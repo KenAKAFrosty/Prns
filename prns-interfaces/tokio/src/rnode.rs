@@ -5,6 +5,10 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::framed_stream::WireMeters;
+use crate::reconnect::ReconnectDelay;
+use crate::serial_control::{
+    wait_for_deadline, ReadyCommandFlowControl, SerialControl, StationIdentification, Transmission,
+};
 use prns_core::engine::InstantMillis;
 use prns_core::interfaces::kiss_framing;
 use prns_core::interfaces::rnode::core::{self, RadioConfig};
@@ -20,7 +24,22 @@ use prns_runtime::reactor::throughput::ThroughputLedger;
 /// How long to wait after opening the port before driving the device, mirroring RNS
 /// `configure_device`'s `reset_radio_state()` + `sleep(2.0)`: a freshly opened RNode needs a moment
 /// to settle, and bytes written into that window are lost. Tests pass `Duration::ZERO`.
-pub const RESET_SETTLE: Duration = Duration::from_secs(2);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RNodeResetDelay(Duration);
+
+impl RNodeResetDelay {
+    #[must_use]
+    pub const fn new(duration: Duration) -> Self {
+        Self(duration)
+    }
+
+    #[must_use]
+    pub const fn duration(self) -> Duration {
+        self.0
+    }
+}
+
+pub const DEFAULT_RNODE_RESET_DELAY: RNodeResetDelay = RNodeResetDelay::new(Duration::from_secs(2));
 
 /// How long to wait for the device to answer the detect query before giving up on this connection
 /// and reconnecting. RNS's serial path waits a fixed `0.2s`; a slightly longer window is more
@@ -32,6 +51,22 @@ const DETECT_TIMEOUT: Duration = Duration::from_secs(2);
 /// every parameter is reported (or this elapses) is the same check, just not wall-clock-bound.
 const VALIDATE_TIMEOUT: Duration = Duration::from_secs(2);
 
+struct RNodeBuffers {
+    decoder: Box<core::CommandDecoder>,
+    read: Box<[u8]>,
+    frame: Box<[u8]>,
+}
+
+impl RNodeBuffers {
+    fn new() -> Self {
+        Self {
+            decoder: Box::new(core::CommandDecoder::new()),
+            read: vec![0u8; core::READ_BUF_LEN].into_boxed_slice(),
+            frame: vec![0u8; core::FRAMED_LEN].into_boxed_slice(),
+        }
+    }
+}
+
 /// A host RNode interface (RNS `RNodeInterface` parity): Reticulum packets carried by a LoRa
 /// RNode over USB serial. Like serial and KISS it owns its medium's whole lifecycle, but each
 /// connection first runs the RNode bring-up handshake (detect, write the radio configuration,
@@ -40,12 +75,23 @@ const VALIDATE_TIMEOUT: Duration = Duration::from_secs(2);
 pub struct RNodeInterface<Open> {
     id: InterfaceId,
     open: Open,
-    reconnect: Duration,
-    settle: Duration,
+    reconnect_delay: ReconnectDelay,
+    reset_delay: RNodeResetDelay,
     radio: RadioConfig,
+    flow_control: ReadyCommandFlowControl,
+    station_identification: Option<StationIdentification>,
     policy: EffectiveInterfacePolicy,
     channel_tag: std::vec::Vec<u8>,
     status: TokioInterfaceStatus,
+}
+
+pub struct RNodeSettings<'a> {
+    pub reset_delay: RNodeResetDelay,
+    pub radio: RadioConfig,
+    pub flow_control: ReadyCommandFlowControl,
+    pub station_identification: Option<StationIdentification>,
+    pub policy: EffectiveInterfacePolicy,
+    pub channel_tag: &'a [u8],
 }
 
 impl<Open> RNodeInterface<Open> {
@@ -53,19 +99,37 @@ impl<Open> RNodeInterface<Open> {
     /// this is, exactly as for serial and KISS: the same device across a reopen passes the same
     /// bytes so its routes survive. The radio determines the bitrate and bring-up configuration.
     #[must_use]
-    pub fn new(open: Open, reconnect: Duration, radio: RadioConfig, channel_tag: &[u8]) -> Self {
-        Self::with_settings(open, reconnect, RESET_SETTLE, radio, channel_tag)
+    pub fn new(
+        open: Open,
+        reconnect_delay: ReconnectDelay,
+        radio: RadioConfig,
+        channel_tag: &[u8],
+    ) -> Self {
+        Self::with_settings(
+            open,
+            reconnect_delay,
+            DEFAULT_RNODE_RESET_DELAY,
+            radio,
+            channel_tag,
+        )
     }
 
     #[must_use]
     pub fn new_with_policy(
         open: Open,
-        reconnect: Duration,
+        reconnect_delay: ReconnectDelay,
         radio: RadioConfig,
         policy: EffectiveInterfacePolicy,
         channel_tag: &[u8],
     ) -> Self {
-        Self::with_settings_and_policy(open, reconnect, RESET_SETTLE, radio, policy, channel_tag)
+        Self::with_settings_and_policy(
+            open,
+            reconnect_delay,
+            DEFAULT_RNODE_RESET_DELAY,
+            radio,
+            policy,
+            channel_tag,
+        )
     }
 
     /// Build with an explicit reset-settle delay — the daemon supplies the configured device, and
@@ -73,16 +137,16 @@ impl<Open> RNodeInterface<Open> {
     #[must_use]
     pub fn with_settings(
         open: Open,
-        reconnect: Duration,
-        settle: Duration,
+        reconnect_delay: ReconnectDelay,
+        reset_delay: RNodeResetDelay,
         radio: RadioConfig,
         channel_tag: &[u8],
     ) -> Self {
         let bitrate = BitrateBps::guess(u64::from(radio.nominal_bitrate_bps()));
         Self::with_settings_and_policy(
             open,
-            reconnect,
-            settle,
+            reconnect_delay,
+            reset_delay,
             radio,
             core::policy_for_bitrate(bitrate),
             channel_tag,
@@ -92,21 +156,43 @@ impl<Open> RNodeInterface<Open> {
     #[must_use]
     pub fn with_settings_and_policy(
         open: Open,
-        reconnect: Duration,
-        settle: Duration,
+        reconnect_delay: ReconnectDelay,
+        reset_delay: RNodeResetDelay,
         radio: RadioConfig,
         policy: EffectiveInterfacePolicy,
         channel_tag: &[u8],
     ) -> Self {
-        let channel_tag = channel_tag.to_vec();
+        Self::with_runtime_settings(
+            open,
+            reconnect_delay,
+            RNodeSettings {
+                reset_delay,
+                radio,
+                flow_control: ReadyCommandFlowControl::Disabled,
+                station_identification: None,
+                policy,
+                channel_tag,
+            },
+        )
+    }
+
+    #[must_use]
+    pub fn with_runtime_settings(
+        open: Open,
+        reconnect_delay: ReconnectDelay,
+        settings: RNodeSettings<'_>,
+    ) -> Self {
+        let channel_tag = settings.channel_tag.to_vec();
         let id = InterfaceId::from_channel_tag(InterfaceKind::Rnode, &channel_tag);
         Self {
             id,
             open,
-            reconnect,
-            settle,
-            radio,
-            policy,
+            reconnect_delay,
+            reset_delay: settings.reset_delay,
+            radio: settings.radio,
+            flow_control: settings.flow_control,
+            station_identification: settings.station_identification,
+            policy: settings.policy,
             channel_tag,
             status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
         }
@@ -237,46 +323,61 @@ where
 async fn serve_rnode<S, Seam>(
     stream: &mut S,
     radio: &RadioConfig,
-    decoder: &mut core::CommandDecoder,
-    read_buf: &mut [u8],
-    frame_buf: &mut [u8],
+    buffers: &mut RNodeBuffers,
     seam: &mut Seam,
+    control: &mut SerialControl,
     meters: &mut WireMeters<'_>,
 ) where
     S: AsyncRead + AsyncWrite + Unpin,
     Seam: InterfaceSeam,
 {
-    let WireMeters {
-        status,
-        airtime,
-        throughput,
-        bitrate,
-        started,
-    } = meters;
-    let started = *started;
     let mut packet_phy = core::PacketPhyState::default();
-    decoder.reset();
+    buffers.decoder.reset();
+    control.connection_opened();
     loop {
+        if let Some(transmission) = control.take_queued(tokio::time::Instant::now()) {
+            if !write_rnode_transmission(stream, &mut buffers.frame, control, transmission, meters)
+                .await
+            {
+                return;
+            }
+            continue;
+        }
+        let flow_deadline = control.flow_timeout_deadline();
+        let station_deadline = control.station_identification_deadline();
         tokio::select! {
-            read = stream.read(&mut *read_buf) => {
+            read = stream.read(&mut buffers.read) => {
                 let read = match read {
                     Ok(0) | Err(_) => return,
                     Ok(read) => read,
                 };
-                status.add_rx(read as u64);
-                let now = InstantMillis(started.elapsed().as_millis() as u64);
-                throughput.record_rx(now, read as u64);
-                status.set_transfer_rates(throughput.rates());
+                record_rnode_rx(read, meters);
                 let mut offset = 0;
-                let chunk = &read_buf[..read];
+                let chunk = &buffers.read[..read];
                 while offset < chunk.len() {
                     if let Some((command, payload)) =
-                        decoder.feed_slice_next(chunk, &mut offset).ok().flatten()
+                        buffers.decoder.feed_slice_next(chunk, &mut offset).ok().flatten()
                     {
                         if command == core::CMD_DATA {
                             let stats = packet_phy.take_for_data();
                             if !payload.is_empty() {
                                 seam.next_inbound_with_phy(payload, stats).await;
+                            }
+                        } else if command == kiss_framing::CMD_READY {
+                            if let Some(transmission) =
+                                control.ready(tokio::time::Instant::now())
+                            {
+                                if !write_rnode_transmission(
+                                    stream,
+                                    &mut buffers.frame,
+                                    control,
+                                    transmission,
+                                    meters,
+                                )
+                                .await
+                                {
+                                    return;
+                                }
                             }
                         } else {
                             packet_phy.apply(command, payload, radio);
@@ -285,22 +386,92 @@ async fn serve_rnode<S, Seam>(
                 }
             }
             outbound = seam.next_outbound() => {
-                if let Ok(framed) =
-                    kiss_framing::encode_with_command(core::CMD_DATA, outbound, &mut *frame_buf)
+                if let Some(transmission) =
+                    control.accept_packet(outbound, tokio::time::Instant::now())
                 {
-                    if stream.write_all(&frame_buf[..framed]).await.is_err() {
+                    if !write_rnode_transmission(
+                        stream,
+                        &mut buffers.frame,
+                        control,
+                        transmission,
+                        meters,
+                    )
+                    .await
+                    {
                         return;
                     }
-                    status.add_tx(framed as u64);
-                    let now = InstantMillis(started.elapsed().as_millis() as u64);
-                    throughput.record_tx(now, framed as u64);
-                    status.set_transfer_rates(throughput.rates());
-                    let frame_airtime = frame_airtime_us(framed, *bitrate);
-                    status.set_airtime(airtime.record_tx(now, frame_airtime));
+                }
+            }
+            () = wait_for_deadline(flow_deadline) => {
+                if let Some(transmission) = control.ready(tokio::time::Instant::now()) {
+                    if !write_rnode_transmission(
+                        stream,
+                        &mut buffers.frame,
+                        control,
+                        transmission,
+                        meters,
+                    )
+                    .await
+                    {
+                        return;
+                    }
+                }
+            }
+            () = wait_for_deadline(station_deadline) => {
+                if let Some(transmission) =
+                    control.station_identification_due(tokio::time::Instant::now())
+                {
+                    if !write_rnode_transmission(
+                        stream,
+                        &mut buffers.frame,
+                        control,
+                        transmission,
+                        meters,
+                    )
+                    .await
+                    {
+                        return;
+                    }
                 }
             }
         }
     }
+}
+
+async fn write_rnode_transmission<S: AsyncWrite + Unpin>(
+    stream: &mut S,
+    frame_buf: &mut [u8],
+    control: &mut SerialControl,
+    transmission: Transmission,
+    meters: &mut WireMeters<'_>,
+) -> bool {
+    let Ok(framed) =
+        kiss_framing::encode_with_command(core::CMD_DATA, transmission.payload(), frame_buf)
+    else {
+        return true;
+    };
+    if stream.write_all(&frame_buf[..framed]).await.is_err() {
+        return false;
+    }
+    let now = tokio::time::Instant::now();
+    control.transmitted(&transmission, now);
+    meters.status.add_tx(framed as u64);
+    let elapsed = InstantMillis(meters.started.elapsed().as_millis() as u64);
+    meters.throughput.record_tx(elapsed, framed as u64);
+    meters.status.set_transfer_rates(meters.throughput.rates());
+    meters.status.set_airtime(
+        meters
+            .airtime
+            .record_tx(elapsed, frame_airtime_us(framed, meters.bitrate)),
+    );
+    true
+}
+
+fn record_rnode_rx(read: usize, meters: &mut WireMeters<'_>) {
+    meters.status.add_rx(read as u64);
+    let now = InstantMillis(meters.started.elapsed().as_millis() as u64);
+    meters.throughput.record_rx(now, read as u64);
+    meters.status.set_transfer_rates(meters.throughput.rates());
 }
 
 impl<Open, Fut, S> Interface for RNodeInterface<Open>
@@ -324,30 +495,33 @@ where
         let mut airtime = AirtimeLedger::new();
         let mut throughput = ThroughputLedger::new();
         let started = tokio::time::Instant::now();
+        let mut control = SerialControl::new(self.flow_control, self.station_identification);
         // The decoder and buffers are heap-held and reused across reconnects — no megabyte of buffer
         // rides the stack, and a device that never answers allocates these exactly once.
-        let mut decoder = std::boxed::Box::new(core::CommandDecoder::new());
-        let mut read_buf = std::vec![0u8; core::READ_BUF_LEN].into_boxed_slice();
-        let mut frame_buf = std::vec![0u8; core::FRAMED_LEN].into_boxed_slice();
+        let mut buffers = RNodeBuffers::new();
         loop {
             if let Ok(mut stream) = (self.open)().await {
-                if !self.settle.is_zero() {
-                    tokio::time::sleep(self.settle).await;
+                if !self.reset_delay.duration().is_zero() {
+                    tokio::time::sleep(self.reset_delay.duration()).await;
                 }
                 // A device that fails to detect or validate is treated like a dropped connection:
                 // skip serving and fall through to the reconnect wait, as RNS closes the port.
-                if bring_up(&mut stream, &self.radio, &mut decoder, &mut read_buf)
-                    .await
-                    .is_ok()
+                if bring_up(
+                    &mut stream,
+                    &self.radio,
+                    &mut buffers.decoder,
+                    &mut buffers.read,
+                )
+                .await
+                .is_ok()
                 {
                     self.status.set_connection(ConnectionState::Connected);
                     serve_rnode(
                         &mut stream,
                         &self.radio,
-                        &mut decoder,
-                        &mut read_buf,
-                        &mut frame_buf,
+                        &mut buffers,
                         &mut seam,
+                        &mut control,
                         &mut WireMeters {
                             status: &self.status,
                             airtime: &mut airtime,
@@ -360,7 +534,7 @@ where
                     self.status.set_connection(ConnectionState::Disconnected);
                 }
             }
-            tokio::time::sleep(self.reconnect).await;
+            tokio::time::sleep(self.reconnect_delay.duration()).await;
         }
     }
 }
@@ -381,6 +555,7 @@ impl<Open> prns_core::interfaces::ReportsStatus for RNodeInterface<Open> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::serial_control::{StationIdInterval, StationIdWireFormat};
     use prns_core::interfaces::kiss_framing::{self, FEND};
     use prns_core::interfaces::{
         InterfaceStatus, PacketPhyStats, RssiDbm, SignalQualityTenthsPercent, SnrQuarterDb,
@@ -422,7 +597,16 @@ mod tests {
     }
 
     fn sample_radio() -> RadioConfig {
-        RadioConfig::new(868_000_000, 125_000, 7, 8, 5, None, None).expect("a valid radio config")
+        RadioConfig::new(core::RadioConfigInput {
+            frequency_hz: 868_000_000,
+            bandwidth_hz: 125_000,
+            txpower_dbm: 7,
+            spreading_factor: 8,
+            coding_rate: 5,
+            airtime_limit_short_centi_percent: None,
+            airtime_limit_long_centi_percent: None,
+        })
+        .expect("a valid radio config")
     }
 
     /// Read decoded device-bound `(command, payload)` frames off the wire until `wanted` of them have
@@ -478,18 +662,28 @@ mod tests {
             config[0],
             (
                 core::CMD_FREQUENCY,
-                radio.frequency_hz.to_be_bytes().to_vec()
+                radio.frequency_hz().to_be_bytes().to_vec()
             )
         );
         assert_eq!(
             config[5],
             (core::CMD_RADIO_STATE, std::vec![core::RADIO_STATE_ON])
         );
-        write_command(wire, core::CMD_FREQUENCY, &radio.frequency_hz.to_be_bytes()).await;
-        write_command(wire, core::CMD_BANDWIDTH, &radio.bandwidth_hz.to_be_bytes()).await;
-        write_command(wire, core::CMD_TXPOWER, &[radio.txpower_dbm]).await;
-        write_command(wire, core::CMD_SF, &[radio.spreading_factor]).await;
-        write_command(wire, core::CMD_CR, &[radio.coding_rate]).await;
+        write_command(
+            wire,
+            core::CMD_FREQUENCY,
+            &radio.frequency_hz().to_be_bytes(),
+        )
+        .await;
+        write_command(
+            wire,
+            core::CMD_BANDWIDTH,
+            &radio.bandwidth_hz().to_be_bytes(),
+        )
+        .await;
+        write_command(wire, core::CMD_TXPOWER, &[radio.txpower_dbm()]).await;
+        write_command(wire, core::CMD_SF, &[radio.spreading_factor()]).await;
+        write_command(wire, core::CMD_CR, &[radio.coding_rate()]).await;
         write_command(wire, core::CMD_RADIO_STATE, &[core::RADIO_STATE_ON]).await;
     }
 
@@ -514,8 +708,8 @@ mod tests {
         // settle = ZERO so the test does not wait the real two-second RNode reset delay.
         let interface = RNodeInterface::with_settings(
             open,
-            Duration::from_millis(10),
-            Duration::ZERO,
+            ReconnectDelay::new(Duration::from_millis(10)),
+            RNodeResetDelay::new(Duration::ZERO),
             radio,
             b"test-rnode",
         );
@@ -598,6 +792,73 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn ready_flow_control_and_station_identification_share_the_rnode_queue() {
+        let (interface_wire, mut device) = tokio::io::duplex(4096);
+        let mut wire = Some(interface_wire);
+        let open = move || {
+            let taken = wire.take();
+            async move { taken.ok_or_else(|| io::Error::from(io::ErrorKind::NotConnected)) }
+        };
+        let (in_tx, _in_rx) = mpsc::unbounded_channel::<(Vec<u8>, PacketPhyStats)>();
+        let (mut out_tx, out_rx) = tokio_grant_lane(core::RNODE_FRAME_LEN, 4);
+        let seam = MockSeam {
+            inbound: in_tx,
+            sink: Vec::new(),
+            outbound: out_rx,
+        };
+        let radio = sample_radio();
+        let station_identification = StationIdentification::new(
+            b"N0CALL",
+            StationIdInterval::new(Duration::from_millis(100)),
+            StationIdWireFormat::Exact,
+        )
+        .expect("valid station identification");
+        let interface = RNodeInterface::with_runtime_settings(
+            open,
+            ReconnectDelay::new(Duration::from_millis(10)),
+            RNodeSettings {
+                reset_delay: RNodeResetDelay::new(Duration::ZERO),
+                radio,
+                flow_control: ReadyCommandFlowControl::WaitForReady,
+                station_identification: Some(station_identification),
+                policy: core::policy_for_bitrate(BitrateBps::guess(u64::from(
+                    radio.nominal_bitrate_bps(),
+                ))),
+                channel_tag: b"controlled-rnode",
+            },
+        );
+        tokio::spawn(interface.run(seam));
+        tokio::time::timeout(Duration::from_secs(2), answer_bringup(&mut device, &radio))
+            .await
+            .expect("bring-up completes");
+
+        out_tx.try_grant().expect("first slot").fill(b"first");
+        out_tx.commit();
+        assert_eq!(
+            read_commands(&mut device, 1).await[0],
+            (core::CMD_DATA, b"first".to_vec())
+        );
+
+        out_tx.try_grant().expect("second slot").fill(b"second");
+        out_tx.commit();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), read_commands(&mut device, 1))
+                .await
+                .is_err()
+        );
+        write_command(&mut device, kiss_framing::CMD_READY, &[1]).await;
+        assert_eq!(
+            read_commands(&mut device, 1).await[0],
+            (core::CMD_DATA, b"second".to_vec())
+        );
+        write_command(&mut device, kiss_framing::CMD_READY, &[1]).await;
+        let station = tokio::time::timeout(Duration::from_secs(1), read_commands(&mut device, 1))
+            .await
+            .expect("station identification arrives");
+        assert_eq!(station[0], (core::CMD_DATA, b"N0CALL".to_vec()));
+    }
+
+    #[tokio::test]
     async fn refuses_to_come_online_when_the_radio_reports_a_mismatch() {
         let (interface_wire, mut device) = tokio::io::duplex(4096);
         let mut wire = Some(interface_wire);
@@ -617,8 +878,8 @@ mod tests {
         let radio = sample_radio();
         let interface = RNodeInterface::with_settings(
             open,
-            Duration::from_millis(10),
-            Duration::ZERO,
+            ReconnectDelay::new(Duration::from_millis(10)),
+            RNodeResetDelay::new(Duration::ZERO),
             radio,
             b"test-rnode",
         );
@@ -633,18 +894,18 @@ mod tests {
         write_command(
             &mut device,
             core::CMD_FREQUENCY,
-            &radio.frequency_hz.to_be_bytes(),
+            &radio.frequency_hz().to_be_bytes(),
         )
         .await;
         write_command(
             &mut device,
             core::CMD_BANDWIDTH,
-            &radio.bandwidth_hz.to_be_bytes(),
+            &radio.bandwidth_hz().to_be_bytes(),
         )
         .await;
-        write_command(&mut device, core::CMD_TXPOWER, &[radio.txpower_dbm]).await;
-        write_command(&mut device, core::CMD_SF, &[radio.spreading_factor + 1]).await;
-        write_command(&mut device, core::CMD_CR, &[radio.coding_rate]).await;
+        write_command(&mut device, core::CMD_TXPOWER, &[radio.txpower_dbm()]).await;
+        write_command(&mut device, core::CMD_SF, &[radio.spreading_factor() + 1]).await;
+        write_command(&mut device, core::CMD_CR, &[radio.coding_rate()]).await;
         write_command(&mut device, core::CMD_RADIO_STATE, &[core::RADIO_STATE_ON]).await;
 
         // The interface must never report Connected on a mismatched bring-up; give it room to try and

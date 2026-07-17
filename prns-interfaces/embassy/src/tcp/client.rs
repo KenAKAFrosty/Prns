@@ -39,8 +39,21 @@ pub const KEEP_ALIVE: Duration = Duration::from_secs(5);
 /// the UI takes effect within a beat rather than waiting on traffic or the reconnect timer.
 pub const ENABLED_POLL: Duration = Duration::from_millis(250);
 
+#[derive(Clone, Copy)]
+struct ReconnectDelay(Duration);
+
+impl ReconnectDelay {
+    const fn new(duration: Duration) -> Self {
+        Self(duration)
+    }
+
+    const fn duration(self) -> Duration {
+        self.0
+    }
+}
+
 /// The initiating end of an RNS TCP pair on embassy. Owns its connection lifecycle: connect to
-/// `target`, serve until the stream drops, wait `reconnect`, connect again. The socket's smoltcp
+/// `target`, serve until the stream drops, wait for the reconnect delay, connect again. The socket's smoltcp
 /// buffers (`rx_buffer`/`tx_buffer`) and the status handle are borrowed from the board's `static`s;
 /// `tag` is the stable channel identity — the configured target's bytes — the interface id derives
 /// from, so the same node reconnects under the same routing key. `bitrate` is the host's claim
@@ -52,7 +65,7 @@ pub struct TcpClient<'a> {
     target: IpEndpoint,
     tag: &'a [u8],
     bitrate: BitrateBps,
-    reconnect: Duration,
+    reconnect_delay: ReconnectDelay,
     rx_buffer: &'a mut [u8],
     tx_buffer: &'a mut [u8],
     status: &'a EmbassyInterfaceStatus,
@@ -76,7 +89,7 @@ impl<'a> TcpClient<'a> {
         target: IpEndpoint,
         tag: &'a [u8],
         bitrate: BitrateBps,
-        reconnect: Duration,
+        reconnect_delay: Duration,
         rx_buffer: &'a mut [u8],
         tx_buffer: &'a mut [u8],
         status: &'a EmbassyInterfaceStatus,
@@ -87,7 +100,7 @@ impl<'a> TcpClient<'a> {
             target,
             tag,
             bitrate,
-            reconnect,
+            reconnect_delay: ReconnectDelay::new(reconnect_delay),
             rx_buffer,
             tx_buffer,
             status,
@@ -121,7 +134,7 @@ impl Interface for TcpClient<'_> {
             target,
             tag: _,
             bitrate,
-            reconnect,
+            reconnect_delay,
             rx_buffer,
             tx_buffer,
             status,
@@ -165,7 +178,7 @@ impl Interface for TcpClient<'_> {
             // at once rather than lingering Disconnected for the reconnect interval.
             if status.is_enabled() {
                 status.set_connection(ConnectionState::Disconnected);
-                Timer::after(reconnect).await;
+                Timer::after(reconnect_delay.duration()).await;
             }
         }
     }

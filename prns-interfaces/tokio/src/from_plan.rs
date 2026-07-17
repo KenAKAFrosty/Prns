@@ -10,13 +10,16 @@ pub use prns_config as config;
 use prns_config::DeferReason;
 use prns_config::{
     AddressFamilyPreference as PlannedAddressFamilyPreference, DaemonPlan, DeferredInterface,
-    InterfaceAccessPlan, PlannedInterface, PlannedMedium, ReconnectLimit as PlannedReconnectLimit,
-    TcpDialPlan, TcpTunnelMode as PlannedTcpTunnelMode, UdpFlowPlan,
+    InterfaceAccessPlan, PlannedInterface, PlannedMedium,
+    ReadyCommandFlowControl as PlannedReadyCommandFlowControl,
+    ReconnectLimit as PlannedReconnectLimit, SerialDataBits, SerialLinePlan, SerialParity,
+    SerialStopBits, StationIdentificationPlan, TcpDialPlan, TcpTunnelMode as PlannedTcpTunnelMode,
+    UdpFlowPlan,
 };
 use prns_core::interfaces::ifac::IfacContext;
 use prns_core::interfaces::{InterfaceId, InterfaceOriginKind};
 use prns_runtime::interfaces::kiss::core::TncConfig;
-use prns_runtime::interfaces::rnode::core::RadioConfig;
+use prns_runtime::interfaces::rnode::core::{RadioConfig, RadioConfigInput};
 use prns_runtime::runtime::{AttachIntent, Attachable, PrnsNodeHandle};
 
 use crate::ax25::{Ax25KissInterface, Ax25KissSettings};
@@ -25,11 +28,17 @@ use crate::backbone::server::BackboneServer;
 use crate::host_network::{
     resolve_tcp_listener, resolve_udp_endpoint, tcp_target, udp_ephemeral_bind,
 };
-use crate::kiss::{KissInterface, CONFIGURE_SETTLE};
-use crate::pipe::PipeInterface;
-use crate::rnode::RNodeInterface;
+use crate::kiss::{KissInterface, KissSettings, DEFAULT_TNC_CONFIGURE_DELAY};
+use crate::pipe::{PipeInterface, PipeRespawnDelay};
+use crate::reconnect::ReconnectDelay;
+use crate::rnode::{RNodeInterface, RNodeSettings};
 use crate::serial::SerialInterface;
-use crate::serial_host::open_host_serial;
+use crate::serial_control::{ReadyCommandFlowControl, StationIdentification};
+use crate::serial_control::{ReadyTimeout, StationIdInterval, StationIdWireFormat};
+use crate::serial_host::{
+    open_host_serial, open_host_serial_with_settings, HostSerialDataBits, HostSerialLineSettings,
+    HostSerialParity, HostSerialStopBits,
+};
 use crate::tcp::client::TcpClientInterface;
 use crate::tcp::server::TcpServer;
 use crate::tcp::tokio_socket::{
@@ -38,12 +47,13 @@ use crate::tcp::tokio_socket::{
 use crate::udp::UdpInterface;
 use crate::wifi::AutoWifi;
 
-const TCP_RECONNECT: Duration = Duration::from_secs(5);
-const SERIAL_RECONNECT: Duration = Duration::from_millis(500);
+const TCP_RECONNECT_DELAY: Duration = Duration::from_secs(5);
+const SERIAL_RECONNECT_DELAY: ReconnectDelay = ReconnectDelay::new(Duration::from_millis(500));
+const KISS_FLOW_CONTROL_TIMEOUT: ReadyTimeout = ReadyTimeout::new(Duration::from_secs(5));
 /// RNS `RNodeInterface.RECONNECT_WAIT`: an RNode's bring-up handshake is expensive (settle, detect,
 /// configure, validate), so a dropped or absent device is retried on a slower cadence than a bare
 /// serial port.
-const RNODE_RECONNECT: Duration = Duration::from_secs(5);
+const RNODE_RECONNECT_DELAY: ReconnectDelay = ReconnectDelay::new(Duration::from_secs(5));
 /// An RNode's host link is always 115200/8N1 — RNS hardcodes the speed; it is not a config knob.
 const RNODE_BAUD: u32 = 115_200;
 
@@ -309,15 +319,15 @@ async fn stand_up(
                 }),
             }
         }
-        PlannedMedium::Serial { device, baud } => {
-            let baud = *baud;
+        PlannedMedium::Serial { device, line } => {
+            let line = host_serial_line(*line);
             let open_path = device.clone();
             let serial = SerialInterface::with_policy(
                 move || {
                     let open_path = open_path.clone();
-                    async move { open_host_serial(&open_path, baud) }
+                    async move { open_host_serial_with_settings(&open_path, line) }
                 },
-                SERIAL_RECONNECT,
+                SERIAL_RECONNECT_DELAY,
                 interface.policy,
                 device.as_bytes(),
             );
@@ -326,13 +336,15 @@ async fn stand_up(
         }
         PlannedMedium::Kiss {
             device,
-            baud,
+            line,
             preamble_ms,
             txtail_ms,
             persistence,
             slottime_ms,
+            flow_control,
+            station_id,
         } => {
-            let baud = *baud;
+            let line = host_serial_line(*line);
             let open_path = device.clone();
             let tnc = TncConfig {
                 preamble_ms: *preamble_ms,
@@ -340,31 +352,47 @@ async fn stand_up(
                 persistence: *persistence,
                 slottime_ms: *slottime_ms,
             };
-            let kiss = KissInterface::with_settings_and_policy(
+            let station_identification =
+                match runtime_station_identification(station_id, StationIdWireFormat::KissPadded) {
+                    Ok(station_identification) => station_identification,
+                    Err(message) => {
+                        report(PlanOutcome::Failed {
+                            interface,
+                            visible_error_message: message,
+                        });
+                        return;
+                    }
+                };
+            let kiss = KissInterface::with_runtime_settings(
                 move || {
                     let open_path = open_path.clone();
-                    async move { open_host_serial(&open_path, baud) }
+                    async move { open_host_serial_with_settings(&open_path, line) }
                 },
-                SERIAL_RECONNECT,
-                CONFIGURE_SETTLE,
-                tnc,
-                interface.policy,
-                device.as_bytes(),
+                SERIAL_RECONNECT_DELAY,
+                KissSettings {
+                    configure_delay: DEFAULT_TNC_CONFIGURE_DELAY,
+                    tnc,
+                    flow_control: runtime_kiss_flow_control(*flow_control),
+                    station_identification,
+                    policy: interface.policy,
+                    channel_tag: device.as_bytes(),
+                },
             );
             let attached = attach_with_access(handle, access, kiss);
             report_up(handle, interface, attached.id(), report);
         }
         PlannedMedium::Ax25Kiss {
             device,
-            baud,
+            line,
             preamble_ms,
             txtail_ms,
             persistence,
             slottime_ms,
+            flow_control,
             callsign,
             ssid,
         } => {
-            let baud = *baud;
+            let line = host_serial_line(*line);
             let open_path = device.clone();
             let tnc = TncConfig {
                 preamble_ms: *preamble_ms,
@@ -375,12 +403,13 @@ async fn stand_up(
             let opened = Ax25KissInterface::with_policy(
                 move || {
                     let open_path = open_path.clone();
-                    async move { open_host_serial(&open_path, baud) }
+                    async move { open_host_serial_with_settings(&open_path, line) }
                 },
-                SERIAL_RECONNECT,
+                SERIAL_RECONNECT_DELAY,
                 Ax25KissSettings {
-                    settle: CONFIGURE_SETTLE,
+                    configure_delay: DEFAULT_TNC_CONFIGURE_DELAY,
                     tnc,
+                    flow_control: runtime_kiss_flow_control(*flow_control),
                     callsign,
                     ssid: *ssid,
                     policy: interface.policy,
@@ -405,32 +434,49 @@ async fn stand_up(
             txpower_dbm,
             spreading_factor,
             coding_rate,
-            airtime_limit_short_centi,
-            airtime_limit_long_centi,
+            flow_control,
+            station_id,
+            airtime_limit_short,
+            airtime_limit_long,
         } => {
-            // Validate the radio against its operating envelope here (as RNS leaves range-checking to
-            // the device): a config the radio cannot accept fails to stand up with a clear reason
-            // rather than opening the port and timing out on validation.
-            match RadioConfig::new(
-                *frequency_hz,
-                *bandwidth_hz,
-                *txpower_dbm,
-                *spreading_factor,
-                *coding_rate,
-                *airtime_limit_short_centi,
-                *airtime_limit_long_centi,
-            ) {
+            match RadioConfig::new(RadioConfigInput {
+                frequency_hz: *frequency_hz,
+                bandwidth_hz: *bandwidth_hz,
+                txpower_dbm: *txpower_dbm,
+                spreading_factor: *spreading_factor,
+                coding_rate: *coding_rate,
+                airtime_limit_short_centi_percent: airtime_limit_short.map(|limit| limit.get()),
+                airtime_limit_long_centi_percent: airtime_limit_long.map(|limit| limit.get()),
+            }) {
                 Ok(radio) => {
+                    let station_identification = match runtime_station_identification(
+                        station_id,
+                        StationIdWireFormat::Exact,
+                    ) {
+                        Ok(station_identification) => station_identification,
+                        Err(message) => {
+                            report(PlanOutcome::Failed {
+                                interface,
+                                visible_error_message: message,
+                            });
+                            return;
+                        }
+                    };
                     let open_path = device.clone();
-                    let rnode = RNodeInterface::new_with_policy(
+                    let rnode = RNodeInterface::with_runtime_settings(
                         move || {
                             let open_path = open_path.clone();
                             async move { open_host_serial(&open_path, RNODE_BAUD) }
                         },
-                        RNODE_RECONNECT,
-                        radio,
-                        interface.policy,
-                        device.as_bytes(),
+                        RNODE_RECONNECT_DELAY,
+                        RNodeSettings {
+                            reset_delay: crate::rnode::DEFAULT_RNODE_RESET_DELAY,
+                            radio,
+                            flow_control: runtime_rnode_flow_control(*flow_control),
+                            station_identification,
+                            policy: interface.policy,
+                            channel_tag: device.as_bytes(),
+                        },
                     );
                     let attached = attach_with_access(handle, access, rnode);
                     report_up(handle, interface, attached.id(), report);
@@ -471,36 +517,83 @@ async fn stand_up(
         }
         PlannedMedium::Pipe {
             command,
-            respawn_delay_ms,
+            respawn_delay,
         } => {
-            let respawn = Duration::from_millis(*respawn_delay_ms);
-            match shlex::split(command) {
-                Some(argv) if !argv.is_empty() => {
-                    let pipe = PipeInterface::with_policy(
-                        move || {
-                            let argv = argv.clone();
-                            async move { crate::pipe_host::spawn(&argv).await }
-                        },
-                        respawn,
-                        interface.policy,
-                        command.as_bytes(),
-                    );
-                    let attached = attach_with_access(handle, access, pipe);
-                    report_up(handle, interface, attached.id(), report);
-                }
-                _ => report(PlanOutcome::Failed {
-                    interface,
-                    visible_error_message: String::from("could not parse command into arguments"),
-                }),
-            }
+            let respawn_delay = PipeRespawnDelay::new(respawn_delay.get());
+            let argv = command.argv().to_vec();
+            let pipe = PipeInterface::with_policy(
+                move || {
+                    let argv = argv.clone();
+                    async move { crate::pipe_host::spawn(&argv).await }
+                },
+                respawn_delay,
+                interface.policy,
+                command.source().as_bytes(),
+            );
+            let attached = attach_with_access(handle, access, pipe);
+            report_up(handle, interface, attached.id(), report);
         }
     }
+}
+
+fn host_serial_line(line: SerialLinePlan) -> HostSerialLineSettings {
+    HostSerialLineSettings::new(
+        line.baud(),
+        match line.data_bits() {
+            SerialDataBits::Five => HostSerialDataBits::Five,
+            SerialDataBits::Six => HostSerialDataBits::Six,
+            SerialDataBits::Seven => HostSerialDataBits::Seven,
+            SerialDataBits::Eight => HostSerialDataBits::Eight,
+        },
+        match line.parity() {
+            SerialParity::None => HostSerialParity::None,
+            SerialParity::Even => HostSerialParity::Even,
+            SerialParity::Odd => HostSerialParity::Odd,
+        },
+        match line.stop_bits() {
+            SerialStopBits::One => HostSerialStopBits::One,
+            SerialStopBits::Two => HostSerialStopBits::Two,
+        },
+    )
+}
+
+fn runtime_kiss_flow_control(planned: PlannedReadyCommandFlowControl) -> ReadyCommandFlowControl {
+    match planned {
+        PlannedReadyCommandFlowControl::Disabled => ReadyCommandFlowControl::Disabled,
+        PlannedReadyCommandFlowControl::Enabled => {
+            ReadyCommandFlowControl::WaitForReadyOrTimeout(KISS_FLOW_CONTROL_TIMEOUT)
+        }
+    }
+}
+
+fn runtime_rnode_flow_control(planned: PlannedReadyCommandFlowControl) -> ReadyCommandFlowControl {
+    match planned {
+        PlannedReadyCommandFlowControl::Disabled => ReadyCommandFlowControl::Disabled,
+        PlannedReadyCommandFlowControl::Enabled => ReadyCommandFlowControl::WaitForReady,
+    }
+}
+
+fn runtime_station_identification(
+    planned: &Option<StationIdentificationPlan>,
+    wire_format: StationIdWireFormat,
+) -> Result<Option<StationIdentification>, String> {
+    planned
+        .as_ref()
+        .map(|planned| {
+            StationIdentification::new(
+                planned.callsign().as_bytes(),
+                StationIdInterval::new(Duration::from_secs(planned.interval_seconds())),
+                wire_format,
+            )
+            .map_err(|_| "station identification callsign cannot be empty".to_string())
+        })
+        .transpose()
 }
 
 fn tcp_connection_settings(plan: &TcpDialPlan) -> TcpConnectionSettings {
     TcpConnectionSettings {
         connect_timeout: Duration::from_secs(plan.connect_timeout.get()),
-        reconnect_wait: TCP_RECONNECT,
+        reconnect_wait: TCP_RECONNECT_DELAY,
         reconnect_limit: match plan.reconnect_limit {
             PlannedReconnectLimit::Unlimited => ReconnectLimit::Unlimited,
             PlannedReconnectLimit::Attempts(attempts) => ReconnectLimit::Attempts(attempts),
@@ -568,5 +661,27 @@ fn defer_reason_name(reason: &DeferReason) -> &'static str {
         DeferReason::UnsupportedKind => "unsupported_kind",
         DeferReason::MissingRequiredField { .. } => "missing_required_field",
         DeferReason::InvalidSetting { .. } => "invalid_setting",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn planned_serial_line_reaches_the_host_transport_without_defaulting() {
+        let config = prns_config::reference::parse(
+            "[interfaces]\n[[Serial]]\ntype = SerialInterface\nenabled = Yes\nport = test\nspeed = 57600\ndatabits = 7\nparity = odd\nstopbits = 2\n",
+        )
+        .expect("valid serial configuration");
+        let plan = prns_config::plan(&config);
+        let PlannedMedium::Serial { line, .. } = &plan.interfaces[0].medium else {
+            panic!("serial medium expected")
+        };
+        let host = host_serial_line(*line);
+        assert_eq!(host.baud(), 57_600);
+        assert_eq!(host.data_bits(), HostSerialDataBits::Seven);
+        assert_eq!(host.parity(), HostSerialParity::Odd);
+        assert_eq!(host.stop_bits(), HostSerialStopBits::Two);
     }
 }

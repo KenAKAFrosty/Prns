@@ -88,6 +88,7 @@ pub const SPREADING_FACTOR_MIN: u8 = 5;
 pub const SPREADING_FACTOR_MAX: u8 = 12;
 pub const CODING_RATE_MIN: u8 = 5;
 pub const CODING_RATE_MAX: u8 = 8;
+pub const AIRTIME_LIMIT_CENTI_PERCENT_MAX: u16 = 10_000;
 
 /// The largest KISS frame [`push_command`] ever emits: a four-byte radio value, every byte escaped.
 const FRAME_SCRATCH: usize = kiss_framing::max_encoded_len(4);
@@ -100,13 +101,24 @@ const FRAME_SCRATCH: usize = kiss_framing::max_encoded_len(4);
 /// airtime locks stay pre-scaled as RNS's wire `int(percent * 100)` so encode is integer-only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RadioConfig {
-    pub frequency_hz: u32,
+    frequency_hz: u32,
+    bandwidth_hz: u32,
+    txpower_dbm: u8,
+    spreading_factor: u8,
+    coding_rate: u8,
+    airtime_limit_short_centi_percent: Option<u16>,
+    airtime_limit_long_centi_percent: Option<u16>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RadioConfigInput {
+    pub frequency_hz: u64,
     pub bandwidth_hz: u32,
-    pub txpower_dbm: u8,
+    pub txpower_dbm: i16,
     pub spreading_factor: u8,
     pub coding_rate: u8,
-    pub airtime_limit_short_centi: Option<u16>,
-    pub airtime_limit_long_centi: Option<u16>,
+    pub airtime_limit_short_centi_percent: Option<u16>,
+    pub airtime_limit_long_centi_percent: Option<u16>,
 }
 
 /// The rejected field carries the out-of-range value the operator gave.
@@ -117,21 +129,24 @@ pub enum RadioConfigError {
     TxPower(i16),
     SpreadingFactor(u8),
     CodingRate(u8),
+    ShortAirtimeLimit(u16),
+    LongAirtimeLimit(u16),
 }
 
 impl RadioConfig {
     /// Validate raw planner values into a `RadioConfig`, or report the first out-of-range
     /// field. Frequency arrives as `u64` (a stock RNS `frequency` can exceed `u32` Hz) and TX
     /// power as `i16` (a negative typo is caught, not wrapped); airtime locks arrive pre-scaled.
-    pub fn new(
-        frequency_hz: u64,
-        bandwidth_hz: u32,
-        txpower_dbm: i16,
-        spreading_factor: u8,
-        coding_rate: u8,
-        airtime_limit_short_centi: Option<u16>,
-        airtime_limit_long_centi: Option<u16>,
-    ) -> Result<Self, RadioConfigError> {
+    pub fn new(input: RadioConfigInput) -> Result<Self, RadioConfigError> {
+        let RadioConfigInput {
+            frequency_hz,
+            bandwidth_hz,
+            txpower_dbm,
+            spreading_factor,
+            coding_rate,
+            airtime_limit_short_centi_percent,
+            airtime_limit_long_centi_percent,
+        } = input;
         if !(FREQUENCY_HZ_MIN..=FREQUENCY_HZ_MAX).contains(&frequency_hz) {
             return Err(RadioConfigError::Frequency(frequency_hz));
         }
@@ -147,15 +162,60 @@ impl RadioConfig {
         if !(CODING_RATE_MIN..=CODING_RATE_MAX).contains(&coding_rate) {
             return Err(RadioConfigError::CodingRate(coding_rate));
         }
+        if let Some(limit) = airtime_limit_short_centi_percent {
+            if limit > AIRTIME_LIMIT_CENTI_PERCENT_MAX {
+                return Err(RadioConfigError::ShortAirtimeLimit(limit));
+            }
+        }
+        if let Some(limit) = airtime_limit_long_centi_percent {
+            if limit > AIRTIME_LIMIT_CENTI_PERCENT_MAX {
+                return Err(RadioConfigError::LongAirtimeLimit(limit));
+            }
+        }
         Ok(Self {
             frequency_hz: frequency_hz as u32,
             bandwidth_hz,
             txpower_dbm: txpower_dbm as u8,
             spreading_factor,
             coding_rate,
-            airtime_limit_short_centi,
-            airtime_limit_long_centi,
+            airtime_limit_short_centi_percent,
+            airtime_limit_long_centi_percent,
         })
+    }
+
+    #[must_use]
+    pub const fn frequency_hz(&self) -> u32 {
+        self.frequency_hz
+    }
+
+    #[must_use]
+    pub const fn bandwidth_hz(&self) -> u32 {
+        self.bandwidth_hz
+    }
+
+    #[must_use]
+    pub const fn txpower_dbm(&self) -> u8 {
+        self.txpower_dbm
+    }
+
+    #[must_use]
+    pub const fn spreading_factor(&self) -> u8 {
+        self.spreading_factor
+    }
+
+    #[must_use]
+    pub const fn coding_rate(&self) -> u8 {
+        self.coding_rate
+    }
+
+    #[must_use]
+    pub const fn airtime_limit_short_centi_percent(&self) -> Option<u16> {
+        self.airtime_limit_short_centi_percent
+    }
+
+    #[must_use]
+    pub const fn airtime_limit_long_centi_percent(&self) -> Option<u16> {
+        self.airtime_limit_long_centi_percent
     }
 
     /// The on-air bitrate the descriptor and airtime ledger reason from; after bring-up the
@@ -176,10 +236,10 @@ impl RadioConfig {
         push_command(&mut out, CMD_TXPOWER, &[self.txpower_dbm]);
         push_command(&mut out, CMD_SF, &[self.spreading_factor]);
         push_command(&mut out, CMD_CR, &[self.coding_rate]);
-        if let Some(short_centi) = self.airtime_limit_short_centi {
+        if let Some(short_centi) = self.airtime_limit_short_centi_percent {
             push_command(&mut out, CMD_ST_ALOCK, &short_centi.to_be_bytes());
         }
-        if let Some(long_centi) = self.airtime_limit_long_centi {
+        if let Some(long_centi) = self.airtime_limit_long_centi_percent {
             push_command(&mut out, CMD_LT_ALOCK, &long_centi.to_be_bytes());
         }
         push_command(&mut out, CMD_RADIO_STATE, &[RADIO_STATE_ON]);
@@ -385,8 +445,20 @@ mod tests {
         frames
     }
 
+    fn sample_input() -> RadioConfigInput {
+        RadioConfigInput {
+            frequency_hz: 868_000_000,
+            bandwidth_hz: 125_000,
+            txpower_dbm: 7,
+            spreading_factor: 8,
+            coding_rate: 5,
+            airtime_limit_short_centi_percent: None,
+            airtime_limit_long_centi_percent: None,
+        }
+    }
+
     fn sample_radio() -> RadioConfig {
-        RadioConfig::new(868_000_000, 125_000, 7, 8, 5, None, None).expect("a valid radio config")
+        RadioConfig::new(sample_input()).expect("a valid radio config")
     }
 
     #[test]
@@ -400,34 +472,67 @@ mod tests {
 
     #[test]
     fn a_valid_config_is_accepted_and_stored_narrowed() {
-        let radio = RadioConfig::new(868_000_000, 125_000, 7, 8, 5, Some(150), Some(500))
-            .expect("valid config");
-        assert_eq!(radio.frequency_hz, 868_000_000);
-        assert_eq!(radio.txpower_dbm, 7);
-        assert_eq!(radio.airtime_limit_short_centi, Some(150));
+        let radio = RadioConfig::new(RadioConfigInput {
+            airtime_limit_short_centi_percent: Some(150),
+            airtime_limit_long_centi_percent: Some(500),
+            ..sample_input()
+        })
+        .expect("valid config");
+        assert_eq!(radio.frequency_hz(), 868_000_000);
+        assert_eq!(radio.txpower_dbm(), 7);
+        assert_eq!(radio.airtime_limit_short_centi_percent(), Some(150));
     }
 
     #[test]
     fn each_out_of_range_field_is_rejected_with_its_value() {
         assert_eq!(
-            RadioConfig::new(50_000_000, 125_000, 7, 8, 5, None, None),
+            RadioConfig::new(RadioConfigInput {
+                frequency_hz: 50_000_000,
+                ..sample_input()
+            }),
             Err(RadioConfigError::Frequency(50_000_000))
         );
         assert_eq!(
-            RadioConfig::new(868_000_000, 5_000, 7, 8, 5, None, None),
+            RadioConfig::new(RadioConfigInput {
+                bandwidth_hz: 5_000,
+                ..sample_input()
+            }),
             Err(RadioConfigError::Bandwidth(5_000))
         );
         assert_eq!(
-            RadioConfig::new(868_000_000, 125_000, -1, 8, 5, None, None),
+            RadioConfig::new(RadioConfigInput {
+                txpower_dbm: -1,
+                ..sample_input()
+            }),
             Err(RadioConfigError::TxPower(-1))
         );
         assert_eq!(
-            RadioConfig::new(868_000_000, 125_000, 7, 4, 5, None, None),
+            RadioConfig::new(RadioConfigInput {
+                spreading_factor: 4,
+                ..sample_input()
+            }),
             Err(RadioConfigError::SpreadingFactor(4))
         );
         assert_eq!(
-            RadioConfig::new(868_000_000, 125_000, 7, 8, 9, None, None),
+            RadioConfig::new(RadioConfigInput {
+                coding_rate: 9,
+                ..sample_input()
+            }),
             Err(RadioConfigError::CodingRate(9))
+        );
+        assert_eq!(
+            RadioConfig::new(RadioConfigInput {
+                airtime_limit_short_centi_percent: Some(10_001),
+                ..sample_input()
+            }),
+            Err(RadioConfigError::ShortAirtimeLimit(10_001))
+        );
+        assert_eq!(
+            RadioConfig::new(RadioConfigInput {
+                airtime_limit_long_centi_percent: Some(10_001),
+                ..sample_input()
+            }),
+            Err(RadioConfigError::LongAirtimeLimit(10_001))
         );
     }
 
@@ -451,8 +556,12 @@ mod tests {
     #[test]
     fn the_airtime_locks_slot_in_before_the_radio_state_when_configured() {
         // 1.5% and 5.0% pre-scaled to centi-percent (150, 500) as the planner hands them over.
-        let radio = RadioConfig::new(868_000_000, 125_000, 7, 8, 5, Some(150), Some(500))
-            .expect("valid config");
+        let radio = RadioConfig::new(RadioConfigInput {
+            airtime_limit_short_centi_percent: Some(150),
+            airtime_limit_long_centi_percent: Some(500),
+            ..sample_input()
+        })
+        .expect("valid config");
         let decoded = decode_commands(&radio.init_command_bytes());
         // Each two-byte big-endian, sitting after CR and before the radio state.
         assert_eq!(decoded[5], (CMD_ST_ALOCK, 150u16.to_be_bytes().to_vec()));

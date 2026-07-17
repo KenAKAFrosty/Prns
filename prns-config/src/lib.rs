@@ -10,11 +10,13 @@ pub use diagnostic::{
 };
 pub use discovery::{discover, DiscoveredConfig, DiscoveryError};
 pub use plan::{
-    plan, AddressFamilyPreference, ConnectTimeoutSeconds, DaemonPlan, DeferReason,
-    DeferredInterface, DiscoveryAdvertisementPlan, DiscoveryAnnouncementPlan, DiscoveryEncryption,
-    DiscoveryIfacPublication, DiscoveryLocationPlan, DiscoveryPublicationProblem,
-    InterfaceAccessPlan, InterfaceDiscoveryPlan, LogLevel, LoggingPlan, PlannedInterface,
-    PlannedMedium, ProtocolPlan, ReconnectLimit, SharedInstance, SharedInstanceTransport,
+    plan, AddressFamilyPreference, AirtimeLimitCentiPercent, ConnectTimeoutSeconds, DaemonPlan,
+    DeferReason, DeferredInterface, DiscoveryAdvertisementPlan, DiscoveryAnnouncementPlan,
+    DiscoveryEncryption, DiscoveryIfacPublication, DiscoveryLocationPlan,
+    DiscoveryPublicationProblem, InterfaceAccessPlan, InterfaceDiscoveryPlan, LogLevel,
+    LoggingPlan, PipeCommandPlan, PipeRespawnDelay, PlannedInterface, PlannedMedium, ProtocolPlan,
+    ReadyCommandFlowControl, ReconnectLimit, SerialDataBits, SerialLinePlan, SerialParity,
+    SerialStopBits, SharedInstance, SharedInstanceTransport, StationIdentificationPlan,
     TcpDialPlan, TcpListenHost, TcpListenPlan, TcpTunnelMode, TransportIdentityPolicy,
     TransportPlan, UdpEndpointHost, UdpEndpointPlan, UdpFlowPlan, UnappliedSetting,
 };
