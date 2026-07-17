@@ -55,8 +55,9 @@ pub use policy::{
 };
 pub use publication::{
     frame_discovery_publication, prepare_discovery_publication,
-    DiscoveryPublicationEncryptionError, DiscoveryPublicationFrameError,
-    DiscoveryPublicationPreparation, DiscoveryPublicationSchedule,
+    prepare_discovery_publication_with_stamp_cache, DiscoveryPublicationEncryptionError,
+    DiscoveryPublicationFrameError, DiscoveryPublicationPreparation,
+    DiscoveryPublicationRegistration, DiscoveryPublicationSchedule,
     DiscoveryPublicationScheduleError, DiscoveryPublicationSecurity, DiscoveryPublicationTiming,
     PreparedDiscoveryAdvertisement,
 };

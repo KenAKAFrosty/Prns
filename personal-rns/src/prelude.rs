@@ -74,8 +74,11 @@ pub use prns_interfaces_tokio::interface_menu;
 
 #[cfg(all(feature = "interface-discovery", feature = "tokio-host"))]
 pub use prns_interfaces_tokio::interface_discovery::{
-    DiscoveredConnectionFailure, DiscoveryIngressOutcome, TokioDiscoveryEvent,
-    TokioDiscoveryIngress, TokioInterfaceDiscovery,
+    DiscoveredConnectionFailure, DiscoveryIngressOutcome, RunningTokioInterfaceDiscoveryPublisher,
+    TokioDiscoveryEvent, TokioDiscoveryIngress, TokioDiscoveryPublicationEvent,
+    TokioDiscoveryPublicationFramingFailure, TokioDiscoveryPublicationPreparationFailure,
+    TokioDiscoveryPublisherConstructionError, TokioInterfaceDiscovery,
+    TokioInterfaceDiscoveryPublisher, DISCOVERY_PUBLICATION_JOB_INTERVAL,
 };
 
 #[cfg(all(feature = "config", feature = "tokio-host"))]

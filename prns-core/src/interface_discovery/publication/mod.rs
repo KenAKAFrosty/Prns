@@ -9,8 +9,8 @@ use crate::units::{DurationMillis, InstantMillis};
 
 use super::{
     encode_advertisement, encode_encrypted_envelope, encode_plaintext_envelope, generate_stamp,
-    AdvertisementHash, DiscoveryAdvertisement, DiscoveryEncodeError, GeneratedStamp, StampCost,
-    StampGeneration, StampValue, STAMP_SIZE,
+    validate_stamp, AdvertisementHash, DiscoveryAdvertisement, DiscoveryEncodeError,
+    GeneratedStamp, StampCost, StampGeneration, StampValidation, StampValue, STAMP_SIZE,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,6 +90,24 @@ pub fn prepare_discovery_publication<E>(
     fill_entropy: impl FnMut(&mut [u8; STAMP_SIZE]) -> Result<(), E>,
     cancelled: impl FnMut() -> bool,
 ) -> DiscoveryPublicationPreparation<E> {
+    prepare_discovery_publication_with_stamp_cache(
+        advertisement,
+        stamp_cost,
+        security,
+        |_| None,
+        fill_entropy,
+        cancelled,
+    )
+}
+
+pub fn prepare_discovery_publication_with_stamp_cache<E>(
+    advertisement: &DiscoveryAdvertisement,
+    stamp_cost: StampCost,
+    security: DiscoveryPublicationSecurity,
+    cached_stamp: impl FnOnce(&AdvertisementHash) -> Option<[u8; STAMP_SIZE]>,
+    fill_entropy: impl FnMut(&mut [u8; STAMP_SIZE]) -> Result<(), E>,
+    cancelled: impl FnMut() -> bool,
+) -> DiscoveryPublicationPreparation<E> {
     if let Some(value) = super::model::invalid_reachable_on(advertisement) {
         return DiscoveryPublicationPreparation::InvalidReachableOn {
             value: String::from(value),
@@ -107,6 +125,22 @@ pub fn prepare_discovery_publication<E>(
         };
     }
     let advertisement_hash = AdvertisementHash::for_advertisement(&packed_advertisement);
+    if let Some(stamp) = cached_stamp(&advertisement_hash) {
+        if let StampValidation::MeetsCost { value } =
+            validate_stamp(&advertisement_hash, &stamp, stamp_cost)
+        {
+            return DiscoveryPublicationPreparation::Prepared(PreparedDiscoveryAdvertisement {
+                packed_advertisement,
+                advertisement_hash,
+                generated_stamp: GeneratedStamp {
+                    stamp,
+                    value,
+                    attempts: 0,
+                },
+                security,
+            });
+        }
+    }
     match generate_stamp(&advertisement_hash, stamp_cost, fill_entropy, cancelled) {
         StampGeneration::Generated(generated_stamp) => {
             DiscoveryPublicationPreparation::Prepared(PreparedDiscoveryAdvertisement {
@@ -179,6 +213,23 @@ fn projected_app_data_len(
 pub struct DiscoveryPublicationTiming {
     pub interface: InterfaceId,
     pub interval: DurationMillis,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DiscoveryPublicationRegistration {
+    pub interface: InterfaceId,
+    pub interval: DurationMillis,
+    pub stamp_cost: StampCost,
+    pub security: DiscoveryPublicationSecurity,
+}
+
+impl DiscoveryPublicationRegistration {
+    pub const fn timing(self) -> DiscoveryPublicationTiming {
+        DiscoveryPublicationTiming {
+            interface: self.interface,
+            interval: self.interval,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
