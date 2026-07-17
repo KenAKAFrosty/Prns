@@ -62,7 +62,7 @@ usb-device = ["usb", "prns-interfaces-embassy?/usb-device"]
 
 [dependencies]
 prns-core = { path = "../prns-core", default-features = false }
-prns-runtime = { path = "../prns-runtime", default-features = false }
+prns-runtime = { path = "../prns-runtime/core", default-features = false }
 prns-interfaces-tokio = { path = "../prns-interfaces/tokio", optional = true, default-features = false }
 prns-interfaces-embassy = { path = "../prns-interfaces/embassy", optional = true, default-features = false }
 
