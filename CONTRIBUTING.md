@@ -62,6 +62,15 @@ corroborated evidence.
 
 ## Structure
 
+- Place by ownership. Give every concept one authoritative home in the
+  narrowest layer that owns it. Decide that ownership before adding modules;
+  adapters and presentations should depend inward on it.
+- Make paths communicate meaning. A reader should be able to infer a file's
+  domain, owner, and abstraction level from its path. The module tree should
+  mirror the conceptual tree; avoid vague root modules and mismatched siblings.
+- Represent modules consistently. Use `foo.rs` for a leaf module and
+  `foo/mod.rs` when `foo` owns child modules or separately housed tests.
+  Directories should represent real namespaces, not storage conveniences.
 - Prefer adding a new module over growing an already-large module.
 - Avoid introducing small helper functions that are only used once unless they
   clearly improve readability.

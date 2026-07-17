@@ -22,14 +22,14 @@ use crate::engine::{InstantMillis, Journaled};
 use crate::identity::held::HoldIdentityError;
 use crate::identity::vault::{IdentityLabel, IdentityVault};
 use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use crate::inspection::{
-    AnnounceRateSnapshot, InspectionSource, InterfaceIfacSnapshot, InterfaceInventoryEntry,
-    RouteSnapshot,
-};
 use crate::interfaces::ifac::IfacContext;
 use crate::interfaces::{
     ConnectionView, InterfaceId, InterfaceKind, InterfaceOriginKind, InterfaceSnapshot, Membership,
     PacketPhyStats, ReportsStatus, StatusView,
+};
+use crate::node_introspection::{
+    AnnounceRateSnapshot, InterfaceIfacSnapshot, InterfaceInventoryEntry, NodeIntrospection,
+    RouteSnapshot,
 };
 use crate::persistence::{
     read_destination_identities_snapshot, read_routing_table_snapshot, read_self_ratchets_snapshot,
@@ -1338,7 +1338,7 @@ impl IdentityBlackholeControl for TokioPrnsHandle {
     }
 }
 
-impl InspectionSource for TokioPrnsHandle {
+impl NodeIntrospection for TokioPrnsHandle {
     fn interface_inventory(&self) -> std::vec::Vec<InterfaceInventoryEntry> {
         TokioPrnsHandle::interface_inventory(self)
     }
@@ -2380,7 +2380,7 @@ mod tests {
         handle.store.remember_packet_phy(packet_hash, packet_phy);
 
         assert_eq!(
-            InspectionSource::packet_phy(&handle, packet_hash),
+            NodeIntrospection::packet_phy(&handle, packet_hash),
             Some(packet_phy)
         );
     }

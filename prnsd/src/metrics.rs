@@ -7,7 +7,7 @@ use personal_rns::engine::{
     AnnounceCommandOutcome, AnnounceIngressOutcome, AnnounceOrigin, AnnounceSourceKind,
     IgnoreReasonKind,
 };
-use personal_rns::inspection::{logical_interface_inventory, InterfaceInventoryEntry};
+use personal_rns::node_introspection::{logical_interface_inventory, InterfaceInventoryEntry};
 use personal_rns::interfaces::InterfaceKind;
 use personal_rns::runtime::{
     AnnounceEgressOutcome, RuntimeHealth, RuntimeLinkClosure, RuntimeMetricsSnapshot,

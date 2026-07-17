@@ -2,14 +2,14 @@ use std::collections::BTreeMap;
 use std::string::String;
 use std::vec::Vec;
 
-pub use crate::engine::{AnnounceRateSnapshot, RouteSnapshot};
-use crate::interfaces::ifac::IfacSize;
-use crate::interfaces::{
+pub use prns_core::engine::{AnnounceRateSnapshot, RouteSnapshot};
+use prns_core::interfaces::ifac::IfacSize;
+use prns_core::interfaces::{
     ConnectionState, InterfaceId, InterfaceOriginKind, InterfaceSnapshot, Membership,
     PacketPhyStats, TransferRates,
 };
-use crate::routing::dedup::PacketHash;
-use crate::wire::DestinationHash;
+use prns_core::routing::dedup::PacketHash;
+use prns_core::wire::DestinationHash;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InterfaceIfacSnapshot {
@@ -200,7 +200,7 @@ fn connection_rank(state: ConnectionState) -> u8 {
     }
 }
 
-pub trait InspectionSource {
+pub trait NodeIntrospection {
     fn interface_inventory(&self) -> Vec<InterfaceInventoryEntry>;
 
     fn link_count(&self) -> impl core::future::Future<Output = u32> + Send;
@@ -222,7 +222,7 @@ pub trait InspectionSource {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interfaces::InterfaceKind;
+    use prns_core::interfaces::InterfaceKind;
 
     fn snapshot(
         id: InterfaceId,

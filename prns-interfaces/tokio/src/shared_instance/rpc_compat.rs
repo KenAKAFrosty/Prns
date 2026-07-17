@@ -7,7 +7,7 @@
 //!
 //! This began as a fault-avoidance stub and is now an honest shared instance: `link_count`,
 //! `path_table`, `next_hop`, and `next_hop_if_name` are answered from live engine state read
-//! through the node handle ([`InspectionSource`]); `interface_stats` reports the same canonical
+//! through the node handle ([`NodeIntrospection`]); `interface_stats` reports the same canonical
 //! inventory folded to its configured logical interfaces. The core's destination identities are
 //! RNS's `known_destinations`; its `destination_data` and `identity_data` RPC verbs project onto
 //! that same retention seam without carrying the compatibility name inward.
@@ -39,10 +39,6 @@ use prns_core::identity::{
     IdentityHash, IdentitySigner, MarkDestinationUsedOutcome, ReleaseDestinationOutcome,
     RetainDestinationOutcome, IDENTITY_SECRET_KEY_LEN,
 };
-use prns_core::inspection::{
-    logical_interface_inventory, AnnounceRateSnapshot, InspectionSource, InterfaceInventoryEntry,
-    RouteSnapshot,
-};
 use prns_core::interfaces::{ConnectionState, InterfaceId, PacketPhyStats};
 use prns_core::routing::dedup::{PacketHash, PACKET_HASH_LEN};
 use prns_core::routing::types::NextHop;
@@ -50,6 +46,10 @@ use prns_core::routing::{
     BlackholeExpiry, BlackholeIdentityOutcome, BlackholedIdentity, UnblackholeIdentityOutcome,
 };
 use prns_core::wire::DestinationHash;
+use prns_runtime::node_introspection::{
+    logical_interface_inventory, AnnounceRateSnapshot, InterfaceInventoryEntry, NodeIntrospection,
+    RouteSnapshot,
+};
 use prns_runtime::runtime::{
     DestinationIdentityRetentionControl, DestinationIdentityRetentionControlError,
     DropRouteOutcome, IdentityBlackholeControl, IdentityBlackholeControlError,
@@ -380,7 +380,7 @@ enum RpcBind {
 
 impl<Q> SharedInstanceRpcCompat<Q, Q>
 where
-    Q: InspectionSource
+    Q: NodeIntrospection
         + RoutingControl
         + DestinationIdentityRetentionControl
         + IdentityBlackholeSource
@@ -426,7 +426,7 @@ where
 
 impl<Q, B> SharedInstanceRpcCompat<Q, B>
 where
-    Q: InspectionSource
+    Q: NodeIntrospection
         + RoutingControl
         + DestinationIdentityRetentionControl
         + Clone
@@ -547,7 +547,7 @@ async fn serve_connection<S, Q, B>(
 ) -> std::io::Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin,
-    Q: InspectionSource + RoutingControl + DestinationIdentityRetentionControl,
+    Q: NodeIntrospection + RoutingControl + DestinationIdentityRetentionControl,
     B: IdentityBlackholeSource + IdentityBlackholeControl,
 {
     let _active = telemetry.connection_opened();
@@ -837,7 +837,7 @@ fn classify_pickle_rpc_verb(request: &[u8]) -> RpcVerb {
 
 async fn reply_for_decoded<B>(
     request: &RpcRequest<'_>,
-    query: &impl InspectionSource,
+    query: &impl NodeIntrospection,
     control: &impl RoutingControl,
     retention: &impl DestinationIdentityRetentionControl,
     blackholes: &B,
@@ -864,7 +864,7 @@ where
 
 async fn reply_for_msgpack<B>(
     request: &RnsRpcRequest,
-    query: &impl InspectionSource,
+    query: &impl NodeIntrospection,
     control: &impl RoutingControl,
     retention: &impl DestinationIdentityRetentionControl,
     blackholes: &B,
@@ -1069,7 +1069,7 @@ where
 }
 
 fn packet_phy(
-    query: &impl InspectionSource,
+    query: &impl NodeIntrospection,
     packet_hash: &request::PacketHashArgument,
 ) -> Option<PacketPhyStats> {
     let bytes: [u8; PACKET_HASH_LEN] = packet_hash.as_bytes().try_into().ok()?;
@@ -1079,7 +1079,7 @@ fn packet_phy(
 /// Purely used for raw compatibility with older RNS clients. Not intended to be complete, just enough to avoid core functionality issues with things like Sideband & Nomadnet on those older clients.
 async fn reply_for_pickle(
     request: &[u8],
-    query: &impl InspectionSource,
+    query: &impl NodeIntrospection,
 ) -> std::io::Result<Vec<u8>> {
     let dialect = RpcDialect::Pickle;
     if contains(request, b"interface_stats") {
@@ -1116,7 +1116,7 @@ async fn reply_for_pickle(
     }
 }
 
-async fn legacy_route_arg(request: &[u8], query: &impl InspectionSource) -> Option<RouteSnapshot> {
+async fn legacy_route_arg(request: &[u8], query: &impl NodeIntrospection) -> Option<RouteSnapshot> {
     match legacy_destination_hash_arg(request) {
         Some(destination) => query.route(destination).await,
         None => None,
@@ -1568,7 +1568,7 @@ mod tests {
 
     async fn reply_for(
         request: &[u8],
-        node: &(impl InspectionSource
+        node: &(impl NodeIntrospection
               + RoutingControl
               + DestinationIdentityRetentionControl
               + IdentityBlackholeSource
@@ -1579,7 +1579,7 @@ mod tests {
 
     async fn reply_for_with_control(
         request: &[u8],
-        query: &(impl InspectionSource
+        query: &(impl NodeIntrospection
               + DestinationIdentityRetentionControl
               + IdentityBlackholeSource
               + IdentityBlackholeControl),
@@ -1602,7 +1602,7 @@ mod tests {
 
     async fn reply_for_with_blackholes<B>(
         request: &[u8],
-        query: &(impl InspectionSource + RoutingControl + DestinationIdentityRetentionControl),
+        query: &(impl NodeIntrospection + RoutingControl + DestinationIdentityRetentionControl),
         blackholes: &B,
     ) -> Vec<u8>
     where
@@ -1625,7 +1625,7 @@ mod tests {
 
     async fn reply_for_with_retention(
         request: &[u8],
-        query: &(impl InspectionSource
+        query: &(impl NodeIntrospection
               + RoutingControl
               + IdentityBlackholeSource
               + IdentityBlackholeControl),
@@ -1809,7 +1809,7 @@ mod tests {
         interfaces: Vec<InterfaceInventoryEntry>,
     }
 
-    impl InspectionSource for StubQuery {
+    impl NodeIntrospection for StubQuery {
         fn interface_inventory(&self) -> Vec<InterfaceInventoryEntry> {
             self.interfaces.clone()
         }
@@ -2866,7 +2866,7 @@ mod tests {
                         transported_links: 0,
                         membership: prns_core::interfaces::Membership::Independent,
                     },
-                    ifac: Some(prns_core::inspection::InterfaceIfacSnapshot {
+                    ifac: Some(prns_runtime::node_introspection::InterfaceIfacSnapshot {
                         signature: [0x5a; 64],
                         size: prns_core::interfaces::ifac::IfacSize::WIDE,
                         network_name: Some("private-net".into()),
