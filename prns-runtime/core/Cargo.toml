@@ -33,7 +33,7 @@ tracing = ["tokio-host", "dep:tracing"]
 log = ["dep:log"]
 
 [dependencies]
-prns-core = { path = "../prns-core", default-features = false }
+prns-core = { path = "../../prns-core", default-features = false }
 cfg-if = "1.0"
 
 # Fixed-capacity collections for the reactor's retained lane state (alloc-free, inline storage)
@@ -76,7 +76,7 @@ log = { version = "0.4", optional = true, default-features = false }
 tracing = { version = "0.1", optional = true, default-features = false, features = ["std", "attributes"] }
 
 [dev-dependencies]
-prns-core = { path = "../prns-core", default-features = false, features = ["test-support"] }
+prns-core = { path = "../../prns-core", default-features = false, features = ["test-support"] }
 # Host-side execution of the embassy bind + reactor tests (`--features embassy-host`):
 # a critical-section impl for the seam's mutex, and the std time driver so deadlines
 # actually fire under `block_on`. Dev-only; cross-builds never see these.

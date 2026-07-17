@@ -2,7 +2,7 @@
 members = [
     "personal-rns",
     "prns-core",
-    "prns-runtime",
+    "prns-runtime/core",
     "personal-lxmf",
     "personal-hopspot/core",
     "tools/docs",
