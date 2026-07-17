@@ -9,7 +9,7 @@ examine_globs = [
     "prns-runtime/impls/tokio/src/runtime/interface_store.rs",
     "prns-core/src/engine/egress.rs",
     "prns-core/src/engine/inbound.rs",
-    "prns-core/src/engine/deadlines.rs",
+    "prns-core/src/engine/deadlines/mod.rs",
     "prns-core/src/engine/execute.rs",
     "prns-core/src/engine/reaction.rs",
     "prns-core/src/routing/announce/defaults.rs",
