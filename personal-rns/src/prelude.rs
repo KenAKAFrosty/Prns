@@ -1,7 +1,3 @@
-//! The one `use` for a Personal Reticulum app: the runtime vocabulary plus every enabled
-//! interface family under its lane-neutral name — the declared runtime lane picks the
-//! implementation, and tokio takes the bare name when a build enables both lanes.
-
 pub use prns_runtime::runtime::{
     Diagnostic, Manual, Message, PreConfiguredDestination, PrnsApi, PrnsEvent, PrnsRecipe,
     RuntimeHealth, SendError,
@@ -62,10 +58,10 @@ pub use prns_interfaces_tokio::wifi_direct;
 pub use prns_interfaces_tokio::wifi_aware;
 
 #[cfg(all(feature = "usb", feature = "tokio-host"))]
-pub use prns_interfaces_tokio::usb;
-
-#[cfg(all(feature = "usb", feature = "tokio-host"))]
-pub use prns_interfaces_tokio::usb_host::{self, AutoUsb};
+pub use prns_interfaces_tokio::{
+    usb,
+    usb_host::{self, AutoUsb},
+};
 
 #[cfg(all(
     feature = "tokio-host",
@@ -75,6 +71,12 @@ pub use prns_interfaces_tokio::auto::Auto;
 
 #[cfg(feature = "tokio-host")]
 pub use prns_interfaces_tokio::interface_menu;
+
+#[cfg(all(feature = "interface-discovery", feature = "tokio-host"))]
+pub use prns_interfaces_tokio::interface_discovery::{
+    DiscoveredConnectionFailure, DiscoveryIngressOutcome, TokioDiscoveryEvent,
+    TokioDiscoveryIngress, TokioInterfaceDiscovery,
+};
 
 #[cfg(all(feature = "config", feature = "tokio-host"))]
 pub use prns_interfaces_tokio::from_plan::{self, attach_plan, config, FromPlan, PlanOutcome};

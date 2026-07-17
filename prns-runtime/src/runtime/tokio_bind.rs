@@ -45,6 +45,7 @@ use crate::reactor::impls::tokio_reactor::{
 };
 use crate::reactor::interface_seam::{frame_cap_for, Interface};
 use crate::reactor::Host;
+use crate::routing::announce::AnnounceObservation;
 use crate::routing::blackhole::BlackholeTable;
 use crate::routing::dedup::PacketHash;
 use crate::routing::links::data::LINK_MDU;
@@ -1680,6 +1681,20 @@ fn stop_interface(stops: &mut HashMap<InterfaceId, oneshot::Sender<()>>, id: Int
         let _ = stop.send(());
     }
 }
+
+type AcceptedAnnounceObserver = Box<dyn for<'a> FnMut(AnnounceObservation<'a>) + Send>;
+
+fn notify_accepted_announce(
+    observer: &mut Option<AcceptedAnnounceObserver>,
+    journaled: &Journaled<'_>,
+) {
+    if let Journaled::AnnounceHeard { observation } = journaled {
+        if let Some(observer) = observer.as_mut() {
+            observer(*observation);
+        }
+    }
+}
+
 /// A node on the tokio host. Built from a [`PrnsRecipe`] with [`new`](Self::new) (synchronous:
 /// it wires the engine and spawns each interface), then driven by [`run`](Self::run). Hold
 /// [`handle`](Self::handle) clones to drive it from other tasks/threads while `run` owns the loop.
@@ -1692,6 +1707,7 @@ pub struct Prns<St, R, F, S: StorageLayout> {
     iface_build_rx: UnboundedReceiver<DriverMsg>,
     state: St,
     on_event: F,
+    accepted_announce_observer: Option<AcceptedAnnounceObserver>,
     crypto_pool: CryptoPoolConfig,
     _routes: PhantomData<R>,
 }
@@ -1789,6 +1805,7 @@ where
             iface_build_rx,
             state: recipe.app_state,
             on_event: recipe.on_event,
+            accepted_announce_observer: None,
             crypto_pool: CryptoPoolConfig::host_default(),
             _routes: PhantomData,
         }
@@ -1799,6 +1816,20 @@ where
     pub fn with_timeline_origin(mut self, origin: InstantMillis) -> Self {
         self.host = TokioHost::start_at(origin);
         self
+    }
+
+    #[must_use]
+    pub fn with_accepted_announce_observer(
+        mut self,
+        observer: impl for<'a> FnMut(AnnounceObservation<'a>) + Send + 'static,
+    ) -> Self {
+        self.accepted_announce_observer = Some(Box::new(observer));
+        self
+    }
+
+    #[must_use]
+    pub fn clock(&self) -> TokioHost {
+        self.host.clone()
     }
 
     pub fn seed_blackholed_identities<Reason: AsRef<str>>(
@@ -2038,6 +2069,7 @@ where
             iface_build_rx,
             state,
             mut on_event,
+            mut accepted_announce_observer,
             crypto_pool,
             _routes,
         } = self;
@@ -2110,6 +2142,7 @@ where
                     });
                     return;
                 }
+                notify_accepted_announce(&mut accepted_announce_observer, &journaled);
                 let event = PrnsEvent::from(journaled);
                 #[cfg(feature = "tracing")]
                 super::tracing_events::emit(&event);
@@ -2268,6 +2301,49 @@ mod tests {
         let origin = wall_clock_timeline_origin();
 
         assert!(wall_now.abs_diff(u128::from(origin.0)) < 1_000);
+    }
+
+    #[test]
+    fn accepted_announce_observers_receive_the_complete_observation() {
+        let captured = Arc::new(Mutex::new(None));
+        let sink = captured.clone();
+        let mut observer: Option<AcceptedAnnounceObserver> =
+            Some(Box::new(move |observation: AnnounceObservation<'_>| {
+                *sink.lock().unwrap() = Some((
+                    observation.destination,
+                    observation.announced_identity,
+                    observation.hops,
+                    observation.source_interface,
+                    observation.arrived_at,
+                    observation.app_data.to_vec(),
+                    observation.is_path_response,
+                ));
+            }));
+        let app_data = [0x42, 0x43, 0x44];
+        let observation = AnnounceObservation {
+            destination: DestinationHash::new([0x11; 16]),
+            announced_identity: crate::identity::IdentityHash::new([0x22; 16]),
+            hops: crate::units::HopCount(3),
+            source_interface: InterfaceId::new([0x33; 8]),
+            arrived_at: InstantMillis(4_000),
+            app_data: &app_data,
+            is_path_response: false,
+        };
+
+        notify_accepted_announce(&mut observer, &Journaled::AnnounceHeard { observation });
+
+        assert_eq!(
+            *captured.lock().unwrap(),
+            Some((
+                observation.destination,
+                observation.announced_identity,
+                observation.hops,
+                observation.source_interface,
+                observation.arrived_at,
+                app_data.to_vec(),
+                observation.is_path_response,
+            ))
+        );
     }
 
     #[test]

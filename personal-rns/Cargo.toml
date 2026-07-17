@@ -15,7 +15,7 @@ path = "src/lib.rs"
 [features]
 default = ["std", "std-sync-host"]
 alloc = ["prns-core/alloc", "prns-runtime/alloc"]
-interface-discovery = ["alloc", "prns-core/interface-discovery", "prns-runtime/interface-discovery"]
+interface-discovery = ["alloc", "prns-core/interface-discovery", "prns-runtime/interface-discovery", "prns-interfaces-tokio?/interface-discovery"]
 external-alloc = ["alloc", "prns-core/external-alloc", "prns-runtime/external-alloc"]
 std = ["alloc", "prns-core/std", "prns-runtime/std"]
 std-sync-host = ["std", "prns-core/std-sync-host"]

@@ -214,6 +214,14 @@ fn startup_selection_is_bounded_ranked_deduplicated_and_type_safe() {
     assert_eq!(plans[0].endpoint().host(), "one.example");
     assert_eq!(plans[0].endpoint().port(), 4242);
     assert_eq!(plans[0].transport_id(), TransportId::new([1; 16]));
+    assert_eq!(
+        plans[0].connection_kind(),
+        DiscoveredConnectionKind::BackboneClient
+    );
+    assert_eq!(
+        plans[1].connection_kind(),
+        DiscoveredConnectionKind::TcpClient
+    );
 }
 
 #[test]

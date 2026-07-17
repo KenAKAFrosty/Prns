@@ -107,6 +107,7 @@ fn retain_packet_phy(
     store.remember_packet_phy(packet_hash, packet_phy);
 }
 
+#[derive(Clone)]
 pub struct TokioHost {
     base: Instant,
     logical_start: InstantMillis,

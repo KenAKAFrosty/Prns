@@ -10,9 +10,9 @@ mod stamp;
 pub use autoconnect::{
     plan_discovered_connections, ActiveDiscoveredInterface, DiscoveredConnectionAccess,
     DiscoveredConnectionEndpoint, DiscoveredConnectionEndpointId, DiscoveredConnectionHealth,
-    DiscoveredConnectionPlan, DiscoveredConnectionRegistrationError, DiscoveredConnectionRegistry,
-    DiscoveredConnectionSelection, DiscoveredConnectionState, DiscoveredConnectionTransition,
-    DISCOVERED_INTERFACE_DETACH_AFTER,
+    DiscoveredConnectionKind, DiscoveredConnectionPlan, DiscoveredConnectionRegistrationError,
+    DiscoveredConnectionRegistry, DiscoveredConnectionSelection, DiscoveredConnectionState,
+    DiscoveredConnectionTransition, DISCOVERED_INTERFACE_DETACH_AFTER,
 };
 pub use catalog::{
     DiscoveryCatalog, DiscoveryCatalogRefresh, DiscoveryCatalogUpdate, DiscoveryObservationCount,

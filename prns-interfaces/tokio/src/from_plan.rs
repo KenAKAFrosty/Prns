@@ -6,9 +6,10 @@
 use core::time::Duration;
 
 pub use prns_config as config;
+#[cfg(feature = "tracing")]
+use prns_config::DeferReason;
 use prns_config::{
-    DaemonPlan, DeferReason, DeferredInterface, InterfaceAccessPlan, PlannedInterface,
-    PlannedMedium,
+    DaemonPlan, DeferredInterface, InterfaceAccessPlan, PlannedInterface, PlannedMedium,
 };
 use prns_core::interfaces::ifac::IfacContext;
 use prns_core::interfaces::{BitrateBps, InterfaceId};
@@ -457,6 +458,7 @@ fn bitrate(interface: &PlannedInterface) -> BitrateBps {
     resolve_bitrate(interface, tcp_core::TCP_BITRATE_GUESS_BPS)
 }
 
+#[cfg(feature = "tracing")]
 fn planned_medium_name(medium: &PlannedMedium) -> &'static str {
     match medium {
         PlannedMedium::AutoWifi { .. } => "auto_wifi",
@@ -473,6 +475,7 @@ fn planned_medium_name(medium: &PlannedMedium) -> &'static str {
     }
 }
 
+#[cfg(feature = "tracing")]
 fn defer_reason_name(reason: &DeferReason) -> &'static str {
     match reason {
         DeferReason::Disabled => "disabled",
