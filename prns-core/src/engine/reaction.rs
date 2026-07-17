@@ -5,6 +5,7 @@ use crate::engine::{CommandId, LinkEstablished, Settlement};
 use crate::identity::IdentityHash;
 use crate::interfaces::{InterfaceId, InterfaceKind};
 use crate::routing::announce::held::HeldDropCause;
+use crate::routing::announce::AnnounceObservation;
 use crate::routing::delivery::Delivery;
 use crate::routing::links::channel::MessageType;
 use crate::routing::links::request::RequestId;
@@ -18,25 +19,24 @@ use crate::wire::DestinationHash;
 // repr(C) on this enum, Journaled, and Directive: they cross the dual-core channel; see the layout note on [`EngineCommand`].
 #[repr(C)]
 pub enum EngineReaction<'a> {
-    /// A notice that something has already happened within the engine.
+    /// A notice that something has just happened within the engine.
     Journaled(Journaled<'a>),
 
-    /// An order for something that must now happen outside it.
+    /// An order for something that must now happen outside the engine.
     Directive(Directive<'a>),
 }
 
+/// A notice that something has just happened within the engine.
 #[repr(C)]
 pub enum Journaled<'a> {
     /// RNS 1.3.5's announce-handler `received_announce` callback as data.
     AnnounceHeard {
-        destination: DestinationHash,
-        hops: u8,
-        source_interface: InterfaceId,
+        observation: AnnounceObservation<'a>,
     },
-    /// An announce just minted a fresh self-ratchet — the host's cue to persist this
-    /// destination's record NOW (the reference's `rotate_ratchets` → `_persist_ratchets` law:
-    /// a secret peers may already encrypt toward must never exist only in memory).
-    SelfRatchetRotated { destination: DestinationHash },
+
+    SelfRatchetRotated {
+        destination: DestinationHash,
+    },
     AnnounceHeldDropped {
         destination: DestinationHash,
         source_interface: InterfaceId,
@@ -53,7 +53,7 @@ pub enum Journaled<'a> {
     /// RNS 1.3.5's `set_link_established_callback` as data.
     LinkEstablished(LinkEstablished),
 
-    /// The link initiator revealed and proved the identity it holds: RNS 1.3.5's `remote_identified` callback as data.
+    /// RNS 1.3.5's `remote_identified` callback as data.
     PeerIdentified {
         link_id: LinkId,
         identity: IdentityHash,
@@ -101,7 +101,7 @@ pub enum Journaled<'a> {
         reason: LinkClosedReason,
     },
 
-    /// RNS 1.3.5 `Link.receive`: a packet for an active link arrived on an interface other than the link's own, dropped unprocessed as a possible manipulation attempt and surfaced so the signal is observable rather than silent.
+    /// RNS 1.3.5 `Link.receive`: a packet for an active link arrived on an interface other than the link's own, dropped unprocessed as a possible manipulation attempt.
     LinkInterfaceMismatch {
         link_id: LinkId,
         attached_interface: InterfaceId,
@@ -109,7 +109,7 @@ pub enum Journaled<'a> {
     },
 
     /// RNS 1.3.5's `resource_concluded` callback as data.
-    /// `metadata` is the transfer's packed metadata, stripped from the stream head, opaque to the engine; `None` when none traveled.
+    /// `metadata` is the transfer's packed metadata, stripped from the stream head, opaque to the engine.
     ResourceReceived {
         link_id: LinkId,
         hash: ResourceHash,
@@ -158,7 +158,6 @@ pub enum Journaled<'a> {
 pub enum LinkClosedReason {
     Timeout,
     PeerClosed,
-    /// The peer's link-RTT message failed to parse during establishment.
     MalformedRtt,
 }
 
@@ -169,17 +168,14 @@ pub enum FanTarget {
     AllExcept(InterfaceId),
 }
 
+/// An order for something that must now happen outside the engine.
 #[repr(C)]
 pub enum Directive<'a> {
     Send {
         target: InterfaceId,
         bytes: &'a [u8],
     },
-    #[cfg(feature = "runtime-metrics")]
-    SendLocalAnnounce {
-        target: InterfaceId,
-        bytes: &'a [u8],
-    },
+
     SendAnnounce {
         target: InterfaceId,
         bytes: &'a [u8],
@@ -192,12 +188,7 @@ pub enum Directive<'a> {
         fan: FanTarget,
         bytes: &'a [u8],
     },
-    #[cfg(feature = "runtime-metrics")]
-    SendLocalAnnounceToFleet {
-        supervisor: InterfaceKind,
-        fan: FanTarget,
-        bytes: &'a [u8],
-    },
+
     SendAnnounceToFleet {
         supervisor: InterfaceKind,
         fan: FanTarget,
@@ -211,5 +202,18 @@ pub enum Directive<'a> {
         target: InterfaceId,
         size_hint: usize,
         fill: &'a mut dyn FnMut(&mut [u8]) -> Option<usize>,
+    },
+
+    #[cfg(feature = "runtime-metrics")]
+    SendMeasuredLocalAnnounce {
+        target: InterfaceId,
+        bytes: &'a [u8],
+    },
+
+    #[cfg(feature = "runtime-metrics")]
+    SendMeasuredLocalAnnounceToFleet {
+        supervisor: InterfaceKind,
+        fan: FanTarget,
+        bytes: &'a [u8],
     },
 }

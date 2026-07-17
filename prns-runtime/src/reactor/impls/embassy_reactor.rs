@@ -783,7 +783,7 @@ fn route_reaction(
             enqueue_for_wire(egress, ifacs, target, bytes);
         }
         #[cfg(feature = "runtime-metrics")]
-        EngineReaction::Directive(Directive::SendLocalAnnounce { target, bytes }) => {
+        EngineReaction::Directive(Directive::SendMeasuredLocalAnnounce { target, bytes }) => {
             enqueue_for_wire(egress, ifacs, target, bytes);
         }
         EngineReaction::Directive(Directive::SendAnnounce {
@@ -809,7 +809,7 @@ fn route_reaction(
             enqueue_broadcast_for_wire(egress, ifacs, supervisor, fan, bytes);
         }
         #[cfg(feature = "runtime-metrics")]
-        EngineReaction::Directive(Directive::SendLocalAnnounceToFleet {
+        EngineReaction::Directive(Directive::SendMeasuredLocalAnnounceToFleet {
             supervisor,
             fan,
             bytes,

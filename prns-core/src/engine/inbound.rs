@@ -45,19 +45,19 @@ pub(crate) fn journal_route_removal(removed: RemovedRoute) -> Journaled<'static>
     }
 }
 
-pub struct IngestIo<'a, F, P, A, K>
+pub struct IngestIo<'a, FillEntropy, OnProofRequest, OnResourceOffer, Sink>
 where
-    F: FnMut(&mut [u8]),
-    P: FnMut(&ProofRequest) -> bool,
-    A: FnMut(&ResourceOffer) -> bool,
-    K: FnMut(EngineReaction<'_>),
+    FillEntropy: FnMut(&mut [u8]),
+    OnProofRequest: FnMut(&ProofRequest) -> bool,
+    OnResourceOffer: FnMut(&ResourceOffer) -> bool,
+    Sink: FnMut(EngineReaction<'_>),
 {
     pub interfaces: AttachedInterfaces<'a>,
     pub now: InstantMillis,
-    pub fill_entropy: &'a mut F,
-    pub should_prove: &'a mut P,
-    pub should_accept_resource: &'a mut A,
-    pub sink: &'a mut K,
+    pub fill_entropy: &'a mut FillEntropy,
+    pub should_prove: &'a mut OnProofRequest,
+    pub should_accept_resource: &'a mut OnResourceOffer,
+    pub sink: &'a mut Sink,
 }
 
 struct DeliveryIo<'a, P, K>
@@ -90,7 +90,7 @@ impl<S: StorageLayout> EngineState<S> {
         F: FnMut(&mut [u8]),
     {
         let mut wake = WakeSchedules::UNCHANGED;
-        let mut effects = IngestEffects::default();
+        let mut destination_identity_expiry = None;
         let mut released_any = false;
         while let Some(interface) = self.next_due_held_interface(now) {
             self.interface_announce_limits
@@ -128,6 +128,7 @@ impl<S: StorageLayout> EngineState<S> {
                 is_path_response: held.is_path_response,
             };
             let identity_hash = arrival.announce.public_keys.identity_hash();
+            let mut effects = IngestEffects::default();
             let ingest = self.ingest_announce(
                 identity_hash,
                 &arrival,
@@ -136,13 +137,19 @@ impl<S: StorageLayout> EngineState<S> {
                 &mut |removed| sink(EngineReaction::Journaled(journal_route_removal(removed))),
                 &mut effects,
             );
+            if let Some(observation) = effects.accepted_announce.take() {
+                sink(EngineReaction::Journaled(Journaled::AnnounceHeard {
+                    observation,
+                }));
+            }
+            if let Some(expiry) = effects.destination_identity_expiry {
+                destination_identity_expiry = Some(
+                    destination_identity_expiry
+                        .map_or(expiry, |current: InstantMillis| current.min(expiry)),
+                );
+            }
             if let AnnounceIngest::Accepted(accepted) = ingest {
                 released_any = true;
-                sink(EngineReaction::Journaled(Journaled::AnnounceHeard {
-                    destination: accepted.destination,
-                    hops: accepted.hops,
-                    source_interface: held.receiving_interface,
-                }));
                 while let Some(settled) = self.pop_settled_path_request(&accepted.destination) {
                     settle(
                         sink,
@@ -155,7 +162,7 @@ impl<S: StorageLayout> EngineState<S> {
             }
         }
         wake.held_announce_release = self.held_announce_release_wake();
-        if let Some(expiry) = effects.destination_identity_expiry {
+        if let Some(expiry) = destination_identity_expiry {
             wake.expired_destination_identities = WakeSchedule::AtMost(expiry);
         }
         if released_any {
@@ -539,6 +546,7 @@ impl<S: StorageLayout> EngineState<S> {
     fn apply_announce_ingest(
         &mut self,
         ingest: AnnounceIngest,
+        accepted_observation: Option<crate::routing::announce::AnnounceObservation<'_>>,
         source: InterfaceId,
         interfaces: AttachedInterfaces<'_>,
         wake: &mut WakeSchedules,
@@ -548,11 +556,11 @@ impl<S: StorageLayout> EngineState<S> {
         self.record_announce_ingress(source, ingest);
         match ingest {
             AnnounceIngest::Accepted(accepted) => {
-                sink(EngineReaction::Journaled(Journaled::AnnounceHeard {
-                    destination: accepted.destination,
-                    hops: accepted.hops,
-                    source_interface: source,
-                }));
+                if let Some(observation) = accepted_observation {
+                    sink(EngineReaction::Journaled(Journaled::AnnounceHeard {
+                        observation,
+                    }));
+                }
                 while let Some(settled) = self.pop_settled_path_request(&accepted.destination) {
                     settle(
                         sink,
@@ -620,7 +628,15 @@ impl<S: StorageLayout> EngineState<S> {
             &mut |removed| sink(EngineReaction::Journaled(journal_route_removal(removed))),
             &mut effects,
         );
-        self.apply_announce_ingest(ingest, source, interfaces, &mut wake, sink);
+        let accepted_observation = effects.accepted_announce.take();
+        self.apply_announce_ingest(
+            ingest,
+            accepted_observation,
+            source,
+            interfaces,
+            &mut wake,
+            sink,
+        );
         if let Some(expiry) = effects.destination_identity_expiry {
             wake.expired_destination_identities = WakeSchedule::AtMost(expiry);
         }
@@ -742,6 +758,7 @@ impl<S: StorageLayout> EngineState<S> {
             deferred.as_deref_mut(),
             &mut effects,
         );
+        let accepted_observation = effects.accepted_announce.take();
         if let Some(expiry) = effects.destination_identity_expiry {
             wake_schedule_changes.expired_destination_identities = WakeSchedule::AtMost(expiry);
         }
@@ -749,6 +766,7 @@ impl<S: StorageLayout> EngineState<S> {
             IngestPacketOutcome::Announce(ingest) => {
                 self.apply_announce_ingest(
                     ingest,
+                    accepted_observation,
                     source,
                     interfaces,
                     &mut wake_schedule_changes,
@@ -1444,6 +1462,78 @@ mod link_wake_tests {
         assert_eq!(
             wake.link_deadlines, truth,
             "the ingest delta must carry the re-armed deadline, or the reactor's cached schedule rots and wakes late",
+        );
+    }
+}
+
+#[cfg(test)]
+mod announce_observation_tests {
+    use super::*;
+    use crate::engine::test_support::{
+        bytes_from_hex, transporting_interfaces, transporting_node, RNS_1_3_5_ANNOUNCE,
+    };
+    use crate::routing::ingress::Ingress;
+
+    #[test]
+    fn an_accepted_announce_journals_the_identity_app_data_and_path_provenance() {
+        let source_interface = InterfaceId::new([0xA7; 8]);
+        let arrived_at = InstantMillis(7_000);
+        let mut identity_wire = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+        let Ingress::Announce {
+            identity_hash: expected_identity,
+            ..
+        } = Ingress::classify(InboundPacket {
+            arrived_at,
+            source_interface,
+            bytes: &mut identity_wire,
+        })
+        else {
+            panic!("reference announce should classify");
+        };
+
+        let mut engine = transporting_node();
+        let interfaces = transporting_interfaces();
+        let mut wire = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+        let mut heard = None;
+        engine.ingest_packet_into(
+            InboundPacket {
+                arrived_at,
+                source_interface,
+                bytes: &mut wire,
+            },
+            IngestIo {
+                interfaces: AttachedInterfaces::new(&interfaces),
+                now: arrived_at,
+                fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
+                should_prove: &mut |_| false,
+                should_accept_resource: &mut |_| false,
+                sink: &mut |reaction| {
+                    if let EngineReaction::Journaled(Journaled::AnnounceHeard { observation }) =
+                        reaction
+                    {
+                        heard = Some((
+                            observation.announced_identity,
+                            observation.hops,
+                            observation.source_interface,
+                            observation.arrived_at,
+                            observation.app_data.to_vec(),
+                            observation.is_path_response,
+                        ));
+                    }
+                },
+            },
+        );
+
+        assert_eq!(
+            heard,
+            Some((
+                expected_identity,
+                crate::units::HopCount(1),
+                source_interface,
+                arrived_at,
+                b"hello-personal".to_vec(),
+                false,
+            ))
         );
     }
 }

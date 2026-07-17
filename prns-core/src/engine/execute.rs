@@ -102,6 +102,7 @@ impl<S: StorageLayout> EngineState<S> {
             CommandOutcome::AnnounceRejected { id, rejection } => {
                 #[cfg(feature = "runtime-metrics")]
                 self.record_announce_command(AnnounceCommandOutcome::Rejected);
+
                 settle(
                     sink,
                     id,
@@ -675,7 +676,6 @@ pub(crate) fn fan_frame(
     fan(interfaces, fanout, bytes, FanKind::Frame, sink);
 }
 
-/// Withheld from an access-point interface, matching RNS 1.3.5 `Transport.outbound`.
 pub(crate) fn fan_announce(
     interfaces: AttachedInterfaces<'_>,
     fanout: FanTarget,
@@ -702,12 +702,15 @@ fn fan(
     //The u128 is a seen-bitmask indexed by the supervisor kind's discriminant.
     let mut fleets_emitted: u128 = 0;
     for descriptor in interfaces {
+        if !descriptor.capabilities.allows_transmit() {
+            continue;
+        }
         let targeted = match fanout {
             FanTarget::All => true,
             FanTarget::Only(id) => descriptor.id == id,
             FanTarget::AllExcept(id) => descriptor.id != id,
         };
-        if !targeted || !descriptor.capabilities.allows_transmit() {
+        if !targeted {
             continue;
         }
         match descriptor
@@ -734,12 +737,13 @@ fn fan(
                         FanKind::Announce => {
                             #[cfg(feature = "runtime-metrics")]
                             sink(EngineReaction::Directive(
-                                Directive::SendLocalAnnounceToFleet {
+                                Directive::SendMeasuredLocalAnnounceToFleet {
                                     supervisor,
                                     fan: fanout,
                                     bytes,
                                 },
                             ));
+
                             #[cfg(not(feature = "runtime-metrics"))]
                             sink(EngineReaction::Directive(Directive::SendToFleet {
                                 supervisor,
@@ -753,6 +757,7 @@ fn fan(
             None => {
                 if matches!(emission, FanKind::Announce)
                     && descriptor.mode == InterfaceMode::AccessPoint
+                // Withheld from an access-point interface, matching RNS 1.3.5 `Transport.outbound`.
                 {
                     continue;
                 }
@@ -763,10 +768,12 @@ fn fan(
                     })),
                     FanKind::Announce => {
                         #[cfg(feature = "runtime-metrics")]
-                        sink(EngineReaction::Directive(Directive::SendLocalAnnounce {
-                            target: descriptor.id,
-                            bytes,
-                        }));
+                        sink(EngineReaction::Directive(
+                            Directive::SendMeasuredLocalAnnounce {
+                                target: descriptor.id,
+                                bytes,
+                            },
+                        ));
                         #[cfg(not(feature = "runtime-metrics"))]
                         sink(EngineReaction::Directive(Directive::Send {
                             target: descriptor.id,
@@ -810,7 +817,9 @@ mod tests {
             &[0xAB],
             &mut |reaction| match reaction {
                 #[cfg(feature = "runtime-metrics")]
-                EngineReaction::Directive(Directive::SendLocalAnnounce { target, .. }) => {
+                EngineReaction::Directive(Directive::SendMeasuredLocalAnnounce {
+                    target, ..
+                }) => {
                     targets.push(target);
                 }
                 #[cfg(not(feature = "runtime-metrics"))]

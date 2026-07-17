@@ -109,14 +109,14 @@ impl<S: StorageLayout> EngineState<S> {
         RebroadcastDecision::Scheduled
     }
 
-    pub(crate) fn ingest_announce(
+    pub(crate) fn ingest_announce<'a>(
         &mut self,
         identity_hash: IdentityHash,
-        arrival: &AnnounceArrival<'_>,
+        arrival: &AnnounceArrival<'a>,
         fill_entropy: &mut impl FnMut(&mut [u8]),
         interfaces: AttachedInterfaces<'_>,
         on_removed: &mut impl FnMut(RemovedRoute),
-        effects: &mut IngestEffects,
+        effects: &mut IngestEffects<'a>,
     ) -> AnnounceIngest {
         if self.identity_blackholes.is_blackholed(&identity_hash) {
             return AnnounceIngest::Blackholed;
@@ -200,6 +200,11 @@ impl<S: StorageLayout> EngineState<S> {
                 }
 
                 let rebroadcast = self.schedule_rebroadcast(arrival, interfaces, fill_entropy);
+                effects.accepted_announce =
+                    Some(crate::routing::announce::AnnounceObservation::from_arrival(
+                        identity_hash,
+                        arrival,
+                    ));
                 AnnounceIngest::Accepted(AcceptedAnnounce {
                     destination: announce.destination,
                     hops: received_hops,
@@ -881,10 +886,10 @@ mod tests {
                 AttachedInterfaces::new(&interfaces),
                 &mut |bytes: &mut [u8]| bytes.fill(0xE7),
                 &mut |reaction| {
-                    if let EngineReaction::Journaled(Journaled::AnnounceHeard { hops, .. }) =
+                    if let EngineReaction::Journaled(Journaled::AnnounceHeard { observation }) =
                         reaction
                     {
-                        released_hops.push(hops);
+                        released_hops.push(observation.hops.0);
                     }
                 },
             );
