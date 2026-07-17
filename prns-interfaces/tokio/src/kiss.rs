@@ -8,10 +8,10 @@ use crate::framed_stream::{self, KissFraming};
 use prns_core::interfaces::kiss::core::{self, TncConfig};
 use prns_core::interfaces::kiss_framing;
 use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
-use prns_core::reactor::airtime::AirtimeLedger;
-use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
-use prns_core::reactor::throughput::ThroughputLedger;
+use prns_runtime::reactor::airtime::AirtimeLedger;
 use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
+use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
+use prns_runtime::reactor::throughput::ThroughputLedger;
 
 /// How long to wait after opening the port before writing the TNC config, mirroring RNS
 /// `configure_device`'s `sleep(2.0)` — a real TNC needs a moment to boot before it will accept

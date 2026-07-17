@@ -5,6 +5,7 @@ pub mod ifac;
 pub mod kind;
 pub mod mac;
 pub mod mode;
+pub mod wire_limits;
 
 mod attached;
 mod bitrate;

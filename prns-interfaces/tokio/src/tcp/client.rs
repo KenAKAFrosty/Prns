@@ -8,10 +8,10 @@ use prns_core::interfaces::tcp::core;
 use prns_core::interfaces::tcp::core::TcpWireFraming;
 use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
-use prns_core::reactor::airtime::AirtimeLedger;
-use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
-use prns_core::reactor::throughput::ThroughputLedger;
+use prns_runtime::reactor::airtime::AirtimeLedger;
 use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
+use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
+use prns_runtime::reactor::throughput::ThroughputLedger;
 use std::time::Duration;
 
 /// The initiating end of an RNS TCP pair (`TCPClientInterface` parity): owns the

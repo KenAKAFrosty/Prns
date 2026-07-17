@@ -26,11 +26,11 @@ use prns_core::interfaces::{
     AirtimeDutyCycle, ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind,
     PacketPhyStats,
 };
-use prns_core::reactor::airtime::AirtimeLedger;
-use prns_core::reactor::duty_gate::{DutyGate, DutyVerdict, FixedDutyQueue};
-use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
-use prns_core::reactor::throughput::ThroughputLedger;
+use prns_runtime::reactor::airtime::AirtimeLedger;
+use prns_runtime::reactor::duty_gate::{DutyGate, DutyVerdict, FixedDutyQueue};
 use prns_runtime::reactor::impls::embassy_reactor::{EmbassyInterfaceStatus, InterfaceLifecycle};
+use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
+use prns_runtime::reactor::throughput::ThroughputLedger;
 
 /// How often a serving radio re-checks its enabled gate, so a "Power" toggle from the UI takes
 /// effect within a beat rather than waiting on traffic.

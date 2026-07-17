@@ -9,10 +9,10 @@ use prns_core::interfaces::wifi_aware::core;
 use prns_core::interfaces::{
     BitrateBps, ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind,
 };
-use prns_core::reactor::airtime::AirtimeLedger;
-use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
-use prns_core::reactor::throughput::ThroughputLedger;
+use prns_runtime::reactor::airtime::AirtimeLedger;
 use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
+use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
+use prns_runtime::reactor::throughput::ThroughputLedger;
 
 pub struct WifiAwareMember<S> {
     id: InterfaceId,

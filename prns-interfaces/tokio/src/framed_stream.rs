@@ -20,10 +20,10 @@ use prns_core::interfaces::kiss_framing::{self, KissScanner};
 ))]
 use prns_core::interfaces::rns_serial_framing::{self, RnsSerialScanner};
 use prns_core::interfaces::{BitrateBps, FrameSink};
-use prns_core::reactor::airtime::{frame_airtime_us, AirtimeLedger};
-use prns_core::reactor::interface_seam::InterfaceSeam;
-use prns_core::reactor::throughput::ThroughputLedger;
+use prns_runtime::reactor::airtime::{frame_airtime_us, AirtimeLedger};
 use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
+use prns_runtime::reactor::interface_seam::InterfaceSeam;
+use prns_runtime::reactor::throughput::ThroughputLedger;
 
 /// A streaming deframer [`serve`] drives over one connection: built fresh, reset between
 /// connections, then fed wire bytes a chunk at a time, writing each frame into the caller's

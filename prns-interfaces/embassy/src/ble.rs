@@ -27,7 +27,7 @@ use prns_core::interfaces::bluetooth_auto::seam::{
 use prns_core::interfaces::{
     BitrateBps, ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus,
 };
-use prns_core::reactor::grant::FrameTarget;
+use prns_runtime::reactor::grant::FrameTarget;
 use prns_runtime::runtime::EmbassyFleet as Fleet;
 
 /// The dial/suppress backoff table size for the embedded brain — a few addresses mid-dial or cooling

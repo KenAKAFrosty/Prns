@@ -16,12 +16,12 @@ use prns_core::interface_discovery::{
 };
 use prns_core::interfaces::ifac::{IfacContext, IfacSize};
 use prns_core::interfaces::{BitrateBps, InterfaceId, InterfaceStatus, ReportsStatus};
-use prns_core::reactor::interface_seam::Interface;
-use prns_core::reactor::Host;
 use prns_core::routing::announce::AnnounceObservation;
 use prns_core::units::{HopCount, InstantMillis};
 use prns_core::wire::DestinationHash;
 use prns_runtime::reactor::impls::tokio_reactor::{TokioHost, TokioInterfaceStatus};
+use prns_runtime::reactor::interface_seam::Interface;
+use prns_runtime::reactor::Host;
 use prns_runtime::runtime::{AttachedInterface, InterfaceAttachmentMetadata, TokioPrnsHandle};
 use tokio::sync::mpsc::{self, error::TrySendError, Receiver, Sender};
 

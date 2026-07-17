@@ -17,10 +17,10 @@ use prns_core::interface_discovery::{
     StampValue,
 };
 use prns_core::interfaces::InterfaceId;
-use prns_core::reactor::Host;
 use prns_core::routing::announce::emit::MAX_ANNOUNCE_APP_DATA_LEN;
 use prns_core::wire::DestinationHash;
 use prns_runtime::reactor::impls::tokio_reactor::TokioHost;
+use prns_runtime::reactor::Host;
 use prns_runtime::runtime::{SendError, TokioPrnsHandle};
 use tokio::sync::Notify;
 use tokio::task::{JoinError, JoinHandle};

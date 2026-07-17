@@ -7,10 +7,10 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use crate::framed_stream::{self, HdlcFraming};
 use prns_core::interfaces::pipe::core;
 use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
-use prns_core::reactor::airtime::AirtimeLedger;
-use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
-use prns_core::reactor::throughput::ThroughputLedger;
+use prns_runtime::reactor::airtime::AirtimeLedger;
 use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
+use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
+use prns_runtime::reactor::throughput::ThroughputLedger;
 
 /// A pipe interface that owns its subprocess pipe's whole lifecycle (RNS `PipeInterface`): `open`
 /// yields a fresh async byte stream — the consumer supplies it, e.g. the daemon spawning the

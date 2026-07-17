@@ -52,7 +52,7 @@ impl PathRequest {
 #[cfg(kani)]
 mod kani_proofs {
     use super::*;
-    use crate::reactor::interface_seam::MAX_WIRE_FRAME_LEN;
+    use crate::interfaces::wire_limits::MAX_WIRE_FRAME_LEN;
 
     #[kani::proof]
     fn path_request_parse_never_panics_for_any_wire_payload() {

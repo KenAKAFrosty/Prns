@@ -1,6 +1,6 @@
 //! The embassy device side of the plug-and-play USB-auto interface: one link to one host (the
 //! desktop or a board acting as USB host), built fresh against the reactor's
-//! [`InterfaceSeam`](prns_core::reactor::interface_seam). It reuses the legacy interface's framing
+//! [`InterfaceSeam`](prns_runtime::reactor::interface_seam). It reuses the legacy interface's framing
 //! core wholesale — the same `Prns`-magic handshake — so it speaks the exact wire the reactor
 //! (and legacy) host already does.
 //!
@@ -19,8 +19,8 @@ use prns_core::interfaces::usb_auto::core::{
     self, Capabilities, InboundReaction, Message, NodeTag,
 };
 use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
-use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
 use prns_runtime::reactor::impls::embassy_reactor::EmbassyInterfaceStatus;
+use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
 
 /// Upper bound on one frame's write. With no host reading the link, an unbounded write would
 /// wedge the loop; this lets a dropped HelloAck/announce lapse so the next probe (or re-announce)
@@ -193,7 +193,7 @@ mod tests {
     use super::*;
     use prns_core::interfaces::ifac::IFAC_MAX_SIZE;
     use prns_core::interfaces::InterfaceStatus;
-    use prns_core::reactor::grant::{GrantConsumer, GrantProducer};
+    use prns_runtime::reactor::grant::{GrantConsumer, GrantProducer};
     use prns_runtime::reactor::impls::embassy_reactor::{leaked_grant_lane, EmbassyInterfaceSeam};
 
     use ::core::cell::RefCell;

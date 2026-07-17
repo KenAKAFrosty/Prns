@@ -420,6 +420,7 @@ dependencies = [
  "libfuzzer-sys",
  "prns-config",
  "prns-core",
+ "prns-runtime",
  "rmpv",
 ]
 
@@ -450,6 +451,15 @@ dependencies = [
  "sha2 0.11.0",
  "x25519-dalek",
  "zeroize",
+]
+
+[[package]]
+name = "prns-runtime"
+version = "0.2.4"
+dependencies = [
+ "cfg-if",
+ "heapless",
+ "prns-core",
 ]
 
 [[package]]
