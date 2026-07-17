@@ -1367,7 +1367,7 @@ fn reply_interface_stats(
             0x80, 0x02, 0x7d, 0x71, 0x00, 0x58, 0x0a, 0x00, 0x00, 0x00, b'i', b'n', b't', b'e',
             b'r', b'f', b'a', b'c', b'e', b's', 0x71, 0x01, 0x5d, 0x71, 0x02, 0x73, 0x2e,
         ]),
-        RpcDialect::Msgpack => interface_stats_msgpack(&logical_interface_inventory(&inventory)),
+        RpcDialect::Msgpack => interface_stats_msgpack(&logical_interface_inventory(inventory)),
     }
 }
 

@@ -69,6 +69,7 @@ use crate::routing::links::resources::{
 use crate::routing::links::{LinkId, LinkKey};
 use crate::routing::proof::EXPLICIT_PROOF_WIRE_LEN;
 use crate::routing::request_handlers::RequestPathHash;
+use crate::runtime::node_introspection::{AnnounceRateHistory, NodeIntrospectionRequest};
 use crate::runtime::{
     apply_destination_identity_retention_command, apply_identity_blackhole_command,
     ClearAnnounceQueuesOutcome, DestinationIdentityRetentionHostCommand, DropRouteOutcome,
@@ -661,6 +662,7 @@ pub enum HostCommand {
     },
     IdentityBlackhole(IdentityBlackholeHostCommand),
     DestinationIdentityRetention(DestinationIdentityRetentionHostCommand),
+    NodeIntrospection(NodeIntrospectionRequest),
     SynthesizeTunnel {
         interface: InterfaceId,
     },
@@ -1863,11 +1865,23 @@ async fn run_inner<S, H, J, P, A>(
         RefCell::new(HashMap::new());
     let resource_sinks: RefCell<HashMap<LinkId, UnboundedSender<ResourceInbound>>> =
         RefCell::new(HashMap::new());
+    let mut announce_rate_history = AnnounceRateHistory::default();
     #[cfg(feature = "runtime-metrics")]
     let mut reliability = ReliabilityMetricsSnapshot::default();
     macro_rules! journaled_sink {
         () => {
             |journaled: Journaled<'_>| {
+                if let Journaled::AnnounceHeard {
+                    observation,
+                    rate_accounting,
+                } = &journaled
+                {
+                    announce_rate_history.record(
+                        observation.destination,
+                        observation.arrived_at,
+                        *rate_accounting,
+                    );
+                }
                 #[cfg(feature = "runtime-metrics")]
                 reliability.record_journaled(&journaled);
                 if let Some(journaled) = settle_or_forward(&pending_completions, journaled) {
@@ -2532,6 +2546,33 @@ async fn run_inner<S, H, J, P, A>(
                     ),
                     HostCommand::DestinationIdentityRetention(command) => {
                         apply_destination_identity_retention_command(&mut engine, command, now)
+                    }
+                    HostCommand::NodeIntrospection(request) => {
+                        match request {
+                            NodeIntrospectionRequest::LinkCount { reply } => {
+                                let _ = reply.send(engine.link_count());
+                            }
+                            NodeIntrospectionRequest::AnnounceRates { reply } => {
+                                let mut snapshots = std::vec::Vec::new();
+                                engine.visit_announce_rate_states(|state| {
+                                    snapshots.push(announce_rate_history.snapshot(state));
+                                });
+                                let _ = reply.send(snapshots);
+                            }
+                            NodeIntrospectionRequest::Routes { reply } => {
+                                let mut snapshots = std::vec::Vec::new();
+                                engine.visit_route_snapshots(interfaces.view(), |snapshot| {
+                                    snapshots.push(snapshot);
+                                });
+                                let _ = reply.send(snapshots);
+                            }
+                            NodeIntrospectionRequest::Route { destination, reply } => {
+                                let _ = reply.send(
+                                    engine.route_snapshot(destination, interfaces.view()),
+                                );
+                            }
+                        }
+                        WakeSchedules::UNCHANGED
                     }
                     HostCommand::SynthesizeTunnel { interface } => {
                         let mut random_hash = [0u8; crate::routing::tunnel::RANDOM_HASH_LEN];
@@ -4675,7 +4716,7 @@ mod tests {
         let (_command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
         let (heard_tx, mut heard_rx) = mpsc::unbounded_channel::<DestinationHash>();
         let app = move |journaled: Journaled<'_>| {
-            if let Journaled::AnnounceHeard { observation } = journaled {
+            if let Journaled::AnnounceHeard { observation, .. } = journaled {
                 let _ = heard_tx.send(observation.destination);
             }
         };
@@ -4771,7 +4812,7 @@ mod tests {
         let (command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
         let (heard_tx, mut heard_rx) = mpsc::unbounded_channel::<DestinationHash>();
         let app = move |journaled: Journaled<'_>| {
-            if let Journaled::AnnounceHeard { observation } = journaled {
+            if let Journaled::AnnounceHeard { observation, .. } = journaled {
                 let _ = heard_tx.send(observation.destination);
             }
         };
@@ -4861,7 +4902,7 @@ mod tests {
         let (heard_tx, mut heard_rx) = mpsc::unbounded_channel::<DestinationHash>();
         let (dropped_tx, mut dropped_rx) = mpsc::unbounded_channel::<DestinationHash>();
         let app = move |journaled: Journaled<'_>| match journaled {
-            Journaled::AnnounceHeard { observation } => {
+            Journaled::AnnounceHeard { observation, .. } => {
                 let _ = heard_tx.send(observation.destination);
             }
             Journaled::RouteRemoved {
@@ -4984,7 +5025,7 @@ mod tests {
         let (expired_tx, mut expired_rx) = mpsc::unbounded_channel::<DestinationHash>();
         let (settled_tx, mut settled_rx) = mpsc::unbounded_channel::<(CommandId, Settlement)>();
         let app = move |journaled: Journaled<'_>| match journaled {
-            Journaled::AnnounceHeard { observation } => {
+            Journaled::AnnounceHeard { observation, .. } => {
                 let _ = heard_tx.send(observation.destination);
             }
             Journaled::RouteRemoved {

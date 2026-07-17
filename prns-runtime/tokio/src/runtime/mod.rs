@@ -3,6 +3,7 @@ mod destination_identity_retention;
 mod identity_blackhole;
 mod interface_store;
 mod node_facade;
+pub mod node_introspection;
 mod request_runner;
 mod route_restore;
 

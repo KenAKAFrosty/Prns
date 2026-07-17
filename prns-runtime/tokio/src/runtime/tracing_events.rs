@@ -312,7 +312,6 @@ fn settlement_kind(settlement: &Settlement) -> &'static str {
         Settlement::SetResourceStrategy(_) => "set_resource_strategy",
         Settlement::SendToChannel(_) => "send_to_channel",
         Settlement::AllowRequester(_) => "allow_requester",
-        Settlement::Inspection(_) => "inspection",
     }
 }
 
@@ -332,7 +331,6 @@ fn settlement_outcome(settlement: &Settlement) -> &'static str {
         Settlement::SetResourceStrategy(result) => result.is_ok(),
         Settlement::SendToChannel(result) => result.is_ok(),
         Settlement::AllowRequester(result) => result.is_ok(),
-        Settlement::Inspection(_) => true,
     };
     if succeeded {
         "succeeded"

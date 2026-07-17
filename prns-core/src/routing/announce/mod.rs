@@ -158,6 +158,13 @@ pub struct AnnounceObservation<'a> {
     pub is_path_response: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnnounceRateAccounting {
+    NotApplied,
+    Started,
+    Continued,
+}
+
 impl<'a> AnnounceObservation<'a> {
     pub const fn from_arrival(
         announced_identity: IdentityHash,

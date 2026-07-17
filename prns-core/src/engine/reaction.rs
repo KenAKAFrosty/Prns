@@ -5,7 +5,7 @@ use crate::engine::{CommandId, LinkEstablished, Settlement};
 use crate::identity::IdentityHash;
 use crate::interfaces::{InterfaceId, InterfaceKind};
 use crate::routing::announce::held::HeldDropCause;
-use crate::routing::announce::AnnounceObservation;
+use crate::routing::announce::{AnnounceObservation, AnnounceRateAccounting};
 use crate::routing::delivery::Delivery;
 use crate::routing::links::channel::MessageType;
 use crate::routing::links::request::RequestId;
@@ -32,6 +32,7 @@ pub enum Journaled<'a> {
     /// RNS 1.3.5's announce-handler `received_announce` callback as data.
     AnnounceHeard {
         observation: AnnounceObservation<'a>,
+        rate_accounting: AnnounceRateAccounting,
     },
 
     SelfRatchetRotated {

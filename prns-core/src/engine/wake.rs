@@ -728,7 +728,7 @@ mod tests {
                             } => {
                                 journal.push(("evicted", destination));
                             }
-                            Journaled::AnnounceHeard { observation } => {
+                            Journaled::AnnounceHeard { observation, .. } => {
                                 journal.push(("heard", observation.destination));
                             }
                             _ => {}

@@ -124,8 +124,7 @@ impl Settleable for EstablishLink {
             | Settlement::SendResource(_)
             | Settlement::SetResourceStrategy(_)
             | Settlement::SendToChannel(_)
-            | Settlement::AllowRequester(_)
-            | Settlement::Inspection(_) => None,
+            | Settlement::AllowRequester(_) => None,
         }
     }
 }
@@ -156,8 +155,7 @@ impl Settleable for SendToLink {
             | Settlement::SendResource(_)
             | Settlement::SetResourceStrategy(_)
             | Settlement::SendToChannel(_)
-            | Settlement::AllowRequester(_)
-            | Settlement::Inspection(_) => None,
+            | Settlement::AllowRequester(_) => None,
         }
     }
 }
@@ -186,8 +184,7 @@ impl Settleable for Identify {
             | Settlement::SendResource(_)
             | Settlement::SetResourceStrategy(_)
             | Settlement::SendToChannel(_)
-            | Settlement::AllowRequester(_)
-            | Settlement::Inspection(_) => None,
+            | Settlement::AllowRequester(_) => None,
         }
     }
 }
@@ -216,8 +213,7 @@ impl Settleable for CloseLink {
             | Settlement::SendResource(_)
             | Settlement::SetResourceStrategy(_)
             | Settlement::SendToChannel(_)
-            | Settlement::AllowRequester(_)
-            | Settlement::Inspection(_) => None,
+            | Settlement::AllowRequester(_) => None,
         }
     }
 }

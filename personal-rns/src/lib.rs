@@ -9,8 +9,8 @@ pub use prns_runtime::{
 
 #[cfg(feature = "interface-discovery")]
 pub use prns_runtime::interface_discovery;
-#[cfg(feature = "std")]
-pub use prns_runtime::node_introspection;
+#[cfg(feature = "tokio-host")]
+pub use prns_runtime_tokio::node_introspection;
 
 pub mod reactor {
     pub use prns_runtime::reactor::{

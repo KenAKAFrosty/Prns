@@ -2289,7 +2289,7 @@ async fn run_tunnel_probe(manifest: &Manifest, addr: &str, duration: Duration) {
     )];
     let (event_tx, event_rx) = mpsc::unbounded_channel::<Event>();
     let journal = move |journaled: Journaled<'_>| match journaled {
-        Journaled::AnnounceHeard { observation } => {
+        Journaled::AnnounceHeard { observation, .. } => {
             let _ = event_tx.send(Event::Heard(observation.destination));
         }
         Journaled::CommandSettled { id, settlement } => {

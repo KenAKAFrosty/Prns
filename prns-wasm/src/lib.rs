@@ -580,7 +580,7 @@ fn directive_to_frame(directive: Directive<'_>) -> OutboundFrame {
 fn journaled_to_js(journaled: Journaled<'_>) -> JsValue {
     let object = Object::new();
     match journaled {
-        Journaled::AnnounceHeard { observation } => {
+        Journaled::AnnounceHeard { observation, .. } => {
             set_str(&object, "type", "announce");
             set_bytes(&object, "destination", observation.destination.as_bytes());
             set_u32(&object, "hops", u32::from(observation.hops.0));

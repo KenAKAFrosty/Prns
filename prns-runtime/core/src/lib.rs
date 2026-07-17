@@ -12,7 +12,6 @@ pub use prns_core::{
     crypto, engine, identity, interfaces, persistence, routing, storage, units, wire,
 };
 
-#[cfg(feature = "std")]
-pub mod node_introspection;
+pub use runtime::node_introspection;
 pub mod reactor;
 pub mod runtime;

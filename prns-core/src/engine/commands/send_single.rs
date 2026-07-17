@@ -60,8 +60,7 @@ impl Settleable for SendSinglePacket {
             | Settlement::SendResource(_)
             | Settlement::SetResourceStrategy(_)
             | Settlement::SendToChannel(_)
-            | Settlement::AllowRequester(_)
-            | Settlement::Inspection(_) => None,
+            | Settlement::AllowRequester(_) => None,
         }
     }
 }

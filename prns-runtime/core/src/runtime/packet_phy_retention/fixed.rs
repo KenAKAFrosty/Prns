@@ -6,7 +6,7 @@ use prns_core::lemire_index::LemireIndex;
 use crate::interfaces::{RssiDbm, SignalQualityTenthsPercent, SnrQuarterDb};
 use crate::routing::dedup::{dedup_index_buckets, PacketHash};
 
-use super::super::core::{PacketMetricStorage, PacketPhyRetention};
+use super::{PacketMetricStorage, PacketPhyRetention};
 
 pub struct FixedPacketMetricStorage<Metric, const CAPACITY: usize, const BUCKETS: usize> {
     packet_hashes: HeaplessVec<PacketHash, CAPACITY>,

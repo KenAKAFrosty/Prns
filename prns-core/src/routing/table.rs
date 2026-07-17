@@ -80,7 +80,6 @@ where
         (0..routes.len()).map(move |i| (routes.destinations()[i], self.path_row_at(i)))
     }
 
-    #[cfg(feature = "alloc")]
     pub(crate) fn path_rows_with_expiry<'a>(
         &'a self,
         interfaces: AttachedInterfaces<'a>,
@@ -102,7 +101,6 @@ where
         Some(self.path_row_at(i))
     }
 
-    #[cfg(feature = "alloc")]
     pub(crate) fn path_row_with_expiry(
         &self,
         destination: &DestinationHash,

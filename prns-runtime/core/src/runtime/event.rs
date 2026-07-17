@@ -227,7 +227,7 @@ impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
                 message_type,
                 data,
             }),
-            Journaled::AnnounceHeard { observation } => {
+            Journaled::AnnounceHeard { observation, .. } => {
                 PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
                     destination: observation.destination,
                     hops: observation.hops.0,

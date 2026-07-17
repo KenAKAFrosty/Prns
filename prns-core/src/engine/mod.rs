@@ -5,6 +5,7 @@ mod destination_identity;
 mod egress;
 mod execute;
 mod inbound;
+mod introspection;
 mod management;
 mod reaction;
 mod registration;
@@ -44,6 +45,7 @@ pub use egress::{
     PATH_REQUEST_DESTINATION, PATH_REQUEST_PAYLOAD_LEN,
 };
 pub use inbound::IngestIo;
+pub use introspection::{AnnounceRateState, RouteSnapshot};
 pub use reaction::{Directive, EngineReaction, FanTarget, Journaled, LinkClosedReason};
 pub use registration::{
     PersistedRoutePreflightError, PersistedRouteSignaturePending, PersistedRouteVerificationError,

@@ -91,7 +91,13 @@ use heapless::Vec as HeaplessVec;
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct IngestEffects<'a> {
     pub destination_identity_expiry: Option<InstantMillis>,
-    pub accepted_announce: Option<crate::routing::announce::AnnounceObservation<'a>>,
+    pub accepted_announce: Option<AcceptedAnnounceEffect<'a>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct AcceptedAnnounceEffect<'a> {
+    pub observation: crate::routing::announce::AnnounceObservation<'a>,
+    pub rate_accounting: crate::routing::announce::AnnounceRateAccounting,
 }
 
 impl IngestEffects<'_> {

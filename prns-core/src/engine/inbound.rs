@@ -21,7 +21,7 @@ use crate::interfaces::InterfaceCommonPolicy;
 use crate::interfaces::{Egress, InboundPacket, InterfaceId, InterfaceKind};
 use crate::routing::announce::{Announce, AnnounceArrival};
 use crate::routing::delivery::{Delivery, SingleDelivery};
-use crate::routing::ingress::{ClassifiedInboundPacket, IngestEffects};
+use crate::routing::ingress::{AcceptedAnnounceEffect, ClassifiedInboundPacket, IngestEffects};
 use crate::routing::links::channel::receive::receive as channel_receive;
 use crate::routing::links::establish::link_mtu_ceiling;
 use crate::routing::links::handshake::{
@@ -143,9 +143,14 @@ impl<S: StorageLayout> EngineState<S> {
                 &mut |removed| sink(EngineReaction::Journaled(journal_route_removal(removed))),
                 &mut effects,
             );
-            if let Some(observation) = effects.accepted_announce.take() {
+            if let Some(AcceptedAnnounceEffect {
+                observation,
+                rate_accounting,
+            }) = effects.accepted_announce.take()
+            {
                 sink(EngineReaction::Journaled(Journaled::AnnounceHeard {
                     observation,
+                    rate_accounting,
                 }));
             }
             if let Some(expiry) = effects.destination_identity_expiry {
@@ -612,7 +617,7 @@ impl<S: StorageLayout> EngineState<S> {
     fn apply_announce_ingest(
         &mut self,
         ingest: AnnounceIngest,
-        accepted_observation: Option<crate::routing::announce::AnnounceObservation<'_>>,
+        accepted_observation: Option<AcceptedAnnounceEffect<'_>>,
         source: InterfaceId,
         interfaces: AttachedInterfaces<'_>,
         wake: &mut WakeSchedules,
@@ -629,9 +634,14 @@ impl<S: StorageLayout> EngineState<S> {
                     interfaces,
                     sink,
                 );
-                if let Some(observation) = accepted_observation {
+                if let Some(AcceptedAnnounceEffect {
+                    observation,
+                    rate_accounting,
+                }) = accepted_observation
+                {
                     sink(EngineReaction::Journaled(Journaled::AnnounceHeard {
                         observation,
+                        rate_accounting,
                     }));
                 }
                 while let Some(settled) = self.pop_settled_path_request(&accepted.destination) {
@@ -1592,8 +1602,9 @@ mod announce_observation_tests {
                 should_prove: &mut |_| false,
                 should_accept_resource: &mut |_| false,
                 sink: &mut |reaction| {
-                    if let EngineReaction::Journaled(Journaled::AnnounceHeard { observation }) =
-                        reaction
+                    if let EngineReaction::Journaled(Journaled::AnnounceHeard {
+                        observation, ..
+                    }) = reaction
                     {
                         heard = Some((
                             observation.announced_identity,

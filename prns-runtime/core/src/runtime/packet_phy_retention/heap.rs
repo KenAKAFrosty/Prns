@@ -6,7 +6,7 @@ use prns_core::lemire_index::HeapLemireIndex;
 use crate::interfaces::{RssiDbm, SignalQualityTenthsPercent, SnrQuarterDb};
 use crate::routing::dedup::PacketHash;
 
-use super::super::core::{PacketMetricStorage, PacketPhyRetention};
+use super::{PacketMetricStorage, PacketPhyRetention};
 
 pub const RNS_1_3_8_PACKET_PHY_CAPACITY: usize = 512;
 
