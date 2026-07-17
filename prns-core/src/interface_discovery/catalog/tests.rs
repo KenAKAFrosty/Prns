@@ -9,6 +9,7 @@ use crate::interface_discovery::{
 use crate::interfaces::InterfaceId;
 use crate::units::HopCount;
 use crate::wire::TransportId;
+use core::num::NonZeroU64;
 
 fn stamp_value(cost: u16) -> StampValue {
     let cost = match StampCost::new(cost) {
@@ -182,4 +183,72 @@ fn expiry_removes_only_after_the_reference_boundary() {
     assert_eq!(removed.len(), 1);
     assert_eq!(removed[0].id(), DiscoveredInterfaceId::from_bytes([1; 32]));
     assert!(catalog.is_empty());
+}
+
+#[test]
+fn restored_records_preserve_history_and_continue_counting() {
+    let value = stamp_value(1);
+    let mut catalog = DiscoveryCatalog::new();
+    let id = DiscoveredInterfaceId::from_bytes([1; 32]);
+    let observation_count =
+        DiscoveryObservationCount::from_non_zero(NonZeroU64::MIN.saturating_add(6));
+
+    assert_eq!(
+        catalog.restore(DiscoveryCatalogSeed {
+            interface: discovered(1, InstantMillis(3_000), value, "one.example"),
+            first_heard: InstantMillis(1_000),
+            observation_count,
+        }),
+        Ok(())
+    );
+    assert_eq!(
+        catalog.observe(discovered(1, InstantMillis(4_000), value, "one.example")),
+        Ok(DiscoveryCatalogUpdate::Refreshed {
+            id,
+            refresh: DiscoveryCatalogRefresh::AdvertisementUnchanged,
+        })
+    );
+
+    let record = catalog.get(id).expect("the restored interface remains");
+    assert_eq!(record.first_heard(), InstantMillis(1_000));
+    assert_eq!(record.last_heard(), InstantMillis(4_000));
+    assert_eq!(record.observation_count().get(), 8);
+}
+
+#[test]
+fn restore_rejects_invalid_history_and_duplicate_ids() {
+    let value = stamp_value(1);
+    let mut catalog = DiscoveryCatalog::new();
+    let observation_count = DiscoveryObservationCount::FIRST;
+
+    assert_eq!(
+        catalog.restore(DiscoveryCatalogSeed {
+            interface: discovered(1, InstantMillis(1_000), value, "one.example"),
+            first_heard: InstantMillis(1_001),
+            observation_count,
+        }),
+        Err(DiscoveryCatalogRestoreError::FirstHeardAfterLastHeard {
+            first_heard: InstantMillis(1_001),
+            last_heard: InstantMillis(1_000),
+        })
+    );
+
+    assert_eq!(
+        catalog.restore(DiscoveryCatalogSeed {
+            interface: discovered(1, InstantMillis(1_000), value, "one.example"),
+            first_heard: InstantMillis(1_000),
+            observation_count,
+        }),
+        Ok(())
+    );
+    assert_eq!(
+        catalog.restore(DiscoveryCatalogSeed {
+            interface: discovered(1, InstantMillis(2_000), value, "one.example"),
+            first_heard: InstantMillis(1_000),
+            observation_count,
+        }),
+        Err(DiscoveryCatalogRestoreError::Duplicate(
+            DiscoveredInterfaceId::from_bytes([1; 32])
+        ))
+    );
 }

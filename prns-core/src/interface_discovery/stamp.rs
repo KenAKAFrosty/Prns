@@ -76,10 +76,41 @@ impl std::error::Error for StampCostError {}
 pub struct StampValue(u16);
 
 impl StampValue {
+    pub const MAX: u16 = (STAMP_SIZE * 8) as u16;
+
+    pub const fn new(value: u16) -> Result<Self, StampValueError> {
+        if value > Self::MAX {
+            return Err(StampValueError::ExceedsMaximum { value });
+        }
+        Ok(Self(value))
+    }
+
     pub const fn get(self) -> u16 {
         self.0
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StampValueError {
+    ExceedsMaximum { value: u16 },
+}
+
+impl core::fmt::Display for StampValueError {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::ExceedsMaximum { value } => {
+                write!(
+                    formatter,
+                    "stamp value {value} exceeds the maximum of {}",
+                    StampValue::MAX
+                )
+            }
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for StampValueError {}
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum StampValidation {
@@ -267,6 +298,15 @@ mod tests {
         assert_eq!(
             StampCost::new(256),
             Err(StampCostError::ExceedsMaximum { value: 256 }),
+        );
+    }
+
+    #[test]
+    fn stamp_values_cannot_exceed_a_sha_256_digest() {
+        assert_eq!(StampValue::new(StampValue::MAX), Ok(StampValue(256)));
+        assert_eq!(
+            StampValue::new(StampValue::MAX + 1),
+            Err(StampValueError::ExceedsMaximum { value: 257 })
         );
     }
 

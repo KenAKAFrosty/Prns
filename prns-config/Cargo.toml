@@ -16,6 +16,7 @@ prns-core = { path = "../prns-core", default-features = false, features = ["inte
 dirs = "6"
 
 [dev-dependencies]
+prns-core = { path = "../prns-core", default-features = false, features = ["interface-discovery-archive"] }
 proptest = "1"
 serde_json = "1"
 
