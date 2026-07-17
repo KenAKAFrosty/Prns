@@ -69,26 +69,55 @@ impl<S: StorageLayout> EngineState<S> {
         fill_entropy: &mut impl FnMut(&mut [u8]),
     ) -> RebroadcastDecision {
         let destination = arrival.announce.destination;
+        let from_local_client =
+            arrival.receiving_interface.kind() == Some(InterfaceKind::LocalClient);
         let awaiting_requester = self.recursive_path_requests.take_requester(&destination);
         if arrival.is_path_response {
             let Some(requesting_interface) = awaiting_requester else {
                 return RebroadcastDecision::TerminalPathResponse;
             };
-            self.scheduled_announces.schedule_directed(
+            if from_local_client {
+                self.scheduled_announces.schedule_directed_shared_client(
+                    destination,
+                    arrival.arrived_at,
+                    requesting_interface,
+                    arrival.hops,
+                );
+            } else {
+                self.scheduled_announces.schedule_directed(
+                    destination,
+                    arrival.arrived_at,
+                    requesting_interface,
+                    arrival.hops,
+                );
+            }
+            return RebroadcastDecision::Scheduled;
+        }
+        if from_local_client {
+            if self.transport_id().is_none() {
+                return RebroadcastDecision::NotATransportNode;
+            }
+            if !interfaces.iter().any(|descriptor| {
+                descriptor.id.kind() != Some(InterfaceKind::LocalClient)
+                    && descriptor.capabilities.allows_transmit()
+            }) {
+                return RebroadcastDecision::NoTransportInterfaces;
+            }
+            self.scheduled_announces.schedule_shared_client(
                 destination,
                 arrival.arrived_at,
-                requesting_interface,
+                arrival.receiving_interface,
                 arrival.hops,
             );
             return RebroadcastDecision::Scheduled;
         }
-        if self.transport_id.is_none() {
+        if !self.network_transport_enabled() {
             return RebroadcastDecision::NotATransportNode;
         }
-        if !interfaces
-            .iter()
-            .any(|descriptor| descriptor.capabilities.allows_transport())
-        {
+        if !interfaces.iter().any(|descriptor| {
+            descriptor.id.kind() != Some(InterfaceKind::LocalClient)
+                && descriptor.capabilities.allows_transport()
+        }) {
             return RebroadcastDecision::NoTransportInterfaces;
         }
         if self.destination_announce_limit_blocks_rebroadcast(
@@ -133,7 +162,7 @@ impl<S: StorageLayout> EngineState<S> {
         if remember_outcome == RememberAnnouncedDestinationIdentityOutcome::PublicKeyChanged {
             return AnnounceIngest::Ignored;
         }
-        if self.transport_id.is_some() {
+        if self.network_transport_enabled() {
             self.scheduled_announces.absorb_echo(
                 &announce.destination,
                 received_hops,
@@ -222,7 +251,9 @@ impl<S: StorageLayout> EngineState<S> {
 mod tests {
     use super::*;
     use crate::engine::test_support::*;
-    use crate::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget};
+    use crate::engine::{
+        AnnounceAppData, AnnounceNow, AnnounceTarget, Directive, EngineReaction, IngestIo,
+    };
     use crate::identity::in_memory::InMemoryNodeIdentity;
     use crate::interfaces::InterfaceDescriptor;
     use crate::routing::ingress::testkit::iface;
@@ -287,6 +318,92 @@ mod tests {
             })),
         ));
         assert_eq!(relay.scheduled_announce_count(), 1);
+    }
+
+    #[test]
+    fn a_shared_clients_announce_crosses_a_leaf_instance_once() {
+        let mut leaf = shared_instance_leaf();
+        let transport_id = leaf.transport_id().unwrap();
+        let app = InterfaceId::from_channel_tag(InterfaceKind::LocalClient, b"nomadnet");
+        let network = iface(0xB2);
+        let interfaces = [routable_descriptor(app), routable_descriptor(network)];
+        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+
+        let out = leaf.ingest_packet_with(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: app,
+                bytes: &mut raw,
+            },
+            &mut |_| {},
+            AttachedInterfaces::new(&interfaces),
+            &mut |_| {},
+            None,
+        );
+
+        assert!(matches!(
+            out,
+            IngestPacketOutcome::Announce(AnnounceIngest::Accepted(AcceptedAnnounce {
+                hops: 0,
+                rebroadcast: RebroadcastDecision::Scheduled,
+                ..
+            }))
+        ));
+        assert!(!leaf.network_transport_enabled());
+
+        let sent = tick_capture(
+            &mut leaf,
+            InstantMillis(1_000),
+            AttachedInterfaces::new(&interfaces),
+        );
+        assert_eq!(sent.len(), 1);
+        let (header, _) = WirePacketHeader::parse(&sent[0]).unwrap();
+        assert_eq!(header.transport_id, Some(transport_id));
+        assert_eq!(header.hops, 0);
+        assert_eq!(leaf.scheduled_announce_count(), 0);
+    }
+
+    #[test]
+    fn a_network_announce_is_immediately_relayed_to_a_leafs_local_client() {
+        let mut leaf = shared_instance_leaf();
+        let transport_id = leaf.transport_id().unwrap();
+        let network = iface(0xA1);
+        let app = InterfaceId::from_channel_tag(InterfaceKind::LocalClient, b"sideband");
+        let interfaces = [routable_descriptor(network), routable_descriptor(app)];
+        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+        let mut sent = None;
+
+        leaf.ingest_packet_into(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: network,
+                bytes: &mut raw,
+            },
+            IngestIo {
+                interfaces: AttachedInterfaces::new(&interfaces),
+                now: InstantMillis(1_000),
+                fill_entropy: &mut |_| {},
+                should_prove: &mut |_| false,
+                should_accept_resource: &mut |_| false,
+                sink: &mut |reaction| {
+                    if let EngineReaction::Directive(Directive::SendAnnounce {
+                        target,
+                        bytes,
+                        ..
+                    }) = reaction
+                    {
+                        sent = Some((target, bytes.to_vec()));
+                    }
+                },
+            },
+        );
+
+        let (target, wire) = sent.expect("the local client receives the announce");
+        assert_eq!(target, app);
+        let (header, _) = WirePacketHeader::parse(&wire).unwrap();
+        assert_eq!(header.transport_id, Some(transport_id));
+        assert!(!leaf.network_transport_enabled());
+        assert_eq!(leaf.scheduled_announce_count(), 0);
     }
 
     #[test]

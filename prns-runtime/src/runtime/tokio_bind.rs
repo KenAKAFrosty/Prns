@@ -15,12 +15,13 @@ use crate::engine::{
     CloseLink, CommandId, Departure, DestinationIdentitySeedOutcome, EngineCommand, EngineState,
     EstablishLink, EstablishLinkFailure, IssuedCommand, PacketReceiptDelivered, SendRequestFailure,
     SendResourceFailure, SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload,
-    Settlement,
+    SetTransportIdentityError, Settlement,
 };
 use crate::engine::{InspectionQuery, InspectionResult};
 use crate::engine::{InstantMillis, Journaled};
+use crate::identity::held::HoldIdentityError;
 use crate::identity::vault::{IdentityLabel, IdentityVault};
-use crate::identity::Zeroizing;
+use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use crate::inspection::{
     AnnounceRateSnapshot, InspectionSource, InterfaceIfacSnapshot, InterfaceInventoryEntry,
     RouteSnapshot,
@@ -1712,6 +1713,12 @@ pub struct Prns<St, R, F, S: StorageLayout> {
     _routes: PhantomData<R>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SharedInstanceIdentityError {
+    Hold(HoldIdentityError),
+    Configure(SetTransportIdentityError),
+}
+
 impl<St, R, F, S: StorageLayout> Prns<St, R, F, S>
 where
     R: RouteSet<St>,
@@ -1809,6 +1816,20 @@ where
             crypto_pool: CryptoPoolConfig::host_default(),
             _routes: PhantomData,
         }
+    }
+
+    pub fn with_shared_instance_identity(
+        mut self,
+        secret: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
+    ) -> Result<Self, SharedInstanceIdentityError> {
+        let identity = self
+            .engine
+            .hold_identity(secret)
+            .map_err(SharedInstanceIdentityError::Hold)?;
+        self.engine
+            .set_shared_instance_identity(&identity)
+            .map_err(SharedInstanceIdentityError::Configure)?;
+        Ok(self)
     }
 
     /// Must precede [`seed_routes_from_store`](Self::seed_routes_from_store) so restored rows sit in this boot's past.

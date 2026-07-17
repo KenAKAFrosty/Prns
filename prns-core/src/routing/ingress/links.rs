@@ -204,7 +204,7 @@ impl<S: StorageLayout> EngineState<S> {
         arrival: LinkRequestArrival<'_>,
     ) -> IngestPacketOutcome<'static> {
         let routed_through_us =
-            self.transport_id.is_some() && header.transport_id == self.transport_id;
+            self.network_transport_enabled() && header.transport_id == self.transport_id();
 
         let is_local_client_transit = arrival.source_interface.kind()
             == Some(InterfaceKind::LocalClient)

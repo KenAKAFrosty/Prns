@@ -119,7 +119,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
 
         let from_local_client = source_interface.kind() == Some(InterfaceKind::LocalClient);
-        let held_route = (self.transport_id.is_some() || from_local_client)
+        let held_route = (self.network_transport_enabled() || from_local_client)
             .then(|| {
                 self.routing_table
                     .forwarding_route_for(&request.destination)
@@ -180,7 +180,7 @@ impl<S: StorageLayout> EngineState<S> {
         now: InstantMillis,
         interfaces: AttachedInterfaces<'_>,
     ) -> IngestPacketOutcome<'p> {
-        let forwards_recursively = self.transport_id.is_some()
+        let forwards_recursively = self.network_transport_enabled()
             && interfaces
                 .descriptor_for(source_interface)
                 .is_some_and(|descriptor| descriptor.mode.recursively_forwards_unknown_paths());
@@ -224,6 +224,7 @@ impl<S: StorageLayout> EngineState<S> {
 mod tests {
     use super::*;
     use crate::engine::test_support::*;
+    use crate::engine::{Directive, EngineReaction, IngestIo};
     use crate::interfaces::InterfaceDescriptor;
     use crate::routing::ingress::testkit::iface;
     use crate::wire::HEADER_MIN_LEN;
@@ -591,6 +592,51 @@ mod tests {
             RecursiveOutcome::AlreadyInFlight,
             "the asking client is remembered so the answer is steered back to it",
         );
+    }
+
+    #[test]
+    fn a_leaf_shared_instance_relays_path_requests_across_its_local_boundary() {
+        let destination = DestinationHash::new([0x44; 16]);
+        let app = InterfaceId::from_channel_tag(InterfaceKind::LocalClient, b"nomadnet");
+        let network = iface(0xB2);
+        let interfaces = [routable_descriptor(app), routable_descriptor(network)];
+
+        for (source, expected_target, tag) in
+            [(app, network, [0x55; 16]), (network, app, [0x66; 16])]
+        {
+            let mut leaf = shared_instance_leaf();
+            let mut wire = stranger_path_request(tag);
+            let mut sent = None;
+            leaf.ingest_packet_into(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: source,
+                    bytes: &mut wire,
+                },
+                IngestIo {
+                    interfaces: AttachedInterfaces::new(&interfaces),
+                    now: InstantMillis(1_000),
+                    fill_entropy: &mut |_| {},
+                    should_prove: &mut |_| false,
+                    should_accept_resource: &mut |_| false,
+                    sink: &mut |reaction| {
+                        if let EngineReaction::Directive(Directive::Send { target, bytes }) =
+                            reaction
+                        {
+                            sent = Some((target, bytes.to_vec()));
+                        }
+                    },
+                },
+            );
+
+            let (target, wire) = sent.expect("the request crosses the local boundary");
+            assert_eq!(target, expected_target);
+            let (_, payload) = WirePacketHeader::parse(&wire).unwrap();
+            let request = PathRequest::parse(payload).unwrap();
+            assert_eq!(request.destination, destination);
+            assert_eq!(request.requester_transport_id, None);
+            assert!(!leaf.network_transport_enabled());
+        }
     }
 
     #[test]

@@ -352,6 +352,9 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
     let shared_instance_credentials = SharedInstanceCredentials::from_identity_secret(&secret);
     let blackhole_file = RnsLocalBlackholeFile::new(storage_dir.join("blackhole"));
     let transport_secret = plan.transport.then(|| secret.clone());
+    let shared_instance_secret = (!plan.transport
+        && matches!(plan.shared_instance, SharedInstance::Enabled { .. }))
+    .then(|| secret.clone());
 
     let persist_dir = persist::store_dir(&storage_dir);
     let store = FileStore::new(&persist_dir);
@@ -373,6 +376,16 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
         },
     })
     .with_timeline_origin(timeline_origin);
+    if let Some(secret) = shared_instance_secret {
+        prns = match prns.with_shared_instance_identity(secret) {
+            Ok(prns) => prns,
+            Err(error) => {
+                tracing::error!(event = "shared_instance_identity_failed", error = ?error);
+                observability.shutdown().await;
+                process::exit(1);
+            }
+        };
+    }
     let prns_handle = prns.handle();
 
     // Elect this node's role on the host's shared instance before standing up any interfaces: a

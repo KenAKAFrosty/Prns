@@ -3,6 +3,9 @@ use alloc::vec::Vec;
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
 use crate::lemire_index::HeapLemireIndex;
+use crate::routing::announce::defaults::{
+    ANNOUNCE_ONE_SHOT_INITIAL_EMISSION_COUNT, ANNOUNCE_WITH_RETRY_INITIAL_EMISSION_COUNT,
+};
 use crate::routing::announce::schedule::{EchoOutcome, ScheduledAnnounce, ScheduledAnnounceQueue};
 #[cfg(feature = "std")]
 use crate::routing::temporal_index::HeapDeadlineIndex;
@@ -112,12 +115,13 @@ impl HeapScheduledAnnounceQueue {
         source_interface: InterfaceId,
         hops: u8,
         directed_to: Option<InterfaceId>,
+        our_emission_count: u8,
     ) {
         if let Some(i) = self.index.get(&destination, &self.destination) {
             self.set_due_at(i, due_at);
             self.source_interface[i] = source_interface;
             self.hops[i] = hops;
-            self.our_emission_count[i] = 0;
+            self.our_emission_count[i] = our_emission_count;
             self.peer_emission_count[i] = 0;
             self.directed_to[i] = directed_to;
         } else {
@@ -126,7 +130,7 @@ impl HeapScheduledAnnounceQueue {
                 due_at,
                 source_interface,
                 hops,
-                our_emission_count: 0,
+                our_emission_count,
                 peer_emission_count: 0,
                 directed_to,
             });
@@ -213,7 +217,14 @@ impl ScheduledAnnounceQueue for HeapScheduledAnnounceQueue {
         hops: u8,
     ) {
         self.clear_held(destination);
-        self.upsert(destination, due_at, source_interface, hops, None);
+        self.upsert(
+            destination,
+            due_at,
+            source_interface,
+            hops,
+            None,
+            ANNOUNCE_WITH_RETRY_INITIAL_EMISSION_COUNT,
+        );
     }
     fn schedule_directed(
         &mut self,
@@ -223,7 +234,48 @@ impl ScheduledAnnounceQueue for HeapScheduledAnnounceQueue {
         hops: u8,
     ) {
         self.park_displaced_flood(destination);
-        self.upsert(destination, due_at, target, hops, Some(target));
+        self.upsert(
+            destination,
+            due_at,
+            target,
+            hops,
+            Some(target),
+            ANNOUNCE_WITH_RETRY_INITIAL_EMISSION_COUNT,
+        );
+    }
+    fn schedule_shared_client(
+        &mut self,
+        destination: DestinationHash,
+        due_at: InstantMillis,
+        source_interface: InterfaceId,
+        hops: u8,
+    ) {
+        self.clear_held(destination);
+        self.upsert(
+            destination,
+            due_at,
+            source_interface,
+            hops,
+            None,
+            ANNOUNCE_ONE_SHOT_INITIAL_EMISSION_COUNT,
+        );
+    }
+    fn schedule_directed_shared_client(
+        &mut self,
+        destination: DestinationHash,
+        due_at: InstantMillis,
+        target: InterfaceId,
+        hops: u8,
+    ) {
+        self.park_displaced_flood(destination);
+        self.upsert(
+            destination,
+            due_at,
+            target,
+            hops,
+            Some(target),
+            ANNOUNCE_ONE_SHOT_INITIAL_EMISSION_COUNT,
+        );
     }
     fn drain_due(&mut self, now: InstantMillis) -> usize {
         #[cfg(feature = "std")]

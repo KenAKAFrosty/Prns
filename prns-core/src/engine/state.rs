@@ -41,6 +41,27 @@ type EngineRoutingTable<S> = RoutingTable<
     <S as StorageLayout>::RouteExpiries,
 >;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum TransportRole {
+    #[default]
+    Disabled,
+    SharedInstance(TransportId),
+    TransportNode(TransportId),
+}
+
+impl TransportRole {
+    pub(crate) const fn id(self) -> Option<TransportId> {
+        match self {
+            Self::Disabled => None,
+            Self::SharedInstance(id) | Self::TransportNode(id) => Some(id),
+        }
+    }
+
+    pub(crate) const fn network_transport_enabled(self) -> bool {
+        matches!(self, Self::TransportNode(_))
+    }
+}
+
 pub struct EngineState<S: StorageLayout> {
     pub(crate) ingested_packet_count: u64,
     pub(crate) ingested_command_count: u64,
@@ -64,7 +85,7 @@ pub struct EngineState<S: StorageLayout> {
     pub(crate) packet_hash_history: S::PacketHashes,
     pub(crate) identity_blackholes: IdentityBlackholes<S::Blackholes>,
     pub(crate) held_identities: HeldIdentities<S::HeldIdentities>,
-    pub(crate) transport_id: Option<TransportId>,
+    pub(crate) transport: TransportRole,
     pub(crate) self_ratchets: SelfRatchets<S::SelfRatchets>,
     pub(crate) receipts: Receipts<S::Receipts>,
     pub(crate) reverse_routes: ReverseRoutes<S::ReverseRoutes>,
@@ -118,7 +139,7 @@ impl<S: StorageLayout> Default for EngineState<S> {
             packet_hash_history: Default::default(),
             identity_blackholes: IdentityBlackholes::default(),
             held_identities: HeldIdentities::default(),
-            transport_id: None,
+            transport: TransportRole::default(),
             self_ratchets: SelfRatchets::default(),
             receipts: Receipts::default(),
             reverse_routes: ReverseRoutes::default(),
@@ -172,7 +193,7 @@ where
             .field("packet_hash_history", &self.packet_hash_history)
             .field("identity_blackholes", &self.identity_blackholes)
             .field("held_identities", &self.held_identities)
-            .field("transport_id", &self.transport_id)
+            .field("transport", &self.transport)
             .field("self_ratchets", &self.self_ratchets)
             .finish_non_exhaustive()
     }
@@ -190,7 +211,7 @@ impl<S: StorageLayout> EngineState<S> {
         let identity = state
             .hold_identity(identity_secret_key)
             .expect("an empty store holds the first identity");
-        state.transport_id = Some(TransportId::new(*identity.as_bytes()));
+        state.transport = TransportRole::TransportNode(TransportId::new(*identity.as_bytes()));
         state
     }
 

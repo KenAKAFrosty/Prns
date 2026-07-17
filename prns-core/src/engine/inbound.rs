@@ -4,13 +4,15 @@ use crate::crypto::{
 };
 use crate::engine::execute::settle;
 use crate::engine::write_implicit_proof_wire_packet;
+#[cfg(feature = "runtime-metrics")]
+use crate::engine::AnnounceOrigin;
 use crate::engine::LinkClosedReason;
 use crate::engine::{
     write_path_request_wire_packet, AnnounceIngest, AnnounceVerifyOwed, CommandId, DecryptOwed,
     DeferredCrypto, Directive, EngineReaction, EngineState, IngestPacketOutcome, InstantMillis,
     Journaled, LinkEstablished, LinkRttOwed, PathFound, PathRequestIdBytes,
-    PathResponseWriteOutcome, ProofIngest, RatchetDecryptOwed, SendRequestFailure, Settlement,
-    WakeSchedule, WakeSchedules,
+    PathResponseWriteOutcome, ProofIngest, RatchetDecryptOwed, ReemitAnnounce, SendRequestFailure,
+    Settlement, WakeSchedule, WakeSchedules,
 };
 use crate::identity::{
     decrypt_finish_in_place, IdentitySigner, OpenedBy, OpenedToken, ENCRYPTION_IV_LEN,
@@ -267,11 +269,12 @@ impl<S: StorageLayout> EngineState<S> {
         audience: RelayAudience,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) {
-        let Some(via) = self.transport_id else {
-            return;
-        };
         let mut buf = [0u8; BROADCAST_MTU];
-        let Ok(wire_len) = write_path_request_wire_packet(destination, Some(via), id, &mut buf)
+        let transport_id = self
+            .network_transport_enabled()
+            .then(|| self.transport_id())
+            .flatten();
+        let Ok(wire_len) = write_path_request_wire_packet(destination, transport_id, id, &mut buf)
         else {
             return;
         };
@@ -282,13 +285,58 @@ impl<S: StorageLayout> EngineState<S> {
                     descriptor.id.kind() == Some(InterfaceKind::LocalClient)
                 }
             };
-            if in_audience && descriptor.id != source && descriptor.capabilities.allows_transport()
-            {
+            if in_audience && descriptor.id != source && descriptor.capabilities.allows_transmit() {
                 sink(EngineReaction::Directive(Directive::Send {
                     target: descriptor.id,
                     bytes: &buf[..wire_len],
                 }));
             }
+        }
+    }
+
+    fn relay_announce_to_local_clients(
+        &self,
+        destination: DestinationHash,
+        hops: u8,
+        source: InterfaceId,
+        interfaces: AttachedInterfaces<'_>,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) {
+        let Some(via) = self.transport_id() else {
+            return;
+        };
+        let Some(stored) = self.routing_table.stored_announce_for(&destination) else {
+            return;
+        };
+        let mut buf = [0u8; BROADCAST_MTU];
+        let relay = ReemitAnnounce {
+            announce: stored.announce.clone(),
+            emit_hops: hops,
+            via,
+            target: source,
+            is_path_response: false,
+        };
+        let Ok(written) = relay.to_wire(&mut buf) else {
+            return;
+        };
+        for descriptor in interfaces {
+            if descriptor.id == source
+                || descriptor.id.kind() != Some(InterfaceKind::LocalClient)
+                || !descriptor.capabilities.allows_transmit()
+            {
+                continue;
+            }
+            sink(EngineReaction::Directive(Directive::SendAnnounce {
+                target: descriptor.id,
+                bytes: &buf[..written],
+                hops,
+                #[cfg(feature = "runtime-metrics")]
+                origin: if source.kind() == Some(InterfaceKind::LocalClient) {
+                    AnnounceOrigin::SharedClient
+                } else {
+                    AnnounceOrigin::Relay
+                },
+            }));
         }
     }
 
@@ -556,6 +604,13 @@ impl<S: StorageLayout> EngineState<S> {
         self.record_announce_ingress(source, ingest);
         match ingest {
             AnnounceIngest::Accepted(accepted) => {
+                self.relay_announce_to_local_clients(
+                    accepted.destination,
+                    accepted.hops,
+                    source,
+                    interfaces,
+                    sink,
+                );
                 if let Some(observation) = accepted_observation {
                     sink(EngineReaction::Journaled(Journaled::AnnounceHeard {
                         observation,

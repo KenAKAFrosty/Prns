@@ -28,7 +28,9 @@ impl<S: StorageLayout> EngineState<S> {
     ) -> PathRequestWriteOutcome {
         let wire_len = match write_path_request_wire_packet(
             request.destination,
-            self.transport_id,
+            self.network_transport_enabled()
+                .then(|| self.transport_id())
+                .flatten(),
             request.id.as_bytes(),
             buf,
         ) {

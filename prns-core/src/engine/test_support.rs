@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use super::*;
+use crate::engine::state::TransportRole;
 use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::{IdentitySigner, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::AttachedInterfaces;
@@ -34,12 +35,19 @@ pub fn test_fill_entropy(bytes: &mut [u8]) {
 /// Production's one road to the transport role is [`EngineState::set_transport_identity`] over a held identity.
 /// The RNS 1.3.5 parity vectors pin the reference relay's raw id (`0x7A…`), so tests set the address directly.
 pub fn pin_transport_id<S: StorageLayout>(state: &mut EngineState<S>, id: TransportId) {
-    state.transport_id = Some(id);
+    state.transport = TransportRole::TransportNode(id);
 }
 
 pub fn transporting_node() -> EngineState<TestStorageLayout> {
     let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
     pin_transport_id(&mut state, TEST_TRANSPORT_ID);
+    state
+}
+
+pub fn shared_instance_leaf() -> EngineState<TestStorageLayout> {
+    let mut state = EngineState::<TestStorageLayout>::default();
+    let identity = state.hold_identity(fixed_secret_key()).unwrap();
+    state.set_shared_instance_identity(&identity).unwrap();
     state
 }
 
