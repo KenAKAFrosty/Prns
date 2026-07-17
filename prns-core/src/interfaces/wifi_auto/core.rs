@@ -12,8 +12,10 @@ use heapless::{String as HString, Vec as HVec};
 
 use crate::crypto::sha256;
 use crate::interfaces::{
-    AnnounceBandwidthCap, BitrateBps, EgressCapability, IngressCapability, InterfaceCapabilities,
-    InterfaceDescriptor, InterfaceId, InterfaceMode, MacAddress, TransportCapability,
+    AnnounceBandwidthCap, BitrateBps, ConfiguredInterfacePolicy, EffectiveInterfacePolicy,
+    EgressCapability, IngressCapability, InterfaceCapabilities, InterfaceDefaults,
+    InterfaceDescriptor, InterfaceId, InterfaceMode, MacAddress, MtuPolicy, TransportCapability,
+    LOCAL_INTERFACE_BITRATE_ESTIMATE,
 };
 use crate::routing::links::MAX_LINK_MTU;
 
@@ -49,11 +51,10 @@ pub const PEERING_TIMEOUT_MS: u64 = 22_000;
 /// [`AutoInterface.py` L70](https://github.com/markqvist/Reticulum/blob/1.3.5/RNS/Interfaces/AutoInterface.py#L70)).
 pub const WIFI_BITRATE_GUESS_BPS: BitrateBps = BitrateBps::guess(10_000_000);
 
-/// What this stack declares for a real wifi LAN pipe: 500 Mbps, true to form for a modern 802.11
-/// LAN's usable throughput and far less conservative than RNS's 10 Mbps AutoInterface guess. The pipe
-/// sets only a member's announce pacing and airtime accounting — the wifi MTU is the fixed
-/// [`HARDWARE_MTU`], not bitrate-derived — so an honest figure just keeps pacing realistic.
-pub const WIFI_LAN_BITRATE_BPS: BitrateBps = BitrateBps::guess(500_000_000);
+/// What this stack declares for a real wifi LAN pipe: 1 Gbps for a local interface, far less
+/// conservative than RNS's 10 Mbps AutoInterface guess. The effective MTU follows the bitrate tier
+/// but remains capped by the interface's real [`HARDWARE_MTU`].
+pub const WIFI_LAN_BITRATE_BPS: BitrateBps = LOCAL_INTERFACE_BITRATE_ESTIMATE;
 
 /// The ceiling an embedded 2.4 GHz radio clamps the LAN pipe to: a single-stream 802.11n part (an
 /// ESP32-S3, say) tops out around 125 Mbps, well under a host's wired-backed wifi. An embedded impl
@@ -61,11 +62,10 @@ pub const WIFI_LAN_BITRATE_BPS: BitrateBps = BitrateBps::guess(500_000_000);
 /// reflect the radio it actually has, not a host's pipe.
 pub const WIFI_EMBEDDED_BITRATE_CEILING_BPS: BitrateBps = BitrateBps::guess(125_000_000);
 
-/// The hardware MTU a per-peer member declares. RNS pins the AutoInterface at a fixed
+/// The hardware ceiling for a per-peer member. RNS pins the AutoInterface at
 /// [`HARDWARE_MTU`] (`FIXED_MTU = True`,
 /// [`AutoInterface.py` L44-L45](https://github.com/markqvist/Reticulum/blob/1.3.5/RNS/Interfaces/AutoInterface.py#L44-L45)),
-/// so unlike the bitrate-tiered interfaces this is not derived from the pipe; it is only clamped by
-/// the engine's link ceiling.
+/// while Prns applies the common optimized policy without ever promising beyond that physical limit.
 pub const WIFI_HW_MTU_CAP: usize = if HARDWARE_MTU < MAX_LINK_MTU {
     HARDWARE_MTU
 } else {
@@ -78,20 +78,34 @@ pub const WIFI_HW_MTU_CAP: usize = if HARDWARE_MTU < MAX_LINK_MTU {
 /// [`TransportCapability::CrossInterfaceOnly`], and an announce arriving from one peer is forwarded
 /// out to the others (never back to its source) by the engine's normal fan-out. `mode` stays
 /// [`InterfaceMode::Full`], the mode RNS hands each spawned peer interface.
-pub fn descriptor(id: InterfaceId, bitrate: BitrateBps) -> InterfaceDescriptor {
-    InterfaceDescriptor {
-        id,
-        capabilities: InterfaceCapabilities {
-            ingress: IngressCapability::Enabled,
-            egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
-        },
-        mode: InterfaceMode::Full,
-        bitrate,
-        hardware_mtu: Some(WIFI_HW_MTU_CAP),
-        announce_rate_limit: None,
-        announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
-        airtime_duty_cycle: None,
-    }
+pub const DEFAULTS: InterfaceDefaults = InterfaceDefaults {
+    capabilities: InterfaceCapabilities {
+        ingress: IngressCapability::Enabled,
+        egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
+    },
+    mode: InterfaceMode::Full,
+    bitrate: WIFI_LAN_BITRATE_BPS,
+    mtu: MtuPolicy::optimized_from_bitrate(WIFI_HW_MTU_CAP),
+    announce_rate_limit: None,
+    announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
+    airtime_duty_cycle: None,
+};
+
+#[must_use]
+pub fn configured_policy(configured: ConfiguredInterfacePolicy) -> EffectiveInterfacePolicy {
+    DEFAULTS.configured(configured)
+}
+
+#[must_use]
+pub fn policy_for_bitrate(bitrate: BitrateBps) -> EffectiveInterfacePolicy {
+    configured_policy(ConfiguredInterfacePolicy {
+        bitrate: Some(bitrate),
+        ..ConfiguredInterfacePolicy::default()
+    })
+}
+
+pub fn descriptor(id: InterfaceId, policy: EffectiveInterfacePolicy) -> InterfaceDescriptor {
+    policy.descriptor(id)
 }
 
 /// Reconstruct the IPv6 link-local address an SLAAC stack derives from `mac` via

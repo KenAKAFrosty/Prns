@@ -45,7 +45,7 @@ pub const ENABLED_POLL: Duration = Duration::from_millis(250);
 /// `tag` is the stable channel identity — the configured target's bytes — the interface id derives
 /// from, so the same node reconnects under the same routing key. `bitrate` is the host's claim
 /// about its pipe; it sets the declared MTU through the reference's tier table, so claim honestly
-/// ([`core::TCP_BITRATE_GUESS_BPS`] when genuinely unknown).
+/// ([`core::TCP_BITRATE_ESTIMATE`] when genuinely unknown).
 pub struct TcpClient<'a> {
     id: InterfaceId,
     stack: Stack<'a>,
@@ -107,7 +107,7 @@ impl Interface for TcpClient<'_> {
     const KIND: InterfaceKind = InterfaceKind::TcpClient;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::descriptor(self.id, self.bitrate)
+        core::descriptor(self.id, core::policy_for_bitrate(self.bitrate))
     }
 
     fn channel_tag(&self) -> &[u8] {

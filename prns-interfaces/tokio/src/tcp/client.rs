@@ -7,7 +7,9 @@ use crate::tcp::tokio_socket::{tune, CONNECT_TIMEOUT};
 use prns_core::interfaces::tcp::core;
 use prns_core::interfaces::tcp::core::TcpWireFraming;
 use prns_core::interfaces::BitrateBps;
-use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
+use prns_core::interfaces::{
+    ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind,
+};
 use prns_runtime::reactor::airtime::AirtimeLedger;
 use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
@@ -20,12 +22,12 @@ use std::time::Duration;
 /// the stream drops, wait `reconnect`, connect again. Point-to-point: one engine
 /// interface, one peer. `bitrate` is the host's claim about its pipe — it sets the
 /// declared hardware MTU through the reference's tier table, so claim honestly
-/// ([`core::TCP_BITRATE_GUESS_BPS`] when genuinely unknown).
+/// ([`core::TCP_BITRATE_ESTIMATE`] when genuinely unknown).
 pub struct TcpClientInterface {
     id: InterfaceId,
     target: String,
     channel_tag: std::vec::Vec<u8>,
-    bitrate: BitrateBps,
+    policy: EffectiveInterfacePolicy,
     reconnect: Duration,
     framing: TcpWireFraming,
     status: TokioInterfaceStatus,
@@ -35,7 +37,35 @@ impl TcpClientInterface {
     #[must_use]
     pub fn new(target: String, bitrate: BitrateBps, reconnect: Duration) -> Self {
         let id = InterfaceId::from_channel_tag(InterfaceKind::TcpClient, target.as_bytes());
-        Self::new_with_id(id, target, bitrate, reconnect)
+        Self::with_id_policy_and_framing(
+            id,
+            target,
+            core::policy_for_bitrate(bitrate),
+            reconnect,
+            TcpWireFraming::Hdlc,
+        )
+    }
+
+    #[must_use]
+    pub fn with_policy(
+        target: String,
+        policy: EffectiveInterfacePolicy,
+        reconnect: Duration,
+    ) -> Self {
+        let id = InterfaceId::from_channel_tag(InterfaceKind::TcpClient, target.as_bytes());
+        Self::with_id_policy_and_framing(id, target, policy, reconnect, TcpWireFraming::Hdlc)
+    }
+
+    #[must_use]
+    pub fn with_policy_and_framing(
+        target: String,
+        policy: EffectiveInterfacePolicy,
+        reconnect: Duration,
+        framing: TcpWireFraming,
+    ) -> Self {
+        let channel_tag = channel_tag(&target, framing);
+        let id = InterfaceId::from_channel_tag(InterfaceKind::TcpClient, &channel_tag);
+        Self::with_id_policy_and_framing(id, target, policy, reconnect, framing)
     }
 
     #[must_use]
@@ -47,7 +77,13 @@ impl TcpClientInterface {
     ) -> Self {
         let channel_tag = channel_tag(&target, framing);
         let id = InterfaceId::from_channel_tag(InterfaceKind::TcpClient, &channel_tag);
-        Self::new_with_id_and_framing(id, target, bitrate, reconnect, framing)
+        Self::with_id_policy_and_framing(
+            id,
+            target,
+            core::policy_for_bitrate(bitrate),
+            reconnect,
+            framing,
+        )
     }
 
     /// Build with a caller-chosen id instead of one derived from the dial target — for advanced
@@ -60,7 +96,13 @@ impl TcpClientInterface {
         bitrate: BitrateBps,
         reconnect: Duration,
     ) -> Self {
-        Self::new_with_id_and_framing(id, target, bitrate, reconnect, TcpWireFraming::Hdlc)
+        Self::with_id_policy_and_framing(
+            id,
+            target,
+            core::policy_for_bitrate(bitrate),
+            reconnect,
+            TcpWireFraming::Hdlc,
+        )
     }
 
     #[must_use]
@@ -71,12 +113,39 @@ impl TcpClientInterface {
         reconnect: Duration,
         framing: TcpWireFraming,
     ) -> Self {
+        Self::with_id_policy_and_framing(
+            id,
+            target,
+            core::policy_for_bitrate(bitrate),
+            reconnect,
+            framing,
+        )
+    }
+
+    #[must_use]
+    pub fn with_id_and_policy(
+        id: InterfaceId,
+        target: String,
+        policy: EffectiveInterfacePolicy,
+        reconnect: Duration,
+    ) -> Self {
+        Self::with_id_policy_and_framing(id, target, policy, reconnect, TcpWireFraming::Hdlc)
+    }
+
+    #[must_use]
+    pub fn with_id_policy_and_framing(
+        id: InterfaceId,
+        target: String,
+        policy: EffectiveInterfacePolicy,
+        reconnect: Duration,
+        framing: TcpWireFraming,
+    ) -> Self {
         let channel_tag = channel_tag(&target, framing);
         Self {
             id,
             target,
             channel_tag,
-            bitrate,
+            policy,
             reconnect,
             framing,
             status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
@@ -104,7 +173,7 @@ impl Interface for TcpClientInterface {
     const KIND: InterfaceKind = InterfaceKind::TcpClient;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::descriptor(self.id, self.bitrate)
+        core::descriptor(self.id, self.policy)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -159,7 +228,7 @@ impl Interface for TcpClientInterface {
                     status: &self.status,
                     airtime: &mut airtime,
                     throughput: &mut throughput,
-                    bitrate: self.bitrate,
+                    bitrate: self.policy.bitrate,
                     started,
                 };
                 match self.framing {
@@ -326,7 +395,7 @@ mod tests {
 
         let interface = TcpClientInterface::new(
             addr.to_string(),
-            core::TCP_BITRATE_GUESS_BPS,
+            core::TCP_BITRATE_ESTIMATE,
             Duration::from_millis(10),
         );
         tokio::spawn(interface.run(seam));

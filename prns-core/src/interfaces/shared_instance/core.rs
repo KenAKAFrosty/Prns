@@ -7,9 +7,10 @@
 use crate::interfaces::rns_serial_framing;
 use crate::interfaces::wire_limits::MAX_WIRE_FRAME_LEN;
 use crate::interfaces::{
-    hardware_mtu_for_bitrate, AnnounceBandwidthCap, BitrateBps, EgressCapability,
-    IngressCapability, InterfaceCapabilities, InterfaceDescriptor, InterfaceId, InterfaceMode,
-    TransportCapability,
+    AnnounceBandwidthCap, BitrateBps, ConfiguredInterfacePolicy, EffectiveInterfacePolicy,
+    EgressCapability, IngressCapability, InterfaceCapabilities, InterfaceDefaults,
+    InterfaceDescriptor, InterfaceId, InterfaceMode, MtuPolicy, TransportCapability,
+    LOCAL_INTERFACE_BITRATE_ESTIMATE,
 };
 use crate::routing::links::MAX_LINK_MTU;
 
@@ -19,7 +20,7 @@ pub const DEFAULT_LOCAL_PORT: u16 = 37428;
 
 /// The bitrate RNS declares on both local ends (`LocalClientInterface.bitrate`): a local bus is not
 /// the bottleneck, so 1 Gbps, the wired-LAN tier.
-pub const LOCAL_BITRATE_BPS: BitrateBps = BitrateBps::guess(1_000_000_000);
+pub const LOCAL_BITRATE_BPS: BitrateBps = LOCAL_INTERFACE_BITRATE_ESTIMATE;
 
 /// RNS's default `local_socket_path` on Linux (`Reticulum.__init__`: it becomes `"default"` whenever
 /// AF_UNIX is in use and no path is configured). The abstract socket the daemon binds is then
@@ -40,20 +41,24 @@ pub const READ_BUF_LEN: usize = FRAMED_LEN;
 /// The descriptor for one spawned local client. `MODE_FULL` (RNS gives its shared instance and apps
 /// full participation), cross-interface egress (the daemon relays an app's traffic out its real
 /// interfaces and to its other apps), and the 1 Gbps tier clamped to the engine ceiling.
+pub const DEFAULTS: InterfaceDefaults = InterfaceDefaults {
+    capabilities: InterfaceCapabilities {
+        ingress: IngressCapability::Enabled,
+        egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
+    },
+    mode: InterfaceMode::Full,
+    bitrate: LOCAL_BITRATE_BPS,
+    mtu: MtuPolicy::optimized_from_bitrate(MAX_LINK_MTU),
+    announce_rate_limit: None,
+    announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
+    airtime_duty_cycle: None,
+};
+
 #[must_use]
-pub fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
-    InterfaceDescriptor {
-        id,
-        capabilities: InterfaceCapabilities {
-            ingress: IngressCapability::Enabled,
-            egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
-        },
-        mode: InterfaceMode::Full,
-        hardware_mtu: hardware_mtu_for_bitrate(LOCAL_BITRATE_BPS.get())
-            .map(|tier| tier.min(MAX_LINK_MTU)),
-        announce_rate_limit: None,
-        bitrate: LOCAL_BITRATE_BPS,
-        announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
-        airtime_duty_cycle: None,
-    }
+pub fn configured_policy(configured: ConfiguredInterfacePolicy) -> EffectiveInterfacePolicy {
+    DEFAULTS.configured(configured)
+}
+
+pub fn descriptor(id: InterfaceId, policy: EffectiveInterfacePolicy) -> InterfaceDescriptor {
+    policy.descriptor(id)
 }

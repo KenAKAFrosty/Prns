@@ -288,7 +288,7 @@ fn run_node(
             Ok(target) if !target.is_empty() => {
                 let tcp = TcpClientInterface::new(
                     target.clone(),
-                    tcp_core::TCP_BITRATE_GUESS_BPS,
+                    tcp_core::TCP_BITRATE_ESTIMATE,
                     Duration::from_secs(5),
                 );
                 let status = tcp.status();

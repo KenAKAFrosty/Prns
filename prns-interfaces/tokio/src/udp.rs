@@ -6,7 +6,9 @@ use tokio::net::UdpSocket;
 use prns_core::engine::InstantMillis;
 use prns_core::interfaces::udp::core;
 use prns_core::interfaces::BitrateBps;
-use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
+use prns_core::interfaces::{
+    ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind,
+};
 use prns_runtime::reactor::airtime::{frame_airtime_us, AirtimeLedger};
 use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
@@ -24,7 +26,7 @@ pub struct UdpInterface {
     id: InterfaceId,
     socket: UdpSocket,
     peer: SocketAddr,
-    bitrate: BitrateBps,
+    policy: EffectiveInterfacePolicy,
     channel_tag: heapless::Vec<u8, 18>,
     status: TokioInterfaceStatus,
 }
@@ -51,8 +53,16 @@ impl UdpInterface {
         peer: impl tokio::net::ToSocketAddrs,
         bitrate: BitrateBps,
     ) -> io::Result<Self> {
+        Self::bind_with_policy(local, peer, core::policy_for_bitrate(bitrate)).await
+    }
+
+    pub async fn bind_with_policy(
+        local: impl tokio::net::ToSocketAddrs,
+        peer: impl tokio::net::ToSocketAddrs,
+        policy: EffectiveInterfacePolicy,
+    ) -> io::Result<Self> {
         let (socket, peer) = Self::bind_socket(local, peer).await?;
-        Ok(Self::assemble(None, socket, peer, bitrate))
+        Ok(Self::assemble(None, socket, peer, policy))
     }
 
     /// Bind with a caller-chosen id instead of one derived from the forward target — for advanced
@@ -64,8 +74,17 @@ impl UdpInterface {
         peer: impl tokio::net::ToSocketAddrs,
         bitrate: BitrateBps,
     ) -> io::Result<Self> {
+        Self::bind_with_id_and_policy(id, local, peer, core::policy_for_bitrate(bitrate)).await
+    }
+
+    pub async fn bind_with_id_and_policy(
+        id: InterfaceId,
+        local: impl tokio::net::ToSocketAddrs,
+        peer: impl tokio::net::ToSocketAddrs,
+        policy: EffectiveInterfacePolicy,
+    ) -> io::Result<Self> {
         let (socket, peer) = Self::bind_socket(local, peer).await?;
-        Ok(Self::assemble(Some(id), socket, peer, bitrate))
+        Ok(Self::assemble(Some(id), socket, peer, policy))
     }
 
     async fn bind_socket(
@@ -84,7 +103,7 @@ impl UdpInterface {
         id_override: Option<InterfaceId>,
         socket: UdpSocket,
         peer: SocketAddr,
-        bitrate: BitrateBps,
+        policy: EffectiveInterfacePolicy,
     ) -> Self {
         let channel_tag = udp_channel_tag(peer);
         let id = id_override
@@ -93,7 +112,7 @@ impl UdpInterface {
             id,
             socket,
             peer,
-            bitrate,
+            policy,
             channel_tag,
             status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
         }
@@ -124,7 +143,7 @@ impl Interface for UdpInterface {
     const KIND: InterfaceKind = InterfaceKind::Udp;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::descriptor(self.id, self.bitrate)
+        core::descriptor(self.id, self.policy)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -161,7 +180,7 @@ impl Interface for UdpInterface {
                     let now = InstantMillis(started.elapsed().as_millis() as u64);
                     throughput.record_tx(now, sent as u64);
                     self.status.set_transfer_rates(throughput.rates());
-                    let frame_airtime = frame_airtime_us(sent, self.bitrate);
+                    let frame_airtime = frame_airtime_us(sent, self.policy.bitrate);
                     self.status.set_airtime(airtime.record_tx(now, frame_airtime));
                 }
             }
@@ -225,7 +244,7 @@ mod tests {
             .expect("binds the test peer");
         let far_addr = far.local_addr().expect("the peer address is known");
 
-        let interface = UdpInterface::bind("127.0.0.1:0", far_addr, core::UDP_BITRATE_GUESS_BPS)
+        let interface = UdpInterface::bind("127.0.0.1:0", far_addr, core::UDP_BITRATE_ESTIMATE)
             .await
             .expect("binds an ephemeral local port");
         let near_addr = interface.local_addr().expect("the bound address is known");

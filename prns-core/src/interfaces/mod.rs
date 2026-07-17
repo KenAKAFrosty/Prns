@@ -13,6 +13,7 @@ mod descriptor;
 mod framing;
 mod origin;
 mod packet;
+mod policy;
 mod status;
 
 pub mod ax25_kiss;
@@ -24,7 +25,6 @@ pub mod kiss;
 pub mod lora;
 pub mod pipe;
 pub mod radios;
-#[cfg(feature = "std")]
 pub mod rnode;
 pub mod serial;
 pub mod shared_instance;
@@ -58,6 +58,10 @@ pub use descriptor::{
 pub use packet::{
     InboundPacket, OutboundPacket, PacketPhyStats, RssiDbm, SignalQualityTenthsPercent,
     SnrQuarterDb,
+};
+pub use policy::{
+    ConfiguredInterfacePolicy, EffectiveInterfacePolicy, InterfaceDefaults, MtuBytes, MtuPolicy,
+    LOCAL_INTERFACE_BITRATE_ESTIMATE, TRAVERSED_NETWORK_BITRATE_ESTIMATE,
 };
 pub use status::{
     AirtimeUtilization, InterfaceSnapshot, InterfaceStatus, InterfaceVitals, Membership,

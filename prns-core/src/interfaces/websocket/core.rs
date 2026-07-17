@@ -1,31 +1,46 @@
 use crate::interfaces::ifac::IFAC_MAX_SIZE;
 use crate::interfaces::{
-    hardware_mtu_for_bitrate, AnnounceBandwidthCap, BitrateBps, EgressCapability,
-    IngressCapability, InterfaceCapabilities, InterfaceDescriptor, InterfaceId, InterfaceMode,
-    TransportCapability,
+    AnnounceBandwidthCap, BitrateBps, ConfiguredInterfacePolicy, EffectiveInterfacePolicy,
+    EgressCapability, IngressCapability, InterfaceCapabilities, InterfaceDefaults,
+    InterfaceDescriptor, InterfaceId, InterfaceMode, MtuPolicy, TransportCapability,
+    TRAVERSED_NETWORK_BITRATE_ESTIMATE,
 };
 use crate::routing::links::MAX_LINK_MTU;
 
 /// A conservative default for hosts that do not know their real pipe speed. It mirrors the modern
 /// TCP default because WebSocket rides the same routed-IP substrate.
-pub const WEBSOCKET_BITRATE_GUESS_BPS: BitrateBps = BitrateBps::guess(1_000_000_000);
+pub const WEBSOCKET_BITRATE_ESTIMATE: BitrateBps = TRAVERSED_NETWORK_BITRATE_ESTIMATE;
 
 /// The largest payload this interface can carry in a single WebSocket binary message.
 pub const WEBSOCKET_HW_MTU_CAP: usize = MAX_LINK_MTU;
 pub const FRAME_CAP: usize = MAX_LINK_MTU + IFAC_MAX_SIZE;
 
-pub fn descriptor(id: InterfaceId, bitrate: BitrateBps) -> InterfaceDescriptor {
-    InterfaceDescriptor {
-        id,
-        capabilities: InterfaceCapabilities {
-            ingress: IngressCapability::Enabled,
-            egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
-        },
-        mode: InterfaceMode::PointToPoint,
-        hardware_mtu: hardware_mtu_for_bitrate(bitrate.get()).map(|tier| tier.min(MAX_LINK_MTU)),
-        announce_rate_limit: None,
-        bitrate,
-        announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
-        airtime_duty_cycle: None,
-    }
+pub const DEFAULTS: InterfaceDefaults = InterfaceDefaults {
+    capabilities: InterfaceCapabilities {
+        ingress: IngressCapability::Enabled,
+        egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
+    },
+    mode: InterfaceMode::PointToPoint,
+    bitrate: WEBSOCKET_BITRATE_ESTIMATE,
+    mtu: MtuPolicy::optimized_from_bitrate(MAX_LINK_MTU),
+    announce_rate_limit: None,
+    announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
+    airtime_duty_cycle: None,
+};
+
+#[must_use]
+pub fn configured_policy(configured: ConfiguredInterfacePolicy) -> EffectiveInterfacePolicy {
+    DEFAULTS.configured(configured)
+}
+
+#[must_use]
+pub fn policy_for_bitrate(bitrate: BitrateBps) -> EffectiveInterfacePolicy {
+    configured_policy(ConfiguredInterfacePolicy {
+        bitrate: Some(bitrate),
+        ..ConfiguredInterfacePolicy::default()
+    })
+}
+
+pub fn descriptor(id: InterfaceId, policy: EffectiveInterfacePolicy) -> InterfaceDescriptor {
+    policy.descriptor(id)
 }

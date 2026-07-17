@@ -1271,7 +1271,7 @@ where
         let client = TcpClientInterface::new_with_id(
             TCP_INTERFACE_ID,
             addr.to_string(),
-            tcp_core::TCP_BITRATE_GUESS_BPS,
+            tcp_core::TCP_BITRATE_ESTIMATE,
             Duration::from_millis(100),
         );
         let node = Prns::new(PrnsRecipe {
@@ -1292,7 +1292,7 @@ where
             TCP_INTERFACE_ID,
             local,
             peer,
-            udp_core::UDP_BITRATE_GUESS_BPS,
+            udp_core::UDP_BITRATE_ESTIMATE,
         )
         .await
         .expect("binds the scenario port");
@@ -1310,7 +1310,7 @@ where
         (node, addr.to_string())
     } else {
         let primary =
-            BenchTcpListener::bind_with_id(TCP_INTERFACE_ID, addr, tcp_core::TCP_BITRATE_GUESS_BPS)
+            BenchTcpListener::bind_with_id(TCP_INTERFACE_ID, addr, tcp_core::TCP_BITRATE_ESTIMATE)
                 .await
                 .expect("binds the scenario port");
         let mut addresses = primary.local_addr().expect("bound address").to_string();
@@ -1319,7 +1319,7 @@ where
             let extra = BenchTcpListener::bind_with_id(
                 fanin_listener_id(index),
                 "127.0.0.1:0",
-                tcp_core::TCP_BITRATE_GUESS_BPS,
+                tcp_core::TCP_BITRATE_ESTIMATE,
             )
             .await
             .expect("binds an extra listener");
@@ -1360,7 +1360,7 @@ where
             TCP_INTERFACE_ID,
             local,
             peer,
-            udp_core::UDP_BITRATE_GUESS_BPS,
+            udp_core::UDP_BITRATE_ESTIMATE,
         )
         .await
         .expect("binds the scenario port");
@@ -1379,7 +1379,7 @@ where
         let client = TcpClientInterface::new_with_id(
             TCP_INTERFACE_ID,
             addr.to_string(),
-            tcp_core::TCP_BITRATE_GUESS_BPS,
+            tcp_core::TCP_BITRATE_ESTIMATE,
             Duration::from_millis(100),
         );
         Prns::new(PrnsRecipe {
@@ -2287,7 +2287,7 @@ async fn run_tunnel_probe(manifest: &Manifest, addr: &str, duration: Duration) {
     let egress = Egress::new(vec![(TCP_INTERFACE_ID, out_tx)]);
     let interfaces = vec![tcp_core::descriptor(
         TCP_INTERFACE_ID,
-        tcp_core::TCP_BITRATE_GUESS_BPS,
+        tcp_core::TCP_BITRATE_ESTIMATE,
     )];
     let (event_tx, event_rx) = mpsc::unbounded_channel::<Event>();
     let journal = move |journaled: Journaled<'_>| match journaled {
@@ -2302,7 +2302,7 @@ async fn run_tunnel_probe(manifest: &Manifest, addr: &str, duration: Duration) {
     let interface = TcpClientInterface::new_with_id(
         TCP_INTERFACE_ID,
         addr.to_string(),
-        tcp_core::TCP_BITRATE_GUESS_BPS,
+        tcp_core::TCP_BITRATE_ESTIMATE,
         Duration::from_millis(100),
     );
     tokio::spawn(interface.run(seam));
@@ -3041,14 +3041,14 @@ async fn relay_node(manifest: &Manifest) {
         (RELAY_SECOND_INTERFACE_ID, out_b_tx),
     ]);
     let interfaces = vec![
-        tcp_core::descriptor(TCP_INTERFACE_ID, tcp_core::TCP_BITRATE_GUESS_BPS),
-        tcp_core::descriptor(RELAY_SECOND_INTERFACE_ID, tcp_core::TCP_BITRATE_GUESS_BPS),
+        tcp_core::descriptor(TCP_INTERFACE_ID, tcp_core::TCP_BITRATE_ESTIMATE),
+        tcp_core::descriptor(RELAY_SECOND_INTERFACE_ID, tcp_core::TCP_BITRATE_ESTIMATE),
     ];
 
     let side_a = BenchTcpListener::bind_with_id(
         TCP_INTERFACE_ID,
         "127.0.0.1:0",
-        tcp_core::TCP_BITRATE_GUESS_BPS,
+        tcp_core::TCP_BITRATE_ESTIMATE,
     )
     .await
     .expect("binds side a");
@@ -3056,7 +3056,7 @@ async fn relay_node(manifest: &Manifest) {
     let side_b = BenchTcpListener::bind_with_id(
         RELAY_SECOND_INTERFACE_ID,
         "127.0.0.1:0",
-        tcp_core::TCP_BITRATE_GUESS_BPS,
+        tcp_core::TCP_BITRATE_ESTIMATE,
     )
     .await
     .expect("binds side b");
@@ -3215,7 +3215,7 @@ async fn tunnel_relay_node(manifest: &Manifest) {
     let egress = Egress::new(vec![(RELAY_SECOND_INTERFACE_ID, out_b_tx)]);
     let interfaces = vec![tcp_core::descriptor(
         RELAY_SECOND_INTERFACE_ID,
-        tcp_core::TCP_BITRATE_GUESS_BPS,
+        tcp_core::TCP_BITRATE_ESTIMATE,
     )];
 
     let client_side = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -3225,7 +3225,7 @@ async fn tunnel_relay_node(manifest: &Manifest) {
     let peer_side = BenchTcpListener::bind_with_id(
         RELAY_SECOND_INTERFACE_ID,
         "127.0.0.1:0",
-        tcp_core::TCP_BITRATE_GUESS_BPS,
+        tcp_core::TCP_BITRATE_ESTIMATE,
     )
     .await
     .expect("binds the peer side");
@@ -3269,7 +3269,7 @@ async fn tunnel_client_side(
         tune(&stream);
         let tag = format!("{peer}#{connection_index}").into_bytes();
         let id = InterfaceId::from_channel_tag(InterfaceKind::TcpServerPeer, &tag);
-        let descriptor = tcp_core::descriptor(id, tcp_core::TCP_BITRATE_GUESS_BPS);
+        let descriptor = tcp_core::descriptor(id, tcp_core::TCP_BITRATE_ESTIMATE);
         let (in_tx, in_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, LANE_DEPTH);
         let (out_tx, out_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, LANE_DEPTH);
         let seam = TokioInterfaceSeam::new(id, in_tx, notify_tx.clone(), out_rx);
@@ -3285,7 +3285,7 @@ async fn tunnel_client_side(
             return;
         }
         let connection =
-            TcpServerConnection::new(tag, stream, tcp_core::TCP_BITRATE_GUESS_BPS).run(seam);
+            TcpServerConnection::new(tag, stream, tcp_core::TCP_BITRATE_ESTIMATE).run(seam);
         let task = tokio::spawn(connection);
         if connection_index == 0 {
             tokio::spawn(async move {
@@ -3317,14 +3317,14 @@ async fn chain_node(upstream: &str) {
         (RELAY_SECOND_INTERFACE_ID, out_up_tx),
     ]);
     let interfaces = vec![
-        tcp_core::descriptor(TCP_INTERFACE_ID, tcp_core::TCP_BITRATE_GUESS_BPS),
-        tcp_core::descriptor(RELAY_SECOND_INTERFACE_ID, tcp_core::TCP_BITRATE_GUESS_BPS),
+        tcp_core::descriptor(TCP_INTERFACE_ID, tcp_core::TCP_BITRATE_ESTIMATE),
+        tcp_core::descriptor(RELAY_SECOND_INTERFACE_ID, tcp_core::TCP_BITRATE_ESTIMATE),
     ];
 
     let downstream = BenchTcpListener::bind_with_id(
         TCP_INTERFACE_ID,
         "127.0.0.1:0",
-        tcp_core::TCP_BITRATE_GUESS_BPS,
+        tcp_core::TCP_BITRATE_ESTIMATE,
     )
     .await
     .expect("binds downstream side");
@@ -3332,7 +3332,7 @@ async fn chain_node(upstream: &str) {
     let up = TcpClientInterface::new_with_id(
         RELAY_SECOND_INTERFACE_ID,
         upstream.to_string(),
-        tcp_core::TCP_BITRATE_GUESS_BPS,
+        tcp_core::TCP_BITRATE_ESTIMATE,
         Duration::from_millis(100),
     );
     tokio::spawn(downstream.run(seam_down));

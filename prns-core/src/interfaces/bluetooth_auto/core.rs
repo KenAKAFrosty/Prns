@@ -2,8 +2,9 @@ use heapless::Vec as HVec;
 
 use crate::crypto::sha256_chunks;
 use crate::interfaces::{
-    AnnounceBandwidthCap, BitrateBps, EgressCapability, IngressCapability, InterfaceCapabilities,
-    InterfaceDescriptor, InterfaceId, InterfaceMode, TransportCapability,
+    AnnounceBandwidthCap, BitrateBps, ConfiguredInterfacePolicy, EgressCapability,
+    IngressCapability, InterfaceCapabilities, InterfaceDefaults, InterfaceDescriptor, InterfaceId,
+    InterfaceMode, MtuPolicy, TransportCapability,
 };
 use crate::routing::links::MAX_LINK_MTU;
 
@@ -905,15 +906,20 @@ impl<const N: usize> Default for StreamDeframer<N> {
 }
 
 pub fn descriptor(id: InterfaceId, bitrate: BitrateBps) -> InterfaceDescriptor {
-    InterfaceDescriptor {
-        id,
+    defaults_for_bitrate(bitrate)
+        .configured(ConfiguredInterfacePolicy::default())
+        .descriptor(id)
+}
+
+pub fn defaults_for_bitrate(bitrate: BitrateBps) -> InterfaceDefaults {
+    InterfaceDefaults {
         capabilities: InterfaceCapabilities {
             ingress: IngressCapability::Enabled,
             egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
         },
         mode: InterfaceMode::Full,
         bitrate,
-        hardware_mtu: Some(BLE_HW_MTU),
+        mtu: MtuPolicy::fixed(BLE_HW_MTU),
         announce_rate_limit: None,
         announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
         airtime_duty_cycle: None,

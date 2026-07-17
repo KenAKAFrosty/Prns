@@ -5,7 +5,7 @@
 //! reads it. This layer narrows that to what Prns can actually construct today, and is honest about
 //! the rest: an interface Prns has no medium for, or one missing a field it needs, becomes a
 //! [`DeferredInterface`] carrying *why* rather than being silently dropped; a setting Prns parses but
-//! cannot yet route into construction (mode, announce pacing) is recorded as an
+//! cannot yet route into construction (announce pacing and medium-specific options) is recorded as an
 //! [`UnappliedSetting`] on the interface that bears it. [`PlannedMedium`] holds only variants a host
 //! can stand up, so an unconstructable interface is unrepresentable as a plan member.
 //!
@@ -20,9 +20,21 @@ use prns_core::interface_discovery::{
     AutoConnectPolicy, DiscoverySourcePolicy, InterfaceDiscoveryPolicy, StampCost,
     DEFAULT_STAMP_COST,
 };
+use prns_core::interfaces::ax25_kiss::core as ax25_core;
 use prns_core::interfaces::ifac::IfacSize;
+use prns_core::interfaces::kiss::core as kiss_core;
+use prns_core::interfaces::pipe::core as pipe_core;
+use prns_core::interfaces::rnode::policy as rnode_policy;
+use prns_core::interfaces::serial::core as serial_core;
+use prns_core::interfaces::tcp::core as tcp_core;
 use prns_core::interfaces::tcp::core::TcpWireFraming;
-use prns_core::interfaces::InterfaceMode;
+use prns_core::interfaces::udp::core as udp_core;
+use prns_core::interfaces::wifi_auto::core as wifi_core;
+use prns_core::interfaces::{
+    BitrateBps, ConfiguredInterfacePolicy, EffectiveInterfacePolicy, InterfaceDefaults,
+    InterfaceMode, MtuBytes, MtuPolicy,
+};
+use prns_core::routing::links::MAX_LINK_MTU;
 use prns_core::units::DurationMillis;
 
 use crate::reference::{
@@ -56,16 +68,12 @@ pub enum SharedInstance {
     Disabled,
 }
 
-/// One interface a host can construct, with the settings construction honors today and a record of
-/// those it does not.
+/// One interface a host can construct, with one effective policy and a record of settings the
+/// current host backend does not yet honor.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlannedInterface {
     pub name: String,
-    /// The mode the interface should run in once mode plumbing reaches the host constructors. v1 does
-    /// not yet apply it; an explicitly configured mode is also recorded in [`Self::unapplied`].
-    pub mode: InterfaceMode,
-    /// The host's declared bitrate for this pipe. `None` lets construction pick the medium's default.
-    pub bitrate_bps: Option<u32>,
+    pub policy: EffectiveInterfacePolicy,
     pub access: InterfaceAccessPlan,
     pub medium: PlannedMedium,
     pub discovery: InterfaceDiscoveryPlan,
@@ -248,8 +256,6 @@ pub enum DeferReason {
 /// belongs to. Surfaced so the daemon can report it rather than silently ignore it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnappliedSetting {
-    /// An explicit `interface_mode`/`mode` (host constructors still pick the medium's fixed mode).
-    Mode(InterfaceMode),
     /// `announce_cap` egress pacing.
     AnnounceBandwidthCap,
     /// `announce_rate_target`/`_grace`/`_penalty` per-destination rate limiting.
@@ -316,15 +322,87 @@ fn plan_interface(interface: &ReferenceInterface) -> Result<PlannedInterface, De
     let medium = plan_medium(interface, &mut unapplied)?;
     let access = plan_access(interface, &medium)?;
     let discovery = plan_interface_discovery(interface, &medium);
+    let policy = effective_policy(interface, &medium, &discovery)?;
     Ok(PlannedInterface {
         name: interface.name.clone(),
-        mode: planned_mode(interface, &discovery),
-        bitrate_bps: interface.bitrate.map(clamp_bitrate),
+        policy,
         access,
         medium,
         discovery,
         unapplied,
     })
+}
+
+fn effective_policy(
+    interface: &ReferenceInterface,
+    medium: &PlannedMedium,
+    discovery: &InterfaceDiscoveryPlan,
+) -> Result<EffectiveInterfacePolicy, DeferReason> {
+    let bitrate = interface
+        .bitrate
+        .map(|bitrate| {
+            BitrateBps::new(bitrate).ok_or(DeferReason::InvalidSetting { key: "bitrate" })
+        })
+        .transpose()?;
+    let mtu = configured_mtu(interface)?;
+    Ok(
+        interface_defaults(medium)?.configured(ConfiguredInterfacePolicy {
+            mode: Some(planned_mode(interface, discovery)),
+            bitrate,
+            mtu,
+            ..ConfiguredInterfacePolicy::default()
+        }),
+    )
+}
+
+fn interface_defaults(medium: &PlannedMedium) -> Result<InterfaceDefaults, DeferReason> {
+    match medium {
+        PlannedMedium::AutoWifi { .. } => Ok(wifi_core::DEFAULTS),
+        PlannedMedium::TcpClient { .. }
+        | PlannedMedium::TcpServer { .. }
+        | PlannedMedium::Backbone { .. }
+        | PlannedMedium::BackboneClient { .. } => Ok(tcp_core::DEFAULTS),
+        PlannedMedium::Udp { .. } => Ok(udp_core::DEFAULTS),
+        PlannedMedium::Serial { baud, .. } => {
+            let bitrate = BitrateBps::new(u64::from(*baud))
+                .ok_or(DeferReason::InvalidSetting { key: "speed" })?;
+            Ok(serial_core::defaults_for_bitrate(bitrate))
+        }
+        PlannedMedium::Kiss { .. } => Ok(kiss_core::DEFAULTS),
+        PlannedMedium::Ax25Kiss { .. } => Ok(ax25_core::DEFAULTS),
+        PlannedMedium::Pipe { .. } => Ok(pipe_core::DEFAULTS),
+        PlannedMedium::Rnode {
+            bandwidth_hz,
+            spreading_factor,
+            coding_rate,
+            ..
+        } => {
+            let raw =
+                rnode_policy::nominal_bitrate_bps(*spreading_factor, *coding_rate, *bandwidth_hz);
+            let bitrate = BitrateBps::new(u64::from(raw)).ok_or(DeferReason::InvalidSetting {
+                key: "radio bitrate",
+            })?;
+            Ok(rnode_policy::defaults_for_bitrate(bitrate))
+        }
+    }
+}
+
+fn configured_mtu(interface: &ReferenceInterface) -> Result<Option<MtuPolicy>, DeferReason> {
+    let fixed_mtu = match &interface.params {
+        ReferenceParams::TcpClient { fixed_mtu, .. }
+        | ReferenceParams::TcpServer { fixed_mtu, .. } => *fixed_mtu,
+        _ => None,
+    };
+    fixed_mtu
+        .map(|fixed_mtu| {
+            if fixed_mtu > MAX_LINK_MTU {
+                return Err(DeferReason::InvalidSetting { key: "fixed_mtu" });
+            }
+            MtuBytes::new(fixed_mtu)
+                .map(MtuPolicy::Fixed)
+                .ok_or(DeferReason::InvalidSetting { key: "fixed_mtu" })
+        })
+        .transpose()
 }
 
 fn plan_interface_discovery(
@@ -537,7 +615,7 @@ fn plan_medium(
             kiss_framing,
             connect_timeout,
             max_reconnect_tries,
-            fixed_mtu,
+            fixed_mtu: _,
         } => {
             let host = target_host
                 .clone()
@@ -550,7 +628,6 @@ fn plan_medium(
                 "max_reconnect_tries",
                 max_reconnect_tries.is_some(),
             );
-            note_present(unapplied, "fixed_mtu", fixed_mtu.is_some());
             Ok(PlannedMedium::TcpClient {
                 host,
                 port,
@@ -568,7 +645,7 @@ fn plan_medium(
             port,
             prefer_ipv6,
             kiss_framing,
-            fixed_mtu,
+            fixed_mtu: _,
         } => {
             let listen_port =
                 listen_port.ok_or(DeferReason::MissingRequiredField { key: "listen_port" })?;
@@ -577,7 +654,6 @@ fn plan_medium(
             note_present(unapplied, "port", port.is_some());
             note_present(unapplied, "prefer_ipv6", prefer_ipv6.is_some());
             note_present(unapplied, "kiss_framing", kiss_framing.is_some());
-            note_present(unapplied, "fixed_mtu", fixed_mtu.is_some());
             Ok(PlannedMedium::TcpServer {
                 bind: format!("{ip}:{listen_port}"),
             })
@@ -832,9 +908,6 @@ fn pct_to_centi(percent: f64) -> u16 {
 
 fn common_unapplied(interface: &ReferenceInterface) -> Vec<UnappliedSetting> {
     let mut unapplied = Vec::new();
-    if let Some(mode) = interface.mode {
-        unapplied.push(UnappliedSetting::Mode(map_mode(mode)));
-    }
     if interface.announce_cap.is_some() {
         unapplied.push(UnappliedSetting::AnnounceBandwidthCap);
     }
@@ -862,10 +935,6 @@ fn map_mode(mode: ReferenceMode) -> InterfaceMode {
         ReferenceMode::Boundary => InterfaceMode::Boundary,
         ReferenceMode::Gateway => InterfaceMode::Gateway,
     }
-}
-
-fn clamp_bitrate(bitrate: u64) -> u32 {
-    bitrate.min(u32::MAX as u64) as u32
 }
 
 fn global_bool(globals: &BTreeMap<String, ReferenceValue>, key: &str, default: bool) -> bool {
@@ -1031,7 +1100,7 @@ mod tests {
                  height = 181.5\n",
         );
         let spine = named(&plan, "Spine");
-        assert_eq!(spine.mode, InterfaceMode::Gateway);
+        assert_eq!(spine.policy.mode, InterfaceMode::Gateway);
         let InterfaceDiscoveryPlan::Announce(announcement) = &spine.discovery else {
             panic!("spine should publish discovery announces");
         };
@@ -1071,7 +1140,7 @@ mod tests {
                  discoverable = Yes\n",
         );
         let radio = named(&plan, "Radio");
-        assert_eq!(radio.mode, InterfaceMode::AccessPoint);
+        assert_eq!(radio.policy.mode, InterfaceMode::AccessPoint);
         let InterfaceDiscoveryPlan::Announce(announcement) = &radio.discovery else {
             panic!("radio should publish discovery announces");
         };
@@ -1586,6 +1655,114 @@ mod tests {
                 baud: RNS_DEFAULT_SERIAL_BAUD,
             }
         );
+        assert_eq!(named(&plan, "Modem").policy.bitrate.get(), 9_600);
+    }
+
+    #[test]
+    fn traversed_network_defaults_share_the_500_mbps_policy() {
+        let plan = plan_of(
+            "[interfaces]\n\
+               [[Tcp]]\n\
+                 type = TCPClientInterface\n\
+                 enabled = Yes\n\
+                 target_host = example.com\n\
+                 target_port = 4242\n\
+               [[Udp]]\n\
+                 type = UDPInterface\n\
+                 enabled = Yes\n\
+                 listen_ip = 0.0.0.0\n\
+                 listen_port = 4242\n\
+                 forward_ip = 255.255.255.255\n\
+                 forward_port = 4242\n\
+               [[Backbone]]\n\
+                 type = BackboneInterface\n\
+                 enabled = Yes\n\
+                 listen_port = 4243\n",
+        );
+
+        let tcp = named(&plan, "Tcp");
+        assert_eq!(tcp.policy.bitrate.get(), 500_000_000);
+        assert_eq!(tcp.policy.mtu.resolve(tcp.policy.bitrate), Some(131_072));
+        let udp = named(&plan, "Udp");
+        assert_eq!(udp.policy.bitrate.get(), 500_000_000);
+        assert_eq!(
+            udp.policy.mtu.resolve(udp.policy.bitrate),
+            Some(prns_core::interfaces::udp::core::UDP_DATAGRAM_MAX)
+        );
+        let backbone = named(&plan, "Backbone");
+        assert_eq!(backbone.policy.bitrate.get(), 500_000_000);
+        assert_eq!(
+            backbone.policy.mtu.resolve(backbone.policy.bitrate),
+            Some(131_072)
+        );
+    }
+
+    #[test]
+    fn auto_wifi_keeps_its_gigabit_estimate_without_overpromising_its_datagram() {
+        let plan = plan_of("[interfaces]\n[[Wifi]]\ntype = AutoInterface\nenabled = Yes\n");
+        let wifi = named(&plan, "Wifi");
+
+        assert_eq!(wifi.policy.bitrate.get(), 1_000_000_000);
+        assert_eq!(
+            wifi.policy.mtu.resolve(wifi.policy.bitrate),
+            Some(prns_core::interfaces::wifi_auto::core::HARDWARE_MTU)
+        );
+    }
+
+    #[test]
+    fn configured_u64_bitrate_and_fixed_mtu_are_preserved_without_clamping() {
+        let plan = plan_of(
+            "[interfaces]\n\
+               [[Fast]]\n\
+                 type = TCPClientInterface\n\
+                 enabled = Yes\n\
+                 target_host = example.com\n\
+                 target_port = 4242\n\
+                 bitrate = 5000000000\n\
+                 fixed_mtu = 4096\n",
+        );
+        let fast = named(&plan, "Fast");
+
+        assert_eq!(fast.policy.bitrate.get(), 5_000_000_000);
+        assert_eq!(fast.policy.mtu.resolve(fast.policy.bitrate), Some(4_096));
+        assert!(!fast
+            .unapplied
+            .contains(&UnappliedSetting::MediumOption("fixed_mtu")));
+    }
+
+    #[test]
+    fn lower_rate_media_own_their_effective_estimates() {
+        let plan = plan_of(
+            "[interfaces]\n\
+               [[Serial]]\n\
+                 type = SerialInterface\n\
+                 enabled = Yes\n\
+                 port = /dev/ttyUSB0\n\
+                 speed = 115200\n\
+               [[Kiss]]\n\
+                 type = KISSInterface\n\
+                 enabled = Yes\n\
+                 port = /dev/ttyUSB1\n\
+                 speed = 9600\n\
+               [[Pipe]]\n\
+                 type = PipeInterface\n\
+                 enabled = Yes\n\
+                 command = example\n\
+               [[Radio]]\n\
+                 type = RNodeInterface\n\
+                 enabled = Yes\n\
+                 port = /dev/ttyUSB2\n\
+                 frequency = 868000000\n\
+                 bandwidth = 125000\n\
+                 txpower = 7\n\
+                 spreadingfactor = 8\n\
+                 codingrate = 5\n",
+        );
+
+        assert_eq!(named(&plan, "Serial").policy.bitrate.get(), 115_200);
+        assert_eq!(named(&plan, "Kiss").policy.bitrate.get(), 1_200);
+        assert_eq!(named(&plan, "Pipe").policy.bitrate.get(), 1_000_000);
+        assert_eq!(named(&plan, "Radio").policy.bitrate.get(), 3_125);
     }
 
     #[test]
@@ -1604,9 +1781,7 @@ mod tests {
                  kiss_framing = Yes\n",
         );
         let hub = named(&plan, "Hub");
-        assert!(hub
-            .unapplied
-            .contains(&UnappliedSetting::Mode(InterfaceMode::Gateway)));
+        assert_eq!(hub.policy.mode, InterfaceMode::Gateway);
         assert!(hub
             .unapplied
             .contains(&UnappliedSetting::AnnounceBandwidthCap));

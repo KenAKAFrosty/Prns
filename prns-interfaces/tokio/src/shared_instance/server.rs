@@ -8,7 +8,9 @@ use tokio::net::UnixListener;
 
 use crate::framed_stream;
 use prns_core::interfaces::shared_instance::core;
-use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
+use prns_core::interfaces::{
+    ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind,
+};
 use prns_runtime::reactor::airtime::AirtimeLedger;
 use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
@@ -23,6 +25,7 @@ pub struct LocalClientInterface<S> {
     id: InterfaceId,
     channel_tag: Vec<u8>,
     stream: Option<S>,
+    policy: EffectiveInterfacePolicy,
     status: TokioInterfaceStatus,
 }
 
@@ -33,11 +36,21 @@ impl<S> LocalClientInterface<S> {
     /// rejects a live collision loudly.
     #[must_use]
     pub fn new(channel_tag: Vec<u8>, stream: S) -> Self {
+        Self::with_policy(
+            channel_tag,
+            stream,
+            core::configured_policy(Default::default()),
+        )
+    }
+
+    #[must_use]
+    pub fn with_policy(channel_tag: Vec<u8>, stream: S, policy: EffectiveInterfacePolicy) -> Self {
         let id = InterfaceId::from_channel_tag(InterfaceKind::LocalClient, &channel_tag);
         Self {
             id,
             channel_tag,
             stream: Some(stream),
+            policy,
             status: TokioInterfaceStatus::new(id, ConnectionState::Connected),
         }
     }
@@ -62,7 +75,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for LocalClientInterface<S> {
     const KIND: InterfaceKind = InterfaceKind::LocalClient;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::descriptor(self.id)
+        core::descriptor(self.id, self.policy)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -95,7 +108,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for LocalClientInterface<S> {
                 status: &self.status,
                 airtime: &mut airtime,
                 throughput: &mut throughput,
-                bitrate: core::LOCAL_BITRATE_BPS,
+                bitrate: self.policy.bitrate,
                 started,
             },
         )
@@ -115,6 +128,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for LocalClientInterface<S> {
 pub struct LocalServer {
     channel_tag: Vec<u8>,
     bind_addr: String,
+    policy: EffectiveInterfacePolicy,
     #[cfg(target_os = "linux")]
     socket_path: Option<String>,
 }
@@ -122,6 +136,7 @@ pub struct LocalServer {
 pub(crate) struct BoundLocalServer {
     channel_tag: Vec<u8>,
     tcp_listener: TcpListener,
+    policy: EffectiveInterfacePolicy,
     #[cfg(target_os = "linux")]
     abstract_unix: BoundAbstractUnix,
 }
@@ -158,10 +173,17 @@ impl LocalServer {
         Self {
             channel_tag: bind_addr.clone().into_bytes(),
             bind_addr,
+            policy: core::configured_policy(Default::default()),
             #[cfg(target_os = "linux")]
             socket_path: (port == core::DEFAULT_LOCAL_PORT)
                 .then(|| core::DEFAULT_SOCKET_PATH.into()),
         }
+    }
+
+    #[must_use]
+    pub fn with_policy(mut self, policy: EffectiveInterfacePolicy) -> Self {
+        self.policy = policy;
+        self
     }
 
     /// Set the AF_UNIX `socket_path` to match an app configured with a non-default `local_socket_path`
@@ -199,6 +221,7 @@ impl LocalServer {
         Ok(BoundLocalServer {
             channel_tag: self.channel_tag,
             tcp_listener,
+            policy: self.policy,
             #[cfg(target_os = "linux")]
             abstract_unix,
         })
@@ -247,13 +270,15 @@ impl InterfaceSupervisor for BoundLocalServer {
 
     async fn run(self, fleet: Fleet) {
         let tcp_listener = self.tcp_listener;
+        let policy = self.policy;
         let tcp = async {
             loop {
                 if let Ok((stream, peer)) = tcp_listener.accept().await {
                     let _ = stream.set_nodelay(true);
-                    let _ = fleet.add(LocalClientInterface::new(
+                    let _ = fleet.add(LocalClientInterface::with_policy(
                         peer.to_string().into_bytes(),
                         stream,
+                        policy,
                     ));
                 }
             }
@@ -274,7 +299,7 @@ impl InterfaceSupervisor for BoundLocalServer {
                     if let Ok((stream, _peer)) = listener.accept().await {
                         nth = nth.wrapping_add(1);
                         let tag = std::format!("unix:{socket_path}#{nth}").into_bytes();
-                        let _ = fleet.add(LocalClientInterface::new(tag, stream));
+                        let _ = fleet.add(LocalClientInterface::with_policy(tag, stream, policy));
                     }
                 }
             };
@@ -330,6 +355,7 @@ mod tests {
         assert_eq!(descriptor.id, iface.id());
         assert_eq!(descriptor.mode, prns_core::interfaces::InterfaceMode::Full);
         assert_eq!(descriptor.bitrate, core::LOCAL_BITRATE_BPS);
+        assert_eq!(descriptor.hardware_mtu, Some(524_288));
     }
 
     #[cfg(target_os = "linux")]

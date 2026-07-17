@@ -261,6 +261,24 @@ fn parse_errors_on_an_uncoercible_value() {
 }
 
 #[test]
+fn bitrate_and_fixed_mtu_fail_with_their_operational_ranges() {
+    let errors = parse(
+        "[interfaces]\n\
+           [[Hub]]\n\
+             type = TCPClientInterface\n\
+             enabled = Yes\n\
+             bitrate = 4\n\
+             fixed_mtu = 0\n",
+    )
+    .unwrap_err();
+
+    assert_eq!(errors.len(), 2);
+    let rendered = errors.to_string();
+    assert!(rendered.contains("integer from 5 through 18446744073709551615 bps"));
+    assert!(rendered.contains("integer from 1 through 524288 bytes"));
+}
+
+#[test]
 fn digit_grouping_underscores_parse_like_python_int() {
     let config = parse(
         "[interfaces]\n\

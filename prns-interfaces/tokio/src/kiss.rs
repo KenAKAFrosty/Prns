@@ -7,7 +7,9 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use crate::framed_stream::{self, KissFraming};
 use prns_core::interfaces::kiss::core::{self, TncConfig};
 use prns_core::interfaces::kiss_framing;
-use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
+use prns_core::interfaces::{
+    ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind,
+};
 use prns_runtime::reactor::airtime::AirtimeLedger;
 use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
@@ -29,6 +31,7 @@ pub struct KissInterface<Open> {
     reconnect: Duration,
     settle: Duration,
     tnc: TncConfig,
+    policy: EffectiveInterfacePolicy,
     channel_tag: std::vec::Vec<u8>,
     status: TokioInterfaceStatus,
 }
@@ -58,6 +61,25 @@ impl<Open> KissInterface<Open> {
         tnc: TncConfig,
         channel_tag: &[u8],
     ) -> Self {
+        Self::with_settings_and_policy(
+            open,
+            reconnect,
+            settle,
+            tnc,
+            core::configured_policy(Default::default()),
+            channel_tag,
+        )
+    }
+
+    #[must_use]
+    pub fn with_settings_and_policy(
+        open: Open,
+        reconnect: Duration,
+        settle: Duration,
+        tnc: TncConfig,
+        policy: EffectiveInterfacePolicy,
+        channel_tag: &[u8],
+    ) -> Self {
         let channel_tag = channel_tag.to_vec();
         let id = InterfaceId::from_channel_tag(InterfaceKind::Kiss, &channel_tag);
         Self {
@@ -66,6 +88,7 @@ impl<Open> KissInterface<Open> {
             reconnect,
             settle,
             tnc,
+            policy,
             channel_tag,
             status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
         }
@@ -112,7 +135,7 @@ where
     const KIND: InterfaceKind = InterfaceKind::Kiss;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::descriptor(self.id)
+        core::descriptor(self.id, self.policy)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -120,7 +143,7 @@ where
     }
 
     async fn run<Seam: InterfaceSeam>(mut self, mut seam: Seam) {
-        let bitrate = core::descriptor(self.id).bitrate;
+        let bitrate = self.policy.bitrate;
         let mut airtime = AirtimeLedger::new();
         let mut throughput = ThroughputLedger::new();
         let started = tokio::time::Instant::now();

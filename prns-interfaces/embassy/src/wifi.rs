@@ -606,7 +606,7 @@ fn ingest_beacon<
     peer_on_secondary[slot] = on_secondary;
     status.member(slot).assign(id);
     status.republish_peer_count();
-    fleet.register_member(core::descriptor(id, bitrate));
+    fleet.register_member(core::descriptor(id, core::policy_for_bitrate(bitrate)));
 }
 
 fn route_inbound<

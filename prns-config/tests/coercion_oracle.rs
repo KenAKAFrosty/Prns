@@ -48,10 +48,14 @@ fn coerced_bool(scalar: &str) -> Result<bool, ()> {
 
 fn coerced_u64(scalar: &str) -> Result<u64, ()> {
     let config = format!(
-        "[interfaces]\n[[H]]\ntype = TCPClientInterface\nenabled = Yes\nbitrate = {scalar}\n"
+        "[interfaces]\n[[H]]\ntype = TCPClientInterface\nenabled = Yes\nannounce_rate_target = {scalar}\n"
     );
     match reference::parse(&config) {
-        Ok(parsed) => parsed.interfaces.first().and_then(|i| i.bitrate).ok_or(()),
+        Ok(parsed) => parsed
+            .interfaces
+            .first()
+            .and_then(|i| i.announce_rate_target)
+            .ok_or(()),
         Err(_) => Err(()),
     }
 }

@@ -4,13 +4,14 @@ pub(super) enum ValueKind {
     Mode,
     String,
     List,
+    Bitrate,
+    LinkMtu,
     U64,
     U32,
     U16,
     U8,
     I16,
     I64,
-    Usize,
     F64,
     StampCost,
     IdentityHashes,
@@ -28,13 +29,14 @@ impl ValueKind {
             }
             ValueKind::String => "one scalar value",
             ValueKind::List => "one value or a comma-separated list",
+            ValueKind::Bitrate => "an integer from 5 through 18446744073709551615 bps",
+            ValueKind::LinkMtu => "an integer from 1 through 524288 bytes",
             ValueKind::U64 => "a non-negative integer",
             ValueKind::U32 => "an integer from 0 through 4294967295",
             ValueKind::U16 => "an integer from 0 through 65535",
             ValueKind::U8 => "an integer from 0 through 255",
             ValueKind::I16 => "an integer from -32768 through 32767",
             ValueKind::I64 => "a signed 64-bit integer",
-            ValueKind::Usize => "a non-negative integer supported by this platform",
             ValueKind::F64 => "a number",
             ValueKind::StampCost => "0 for the default, or an integer from 1 through 255",
             ValueKind::IdentityHashes => {
@@ -52,7 +54,9 @@ impl ValueKind {
             ValueKind::Mode => "full",
             ValueKind::String => "value",
             ValueKind::List => "first, second",
-            ValueKind::U64 | ValueKind::U32 | ValueKind::Usize => "1000000",
+            ValueKind::Bitrate => "500000000",
+            ValueKind::LinkMtu => "131072",
+            ValueKind::U64 | ValueKind::U32 => "1000000",
             ValueKind::U16 => "4242",
             ValueKind::U8 => "8",
             ValueKind::I16 | ValueKind::I64 => "0",
@@ -87,7 +91,7 @@ pub(super) const GLOBAL_RULES: &[(&str, ValueKind)] = &[
     ("enable_remote_management", ValueKind::Bool),
     ("remote_management_allowed", ValueKind::IdentityHashes),
     ("respond_to_probes", ValueKind::Bool),
-    ("force_shared_instance_bitrate", ValueKind::U64),
+    ("force_shared_instance_bitrate", ValueKind::Bitrate),
     ("panic_on_interface_error", ValueKind::Bool),
     ("use_implicit_proof", ValueKind::Bool),
     ("discover_interfaces", ValueKind::Bool),
@@ -149,7 +153,8 @@ pub(super) fn interface_key_rule(
         | "recursive_prs"
         | "announces_from_internal"
         | "ignore_config_warnings" => Some(KeyRule::Validate(ValueKind::Bool)),
-        "bitrate" | "announce_rate_target" | "announce_rate_grace" | "announce_rate_penalty" => {
+        "bitrate" => Some(KeyRule::Validate(ValueKind::Bitrate)),
+        "announce_rate_target" | "announce_rate_grace" | "announce_rate_penalty" => {
             Some(KeyRule::Validate(ValueKind::U64))
         }
         "announce_cap"
@@ -201,7 +206,7 @@ pub(super) fn interface_key_rule(
         }
         ("TCPClientInterface", "connect_timeout") => Some(KeyRule::Validate(ValueKind::U64)),
         ("TCPClientInterface", "max_reconnect_tries") => Some(KeyRule::Validate(ValueKind::U32)),
-        ("TCPClientInterface", "fixed_mtu") => Some(KeyRule::Validate(ValueKind::Usize)),
+        ("TCPClientInterface", "fixed_mtu") => Some(KeyRule::Validate(ValueKind::LinkMtu)),
         ("TCPServerInterface", "listen_ip" | "device") => {
             Some(KeyRule::Validate(ValueKind::String))
         }
@@ -209,7 +214,7 @@ pub(super) fn interface_key_rule(
         ("TCPServerInterface", "prefer_ipv6" | "i2p_tunneled" | "kiss_framing") => {
             Some(KeyRule::Validate(ValueKind::Bool))
         }
-        ("TCPServerInterface", "fixed_mtu") => Some(KeyRule::Validate(ValueKind::Usize)),
+        ("TCPServerInterface", "fixed_mtu") => Some(KeyRule::Validate(ValueKind::LinkMtu)),
         ("UDPInterface", "listen_ip" | "forward_ip" | "device") => {
             Some(KeyRule::Validate(ValueKind::String))
         }

@@ -675,13 +675,26 @@ fn normalized_value(value: &Value, kind: ValueKind) -> Result<String, ()> {
         .to_string(),
         ValueKind::String => text.to_string(),
         ValueKind::List => unreachable!("list values return before scalar coercion"),
+        ValueKind::Bitrate => {
+            let value = parse_integer::<u64>(text)?;
+            if value < prns_core::interfaces::BitrateBps::MINIMUM {
+                return Err(());
+            }
+            value.to_string()
+        }
+        ValueKind::LinkMtu => {
+            let value = parse_integer::<usize>(text)?;
+            if !(1..=prns_core::routing::links::MAX_LINK_MTU).contains(&value) {
+                return Err(());
+            }
+            value.to_string()
+        }
         ValueKind::U64 => parse_integer::<u64>(text)?.to_string(),
         ValueKind::U32 => parse_integer::<u32>(text)?.to_string(),
         ValueKind::U16 => parse_integer::<u16>(text)?.to_string(),
         ValueKind::U8 => parse_integer::<u8>(text)?.to_string(),
         ValueKind::I16 => parse_integer::<i16>(text)?.to_string(),
         ValueKind::I64 => parse_integer::<i64>(text)?.to_string(),
-        ValueKind::Usize => parse_integer::<usize>(text)?.to_string(),
         ValueKind::F64 => parse_float(text)?.to_string(),
         ValueKind::StampCost => {
             let value = parse_integer::<i64>(text)?;

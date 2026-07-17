@@ -9,15 +9,16 @@
 
 use crate::interfaces::kiss_framing::{self, KissCommandDecoder, FEND};
 use crate::interfaces::lora::core::SpreadingFactor;
+pub use crate::interfaces::rnode::policy::{
+    defaults_for_bitrate, nominal_bitrate_bps, policy_for_bitrate, RNODE_HW_MTU,
+};
 use crate::interfaces::{
-    AnnounceBandwidthCap, BitrateBps, EgressCapability, IngressCapability, InterfaceCapabilities,
-    InterfaceDescriptor, InterfaceId, InterfaceMode, PacketPhyStats, RssiDbm, SnrQuarterDb,
-    TransportCapability,
+    EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, PacketPhyStats, RssiDbm,
+    SnrQuarterDb,
 };
 
 /// RNS `RNodeInterface.HW_MTU` — the device's on-air payload ceiling and the read loop's data-frame
 /// bound (`len(data_buffer) < self.HW_MTU`).
-pub const RNODE_HW_MTU: usize = 508;
 pub const READ_BUF_LEN: usize = 256;
 /// The deframer's payload ceiling: the hardware MTU plus the access tag a frame may carry.
 pub const RNODE_FRAME_LEN: usize = RNODE_HW_MTU + crate::interfaces::ifac::IFAC_MAX_SIZE;
@@ -94,17 +95,6 @@ const FRAME_SCRATCH: usize = kiss_framing::max_encoded_len(4);
 /// The on-air bitrate of a LoRa link, RNS `updateBitrate`:
 /// `sf * ((4/cr) / (2^sf / (bw/1000))) * 1000`, which reduces to `(sf * 4 * bw) / (cr * 2^sf)`.
 /// Returns 0 for a degenerate `sf`/`cr` of zero (validation rules those out for a real config).
-#[must_use]
-pub const fn nominal_bitrate_bps(spreading_factor: u8, coding_rate: u8, bandwidth_hz: u32) -> u32 {
-    let sf = spreading_factor as u64;
-    let cr = coding_rate as u64;
-    let bw = bandwidth_hz as u64;
-    if sf == 0 || cr == 0 {
-        return 0;
-    }
-    ((sf * bw * 4) / ((1u64 << sf) * cr)) as u32
-}
-
 /// A radio configuration past construction-time range validation, ready to write to a device.
 /// Frequency and bandwidth are whole Hz, TX power dBm, coding rate the `4/n` denominator; the
 /// airtime locks stay pre-scaled as RNS's wire `int(percent * 100)` so encode is integer-only.
@@ -373,20 +363,8 @@ fn be_u32(payload: &[u8]) -> Option<u32> {
 
 /// The engine's view of an RNode link: a full-duplex LoRa radio that can repeat traffic out
 /// its own interface, carrying its computed on-air bitrate and the 508-byte hardware MTU.
-pub fn descriptor(id: InterfaceId, bitrate: BitrateBps) -> InterfaceDescriptor {
-    InterfaceDescriptor {
-        id,
-        capabilities: InterfaceCapabilities {
-            ingress: IngressCapability::Enabled,
-            egress: EgressCapability::Enabled(TransportCapability::SameInterfaceRepeat),
-        },
-        mode: InterfaceMode::Full,
-        bitrate,
-        hardware_mtu: Some(RNODE_HW_MTU),
-        announce_rate_limit: None,
-        announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
-        airtime_duty_cycle: None,
-    }
+pub fn descriptor(id: InterfaceId, policy: EffectiveInterfacePolicy) -> InterfaceDescriptor {
+    policy.descriptor(id)
 }
 
 #[cfg(test)]
@@ -591,10 +569,13 @@ mod tests {
 
     #[test]
     fn the_descriptor_is_a_repeating_full_radio_at_the_rnode_mtu() {
-        use crate::interfaces::INTERFACE_ID_LEN;
+        use crate::interfaces::{
+            BitrateBps, EgressCapability, InterfaceMode, TransportCapability, INTERFACE_ID_LEN,
+        };
+        let bitrate = BitrateBps::guess(3125);
         let d = descriptor(
             InterfaceId::new([0x5C; INTERFACE_ID_LEN]),
-            BitrateBps::guess(3125),
+            policy_for_bitrate(bitrate),
         );
         assert!(matches!(d.mode, InterfaceMode::Full));
         assert_eq!(
@@ -602,6 +583,6 @@ mod tests {
             EgressCapability::Enabled(TransportCapability::SameInterfaceRepeat)
         );
         assert_eq!(d.hardware_mtu, Some(RNODE_HW_MTU));
-        assert_eq!(d.bitrate, BitrateBps::guess(3125));
+        assert_eq!(d.bitrate, bitrate);
     }
 }

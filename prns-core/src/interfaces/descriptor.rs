@@ -15,7 +15,7 @@ pub struct InterfaceDescriptor {
 /// RNS 1.3.5 `Interface.optimise_mtu`: the hardware MTU an interface declares
 /// for its bitrate tier. What a link actually negotiates is this clamped by
 /// the engine's `MAX_LINK_MTU`.
-pub const fn hardware_mtu_for_bitrate(bitrate_bps: u32) -> Option<usize> {
+pub const fn hardware_mtu_for_bitrate(bitrate_bps: u64) -> Option<usize> {
     match bitrate_bps {
         1_000_000_000.. => Some(524_288),
         750_000_001.. => Some(262_144),
@@ -85,7 +85,7 @@ impl AnnounceBandwidthCap {
                     return 0;
                 }
                 (announce_bytes as u64).saturating_mul(8_000_000)
-                    / (u64::from(bitrate.get()).saturating_mul(cap_per_mille as u64))
+                    / (bitrate.get().saturating_mul(cap_per_mille as u64))
             }
         }
     }
@@ -97,7 +97,7 @@ mod tests {
 
     const TYPICAL_ANNOUNCE_BYTES: usize = 167;
 
-    fn bitrate(bps: u32) -> BitrateBps {
+    fn bitrate(bps: u64) -> BitrateBps {
         BitrateBps::new(bps).expect("test bitrate above the floor")
     }
 

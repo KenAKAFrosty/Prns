@@ -12,7 +12,7 @@ const AIRTIME_SHORT_WINDOW_MS: u64 = SHORT_BUCKET_MS * SHORT_BUCKETS as u64;
 const AIRTIME_LONG_WINDOW_MS: u64 = LONG_BUCKET_MS * LONG_BUCKETS as u64;
 
 pub fn frame_airtime_us(frame_bytes: usize, bitrate: BitrateBps) -> u64 {
-    (frame_bytes as u64).saturating_mul(8_000_000) / u64::from(bitrate.get())
+    (frame_bytes as u64).saturating_mul(8_000_000) / bitrate.get()
 }
 
 pub struct AirtimeLedger {

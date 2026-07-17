@@ -6,7 +6,9 @@ use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::framed_stream;
 use prns_core::interfaces::serial::core;
-use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
+use prns_core::interfaces::{
+    ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind,
+};
 use prns_runtime::reactor::airtime::AirtimeLedger;
 use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
@@ -20,6 +22,7 @@ pub struct SerialInterface<Open> {
     id: InterfaceId,
     open: Open,
     reconnect: Duration,
+    policy: EffectiveInterfacePolicy,
     channel_tag: std::vec::Vec<u8>,
     status: TokioInterfaceStatus,
 }
@@ -31,12 +34,28 @@ impl<Open> SerialInterface<Open> {
     /// reopen should pass the same, so its routes survive the reconnect.
     #[must_use]
     pub fn new(open: Open, reconnect: Duration, channel_tag: &[u8]) -> Self {
+        Self::with_policy(
+            open,
+            reconnect,
+            core::policy_for_bitrate(core::SERIAL_BITRATE_BPS),
+            channel_tag,
+        )
+    }
+
+    #[must_use]
+    pub fn with_policy(
+        open: Open,
+        reconnect: Duration,
+        policy: EffectiveInterfacePolicy,
+        channel_tag: &[u8],
+    ) -> Self {
         let channel_tag = channel_tag.to_vec();
         let id = InterfaceId::from_channel_tag(InterfaceKind::Serial, &channel_tag);
         Self {
             id,
             open,
             reconnect,
+            policy,
             channel_tag,
             status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
         }
@@ -67,7 +86,7 @@ where
     const KIND: InterfaceKind = InterfaceKind::Serial;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::descriptor(self.id)
+        core::descriptor(self.id, self.policy)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -75,7 +94,7 @@ where
     }
 
     async fn run<Seam: InterfaceSeam>(mut self, mut seam: Seam) {
-        let bitrate = core::descriptor(self.id).bitrate;
+        let bitrate = self.policy.bitrate;
         let mut airtime = AirtimeLedger::new();
         let mut throughput = ThroughputLedger::new();
         let started = tokio::time::Instant::now();

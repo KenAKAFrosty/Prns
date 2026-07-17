@@ -16,8 +16,8 @@ use prns_core::engine::InstantMillis;
 use prns_core::interfaces::wifi_auto::core;
 use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{
-    ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceStatus,
-    TransferRates,
+    ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind,
+    InterfaceStatus, TransferRates,
 };
 use prns_runtime::reactor::airtime::{frame_airtime_us, AirtimeLedger};
 use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
@@ -45,7 +45,7 @@ pub struct AutoWifiPeer {
     socket: Arc<UdpSocket>,
     peer: SocketAddrV6,
     inbound: Receiver<std::vec::Vec<u8>>,
-    bitrate: BitrateBps,
+    policy: EffectiveInterfacePolicy,
     channel_tag: [u8; 16],
     status: TokioInterfaceStatus,
 }
@@ -59,6 +59,15 @@ impl AutoWifiPeer {
         inbound: Receiver<std::vec::Vec<u8>>,
         bitrate: BitrateBps,
     ) -> Self {
+        Self::with_policy(socket, peer, inbound, core::policy_for_bitrate(bitrate))
+    }
+
+    pub fn with_policy(
+        socket: Arc<UdpSocket>,
+        peer: SocketAddrV6,
+        inbound: Receiver<std::vec::Vec<u8>>,
+        policy: EffectiveInterfacePolicy,
+    ) -> Self {
         let channel_tag = peer.ip().octets();
         let id = InterfaceId::from_channel_tag(InterfaceKind::WifiPeer, &channel_tag);
         Self {
@@ -66,7 +75,7 @@ impl AutoWifiPeer {
             socket,
             peer,
             inbound,
-            bitrate,
+            policy,
             channel_tag,
             status: TokioInterfaceStatus::new(id, ConnectionState::Connected),
         }
@@ -87,7 +96,7 @@ impl Interface for AutoWifiPeer {
     const KIND: InterfaceKind = InterfaceKind::WifiPeer;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::descriptor(self.id, self.bitrate)
+        core::descriptor(self.id, self.policy)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -123,7 +132,7 @@ impl Interface for AutoWifiPeer {
                     let now = InstantMillis(started.elapsed().as_millis() as u64);
                     throughput.record_tx(now, sent as u64);
                     self.status.set_transfer_rates(throughput.rates());
-                    let frame_airtime = frame_airtime_us(sent, self.bitrate);
+                    let frame_airtime = frame_airtime_us(sent, self.policy.bitrate);
                     self.status.set_airtime(airtime.record_tx(now, frame_airtime));
                 }
             }
@@ -136,7 +145,7 @@ impl Interface for AutoWifiPeer {
 /// inbound beacons, and stands up an [`AutoWifiPeer`] member per confirmed peer, demuxing
 /// inbound datagrams back to each member by source. Attach with `handle.supervise(AutoWifi::new())`.
 pub struct AutoWifi {
-    bitrate: BitrateBps,
+    policy: EffectiveInterfacePolicy,
     status: AutoWifiStatus,
     mdns: Option<UnboundedReceiver<SocketAddr>>,
 }
@@ -144,14 +153,19 @@ pub struct AutoWifi {
 impl AutoWifi {
     #[must_use]
     pub fn new() -> Self {
-        Self::with_bitrate(core::WIFI_LAN_BITRATE_BPS)
+        Self::with_policy(core::configured_policy(Default::default()))
     }
 
     /// Declare a known pipe instead of the default wifi LAN bitrate; sets the members' announce pacing.
     #[must_use]
     pub fn with_bitrate(bitrate: BitrateBps) -> Self {
+        Self::with_policy(core::policy_for_bitrate(bitrate))
+    }
+
+    #[must_use]
+    pub fn with_policy(policy: EffectiveInterfacePolicy) -> Self {
         Self {
-            bitrate,
+            policy,
             status: AutoWifiStatus::new(InterfaceId::from_channel_tag(
                 InterfaceKind::AutoWifi,
                 core::GROUP_ID,
@@ -325,7 +339,7 @@ impl InterfaceSupervisor for AutoWifi {
             prefixes: local_prefixes(),
             fleet,
             data: sockets.as_ref().map(|s| s.data.clone()),
-            bitrate: self.bitrate,
+            policy: self.policy,
             status: self.status,
         };
         sup.dial_initial_gateways(&nics);
@@ -341,7 +355,7 @@ impl InterfaceSupervisor for AutoWifi {
         let mut rendezvous = TcpListener::bind(("0.0.0.0", core::TCP_RENDEZVOUS_PORT))
             .await
             .ok();
-        let mut loopback = bounce_to_local_core(&rendezvous, &sup.fleet, sup.bitrate);
+        let mut loopback = bounce_to_local_core(&rendezvous, &sup.fleet, sup.policy);
 
         loop {
             while !sup.status.is_enabled() {
@@ -354,10 +368,10 @@ impl InterfaceSupervisor for AutoWifi {
                     if let Ok((stream, peer)) = accepted {
                         if is_local_peer(peer.ip(), &sup.prefixes) {
                             tune(&stream);
-                            let connection = TcpServerConnection::new(
+                            let connection = TcpServerConnection::with_policy(
                                 peer.to_string().into_bytes(),
                                 stream,
-                                sup.bitrate,
+                                sup.policy,
                             );
                             let status = connection.status();
                             let attached = sup.fleet.add(connection);
@@ -468,7 +482,7 @@ struct Supervisor {
     /// The shared UDP data socket each multicast-discovered member transmits on; `None` when the
     /// multicast plane is absent, which is exactly when no member is ever spawned.
     data: Option<Arc<UdpSocket>>,
-    bitrate: BitrateBps,
+    policy: EffectiveInterfacePolicy,
     status: AutoWifiStatus,
 }
 
@@ -500,7 +514,7 @@ impl Supervisor {
         };
         let (inbound_tx, inbound_rx) = mpsc::channel(PEER_INBOUND_DEPTH);
         let peer = SocketAddrV6::new(addr, core::DEFAULT_DATA_PORT, 0, scope);
-        let member = AutoWifiPeer::new(data, peer, inbound_rx, self.bitrate);
+        let member = AutoWifiPeer::with_policy(data, peer, inbound_rx, self.policy);
         let status = member.status();
         let attached = self.fleet.add(member);
         crate::diagnostic_log::debug!("wifi-auto: peer {addr}%{scope} discovered over multicast");
@@ -564,7 +578,8 @@ impl Supervisor {
             return;
         }
         crate::diagnostic_log::debug!("wifi-auto: dialing mDNS rendezvous {target}");
-        let client = TcpClientInterface::new(target.to_string(), self.bitrate, RENDEZVOUS_REDIAL);
+        let client =
+            TcpClientInterface::with_policy(target.to_string(), self.policy, RENDEZVOUS_REDIAL);
         let status = client.status();
         let attached = self.fleet.add(client);
         self.mdns_dials
@@ -643,7 +658,7 @@ impl Supervisor {
             crate::diagnostic_log::debug!(
                 "wifi-auto: dialing gateway rendezvous {target} on ifindex {index}"
             );
-            let client = TcpClientInterface::new(target, self.bitrate, RENDEZVOUS_REDIAL);
+            let client = TcpClientInterface::with_policy(target, self.policy, RENDEZVOUS_REDIAL);
             let status = client.status();
             let attached = self.fleet.add(client);
             self.gateways.insert(
@@ -836,13 +851,17 @@ fn gateway_for(ifaces: &[netdev::Interface], index: u32) -> Option<IpAddr> {
 fn bounce_to_local_core(
     rendezvous: &Option<TcpListener>,
     fleet: &Fleet,
-    bitrate: BitrateBps,
+    policy: EffectiveInterfacePolicy,
 ) -> Option<AttachedInterface> {
     if rendezvous.is_some() {
         return None;
     }
     let target = std::format!("127.0.0.1:{}", core::TCP_RENDEZVOUS_PORT);
-    Some(fleet.add(TcpClientInterface::new(target, bitrate, RENDEZVOUS_REDIAL)))
+    Some(fleet.add(TcpClientInterface::with_policy(
+        target,
+        policy,
+        RENDEZVOUS_REDIAL,
+    )))
 }
 
 /// Accept on the rendezvous listener when there is one, otherwise stay pending forever — so the
@@ -1120,10 +1139,29 @@ mod tests {
             prefixes: std::vec::Vec::new(),
             fleet,
             data: Some(Arc::new(UdpSocket::from_std(data).expect("into tokio"))),
-            bitrate: core::WIFI_LAN_BITRATE_BPS,
+            policy: core::configured_policy(Default::default()),
             status: AutoWifiStatus::new(id),
         };
         (sup, guard)
+    }
+
+    #[tokio::test]
+    async fn a_peer_inherits_the_auto_wifi_effective_policy() {
+        let socket = Arc::new(UdpSocket::bind("[::1]:0").await.unwrap());
+        let (_inbound_tx, inbound_rx) = mpsc::channel(1);
+        let policy = core::configured_policy(prns_core::interfaces::ConfiguredInterfacePolicy {
+            mode: Some(prns_core::interfaces::InterfaceMode::Gateway),
+            bitrate: Some(BitrateBps::guess(900_000_000)),
+            ..prns_core::interfaces::ConfiguredInterfacePolicy::default()
+        });
+        let peer = AutoWifiPeer::with_policy(
+            socket,
+            SocketAddrV6::new(Ipv6Addr::LOCALHOST, 1, 0, 0),
+            inbound_rx,
+            policy,
+        );
+
+        assert_eq!(peer.descriptor(), policy.descriptor(peer.id()));
     }
 
     #[tokio::test]

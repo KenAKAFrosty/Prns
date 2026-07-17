@@ -10,7 +10,7 @@ use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::interfaces::udp::core::UDP_BITRATE_GUESS_BPS;
+use personal_rns::interfaces::udp::core::UDP_BITRATE_ESTIMATE;
 use personal_rns::routes;
 use personal_rns::routing::request_handlers::RequestPathHash;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
@@ -72,10 +72,10 @@ async fn a_link_establishes_and_carries_data_across_two_nodes_over_udp() {
         .expect("the test destination name is valid");
 
     let (addr_a, addr_b) = two_free_udp_ports().await.expect("probes two free ports");
-    let udp_a = UdpInterface::bind(addr_a, addr_b, UDP_BITRATE_GUESS_BPS)
+    let udp_a = UdpInterface::bind(addr_a, addr_b, UDP_BITRATE_ESTIMATE)
         .await
         .expect("binds the responder socket");
-    let udp_b = UdpInterface::bind(addr_b, addr_a, UDP_BITRATE_GUESS_BPS)
+    let udp_b = UdpInterface::bind(addr_b, addr_a, UDP_BITRATE_ESTIMATE)
         .await
         .expect("binds the initiator socket");
 
