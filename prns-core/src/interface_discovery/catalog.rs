@@ -1,12 +1,12 @@
-use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use core::num::NonZeroU64;
 
+use crate::storage::TablePushError;
 use crate::units::InstantMillis;
 
 use super::{
     discovered_interface_status, DiscoveredInterface, DiscoveredInterfaceId,
-    DiscoveredInterfaceStatus,
+    DiscoveredInterfaceStatus, DiscoveryCatalogTable, HeapDiscoveryCatalogTable,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -87,32 +87,83 @@ pub enum DiscoveryCatalogUpdate {
     },
 }
 
-#[derive(Debug, Default)]
-pub struct DiscoveryCatalog {
-    records: BTreeMap<DiscoveredInterfaceId, DiscoveryRecord>,
-}
-
-impl DiscoveryCatalog {
-    pub const fn new() -> Self {
-        Self {
-            records: BTreeMap::new(),
+impl DiscoveryCatalogUpdate {
+    pub const fn id(self) -> DiscoveredInterfaceId {
+        match self {
+            Self::Added { id }
+            | Self::Refreshed { id, .. }
+            | Self::IgnoredOutOfOrder { id, .. } => id,
         }
     }
+}
 
-    pub fn observe(&mut self, interface: DiscoveredInterface) -> DiscoveryCatalogUpdate {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiscoveryCatalogStoreError {
+    CapacityReached(DiscoveredInterfaceId),
+}
+
+impl core::fmt::Display for DiscoveryCatalogStoreError {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::CapacityReached(id) => write!(
+                formatter,
+                "discovery catalog has no capacity for record {:?}",
+                id.as_bytes()
+            ),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for DiscoveryCatalogStoreError {}
+
+#[derive(Debug)]
+pub struct DiscoveryCatalog<T: DiscoveryCatalogTable = HeapDiscoveryCatalogTable> {
+    records: T,
+}
+
+impl<T: DiscoveryCatalogTable> Default for DiscoveryCatalog<T> {
+    fn default() -> Self {
+        Self {
+            records: T::default(),
+        }
+    }
+}
+
+impl DiscoveryCatalog<HeapDiscoveryCatalogTable> {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl<T: DiscoveryCatalogTable> DiscoveryCatalog<T> {
+    pub fn with_table(records: T) -> Self {
+        Self { records }
+    }
+
+    pub fn observe(
+        &mut self,
+        interface: DiscoveredInterface,
+    ) -> Result<DiscoveryCatalogUpdate, DiscoveryCatalogStoreError> {
         let id = interface.id;
-        let Some(record) = self.records.get_mut(&id) else {
-            self.records.insert(id, DiscoveryRecord::first(interface));
-            return DiscoveryCatalogUpdate::Added { id };
+        let Some(record) = self.records.get_mut(id) else {
+            let previous = self
+                .records
+                .try_insert(id, DiscoveryRecord::first(interface))
+                .map_err(|TablePushError::TableFull| {
+                    DiscoveryCatalogStoreError::CapacityReached(id)
+                })?;
+            debug_assert!(previous.is_none());
+            return Ok(DiscoveryCatalogUpdate::Added { id });
         };
         let received_at = interface.provenance.received_at;
         let last_heard = record.last_heard();
         if received_at < last_heard {
-            return DiscoveryCatalogUpdate::IgnoredOutOfOrder {
+            return Ok(DiscoveryCatalogUpdate::IgnoredOutOfOrder {
                 id,
                 received_at,
                 last_heard,
-            };
+            });
         }
         let refresh = if record.interface.advertisement == interface.advertisement {
             DiscoveryCatalogRefresh::AdvertisementUnchanged
@@ -121,19 +172,19 @@ impl DiscoveryCatalog {
         };
         record.interface = interface;
         record.observation_count.increment();
-        DiscoveryCatalogUpdate::Refreshed { id, refresh }
+        Ok(DiscoveryCatalogUpdate::Refreshed { id, refresh })
     }
 
     pub fn get(&self, id: DiscoveredInterfaceId) -> Option<&DiscoveryRecord> {
-        self.records.get(&id)
+        self.records.get(id)
     }
 
-    pub fn records(&self) -> impl Iterator<Item = &DiscoveryRecord> {
-        self.records.values()
+    pub fn records(&self) -> T::Records<'_> {
+        self.records.records()
     }
 
     pub fn ranked_records(&self, now: InstantMillis) -> Vec<&DiscoveryRecord> {
-        let mut records = self.records.values().collect::<Vec<_>>();
+        let mut records = self.records.records().collect::<Vec<_>>();
         records.sort_by(|left, right| {
             status_priority(right.status(now))
                 .cmp(&status_priority(left.status(now)))
@@ -146,15 +197,15 @@ impl DiscoveryCatalog {
 
     pub fn remove_expired(&mut self, now: InstantMillis) -> Vec<DiscoveryRecord> {
         let expired = self
-            .records
-            .iter()
-            .filter_map(|(id, record)| {
-                matches!(record.status(now), DiscoveredInterfaceStatus::Expired).then_some(*id)
+            .records()
+            .filter_map(|record| {
+                matches!(record.status(now), DiscoveredInterfaceStatus::Expired)
+                    .then_some(record.id())
             })
             .collect::<Vec<_>>();
         expired
             .into_iter()
-            .filter_map(|id| self.records.remove(&id))
+            .filter_map(|id| self.records.remove(id))
             .collect()
     }
 

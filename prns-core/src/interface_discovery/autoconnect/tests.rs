@@ -4,8 +4,8 @@ use super::*;
 use crate::identity::IdentityHash;
 use crate::interface_discovery::{
     generate_stamp, AutoConnectPolicy, DiscoveryAdvertisement, DiscoveryEnvelopeSecurity,
-    DiscoverySourcePolicy, GeographicLocation, PublishedIfac, StampCost, StampGeneration,
-    DEFAULT_STAMP_COST, DISCOVERY_UNKNOWN_AFTER,
+    DiscoverySourcePolicy, GeographicLocation, HeapDiscoveredEndpointSet, PublishedIfac, StampCost,
+    StampGeneration, DEFAULT_STAMP_COST, DISCOVERY_UNKNOWN_AFTER,
 };
 use crate::units::HopCount;
 
@@ -127,6 +127,14 @@ fn registry_with(endpoints: &[DiscoveredConnectionEndpointId]) -> DiscoveredConn
     registry
 }
 
+fn endpoint_set(endpoints: &[DiscoveredConnectionEndpointId]) -> HeapDiscoveredEndpointSet {
+    let mut set = HeapDiscoveredEndpointSet::default();
+    for endpoint in endpoints {
+        assert_eq!(set.try_insert(*endpoint), Ok(true));
+    }
+    set
+}
+
 #[test]
 fn endpoint_identity_matches_the_reference_hash_material() {
     assert_eq!(
@@ -182,7 +190,9 @@ fn startup_selection_is_bounded_ranked_deduplicated_and_type_safe() {
             now,
         ),
     ] {
-        catalog.observe(interface);
+        catalog
+            .observe(interface)
+            .expect("the growable catalog accepts every test record");
     }
 
     let active = DiscoveredConnectionRegistry::new();
@@ -191,7 +201,8 @@ fn startup_selection_is_bounded_ranked_deduplicated_and_type_safe() {
         &policy(2),
         DiscoveredConnectionSelection::Startup,
         now,
-        DiscoveredConnectionState::new(&active, &[]),
+        &active,
+        &endpoint_set(&[]),
     );
     assert_eq!(plans.len(), 2);
     assert_eq!(
@@ -228,36 +239,41 @@ fn startup_selection_is_bounded_ranked_deduplicated_and_type_safe() {
 fn configured_and_active_endpoints_block_duplicate_connections() {
     let now = InstantMillis(50_000);
     let mut catalog = DiscoveryCatalog::new();
-    catalog.observe(discovered(
-        1,
-        AdvertisedInterfaceType::Backbone,
-        true,
-        "one.example",
-        now,
-    ));
-    catalog.observe(discovered(
-        2,
-        AdvertisedInterfaceType::TcpServer,
-        true,
-        "two.example",
-        now,
-    ));
+    catalog
+        .observe(discovered(
+            1,
+            AdvertisedInterfaceType::Backbone,
+            true,
+            "one.example",
+            now,
+        ))
+        .expect("the growable catalog accepts the test record");
+    catalog
+        .observe(discovered(
+            2,
+            AdvertisedInterfaceType::TcpServer,
+            true,
+            "two.example",
+            now,
+        ))
+        .expect("the growable catalog accepts the test record");
     let active_endpoints = [DiscoveredConnectionEndpointId::for_endpoint(
         "one.example",
         4242,
     )];
     let active = registry_with(&active_endpoints);
-    let occupied = [DiscoveredConnectionEndpointId::for_endpoint(
+    let occupied = endpoint_set(&[DiscoveredConnectionEndpointId::for_endpoint(
         "two.example",
         4242,
-    )];
+    )]);
 
     assert!(plan_discovered_connections(
         &catalog,
         &policy(3),
         DiscoveredConnectionSelection::Startup,
         now,
-        DiscoveredConnectionState::new(&active, &occupied),
+        &active,
+        &occupied,
     )
     .is_empty());
     let no_active = DiscoveredConnectionRegistry::new();
@@ -266,7 +282,8 @@ fn configured_and_active_endpoints_block_duplicate_connections() {
         &InterfaceDiscoveryPolicy::Disabled,
         DiscoveredConnectionSelection::Startup,
         now,
-        DiscoveredConnectionState::new(&no_active, &[]),
+        &no_active,
+        &endpoint_set(&[]),
     )
     .is_empty());
 }
@@ -275,20 +292,24 @@ fn configured_and_active_endpoints_block_duplicate_connections() {
 fn refill_keeps_reserved_capacity_and_only_uses_available_records() {
     let now = InstantMillis(DISCOVERY_UNKNOWN_AFTER.0 + 10_000);
     let mut catalog = DiscoveryCatalog::new();
-    catalog.observe(discovered(
-        1,
-        AdvertisedInterfaceType::Backbone,
-        true,
-        "available.example",
-        now,
-    ));
-    catalog.observe(discovered(
-        2,
-        AdvertisedInterfaceType::Backbone,
-        true,
-        "unknown.example",
-        InstantMillis(1),
-    ));
+    catalog
+        .observe(discovered(
+            1,
+            AdvertisedInterfaceType::Backbone,
+            true,
+            "available.example",
+            now,
+        ))
+        .expect("the growable catalog accepts the test record");
+    catalog
+        .observe(discovered(
+            2,
+            AdvertisedInterfaceType::Backbone,
+            true,
+            "unknown.example",
+            InstantMillis(1),
+        ))
+        .expect("the growable catalog accepts the test record");
     let two_active_endpoints = [
         DiscoveredConnectionEndpointId::from_bytes([0xa1; 32]),
         DiscoveredConnectionEndpointId::from_bytes([0xa2; 32]),
@@ -306,7 +327,8 @@ fn refill_keeps_reserved_capacity_and_only_uses_available_records() {
         &policy(4),
         DiscoveredConnectionSelection::Refill,
         now,
-        DiscoveredConnectionState::new(&two_active, &[]),
+        &two_active,
+        &endpoint_set(&[]),
     );
     assert_eq!(refill.len(), 1);
     assert_eq!(
@@ -318,19 +340,21 @@ fn refill_keeps_reserved_capacity_and_only_uses_available_records() {
         &policy(4),
         DiscoveredConnectionSelection::Refill,
         now,
-        DiscoveredConnectionState::new(&three_active, &[]),
+        &three_active,
+        &endpoint_set(&[]),
     )
     .is_empty());
-    let available = [DiscoveredConnectionEndpointId::for_endpoint(
+    let available = endpoint_set(&[DiscoveredConnectionEndpointId::for_endpoint(
         "available.example",
         4242,
-    )];
+    )]);
     assert!(plan_discovered_connections(
         &catalog,
         &policy(4),
         DiscoveredConnectionSelection::Refill,
         now,
-        DiscoveredConnectionState::new(&two_active, &available),
+        &two_active,
+        &available,
     )
     .is_empty());
 }
@@ -340,13 +364,15 @@ fn newly_observed_selection_targets_only_that_record() {
     let now = InstantMillis(20_000);
     let mut catalog = DiscoveryCatalog::new();
     for id in [1, 2] {
-        catalog.observe(discovered(
-            id,
-            AdvertisedInterfaceType::Backbone,
-            true,
-            &alloc::format!("{id}.example"),
-            now,
-        ));
+        catalog
+            .observe(discovered(
+                id,
+                AdvertisedInterfaceType::Backbone,
+                true,
+                &alloc::format!("{id}.example"),
+                now,
+            ))
+            .expect("the growable catalog accepts every test record");
     }
 
     let active = DiscoveredConnectionRegistry::new();
@@ -355,7 +381,8 @@ fn newly_observed_selection_targets_only_that_record() {
         &policy(2),
         DiscoveredConnectionSelection::NewlyObserved(DiscoveredInterfaceId::from_bytes([2; 32])),
         now,
-        DiscoveredConnectionState::new(&active, &[]),
+        &active,
+        &endpoint_set(&[]),
     );
     assert_eq!(plans.len(), 1);
     assert_eq!(
@@ -409,6 +436,7 @@ fn connection_registry_enforces_uniqueness_and_detaches_at_the_exact_threshold()
             InstantMillis(1_000),
         ),
         DiscoveredConnectionTransition::Disconnected {
+            discovery: DiscoveredInterfaceId::from_bytes([1; 32]),
             interface: first_interface,
             since: InstantMillis(1_000),
         }
@@ -428,6 +456,7 @@ fn connection_registry_enforces_uniqueness_and_detaches_at_the_exact_threshold()
             InstantMillis(13_000),
         ),
         DiscoveredConnectionTransition::Reconnected {
+            discovery: DiscoveredInterfaceId::from_bytes([1; 32]),
             interface: first_interface,
         }
     );
@@ -438,6 +467,7 @@ fn connection_registry_enforces_uniqueness_and_detaches_at_the_exact_threshold()
             InstantMillis(14_000),
         ),
         DiscoveredConnectionTransition::Disconnected {
+            discovery: DiscoveredInterfaceId::from_bytes([1; 32]),
             interface: first_interface,
             since: InstantMillis(14_000),
         }
@@ -455,7 +485,7 @@ fn connection_registry_enforces_uniqueness_and_detaches_at_the_exact_threshold()
             disconnected_since: Some(InstantMillis(14_000)),
         })
     );
-    assert!(registry.is_empty());
+    assert_eq!(registry.active.len(), 0);
     assert_eq!(
         registry.observe_health(
             first_interface,

@@ -25,7 +25,15 @@ impl PreparedDiscovery {
             match &interface.medium {
                 PlannedMedium::TcpClient { host, port }
                 | PlannedMedium::BackboneClient { host, port } => {
-                    service.reserve_endpoint(host, *port);
+                    if let Err(error) = service.reserve_endpoint(host, *port) {
+                        tracing::error!(
+                            event = "interface_discovery_endpoint_reservation_failed",
+                            host,
+                            port,
+                            error = %error,
+                        );
+                        return None;
+                    }
                 }
                 PlannedMedium::AutoWifi { .. }
                 | PlannedMedium::TcpServer { .. }
@@ -82,6 +90,12 @@ fn trace_discovery_event(event: TokioDiscoveryEvent<'_>) {
                 event = "interface_discovery_rejected",
                 reason = ?rejection.kind(),
                 detail = ?rejection,
+            );
+        }
+        TokioDiscoveryEvent::CatalogStoreRejected(error) => {
+            tracing::warn!(
+                event = "interface_discovery_catalog_store_rejected",
+                error = %error,
             );
         }
         TokioDiscoveryEvent::CatalogUpdated { update, record } => {

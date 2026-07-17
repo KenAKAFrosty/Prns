@@ -75,29 +75,29 @@ fn observations_preserve_history_refresh_content_and_reject_time_regression() {
 
     assert_eq!(
         catalog.observe(discovered(1, InstantMillis(1_000), value, "one.example")),
-        DiscoveryCatalogUpdate::Added { id }
+        Ok(DiscoveryCatalogUpdate::Added { id })
     );
     assert_eq!(
         catalog.observe(discovered(1, InstantMillis(2_000), value, "one.example")),
-        DiscoveryCatalogUpdate::Refreshed {
+        Ok(DiscoveryCatalogUpdate::Refreshed {
             id,
             refresh: DiscoveryCatalogRefresh::AdvertisementUnchanged,
-        }
+        })
     );
     assert_eq!(
         catalog.observe(discovered(1, InstantMillis(3_000), value, "two.example")),
-        DiscoveryCatalogUpdate::Refreshed {
+        Ok(DiscoveryCatalogUpdate::Refreshed {
             id,
             refresh: DiscoveryCatalogRefresh::AdvertisementChanged,
-        }
+        })
     );
     assert_eq!(
         catalog.observe(discovered(1, InstantMillis(2_999), value, "old.example")),
-        DiscoveryCatalogUpdate::IgnoredOutOfOrder {
+        Ok(DiscoveryCatalogUpdate::IgnoredOutOfOrder {
             id,
             received_at: InstantMillis(2_999),
             last_heard: InstantMillis(3_000),
-        }
+        })
     );
 
     let record = catalog.get(id).expect("the observed interface remains");
@@ -145,7 +145,9 @@ fn ranking_is_status_then_stamp_then_recency_then_stable_id() {
         ),
         discovered(1, InstantMillis(now.0 - 200), high, "one.example"),
     ] {
-        catalog.observe(interface);
+        catalog
+            .observe(interface)
+            .expect("the growable catalog accepts every test record");
     }
 
     assert_eq!(
@@ -169,7 +171,9 @@ fn ranking_is_status_then_stamp_then_recency_then_stable_id() {
 fn expiry_removes_only_after_the_reference_boundary() {
     let value = stamp_value(1);
     let mut catalog = DiscoveryCatalog::new();
-    catalog.observe(discovered(1, InstantMillis(1_000), value, "one.example"));
+    catalog
+        .observe(discovered(1, InstantMillis(1_000), value, "one.example"))
+        .expect("the growable catalog accepts the test record");
 
     assert!(catalog
         .remove_expired(InstantMillis(1_000 + DISCOVERY_EXPIRES_AFTER.0))
