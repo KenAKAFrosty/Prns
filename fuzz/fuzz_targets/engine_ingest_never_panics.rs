@@ -30,6 +30,7 @@ fn interface_descriptor(id: InterfaceId) -> InterfaceDescriptor {
         announce_rate_limit: None,
         announce_bandwidth_cap: AnnounceBandwidthCap::Unlimited,
         airtime_duty_cycle: None,
+        common: prns_runtime::interfaces::InterfaceCommonPolicy::RNS_DEFAULT,
     }
 }
 

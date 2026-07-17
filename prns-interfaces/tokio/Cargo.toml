@@ -27,7 +27,7 @@ shlex = { version = "1", optional = true }
 tokio-serial = { version = "5.5", default-features = false, optional = true }
 serialport = { version = "4.9", optional = true }
 prns-core = { path = "../../prns-core", default-features = false, features = ["tokio-host"] }
-prns-runtime = { path = "../../prns-runtime/core", default-features = false, features = ["tokio-host"] }
+prns-runtime = { package = "prns-runtime-tokio", path = "../../prns-runtime/tokio", default-features = false }
 heapless = { version = "0.8", default-features = false }
 tokio = { version = "1", optional = true, default-features = false, features = ["rt", "macros", "sync", "time", "io-util"] }
 socket2 = { version = "0.6", optional = true, features = ["all"] }

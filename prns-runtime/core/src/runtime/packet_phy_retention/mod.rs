@@ -6,14 +6,16 @@ pub use impls::fixed::{
     fixed_packet_phy_retention, FixedPacketMetricStorage, FixedPacketPhyRetention,
 };
 
-#[cfg(feature = "tokio-host")]
-pub(super) use impls::heap::HeapPacketPhyRetention;
+#[cfg(feature = "alloc")]
+pub use impls::heap::{
+    HeapPacketMetricStorage, HeapPacketPhyRetention, RNS_1_3_8_PACKET_PHY_CAPACITY,
+};
 
 #[cfg(test)]
 mod tests {
     use super::core::{PacketMetricStorage, PacketPhyRetention};
     use super::impls::fixed::{fixed_packet_phy_retention, FixedPacketPhyRetention};
-    #[cfg(feature = "tokio-host")]
+    #[cfg(feature = "alloc")]
     use super::impls::heap::{HeapPacketPhyRetention, RNS_1_3_8_PACKET_PHY_CAPACITY};
     use crate::interfaces::{PacketPhyStats, RssiDbm, SignalQualityTenthsPercent, SnrQuarterDb};
     use crate::routing::dedup::{dedup_index_buckets, PacketHash};
@@ -159,7 +161,7 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "tokio-host")]
+    #[cfg(feature = "alloc")]
     #[test]
     fn heap_backend_obeys_the_shared_retention_contract() {
         assert_retention_contract(

@@ -204,7 +204,7 @@ fn run_node(
         let transport_secret = identity_secret_key.clone();
         let rpc_key = rpc_key_from_rns_identity(&reticulum_storage_dir(), &identity_secret_key[..]);
         let credentials = SharedInstanceCredentials {
-            rpc_key,
+            rpc_key: rpc_key.to_vec(),
             ..SharedInstanceCredentials::from_identity_secret(&identity_secret_key)
         };
 
@@ -299,7 +299,9 @@ fn run_node(
             _ => (None, None, None),
         };
 
-        tokio::spawn(SharedInstanceRpcCompat::tcp(credentials, rpc_port, handle.clone()).run());
+        tokio::spawn(
+            SharedInstanceRpcCompat::tcp(credentials.clone(), rpc_port, handle.clone()).run(),
+        );
         #[cfg(target_os = "linux")]
         {
             tokio::spawn(

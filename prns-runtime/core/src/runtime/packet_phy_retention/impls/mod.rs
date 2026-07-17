@@ -1,4 +1,4 @@
 pub(super) mod fixed;
 
-#[cfg(feature = "tokio-host")]
+#[cfg(feature = "alloc")]
 pub(super) mod heap;

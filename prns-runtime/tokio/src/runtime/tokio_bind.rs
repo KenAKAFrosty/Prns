@@ -2740,6 +2740,7 @@ mod tests {
                 announce_rate_limit: None,
                 announce_bandwidth_cap: crate::interfaces::AnnounceBandwidthCap::Unlimited,
                 airtime_duty_cycle: None,
+                common: crate::interfaces::InterfaceCommonPolicy::RNS_DEFAULT,
             }
         }
 

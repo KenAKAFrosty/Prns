@@ -1890,10 +1890,13 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 name = "personal-rns"
 version = "0.2.4"
 dependencies = [
+ "cfg-if",
  "prns-core",
  "prns-interfaces-embassy",
  "prns-interfaces-tokio",
  "prns-runtime",
+ "prns-runtime-embassy",
+ "prns-runtime-tokio",
 ]
 
 [[package]]
@@ -2015,7 +2018,7 @@ dependencies = [
  "log",
  "portable-atomic",
  "prns-core",
- "prns-runtime",
+ "prns-runtime-embassy",
  "trouble-host",
 ]
 
@@ -2034,7 +2037,7 @@ dependencies = [
  "prns-config",
  "prns-core",
  "prns-ffi",
- "prns-runtime",
+ "prns-runtime-tokio",
  "rmpv",
  "shlex 1.3.0",
  "socket2",
@@ -2047,17 +2050,36 @@ dependencies = [
 name = "prns-runtime"
 version = "0.2.4"
 dependencies = [
- "bzip2",
  "cfg-if",
+ "getrandom 0.2.17",
+ "heapless 0.8.0",
+ "prns-core",
+]
+
+[[package]]
+name = "prns-runtime-embassy"
+version = "0.2.4"
+dependencies = [
  "embassy-futures",
  "embassy-sync 0.8.0",
  "embassy-time",
- "futures-util",
- "getrandom 0.2.17",
  "heapless 0.8.0",
  "log",
  "portable-atomic",
  "prns-core",
+ "prns-runtime",
+]
+
+[[package]]
+name = "prns-runtime-tokio"
+version = "0.2.4"
+dependencies = [
+ "bzip2",
+ "futures-util",
+ "getrandom 0.2.17",
+ "heapless 0.8.0",
+ "prns-core",
+ "prns-runtime",
  "rtrb",
  "tokio",
  "tracing",

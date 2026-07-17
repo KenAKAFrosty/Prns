@@ -9,7 +9,7 @@ use crate::storage::StorageLayout;
 use crate::units::InstantMillis;
 use crate::wire::DestinationHash;
 
-use super::super::DestinationIdentityRetentionControlError;
+use super::DestinationIdentityRetentionControlError;
 
 pub enum DestinationIdentityRetentionHostCommand {
     MarkUsed {

@@ -10,6 +10,7 @@ for ws in \
   prnsd \
   prns-ffi \
   prns-wasm \
+  prns-runtime/tokio \
   prns-runtime/embassy \
   prns-interfaces/tokio \
   prns-interfaces/embassy \

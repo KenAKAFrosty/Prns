@@ -25,7 +25,7 @@ pub use prns_runtime::runtime::{
 };
 
 #[cfg(feature = "tokio-host")]
-pub use prns_runtime::runtime::{
+pub use prns_runtime_tokio::runtime::{
     AttachIntent, Attachable, AttachedInterface, AttachedSupervisor, Fleet, Prns, TokioPrnsHandle,
 };
 

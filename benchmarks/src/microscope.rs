@@ -199,7 +199,10 @@ impl ResourceCycle {
             responder,
             initiator_entropy: Splitmix(101),
             responder_entropy: Splitmix(202),
-            interfaces: vec![tcp_core::descriptor(WIRE, tcp_core::TCP_BITRATE_ESTIMATE)],
+            interfaces: vec![tcp_core::descriptor(
+                WIRE,
+                tcp_core::policy_for_bitrate(tcp_core::TCP_BITRATE_ESTIMATE),
+            )],
             destination,
             link_id: LinkId::new([0; 16]),
             payload: deterministic_payload(payload_len),
@@ -563,7 +566,10 @@ impl Cycle {
             .expect("registers the bench destination");
         let initiator =
             EngineState::<GrowableHeap>::new(Zeroizing::new([0x22; IDENTITY_SECRET_KEY_LEN]));
-        let interfaces = vec![tcp_core::descriptor(WIRE, tcp_core::TCP_BITRATE_ESTIMATE)];
+        let interfaces = vec![tcp_core::descriptor(
+            WIRE,
+            tcp_core::policy_for_bitrate(tcp_core::TCP_BITRATE_ESTIMATE),
+        )];
 
         let mut cycle = Self {
             initiator,
@@ -803,14 +809,23 @@ impl Forward {
             upstream_entropy: Splitmix(11),
             relay_entropy: Splitmix(22),
             initiator_entropy: Splitmix(33),
-            up_view: vec![tcp_core::descriptor(IF_UP, tcp_core::TCP_BITRATE_ESTIMATE)],
+            up_view: vec![tcp_core::descriptor(
+                IF_UP,
+                tcp_core::policy_for_bitrate(tcp_core::TCP_BITRATE_ESTIMATE),
+            )],
             relay_interfaces: vec![
-                tcp_core::descriptor(IF_UP, tcp_core::TCP_BITRATE_ESTIMATE),
-                tcp_core::descriptor(IF_DOWN, tcp_core::TCP_BITRATE_ESTIMATE),
+                tcp_core::descriptor(
+                    IF_UP,
+                    tcp_core::policy_for_bitrate(tcp_core::TCP_BITRATE_ESTIMATE),
+                ),
+                tcp_core::descriptor(
+                    IF_DOWN,
+                    tcp_core::policy_for_bitrate(tcp_core::TCP_BITRATE_ESTIMATE),
+                ),
             ],
             down_interfaces: vec![tcp_core::descriptor(
                 IF_DOWN,
-                tcp_core::TCP_BITRATE_ESTIMATE,
+                tcp_core::policy_for_bitrate(tcp_core::TCP_BITRATE_ESTIMATE),
             )],
             destination,
             payload: [0xCD; PAYLOAD_LEN],

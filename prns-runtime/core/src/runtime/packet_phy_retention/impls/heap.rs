@@ -1,5 +1,6 @@
 use core::num::NonZeroUsize;
 
+use alloc::vec::Vec;
 use prns_core::lemire_index::HeapLemireIndex;
 
 use crate::interfaces::{RssiDbm, SignalQualityTenthsPercent, SnrQuarterDb};
@@ -7,9 +8,9 @@ use crate::routing::dedup::PacketHash;
 
 use super::super::core::{PacketMetricStorage, PacketPhyRetention};
 
-pub(crate) const RNS_1_3_8_PACKET_PHY_CAPACITY: usize = 512;
+pub const RNS_1_3_8_PACKET_PHY_CAPACITY: usize = 512;
 
-pub(crate) struct HeapPacketMetricStorage<Metric, const CAPACITY: usize> {
+pub struct HeapPacketMetricStorage<Metric, const CAPACITY: usize> {
     packet_hashes: Vec<PacketHash>,
     metrics: Vec<Metric>,
     index: HeapLemireIndex,
@@ -72,7 +73,7 @@ impl<Metric: Copy, const CAPACITY: usize> PacketMetricStorage
     }
 }
 
-pub(crate) type HeapPacketPhyRetention = PacketPhyRetention<
+pub type HeapPacketPhyRetention = PacketPhyRetention<
     HeapPacketMetricStorage<RssiDbm, RNS_1_3_8_PACKET_PHY_CAPACITY>,
     HeapPacketMetricStorage<SnrQuarterDb, RNS_1_3_8_PACKET_PHY_CAPACITY>,
     HeapPacketMetricStorage<SignalQualityTenthsPercent, RNS_1_3_8_PACKET_PHY_CAPACITY>,

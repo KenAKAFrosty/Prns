@@ -52,7 +52,7 @@ impl Interface for AnnounceFlood {
     const KIND: InterfaceKind = InterfaceKind::Pipe;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        pipe_core::descriptor(self.id)
+        pipe_core::descriptor(self.id, pipe_core::configured_policy(Default::default()))
     }
 
     fn channel_tag(&self) -> &[u8] {

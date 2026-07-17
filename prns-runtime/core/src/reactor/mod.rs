@@ -18,12 +18,6 @@ pub mod timers;
 
 pub(crate) mod window_ring;
 
-cfg_if::cfg_if! {
-    if #[cfg(feature = "tokio-host")] {
-        pub mod impls;
-    }
-}
-
 /// The app's synchronous judgment seams, consulted inline on the reactor: RNS 1.3.5 `PROVE_APP` and `ACCEPT_APP`.
 pub struct AppDeciders<P, A>
 where

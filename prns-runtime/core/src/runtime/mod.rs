@@ -1,5 +1,4 @@
 mod command;
-mod destination_identity_retention;
 mod event;
 mod health;
 mod identity_blackhole;
@@ -32,45 +31,6 @@ cfg_if::cfg_if! {
 }
 
 cfg_if::cfg_if! {
-    if #[cfg(feature = "tokio-host")] {
-        mod byte_stream;
-        mod interface_store;
-        mod route_restore;
-        mod tokio_bind;
-        mod tokio_runner;
-
-        pub use crate::reactor::impls::tokio_reactor::{
-            CryptoPoolConfig, PersistedStateSnapshot, PoolWorkers, SelfRatchetSnapshot,
-            SelfRatchetsSnapshot,
-        };
-        pub use byte_stream::{ByteStreamReader, ByteStreamWriter, StreamId};
-        pub use interface_store::{InterfaceStore, Subscription};
-        pub use tokio_bind::{
-            boot_timeline_origin, AttachIntent, Attachable, AttachedInterface, AttachedSupervisor,
-            BlackholeSeedReport, DetachedFleet, FlushError, FlushMark, FlushReport,
-            InterfaceAttachmentMetadata, InterfaceSupervisor, DestinationIdentitySeedReport,
-            NonRoutingIdentityError, PrepareFlushError, PreparedFlush, RatchetSeedReport,
-            RegionFlush, ResourceReceipt,
-            ResourceReceiveError, ResourceSendError, RouteSeedProgress, RouteSeedReport,
-            SegmentCompression, SharedInstanceIdentityError, TokioPrnsHandle, TunnelSeedReport,
-        };
-        pub(crate) use destination_identity_retention::{
-            apply_destination_identity_retention_command, settle_destination_identity_retention,
-            DestinationIdentityRetentionHostCommand,
-        };
-        pub(crate) use identity_blackhole::{
-            apply_identity_blackhole_command, IdentityBlackholeHostCommand,
-        };
-    }
-}
-
-cfg_if::cfg_if! {
-    if #[cfg(feature = "tokio-host")] {
-        pub use tokio_bind::{Fleet, Prns};
-    }
-}
-
-cfg_if::cfg_if! {
     if #[cfg(feature = "runtime-metrics")] {
         mod metrics;
         mod observability;
@@ -86,11 +46,5 @@ cfg_if::cfg_if! {
             RuntimeResourceFailure, RuntimeResourceFailureCounts, RuntimeRouteRemoval,
             RuntimeRouteRemovalCounts,
         };
-    }
-}
-
-cfg_if::cfg_if! {
-    if #[cfg(feature = "tracing")] {
-        mod tracing_events;
     }
 }

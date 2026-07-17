@@ -284,57 +284,59 @@ mod tests {
         assert!(registrations[0].1.seed_list().is_empty());
     }
 
-    #[cfg(feature = "tokio-host")]
-    #[tokio::test]
-    async fn dispatch_routes_by_path_then_answers_or_declines() {
-        async fn dispatch<R: RouteSet<App>>(
-            _routes: &R,
-            state: &App,
-            path: &str,
-            sink: &mut dyn ResponseSink,
-        ) -> Result<(), Decline> {
-            let request = InboundRequest::new(
-                LinkId::new([1; 16]),
-                RequestId([2; 16]),
-                None,
-                InstantMillis(0),
-                RttMillis::new(0),
-                b"",
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn dispatch_routes_by_path_then_answers_or_declines() {
+        futures_executor::block_on(async {
+            async fn dispatch<R: RouteSet<App>>(
+                _routes: &R,
+                state: &App,
+                path: &str,
+                sink: &mut dyn ResponseSink,
+            ) -> Result<(), Decline> {
+                let request = InboundRequest::new(
+                    LinkId::new([1; 16]),
+                    RequestId([2; 16]),
+                    None,
+                    InstantMillis(0),
+                    RttMillis::new(0),
+                    b"",
+                );
+                dispatch_request::<App, R>(state, RequestPathHash::of(path), request, sink).await
+            }
+
+            let routes = crate::routes![Health, Greet, Admin, Ack];
+            let state = App { greeting: b"hi" };
+
+            let mut greet = std::vec::Vec::new();
+            assert_eq!(
+                dispatch(&routes, &state, "/greet", &mut greet).await,
+                Ok(())
             );
-            dispatch_request::<App, R>(state, RequestPathHash::of(path), request, sink).await
-        }
+            assert_eq!(greet.as_slice(), b"hi");
 
-        let routes = crate::routes![Health, Greet, Admin, Ack];
-        let state = App { greeting: b"hi" };
+            let mut health = std::vec::Vec::new();
+            assert_eq!(
+                dispatch(&routes, &state, "/health", &mut health).await,
+                Ok(())
+            );
+            assert_eq!(health.as_slice(), b"ok");
 
-        let mut greet = std::vec::Vec::new();
-        assert_eq!(
-            dispatch(&routes, &state, "/greet", &mut greet).await,
-            Ok(())
-        );
-        assert_eq!(greet.as_slice(), b"hi");
+            let mut ack = std::vec::Vec::new();
+            assert_eq!(dispatch(&routes, &state, "/ack", &mut ack).await, Ok(()));
+            assert!(ack.is_empty());
 
-        let mut health = std::vec::Vec::new();
-        assert_eq!(
-            dispatch(&routes, &state, "/health", &mut health).await,
-            Ok(())
-        );
-        assert_eq!(health.as_slice(), b"ok");
+            let mut admin = std::vec::Vec::new();
+            assert_eq!(
+                dispatch(&routes, &state, "/admin", &mut admin).await,
+                Err(Decline::CloseLink)
+            );
 
-        let mut ack = std::vec::Vec::new();
-        assert_eq!(dispatch(&routes, &state, "/ack", &mut ack).await, Ok(()));
-        assert!(ack.is_empty());
-
-        let mut admin = std::vec::Vec::new();
-        assert_eq!(
-            dispatch(&routes, &state, "/admin", &mut admin).await,
-            Err(Decline::CloseLink)
-        );
-
-        let mut miss = std::vec::Vec::new();
-        assert_eq!(
-            dispatch(&routes, &state, "/nope", &mut miss).await,
-            Err(Decline::Ignore)
-        );
+            let mut miss = std::vec::Vec::new();
+            assert_eq!(
+                dispatch(&routes, &state, "/nope", &mut miss).await,
+                Err(Decline::Ignore)
+            );
+        });
     }
 }
