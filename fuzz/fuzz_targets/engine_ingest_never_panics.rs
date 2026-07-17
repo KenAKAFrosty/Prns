@@ -13,7 +13,7 @@ use prns_core::interfaces::{
 use prns_core::routing::request_handlers::RequestPolicy;
 use prns_core::routing::{LinkRequestPolicy, ProofStrategy};
 use prns_core::storage::GrowableHeap;
-use prns_runtime::reactor::driver::{fire_due_reason, merge_wake_schedules_delta};
+use prns_runtime::reactor::kernel::{fire_due_reason, merge_wake_schedules_delta};
 
 const FRAME_CAP: usize = u16::MAX as usize;
 

@@ -8,7 +8,7 @@ use crate::routing::dedup::{dedup_index_buckets, PacketHash};
 
 use super::super::core::{PacketMetricStorage, PacketPhyRetention};
 
-pub(crate) struct FixedPacketMetricStorage<Metric, const CAPACITY: usize, const BUCKETS: usize> {
+pub struct FixedPacketMetricStorage<Metric, const CAPACITY: usize, const BUCKETS: usize> {
     packet_hashes: HeaplessVec<PacketHash, CAPACITY>,
     metrics: HeaplessVec<Metric, CAPACITY>,
     index: LemireIndex<BUCKETS>,
@@ -17,7 +17,7 @@ pub(crate) struct FixedPacketMetricStorage<Metric, const CAPACITY: usize, const 
 impl<Metric, const CAPACITY: usize, const BUCKETS: usize>
     FixedPacketMetricStorage<Metric, CAPACITY, BUCKETS>
 {
-    pub(crate) const fn new() -> Self {
+    pub const fn new() -> Self {
         const {
             assert!(
                 CAPACITY > 0,
@@ -91,14 +91,13 @@ impl<Metric: Copy, const CAPACITY: usize, const BUCKETS: usize> PacketMetricStor
     }
 }
 
-pub(crate) type FixedPacketPhyRetention<const CAPACITY: usize, const BUCKETS: usize> =
-    PacketPhyRetention<
-        FixedPacketMetricStorage<RssiDbm, CAPACITY, BUCKETS>,
-        FixedPacketMetricStorage<SnrQuarterDb, CAPACITY, BUCKETS>,
-        FixedPacketMetricStorage<SignalQualityTenthsPercent, CAPACITY, BUCKETS>,
-    >;
+pub type FixedPacketPhyRetention<const CAPACITY: usize, const BUCKETS: usize> = PacketPhyRetention<
+    FixedPacketMetricStorage<RssiDbm, CAPACITY, BUCKETS>,
+    FixedPacketMetricStorage<SnrQuarterDb, CAPACITY, BUCKETS>,
+    FixedPacketMetricStorage<SignalQualityTenthsPercent, CAPACITY, BUCKETS>,
+>;
 
-pub(crate) const fn fixed_packet_phy_retention<const CAPACITY: usize, const BUCKETS: usize>(
+pub const fn fixed_packet_phy_retention<const CAPACITY: usize, const BUCKETS: usize>(
 ) -> FixedPacketPhyRetention<CAPACITY, BUCKETS> {
     PacketPhyRetention::from_storages(
         FixedPacketMetricStorage::new(),

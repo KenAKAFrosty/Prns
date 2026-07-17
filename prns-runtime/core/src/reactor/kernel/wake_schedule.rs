@@ -2,7 +2,7 @@ use crate::engine::{EngineReaction, EngineState, InstantMillis, WakeReason, Wake
 use crate::interfaces::AttachedInterfaces;
 use crate::storage::StorageLayout;
 
-pub(crate) fn fire_due_reason<S, F>(
+pub fn fire_due_reason<S, F>(
     engine: &mut EngineState<S>,
     reason: WakeReason,
     now: InstantMillis,
@@ -38,7 +38,7 @@ where
     }
 }
 
-pub(crate) fn merge_wake_schedules_delta<S: StorageLayout>(
+pub fn merge_wake_schedules_delta<S: StorageLayout>(
     source_wake_schedules: &mut WakeSchedules,
     delta: WakeSchedules,
     engine: &EngineState<S>,

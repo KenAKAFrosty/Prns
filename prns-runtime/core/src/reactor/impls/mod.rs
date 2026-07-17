@@ -5,9 +5,3 @@ cfg_if::cfg_if! {
         pub mod tokio_reactor;
     }
 }
-
-cfg_if::cfg_if! {
-    if #[cfg(feature = "embassy-host")] {
-        pub mod embassy_reactor;
-    }
-}

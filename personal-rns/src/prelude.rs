@@ -30,10 +30,10 @@ pub use prns_runtime::runtime::{
 };
 
 #[cfg(all(feature = "embassy-host", not(feature = "tokio-host")))]
-pub use prns_runtime::runtime::{Fleet, Prns};
+pub use prns_runtime_embassy::runtime::{Fleet, Prns};
 
 #[cfg(feature = "embassy-host")]
-pub use prns_runtime::runtime::EmbassyPrnsHandle;
+pub use prns_runtime_embassy::runtime::EmbassyPrnsHandle;
 
 #[cfg(all(feature = "tcp", feature = "tokio-host"))]
 pub use prns_interfaces_tokio::tcp;

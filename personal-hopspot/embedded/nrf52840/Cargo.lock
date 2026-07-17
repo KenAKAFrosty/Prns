@@ -1576,10 +1576,12 @@ dependencies = [
 name = "personal-rns"
 version = "0.2.4"
 dependencies = [
+ "cfg-if",
  "prns-core",
  "prns-interfaces-embassy",
  "prns-interfaces-tokio",
  "prns-runtime",
+ "prns-runtime-embassy",
 ]
 
 [[package]]
@@ -1672,7 +1674,7 @@ dependencies = [
  "heapless 0.8.0",
  "portable-atomic",
  "prns-core",
- "prns-runtime",
+ "prns-runtime-embassy",
 ]
 
 [[package]]
@@ -1697,16 +1699,25 @@ version = "0.2.4"
 dependencies = [
  "bzip2",
  "cfg-if",
- "embassy-futures",
- "embassy-sync",
- "embassy-time",
  "futures-util",
  "getrandom 0.2.17",
  "heapless 0.8.0",
- "portable-atomic",
  "prns-core",
  "rtrb",
  "tokio",
+]
+
+[[package]]
+name = "prns-runtime-embassy"
+version = "0.2.4"
+dependencies = [
+ "embassy-futures",
+ "embassy-sync",
+ "embassy-time",
+ "heapless 0.8.0",
+ "portable-atomic",
+ "prns-core",
+ "prns-runtime",
 ]
 
 [[package]]

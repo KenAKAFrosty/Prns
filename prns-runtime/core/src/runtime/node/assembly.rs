@@ -7,18 +7,18 @@ use super::super::request_router::RouteSet;
 use super::super::PrnsEvent;
 use super::recipe::{PreConfiguredDestination, PrnsRecipe};
 
-pub(crate) struct AssembledNode<St, R, F, S>
+pub struct AssembledNode<St, R, F, S>
 where
     S: StorageLayout,
 {
-    pub(crate) engine: EngineState<S>,
-    pub(crate) state: St,
-    pub(crate) on_event: F,
-    pub(crate) routes: PhantomData<R>,
+    pub engine: EngineState<S>,
+    pub state: St,
+    pub on_event: F,
+    pub routes: PhantomData<R>,
 }
 
 #[allow(clippy::expect_used)]
-pub(crate) fn assemble_node<'a, D, St, R, F, I, S>(
+pub fn assemble_node<'a, D, St, R, F, I, S>(
     recipe: PrnsRecipe<D, St, R, F, I, S>,
 ) -> (AssembledNode<St, R, F, S>, I)
 where

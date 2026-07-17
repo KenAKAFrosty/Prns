@@ -3,11 +3,14 @@ use core::num::NonZeroUsize;
 use crate::interfaces::{PacketPhyStats, RssiDbm, SignalQualityTenthsPercent, SnrQuarterDb};
 use crate::routing::dedup::PacketHash;
 
-pub(crate) trait PacketMetricStorage {
+pub trait PacketMetricStorage {
     type Metric: Copy;
 
     fn capacity(&self) -> NonZeroUsize;
     fn len(&self) -> usize;
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
     fn append(&mut self, packet_hash: PacketHash, metric: Self::Metric);
     fn replace(&mut self, slot: usize, packet_hash: PacketHash, metric: Self::Metric);
     fn get(&self, packet_hash: PacketHash) -> Option<Self::Metric>;
@@ -42,7 +45,7 @@ impl<Storage: PacketMetricStorage> PacketMetricRetention<Storage> {
     }
 }
 
-pub(crate) struct PacketPhyRetention<RssiStorage, SnrStorage, QualityStorage> {
+pub struct PacketPhyRetention<RssiStorage, SnrStorage, QualityStorage> {
     rssi: PacketMetricRetention<RssiStorage>,
     snr: PacketMetricRetention<SnrStorage>,
     quality: PacketMetricRetention<QualityStorage>,
@@ -55,7 +58,7 @@ where
     SnrStorage: PacketMetricStorage<Metric = SnrQuarterDb>,
     QualityStorage: PacketMetricStorage<Metric = SignalQualityTenthsPercent>,
 {
-    pub(crate) const fn from_storages(
+    pub const fn from_storages(
         rssi: RssiStorage,
         snr: SnrStorage,
         quality: QualityStorage,
@@ -67,7 +70,7 @@ where
         }
     }
 
-    pub(crate) fn remember(&mut self, packet_hash: PacketHash, stats: PacketPhyStats) {
+    pub fn remember(&mut self, packet_hash: PacketHash, stats: PacketPhyStats) {
         if let Some(rssi) = stats.rssi {
             self.rssi.remember(packet_hash, rssi);
         }
@@ -79,7 +82,7 @@ where
         }
     }
 
-    pub(crate) fn get(&self, packet_hash: PacketHash) -> Option<PacketPhyStats> {
+    pub fn get(&self, packet_hash: PacketHash) -> Option<PacketPhyStats> {
         let stats = PacketPhyStats {
             rssi: self.rssi.get(packet_hash),
             snr: self.snr.get(packet_hash),
