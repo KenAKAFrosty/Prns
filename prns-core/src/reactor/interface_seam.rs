@@ -1,5 +1,7 @@
 use crate::interfaces::ifac::IFAC_MAX_SIZE;
-use crate::interfaces::{FrameSink, InterfaceDescriptor, InterfaceKind, PacketPhyStats};
+use crate::interfaces::{
+    FrameSink, InterfaceDescriptor, InterfaceKind, InterfaceOriginKind, PacketPhyStats,
+};
 
 pub const MAX_WIRE_FRAME_LEN: usize = crate::routing::links::MAX_LINK_MTU + IFAC_MAX_SIZE;
 
@@ -23,6 +25,10 @@ pub fn frame_cap_for(descriptor: &InterfaceDescriptor) -> usize {
 /// An outbound frame arrives already committed: the engine wrote it into the lane's slot and let go in its own synchronous step before `next_outbound` resolves, so the returned borrow points into the lane, never into the engine, and holding it across the transmit await pins nothing.
 #[allow(async_fn_in_trait)]
 pub trait InterfaceSeam {
+    fn interface_origin(&self) -> InterfaceOriginKind {
+        InterfaceOriginKind::Configured
+    }
+
     /// The storage the frame being received accumulates in — the seam's granted inbound slot,
     /// so a streaming deframer's writes land once, already across the seam.
     /// Parks until a slot is free (backpressure: an interface that cannot grant stops reading its medium).

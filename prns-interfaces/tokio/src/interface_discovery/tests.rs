@@ -4,6 +4,7 @@ use prns_core::interface_discovery::{
     DiscoveryAdvertisement, DiscoveryPublicationPreparation, DiscoveryPublicationSecurity,
     DiscoverySourcePolicy, GeographicLocation, StampCost,
 };
+use prns_core::interfaces::InterfaceOriginKind;
 use prns_core::wire::TransportId;
 
 use super::*;
@@ -153,7 +154,7 @@ async fn an_eligible_discovery_stands_up_a_real_backbone_client() {
     let handle = node.handle();
     let clock = node.clock();
     let (events_tx, mut events_rx) = tokio::sync::mpsc::unbounded_channel();
-    let service_task = tokio::spawn(service.run(handle, clock, move |event| {
+    let service_task = tokio::spawn(service.run(handle.clone(), clock, move |event| {
         if let TokioDiscoveryEvent::ConnectionAttached { interface, .. } = event {
             let _ = events_tx.send(interface);
         }
@@ -176,6 +177,15 @@ async fn an_eligible_discovery_stands_up_a_real_backbone_client() {
         assert_eq!(
             interface.kind(),
             Some(prns_core::interfaces::InterfaceKind::BackboneClient)
+        );
+        let inventory = handle.interface_inventory();
+        let attached = inventory
+            .iter()
+            .find(|entry| entry.snapshot.id == interface)
+            .expect("the discovered interface is registered for inspection");
+        assert_eq!(
+            (attached.name.as_deref(), attached.origin),
+            (Some("Public backbone"), InterfaceOriginKind::Discovered)
         );
 
         drop(ingress);

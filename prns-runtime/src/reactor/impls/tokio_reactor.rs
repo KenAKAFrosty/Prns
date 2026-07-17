@@ -1,5 +1,5 @@
 use core::cell::{Cell, RefCell};
-use prns_core::interfaces::IndexedAttachedInterfaces;
+use prns_core::interfaces::{IndexedAttachedInterfaces, InterfaceOriginKind};
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -162,6 +162,7 @@ impl Host for TokioHost {
 /// interface's own outbound queue until the reactor enqueues a frame for it.
 pub struct TokioInterfaceSeam {
     id: InterfaceId,
+    origin: InterfaceOriginKind,
     inbound: TokioGrantProducer,
     notify: UnboundedSender<InterfaceId>,
     outbound: TokioGrantConsumer,
@@ -178,11 +179,18 @@ impl TokioInterfaceSeam {
     ) -> Self {
         Self {
             id,
+            origin: InterfaceOriginKind::Configured,
             inbound,
             notify,
             outbound,
             commands: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_origin(mut self, origin: InterfaceOriginKind) -> Self {
+        self.origin = origin;
+        self
     }
 
     #[must_use]
@@ -193,6 +201,10 @@ impl TokioInterfaceSeam {
 }
 
 impl InterfaceSeam for TokioInterfaceSeam {
+    fn interface_origin(&self) -> InterfaceOriginKind {
+        self.origin
+    }
+
     async fn inbound_sink(&mut self) -> &mut dyn FrameSink {
         self.inbound.grant().await
     }

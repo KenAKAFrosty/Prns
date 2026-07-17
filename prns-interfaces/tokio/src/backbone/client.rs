@@ -87,6 +87,7 @@ impl Interface for BackboneClientInterface {
     }
 
     async fn run<Seam: InterfaceSeam>(self, mut seam: Seam) {
+        let interface_origin = seam.interface_origin().as_str();
         let mut airtime = AirtimeLedger::new();
         let mut throughput = ThroughputLedger::new();
         let started = tokio::time::Instant::now();
@@ -98,11 +99,28 @@ impl Interface for BackboneClientInterface {
             >,
         > = None;
         loop {
+            #[cfg(feature = "tracing")]
+            let connected = tracing::Instrument::instrument(
+                tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(self.target.as_str())),
+                tracing::debug_span!(
+                    target: "prns.interface",
+                    "prns.interface.connect",
+                    interface_kind = "backbone_client",
+                    interface_origin,
+                    peer = %self.target,
+                ),
+            )
+            .await;
+            #[cfg(not(feature = "tracing"))]
             let connected =
                 tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(self.target.as_str()))
                     .await;
             if let Ok(Ok(stream)) = connected {
                 tune(&stream);
+                crate::diagnostic_log::debug!(
+                    "backbone-client [{interface_origin}]: connected {}",
+                    self.target
+                );
                 self.status.set_connection(ConnectionState::Connected);
                 seam.request_tunnel_synthesis().await;
                 framed_stream::serve::<
@@ -124,7 +142,16 @@ impl Interface for BackboneClientInterface {
                     },
                 )
                 .await;
+                crate::diagnostic_log::debug!(
+                    "backbone-client [{interface_origin}]: dropped {}, retrying",
+                    self.target
+                );
                 self.status.set_connection(ConnectionState::Disconnected);
+            } else {
+                crate::diagnostic_log::debug!(
+                    "backbone-client [{interface_origin}]: connect failed {}, retrying",
+                    self.target
+                );
             }
             tokio::time::sleep(self.reconnect).await;
         }

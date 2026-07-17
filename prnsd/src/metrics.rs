@@ -234,6 +234,7 @@ impl MetricsReporter {
             let attributes = [
                 KeyValue::new("interface", metric_interface_name(interface)),
                 KeyValue::new("interface_kind", kind),
+                KeyValue::new("interface_origin", interface.origin.as_str()),
             ];
             self.instruments.interface_state.record(
                 u64::from(interface.snapshot.connection.as_u8()),
@@ -249,6 +250,7 @@ impl MetricsReporter {
                 let link_attributes = [
                     attributes[0].clone(),
                     attributes[1].clone(),
+                    attributes[2].clone(),
                     KeyValue::new("kind", link_kind),
                 ];
                 self.instruments
@@ -276,6 +278,7 @@ impl MetricsReporter {
                 let io_attributes = [
                     attributes[0].clone(),
                     attributes[1].clone(),
+                    attributes[2].clone(),
                     KeyValue::new("direction", direction),
                 ];
                 self.instruments
@@ -307,6 +310,7 @@ impl MetricsReporter {
                     let announce_attributes = [
                         attributes[0].clone(),
                         attributes[1].clone(),
+                        attributes[2].clone(),
                         KeyValue::new("source", announce_source_name(source)),
                         KeyValue::new("outcome", announce_ingress_outcome_name(outcome)),
                     ];
@@ -328,6 +332,7 @@ impl MetricsReporter {
                 let queue_attributes = [
                     attributes[0].clone(),
                     attributes[1].clone(),
+                    attributes[2].clone(),
                     KeyValue::new("queue", queue),
                 ];
                 self.instruments
@@ -356,6 +361,7 @@ impl MetricsReporter {
                     let announce_attributes = [
                         attributes[0].clone(),
                         attributes[1].clone(),
+                        attributes[2].clone(),
                         KeyValue::new("origin", announce_origin_name(origin)),
                         KeyValue::new("outcome", announce_egress_outcome_name(outcome)),
                     ];
@@ -372,6 +378,7 @@ impl MetricsReporter {
                     let announce_attributes = [
                         attributes[0].clone(),
                         attributes[1].clone(),
+                        attributes[2].clone(),
                         KeyValue::new("origin", announce_origin_name(origin)),
                     ];
                     add_delta(
@@ -385,6 +392,7 @@ impl MetricsReporter {
             let queue_attributes = [
                 attributes[0].clone(),
                 attributes[1].clone(),
+                attributes[2].clone(),
                 KeyValue::new("queue", "pacer"),
             ];
             self.instruments.interface_announce_queue_depth.record(
@@ -727,7 +735,7 @@ fn ignore_reason_name(reason: IgnoreReasonKind) -> &'static str {
 
 fn metric_interface_name(interface: &InterfaceInventoryEntry) -> String {
     interface
-        .configured_name
+        .name
         .clone()
         .unwrap_or_else(|| match interface.snapshot.id.kind() {
             Some(InterfaceKind::LocalServer | InterfaceKind::LocalClient) => {

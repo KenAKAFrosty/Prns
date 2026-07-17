@@ -1377,7 +1377,7 @@ fn interface_stats_msgpack(inventory: &[InterfaceInventoryEntry]) -> std::io::Re
             let interface = &entry.snapshot;
             let ifac = entry.ifac.as_ref();
             let name = entry
-                .configured_name
+                .name
                 .clone()
                 .unwrap_or_else(|| interface_name(interface.id));
             let rates = interface
@@ -2849,7 +2849,8 @@ mod tests {
             routes: std::vec![],
             interfaces: std::vec![
                 InterfaceInventoryEntry {
-                    configured_name: Some("Default Interface".into()),
+                    name: Some("Default Interface".into()),
+                    origin: prns_core::interfaces::InterfaceOriginKind::Configured,
                     snapshot: prns_core::interfaces::InterfaceSnapshot {
                         id: InterfaceId::new([0x07; 8]),
                         connection: ConnectionState::Connected,
@@ -2872,7 +2873,8 @@ mod tests {
                     }),
                 },
                 InterfaceInventoryEntry {
-                    configured_name: Some("Remote bridge".into()),
+                    name: Some("Remote bridge".into()),
+                    origin: prns_core::interfaces::InterfaceOriginKind::Configured,
                     snapshot: prns_core::interfaces::InterfaceSnapshot {
                         id: InterfaceId::new([0x09; 8]),
                         connection: ConnectionState::Reconnecting,

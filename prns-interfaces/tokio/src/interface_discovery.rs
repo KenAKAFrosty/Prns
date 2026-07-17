@@ -22,7 +22,7 @@ use prns_core::routing::announce::AnnounceObservation;
 use prns_core::units::{HopCount, InstantMillis};
 use prns_core::wire::DestinationHash;
 use prns_runtime::reactor::impls::tokio_reactor::{TokioHost, TokioInterfaceStatus};
-use prns_runtime::runtime::{AttachedInterface, TokioPrnsHandle};
+use prns_runtime::runtime::{AttachedInterface, InterfaceAttachmentMetadata, TokioPrnsHandle};
 use tokio::sync::mpsc::{self, error::TrySendError, Receiver, Sender};
 
 use crate::backbone::client::BackboneClientInterface;
@@ -343,8 +343,7 @@ fn attach_discovered(
             let interface =
                 BackboneClientInterface::new(target, AUTOCONNECT_BITRATE, RECONNECT_INTERVAL);
             let status = interface.status();
-            let attached = attach_with_access(handle, interface, plan.access())?;
-            let _ = handle.set_interface_name(attached.id(), plan.name());
+            let attached = attach_with_access(handle, interface, plan)?;
             Ok(AttachedDiscoveredInterface {
                 interface: attached.id(),
                 status,
@@ -354,8 +353,7 @@ fn attach_discovered(
             let interface =
                 TcpClientInterface::new(target, AUTOCONNECT_BITRATE, RECONNECT_INTERVAL);
             let status = interface.status();
-            let attached = attach_with_access(handle, interface, plan.access())?;
-            let _ = handle.set_interface_name(attached.id(), plan.name());
+            let attached = attach_with_access(handle, interface, plan)?;
             Ok(AttachedDiscoveredInterface {
                 interface: attached.id(),
                 status,
@@ -367,13 +365,19 @@ fn attach_discovered(
 fn attach_with_access<I>(
     handle: &TokioPrnsHandle,
     interface: I,
-    access: &DiscoveredConnectionAccess,
+    plan: &DiscoveredConnectionPlan,
 ) -> Result<AttachedInterface, DiscoveredConnectionFailure>
 where
     I: Interface + ReportsStatus + Send + 'static,
 {
-    match access {
-        DiscoveredConnectionAccess::Open => Ok(handle.add_interface(interface)),
+    let metadata = InterfaceAttachmentMetadata {
+        name: Some(String::from(plan.name())),
+        origin: plan.origin().kind(),
+    };
+    match plan.access() {
+        DiscoveredConnectionAccess::Open => {
+            Ok(handle.add_interface_with_metadata(interface, metadata))
+        }
         DiscoveredConnectionAccess::PublishedIfac {
             network_name,
             passphrase,
@@ -385,7 +389,12 @@ where
             ) else {
                 return Err(DiscoveredConnectionFailure::InvalidPublishedIfac);
             };
-            Ok(handle.add_interface_with_ifac_name(interface, ifac, network_name.clone()))
+            Ok(handle.add_interface_with_metadata_and_ifac_name(
+                interface,
+                metadata,
+                ifac,
+                network_name.clone(),
+            ))
         }
     }
 }
