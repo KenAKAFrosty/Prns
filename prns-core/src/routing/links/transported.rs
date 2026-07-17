@@ -12,7 +12,7 @@ pub const TRANSPORTED_LINK_TIMEOUT_MS: u64 = 900_000;
 /// RNS 1.3.5 `Transport.extra_link_proof_timeout`: one MTU's airtime on the arrival interface, an allowance for slow last hops.
 #[must_use]
 pub fn extra_link_proof_timeout_ms(bitrate: BitrateBps) -> u64 {
-    4_000_000u64 / u64::from(bitrate.get())
+    4_000_000u64 / bitrate.get()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

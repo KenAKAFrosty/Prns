@@ -7,9 +7,10 @@
 use crate::interfaces::rns_serial_framing;
 use crate::interfaces::wire_limits::{EMBEDDED_MAX_WIRE_FRAME_LEN, MAX_WIRE_FRAME_LEN};
 use crate::interfaces::{
-    hardware_mtu_for_bitrate, AnnounceBandwidthCap, BitrateBps, EgressCapability,
-    IngressCapability, InterfaceCapabilities, InterfaceDescriptor, InterfaceId, InterfaceMode,
-    TransportCapability,
+    AnnounceBandwidthCap, BitrateBps, ConfiguredInterfacePolicy, EffectiveInterfacePolicy,
+    EgressCapability, IngressCapability, InterfaceCapabilities, InterfaceDefaults,
+    InterfaceDescriptor, InterfaceId, InterfaceMode, MtuPolicy, TransportCapability,
+    TRAVERSED_NETWORK_BITRATE_ESTIMATE,
 };
 use crate::routing::links::MAX_LINK_MTU;
 
@@ -25,12 +26,12 @@ pub enum TcpWireFraming {
 /// A TCP read can now absorb one worst-case encoded engine frame.
 pub const READ_BUF_LEN: usize = FRAMED_LEN;
 
-/// What a host should claim when it genuinely doesn't know its pipe: a modern wired-LAN
-/// figure, whose tier is the table's top. The reference guesses 10 Mbps
+/// What a host should claim when it genuinely doesn't know its pipe: a conservative 500 Mbps
+/// estimate for traffic that crosses an actual network. The reference guesses 10 Mbps
 /// (`TCPClientInterface.BITRATE_GUESS`), which its own tier table maps to an 8 KiB MTU —
 /// a 2005 answer; a host that knows its real figure should pass it instead, in either
 /// direction.
-pub const TCP_BITRATE_GUESS_BPS: BitrateBps = BitrateBps::guess(1_000_000_000);
+pub const TCP_BITRATE_ESTIMATE: BitrateBps = TRAVERSED_NETWORK_BITRATE_ESTIMATE;
 
 /// The most this interface can carry per wire packet — the engine's ceiling. What an
 /// instance *declares* is its bitrate tier clamped to this.
@@ -56,18 +57,32 @@ pub const EMBEDDED_READ_BUF_LEN: usize = 1_024;
 /// in-transit MTU clamp takes interface declarations at face value when a relay books a
 /// transported link, so an interface must never promise more than its buffers carry. The
 /// day the ceiling rises, every declaration here rises with it for free.
-pub fn descriptor(id: InterfaceId, bitrate: BitrateBps) -> InterfaceDescriptor {
-    InterfaceDescriptor {
-        id,
-        capabilities: InterfaceCapabilities {
-            ingress: IngressCapability::Enabled,
-            egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
-        },
-        mode: InterfaceMode::PointToPoint,
-        hardware_mtu: hardware_mtu_for_bitrate(bitrate.get()).map(|tier| tier.min(MAX_LINK_MTU)),
-        announce_rate_limit: None,
-        bitrate,
-        announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
-        airtime_duty_cycle: None,
-    }
+pub const DEFAULTS: InterfaceDefaults = InterfaceDefaults {
+    capabilities: InterfaceCapabilities {
+        ingress: IngressCapability::Enabled,
+        egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
+    },
+    mode: InterfaceMode::PointToPoint,
+    bitrate: TCP_BITRATE_ESTIMATE,
+    mtu: MtuPolicy::optimized_from_bitrate(MAX_LINK_MTU),
+    announce_rate_limit: None,
+    announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
+    airtime_duty_cycle: None,
+};
+
+#[must_use]
+pub fn configured_policy(configured: ConfiguredInterfacePolicy) -> EffectiveInterfacePolicy {
+    DEFAULTS.configured(configured)
+}
+
+#[must_use]
+pub fn policy_for_bitrate(bitrate: BitrateBps) -> EffectiveInterfacePolicy {
+    configured_policy(ConfiguredInterfacePolicy {
+        bitrate: Some(bitrate),
+        ..ConfiguredInterfacePolicy::default()
+    })
+}
+
+pub fn descriptor(id: InterfaceId, policy: EffectiveInterfacePolicy) -> InterfaceDescriptor {
+    policy.descriptor(id)
 }

@@ -117,7 +117,7 @@ pub fn bluetooth_hardware_mtu() -> usize {
 
 #[wasm_bindgen(js_name = websocketBitrateBps)]
 pub fn websocket_bitrate_bps() -> u32 {
-    websocket_core::WEBSOCKET_BITRATE_GUESS_BPS.get()
+    websocket_core::WEBSOCKET_BITRATE_ESTIMATE.get()
 }
 
 #[wasm_bindgen(js_name = websocketHardwareMtu)]

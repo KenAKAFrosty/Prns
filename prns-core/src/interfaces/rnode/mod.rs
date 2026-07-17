@@ -4,4 +4,6 @@
 //! read-back model, and descriptor; the per-host driver (detect, configure, validate, and the
 //! data path) lives in `prns-interfaces-tokio`.
 
+#[cfg(feature = "std")]
 pub mod core;
+pub mod policy;

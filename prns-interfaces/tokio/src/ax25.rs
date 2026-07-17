@@ -9,7 +9,8 @@ use crate::kiss::{configure_tnc, CONFIGURE_SETTLE};
 use prns_core::interfaces::ax25_kiss::core::{self, Ax25AddressError, AX25_HEADER_SIZE};
 use prns_core::interfaces::kiss::core::TncConfig;
 use prns_core::interfaces::{
-    ConnectionState, FrameSink, InterfaceDescriptor, InterfaceId, InterfaceKind,
+    ConnectionState, EffectiveInterfacePolicy, FrameSink, InterfaceDescriptor, InterfaceId,
+    InterfaceKind,
 };
 use prns_runtime::reactor::airtime::AirtimeLedger;
 use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
@@ -77,9 +78,19 @@ pub struct Ax25KissInterface<Open> {
     reconnect: Duration,
     settle: Duration,
     tnc: TncConfig,
+    policy: EffectiveInterfacePolicy,
     header: [u8; AX25_HEADER_SIZE],
     channel_tag: std::vec::Vec<u8>,
     status: TokioInterfaceStatus,
+}
+
+pub struct Ax25KissSettings<'a> {
+    pub settle: Duration,
+    pub tnc: TncConfig,
+    pub callsign: &'a str,
+    pub ssid: u8,
+    pub policy: EffectiveInterfacePolicy,
+    pub channel_tag: &'a [u8],
 }
 
 impl<Open> Ax25KissInterface<Open> {
@@ -116,15 +127,35 @@ impl<Open> Ax25KissInterface<Open> {
         ssid: u8,
         channel_tag: &[u8],
     ) -> Result<Self, Ax25AddressError> {
-        let header = core::build_header(callsign, ssid)?;
-        let channel_tag = channel_tag.to_vec();
+        Self::with_policy(
+            open,
+            reconnect,
+            Ax25KissSettings {
+                settle,
+                tnc,
+                callsign,
+                ssid,
+                policy: core::configured_policy(Default::default()),
+                channel_tag,
+            },
+        )
+    }
+
+    pub fn with_policy(
+        open: Open,
+        reconnect: Duration,
+        settings: Ax25KissSettings<'_>,
+    ) -> Result<Self, Ax25AddressError> {
+        let header = core::build_header(settings.callsign, settings.ssid)?;
+        let channel_tag = settings.channel_tag.to_vec();
         let id = InterfaceId::from_channel_tag(InterfaceKind::Ax25Kiss, &channel_tag);
         Ok(Self {
             id,
             open,
             reconnect,
-            settle,
-            tnc,
+            settle: settings.settle,
+            tnc: settings.tnc,
+            policy: settings.policy,
             header,
             channel_tag,
             status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
@@ -155,7 +186,7 @@ where
     const KIND: InterfaceKind = InterfaceKind::Ax25Kiss;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::descriptor(self.id)
+        core::descriptor(self.id, self.policy)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -163,7 +194,7 @@ where
     }
 
     async fn run<Seam: InterfaceSeam>(mut self, seam: Seam) {
-        let bitrate = core::descriptor(self.id).bitrate;
+        let bitrate = self.policy.bitrate;
         let mut airtime = AirtimeLedger::new();
         let mut throughput = ThroughputLedger::new();
         let started = tokio::time::Instant::now();

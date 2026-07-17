@@ -31,7 +31,7 @@ impl Splitmix {
 }
 
 fn interfaces() -> Vec<InterfaceDescriptor> {
-    vec![tcp_core::descriptor(WIRE, tcp_core::TCP_BITRATE_GUESS_BPS)]
+    vec![tcp_core::descriptor(WIRE, tcp_core::TCP_BITRATE_ESTIMATE)]
 }
 
 fn announce_wire() -> (Vec<u8>, DestinationHash) {

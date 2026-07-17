@@ -4,8 +4,9 @@
 
 use crate::interfaces::kiss_framing::{self, KissDecoder};
 use crate::interfaces::{
-    AnnounceBandwidthCap, BitrateBps, EgressCapability, IngressCapability, InterfaceCapabilities,
-    InterfaceDescriptor, InterfaceId, InterfaceMode, TransportCapability,
+    AnnounceBandwidthCap, BitrateBps, ConfiguredInterfacePolicy, EffectiveInterfacePolicy,
+    EgressCapability, IngressCapability, InterfaceCapabilities, InterfaceDefaults,
+    InterfaceDescriptor, InterfaceId, InterfaceMode, MtuPolicy, TransportCapability,
 };
 
 pub const READ_BUF_LEN: usize = 256;
@@ -75,20 +76,26 @@ fn ms_div10_clamped(ms: u32) -> u8 {
     (ms / 10).min(255) as u8
 }
 
-pub fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
-    InterfaceDescriptor {
-        id,
-        capabilities: InterfaceCapabilities {
-            ingress: IngressCapability::Enabled,
-            egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
-        },
-        mode: InterfaceMode::PointToPoint,
-        hardware_mtu: Some(KISS_HW_MTU),
-        announce_rate_limit: None,
-        bitrate: KISS_BITRATE_BPS,
-        announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
-        airtime_duty_cycle: None,
-    }
+pub const DEFAULTS: InterfaceDefaults = InterfaceDefaults {
+    capabilities: InterfaceCapabilities {
+        ingress: IngressCapability::Enabled,
+        egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
+    },
+    mode: InterfaceMode::PointToPoint,
+    bitrate: KISS_BITRATE_BPS,
+    mtu: MtuPolicy::fixed(KISS_HW_MTU),
+    announce_rate_limit: None,
+    announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
+    airtime_duty_cycle: None,
+};
+
+#[must_use]
+pub fn configured_policy(configured: ConfiguredInterfacePolicy) -> EffectiveInterfacePolicy {
+    DEFAULTS.configured(configured)
+}
+
+pub fn descriptor(id: InterfaceId, policy: EffectiveInterfacePolicy) -> InterfaceDescriptor {
+    policy.descriptor(id)
 }
 
 #[cfg(test)]

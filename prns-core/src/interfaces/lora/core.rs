@@ -16,9 +16,10 @@
 use heapless::Vec as HeaplessVec;
 
 use crate::interfaces::{
-    AirtimeDutyCycle, AnnounceBandwidthCap, BitrateBps, EgressCapability, IngressCapability,
-    InterfaceCapabilities, InterfaceDescriptor, InterfaceId, InterfaceMode, PacketPhyStats,
-    RssiDbm, SignalQualityTenthsPercent, SnrQuarterDb, TransportCapability,
+    AirtimeDutyCycle, AnnounceBandwidthCap, BitrateBps, ConfiguredInterfacePolicy,
+    EgressCapability, IngressCapability, InterfaceCapabilities, InterfaceDefaults,
+    InterfaceDescriptor, InterfaceId, InterfaceMode, MtuPolicy, PacketPhyStats, RssiDbm,
+    SignalQualityTenthsPercent, SnrQuarterDb, TransportCapability,
 };
 
 pub const LORA_HEADER_LEN: usize = 1;
@@ -187,6 +188,21 @@ pub enum Modulation {
     },
 }
 
+#[must_use]
+pub const fn nominal_lora_bitrate_bps(
+    spreading_factor: u8,
+    coding_rate: u8,
+    bandwidth_hz: u32,
+) -> u32 {
+    let sf = spreading_factor as u64;
+    let cr = coding_rate as u64;
+    let bw = bandwidth_hz as u64;
+    if sf == 0 || cr == 0 {
+        return 0;
+    }
+    ((sf * bw * 4) / ((1u64 << sf) * cr)) as u32
+}
+
 impl Modulation {
     pub const fn spreading_factor(self) -> SpreadingFactor {
         let Self::Lora {
@@ -201,10 +217,7 @@ impl Modulation {
             bandwidth,
             coding_rate,
         } = self;
-        let sf = spreading_factor as u32;
-        let bandwidth_hz = bandwidth.hz();
-        let coding_denominator = coding_rate as u32;
-        (sf * bandwidth_hz * 4) / ((1u32 << sf) * coding_denominator)
+        nominal_lora_bitrate_bps(spreading_factor as u8, coding_rate as u8, bandwidth.hz())
     }
 
     pub const fn is_low_data_rate(&self) -> bool {
@@ -657,15 +670,23 @@ pub fn descriptor(
     profile: &RadioProfile,
     airtime_duty_cycle: Option<AirtimeDutyCycle>,
 ) -> InterfaceDescriptor {
-    InterfaceDescriptor {
-        id,
+    defaults(profile, airtime_duty_cycle)
+        .configured(ConfiguredInterfacePolicy::default())
+        .descriptor(id)
+}
+
+pub fn defaults(
+    profile: &RadioProfile,
+    airtime_duty_cycle: Option<AirtimeDutyCycle>,
+) -> InterfaceDefaults {
+    InterfaceDefaults {
         capabilities: InterfaceCapabilities {
             ingress: IngressCapability::Enabled,
             egress: EgressCapability::Enabled(TransportCapability::SameInterfaceRepeat),
         },
         mode: InterfaceMode::Full,
-        bitrate: BitrateBps::clamped(profile.nominal_bitrate_bps()),
-        hardware_mtu: Some(LORA_MAX_PAYLOAD),
+        bitrate: BitrateBps::guess(u64::from(profile.nominal_bitrate_bps())),
+        mtu: MtuPolicy::fixed(LORA_MAX_PAYLOAD),
         announce_rate_limit: None,
         announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
         airtime_duty_cycle,
@@ -1021,7 +1042,7 @@ mod tests {
         assert_eq!(d.hardware_mtu, Some(LORA_MAX_PAYLOAD));
         assert_eq!(
             d.bitrate,
-            BitrateBps::clamped(DEFAULT_915_PROFILE.nominal_bitrate_bps())
+            BitrateBps::new(u64::from(DEFAULT_915_PROFILE.nominal_bitrate_bps())).unwrap()
         );
         assert_eq!(d.announce_bandwidth_cap, AnnounceBandwidthCap::RNS_DEFAULT);
     }

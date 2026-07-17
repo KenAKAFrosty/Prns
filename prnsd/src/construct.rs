@@ -145,7 +145,6 @@ fn medium_name(medium: &PlannedMedium) -> &'static str {
 
 fn unapplied_name(setting: &UnappliedSetting) -> &'static str {
     match setting {
-        UnappliedSetting::Mode(_) => "mode",
         UnappliedSetting::AnnounceBandwidthCap => "announce_bandwidth_cap",
         UnappliedSetting::AnnounceRateLimit => "announce_rate_limit",
         UnappliedSetting::MediumOption(_) => "medium_option",

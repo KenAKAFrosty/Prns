@@ -9,7 +9,9 @@ use prns_core::engine::InstantMillis;
 use prns_core::interfaces::kiss_framing;
 use prns_core::interfaces::rnode::core::{self, RadioConfig};
 use prns_core::interfaces::BitrateBps;
-use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
+use prns_core::interfaces::{
+    ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind,
+};
 use prns_runtime::reactor::airtime::{frame_airtime_us, AirtimeLedger};
 use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
@@ -41,7 +43,7 @@ pub struct RNodeInterface<Open> {
     reconnect: Duration,
     settle: Duration,
     radio: RadioConfig,
-    bitrate: BitrateBps,
+    policy: EffectiveInterfacePolicy,
     channel_tag: std::vec::Vec<u8>,
     status: TokioInterfaceStatus,
 }
@@ -55,6 +57,17 @@ impl<Open> RNodeInterface<Open> {
         Self::with_settings(open, reconnect, RESET_SETTLE, radio, channel_tag)
     }
 
+    #[must_use]
+    pub fn new_with_policy(
+        open: Open,
+        reconnect: Duration,
+        radio: RadioConfig,
+        policy: EffectiveInterfacePolicy,
+        channel_tag: &[u8],
+    ) -> Self {
+        Self::with_settings_and_policy(open, reconnect, RESET_SETTLE, radio, policy, channel_tag)
+    }
+
     /// Build with an explicit reset-settle delay — the daemon supplies the configured device, and
     /// tests pass `Duration::ZERO` to skip the real two-second RNode settle.
     #[must_use]
@@ -65,6 +78,26 @@ impl<Open> RNodeInterface<Open> {
         radio: RadioConfig,
         channel_tag: &[u8],
     ) -> Self {
+        let bitrate = BitrateBps::guess(u64::from(radio.nominal_bitrate_bps()));
+        Self::with_settings_and_policy(
+            open,
+            reconnect,
+            settle,
+            radio,
+            core::policy_for_bitrate(bitrate),
+            channel_tag,
+        )
+    }
+
+    #[must_use]
+    pub fn with_settings_and_policy(
+        open: Open,
+        reconnect: Duration,
+        settle: Duration,
+        radio: RadioConfig,
+        policy: EffectiveInterfacePolicy,
+        channel_tag: &[u8],
+    ) -> Self {
         let channel_tag = channel_tag.to_vec();
         let id = InterfaceId::from_channel_tag(InterfaceKind::Rnode, &channel_tag);
         Self {
@@ -73,7 +106,7 @@ impl<Open> RNodeInterface<Open> {
             reconnect,
             settle,
             radio,
-            bitrate: BitrateBps::clamped(radio.nominal_bitrate_bps()),
+            policy,
             channel_tag,
             status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
         }
@@ -280,7 +313,7 @@ where
     const KIND: InterfaceKind = InterfaceKind::Rnode;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::descriptor(self.id, self.bitrate)
+        core::descriptor(self.id, self.policy)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -319,7 +352,7 @@ where
                             status: &self.status,
                             airtime: &mut airtime,
                             throughput: &mut throughput,
-                            bitrate: self.bitrate,
+                            bitrate: self.policy.bitrate,
                             started,
                         },
                     )

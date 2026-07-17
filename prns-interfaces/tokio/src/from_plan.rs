@@ -12,14 +12,12 @@ use prns_config::{
     DaemonPlan, DeferredInterface, InterfaceAccessPlan, PlannedInterface, PlannedMedium,
 };
 use prns_core::interfaces::ifac::IfacContext;
-use prns_core::interfaces::{BitrateBps, InterfaceId, InterfaceOriginKind};
-use prns_runtime::interfaces::backbone::core as backbone_core;
+use prns_core::interfaces::{InterfaceId, InterfaceOriginKind};
 use prns_runtime::interfaces::kiss::core::TncConfig;
 use prns_runtime::interfaces::rnode::core::RadioConfig;
-use prns_runtime::interfaces::tcp::core as tcp_core;
 use prns_runtime::runtime::{AttachIntent, Attachable, TokioPrnsHandle};
 
-use crate::ax25::Ax25KissInterface;
+use crate::ax25::{Ax25KissInterface, Ax25KissSettings};
 use crate::backbone::client::BackboneClientInterface;
 use crate::backbone::server::BackboneServer;
 use crate::kiss::{KissInterface, CONFIGURE_SETTLE};
@@ -217,13 +215,7 @@ async fn stand_up(
     };
     match &interface.medium {
         PlannedMedium::AutoWifi { .. } => {
-            let wifi = match interface.bitrate_bps.and_then(BitrateBps::new) {
-                Some(bitrate) => AutoWifi::with_bitrate(bitrate),
-                None => {
-                    warn_if_below_floor(interface);
-                    AutoWifi::default()
-                }
-            };
+            let wifi = AutoWifi::with_policy(interface.policy);
             let attached = attach_with_access(handle, access, wifi);
             report_up(handle, interface, attached.id(), report);
         }
@@ -235,9 +227,9 @@ async fn stand_up(
             let attached = attach_with_access(
                 handle,
                 access,
-                TcpClientInterface::with_framing(
+                TcpClientInterface::with_policy_and_framing(
                     format!("{host}:{port}"),
-                    bitrate(interface),
+                    interface.policy,
                     TCP_RECONNECT,
                     *framing,
                 ),
@@ -245,7 +237,7 @@ async fn stand_up(
             report_up(handle, interface, attached.id(), report);
         }
         PlannedMedium::TcpServer { bind } => {
-            match TcpServer::bind(bind.clone(), bitrate(interface)).await {
+            match TcpServer::bind_with_policy(bind.clone(), interface.policy).await {
                 Ok(server) => {
                     let attached = attach_with_access(handle, access, server);
                     report_up(handle, interface, attached.id(), report);
@@ -257,7 +249,9 @@ async fn stand_up(
             }
         }
         PlannedMedium::Udp { listen, forward } => {
-            match UdpInterface::bind(listen.clone(), forward.clone(), bitrate(interface)).await {
+            match UdpInterface::bind_with_policy(listen.clone(), forward.clone(), interface.policy)
+                .await
+            {
                 Ok(udp) => {
                     let attached = attach_with_access(handle, access, udp);
                     report_up(handle, interface, attached.id(), report);
@@ -271,12 +265,13 @@ async fn stand_up(
         PlannedMedium::Serial { device, baud } => {
             let baud = *baud;
             let open_path = device.clone();
-            let serial = SerialInterface::new(
+            let serial = SerialInterface::with_policy(
                 move || {
                     let open_path = open_path.clone();
                     async move { open_host_serial(&open_path, baud) }
                 },
                 SERIAL_RECONNECT,
+                interface.policy,
                 device.as_bytes(),
             );
             let attached = attach_with_access(handle, access, serial);
@@ -298,7 +293,7 @@ async fn stand_up(
                 persistence: *persistence,
                 slottime_ms: *slottime_ms,
             };
-            let kiss = KissInterface::with_settings(
+            let kiss = KissInterface::with_settings_and_policy(
                 move || {
                     let open_path = open_path.clone();
                     async move { open_host_serial(&open_path, baud) }
@@ -306,6 +301,7 @@ async fn stand_up(
                 SERIAL_RECONNECT,
                 CONFIGURE_SETTLE,
                 tnc,
+                interface.policy,
                 device.as_bytes(),
             );
             let attached = attach_with_access(handle, access, kiss);
@@ -329,17 +325,20 @@ async fn stand_up(
                 persistence: *persistence,
                 slottime_ms: *slottime_ms,
             };
-            let opened = Ax25KissInterface::with_settings(
+            let opened = Ax25KissInterface::with_policy(
                 move || {
                     let open_path = open_path.clone();
                     async move { open_host_serial(&open_path, baud) }
                 },
                 SERIAL_RECONNECT,
-                CONFIGURE_SETTLE,
-                tnc,
-                callsign,
-                *ssid,
-                device.as_bytes(),
+                Ax25KissSettings {
+                    settle: CONFIGURE_SETTLE,
+                    tnc,
+                    callsign,
+                    ssid: *ssid,
+                    policy: interface.policy,
+                    channel_tag: device.as_bytes(),
+                },
             );
             match opened {
                 Ok(ax25) => {
@@ -376,13 +375,14 @@ async fn stand_up(
             ) {
                 Ok(radio) => {
                     let open_path = device.clone();
-                    let rnode = RNodeInterface::new(
+                    let rnode = RNodeInterface::new_with_policy(
                         move || {
                             let open_path = open_path.clone();
                             async move { open_host_serial(&open_path, RNODE_BAUD) }
                         },
                         RNODE_RECONNECT,
                         radio,
+                        interface.policy,
                         device.as_bytes(),
                     );
                     let attached = attach_with_access(handle, access, rnode);
@@ -395,10 +395,7 @@ async fn stand_up(
             }
         }
         PlannedMedium::Backbone { bind } => {
-            // Wire-identical to a TCP server, under the Backbone kind. The listener's default pipe
-            // claim is the reference's gigabit `BackboneInterface.BITRATE_GUESS`.
-            let bitrate = resolve_bitrate(interface, backbone_core::BACKBONE_BITRATE_GUESS_BPS);
-            match BackboneServer::bind(bind.clone(), bitrate).await {
+            match BackboneServer::bind_with_policy(bind.clone(), interface.policy).await {
                 Ok(server) => {
                     let attached = attach_with_access(handle, access, server);
                     report_up(handle, interface, attached.id(), report);
@@ -410,14 +407,14 @@ async fn stand_up(
             }
         }
         PlannedMedium::BackboneClient { host, port } => {
-            // Wire-identical to a TCP client, under the Backbone kind. The connector's default pipe
-            // claim is the reference's 100 Mbps `BackboneClientInterface.BITRATE_GUESS`.
-            let bitrate =
-                resolve_bitrate(interface, backbone_core::BACKBONE_CLIENT_BITRATE_GUESS_BPS);
             let attached = attach_with_access(
                 handle,
                 access,
-                BackboneClientInterface::new(format!("{host}:{port}"), bitrate, TCP_RECONNECT),
+                BackboneClientInterface::with_policy(
+                    format!("{host}:{port}"),
+                    interface.policy,
+                    TCP_RECONNECT,
+                ),
             );
             report_up(handle, interface, attached.id(), report);
         }
@@ -428,12 +425,13 @@ async fn stand_up(
             let respawn = Duration::from_millis(*respawn_delay_ms);
             match shlex::split(command) {
                 Some(argv) if !argv.is_empty() => {
-                    let pipe = PipeInterface::new(
+                    let pipe = PipeInterface::with_policy(
                         move || {
                             let argv = argv.clone();
                             async move { crate::pipe_host::spawn(&argv).await }
                         },
                         respawn,
+                        interface.policy,
                         command.as_bytes(),
                     );
                     let attached = attach_with_access(handle, access, pipe);
@@ -471,10 +469,6 @@ fn attach_with_access<A: Attachable>(
     }
 }
 
-fn bitrate(interface: &PlannedInterface) -> BitrateBps {
-    resolve_bitrate(interface, tcp_core::TCP_BITRATE_GUESS_BPS)
-}
-
 #[cfg(feature = "tracing")]
 fn planned_medium_name(medium: &PlannedMedium) -> &'static str {
     match medium {
@@ -499,30 +493,5 @@ fn defer_reason_name(reason: &DeferReason) -> &'static str {
         DeferReason::UnsupportedKind => "unsupported_kind",
         DeferReason::MissingRequiredField { .. } => "missing_required_field",
         DeferReason::InvalidSetting { .. } => "invalid_setting",
-    }
-}
-
-fn resolve_bitrate(interface: &PlannedInterface, default: BitrateBps) -> BitrateBps {
-    match interface.bitrate_bps {
-        Some(raw) => BitrateBps::new(raw).unwrap_or_else(|| {
-            crate::diagnostic_log::warn!(
-                "interface {} configured bitrate {raw} bps is below the {}-bps minimum; using the default {} bps",
-                interface.name,
-                BitrateBps::MINIMUM,
-                default.get(),
-            );
-            default
-        }),
-        None => default,
-    }
-}
-
-fn warn_if_below_floor(interface: &PlannedInterface) {
-    if let Some(raw) = interface.bitrate_bps {
-        crate::diagnostic_log::warn!(
-            "interface {} configured bitrate {raw} bps is below the {}-bps minimum; using the medium default",
-            interface.name,
-            BitrateBps::MINIMUM,
-        );
     }
 }

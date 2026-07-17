@@ -6,7 +6,9 @@ use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::framed_stream::{self, HdlcFraming};
 use prns_core::interfaces::pipe::core;
-use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
+use prns_core::interfaces::{
+    ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind,
+};
 use prns_runtime::reactor::airtime::AirtimeLedger;
 use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
@@ -21,6 +23,7 @@ pub struct PipeInterface<Open> {
     id: InterfaceId,
     open: Open,
     respawn: Duration,
+    policy: EffectiveInterfacePolicy,
     channel_tag: std::vec::Vec<u8>,
     status: TokioInterfaceStatus,
 }
@@ -31,12 +34,28 @@ impl<Open> PipeInterface<Open> {
     /// routes survive the respawn.
     #[must_use]
     pub fn new(open: Open, respawn: Duration, channel_tag: &[u8]) -> Self {
+        Self::with_policy(
+            open,
+            respawn,
+            core::configured_policy(Default::default()),
+            channel_tag,
+        )
+    }
+
+    #[must_use]
+    pub fn with_policy(
+        open: Open,
+        respawn: Duration,
+        policy: EffectiveInterfacePolicy,
+        channel_tag: &[u8],
+    ) -> Self {
         let channel_tag = channel_tag.to_vec();
         let id = InterfaceId::from_channel_tag(InterfaceKind::Pipe, &channel_tag);
         Self {
             id,
             open,
             respawn,
+            policy,
             channel_tag,
             status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
         }
@@ -66,7 +85,7 @@ where
     const KIND: InterfaceKind = InterfaceKind::Pipe;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::descriptor(self.id)
+        core::descriptor(self.id, self.policy)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -74,7 +93,7 @@ where
     }
 
     async fn run<Seam: InterfaceSeam>(mut self, mut seam: Seam) {
-        let bitrate = core::descriptor(self.id).bitrate;
+        let bitrate = self.policy.bitrate;
         let mut airtime = AirtimeLedger::new();
         let mut throughput = ThroughputLedger::new();
         let started = tokio::time::Instant::now();

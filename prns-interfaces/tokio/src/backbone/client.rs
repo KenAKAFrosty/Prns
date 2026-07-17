@@ -1,7 +1,7 @@
 //! The initiating end of a Backbone pair (`BackboneClientInterface` parity): dial one peer, serve the
 //! HDLC-framed link until it drops, wait, dial again. Structurally identical to the
 //! [`tcp`](prns_core::interfaces::tcp) client (Backbone is TCP on the wire); only the
-//! interface kind and the bitrate guess are Backbone's own.
+//! interface kind and effective policy are Backbone's own.
 
 use std::string::String;
 use std::time::Duration;
@@ -12,7 +12,9 @@ use crate::framed_stream;
 use crate::tcp::tokio_socket::{tune, CONNECT_TIMEOUT};
 use prns_core::interfaces::backbone::core;
 use prns_core::interfaces::BitrateBps;
-use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
+use prns_core::interfaces::{
+    ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind,
+};
 use prns_runtime::reactor::airtime::AirtimeLedger;
 use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
@@ -23,11 +25,11 @@ use prns_runtime::reactor::throughput::ThroughputLedger;
 /// dynamic DNS heals), apply the socket discipline, serve until the stream drops, wait `reconnect`,
 /// connect again. Point-to-point: one engine interface, one peer. `bitrate` is the host's claim
 /// about its pipe — it sets the declared hardware MTU through the reference's tier table, so claim
-/// honestly ([`core::BACKBONE_CLIENT_BITRATE_GUESS_BPS`] when genuinely unknown).
+/// honestly ([`core::BACKBONE_CLIENT_BITRATE_ESTIMATE`] when genuinely unknown).
 pub struct BackboneClientInterface {
     id: InterfaceId,
     target: String,
-    bitrate: BitrateBps,
+    policy: EffectiveInterfacePolicy,
     reconnect: Duration,
     status: TokioInterfaceStatus,
 }
@@ -36,7 +38,17 @@ impl BackboneClientInterface {
     #[must_use]
     pub fn new(target: String, bitrate: BitrateBps, reconnect: Duration) -> Self {
         let id = InterfaceId::from_channel_tag(InterfaceKind::BackboneClient, target.as_bytes());
-        Self::new_with_id(id, target, bitrate, reconnect)
+        Self::with_id_and_policy(id, target, core::policy_for_bitrate(bitrate), reconnect)
+    }
+
+    #[must_use]
+    pub fn with_policy(
+        target: String,
+        policy: EffectiveInterfacePolicy,
+        reconnect: Duration,
+    ) -> Self {
+        let id = InterfaceId::from_channel_tag(InterfaceKind::BackboneClient, target.as_bytes());
+        Self::with_id_and_policy(id, target, policy, reconnect)
     }
 
     /// Build with a caller-chosen id instead of one derived from the dial target — for advanced setups
@@ -49,10 +61,20 @@ impl BackboneClientInterface {
         bitrate: BitrateBps,
         reconnect: Duration,
     ) -> Self {
+        Self::with_id_and_policy(id, target, core::policy_for_bitrate(bitrate), reconnect)
+    }
+
+    #[must_use]
+    pub fn with_id_and_policy(
+        id: InterfaceId,
+        target: String,
+        policy: EffectiveInterfacePolicy,
+        reconnect: Duration,
+    ) -> Self {
         Self {
             id,
             target,
-            bitrate,
+            policy,
             reconnect,
             status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
         }
@@ -79,7 +101,7 @@ impl Interface for BackboneClientInterface {
     const KIND: InterfaceKind = InterfaceKind::BackboneClient;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::descriptor(self.id, self.bitrate)
+        core::descriptor(self.id, self.policy)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -137,7 +159,7 @@ impl Interface for BackboneClientInterface {
                         status: &self.status,
                         airtime: &mut airtime,
                         throughput: &mut throughput,
-                        bitrate: self.bitrate,
+                        bitrate: self.policy.bitrate,
                         started,
                     },
                 )
@@ -236,7 +258,7 @@ mod tests {
     fn the_client_id_is_a_backbone_client_kind_from_the_target() {
         let iface = BackboneClientInterface::new(
             "hub.example.com:4965".to_string(),
-            core::BACKBONE_CLIENT_BITRATE_GUESS_BPS,
+            core::BACKBONE_CLIENT_BITRATE_ESTIMATE,
             Duration::from_secs(5),
         );
         assert_eq!(iface.id().kind(), Some(InterfaceKind::BackboneClient));
@@ -259,7 +281,7 @@ mod tests {
 
         let interface = BackboneClientInterface::new(
             addr.to_string(),
-            core::BACKBONE_CLIENT_BITRATE_GUESS_BPS,
+            core::BACKBONE_CLIENT_BITRATE_ESTIMATE,
             Duration::from_millis(10),
         );
         tokio::spawn(interface.run(seam));

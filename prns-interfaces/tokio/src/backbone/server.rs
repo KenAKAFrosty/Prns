@@ -1,7 +1,7 @@
 //! The listening end of a Backbone link (`BackboneInterface` parity): bind a port and stand up
 //! a distinct engine interface per client, the way the reference spawns a child
 //! `BackboneClientInterface` per accepted socket. Structurally identical to the TCP server,
-//! since Backbone is TCP on the wire; only the interface kinds and the bitrate guess are Backbone's own.
+//! since Backbone is TCP on the wire; only the interface kinds and effective policy are Backbone's own.
 
 use std::io;
 use std::net::SocketAddr;
@@ -14,7 +14,9 @@ use crate::framed_stream;
 use crate::tcp::tokio_socket::{tune, RECONNECT_WAIT};
 use prns_core::interfaces::backbone::core;
 use prns_core::interfaces::BitrateBps;
-use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
+use prns_core::interfaces::{
+    ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind,
+};
 use prns_runtime::reactor::airtime::AirtimeLedger;
 use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
@@ -29,7 +31,7 @@ pub struct BackboneServerConnection<S> {
     id: InterfaceId,
     channel_tag: Vec<u8>,
     stream: Option<S>,
-    bitrate: BitrateBps,
+    policy: EffectiveInterfacePolicy,
     status: TokioInterfaceStatus,
 }
 
@@ -40,12 +42,17 @@ impl<S> BackboneServerConnection<S> {
     /// collision loudly.
     #[must_use]
     pub fn new(channel_tag: Vec<u8>, stream: S, bitrate: BitrateBps) -> Self {
+        Self::with_policy(channel_tag, stream, core::policy_for_bitrate(bitrate))
+    }
+
+    #[must_use]
+    pub fn with_policy(channel_tag: Vec<u8>, stream: S, policy: EffectiveInterfacePolicy) -> Self {
         let id = InterfaceId::from_channel_tag(InterfaceKind::BackboneServerPeer, &channel_tag);
         Self {
             id,
             channel_tag,
             stream: Some(stream),
-            bitrate,
+            policy,
             status: TokioInterfaceStatus::new(id, ConnectionState::Connected),
         }
     }
@@ -70,7 +77,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for BackboneServerConnection<S
     const KIND: InterfaceKind = InterfaceKind::BackboneServerPeer;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::descriptor(self.id, self.bitrate)
+        core::descriptor(self.id, self.policy)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -103,7 +110,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for BackboneServerConnection<S
                 status: &self.status,
                 airtime: &mut airtime,
                 throughput: &mut throughput,
-                bitrate: self.bitrate,
+                bitrate: self.policy.bitrate,
                 started,
             },
         )
@@ -116,10 +123,10 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for BackboneServerConnection<S
 /// per-connection members, each a distinct engine interface. It owns no wire of its own (the
 /// reference's `process_outgoing` is a no-op; the members carry the traffic); teardown
 /// cascades. `bitrate` sets each member's declared MTU through the reference's tier table;
-/// claim honestly ([`core::BACKBONE_BITRATE_GUESS_BPS`] when genuinely unknown).
+/// claim honestly ([`core::BACKBONE_BITRATE_ESTIMATE`] when genuinely unknown).
 pub struct BackboneServer {
     listener: TcpListener,
-    bitrate: BitrateBps,
+    policy: EffectiveInterfacePolicy,
     channel_tag: Vec<u8>,
 }
 
@@ -128,11 +135,18 @@ impl BackboneServer {
         addr: impl tokio::net::ToSocketAddrs,
         bitrate: BitrateBps,
     ) -> io::Result<Self> {
+        Self::bind_with_policy(addr, core::policy_for_bitrate(bitrate)).await
+    }
+
+    pub async fn bind_with_policy(
+        addr: impl tokio::net::ToSocketAddrs,
+        policy: EffectiveInterfacePolicy,
+    ) -> io::Result<Self> {
         let listener = TcpListener::bind(addr).await?;
         let channel_tag = listener.local_addr()?.to_string().into_bytes();
         Ok(Self {
             listener,
-            bitrate,
+            policy,
             channel_tag,
         })
     }
@@ -164,10 +178,10 @@ impl InterfaceSupervisor for BackboneServer {
             match self.listener.accept().await {
                 Ok((stream, peer)) => {
                     tune(&stream);
-                    let _ = fleet.add(BackboneServerConnection::new(
+                    let _ = fleet.add(BackboneServerConnection::with_policy(
                         peer.to_string().into_bytes(),
                         stream,
-                        self.bitrate,
+                        self.policy,
                     ));
                 }
                 Err(_) => tokio::time::sleep(RECONNECT_WAIT).await,
@@ -263,11 +277,11 @@ mod tests {
 
     #[test]
     fn the_member_id_is_a_backbone_server_peer_kind_from_the_tag() {
-        let iface = duplex_member(b"127.0.0.1:54321", core::BACKBONE_BITRATE_GUESS_BPS);
+        let iface = duplex_member(b"127.0.0.1:54321", core::BACKBONE_BITRATE_ESTIMATE);
         assert_eq!(iface.id().kind(), Some(InterfaceKind::BackboneServerPeer));
-        let same = duplex_member(b"127.0.0.1:54321", core::BACKBONE_BITRATE_GUESS_BPS);
+        let same = duplex_member(b"127.0.0.1:54321", core::BACKBONE_BITRATE_ESTIMATE);
         assert_eq!(iface.id(), same.id(), "the same peer addr is the same id");
-        let other = duplex_member(b"127.0.0.1:54322", core::BACKBONE_BITRATE_GUESS_BPS);
+        let other = duplex_member(b"127.0.0.1:54322", core::BACKBONE_BITRATE_ESTIMATE);
         assert_ne!(iface.id(), other.id(), "a different peer is a different id");
     }
 
@@ -304,7 +318,7 @@ mod tests {
             BackboneServerConnection::new(
                 peer.to_string().into_bytes(),
                 stream,
-                core::BACKBONE_BITRATE_GUESS_BPS,
+                core::BACKBONE_BITRATE_ESTIMATE,
             )
             .run(seam)
             .await;

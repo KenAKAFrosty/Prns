@@ -6,7 +6,9 @@ use tokio_tungstenite::connect_async_with_config;
 use crate::websocket::tokio_wire;
 use prns_core::interfaces::websocket::core;
 use prns_core::interfaces::BitrateBps;
-use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
+use prns_core::interfaces::{
+    ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind,
+};
 use prns_runtime::reactor::airtime::AirtimeLedger;
 use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
@@ -20,7 +22,7 @@ const WEBSOCKET_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 pub struct WebSocketClientInterface {
     id: InterfaceId,
     target: String,
-    bitrate: BitrateBps,
+    policy: EffectiveInterfacePolicy,
     reconnect: Duration,
     status: TokioInterfaceStatus,
 }
@@ -29,7 +31,17 @@ impl WebSocketClientInterface {
     #[must_use]
     pub fn new(target: String, bitrate: BitrateBps, reconnect: Duration) -> Self {
         let id = InterfaceId::from_channel_tag(InterfaceKind::WebSocketClient, target.as_bytes());
-        Self::new_with_id(id, target, bitrate, reconnect)
+        Self::with_id_and_policy(id, target, core::policy_for_bitrate(bitrate), reconnect)
+    }
+
+    #[must_use]
+    pub fn with_policy(
+        target: String,
+        policy: EffectiveInterfacePolicy,
+        reconnect: Duration,
+    ) -> Self {
+        let id = InterfaceId::from_channel_tag(InterfaceKind::WebSocketClient, target.as_bytes());
+        Self::with_id_and_policy(id, target, policy, reconnect)
     }
 
     /// Build with a caller-chosen id instead of one derived from the dial target. Ordinary nodes
@@ -41,10 +53,20 @@ impl WebSocketClientInterface {
         bitrate: BitrateBps,
         reconnect: Duration,
     ) -> Self {
+        Self::with_id_and_policy(id, target, core::policy_for_bitrate(bitrate), reconnect)
+    }
+
+    #[must_use]
+    pub fn with_id_and_policy(
+        id: InterfaceId,
+        target: String,
+        policy: EffectiveInterfacePolicy,
+        reconnect: Duration,
+    ) -> Self {
         Self {
             id,
             target,
-            bitrate,
+            policy,
             reconnect,
             status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
         }
@@ -66,7 +88,7 @@ impl Interface for WebSocketClientInterface {
     const KIND: InterfaceKind = InterfaceKind::WebSocketClient;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::descriptor(self.id, self.bitrate)
+        core::descriptor(self.id, self.policy)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -111,7 +133,7 @@ impl Interface for WebSocketClientInterface {
                         &self.status,
                         &mut airtime,
                         &mut throughput,
-                        self.bitrate,
+                        self.policy.bitrate,
                         started,
                     )
                     .await;
@@ -213,7 +235,7 @@ mod tests {
 
         let interface = WebSocketClientInterface::new(
             std::format!("ws://{addr}/prns"),
-            core::WEBSOCKET_BITRATE_GUESS_BPS,
+            core::WEBSOCKET_BITRATE_ESTIMATE,
             Duration::from_millis(10),
         );
         tokio::spawn(interface.run(seam));

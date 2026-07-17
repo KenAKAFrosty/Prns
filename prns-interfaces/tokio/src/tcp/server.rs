@@ -11,8 +11,8 @@ use crate::tcp::tokio_socket::{tune, RECONNECT_WAIT};
 use prns_core::interfaces::tcp::core;
 use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{
-    ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceStatus,
-    TransferRates,
+    ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind,
+    InterfaceStatus, TransferRates,
 };
 use prns_runtime::reactor::airtime::AirtimeLedger;
 use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
@@ -29,7 +29,7 @@ pub struct TcpServerConnection<S> {
     id: InterfaceId,
     channel_tag: Vec<u8>,
     stream: Option<S>,
-    bitrate: BitrateBps,
+    policy: EffectiveInterfacePolicy,
     status: TokioInterfaceStatus,
 }
 
@@ -40,12 +40,17 @@ impl<S> TcpServerConnection<S> {
     /// collision loudly.
     #[must_use]
     pub fn new(channel_tag: Vec<u8>, stream: S, bitrate: BitrateBps) -> Self {
+        Self::with_policy(channel_tag, stream, core::policy_for_bitrate(bitrate))
+    }
+
+    #[must_use]
+    pub fn with_policy(channel_tag: Vec<u8>, stream: S, policy: EffectiveInterfacePolicy) -> Self {
         let id = InterfaceId::from_channel_tag(InterfaceKind::TcpServerPeer, &channel_tag);
         Self {
             id,
             channel_tag,
             stream: Some(stream),
-            bitrate,
+            policy,
             status: TokioInterfaceStatus::new(id, ConnectionState::Connected),
         }
     }
@@ -70,7 +75,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for TcpServerConnection<S> {
     const KIND: InterfaceKind = InterfaceKind::TcpServerPeer;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::descriptor(self.id, self.bitrate)
+        core::descriptor(self.id, self.policy)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -103,7 +108,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for TcpServerConnection<S> {
                 status: &self.status,
                 airtime: &mut airtime,
                 throughput: &mut throughput,
-                bitrate: self.bitrate,
+                bitrate: self.policy.bitrate,
                 started,
             },
         )
@@ -120,7 +125,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for TcpServerConnection<S> {
 /// setting each member's declared MTU through the reference's tier table; claim honestly.
 pub struct TcpServer {
     listener: TcpListener,
-    bitrate: BitrateBps,
+    policy: EffectiveInterfacePolicy,
     channel_tag: Vec<u8>,
     status: TcpServerStatus,
 }
@@ -130,12 +135,19 @@ impl TcpServer {
         addr: impl tokio::net::ToSocketAddrs,
         bitrate: BitrateBps,
     ) -> io::Result<Self> {
+        Self::bind_with_policy(addr, core::policy_for_bitrate(bitrate)).await
+    }
+
+    pub async fn bind_with_policy(
+        addr: impl tokio::net::ToSocketAddrs,
+        policy: EffectiveInterfacePolicy,
+    ) -> io::Result<Self> {
         let listener = TcpListener::bind(addr).await?;
         let channel_tag = listener.local_addr()?.to_string().into_bytes();
         let id = InterfaceId::from_channel_tag(InterfaceKind::TcpServer, &channel_tag);
         Ok(Self {
             listener,
-            bitrate,
+            policy,
             channel_tag,
             status: TcpServerStatus::new(id),
         })
@@ -176,10 +188,10 @@ impl InterfaceSupervisor for TcpServer {
             match self.listener.accept().await {
                 Ok((stream, peer)) => {
                     tune(&stream);
-                    let connection = TcpServerConnection::new(
+                    let connection = TcpServerConnection::with_policy(
                         peer.to_string().into_bytes(),
                         stream,
-                        self.bitrate,
+                        self.policy,
                     );
                     self.status.admit(connection.status());
                     let _ = fleet.add(connection);
@@ -374,11 +386,11 @@ mod tests {
 
     #[test]
     fn the_member_id_is_a_tcp_server_peer_kind_from_the_tag() {
-        let iface = duplex_member(b"127.0.0.1:54321", core::TCP_BITRATE_GUESS_BPS);
+        let iface = duplex_member(b"127.0.0.1:54321", core::TCP_BITRATE_ESTIMATE);
         assert_eq!(iface.id().kind(), Some(InterfaceKind::TcpServerPeer));
-        let same = duplex_member(b"127.0.0.1:54321", core::TCP_BITRATE_GUESS_BPS);
+        let same = duplex_member(b"127.0.0.1:54321", core::TCP_BITRATE_ESTIMATE);
         assert_eq!(iface.id(), same.id(), "the same peer addr is the same id");
-        let other = duplex_member(b"127.0.0.1:54322", core::TCP_BITRATE_GUESS_BPS);
+        let other = duplex_member(b"127.0.0.1:54322", core::TCP_BITRATE_ESTIMATE);
         assert_ne!(iface.id(), other.id(), "a different peer is a different id");
     }
 
@@ -395,6 +407,20 @@ mod tests {
     }
 
     #[test]
+    fn the_member_inherits_the_servers_complete_effective_policy() {
+        let policy = core::configured_policy(prns_core::interfaces::ConfiguredInterfacePolicy {
+            mode: Some(prns_core::interfaces::InterfaceMode::Gateway),
+            bitrate: Some(BitrateBps::guess(900_000_000)),
+            mtu: Some(prns_core::interfaces::MtuPolicy::fixed(4_096)),
+            ..prns_core::interfaces::ConfiguredInterfacePolicy::default()
+        });
+        let (near, _far) = tokio::io::duplex(64);
+        let iface = TcpServerConnection::with_policy(b"peer".to_vec(), near, policy);
+
+        assert_eq!(iface.descriptor(), policy.descriptor(iface.id()));
+    }
+
+    #[test]
     fn the_aggregate_status_is_dormant_until_a_client_connects() {
         let status = TcpServerStatus::new(InterfaceId::from_channel_tag(
             InterfaceKind::TcpServer,
@@ -407,7 +433,7 @@ mod tests {
         );
         assert_eq!(status.id().kind(), Some(InterfaceKind::TcpServer));
 
-        let client = duplex_member(b"127.0.0.1:54321", core::TCP_BITRATE_GUESS_BPS);
+        let client = duplex_member(b"127.0.0.1:54321", core::TCP_BITRATE_ESTIMATE);
         let client_status = client.status();
         status.admit(client_status.clone());
         assert_eq!(
@@ -446,7 +472,7 @@ mod tests {
             TcpServerConnection::new(
                 peer.to_string().into_bytes(),
                 stream,
-                core::TCP_BITRATE_GUESS_BPS,
+                core::TCP_BITRATE_ESTIMATE,
             )
             .run(seam)
             .await;

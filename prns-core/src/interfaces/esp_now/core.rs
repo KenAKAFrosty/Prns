@@ -7,8 +7,9 @@ use heapless::Vec as HeaplessVec;
 
 use crate::interfaces::ifac::IFAC_MAX_SIZE;
 use crate::interfaces::{
-    AnnounceBandwidthCap, BitrateBps, EgressCapability, IngressCapability, InterfaceCapabilities,
-    InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceMode, TransportCapability,
+    AnnounceBandwidthCap, BitrateBps, ConfiguredInterfacePolicy, EgressCapability,
+    IngressCapability, InterfaceCapabilities, InterfaceDefaults, InterfaceDescriptor, InterfaceId,
+    InterfaceKind, InterfaceMode, MtuPolicy, TransportCapability,
 };
 
 /// ESP-NOW v2's on-air payload ceiling (`ESP_NOW_MAX_DATA_LEN_V2`). The radio fragments and
@@ -95,17 +96,20 @@ pub fn interface_id() -> InterfaceId {
 
 #[must_use]
 pub fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
-    InterfaceDescriptor {
-        id,
-        capabilities: InterfaceCapabilities {
-            ingress: IngressCapability::Enabled,
-            egress: EgressCapability::Enabled(TransportCapability::SameInterfaceRepeat),
-        },
-        mode: InterfaceMode::Full,
-        bitrate: ESP_NOW_BITRATE_BPS,
-        hardware_mtu: Some(ESP_NOW_HW_MTU),
-        announce_rate_limit: None,
-        announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
-        airtime_duty_cycle: None,
-    }
+    DEFAULTS
+        .configured(ConfiguredInterfacePolicy::default())
+        .descriptor(id)
 }
+
+pub const DEFAULTS: InterfaceDefaults = InterfaceDefaults {
+    capabilities: InterfaceCapabilities {
+        ingress: IngressCapability::Enabled,
+        egress: EgressCapability::Enabled(TransportCapability::SameInterfaceRepeat),
+    },
+    mode: InterfaceMode::Full,
+    bitrate: ESP_NOW_BITRATE_BPS,
+    mtu: MtuPolicy::fixed(ESP_NOW_HW_MTU),
+    announce_rate_limit: None,
+    announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
+    airtime_duty_cycle: None,
+};
