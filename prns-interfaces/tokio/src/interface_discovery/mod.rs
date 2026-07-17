@@ -28,6 +28,15 @@ use tokio::sync::mpsc::{self, error::TrySendError, Receiver, Sender};
 use crate::backbone::client::BackboneClientInterface;
 use crate::tcp::client::TcpClientInterface;
 
+mod publication;
+
+pub use publication::{
+    RunningTokioInterfaceDiscoveryPublisher, TokioDiscoveryPublicationEvent,
+    TokioDiscoveryPublicationFramingFailure, TokioDiscoveryPublicationPreparationFailure,
+    TokioDiscoveryPublisherConstructionError, TokioInterfaceDiscoveryPublisher,
+    DISCOVERY_PUBLICATION_JOB_INTERVAL,
+};
+
 const OBSERVATION_QUEUE_DEPTH: usize = 64;
 const MONITOR_INTERVAL: Duration = Duration::from_secs(5);
 const RECONNECT_INTERVAL: Duration = Duration::from_secs(5);

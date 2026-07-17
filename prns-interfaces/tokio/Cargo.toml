@@ -105,7 +105,7 @@ usb-host = ["usb", "serial-host", "dep:serialport"]
 ble-host = ["ble", "dep:tokio", "tokio/rt", "dep:prns-ffi"]
 pipe-host = ["pipe", "dep:tokio", "tokio/process"]
 auto = []
-interface-discovery = ["tcp", "backbone", "prns-core/interface-discovery", "prns-runtime/interface-discovery"]
+interface-discovery = ["tcp", "backbone", "dep:getrandom", "prns-core/interface-discovery", "prns-runtime/interface-discovery"]
 from-plan = ["tcp", "udp", "serial", "serial-host", "kiss", "ax25", "rnode", "pipe", "pipe-host", "backbone", "wifi", "dep:prns-config", "dep:shlex", "dep:tokio", "tokio/rt"]
 ble = ["dep:tokio", "dep:futures-util", "dep:bluer", "dep:prns-ffi"]
 

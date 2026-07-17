@@ -12,8 +12,9 @@ use tokio::sync::oneshot;
 
 use crate::crypto::ratchets::SeedSelfRatchetsOutcome;
 use crate::engine::{
-    CloseLink, CommandId, Departure, DestinationIdentitySeedOutcome, EngineCommand, EngineState,
-    EstablishLink, EstablishLinkFailure, IssuedCommand, PacketReceiptDelivered, SendRequestFailure,
+    AnnounceNow, AnnounceNowFailure, CloseLink, CommandId, Departure,
+    DestinationIdentitySeedOutcome, EngineCommand, EngineState, EstablishLink,
+    EstablishLinkFailure, IssuedCommand, PacketReceiptDelivered, SendRequestFailure,
     SendResourceFailure, SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload,
     SetTransportIdentityError, Settlement,
 };
@@ -729,6 +730,16 @@ impl TokioPrnsHandle {
             Some(Settlement::EstablishLink(result)) => result
                 .map(|established| established.link_id)
                 .map_err(SendError::Failed),
+            Some(_) | None => Err(SendError::NodeStopped),
+        }
+    }
+
+    pub async fn announce_now(
+        &self,
+        announce: AnnounceNow,
+    ) -> Result<(), SendError<AnnounceNowFailure>> {
+        match self.settle(EngineCommand::AnnounceNow(announce)).await {
+            Some(Settlement::AnnounceNow(result)) => result.map_err(SendError::Failed),
             Some(_) | None => Err(SendError::NodeStopped),
         }
     }
@@ -3104,6 +3115,36 @@ mod tests {
         assert_eq!(
             establish.await.expect("the establish task joins"),
             Err(SendError::Failed(EstablishLinkFailure::Timeout)),
+        );
+    }
+
+    #[tokio::test]
+    async fn announce_now_awaits_and_surfaces_its_typed_settlement() {
+        let (prns, mut command_rx) = handle();
+        let command = AnnounceNow {
+            destination: PEER,
+            target: crate::engine::AnnounceTarget::AllInterfaces,
+            app_data: crate::engine::AnnounceAppData::Registered,
+        };
+        let expected = command.clone();
+        let issuer = prns.clone();
+        let announced = tokio::spawn(async move { issuer.announce_now(command).await });
+        let HostCommand::AwaitedEngine { issued, completion } =
+            command_rx.recv().await.expect("the command was issued")
+        else {
+            panic!("announce_now must issue an awaited engine command");
+        };
+        assert_eq!(issued.command, EngineCommand::AnnounceNow(expected));
+        completion
+            .send(Settlement::AnnounceNow(Err(AnnounceNowFailure::Rejected(
+                crate::engine::AnnounceNowRejection::UnknownDestination,
+            ))))
+            .expect("the awaiter is still parked");
+        assert_eq!(
+            announced.await.expect("the announce task joins"),
+            Err(SendError::Failed(AnnounceNowFailure::Rejected(
+                crate::engine::AnnounceNowRejection::UnknownDestination,
+            ))),
         );
     }
 

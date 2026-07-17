@@ -83,6 +83,47 @@ fn deterministic_stamping_reproduces_the_reference_payload() {
 }
 
 #[test]
+fn a_cached_stamp_is_revalidated_and_reused_without_entropy_work() {
+    let advertisement = backbone();
+    let first = prepare_discovery_publication(
+        &advertisement,
+        stamp_cost(1),
+        DiscoveryPublicationSecurity::Plaintext,
+        |candidate| {
+            candidate.fill(0x42);
+            Ok::<_, core::convert::Infallible>(())
+        },
+        || false,
+    );
+    let DiscoveryPublicationPreparation::Prepared(first) = first else {
+        panic!("the first stamp should prepare");
+    };
+    let cached = *first.stamp();
+    let entropy_calls = core::cell::Cell::new(0);
+    let second = prepare_discovery_publication_with_stamp_cache(
+        &advertisement,
+        stamp_cost(1),
+        DiscoveryPublicationSecurity::Plaintext,
+        |hash| {
+            assert_eq!(hash.as_bytes(), first.advertisement_hash().as_bytes());
+            Some(cached)
+        },
+        |_| {
+            entropy_calls.set(entropy_calls.get() + 1);
+            Ok::<_, core::convert::Infallible>(())
+        },
+        || false,
+    );
+    let DiscoveryPublicationPreparation::Prepared(second) = second else {
+        panic!("the cached stamp should prepare");
+    };
+    assert_eq!(second.stamp(), &cached);
+    assert_eq!(second.stamp_value(), first.stamp_value());
+    assert_eq!(second.stamp_attempts(), 0);
+    assert_eq!(entropy_calls.get(), 0);
+}
+
+#[test]
 fn network_encryption_is_injected_and_never_confused_with_plaintext() {
     let prepared = prepared(DiscoveryPublicationSecurity::NetworkEncrypted);
     let expected_body = prepared.plaintext_body();
