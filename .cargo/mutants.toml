@@ -1,13 +1,12 @@
-# Initial mutation-testing lane. Keep this focused on stable contract-heavy
-# modules until the suite has enough experience triaging survivors.
+# Initial mutation-testing lane. Keep this focused on stable contract-heavy modules until the suite has enough experience triaging survivors.
 examine_globs = [
     "prns-core/src/wire.rs",
     "prns-core/src/interfaces/capabilities.rs",
     "prns-core/src/interfaces/ifac.rs",
     "prns-core/src/interfaces/framing/rns_serial_framing.rs",
-    "prns-interfaces/impls/tokio/src/shared_instance/rpc_compat.rs",
+    "prns-interfaces/impls/tokio/src/shared_instance/rpc_compat/mod.rs",
     "prns-interfaces/impls/tokio/src/shared_instance/rpc_compat/request.rs",
-    "prns-runtime/src/runtime/interface_store.rs",
+    "prns-runtime/impls/tokio/src/runtime/interface_store.rs",
     "prns-core/src/engine/egress.rs",
     "prns-core/src/engine/inbound.rs",
     "prns-core/src/engine/deadlines.rs",
@@ -28,34 +27,17 @@ examine_globs = [
     "prns-core/src/crypto/sign.rs",
 ]
 
-# These bit-pack fields occupy disjoint positions; replacing OR with XOR in
-# `WirePacketHeader::write` is equivalent for all constructible headers. The
-# link signalling pack and unpack are the same shape: the MTU mask owns bits
-# 0-20, the mode owns bits 21-23, and the three decode shifts never overlap.
+# These bit-pack fields occupy disjoint positions; replacing OR with XOR in `WirePacketHeader::write` is equivalent for all constructible headers. The link signalling pack and unpack are the same shape: the MTU mask owns bits 0-20, the mode owns bits 21-23, and the three decode shifts never overlap.
 #
-# The fixed in-place queues intentionally use manual shrinking loops. These
-# mutants remove loop progress or length reduction and are covered as hangs by
-# the tests, but excluding them keeps the mutation lane focused on actionable
-# assertion failures.
+# The fixed in-place queues intentionally use manual shrinking loops. These mutants remove loop progress or length reduction and are covered as hangs by the tests, but excluding them keeps the mutation lane focused on actionable assertion failures.
 #
-# WRAPPED_PLAINTEXT_CAP sizes a scratch buffer that is always sliced to the
-# bytes actually written, so over-sizing it (+ -> *) is harmless; and it picks
-# the larger of two caps that are equal by construction (28 + 403 == 19 + 412
-# == 431), so every comparison operator selects the same value. Both kinds are
-# equivalent and pinned by line/column because the const carries no function
-# name to anchor on.
+# WRAPPED_PLAINTEXT_CAP sizes a scratch buffer that is always sliced to the bytes actually written, so over-sizing it (+ -> *) is harmless; and it picks the larger of two caps that are equal by construction (28 + 403 == 19 + 412 == 431), so every comparison operator selects the same value. Both kinds are equivalent and pinned by line/column because the const carries no function name to anchor on.
 #
-# `no_interfaces` is already the canonical empty `Vec<InterfaceVitals>` source;
-# replacing its body with `vec![]` is byte-for-byte the same observable behavior.
+# `no_interfaces` is already the canonical empty `Vec<InterfaceVitals>` source; replacing its body with `vec![]` is byte-for-byte the same observable behavior.
 #
-# Msgpack fixstr uses the high three opcode bits and a five-bit length; for every
-# constructible fixstr length, `0xa0 | len` and `0xa0 ^ len` are equivalent.
-# Msgpack fixarray/fixmap are the same shape: high opcode bits plus a four-bit
-# element count, with no overlapping bits for constructible fixed sequences.
+# Msgpack fixstr uses the high three opcode bits and a five-bit length; for every constructible fixstr length, `0xa0 | len` and `0xa0 ^ len` are equivalent. Msgpack fixarray/fixmap are the same shape: high opcode bits plus a four-bit element count, with no overlapping bits for constructible fixed sequences.
 #
-# Abstract AF_UNIX sockets are Linux-only code. The unit proof is Linux-gated,
-# but macOS mutation workers still enumerate the cfg-disabled body, so those
-# mutants are unobservable on this host.
+# Abstract AF_UNIX sockets are Linux-only code. The unit proof is Linux-gated, but macOS mutation workers still enumerate the cfg-disabled body, so those mutants are unobservable on this host.
 exclude_re = [
     'replace \| with \^ in WirePacketHeader::write',
     'replace \| with \^ in signalling_bytes_from',
@@ -75,6 +57,5 @@ exclude_re = [
     'links/request\.rs:43:\d+: replace > with',
 ]
 
-# The lane includes local shared-instance RPC files, so the test invocation must
-# compile the same host feature surface the runtime/oracle uses.
+# The lane includes local shared-instance RPC files, so the test invocation must compile the same host feature surface the runtime/oracle uses.
 additional_cargo_test_args = ["-p", "personal-rns", "--features", "local tcp"]
