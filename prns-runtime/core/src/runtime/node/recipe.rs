@@ -8,7 +8,7 @@ use crate::routing::links::resources::ResourceStrategy;
 use crate::routing::{LinkRequestPolicy, ProofStrategy};
 use crate::wire::DestinationHash;
 
-use super::PrnsEvent;
+use super::super::PrnsEvent;
 
 pub enum PreConfiguredDestination<'a> {
     Plain {
@@ -23,18 +23,13 @@ pub enum PreConfiguredDestination<'a> {
         proof: ProofStrategy,
         link_requests: LinkRequestPolicy,
         ratchet: RatchetPolicy,
-        /// Whether links to this destination accept inbound resources, and how large. The runtime
-        /// counterpart is the handle's `set_resource_strategy`; most destinations want
-        /// `ResourceStrategy::AcceptNone` until they expect a transfer.
+        /// Whether links to this destination accept inbound resources, and how large. The runtime counterpart is the handle's `set_resource_strategy`; most destinations want `ResourceStrategy::AcceptNone` until they expect a transfer.
         resource_strategy: ResourceStrategy,
     },
 }
 
 impl PreConfiguredDestination<'_> {
-    /// The address this destination answers as, derived from its name (and key, for a `Single`),
-    /// so an announcing app can name itself before the node starts. `Err` only when the name is
-    /// malformed (a dotted component, or past the length bound), the same validation `Prns::new`
-    /// runs as it stands the destination up.
+    /// The address this destination answers as, derived from its name (and key, for a `Single`), so an announcing app can name itself before the node starts. `Err` only when the name is malformed (a dotted component, or past the length bound), the same validation `Prns::new` runs as it stands the destination up.
     pub fn destination_hash(&self) -> Result<DestinationHash, ExpandNameError> {
         match self {
             PreConfiguredDestination::Plain { app_name, aspects } => Ok(
@@ -56,9 +51,7 @@ impl PreConfiguredDestination<'_> {
     }
 }
 
-/// The explicit "I wire interfaces myself" answer to the recipe's `interfaces` field:
-/// attach everything after construction through the node handle (or, on a board, at
-/// slot activation).
+/// The explicit "I wire interfaces myself" answer to the recipe's `interfaces` field: attach everything after construction through the node handle (or, on a board, at slot activation).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Manual;
 
@@ -70,9 +63,7 @@ where
     pub transport_identity: Option<Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>>,
     pub pre_configured_destinations: Destinations,
     pub app_state: AppState,
-    /// The storage layout the engine's columns run on: `GrowableHeap` on a std host, a fixed
-    /// prepackage (`Esp32S3`/`Esp32C6`/`Nrf52840`) on a board. A type-level choice carried as a
-    /// value so the recipe owns it and `Prns::new` no longer assumes one.
+    /// The storage layout the engine's columns run on: `GrowableHeap` on a std host, a fixed prepackage (`Esp32S3`/`Esp32C6`/`Nrf52840`) on a board. A type-level choice carried as a value so the recipe owns it and `Prns::new` no longer assumes one.
     pub storage: Storage,
     pub routes: Routes,
     pub interfaces: Interfaces,
