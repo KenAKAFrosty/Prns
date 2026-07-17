@@ -240,16 +240,18 @@ impl InterfaceSeam for TokioInterfaceSeam {
 
 pub struct Egress {
     lanes: std::vec::Vec<EgressLane>,
+
     #[cfg(feature = "runtime-metrics")]
     metrics: EgressMetricsSnapshot,
 }
 
 struct EgressLane {
     id: InterfaceId,
-    #[cfg(feature = "runtime-metrics")]
-    logical_interface: InterfaceId,
     producer: TokioGrantProducer,
     connection: Option<ConnectionView>,
+
+    #[cfg(feature = "runtime-metrics")]
+    logical_interface: InterfaceId,
 }
 
 impl EgressLane {
@@ -274,12 +276,13 @@ impl Egress {
             .into_iter()
             .map(|(id, producer)| EgressLane {
                 id,
-                #[cfg(feature = "runtime-metrics")]
-                logical_interface: id,
                 producer,
                 connection: None,
+                #[cfg(feature = "runtime-metrics")]
+                logical_interface: id,
             })
             .collect::<std::vec::Vec<_>>();
+
         #[cfg(feature = "runtime-metrics")]
         let metrics = {
             let mut metrics = EgressMetricsSnapshot::default();
@@ -288,6 +291,7 @@ impl Egress {
             }
             metrics
         };
+
         Self {
             lanes,
             #[cfg(feature = "runtime-metrics")]
@@ -297,30 +301,40 @@ impl Egress {
 
     fn enqueue(&mut self, target: InterfaceId, bytes: &[u8]) -> EgressEnqueueOutcome {
         for lane in &mut self.lanes {
-            if lane.id == target {
-                if let Some(slot) = lane.producer.try_grant() {
-                    slot.fill(bytes);
-                    lane.producer.commit();
-                    #[cfg(feature = "runtime-metrics")]
-                    {
-                        self.metrics.enqueued_frames =
-                            self.metrics.enqueued_frames.saturating_add(1);
-                    }
-                    return EgressEnqueueOutcome::Enqueued;
-                } else {
+            if lane.id != target {
+                continue;
+            }
+
+            match lane.producer.try_grant() {
+                None => {
                     #[cfg(feature = "runtime-metrics")]
                     {
                         self.metrics.full_lane_drops =
                             self.metrics.full_lane_drops.saturating_add(1);
                     }
+
                     return EgressEnqueueOutcome::LaneFull;
+                }
+                Some(slot) => {
+                    slot.fill(bytes);
+                    lane.producer.commit();
+
+                    #[cfg(feature = "runtime-metrics")]
+                    {
+                        self.metrics.enqueued_frames =
+                            self.metrics.enqueued_frames.saturating_add(1);
+                    }
+
+                    return EgressEnqueueOutcome::Enqueued;
                 }
             }
         }
+
         #[cfg(feature = "runtime-metrics")]
         {
             self.metrics.missing_lane_drops = self.metrics.missing_lane_drops.saturating_add(1);
         }
+
         EgressEnqueueOutcome::LaneMissing
     }
 
@@ -330,13 +344,15 @@ impl Egress {
             .iter()
             .find(|lane| lane.id == target)
             .is_some_and(|lane| !lane.is_available());
+
+        #[cfg(feature = "runtime-metrics")]
         if unavailable {
-            #[cfg(feature = "runtime-metrics")]
             {
                 self.metrics.unavailable_frame_skips =
                     self.metrics.unavailable_frame_skips.saturating_add(1);
             }
         }
+
         unavailable
     }
 
@@ -358,9 +374,7 @@ impl Egress {
             .record(origin, logical_interface, outcome, bytes);
     }
 
-    /// The member interfaces a fleet broadcast targets: every lane of the supervisor's member kind
-    /// that `fan` selects. The host owns a lane per member, so a broadcast fans out as one per-member
-    /// send each — no shared-lane collision to dodge, unlike the embedded supervisor.
+    /// Every lane of the supervisor's member kind that `fan` selects.
     fn broadcast_targets(
         &self,
         supervisor: InterfaceKind,
@@ -387,41 +401,40 @@ impl Egress {
         discard: &mut [u8],
     ) {
         for lane in &mut self.lanes {
-            if lane.id == target {
-                match lane.producer.try_grant() {
-                    Some(slot) => {
-                        let hint = size_hint.clamp(1, MAX_WIRE_FRAME_LEN);
-                        if slot.bytes.len() < hint {
-                            slot.bytes.resize(hint, 0);
-                        }
-                        if let Some(len) = fill(&mut slot.bytes[..hint]) {
-                            slot.len = len.min(hint);
-                            lane.producer.commit();
-                            #[cfg(feature = "runtime-metrics")]
-                            {
-                                self.metrics.enqueued_frames =
-                                    self.metrics.enqueued_frames.saturating_add(1);
-                            }
-                        }
+            if lane.id != target {
+                continue;
+            }
+            match lane.producer.try_grant() {
+                Some(slot) => {
+                    let hint = size_hint.clamp(1, MAX_WIRE_FRAME_LEN);
+                    if slot.bytes.len() < hint {
+                        slot.bytes.resize(hint, 0);
                     }
-                    None => {
-                        if fill(discard).is_some() {
-                            #[cfg(feature = "runtime-metrics")]
-                            {
-                                self.metrics.full_lane_drops =
-                                    self.metrics.full_lane_drops.saturating_add(1);
-                            }
+                    if let Some(len) = fill(&mut slot.bytes[..hint]) {
+                        slot.len = len.min(hint);
+                        lane.producer.commit();
+                        #[cfg(feature = "runtime-metrics")]
+                        {
+                            self.metrics.enqueued_frames =
+                                self.metrics.enqueued_frames.saturating_add(1);
                         }
                     }
                 }
-                return;
+                None => {
+                    let _fill_result = fill(discard);
+                    #[cfg(feature = "runtime-metrics")]
+                    if _fill_result.is_some() {
+                        self.metrics.full_lane_drops =
+                            self.metrics.full_lane_drops.saturating_add(1);
+                    }
+                }
             }
+            return;
         }
-        if fill(discard).is_some() {
-            #[cfg(feature = "runtime-metrics")]
-            {
-                self.metrics.missing_lane_drops = self.metrics.missing_lane_drops.saturating_add(1);
-            }
+        let _fill_result = fill(discard);
+        #[cfg(feature = "runtime-metrics")]
+        if _fill_result.is_some() {
+            self.metrics.missing_lane_drops = self.metrics.missing_lane_drops.saturating_add(1);
         }
     }
 
@@ -434,13 +447,15 @@ impl Egress {
     ) {
         #[cfg(not(feature = "runtime-metrics"))]
         let _ = logical_interface;
+
         self.lanes.push(EgressLane {
             id,
-            #[cfg(feature = "runtime-metrics")]
-            logical_interface,
             producer,
             connection,
+            #[cfg(feature = "runtime-metrics")]
+            logical_interface,
         });
+
         #[cfg(feature = "runtime-metrics")]
         self.metrics.announces.register_interface(logical_interface);
     }
@@ -2933,7 +2948,7 @@ fn route_reaction<A: FnMut(Journaled<'_>)>(
             enqueue_for_wire(egress, ifacs, target, bytes, &mut scratch.masked);
         }
         #[cfg(feature = "runtime-metrics")]
-        EngineReaction::Directive(Directive::SendLocalAnnounce { target, bytes }) => {
+        EngineReaction::Directive(Directive::SendMeasuredLocalAnnounce { target, bytes }) => {
             enqueue_announce_for_wire(
                 egress,
                 ifacs,
@@ -2981,7 +2996,7 @@ fn route_reaction<A: FnMut(Journaled<'_>)>(
             }
         }
         #[cfg(feature = "runtime-metrics")]
-        EngineReaction::Directive(Directive::SendLocalAnnounceToFleet {
+        EngineReaction::Directive(Directive::SendMeasuredLocalAnnounceToFleet {
             supervisor,
             fan,
             bytes,
@@ -4609,8 +4624,8 @@ mod tests {
         let (_command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
         let (heard_tx, mut heard_rx) = mpsc::unbounded_channel::<DestinationHash>();
         let app = move |journaled: Journaled<'_>| {
-            if let Journaled::AnnounceHeard { destination, .. } = journaled {
-                let _ = heard_tx.send(destination);
+            if let Journaled::AnnounceHeard { observation } = journaled {
+                let _ = heard_tx.send(observation.destination);
             }
         };
 
@@ -4705,8 +4720,8 @@ mod tests {
         let (command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
         let (heard_tx, mut heard_rx) = mpsc::unbounded_channel::<DestinationHash>();
         let app = move |journaled: Journaled<'_>| {
-            if let Journaled::AnnounceHeard { destination, .. } = journaled {
-                let _ = heard_tx.send(destination);
+            if let Journaled::AnnounceHeard { observation } = journaled {
+                let _ = heard_tx.send(observation.destination);
             }
         };
 
@@ -4795,8 +4810,8 @@ mod tests {
         let (heard_tx, mut heard_rx) = mpsc::unbounded_channel::<DestinationHash>();
         let (dropped_tx, mut dropped_rx) = mpsc::unbounded_channel::<DestinationHash>();
         let app = move |journaled: Journaled<'_>| match journaled {
-            Journaled::AnnounceHeard { destination, .. } => {
-                let _ = heard_tx.send(destination);
+            Journaled::AnnounceHeard { observation } => {
+                let _ = heard_tx.send(observation.destination);
             }
             Journaled::RouteRemoved {
                 destination,
@@ -4918,8 +4933,8 @@ mod tests {
         let (expired_tx, mut expired_rx) = mpsc::unbounded_channel::<DestinationHash>();
         let (settled_tx, mut settled_rx) = mpsc::unbounded_channel::<(CommandId, Settlement)>();
         let app = move |journaled: Journaled<'_>| match journaled {
-            Journaled::AnnounceHeard { destination, .. } => {
-                let _ = heard_tx.send(destination);
+            Journaled::AnnounceHeard { observation } => {
+                let _ = heard_tx.send(observation.destination);
             }
             Journaled::RouteRemoved {
                 destination,

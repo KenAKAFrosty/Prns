@@ -140,3 +140,87 @@ pub struct DiscoveryAdvertisement {
     pub details: AdvertisementDetails,
     pub published_ifac: Option<PublishedIfac>,
 }
+
+pub(crate) fn invalid_reachable_on(advertisement: &DiscoveryAdvertisement) -> Option<&str> {
+    match &advertisement.details {
+        AdvertisementDetails::Reachable { host, .. } if !address_is_valid(host) => Some(host),
+        AdvertisementDetails::I2p { address } if !address_is_valid(address) => Some(address),
+        AdvertisementDetails::Reachable { .. } | AdvertisementDetails::I2p { .. } => None,
+        AdvertisementDetails::None
+        | AdvertisementDetails::RNode { .. }
+        | AdvertisementDetails::Weave { .. }
+        | AdvertisementDetails::Kiss { .. } => None,
+    }
+}
+
+fn address_is_valid(address: &str) -> bool {
+    address.parse::<core::net::IpAddr>().is_ok() || hostname_is_valid(address)
+}
+
+fn hostname_is_valid(hostname: &str) -> bool {
+    let hostname = hostname.strip_suffix('.').unwrap_or(hostname);
+    if hostname.is_empty() || hostname.len() > 253 || !hostname.is_ascii() {
+        return false;
+    }
+    let mut labels = hostname.split('.');
+    let Some(last) = labels.next_back() else {
+        return false;
+    };
+    if last.bytes().all(|byte| byte.is_ascii_digit()) {
+        return false;
+    }
+    hostname.split('.').all(|label| {
+        !label.is_empty()
+            && label.len() <= 63
+            && label
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+            && !label.starts_with('-')
+            && !label.ends_with('-')
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn reachable(host: &str) -> DiscoveryAdvertisement {
+        DiscoveryAdvertisement {
+            interface_type: AdvertisedInterfaceType::Backbone,
+            transport: AdvertisedTransport::Disabled(TransportId::new([0x11; 16])),
+            name: None,
+            location: GeographicLocation::UNKNOWN,
+            details: AdvertisementDetails::Reachable {
+                host: String::from(host),
+                port: 4242,
+            },
+            published_ifac: None,
+        }
+    }
+
+    #[test]
+    fn reference_address_rules_accept_addresses_and_dns_names() {
+        for host in [
+            "192.0.2.1",
+            "2001:db8::1",
+            "router.example",
+            "router.example.",
+            "peer.b32.i2p",
+        ] {
+            assert_eq!(invalid_reachable_on(&reachable(host)), None);
+        }
+    }
+
+    #[test]
+    fn reference_address_rules_reject_non_hosts_and_numeric_dns_tails() {
+        for host in [
+            "",
+            "not a host",
+            "-router.example",
+            "router-.example",
+            "host.123",
+        ] {
+            assert_eq!(invalid_reachable_on(&reachable(host)), Some(host));
+        }
+    }
+}

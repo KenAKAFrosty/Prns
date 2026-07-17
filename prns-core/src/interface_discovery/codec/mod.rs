@@ -152,6 +152,7 @@ pub enum DiscoveryEnvelopeBody<'a> {
 #[derive(Debug, PartialEq, Eq)]
 pub enum DiscoveryEnvelopeError {
     MissingFlags,
+    PayloadTooShort,
     MissingPlaintextOrStamp,
 }
 
@@ -159,6 +160,9 @@ impl core::fmt::Display for DiscoveryEnvelopeError {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::MissingFlags => formatter.write_str("interface discovery payload has no flags"),
+            Self::PayloadTooShort => {
+                formatter.write_str("interface discovery payload is too short")
+            }
             Self::MissingPlaintextOrStamp => formatter
                 .write_str("plaintext interface discovery payload has no advertisement or stamp"),
         }

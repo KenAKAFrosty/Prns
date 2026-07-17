@@ -227,15 +227,13 @@ impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
                 message_type,
                 data,
             }),
-            Journaled::AnnounceHeard {
-                destination,
-                hops,
-                source_interface,
-            } => PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
-                destination,
-                hops,
-                source_interface,
-            }),
+            Journaled::AnnounceHeard { observation } => {
+                PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
+                    destination: observation.destination,
+                    hops: observation.hops.0,
+                    source_interface: observation.source_interface,
+                })
+            }
             Journaled::SelfRatchetRotated { destination } => {
                 PrnsEvent::Diagnostic(Diagnostic::SelfRatchetRotated { destination })
             }

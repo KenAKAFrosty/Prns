@@ -21,6 +21,7 @@ use crate::identity::{
 };
 use crate::interfaces::InterfaceId;
 use crate::routing::NextHop;
+use crate::units::HopCount;
 use crate::units::InstantMillis;
 use crate::wire::{
     ContextFlag, DestinationHash, DestinationType, PacketType, WirePacketHeader,
@@ -144,6 +145,34 @@ pub struct AnnounceArrival<'a> {
     pub receiving_interface: InterfaceId,
     pub next_hop: NextHop,
     pub is_path_response: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AnnounceObservation<'a> {
+    pub destination: DestinationHash,
+    pub announced_identity: IdentityHash,
+    pub hops: HopCount,
+    pub source_interface: InterfaceId,
+    pub arrived_at: InstantMillis,
+    pub app_data: &'a [u8],
+    pub is_path_response: bool,
+}
+
+impl<'a> AnnounceObservation<'a> {
+    pub const fn from_arrival(
+        announced_identity: IdentityHash,
+        arrival: &AnnounceArrival<'a>,
+    ) -> Self {
+        Self {
+            destination: arrival.announce.destination,
+            announced_identity,
+            hops: HopCount(arrival.hops),
+            source_interface: arrival.receiving_interface,
+            arrived_at: arrival.arrived_at,
+            app_data: arrival.announce.app_data,
+            is_path_response: arrival.is_path_response,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

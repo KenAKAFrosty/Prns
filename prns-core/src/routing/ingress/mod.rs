@@ -87,11 +87,12 @@ use crate::wire::{
 use heapless::Vec as HeaplessVec;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct IngestEffects {
+pub(crate) struct IngestEffects<'a> {
     pub destination_identity_expiry: Option<InstantMillis>,
+    pub accepted_announce: Option<crate::routing::announce::AnnounceObservation<'a>>,
 }
 
-impl IngestEffects {
+impl IngestEffects<'_> {
     pub(crate) fn note_destination_identity_expiry(&mut self, expiry: Option<InstantMillis>) {
         if let Some(expiry) = expiry {
             self.destination_identity_expiry = Some(
@@ -519,7 +520,7 @@ impl<S: StorageLayout> EngineState<S> {
         interfaces: AttachedInterfaces<'_>,
         on_removed: &mut impl FnMut(RemovedRoute),
         deferred: Option<&mut DeferredCrypto>,
-        effects: &mut IngestEffects,
+        effects: &mut IngestEffects<'p>,
     ) -> IngestPacketOutcome<'p> {
         self.ingested_packet_count = self.ingested_packet_count.saturating_add(1);
 
