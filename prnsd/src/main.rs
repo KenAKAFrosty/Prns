@@ -360,8 +360,11 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
     let store = FileStore::new(&persist_dir);
     let timeline_origin = boot_timeline_origin(&store);
     let (rotated_tx, rotated_rx) = tokio::sync::mpsc::unbounded_channel();
-    let mut prepared_discovery =
-        discovery::PreparedDiscovery::from_plan(&plan, network_identity.clone());
+    let mut prepared_discovery = discovery::PreparedDiscovery::from_plan(
+        &plan,
+        network_identity.clone(),
+        &discovered_config.dir,
+    );
     let mut prns = Prns::new(PrnsRecipe {
         transport_identity: transport_secret,
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
@@ -518,7 +521,7 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
                     observer.observe(observation);
                 });
                 let clock = prns.clock();
-                Some(tokio::spawn(discovery.run(prns_handle.clone(), clock)))
+                Some(discovery.spawn(prns_handle.clone(), clock))
             }
             None => None,
         }
@@ -550,9 +553,8 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
         () = prns.run() => {}
         () = persist::run_until_shutdown(persistence, managed.as_ref()) => {}
     }
-    if let Some(task) = discovery_task {
-        task.abort();
-        let _ = task.await;
+    if let Some(discovery) = discovery_task {
+        discovery.shutdown().await;
     }
     #[cfg(feature = "otlp")]
     if let Some((task, runtime_up)) = metrics_task {

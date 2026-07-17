@@ -1,22 +1,31 @@
+use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, Sender};
+
 use personal_rns::config::{DaemonPlan, PlannedMedium};
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::interface_discovery::{DiscoveryCatalogRefresh, DiscoveryCatalogUpdate};
+use personal_rns::interface_discovery::{
+    DiscoveryArchive, DiscoveryArchiveError, DiscoveryArchiveRecord, DiscoveryCatalogRefresh,
+    DiscoveryCatalogUpdate, LoadedDiscoveryArchive, DISCOVERED_INTERFACES_FILE,
+};
 use personal_rns::reactor::impls::tokio_reactor::TokioHost;
 use personal_rns::routing::announce::AnnounceObservation;
 use personal_rns::runtime::TokioPrnsHandle;
 use personal_rns::{
     DiscoveryIngressOutcome, TokioDiscoveryEvent, TokioDiscoveryIngress, TokioInterfaceDiscovery,
 };
+use tokio::sync::oneshot;
 
 pub struct PreparedDiscovery {
     service: TokioInterfaceDiscovery,
     ingress: TokioDiscoveryIngress,
+    archive_path: PathBuf,
 }
 
 impl PreparedDiscovery {
     pub fn from_plan(
         plan: &DaemonPlan,
         network_identity: Option<Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>>,
+        config_dir: &Path,
     ) -> Option<Self> {
         plan.discovery.enabled_policy()?;
         let (mut service, ingress) =
@@ -46,7 +55,11 @@ impl PreparedDiscovery {
                 | PlannedMedium::Pipe { .. } => {}
             }
         }
-        Some(Self { service, ingress })
+        Some(Self {
+            service,
+            ingress,
+            archive_path: config_dir.join(DISCOVERED_INTERFACES_FILE),
+        })
     }
 
     pub fn observer(&self) -> DiscoveryObserver {
@@ -55,8 +68,92 @@ impl PreparedDiscovery {
         }
     }
 
-    pub async fn run(self, handle: TokioPrnsHandle, clock: TokioHost) {
-        self.service.run(handle, clock, trace_discovery_event).await;
+    pub fn spawn(self, handle: TokioPrnsHandle, clock: TokioHost) -> RunningDiscovery {
+        let (shutdown, shutdown_requested) = oneshot::channel();
+        let task = tokio::spawn(self.run(handle, clock, shutdown_requested));
+        RunningDiscovery { shutdown, task }
+    }
+
+    async fn run(
+        mut self,
+        handle: TokioPrnsHandle,
+        clock: TokioHost,
+        shutdown: oneshot::Receiver<()>,
+    ) {
+        let (archive_sink, archive_worker) = match load_discovery_archive(self.archive_path).await {
+            Some(loaded) => {
+                self.service.seed_catalog(loaded.catalog);
+                let (sink, worker) = start_archive_worker(loaded.archive);
+                (Some(sink), Some(worker))
+            }
+            None => (None, None),
+        };
+        tokio::select! {
+            () = self.service.run(handle, clock, move |event| {
+                trace_discovery_event(&event);
+                if let Some(archive_sink) = archive_sink.as_ref() {
+                    archive_sink.record(&event);
+                }
+            }) => {}
+            _ = shutdown => {}
+        }
+        if let Some(archive_worker) = archive_worker {
+            archive_worker.finish().await;
+        }
+    }
+}
+
+pub struct RunningDiscovery {
+    shutdown: oneshot::Sender<()>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl RunningDiscovery {
+    pub async fn shutdown(self) {
+        let _ = self.shutdown.send(());
+        if let Err(error) = self.task.await {
+            tracing::warn!(event = "interface_discovery_task_failed", error = %error);
+        }
+    }
+}
+
+async fn load_discovery_archive(path: PathBuf) -> Option<LoadedDiscoveryArchive> {
+    let requested_path = path.clone();
+    let loaded = tokio::task::spawn_blocking(move || {
+        let loaded = DiscoveryArchive::load(path)?;
+        let persist_error = loaded.archive.persist().err();
+        Ok::<_, DiscoveryArchiveError>((loaded, persist_error))
+    })
+    .await;
+    match loaded {
+        Ok(Ok((loaded, persist_error))) => {
+            tracing::info!(
+                event = "interface_discovery_archive_loaded",
+                path = %loaded.archive.path().display(),
+                interfaces = loaded.archive.len(),
+                file_state = ?loaded.file_state,
+            );
+            if let Some(error) = persist_error {
+                tracing::warn!(
+                    event = "interface_discovery_archive_write_failed",
+                    path = %loaded.archive.path().display(),
+                    error = %error,
+                );
+            }
+            Some(loaded)
+        }
+        Ok(Err(error)) => {
+            tracing::warn!(event = "interface_discovery_archive_unavailable", error = %error);
+            None
+        }
+        Err(error) => {
+            tracing::warn!(
+                event = "interface_discovery_archive_load_worker_failed",
+                path = %requested_path.display(),
+                error = %error,
+            );
+            None
+        }
     }
 }
 
@@ -80,7 +177,79 @@ impl DiscoveryObserver {
     }
 }
 
-fn trace_discovery_event(event: TokioDiscoveryEvent<'_>) {
+struct DiscoveryArchiveSink {
+    path: PathBuf,
+    records: Sender<DiscoveryArchiveRecord>,
+}
+
+impl DiscoveryArchiveSink {
+    fn record(&self, event: &TokioDiscoveryEvent<'_>) {
+        let Some(record) = discovery_archive_record(event) else {
+            return;
+        };
+        if self.records.send(record).is_err() {
+            tracing::warn!(
+                event = "interface_discovery_archive_writer_unavailable",
+                path = %self.path.display(),
+            );
+        }
+    }
+}
+
+struct DiscoveryArchiveWorker {
+    path: PathBuf,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl DiscoveryArchiveWorker {
+    async fn finish(self) {
+        if let Err(error) = self.task.await {
+            tracing::warn!(
+                event = "interface_discovery_archive_worker_failed",
+                path = %self.path.display(),
+                error = %error,
+            );
+        }
+    }
+}
+
+fn start_archive_worker(
+    mut archive: DiscoveryArchive,
+) -> (DiscoveryArchiveSink, DiscoveryArchiveWorker) {
+    let path = archive.path().to_path_buf();
+    let (records, receiver) = mpsc::channel();
+    let task = tokio::task::spawn_blocking(move || {
+        for record in receiver {
+            if let Err(error) = archive.record(record) {
+                tracing::warn!(
+                    event = "interface_discovery_archive_write_failed",
+                    path = %archive.path().display(),
+                    error = %error,
+                );
+            }
+        }
+    });
+    (
+        DiscoveryArchiveSink {
+            path: path.clone(),
+            records,
+        },
+        DiscoveryArchiveWorker { path, task },
+    )
+}
+
+fn discovery_archive_record(event: &TokioDiscoveryEvent<'_>) -> Option<DiscoveryArchiveRecord> {
+    let TokioDiscoveryEvent::CatalogUpdated { update, record } = event else {
+        return None;
+    };
+    match update {
+        DiscoveryCatalogUpdate::Added { .. } | DiscoveryCatalogUpdate::Refreshed { .. } => {}
+        DiscoveryCatalogUpdate::IgnoredOutOfOrder { .. } => return None,
+    }
+    Some(DiscoveryArchiveRecord::from(*record))
+}
+
+fn trace_discovery_event(event: &TokioDiscoveryEvent<'_>) {
     match event {
         TokioDiscoveryEvent::IntakeNotApplicable(reason) => {
             tracing::trace!(event = "interface_discovery_not_applicable", reason = ?reason);
@@ -100,7 +269,7 @@ fn trace_discovery_event(event: TokioDiscoveryEvent<'_>) {
         }
         TokioDiscoveryEvent::CatalogUpdated { update, record } => {
             let interface = record.interface();
-            match update {
+            match *update {
                 DiscoveryCatalogUpdate::Added { .. } => {
                     tracing::info!(
                         event = "interface_discovered",
@@ -212,3 +381,6 @@ fn trace_discovery_event(event: TokioDiscoveryEvent<'_>) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
