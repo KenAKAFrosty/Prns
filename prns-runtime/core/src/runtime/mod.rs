@@ -3,7 +3,7 @@ mod destination_identity_retention;
 mod event;
 mod health;
 mod identity_blackhole;
-mod recipe;
+mod node;
 pub mod request_router;
 
 pub use command::{
@@ -11,22 +11,13 @@ pub use command::{
     DestinationIdentityRetentionControlError, DropRouteOutcome, DropRoutesViaOutcome, PrnsApi,
     RoutingControl, RoutingControlError, SendError,
 };
-#[cfg(feature = "tokio-host")]
-pub(crate) use destination_identity_retention::{
-    apply_destination_identity_retention_command, settle_destination_identity_retention,
-    DestinationIdentityRetentionHostCommand,
-};
 pub use event::{Diagnostic, Message, PrnsEvent};
 pub use health::RuntimeHealth;
-#[cfg(feature = "tokio-host")]
-pub(crate) use identity_blackhole::{
-    apply_identity_blackhole_command, IdentityBlackholeHostCommand,
-};
 pub use identity_blackhole::{
     IdentityBlackholeControl, IdentityBlackholeControlError, IdentityBlackholeSource,
     IdentityBlackholeSourceError,
 };
-pub use recipe::{Manual, PreConfiguredDestination, PrnsRecipe};
+pub use node::{Manual, PreConfiguredDestination, PrnsRecipe};
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "std")] {
@@ -66,6 +57,13 @@ cfg_if::cfg_if! {
             PrepareFlushError, PreparedFlush, RatchetSeedReport, RegionFlush, ResourceReceipt,
             ResourceReceiveError, ResourceSendError, RouteSeedProgress, RouteSeedReport,
             SegmentCompression, SharedInstanceIdentityError, TokioPrnsHandle, TunnelSeedReport,
+        };
+        pub(crate) use destination_identity_retention::{
+            apply_destination_identity_retention_command, settle_destination_identity_retention,
+            DestinationIdentityRetentionHostCommand,
+        };
+        pub(crate) use identity_blackhole::{
+            apply_identity_blackhole_command, IdentityBlackholeHostCommand,
         };
     }
 }

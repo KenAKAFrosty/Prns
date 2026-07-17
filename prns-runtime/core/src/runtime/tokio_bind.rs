@@ -1,6 +1,5 @@
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
-use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -13,10 +12,10 @@ use tokio::sync::oneshot;
 use crate::crypto::ratchets::SeedSelfRatchetsOutcome;
 use crate::engine::{
     AnnounceNow, AnnounceNowFailure, CloseLink, CommandId, Departure,
-    DestinationIdentitySeedOutcome, EngineCommand, EngineState, EstablishLink,
-    EstablishLinkFailure, IssuedCommand, PacketReceiptDelivered, SendRequestFailure,
-    SendResourceFailure, SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload,
-    SetTransportIdentityError, Settlement,
+    DestinationIdentitySeedOutcome, EngineCommand, EstablishLink, EstablishLinkFailure,
+    IssuedCommand, PacketReceiptDelivered, SendRequestFailure, SendResourceFailure,
+    SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload, SetTransportIdentityError,
+    Settlement,
 };
 use crate::engine::{InspectionQuery, InspectionResult};
 use crate::engine::{InstantMillis, Journaled};
@@ -65,7 +64,7 @@ use crate::wire::{DestinationHash, TransportId};
 
 use super::byte_stream::{ByteStreamReader, ByteStreamWriter, StreamId};
 use super::identity_blackhole::{settle_control, settle_source};
-use super::recipe::{Manual, PreConfiguredDestination};
+use super::node::{assemble_node, AssembledNode};
 use super::request_router::{RespondToken, RouteSet};
 use super::settle_destination_identity_retention;
 use super::tokio_runner::{run_router, RunnerRequest, REQUEST_QUEUE_DEPTH};
@@ -76,8 +75,8 @@ use super::{
     DestinationIdentityRetentionControlError, DestinationIdentityRetentionHostCommand,
     DropRouteOutcome, DropRoutesViaOutcome, IdentityBlackholeControl,
     IdentityBlackholeControlError, IdentityBlackholeHostCommand, IdentityBlackholeSource,
-    IdentityBlackholeSourceError, InterfaceStore, Message, PrnsEvent, PrnsRecipe, RoutingControl,
-    RoutingControlError, SendError,
+    IdentityBlackholeSourceError, InterfaceStore, Manual, Message, PreConfiguredDestination,
+    PrnsEvent, PrnsRecipe, RoutingControl, RoutingControlError, SendError,
 };
 
 /// How many frames a host lane holds in flight. RNS resource transfer bursts a whole window of
@@ -1779,21 +1778,16 @@ fn notify_accepted_announce(
     }
 }
 
-/// A node on the tokio host. Built from a [`PrnsRecipe`] with [`new`](Self::new) (synchronous:
-/// it wires the engine and spawns each interface), then driven by [`run`](Self::run). Hold
-/// [`handle`](Self::handle) clones to drive it from other tasks/threads while `run` owns the loop.
+/// A node on the tokio host. Built from a [`PrnsRecipe`] with [`new`](Self::new) (synchronous: it wires the engine and spawns each interface), then driven by [`run`](Self::run). Hold [`handle`](Self::handle) clones to drive it from other tasks/threads while `run` owns the loop.
 pub struct Prns<St, R, F, S: StorageLayout> {
     handle: TokioPrnsHandle,
     host: TokioHost,
-    engine: EngineState<S>,
+    node: AssembledNode<St, R, F, S>,
     notify_rx: UnboundedReceiver<InterfaceId>,
     command_rx: UnboundedReceiver<HostCommand>,
     iface_build_rx: UnboundedReceiver<DriverMsg>,
-    state: St,
-    on_event: F,
     accepted_announce_observer: Option<AcceptedAnnounceObserver>,
     crypto_pool: CryptoPoolConfig,
-    _routes: PhantomData<R>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1807,10 +1801,7 @@ where
     R: RouteSet<St>,
     F: FnMut(PrnsEvent<'_>, &St),
 {
-    /// Stand a node up from `recipe` on the storage layout it names: assemble the engine
-    /// (transport role, destinations, the routes' request handlers), then let the recipe's
-    /// `interfaces` intent attach the node's edges through its own handle. Only [`run`](Self::run) awaits.
-    #[allow(clippy::expect_used)]
+    /// Stand a node up from `recipe` on the storage layout it names: assemble the engine (transport role, destinations, the routes' request handlers), then let the recipe's `interfaces` intent attach the node's edges through its own handle. Only [`run`](Self::run) awaits.
     pub fn new<'a, D, I>(recipe: PrnsRecipe<D, St, R, F, I, S>) -> Self
     where
         D: IntoIterator<Item = PreConfiguredDestination<'a>>,
@@ -1819,62 +1810,7 @@ where
         let (notify_tx, notify_rx) = mpsc::unbounded_channel();
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         let (iface_build_tx, iface_build_rx) = mpsc::unbounded_channel();
-
-        let mut engine = EngineState::<S>::default();
-        for destination in recipe.pre_configured_destinations {
-            match destination {
-                PreConfiguredDestination::Plain { app_name, aspects } => {
-                    engine
-                        .register_plain_destination(app_name, aspects)
-                        .expect("recipe plain destination is valid");
-                }
-                PreConfiguredDestination::Single {
-                    app_name,
-                    aspects,
-                    identity,
-                    announce_app_data: app_data,
-                    proof,
-                    link_requests,
-                    ratchet,
-                    resource_strategy,
-                } => {
-                    let held = engine
-                        .hold_identity(identity)
-                        .expect("recipe identity fits the store");
-                    let dest = engine
-                        .register_single_destination(
-                            &held,
-                            app_name,
-                            aspects,
-                            app_data,
-                            proof,
-                            link_requests,
-                            ratchet,
-                        )
-                        .expect("recipe single destination is valid");
-                    engine.set_default_resource_strategy(&dest, resource_strategy);
-                    for (path, policy) in R::REGISTRATIONS {
-                        engine
-                            .register_request_handler(&dest, path, policy.engine_policy())
-                            .expect("recipe request handler fits the store");
-                        for seed in policy.seed_list() {
-                            engine
-                                .allow_requester(&dest, path, *seed)
-                                .expect("recipe seed identity admits to its own fresh handler");
-                        }
-                    }
-                }
-            }
-        }
-
-        if let Some(secret) = recipe.transport_identity {
-            let identity = engine
-                .hold_identity(secret)
-                .expect("the transport identity fits the held-identity store");
-            engine
-                .set_transport_identity(&identity)
-                .expect("the transport identity was just held");
-        }
+        let (node, interfaces) = assemble_node(recipe);
 
         let handle = TokioPrnsHandle {
             commands: command_tx,
@@ -1884,20 +1820,17 @@ where
             interfaces: Arc::new(Mutex::new(HashMap::new())),
             store: InterfaceStore::new(),
         };
-        recipe.interfaces.attach(&handle);
+        interfaces.attach(&handle);
 
         Prns {
             handle,
             host: TokioHost::start_at(wall_clock_timeline_origin()),
-            engine,
+            node,
             notify_rx,
             command_rx,
             iface_build_rx,
-            state: recipe.app_state,
-            on_event: recipe.on_event,
             accepted_announce_observer: None,
             crypto_pool: CryptoPoolConfig::host_default(),
-            _routes: PhantomData,
         }
     }
 
@@ -1906,10 +1839,12 @@ where
         secret: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
     ) -> Result<Self, SharedInstanceIdentityError> {
         let identity = self
+            .node
             .engine
             .hold_identity(secret)
             .map_err(SharedInstanceIdentityError::Hold)?;
-        self.engine
+        self.node
+            .engine
             .set_shared_instance_identity(&identity)
             .map_err(SharedInstanceIdentityError::Configure)?;
         Ok(self)
@@ -1948,7 +1883,7 @@ where
                 continue;
             }
             let reason = entry.reason.as_ref().map(AsRef::as_ref);
-            match self.engine.blackhole_identity(
+            match self.node.engine.blackhole_identity(
                 BlackholedIdentity {
                     identity: entry.identity,
                     source: entry.source,
@@ -1999,8 +1934,14 @@ where
         };
         let now = self.host.now();
         let workers = self.crypto_pool.resolved_worker_count();
-        super::route_restore::seed_persisted_routes(&mut self.engine, rows, now, workers, progress)
-            .into_report()
+        super::route_restore::seed_persisted_routes(
+            &mut self.node.engine,
+            rows,
+            now,
+            workers,
+            progress,
+        )
+        .into_report()
     }
 
     pub fn seed_destination_identities_from_store(
@@ -2028,7 +1969,7 @@ where
                 report.refused_count += 1;
                 break;
             };
-            match self.engine.seed_destination_identity(row, now) {
+            match self.node.engine.seed_destination_identity(row, now) {
                 DestinationIdentitySeedOutcome::Seeded => report.seeded_count += 1,
                 DestinationIdentitySeedOutcome::RefusedPublicKeyChanged => {
                     report.refused_count += 1;
@@ -2062,7 +2003,7 @@ where
             return report;
         };
         for row in rows {
-            match self.engine.seed_tunnel(row) {
+            match self.node.engine.seed_tunnel(row) {
                 SeedTunnelOutcome::Seeded => report.seeded_count += 1,
                 SeedTunnelOutcome::AlreadyPresent | SeedTunnelOutcome::TableFull => {
                     report.dropped_count += 1;
@@ -2081,6 +2022,7 @@ where
     ) -> RatchetSeedReport {
         let mut report = RatchetSeedReport::default();
         let destinations: Vec<DestinationHash> = self
+            .node
             .engine
             .persisted_self_ratchet_rows()
             .map(|(destination, _, _)| destination)
@@ -2102,7 +2044,7 @@ where
                 report.refused_count += 1;
                 continue;
             };
-            match self.engine.seed_self_ratchets(
+            match self.node.engine.seed_self_ratchets(
                 &destination,
                 record.last_rotated,
                 record
@@ -2160,23 +2102,24 @@ where
         self.handle.close_link(link_id)
     }
 
-    /// Drive the node until it stops (in practice forever). The reactor and the request runner
-    /// run joined: every inbound request forks to the runner, while that event, and every
-    /// other, reaches the recipe's `on_event` with shared `&state`, zero-copy.
+    /// Drive the node until it stops (in practice forever). The reactor and the request runner run joined: every inbound request forks to the runner, while that event, and every other, reaches the recipe's `on_event` with shared `&state`, zero-copy.
     pub async fn run(self) {
         let Prns {
             handle,
             host,
-            engine,
+            node,
             notify_rx,
             command_rx,
             iface_build_rx,
-            state,
-            mut on_event,
             mut accepted_announce_observer,
             crypto_pool,
-            _routes,
         } = self;
+        let AssembledNode {
+            engine,
+            state,
+            mut on_event,
+            routes: _,
+        } = node;
         let egress = Egress::new(std::vec::Vec::new());
         let store = handle.store.clone();
         let (req_tx, req_rx) = mpsc::channel(REQUEST_QUEUE_DEPTH);
@@ -2452,7 +2395,7 @@ mod tests {
 
     #[test]
     fn boot_blackholes_seed_against_the_resumed_timeline() {
-        let mut node = Prns::new(PrnsRecipe {
+        let mut prns = Prns::new(PrnsRecipe {
             transport_identity: None,
             pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
             app_state: (),
@@ -2465,7 +2408,7 @@ mod tests {
         let identity = crate::identity::IdentityHash::new([0x31; 16]);
         let source = crate::identity::IdentityHash::new([0x41; 16]);
 
-        let report = node.seed_blackholed_identities([
+        let report = prns.seed_blackholed_identities([
             BlackholedIdentity {
                 identity,
                 source,
@@ -2494,8 +2437,8 @@ mod tests {
                 dropped_count: 1,
             }
         );
-        assert!(node.engine.is_identity_blackholed(&identity));
-        assert_eq!(node.engine.blackholed_identity_count(), 1);
+        assert!(prns.node.engine.is_identity_blackholed(&identity));
+        assert_eq!(prns.node.engine.blackholed_identity_count(), 1);
     }
 
     #[cfg(feature = "runtime-metrics")]

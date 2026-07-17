@@ -7,7 +7,6 @@
 
 use core::cell::RefCell;
 use core::future::Future;
-use core::marker::PhantomData;
 
 use embassy_futures::join::join;
 use embassy_sync::blocking_mutex::raw::RawMutex;
@@ -18,9 +17,8 @@ use heapless::Vec as HeaplessVec;
 use portable_atomic::{AtomicU64, Ordering};
 
 use crate::engine::{
-    CloseLink, CommandId, EngineCommand, EngineState, IssuedCommand, Journaled,
-    PacketReceiptDelivered, Respond, RespondData, SendSinglePacket, SendSinglePacketFailure,
-    SendSinglePacketPayload, Settlement,
+    CloseLink, CommandId, EngineCommand, IssuedCommand, Journaled, PacketReceiptDelivered, Respond,
+    RespondData, SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload, Settlement,
 };
 use crate::interfaces::ifac::{IfacContext, InterfaceIfac};
 use crate::interfaces::{InterfaceDescriptor, InterfaceId};
@@ -34,11 +32,11 @@ use crate::routing::links::LinkId;
 use crate::storage::StorageLayout;
 use crate::wire::DestinationHash;
 
-use super::recipe::{Manual, PreConfiguredDestination};
+use super::node::{assemble_node, AssembledNode};
 use super::request_router::{RespondToken, RouteSet};
 use super::{
-    EmbassyInterfaceStore, InterfaceInspectionStore, NoInterfaceInspectionStore, PrnsEvent,
-    PrnsRecipe, SendError,
+    EmbassyInterfaceStore, InterfaceInspectionStore, Manual, NoInterfaceInspectionStore,
+    PreConfiguredDestination, PrnsEvent, PrnsRecipe, SendError,
 };
 
 /// The free-slot sentinel — no real [`CommandId`] reaches `u64::MAX` (the handle mints from zero).
@@ -317,10 +315,7 @@ impl<
     }
 }
 
-/// A node on an embassy host: the no_std twin of the tokio `Prns`, built from a [`PrnsRecipe`]
-/// over a board-declared static interface pool ([`ReactorPlumbing`]). The wires are attached
-/// explicitly because the board owns their `static` storage: [`activate`](Self::activate)
-/// stands up a top-level interface on a pool slot, [`run`](Self::run) joins the reactor with the caller's drive.
+/// A node on an embassy host: the no_std twin of the tokio `Prns`, built from a [`PrnsRecipe`] over a board-declared static interface pool ([`ReactorPlumbing`]). The wires are attached explicitly because the board owns their `static` storage: [`activate`](Self::activate) stands up a top-level interface on a pool slot, [`run`](Self::run) joins the reactor with the caller's drive.
 pub struct Prns<
     St,
     R,
@@ -339,7 +334,7 @@ pub struct Prns<
     S: StorageLayout,
     M: RawMutex + 'static,
 {
-    engine: EngineState<S>,
+    node: AssembledNode<St, R, F, S>,
     inbound: HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, M, SLOT>), IFACES>,
     egress: PooledEgress<M, SLOT, IFACES>,
     notify: Receiver<'static, M, InterfaceId, NOTIFY>,
@@ -349,9 +344,6 @@ pub struct Prns<
     host: H,
     initial: HeaplessVec<InterfaceDescriptor, MAX_IFACES>,
     ifacs: HeaplessVec<InterfaceIfac, IFACES>,
-    state: St,
-    on_event: F,
-    _routes: PhantomData<R>,
 }
 
 impl<
@@ -376,10 +368,7 @@ where
     H: Host,
     M: RawMutex + 'static,
 {
-    /// Stand a node up from `recipe` over the board's `plumbing` and `host` (its clock +
-    /// entropy), assembling the engine exactly as the tokio `Prns::new` does. No interface is
-    /// wired yet: [`activate`](Self::activate) names the top-level wires, the supervisor drive names the rest.
-    #[allow(clippy::expect_used)]
+    /// Stand a node up from `recipe` over the board's `plumbing` and `host` (its clock + entropy). No interface is wired yet: [`activate`](Self::activate) names the top-level wires, and the supervisor drive names the rest.
     pub fn new<'d, D>(
         recipe: PrnsRecipe<D, St, R, F, Manual, S>,
         plumbing: ReactorPlumbing<M, SLOT, IFACES, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
@@ -389,64 +378,10 @@ where
     where
         D: IntoIterator<Item = PreConfiguredDestination<'d>>,
     {
-        let mut engine = EngineState::<S>::default();
-        for destination in recipe.pre_configured_destinations {
-            match destination {
-                PreConfiguredDestination::Plain { app_name, aspects } => {
-                    engine
-                        .register_plain_destination(app_name, aspects)
-                        .expect("recipe plain destination is valid");
-                }
-                PreConfiguredDestination::Single {
-                    app_name,
-                    aspects,
-                    identity,
-                    announce_app_data: app_data,
-                    proof,
-                    link_requests,
-                    ratchet,
-                    resource_strategy,
-                } => {
-                    let held = engine
-                        .hold_identity(identity)
-                        .expect("recipe identity fits the store");
-                    let dest = engine
-                        .register_single_destination(
-                            &held,
-                            app_name,
-                            aspects,
-                            app_data,
-                            proof,
-                            link_requests,
-                            ratchet,
-                        )
-                        .expect("recipe single destination is valid");
-                    engine.set_default_resource_strategy(&dest, resource_strategy);
-                    for (path, policy) in R::REGISTRATIONS {
-                        engine
-                            .register_request_handler(&dest, path, policy.engine_policy())
-                            .expect("recipe request handler fits the store");
-                        for seed in policy.seed_list() {
-                            engine
-                                .allow_requester(&dest, path, *seed)
-                                .expect("recipe seed identity admits to its own fresh handler");
-                        }
-                    }
-                }
-            }
-        }
-
-        if let Some(secret) = recipe.transport_identity {
-            let identity = engine
-                .hold_identity(secret)
-                .expect("the transport identity fits the held-identity store");
-            engine
-                .set_transport_identity(&identity)
-                .expect("the transport identity was just held");
-        }
+        let (node, Manual) = assemble_node(recipe);
 
         Prns {
-            engine,
+            node,
             inbound: plumbing.inbound,
             egress: plumbing.egress,
             notify: plumbing.notify,
@@ -456,9 +391,6 @@ where
             host,
             initial,
             ifacs: HeaplessVec::new(),
-            state: recipe.app_state,
-            on_event: recipe.on_event,
-            _routes: PhantomData,
         }
     }
 
@@ -595,7 +527,7 @@ where
         Store: InterfaceInspectionStore,
     {
         let Prns {
-            mut engine,
+            node,
             mut inbound,
             mut egress,
             notify,
@@ -605,10 +537,13 @@ where
             mut host,
             initial,
             mut ifacs,
+        } = self;
+        let AssembledNode {
+            mut engine,
             state,
             mut on_event,
-            _routes,
-        } = self;
+            routes: _,
+        } = node;
         let reactor = run_pooled(
             &mut engine,
             &mut host,
@@ -668,7 +603,7 @@ where
         Store: InterfaceInspectionStore,
     {
         let Prns {
-            engine,
+            node,
             inbound,
             egress,
             notify,
@@ -678,10 +613,13 @@ where
             host,
             initial,
             ifacs,
+        } = self;
+        let AssembledNode {
+            engine,
             state,
             on_event,
-            _routes,
-        } = self;
+            routes: _,
+        } = node;
         run_pooled(
             engine,
             host,
