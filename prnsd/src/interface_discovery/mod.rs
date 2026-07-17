@@ -16,6 +16,8 @@ use personal_rns::{
 };
 use tokio::sync::oneshot;
 
+pub(crate) mod publication;
+
 pub struct PreparedDiscovery {
     service: TokioInterfaceDiscovery,
     ingress: TokioDiscoveryIngress,

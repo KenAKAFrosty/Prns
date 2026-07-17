@@ -15,8 +15,8 @@
 
 mod cli;
 mod construct;
-mod discovery;
 mod identity;
+mod interface_discovery;
 #[cfg(feature = "otlp")]
 mod metrics;
 mod observability;
@@ -32,7 +32,7 @@ use personal_rns::identity::vault::FileVault;
 use personal_rns::persistence::FileStore;
 use personal_rns::routes;
 use personal_rns::runtime::{
-    boot_timeline_origin, Diagnostic, Manual, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe,
+    boot_timeline_origin, Diagnostic, Manual, Prns, PrnsEvent, PrnsRecipe,
 };
 use personal_rns::shared_instance::{
     join_shared_instance, InstancePorts, JoinError, OnExisting, RnsLocalBlackholeFile, Role,
@@ -360,14 +360,17 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
     let store = FileStore::new(&persist_dir);
     let timeline_origin = boot_timeline_origin(&store);
     let (rotated_tx, rotated_rx) = tokio::sync::mpsc::unbounded_channel();
-    let mut prepared_discovery = discovery::PreparedDiscovery::from_plan(
+    let mut prepared_discovery = interface_discovery::PreparedDiscovery::from_plan(
         &plan,
         network_identity.clone(),
         &discovered_config.dir,
     );
+    let (discovery_destination, prepared_discovery_publisher) =
+        interface_discovery::publication::prepare(&plan, &secret, network_identity.as_ref())
+            .unzip();
     let mut prns = Prns::new(PrnsRecipe {
         transport_identity: transport_secret,
-        pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
+        pre_configured_destinations: discovery_destination,
         app_state: (),
         storage: GrowableHeap,
         routes: routes![],
@@ -396,6 +399,7 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
     // Only a node that owns tables seeds and persists them (RNS gates persistence the same way
     // for shared-instance clients).
     let mut owns_tables = false;
+    let mut constructed_interfaces = Vec::new();
     match plan.shared_instance {
         SharedInstance::Enabled {
             instance_port,
@@ -425,7 +429,8 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
                         bus_port = ports.bus,
                         control_port = ports.control,
                     );
-                    construct::construct_interfaces(&prns_handle, &plan).await;
+                    constructed_interfaces =
+                        construct::construct_interfaces(&prns_handle, &plan).await;
                     owns_tables = true;
                 }
                 Ok(Role::JoinedAsClient { of }) => {
@@ -455,7 +460,7 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
         }
         SharedInstance::Disabled => {
             tracing::info!(event = "standalone_node_started");
-            construct::construct_interfaces(&prns_handle, &plan).await;
+            constructed_interfaces = construct::construct_interfaces(&prns_handle, &plan).await;
             owns_tables = true;
         }
     }
@@ -528,6 +533,26 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
     } else {
         None
     };
+    let discovery_publication_task = if owns_tables {
+        match prepared_discovery_publisher {
+            Some(publisher) => {
+                let clock = prns.clock();
+                match publisher.spawn(prns_handle.clone(), clock, constructed_interfaces) {
+                    Ok(task) => task,
+                    Err(error) => {
+                        tracing::error!(
+                            event = "interface_discovery_publisher_start_failed",
+                            error = %error,
+                        );
+                        None
+                    }
+                }
+            }
+            None => None,
+        }
+    } else {
+        None
+    };
     #[cfg(feature = "otlp")]
     let metrics_task = observability.metrics_reporter().map(|reporter| {
         let runtime_up = reporter.runtime_up_handle();
@@ -555,6 +580,11 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
     }
     if let Some(discovery) = discovery_task {
         discovery.shutdown().await;
+    }
+    if let Some(publisher) = discovery_publication_task {
+        if let Err(error) = publisher.shutdown().await {
+            tracing::warn!(event = "interface_discovery_publisher_task_failed", error = %error);
+        }
     }
     #[cfg(feature = "otlp")]
     if let Some((task, runtime_up)) = metrics_task {

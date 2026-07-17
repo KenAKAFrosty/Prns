@@ -1,25 +1,82 @@
-//! Render the daemon's lines for a [`DaemonPlan`] standing up — construction itself lives in
-//! `personal_rns::from_plan` ([`attach_plan`]); this module owns only the `RNSD_*` output the
-//! smokes and operators read.
-
-use personal_rns::config::{DaemonPlan, DeferReason, PlannedMedium, UnappliedSetting};
+use personal_rns::config::{
+    DaemonPlan, DeferReason, DiscoveryPublicationProblem, InterfaceDiscoveryPlan, PlannedInterface,
+    PlannedMedium, UnappliedSetting,
+};
 use personal_rns::from_plan::{attach_plan, PlanOutcome};
-use personal_rns::interfaces::InterfaceOriginKind;
+use personal_rns::interfaces::{InterfaceId, InterfaceOriginKind};
 use personal_rns::runtime::TokioPrnsHandle;
 
-pub async fn construct_interfaces(handle: &TokioPrnsHandle, plan: &DaemonPlan) {
-    attach_plan(handle, plan, &mut render).await;
+pub(crate) struct AttachedConfiguredInterface {
+    pub id: InterfaceId,
+    pub plan: PlannedInterface,
+}
+
+pub(crate) async fn construct_interfaces(
+    handle: &TokioPrnsHandle,
+    plan: &DaemonPlan,
+) -> Vec<AttachedConfiguredInterface> {
+    let mut constructed = Vec::new();
+    attach_plan(handle, plan, &mut |outcome| {
+        if let PlanOutcome::Up { interface, id } = &outcome {
+            constructed.push(AttachedConfiguredInterface {
+                id: *id,
+                plan: (*interface).clone(),
+            });
+        }
+        render(outcome);
+    })
+    .await;
+    constructed
 }
 
 fn render(outcome: PlanOutcome<'_>) {
     match outcome {
-        PlanOutcome::Up { interface, .. } => {
+        PlanOutcome::Up { interface, id } => {
             tracing::info!(
                 event = "interface_started",
                 interface_origin = InterfaceOriginKind::Configured.as_str(),
+                interface = ?id.as_bytes(),
                 interface_name = ?interface.name,
                 medium = medium_name(&interface.medium),
             );
+            match &interface.discovery {
+                InterfaceDiscoveryPlan::Disabled | InterfaceDiscoveryPlan::Announce(_) => {}
+                InterfaceDiscoveryPlan::Unpublishable(
+                    DiscoveryPublicationProblem::UnsupportedInterfaceType,
+                ) => {
+                    tracing::warn!(
+                        event = "interface_discovery_publication_unavailable",
+                        interface_origin = InterfaceOriginKind::Configured.as_str(),
+                        interface = ?id.as_bytes(),
+                        interface_name = %interface.name,
+                        reason = "unsupported_interface_type",
+                    );
+                }
+                InterfaceDiscoveryPlan::Unpublishable(
+                    DiscoveryPublicationProblem::MissingRequiredSetting { key },
+                ) => {
+                    tracing::warn!(
+                        event = "interface_discovery_publication_unavailable",
+                        interface_origin = InterfaceOriginKind::Configured.as_str(),
+                        interface = ?id.as_bytes(),
+                        interface_name = %interface.name,
+                        reason = "missing_required_setting",
+                        setting = *key,
+                    );
+                }
+                InterfaceDiscoveryPlan::Unpublishable(
+                    DiscoveryPublicationProblem::IncompatibleSetting { key },
+                ) => {
+                    tracing::warn!(
+                        event = "interface_discovery_publication_unavailable",
+                        interface_origin = InterfaceOriginKind::Configured.as_str(),
+                        interface = ?id.as_bytes(),
+                        interface_name = %interface.name,
+                        reason = "incompatible_setting",
+                        setting = *key,
+                    );
+                }
+            }
         }
         PlanOutcome::Failed {
             interface,
