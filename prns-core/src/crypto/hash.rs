@@ -1,12 +1,15 @@
+use sha2::digest::{typenum::Unsigned, OutputSizeUser};
 use sha2::{Digest, Sha256};
 
-pub fn sha256(data: &[u8]) -> [u8; 32] {
+pub const SHA256_OUTPUT_LEN: usize = <<Sha256 as OutputSizeUser>::OutputSize as Unsigned>::USIZE;
+
+pub fn sha256(data: &[u8]) -> [u8; SHA256_OUTPUT_LEN] {
     let mut hasher = Sha256::new();
     hasher.update(data);
     hasher.finalize().into()
 }
 
-pub fn sha256_chunks(chunks: &[&[u8]]) -> [u8; 32] {
+pub fn sha256_chunks(chunks: &[&[u8]]) -> [u8; SHA256_OUTPUT_LEN] {
     let mut hasher = Sha256::new();
     for chunk in chunks {
         hasher.update(chunk);
@@ -15,8 +18,8 @@ pub fn sha256_chunks(chunks: &[&[u8]]) -> [u8; 32] {
 }
 
 pub struct SharedPrefixDigests {
-    pub with_suffix: [u8; 32],
-    pub with_first_digest: [u8; 32],
+    pub with_suffix: [u8; SHA256_OUTPUT_LEN],
+    pub with_first_digest: [u8; SHA256_OUTPUT_LEN],
 }
 
 /// One pass over the `prefix` chunks feeds both digests: the midstate is cloned, not rehashed.
@@ -49,7 +52,7 @@ impl Sha256PrefixState {
     pub fn digests_with_suffix(&self, first_suffix: &[u8]) -> SharedPrefixDigests {
         let mut first = self.base.clone();
         first.update(first_suffix);
-        let with_suffix: [u8; 32] = first.finalize().into();
+        let with_suffix: [u8; SHA256_OUTPUT_LEN] = first.finalize().into();
 
         let mut second = self.base.clone();
         second.update(with_suffix);

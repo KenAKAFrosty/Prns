@@ -11,6 +11,7 @@ pub mod serve_outgoing;
 pub mod streamed_open;
 pub mod table;
 
+use crate::crypto::SHA256_OUTPUT_LEN;
 use crate::engine::CommandId;
 use crate::routing::links::data::LINK_MDU;
 use crate::routing::links::request::RequestId;
@@ -31,7 +32,7 @@ pub const MAP_HASH_LEN: usize = 4;
 pub const RESOURCE_NONCE_LEN: usize = 4;
 
 /// A resource names itself by a full SHA-256. RNS 1.3.5 `Identity.full_hash(data + random_hash)`
-pub const RESOURCE_HASH_LEN: usize = 32;
+pub const RESOURCE_HASH_LEN: usize = SHA256_OUTPUT_LEN;
 
 /// RNS 1.3.5 `Resource.WINDOW_MAX` (= `WINDOW_MAX_FAST`). The widest part window either end will ever run. The collision guard is sized from it.
 pub const WINDOW_MAX: usize = 75;
@@ -333,7 +334,7 @@ impl ResourceCorrelation {
 }
 
 /// Why an incoming transfer died.
-/// The reference has no analogous signal. A stock receiver's failures surface only in its own logs; ours ride the failure event by name.
+/// The reference has no analogous signal. A stock RNS receiver's failures surface only in its own logs; ours ride the failure event by name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResourceFailureCause {
     CancelledBySender,
@@ -345,7 +346,6 @@ pub enum ResourceFailureCause {
     ProofUnsendable,
     DecompressionFailed,
     DecompressionTimedOut,
-    /// The pool never returned the span verdict a complete transfer was parked on.
     OpenTimedOut,
     /// The verified stream's own metadata prefix declares more bytes than the stream holds.
     /// Intentional deviation: the reference silently delivers truncated metadata and empty data when the declared length overruns (Python slice leniency); we fail the transfer by name.

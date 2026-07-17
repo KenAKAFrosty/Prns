@@ -14,6 +14,7 @@ pub use exchange::{
 };
 pub use hash::{
     sha256, sha256_chunks, sha256_prefix_and_digest_suffix, Sha256PrefixState, SharedPrefixDigests,
+    SHA256_OUTPUT_LEN,
 };
 pub use kdf::{hkdf_sha256, hkdf_sha256_into, HkdfOutputTooLong};
 pub use mac::{hmac_sha256, hmac_sha256_chunks, hmac_sha256_verify, HmacSha256Stream, InvalidMac};

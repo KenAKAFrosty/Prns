@@ -31,7 +31,7 @@ pub fn link_traffic_timeout_ms(rtt: RttMillis) -> u64 {
         .saturating_add(RECEIPT_ENFORCEMENT_SLACK_MS)
 }
 
-/// RNS 1.3.5 `Link.update_mdu`: the most plaintext one link data packet can  carry: the link MTU less the type-1 header, minimum IFAC, and token overhead, floored to a whole AES block, minus one pad byte.
+/// RNS 1.3.5 `Link.update_mdu`
 pub const fn link_mdu(mtu: usize) -> usize {
     ((mtu - IFAC_MIN_LEN - HEADER_MIN_LEN - TOKEN_OVERHEAD) / 16) * 16 - 1
 }
