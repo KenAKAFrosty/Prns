@@ -1,6 +1,6 @@
 use personal_rns::config::{
-    DaemonPlan, DeferReason, DiscoveryPublicationProblem, InterfaceDiscoveryPlan, PlannedInterface,
-    PlannedMedium, UnappliedSetting,
+    DaemonPlan, DiscoveryPublicationProblem, InterfaceDiscoveryPlan, PlannedInterface,
+    PlannedMedium,
 };
 use personal_rns::from_plan::{attach_plan, PlanOutcome};
 use personal_rns::interfaces::{InterfaceId, InterfaceOriginKind};
@@ -74,7 +74,6 @@ fn classify(outcome: &PlanOutcome<'_>) -> StartupInterfaceReport {
             | PlannedMedium::Pipe { .. } => report.retrying = 1,
         },
         PlanOutcome::Failed { .. } => report.failed = 1,
-        PlanOutcome::Unapplied(_) | PlanOutcome::Deferred(_) => {}
     }
     report
 }
@@ -145,35 +144,6 @@ fn render(outcome: PlanOutcome<'_>) {
                 error = %visible_error_message,
             );
         }
-        PlanOutcome::Unapplied(interface) => {
-            for setting in &interface.unapplied {
-                tracing::warn!(
-                    event = "interface_setting_unapplied",
-                    interface_origin = InterfaceOriginKind::Configured.as_str(),
-                    setting = unapplied_name(setting),
-                );
-                tracing::debug!(
-                    event = "interface_setting_unapplied_detail",
-                    interface_origin = InterfaceOriginKind::Configured.as_str(),
-                    interface_name = ?interface.name,
-                    setting = ?setting,
-                );
-            }
-        }
-        PlanOutcome::Deferred(deferred) => {
-            tracing::info!(
-                event = "interface_deferred",
-                interface_origin = InterfaceOriginKind::Configured.as_str(),
-                interface_name = ?deferred.name,
-                interface_type = ?deferred.type_name,
-                reason = defer_name(&deferred.why),
-            );
-            tracing::debug!(
-                event = "interface_deferred_detail",
-                interface_origin = InterfaceOriginKind::Configured.as_str(),
-                reason = ?deferred.why,
-            );
-        }
     }
 }
 
@@ -190,21 +160,6 @@ fn medium_name(medium: &PlannedMedium) -> &'static str {
         PlannedMedium::Backbone { .. } => "backbone",
         PlannedMedium::BackboneClient { .. } => "backbone_client",
         PlannedMedium::Pipe { .. } => "pipe",
-    }
-}
-
-fn unapplied_name(setting: &UnappliedSetting) -> &'static str {
-    match setting {
-        UnappliedSetting::MediumOption(_) => "medium_option",
-    }
-}
-
-fn defer_name(reason: &DeferReason) -> &'static str {
-    match reason {
-        DeferReason::Disabled => "disabled",
-        DeferReason::UnsupportedKind => "unsupported_kind",
-        DeferReason::MissingRequiredField { .. } => "missing_required_field",
-        DeferReason::InvalidSetting { .. } => "invalid_setting",
     }
 }
 

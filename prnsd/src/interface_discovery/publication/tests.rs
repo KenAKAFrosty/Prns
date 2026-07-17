@@ -5,7 +5,9 @@ use std::fs;
 #[cfg(unix)]
 use std::path::{Path, PathBuf};
 
-use personal_rns::config::{plan, reference, DiscoveryEncryption, InterfaceDiscoveryPlan};
+use personal_rns::config::{
+    parse_and_plan, DaemonPlan, DiscoveryEncryption, InterfaceDiscoveryPlan,
+};
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interface_discovery::{
@@ -68,10 +70,15 @@ fn interface_id(value: u8) -> InterfaceId {
     InterfaceId::new([value; INTERFACE_ID_LEN])
 }
 
+fn planned(config: &str) -> DaemonPlan {
+    parse_and_plan(config)
+        .expect("the fixture config is valid")
+        .value
+}
+
 #[test]
 fn network_identity_owns_the_destination_while_transport_identity_stays_advertised() {
-    let config = reference::parse(TCP_SERVER).expect("the fixture config is valid");
-    let plan = plan(&config);
+    let plan = planned(TCP_SERVER);
     let transport_secret = identity_secret(0x11, 0x22);
     let network_secret = identity_secret(0x33, 0x44);
 
@@ -104,8 +111,7 @@ fn network_identity_owns_the_destination_while_transport_identity_stays_advertis
 
 #[test]
 fn transport_identity_owns_the_destination_without_a_network_identity() {
-    let config = reference::parse(TCP_SERVER).expect("the fixture config is valid");
-    let plan = plan(&config);
+    let plan = planned(TCP_SERVER);
     let transport_secret = identity_secret(0x11, 0x22);
 
     let (destination, prepared) = prepare(&plan, &transport_secret, None)
@@ -125,15 +131,13 @@ fn transport_identity_owns_the_destination_without_a_network_identity() {
 
 #[test]
 fn no_publishable_interface_registers_no_discovery_destination() {
-    let config = reference::parse(
+    let plan = planned(
         "[interfaces]\n\
          [[LAN]]\n\
          type = AutoInterface\n\
          interface_enabled = Yes\n\
          discoverable = Yes\n",
-    )
-    .expect("the fixture config is valid");
-    let plan = plan(&config);
+    );
     let transport_secret = identity_secret(0x11, 0x22);
 
     assert!(prepare(&plan, &transport_secret, None).is_none());
@@ -141,8 +145,7 @@ fn no_publishable_interface_registers_no_discovery_destination() {
 
 #[tokio::test]
 async fn configured_fields_materialize_into_the_complete_wire_advertisement() {
-    let config = reference::parse(TCP_SERVER).expect("the fixture config is valid");
-    let mut plan = plan(&config);
+    let mut plan = planned(TCP_SERVER);
     let InterfaceDiscoveryPlan::Announce(announcement) = &mut plan.interfaces[0].discovery else {
         panic!("the fixture interface is publishable");
     };
@@ -192,7 +195,7 @@ async fn configured_fields_materialize_into_the_complete_wire_advertisement() {
 
 #[test]
 fn unavailable_network_encryption_does_not_suppress_plaintext_interfaces() {
-    let config = reference::parse(&format!(
+    let config = format!(
         "{TCP_SERVER}\n\
          [[Encrypted TCP]]\n\
          type = TCPServerInterface\n\
@@ -202,9 +205,8 @@ fn unavailable_network_encryption_does_not_suppress_plaintext_interfaces() {
          discoverable = Yes\n\
          discovery_encrypt = Yes\n\
          reachable_on = encrypted.example\n"
-    ))
-    .expect("the fixture config is valid");
-    let mut plan = plan(&config);
+    );
+    let mut plan = planned(&config);
     assert_eq!(plan.interfaces.len(), 2);
     let transport_secret = identity_secret(0x11, 0x22);
     let (_, prepared) = prepare(&plan, &transport_secret, None)
@@ -239,8 +241,7 @@ fn unavailable_network_encryption_does_not_suppress_plaintext_interfaces() {
 
 #[test]
 fn duplicate_attached_interface_ids_are_rejected() {
-    let config = reference::parse(TCP_SERVER).expect("the fixture config is valid");
-    let mut plan = plan(&config);
+    let mut plan = planned(TCP_SERVER);
     let transport_secret = identity_secret(0x11, 0x22);
     let (_, prepared) = prepare(&plan, &transport_secret, None)
         .expect("the discoverable interface prepares a publisher");

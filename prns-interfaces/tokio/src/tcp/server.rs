@@ -9,6 +9,7 @@ use tokio::net::TcpListener;
 use crate::framed_stream;
 use crate::tcp::tokio_socket::{tune_for_tunnel, TcpTunnelMode, RECONNECT_WAIT};
 use prns_core::interfaces::tcp::core;
+use prns_core::interfaces::tcp::core::TcpWireFraming;
 use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{
     ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind,
@@ -22,7 +23,7 @@ use prns_runtime::runtime::{Fleet, InterfaceSupervisor};
 
 /// One client connected to our TCP server: the server-spawned side of an RNS TCP pair (the
 /// reference's `spawned_interface`), a distinct engine interface over an already-accepted
-/// stream speaking the same HDLC framing. The [`TcpServer`] supervisor stands one up per
+/// stream speaking the server's selected framing. The [`TcpServer`] supervisor stands one up per
 /// connection and drops it when the stream closes; this end never reconnects (the client owns
 /// the reconnect). Generic over the stream so the body serves a real socket or a duplex pipe under test.
 pub struct TcpServerConnection<S> {
@@ -30,6 +31,7 @@ pub struct TcpServerConnection<S> {
     channel_tag: Vec<u8>,
     stream: Option<S>,
     policy: EffectiveInterfacePolicy,
+    framing: TcpWireFraming,
     status: TokioInterfaceStatus,
 }
 
@@ -45,12 +47,23 @@ impl<S> TcpServerConnection<S> {
 
     #[must_use]
     pub fn with_policy(channel_tag: Vec<u8>, stream: S, policy: EffectiveInterfacePolicy) -> Self {
+        Self::with_policy_and_framing(channel_tag, stream, policy, TcpWireFraming::Hdlc)
+    }
+
+    #[must_use]
+    pub fn with_policy_and_framing(
+        channel_tag: Vec<u8>,
+        stream: S,
+        policy: EffectiveInterfacePolicy,
+        framing: TcpWireFraming,
+    ) -> Self {
         let id = InterfaceId::from_channel_tag(InterfaceKind::TcpServerPeer, &channel_tag);
         Self {
             id,
             channel_tag,
             stream: Some(stream),
             policy,
+            framing,
             status: TokioInterfaceStatus::new(id, ConnectionState::Connected),
         }
     }
@@ -89,30 +102,45 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for TcpServerConnection<S> {
         let mut airtime = AirtimeLedger::new();
         let mut throughput = ThroughputLedger::new();
         let started = tokio::time::Instant::now();
-        let mut buffers = framed_stream::FramedBuffers::<
-            framed_stream::HdlcFraming,
-            { core::READ_BUF_LEN },
-            { core::FRAMED_LEN },
-        >::new();
-        framed_stream::serve::<
-            framed_stream::HdlcFraming,
-            { core::READ_BUF_LEN },
-            { core::FRAMED_LEN },
-            _,
-            _,
-        >(
-            stream,
-            &mut buffers,
-            &mut seam,
-            &mut framed_stream::WireMeters {
-                status: &self.status,
-                airtime: &mut airtime,
-                throughput: &mut throughput,
-                bitrate: self.policy.bitrate,
-                started,
-            },
-        )
-        .await;
+        let mut meters = framed_stream::WireMeters {
+            status: &self.status,
+            airtime: &mut airtime,
+            throughput: &mut throughput,
+            bitrate: self.policy.bitrate,
+            started,
+        };
+        match self.framing {
+            TcpWireFraming::Hdlc => {
+                let mut buffers = framed_stream::FramedBuffers::<
+                    framed_stream::HdlcFraming,
+                    { core::READ_BUF_LEN },
+                    { core::FRAMED_LEN },
+                >::new();
+                framed_stream::serve::<
+                    framed_stream::HdlcFraming,
+                    { core::READ_BUF_LEN },
+                    { core::FRAMED_LEN },
+                    _,
+                    _,
+                >(stream, &mut buffers, &mut seam, &mut meters)
+                .await;
+            }
+            TcpWireFraming::Kiss => {
+                let mut buffers = framed_stream::FramedBuffers::<
+                    framed_stream::KissFraming,
+                    { core::READ_BUF_LEN },
+                    { core::KISS_FRAMED_LEN },
+                >::new();
+                framed_stream::serve::<
+                    framed_stream::KissFraming,
+                    { core::READ_BUF_LEN },
+                    { core::KISS_FRAMED_LEN },
+                    _,
+                    _,
+                >(stream, &mut buffers, &mut seam, &mut meters)
+                .await;
+            }
+        }
         self.status.set_connection(ConnectionState::Disconnected);
     }
 }
@@ -127,6 +155,7 @@ pub struct TcpServer {
     listener: TcpListener,
     policy: EffectiveInterfacePolicy,
     tunnel: TcpTunnelMode,
+    framing: TcpWireFraming,
     channel_tag: Vec<u8>,
     status: TcpServerStatus,
 }
@@ -151,6 +180,16 @@ impl TcpServer {
         policy: EffectiveInterfacePolicy,
         tunnel: TcpTunnelMode,
     ) -> io::Result<Self> {
+        Self::bind_with_policy_and_tunnel_and_framing(addr, policy, tunnel, TcpWireFraming::Hdlc)
+            .await
+    }
+
+    pub async fn bind_with_policy_and_tunnel_and_framing(
+        addr: impl tokio::net::ToSocketAddrs,
+        policy: EffectiveInterfacePolicy,
+        tunnel: TcpTunnelMode,
+        framing: TcpWireFraming,
+    ) -> io::Result<Self> {
         let listener = TcpListener::bind(addr).await?;
         let channel_tag = listener.local_addr()?.to_string().into_bytes();
         let id = InterfaceId::from_channel_tag(InterfaceKind::TcpServer, &channel_tag);
@@ -158,6 +197,7 @@ impl TcpServer {
             listener,
             policy,
             tunnel,
+            framing,
             channel_tag,
             status: TcpServerStatus::new(id),
         })
@@ -198,10 +238,11 @@ impl InterfaceSupervisor for TcpServer {
             match self.listener.accept().await {
                 Ok((stream, peer)) => {
                     tune_for_tunnel(&stream, self.tunnel);
-                    let connection = TcpServerConnection::with_policy(
+                    let connection = TcpServerConnection::with_policy_and_framing(
                         peer.to_string().into_bytes(),
                         stream,
                         self.policy,
+                        self.framing,
                     );
                     self.status.admit(connection.status());
                     let _ = fleet.add(connection);
@@ -326,6 +367,7 @@ impl<S> prns_core::interfaces::ReportsStatus for TcpServerConnection<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use prns_core::interfaces::kiss_framing::{self, KissDecoder, FEND, FESC};
     use prns_core::interfaces::rns_serial_framing::{self, RnsSerialDecoder, ESC, FLAG};
 
     use prns_runtime::reactor::driver::{tokio_grant_lane, TokioGrantConsumer};
@@ -372,6 +414,22 @@ mod tests {
 
     async fn read_deframed(socket: &mut TcpStream) -> std::vec::Vec<u8> {
         let mut decoder = std::boxed::Box::new(RnsSerialDecoder::<{ core::FRAME_CAP }>::new());
+        let mut buf = [0u8; 256];
+        loop {
+            let n = socket.read(&mut buf).await.expect("reads from the wire");
+            assert_ne!(n, 0, "the wire stays up while a frame is owed");
+            for &byte in &buf[..n] {
+                if let Ok(Some(frame)) = decoder.feed(byte) {
+                    if !frame.is_empty() {
+                        return frame.to_vec();
+                    }
+                }
+            }
+        }
+    }
+
+    async fn read_kiss_deframed(socket: &mut TcpStream) -> std::vec::Vec<u8> {
+        let mut decoder = std::boxed::Box::new(KissDecoder::<{ core::FRAME_CAP }>::new());
         let mut buf = [0u8; 256];
         loop {
             let n = socket.read(&mut buf).await.expect("reads from the wire");
@@ -511,5 +569,56 @@ mod tests {
             .await
             .expect("the frame leaves within the window");
         assert_eq!(decoded, out_payload);
+    }
+
+    #[tokio::test]
+    async fn a_member_honors_kiss_framing_in_both_directions() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("binds an ephemeral test port");
+        let addr = listener.local_addr().expect("the bound address is known");
+        let (in_tx, mut in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
+        let (mut out_tx, out_rx) = tokio_grant_lane(core::FRAME_CAP, 2);
+        let seam = MockSeam {
+            inbound: in_tx,
+            sink: std::vec::Vec::new(),
+            outbound: out_rx,
+        };
+        tokio::spawn(async move {
+            let (stream, peer) = listener.accept().await.expect("the listener accepts");
+            TcpServerConnection::with_policy_and_framing(
+                peer.to_string().into_bytes(),
+                stream,
+                core::DEFAULTS.configured(Default::default()),
+                TcpWireFraming::Kiss,
+            )
+            .run(seam)
+            .await;
+        });
+        let mut client = TcpStream::connect(addr).await.expect("the client connects");
+        let inbound = [0x01u8, FEND, FESC, 0x02];
+        let mut framed = [0u8; 32];
+        let framed_len =
+            kiss_framing::encode(&inbound, &mut framed).expect("encodes the inbound payload");
+        client
+            .write_all(&framed[..framed_len])
+            .await
+            .expect("writes the inbound frame");
+        let received = tokio::time::timeout(Duration::from_secs(2), in_rx.recv())
+            .await
+            .expect("the member deframes within the window")
+            .expect("the member task is alive");
+        assert_eq!(received, inbound);
+        let outbound = [0xAAu8, FEND, 0xBB];
+        out_tx
+            .try_grant()
+            .expect("the outbound lane has a free slot")
+            .fill(&outbound);
+        out_tx.commit();
+        let received =
+            tokio::time::timeout(Duration::from_secs(2), read_kiss_deframed(&mut client))
+                .await
+                .expect("the frame leaves within the window");
+        assert_eq!(received, outbound);
     }
 }

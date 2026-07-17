@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use prns_config::{plan, reference, PlannedMedium};
+use prns_config::{parse_and_plan, PlannedMedium};
 use prns_core::identity::IdentityHash;
 use prns_core::interface_discovery::{
     AdvertisedInterfaceType, AdvertisedTransport, AdvertisementDetails, DiscoveredInterface,
@@ -73,8 +73,9 @@ fn archived_manual_configuration_is_accepted_by_the_reference_config_pipeline() 
         .and_then(|interfaces| interfaces.values().next())
         .and_then(|interface| interface["configuration_entry"].as_str())
         .unwrap();
-    let parsed = reference::parse(&format!("[interfaces]\n{entry}\n")).unwrap();
-    let planned = plan(&parsed);
+    let planned = parse_and_plan(&format!("[interfaces]\n{entry}\n"))
+        .unwrap()
+        .value;
 
     assert!(matches!(
         planned.interfaces.as_slice(),

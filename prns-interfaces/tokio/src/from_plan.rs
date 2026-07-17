@@ -6,12 +6,9 @@
 use core::time::Duration;
 
 pub use prns_config as config;
-#[cfg(feature = "tracing")]
-use prns_config::DeferReason;
 use prns_config::{
-    AddressFamilyPreference as PlannedAddressFamilyPreference, DaemonPlan, DeferredInterface,
-    InterfaceAccessPlan, PlannedInterface, PlannedMedium,
-    ReadyCommandFlowControl as PlannedReadyCommandFlowControl,
+    AddressFamilyPreference as PlannedAddressFamilyPreference, DaemonPlan, InterfaceAccessPlan,
+    PlannedInterface, PlannedMedium, ReadyCommandFlowControl as PlannedReadyCommandFlowControl,
     ReconnectLimit as PlannedReconnectLimit, SerialDataBits, SerialLinePlan, SerialParity,
     SerialStopBits, StationIdentificationPlan, TcpDialPlan, TcpTunnelMode as PlannedTcpTunnelMode,
     UdpFlowPlan,
@@ -67,8 +64,6 @@ pub enum PlanOutcome<'a> {
         interface: &'a PlannedInterface,
         visible_error_message: String,
     },
-    Unapplied(&'a PlannedInterface),
-    Deferred(&'a DeferredInterface),
 }
 
 /// The recipe intent for a config-driven node. Construction awaits socket binds, so it rides its
@@ -134,57 +129,6 @@ impl AttachIntent for FromPlan {
                         interface.name
                     );
                 }
-                PlanOutcome::Unapplied(interface) => {
-                    #[cfg(feature = "tracing")]
-                    {
-                        tracing::warn!(
-                            target: "prns.interface",
-                            event = "interface_settings_unapplied",
-                            interface_origin = InterfaceOriginKind::Configured.as_str(),
-                            setting_count = interface.unapplied.len(),
-                        );
-                        tracing::debug!(
-                            target: "prns.interface",
-                            event = "interface_settings_unapplied_detail",
-                            interface_origin = InterfaceOriginKind::Configured.as_str(),
-                            interface_name = ?interface.name,
-                            settings = ?interface.unapplied,
-                        );
-                    }
-                    #[cfg(not(feature = "tracing"))]
-                    crate::diagnostic_log::warn!(
-                        "settings parsed but not applied on [{}] {:?}: {:?}",
-                        InterfaceOriginKind::Configured.as_str(),
-                        interface.name,
-                        interface.unapplied
-                    );
-                }
-                PlanOutcome::Deferred(deferred) => {
-                    #[cfg(feature = "tracing")]
-                    {
-                        tracing::info!(
-                            target: "prns.interface",
-                            event = "interface_deferred",
-                            interface_origin = InterfaceOriginKind::Configured.as_str(),
-                            reason = defer_reason_name(&deferred.why),
-                        );
-                        tracing::debug!(
-                            target: "prns.interface",
-                            event = "interface_deferred_detail",
-                            interface_origin = InterfaceOriginKind::Configured.as_str(),
-                            interface_name = ?deferred.name,
-                            interface_type = ?deferred.type_name,
-                            reason = ?deferred.why,
-                        );
-                    }
-                    #[cfg(not(feature = "tracing"))]
-                    crate::diagnostic_log::info!(
-                        "interface deferred [{}]: {:?} ({:?})",
-                        InterfaceOriginKind::Configured.as_str(),
-                        deferred.name,
-                        deferred.why
-                    );
-                }
             })
             .await;
         });
@@ -200,12 +144,6 @@ pub async fn attach_plan(
 ) {
     for interface in &plan.interfaces {
         stand_up(handle, interface, report).await;
-        if !interface.unapplied.is_empty() {
-            report(PlanOutcome::Unapplied(interface));
-        }
-    }
-    for deferred in &plan.deferred {
-        report(PlanOutcome::Deferred(deferred));
     }
 }
 
@@ -253,14 +191,15 @@ async fn stand_up(
             );
             report_up(handle, interface, attached.id(), report);
         }
-        PlannedMedium::TcpServer { listener } => {
+        PlannedMedium::TcpServer { listener, framing } => {
             let resolved = resolve_tcp_listener(listener).await;
             let opened = match resolved {
                 Ok(bind) => {
-                    TcpServer::bind_with_policy_and_tunnel(
+                    TcpServer::bind_with_policy_and_tunnel_and_framing(
                         bind,
                         interface.policy,
                         tcp_tunnel_mode(listener.tunnel),
+                        *framing,
                     )
                     .await
                 }
@@ -654,27 +593,17 @@ fn planned_medium_name(medium: &PlannedMedium) -> &'static str {
     }
 }
 
-#[cfg(feature = "tracing")]
-fn defer_reason_name(reason: &DeferReason) -> &'static str {
-    match reason {
-        DeferReason::Disabled => "disabled",
-        DeferReason::UnsupportedKind => "unsupported_kind",
-        DeferReason::MissingRequiredField { .. } => "missing_required_field",
-        DeferReason::InvalidSetting { .. } => "invalid_setting",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn planned_serial_line_reaches_the_host_transport_without_defaulting() {
-        let config = prns_config::reference::parse(
+        let plan = prns_config::parse_and_plan(
             "[interfaces]\n[[Serial]]\ntype = SerialInterface\nenabled = Yes\nport = test\nspeed = 57600\ndatabits = 7\nparity = odd\nstopbits = 2\n",
         )
-        .expect("valid serial configuration");
-        let plan = prns_config::plan(&config);
+        .expect("valid serial configuration")
+        .value;
         let PlannedMedium::Serial { line, .. } = &plan.interfaces[0].medium else {
             panic!("serial medium expected")
         };
