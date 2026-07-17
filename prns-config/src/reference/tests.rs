@@ -514,6 +514,80 @@ fn common_control_ranges_fail_with_a_concrete_correction() {
 }
 
 #[test]
+fn serial_line_errors_are_aggregated_with_supported_forms() {
+    let errors = parse_named(
+        "/tmp/rns/config",
+        "[interfaces]\n[[Serial]]\ntype = SerialInterface\nenabled = Yes\nport = /dev/ttyUSB0\nspeed = 4\ndatabits = 9\nparity = mark\nstopbits = 3\n",
+    )
+    .unwrap_err();
+    assert_eq!(errors.len(), 4);
+    let rendered = errors.to_string();
+    assert!(rendered.contains("[[Serial]] > speed"));
+    assert!(rendered.contains("speed = 9600"));
+    assert!(rendered.contains("one of 5, 6, 7, or 8"));
+    assert!(rendered.contains("one of N, None, E, Even, O, or Odd"));
+    assert!(rendered.contains("one of 1 or 2"));
+}
+
+#[test]
+fn station_identification_must_be_complete() {
+    let errors = parse_named(
+        "/tmp/rns/config",
+        "[interfaces]\n[[TNC]]\ntype = KISSInterface\nenabled = Yes\nport = /dev/ttyUSB0\nid_callsign = N0CALL\n",
+    )
+    .unwrap_err();
+    assert_eq!(errors.len(), 1);
+    let rendered = errors.to_string();
+    assert!(rendered.contains("[[TNC]] > id_interval"));
+    assert!(rendered.contains("id_interval = 600"));
+    assert!(rendered.contains("or remove `id_callsign`"));
+}
+
+#[test]
+fn rnode_ranges_and_callsign_capacity_fail_before_startup() {
+    let errors = parse_named(
+        "/tmp/rns/config",
+        "[interfaces]\n[[Radio]]\ntype = RNodeInterface\nenabled = Yes\nport = /dev/ttyUSB0\nfrequency = 136999999\nbandwidth = 1625001\ntxpower = 38\nspreadingfactor = 13\ncodingrate = 9\nairtime_limit_short = -0.1\nairtime_limit_long = 100.1\nid_callsign = 123456789012345678901234567890123\nid_interval = 600\n",
+    )
+    .unwrap_err();
+    assert_eq!(errors.len(), 8);
+    let rendered = errors.to_string();
+    assert!(rendered.contains("137000000 through 3000000000 hertz"));
+    assert!(rendered.contains("7800 through 1625000 hertz"));
+    assert!(rendered.contains("0 through 37 dBm"));
+    assert!(rendered.contains("5 through 12"));
+    assert!(rendered.contains("5 through 8"));
+    assert!(rendered.contains("a percentage from 0 through 100"));
+    assert!(rendered.contains("at most 32 UTF-8 bytes"));
+}
+
+#[test]
+fn pipe_respawn_delay_rejects_negative_and_nonfinite_values() {
+    for value in ["-1", "NaN", "inf"] {
+        let config = format!(
+            "[interfaces]\n[[Pipe]]\ntype = PipeInterface\nenabled = Yes\ncommand = worker\nrespawn_delay = {value}\n"
+        );
+        let errors = parse_named("/tmp/rns/config", &config).unwrap_err();
+        let rendered = errors.to_string();
+        assert!(rendered.contains("non-negative finite duration"));
+        assert!(rendered.contains("respawn_delay = 5.0"));
+    }
+}
+
+#[test]
+fn pipe_command_rejects_empty_or_incomplete_quoting_before_startup() {
+    for value in ["\"\"", "\"program 'unterminated\""] {
+        let config = format!(
+            "[interfaces]\n[[Pipe]]\ntype = PipeInterface\nenabled = Yes\ncommand = {value}\n"
+        );
+        let errors = parse_named("/tmp/rns/config", &config).unwrap_err();
+        let rendered = errors.to_string();
+        assert!(rendered.contains("non-empty command with complete shell-style quoting"));
+        assert!(rendered.contains("command = /path/to/program --option value"));
+    }
+}
+
+#[test]
 fn an_absent_key_is_none_never_a_default() {
     let config = parse(
         "[interfaces]\n\

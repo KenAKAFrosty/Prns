@@ -28,6 +28,8 @@ cfg_if::cfg_if! {
 
 mod attach;
 
+pub mod reconnect;
+
 pub mod interface_menu;
 
 #[cfg(feature = "auto")]
@@ -44,11 +46,15 @@ pub mod interface_discovery;
     feature = "serial",
     feature = "kiss",
     feature = "ax25",
+    feature = "rnode",
     feature = "pipe",
     feature = "shared-instance",
     feature = "backbone"
 ))]
 mod framed_stream;
+
+#[cfg(any(feature = "kiss", feature = "ax25", feature = "rnode"))]
+pub mod serial_control;
 
 #[cfg(feature = "tcp")]
 pub mod tcp;

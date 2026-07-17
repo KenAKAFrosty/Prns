@@ -62,13 +62,14 @@ fn coerced_u64(scalar: &str) -> Result<u64, ()> {
 
 fn coerced_f64(scalar: &str) -> Result<f64, ()> {
     let config = format!(
-        "[interfaces]\n[[H]]\ntype = PipeInterface\nenabled = Yes\ncommand = true\nrespawn_delay = {scalar}\n"
+        "[interfaces]\n[[H]]\ntype = AutoInterface\nenabled = Yes\ndiscoverable = Yes\nlatitude = {scalar}\n"
     );
     match reference::parse(&config) {
-        Ok(parsed) => match parsed.interfaces.first().map(|interface| &interface.params) {
-            Some(reference::ReferenceParams::Pipe { respawn_delay, .. }) => respawn_delay.ok_or(()),
-            _ => Err(()),
-        },
+        Ok(parsed) => parsed
+            .interfaces
+            .first()
+            .and_then(|interface| interface.discovery.latitude)
+            .ok_or(()),
         Err(_) => Err(()),
     }
 }

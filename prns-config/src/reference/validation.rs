@@ -1,5 +1,9 @@
 use crate::configobj::{Section, SourceLocations, Value};
 use crate::diagnostic::{ConfigDiagnostic, ConfigDiagnosticCode, ConfigSeverity};
+use prns_core::interfaces::rnode::core::{
+    BANDWIDTH_HZ_MAX, BANDWIDTH_HZ_MIN, CODING_RATE_MAX, CODING_RATE_MIN, FREQUENCY_HZ_MAX,
+    FREQUENCY_HZ_MIN, SPREADING_FACTOR_MAX, SPREADING_FACTOR_MIN, TXPOWER_DBM_MAX, TXPOWER_DBM_MIN,
+};
 
 use super::interpret::{cleaned_number, parse_bool, parse_identity_hash, ReferenceError};
 use super::keys::{
@@ -460,7 +464,7 @@ fn validate_interface(
         _ => {}
     }
 
-    validate_host_network_requirements(source, name, type_name, section, locations, errors);
+    validate_medium_requirements(source, name, type_name, section, locations, errors);
 
     if type_name == "RNodeInterface" {
         let port_key = interface_key::PORT;
@@ -502,7 +506,7 @@ fn validate_interface(
     }
 }
 
-fn validate_host_network_requirements(
+fn validate_medium_requirements(
     source: &str,
     interface: &str,
     type_name: &str,
@@ -563,6 +567,139 @@ fn validate_host_network_requirements(
         "UDPInterface" => {
             validate_udp_requirements(&context, errors);
         }
+        "SerialInterface" | "KISSInterface" => {
+            require_setting(
+                &context,
+                RequiredSetting {
+                    primary: interface_key::PORT,
+                    alternatives: &[],
+                    accepted: "a serial device path",
+                    correction: format!(
+                        "add `{} = /dev/ttyUSB0` under [[{interface}]]",
+                        interface_key::PORT
+                    ),
+                },
+                errors,
+            );
+            if type_name == "KISSInterface" {
+                validate_station_identification(&context, errors);
+            }
+        }
+        "AX25KISSInterface" => {
+            require_setting(
+                &context,
+                RequiredSetting {
+                    primary: interface_key::PORT,
+                    alternatives: &[],
+                    accepted: "a serial device path",
+                    correction: format!(
+                        "add `{} = /dev/ttyUSB0` under [[{interface}]]",
+                        interface_key::PORT
+                    ),
+                },
+                errors,
+            );
+            require_setting(
+                &context,
+                RequiredSetting {
+                    primary: interface_key::CALLSIGN,
+                    alternatives: &[],
+                    accepted: "an AX.25 source callsign",
+                    correction: format!(
+                        "add `{} = N0CALL` under [[{interface}]]",
+                        interface_key::CALLSIGN
+                    ),
+                },
+                errors,
+            );
+            require_setting(
+                &context,
+                RequiredSetting {
+                    primary: interface_key::SSID,
+                    alternatives: &[],
+                    accepted: "an AX.25 SSID",
+                    correction: format!("add `{} = 0` under [[{interface}]]", interface_key::SSID),
+                },
+                errors,
+            );
+        }
+        "RNodeInterface" => {
+            for required in [
+                RequiredSetting {
+                    primary: interface_key::PORT,
+                    alternatives: &[],
+                    accepted: "a local serial device path",
+                    correction: format!(
+                        "add `{} = /dev/ttyUSB0` under [[{interface}]]",
+                        interface_key::PORT
+                    ),
+                },
+                RequiredSetting {
+                    primary: interface_key::FREQUENCY,
+                    alternatives: &[],
+                    accepted: "a radio frequency",
+                    correction: format!(
+                        "add `{} = 868000000` under [[{interface}]]",
+                        interface_key::FREQUENCY
+                    ),
+                },
+                RequiredSetting {
+                    primary: interface_key::BANDWIDTH,
+                    alternatives: &[],
+                    accepted: "a radio bandwidth",
+                    correction: format!(
+                        "add `{} = 125000` under [[{interface}]]",
+                        interface_key::BANDWIDTH
+                    ),
+                },
+                RequiredSetting {
+                    primary: interface_key::TXPOWER,
+                    alternatives: &[],
+                    accepted: "a transmit power",
+                    correction: format!(
+                        "add `{} = 7` under [[{interface}]]",
+                        interface_key::TXPOWER
+                    ),
+                },
+                RequiredSetting {
+                    primary: interface_key::SPREADINGFACTOR,
+                    alternatives: &[],
+                    accepted: "a LoRa spreading factor",
+                    correction: format!(
+                        "add `{} = 8` under [[{interface}]]",
+                        interface_key::SPREADINGFACTOR
+                    ),
+                },
+                RequiredSetting {
+                    primary: interface_key::CODINGRATE,
+                    alternatives: &[],
+                    accepted: "a LoRa coding rate",
+                    correction: format!(
+                        "add `{} = 5` under [[{interface}]]",
+                        interface_key::CODINGRATE
+                    ),
+                },
+            ] {
+                require_setting(&context, required, errors);
+            }
+            validate_station_identification(&context, errors);
+            validate_rnode_station_callsign(&context, errors);
+        }
+        "PipeInterface" => {
+            require_setting(
+                &context,
+                RequiredSetting {
+                    primary: interface_key::COMMAND,
+                    alternatives: &[],
+                    accepted: "a subprocess command",
+                    correction: format!(
+                        "add `{} = /path/to/program` under [[{interface}]]",
+                        interface_key::COMMAND
+                    ),
+                },
+                errors,
+            );
+        }
         "BackboneInterface" | "BackboneClientInterface" => {
             let client = type_name == "BackboneClientInterface"
                 || has_one_of(
@@ -614,6 +751,80 @@ fn validate_host_network_requirements(
         }
         _ => {}
     }
+}
+
+fn validate_station_identification(
+    context: &InterfaceRequirementContext<'_>,
+    errors: &mut ValidationErrorCollector,
+) {
+    let callsign = context.section.get(interface_key::ID_CALLSIGN).is_some();
+    let interval = context.section.get(interface_key::ID_INTERVAL).is_some();
+    match (callsign, interval) {
+        (true, false) => missing_setting(
+            context,
+            interface_key::ID_INTERVAL,
+            "id_interval whenever id_callsign is set",
+            format!(
+                "add `{} = 600` under [[{}]], or remove `{}`",
+                interface_key::ID_INTERVAL,
+                context.interface,
+                interface_key::ID_CALLSIGN
+            ),
+            errors,
+        ),
+        (false, true) => missing_setting(
+            context,
+            interface_key::ID_CALLSIGN,
+            "id_callsign whenever id_interval is set",
+            format!(
+                "add `{} = N0CALL` under [[{}]], or remove `{}`",
+                interface_key::ID_CALLSIGN,
+                context.interface,
+                interface_key::ID_INTERVAL
+            ),
+            errors,
+        ),
+        (false, false) | (true, true) => {}
+    }
+}
+
+fn validate_rnode_station_callsign(
+    context: &InterfaceRequirementContext<'_>,
+    errors: &mut ValidationErrorCollector,
+) {
+    let Some(value) = context.section.get(interface_key::ID_CALLSIGN) else {
+        return;
+    };
+    let Some(callsign) = value.as_scalar() else {
+        return;
+    };
+    if callsign.len() <= 32 {
+        return;
+    }
+    errors.push(ConfigDiagnostic::new(
+        ConfigDiagnosticCode::InvalidValue,
+        context.source,
+        location(
+            context.locations,
+            &[
+                section_key::INTERFACES,
+                context.interface,
+                interface_key::ID_CALLSIGN,
+            ],
+        ),
+        format!(
+            "[interfaces] > [[{}]] > {}",
+            context.interface,
+            interface_key::ID_CALLSIGN
+        ),
+        Some(callsign.to_string()),
+        "RNode station identification exceeds the device command capacity",
+        Some("a non-empty UTF-8 value no longer than 32 encoded bytes".to_string()),
+        format!(
+            "shorten `{}` to at most 32 UTF-8 bytes",
+            interface_key::ID_CALLSIGN
+        ),
+    ));
 }
 
 fn validate_udp_requirements(
@@ -924,6 +1135,43 @@ fn validate_value(
 fn accepted_for_key(key: &str, kind: ValueKind) -> String {
     match key {
         interface_key::ANNOUNCE_CAP => "a percentage from 0 through 100".to_string(),
+        interface_key::SPEED => format!(
+            "an integer from {} through {} bits per second",
+            prns_core::interfaces::BitrateBps::MINIMUM,
+            u32::MAX
+        ),
+        interface_key::DATABITS => "one of 5, 6, 7, or 8".to_string(),
+        interface_key::PARITY => "one of N, None, E, Even, O, or Odd".to_string(),
+        interface_key::STOPBITS => "one of 1 or 2".to_string(),
+        interface_key::ID_CALLSIGN => "a non-empty station identifier".to_string(),
+        interface_key::CALLSIGN => {
+            "an ASCII AX.25 callsign containing 3 through 6 characters".to_string()
+        }
+        interface_key::SSID => "an integer from 0 through 15".to_string(),
+        interface_key::FREQUENCY => format!(
+            "an integer from {FREQUENCY_HZ_MIN} through {FREQUENCY_HZ_MAX} hertz"
+        ),
+        interface_key::BANDWIDTH => format!(
+            "an integer from {BANDWIDTH_HZ_MIN} through {BANDWIDTH_HZ_MAX} hertz"
+        ),
+        interface_key::TXPOWER => {
+            format!("an integer from {TXPOWER_DBM_MIN} through {TXPOWER_DBM_MAX} dBm")
+        }
+        interface_key::SPREADINGFACTOR => format!(
+            "an integer from {SPREADING_FACTOR_MIN} through {SPREADING_FACTOR_MAX}"
+        ),
+        interface_key::CODINGRATE => {
+            format!("an integer from {CODING_RATE_MIN} through {CODING_RATE_MAX}")
+        }
+        interface_key::AIRTIME_LIMIT_SHORT | interface_key::AIRTIME_LIMIT_LONG => {
+            "a percentage from 0 through 100".to_string()
+        }
+        interface_key::RESPAWN_DELAY => {
+            "a non-negative finite duration in seconds representable by the host".to_string()
+        }
+        interface_key::COMMAND => {
+            "a non-empty command with complete shell-style quoting".to_string()
+        }
         common_key::IC_BURST_HOLD | common_key::IC_NEW_TIME | common_key::IC_BURST_PENALTY | common_key::IC_HELD_RELEASE_INTERVAL => {
             "a non-negative duration in seconds whose rounded milliseconds are below 18446744073709551616"
                 .to_string()
@@ -954,6 +1202,21 @@ fn accepted_for_key(key: &str, kind: ValueKind) -> String {
 fn example_for_key(key: &str, kind: ValueKind) -> &'static str {
     match key {
         interface_key::ANNOUNCE_CAP => "2.0",
+        interface_key::SPEED => "9600",
+        interface_key::DATABITS => "8",
+        interface_key::PARITY => "N",
+        interface_key::STOPBITS => "1",
+        interface_key::ID_CALLSIGN | interface_key::CALLSIGN => "N0CALL",
+        interface_key::SSID => "0",
+        interface_key::FREQUENCY => "868000000",
+        interface_key::BANDWIDTH => "125000",
+        interface_key::TXPOWER => "7",
+        interface_key::SPREADINGFACTOR => "8",
+        interface_key::CODINGRATE => "5",
+        interface_key::AIRTIME_LIMIT_SHORT => "1.5",
+        interface_key::AIRTIME_LIMIT_LONG => "5.0",
+        interface_key::RESPAWN_DELAY => "5.0",
+        interface_key::COMMAND => "/path/to/program --option value",
         common_key::IC_BURST_HOLD | common_key::IC_BURST_PENALTY => "15.0",
         common_key::IC_NEW_TIME => "7200.0",
         common_key::IC_HELD_RELEASE_INTERVAL => "5.0",
@@ -977,6 +1240,37 @@ fn semantic_value_is_valid(key: &str, value: &Value) -> bool {
         interface_key::ANNOUNCE_CAP => {
             parse_float(text).is_ok_and(|value| (0.0..=100.0).contains(&value))
         }
+        interface_key::SPEED => parse_integer::<u32>(text)
+            .is_ok_and(|value| u64::from(value) >= prns_core::interfaces::BitrateBps::MINIMUM),
+        interface_key::DATABITS => {
+            parse_integer::<u8>(text).is_ok_and(|value| matches!(value, 5..=8))
+        }
+        interface_key::PARITY => matches!(
+            text.trim().to_ascii_lowercase().as_str(),
+            "n" | "none" | "e" | "even" | "o" | "odd"
+        ),
+        interface_key::STOPBITS => {
+            parse_integer::<u8>(text).is_ok_and(|value| matches!(value, 1 | 2))
+        }
+        interface_key::ID_CALLSIGN => !text.is_empty(),
+        interface_key::CALLSIGN => text.is_ascii() && (3..=6).contains(&text.len()),
+        interface_key::SSID => parse_integer::<u8>(text).is_ok_and(|value| value <= 15),
+        interface_key::FREQUENCY => parse_integer::<u64>(text)
+            .is_ok_and(|value| (FREQUENCY_HZ_MIN..=FREQUENCY_HZ_MAX).contains(&value)),
+        interface_key::BANDWIDTH => parse_integer::<u32>(text)
+            .is_ok_and(|value| (BANDWIDTH_HZ_MIN..=BANDWIDTH_HZ_MAX).contains(&value)),
+        interface_key::TXPOWER => parse_integer::<i16>(text)
+            .is_ok_and(|value| (TXPOWER_DBM_MIN..=TXPOWER_DBM_MAX).contains(&value)),
+        interface_key::SPREADINGFACTOR => parse_integer::<u8>(text)
+            .is_ok_and(|value| (SPREADING_FACTOR_MIN..=SPREADING_FACTOR_MAX).contains(&value)),
+        interface_key::CODINGRATE => parse_integer::<u8>(text)
+            .is_ok_and(|value| (CODING_RATE_MIN..=CODING_RATE_MAX).contains(&value)),
+        interface_key::AIRTIME_LIMIT_SHORT | interface_key::AIRTIME_LIMIT_LONG => {
+            parse_float(text).is_ok_and(|value| value.is_finite() && (0.0..=100.0).contains(&value))
+        }
+        interface_key::RESPAWN_DELAY => parse_float(text)
+            .is_ok_and(|value| std::time::Duration::try_from_secs_f64(value).is_ok()),
+        interface_key::COMMAND => shlex::split(text).is_some_and(|argv| !argv.is_empty()),
         common_key::IC_BURST_HOLD
         | common_key::IC_BURST_FREQ_NEW
         | common_key::IC_BURST_FREQ

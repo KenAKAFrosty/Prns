@@ -14,6 +14,21 @@ use prns_runtime::reactor::driver::TokioInterfaceStatus;
 use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
 use prns_runtime::reactor::throughput::ThroughputLedger;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PipeRespawnDelay(Duration);
+
+impl PipeRespawnDelay {
+    #[must_use]
+    pub const fn new(duration: Duration) -> Self {
+        Self(duration)
+    }
+
+    #[must_use]
+    pub const fn duration(self) -> Duration {
+        self.0
+    }
+}
+
 /// A pipe interface that owns its subprocess pipe's whole lifecycle (RNS `PipeInterface`): `open`
 /// yields a fresh async byte stream — the consumer supplies it, e.g. the daemon spawning the
 /// configured command and joining its stdout/stdin — and the interface respawns on its own: serve a
@@ -22,7 +37,7 @@ use prns_runtime::reactor::throughput::ThroughputLedger;
 pub struct PipeInterface<Open> {
     id: InterfaceId,
     open: Open,
-    respawn: Duration,
+    respawn_delay: PipeRespawnDelay,
     policy: EffectiveInterfacePolicy,
     channel_tag: std::vec::Vec<u8>,
     status: TokioInterfaceStatus,
@@ -33,10 +48,10 @@ impl<Open> PipeInterface<Open> {
     /// pipes must pass distinct bytes; the same command across a respawn should pass the same, so its
     /// routes survive the respawn.
     #[must_use]
-    pub fn new(open: Open, respawn: Duration, channel_tag: &[u8]) -> Self {
+    pub fn new(open: Open, respawn_delay: PipeRespawnDelay, channel_tag: &[u8]) -> Self {
         Self::with_policy(
             open,
-            respawn,
+            respawn_delay,
             core::configured_policy(Default::default()),
             channel_tag,
         )
@@ -45,7 +60,7 @@ impl<Open> PipeInterface<Open> {
     #[must_use]
     pub fn with_policy(
         open: Open,
-        respawn: Duration,
+        respawn_delay: PipeRespawnDelay,
         policy: EffectiveInterfacePolicy,
         channel_tag: &[u8],
     ) -> Self {
@@ -54,7 +69,7 @@ impl<Open> PipeInterface<Open> {
         Self {
             id,
             open,
-            respawn,
+            respawn_delay,
             policy,
             channel_tag,
             status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
@@ -124,7 +139,7 @@ where
                 .await;
                 self.status.set_connection(ConnectionState::Disconnected);
             }
-            tokio::time::sleep(self.respawn).await;
+            tokio::time::sleep(self.respawn_delay.duration()).await;
         }
     }
 }
@@ -195,7 +210,11 @@ mod tests {
             outbound: out_rx,
         };
 
-        let interface = PipeInterface::new(open, Duration::from_millis(10), b"cat");
+        let interface = PipeInterface::new(
+            open,
+            PipeRespawnDelay::new(Duration::from_millis(10)),
+            b"cat",
+        );
         let status = interface.status();
         tokio::spawn(interface.run(seam));
 

@@ -2332,6 +2332,7 @@ version = "0.1.0"
 dependencies = [
  "dirs",
  "prns-core",
+ "shlex",
 ]
 
 [[package]]
@@ -2422,7 +2423,6 @@ dependencies = [
  "prns-runtime-tokio",
  "rmpv",
  "serialport",
- "shlex",
  "socket2",
  "tokio",
  "tokio-serial",

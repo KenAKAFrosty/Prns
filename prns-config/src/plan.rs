@@ -15,6 +15,7 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use prns_core::interface_discovery::{
     AutoConnectPolicy, DiscoverySourcePolicy, InterfaceDiscoveryPolicy, StampCost,
@@ -315,6 +316,109 @@ pub enum UdpFlowPlan {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SerialDataBits {
+    Five,
+    Six,
+    Seven,
+    Eight,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SerialParity {
+    None,
+    Even,
+    Odd,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SerialStopBits {
+    One,
+    Two,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SerialLinePlan {
+    baud: u32,
+    data_bits: SerialDataBits,
+    parity: SerialParity,
+    stop_bits: SerialStopBits,
+}
+
+impl SerialLinePlan {
+    pub const fn baud(self) -> u32 {
+        self.baud
+    }
+
+    pub const fn data_bits(self) -> SerialDataBits {
+        self.data_bits
+    }
+
+    pub const fn parity(self) -> SerialParity {
+        self.parity
+    }
+
+    pub const fn stop_bits(self) -> SerialStopBits {
+        self.stop_bits
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadyCommandFlowControl {
+    Disabled,
+    Enabled,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StationIdentificationPlan {
+    callsign: String,
+    interval_seconds: u64,
+}
+
+impl StationIdentificationPlan {
+    pub fn callsign(&self) -> &str {
+        &self.callsign
+    }
+
+    pub const fn interval_seconds(&self) -> u64 {
+        self.interval_seconds
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AirtimeLimitCentiPercent(u16);
+
+impl AirtimeLimitCentiPercent {
+    pub const fn get(self) -> u16 {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PipeRespawnDelay(std::time::Duration);
+
+impl PipeRespawnDelay {
+    pub const fn get(self) -> std::time::Duration {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PipeCommandPlan {
+    source: String,
+    argv: Vec<String>,
+}
+
+impl PipeCommandPlan {
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+
+    pub fn argv(&self) -> &[String] {
+        &self.argv
+    }
+}
+
 /// The wire a planned interface runs on. Only mediums a host can stand up appear here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlannedMedium {
@@ -329,41 +433,45 @@ pub enum PlannedMedium {
     TcpServer { listener: TcpListenPlan },
     /// RNS `UDPInterface`: receive, send, or do both over configured datagram endpoints.
     Udp { flow: UdpFlowPlan },
-    /// RNS `SerialInterface`: a serial device at `baud`.
-    Serial { device: String, baud: u32 },
-    /// RNS `KISSInterface`: a KISS TNC on a serial device at `baud`, with the CSMA/timing config
+    /// RNS `SerialInterface`: a configured serial device.
+    Serial {
+        device: String,
+        line: SerialLinePlan,
+    },
+    /// RNS `KISSInterface`: a KISS TNC on a configured serial line, with the CSMA/timing config
     /// written to the TNC at startup (the millisecond values as the operator gave them).
     Kiss {
         device: String,
-        baud: u32,
+        line: SerialLinePlan,
         preamble_ms: u32,
         txtail_ms: u32,
         persistence: u8,
         slottime_ms: u32,
+        flow_control: ReadyCommandFlowControl,
+        station_id: Option<StationIdentificationPlan>,
     },
     /// RNS `AX25KISSInterface`: a KISS TNC carrying AX.25 UI frames, sourced from `callsign`/`ssid`.
-    /// The callsign/SSID are validated when the interface is constructed, as RNS does.
+    /// The callsign/SSID are validated before the daemon plan is constructed.
     Ax25Kiss {
         device: String,
-        baud: u32,
+        line: SerialLinePlan,
         preamble_ms: u32,
         txtail_ms: u32,
         persistence: u8,
         slottime_ms: u32,
+        flow_control: ReadyCommandFlowControl,
         callsign: String,
         ssid: u8,
     },
     /// RNS `PipeInterface`: a subprocess `command` whose stdout/stdin carries HDLC-framed packets,
-    /// respawned `respawn_delay_ms` after it exits.
+    /// respawned after the configured delay when it exits.
     Pipe {
-        command: String,
-        respawn_delay_ms: u64,
+        command: PipeCommandPlan,
+        respawn_delay: PipeRespawnDelay,
     },
     /// RNS `RNodeInterface`: a LoRa RNode driven over a USB-serial KISS link, configured to a radio
     /// channel at bring-up. The radio parameters are required; the airtime locks are the wire-scaled
-    /// `int(percent * 100)` values, absent when unconfigured. Range validation happens at
-    /// construction (as RNS leaves it to the device's echo-back), so the plan only carries the
-    /// values; an out-of-range radio fails to stand up rather than deferring.
+    /// `int(percent * 100)` values, absent when unconfigured.
     Rnode {
         device: String,
         frequency_hz: u64,
@@ -371,8 +479,10 @@ pub enum PlannedMedium {
         txpower_dbm: i16,
         spreading_factor: u8,
         coding_rate: u8,
-        airtime_limit_short_centi: Option<u16>,
-        airtime_limit_long_centi: Option<u16>,
+        flow_control: ReadyCommandFlowControl,
+        station_id: Option<StationIdentificationPlan>,
+        airtime_limit_short: Option<AirtimeLimitCentiPercent>,
+        airtime_limit_long: Option<AirtimeLimitCentiPercent>,
     },
     /// RNS `BackboneInterface`: the listening end of a TCP backbone link.
     Backbone { listener: TcpListenPlan },
@@ -679,10 +789,11 @@ fn interface_defaults(medium: &PlannedMedium) -> Result<InterfaceDefaults, Defer
         | PlannedMedium::Backbone { .. }
         | PlannedMedium::BackboneClient { .. } => Ok(tcp_core::DEFAULTS),
         PlannedMedium::Udp { .. } => Ok(udp_core::DEFAULTS),
-        PlannedMedium::Serial { baud, .. } => {
-            let bitrate = BitrateBps::new(u64::from(*baud)).ok_or(DeferReason::InvalidSetting {
-                key: interface_key::SPEED,
-            })?;
+        PlannedMedium::Serial { line, .. } => {
+            let bitrate =
+                BitrateBps::new(u64::from(line.baud())).ok_or(DeferReason::InvalidSetting {
+                    key: interface_key::SPEED,
+                })?;
             Ok(serial_core::defaults_for_bitrate(bitrate))
         }
         PlannedMedium::Kiss { .. } => Ok(kiss_core::DEFAULTS),
@@ -1052,12 +1163,9 @@ fn plan_medium(
             let device = port.clone().ok_or(DeferReason::MissingRequiredField {
                 key: interface_key::PORT,
             })?;
-            note_present(unapplied, interface_key::DATABITS, databits.is_some());
-            note_present(unapplied, interface_key::PARITY, parity.is_some());
-            note_present(unapplied, interface_key::STOPBITS, stopbits.is_some());
             Ok(PlannedMedium::Serial {
                 device,
-                baud: speed.unwrap_or(RNS_DEFAULT_SERIAL_BAUD),
+                line: serial_line(*speed, *databits, parity.as_deref(), *stopbits)?,
             })
         }
         ReferenceParams::Kiss {
@@ -1077,27 +1185,17 @@ fn plan_medium(
             let device = port.clone().ok_or(DeferReason::MissingRequiredField {
                 key: interface_key::PORT,
             })?;
-            note_present(unapplied, interface_key::DATABITS, databits.is_some());
-            note_present(unapplied, interface_key::PARITY, parity.is_some());
-            note_present(unapplied, interface_key::STOPBITS, stopbits.is_some());
-            // Flow-control TX gating and station-ID beaconing are not yet honored by the host KISS
-            // interface; surface them rather than pretend they took effect.
-            note_present(
-                unapplied,
-                interface_key::FLOW_CONTROL,
-                flow_control.is_some(),
-            );
-            note_present(unapplied, interface_key::ID_CALLSIGN, id_callsign.is_some());
-            note_present(unapplied, interface_key::ID_INTERVAL, id_interval.is_some());
             Ok(PlannedMedium::Kiss {
                 device,
-                baud: speed.unwrap_or(RNS_DEFAULT_SERIAL_BAUD),
+                line: serial_line(*speed, *databits, parity.as_deref(), *stopbits)?,
                 preamble_ms: preamble.unwrap_or(RNS_KISS_DEFAULT_PREAMBLE_MS),
                 txtail_ms: txtail.unwrap_or(RNS_KISS_DEFAULT_TXTAIL_MS),
                 persistence: persistence
                     .map(|p| p.min(u8::MAX as u32) as u8)
                     .unwrap_or(RNS_KISS_DEFAULT_PERSISTENCE),
                 slottime_ms: slottime.unwrap_or(RNS_KISS_DEFAULT_SLOTTIME_MS),
+                flow_control: ready_command_flow_control(*flow_control),
+                station_id: station_identification(id_callsign.as_deref(), *id_interval, None)?,
             })
         }
         ReferenceParams::Ax25Kiss {
@@ -1123,24 +1221,16 @@ fn plan_medium(
             let ssid = ssid.ok_or(DeferReason::MissingRequiredField {
                 key: interface_key::SSID,
             })?;
-            note_present(unapplied, interface_key::DATABITS, databits.is_some());
-            note_present(unapplied, interface_key::PARITY, parity.is_some());
-            note_present(unapplied, interface_key::STOPBITS, stopbits.is_some());
-            // Flow-control TX gating is not yet honored by the host AX.25 interface.
-            note_present(
-                unapplied,
-                interface_key::FLOW_CONTROL,
-                flow_control.is_some(),
-            );
             Ok(PlannedMedium::Ax25Kiss {
                 device,
-                baud: speed.unwrap_or(RNS_DEFAULT_SERIAL_BAUD),
+                line: serial_line(*speed, *databits, parity.as_deref(), *stopbits)?,
                 preamble_ms: preamble.unwrap_or(RNS_KISS_DEFAULT_PREAMBLE_MS),
                 txtail_ms: txtail.unwrap_or(RNS_KISS_DEFAULT_TXTAIL_MS),
                 persistence: persistence
                     .map(|p| p.min(u8::MAX as u32) as u8)
                     .unwrap_or(RNS_KISS_DEFAULT_PERSISTENCE),
                 slottime_ms: slottime.unwrap_or(RNS_KISS_DEFAULT_SLOTTIME_MS),
+                flow_control: ready_command_flow_control(*flow_control),
                 callsign,
                 ssid,
             })
@@ -1175,15 +1265,6 @@ fn plan_medium(
             let txpower_dbm = radio.txpower.ok_or(DeferReason::MissingRequiredField {
                 key: interface_key::TXPOWER,
             })?;
-            // Flow-control TX gating and station-ID beaconing are not yet honored by the host RNode
-            // interface; surface them rather than pretend they took effect.
-            note_present(
-                unapplied,
-                interface_key::FLOW_CONTROL,
-                flow_control.is_some(),
-            );
-            note_present(unapplied, interface_key::ID_CALLSIGN, id_callsign.is_some());
-            note_present(unapplied, interface_key::ID_INTERVAL, id_interval.is_some());
             Ok(PlannedMedium::Rnode {
                 device,
                 frequency_hz,
@@ -1191,22 +1272,30 @@ fn plan_medium(
                 txpower_dbm,
                 spreading_factor,
                 coding_rate,
-                airtime_limit_short_centi: airtime_limit_short.map(pct_to_centi),
-                airtime_limit_long_centi: airtime_limit_long.map(pct_to_centi),
+                flow_control: ready_command_flow_control(*flow_control),
+                station_id: station_identification(id_callsign.as_deref(), *id_interval, Some(32))?,
+                airtime_limit_short: airtime_limit(
+                    *airtime_limit_short,
+                    interface_key::AIRTIME_LIMIT_SHORT,
+                )?,
+                airtime_limit_long: airtime_limit(
+                    *airtime_limit_long,
+                    interface_key::AIRTIME_LIMIT_LONG,
+                )?,
             })
         }
         ReferenceParams::Pipe {
             command,
             respawn_delay,
         } => {
-            let command = command.clone().ok_or(DeferReason::MissingRequiredField {
-                key: interface_key::COMMAND,
-            })?;
+            let command = command
+                .as_deref()
+                .ok_or(DeferReason::MissingRequiredField {
+                    key: interface_key::COMMAND,
+                })?;
             Ok(PlannedMedium::Pipe {
-                command,
-                respawn_delay_ms: respawn_delay
-                    .map(|secs| (secs.max(0.0) * 1000.0) as u64)
-                    .unwrap_or(RNS_PIPE_DEFAULT_RESPAWN_MS),
+                command: pipe_command(command)?,
+                respawn_delay: pipe_respawn_delay(*respawn_delay)?,
             })
         }
         ReferenceParams::Backbone {
@@ -1344,13 +1433,131 @@ const RNS_KISS_DEFAULT_TXTAIL_MS: u32 = 20;
 const RNS_KISS_DEFAULT_PERSISTENCE: u8 = 64;
 const RNS_KISS_DEFAULT_SLOTTIME_MS: u32 = 20;
 
-/// RNS `PipeInterface` default respawn delay: 5 seconds.
-const RNS_PIPE_DEFAULT_RESPAWN_MS: u64 = 5_000;
+const RNS_PIPE_DEFAULT_RESPAWN_SECONDS: u64 = 5;
 
-/// An RNode airtime-limit percentage as the wire-scaled value RNS sends: `int(percent * 100)`,
-/// clamped to the two-byte width the device command carries.
-fn pct_to_centi(percent: f64) -> u16 {
-    (percent.max(0.0) * 100.0).min(f64::from(u16::MAX)) as u16
+fn serial_line(
+    speed: Option<u32>,
+    data_bits: Option<u8>,
+    parity: Option<&str>,
+    stop_bits: Option<u8>,
+) -> Result<SerialLinePlan, DeferReason> {
+    let baud = speed.unwrap_or(RNS_DEFAULT_SERIAL_BAUD);
+    if u64::from(baud) < BitrateBps::MINIMUM {
+        return Err(DeferReason::InvalidSetting {
+            key: interface_key::SPEED,
+        });
+    }
+    let data_bits = match data_bits.unwrap_or(8) {
+        5 => SerialDataBits::Five,
+        6 => SerialDataBits::Six,
+        7 => SerialDataBits::Seven,
+        8 => SerialDataBits::Eight,
+        _ => {
+            return Err(DeferReason::InvalidSetting {
+                key: interface_key::DATABITS,
+            })
+        }
+    };
+    let parity = match parity.unwrap_or("n").trim().to_ascii_lowercase().as_str() {
+        "n" | "none" => SerialParity::None,
+        "e" | "even" => SerialParity::Even,
+        "o" | "odd" => SerialParity::Odd,
+        _ => {
+            return Err(DeferReason::InvalidSetting {
+                key: interface_key::PARITY,
+            })
+        }
+    };
+    let stop_bits = match stop_bits.unwrap_or(1) {
+        1 => SerialStopBits::One,
+        2 => SerialStopBits::Two,
+        _ => {
+            return Err(DeferReason::InvalidSetting {
+                key: interface_key::STOPBITS,
+            })
+        }
+    };
+    Ok(SerialLinePlan {
+        baud,
+        data_bits,
+        parity,
+        stop_bits,
+    })
+}
+
+fn ready_command_flow_control(configured: Option<bool>) -> ReadyCommandFlowControl {
+    match configured {
+        Some(true) => ReadyCommandFlowControl::Enabled,
+        Some(false) | None => ReadyCommandFlowControl::Disabled,
+    }
+}
+
+fn station_identification(
+    callsign: Option<&str>,
+    interval_seconds: Option<u64>,
+    maximum_callsign_bytes: Option<usize>,
+) -> Result<Option<StationIdentificationPlan>, DeferReason> {
+    let (callsign, interval_seconds) = match (callsign, interval_seconds) {
+        (None, None) => return Ok(None),
+        (Some(_), None) => {
+            return Err(DeferReason::MissingRequiredField {
+                key: interface_key::ID_INTERVAL,
+            })
+        }
+        (None, Some(_)) => {
+            return Err(DeferReason::MissingRequiredField {
+                key: interface_key::ID_CALLSIGN,
+            })
+        }
+        (Some(callsign), Some(interval_seconds)) => (callsign, interval_seconds),
+    };
+    if callsign.is_empty() || maximum_callsign_bytes.is_some_and(|maximum| callsign.len() > maximum)
+    {
+        return Err(DeferReason::InvalidSetting {
+            key: interface_key::ID_CALLSIGN,
+        });
+    }
+    Ok(Some(StationIdentificationPlan {
+        callsign: callsign.to_string(),
+        interval_seconds,
+    }))
+}
+
+fn airtime_limit(
+    percent: Option<f64>,
+    key: &'static str,
+) -> Result<Option<AirtimeLimitCentiPercent>, DeferReason> {
+    let Some(percent) = percent else {
+        return Ok(None);
+    };
+    if !percent.is_finite() || !(0.0..=100.0).contains(&percent) {
+        return Err(DeferReason::InvalidSetting { key });
+    }
+    Ok(Some(AirtimeLimitCentiPercent((percent * 100.0) as u16)))
+}
+
+fn pipe_respawn_delay(seconds: Option<f64>) -> Result<PipeRespawnDelay, DeferReason> {
+    let duration = match seconds {
+        Some(seconds) => {
+            Duration::try_from_secs_f64(seconds).map_err(|_| DeferReason::InvalidSetting {
+                key: interface_key::RESPAWN_DELAY,
+            })?
+        }
+        None => Duration::from_secs(RNS_PIPE_DEFAULT_RESPAWN_SECONDS),
+    };
+    Ok(PipeRespawnDelay(duration))
+}
+
+fn pipe_command(source: &str) -> Result<PipeCommandPlan, DeferReason> {
+    let argv = shlex::split(source).filter(|argv| !argv.is_empty()).ok_or(
+        DeferReason::InvalidSetting {
+            key: interface_key::COMMAND,
+        },
+    )?;
+    Ok(PipeCommandPlan {
+        source: source.to_string(),
+        argv,
+    })
 }
 
 fn announce_bandwidth_cap(percent: f64) -> Result<AnnounceBandwidthCap, DeferReason> {
@@ -1651,6 +1858,15 @@ mod tests {
         UdpEndpointPlan {
             host: UdpEndpointHost::Address(host.to_string()),
             port,
+        }
+    }
+
+    fn serial_line_plan(baud: u32) -> SerialLinePlan {
+        SerialLinePlan {
+            baud,
+            data_bits: SerialDataBits::Eight,
+            parity: SerialParity::None,
+            stop_bits: SerialStopBits::One,
         }
     }
 
@@ -2133,7 +2349,7 @@ mod tests {
             named(&plan, "Modem").medium,
             PlannedMedium::Serial {
                 device: "/dev/ttyUSB0".to_string(),
-                baud: 115200,
+                line: serial_line_plan(115_200),
             }
         );
     }
@@ -2185,17 +2401,19 @@ mod tests {
             named(&plan, "TNC").medium,
             PlannedMedium::Kiss {
                 device: "/dev/ttyUSB0".to_string(),
-                baud: 115200,
+                line: serial_line_plan(115_200),
                 preamble_ms: 350,
                 txtail_ms: 20,
                 persistence: 64,
                 slottime_ms: 20,
+                flow_control: ReadyCommandFlowControl::Disabled,
+                station_id: None,
             }
         );
     }
 
     #[test]
-    fn a_kiss_tnc_carries_configured_timing_and_notes_what_it_cannot_honor() {
+    fn a_kiss_tnc_carries_configured_timing_flow_control_and_station_id() {
         let plan = plan_of(
             "[interfaces]\n[[TNC]]\ntype = KISSInterface\nenabled = Yes\nport = /dev/ttyUSB0\n\
              preamble = 150\ntxtail = 50\npersistence = 200\nslottime = 30\nflow_control = Yes\n\
@@ -2206,23 +2424,19 @@ mod tests {
             tnc.medium,
             PlannedMedium::Kiss {
                 device: "/dev/ttyUSB0".to_string(),
-                baud: RNS_DEFAULT_SERIAL_BAUD,
+                line: serial_line_plan(RNS_DEFAULT_SERIAL_BAUD),
                 preamble_ms: 150,
                 txtail_ms: 50,
                 persistence: 200,
                 slottime_ms: 30,
+                flow_control: ReadyCommandFlowControl::Enabled,
+                station_id: Some(StationIdentificationPlan {
+                    callsign: "N0CALL".to_string(),
+                    interval_seconds: 600,
+                }),
             }
         );
-        // Flow-control gating and station-ID beaconing are parsed but not yet honored by the host.
-        assert!(tnc
-            .unapplied
-            .contains(&UnappliedSetting::MediumOption(interface_key::FLOW_CONTROL)));
-        assert!(tnc
-            .unapplied
-            .contains(&UnappliedSetting::MediumOption(interface_key::ID_CALLSIGN)));
-        assert!(tnc
-            .unapplied
-            .contains(&UnappliedSetting::MediumOption(interface_key::ID_INTERVAL)));
+        assert!(tnc.unapplied.is_empty());
     }
 
     #[test]
@@ -2235,11 +2449,12 @@ mod tests {
             named(&plan, "Packet").medium,
             PlannedMedium::Ax25Kiss {
                 device: "/dev/ttyUSB0".to_string(),
-                baud: RNS_DEFAULT_SERIAL_BAUD,
+                line: serial_line_plan(RNS_DEFAULT_SERIAL_BAUD),
                 preamble_ms: 350,
                 txtail_ms: 20,
                 persistence: 64,
                 slottime_ms: 20,
+                flow_control: ReadyCommandFlowControl::Disabled,
                 callsign: "N0CALL".to_string(),
                 ssid: 2,
             }
@@ -2247,25 +2462,15 @@ mod tests {
     }
 
     #[test]
-    fn an_ax25_tnc_without_a_callsign_or_ssid_defers_with_the_missing_key() {
-        let no_call = plan_of(
+    fn an_ax25_tnc_without_a_callsign_or_ssid_is_invalid() {
+        let no_call = parse(
             "[interfaces]\n[[Packet]]\ntype = AX25KISSInterface\nenabled = Yes\nport = /dev/ttyUSB0\nssid = 0\n",
         );
-        assert_eq!(
-            no_call.deferred[0].why,
-            DeferReason::MissingRequiredField {
-                key: interface_key::CALLSIGN
-            }
-        );
-        let no_ssid = plan_of(
+        assert!(no_call.is_err());
+        let no_ssid = parse(
             "[interfaces]\n[[Packet]]\ntype = AX25KISSInterface\nenabled = Yes\nport = /dev/ttyUSB0\ncallsign = N0CALL\n",
         );
-        assert_eq!(
-            no_ssid.deferred[0].why,
-            DeferReason::MissingRequiredField {
-                key: interface_key::SSID
-            }
-        );
+        assert!(no_ssid.is_err());
     }
 
     #[test]
@@ -2276,8 +2481,11 @@ mod tests {
         assert_eq!(
             named(&plan, "Subprocess").medium,
             PlannedMedium::Pipe {
-                command: "nc -l 4242".to_string(),
-                respawn_delay_ms: 5_000,
+                command: PipeCommandPlan {
+                    source: "nc -l 4242".to_string(),
+                    argv: vec!["nc".to_string(), "-l".to_string(), "4242".to_string()],
+                },
+                respawn_delay: PipeRespawnDelay(Duration::from_secs(5)),
             }
         );
     }
@@ -2290,20 +2498,19 @@ mod tests {
         assert_eq!(
             named(&plan, "Subprocess").medium,
             PlannedMedium::Pipe {
-                command: "prog".to_string(),
-                respawn_delay_ms: 2_500,
+                command: PipeCommandPlan {
+                    source: "prog".to_string(),
+                    argv: vec!["prog".to_string()],
+                },
+                respawn_delay: PipeRespawnDelay(Duration::from_millis(2_500)),
             }
         );
     }
 
     #[test]
-    fn a_pipe_without_a_command_defers_with_the_missing_key() {
-        let plan = plan_of("[interfaces]\n[[Subprocess]]\ntype = PipeInterface\nenabled = Yes\n");
-        assert_eq!(
-            plan.deferred[0].why,
-            DeferReason::MissingRequiredField {
-                key: interface_key::COMMAND
-            }
+    fn a_pipe_without_a_command_is_invalid() {
+        assert!(
+            parse("[interfaces]\n[[Subprocess]]\ntype = PipeInterface\nenabled = Yes\n").is_err()
         );
     }
 
@@ -2478,54 +2685,53 @@ mod tests {
                 txpower_dbm: 7,
                 spreading_factor: 8,
                 coding_rate: 5,
-                airtime_limit_short_centi: Some(150),
-                airtime_limit_long_centi: Some(500),
+                flow_control: ReadyCommandFlowControl::Disabled,
+                station_id: None,
+                airtime_limit_short: Some(AirtimeLimitCentiPercent(150)),
+                airtime_limit_long: Some(AirtimeLimitCentiPercent(500)),
             }
         );
     }
 
     #[test]
-    fn an_rnode_without_a_radio_field_defers_with_the_missing_key() {
-        let no_freq = plan_of(
+    fn an_rnode_without_a_radio_field_is_invalid() {
+        let no_freq = parse(
             "[interfaces]\n[[Radio]]\ntype = RNodeInterface\nenabled = Yes\nport = /dev/ttyUSB0\n\
              bandwidth = 125000\ntxpower = 7\nspreadingfactor = 8\ncodingrate = 5\n",
         );
-        assert!(no_freq.interfaces.is_empty());
-        assert_eq!(
-            no_freq.deferred[0].why,
-            DeferReason::MissingRequiredField {
-                key: interface_key::FREQUENCY
-            }
-        );
-        let no_sf = plan_of(
+        assert!(no_freq.is_err());
+        let no_sf = parse(
             "[interfaces]\n[[Radio]]\ntype = RNodeInterface\nenabled = Yes\nport = /dev/ttyUSB0\n\
              frequency = 868000000\nbandwidth = 125000\ntxpower = 7\ncodingrate = 5\n",
         );
-        assert_eq!(
-            no_sf.deferred[0].why,
-            DeferReason::MissingRequiredField {
-                key: interface_key::SPREADINGFACTOR
-            }
-        );
+        assert!(no_sf.is_err());
     }
 
     #[test]
-    fn an_rnode_surfaces_flow_control_and_beaconing_as_unapplied() {
+    fn an_rnode_plans_flow_control_and_station_identification() {
         let plan = plan_of(
             "[interfaces]\n[[Radio]]\ntype = RNodeInterface\nenabled = Yes\nport = /dev/ttyUSB0\n\
              frequency = 868000000\nbandwidth = 125000\ntxpower = 7\nspreadingfactor = 8\n\
              codingrate = 5\nflow_control = Yes\nid_callsign = N0CALL\nid_interval = 600\n",
         );
         let radio = named(&plan, "Radio");
-        assert!(radio
-            .unapplied
-            .contains(&UnappliedSetting::MediumOption(interface_key::FLOW_CONTROL)));
-        assert!(radio
-            .unapplied
-            .contains(&UnappliedSetting::MediumOption(interface_key::ID_CALLSIGN)));
-        assert!(radio
-            .unapplied
-            .contains(&UnappliedSetting::MediumOption(interface_key::ID_INTERVAL)));
+        let PlannedMedium::Rnode {
+            flow_control,
+            station_id,
+            ..
+        } = &radio.medium
+        else {
+            panic!("RNode medium expected")
+        };
+        assert_eq!(*flow_control, ReadyCommandFlowControl::Enabled);
+        assert_eq!(
+            station_id.as_ref(),
+            Some(&StationIdentificationPlan {
+                callsign: "N0CALL".to_string(),
+                interval_seconds: 600,
+            })
+        );
+        assert!(radio.unapplied.is_empty());
     }
 
     #[test]
@@ -2644,10 +2850,30 @@ mod tests {
             named(&plan, "Modem").medium,
             PlannedMedium::Serial {
                 device: "/dev/ttyUSB0".to_string(),
-                baud: RNS_DEFAULT_SERIAL_BAUD,
+                line: serial_line_plan(RNS_DEFAULT_SERIAL_BAUD),
             }
         );
         assert_eq!(named(&plan, "Modem").policy.bitrate.get(), 9_600);
+    }
+
+    #[test]
+    fn serial_line_settings_are_typed_and_drive_the_bitrate() {
+        let plan = plan_of(
+            "[interfaces]\n[[Modem]]\ntype = SerialInterface\nenabled = Yes\nport = /dev/ttyUSB0\nspeed = 57600\ndatabits = 7\nparity = even\nstopbits = 2\n",
+        );
+        assert_eq!(
+            named(&plan, "Modem").medium,
+            PlannedMedium::Serial {
+                device: "/dev/ttyUSB0".to_string(),
+                line: SerialLinePlan {
+                    baud: 57_600,
+                    data_bits: SerialDataBits::Seven,
+                    parity: SerialParity::Even,
+                    stop_bits: SerialStopBits::Two,
+                },
+            }
+        );
+        assert_eq!(named(&plan, "Modem").policy.bitrate.get(), 57_600);
     }
 
     #[test]
