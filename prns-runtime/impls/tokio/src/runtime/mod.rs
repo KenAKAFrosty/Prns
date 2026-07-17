@@ -1,6 +1,7 @@
 mod byte_stream;
 mod destination_identity_retention;
 mod identity_blackhole;
+mod identity_bootstrap;
 mod interface_store;
 mod node_facade;
 pub mod node_introspection;
@@ -23,6 +24,10 @@ pub(crate) use destination_identity_retention::{
 };
 pub(crate) use identity_blackhole::{
     apply_identity_blackhole_command, IdentityBlackholeHostCommand,
+};
+pub use identity_bootstrap::{
+    ephemeral_ble_identity, generate_identity_secret, load_or_create_identity_secret,
+    IdentitySecretFileError,
 };
 pub use interface_store::{InterfaceStore, Subscription};
 pub use node_facade::{

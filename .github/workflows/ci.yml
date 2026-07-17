@@ -94,13 +94,13 @@ jobs:
         working-directory: prns-interfaces/tokio
       - name: clippy — prns-runtime-tokio
         run: cargo clippy --all-features --all-targets -- -D warnings
-        working-directory: prns-runtime/tokio
+        working-directory: prns-runtime/impls/tokio
       - name: test — prns-runtime-tokio
         run: cargo test --all-features
-        working-directory: prns-runtime/tokio
+        working-directory: prns-runtime/impls/tokio
       - name: doc — prns-runtime-tokio
         run: cargo doc --no-deps --document-private-items --all-features --quiet
-        working-directory: prns-runtime/tokio
+        working-directory: prns-runtime/impls/tokio
         env:
           RUSTDOCFLAGS: "-D rustdoc::broken_intra_doc_links"
       # The umbrella on the same lane — the config a consumer enabling tokio-host on top of the
@@ -133,13 +133,13 @@ jobs:
         working-directory: prns-integration-tests
       - name: clippy — prns-runtime-embassy
         run: cargo clippy --all-targets -- -D warnings
-        working-directory: prns-runtime/embassy
+        working-directory: prns-runtime/impls/embassy
       - name: test — prns-runtime-embassy
         run: cargo test -- --skip a_recipe_node_hears_an_ifac_announce_a_supervisor_stands_a_peer_up_for
-        working-directory: prns-runtime/embassy
+        working-directory: prns-runtime/impls/embassy
       - name: doc — prns-runtime-embassy
         run: cargo doc --no-deps --document-private-items --quiet
-        working-directory: prns-runtime/embassy
+        working-directory: prns-runtime/impls/embassy
         env:
           RUSTDOCFLAGS: "-D rustdoc::broken_intra_doc_links"
       # Hopspot desktop face (personal-hopspot/desktop): its own stable-toolchain

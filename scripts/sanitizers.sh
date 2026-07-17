@@ -78,7 +78,7 @@ for sanitizer in "${sanitizers[@]}"; do
     run_suite "$sanitizer" "$options_name" "$options_value" \
         "prns-core" "$root/Cargo.toml" -p prns-core
     run_suite "$sanitizer" "$options_name" "$options_value" \
-        "prns-runtime-tokio" "$root/prns-runtime/tokio/Cargo.toml"
+        "prns-runtime-tokio" "$root/prns-runtime/impls/tokio/Cargo.toml"
     run_suite "$sanitizer" "$options_name" "$options_value" \
         "cross-crate integration" "$root/prns-integration-tests/Cargo.toml"
     run_suite "$sanitizer" "$options_name" "$options_value" \

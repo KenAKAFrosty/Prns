@@ -1,12 +1,11 @@
-//! Host-side identity bootstrap: the OS-entropy and filesystem sides of minting the node's
-//! X25519 ‖ Ed25519 identity secret, which the sans-io engine only ever takes as bytes.
+//! Host-side identity bootstrap: the OS-entropy and filesystem sides of minting the node's X25519 ‖ Ed25519 identity secret, which the sans-io engine only ever takes as bytes.
 
 use std::fs;
 use std::io::{Read, Write};
 use std::path::Path;
 
-use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use crate::interfaces::bluetooth_auto::core::BleIdentity;
+use prns_core::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use prns_core::interfaces::bluetooth_auto::core::BleIdentity;
 
 /// A fresh identity secret from the OS CSPRNG.
 #[must_use]
@@ -31,9 +30,7 @@ pub fn ephemeral_ble_identity() -> BleIdentity {
     BleIdentity::new(bytes)
 }
 
-/// Load the identity secret at `path`, minting and persisting a fresh one when the file is
-/// absent (parent directories created, unix mode `0o600`). A malformed file is refused,
-/// never overwritten.
+/// Load the identity secret at `path`, minting and persisting a fresh one when the file is absent (parent directories created, unix mode `0o600`). A malformed file is refused, never overwritten.
 pub fn load_or_create_identity_secret(
     path: &Path,
 ) -> Result<Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>, IdentitySecretFileError> {

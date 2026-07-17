@@ -10,8 +10,8 @@ for ws in \
   prnsd \
   prns-ffi \
   prns-wasm \
-  prns-runtime/tokio \
-  prns-runtime/embassy \
+  prns-runtime/impls/tokio \
+  prns-runtime/impls/embassy \
   prns-interfaces/tokio \
   prns-interfaces/embassy \
   prns-integration-tests \
