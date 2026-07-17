@@ -2391,7 +2391,7 @@ dependencies = [
 
 [[package]]
 name = "personal-rns"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "prns-core",
  "prns-interfaces-embassy",
@@ -2491,12 +2491,13 @@ checksum = "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391"
 
 [[package]]
 name = "prns-core"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "aes",
  "allocator-api2",
  "cbc",
  "cfg-if",
+ "crc32fast",
  "ed25519-dalek",
  "embedded-hal 1.0.0",
  "embedded-hal-async",
@@ -2527,7 +2528,7 @@ dependencies = [
 
 [[package]]
 name = "prns-interfaces-embassy"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "bt-hci",
  "embassy-futures",
@@ -2550,7 +2551,7 @@ dependencies = [
 
 [[package]]
 name = "prns-interfaces-tokio"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "bluer",
  "cfg-if",
@@ -2570,7 +2571,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "bzip2",
  "cfg-if",

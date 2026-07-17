@@ -111,6 +111,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "crc32fast"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9481c1c90cbf2ac953f07c8d4a58aa3945c425b7185c9154d67a65e4230da511"
+dependencies = [
+ "cfg-if",
+]
+
+[[package]]
 name = "crypto-common"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -381,11 +390,12 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "prns-core"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "aes",
  "cbc",
  "cfg-if",
+ "crc32fast",
  "ed25519-dalek",
  "embedded-hal",
  "embedded-hal-async",
