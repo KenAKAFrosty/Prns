@@ -303,11 +303,11 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
             process::exit(1);
         }
     };
-    let config_text = match &discovered_config.reference {
+    let (config_text, config_source) = match &discovered_config.config {
         Some(path) => match std::fs::read_to_string(path) {
             Ok(text) => {
                 tracing::info!(event = "config_loaded", path = %path.display());
-                text
+                (text, path.display().to_string())
             }
             Err(error) => {
                 tracing::error!(
@@ -324,14 +324,46 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
                 event = "config_defaulted",
                 directory = %discovered_config.dir.display(),
             );
-            DEFAULT_CONFIG.to_string()
+            (DEFAULT_CONFIG.to_string(), "<built-in config>".to_string())
         }
     };
 
-    let reference = match personal_rns::config::reference::parse(&config_text) {
-        Ok(reference) => reference,
-        Err(error) => {
-            tracing::error!(event = "config_parse_failed", error = %error);
+    let reference = match personal_rns::config::reference::parse_named(&config_source, &config_text)
+    {
+        Ok(report) => {
+            for diagnostic in report.warnings {
+                tracing::warn!(
+                    event = "config_warning",
+                    code = diagnostic.code().as_str(),
+                    source = diagnostic.source(),
+                    line = diagnostic.line(),
+                    path = diagnostic.path(),
+                    diagnostic = %diagnostic,
+                );
+            }
+            report.value
+        }
+        Err(errors) => {
+            for diagnostic in errors.diagnostics() {
+                match diagnostic.severity() {
+                    personal_rns::config::ConfigSeverity::Warning => tracing::warn!(
+                        event = "config_warning",
+                        code = diagnostic.code().as_str(),
+                        source = diagnostic.source(),
+                        line = diagnostic.line(),
+                        path = diagnostic.path(),
+                        diagnostic = %diagnostic,
+                    ),
+                    personal_rns::config::ConfigSeverity::Error => tracing::error!(
+                        event = "config_invalid",
+                        code = diagnostic.code().as_str(),
+                        source = diagnostic.source(),
+                        line = diagnostic.line(),
+                        path = diagnostic.path(),
+                        diagnostic = %diagnostic,
+                    ),
+                }
+            }
             observability.shutdown().await;
             process::exit(1);
         }

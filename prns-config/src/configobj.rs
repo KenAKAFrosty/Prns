@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -102,6 +103,45 @@ impl fmt::Display for ConfigError {
 
 impl std::error::Error for ConfigError {}
 
+impl ConfigError {
+    pub fn line(&self) -> usize {
+        match self {
+            ConfigError::UnterminatedQuote { line }
+            | ConfigError::UnmatchedSectionBrackets { line }
+            | ConfigError::SectionDepthJump { line, .. }
+            | ConfigError::DuplicateKey { line, .. }
+            | ConfigError::DuplicateSection { line, .. }
+            | ConfigError::MissingEquals { line }
+            | ConfigError::EmptyKey { line } => *line,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SourceLocations {
+    lines: BTreeMap<Vec<String>, usize>,
+}
+
+impl SourceLocations {
+    pub fn line<I, S>(&self, path: I) -> Option<usize>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let path = path
+            .into_iter()
+            .map(|part| part.as_ref().to_string())
+            .collect::<Vec<_>>();
+        self.lines.get(&path).copied()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedConfigObj {
+    pub root: Section,
+    pub locations: SourceLocations,
+}
+
 struct Frame {
     name: String,
     depth: usize,
@@ -109,11 +149,17 @@ struct Frame {
 }
 
 pub fn parse(input: &str) -> Result<Section, ConfigError> {
+    parse_located(input).map(|parsed| parsed.root)
+}
+
+pub fn parse_located(input: &str) -> Result<ParsedConfigObj, ConfigError> {
     let mut stack = std::vec![Frame {
         name: String::new(),
         depth: 0,
         section: Section::default(),
     }];
+    let mut locations = SourceLocations::default();
+    let mut current_path = Vec::new();
 
     let mut lines = input.lines().enumerate();
     while let Some((index, raw_line)) = lines.next() {
@@ -144,10 +190,13 @@ pub fn parse(input: &str) -> Result<Section, ConfigError> {
                 });
             }
             stack.push(Frame {
-                name,
+                name: name.clone(),
                 depth,
                 section: Section::default(),
             });
+            current_path.truncate(depth - 1);
+            current_path.push(name);
+            locations.lines.insert(current_path.clone(), line_no);
             continue;
         }
 
@@ -159,11 +208,17 @@ pub fn parse(input: &str) -> Result<Section, ConfigError> {
         if current.get(&key).is_some() {
             return Err(ConfigError::DuplicateKey { line: line_no, key });
         }
+        let mut key_path = current_path.clone();
+        key_path.push(key.clone());
+        locations.lines.insert(key_path, line_no);
         current.scalars.push((key, value));
     }
 
     close_to(&mut stack, 0, 0)?;
-    Ok(stack.pop().expect("root frame is never popped").section)
+    Ok(ParsedConfigObj {
+        root: stack.pop().expect("root frame is never popped").section,
+        locations,
+    })
 }
 
 fn close_to(
@@ -421,6 +476,24 @@ mod tests {
         assert_eq!(
             scalar(root.section("x").unwrap(), "banner"),
             "line one\nline two"
+        );
+    }
+
+    #[test]
+    fn located_parse_tracks_full_section_and_key_paths() {
+        let parsed = parse_located(
+            "[reticulum]\nenable_transport = Yes\n[interfaces]\n[[Hub]]\ntype = TCPClientInterface\n",
+        )
+        .unwrap();
+        assert_eq!(parsed.locations.line(["reticulum"]), Some(1));
+        assert_eq!(
+            parsed.locations.line(["reticulum", "enable_transport"]),
+            Some(2)
+        );
+        assert_eq!(parsed.locations.line(["interfaces", "Hub"]), Some(4));
+        assert_eq!(
+            parsed.locations.line(["interfaces", "Hub", "type"]),
+            Some(5)
         );
     }
 }

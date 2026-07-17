@@ -37,7 +37,9 @@ fn run_oracle(corpus: &[String]) -> Vec<serde_json::Value> {
 }
 
 fn coerced_bool(scalar: &str) -> Result<bool, ()> {
-    let config = format!("[interfaces]\n[[H]]\ntype = TCPClientInterface\noutgoing = {scalar}\n");
+    let config = format!(
+        "[interfaces]\n[[H]]\ntype = TCPClientInterface\nenabled = Yes\noutgoing = {scalar}\n"
+    );
     match reference::parse(&config) {
         Ok(parsed) => parsed.interfaces.first().and_then(|i| i.outgoing).ok_or(()),
         Err(_) => Err(()),
@@ -45,7 +47,9 @@ fn coerced_bool(scalar: &str) -> Result<bool, ()> {
 }
 
 fn coerced_u64(scalar: &str) -> Result<u64, ()> {
-    let config = format!("[interfaces]\n[[H]]\ntype = TCPClientInterface\nbitrate = {scalar}\n");
+    let config = format!(
+        "[interfaces]\n[[H]]\ntype = TCPClientInterface\nenabled = Yes\nbitrate = {scalar}\n"
+    );
     match reference::parse(&config) {
         Ok(parsed) => parsed.interfaces.first().and_then(|i| i.bitrate).ok_or(()),
         Err(_) => Err(()),
@@ -53,8 +57,9 @@ fn coerced_u64(scalar: &str) -> Result<u64, ()> {
 }
 
 fn coerced_f64(scalar: &str) -> Result<f64, ()> {
-    let config =
-        format!("[interfaces]\n[[H]]\ntype = TCPClientInterface\nannounce_cap = {scalar}\n");
+    let config = format!(
+        "[interfaces]\n[[H]]\ntype = TCPClientInterface\nenabled = Yes\nannounce_cap = {scalar}\n"
+    );
     match reference::parse(&config) {
         Ok(parsed) => parsed
             .interfaces
