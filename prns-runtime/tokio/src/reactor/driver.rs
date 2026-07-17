@@ -84,7 +84,7 @@ use crate::units::RttMillis;
 use crate::wire::{DestinationHash, TransportId};
 use heapless::Vec as HeaplessVec;
 
-pub use super::tokio_grant_lane::{
+pub use super::grant_lane::{
     tokio_grant_lane, HeapFrameSlot, TokioGrantConsumer, TokioGrantProducer,
 };
 

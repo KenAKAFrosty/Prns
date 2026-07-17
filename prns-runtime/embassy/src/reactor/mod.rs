@@ -3,5 +3,5 @@ pub use prns_runtime::reactor::{
     timers, AppDeciders, Host,
 };
 
-pub mod impls;
+pub mod driver;
 pub mod timebase;

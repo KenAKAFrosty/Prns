@@ -15,14 +15,14 @@ use crate::engine::{
     EngineCommand, SendToChannel, SendToChannelBody, SendToChannelFailure, Settlement,
     MAX_SEND_TO_CHANNEL_BODY_LEN,
 };
-use crate::reactor::impls::compression;
-use crate::reactor::impls::tokio_reactor::StreamInbound;
+use crate::reactor::compression;
+use crate::reactor::driver::StreamInbound;
 use crate::routing::links::channel::byte_stream::{
     StreamDataHeader, HEADER_LEN, MAX_STREAM_CHUNK_LEN, STREAM_DATA_TYPE,
 };
 use crate::routing::links::LinkId;
 
-use super::tokio_bind::PrnsNodeHandle;
+use super::node_facade::PrnsNodeHandle;
 
 pub use crate::routing::links::channel::byte_stream::StreamId;
 
@@ -290,7 +290,7 @@ impl AsyncWrite for ByteStreamWriter {
 mod tests {
     use super::*;
     use crate::engine::{IssuedCommand, PacketReceiptDelivered};
-    use crate::reactor::impls::tokio_reactor::HostCommand;
+    use crate::reactor::driver::HostCommand;
     use crate::routing::links::channel::byte_stream::parse;
     use crate::units::RttMillis;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};

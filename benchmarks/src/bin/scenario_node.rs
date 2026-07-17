@@ -22,11 +22,11 @@ use personal_rns::interfaces::udp::core as udp_core;
 use personal_rns::interfaces::{
     BitrateBps, InterfaceDescriptor, InterfaceId, InterfaceKind, ReportsStatus,
 };
-use personal_rns::reactor::impls::tokio_reactor::{
+use personal_rns::reactor::interface_seam::{Interface, InterfaceSeam, MAX_WIRE_FRAME_LEN};
+use personal_rns::reactor::tokio::{
     run, tokio_grant_lane, AddInterfaceCommand, Egress, HostCommand, ReactorWiring, TokioHost,
     TokioInterfaceSeam,
 };
-use personal_rns::reactor::interface_seam::{Interface, InterfaceSeam, MAX_WIRE_FRAME_LEN};
 use personal_rns::routes;
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::links::channel::MessageType;

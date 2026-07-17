@@ -3,8 +3,8 @@ use std::time::Duration;
 
 use personal_rns::interfaces::usb_auto::core::{self, Capabilities, Message, NodeTag};
 use personal_rns::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
-use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use personal_rns::reactor::interface_seam::{Interface, InterfaceSeam};
+use personal_rns::reactor::tokio::TokioInterfaceStatus;
 use personal_rns::tcp::tokio_socket;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};

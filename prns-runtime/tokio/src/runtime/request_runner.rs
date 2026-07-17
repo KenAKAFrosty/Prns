@@ -7,8 +7,8 @@ use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::units::RttMillis;
 
+use super::node_facade::PrnsNodeHandle;
 use super::request_router::{dispatch_request, Decline, InboundRequest, RouteSet};
-use super::tokio_bind::PrnsNodeHandle;
 
 pub(super) const REQUEST_QUEUE_DEPTH: usize = 1024;
 const MAX_IN_FLIGHT: usize = 256;

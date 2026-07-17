@@ -19,7 +19,7 @@ use prns_core::interfaces::{BitrateBps, InterfaceId, InterfaceStatus, ReportsSta
 use prns_core::routing::announce::AnnounceObservation;
 use prns_core::units::{HopCount, InstantMillis};
 use prns_core::wire::DestinationHash;
-use prns_runtime::reactor::impls::tokio_reactor::{TokioHost, TokioInterfaceStatus};
+use prns_runtime::reactor::driver::{TokioHost, TokioInterfaceStatus};
 use prns_runtime::reactor::interface_seam::Interface;
 use prns_runtime::reactor::Host;
 use prns_runtime::runtime::{AttachedInterface, InterfaceAttachmentMetadata, PrnsNodeHandle};

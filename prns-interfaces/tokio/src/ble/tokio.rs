@@ -31,7 +31,7 @@ use prns_core::interfaces::{
     ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceStatus,
     TransferRates,
 };
-use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
+use prns_runtime::reactor::driver::TokioInterfaceStatus;
 use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam, MAX_WIRE_FRAME_LEN};
 use prns_runtime::runtime::{AttachedInterface, Fleet, InterfaceSupervisor};
 
@@ -767,7 +767,7 @@ mod tests {
         arrangement, is_keeper, l2cap_plan, AndroidHost, AppleHost, BleAddress, BlueZHost, Control,
         Dialect, Psm,
     };
-    use prns_runtime::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
+    use prns_runtime::reactor::driver::{tokio_grant_lane, TokioGrantConsumer};
 
     const TEST_FRAME_CAP: usize = 2_048;
 

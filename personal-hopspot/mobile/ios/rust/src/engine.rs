@@ -14,7 +14,7 @@ use personal_rns::engine::{
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::wifi_auto::core as wifi_core;
 use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus};
-use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
+use personal_rns::reactor::tokio::TokioInterfaceStatus;
 use personal_rns::routes;
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};

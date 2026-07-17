@@ -1,10 +1,10 @@
 prns-core 1829
-prns-runtime 664
+prns-runtime 659
 personal-rns 4
-prns-interfaces/tokio 830
+prns-interfaces/tokio 828
 prns-interfaces/embassy 431
 prns-integration-tests 107
-prns-config 72
+prns-config 61
 prnsd 36
 prns-ffi 226
 prns-wasm 2

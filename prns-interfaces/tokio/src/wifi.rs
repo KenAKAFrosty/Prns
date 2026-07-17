@@ -20,7 +20,7 @@ use prns_core::interfaces::{
     InterfaceStatus, TransferRates,
 };
 use prns_runtime::reactor::airtime::{frame_airtime_us, AirtimeLedger};
-use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
+use prns_runtime::reactor::driver::TokioInterfaceStatus;
 use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
 use prns_runtime::reactor::throughput::ThroughputLedger;
 use prns_runtime::runtime::{AttachedInterface, Fleet, InterfaceSupervisor};
@@ -1012,7 +1012,7 @@ impl prns_core::interfaces::ReportsStatus for AutoWifiPeer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prns_runtime::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
+    use prns_runtime::reactor::driver::{tokio_grant_lane, TokioGrantConsumer};
 
     const TEST_FRAME_CAP: usize = 2_048;
 

@@ -87,13 +87,13 @@ use personal_rns::interfaces::{
     Membership,
 };
 use personal_rns::lora::{LoRaControl, LoRaInterface};
-use personal_rns::reactor::grant::FrameSlot;
-use personal_rns::reactor::impls::embassy_reactor::{
+use personal_rns::reactor::embassy::timebase::EmbassyTimebase;
+use personal_rns::reactor::embassy::{
     embassy_grant_lane, EmbassyGrantConsumer, EmbassyGrantProducer, EmbassyHost,
     EmbassyInterfaceSeam, EmbassyInterfaceStatus, InterfaceLifecycle, PooledEgress,
 };
+use personal_rns::reactor::grant::FrameSlot;
 use personal_rns::reactor::interface_seam::{Interface, EMBEDDED_MAX_WIRE_FRAME_LEN};
-use personal_rns::reactor::timebase::EmbassyTimebase;
 use personal_rns::runtime::{
     CompletionPool, EmbassyInterfaceStore, Fleet, MemberWire, PreConfiguredDestination, PrnsEvent,
     PrnsNode, PrnsNodeHandle, PrnsNodeRecipe, ReactorPlumbing,
@@ -523,7 +523,7 @@ macro_rules! boot_common {
         // slow, so it can overrun the RTC watchdog's ~2s timeout. Disable RWDT/SWD over the boot.
         rtc.rwdt.disable();
         rtc.swd.disable();
-        let timebase = ::personal_rns::reactor::timebase::EmbassyTimebase::start_at(
+        let timebase = ::personal_rns::reactor::embassy::timebase::EmbassyTimebase::start_at(
             ::personal_rns::engine::InstantMillis(rtc.current_time_us() / 1000),
         );
         ::esp_println::println!("{} boot — recipe runtime, engine core 1 + I/O core 0", $banner);

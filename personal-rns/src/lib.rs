@@ -18,19 +18,17 @@ pub mod reactor {
         timers, AppDeciders, Host,
     };
 
-    cfg_if::cfg_if! {
-        if #[cfg(any(feature = "tokio-host", feature = "embassy-host"))] {
-            pub mod impls {
-                #[cfg(feature = "tokio-host")]
-                pub use prns_runtime_tokio::reactor::impls::{compression, tokio_reactor};
-                #[cfg(feature = "embassy-host")]
-                pub use prns_runtime_embassy::reactor::impls::embassy_reactor;
-            }
-        }
+    #[cfg(feature = "tokio-host")]
+    pub mod tokio {
+        pub use prns_runtime_tokio::reactor::compression;
+        pub use prns_runtime_tokio::reactor::driver::*;
     }
 
     #[cfg(feature = "embassy-host")]
-    pub use prns_runtime_embassy::reactor::timebase;
+    pub mod embassy {
+        pub use prns_runtime_embassy::reactor::driver::*;
+        pub use prns_runtime_embassy::reactor::timebase;
+    }
 }
 
 pub mod runtime {

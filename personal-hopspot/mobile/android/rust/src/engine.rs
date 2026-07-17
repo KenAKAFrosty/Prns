@@ -17,7 +17,7 @@ use personal_rns::interfaces::bluetooth_auto::core::{
 };
 use personal_rns::interfaces::bluetooth_auto::seam::BleBackend;
 use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus};
-use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
+use personal_rns::reactor::tokio::TokioInterfaceStatus;
 use personal_rns::routes;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{

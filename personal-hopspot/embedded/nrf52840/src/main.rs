@@ -52,11 +52,11 @@ use personal_rns::interfaces::{
     ConnectionState, InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus, Membership,
 };
 use personal_rns::lora::{LoRaControl, LoRaInterface};
-use personal_rns::reactor::grant::FrameSlot;
-use personal_rns::reactor::impls::embassy_reactor::{
+use personal_rns::reactor::embassy::{
     embassy_grant_lane, EmbassyGrantConsumer, EmbassyGrantProducer, EmbassyHost,
     EmbassyInterfaceSeam, EmbassyInterfaceStatus, InterfaceLifecycle, PooledEgress,
 };
+use personal_rns::reactor::grant::FrameSlot;
 use personal_rns::reactor::interface_seam::{Interface, EMBEDDED_MAX_WIRE_FRAME_LEN};
 use personal_rns::runtime::{
     CompletionPool, EmbassyInterfaceStore, PreConfiguredDestination, PrnsEvent, PrnsNode,

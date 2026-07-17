@@ -9,7 +9,7 @@ use crate::engine::{
 use crate::persistence::PersistedRouteRows;
 use crate::storage::StorageLayout;
 
-use super::tokio_bind::{RouteSeedProgress, RouteSeedReport};
+use super::node_facade::{RouteSeedProgress, RouteSeedReport};
 
 const MIN_PARALLEL_ROUTE_VERIFICATIONS: usize = 64;
 const ROUTE_VERIFICATION_BATCH_SIZE: usize = 16;
