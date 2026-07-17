@@ -12,23 +12,15 @@ pub mod announce_pacer;
 pub mod duty_gate;
 pub mod grant;
 pub mod interface_seam;
+pub mod kernel;
 pub mod throughput;
+pub mod timers;
 
 pub(crate) mod window_ring;
 
 cfg_if::cfg_if! {
-    if #[cfg(any(feature = "tokio-host", feature = "embassy-host"))] {
-        mod kernel;
-
+    if #[cfg(feature = "tokio-host")] {
         pub mod impls;
-    }
-}
-
-cfg_if::cfg_if! {
-    if #[cfg(feature = "embassy-host")] {
-        mod timers;
-
-        pub mod timebase;
     }
 }
 

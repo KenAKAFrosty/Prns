@@ -15,8 +15,6 @@ use heapless::Vec as HeaplessVec;
 
 use portable_atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
-#[cfg(feature = "runtime-metrics")]
-use crate::engine::AnnounceOrigin;
 use crate::engine::{
     ClassifiedInboundPacket, EngineReaction, EngineState, FanTarget, IngestIo, InstantMillis,
     IssuedCommand, Journaled, ProofRequest,
@@ -35,7 +33,7 @@ use crate::reactor::interface_seam::{
 };
 use crate::reactor::kernel::{
     fire_due_reason, merge_wake_schedules_delta, route_reaction as route_engine_reaction,
-    DirectiveEgress,
+    AnnounceDirective, DirectiveEgress,
 };
 use crate::reactor::timebase::EmbassyTimebase;
 use crate::reactor::timers::{wait_for_due_reason, wait_for_pacer};
@@ -800,18 +798,12 @@ impl<E: ReactorEgress> DirectiveEgress for EmbassyDirectiveEgress<'_, E> {
         enqueue_for_wire(self.egress, self.ifacs, target, bytes);
     }
 
-    fn send_announce(
-        &mut self,
-        target: InterfaceId,
-        bytes: &[u8],
-        hops: u8,
-        #[cfg(feature = "runtime-metrics")] _origin: AnnounceOrigin,
-    ) {
+    fn send_announce(&mut self, target: InterfaceId, announce: AnnounceDirective<'_>) {
         offer_to_pacer(
             self.pacers,
             target,
-            bytes,
-            hops,
+            announce.bytes(),
+            announce.hops(),
             self.now,
             self.egress,
             self.ifacs,
@@ -826,11 +818,9 @@ impl<E: ReactorEgress> DirectiveEgress for EmbassyDirectiveEgress<'_, E> {
         &mut self,
         supervisor: InterfaceKind,
         fan: FanTarget,
-        bytes: &[u8],
-        _hops: u8,
-        #[cfg(feature = "runtime-metrics")] _origin: AnnounceOrigin,
+        announce: AnnounceDirective<'_>,
     ) {
-        enqueue_broadcast_for_wire(self.egress, self.ifacs, supervisor, fan, bytes);
+        enqueue_broadcast_for_wire(self.egress, self.ifacs, supervisor, fan, announce.bytes());
     }
 
     fn emit_frame(
@@ -840,21 +830,6 @@ impl<E: ReactorEgress> DirectiveEgress for EmbassyDirectiveEgress<'_, E> {
         fill: &mut dyn FnMut(&mut [u8]) -> Option<usize>,
     ) {
         emit_for_wire(self.egress, self.ifacs, target, fill);
-    }
-
-    #[cfg(feature = "runtime-metrics")]
-    fn send_measured_local_announce(&mut self, target: InterfaceId, bytes: &[u8]) {
-        enqueue_for_wire(self.egress, self.ifacs, target, bytes);
-    }
-
-    #[cfg(feature = "runtime-metrics")]
-    fn send_measured_local_announce_to_fleet(
-        &mut self,
-        supervisor: InterfaceKind,
-        fan: FanTarget,
-        bytes: &[u8],
-    ) {
-        enqueue_broadcast_for_wire(self.egress, self.ifacs, supervisor, fan, bytes);
     }
 }
 
@@ -1295,7 +1270,7 @@ pub(crate) async fn run_pooled<
                             engine.wake_schedules(AttachedInterfaces::new(&descriptors));
                     }
                     #[cfg(feature = "log")]
-                    crate::diagnostic_log::info!(
+                    log::info!(
                         "reactor: Add kind={:?} present={present} descriptors={}",
                         id.kind(),
                         descriptors.len()
@@ -1309,7 +1284,7 @@ pub(crate) async fn run_pooled<
                         let _ = descriptors.swap_remove(pos);
                     }
                     #[cfg(feature = "log")]
-                    crate::diagnostic_log::info!(
+                    log::info!(
                         "reactor: Remove kind={:?} found={} descriptors={}",
                         id.kind(),
                         found.is_some(),

@@ -1,11 +1,13 @@
 mod core;
 mod impls;
 
+pub use core::{PacketMetricStorage, PacketPhyRetention};
+pub use impls::fixed::{
+    fixed_packet_phy_retention, FixedPacketMetricStorage, FixedPacketPhyRetention,
+};
+
 #[cfg(feature = "tokio-host")]
 pub(super) use impls::heap::HeapPacketPhyRetention;
-
-#[cfg(feature = "embassy-host")]
-pub(super) use impls::fixed::{fixed_packet_phy_retention, FixedPacketPhyRetention};
 
 #[cfg(test)]
 mod tests {

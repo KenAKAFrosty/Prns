@@ -3,16 +3,35 @@ use crate::engine::AnnounceOrigin;
 use crate::engine::{Directive, EngineReaction, FanTarget, Journaled};
 use crate::interfaces::{InterfaceId, InterfaceKind};
 
-pub(crate) trait DirectiveEgress {
+pub struct AnnounceDirective<'a> {
+    bytes: &'a [u8],
+    hops: u8,
+    #[cfg(feature = "runtime-metrics")]
+    origin: AnnounceOrigin,
+}
+
+impl<'a> AnnounceDirective<'a> {
+    #[must_use]
+    pub fn bytes(&self) -> &'a [u8] {
+        self.bytes
+    }
+
+    #[must_use]
+    pub fn hops(&self) -> u8 {
+        self.hops
+    }
+
+    #[cfg(feature = "runtime-metrics")]
+    #[must_use]
+    pub fn origin(&self) -> AnnounceOrigin {
+        self.origin
+    }
+}
+
+pub trait DirectiveEgress {
     fn send(&mut self, target: InterfaceId, bytes: &[u8]);
 
-    fn send_announce(
-        &mut self,
-        target: InterfaceId,
-        bytes: &[u8],
-        hops: u8,
-        #[cfg(feature = "runtime-metrics")] origin: AnnounceOrigin,
-    );
+    fn send_announce(&mut self, target: InterfaceId, announce: AnnounceDirective<'_>);
 
     fn send_to_fleet(&mut self, supervisor: InterfaceKind, fan: FanTarget, bytes: &[u8]);
 
@@ -20,9 +39,7 @@ pub(crate) trait DirectiveEgress {
         &mut self,
         supervisor: InterfaceKind,
         fan: FanTarget,
-        bytes: &[u8],
-        hops: u8,
-        #[cfg(feature = "runtime-metrics")] origin: AnnounceOrigin,
+        announce: AnnounceDirective<'_>,
     );
 
     fn emit_frame(
@@ -32,19 +49,21 @@ pub(crate) trait DirectiveEgress {
         fill: &mut dyn FnMut(&mut [u8]) -> Option<usize>,
     );
 
-    #[cfg(feature = "runtime-metrics")]
-    fn send_measured_local_announce(&mut self, target: InterfaceId, bytes: &[u8]);
+    fn send_measured_local_announce(&mut self, target: InterfaceId, bytes: &[u8]) {
+        self.send(target, bytes);
+    }
 
-    #[cfg(feature = "runtime-metrics")]
     fn send_measured_local_announce_to_fleet(
         &mut self,
         supervisor: InterfaceKind,
         fan: FanTarget,
         bytes: &[u8],
-    );
+    ) {
+        self.send_to_fleet(supervisor, fan, bytes);
+    }
 }
 
-pub(crate) fn route_reaction(
+pub fn route_reaction(
     reaction: EngineReaction<'_>,
     egress: &mut impl DirectiveEgress,
     app: &mut impl FnMut(Journaled<'_>),
@@ -62,10 +81,12 @@ pub(crate) fn route_reaction(
         }) => {
             egress.send_announce(
                 target,
-                bytes,
-                hops,
-                #[cfg(feature = "runtime-metrics")]
-                origin,
+                AnnounceDirective {
+                    bytes,
+                    hops,
+                    #[cfg(feature = "runtime-metrics")]
+                    origin,
+                },
             );
         }
         EngineReaction::Directive(Directive::SendToFleet {
@@ -86,10 +107,12 @@ pub(crate) fn route_reaction(
             egress.send_announce_to_fleet(
                 supervisor,
                 fan,
-                bytes,
-                hops,
-                #[cfg(feature = "runtime-metrics")]
-                origin,
+                AnnounceDirective {
+                    bytes,
+                    hops,
+                    #[cfg(feature = "runtime-metrics")]
+                    origin,
+                },
             );
         }
         EngineReaction::Directive(Directive::EmitFrame {

@@ -9,7 +9,9 @@ use crate::engine::InterfaceCounts;
 use crate::interfaces::{InterfaceId, PacketPhyStats};
 use crate::routing::dedup::PacketHash;
 
-use super::packet_phy_retention::{fixed_packet_phy_retention, FixedPacketPhyRetention};
+use prns_runtime::runtime::packet_phy_retention::{
+    fixed_packet_phy_retention, FixedPacketPhyRetention,
+};
 
 pub(crate) trait InterfaceInspectionStore: Sync {
     const RETAINS_COUNTS: bool;

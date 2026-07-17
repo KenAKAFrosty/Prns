@@ -41,7 +41,7 @@ use crate::reactor::interface_seam::{
 };
 use crate::reactor::kernel::{
     fire_due_reason, merge_wake_schedules_delta, route_reaction as route_engine_reaction,
-    DirectiveEgress,
+    AnnounceDirective, DirectiveEgress,
 };
 use crate::reactor::AppDeciders;
 use crate::reactor::Host;
@@ -2987,21 +2987,15 @@ impl DirectiveEgress for TokioDirectiveEgress<'_> {
         );
     }
 
-    fn send_announce(
-        &mut self,
-        target: InterfaceId,
-        bytes: &[u8],
-        hops: u8,
-        #[cfg(feature = "runtime-metrics")] origin: AnnounceOrigin,
-    ) {
+    fn send_announce(&mut self, target: InterfaceId, announce: AnnounceDirective<'_>) {
         offer_to_pacer(
             self.pacers,
             target,
             PacedAnnounce {
-                bytes,
-                hops,
+                bytes: announce.bytes(),
+                hops: announce.hops(),
                 #[cfg(feature = "runtime-metrics")]
-                origin,
+                origin: announce.origin(),
             },
             self.now,
             self.egress,
@@ -3025,10 +3019,12 @@ impl DirectiveEgress for TokioDirectiveEgress<'_> {
         &mut self,
         supervisor: InterfaceKind,
         fan: FanTarget,
-        bytes: &[u8],
-        hops: u8,
-        #[cfg(feature = "runtime-metrics")] origin: AnnounceOrigin,
+        announce: AnnounceDirective<'_>,
     ) {
+        let bytes = announce.bytes();
+        let hops = announce.hops();
+        #[cfg(feature = "runtime-metrics")]
+        let origin = announce.origin();
         for target in self.egress.broadcast_targets(supervisor, fan) {
             offer_to_pacer(
                 self.pacers,
