@@ -86,6 +86,9 @@ mod host_network;
 #[cfg(feature = "websocket")]
 pub mod websocket;
 
+#[cfg(feature = "i2p")]
+pub mod i2p;
+
 #[cfg(feature = "ax25")]
 pub mod ax25;
 
