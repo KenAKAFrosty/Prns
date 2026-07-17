@@ -1,32 +1,8 @@
-//! The host-agnostic core of the reactor's timer edge: pick the wake reason that came due and fire it. The tokio and embassy drivers differ only in channel and select primitives, never in which engine method a [`WakeReason`] names: one table, two hosts.
-
-use super::Host;
-use crate::engine::{
-    EngineReaction, EngineState, InstantMillis, NextWake, WakeReason, WakeSchedules,
-};
+use crate::engine::{EngineReaction, EngineState, InstantMillis, WakeReason, WakeSchedules};
 use crate::interfaces::AttachedInterfaces;
 use crate::storage::StorageLayout;
 
-#[cfg_attr(not(feature = "embassy-host"), allow(dead_code))]
-pub async fn wait_for_due_reason<H: Host>(host: &H, scheduled_wake: NextWake) -> WakeReason {
-    match scheduled_wake {
-        NextWake::Idle => core::future::pending().await,
-        NextWake::Due(reason) => reason,
-        NextWake::At { at, reason } => {
-            host.sleep_until(at).await;
-            reason
-        }
-    }
-}
-
-pub async fn wait_for_pacer<H: Host>(host: &H, deadline: Option<InstantMillis>) {
-    match deadline {
-        Some(at) => host.sleep_until(at).await,
-        None => core::future::pending().await,
-    }
-}
-
-pub fn fire_due_reason<S, F>(
+pub(crate) fn fire_due_reason<S, F>(
     engine: &mut EngineState<S>,
     reason: WakeReason,
     now: InstantMillis,
@@ -62,7 +38,7 @@ where
     }
 }
 
-pub fn merge_wake_schedules_delta<S: StorageLayout>(
+pub(crate) fn merge_wake_schedules_delta<S: StorageLayout>(
     source_wake_schedules: &mut WakeSchedules,
     delta: WakeSchedules,
     engine: &EngineState<S>,
@@ -126,7 +102,6 @@ pub fn merge_wake_schedules_delta<S: StorageLayout>(
     let _ = (engine, interfaces);
 }
 
-/// The expired-routes schedule runs on `AtMost` deltas, so its cached deadline may sit EARLY of the truth (a removal or refresh pushed the true deadline later) but never late: a premature wake costs one no-op cull whose full recompute resyncs the schedule; a late one would miss a deadline.
 #[cfg(debug_assertions)]
 fn never_late(cached: crate::engine::WakeSchedule, truth: crate::engine::WakeSchedule) -> bool {
     use crate::engine::WakeSchedule::{At, Idle};
