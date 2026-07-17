@@ -69,7 +69,7 @@ struct Engine {
     mdns: AndroidMdnsBridge,
     handle: TokioPrnsHandle,
     destination: DestinationHash,
-    rpc_key: [u8; 32],
+    rpc_key: Vec<u8>,
 }
 
 static ENGINE: OnceLock<Engine> = OnceLock::new();
@@ -93,7 +93,7 @@ pub(crate) fn runtime_health() -> RuntimeHealth {
 
 pub(crate) fn rpc_key_hex() -> String {
     let mut out = String::with_capacity(64);
-    for byte in engine().rpc_key {
+    for byte in &engine().rpc_key {
         let _ = write!(&mut out, "{byte:02x}");
     }
     out
@@ -245,7 +245,7 @@ struct Ready {
     wifi_status: AutoWifiStatus,
     handle: TokioPrnsHandle,
     destination: DestinationHash,
-    rpc_key: [u8; 32],
+    rpc_key: Vec<u8>,
 }
 
 fn spawn_engine() -> Engine {
@@ -322,7 +322,7 @@ fn run_engine(
     runtime.block_on(async move {
         let identity = load_identity_secret_key();
         let credentials = SharedInstanceCredentials::from_identity_secret(&identity);
-        let rpc_key = credentials.rpc_key;
+        let rpc_key = credentials.rpc_key.clone();
         let transport_secret = identity.clone();
         let ble_identity = ephemeral_ble_identity();
         ble.set_local_identity(ble_identity);

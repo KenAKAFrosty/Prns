@@ -19,7 +19,7 @@ default = []
 alloc = ["prns-runtime/alloc"]
 external-alloc = ["alloc", "prns-runtime/external-alloc"]
 std = ["alloc", "prns-runtime/std"]
-log = ["dep:log", "prns-runtime/log"]
+log = ["dep:log"]
 
 [dependencies]
 prns-core = { path = "../../prns-core", default-features = false, features = ["embassy-host"] }

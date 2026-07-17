@@ -15,7 +15,8 @@ use personal_rns::interfaces::usb_auto::core as usb_auto_core;
 use personal_rns::interfaces::websocket::core as websocket_core;
 use personal_rns::interfaces::{
     AnnounceBandwidthCap, BitrateBps, Capabilities, InboundPacket, InterfaceCapabilities,
-    InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceMode, INTERFACE_ID_LEN,
+    InterfaceCommonPolicy, InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceMode,
+    INTERFACE_ID_LEN,
 };
 use personal_rns::routing::upstream_app_destinations::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::storage::GrowableHeap;
@@ -45,7 +46,7 @@ pub fn destination_hash_length() -> usize {
 
 #[wasm_bindgen(js_name = usbAutoHostBitrateBps)]
 pub fn usb_auto_host_bitrate_bps() -> u32 {
-    personal_rns::interfaces::usb_auto::core::HOST_USB_BITRATE_BPS.get()
+    bitrate_bps_u32(personal_rns::interfaces::usb_auto::core::HOST_USB_BITRATE_BPS)
 }
 
 #[wasm_bindgen(js_name = usbAutoHostHardwareMtu)]
@@ -107,7 +108,7 @@ pub fn bluetooth_data_uuid() -> String {
 
 #[wasm_bindgen(js_name = bluetoothBitrateBps)]
 pub fn bluetooth_bitrate_bps() -> u32 {
-    bluetooth_core::BLE_BITRATE_GUESS_BPS.get()
+    bitrate_bps_u32(bluetooth_core::BLE_BITRATE_GUESS_BPS)
 }
 
 #[wasm_bindgen(js_name = bluetoothHardwareMtu)]
@@ -117,7 +118,7 @@ pub fn bluetooth_hardware_mtu() -> usize {
 
 #[wasm_bindgen(js_name = websocketBitrateBps)]
 pub fn websocket_bitrate_bps() -> u32 {
-    websocket_core::WEBSOCKET_BITRATE_ESTIMATE.get()
+    bitrate_bps_u32(websocket_core::WEBSOCKET_BITRATE_ESTIMATE)
 }
 
 #[wasm_bindgen(js_name = websocketHardwareMtu)]
@@ -269,6 +270,7 @@ impl PrnsRuntime {
         let kind = parse_interface_kind(&required_string(&options, "kind")?)?;
         let channel_tag = required_bytes(&options, "channelTag")?;
         let bitrate = optional_u32(&options, "bitrateBps")?
+            .map(u64::from)
             .and_then(BitrateBps::new)
             .ok_or_else(|| {
                 JsValue::from_str("bitrateBps is required and must be at least 5 bps")
@@ -291,6 +293,7 @@ impl PrnsRuntime {
             announce_rate_limit: None,
             announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
             airtime_duty_cycle: None,
+            common: InterfaceCommonPolicy::RNS_DEFAULT,
         };
         if let Some(slot) = self.interfaces.iter_mut().find(|iface| iface.id == id) {
             *slot = descriptor;
@@ -430,7 +433,7 @@ impl PrnsRuntime {
             let row = Object::new();
             set_bytes(&row, "id", interface.id.as_bytes());
             set_str(&row, "kind", interface_kind_name(interface.id.kind()));
-            set_u32(&row, "bitrateBps", interface.bitrate.get());
+            set_u32(&row, "bitrateBps", bitrate_bps_u32(interface.bitrate));
             if let Some(mtu) = interface.hardware_mtu {
                 set_usize(&row, "hardwareMtu", mtu);
             }
@@ -577,15 +580,15 @@ fn directive_to_frame(directive: Directive<'_>) -> OutboundFrame {
 fn journaled_to_js(journaled: Journaled<'_>) -> JsValue {
     let object = Object::new();
     match journaled {
-        Journaled::AnnounceHeard {
-            destination,
-            hops,
-            source_interface,
-        } => {
+        Journaled::AnnounceHeard { observation } => {
             set_str(&object, "type", "announce");
-            set_bytes(&object, "destination", destination.as_bytes());
-            set_u32(&object, "hops", hops as u32);
-            set_bytes(&object, "sourceInterface", source_interface.as_bytes());
+            set_bytes(&object, "destination", observation.destination.as_bytes());
+            set_u32(&object, "hops", u32::from(observation.hops.0));
+            set_bytes(
+                &object,
+                "sourceInterface",
+                observation.source_interface.as_bytes(),
+            );
         }
         Journaled::SelfRatchetRotated { destination } => {
             set_str(&object, "type", "selfRatchetRotated");
@@ -750,6 +753,7 @@ fn journaled_to_js(journaled: Journaled<'_>) -> JsValue {
                 RouteRemovalCause::Expired => "routeExpired",
                 RouteRemovalCause::Evicted => "routeEvicted",
                 RouteRemovalCause::InterfaceGone => "routeInterfaceGone",
+                RouteRemovalCause::Dropped => "routeDropped",
             };
             set_str(&object, "type", kind);
             set_bytes(&object, "destination", destination.as_bytes());
@@ -1140,6 +1144,10 @@ fn interface_kind_name(kind: Option<InterfaceKind>) -> &'static str {
 
 fn set_str(object: &Object, key: &str, value: &str) {
     set_value(object, key, JsValue::from_str(value));
+}
+
+fn bitrate_bps_u32(bitrate: BitrateBps) -> u32 {
+    u32::try_from(bitrate.get()).unwrap_or(u32::MAX)
 }
 
 fn set_u32(object: &Object, key: &str, value: u32) {

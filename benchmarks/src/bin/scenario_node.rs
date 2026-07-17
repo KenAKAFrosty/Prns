@@ -102,7 +102,7 @@ impl Interface for BenchTcpListener {
     const KIND: InterfaceKind = InterfaceKind::TcpServerPeer;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        tcp_core::descriptor(self.id, self.bitrate)
+        tcp_core::descriptor(self.id, tcp_core::policy_for_bitrate(self.bitrate))
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -2291,12 +2291,12 @@ async fn run_tunnel_probe(manifest: &Manifest, addr: &str, duration: Duration) {
     let egress = Egress::new(vec![(TCP_INTERFACE_ID, out_tx)]);
     let interfaces = vec![tcp_core::descriptor(
         TCP_INTERFACE_ID,
-        tcp_core::TCP_BITRATE_ESTIMATE,
+        tcp_core::policy_for_bitrate(tcp_core::TCP_BITRATE_ESTIMATE),
     )];
     let (event_tx, event_rx) = mpsc::unbounded_channel::<Event>();
     let journal = move |journaled: Journaled<'_>| match journaled {
-        Journaled::AnnounceHeard { destination, .. } => {
-            let _ = event_tx.send(Event::Heard(destination));
+        Journaled::AnnounceHeard { observation } => {
+            let _ = event_tx.send(Event::Heard(observation.destination));
         }
         Journaled::CommandSettled { id, settlement } => {
             let _ = event_tx.send(Event::Settled(id, settlement));
@@ -3045,8 +3045,14 @@ async fn relay_node(manifest: &Manifest) {
         (RELAY_SECOND_INTERFACE_ID, out_b_tx),
     ]);
     let interfaces = vec![
-        tcp_core::descriptor(TCP_INTERFACE_ID, tcp_core::TCP_BITRATE_ESTIMATE),
-        tcp_core::descriptor(RELAY_SECOND_INTERFACE_ID, tcp_core::TCP_BITRATE_ESTIMATE),
+        tcp_core::descriptor(
+            TCP_INTERFACE_ID,
+            tcp_core::policy_for_bitrate(tcp_core::TCP_BITRATE_ESTIMATE),
+        ),
+        tcp_core::descriptor(
+            RELAY_SECOND_INTERFACE_ID,
+            tcp_core::policy_for_bitrate(tcp_core::TCP_BITRATE_ESTIMATE),
+        ),
     ];
 
     let side_a = BenchTcpListener::bind_with_id(
@@ -3219,7 +3225,7 @@ async fn tunnel_relay_node(manifest: &Manifest) {
     let egress = Egress::new(vec![(RELAY_SECOND_INTERFACE_ID, out_b_tx)]);
     let interfaces = vec![tcp_core::descriptor(
         RELAY_SECOND_INTERFACE_ID,
-        tcp_core::TCP_BITRATE_ESTIMATE,
+        tcp_core::policy_for_bitrate(tcp_core::TCP_BITRATE_ESTIMATE),
     )];
 
     let client_side = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -3273,15 +3279,20 @@ async fn tunnel_client_side(
         tune(&stream);
         let tag = format!("{peer}#{connection_index}").into_bytes();
         let id = InterfaceId::from_channel_tag(InterfaceKind::TcpServerPeer, &tag);
-        let descriptor = tcp_core::descriptor(id, tcp_core::TCP_BITRATE_ESTIMATE);
+        let descriptor = tcp_core::descriptor(
+            id,
+            tcp_core::policy_for_bitrate(tcp_core::TCP_BITRATE_ESTIMATE),
+        );
         let (in_tx, in_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, LANE_DEPTH);
         let (out_tx, out_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, LANE_DEPTH);
         let seam = TokioInterfaceSeam::new(id, in_tx, notify_tx.clone(), out_rx);
         if commands
             .send(HostCommand::AddInterface(AddInterfaceCommand {
                 descriptor,
+                logical_interface: id,
                 inbound: in_rx,
                 egress: out_tx,
+                connection: None,
                 ifac: None,
             }))
             .is_err()
@@ -3321,8 +3332,14 @@ async fn chain_node(upstream: &str) {
         (RELAY_SECOND_INTERFACE_ID, out_up_tx),
     ]);
     let interfaces = vec![
-        tcp_core::descriptor(TCP_INTERFACE_ID, tcp_core::TCP_BITRATE_ESTIMATE),
-        tcp_core::descriptor(RELAY_SECOND_INTERFACE_ID, tcp_core::TCP_BITRATE_ESTIMATE),
+        tcp_core::descriptor(
+            TCP_INTERFACE_ID,
+            tcp_core::policy_for_bitrate(tcp_core::TCP_BITRATE_ESTIMATE),
+        ),
+        tcp_core::descriptor(
+            RELAY_SECOND_INTERFACE_ID,
+            tcp_core::policy_for_bitrate(tcp_core::TCP_BITRATE_ESTIMATE),
+        ),
     ];
 
     let downstream = BenchTcpListener::bind_with_id(

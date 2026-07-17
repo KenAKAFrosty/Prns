@@ -1,5 +1,4 @@
-//! Platform-neutral command-surface types, shared by every command handle: a `send_single_packet`
-//! resolves to the same `Result` whether tokio's oneshot or embassy's completion pool carried the settlement.
+//! Platform-neutral command-surface types, shared by every command handle: a `send_single_packet` resolves to the same `Result` whether Tokio's oneshot or Embassy's completion pool carried the settlement.
 
 use crate::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, PacketReceiptDelivered,

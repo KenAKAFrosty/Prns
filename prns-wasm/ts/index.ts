@@ -166,7 +166,7 @@ export type CommandSettledEvent = {
 };
 
 export type RouteEvent = {
-  type: "routeExpired" | "routeEvicted" | "routeInterfaceGone";
+  type: "routeExpired" | "routeEvicted" | "routeInterfaceGone" | "routeDropped";
   destination: DestinationHash;
 };
 
@@ -1649,6 +1649,7 @@ function parseEvent(raw: unknown): PrnsEvent {
     case "routeExpired":
     case "routeEvicted":
     case "routeInterfaceGone":
+    case "routeDropped":
       return {
         type,
         destination: destinationHash(bytesField(object, "destination")),

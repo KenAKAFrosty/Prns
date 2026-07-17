@@ -20,14 +20,14 @@ interface-discovery-archive = ["std", "interface-discovery", "prns-core/interfac
 external-alloc = ["alloc", "prns-core/external-alloc", "prns-runtime/external-alloc"]
 std = ["alloc", "prns-core/std", "prns-runtime/std"]
 std-sync-host = ["std", "prns-core/std-sync-host"]
-tokio-host = ["std", "prns-core/tokio-host", "prns-runtime/tokio-host", "dep:prns-interfaces-tokio", "prns-interfaces-tokio?/auto"]
+tokio-host = ["std", "dep:prns-runtime-tokio", "dep:prns-interfaces-tokio", "prns-interfaces-tokio?/auto"]
 embassy-host = ["dep:prns-runtime-embassy", "dep:prns-interfaces-embassy"]
-runtime-metrics = ["tokio-host", "prns-core/runtime-metrics", "prns-runtime/runtime-metrics"]
-tracing = ["tokio-host", "prns-runtime/tracing", "prns-interfaces-tokio?/tracing"]
-log = ["prns-runtime/log", "prns-runtime-embassy?/log", "prns-interfaces-tokio?/log", "prns-interfaces-embassy?/log"]
+runtime-metrics = ["tokio-host", "prns-runtime/runtime-metrics", "prns-runtime-tokio/runtime-metrics"]
+tracing = ["tokio-host", "prns-runtime-tokio/tracing", "prns-interfaces-tokio?/tracing"]
+log = ["prns-runtime-embassy?/log", "prns-interfaces-tokio?/log", "prns-interfaces-embassy?/log"]
 stream-compression = ["prns-core/stream-compression"]
 parallel-resource-hash = ["prns-core/parallel-resource-hash"]
-parallel-persistence = ["prns-core/parallel-persistence", "prns-runtime/parallel-persistence"]
+parallel-persistence = ["tokio-host", "prns-runtime-tokio/parallel-persistence"]
 test-support = ["prns-core/test-support"]
 keyring-zbus = ["prns-core/keyring-zbus"]
 keyring-libdbus = ["prns-core/keyring-libdbus"]
@@ -64,6 +64,7 @@ usb-device = ["usb", "prns-interfaces-embassy?/usb-device"]
 cfg-if = "1.0"
 prns-core = { path = "../prns-core", default-features = false }
 prns-runtime = { path = "../prns-runtime/core", default-features = false }
+prns-runtime-tokio = { path = "../prns-runtime/tokio", optional = true, default-features = false }
 prns-runtime-embassy = { path = "../prns-runtime/embassy", optional = true, default-features = false }
 prns-interfaces-tokio = { path = "../prns-interfaces/tokio", optional = true, default-features = false }
 prns-interfaces-embassy = { path = "../prns-interfaces/embassy", optional = true, default-features = false }

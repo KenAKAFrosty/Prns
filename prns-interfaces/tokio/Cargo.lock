@@ -1631,9 +1631,11 @@ checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 name = "personal-rns"
 version = "0.2.4"
 dependencies = [
+ "cfg-if",
  "prns-core",
  "prns-interfaces-tokio",
  "prns-runtime",
+ "prns-runtime-tokio",
 ]
 
 [[package]]
@@ -1800,7 +1802,7 @@ dependencies = [
  "prns-config",
  "prns-core",
  "prns-ffi",
- "prns-runtime",
+ "prns-runtime-tokio",
  "rmpv",
  "serialport",
  "shlex",
@@ -1816,12 +1818,22 @@ dependencies = [
 name = "prns-runtime"
 version = "0.2.4"
 dependencies = [
- "bzip2",
  "cfg-if",
+ "getrandom 0.2.17",
+ "heapless",
+ "prns-core",
+]
+
+[[package]]
+name = "prns-runtime-tokio"
+version = "0.2.4"
+dependencies = [
+ "bzip2",
  "futures-util",
  "getrandom 0.2.17",
  "heapless",
  "prns-core",
+ "prns-runtime",
  "rtrb",
  "tokio",
 ]

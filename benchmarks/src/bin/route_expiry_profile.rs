@@ -111,11 +111,7 @@ fn linear_cull(mut rows: RouteRows, now: InstantMillis) -> (usize, f64) {
             row += 1;
         }
     }
-    black_box(
-        (0..rows.len())
-            .map(|row| rows.expiry(row))
-            .min(),
-    );
+    black_box((0..rows.len()).map(|row| rows.expiry(row)).min());
     (culled, begun.elapsed().as_secs_f64() * 1e3)
 }
 

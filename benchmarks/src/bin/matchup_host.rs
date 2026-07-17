@@ -37,7 +37,7 @@ async fn main() {
 
     let secret = Zeroizing::new([0xD1u8; IDENTITY_SECRET_KEY_LEN]);
     let credentials = SharedInstanceCredentials {
-        rpc_key: [0x5a; 32],
+        rpc_key: vec![0x5a; 32],
         ..SharedInstanceCredentials::from_identity_secret(&secret)
     };
 

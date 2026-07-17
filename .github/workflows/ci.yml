@@ -92,12 +92,17 @@ jobs:
         env:
           RUSTDOCFLAGS: "-D rustdoc::broken_intra_doc_links"
         working-directory: prns-interfaces/tokio
-      # The tokio runtime lane lives in prns-runtime now: the Prns bind, the request runner, and
-      # the tokio reactor body, plus their tests (which pull prns-core's test-support fixtures).
-      - name: clippy — prns-runtime tokio-host lane
-        run: cargo clippy -p prns-runtime --features tracing,runtime-metrics,log --all-targets -- -D warnings
-      - name: test — prns-runtime tokio-host lane
-        run: cargo test -p prns-runtime --features tracing,runtime-metrics,log
+      - name: clippy — prns-runtime-tokio
+        run: cargo clippy --all-features --all-targets -- -D warnings
+        working-directory: prns-runtime/tokio
+      - name: test — prns-runtime-tokio
+        run: cargo test --all-features
+        working-directory: prns-runtime/tokio
+      - name: doc — prns-runtime-tokio
+        run: cargo doc --no-deps --document-private-items --all-features --quiet
+        working-directory: prns-runtime/tokio
+        env:
+          RUSTDOCFLAGS: "-D rustdoc::broken_intra_doc_links"
       # The umbrella on the same lane — the config a consumer enabling tokio-host on top of the
       # defaults actually ships, catching a std-sync-host <-> tokio-host feature-unification break
       # across all three layers at once. Interface families ride their lane-neutral names, so this

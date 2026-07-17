@@ -22,7 +22,7 @@ pub mod reactor {
         if #[cfg(any(feature = "tokio-host", feature = "embassy-host"))] {
             pub mod impls {
                 #[cfg(feature = "tokio-host")]
-                pub use prns_runtime::reactor::impls::{compression, tokio_reactor};
+                pub use prns_runtime_tokio::reactor::impls::{compression, tokio_reactor};
                 #[cfg(feature = "embassy-host")]
                 pub use prns_runtime_embassy::reactor::impls::embassy_reactor;
             }
@@ -34,15 +34,21 @@ pub mod reactor {
 }
 
 pub mod runtime {
-    pub use prns_runtime::runtime::*;
+    cfg_if::cfg_if! {
+        if #[cfg(feature = "tokio-host")] {
+            pub use prns_runtime_tokio::runtime::*;
+        } else if #[cfg(feature = "embassy-host")] {
+            pub use prns_runtime_embassy::runtime::*;
+        } else {
+            pub use prns_runtime::runtime::*;
+        }
+    }
 
-    #[cfg(feature = "embassy-host")]
+    #[cfg(all(feature = "tokio-host", feature = "embassy-host"))]
     pub use prns_runtime_embassy::runtime::{
         CompletionPool, EmbassyFleet, EmbassyInterfaceStore, EmbassyPrnsHandle, MemberWire,
         ReactorPlumbing,
     };
-    #[cfg(all(feature = "embassy-host", not(feature = "tokio-host")))]
-    pub use prns_runtime_embassy::runtime::{Fleet, Prns};
 }
 
 mod lane_guards;

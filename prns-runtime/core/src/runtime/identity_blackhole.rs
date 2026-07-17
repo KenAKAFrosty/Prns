@@ -46,10 +46,3 @@ pub trait IdentityBlackholeControl {
         Output = Result<UnblackholeIdentityOutcome, IdentityBlackholeControlError>,
     > + Send;
 }
-
-#[cfg(feature = "tokio-host")]
-mod tokio;
-#[cfg(feature = "tokio-host")]
-pub(crate) use tokio::{
-    apply_identity_blackhole_command, settle_control, settle_source, IdentityBlackholeHostCommand,
-};

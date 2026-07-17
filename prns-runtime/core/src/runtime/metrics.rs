@@ -1,3 +1,5 @@
+use alloc::vec::Vec;
+
 use crate::engine::{AnnounceOrigin, EngineMetricsSnapshot};
 use crate::interfaces::{InterfaceId, InterfaceKind};
 use crate::runtime::ReliabilityMetricsSnapshot;
@@ -146,11 +148,11 @@ pub struct AnnounceEgressMetricsSnapshot {
     pub enqueued_by_interface_kind: EgressInterfaceKindCounts,
     pub enqueued_bytes_by_origin: AnnounceOriginCounts,
     pub pacer_queue_depth: u32,
-    pub interfaces: std::vec::Vec<InterfaceAnnounceEgressMetricsSnapshot>,
+    pub interfaces: Vec<InterfaceAnnounceEgressMetricsSnapshot>,
 }
 
 impl AnnounceEgressMetricsSnapshot {
-    pub(crate) fn record(
+    pub fn record(
         &mut self,
         origin: AnnounceOrigin,
         interface: InterfaceId,
@@ -172,18 +174,18 @@ impl AnnounceEgressMetricsSnapshot {
         }
     }
 
-    pub(crate) fn register_interface(&mut self, interface: InterfaceId) {
+    pub fn register_interface(&mut self, interface: InterfaceId) {
         let _ = self.interface_mut(interface);
     }
 
-    pub(crate) fn reset_pacer_depths(&mut self) {
+    pub fn reset_pacer_depths(&mut self) {
         self.pacer_queue_depth = 0;
         for metrics in &mut self.interfaces {
             metrics.pacer_queue_depth = 0;
         }
     }
 
-    pub(crate) fn add_pacer_depth(&mut self, interface: InterfaceId, depth: usize) {
+    pub fn add_pacer_depth(&mut self, interface: InterfaceId, depth: usize) {
         let depth = u32::try_from(depth).unwrap_or(u32::MAX);
         self.pacer_queue_depth = self.pacer_queue_depth.saturating_add(depth);
         let metrics = self.interface_mut(interface);

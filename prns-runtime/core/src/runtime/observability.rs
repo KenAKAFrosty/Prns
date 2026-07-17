@@ -286,7 +286,7 @@ pub struct ReliabilityMetricsSnapshot {
 }
 
 impl ReliabilityMetricsSnapshot {
-    pub(crate) fn record_journaled(&mut self, journaled: &Journaled<'_>) {
+    pub fn record_journaled(&mut self, journaled: &Journaled<'_>) {
         match journaled {
             Journaled::CommandSettled { settlement, .. } => {
                 let settled = SettledOperation::from(settlement);

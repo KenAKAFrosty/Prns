@@ -19,40 +19,18 @@ interface-discovery = ["alloc", "prns-core/interface-discovery"]
 interface-discovery-archive = ["std", "interface-discovery", "prns-core/interface-discovery-archive"]
 external-alloc = ["alloc", "prns-core/external-alloc"]
 std = ["alloc", "prns-core/std", "dep:getrandom"]
-tokio-host = ["std", "prns-core/tokio-host", "dep:tokio", "dep:futures-util", "dep:getrandom", "dep:bzip2", "dep:rtrb"]
-runtime-metrics = ["tokio-host", "prns-core/runtime-metrics"]
-parallel-persistence = ["tokio-host", "prns-core/parallel-persistence"]
-tracing = ["tokio-host", "dep:tracing"]
-log = ["dep:log"]
+runtime-metrics = ["alloc", "prns-core/runtime-metrics"]
 
 [dependencies]
 prns-core = { path = "../../prns-core", default-features = false }
 cfg-if = "1.0"
 
-# Fixed-capacity collections for the reactor's retained lane state (alloc-free, inline storage)
 heapless = { version = "0.8", default-features = false }
-
-# Async runtime for the `tokio-host` lane: `sync` for the Notify wakers that cross it, `time` for the host's deadline waits, `macros` for the reactor's `select!` over its three inputs. Workers bring their own I/O features; the seam itself needs no runtime flavor.
-tokio = { version = "1", optional = true, default-features = false, features = ["rt", "macros", "sync", "time", "io-util"] }
-rtrb = { version = "0.3", optional = true, default-features = false }
-
-# Cooperative multiplexer for the request runner (under `tokio-host`): `FuturesUnordered` drives every in-flight handler on the runner's single task, so a slow `async fn` yields to the others rather than blocking them — the cooperative concurrency the typed router promises. `alloc` is the only feature it needs; the crate owns the pin machinery our `deny(unsafe_code)` won't let us hand-roll.
-futures-util = { version = "0.3", optional = true, default-features = false, features = ["alloc", "sink"] }
-
-# OS CSPRNG for the tokio reactor's entropy fills. The no_std core never sees an RNG — entropy is data the host supplies — so this rides the host lane only.
 getrandom = { version = "0.2", optional = true }
-
-# Pure-Rust bz2 (default `libbz2-rs-sys` backend, no C toolchain) for RNS Resource compression on the tokio host. The engine leaves the codec to its host; a std node must still speak the reference's wire compression, so the reactor compresses every outgoing resource and inflates every compressed one. Rides the tokio-host lane only — embedded nodes stay transport-only and send their resources uncompressed, which is fully compliant.
-bzip2 = { version = "0.6", optional = true }
-
-log = { version = "0.4", optional = true, default-features = false }
-tracing = { version = "0.1", optional = true, default-features = false, features = ["std", "attributes"] }
 
 [dev-dependencies]
 prns-core = { path = "../../prns-core", default-features = false, features = ["test-support"] }
-# Executor + macros for the tokio bind's cross-task tests (`--features tokio-host`).
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "test-util"] }
-tracing-subscriber = { version = "0.3", default-features = false, features = ["registry"] }
+futures-executor = "0.3"
 
 [lints]
 workspace = true

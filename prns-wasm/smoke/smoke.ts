@@ -286,6 +286,7 @@ function describeEvent(event: PrnsEvent): string {
     case "routeExpired":
     case "routeEvicted":
     case "routeInterfaceGone":
+    case "routeDropped":
       return `${event.type} destination=${hex(event.destination)}`;
     case "unknown":
       return `unknown ${JSON.stringify(event.raw)}`;
