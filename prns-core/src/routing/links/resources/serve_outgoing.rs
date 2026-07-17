@@ -196,7 +196,7 @@ mod tests {
         requested.extend_from_slice(&name(50));
         assert_eq!(
             collect(serve_part_indices(&hashmap, 100, &requested)),
-            std::vec![],
+            std::vec::Vec::<usize>::new(),
         );
     }
 

@@ -15,6 +15,10 @@ pub struct DiscoveryObservationCount(NonZeroU64);
 impl DiscoveryObservationCount {
     pub const FIRST: Self = Self(NonZeroU64::MIN);
 
+    pub const fn from_non_zero(count: NonZeroU64) -> Self {
+        Self(count)
+    }
+
     pub const fn get(self) -> u64 {
         self.0.get()
     }
@@ -23,6 +27,53 @@ impl DiscoveryObservationCount {
         self.0 = self.0.saturating_add(1);
     }
 }
+
+#[derive(Debug, PartialEq)]
+pub struct DiscoveryCatalogSeed {
+    pub interface: DiscoveredInterface,
+    pub first_heard: InstantMillis,
+    pub observation_count: DiscoveryObservationCount,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiscoveryCatalogRestoreError {
+    Duplicate(DiscoveredInterfaceId),
+    CapacityReached(DiscoveredInterfaceId),
+    FirstHeardAfterLastHeard {
+        first_heard: InstantMillis,
+        last_heard: InstantMillis,
+    },
+}
+
+impl core::fmt::Display for DiscoveryCatalogRestoreError {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Duplicate(id) => {
+                write!(
+                    formatter,
+                    "discovery record {:?} is already restored",
+                    id.as_bytes()
+                )
+            }
+            Self::CapacityReached(id) => write!(
+                formatter,
+                "discovery catalog has no capacity for record {:?}",
+                id.as_bytes()
+            ),
+            Self::FirstHeardAfterLastHeard {
+                first_heard,
+                last_heard,
+            } => write!(
+                formatter,
+                "discovery first-heard time {} is after last-heard time {}",
+                first_heard.0, last_heard.0
+            ),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for DiscoveryCatalogRestoreError {}
 
 #[derive(Debug, PartialEq)]
 pub struct DiscoveryRecord {
@@ -173,6 +224,38 @@ impl<T: DiscoveryCatalogTable> DiscoveryCatalog<T> {
         record.interface = interface;
         record.observation_count.increment();
         Ok(DiscoveryCatalogUpdate::Refreshed { id, refresh })
+    }
+
+    pub fn restore(
+        &mut self,
+        seed: DiscoveryCatalogSeed,
+    ) -> Result<(), DiscoveryCatalogRestoreError> {
+        let id = seed.interface.id;
+        let last_heard = seed.interface.provenance.received_at;
+        if seed.first_heard > last_heard {
+            return Err(DiscoveryCatalogRestoreError::FirstHeardAfterLastHeard {
+                first_heard: seed.first_heard,
+                last_heard,
+            });
+        }
+        if self.records.get(id).is_some() {
+            return Err(DiscoveryCatalogRestoreError::Duplicate(id));
+        }
+        let previous = self
+            .records
+            .try_insert(
+                id,
+                DiscoveryRecord {
+                    interface: seed.interface,
+                    first_heard: seed.first_heard,
+                    observation_count: seed.observation_count,
+                },
+            )
+            .map_err(|TablePushError::TableFull| {
+                DiscoveryCatalogRestoreError::CapacityReached(id)
+            })?;
+        debug_assert!(previous.is_none());
+        Ok(())
     }
 
     pub fn get(&self, id: DiscoveredInterfaceId) -> Option<&DiscoveryRecord> {

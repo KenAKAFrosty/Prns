@@ -2,6 +2,8 @@ mod autoconnect;
 mod catalog;
 mod codec;
 mod coordinator;
+#[cfg(feature = "interface-discovery-archive")]
+mod impls;
 mod intake;
 mod model;
 mod policy;
@@ -16,8 +18,8 @@ pub use autoconnect::{
     DISCOVERED_INTERFACE_DETACH_AFTER,
 };
 pub use catalog::{
-    DiscoveryCatalog, DiscoveryCatalogRefresh, DiscoveryCatalogStoreError, DiscoveryCatalogUpdate,
-    DiscoveryObservationCount, DiscoveryRecord,
+    DiscoveryCatalog, DiscoveryCatalogRefresh, DiscoveryCatalogRestoreError, DiscoveryCatalogSeed,
+    DiscoveryCatalogStoreError, DiscoveryCatalogUpdate, DiscoveryObservationCount, DiscoveryRecord,
 };
 pub use codec::{
     decode_advertisement, decode_envelope, encode_advertisement, encode_encrypted_envelope,
@@ -28,6 +30,12 @@ pub use coordinator::{
     DiscoveryAttachmentRegistrationFailure, DiscoveryCoordinator, DiscoveryCoordinatorAction,
     DiscoveryCoordinatorEvent, DiscoveryCoordinatorOutput, DiscoveryEndpointReservation,
     DiscoveryEndpointReservationError, DiscoveryIngressEligibility, DiscoveryIngressFilter,
+};
+#[cfg(feature = "interface-discovery-archive")]
+pub use impls::{
+    ArchiveFileOperation, ArchiveRecordError, DiscoveryArchive, DiscoveryArchiveError,
+    DiscoveryArchiveFileState, DiscoveryArchiveRecord, HexDecodeError, LoadedDiscoveryArchive,
+    DISCOVERED_INTERFACES_FILE,
 };
 pub use intake::{
     ingest_discovery_announce, DiscoveredInterface, DiscoveredInterfaceId,
@@ -54,8 +62,8 @@ pub use publication::{
 };
 pub use stamp::{
     generate_stamp, stamp_value, validate_stamp, AdvertisementHash, GeneratedStamp, StampCost,
-    StampCostError, StampGeneration, StampValidation, StampValue, DEFAULT_STAMP_COST, STAMP_SIZE,
-    WORKBLOCK_EXPAND_ROUNDS,
+    StampCostError, StampGeneration, StampValidation, StampValue, StampValueError,
+    DEFAULT_STAMP_COST, STAMP_SIZE, WORKBLOCK_EXPAND_ROUNDS,
 };
 pub use storage::{
     DiscoveredConnectionTable, DiscoveredEndpointSet, DiscoveryCatalogTable,
