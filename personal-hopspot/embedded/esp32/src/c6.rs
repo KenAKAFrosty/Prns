@@ -34,8 +34,8 @@ use personal_rns::reactor::impls::embassy_reactor::{
 use personal_rns::reactor::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
 use personal_rns::reactor::timebase::EmbassyTimebase;
 use personal_rns::runtime::{
-    CompletionPool, EmbassyInterfaceStore, EmbassyPrnsHandle, PreConfiguredDestination, Prns,
-    PrnsEvent, PrnsRecipe, ReactorPlumbing,
+    CompletionPool, EmbassyInterfaceStore, PreConfiguredDestination, PrnsEvent, PrnsNode,
+    PrnsNodeHandle, PrnsNodeRecipe, ReactorPlumbing,
 };
 use personal_rns::usb::UsbAutoDevice;
 
@@ -146,7 +146,7 @@ type InterfaceStore = EmbassyInterfaceStore<
 >;
 #[cfg(feature = "ble-bringup-c6")]
 type C6BleFleet = Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP>;
-type Node = Prns<
+type Node = PrnsNode<
     (),
     (),
     for<'a> fn(PrnsEvent<'a>, &()),
@@ -438,7 +438,7 @@ pub async fn run(spawner: Spawner) {
         )
     };
 
-    let handle = EmbassyPrnsHandle::new(COMMANDS.sender(), &COMPLETION);
+    let handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
     let plumbing = ReactorPlumbing::new(
         inbound,
         PooledEgress::new(egress_lanes),
@@ -450,8 +450,8 @@ pub async fn run(spawner: Spawner) {
     let host = EmbassyHost::new_with_timebase(timebase, seeded_entropy as fn(&mut [u8]));
 
     static NODE: StaticCell<Node> = StaticCell::new();
-    let node: &'static mut Node = NODE.init(Prns::new(
-        PrnsRecipe {
+    let node: &'static mut Node = NODE.init(PrnsNode::new(
+        PrnsNodeRecipe {
             transport_identity: Some(transport_secret),
             pre_configured_destinations: [PreConfiguredDestination::Single {
                 resource_strategy:

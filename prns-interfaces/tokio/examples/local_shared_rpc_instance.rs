@@ -7,7 +7,7 @@
 
 use personal_rns::identity::IDENTITY_SECRET_KEY_LEN;
 use personal_rns::routes;
-use personal_rns::runtime::{Manual, Prns, PrnsRecipe};
+use personal_rns::runtime::{Manual, PrnsNode, PrnsNodeRecipe};
 use personal_rns::storage::GrowableHeap;
 use prns_interfaces_tokio::shared_instance::rpc_compat::{
     SharedInstanceCredentials, SharedInstanceRpcCompat,
@@ -46,7 +46,7 @@ async fn main() {
         ..SharedInstanceCredentials::from_identity_secret(&[0xD2; IDENTITY_SECRET_KEY_LEN])
     };
 
-    let node = Prns::new(PrnsRecipe {
+    let node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [] as [personal_rns::runtime::PreConfiguredDestination; 0],
         app_state: (),

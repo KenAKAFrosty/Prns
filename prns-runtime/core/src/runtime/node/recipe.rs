@@ -29,7 +29,7 @@ pub enum PreConfiguredDestination<'a> {
 }
 
 impl PreConfiguredDestination<'_> {
-    /// The address this destination answers as, derived from its name (and key, for a `Single`), so an announcing app can name itself before the node starts. `Err` only when the name is malformed (a dotted component, or past the length bound), the same validation `Prns::new` runs as it stands the destination up.
+    /// The address this destination answers as, derived from its name (and key, for a `Single`), so an announcing app can name itself before the node starts. `Err` only when the name is malformed (a dotted component, or past the length bound), the same validation `PrnsNode::new` runs as it stands the destination up.
     pub fn destination_hash(&self) -> Result<DestinationHash, ExpandNameError> {
         match self {
             PreConfiguredDestination::Plain { app_name, aspects } => Ok(
@@ -55,7 +55,7 @@ impl PreConfiguredDestination<'_> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Manual;
 
-pub struct PrnsRecipe<Destinations, AppState, Routes, OnEvent, Interfaces, Storage>
+pub struct PrnsNodeRecipe<Destinations, AppState, Routes, OnEvent, Interfaces, Storage>
 where
     OnEvent: FnMut(PrnsEvent<'_>, &AppState),
 {
@@ -63,7 +63,7 @@ where
     pub transport_identity: Option<Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>>,
     pub pre_configured_destinations: Destinations,
     pub app_state: AppState,
-    /// The storage layout the engine's columns run on: `GrowableHeap` on a std host, a fixed prepackage (`Esp32S3`/`Esp32C6`/`Nrf52840`) on a board. A type-level choice carried as a value so the recipe owns it and `Prns::new` no longer assumes one.
+    /// The storage layout the engine's columns run on: `GrowableHeap` on a std host, a fixed prepackage (`Esp32S3`/`Esp32C6`/`Nrf52840`) on a board. A type-level choice carried as a value so the recipe owns it and `PrnsNode::new` no longer assumes one.
     pub storage: Storage,
     pub routes: Routes,
     pub interfaces: Interfaces,

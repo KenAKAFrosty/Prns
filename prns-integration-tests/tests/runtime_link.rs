@@ -1,8 +1,4 @@
-//! A link establishes and carries data across two live nodes over UDP — the public-API successor
-//! to the two-reactor UDP capstone that lived beside the interface impl. Two `Prns` nodes talk
-//! through a fixed-peer `UdpInterface` pair (one raw wire packet per datagram, no framing); the
-//! responder announces, the initiator hears it, establishes a link, and round-trips a request over
-//! it. The TCP leg of the same claim lives in `runtime_request.rs`.
+//! A link establishes and carries data across two live nodes over UDP — the public-API successor to the two-reactor UDP capstone that lived beside the interface implementation. Two `PrnsNode` instances talk through a fixed-peer `UdpInterface` pair (one raw wire packet per datagram, no framing); the responder announces, the initiator hears it, establishes a link, and round-trips a request over it. The TCP leg of the same claim lives in `runtime_request.rs`.
 
 use core::time::Duration;
 
@@ -16,7 +12,7 @@ use personal_rns::routing::request_handlers::RequestPathHash;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::request_router::{Decline, RequestContext, RequestRoute, RoutePolicy};
 use personal_rns::runtime::{
-    Diagnostic, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe, TokioPrnsHandle,
+    Diagnostic, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::udp::UdpInterface;
@@ -79,14 +75,14 @@ async fn a_link_establishes_and_carries_data_across_two_nodes_over_udp() {
         .await
         .expect("binds the initiator socket");
 
-    let node_a = Prns::new(PrnsRecipe {
+    let node_a = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [responder_dest],
         app_state: Responder,
         storage: GrowableHeap,
         routes: routes![Echo],
         on_event: |_event, _state| {},
-        interfaces: |node: &TokioPrnsHandle| {
+        interfaces: |node: &PrnsNodeHandle| {
             node.attach(udp_a);
         },
     });
@@ -110,7 +106,7 @@ async fn a_link_establishes_and_carries_data_across_two_nodes_over_udp() {
     });
 
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
-    let node_b = Prns::new(PrnsRecipe {
+    let node_b = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [PreConfiguredDestination::Single {
             resource_strategy:
@@ -131,7 +127,7 @@ async fn a_link_establishes_and_carries_data_across_two_nodes_over_udp() {
                 let _ = heard_tx.send(destination);
             }
         },
-        interfaces: |node: &TokioPrnsHandle| {
+        interfaces: |node: &PrnsNodeHandle| {
             node.attach(udp_b);
         },
     });

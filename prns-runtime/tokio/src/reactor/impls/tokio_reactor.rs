@@ -3340,7 +3340,7 @@ mod tests {
     };
     use crate::reactor::interface_seam::Interface;
     use crate::reactor::interface_seam::MAX_WIRE_FRAME_LEN;
-    use crate::runtime::{RoutingControl, TokioPrnsHandle};
+    use crate::runtime::{PrnsNodeHandle, RoutingControl};
     use crate::wire::{PacketType, WirePacketHeader};
 
     #[tokio::test(start_paused = true)]
@@ -4857,7 +4857,7 @@ mod tests {
         let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
         let (mut inbound_tx, inbound_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
         let (command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
-        let handle = TokioPrnsHandle::over(command_tx);
+        let handle = PrnsNodeHandle::over(command_tx);
         let (heard_tx, mut heard_rx) = mpsc::unbounded_channel::<DestinationHash>();
         let (dropped_tx, mut dropped_rx) = mpsc::unbounded_channel::<DestinationHash>();
         let app = move |journaled: Journaled<'_>| match journaled {

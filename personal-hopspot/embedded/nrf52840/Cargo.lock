@@ -1687,7 +1687,7 @@ dependencies = [
  "heapless 0.8.0",
  "prns-core",
  "prns-ffi",
- "prns-runtime",
+ "prns-runtime-tokio",
  "serialport",
  "tokio",
  "tokio-serial",
@@ -1697,14 +1697,10 @@ dependencies = [
 name = "prns-runtime"
 version = "0.2.4"
 dependencies = [
- "bzip2",
  "cfg-if",
- "futures-util",
  "getrandom 0.2.17",
  "heapless 0.8.0",
  "prns-core",
- "rtrb",
- "tokio",
 ]
 
 [[package]]
@@ -1718,6 +1714,20 @@ dependencies = [
  "portable-atomic",
  "prns-core",
  "prns-runtime",
+]
+
+[[package]]
+name = "prns-runtime-tokio"
+version = "0.2.4"
+dependencies = [
+ "bzip2",
+ "futures-util",
+ "getrandom 0.2.17",
+ "heapless 0.8.0",
+ "prns-core",
+ "prns-runtime",
+ "rtrb",
+ "tokio",
 ]
 
 [[package]]

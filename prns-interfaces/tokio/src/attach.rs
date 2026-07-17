@@ -26,14 +26,14 @@ macro_rules! attaches_as_wire {
             type Attached = prns_runtime::runtime::AttachedInterface;
             fn attach_to(
                 self,
-                handle: &prns_runtime::runtime::TokioPrnsHandle,
+                handle: &prns_runtime::runtime::PrnsNodeHandle,
             ) -> prns_runtime::runtime::AttachedInterface {
                 handle.add_interface(self)
             }
 
             fn attach_to_with_ifac(
                 self,
-                handle: &prns_runtime::runtime::TokioPrnsHandle,
+                handle: &prns_runtime::runtime::PrnsNodeHandle,
                 ifac: prns_core::interfaces::ifac::IfacContext,
                 network_name: Option<std::string::String>,
             ) -> prns_runtime::runtime::AttachedInterface {
@@ -64,14 +64,14 @@ macro_rules! attaches_as_fleet {
             type Attached = prns_runtime::runtime::AttachedSupervisor;
             fn attach_to(
                 self,
-                handle: &prns_runtime::runtime::TokioPrnsHandle,
+                handle: &prns_runtime::runtime::PrnsNodeHandle,
             ) -> prns_runtime::runtime::AttachedSupervisor {
                 handle.supervise(self)
             }
 
             fn attach_to_with_ifac(
                 self,
-                handle: &prns_runtime::runtime::TokioPrnsHandle,
+                handle: &prns_runtime::runtime::PrnsNodeHandle,
                 ifac: prns_core::interfaces::ifac::IfacContext,
                 network_name: Option<std::string::String>,
             ) -> prns_runtime::runtime::AttachedSupervisor {

@@ -33,12 +33,7 @@ keyring-zbus = ["prns-core/keyring-zbus"]
 keyring-libdbus = ["prns-core/keyring-libdbus"]
 flash = ["prns-core/flash"]
 
-# The interface families, one lane-neutral name each: the weak (`?/`) edges light the
-# family up on whichever runtime lane the build declared, so `tokio-host` + `tcp` is the
-# host TcpClient/TcpServer and `embassy-host` + `tcp` is the embedded client — same
-# feature spelling. A family named without its lane is a compile error (src/lane_guards.rs),
-# never a silent no-op. When both lanes are on, the prelude's bare name goes to tokio
-# (the `Prns`/`Fleet` precedent); the embassy module stays reachable explicitly.
+# The interface families have one lane-neutral name each. Weak (`?/`) edges enable the family on whichever runtime lane the build declares, so `tokio-host` + `tcp` is the host TcpClient/TcpServer and `embassy-host` + `tcp` is the embedded client with the same feature spelling. A family named without its lane is a compile error (src/lane_guards.rs), never a silent no-op. When both lanes are enabled, the prelude's bare name follows the Tokio `PrnsNode`/`Fleet` precedent; the Embassy module remains explicitly reachable.
 tcp = ["prns-interfaces-tokio?/tcp", "prns-interfaces-embassy?/tcp"]
 wifi = ["prns-interfaces-tokio?/wifi", "prns-interfaces-embassy?/wifi"]
 wifi-direct = ["prns-interfaces-tokio?/wifi-direct"]

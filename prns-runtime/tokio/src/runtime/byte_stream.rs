@@ -22,7 +22,7 @@ use crate::routing::links::channel::byte_stream::{
 };
 use crate::routing::links::LinkId;
 
-use super::tokio_bind::TokioPrnsHandle;
+use super::tokio_bind::PrnsNodeHandle;
 
 pub use crate::routing::links::channel::byte_stream::StreamId;
 
@@ -111,7 +111,7 @@ impl AsyncRead for ByteStreamReader {
 
 /// Success case is the bytes consumed
 async fn send_chunk(
-    handle: TokioPrnsHandle,
+    handle: PrnsNodeHandle,
     link_id: LinkId,
     header: StreamDataHeader,
     payload: std::vec::Vec<u8>,
@@ -172,7 +172,7 @@ fn compress_stream_chunk(input: std::vec::Vec<u8>) -> (std::vec::Vec<u8>, bool, 
 type SendFuture<T> = Pin<Box<dyn Future<Output = io::Result<T>> + Send>>;
 
 pub struct ByteStreamWriter {
-    handle: TokioPrnsHandle,
+    handle: PrnsNodeHandle,
     link_id: LinkId,
     stream_id: StreamId,
     pending: Option<SendFuture<usize>>,
@@ -180,7 +180,7 @@ pub struct ByteStreamWriter {
 }
 
 impl ByteStreamWriter {
-    pub(crate) fn new(handle: TokioPrnsHandle, link_id: LinkId, stream_id: StreamId) -> Self {
+    pub(crate) fn new(handle: PrnsNodeHandle, link_id: LinkId, stream_id: StreamId) -> Self {
         Self {
             handle,
             link_id,
@@ -357,7 +357,7 @@ mod tests {
         let (commands_tx, mut commands_rx) = tokio::sync::mpsc::unbounded_channel();
         let link = LinkId::new([7; 16]);
         let stream_id = StreamId::new(3).unwrap();
-        let mut writer = ByteStreamWriter::new(TokioPrnsHandle::over(commands_tx), link, stream_id);
+        let mut writer = ByteStreamWriter::new(PrnsNodeHandle::over(commands_tx), link, stream_id);
 
         let write = tokio::spawn(async move {
             writer.write_all(b"hello").await.unwrap();
@@ -398,7 +398,7 @@ mod tests {
         let (commands_tx, mut commands_rx) = tokio::sync::mpsc::unbounded_channel();
         let link = LinkId::new([7; 16]);
         let stream_id = StreamId::new(3).unwrap();
-        let mut writer = ByteStreamWriter::new(TokioPrnsHandle::over(commands_tx), link, stream_id);
+        let mut writer = ByteStreamWriter::new(PrnsNodeHandle::over(commands_tx), link, stream_id);
 
         let original = std::vec![7u8; 4096];
         let original_for_task = original.clone();
@@ -443,7 +443,7 @@ mod tests {
         let (commands_tx, mut commands_rx) = tokio::sync::mpsc::unbounded_channel();
         let link = LinkId::new([7; 16]);
         let stream_id = StreamId::new(3).unwrap();
-        let mut writer = ByteStreamWriter::new(TokioPrnsHandle::over(commands_tx), link, stream_id);
+        let mut writer = ByteStreamWriter::new(PrnsNodeHandle::over(commands_tx), link, stream_id);
 
         let mut original = std::vec![9u8; 5000];
         let mut x = 0x1234_5678_9abc_def0u64;
@@ -505,7 +505,7 @@ mod tests {
         let (commands_tx, mut commands_rx) = tokio::sync::mpsc::unbounded_channel();
         let link = LinkId::new([9; 16]);
         let stream_id = StreamId::new(1).unwrap();
-        let mut writer = ByteStreamWriter::new(TokioPrnsHandle::over(commands_tx), link, stream_id);
+        let mut writer = ByteStreamWriter::new(PrnsNodeHandle::over(commands_tx), link, stream_id);
 
         let write = tokio::spawn(async move {
             writer.write_all(b"x").await.unwrap();

@@ -7,7 +7,7 @@ use personal_rns::routes;
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::tunnel::{parse_synthesize_payload, SYNTHESIZE_PAYLOAD_LEN};
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
-use personal_rns::runtime::{PreConfiguredDestination, Prns, PrnsRecipe, TokioPrnsHandle};
+use personal_rns::runtime::{PreConfiguredDestination, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe};
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::client::TcpClientInterface;
 use personal_rns::wire::HEADER_MIN_LEN;
@@ -61,7 +61,7 @@ async fn a_recipe_node_synthesizes_a_tunnel_when_its_transport_is_a_held_identit
     let secret = Zeroizing::new([0xC3u8; IDENTITY_SECRET_KEY_LEN]);
 
     let client = TcpClientInterface::new(addr, BITRATE, Duration::from_millis(100));
-    let node = Prns::new(PrnsRecipe {
+    let node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: Some(secret.clone()),
         pre_configured_destinations: [PreConfiguredDestination::Single {
             app_name: "bench",
@@ -77,7 +77,7 @@ async fn a_recipe_node_synthesizes_a_tunnel_when_its_transport_is_a_held_identit
         storage: GrowableHeap,
         routes: routes![],
         on_event: |_event, _state| {},
-        interfaces: |node: &TokioPrnsHandle| {
+        interfaces: |node: &PrnsNodeHandle| {
             node.attach(client);
         },
     });

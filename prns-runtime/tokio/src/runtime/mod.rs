@@ -28,8 +28,8 @@ pub use tokio_bind::{
     boot_timeline_origin, AttachIntent, Attachable, AttachedInterface, AttachedSupervisor,
     BlackholeSeedReport, DestinationIdentitySeedReport, DetachedFleet, Fleet, FlushError,
     FlushMark, FlushReport, InterfaceAttachmentMetadata, InterfaceSupervisor,
-    NonRoutingIdentityError, PrepareFlushError, PreparedFlush, Prns, RatchetSeedReport,
-    RegionFlush, ResourceReceipt, ResourceReceiveError, ResourceSendError, RouteSeedProgress,
-    RouteSeedReport, SegmentCompression, SharedInstanceIdentityError, TokioPrnsHandle,
+    NonRoutingIdentityError, PrepareFlushError, PreparedFlush, PrnsNode, PrnsNodeHandle,
+    RatchetSeedReport, RegionFlush, ResourceReceipt, ResourceReceiveError, ResourceSendError,
+    RouteSeedProgress, RouteSeedReport, SegmentCompression, SharedInstanceIdentityError,
     TunnelSeedReport, AUTO_COMPRESS_MAX_LEN,
 };

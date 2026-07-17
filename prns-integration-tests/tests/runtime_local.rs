@@ -9,7 +9,8 @@ use personal_rns::interfaces::InterfaceKind;
 use personal_rns::routes;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
-    Diagnostic, Manual, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe, TokioPrnsHandle,
+    Diagnostic, Manual, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle,
+    PrnsNodeRecipe,
 };
 use personal_rns::shared_instance::server::LocalServer;
 use personal_rns::storage::GrowableHeap;
@@ -52,7 +53,7 @@ async fn an_app_dials_the_shared_instance_and_is_heard_at_a_discounted_hop() {
         .port();
 
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
-    let daemon = Prns::new(PrnsRecipe {
+    let daemon = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [single(secret(0xD1))],
         app_state: (),
@@ -75,7 +76,7 @@ async fn an_app_dials_the_shared_instance_and_is_heard_at_a_discounted_hop() {
 
     // The app: dials the daemon's port over TCP (the same HDLC wire a real RNS app speaks), and
     // announces its destination.
-    let app = Prns::new(PrnsRecipe {
+    let app = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [app_single],
         app_state: (),
@@ -147,7 +148,7 @@ async fn a_leaf_shared_instance_carries_announces_across_its_local_boundary() {
         .expect("the network address is known")
         .to_string();
 
-    let daemon = Prns::new(PrnsRecipe {
+    let daemon = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
         app_state: (),
@@ -168,13 +169,13 @@ async fn a_leaf_shared_instance_carries_announces_across_its_local_boundary() {
         .expect("the network destination is valid");
     let (network_heard_tx, mut network_heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let network_client = TcpClientInterface::new(network_addr, BITRATE, Duration::from_millis(100));
-    let network_node = Prns::new(PrnsRecipe {
+    let network_node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [network_single],
         app_state: (),
         storage: GrowableHeap,
         routes: routes![],
-        interfaces: |node: &TokioPrnsHandle| {
+        interfaces: |node: &PrnsNodeHandle| {
             node.attach(network_client);
         },
         on_event: move |event, _state| {
@@ -195,13 +196,13 @@ async fn a_leaf_shared_instance_carries_announces_across_its_local_boundary() {
         BITRATE,
         Duration::from_millis(100),
     );
-    let local_node = Prns::new(PrnsRecipe {
+    let local_node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [local_single],
         app_state: (),
         storage: GrowableHeap,
         routes: routes![],
-        interfaces: |node: &TokioPrnsHandle| {
+        interfaces: |node: &PrnsNodeHandle| {
             node.attach(local_client);
         },
         on_event: move |event, _state| {

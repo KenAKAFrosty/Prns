@@ -1,4 +1,4 @@
-//! The typed request router, end to end over real TCP: a responder stood up by `Prns::new` with a
+//! The typed request router, end to end over real TCP: a responder stood up by `PrnsNode::new` with a
 //! one-route set answers a live request from an initiator. The handler *computes* its answer (it
 //! echoes the request bytes and appends a suffix, assembling them straight into the grant), so this
 //! exercises the whole dogfood path — `run` drives the reactor and the runner together, a
@@ -19,8 +19,8 @@ use personal_rns::routing::request_handlers::RequestPathHash;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::request_router::{Decline, RequestContext, RequestRoute, RoutePolicy};
 use personal_rns::runtime::{
-    Diagnostic, Manual, Message, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe,
-    TokioPrnsHandle,
+    Diagnostic, Manual, Message, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle,
+    PrnsNodeRecipe,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::client::TcpClientInterface;
@@ -87,13 +87,13 @@ async fn a_request_router_answers_a_live_request_over_tcp() {
         .destination_hash()
         .expect("the test destination name is valid");
 
-    // Responder node: a TCP server plus the route-backed Single it answers requests on. `Prns::new`
+    // Responder node: a TCP server plus the route-backed Single it answers requests on. `PrnsNode::new`
     // registers the routes' handlers on every Single it stands up, so the destination carries them.
     let server = TcpServer::bind("127.0.0.1:0", BITRATE)
         .await
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
-    let node_a = Prns::new(PrnsRecipe {
+    let node_a = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [responder_dest],
         app_state: Responder,
@@ -124,7 +124,7 @@ async fn a_request_router_answers_a_live_request_over_tcp() {
 
     let client = TcpClientInterface::new(addr, BITRATE, Duration::from_millis(100));
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
-    let node_b = Prns::new(PrnsRecipe {
+    let node_b = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [PreConfiguredDestination::Single {
             resource_strategy:
@@ -157,7 +157,7 @@ async fn a_request_router_answers_a_live_request_over_tcp() {
                 let _ = heard_tx.send(event);
             }
         },
-        interfaces: |node: &TokioPrnsHandle| {
+        interfaces: |node: &PrnsNodeHandle| {
             node.attach(client);
         },
     });
@@ -243,7 +243,7 @@ async fn request_auto_negotiates_both_rungs_over_tcp() {
         .await
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
-    let node_a = Prns::new(PrnsRecipe {
+    let node_a = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [responder_dest],
         app_state: Responder,
@@ -276,7 +276,7 @@ async fn request_auto_negotiates_both_rungs_over_tcp() {
     // `establish_link` and `request` return their own results (the demux suppresses them here).
     let client = TcpClientInterface::new(addr, BITRATE, Duration::from_millis(100));
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
-    let node_b = Prns::new(PrnsRecipe {
+    let node_b = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [PreConfiguredDestination::Single {
             resource_strategy:
@@ -297,7 +297,7 @@ async fn request_auto_negotiates_both_rungs_over_tcp() {
                 let _ = heard_tx.send(destination);
             }
         },
-        interfaces: |node: &TokioPrnsHandle| {
+        interfaces: |node: &PrnsNodeHandle| {
             node.attach(client);
         },
     });
@@ -374,7 +374,7 @@ async fn a_split_response_answers_a_small_request_over_tcp() {
         .await
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
-    let node_a = Prns::new(PrnsRecipe {
+    let node_a = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [responder_dest],
         app_state: Responder,
@@ -405,7 +405,7 @@ async fn a_split_response_answers_a_small_request_over_tcp() {
 
     let client = TcpClientInterface::new(addr, BITRATE, Duration::from_millis(100));
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
-    let node_b = Prns::new(PrnsRecipe {
+    let node_b = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [PreConfiguredDestination::Single {
             resource_strategy:
@@ -426,7 +426,7 @@ async fn a_split_response_answers_a_small_request_over_tcp() {
                 let _ = heard_tx.send(destination);
             }
         },
-        interfaces: |node: &TokioPrnsHandle| {
+        interfaces: |node: &PrnsNodeHandle| {
             node.attach(client);
         },
     });

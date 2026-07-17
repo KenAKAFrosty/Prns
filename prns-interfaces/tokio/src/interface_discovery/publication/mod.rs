@@ -21,7 +21,7 @@ use prns_core::routing::announce::emit::MAX_ANNOUNCE_APP_DATA_LEN;
 use prns_core::wire::DestinationHash;
 use prns_runtime::reactor::impls::tokio_reactor::TokioHost;
 use prns_runtime::reactor::Host;
-use prns_runtime::runtime::{SendError, TokioPrnsHandle};
+use prns_runtime::runtime::{PrnsNodeHandle, SendError};
 use tokio::sync::Notify;
 use tokio::task::{JoinError, JoinHandle};
 
@@ -147,7 +147,7 @@ impl TokioInterfaceDiscoveryPublisher {
 
     pub fn spawn<E, Resolve, ResolveFuture, Report>(
         self,
-        handle: TokioPrnsHandle,
+        handle: PrnsNodeHandle,
         clock: TokioHost,
         resolve: Resolve,
         report: Report,

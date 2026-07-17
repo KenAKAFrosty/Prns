@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use prns_runtime::interfaces::ifac::IfacContext;
 use prns_runtime::interfaces::InterfaceId;
-use prns_runtime::runtime::{Attachable, AttachedInterface, TokioPrnsHandle};
+use prns_runtime::runtime::{Attachable, AttachedInterface, PrnsNodeHandle};
 use tokio::sync::Notify;
 
 use crate::serial_host::open_host_serial;
@@ -56,7 +56,7 @@ fn scan_cdc_targets() -> Vec<String> {
 
 impl Attachable for AutoUsb {
     type Attached = AttachedInterface;
-    fn attach_to(self, handle: &TokioPrnsHandle) -> AttachedInterface {
+    fn attach_to(self, handle: &PrnsNodeHandle) -> AttachedInterface {
         let baud = self.baud;
         handle.add_interface(UsbAutoHost::new(
             DEFAULT_USB_AUTO_ID,
@@ -68,7 +68,7 @@ impl Attachable for AutoUsb {
 
     fn attach_to_with_ifac(
         self,
-        handle: &TokioPrnsHandle,
+        handle: &PrnsNodeHandle,
         ifac: IfacContext,
         network_name: Option<String>,
     ) -> AttachedInterface {

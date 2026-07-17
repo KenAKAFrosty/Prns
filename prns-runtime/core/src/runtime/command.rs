@@ -101,16 +101,9 @@ pub trait DestinationIdentityRetentionControl {
     > + Send;
 }
 
-/// The high-level node API every platform's handle presents: `TokioPrnsHandle` over an
-/// unbounded channel and a oneshot, `EmbassyPrnsHandle` over a bounded channel and a static
-/// completion pool. The same verbs either way, so engine logic ports between a desktop and a
-/// board by recompiling, not rewriting: [`issue`](Self::issue) mints a [`CommandId`] and
-/// returns at once; an awaiting verb issues and then `.await`s the settlement demuxed by that
-/// id. What genuinely differs stays *off* this trait as inherent methods on each concrete
-/// handle (interface lifecycle, host-only capabilities, platform extras). The handle mints
-/// every id from one counter, so the app never picks ids and verbs can't collide.
+/// The high-level API shared by every platform's node handle. Tokio carries commands over an unbounded channel with per-command oneshots; Embassy uses a bounded channel and static completion pool. [`issue`](Self::issue) returns a minted [`CommandId`] immediately, while awaited operations settle through that id. Platform-specific capabilities remain inherent methods on the concrete handle.
 #[allow(async_fn_in_trait)]
-pub trait PrnsApi {
+pub trait PrnsNodeApi {
     /// Queue an engine command and return the [`CommandId`] it was minted under — watch the event
     /// stream for the settlement tagged with it. `None` once the node has stopped (or the bounded
     /// embedded lane is full). The fire-and-forget escape hatch.

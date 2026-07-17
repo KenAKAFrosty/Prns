@@ -1,4 +1,4 @@
-//! The revived high-level runtime, end to end: nodes each stood up by `Prns::new` and driven by
+//! The revived high-level runtime, end to end: nodes each stood up by `PrnsNode::new` and driven by
 //! `prns.run()`, talking across a real TCP loopback. A announces (pure app policy, driven through the
 //! command handle); the other side hears it through the curated `PrnsEvent` lane. The listening end
 //! is the `TcpServer` supervisor, which stands up a distinct engine interface per client that
@@ -17,8 +17,8 @@ use personal_rns::routes;
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
-    Diagnostic, Fleet, InterfaceSupervisor, Manual, PreConfiguredDestination, Prns, PrnsEvent,
-    PrnsRecipe, TokioPrnsHandle,
+    Diagnostic, Fleet, InterfaceSupervisor, Manual, PreConfiguredDestination, PrnsEvent, PrnsNode,
+    PrnsNodeHandle, PrnsNodeRecipe,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::client::TcpClientInterface;
@@ -80,7 +80,7 @@ async fn two_nodes_stand_up_and_one_hears_the_others_announce() {
         .await
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
-    let node_a = Prns::new(PrnsRecipe {
+    let node_a = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [single_a],
         app_state: (),
@@ -94,7 +94,7 @@ async fn two_nodes_stand_up_and_one_hears_the_others_announce() {
 
     let client = TcpClientInterface::new(addr, BITRATE, Duration::from_millis(100));
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
-    let node_b = Prns::new(PrnsRecipe {
+    let node_b = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [single(secret(0xB2))],
         app_state: (),
@@ -105,7 +105,7 @@ async fn two_nodes_stand_up_and_one_hears_the_others_announce() {
                 let _ = heard_tx.send(destination);
             }
         },
-        interfaces: |node: &TokioPrnsHandle| {
+        interfaces: |node: &PrnsNodeHandle| {
             node.attach(client);
         },
     });
@@ -155,7 +155,7 @@ async fn an_interface_added_through_the_handle_carries_traffic_until_torn_down()
         .await
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
-    let node_a = Prns::new(PrnsRecipe {
+    let node_a = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [single_a],
         app_state: (),
@@ -169,7 +169,7 @@ async fn an_interface_added_through_the_handle_carries_traffic_until_torn_down()
 
     // Node B is born with NO interface; it gets one at runtime through its handle.
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
-    let node_b = Prns::new(PrnsRecipe {
+    let node_b = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [single(secret(0xD2))],
         app_state: (),
@@ -260,7 +260,7 @@ async fn a_supervisor_spawns_a_member_and_tearing_the_supervisor_down_cascades_t
         .await
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
-    let node_a = Prns::new(PrnsRecipe {
+    let node_a = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [single_a],
         app_state: (),
@@ -274,7 +274,7 @@ async fn a_supervisor_spawns_a_member_and_tearing_the_supervisor_down_cascades_t
 
     // Node B starts wireless; a supervisor stands up its member at runtime.
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
-    let node_b = Prns::new(PrnsRecipe {
+    let node_b = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [single(secret(0xF2))],
         app_state: (),
@@ -354,7 +354,7 @@ async fn the_server_stands_up_a_distinct_member_per_client_and_hears_each_on_its
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
-    let node_s = Prns::new(PrnsRecipe {
+    let node_s = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [single(secret(0x55))],
         app_state: (),
@@ -376,13 +376,13 @@ async fn the_server_stands_up_a_distinct_member_per_client_and_hears_each_on_its
     let _server_sup = commands_s.supervise(server);
 
     let client_a = TcpClientInterface::new(addr.clone(), BITRATE, Duration::from_millis(100));
-    let node_a = Prns::new(PrnsRecipe {
+    let node_a = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [single_a],
         app_state: (),
         storage: GrowableHeap,
         routes: routes![],
-        interfaces: |node: &TokioPrnsHandle| {
+        interfaces: |node: &PrnsNodeHandle| {
             node.attach(client_a);
         },
         on_event: |_event, _state| {},
@@ -390,13 +390,13 @@ async fn the_server_stands_up_a_distinct_member_per_client_and_hears_each_on_its
     let commands_a = node_a.handle();
 
     let client_b = TcpClientInterface::new(addr, BITRATE, Duration::from_millis(100));
-    let node_b = Prns::new(PrnsRecipe {
+    let node_b = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [single_b],
         app_state: (),
         storage: GrowableHeap,
         routes: routes![],
-        interfaces: |node: &TokioPrnsHandle| {
+        interfaces: |node: &PrnsNodeHandle| {
             node.attach(client_b);
         },
         on_event: |_event, _state| {},
@@ -485,7 +485,7 @@ async fn a_recipe_accept_destination_receives_a_resource() {
         .await
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
-    let node_a = Prns::new(PrnsRecipe {
+    let node_a = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [single_a],
         app_state: (),
@@ -499,13 +499,13 @@ async fn a_recipe_accept_destination_receives_a_resource() {
 
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let client = TcpClientInterface::new(addr, BITRATE, Duration::from_millis(100));
-    let node_b = Prns::new(PrnsRecipe {
+    let node_b = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [single(secret(0xF2))],
         app_state: (),
         storage: GrowableHeap,
         routes: routes![],
-        interfaces: |node: &TokioPrnsHandle| {
+        interfaces: |node: &PrnsNodeHandle| {
             node.attach(client);
         },
         on_event: move |event, _state| {

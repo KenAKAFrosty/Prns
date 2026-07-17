@@ -22,7 +22,7 @@ use prns_core::wire::DestinationHash;
 use prns_runtime::reactor::impls::tokio_reactor::{TokioHost, TokioInterfaceStatus};
 use prns_runtime::reactor::interface_seam::Interface;
 use prns_runtime::reactor::Host;
-use prns_runtime::runtime::{AttachedInterface, InterfaceAttachmentMetadata, TokioPrnsHandle};
+use prns_runtime::runtime::{AttachedInterface, InterfaceAttachmentMetadata, PrnsNodeHandle};
 use tokio::sync::mpsc::{self, error::TrySendError, Receiver, Sender};
 
 use crate::backbone::client::BackboneClientInterface;
@@ -166,7 +166,7 @@ impl TokioInterfaceDiscovery {
 
     pub async fn run(
         mut self,
-        handle: TokioPrnsHandle,
+        handle: PrnsNodeHandle,
         clock: TokioHost,
         mut report: impl for<'a> FnMut(TokioDiscoveryEvent<'a>) + Send,
     ) {
@@ -230,7 +230,7 @@ impl TokioInterfaceDiscovery {
 
     fn process_outputs(
         &mut self,
-        handle: &TokioPrnsHandle,
+        handle: &PrnsNodeHandle,
         outputs: Vec<DiscoveryCoordinatorOutput>,
         report: &mut impl for<'a> FnMut(TokioDiscoveryEvent<'a>),
     ) {
@@ -343,7 +343,7 @@ struct AttachedDiscoveredInterface {
 }
 
 fn attach_discovered(
-    handle: &TokioPrnsHandle,
+    handle: &PrnsNodeHandle,
     plan: &DiscoveredConnectionPlan,
 ) -> Result<AttachedDiscoveredInterface, DiscoveredConnectionFailure> {
     let target = dial_target(plan.endpoint().host(), plan.endpoint().port());
@@ -372,7 +372,7 @@ fn attach_discovered(
 }
 
 fn attach_with_access<I>(
-    handle: &TokioPrnsHandle,
+    handle: &PrnsNodeHandle,
     interface: I,
     plan: &DiscoveredConnectionPlan,
 ) -> Result<AttachedInterface, DiscoveredConnectionFailure>

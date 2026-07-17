@@ -133,7 +133,7 @@ fn dial_targets_bracket_ipv6_without_changing_dns_or_ipv4() {
 
 #[tokio::test]
 async fn an_eligible_discovery_stands_up_a_real_backbone_client() {
-    use prns_runtime::runtime::{Manual, PreConfiguredDestination, Prns, PrnsRecipe};
+    use prns_runtime::runtime::{Manual, PreConfiguredDestination, PrnsNode, PrnsNodeRecipe};
     use prns_runtime::storage::GrowableHeap;
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -141,7 +141,7 @@ async fn an_eligible_discovery_stands_up_a_real_backbone_client() {
         .expect("binds an ephemeral discovery target");
     let address = listener.local_addr().expect("the listener has an address");
     let (service, ingress) = TokioInterfaceDiscovery::new(enabled_policy(1), None);
-    let node = Prns::new(PrnsRecipe {
+    let node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: std::iter::empty::<PreConfiguredDestination<'static>>(),
         app_state: (),

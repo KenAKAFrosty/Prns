@@ -943,11 +943,7 @@ fn soonest_pacer_release(pacers: &[InterfacePacer]) -> Option<InstantMillis> {
         .min_by_key(|deadline| deadline.0)
 }
 
-/// The runtime's lever to bring one engine interface up or down between cycles: a supervisor
-/// sends `Add` when a peer is confirmed and `Remove` when it drops, and the reactor adds or
-/// drops the descriptor (plus an announce pacer only for a dedicated-lane owner). No lane is
-/// allocated: frames route to the medium's standing lane by [`lane_serves`], so a fleet of
-/// members shares one lane and `Add`/`Remove` only touch the cheap descriptor set.
+/// The runtime's lever to bring one engine interface up or down between cycles: a supervisor sends `Add` when a peer is confirmed and `Remove` when it drops, and the reactor adds or drops the descriptor (plus an announce pacer only for a dedicated-lane owner). No lane is allocated: frames route to the medium's standing lane through `lane_serves`, so a fleet of members shares one lane and `Add`/`Remove` only touch the descriptor set.
 // repr(C): crosses the dual-core channel; see the layout note on `EngineCommand`.
 #[repr(C)]
 pub enum InterfaceLifecycle {
@@ -964,10 +960,7 @@ pub enum InterfaceLifecycle {
     },
 }
 
-/// The dynamic egress: a fixed pool of `N` permanently-owned outbound lane endpoints, each
-/// tagged with the id of the interface or fleet supervisor it serves. The uniform `SLOT` size
-/// (a board's one wire ceiling) lets the pool own concrete endpoints rather than the fixed
-/// path's erased `&mut dyn`, and the tag lets [`lane_serves`] route a whole fleet over one lane.
+/// The dynamic egress: a fixed pool of `N` permanently owned outbound lane endpoints, each tagged with the id of the interface or fleet supervisor it serves. The uniform `SLOT` size (a board's one wire ceiling) lets the pool own concrete endpoints rather than the fixed path's erased `&mut dyn`, and the tag lets `lane_serves` route a whole fleet over one lane.
 pub struct PooledEgress<M: RawMutex + 'static, const SLOT: usize, const N: usize> {
     lanes: HeaplessVec<(InterfaceId, EmbassyGrantProducer<'static, M, SLOT>), N>,
 }

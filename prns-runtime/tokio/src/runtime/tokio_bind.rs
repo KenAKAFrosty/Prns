@@ -76,7 +76,7 @@ use super::{
     DropRouteOutcome, DropRoutesViaOutcome, IdentityBlackholeControl,
     IdentityBlackholeControlError, IdentityBlackholeHostCommand, IdentityBlackholeSource,
     IdentityBlackholeSourceError, InterfaceStore, Manual, Message, PreConfiguredDestination,
-    PrnsEvent, PrnsRecipe, RoutingControl, RoutingControlError, SendError,
+    PrnsEvent, PrnsNodeRecipe, RoutingControl, RoutingControlError, SendError,
 };
 
 /// How many frames a host lane holds in flight. RNS resource transfer bursts a whole window of
@@ -101,7 +101,7 @@ const RESPONSE_PACKET_CEILING: usize = LINK_MDU - RESPONSE_WIRE_OVERHEAD;
 /// minted from one counter, so a fire-and-forget [`issue`](Self::issue) can never collide with
 /// an awaited [`send_single_packet`](Self::send_single_packet) or a runner's respond.
 #[derive(Clone)]
-pub struct TokioPrnsHandle {
+pub struct PrnsNodeHandle {
     commands: UnboundedSender<HostCommand>,
     ids: Arc<AtomicU64>,
     notify_tx: UnboundedSender<InterfaceId>,
@@ -138,7 +138,7 @@ impl RuntimeIfac {
     }
 }
 
-/// Why a [`send_resource`](TokioPrnsHandle::send_resource) stream did not complete.
+/// Why a [`send_resource`](PrnsNodeHandle::send_resource) stream did not complete.
 #[derive(Debug)]
 pub enum ResourceSendError {
     /// Reading `source` failed before the whole resource was sent.
@@ -196,7 +196,7 @@ impl SegmentCompression {
     };
 }
 
-/// What a completed [`receive_resource`](TokioPrnsHandle::receive_resource) yields: the assembled
+/// What a completed [`receive_resource`](PrnsNodeHandle::receive_resource) yields: the assembled
 /// resource's identity, total size, and any metadata that traveled. The bytes themselves were
 /// streamed to the caller's sink.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -207,7 +207,7 @@ pub struct ResourceReceipt {
     pub metadata: Option<std::vec::Vec<u8>>,
 }
 
-/// Why a [`receive_resource`](TokioPrnsHandle::receive_resource) stream did not complete.
+/// Why a [`receive_resource`](PrnsNodeHandle::receive_resource) stream did not complete.
 #[derive(Debug)]
 pub enum ResourceReceiveError {
     /// Writing to `sink` failed before the whole resource arrived.
@@ -218,7 +218,7 @@ pub enum ResourceReceiveError {
     NodeStopped,
 }
 
-impl TokioPrnsHandle {
+impl PrnsNodeHandle {
     #[cfg(test)]
     pub(crate) fn over(commands: UnboundedSender<HostCommand>) -> Self {
         let (notify_tx, _notify_rx) = mpsc::unbounded_channel();
@@ -1168,10 +1168,10 @@ impl TokioPrnsHandle {
 /// wire (`add_interface`) or a discovery fleet (`supervise`), so no callsite has to know.
 pub trait Attachable {
     type Attached;
-    fn attach_to(self, handle: &TokioPrnsHandle) -> Self::Attached;
+    fn attach_to(self, handle: &PrnsNodeHandle) -> Self::Attached;
     fn attach_to_with_ifac(
         self,
-        handle: &TokioPrnsHandle,
+        handle: &PrnsNodeHandle,
         ifac: IfacContext,
         network_name: Option<String>,
     ) -> Self::Attached;
@@ -1180,15 +1180,15 @@ pub trait Attachable {
 /// The recipe's `interfaces` answer: [`Manual`] says the app attaches through the handle
 /// itself, a closure over the handle is the inline shopping list, prefabs compose the common cases.
 pub trait AttachIntent {
-    fn attach(self, handle: &TokioPrnsHandle);
+    fn attach(self, handle: &PrnsNodeHandle);
 }
 
 impl AttachIntent for Manual {
-    fn attach(self, _handle: &TokioPrnsHandle) {}
+    fn attach(self, _handle: &PrnsNodeHandle) {}
 }
 
-impl<F: FnOnce(&TokioPrnsHandle)> AttachIntent for F {
-    fn attach(self, handle: &TokioPrnsHandle) {
+impl<F: FnOnce(&PrnsNodeHandle)> AttachIntent for F {
+    fn attach(self, handle: &PrnsNodeHandle) {
         self(handle)
     }
 }
@@ -1208,7 +1208,7 @@ where
     settled.await.map_err(|_| RoutingControlError::NodeStopped)
 }
 
-impl RoutingControl for TokioPrnsHandle {
+impl RoutingControl for PrnsNodeHandle {
     fn drop_route(
         &self,
         destination: DestinationHash,
@@ -1237,7 +1237,7 @@ impl RoutingControl for TokioPrnsHandle {
     }
 }
 
-impl DestinationIdentityRetentionControl for TokioPrnsHandle {
+impl DestinationIdentityRetentionControl for PrnsNodeHandle {
     fn mark_destination_used(
         &self,
         destination: DestinationHash,
@@ -1295,7 +1295,7 @@ impl DestinationIdentityRetentionControl for TokioPrnsHandle {
     }
 }
 
-impl IdentityBlackholeSource for TokioPrnsHandle {
+impl IdentityBlackholeSource for PrnsNodeHandle {
     type Reason = String;
     type Entries = std::vec::Vec<BlackholedIdentity<String>>;
 
@@ -1317,7 +1317,7 @@ impl IdentityBlackholeSource for TokioPrnsHandle {
     }
 }
 
-impl IdentityBlackholeControl for TokioPrnsHandle {
+impl IdentityBlackholeControl for PrnsNodeHandle {
     fn blackhole_identity<'a>(
         &'a self,
         entry: BlackholedIdentity<&'a str>,
@@ -1348,9 +1348,9 @@ impl IdentityBlackholeControl for TokioPrnsHandle {
     }
 }
 
-impl NodeIntrospection for TokioPrnsHandle {
+impl NodeIntrospection for PrnsNodeHandle {
     fn interface_inventory(&self) -> std::vec::Vec<InterfaceInventoryEntry> {
-        TokioPrnsHandle::interface_inventory(self)
+        PrnsNodeHandle::interface_inventory(self)
     }
 
     async fn link_count(&self) -> u32 {
@@ -1398,7 +1398,7 @@ impl NodeIntrospection for TokioPrnsHandle {
     }
 }
 
-impl super::PrnsApi for TokioPrnsHandle {
+impl super::PrnsNodeApi for PrnsNodeHandle {
     fn issue(&self, command: EngineCommand) -> Option<CommandId> {
         self.issue(command)
     }
@@ -1421,7 +1421,7 @@ impl super::PrnsApi for TokioPrnsHandle {
 }
 
 /// A handle to one interface attached at runtime: its minted id and the lever to detach it.
-/// Dropping the handle leaves the interface running; only [`teardown`](Self::teardown) (or [`TokioPrnsHandle::remove_interface`]) takes it down.
+/// Dropping the handle leaves the interface running; only [`teardown`](Self::teardown) (or [`PrnsNodeHandle::remove_interface`]) takes it down.
 pub struct AttachedInterface {
     id: InterfaceId,
     commands: UnboundedSender<HostCommand>,
@@ -1445,7 +1445,7 @@ impl AttachedInterface {
     }
 }
 
-/// A handle to a supervisor attached through [`TokioPrnsHandle::supervise`]. Teardown is a single
+/// A handle to a supervisor attached through [`PrnsNodeHandle::supervise`]. Teardown is a single
 /// stop on the driver, ending its discovery loop and cascading to its whole fleet; dropping the handle leaves it running.
 pub struct AttachedSupervisor {
     id: InterfaceId,
@@ -1541,7 +1541,7 @@ pub struct Fleet {
 }
 
 impl Fleet {
-    /// Stand up a fleet member under this supervisor — identical to [`TokioPrnsHandle::add_interface`]
+    /// Stand up a fleet member under this supervisor — identical to [`PrnsNodeHandle::add_interface`]
     /// except the member is recorded as this supervisor's, so a supervisor teardown takes it with it.
     pub fn add<I>(&self, interface: I) -> AttachedInterface
     where
@@ -1608,7 +1608,7 @@ pub struct DetachedFleet {
 }
 
 /// An interface supervisor: a node that owns no wire of its own but runs a discovery loop and
-/// stands up a fleet member per validated connection. Attached with [`TokioPrnsHandle::supervise`].
+/// stands up a fleet member per validated connection. Attached with [`PrnsNodeHandle::supervise`].
 #[allow(async_fn_in_trait)]
 pub trait InterfaceSupervisor {
     /// The medium this supervisor stands for — the namespace root of its id.
@@ -1637,7 +1637,7 @@ enum DriverMsg {
 
 /// Drive every interface run future — the recipe's initial set, plus any added through the handle
 /// at runtime — on the `run` task. Each runtime-added interface is wrapped with a stop signal so
-/// [`TokioPrnsHandle::remove_interface`] can drop it mid-flight; the initial set runs for the node's life.
+/// [`PrnsNodeHandle::remove_interface`] can drop it mid-flight; the initial set runs for the node's life.
 async fn drive_interfaces(
     initial: std::vec::Vec<Pin<Box<dyn Future<Output = ()>>>>,
     mut messages: UnboundedReceiver<DriverMsg>,
@@ -1778,9 +1778,9 @@ fn notify_accepted_announce(
     }
 }
 
-/// A node on the tokio host. Built from a [`PrnsRecipe`] with [`new`](Self::new) (synchronous: it wires the engine and spawns each interface), then driven by [`run`](Self::run). Hold [`handle`](Self::handle) clones to drive it from other tasks/threads while `run` owns the loop.
-pub struct Prns<St, R, F, S: StorageLayout> {
-    handle: TokioPrnsHandle,
+/// A node on the tokio host. Built from a [`PrnsNodeRecipe`] with [`new`](Self::new) (synchronous: it wires the engine and spawns each interface), then driven by [`run`](Self::run). Hold [`handle`](Self::handle) clones to drive it from other tasks/threads while `run` owns the loop.
+pub struct PrnsNode<St, R, F, S: StorageLayout> {
+    handle: PrnsNodeHandle,
     host: TokioHost,
     node: AssembledNode<St, R, F, S>,
     notify_rx: UnboundedReceiver<InterfaceId>,
@@ -1798,13 +1798,13 @@ pub enum NonRoutingIdentityError {
 
 pub type SharedInstanceIdentityError = NonRoutingIdentityError;
 
-impl<St, R, F, S: StorageLayout> Prns<St, R, F, S>
+impl<St, R, F, S: StorageLayout> PrnsNode<St, R, F, S>
 where
     R: RouteSet<St>,
     F: FnMut(PrnsEvent<'_>, &St),
 {
     /// Stand a node up from `recipe` on the storage layout it names: assemble the engine (transport role, destinations, the routes' request handlers), then let the recipe's `interfaces` intent attach the node's edges through its own handle. Only [`run`](Self::run) awaits.
-    pub fn new<'a, D, I>(recipe: PrnsRecipe<D, St, R, F, I, S>) -> Self
+    pub fn new<'a, D, I>(recipe: PrnsNodeRecipe<D, St, R, F, I, S>) -> Self
     where
         D: IntoIterator<Item = PreConfiguredDestination<'a>>,
         I: AttachIntent,
@@ -1814,7 +1814,7 @@ where
         let (iface_build_tx, iface_build_rx) = mpsc::unbounded_channel();
         let (node, interfaces) = assemble_node(recipe);
 
-        let handle = TokioPrnsHandle {
+        let handle = PrnsNodeHandle {
             commands: command_tx,
             ids: Arc::new(AtomicU64::new(0)),
             notify_tx,
@@ -1824,7 +1824,7 @@ where
         };
         interfaces.attach(&handle);
 
-        Prns {
+        PrnsNode {
             handle,
             host: TokioHost::start_at(wall_clock_timeline_origin()),
             node,
@@ -2086,7 +2086,7 @@ where
 
     /// A `Send + Clone` handle for other tasks/threads to drive the node while [`run`](Self::run) owns the loop.
     #[must_use]
-    pub fn handle(&self) -> TokioPrnsHandle {
+    pub fn handle(&self) -> PrnsNodeHandle {
         self.handle.clone()
     }
 
@@ -2119,7 +2119,7 @@ where
 
     /// Drive the node until it stops (in practice forever). The reactor and the request runner run joined: every inbound request forks to the runner, while that event, and every other, reaches the recipe's `on_event` with shared `&state`, zero-copy.
     pub async fn run(self) {
-        let Prns {
+        let PrnsNode {
             handle,
             host,
             node,
@@ -2258,9 +2258,9 @@ mod tests {
 
     const PEER: DestinationHash = DestinationHash::new([0xAB; 16]);
 
-    fn handle() -> (TokioPrnsHandle, UnboundedReceiver<HostCommand>) {
+    fn handle() -> (PrnsNodeHandle, UnboundedReceiver<HostCommand>) {
         let (commands, command_rx) = mpsc::unbounded_channel();
-        (TokioPrnsHandle::over(commands), command_rx)
+        (PrnsNodeHandle::over(commands), command_rx)
     }
 
     #[test]
@@ -2410,7 +2410,7 @@ mod tests {
 
     #[test]
     fn boot_blackholes_seed_against_the_resumed_timeline() {
-        let mut prns = Prns::new(PrnsRecipe {
+        let mut prns = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: None,
             pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
             app_state: (),
@@ -3139,19 +3139,19 @@ mod tests {
     }
 
     #[test]
-    fn the_prns_api_trait_dispatches_to_the_handle() {
+    fn the_prns_node_api_trait_dispatches_to_the_handle() {
         use crate::routing::links::LinkId;
-        use crate::runtime::PrnsApi;
+        use crate::runtime::PrnsNodeApi;
 
         let (prns, mut command_rx) = handle();
-        let queued = PrnsApi::close_link(&prns, LinkId::new([3; 16]));
+        let queued = PrnsNodeApi::close_link(&prns, LinkId::new([3; 16]));
         assert!(
             queued,
             "the trait method reaches the handle and queues the close"
         );
         assert!(
             matches!(command_rx.try_recv(), Ok(HostCommand::Engine(_))),
-            "dispatched through PrnsApi, the close rode the channel"
+            "dispatched through PrnsNodeApi, the close rode the channel"
         );
     }
 

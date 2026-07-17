@@ -10,7 +10,7 @@ use personal_rns::interface_discovery::{
 use personal_rns::interfaces::InterfaceOriginKind;
 use personal_rns::reactor::impls::tokio_reactor::TokioHost;
 use personal_rns::routing::announce::AnnounceObservation;
-use personal_rns::runtime::TokioPrnsHandle;
+use personal_rns::runtime::PrnsNodeHandle;
 use personal_rns::{
     DiscoveryIngressOutcome, TokioDiscoveryEvent, TokioDiscoveryIngress, TokioInterfaceDiscovery,
 };
@@ -72,7 +72,7 @@ impl PreparedDiscovery {
         }
     }
 
-    pub fn spawn(self, handle: TokioPrnsHandle, clock: TokioHost) -> RunningDiscovery {
+    pub fn spawn(self, handle: PrnsNodeHandle, clock: TokioHost) -> RunningDiscovery {
         let (shutdown, shutdown_requested) = oneshot::channel();
         let task = tokio::spawn(self.run(handle, clock, shutdown_requested));
         RunningDiscovery { shutdown, task }
@@ -80,7 +80,7 @@ impl PreparedDiscovery {
 
     async fn run(
         mut self,
-        handle: TokioPrnsHandle,
+        handle: PrnsNodeHandle,
         clock: TokioHost,
         shutdown: oneshot::Receiver<()>,
     ) {

@@ -10,7 +10,7 @@ mod linux_only {
     use personal_rns::routing::links::resources::ResourceStrategy;
     use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
     use personal_rns::runtime::{
-        Diagnostic, Manual, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe,
+        Diagnostic, Manual, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeRecipe,
     };
     use personal_rns::storage::GrowableHeap;
     use prns_core::interfaces::wifi_direct::core::GoIntent;
@@ -124,7 +124,7 @@ mod linux_only {
             eprintln!("WIFI_DIRECT_SMOKE[announce] destination derivation failed");
             std::process::exit(1);
         };
-        let node = Prns::new(PrnsRecipe {
+        let node = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: None,
             pre_configured_destinations: [single_a],
             app_state: (),
@@ -166,7 +166,7 @@ mod linux_only {
             std::process::exit(1);
         };
         let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
-        let node = Prns::new(PrnsRecipe {
+        let node = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: None,
             pre_configured_destinations: [single(secret(LISTENER_SECRET))],
             app_state: (),

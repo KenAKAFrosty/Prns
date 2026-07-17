@@ -19,7 +19,7 @@ use personal_rns::interfaces::{InterfaceDescriptor, InterfaceId, InterfaceKind, 
 use personal_rns::reactor::interface_seam::{Interface, InterfaceSeam};
 use personal_rns::routes;
 use personal_rns::runtime::{
-    PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe, TokioPrnsHandle,
+    PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe,
 };
 use personal_rns::storage::GrowableHeap;
 
@@ -89,14 +89,14 @@ async fn main() {
         deadline: Instant::now() + duration,
     };
 
-    let node: Prns<(), (), _, GrowableHeap> = Prns::new(PrnsRecipe {
+    let node: PrnsNode<(), (), _, GrowableHeap> = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [] as [PreConfiguredDestination; 0],
         app_state: (),
         storage: GrowableHeap::default(),
         routes: routes![],
         on_event: |_event: PrnsEvent<'_>, _state: &()| {},
-        interfaces: |node: &TokioPrnsHandle| {
+        interfaces: |node: &PrnsNodeHandle| {
             node.add_interface(flood);
         },
     });
