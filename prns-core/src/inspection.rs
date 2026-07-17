@@ -5,7 +5,8 @@ use std::vec::Vec;
 pub use crate::engine::{AnnounceRateSnapshot, RouteSnapshot};
 use crate::interfaces::ifac::IfacSize;
 use crate::interfaces::{
-    ConnectionState, InterfaceId, InterfaceSnapshot, Membership, PacketPhyStats, TransferRates,
+    ConnectionState, InterfaceId, InterfaceOriginKind, InterfaceSnapshot, Membership,
+    PacketPhyStats, TransferRates,
 };
 use crate::routing::dedup::PacketHash;
 use crate::wire::DestinationHash;
@@ -19,14 +20,16 @@ pub struct InterfaceIfacSnapshot {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InterfaceInventoryEntry {
-    pub configured_name: Option<String>,
+    pub name: Option<String>,
+    pub origin: InterfaceOriginKind,
     pub snapshot: InterfaceSnapshot,
     pub ifac: Option<InterfaceIfacSnapshot>,
 }
 
 struct FoldedInterface {
     id: InterfaceId,
-    configured_name: Option<String>,
+    name: Option<String>,
+    origin: InterfaceOriginKind,
     root: Option<InterfaceSnapshot>,
     ifac: Option<InterfaceIfacSnapshot>,
     member_connection: ConnectionState,
@@ -41,10 +44,11 @@ struct FoldedInterface {
 }
 
 impl FoldedInterface {
-    fn new(id: InterfaceId) -> Self {
+    fn new(id: InterfaceId, origin: InterfaceOriginKind) -> Self {
         Self {
             id,
-            configured_name: None,
+            name: None,
+            origin,
             root: None,
             ifac: None,
             member_connection: ConnectionState::Unknown,
@@ -69,14 +73,18 @@ impl FoldedInterface {
         match snapshot.membership {
             Membership::Independent => {
                 self.root = Some(snapshot);
-                if entry.configured_name.is_some() {
-                    self.configured_name = entry.configured_name.clone();
+                self.origin = entry.origin;
+                if entry.name.is_some() {
+                    self.name = entry.name.clone();
                 }
                 if entry.ifac.is_some() {
                     self.ifac = entry.ifac.clone();
                 }
             }
             Membership::FleetMember { .. } => {
+                if self.root.is_none() && entry.origin == InterfaceOriginKind::Discovered {
+                    self.origin = InterfaceOriginKind::Discovered;
+                }
                 self.has_members = true;
                 self.member_connection =
                     preferred_connection(self.member_connection, snapshot.connection);
@@ -91,8 +99,8 @@ impl FoldedInterface {
                     aggregate.rx_bps = aggregate.rx_bps.saturating_add(rates.rx_bps);
                     aggregate.tx_bps = aggregate.tx_bps.saturating_add(rates.tx_bps);
                 }
-                if self.configured_name.is_none() {
-                    self.configured_name = entry.configured_name.clone();
+                if self.name.is_none() {
+                    self.name = entry.name.clone();
                 }
                 if self.ifac.is_none() {
                     self.ifac = entry.ifac.clone();
@@ -125,7 +133,8 @@ impl FoldedInterface {
             })
         };
         InterfaceInventoryEntry {
-            configured_name: self.configured_name,
+            name: self.name,
+            origin: self.origin,
             snapshot: InterfaceSnapshot {
                 id: self.id,
                 connection,
@@ -155,7 +164,7 @@ pub fn logical_interface_inventory(
         };
         folded
             .entry(id)
-            .or_insert_with(|| FoldedInterface::new(id))
+            .or_insert_with(|| FoldedInterface::new(id, entry.origin))
             .add(entry);
     }
     let mut interfaces = folded
@@ -163,8 +172,8 @@ pub fn logical_interface_inventory(
         .map(FoldedInterface::finish)
         .collect::<Vec<_>>();
     interfaces.sort_by(|left, right| {
-        left.configured_name
-            .cmp(&right.configured_name)
+        left.name
+            .cmp(&right.name)
             .then_with(|| left.snapshot.id.cmp(&right.snapshot.id))
     });
     interfaces
@@ -221,10 +230,11 @@ mod tests {
         rx_bytes: u64,
         destinations: u32,
         links: u32,
-        configured_name: Option<&str>,
+        name: Option<&str>,
     ) -> InterfaceInventoryEntry {
         InterfaceInventoryEntry {
-            configured_name: configured_name.map(String::from),
+            name: name.map(String::from),
+            origin: InterfaceOriginKind::Configured,
             snapshot: InterfaceSnapshot {
                 id,
                 connection: ConnectionState::Connected,
@@ -268,11 +278,31 @@ mod tests {
         let logical = logical_interface_inventory(&snapshots);
 
         assert_eq!(logical.len(), 1);
-        assert_eq!(logical[0].configured_name.as_deref(), Some("Public server"));
+        assert_eq!(logical[0].name.as_deref(), Some("Public server"));
+        assert_eq!(logical[0].origin, InterfaceOriginKind::Configured);
         assert_eq!(logical[0].snapshot.id, supervisor);
         assert_eq!(logical[0].snapshot.rx_bytes, 100);
         assert_eq!(logical[0].snapshot.destinations, 5);
         assert_eq!(logical[0].snapshot.links, 3);
         assert_eq!(logical[0].snapshot.membership, Membership::Independent);
+    }
+
+    #[test]
+    fn discovered_origin_survives_logical_inventory_folding() {
+        let id = InterfaceId::from_channel_tag(InterfaceKind::BackboneClient, b"discovered");
+        let mut discovered = snapshot(
+            id,
+            Membership::Independent,
+            100,
+            2,
+            1,
+            Some("Discovered backbone"),
+        );
+        discovered.origin = InterfaceOriginKind::Discovered;
+
+        assert_eq!(
+            logical_interface_inventory(core::slice::from_ref(&discovered)),
+            vec![discovered]
+        );
     }
 }

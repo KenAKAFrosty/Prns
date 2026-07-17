@@ -35,7 +35,7 @@ Open [the Prns health dashboard](http://127.0.0.1:3000/d/prns-observability/prns
 
 - daemon liveness
 - five-minute failure breakdowns
-- uptime, interfaces, routes, links, shared clients, traffic, and sampled request latency
+- uptime, configured-versus-discovered interfaces, routes, links, shared clients, traffic, and sampled request latency
 - inbound and outbound announces by source, origin, outcome, and interface kind
 - announce holds, schedules, pacer pressure, and egress failures
 - warnings, errors, and recent structured events

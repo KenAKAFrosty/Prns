@@ -12,7 +12,7 @@ use prns_config::{
     DaemonPlan, DeferredInterface, InterfaceAccessPlan, PlannedInterface, PlannedMedium,
 };
 use prns_core::interfaces::ifac::IfacContext;
-use prns_core::interfaces::{BitrateBps, InterfaceId};
+use prns_core::interfaces::{BitrateBps, InterfaceId, InterfaceOriginKind};
 use prns_runtime::interfaces::backbone::core as backbone_core;
 use prns_runtime::interfaces::kiss::core::TncConfig;
 use prns_runtime::interfaces::rnode::core::RadioConfig;
@@ -71,18 +71,21 @@ impl AttachIntent for FromPlan {
                         tracing::info!(
                             target: "prns.interface",
                             event = "interface_configured",
+                            interface_origin = InterfaceOriginKind::Configured.as_str(),
                             medium = planned_medium_name(&interface.medium),
                         );
                         tracing::debug!(
                             target: "prns.interface",
                             event = "interface_configured_detail",
+                            interface_origin = InterfaceOriginKind::Configured.as_str(),
                             interface_name = ?interface.name,
                             medium = ?interface.medium,
                         );
                     }
                     #[cfg(not(feature = "tracing"))]
                     crate::diagnostic_log::info!(
-                        "interface up: {:?} ({:?})",
+                        "interface up [{}]: {:?} ({:?})",
+                        InterfaceOriginKind::Configured.as_str(),
                         interface.name,
                         interface.medium
                     );
@@ -96,11 +99,13 @@ impl AttachIntent for FromPlan {
                         tracing::warn!(
                             target: "prns.interface",
                             event = "interface_configuration_failed",
+                            interface_origin = InterfaceOriginKind::Configured.as_str(),
                             medium = planned_medium_name(&interface.medium),
                         );
                         tracing::debug!(
                             target: "prns.interface",
                             event = "interface_configuration_failed_detail",
+                            interface_origin = InterfaceOriginKind::Configured.as_str(),
                             interface_name = ?interface.name,
                             medium = ?interface.medium,
                             error = %visible_error_message,
@@ -108,7 +113,8 @@ impl AttachIntent for FromPlan {
                     }
                     #[cfg(not(feature = "tracing"))]
                     crate::diagnostic_log::warn!(
-                        "interface failed: {:?} ({visible_error_message})",
+                        "interface failed [{}]: {:?} ({visible_error_message})",
+                        InterfaceOriginKind::Configured.as_str(),
                         interface.name
                     );
                 }
@@ -118,18 +124,21 @@ impl AttachIntent for FromPlan {
                         tracing::warn!(
                             target: "prns.interface",
                             event = "interface_settings_unapplied",
+                            interface_origin = InterfaceOriginKind::Configured.as_str(),
                             setting_count = interface.unapplied.len(),
                         );
                         tracing::debug!(
                             target: "prns.interface",
                             event = "interface_settings_unapplied_detail",
+                            interface_origin = InterfaceOriginKind::Configured.as_str(),
                             interface_name = ?interface.name,
                             settings = ?interface.unapplied,
                         );
                     }
                     #[cfg(not(feature = "tracing"))]
                     crate::diagnostic_log::warn!(
-                        "settings parsed but not applied on {:?}: {:?}",
+                        "settings parsed but not applied on [{}] {:?}: {:?}",
+                        InterfaceOriginKind::Configured.as_str(),
                         interface.name,
                         interface.unapplied
                     );
@@ -140,11 +149,13 @@ impl AttachIntent for FromPlan {
                         tracing::info!(
                             target: "prns.interface",
                             event = "interface_deferred",
+                            interface_origin = InterfaceOriginKind::Configured.as_str(),
                             reason = defer_reason_name(&deferred.why),
                         );
                         tracing::debug!(
                             target: "prns.interface",
                             event = "interface_deferred_detail",
+                            interface_origin = InterfaceOriginKind::Configured.as_str(),
                             interface_name = ?deferred.name,
                             interface_type = ?deferred.type_name,
                             reason = ?deferred.why,
@@ -152,7 +163,8 @@ impl AttachIntent for FromPlan {
                     }
                     #[cfg(not(feature = "tracing"))]
                     crate::diagnostic_log::info!(
-                        "interface deferred: {:?} ({:?})",
+                        "interface deferred [{}]: {:?} ({:?})",
+                        InterfaceOriginKind::Configured.as_str(),
                         deferred.name,
                         deferred.why
                     );

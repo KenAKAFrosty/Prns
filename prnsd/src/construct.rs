@@ -4,6 +4,7 @@
 
 use personal_rns::config::{DaemonPlan, DeferReason, PlannedMedium, UnappliedSetting};
 use personal_rns::from_plan::{attach_plan, PlanOutcome};
+use personal_rns::interfaces::InterfaceOriginKind;
 use personal_rns::runtime::TokioPrnsHandle;
 
 pub async fn construct_interfaces(handle: &TokioPrnsHandle, plan: &DaemonPlan) {
@@ -15,6 +16,7 @@ fn render(outcome: PlanOutcome<'_>) {
         PlanOutcome::Up { interface, .. } => {
             tracing::info!(
                 event = "interface_started",
+                interface_origin = InterfaceOriginKind::Configured.as_str(),
                 interface_name = ?interface.name,
                 medium = medium_name(&interface.medium),
             );
@@ -25,10 +27,12 @@ fn render(outcome: PlanOutcome<'_>) {
         } => {
             tracing::warn!(
                 event = "interface_start_failed",
+                interface_origin = InterfaceOriginKind::Configured.as_str(),
                 medium = medium_name(&interface.medium),
             );
             tracing::debug!(
                 event = "interface_start_failed_detail",
+                interface_origin = InterfaceOriginKind::Configured.as_str(),
                 interface_name = ?interface.name,
                 interface = ?interface.medium,
                 error = %visible_error_message,
@@ -38,10 +42,12 @@ fn render(outcome: PlanOutcome<'_>) {
             for setting in &interface.unapplied {
                 tracing::warn!(
                     event = "interface_setting_unapplied",
+                    interface_origin = InterfaceOriginKind::Configured.as_str(),
                     setting = unapplied_name(setting),
                 );
                 tracing::debug!(
                     event = "interface_setting_unapplied_detail",
+                    interface_origin = InterfaceOriginKind::Configured.as_str(),
                     interface_name = ?interface.name,
                     setting = ?setting,
                 );
@@ -50,11 +56,16 @@ fn render(outcome: PlanOutcome<'_>) {
         PlanOutcome::Deferred(deferred) => {
             tracing::info!(
                 event = "interface_deferred",
+                interface_origin = InterfaceOriginKind::Configured.as_str(),
                 interface_name = ?deferred.name,
                 interface_type = ?deferred.type_name,
                 reason = defer_name(&deferred.why),
             );
-            tracing::debug!(event = "interface_deferred_detail", reason = ?deferred.why);
+            tracing::debug!(
+                event = "interface_deferred_detail",
+                interface_origin = InterfaceOriginKind::Configured.as_str(),
+                reason = ?deferred.why,
+            );
         }
     }
 }

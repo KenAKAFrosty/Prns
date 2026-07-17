@@ -28,8 +28,8 @@ use crate::inspection::{
 };
 use crate::interfaces::ifac::IfacContext;
 use crate::interfaces::{
-    ConnectionView, InterfaceId, InterfaceKind, InterfaceSnapshot, Membership, PacketPhyStats,
-    ReportsStatus, StatusView,
+    ConnectionView, InterfaceId, InterfaceKind, InterfaceOriginKind, InterfaceSnapshot, Membership,
+    PacketPhyStats, ReportsStatus, StatusView,
 };
 use crate::persistence::{
     read_destination_identities_snapshot, read_routing_table_snapshot, read_self_ratchets_snapshot,
@@ -114,6 +114,18 @@ pub struct TokioPrnsHandle {
 struct RuntimeIfac {
     context: IfacContext,
     network_name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InterfaceAttachmentMetadata {
+    pub name: Option<String>,
+    pub origin: InterfaceOriginKind,
+}
+
+#[derive(Clone, Copy)]
+struct InterfacePlacement {
+    membership: Membership,
+    origin: InterfaceOriginKind,
 }
 
 impl RuntimeIfac {
@@ -869,7 +881,13 @@ impl TokioPrnsHandle {
     where
         I: Interface + ReportsStatus + Send + 'static,
     {
-        self.add_interface_access(interface, None)
+        self.add_interface_with_metadata(
+            interface,
+            InterfaceAttachmentMetadata {
+                name: None,
+                origin: InterfaceOriginKind::Configured,
+            },
+        )
     }
 
     pub fn add_interface_with_ifac<I>(&self, interface: I, ifac: IfacContext) -> AttachedInterface
@@ -888,8 +906,41 @@ impl TokioPrnsHandle {
     where
         I: Interface + ReportsStatus + Send + 'static,
     {
+        self.add_interface_with_metadata_and_ifac_name(
+            interface,
+            InterfaceAttachmentMetadata {
+                name: None,
+                origin: InterfaceOriginKind::Configured,
+            },
+            ifac,
+            network_name,
+        )
+    }
+
+    pub fn add_interface_with_metadata<I>(
+        &self,
+        interface: I,
+        metadata: InterfaceAttachmentMetadata,
+    ) -> AttachedInterface
+    where
+        I: Interface + ReportsStatus + Send + 'static,
+    {
+        self.add_interface_access(interface, metadata, None)
+    }
+
+    pub fn add_interface_with_metadata_and_ifac_name<I>(
+        &self,
+        interface: I,
+        metadata: InterfaceAttachmentMetadata,
+        ifac: IfacContext,
+        network_name: Option<String>,
+    ) -> AttachedInterface
+    where
+        I: Interface + ReportsStatus + Send + 'static,
+    {
         self.add_interface_access(
             interface,
+            metadata,
             Some(RuntimeIfac {
                 context: ifac,
                 network_name,
@@ -897,10 +948,20 @@ impl TokioPrnsHandle {
         )
     }
 
-    fn add_interface_access<I>(&self, interface: I, ifac: Option<RuntimeIfac>) -> AttachedInterface
+    fn add_interface_access<I>(
+        &self,
+        interface: I,
+        metadata: InterfaceAttachmentMetadata,
+        ifac: Option<RuntimeIfac>,
+    ) -> AttachedInterface
     where
         I: Interface + ReportsStatus + Send + 'static,
     {
+        let InterfaceAttachmentMetadata { name, origin } = metadata;
+        let placement = InterfacePlacement {
+            membership: Membership::Independent,
+            origin,
+        };
         let view = interface.status_view();
         let connection = interface.connection_view();
         let attached = attach_interface(
@@ -908,7 +969,7 @@ impl TokioPrnsHandle {
             &self.iface_build,
             &self.notify_tx,
             interface,
-            None,
+            placement,
             connection,
             ifac.as_ref().map(|access| access.context.clone()),
         );
@@ -916,8 +977,9 @@ impl TokioPrnsHandle {
             &self.interfaces,
             attached.id(),
             view,
-            Membership::Independent,
+            placement,
             ifac.as_ref().map(RuntimeIfac::snapshot),
+            name,
         );
         attached
     }
@@ -929,13 +991,14 @@ impl TokioPrnsHandle {
         };
         map.values()
             .flat_map(|registered| {
-                let membership = registered.membership;
+                let placement = registered.placement;
                 let ifac = registered.ifac.clone();
-                let configured_name = registered.configured_name.clone();
+                let name = registered.name.clone();
                 (registered.view)().into_iter().map(move |vitals| {
                     let counts = self.store.counts(vitals.id);
                     InterfaceInventoryEntry {
-                        configured_name: configured_name.clone(),
+                        name: name.clone(),
+                        origin: placement.origin,
                         snapshot: InterfaceSnapshot {
                             id: vitals.id,
                             connection: vitals.connection,
@@ -946,7 +1009,7 @@ impl TokioPrnsHandle {
                             destinations: counts.destinations,
                             links: counts.links,
                             transported_links: counts.transported_links,
-                            membership,
+                            membership: placement.membership,
                         },
                         ifac: ifac.clone(),
                     }
@@ -963,7 +1026,7 @@ impl TokioPrnsHandle {
         let Some(interface) = interfaces.get_mut(&id) else {
             return false;
         };
-        interface.configured_name = Some(name.into());
+        interface.name = Some(name.into());
         true
     }
 
@@ -1019,6 +1082,10 @@ impl TokioPrnsHandle {
         S: InterfaceSupervisor + ReportsStatus + Send + 'static,
     {
         let id = InterfaceId::from_channel_tag(S::KIND, supervisor.channel_tag());
+        let placement = InterfacePlacement {
+            membership: Membership::Independent,
+            origin: InterfaceOriginKind::Configured,
+        };
         let view = supervisor.status_view();
         let ifac_status = ifac.as_ref().map(RuntimeIfac::snapshot);
         let fleet = Fleet {
@@ -1036,13 +1103,7 @@ impl TokioPrnsHandle {
             supervisor: None,
             build,
         });
-        register_status(
-            &self.interfaces,
-            id,
-            view,
-            Membership::Independent,
-            ifac_status,
-        );
+        register_status(&self.interfaces, id, view, placement, ifac_status, None);
         AttachedSupervisor {
             id,
             iface_build: self.iface_build.clone(),
@@ -1415,7 +1476,7 @@ fn attach_interface<I>(
     iface_build: &UnboundedSender<DriverMsg>,
     notify_tx: &UnboundedSender<InterfaceId>,
     interface: I,
-    supervisor: Option<InterfaceId>,
+    placement: InterfacePlacement,
     connection: Option<ConnectionView>,
     ifac: Option<IfacContext>,
 ) -> AttachedInterface
@@ -1424,12 +1485,17 @@ where
 {
     let descriptor = interface.descriptor();
     let id = descriptor.id;
+    let supervisor = match placement.membership {
+        Membership::Independent => None,
+        Membership::FleetMember { supervisor_id } => Some(supervisor_id),
+    };
     let logical_interface = supervisor.unwrap_or(id);
     let slot_cap = frame_cap_for(&descriptor);
     let depth = lane_depth_for(slot_cap);
     let (in_producer, in_consumer) = tokio_grant_lane(slot_cap, depth);
     let (out_producer, out_consumer) = tokio_grant_lane(slot_cap, depth);
     let seam = TokioInterfaceSeam::new(id, in_producer, notify_tx.clone(), out_consumer)
+        .with_origin(placement.origin)
         .with_commands(commands.clone());
     let build: Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()>>> + Send> =
         Box::new(move || Box::pin(interface.run(seam)));
@@ -1473,12 +1539,18 @@ impl Fleet {
     {
         let view = interface.status_view();
         let connection = interface.connection_view();
+        let placement = InterfacePlacement {
+            membership: Membership::FleetMember {
+                supervisor_id: self.supervisor_id,
+            },
+            origin: InterfaceOriginKind::Configured,
+        };
         let attached = attach_interface(
             &self.commands,
             &self.iface_build,
             &self.notify_tx,
             interface,
-            Some(self.supervisor_id),
+            placement,
             connection,
             self.ifac.as_ref().map(|access| access.context.clone()),
         );
@@ -1486,10 +1558,9 @@ impl Fleet {
             &self.interfaces,
             attached.id(),
             view,
-            Membership::FleetMember {
-                supervisor_id: self.supervisor_id,
-            },
+            placement,
             self.ifac.as_ref().map(RuntimeIfac::snapshot),
+            None,
         );
         attached
     }
@@ -1643,26 +1714,27 @@ async fn drive_interfaces(
 /// `interfaces()` joins each with the engine's count store to mint an `InterfaceSnapshot`.
 struct RegisteredInterface {
     view: StatusView,
-    membership: Membership,
+    placement: InterfacePlacement,
     ifac: Option<InterfaceIfacSnapshot>,
-    configured_name: Option<String>,
+    name: Option<String>,
 }
 
 fn register_status(
     interfaces: &Arc<Mutex<HashMap<InterfaceId, RegisteredInterface>>>,
     id: InterfaceId,
     view: Option<StatusView>,
-    membership: Membership,
+    placement: InterfacePlacement,
     ifac: Option<InterfaceIfacSnapshot>,
+    name: Option<String>,
 ) {
     if let (Some(view), Ok(mut map)) = (view, interfaces.lock()) {
         map.insert(
             id,
             RegisteredInterface {
                 view,
-                membership,
+                placement,
                 ifac,
-                configured_name: None,
+                name,
             },
         );
     }
@@ -2742,7 +2814,8 @@ mod tests {
         assert_eq!(
             handle.interface_inventory(),
             std::vec![InterfaceInventoryEntry {
-                configured_name: Some("Protected wire".into()),
+                name: Some("Protected wire".into()),
+                origin: InterfaceOriginKind::Configured,
                 snapshot: InterfaceSnapshot {
                     id,
                     connection: crate::interfaces::ConnectionState::Connected,

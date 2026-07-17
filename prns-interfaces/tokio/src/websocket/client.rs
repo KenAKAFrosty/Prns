@@ -74,6 +74,7 @@ impl Interface for WebSocketClientInterface {
     }
 
     async fn run<Seam: InterfaceSeam>(self, mut seam: Seam) {
+        let interface_origin = seam.interface_origin().as_str();
         let mut airtime = AirtimeLedger::new();
         let mut throughput = ThroughputLedger::new();
         let started = tokio::time::Instant::now();
@@ -89,6 +90,7 @@ impl Interface for WebSocketClientInterface {
                     target: "prns.interface",
                     "prns.interface.connect",
                     interface_kind = "websocket_client",
+                    interface_origin,
                     peer = %self.target,
                 ),
             )
@@ -97,7 +99,10 @@ impl Interface for WebSocketClientInterface {
             let connected = connect.await;
             match connected {
                 Ok(Ok((socket, _response))) => {
-                    crate::diagnostic_log::debug!("websocket-client: connected {}", self.target);
+                    crate::diagnostic_log::debug!(
+                        "websocket-client [{interface_origin}]: connected {}",
+                        self.target
+                    );
                     self.status.set_connection(ConnectionState::Connected);
                     seam.request_tunnel_synthesis().await;
                     tokio_wire::serve(
@@ -111,14 +116,14 @@ impl Interface for WebSocketClientInterface {
                     )
                     .await;
                     crate::diagnostic_log::debug!(
-                        "websocket-client: dropped {}, retrying",
+                        "websocket-client [{interface_origin}]: dropped {}, retrying",
                         self.target
                     );
                     self.status.set_connection(ConnectionState::Disconnected);
                 }
                 Ok(Err(_)) | Err(_) => {
                     crate::diagnostic_log::debug!(
-                        "websocket-client: connect failed {}, retrying",
+                        "websocket-client [{interface_origin}]: connect failed {}, retrying",
                         self.target
                     );
                 }

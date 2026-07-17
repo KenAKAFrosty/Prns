@@ -11,6 +11,7 @@ mod publication;
 mod stamp;
 mod storage;
 
+pub use crate::interfaces::InterfaceOriginKind;
 pub use autoconnect::{
     ActiveDiscoveredInterface, DiscoveredConnectionAccess, DiscoveredConnectionEndpoint,
     DiscoveredConnectionEndpointId, DiscoveredConnectionHealth, DiscoveredConnectionKind,
@@ -41,7 +42,6 @@ pub use intake::{
     ingest_discovery_announce, DiscoveredInterface, DiscoveredInterfaceId,
     DiscoveryDecryptionError, DiscoveryEnvelopeSecurity, DiscoveryIntake, DiscoveryNotApplicable,
     DiscoveryProvenance, DiscoveryRejection, DiscoveryRejectionKind, InterfaceOrigin,
-    InterfaceOriginKind,
 };
 pub use model::{
     AdvertisedInterfaceType, AdvertisedTransport, AdvertisementDetails, DiscoveryAdvertisement,

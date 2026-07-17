@@ -7,6 +7,7 @@ use personal_rns::interface_discovery::{
     DiscoveryArchive, DiscoveryArchiveError, DiscoveryArchiveRecord, DiscoveryCatalogRefresh,
     DiscoveryCatalogUpdate, LoadedDiscoveryArchive, DISCOVERED_INTERFACES_FILE,
 };
+use personal_rns::interfaces::InterfaceOriginKind;
 use personal_rns::reactor::impls::tokio_reactor::TokioHost;
 use personal_rns::routing::announce::AnnounceObservation;
 use personal_rns::runtime::TokioPrnsHandle;
@@ -273,7 +274,7 @@ fn trace_discovery_event(event: &TokioDiscoveryEvent<'_>) {
                 DiscoveryCatalogUpdate::Added { .. } => {
                     tracing::info!(
                         event = "interface_discovered",
-                        origin = "discovered",
+                        interface_origin = InterfaceOriginKind::Discovered.as_str(),
                         discovery_id = ?interface.id.as_bytes(),
                         interface_name = %interface.name,
                         interface_type = interface.advertisement.interface_type.rns_name(),
@@ -290,7 +291,7 @@ fn trace_discovery_event(event: &TokioDiscoveryEvent<'_>) {
                     };
                     tracing::debug!(
                         event = "interface_discovery_refreshed",
-                        origin = "discovered",
+                        interface_origin = InterfaceOriginKind::Discovered.as_str(),
                         discovery_id = ?interface.id.as_bytes(),
                         interface_name = %interface.name,
                         advertisement_changed,
@@ -304,7 +305,7 @@ fn trace_discovery_event(event: &TokioDiscoveryEvent<'_>) {
                 } => {
                     tracing::debug!(
                         event = "interface_discovery_out_of_order",
-                        origin = "discovered",
+                        interface_origin = InterfaceOriginKind::Discovered.as_str(),
                         discovery_id = ?interface.id.as_bytes(),
                         received_at = received_at.0,
                         last_heard = last_heard.0,
@@ -315,7 +316,7 @@ fn trace_discovery_event(event: &TokioDiscoveryEvent<'_>) {
         TokioDiscoveryEvent::CatalogExpired(record) => {
             tracing::info!(
                 event = "interface_discovery_expired",
-                origin = "discovered",
+                interface_origin = InterfaceOriginKind::Discovered.as_str(),
                 discovery_id = ?record.id().as_bytes(),
                 interface_name = %record.interface().name,
             );
@@ -323,7 +324,7 @@ fn trace_discovery_event(event: &TokioDiscoveryEvent<'_>) {
         TokioDiscoveryEvent::ConnectionAttached { plan, interface } => {
             tracing::info!(
                 event = "interface_discovery_connected",
-                origin = "discovered",
+                interface_origin = InterfaceOriginKind::Discovered.as_str(),
                 interface = ?interface.as_bytes(),
                 discovery_id = ?plan.discovery_id().as_bytes(),
                 interface_name = %plan.name(),
@@ -336,7 +337,7 @@ fn trace_discovery_event(event: &TokioDiscoveryEvent<'_>) {
         TokioDiscoveryEvent::ConnectionAttachFailed { plan, failure } => {
             tracing::warn!(
                 event = "interface_discovery_connect_failed",
-                origin = "discovered",
+                interface_origin = InterfaceOriginKind::Discovered.as_str(),
                 discovery_id = ?plan.discovery_id().as_bytes(),
                 interface_name = %plan.name(),
                 host = plan.endpoint().host(),
@@ -351,7 +352,7 @@ fn trace_discovery_event(event: &TokioDiscoveryEvent<'_>) {
         } => {
             tracing::debug!(
                 event = "interface_discovery_disconnected",
-                origin = "discovered",
+                interface_origin = InterfaceOriginKind::Discovered.as_str(),
                 discovery_id = ?discovery.as_bytes(),
                 interface = ?interface.as_bytes(),
                 since = since.0,
@@ -363,7 +364,7 @@ fn trace_discovery_event(event: &TokioDiscoveryEvent<'_>) {
         } => {
             tracing::info!(
                 event = "interface_discovery_reconnected",
-                origin = "discovered",
+                interface_origin = InterfaceOriginKind::Discovered.as_str(),
                 discovery_id = ?discovery.as_bytes(),
                 interface = ?interface.as_bytes(),
             );
@@ -374,7 +375,7 @@ fn trace_discovery_event(event: &TokioDiscoveryEvent<'_>) {
         } => {
             tracing::info!(
                 event = "interface_discovery_detached",
-                origin = "discovered",
+                interface_origin = InterfaceOriginKind::Discovered.as_str(),
                 discovery_id = ?discovery.as_bytes(),
                 interface = ?interface.as_bytes(),
             );

@@ -10,6 +10,7 @@ mod attached;
 mod bitrate;
 mod descriptor;
 mod framing;
+mod origin;
 mod packet;
 mod status;
 
@@ -43,6 +44,7 @@ pub use id::{InterfaceId, INTERFACE_ID_LEN};
 pub use kind::InterfaceKind;
 pub use mac::MacAddress;
 pub use mode::InterfaceMode;
+pub use origin::InterfaceOriginKind;
 
 #[cfg(feature = "alloc")]
 pub use attached::IndexedAttachedInterfaces;

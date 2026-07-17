@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 
 use crate::crypto::sha256_chunks;
 use crate::identity::{DecryptError, IdentityHash};
-use crate::interfaces::InterfaceId;
+use crate::interfaces::{InterfaceId, InterfaceOriginKind};
 use crate::routing::announce::AnnounceObservation;
 use crate::units::{HopCount, InstantMillis};
 use crate::wire::TransportId;
@@ -36,12 +36,6 @@ pub struct DiscoveryProvenance {
 pub enum InterfaceOrigin {
     Configured,
     Discovered(DiscoveryProvenance),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InterfaceOriginKind {
-    Configured,
-    Discovered,
 }
 
 impl InterfaceOrigin {

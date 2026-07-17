@@ -83,6 +83,7 @@ impl Interface for TcpClientInterface {
     }
 
     async fn run<Seam: InterfaceSeam>(self, mut seam: Seam) {
+        let interface_origin = seam.interface_origin().as_str();
         let mut airtime = AirtimeLedger::new();
         let mut throughput = ThroughputLedger::new();
         let started = tokio::time::Instant::now();
@@ -101,6 +102,7 @@ impl Interface for TcpClientInterface {
                     target: "prns.interface",
                     "prns.interface.connect",
                     interface_kind = "tcp_client",
+                    interface_origin,
                     peer = %self.target,
                 ),
             )
@@ -111,7 +113,10 @@ impl Interface for TcpClientInterface {
                     .await;
             if let Ok(Ok(stream)) = connected {
                 tune(&stream);
-                crate::diagnostic_log::debug!("tcp-client: connected {}", self.target);
+                crate::diagnostic_log::debug!(
+                    "tcp-client [{interface_origin}]: connected {}",
+                    self.target
+                );
                 self.status.set_connection(ConnectionState::Connected);
                 seam.request_tunnel_synthesis().await;
                 framed_stream::serve::<
@@ -133,11 +138,14 @@ impl Interface for TcpClientInterface {
                     },
                 )
                 .await;
-                crate::diagnostic_log::debug!("tcp-client: dropped {}, retrying", self.target);
+                crate::diagnostic_log::debug!(
+                    "tcp-client [{interface_origin}]: dropped {}, retrying",
+                    self.target
+                );
                 self.status.set_connection(ConnectionState::Disconnected);
             } else {
                 crate::diagnostic_log::debug!(
-                    "tcp-client: connect failed {}, retrying",
+                    "tcp-client [{interface_origin}]: connect failed {}, retrying",
                     self.target
                 );
             }

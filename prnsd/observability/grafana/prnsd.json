@@ -732,9 +732,9 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "(max by (interface, interface_kind) (prns_interface_state) != 1) or on() label_replace(((count(max by (interface, interface_kind) (prns_interface_state) != 1) or vector(0)) == 0) + 1, \"interface\", \"All interfaces connected\", \"__name__\", \".*\")",
+          "expr": "(max by (interface, interface_kind, interface_origin) (prns_interface_state) != 1) or on() label_replace(label_replace(((count(max by (interface, interface_kind, interface_origin) (prns_interface_state) != 1) or vector(0)) == 0) + 1, \"interface\", \"All interfaces connected\", \"__name__\", \".*\"), \"interface_origin\", \"n/a\", \"interface\", \"All interfaces connected\")",
           "instant": true,
-          "legendFormat": "{{interface}}",
+          "legendFormat": "{{interface}} · {{interface_origin}}",
           "range": false,
           "refId": "A"
         }
@@ -1498,7 +1498,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "One bounded row per configured logical interface. Fleet peers roll up beneath their TCP, Wi-Fi, Bluetooth, backbone, WebSocket, or shared-instance supervisor.",
+      "description": "One bounded row per logical interface, including whether it was configured or discovered. Fleet peers roll up beneath their TCP, Wi-Fi, Bluetooth, backbone, WebSocket, or shared-instance supervisor.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1649,7 +1649,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "max by (interface, interface_kind) (prns_interface_state)",
+          "expr": "max by (interface, interface_kind, interface_origin) (prns_interface_state)",
           "format": "table",
           "instant": true,
           "range": false,
@@ -1661,7 +1661,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "max by (interface, interface_kind) (prns_interface_routes)",
+          "expr": "max by (interface, interface_kind, interface_origin) (prns_interface_routes)",
           "format": "table",
           "instant": true,
           "range": false,
@@ -1673,7 +1673,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "max by (interface, interface_kind) (prns_interface_links{kind=\"local\"})",
+          "expr": "max by (interface, interface_kind, interface_origin) (prns_interface_links{kind=\"local\"})",
           "format": "table",
           "instant": true,
           "range": false,
@@ -1685,7 +1685,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "max by (interface, interface_kind) (prns_interface_links{kind=\"transported\"})",
+          "expr": "max by (interface, interface_kind, interface_origin) (prns_interface_links{kind=\"transported\"})",
           "format": "table",
           "instant": true,
           "range": false,
@@ -1697,7 +1697,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "max by (interface, interface_kind) (prns_interface_io_bits_per_second{direction=\"receive\"})",
+          "expr": "max by (interface, interface_kind, interface_origin) (prns_interface_io_bits_per_second{direction=\"receive\"})",
           "format": "table",
           "instant": true,
           "range": false,
@@ -1709,7 +1709,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "max by (interface, interface_kind) (prns_interface_io_bits_per_second{direction=\"transmit\"})",
+          "expr": "max by (interface, interface_kind, interface_origin) (prns_interface_io_bits_per_second{direction=\"transmit\"})",
           "format": "table",
           "instant": true,
           "range": false,
@@ -1721,7 +1721,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (interface, interface_kind) (rate(prns_interface_announces_ingress_total[$__rate_interval]))",
+          "expr": "sum by (interface, interface_kind, interface_origin) (rate(prns_interface_announces_ingress_total[$__rate_interval]))",
           "format": "table",
           "instant": true,
           "range": false,
@@ -1733,7 +1733,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (interface, interface_kind) (rate(prns_interface_announces_egress_total{outcome=\"enqueued\"}[$__rate_interval]))",
+          "expr": "sum by (interface, interface_kind, interface_origin) (rate(prns_interface_announces_egress_total{outcome=\"enqueued\"}[$__rate_interval]))",
           "format": "table",
           "instant": true,
           "range": false,
@@ -1745,7 +1745,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (interface, interface_kind) (prns_interface_announces_queue_depth)",
+          "expr": "sum by (interface, interface_kind, interface_origin) (prns_interface_announces_queue_depth)",
           "format": "table",
           "instant": true,
           "range": false,
@@ -1781,20 +1781,29 @@
               "interface_kind 5": true,
               "interface_kind 6": true,
               "interface_kind 7": true,
-              "interface_kind 8": true
+              "interface_kind 8": true,
+              "interface_origin 1": true,
+              "interface_origin 2": true,
+              "interface_origin 3": true,
+              "interface_origin 4": true,
+              "interface_origin 5": true,
+              "interface_origin 6": true,
+              "interface_origin 7": true,
+              "interface_origin 8": true
             },
             "indexByName": {
-              "Value #A": 2,
-              "Value #B": 3,
-              "Value #C": 4,
-              "Value #D": 5,
-              "Value #E": 6,
-              "Value #F": 7,
-              "Value #G": 8,
-              "Value #H": 9,
-              "Value #I": 10,
+              "Value #A": 3,
+              "Value #B": 4,
+              "Value #C": 5,
+              "Value #D": 6,
+              "Value #E": 7,
+              "Value #F": 8,
+              "Value #G": 9,
+              "Value #H": 10,
+              "Value #I": 11,
               "interface": 0,
-              "interface_kind": 1
+              "interface_kind": 1,
+              "interface_origin": 2
             },
             "renameByName": {
               "Value #A": "State",
@@ -1807,7 +1816,8 @@
               "Value #H": "Announce out",
               "Value #I": "Queued",
               "interface": "Interface",
-              "interface_kind": "Kind"
+              "interface_kind": "Kind",
+              "interface_origin": "Origin"
             }
           }
         }
@@ -1865,8 +1875,8 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "max by (interface, direction) (prns_interface_io_bits_per_second{interface=~\"$interface\"})",
-          "legendFormat": "{{interface}} · {{direction}}",
+          "expr": "max by (interface, interface_origin, direction) (prns_interface_io_bits_per_second{interface=~\"$interface\"})",
+          "legendFormat": "{{interface}} · {{interface_origin}} · {{direction}}",
           "range": true,
           "refId": "A"
         }
@@ -1922,8 +1932,8 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (interface, outcome) (rate(prns_interface_announces_ingress_total{interface=~\"$interface\"}[$__rate_interval]))",
-          "legendFormat": "{{interface}} · in · {{outcome}}",
+          "expr": "sum by (interface, interface_origin, outcome) (rate(prns_interface_announces_ingress_total{interface=~\"$interface\"}[$__rate_interval]))",
+          "legendFormat": "{{interface}} · {{interface_origin}} · in · {{outcome}}",
           "range": true,
           "refId": "A"
         },
@@ -1933,8 +1943,8 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (interface, outcome) (rate(prns_interface_announces_egress_total{interface=~\"$interface\"}[$__rate_interval]))",
-          "legendFormat": "{{interface}} · out · {{outcome}}",
+          "expr": "sum by (interface, interface_origin, outcome) (rate(prns_interface_announces_egress_total{interface=~\"$interface\"}[$__rate_interval]))",
+          "legendFormat": "{{interface}} · {{interface_origin}} · out · {{outcome}}",
           "range": true,
           "refId": "B"
         }
@@ -2003,9 +2013,9 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "max by (interface, queue) (prns_interface_announces_queue_depth{interface=~\"$interface\"})",
+          "expr": "max by (interface, interface_origin, queue) (prns_interface_announces_queue_depth{interface=~\"$interface\"})",
           "instant": true,
-          "legendFormat": "{{interface}} · {{queue}}",
+          "legendFormat": "{{interface}} · {{interface_origin}} · {{queue}}",
           "range": false,
           "refId": "A"
         }
