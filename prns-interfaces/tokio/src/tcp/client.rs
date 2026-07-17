@@ -1,9 +1,7 @@
 use std::string::String;
 
-use tokio::net::TcpStream;
-
 use crate::framed_stream;
-use crate::tcp::tokio_socket::{tune, CONNECT_TIMEOUT};
+use crate::tcp::tokio_socket::{connect, tune_for_tunnel, TcpConnectionSettings};
 use prns_core::interfaces::tcp::core;
 use prns_core::interfaces::tcp::core::TcpWireFraming;
 use prns_core::interfaces::BitrateBps;
@@ -28,7 +26,7 @@ pub struct TcpClientInterface {
     target: String,
     channel_tag: std::vec::Vec<u8>,
     policy: EffectiveInterfacePolicy,
-    reconnect: Duration,
+    connection: TcpConnectionSettings,
     framing: TcpWireFraming,
     status: TokioInterfaceStatus,
 }
@@ -66,6 +64,20 @@ impl TcpClientInterface {
         let channel_tag = channel_tag(&target, framing);
         let id = InterfaceId::from_channel_tag(InterfaceKind::TcpClient, &channel_tag);
         Self::with_id_policy_and_framing(id, target, policy, reconnect, framing)
+    }
+
+    #[must_use]
+    pub fn with_policy_and_connection_settings(
+        target: String,
+        policy: EffectiveInterfacePolicy,
+        framing: TcpWireFraming,
+        connection: TcpConnectionSettings,
+    ) -> Self {
+        let channel_tag = channel_tag(&target, framing);
+        let id = InterfaceId::from_channel_tag(InterfaceKind::TcpClient, &channel_tag);
+        Self::with_id_policy_framing_and_connection_settings(
+            id, target, policy, framing, connection,
+        )
     }
 
     #[must_use]
@@ -140,13 +152,33 @@ impl TcpClientInterface {
         reconnect: Duration,
         framing: TcpWireFraming,
     ) -> Self {
+        Self::with_id_policy_framing_and_connection_settings(
+            id,
+            target,
+            policy,
+            framing,
+            TcpConnectionSettings {
+                reconnect_wait: reconnect,
+                ..TcpConnectionSettings::STOCK
+            },
+        )
+    }
+
+    #[must_use]
+    pub fn with_id_policy_framing_and_connection_settings(
+        id: InterfaceId,
+        target: String,
+        policy: EffectiveInterfacePolicy,
+        framing: TcpWireFraming,
+        connection: TcpConnectionSettings,
+    ) -> Self {
         let channel_tag = channel_tag(&target, framing);
         Self {
             id,
             target,
             channel_tag,
             policy,
-            reconnect,
+            connection,
             framing,
             status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
         }
@@ -199,10 +231,11 @@ impl Interface for TcpClientInterface {
                 { core::KISS_FRAMED_LEN },
             >,
         > = None;
+        let mut reconnect_attempts = 0u32;
         loop {
             #[cfg(feature = "tracing")]
             let connected = tracing::Instrument::instrument(
-                tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(self.target.as_str())),
+                connect(self.target.as_str(), self.connection),
                 tracing::debug_span!(
                     target: "prns.interface",
                     "prns.interface.connect",
@@ -213,17 +246,17 @@ impl Interface for TcpClientInterface {
             )
             .await;
             #[cfg(not(feature = "tracing"))]
-            let connected =
-                tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(self.target.as_str()))
-                    .await;
-            if let Ok(Ok(stream)) = connected {
-                tune(&stream);
+            let connected = connect(self.target.as_str(), self.connection).await;
+            if let Ok(stream) = connected {
+                tune_for_tunnel(&stream, self.connection.tunnel);
                 crate::diagnostic_log::debug!(
                     "tcp-client [{interface_origin}]: connected {}",
                     self.target
                 );
                 self.status.set_connection(ConnectionState::Connected);
-                seam.request_tunnel_synthesis().await;
+                if self.framing == TcpWireFraming::Hdlc {
+                    seam.request_tunnel_synthesis().await;
+                }
                 let mut meters = framed_stream::WireMeters {
                     status: &self.status,
                     airtime: &mut airtime,
@@ -268,13 +301,23 @@ impl Interface for TcpClientInterface {
                     self.target
                 );
                 self.status.set_connection(ConnectionState::Disconnected);
+                reconnect_attempts = 0;
             } else {
                 crate::diagnostic_log::debug!(
                     "tcp-client [{interface_origin}]: connect failed {}, retrying",
                     self.target
                 );
+                self.status.set_connection(ConnectionState::Disconnected);
             }
-            tokio::time::sleep(self.reconnect).await;
+            tokio::time::sleep(self.connection.reconnect_wait).await;
+            if self
+                .connection
+                .reconnect_limit
+                .exhausted(reconnect_attempts)
+            {
+                return;
+            }
+            reconnect_attempts = reconnect_attempts.saturating_add(1);
         }
     }
 }
@@ -307,7 +350,7 @@ mod tests {
     use prns_core::interfaces::rns_serial_framing::{self, RnsSerialDecoder, ESC, FLAG};
     use prns_runtime::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::net::TcpListener;
+    use tokio::net::{TcpListener, TcpStream};
     use tokio::sync::mpsc::{self, UnboundedSender};
 
     /// A hand-driven seam: it captures every `next_inbound` and supplies `next_outbound` from a

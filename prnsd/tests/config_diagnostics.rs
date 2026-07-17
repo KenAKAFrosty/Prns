@@ -31,7 +31,7 @@ fn invalid_config_exits_before_startup_and_renders_every_actionable_error() {
     let path = directory.0.join("config");
     fs::write(
         &path,
-        "[reticulum]\ndiscover_interfaces = perhaps\n[interfaces]\n[[Hub]]\ntype = TCPClientInterface\nenabled = Yes\ntarget_port = many\noutgoing = sideways\n",
+        "[reticulum]\ndiscover_interfaces = perhaps\n[interfaces]\n[[Hub]]\ntype = TCPClientInterface\nenabled = Yes\ntarget_host = 127.0.0.1\ntarget_port = many\noutgoing = sideways\n",
     )
     .unwrap();
 

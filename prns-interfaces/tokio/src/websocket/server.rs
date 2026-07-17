@@ -389,6 +389,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_member_inherits_the_servers_complete_effective_policy() {
+        let policy = core::configured_policy(prns_core::interfaces::ConfiguredInterfacePolicy {
+            mode: Some(prns_core::interfaces::InterfaceMode::Gateway),
+            bitrate: Some(BitrateBps::guess(900_000_000)),
+            mtu: Some(prns_core::interfaces::MtuPolicy::fixed(4_096)),
+            ..prns_core::interfaces::ConfiguredInterfacePolicy::default()
+        });
+        let (near, _far) = tokio::io::duplex(64);
+        let socket = WebSocketStream::from_raw_socket(
+            near,
+            tokio_tungstenite::tungstenite::protocol::Role::Server,
+            None,
+        )
+        .await;
+        let interface = WebSocketServerConnection::with_policy(b"peer".to_vec(), socket, policy);
+
+        assert_eq!(interface.descriptor(), policy.descriptor(interface.id()));
+    }
+
+    #[tokio::test]
     async fn a_member_carries_binary_frames_across_a_real_websocket() {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await

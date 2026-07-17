@@ -54,6 +54,7 @@ fn parse_coerces_typed_fields_and_folds_dual_keys_and_aliases() {
             target_host: Some("hub.example.com".to_string()),
             target_port: Some(4965),
             kiss_framing: None,
+            i2p_tunneled: None,
             connect_timeout: None,
             max_reconnect_tries: None,
             fixed_mtu: None,
@@ -169,6 +170,7 @@ fn disabled_publication_leaves_its_conditional_keys_uninterpreted() {
            [[Spine]]\n\
              type = BackboneInterface\n\
              enabled = Yes\n\
+             listen_port = 4242\n\
              discoverable = No\n\
              announce_interval = not-an-integer\n\
              discovery_stamp_value = not-an-integer\n",
@@ -212,6 +214,7 @@ fn parse_lands_unmodeled_keys_in_extra() {
              type = TCPClientInterface\n\
              enabled = Yes\n\
              target_host = host\n\
+             target_port = 4242\n\
              announce_interval = 30\n\
              discovery_frequency = 867200000\n",
     )
@@ -268,6 +271,8 @@ fn bitrate_and_fixed_mtu_fail_with_their_operational_ranges() {
            [[Hub]]\n\
              type = TCPClientInterface\n\
              enabled = Yes\n\
+             target_host = host\n\
+             target_port = 4242\n\
              bitrate = 4\n\
              fixed_mtu = 0\n",
     )
@@ -287,6 +292,7 @@ fn digit_grouping_underscores_parse_like_python_int() {
              type = TCPClientInterface\n\
              enabled = Yes\n\
              bitrate = 1_000_000\n\
+             target_host = host\n\
              target_port = 4_965\n",
     )
     .unwrap();
@@ -368,7 +374,7 @@ fn conflicting_aliases_fail_and_identical_aliases_warn() {
 
     let report = parse_named(
         "/tmp/rns/config",
-        "[interfaces]\n[[Hub]]\ntype = TCPClientInterface\ninterface_enabled = Yes\nenabled = true\n",
+        "[interfaces]\n[[Hub]]\ntype = TCPClientInterface\ninterface_enabled = Yes\nenabled = true\ntarget_host = host\ntarget_port = 4242\n",
     )
     .unwrap();
     assert_eq!(report.value.interfaces.len(), 1);
@@ -389,7 +395,7 @@ fn medium_override_aliases_cannot_silently_disagree() {
 
     let report = parse_named(
         "/tmp/rns/config",
-        "[interfaces]\n[[Mesh]]\ntype = UDPInterface\nenabled = Yes\nport = 4242\nlisten_port = 4242\nforward_port = 4242\n",
+        "[interfaces]\n[[Mesh]]\ntype = UDPInterface\nenabled = Yes\nport = 4242\nlisten_ip = 0.0.0.0\nlisten_port = 4242\nforward_ip = 255.255.255.255\nforward_port = 4242\n",
     )
     .unwrap();
     assert_eq!(
@@ -406,7 +412,7 @@ fn medium_override_aliases_cannot_silently_disagree() {
 fn independent_semantic_errors_are_aggregated_with_actionable_context() {
     let errors = parse_named(
         "/tmp/rns/config",
-        "[reticulum]\ndiscover_interfaces = perhaps\n[logging]\nloglevel = 9\n[interfaces]\n[[Missing]]\nenabled = Yes\n[[Broken]]\ntype = TCPClientInterface\nenabled = Yes\ntarget_port = many\noutgoing = sideways\n",
+        "[reticulum]\ndiscover_interfaces = perhaps\n[logging]\nloglevel = 9\n[interfaces]\n[[Missing]]\nenabled = Yes\n[[Broken]]\ntype = TCPClientInterface\nenabled = Yes\ntarget_host = host\ntarget_port = many\noutgoing = sideways\n",
     )
     .unwrap_err();
     assert_eq!(errors.len(), 5);
@@ -421,10 +427,27 @@ fn independent_semantic_errors_are_aggregated_with_actionable_context() {
 }
 
 #[test]
+fn incomplete_host_network_endpoints_fail_with_concrete_repairs() {
+    let errors = parse_named(
+        "/tmp/rns/config",
+        "[interfaces]\n\
+         [[Client]]\ntype = TCPClientInterface\nenabled = Yes\ntarget_host = peer\n\
+         [[Datagram]]\ntype = UDPInterface\nenabled = Yes\nforward_ip = 255.255.255.255\n",
+    )
+    .unwrap_err();
+    assert_eq!(errors.len(), 2);
+    let rendered = errors.to_string();
+    assert!(rendered.contains("[[Client]] > target_port"));
+    assert!(rendered.contains("target_port = 4242"));
+    assert!(rendered.contains("[[Datagram]] > forward_port"));
+    assert!(rendered.contains("forward_port = 4242"));
+}
+
+#[test]
 fn unknown_keys_warn_with_a_nearby_stock_spelling() {
     let report = parse_named(
         "/tmp/rns/config",
-        "[interfaces]\n[[Hub]]\ntype = TCPClientInterface\nenabled = Yes\ntarget_hots = example.com\n",
+        "[interfaces]\n[[Hub]]\ntype = TCPClientInterface\nenabled = Yes\ntarget_host = example.com\ntarget_port = 4242\ntarget_hots = example.com\n",
     )
     .unwrap();
     let warning = report
@@ -476,7 +499,7 @@ fn unsupported_rnode_uri_transport_is_a_focused_error() {
 fn common_control_ranges_fail_with_a_concrete_correction() {
     let errors = parse_named(
         "/tmp/rns/config",
-        "[reticulum]\nic_burst_hold = -1\nic_new_time = 1e300\n[interfaces]\n[[Hub]]\ntype = TCPClientInterface\nenabled = Yes\nannounce_cap = 101\nec_pr_freq = 1e300\n",
+        "[reticulum]\nic_burst_hold = -1\nic_new_time = 1e300\n[interfaces]\n[[Hub]]\ntype = TCPClientInterface\nenabled = Yes\ntarget_host = host\ntarget_port = 4242\nannounce_cap = 101\nec_pr_freq = 1e300\n",
     )
     .unwrap_err();
     assert_eq!(errors.len(), 4);

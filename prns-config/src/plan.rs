@@ -32,8 +32,9 @@ use prns_core::interfaces::udp::core as udp_core;
 use prns_core::interfaces::wifi_auto::core as wifi_core;
 use prns_core::interfaces::{
     AnnounceBandwidthCap, AnnounceRateLimit, BitrateBps, ConfiguredInterfacePolicy,
-    EffectiveInterfacePolicy, EgressCapability, FrequencyMilliHertz, InterfaceCommonPolicy,
-    InterfaceDefaults, InterfaceForwardingPolicy, InterfaceMode, MtuBytes, MtuPolicy,
+    EffectiveInterfacePolicy, EgressCapability, FrequencyMilliHertz, IngressCapability,
+    InterfaceCommonPolicy, InterfaceDefaults, InterfaceForwardingPolicy, InterfaceMode, MtuBytes,
+    MtuPolicy,
 };
 use prns_core::routing::links::MAX_LINK_MTU;
 use prns_core::units::DurationMillis;
@@ -231,6 +232,89 @@ pub enum InterfaceAccessPlan {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AddressFamilyPreference {
+    System,
+    Ipv4,
+    Ipv6,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TcpTunnelMode {
+    Direct,
+    I2p,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReconnectLimit {
+    Unlimited,
+    Attempts(u32),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ConnectTimeoutSeconds(u64);
+
+impl ConnectTimeoutSeconds {
+    pub const fn new(seconds: u64) -> Self {
+        Self(seconds)
+    }
+
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TcpDialPlan {
+    pub host: String,
+    pub port: u16,
+    pub connect_timeout: ConnectTimeoutSeconds,
+    pub reconnect_limit: ReconnectLimit,
+    pub address_family: AddressFamilyPreference,
+    pub tunnel: TcpTunnelMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TcpListenHost {
+    Any,
+    Address(String),
+    Device(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TcpListenPlan {
+    pub host: TcpListenHost,
+    pub port: u16,
+    pub address_family: AddressFamilyPreference,
+    pub tunnel: TcpTunnelMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UdpEndpointHost {
+    Address(String),
+    DeviceBroadcast(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UdpEndpointPlan {
+    pub host: UdpEndpointHost,
+    pub port: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UdpFlowPlan {
+    ReceiveOnly {
+        listen: UdpEndpointPlan,
+    },
+    SendOnly {
+        forward: UdpEndpointPlan,
+    },
+    Bidirectional {
+        listen: UdpEndpointPlan,
+        forward: UdpEndpointPlan,
+    },
+}
+
 /// The wire a planned interface runs on. Only mediums a host can stand up appear here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlannedMedium {
@@ -238,15 +322,13 @@ pub enum PlannedMedium {
     AutoWifi { group: Option<String> },
     /// RNS `TCPClientInterface`: dial one peer.
     TcpClient {
-        host: String,
-        port: u16,
+        connection: TcpDialPlan,
         framing: TcpWireFraming,
     },
-    /// RNS `TCPServerInterface`: accept peers on `bind` (`ip:port`).
-    TcpServer { bind: String },
-    /// RNS `UDPInterface`: receive on `listen`, send to `forward` (each `ip:port`). A datagram
-    /// socket needs a send target, so `forward` is required to construct the medium.
-    Udp { listen: String, forward: String },
+    /// RNS `TCPServerInterface`: accept peers on the configured listener.
+    TcpServer { listener: TcpListenPlan },
+    /// RNS `UDPInterface`: receive, send, or do both over configured datagram endpoints.
+    Udp { flow: UdpFlowPlan },
     /// RNS `SerialInterface`: a serial device at `baud`.
     Serial { device: String, baud: u32 },
     /// RNS `KISSInterface`: a KISS TNC on a serial device at `baud`, with the CSMA/timing config
@@ -292,13 +374,11 @@ pub enum PlannedMedium {
         airtime_limit_short_centi: Option<u16>,
         airtime_limit_long_centi: Option<u16>,
     },
-    /// RNS `BackboneInterface`: the listening end of a TCP backbone link, accepting peers on `bind`
-    /// (`ip:port`). Wire-identical to [`TcpServer`](Self::TcpServer) — a high-throughput transport-node
-    /// listener; unlike the reference it is not Linux-gated (tokio replaces RNS's epoll backend).
-    Backbone { bind: String },
+    /// RNS `BackboneInterface`: the listening end of a TCP backbone link.
+    Backbone { listener: TcpListenPlan },
     /// RNS `BackboneClientInterface`: dial one backbone peer. Wire-identical to
     /// [`TcpClient`](Self::TcpClient).
-    BackboneClient { host: String, port: u16 },
+    BackboneClient { connection: TcpDialPlan },
 }
 
 /// An interface this config named that the node will not stand up, and why.
@@ -497,12 +577,30 @@ fn effective_policy(
         .transpose()?;
     let mtu = configured_mtu(interface)?;
     let defaults = interface_defaults(medium)?;
-    let capabilities = (interface.outgoing == Some(false)).then_some(
-        prns_core::interfaces::InterfaceCapabilities {
-            ingress: defaults.capabilities.ingress,
-            egress: EgressCapability::Disabled,
-        },
-    );
+    let ingress = if matches!(
+        medium,
+        PlannedMedium::Udp {
+            flow: UdpFlowPlan::SendOnly { .. }
+        }
+    ) {
+        IngressCapability::Disabled
+    } else {
+        defaults.capabilities.ingress
+    };
+    let egress = if interface.outgoing == Some(false)
+        || matches!(
+            medium,
+            PlannedMedium::Udp {
+                flow: UdpFlowPlan::ReceiveOnly { .. }
+            }
+        ) {
+        EgressCapability::Disabled
+    } else {
+        defaults.capabilities.egress
+    };
+    let capabilities = (ingress != defaults.capabilities.ingress
+        || egress != defaults.capabilities.egress)
+        .then_some(prns_core::interfaces::InterfaceCapabilities { ingress, egress });
     let announce_bandwidth_cap = interface
         .announce_cap
         .map(announce_bandwidth_cap)
@@ -709,14 +807,17 @@ fn plan_discovery_advertisement(
                 DiscoveryPublicationProblem::MissingRequiredSetting { key: "listen_port" },
             )?,
         }),
-        (PlannedMedium::TcpServer { .. }, ReferenceParams::TcpServer { listen_port, .. }) => {
-            Ok(DiscoveryAdvertisementPlan::TcpServer {
-                reachable_on: reachable_on()?,
-                port: listen_port.ok_or(DiscoveryPublicationProblem::MissingRequiredSetting {
-                    key: "listen_port",
-                })?,
-            })
-        }
+        (
+            PlannedMedium::TcpServer { .. },
+            ReferenceParams::TcpServer {
+                listen_port, port, ..
+            },
+        ) => Ok(DiscoveryAdvertisementPlan::TcpServer {
+            reachable_on: reachable_on()?,
+            port: port.or(*listen_port).ok_or(
+                DiscoveryPublicationProblem::MissingRequiredSetting { key: "listen_port" },
+            )?,
+        }),
         (
             PlannedMedium::Rnode {
                 frequency_hz,
@@ -851,6 +952,7 @@ fn plan_medium(
             target_host,
             target_port,
             kiss_framing,
+            i2p_tunneled,
             connect_timeout,
             max_reconnect_tries,
             fixed_mtu: _,
@@ -863,19 +965,15 @@ fn plan_medium(
             let port = target_port.ok_or(DeferReason::MissingRequiredField {
                 key: interface_key::TARGET_PORT,
             })?;
-            note_present(
-                unapplied,
-                interface_key::CONNECT_TIMEOUT,
-                connect_timeout.is_some(),
-            );
-            note_present(
-                unapplied,
-                interface_key::MAX_RECONNECT_TRIES,
-                max_reconnect_tries.is_some(),
-            );
             Ok(PlannedMedium::TcpClient {
-                host,
-                port,
+                connection: tcp_dial_plan(
+                    host,
+                    port,
+                    *connect_timeout,
+                    *max_reconnect_tries,
+                    AddressFamilyPreference::System,
+                    *i2p_tunneled,
+                ),
                 framing: if *kiss_framing == Some(true) {
                     TcpWireFraming::Kiss
                 } else {
@@ -889,23 +987,27 @@ fn plan_medium(
             device,
             port,
             prefer_ipv6,
+            i2p_tunneled,
             kiss_framing,
             fixed_mtu: _,
         } => {
-            let listen_port = listen_port.ok_or(DeferReason::MissingRequiredField {
-                key: interface_key::LISTEN_PORT,
-            })?;
-            let ip = listen_ip.as_deref().unwrap_or("0.0.0.0");
-            note_present(unapplied, interface_key::DEVICE, device.is_some());
-            note_present(unapplied, interface_key::PORT, port.is_some());
-            note_present(unapplied, interface_key::PREFER_IPV6, prefer_ipv6.is_some());
+            let listen_port = port
+                .or(*listen_port)
+                .ok_or(DeferReason::MissingRequiredField {
+                    key: interface_key::LISTEN_PORT,
+                })?;
             note_present(
                 unapplied,
                 interface_key::KISS_FRAMING,
                 kiss_framing.is_some(),
             );
             Ok(PlannedMedium::TcpServer {
-                bind: format!("{ip}:{listen_port}"),
+                listener: TcpListenPlan {
+                    host: tcp_listen_host(listen_ip, device),
+                    port: listen_port,
+                    address_family: preferred_ip_family(*prefer_ipv6),
+                    tunnel: tunnel_mode(*i2p_tunneled),
+                },
             })
         }
         ReferenceParams::Udp {
@@ -916,26 +1018,29 @@ fn plan_medium(
             device,
             port,
         } => {
-            let listen_port = listen_port.ok_or(DeferReason::MissingRequiredField {
-                key: interface_key::LISTEN_PORT,
-            })?;
-            let listen_ip = listen_ip.clone().ok_or(DeferReason::MissingRequiredField {
-                key: interface_key::LISTEN_IP,
-            })?;
-            let forward_ip = forward_ip
-                .clone()
-                .ok_or(DeferReason::MissingRequiredField {
-                    key: interface_key::FORWARD_IP,
-                })?;
-            let forward_port = forward_port.ok_or(DeferReason::MissingRequiredField {
-                key: interface_key::FORWARD_PORT,
-            })?;
-            note_present(unapplied, interface_key::DEVICE, device.is_some());
-            note_present(unapplied, interface_key::PORT, port.is_some());
-            Ok(PlannedMedium::Udp {
-                listen: format!("{listen_ip}:{listen_port}"),
-                forward: format!("{forward_ip}:{forward_port}"),
-            })
+            let listen = udp_endpoint(
+                listen_ip.as_deref(),
+                port.or(*listen_port),
+                device.as_deref(),
+                interface_key::LISTEN_PORT,
+            )?;
+            let forward = udp_endpoint(
+                forward_ip.as_deref(),
+                port.or(*forward_port),
+                device.as_deref(),
+                interface_key::FORWARD_PORT,
+            )?;
+            let flow = match (listen, forward) {
+                (Some(listen), Some(forward)) => UdpFlowPlan::Bidirectional { listen, forward },
+                (Some(listen), None) => UdpFlowPlan::ReceiveOnly { listen },
+                (None, Some(forward)) => UdpFlowPlan::SendOnly { forward },
+                (None, None) => {
+                    return Err(DeferReason::MissingRequiredField {
+                        key: interface_key::LISTEN_IP,
+                    })
+                }
+            };
+            Ok(PlannedMedium::Udp { flow })
         }
         ReferenceParams::Serial {
             port,
@@ -1116,51 +1221,46 @@ fn plan_medium(
             connect_timeout,
             max_reconnect_tries,
         } => {
-            // RNS collapses `BackboneInterface` (the listener) and `BackboneClientInterface` (the
-            // outbound connector) into one config shape; the type name is the role. Backbone is
-            // wire-identical to TCP, so each role maps to the matching TCP-shaped medium under its own
-            // Backbone kind. `prefer_ipv6` is parsed but not honored — construction binds/dials the
-            // address as given rather than re-ordering a hostname's resolved families.
-            note_present(unapplied, interface_key::PREFER_IPV6, prefer_ipv6.is_some());
-            if interface.type_name == "BackboneClientInterface" {
+            if target_host.is_some() || interface.type_name == "BackboneClientInterface" {
                 let host = target_host
                     .clone()
                     .ok_or(DeferReason::MissingRequiredField {
                         key: interface_key::TARGET_HOST,
                     })?;
-                let port = target_port.ok_or(DeferReason::MissingRequiredField {
-                    key: interface_key::TARGET_PORT,
-                })?;
-                note_present(
-                    unapplied,
-                    interface_key::I2P_TUNNELED,
-                    i2p_tunneled.is_some(),
-                );
-                note_present(
-                    unapplied,
-                    interface_key::CONNECT_TIMEOUT,
-                    connect_timeout.is_some(),
-                );
-                note_present(
-                    unapplied,
-                    interface_key::MAX_RECONNECT_TRIES,
-                    max_reconnect_tries.is_some(),
-                );
-                Ok(PlannedMedium::BackboneClient { host, port })
+                let port = port
+                    .or(*target_port)
+                    .ok_or(DeferReason::MissingRequiredField {
+                        key: interface_key::TARGET_PORT,
+                    })?;
+                Ok(PlannedMedium::BackboneClient {
+                    connection: tcp_dial_plan(
+                        host,
+                        port,
+                        *connect_timeout,
+                        *max_reconnect_tries,
+                        preferred_ip_family(*prefer_ipv6),
+                        *i2p_tunneled,
+                    ),
+                })
             } else {
-                // The `BackboneInterface` listener: `port` overrides `listen_port` for the bind port
-                // (RNS `if port != None: bindport = port`); `listen_ip` defaults to all-interfaces.
-                // Binding to a named kernel interface (`device`) is not yet supported on the host.
                 let bind_port =
                     (*port)
                         .or(*listen_port)
                         .ok_or(DeferReason::MissingRequiredField {
                             key: interface_key::LISTEN_PORT,
                         })?;
-                let ip = listen_ip.as_deref().unwrap_or("0.0.0.0");
-                note_present(unapplied, interface_key::DEVICE, device.is_some());
+                note_present(
+                    unapplied,
+                    interface_key::I2P_TUNNELED,
+                    i2p_tunneled.is_some(),
+                );
                 Ok(PlannedMedium::Backbone {
-                    bind: format!("{ip}:{bind_port}"),
+                    listener: TcpListenPlan {
+                        host: tcp_listen_host(listen_ip, device),
+                        port: bind_port,
+                        address_family: preferred_ip_family(*prefer_ipv6),
+                        tunnel: TcpTunnelMode::Direct,
+                    },
                 })
             }
         }
@@ -1168,7 +1268,73 @@ fn plan_medium(
     }
 }
 
+fn tcp_dial_plan(
+    host: String,
+    port: u16,
+    connect_timeout_seconds: Option<u64>,
+    max_reconnect_tries: Option<u32>,
+    address_family: AddressFamilyPreference,
+    i2p_tunneled: Option<bool>,
+) -> TcpDialPlan {
+    TcpDialPlan {
+        host,
+        port,
+        connect_timeout: ConnectTimeoutSeconds::new(
+            connect_timeout_seconds.unwrap_or(RNS_TCP_CONNECT_TIMEOUT_SECONDS),
+        ),
+        reconnect_limit: max_reconnect_tries
+            .map(ReconnectLimit::Attempts)
+            .unwrap_or(ReconnectLimit::Unlimited),
+        address_family,
+        tunnel: tunnel_mode(i2p_tunneled),
+    }
+}
+
+fn tcp_listen_host(listen_ip: &Option<String>, device: &Option<String>) -> TcpListenHost {
+    match (device, listen_ip) {
+        (Some(device), _) => TcpListenHost::Device(device.clone()),
+        (None, Some(address)) => TcpListenHost::Address(address.clone()),
+        (None, None) => TcpListenHost::Any,
+    }
+}
+
+const fn preferred_ip_family(prefer_ipv6: Option<bool>) -> AddressFamilyPreference {
+    match prefer_ipv6 {
+        Some(true) => AddressFamilyPreference::Ipv6,
+        Some(false) | None => AddressFamilyPreference::Ipv4,
+    }
+}
+
+const fn tunnel_mode(i2p_tunneled: Option<bool>) -> TcpTunnelMode {
+    match i2p_tunneled {
+        Some(true) => TcpTunnelMode::I2p,
+        Some(false) | None => TcpTunnelMode::Direct,
+    }
+}
+
+fn udp_endpoint(
+    address: Option<&str>,
+    port: Option<u16>,
+    device: Option<&str>,
+    port_key: &'static str,
+) -> Result<Option<UdpEndpointPlan>, DeferReason> {
+    if address.is_none() && port.is_none() {
+        return Ok(None);
+    }
+    let host = match (address, device) {
+        (Some(address), _) => Some(UdpEndpointHost::Address(address.to_string())),
+        (None, Some(device)) => Some(UdpEndpointHost::DeviceBroadcast(device.to_string())),
+        (None, None) => None,
+    };
+    match (host, port) {
+        (Some(host), Some(port)) => Ok(Some(UdpEndpointPlan { host, port })),
+        (Some(_), None) => Err(DeferReason::MissingRequiredField { key: port_key }),
+        (None, _) => Ok(None),
+    }
+}
+
 const RNS_DEFAULT_SERIAL_BAUD: u32 = 9_600;
+const RNS_TCP_CONNECT_TIMEOUT_SECONDS: u64 = 5;
 
 /// RNS `KISSInterface` TNC defaults, mirrored from `interfaces::kiss::core` (kept in this crate so
 /// the config planner stays independent of the interface crate): 350 ms preamble, 20 ms TX-tail,
@@ -1459,6 +1625,33 @@ mod tests {
             .iter()
             .find(|interface| interface.name == name)
             .unwrap_or_else(|| panic!("interface '{name}' was planned"))
+    }
+
+    fn tcp_dial(host: &str, port: u16) -> TcpDialPlan {
+        TcpDialPlan {
+            host: host.to_string(),
+            port,
+            connect_timeout: ConnectTimeoutSeconds::new(5),
+            reconnect_limit: ReconnectLimit::Unlimited,
+            address_family: AddressFamilyPreference::System,
+            tunnel: TcpTunnelMode::Direct,
+        }
+    }
+
+    fn tcp_listener(host: TcpListenHost, port: u16) -> TcpListenPlan {
+        TcpListenPlan {
+            host,
+            port,
+            address_family: AddressFamilyPreference::Ipv4,
+            tunnel: TcpTunnelMode::Direct,
+        }
+    }
+
+    fn udp_address(host: &str, port: u16) -> UdpEndpointPlan {
+        UdpEndpointPlan {
+            host: UdpEndpointHost::Address(host.to_string()),
+            port,
+        }
     }
 
     const STOCK: &str = "[reticulum]\n\
@@ -1917,22 +2110,23 @@ mod tests {
         assert_eq!(
             named(&plan, "Hub").medium,
             PlannedMedium::TcpClient {
-                host: "hub.example.com".to_string(),
-                port: 4965,
+                connection: tcp_dial("hub.example.com", 4965),
                 framing: TcpWireFraming::Hdlc,
             }
         );
         assert_eq!(
             named(&plan, "Listener").medium,
             PlannedMedium::TcpServer {
-                bind: "0.0.0.0:4242".to_string(),
+                listener: tcp_listener(TcpListenHost::Address("0.0.0.0".to_string()), 4242),
             }
         );
         assert_eq!(
             named(&plan, "Mesh").medium,
             PlannedMedium::Udp {
-                listen: "0.0.0.0:4848".to_string(),
-                forward: "255.255.255.255:4848".to_string(),
+                flow: UdpFlowPlan::Bidirectional {
+                    listen: udp_address("0.0.0.0", 4848),
+                    forward: udp_address("255.255.255.255", 4848),
+                },
             }
         );
         assert_eq!(
@@ -1942,6 +2136,44 @@ mod tests {
                 baud: 115200,
             }
         );
+    }
+
+    #[test]
+    fn tcp_socket_settings_are_typed_into_the_plan() {
+        let plan = plan_of(
+            "[interfaces]\n\
+             [[Client]]\ntype = TCPClientInterface\nenabled = Yes\ntarget_host = peer\ntarget_port = 4242\n\
+             i2p_tunneled = Yes\nconnect_timeout = 11\nmax_reconnect_tries = 3\n\
+             [[Server]]\ntype = TCPServerInterface\nenabled = Yes\nport = 4243\nprefer_ipv6 = Yes\n\
+             i2p_tunneled = Yes\n",
+        );
+        assert_eq!(
+            named(&plan, "Client").medium,
+            PlannedMedium::TcpClient {
+                connection: TcpDialPlan {
+                    host: "peer".to_string(),
+                    port: 4242,
+                    connect_timeout: ConnectTimeoutSeconds::new(11),
+                    reconnect_limit: ReconnectLimit::Attempts(3),
+                    address_family: AddressFamilyPreference::System,
+                    tunnel: TcpTunnelMode::I2p,
+                },
+                framing: TcpWireFraming::Hdlc,
+            }
+        );
+        assert_eq!(
+            named(&plan, "Server").medium,
+            PlannedMedium::TcpServer {
+                listener: TcpListenPlan {
+                    host: TcpListenHost::Any,
+                    port: 4243,
+                    address_family: AddressFamilyPreference::Ipv6,
+                    tunnel: TcpTunnelMode::I2p,
+                }
+            }
+        );
+        assert!(named(&plan, "Client").unapplied.is_empty());
+        assert!(named(&plan, "Server").unapplied.is_empty());
     }
 
     #[test]
@@ -2084,7 +2316,7 @@ mod tests {
         assert_eq!(
             named(&plan, "Spine").medium,
             PlannedMedium::Backbone {
-                bind: "0.0.0.0:4242".to_string(),
+                listener: tcp_listener(TcpListenHost::Address("0.0.0.0".to_string()), 4242),
             }
         );
     }
@@ -2098,7 +2330,7 @@ mod tests {
         assert_eq!(
             named(&plan, "Spine").medium,
             PlannedMedium::Backbone {
-                bind: "0.0.0.0:5959".to_string(),
+                listener: tcp_listener(TcpListenHost::Any, 5959),
             }
         );
     }
@@ -2112,61 +2344,74 @@ mod tests {
         assert_eq!(
             named(&plan, "Uplink").medium,
             PlannedMedium::BackboneClient {
-                host: "spine.example.com".to_string(),
-                port: 4242,
+                connection: TcpDialPlan {
+                    address_family: AddressFamilyPreference::Ipv4,
+                    ..tcp_dial("spine.example.com", 4242)
+                },
             }
         );
     }
 
     #[test]
-    fn a_backbone_listener_without_a_port_defers_with_the_missing_key() {
+    fn backbone_remote_alias_selects_the_client_role_on_the_listener_type() {
         let plan = plan_of(
+            "[interfaces]\n[[Uplink]]\ntype = BackboneInterface\nenabled = Yes\n\
+             remote = spine.example.com\nport = 4242\nprefer_ipv6 = Yes\n",
+        );
+        assert_eq!(
+            named(&plan, "Uplink").medium,
+            PlannedMedium::BackboneClient {
+                connection: TcpDialPlan {
+                    host: "spine.example.com".to_string(),
+                    port: 4242,
+                    connect_timeout: ConnectTimeoutSeconds::new(5),
+                    reconnect_limit: ReconnectLimit::Unlimited,
+                    address_family: AddressFamilyPreference::Ipv6,
+                    tunnel: TcpTunnelMode::Direct,
+                }
+            }
+        );
+    }
+
+    #[test]
+    fn a_backbone_listener_without_a_port_is_invalid() {
+        let invalid = parse(
             "[interfaces]\n[[Spine]]\ntype = BackboneInterface\nenabled = Yes\nlisten_ip = 0.0.0.0\n",
         );
-        assert!(plan.interfaces.is_empty());
-        assert_eq!(
-            plan.deferred[0].why,
-            DeferReason::MissingRequiredField {
-                key: interface_key::LISTEN_PORT
-            }
-        );
+        assert!(invalid.is_err());
     }
 
     #[test]
-    fn a_backbone_client_without_a_target_defers_with_the_missing_key() {
-        let no_host = plan_of(
+    fn a_backbone_client_without_a_target_is_invalid() {
+        let no_host = parse(
             "[interfaces]\n[[Uplink]]\ntype = BackboneClientInterface\nenabled = Yes\ntarget_port = 4242\n",
         );
-        assert_eq!(
-            no_host.deferred[0].why,
-            DeferReason::MissingRequiredField {
-                key: interface_key::TARGET_HOST
-            }
-        );
-        let no_port = plan_of(
+        assert!(no_host.is_err());
+        let no_port = parse(
             "[interfaces]\n[[Uplink]]\ntype = BackboneClientInterface\nenabled = Yes\ntarget_host = spine\n",
         );
-        assert_eq!(
-            no_port.deferred[0].why,
-            DeferReason::MissingRequiredField {
-                key: interface_key::TARGET_PORT
-            }
-        );
+        assert!(no_port.is_err());
     }
 
     #[test]
-    fn a_backbone_interface_surfaces_unhonored_options_rather_than_dropping_them() {
+    fn backbone_host_options_are_fully_planned() {
         let listener = plan_of(
             "[interfaces]\n[[Spine]]\ntype = BackboneInterface\nenabled = Yes\n\
              listen_port = 4242\ndevice = eth0\nprefer_ipv6 = Yes\n",
         );
         let spine = named(&listener, "Spine");
-        assert!(spine
-            .unapplied
-            .contains(&UnappliedSetting::MediumOption(interface_key::DEVICE)));
-        assert!(spine
-            .unapplied
-            .contains(&UnappliedSetting::MediumOption(interface_key::PREFER_IPV6)));
+        assert_eq!(
+            spine.medium,
+            PlannedMedium::Backbone {
+                listener: TcpListenPlan {
+                    host: TcpListenHost::Device("eth0".to_string()),
+                    port: 4242,
+                    address_family: AddressFamilyPreference::Ipv6,
+                    tunnel: TcpTunnelMode::Direct,
+                }
+            }
+        );
+        assert!(spine.unapplied.is_empty());
 
         let client = plan_of(
             "[interfaces]\n[[Uplink]]\ntype = BackboneClientInterface\nenabled = Yes\n\
@@ -2174,15 +2419,20 @@ mod tests {
              max_reconnect_tries = 3\n",
         );
         let uplink = named(&client, "Uplink");
-        assert!(uplink
-            .unapplied
-            .contains(&UnappliedSetting::MediumOption(interface_key::I2P_TUNNELED)));
-        assert!(uplink.unapplied.contains(&UnappliedSetting::MediumOption(
-            interface_key::CONNECT_TIMEOUT
-        )));
-        assert!(uplink.unapplied.contains(&UnappliedSetting::MediumOption(
-            interface_key::MAX_RECONNECT_TRIES
-        )));
+        assert_eq!(
+            uplink.medium,
+            PlannedMedium::BackboneClient {
+                connection: TcpDialPlan {
+                    host: "spine".to_string(),
+                    port: 4242,
+                    connect_timeout: ConnectTimeoutSeconds::new(10),
+                    reconnect_limit: ReconnectLimit::Attempts(3),
+                    address_family: AddressFamilyPreference::Ipv4,
+                    tunnel: TcpTunnelMode::I2p,
+                }
+            }
+        );
+        assert!(uplink.unapplied.is_empty());
     }
 
     #[test]
@@ -2195,16 +2445,11 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_required_field_defers_with_the_key() {
-        let plan = plan_of(
+    fn a_missing_required_field_is_invalid_before_planning() {
+        let invalid = parse(
             "[interfaces]\n[[Hub]]\ntype = TCPClientInterface\nenabled = Yes\ntarget_host = h\n",
         );
-        assert_eq!(
-            plan.deferred[0].why,
-            DeferReason::MissingRequiredField {
-                key: interface_key::TARGET_PORT
-            }
-        );
+        assert!(invalid.is_err());
     }
 
     #[test]
@@ -2284,16 +2529,108 @@ mod tests {
     }
 
     #[test]
-    fn a_listen_only_udp_defers_for_want_of_a_forward_target() {
+    fn a_listen_only_udp_disables_egress_and_remains_constructible() {
         let plan = plan_of(
             "[interfaces]\n[[Mesh]]\ntype = UDPInterface\nenabled = Yes\n\
              listen_ip = 0.0.0.0\nlisten_port = 4848\n",
         );
-        assert!(plan.interfaces.is_empty());
+        let interface = named(&plan, "Mesh");
         assert_eq!(
-            plan.deferred[0].why,
-            DeferReason::MissingRequiredField {
-                key: interface_key::FORWARD_IP
+            interface.medium,
+            PlannedMedium::Udp {
+                flow: UdpFlowPlan::ReceiveOnly {
+                    listen: udp_address("0.0.0.0", 4848),
+                }
+            }
+        );
+        assert_eq!(
+            interface.policy.capabilities.egress,
+            EgressCapability::Disabled
+        );
+    }
+
+    #[test]
+    fn send_only_udp_disables_ingress_and_explicit_outgoing_no_still_wins() {
+        let enabled = plan_of(
+            "[interfaces]\n[[Mesh]]\ntype = UDPInterface\nenabled = Yes\n\
+             forward_ip = 255.255.255.255\nforward_port = 4848\n",
+        );
+        let interface = named(&enabled, "Mesh");
+        assert_eq!(
+            interface.medium,
+            PlannedMedium::Udp {
+                flow: UdpFlowPlan::SendOnly {
+                    forward: udp_address("255.255.255.255", 4848),
+                }
+            }
+        );
+        assert_eq!(
+            interface.policy.capabilities.ingress,
+            IngressCapability::Disabled
+        );
+        assert!(interface.policy.capabilities.allows_transmit());
+
+        let disabled = plan_of(
+            "[interfaces]\n[[Mesh]]\ntype = UDPInterface\nenabled = Yes\noutgoing = No\n\
+             forward_ip = 255.255.255.255\nforward_port = 4848\n",
+        );
+        assert_eq!(
+            named(&disabled, "Mesh").policy.capabilities.egress,
+            EgressCapability::Disabled
+        );
+    }
+
+    #[test]
+    fn udp_device_and_port_form_a_bidirectional_broadcast_flow() {
+        let plan = plan_of(
+            "[interfaces]\n[[Mesh]]\ntype = UDPInterface\nenabled = Yes\ndevice = eth0\nport = 4848\n",
+        );
+        let endpoint = UdpEndpointPlan {
+            host: UdpEndpointHost::DeviceBroadcast("eth0".to_string()),
+            port: 4848,
+        };
+        assert_eq!(
+            named(&plan, "Mesh").medium,
+            PlannedMedium::Udp {
+                flow: UdpFlowPlan::Bidirectional {
+                    listen: endpoint.clone(),
+                    forward: endpoint,
+                }
+            }
+        );
+    }
+
+    #[test]
+    fn udp_device_supplies_the_address_without_changing_a_partial_direction() {
+        let receive = plan_of(
+            "[interfaces]\n[[Receive]]\ntype = UDPInterface\nenabled = Yes\ndevice = eth0\n\
+             listen_port = 4848\n",
+        );
+        let send = plan_of(
+            "[interfaces]\n[[Send]]\ntype = UDPInterface\nenabled = Yes\ndevice = eth0\n\
+             forward_port = 4849\n",
+        );
+
+        assert_eq!(
+            named(&receive, "Receive").medium,
+            PlannedMedium::Udp {
+                flow: UdpFlowPlan::ReceiveOnly {
+                    listen: UdpEndpointPlan {
+                        host: UdpEndpointHost::DeviceBroadcast("eth0".to_string()),
+                        port: 4848,
+                    },
+                }
+            }
+        );
+        assert_eq!(
+            named(&send, "Send").medium,
+            PlannedMedium::Udp {
+                flow: UdpFlowPlan::SendOnly {
+                    forward: UdpEndpointPlan {
+                        host: UdpEndpointHost::DeviceBroadcast("eth0".to_string()),
+                        port: 4849,
+                    },
+                }
             }
         );
     }
