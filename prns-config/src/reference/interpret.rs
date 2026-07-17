@@ -345,6 +345,7 @@ fn interpret_params(
             target_host: opt(rest, interface_key::TARGET_HOST, interface, coerce_string)?,
             target_port: opt(rest, interface_key::TARGET_PORT, interface, coerce_u16)?,
             kiss_framing: opt(rest, interface_key::KISS_FRAMING, interface, coerce_bool)?,
+            i2p_tunneled: opt(rest, interface_key::I2P_TUNNELED, interface, coerce_bool)?,
             connect_timeout: opt(rest, interface_key::CONNECT_TIMEOUT, interface, coerce_u64)?,
             max_reconnect_tries: opt(
                 rest,
@@ -360,6 +361,7 @@ fn interpret_params(
             device: opt(rest, interface_key::DEVICE, interface, coerce_string)?,
             port: opt(rest, interface_key::PORT, interface, coerce_u16)?,
             prefer_ipv6: opt(rest, interface_key::PREFER_IPV6, interface, coerce_bool)?,
+            i2p_tunneled: opt(rest, interface_key::I2P_TUNNELED, interface, coerce_bool)?,
             kiss_framing: opt(rest, interface_key::KISS_FRAMING, interface, coerce_bool)?,
             fixed_mtu: opt(rest, interface_key::FIXED_MTU, interface, coerce_usize)?,
         },
@@ -453,9 +455,15 @@ fn interpret_params(
             connectable: opt(rest, interface_key::CONNECTABLE, interface, coerce_bool)?,
         },
         "BackboneInterface" | "BackboneClientInterface" => ReferenceParams::Backbone {
-            listen_ip: opt(rest, interface_key::LISTEN_IP, interface, coerce_string)?,
+            listen_ip: take_alias_string(
+                rest,
+                &[interface_key::LISTEN_IP, interface_key::LISTEN_ON],
+            ),
             listen_port: opt(rest, interface_key::LISTEN_PORT, interface, coerce_u16)?,
-            target_host: opt(rest, interface_key::TARGET_HOST, interface, coerce_string)?,
+            target_host: take_alias_string(
+                rest,
+                &[interface_key::TARGET_HOST, interface_key::REMOTE],
+            ),
             target_port: opt(rest, interface_key::TARGET_PORT, interface, coerce_u16)?,
             port: opt(rest, interface_key::PORT, interface, coerce_u16)?,
             device: opt(rest, interface_key::DEVICE, interface, coerce_string)?,

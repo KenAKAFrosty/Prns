@@ -9,7 +9,9 @@ pub use prns_config as config;
 #[cfg(feature = "tracing")]
 use prns_config::DeferReason;
 use prns_config::{
-    DaemonPlan, DeferredInterface, InterfaceAccessPlan, PlannedInterface, PlannedMedium,
+    AddressFamilyPreference as PlannedAddressFamilyPreference, DaemonPlan, DeferredInterface,
+    InterfaceAccessPlan, PlannedInterface, PlannedMedium, ReconnectLimit as PlannedReconnectLimit,
+    TcpDialPlan, TcpTunnelMode as PlannedTcpTunnelMode, UdpFlowPlan,
 };
 use prns_core::interfaces::ifac::IfacContext;
 use prns_core::interfaces::{InterfaceId, InterfaceOriginKind};
@@ -20,6 +22,9 @@ use prns_runtime::runtime::{AttachIntent, Attachable, TokioPrnsHandle};
 use crate::ax25::{Ax25KissInterface, Ax25KissSettings};
 use crate::backbone::client::BackboneClientInterface;
 use crate::backbone::server::BackboneServer;
+use crate::host_network::{
+    resolve_tcp_listener, resolve_udp_endpoint, tcp_target, udp_ephemeral_bind,
+};
 use crate::kiss::{KissInterface, CONFIGURE_SETTLE};
 use crate::pipe::PipeInterface;
 use crate::rnode::RNodeInterface;
@@ -27,6 +32,9 @@ use crate::serial::SerialInterface;
 use crate::serial_host::open_host_serial;
 use crate::tcp::client::TcpClientInterface;
 use crate::tcp::server::TcpServer;
+use crate::tcp::tokio_socket::{
+    AddressFamilyPreference, ReconnectLimit, TcpConnectionSettings, TcpTunnelMode,
+};
 use crate::udp::UdpInterface;
 use crate::wifi::AutoWifi;
 
@@ -220,24 +228,35 @@ async fn stand_up(
             report_up(handle, interface, attached.id(), report);
         }
         PlannedMedium::TcpClient {
-            host,
-            port,
+            connection,
             framing,
         } => {
             let attached = attach_with_access(
                 handle,
                 access,
-                TcpClientInterface::with_policy_and_framing(
-                    format!("{host}:{port}"),
+                TcpClientInterface::with_policy_and_connection_settings(
+                    tcp_target(connection),
                     interface.policy,
-                    TCP_RECONNECT,
                     *framing,
+                    tcp_connection_settings(connection),
                 ),
             );
             report_up(handle, interface, attached.id(), report);
         }
-        PlannedMedium::TcpServer { bind } => {
-            match TcpServer::bind_with_policy(bind.clone(), interface.policy).await {
+        PlannedMedium::TcpServer { listener } => {
+            let resolved = resolve_tcp_listener(listener).await;
+            let opened = match resolved {
+                Ok(bind) => {
+                    TcpServer::bind_with_policy_and_tunnel(
+                        bind,
+                        interface.policy,
+                        tcp_tunnel_mode(listener.tunnel),
+                    )
+                    .await
+                }
+                Err(error) => Err(error),
+            };
+            match opened {
                 Ok(server) => {
                     let attached = attach_with_access(handle, access, server);
                     report_up(handle, interface, attached.id(), report);
@@ -248,10 +267,38 @@ async fn stand_up(
                 }),
             }
         }
-        PlannedMedium::Udp { listen, forward } => {
-            match UdpInterface::bind_with_policy(listen.clone(), forward.clone(), interface.policy)
-                .await
-            {
+        PlannedMedium::Udp { flow } => {
+            let opened = match flow {
+                UdpFlowPlan::ReceiveOnly { listen } => match resolve_udp_endpoint(listen).await {
+                    Ok(listen) => {
+                        UdpInterface::bind_receive_with_policy(listen, interface.policy).await
+                    }
+                    Err(error) => Err(error),
+                },
+                UdpFlowPlan::SendOnly { forward } => match resolve_udp_endpoint(forward).await {
+                    Ok(forward) => {
+                        UdpInterface::bind_send_with_policy(
+                            udp_ephemeral_bind(),
+                            forward,
+                            interface.policy,
+                        )
+                        .await
+                    }
+                    Err(error) => Err(error),
+                },
+                UdpFlowPlan::Bidirectional { listen, forward } => {
+                    match (
+                        resolve_udp_endpoint(listen).await,
+                        resolve_udp_endpoint(forward).await,
+                    ) {
+                        (Ok(listen), Ok(forward)) => {
+                            UdpInterface::bind_with_policy(listen, forward, interface.policy).await
+                        }
+                        (Err(error), _) | (_, Err(error)) => Err(error),
+                    }
+                }
+            };
+            match opened {
                 Ok(udp) => {
                     let attached = attach_with_access(handle, access, udp);
                     report_up(handle, interface, attached.id(), report);
@@ -394,8 +441,12 @@ async fn stand_up(
                 }),
             }
         }
-        PlannedMedium::Backbone { bind } => {
-            match BackboneServer::bind_with_policy(bind.clone(), interface.policy).await {
+        PlannedMedium::Backbone { listener } => {
+            let opened = match resolve_tcp_listener(listener).await {
+                Ok(bind) => BackboneServer::bind_with_policy(bind, interface.policy).await,
+                Err(error) => Err(error),
+            };
+            match opened {
                 Ok(server) => {
                     let attached = attach_with_access(handle, access, server);
                     report_up(handle, interface, attached.id(), report);
@@ -406,14 +457,14 @@ async fn stand_up(
                 }),
             }
         }
-        PlannedMedium::BackboneClient { host, port } => {
+        PlannedMedium::BackboneClient { connection } => {
             let attached = attach_with_access(
                 handle,
                 access,
-                BackboneClientInterface::with_policy(
-                    format!("{host}:{port}"),
+                BackboneClientInterface::with_policy_and_connection_settings(
+                    tcp_target(connection),
                     interface.policy,
-                    TCP_RECONNECT,
+                    tcp_connection_settings(connection),
                 ),
             );
             report_up(handle, interface, attached.id(), report);
@@ -443,6 +494,30 @@ async fn stand_up(
                 }),
             }
         }
+    }
+}
+
+fn tcp_connection_settings(plan: &TcpDialPlan) -> TcpConnectionSettings {
+    TcpConnectionSettings {
+        connect_timeout: Duration::from_secs(plan.connect_timeout.get()),
+        reconnect_wait: TCP_RECONNECT,
+        reconnect_limit: match plan.reconnect_limit {
+            PlannedReconnectLimit::Unlimited => ReconnectLimit::Unlimited,
+            PlannedReconnectLimit::Attempts(attempts) => ReconnectLimit::Attempts(attempts),
+        },
+        address_family: match plan.address_family {
+            PlannedAddressFamilyPreference::System => AddressFamilyPreference::System,
+            PlannedAddressFamilyPreference::Ipv4 => AddressFamilyPreference::Ipv4,
+            PlannedAddressFamilyPreference::Ipv6 => AddressFamilyPreference::Ipv6,
+        },
+        tunnel: tcp_tunnel_mode(plan.tunnel),
+    }
+}
+
+const fn tcp_tunnel_mode(mode: PlannedTcpTunnelMode) -> TcpTunnelMode {
+    match mode {
+        PlannedTcpTunnelMode::Direct => TcpTunnelMode::Direct,
+        PlannedTcpTunnelMode::I2p => TcpTunnelMode::I2p,
     }
 }
 

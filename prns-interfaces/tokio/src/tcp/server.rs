@@ -7,7 +7,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpListener;
 
 use crate::framed_stream;
-use crate::tcp::tokio_socket::{tune, RECONNECT_WAIT};
+use crate::tcp::tokio_socket::{tune_for_tunnel, TcpTunnelMode, RECONNECT_WAIT};
 use prns_core::interfaces::tcp::core;
 use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{
@@ -126,6 +126,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for TcpServerConnection<S> {
 pub struct TcpServer {
     listener: TcpListener,
     policy: EffectiveInterfacePolicy,
+    tunnel: TcpTunnelMode,
     channel_tag: Vec<u8>,
     status: TcpServerStatus,
 }
@@ -142,12 +143,21 @@ impl TcpServer {
         addr: impl tokio::net::ToSocketAddrs,
         policy: EffectiveInterfacePolicy,
     ) -> io::Result<Self> {
+        Self::bind_with_policy_and_tunnel(addr, policy, TcpTunnelMode::Direct).await
+    }
+
+    pub async fn bind_with_policy_and_tunnel(
+        addr: impl tokio::net::ToSocketAddrs,
+        policy: EffectiveInterfacePolicy,
+        tunnel: TcpTunnelMode,
+    ) -> io::Result<Self> {
         let listener = TcpListener::bind(addr).await?;
         let channel_tag = listener.local_addr()?.to_string().into_bytes();
         let id = InterfaceId::from_channel_tag(InterfaceKind::TcpServer, &channel_tag);
         Ok(Self {
             listener,
             policy,
+            tunnel,
             channel_tag,
             status: TcpServerStatus::new(id),
         })
@@ -187,7 +197,7 @@ impl InterfaceSupervisor for TcpServer {
         loop {
             match self.listener.accept().await {
                 Ok((stream, peer)) => {
-                    tune(&stream);
+                    tune_for_tunnel(&stream, self.tunnel);
                     let connection = TcpServerConnection::with_policy(
                         peer.to_string().into_bytes(),
                         stream,

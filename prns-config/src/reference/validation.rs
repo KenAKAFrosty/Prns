@@ -460,6 +460,8 @@ fn validate_interface(
         _ => {}
     }
 
+    validate_host_network_requirements(source, name, type_name, section, locations, errors);
+
     if type_name == "RNodeInterface" {
         let port_key = interface_key::PORT;
         if let Some((_, value)) = section.scalars.iter().find(|(key, _)| key == port_key) {
@@ -498,6 +500,273 @@ fn validate_interface(
             format!("remove [[[{child}]]] from [[{name}]]"),
         ));
     }
+}
+
+fn validate_host_network_requirements(
+    source: &str,
+    interface: &str,
+    type_name: &str,
+    section: &Section,
+    locations: &SourceLocations,
+    errors: &mut ValidationErrorCollector,
+) {
+    let context = InterfaceRequirementContext {
+        source,
+        interface,
+        section,
+        locations,
+    };
+    match type_name {
+        "TCPClientInterface" => {
+            require_setting(
+                &context,
+                RequiredSetting {
+                    primary: interface_key::TARGET_HOST,
+                    alternatives: &[],
+                    accepted: "a TCP target host",
+                    correction: format!(
+                        "add `{} = example.com` under [[{interface}]]",
+                        interface_key::TARGET_HOST
+                    ),
+                },
+                errors,
+            );
+            require_setting(
+                &context,
+                RequiredSetting {
+                    primary: interface_key::TARGET_PORT,
+                    alternatives: &[],
+                    accepted: "a TCP target port",
+                    correction: format!(
+                        "add `{} = 4242` under [[{interface}]]",
+                        interface_key::TARGET_PORT
+                    ),
+                },
+                errors,
+            );
+        }
+        "TCPServerInterface" => {
+            require_setting(
+                &context,
+                RequiredSetting {
+                    primary: interface_key::PORT,
+                    alternatives: &[interface_key::LISTEN_PORT],
+                    accepted: "port or listen_port",
+                    correction: format!(
+                        "add `{} = 4242` under [[{interface}]]",
+                        interface_key::PORT
+                    ),
+                },
+                errors,
+            );
+        }
+        "UDPInterface" => {
+            validate_udp_requirements(&context, errors);
+        }
+        "BackboneInterface" | "BackboneClientInterface" => {
+            let client = type_name == "BackboneClientInterface"
+                || has_one_of(
+                    section,
+                    &[interface_key::TARGET_HOST, interface_key::REMOTE],
+                );
+            if client {
+                require_setting(
+                    &context,
+                    RequiredSetting {
+                        primary: interface_key::TARGET_HOST,
+                        alternatives: &[interface_key::REMOTE],
+                        accepted: "target_host or remote",
+                        correction: format!(
+                            "add `{} = backbone.example.com` under [[{interface}]]",
+                            interface_key::REMOTE
+                        ),
+                    },
+                    errors,
+                );
+                require_setting(
+                    &context,
+                    RequiredSetting {
+                        primary: interface_key::PORT,
+                        alternatives: &[interface_key::TARGET_PORT],
+                        accepted: "port or target_port",
+                        correction: format!(
+                            "add `{} = 4242` under [[{interface}]]",
+                            interface_key::PORT
+                        ),
+                    },
+                    errors,
+                );
+            } else {
+                require_setting(
+                    &context,
+                    RequiredSetting {
+                        primary: interface_key::PORT,
+                        alternatives: &[interface_key::LISTEN_PORT],
+                        accepted: "port or listen_port",
+                        correction: format!(
+                            "add `{} = 4242` under [[{interface}]]",
+                            interface_key::PORT
+                        ),
+                    },
+                    errors,
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+fn validate_udp_requirements(
+    context: &InterfaceRequirementContext<'_>,
+    errors: &mut ValidationErrorCollector,
+) {
+    let section = context.section;
+    let device = section.get(interface_key::DEVICE).is_some();
+    let shared_port = section.get(interface_key::PORT).is_some();
+    let receive_intent = section.get(interface_key::LISTEN_IP).is_some()
+        || section.get(interface_key::LISTEN_PORT).is_some()
+        || (device && shared_port);
+    let send_intent = section.get(interface_key::FORWARD_IP).is_some()
+        || section.get(interface_key::FORWARD_PORT).is_some()
+        || (device && shared_port);
+
+    if !receive_intent && !send_intent {
+        let accepted = if shared_port {
+            "listen_ip, forward_ip, or device"
+        } else {
+            "a complete receive endpoint, send endpoint, or device plus port"
+        };
+        missing_setting(
+            context,
+            "udp_endpoint",
+            accepted,
+            format!(
+                "add `{} = 0.0.0.0` and `{} = 4242`, or add `{} = 255.255.255.255` and `{} = 4242` under [[{}]]",
+                interface_key::LISTEN_IP,
+                interface_key::LISTEN_PORT,
+                interface_key::FORWARD_IP,
+                interface_key::FORWARD_PORT,
+                context.interface,
+            ),
+            errors,
+        );
+        return;
+    }
+
+    if receive_intent {
+        if !device && section.get(interface_key::LISTEN_IP).is_none() {
+            missing_setting(
+                context,
+                interface_key::LISTEN_IP,
+                "listen_ip or device",
+                format!(
+                    "add `{} = 0.0.0.0` under [[{}]]",
+                    interface_key::LISTEN_IP,
+                    context.interface,
+                ),
+                errors,
+            );
+        }
+        if !shared_port && section.get(interface_key::LISTEN_PORT).is_none() {
+            missing_setting(
+                context,
+                interface_key::LISTEN_PORT,
+                "listen_port or port",
+                format!(
+                    "add `{} = 4242` under [[{}]]",
+                    interface_key::LISTEN_PORT,
+                    context.interface,
+                ),
+                errors,
+            );
+        }
+    }
+
+    if send_intent {
+        if !device && section.get(interface_key::FORWARD_IP).is_none() {
+            missing_setting(
+                context,
+                interface_key::FORWARD_IP,
+                "forward_ip or device",
+                format!(
+                    "add `{} = 255.255.255.255` under [[{}]]",
+                    interface_key::FORWARD_IP,
+                    context.interface,
+                ),
+                errors,
+            );
+        }
+        if !shared_port && section.get(interface_key::FORWARD_PORT).is_none() {
+            missing_setting(
+                context,
+                interface_key::FORWARD_PORT,
+                "forward_port or port",
+                format!(
+                    "add `{} = 4242` under [[{}]]",
+                    interface_key::FORWARD_PORT,
+                    context.interface,
+                ),
+                errors,
+            );
+        }
+    }
+}
+
+struct InterfaceRequirementContext<'a> {
+    source: &'a str,
+    interface: &'a str,
+    section: &'a Section,
+    locations: &'a SourceLocations,
+}
+
+struct RequiredSetting<'a> {
+    primary: &'a str,
+    alternatives: &'a [&'a str],
+    accepted: &'a str,
+    correction: String,
+}
+
+fn require_setting(
+    context: &InterfaceRequirementContext<'_>,
+    required: RequiredSetting<'_>,
+    errors: &mut ValidationErrorCollector,
+) {
+    if context.section.get(required.primary).is_some()
+        || has_one_of(context.section, required.alternatives)
+    {
+        return;
+    }
+    missing_setting(
+        context,
+        required.primary,
+        required.accepted,
+        required.correction,
+        errors,
+    );
+}
+
+fn has_one_of(section: &Section, keys: &[&str]) -> bool {
+    keys.iter().any(|key| section.get(key).is_some())
+}
+
+fn missing_setting(
+    context: &InterfaceRequirementContext<'_>,
+    key: &str,
+    accepted: &str,
+    correction: String,
+    errors: &mut ValidationErrorCollector,
+) {
+    let interface = context.interface;
+    errors.push(ConfigDiagnostic::new(
+        ConfigDiagnosticCode::MissingRequiredKey,
+        context.source,
+        location(context.locations, &[section_key::INTERFACES, interface]),
+        format!("[interfaces] > [[{interface}]] > {key}"),
+        None,
+        format!("enabled interface is missing {accepted}"),
+        Some(accepted.to_string()),
+        correction,
+    ));
 }
 
 #[allow(clippy::too_many_arguments)]

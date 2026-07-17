@@ -25,17 +25,28 @@ use prns_runtime::reactor::throughput::ThroughputLedger;
 pub struct UdpInterface {
     id: InterfaceId,
     socket: UdpSocket,
-    peer: SocketAddr,
+    flow: UdpSocketFlow,
     policy: EffectiveInterfacePolicy,
-    channel_tag: heapless::Vec<u8, 18>,
+    channel_tag: heapless::Vec<u8, 19>,
     status: TokioInterfaceStatus,
 }
 
-/// The bytes that tag this UDP channel: the fixed forward target it speaks to (RNS forwards every
-/// datagram to one `forward_ip:forward_port`), the same target across a reconnect.
-fn udp_channel_tag(peer: SocketAddr) -> heapless::Vec<u8, 18> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UdpSocketFlow {
+    ReceiveOnly,
+    SendOnly { peer: SocketAddr },
+    Bidirectional { peer: SocketAddr },
+}
+
+fn udp_channel_tag(flow: UdpSocketFlow, local: SocketAddr) -> heapless::Vec<u8, 19> {
     let mut tag = heapless::Vec::new();
-    match peer.ip() {
+    let (kind, endpoint) = match flow {
+        UdpSocketFlow::ReceiveOnly => (0, local),
+        UdpSocketFlow::SendOnly { peer } => (1, peer),
+        UdpSocketFlow::Bidirectional { peer } => (2, peer),
+    };
+    let _ = tag.push(kind);
+    match endpoint.ip() {
         IpAddr::V4(v4) => {
             let _ = tag.extend_from_slice(&v4.octets());
         }
@@ -43,7 +54,7 @@ fn udp_channel_tag(peer: SocketAddr) -> heapless::Vec<u8, 18> {
             let _ = tag.extend_from_slice(&v6.octets());
         }
     }
-    let _ = tag.extend_from_slice(&peer.port().to_be_bytes());
+    let _ = tag.extend_from_slice(&endpoint.port().to_be_bytes());
     tag
 }
 
@@ -61,8 +72,25 @@ impl UdpInterface {
         peer: impl tokio::net::ToSocketAddrs,
         policy: EffectiveInterfacePolicy,
     ) -> io::Result<Self> {
-        let (socket, peer) = Self::bind_socket(local, peer).await?;
-        Ok(Self::assemble(None, socket, peer, policy))
+        let (socket, peer) = Self::bind_peer_socket(local, peer).await?;
+        Self::assemble(None, socket, UdpSocketFlow::Bidirectional { peer }, policy)
+    }
+
+    pub async fn bind_receive_with_policy(
+        local: impl tokio::net::ToSocketAddrs,
+        policy: EffectiveInterfacePolicy,
+    ) -> io::Result<Self> {
+        let socket = Self::bind_socket(local).await?;
+        Self::assemble(None, socket, UdpSocketFlow::ReceiveOnly, policy)
+    }
+
+    pub async fn bind_send_with_policy(
+        local: impl tokio::net::ToSocketAddrs,
+        peer: impl tokio::net::ToSocketAddrs,
+        policy: EffectiveInterfacePolicy,
+    ) -> io::Result<Self> {
+        let (socket, peer) = Self::bind_peer_socket(local, peer).await?;
+        Self::assemble(None, socket, UdpSocketFlow::SendOnly { peer }, policy)
     }
 
     /// Bind with a caller-chosen id instead of one derived from the forward target — for advanced
@@ -83,15 +111,20 @@ impl UdpInterface {
         peer: impl tokio::net::ToSocketAddrs,
         policy: EffectiveInterfacePolicy,
     ) -> io::Result<Self> {
-        let (socket, peer) = Self::bind_socket(local, peer).await?;
-        Ok(Self::assemble(Some(id), socket, peer, policy))
+        let (socket, peer) = Self::bind_peer_socket(local, peer).await?;
+        Self::assemble(
+            Some(id),
+            socket,
+            UdpSocketFlow::Bidirectional { peer },
+            policy,
+        )
     }
 
-    async fn bind_socket(
+    async fn bind_peer_socket(
         local: impl tokio::net::ToSocketAddrs,
         peer: impl tokio::net::ToSocketAddrs,
     ) -> io::Result<(UdpSocket, SocketAddr)> {
-        let socket = UdpSocket::bind(local).await?;
+        let socket = Self::bind_socket(local).await?;
         let peer = tokio::net::lookup_host(peer)
             .await?
             .next()
@@ -99,23 +132,29 @@ impl UdpInterface {
         Ok((socket, peer))
     }
 
+    async fn bind_socket(local: impl tokio::net::ToSocketAddrs) -> io::Result<UdpSocket> {
+        let socket = UdpSocket::bind(local).await?;
+        socket.set_broadcast(true)?;
+        Ok(socket)
+    }
+
     fn assemble(
         id_override: Option<InterfaceId>,
         socket: UdpSocket,
-        peer: SocketAddr,
+        flow: UdpSocketFlow,
         policy: EffectiveInterfacePolicy,
-    ) -> Self {
-        let channel_tag = udp_channel_tag(peer);
+    ) -> io::Result<Self> {
+        let channel_tag = udp_channel_tag(flow, socket.local_addr()?);
         let id = id_override
             .unwrap_or_else(|| InterfaceId::from_channel_tag(InterfaceKind::Udp, &channel_tag));
-        Self {
+        Ok(Self {
             id,
             socket,
-            peer,
+            flow,
             policy,
             channel_tag,
             status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
-        }
+        })
     }
 
     /// This interface's id: derived from its forward target by [`bind`](Self::bind), or the one
@@ -156,34 +195,65 @@ impl Interface for UdpInterface {
         let started = tokio::time::Instant::now();
         let mut recv_buf = std::vec![0u8; core::RECV_BUF_LEN].into_boxed_slice();
         self.status.set_connection(ConnectionState::Connected);
-        loop {
-            tokio::select! {
-                received = self.socket.recv_from(&mut recv_buf) => {
-                    let Ok((len, _)) = received else { continue };
-                    if len == 0 {
-                        continue;
-                    }
-                    self.status.add_rx(len as u64);
-                    let now = InstantMillis(started.elapsed().as_millis() as u64);
-                    throughput.record_rx(now, len as u64);
-                    self.status.set_transfer_rates(throughput.rates());
-                    seam.next_inbound(&recv_buf[..len]).await;
+        match self.flow {
+            UdpSocketFlow::ReceiveOnly => loop {
+                let Ok((len, _)) = self.socket.recv_from(&mut recv_buf).await else {
+                    continue;
+                };
+                if len == 0 {
+                    continue;
                 }
-                outbound = seam.next_outbound() => {
-                    if outbound.is_empty() || outbound.len() > core::UDP_DATAGRAM_MAX {
-                        continue;
-                    }
-                    let Ok(sent) = self.socket.send_to(outbound, self.peer).await else {
-                        continue;
-                    };
-                    self.status.add_tx(sent as u64);
-                    let now = InstantMillis(started.elapsed().as_millis() as u64);
-                    throughput.record_tx(now, sent as u64);
-                    self.status.set_transfer_rates(throughput.rates());
-                    let frame_airtime = frame_airtime_us(sent, self.policy.bitrate);
-                    self.status.set_airtime(airtime.record_tx(now, frame_airtime));
+                self.status.add_rx(len as u64);
+                let now = InstantMillis(started.elapsed().as_millis() as u64);
+                throughput.record_rx(now, len as u64);
+                self.status.set_transfer_rates(throughput.rates());
+                seam.next_inbound(&recv_buf[..len]).await;
+            },
+            UdpSocketFlow::SendOnly { peer } => loop {
+                let outbound = seam.next_outbound().await;
+                if outbound.is_empty() || outbound.len() > core::UDP_DATAGRAM_MAX {
+                    continue;
                 }
-            }
+                let Ok(sent) = self.socket.send_to(outbound, peer).await else {
+                    continue;
+                };
+                self.status.add_tx(sent as u64);
+                let now = InstantMillis(started.elapsed().as_millis() as u64);
+                throughput.record_tx(now, sent as u64);
+                self.status.set_transfer_rates(throughput.rates());
+                let frame_airtime = frame_airtime_us(sent, self.policy.bitrate);
+                self.status
+                    .set_airtime(airtime.record_tx(now, frame_airtime));
+            },
+            UdpSocketFlow::Bidirectional { peer } => loop {
+                tokio::select! {
+                    received = self.socket.recv_from(&mut recv_buf) => {
+                        let Ok((len, _)) = received else { continue };
+                        if len == 0 {
+                            continue;
+                        }
+                        self.status.add_rx(len as u64);
+                        let now = InstantMillis(started.elapsed().as_millis() as u64);
+                        throughput.record_rx(now, len as u64);
+                        self.status.set_transfer_rates(throughput.rates());
+                        seam.next_inbound(&recv_buf[..len]).await;
+                    }
+                    outbound = seam.next_outbound() => {
+                        if outbound.is_empty() || outbound.len() > core::UDP_DATAGRAM_MAX {
+                            continue;
+                        }
+                        let Ok(sent) = self.socket.send_to(outbound, peer).await else {
+                            continue;
+                        };
+                        self.status.add_tx(sent as u64);
+                        let now = InstantMillis(started.elapsed().as_millis() as u64);
+                        throughput.record_tx(now, sent as u64);
+                        self.status.set_transfer_rates(throughput.rates());
+                        let frame_airtime = frame_airtime_us(sent, self.policy.bitrate);
+                        self.status.set_airtime(airtime.record_tx(now, frame_airtime));
+                    }
+                }
+            },
         }
     }
 }
@@ -283,5 +353,73 @@ mod tests {
             .expect("the test peer receives");
         assert_eq!(&buf[..len], out_payload, "raw bytes, exactly as granted");
         assert_eq!(from, near_addr, "sent from the interface's bound port");
+    }
+
+    #[tokio::test]
+    async fn receive_only_never_requires_a_forward_target() {
+        let interface = UdpInterface::bind_receive_with_policy(
+            "127.0.0.1:0",
+            core::policy_for_bitrate(core::UDP_BITRATE_ESTIMATE),
+        )
+        .await
+        .expect("binds a receive-only socket");
+        let near_addr = interface.local_addr().expect("the bound address is known");
+        let far = UdpSocket::bind("127.0.0.1:0")
+            .await
+            .expect("binds the sender");
+        let (in_tx, mut in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
+        let (_out_tx, out_rx) = tokio_grant_lane(TEST_FRAME_CAP, 1);
+        tokio::spawn(interface.run(MockSeam {
+            inbound: in_tx,
+            sink: std::vec::Vec::new(),
+            outbound: out_rx,
+        }));
+
+        far.send_to(b"receive-only", near_addr)
+            .await
+            .expect("sends to the receive-only socket");
+        let received = tokio::time::timeout(Duration::from_secs(2), in_rx.recv())
+            .await
+            .expect("the frame arrives")
+            .expect("the interface task is alive");
+        assert_eq!(received, b"receive-only");
+    }
+
+    #[tokio::test]
+    async fn send_only_uses_an_ephemeral_bind_and_never_requires_ingress() {
+        let far = UdpSocket::bind("127.0.0.1:0")
+            .await
+            .expect("binds the receiver");
+        let far_addr = far.local_addr().expect("the receiver address is known");
+        let interface = UdpInterface::bind_send_with_policy(
+            "127.0.0.1:0",
+            far_addr,
+            core::policy_for_bitrate(core::UDP_BITRATE_ESTIMATE),
+        )
+        .await
+        .expect("binds a send-only socket");
+        assert_ne!(
+            interface.local_addr().expect("the bind is visible").port(),
+            0
+        );
+        let (in_tx, _in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
+        let (mut out_tx, out_rx) = tokio_grant_lane(TEST_FRAME_CAP, 1);
+        tokio::spawn(interface.run(MockSeam {
+            inbound: in_tx,
+            sink: std::vec::Vec::new(),
+            outbound: out_rx,
+        }));
+
+        out_tx
+            .try_grant()
+            .expect("the outbound lane has room")
+            .fill(b"send-only");
+        out_tx.commit();
+        let mut received = [0u8; 32];
+        let (len, _) = tokio::time::timeout(Duration::from_secs(2), far.recv_from(&mut received))
+            .await
+            .expect("the frame leaves")
+            .expect("the receiver reads it");
+        assert_eq!(&received[..len], b"send-only");
     }
 }

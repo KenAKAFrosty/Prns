@@ -74,6 +74,9 @@ pub mod pipe;
 #[cfg(feature = "pipe-host")]
 pub mod pipe_host;
 
+#[cfg(feature = "from-plan")]
+mod host_network;
+
 #[cfg(feature = "websocket")]
 pub mod websocket;
 

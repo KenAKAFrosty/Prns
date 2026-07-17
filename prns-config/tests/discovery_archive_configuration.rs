@@ -81,8 +81,8 @@ fn archived_manual_configuration_is_accepted_by_the_reference_config_pipeline() 
         [interface]
             if matches!(
                 &interface.medium,
-                PlannedMedium::BackboneClient { host, port }
-                    if host == "backbone.example" && *port == 4242
+                PlannedMedium::BackboneClient { connection }
+                    if connection.host == "backbone.example" && connection.port == 4242
             )
     ));
 }

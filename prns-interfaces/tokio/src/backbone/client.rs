@@ -6,10 +6,8 @@
 use std::string::String;
 use std::time::Duration;
 
-use tokio::net::TcpStream;
-
 use crate::framed_stream;
-use crate::tcp::tokio_socket::{tune, CONNECT_TIMEOUT};
+use crate::tcp::tokio_socket::{connect, tune_for_tunnel, TcpConnectionSettings};
 use prns_core::interfaces::backbone::core;
 use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{
@@ -30,7 +28,7 @@ pub struct BackboneClientInterface {
     id: InterfaceId,
     target: String,
     policy: EffectiveInterfacePolicy,
-    reconnect: Duration,
+    connection: TcpConnectionSettings,
     status: TokioInterfaceStatus,
 }
 
@@ -49,6 +47,16 @@ impl BackboneClientInterface {
     ) -> Self {
         let id = InterfaceId::from_channel_tag(InterfaceKind::BackboneClient, target.as_bytes());
         Self::with_id_and_policy(id, target, policy, reconnect)
+    }
+
+    #[must_use]
+    pub fn with_policy_and_connection_settings(
+        target: String,
+        policy: EffectiveInterfacePolicy,
+        connection: TcpConnectionSettings,
+    ) -> Self {
+        let id = InterfaceId::from_channel_tag(InterfaceKind::BackboneClient, target.as_bytes());
+        Self::with_id_policy_and_connection_settings(id, target, policy, connection)
     }
 
     /// Build with a caller-chosen id instead of one derived from the dial target — for advanced setups
@@ -71,11 +79,29 @@ impl BackboneClientInterface {
         policy: EffectiveInterfacePolicy,
         reconnect: Duration,
     ) -> Self {
+        Self::with_id_policy_and_connection_settings(
+            id,
+            target,
+            policy,
+            TcpConnectionSettings {
+                reconnect_wait: reconnect,
+                ..TcpConnectionSettings::STOCK
+            },
+        )
+    }
+
+    #[must_use]
+    pub fn with_id_policy_and_connection_settings(
+        id: InterfaceId,
+        target: String,
+        policy: EffectiveInterfacePolicy,
+        connection: TcpConnectionSettings,
+    ) -> Self {
         Self {
             id,
             target,
             policy,
-            reconnect,
+            connection,
             status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
         }
     }
@@ -120,10 +146,11 @@ impl Interface for BackboneClientInterface {
                 { core::FRAMED_LEN },
             >,
         > = None;
+        let mut reconnect_attempts = 0u32;
         loop {
             #[cfg(feature = "tracing")]
             let connected = tracing::Instrument::instrument(
-                tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(self.target.as_str())),
+                connect(self.target.as_str(), self.connection),
                 tracing::debug_span!(
                     target: "prns.interface",
                     "prns.interface.connect",
@@ -134,11 +161,9 @@ impl Interface for BackboneClientInterface {
             )
             .await;
             #[cfg(not(feature = "tracing"))]
-            let connected =
-                tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(self.target.as_str()))
-                    .await;
-            if let Ok(Ok(stream)) = connected {
-                tune(&stream);
+            let connected = connect(self.target.as_str(), self.connection).await;
+            if let Ok(stream) = connected {
+                tune_for_tunnel(&stream, self.connection.tunnel);
                 crate::diagnostic_log::debug!(
                     "backbone-client [{interface_origin}]: connected {}",
                     self.target
@@ -169,13 +194,23 @@ impl Interface for BackboneClientInterface {
                     self.target
                 );
                 self.status.set_connection(ConnectionState::Disconnected);
+                reconnect_attempts = 0;
             } else {
                 crate::diagnostic_log::debug!(
                     "backbone-client [{interface_origin}]: connect failed {}, retrying",
                     self.target
                 );
+                self.status.set_connection(ConnectionState::Disconnected);
             }
-            tokio::time::sleep(self.reconnect).await;
+            tokio::time::sleep(self.connection.reconnect_wait).await;
+            if self
+                .connection
+                .reconnect_limit
+                .exhausted(reconnect_attempts)
+            {
+                return;
+            }
+            reconnect_attempts = reconnect_attempts.saturating_add(1);
         }
     }
 }
@@ -199,7 +234,7 @@ mod tests {
     use prns_core::interfaces::rns_serial_framing::{self, RnsSerialDecoder, ESC, FLAG};
     use prns_runtime::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::net::TcpListener;
+    use tokio::net::{TcpListener, TcpStream};
     use tokio::sync::mpsc::{self, UnboundedSender};
 
     /// A hand-driven seam: it captures every `next_inbound` and supplies `next_outbound` from a grant
