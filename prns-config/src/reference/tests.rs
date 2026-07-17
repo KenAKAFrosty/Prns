@@ -165,7 +165,8 @@ fn nonpositive_discovery_numbers_select_reference_defaults() {
 
 #[test]
 fn disabled_publication_leaves_its_conditional_keys_uninterpreted() {
-    let config = parse(
+    let report = parse_named(
+        "/tmp/rns/config",
         "[interfaces]\n\
            [[Spine]]\n\
              type = BackboneInterface\n\
@@ -176,10 +177,23 @@ fn disabled_publication_leaves_its_conditional_keys_uninterpreted() {
              discovery_stamp_value = not-an-integer\n",
     )
     .unwrap();
+    let config = report.value;
     let spine = &config.interfaces[0];
     assert_eq!(spine.discovery.discoverable, Some(false));
     assert!(spine.extra.contains_key("announce_interval"));
     assert!(spine.extra.contains_key("discovery_stamp_value"));
+    assert_eq!(
+        report
+            .warnings
+            .iter()
+            .filter(|diagnostic| diagnostic.code() == ConfigDiagnosticCode::IneffectiveSetting)
+            .count(),
+        2
+    );
+    assert!(report
+        .warnings
+        .iter()
+        .all(|warning| { warning.correction().contains("set `discoverable` = Yes") }));
 }
 
 #[test]
@@ -466,6 +480,71 @@ fn unknown_sections_warn_with_a_nearby_stock_spelling() {
     assert!(warning
         .to_string()
         .contains("rename [reticlum] to [reticulum]"));
+}
+
+#[test]
+fn recognized_follow_ons_warn_at_their_exact_source_locations() {
+    let report = parse_named(
+        "/tmp/rns/config",
+        "[reticulum]\nenable_remote_management = Yes\nrespond_to_probes = No\n[interfaces]\n[[LAN]]\ntype = AutoInterface\nenabled = Yes\ndiscovery_port = 29716\nbootstrap_only = Yes\nignore_config_warnings = Yes\n",
+    )
+    .unwrap();
+    let warnings = report
+        .warnings
+        .iter()
+        .filter(|diagnostic| diagnostic.code() == ConfigDiagnosticCode::UnsupportedSetting)
+        .collect::<Vec<_>>();
+    assert_eq!(warnings.len(), 5);
+    assert_eq!(warnings[0].source(), "/tmp/rns/config");
+    assert_eq!(warnings[0].line(), 2);
+    assert_eq!(warnings[0].value(), Some("Yes"));
+    assert!(warnings
+        .iter()
+        .any(|warning| { warning.line() == 8 && warning.path().ends_with("discovery_port") }));
+    assert!(warnings
+        .iter()
+        .any(|warning| warning.correction().contains("correct each reported")));
+}
+
+#[test]
+fn backbone_role_specific_settings_never_disappear() {
+    let report = parse_named(
+        "/tmp/rns/config",
+        "[interfaces]\n[[Listener]]\ntype = BackboneInterface\nenabled = Yes\nlisten_port = 4242\ni2p_tunneled = Yes\nconnect_timeout = 8\nmax_reconnect_tries = 3\n[[Client]]\ntype = BackboneClientInterface\nenabled = Yes\ntarget_host = peer\ntarget_port = 4242\nlisten_ip = 0.0.0.0\ndevice = eth0\n",
+    )
+    .unwrap();
+    let warnings = report
+        .warnings
+        .iter()
+        .filter(|diagnostic| diagnostic.code() == ConfigDiagnosticCode::IneffectiveSetting)
+        .collect::<Vec<_>>();
+    assert_eq!(warnings.len(), 5);
+    assert!(warnings
+        .iter()
+        .all(|warning| warning.message().contains("interface role")));
+    assert!(warnings
+        .iter()
+        .any(|warning| warning.path().ends_with("i2p_tunneled")));
+    assert!(warnings
+        .iter()
+        .any(|warning| warning.path().ends_with("device")));
+}
+
+#[test]
+fn ifac_size_fails_when_its_floored_byte_count_exceeds_the_wire_limit() {
+    let errors = parse_named(
+        "/tmp/rns/config",
+        "[interfaces]\n[[Private]]\ntype = TCPClientInterface\nenabled = Yes\ntarget_host = host\ntarget_port = 4242\nifac_size = 520\n",
+    )
+    .unwrap_err();
+    let diagnostic = &errors.diagnostics()[0];
+    assert_eq!(diagnostic.code(), ConfigDiagnosticCode::InvalidValue);
+    assert_eq!(diagnostic.line(), 7);
+    assert_eq!(diagnostic.value(), Some("520"));
+    assert!(diagnostic
+        .accepted()
+        .is_some_and(|accepted| accepted.contains("519")));
+    assert!(diagnostic.correction().contains("ifac_size = 64"));
 }
 
 #[test]

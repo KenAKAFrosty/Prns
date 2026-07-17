@@ -29,6 +29,8 @@ pub enum ConfigDiagnosticCode {
     RedundantAliases,
     UnsupportedInterface,
     UnsupportedTransport,
+    UnsupportedSetting,
+    IneffectiveSetting,
 }
 
 impl ConfigDiagnosticCode {
@@ -44,6 +46,8 @@ impl ConfigDiagnosticCode {
             ConfigDiagnosticCode::RedundantAliases => "redundant_aliases",
             ConfigDiagnosticCode::UnsupportedInterface => "unsupported_interface",
             ConfigDiagnosticCode::UnsupportedTransport => "unsupported_transport",
+            ConfigDiagnosticCode::UnsupportedSetting => "unsupported_setting",
+            ConfigDiagnosticCode::IneffectiveSetting => "ineffective_setting",
         }
     }
 
@@ -51,7 +55,9 @@ impl ConfigDiagnosticCode {
         match self {
             ConfigDiagnosticCode::UnknownKey
             | ConfigDiagnosticCode::UnknownSection
-            | ConfigDiagnosticCode::RedundantAliases => ConfigSeverity::Warning,
+            | ConfigDiagnosticCode::RedundantAliases
+            | ConfigDiagnosticCode::UnsupportedSetting
+            | ConfigDiagnosticCode::IneffectiveSetting => ConfigSeverity::Warning,
             ConfigDiagnosticCode::Syntax
             | ConfigDiagnosticCode::MisplacedKey
             | ConfigDiagnosticCode::MissingRequiredKey

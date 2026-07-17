@@ -1,5 +1,6 @@
 use crate::configobj::{Section, SourceLocations, Value};
 use crate::diagnostic::{ConfigDiagnostic, ConfigDiagnosticCode, ConfigSeverity};
+use prns_core::interfaces::ifac::IFAC_MAX_SIZE;
 use prns_core::interfaces::rnode::core::{
     BANDWIDTH_HZ_MAX, BANDWIDTH_HZ_MIN, CODING_RATE_MAX, CODING_RATE_MIN, FREQUENCY_HZ_MAX,
     FREQUENCY_HZ_MIN, SPREADING_FACTOR_MAX, SPREADING_FACTOR_MIN, TXPOWER_DBM_MAX, TXPOWER_DBM_MIN,
@@ -10,8 +11,9 @@ use super::keys::{
     common as common_key, global as global_key, interface as interface_key, section as section_key,
 };
 use super::schema::{
-    interface_key_rule, known_interface_keys, KeyRule, ValueKind, GLOBAL_RULES, LOGGING_RULES,
-    SUPPORTED_INTERFACES,
+    interface_key_rule, known_interface_keys, KeyRule, ValueKind, AUTO_INTERFACE_FOLLOW_ON_KEYS,
+    DISCOVERY_DETAIL_KEYS, GLOBAL_FOLLOW_ON_KEYS, GLOBAL_RULES, INTERFACE_FOLLOW_ON_KEYS,
+    LOGGING_RULES, SUPPORTED_INTERFACES,
 };
 
 #[derive(Default)]
@@ -123,16 +125,28 @@ pub(super) fn validate(
 
     for (name, section) in &root.sections {
         match name.as_str() {
-            section_key::RETICULUM => validate_section(
-                source,
-                "[reticulum]",
-                &[section_key::RETICULUM],
-                section,
-                GLOBAL_RULES,
-                locations,
-                &mut warnings,
-                &mut errors,
-            ),
+            section_key::RETICULUM => {
+                validate_section(
+                    source,
+                    "[reticulum]",
+                    &[section_key::RETICULUM],
+                    section,
+                    GLOBAL_RULES,
+                    locations,
+                    &mut warnings,
+                    &mut errors,
+                );
+                warn_non_effective_settings(
+                    source,
+                    "[reticulum]",
+                    &[section_key::RETICULUM],
+                    section,
+                    GLOBAL_FOLLOW_ON_KEYS,
+                    locations,
+                    &mut warnings,
+                    SettingWarningKind::FollowOn,
+                );
+            }
             section_key::LOGGING => validate_section(
                 source,
                 "[logging]",
@@ -212,6 +226,7 @@ fn validate_section(
             )),
         }
     }
+
     for (name, _) in &section.sections {
         let mut section_path = source_path.to_vec();
         section_path.push(name);
@@ -248,6 +263,79 @@ fn validate_interfaces(
     for (name, section) in &interfaces.sections {
         validate_interface(source, name, section, locations, warnings, errors);
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn warn_non_effective_settings(
+    source: &str,
+    display_path: &str,
+    source_path: &[&str],
+    section: &Section,
+    keys: &[&str],
+    locations: &SourceLocations,
+    warnings: &mut ValidationWarnings,
+    reason: SettingWarningKind,
+) {
+    for key in keys {
+        let Some(value) = section.get(key) else {
+            continue;
+        };
+        let mut key_path = source_path.to_vec();
+        key_path.push(key);
+        let (code, message, accepted, correction) = match reason {
+            SettingWarningKind::FollowOn if *key == interface_key::IGNORE_CONFIG_WARNINGS => (
+                ConfigDiagnosticCode::UnsupportedSetting,
+                format!("stock RNS setting {key:?} is not applied by this build"),
+                "omit this setting".to_string(),
+                format!("remove `{key}` and correct each reported configuration problem"),
+            ),
+            SettingWarningKind::FollowOn => (
+                ConfigDiagnosticCode::UnsupportedSetting,
+                format!("stock RNS setting {key:?} is not applied by this build"),
+                "omit this setting or use a build that implements it".to_string(),
+                format!(
+                    "remove `{key} = {}` until this feature is available",
+                    value_text(value)
+                ),
+            ),
+            SettingWarningKind::InapplicableInterfaceRole => (
+                ConfigDiagnosticCode::IneffectiveSetting,
+                format!("setting {key:?} is not applied by this interface role"),
+                "omit this setting for the selected listener or client role".to_string(),
+                format!("remove `{key} = {}` from this stanza", value_text(value)),
+            ),
+            SettingWarningKind::DiscoveryDisabled => (
+                ConfigDiagnosticCode::IneffectiveSetting,
+                format!("setting {key:?} is not applied while discovery publication is disabled"),
+                format!(
+                    "omit this setting or set {} = Yes",
+                    interface_key::DISCOVERABLE
+                ),
+                format!(
+                    "remove `{key} = {}`, or set `{}` = Yes",
+                    value_text(value),
+                    interface_key::DISCOVERABLE
+                ),
+            ),
+        };
+        warnings.push(ConfigDiagnostic::new(
+            code,
+            source,
+            location(locations, &key_path),
+            format!("{display_path} > {key}"),
+            Some(value_text(value)),
+            message,
+            Some(accepted),
+            correction,
+        ));
+    }
+}
+
+#[derive(Clone, Copy)]
+enum SettingWarningKind {
+    FollowOn,
+    InapplicableInterfaceRole,
+    DiscoveryDisabled,
 }
 
 fn validate_interface(
@@ -377,6 +465,67 @@ fn validate_interface(
                 &known,
             )),
         }
+    }
+
+    let mut unsupported = INTERFACE_FOLLOW_ON_KEYS.to_vec();
+    if type_name == "AutoInterface" {
+        unsupported.extend(AUTO_INTERFACE_FOLLOW_ON_KEYS);
+    }
+    warn_non_effective_settings(
+        source,
+        &interface_path,
+        &[section_key::INTERFACES, name],
+        section,
+        &unsupported,
+        locations,
+        warnings,
+        SettingWarningKind::FollowOn,
+    );
+
+    if !discoverable {
+        warn_non_effective_settings(
+            source,
+            &interface_path,
+            &[section_key::INTERFACES, name],
+            section,
+            DISCOVERY_DETAIL_KEYS,
+            locations,
+            warnings,
+            SettingWarningKind::DiscoveryDisabled,
+        );
+    }
+
+    if matches!(type_name, "BackboneInterface" | "BackboneClientInterface") {
+        let client_role = type_name == "BackboneClientInterface"
+            || has_one_of(
+                section,
+                &[interface_key::TARGET_HOST, interface_key::REMOTE],
+            );
+        let inapplicable = if client_role {
+            &[
+                interface_key::LISTEN_IP,
+                interface_key::LISTEN_PORT,
+                interface_key::LISTEN_ON,
+                interface_key::DEVICE,
+            ][..]
+        } else {
+            &[
+                interface_key::TARGET_PORT,
+                interface_key::I2P_TUNNELED,
+                interface_key::CONNECT_TIMEOUT,
+                interface_key::MAX_RECONNECT_TRIES,
+            ][..]
+        };
+        warn_non_effective_settings(
+            source,
+            &interface_path,
+            &[section_key::INTERFACES, name],
+            section,
+            inapplicable,
+            locations,
+            warnings,
+            SettingWarningKind::InapplicableInterfaceRole,
+        );
     }
 
     match type_name {
@@ -1134,6 +1283,10 @@ fn validate_value(
 
 fn accepted_for_key(key: &str, kind: ValueKind) -> String {
     match key {
+        interface_key::IFAC_SIZE => format!(
+            "an integer from 0 through {} bits",
+            IFAC_MAX_SIZE * 8 + 7
+        ),
         interface_key::ANNOUNCE_CAP => "a percentage from 0 through 100".to_string(),
         interface_key::SPEED => format!(
             "an integer from {} through {} bits per second",
@@ -1201,6 +1354,7 @@ fn accepted_for_key(key: &str, kind: ValueKind) -> String {
 
 fn example_for_key(key: &str, kind: ValueKind) -> &'static str {
     match key {
+        interface_key::IFAC_SIZE => "64",
         interface_key::ANNOUNCE_CAP => "2.0",
         interface_key::SPEED => "9600",
         interface_key::DATABITS => "8",
@@ -1237,6 +1391,9 @@ fn semantic_value_is_valid(key: &str, value: &Value) -> bool {
         return true;
     };
     match key {
+        interface_key::IFAC_SIZE => {
+            parse_integer::<u32>(text).is_ok_and(|value| value <= (IFAC_MAX_SIZE * 8 + 7) as u32)
+        }
         interface_key::ANNOUNCE_CAP => {
             parse_float(text).is_ok_and(|value| (0.0..=100.0).contains(&value))
         }

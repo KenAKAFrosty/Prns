@@ -1,17 +1,5 @@
 //! The reference-to-ours mapping layer: a faithful [`ReferenceConfig`] becomes a [`DaemonPlan`],
 //! the host-agnostic description of the node a daemon should stand up.
-//!
-//! [`reference`](crate::reference) reads every interface type stock RNS knows about, exactly as RNS
-//! reads it. This layer narrows that to what Prns can actually construct today, and is honest about
-//! the rest: an interface Prns has no medium for, or one missing a field it needs, becomes a
-//! [`DeferredInterface`] carrying *why* rather than being silently dropped; a setting Prns parses but
-//! cannot yet route into construction (announce pacing and medium-specific options) is recorded as an
-//! [`UnappliedSetting`] on the interface that bears it. [`PlannedMedium`] holds only variants a host
-//! can stand up, so an unconstructable interface is unrepresentable as a plan member.
-//!
-//! [`plan`] is total: it never fails. A config that names nothing constructible yields a plan whose
-//! `interfaces` is empty and whose `deferred` explains each omission, leaving the daemon to decide
-//! whether an empty node is worth running.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -47,6 +35,7 @@ use crate::reference::keys::{
 use crate::reference::{
     ReferenceConfig, ReferenceInterface, ReferenceMode, ReferenceParams, ReferenceValue,
 };
+use crate::{ConfigDiagnostic, ConfigDiagnosticCode, ConfigErrors, ConfigReport, SourceLocations};
 
 /// The complete, host-agnostic description of a node to stand up, projected from a stock RNS config.
 #[derive(Debug, Clone, PartialEq)]
@@ -59,10 +48,7 @@ pub struct DaemonPlan {
     pub panic_on_interface_error: bool,
     pub network_identity_path: Option<PathBuf>,
     pub discovery: InterfaceDiscoveryPolicy,
-    /// The interfaces a host can construct from this config, in config order.
     pub interfaces: Vec<PlannedInterface>,
-    /// The interfaces this config named that the node will not stand up, each with its reason.
-    pub deferred: Vec<DeferredInterface>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -143,8 +129,6 @@ pub enum SharedInstanceTransport {
     Unix,
 }
 
-/// One interface a host can construct, with one effective policy and a record of settings the
-/// current host backend does not yet honor.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlannedInterface {
     pub name: String,
@@ -152,8 +136,6 @@ pub struct PlannedInterface {
     pub access: InterfaceAccessPlan,
     pub medium: PlannedMedium,
     pub discovery: InterfaceDiscoveryPlan,
-    /// Settings parsed from this interface's config that v1 construction does not yet pass through.
-    pub unapplied: Vec<UnappliedSetting>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -430,7 +412,10 @@ pub enum PlannedMedium {
         framing: TcpWireFraming,
     },
     /// RNS `TCPServerInterface`: accept peers on the configured listener.
-    TcpServer { listener: TcpListenPlan },
+    TcpServer {
+        listener: TcpListenPlan,
+        framing: TcpWireFraming,
+    },
     /// RNS `UDPInterface`: receive, send, or do both over configured datagram endpoints.
     Udp { flow: UdpFlowPlan },
     /// RNS `SerialInterface`: a configured serial device.
@@ -491,36 +476,56 @@ pub enum PlannedMedium {
     BackboneClient { connection: TcpDialPlan },
 }
 
-/// An interface this config named that the node will not stand up, and why.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DeferredInterface {
-    pub name: String,
-    pub type_name: String,
-    pub why: DeferReason,
-}
-
-/// Why a configured interface was not turned into a [`PlannedInterface`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DeferReason {
-    Disabled,
+enum PlanErrorKind {
     UnsupportedKind,
     MissingRequiredField { key: &'static str },
     InvalidSetting { key: &'static str },
 }
 
-/// A setting parsed from config that v1 construction does not yet route into the interface it
-/// belongs to. Surfaced so the daemon can report it rather than silently ignore it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UnappliedSetting {
-    /// A medium-specific key parsed but not passed to the constructor (e.g. `kiss_framing`).
-    MediumOption(&'static str),
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PlanError {
+    interface_name: String,
+    interface_type: String,
+    kind: PlanErrorKind,
 }
 
-/// Project a faithful reference config onto the node a host should stand up.
-#[must_use]
-pub fn plan(config: &ReferenceConfig) -> DaemonPlan {
+pub fn parse_and_plan(input: &str) -> Result<ConfigReport<DaemonPlan>, ConfigErrors> {
+    parse_and_plan_named("config", input)
+}
+
+pub fn parse_and_plan_named(
+    source: impl Into<String>,
+    input: &str,
+) -> Result<ConfigReport<DaemonPlan>, ConfigErrors> {
+    let report = crate::reference::parse_named(source, input)?;
+    let ConfigReport {
+        value,
+        warnings,
+        source,
+        locations,
+    } = report;
+    match build_plan(&value) {
+        Ok(value) => Ok(ConfigReport {
+            value,
+            warnings,
+            source,
+            locations,
+        }),
+        Err(errors) => {
+            let mut diagnostics = errors
+                .iter()
+                .map(|error| planning_diagnostic(&source, &locations, error))
+                .collect::<Vec<_>>();
+            diagnostics.extend(warnings);
+            Err(ConfigErrors::new(diagnostics))
+        }
+    }
+}
+
+fn build_plan(config: &ReferenceConfig) -> Result<DaemonPlan, Vec<PlanError>> {
     let mut interfaces = Vec::new();
-    let mut deferred = Vec::new();
+    let mut errors = Vec::new();
     let transport = transport_plan(config);
     let common = global_common_policy(config);
     let announce_rate = global_announce_rate(config);
@@ -532,14 +537,17 @@ pub fn plan(config: &ReferenceConfig) -> DaemonPlan {
             transport.routing_enabled(),
         ) {
             Ok(planned) => interfaces.push(planned),
-            Err(reason) => deferred.push(DeferredInterface {
-                name: interface.name.clone(),
-                type_name: interface.type_name.clone(),
-                why: reason,
+            Err(kind) => errors.push(PlanError {
+                interface_name: interface.name.clone(),
+                interface_type: interface.type_name.clone(),
+                kind,
             }),
         }
     }
-    DaemonPlan {
+    if !errors.is_empty() {
+        return Err(errors);
+    }
+    Ok(DaemonPlan {
         transport,
         shared_instance: shared_instance(config),
         protocol: ProtocolPlan {
@@ -560,8 +568,58 @@ pub fn plan(config: &ReferenceConfig) -> DaemonPlan {
         network_identity_path: config.network_identity_path.as_deref().map(PathBuf::from),
         discovery: discovery_policy(config),
         interfaces,
-        deferred,
-    }
+    })
+}
+
+fn planning_diagnostic(
+    source: &str,
+    locations: &SourceLocations,
+    error: &PlanError,
+) -> ConfigDiagnostic {
+    let (code, key, message, accepted, correction) = match error.kind {
+        PlanErrorKind::UnsupportedKind => (
+            ConfigDiagnosticCode::UnsupportedInterface,
+            interface_key::TYPE,
+            format!(
+                "interface type {:?} is not available in this build",
+                error.interface_type
+            ),
+            "an interface type supported by this build".to_string(),
+            format!(
+                "set `{}` = No for [[{}]]",
+                interface_key::ENABLED,
+                error.interface_name
+            ),
+        ),
+        PlanErrorKind::MissingRequiredField { key } => (
+            ConfigDiagnosticCode::MissingRequiredKey,
+            key,
+            format!("enabled interface is missing required setting {key:?}"),
+            format!("a valid {key} value"),
+            format!("add `{key} = value` under [[{}]]", error.interface_name),
+        ),
+        PlanErrorKind::InvalidSetting { key } => (
+            ConfigDiagnosticCode::InvalidValue,
+            key,
+            format!("setting {key:?} cannot be represented by this build"),
+            format!("a valid, representable {key} value"),
+            format!("replace `{key}` under [[{}]]", error.interface_name),
+        ),
+    };
+    let path = [section_key::INTERFACES, error.interface_name.as_str(), key];
+    let line = locations
+        .line(path)
+        .or_else(|| locations.line([section_key::INTERFACES, error.interface_name.as_str()]));
+    ConfigDiagnostic::new(
+        code,
+        source,
+        line.unwrap_or(1),
+        format!("[interfaces] > [[{}]] > {key}", error.interface_name),
+        None,
+        message,
+        Some(accepted),
+        correction,
+    )
 }
 
 fn discovery_policy(config: &ReferenceConfig) -> InterfaceDiscoveryPolicy {
@@ -643,12 +701,8 @@ fn plan_interface(
     global_common: InterfaceCommonPolicy,
     global_announce_rate: AnnounceRateLimit,
     transport_enabled: bool,
-) -> Result<PlannedInterface, DeferReason> {
-    if !interface.enabled.unwrap_or(false) {
-        return Err(DeferReason::Disabled);
-    }
-    let mut unapplied = Vec::new();
-    let medium = plan_medium(interface, &mut unapplied)?;
+) -> Result<PlannedInterface, PlanErrorKind> {
+    let medium = plan_medium(interface)?;
     let access = plan_access(interface, &medium)?;
     let discovery = plan_interface_discovery(interface, &medium);
     let policy = effective_policy(
@@ -665,7 +719,6 @@ fn plan_interface(
         access,
         medium,
         discovery,
-        unapplied,
     })
 }
 
@@ -676,11 +729,11 @@ fn effective_policy(
     global_common: InterfaceCommonPolicy,
     global_announce_rate: AnnounceRateLimit,
     transport_enabled: bool,
-) -> Result<EffectiveInterfacePolicy, DeferReason> {
+) -> Result<EffectiveInterfacePolicy, PlanErrorKind> {
     let bitrate = interface
         .bitrate
         .map(|bitrate| {
-            BitrateBps::new(bitrate).ok_or(DeferReason::InvalidSetting {
+            BitrateBps::new(bitrate).ok_or(PlanErrorKind::InvalidSetting {
                 key: interface_key::BITRATE,
             })
         })
@@ -739,7 +792,7 @@ fn planned_announce_rate_limit(
     interface: &ReferenceInterface,
     global: AnnounceRateLimit,
     transport_enabled: bool,
-) -> Result<Option<AnnounceRateLimit>, DeferReason> {
+) -> Result<Option<AnnounceRateLimit>, PlanErrorKind> {
     let source = match (interface.announce_rate_target, transport_enabled) {
         (Some(target_seconds), _) => AnnounceRateSource::Interface { target_seconds },
         (None, true) => AnnounceRateSource::TransportDefault(global),
@@ -759,7 +812,7 @@ fn planned_announce_rate_limit(
         .announce_rate_grace
         .map(u16::try_from)
         .transpose()
-        .map_err(|_| DeferReason::InvalidSetting {
+        .map_err(|_| PlanErrorKind::InvalidSetting {
             key: interface_key::ANNOUNCE_RATE_GRACE,
         })?
         .unwrap_or(default_grace);
@@ -775,13 +828,13 @@ fn planned_announce_rate_limit(
     }))
 }
 
-fn checked_milliseconds(seconds: u64, key: &'static str) -> Result<u64, DeferReason> {
+fn checked_milliseconds(seconds: u64, key: &'static str) -> Result<u64, PlanErrorKind> {
     seconds
         .checked_mul(1_000)
-        .ok_or(DeferReason::InvalidSetting { key })
+        .ok_or(PlanErrorKind::InvalidSetting { key })
 }
 
-fn interface_defaults(medium: &PlannedMedium) -> Result<InterfaceDefaults, DeferReason> {
+fn interface_defaults(medium: &PlannedMedium) -> Result<InterfaceDefaults, PlanErrorKind> {
     match medium {
         PlannedMedium::AutoWifi { .. } => Ok(wifi_core::DEFAULTS),
         PlannedMedium::TcpClient { .. }
@@ -791,7 +844,7 @@ fn interface_defaults(medium: &PlannedMedium) -> Result<InterfaceDefaults, Defer
         PlannedMedium::Udp { .. } => Ok(udp_core::DEFAULTS),
         PlannedMedium::Serial { line, .. } => {
             let bitrate =
-                BitrateBps::new(u64::from(line.baud())).ok_or(DeferReason::InvalidSetting {
+                BitrateBps::new(u64::from(line.baud())).ok_or(PlanErrorKind::InvalidSetting {
                     key: interface_key::SPEED,
                 })?;
             Ok(serial_core::defaults_for_bitrate(bitrate))
@@ -807,15 +860,15 @@ fn interface_defaults(medium: &PlannedMedium) -> Result<InterfaceDefaults, Defer
         } => {
             let raw =
                 rnode_policy::nominal_bitrate_bps(*spreading_factor, *coding_rate, *bandwidth_hz);
-            let bitrate = BitrateBps::new(u64::from(raw)).ok_or(DeferReason::InvalidSetting {
-                key: "radio bitrate",
+            let bitrate = BitrateBps::new(u64::from(raw)).ok_or(PlanErrorKind::InvalidSetting {
+                key: interface_key::BANDWIDTH,
             })?;
             Ok(rnode_policy::defaults_for_bitrate(bitrate))
         }
     }
 }
 
-fn configured_mtu(interface: &ReferenceInterface) -> Result<Option<MtuPolicy>, DeferReason> {
+fn configured_mtu(interface: &ReferenceInterface) -> Result<Option<MtuPolicy>, PlanErrorKind> {
     let fixed_mtu = match &interface.params {
         ReferenceParams::TcpClient { fixed_mtu, .. }
         | ReferenceParams::TcpServer { fixed_mtu, .. } => *fixed_mtu,
@@ -824,13 +877,13 @@ fn configured_mtu(interface: &ReferenceInterface) -> Result<Option<MtuPolicy>, D
     fixed_mtu
         .map(|fixed_mtu| {
             if fixed_mtu > MAX_LINK_MTU {
-                return Err(DeferReason::InvalidSetting {
+                return Err(PlanErrorKind::InvalidSetting {
                     key: interface_key::FIXED_MTU,
                 });
             }
             MtuBytes::new(fixed_mtu)
                 .map(MtuPolicy::Fixed)
-                .ok_or(DeferReason::InvalidSetting {
+                .ok_or(PlanErrorKind::InvalidSetting {
                     key: interface_key::FIXED_MTU,
                 })
         })
@@ -883,7 +936,7 @@ fn plan_discovery_advertisement(
     let reachable_on = || {
         interface.discovery.reachable_on.clone().ok_or(
             DiscoveryPublicationProblem::MissingRequiredSetting {
-                key: "reachable_on",
+                key: interface_key::REACHABLE_ON,
             },
         )
     };
@@ -891,17 +944,17 @@ fn plan_discovery_advertisement(
         Ok(DiscoveryAdvertisementPlan::Kiss {
             frequency_hz: interface.discovery.frequency_hz.ok_or(
                 DiscoveryPublicationProblem::MissingRequiredSetting {
-                    key: "discovery_frequency",
+                    key: interface_key::DISCOVERY_FREQUENCY,
                 },
             )?,
             bandwidth_hz: interface.discovery.bandwidth_hz.ok_or(
                 DiscoveryPublicationProblem::MissingRequiredSetting {
-                    key: "discovery_bandwidth",
+                    key: interface_key::DISCOVERY_BANDWIDTH,
                 },
             )?,
             modulation: interface.discovery.modulation.clone().ok_or(
                 DiscoveryPublicationProblem::MissingRequiredSetting {
-                    key: "discovery_modulation",
+                    key: interface_key::DISCOVERY_MODULATION,
                 },
             )?,
         })
@@ -915,7 +968,9 @@ fn plan_discovery_advertisement(
         ) => Ok(DiscoveryAdvertisementPlan::Backbone {
             reachable_on: reachable_on()?,
             port: port.or(*listen_port).ok_or(
-                DiscoveryPublicationProblem::MissingRequiredSetting { key: "listen_port" },
+                DiscoveryPublicationProblem::MissingRequiredSetting {
+                    key: interface_key::LISTEN_PORT,
+                },
             )?,
         }),
         (
@@ -926,7 +981,9 @@ fn plan_discovery_advertisement(
         ) => Ok(DiscoveryAdvertisementPlan::TcpServer {
             reachable_on: reachable_on()?,
             port: port.or(*listen_port).ok_or(
-                DiscoveryPublicationProblem::MissingRequiredSetting { key: "listen_port" },
+                DiscoveryPublicationProblem::MissingRequiredSetting {
+                    key: interface_key::LISTEN_PORT,
+                },
             )?,
         }),
         (
@@ -954,7 +1011,7 @@ fn plan_discovery_advertisement(
         ) => kiss(),
         (PlannedMedium::TcpClient { .. }, ReferenceParams::TcpClient { .. }) => {
             Err(DiscoveryPublicationProblem::IncompatibleSetting {
-                key: "kiss_framing",
+                key: interface_key::KISS_FRAMING,
             })
         }
         _ => Err(DiscoveryPublicationProblem::UnsupportedInterfaceType),
@@ -987,7 +1044,7 @@ fn planned_mode(
 fn plan_access(
     interface: &ReferenceInterface,
     medium: &PlannedMedium,
-) -> Result<InterfaceAccessPlan, DeferReason> {
+) -> Result<InterfaceAccessPlan, PlanErrorKind> {
     if interface.network_name.is_none() && interface.passphrase.is_none() {
         return Ok(InterfaceAccessPlan::Open);
     }
@@ -1006,7 +1063,7 @@ fn plan_access(
     };
     let size = match interface.ifac_size_bits {
         Some(bits) if bits >= 8 => {
-            IfacSize::new((bits / 8) as usize).map_err(|_| DeferReason::InvalidSetting {
+            IfacSize::new((bits / 8) as usize).map_err(|_| PlanErrorKind::InvalidSetting {
                 key: interface_key::IFAC_SIZE,
             })?
         }
@@ -1019,46 +1076,11 @@ fn plan_access(
     })
 }
 
-fn plan_medium(
-    interface: &ReferenceInterface,
-    unapplied: &mut Vec<UnappliedSetting>,
-) -> Result<PlannedMedium, DeferReason> {
+fn plan_medium(interface: &ReferenceInterface) -> Result<PlannedMedium, PlanErrorKind> {
     match &interface.params {
-        ReferenceParams::Auto {
-            group_id,
-            discovery_scope,
-            discovery_port,
-            data_port,
-            devices,
-            ignored_devices,
-            multicast_address_type,
-        } => {
-            note_present(
-                unapplied,
-                interface_key::DISCOVERY_SCOPE,
-                discovery_scope.is_some(),
-            );
-            note_present(
-                unapplied,
-                interface_key::DISCOVERY_PORT,
-                discovery_port.is_some(),
-            );
-            note_present(unapplied, interface_key::DATA_PORT, data_port.is_some());
-            note_present(unapplied, interface_key::DEVICES, devices.is_some());
-            note_present(
-                unapplied,
-                interface_key::IGNORED_DEVICES,
-                ignored_devices.is_some(),
-            );
-            note_present(
-                unapplied,
-                interface_key::MULTICAST_ADDRESS_TYPE,
-                multicast_address_type.is_some(),
-            );
-            Ok(PlannedMedium::AutoWifi {
-                group: group_id.clone(),
-            })
-        }
+        ReferenceParams::Auto { group_id, .. } => Ok(PlannedMedium::AutoWifi {
+            group: group_id.clone(),
+        }),
         ReferenceParams::TcpClient {
             target_host,
             target_port,
@@ -1070,10 +1092,10 @@ fn plan_medium(
         } => {
             let host = target_host
                 .clone()
-                .ok_or(DeferReason::MissingRequiredField {
+                .ok_or(PlanErrorKind::MissingRequiredField {
                     key: interface_key::TARGET_HOST,
                 })?;
-            let port = target_port.ok_or(DeferReason::MissingRequiredField {
+            let port = target_port.ok_or(PlanErrorKind::MissingRequiredField {
                 key: interface_key::TARGET_PORT,
             })?;
             Ok(PlannedMedium::TcpClient {
@@ -1104,20 +1126,20 @@ fn plan_medium(
         } => {
             let listen_port = port
                 .or(*listen_port)
-                .ok_or(DeferReason::MissingRequiredField {
+                .ok_or(PlanErrorKind::MissingRequiredField {
                     key: interface_key::LISTEN_PORT,
                 })?;
-            note_present(
-                unapplied,
-                interface_key::KISS_FRAMING,
-                kiss_framing.is_some(),
-            );
             Ok(PlannedMedium::TcpServer {
                 listener: TcpListenPlan {
                     host: tcp_listen_host(listen_ip, device),
                     port: listen_port,
                     address_family: preferred_ip_family(*prefer_ipv6),
                     tunnel: tunnel_mode(*i2p_tunneled),
+                },
+                framing: if *kiss_framing == Some(true) {
+                    TcpWireFraming::Kiss
+                } else {
+                    TcpWireFraming::Hdlc
                 },
             })
         }
@@ -1146,7 +1168,7 @@ fn plan_medium(
                 (Some(listen), None) => UdpFlowPlan::ReceiveOnly { listen },
                 (None, Some(forward)) => UdpFlowPlan::SendOnly { forward },
                 (None, None) => {
-                    return Err(DeferReason::MissingRequiredField {
+                    return Err(PlanErrorKind::MissingRequiredField {
                         key: interface_key::LISTEN_IP,
                     })
                 }
@@ -1160,7 +1182,7 @@ fn plan_medium(
             parity,
             stopbits,
         } => {
-            let device = port.clone().ok_or(DeferReason::MissingRequiredField {
+            let device = port.clone().ok_or(PlanErrorKind::MissingRequiredField {
                 key: interface_key::PORT,
             })?;
             Ok(PlannedMedium::Serial {
@@ -1182,7 +1204,7 @@ fn plan_medium(
             id_callsign,
             id_interval,
         } => {
-            let device = port.clone().ok_or(DeferReason::MissingRequiredField {
+            let device = port.clone().ok_or(PlanErrorKind::MissingRequiredField {
                 key: interface_key::PORT,
             })?;
             Ok(PlannedMedium::Kiss {
@@ -1212,13 +1234,15 @@ fn plan_medium(
             callsign,
             ssid,
         } => {
-            let device = port.clone().ok_or(DeferReason::MissingRequiredField {
+            let device = port.clone().ok_or(PlanErrorKind::MissingRequiredField {
                 key: interface_key::PORT,
             })?;
-            let callsign = callsign.clone().ok_or(DeferReason::MissingRequiredField {
-                key: interface_key::CALLSIGN,
-            })?;
-            let ssid = ssid.ok_or(DeferReason::MissingRequiredField {
+            let callsign = callsign
+                .clone()
+                .ok_or(PlanErrorKind::MissingRequiredField {
+                    key: interface_key::CALLSIGN,
+                })?;
+            let ssid = ssid.ok_or(PlanErrorKind::MissingRequiredField {
                 key: interface_key::SSID,
             })?;
             Ok(PlannedMedium::Ax25Kiss {
@@ -1244,25 +1268,27 @@ fn plan_medium(
             airtime_limit_short,
             airtime_limit_long,
         } => {
-            let device = port.clone().ok_or(DeferReason::MissingRequiredField {
+            let device = port.clone().ok_or(PlanErrorKind::MissingRequiredField {
                 key: interface_key::PORT,
             })?;
-            let frequency_hz = radio.frequency.ok_or(DeferReason::MissingRequiredField {
+            let frequency_hz = radio.frequency.ok_or(PlanErrorKind::MissingRequiredField {
                 key: interface_key::FREQUENCY,
             })?;
-            let bandwidth_hz = radio.bandwidth.ok_or(DeferReason::MissingRequiredField {
+            let bandwidth_hz = radio.bandwidth.ok_or(PlanErrorKind::MissingRequiredField {
                 key: interface_key::BANDWIDTH,
             })?;
             let spreading_factor =
                 radio
                     .spreadingfactor
-                    .ok_or(DeferReason::MissingRequiredField {
+                    .ok_or(PlanErrorKind::MissingRequiredField {
                         key: interface_key::SPREADINGFACTOR,
                     })?;
-            let coding_rate = radio.codingrate.ok_or(DeferReason::MissingRequiredField {
-                key: interface_key::CODINGRATE,
-            })?;
-            let txpower_dbm = radio.txpower.ok_or(DeferReason::MissingRequiredField {
+            let coding_rate = radio
+                .codingrate
+                .ok_or(PlanErrorKind::MissingRequiredField {
+                    key: interface_key::CODINGRATE,
+                })?;
+            let txpower_dbm = radio.txpower.ok_or(PlanErrorKind::MissingRequiredField {
                 key: interface_key::TXPOWER,
             })?;
             Ok(PlannedMedium::Rnode {
@@ -1290,7 +1316,7 @@ fn plan_medium(
         } => {
             let command = command
                 .as_deref()
-                .ok_or(DeferReason::MissingRequiredField {
+                .ok_or(PlanErrorKind::MissingRequiredField {
                     key: interface_key::COMMAND,
                 })?;
             Ok(PlannedMedium::Pipe {
@@ -1313,12 +1339,12 @@ fn plan_medium(
             if target_host.is_some() || interface.type_name == "BackboneClientInterface" {
                 let host = target_host
                     .clone()
-                    .ok_or(DeferReason::MissingRequiredField {
+                    .ok_or(PlanErrorKind::MissingRequiredField {
                         key: interface_key::TARGET_HOST,
                     })?;
                 let port = port
                     .or(*target_port)
-                    .ok_or(DeferReason::MissingRequiredField {
+                    .ok_or(PlanErrorKind::MissingRequiredField {
                         key: interface_key::TARGET_PORT,
                     })?;
                 Ok(PlannedMedium::BackboneClient {
@@ -1335,14 +1361,9 @@ fn plan_medium(
                 let bind_port =
                     (*port)
                         .or(*listen_port)
-                        .ok_or(DeferReason::MissingRequiredField {
+                        .ok_or(PlanErrorKind::MissingRequiredField {
                             key: interface_key::LISTEN_PORT,
                         })?;
-                note_present(
-                    unapplied,
-                    interface_key::I2P_TUNNELED,
-                    i2p_tunneled.is_some(),
-                );
                 Ok(PlannedMedium::Backbone {
                     listener: TcpListenPlan {
                         host: tcp_listen_host(listen_ip, device),
@@ -1353,7 +1374,7 @@ fn plan_medium(
                 })
             }
         }
-        _ => Err(DeferReason::UnsupportedKind),
+        _ => Err(PlanErrorKind::UnsupportedKind),
     }
 }
 
@@ -1406,7 +1427,7 @@ fn udp_endpoint(
     port: Option<u16>,
     device: Option<&str>,
     port_key: &'static str,
-) -> Result<Option<UdpEndpointPlan>, DeferReason> {
+) -> Result<Option<UdpEndpointPlan>, PlanErrorKind> {
     if address.is_none() && port.is_none() {
         return Ok(None);
     }
@@ -1417,7 +1438,7 @@ fn udp_endpoint(
     };
     match (host, port) {
         (Some(host), Some(port)) => Ok(Some(UdpEndpointPlan { host, port })),
-        (Some(_), None) => Err(DeferReason::MissingRequiredField { key: port_key }),
+        (Some(_), None) => Err(PlanErrorKind::MissingRequiredField { key: port_key }),
         (None, _) => Ok(None),
     }
 }
@@ -1440,10 +1461,10 @@ fn serial_line(
     data_bits: Option<u8>,
     parity: Option<&str>,
     stop_bits: Option<u8>,
-) -> Result<SerialLinePlan, DeferReason> {
+) -> Result<SerialLinePlan, PlanErrorKind> {
     let baud = speed.unwrap_or(RNS_DEFAULT_SERIAL_BAUD);
     if u64::from(baud) < BitrateBps::MINIMUM {
-        return Err(DeferReason::InvalidSetting {
+        return Err(PlanErrorKind::InvalidSetting {
             key: interface_key::SPEED,
         });
     }
@@ -1453,7 +1474,7 @@ fn serial_line(
         7 => SerialDataBits::Seven,
         8 => SerialDataBits::Eight,
         _ => {
-            return Err(DeferReason::InvalidSetting {
+            return Err(PlanErrorKind::InvalidSetting {
                 key: interface_key::DATABITS,
             })
         }
@@ -1463,7 +1484,7 @@ fn serial_line(
         "e" | "even" => SerialParity::Even,
         "o" | "odd" => SerialParity::Odd,
         _ => {
-            return Err(DeferReason::InvalidSetting {
+            return Err(PlanErrorKind::InvalidSetting {
                 key: interface_key::PARITY,
             })
         }
@@ -1472,7 +1493,7 @@ fn serial_line(
         1 => SerialStopBits::One,
         2 => SerialStopBits::Two,
         _ => {
-            return Err(DeferReason::InvalidSetting {
+            return Err(PlanErrorKind::InvalidSetting {
                 key: interface_key::STOPBITS,
             })
         }
@@ -1496,16 +1517,16 @@ fn station_identification(
     callsign: Option<&str>,
     interval_seconds: Option<u64>,
     maximum_callsign_bytes: Option<usize>,
-) -> Result<Option<StationIdentificationPlan>, DeferReason> {
+) -> Result<Option<StationIdentificationPlan>, PlanErrorKind> {
     let (callsign, interval_seconds) = match (callsign, interval_seconds) {
         (None, None) => return Ok(None),
         (Some(_), None) => {
-            return Err(DeferReason::MissingRequiredField {
+            return Err(PlanErrorKind::MissingRequiredField {
                 key: interface_key::ID_INTERVAL,
             })
         }
         (None, Some(_)) => {
-            return Err(DeferReason::MissingRequiredField {
+            return Err(PlanErrorKind::MissingRequiredField {
                 key: interface_key::ID_CALLSIGN,
             })
         }
@@ -1513,7 +1534,7 @@ fn station_identification(
     };
     if callsign.is_empty() || maximum_callsign_bytes.is_some_and(|maximum| callsign.len() > maximum)
     {
-        return Err(DeferReason::InvalidSetting {
+        return Err(PlanErrorKind::InvalidSetting {
             key: interface_key::ID_CALLSIGN,
         });
     }
@@ -1526,20 +1547,20 @@ fn station_identification(
 fn airtime_limit(
     percent: Option<f64>,
     key: &'static str,
-) -> Result<Option<AirtimeLimitCentiPercent>, DeferReason> {
+) -> Result<Option<AirtimeLimitCentiPercent>, PlanErrorKind> {
     let Some(percent) = percent else {
         return Ok(None);
     };
     if !percent.is_finite() || !(0.0..=100.0).contains(&percent) {
-        return Err(DeferReason::InvalidSetting { key });
+        return Err(PlanErrorKind::InvalidSetting { key });
     }
     Ok(Some(AirtimeLimitCentiPercent((percent * 100.0) as u16)))
 }
 
-fn pipe_respawn_delay(seconds: Option<f64>) -> Result<PipeRespawnDelay, DeferReason> {
+fn pipe_respawn_delay(seconds: Option<f64>) -> Result<PipeRespawnDelay, PlanErrorKind> {
     let duration = match seconds {
         Some(seconds) => {
-            Duration::try_from_secs_f64(seconds).map_err(|_| DeferReason::InvalidSetting {
+            Duration::try_from_secs_f64(seconds).map_err(|_| PlanErrorKind::InvalidSetting {
                 key: interface_key::RESPAWN_DELAY,
             })?
         }
@@ -1548,9 +1569,9 @@ fn pipe_respawn_delay(seconds: Option<f64>) -> Result<PipeRespawnDelay, DeferRea
     Ok(PipeRespawnDelay(duration))
 }
 
-fn pipe_command(source: &str) -> Result<PipeCommandPlan, DeferReason> {
+fn pipe_command(source: &str) -> Result<PipeCommandPlan, PlanErrorKind> {
     let argv = shlex::split(source).filter(|argv| !argv.is_empty()).ok_or(
-        DeferReason::InvalidSetting {
+        PlanErrorKind::InvalidSetting {
             key: interface_key::COMMAND,
         },
     )?;
@@ -1560,9 +1581,9 @@ fn pipe_command(source: &str) -> Result<PipeCommandPlan, DeferReason> {
     })
 }
 
-fn announce_bandwidth_cap(percent: f64) -> Result<AnnounceBandwidthCap, DeferReason> {
+fn announce_bandwidth_cap(percent: f64) -> Result<AnnounceBandwidthCap, PlanErrorKind> {
     if !percent.is_finite() || !(0.0..=100.0).contains(&percent) {
-        return Err(DeferReason::InvalidSetting {
+        return Err(PlanErrorKind::InvalidSetting {
             key: interface_key::ANNOUNCE_CAP,
         });
     }
@@ -1575,7 +1596,7 @@ fn announce_bandwidth_cap(percent: f64) -> Result<AnnounceBandwidthCap, DeferRea
 fn interface_common_policy(
     interface: &ReferenceInterface,
     global: InterfaceCommonPolicy,
-) -> Result<InterfaceCommonPolicy, DeferReason> {
+) -> Result<InterfaceCommonPolicy, PlanErrorKind> {
     let mut common = global;
     common.forwarding = InterfaceForwardingPolicy {
         recursive_path_requests: interface
@@ -1593,7 +1614,7 @@ fn interface_common_policy(
         .unwrap_or(common.path_request_egress.enabled);
     if let Some(value) = interface.ic_max_held_announces {
         common.ingress_control.max_held_announces =
-            usize::try_from(value).map_err(|_| DeferReason::InvalidSetting {
+            usize::try_from(value).map_err(|_| PlanErrorKind::InvalidSetting {
                 key: common_key::IC_MAX_HELD_ANNOUNCES,
             })?;
     }
@@ -1650,7 +1671,7 @@ impl CommonNumberOverrides {
 fn apply_common_numbers(
     configured: CommonNumberOverrides,
     common: &mut InterfaceCommonPolicy,
-) -> Result<(), DeferReason> {
+) -> Result<(), PlanErrorKind> {
     if let Some(value) = configured.new_time {
         common.ingress_control.new_interface_ms =
             seconds_to_millis(value, common_key::IC_NEW_TIME)?;
@@ -1688,18 +1709,21 @@ fn apply_common_numbers(
     Ok(())
 }
 
-fn seconds_to_millis(value: f64, key: &'static str) -> Result<u64, DeferReason> {
+fn seconds_to_millis(value: f64, key: &'static str) -> Result<u64, PlanErrorKind> {
     let millis = (value * 1_000.0).round();
     if !value.is_finite() || value < 0.0 || millis >= u64::MAX as f64 {
-        return Err(DeferReason::InvalidSetting { key });
+        return Err(PlanErrorKind::InvalidSetting { key });
     }
     Ok(millis as u64)
 }
 
-fn hertz_to_milli_hertz(value: f64, key: &'static str) -> Result<FrequencyMilliHertz, DeferReason> {
+fn hertz_to_milli_hertz(
+    value: f64,
+    key: &'static str,
+) -> Result<FrequencyMilliHertz, PlanErrorKind> {
     let milli_hertz = (value * 1_000.0).round();
     if !value.is_finite() || value < 0.0 || milli_hertz >= u64::MAX as f64 {
-        return Err(DeferReason::InvalidSetting { key });
+        return Err(PlanErrorKind::InvalidSetting { key });
     }
     Ok(FrequencyMilliHertz::new(milli_hertz as u64))
 }
@@ -1738,12 +1762,6 @@ fn global_announce_rate(config: &ReferenceConfig) -> AnnounceRateLimit {
         penalty_ms: penalty_seconds
             .checked_mul(1_000)
             .expect("validated default_ar_penalty must fit milliseconds"),
-    }
-}
-
-fn note_present(unapplied: &mut Vec<UnappliedSetting>, key: &'static str, present: bool) {
-    if present {
-        unapplied.push(UnappliedSetting::MediumOption(key));
     }
 }
 
@@ -1824,7 +1842,7 @@ mod tests {
     use crate::reference::parse;
 
     fn plan_of(config: &str) -> DaemonPlan {
-        plan(&parse(config).expect("config parses"))
+        parse_and_plan(config).expect("config plans").value
     }
 
     fn named<'a>(plan: &'a DaemonPlan, name: &str) -> &'a PlannedInterface {
@@ -2276,7 +2294,7 @@ mod tests {
             named(&plan, "Private TCP").discovery,
             InterfaceDiscoveryPlan::Unpublishable(
                 DiscoveryPublicationProblem::IncompatibleSetting {
-                    key: "kiss_framing",
+                    key: interface_key::KISS_FRAMING,
                 }
             )
         );
@@ -2284,7 +2302,7 @@ mod tests {
             named(&plan, "Incomplete Server").discovery,
             InterfaceDiscoveryPlan::Unpublishable(
                 DiscoveryPublicationProblem::MissingRequiredSetting {
-                    key: "reachable_on",
+                    key: interface_key::REACHABLE_ON,
                 }
             )
         );
@@ -2318,7 +2336,6 @@ mod tests {
     fn every_host_constructible_medium_maps() {
         let plan = plan_of(STOCK);
         assert_eq!(plan.interfaces.len(), 5);
-        assert!(plan.deferred.is_empty());
         assert_eq!(
             named(&plan, "Default Interface").medium,
             PlannedMedium::AutoWifi { group: None }
@@ -2334,6 +2351,7 @@ mod tests {
             named(&plan, "Listener").medium,
             PlannedMedium::TcpServer {
                 listener: tcp_listener(TcpListenHost::Address("0.0.0.0".to_string()), 4242),
+                framing: TcpWireFraming::Hdlc,
             }
         );
         assert_eq!(
@@ -2361,7 +2379,7 @@ mod tests {
              [[Client]]\ntype = TCPClientInterface\nenabled = Yes\ntarget_host = peer\ntarget_port = 4242\n\
              i2p_tunneled = Yes\nconnect_timeout = 11\nmax_reconnect_tries = 3\n\
              [[Server]]\ntype = TCPServerInterface\nenabled = Yes\nport = 4243\nprefer_ipv6 = Yes\n\
-             i2p_tunneled = Yes\n",
+             i2p_tunneled = Yes\nkiss_framing = Yes\n",
         );
         assert_eq!(
             named(&plan, "Client").medium,
@@ -2385,11 +2403,10 @@ mod tests {
                     port: 4243,
                     address_family: AddressFamilyPreference::Ipv6,
                     tunnel: TcpTunnelMode::I2p,
-                }
+                },
+                framing: TcpWireFraming::Kiss,
             }
         );
-        assert!(named(&plan, "Client").unapplied.is_empty());
-        assert!(named(&plan, "Server").unapplied.is_empty());
     }
 
     #[test]
@@ -2436,7 +2453,6 @@ mod tests {
                 }),
             }
         );
-        assert!(tnc.unapplied.is_empty());
     }
 
     #[test]
@@ -2618,7 +2634,6 @@ mod tests {
                 }
             }
         );
-        assert!(spine.unapplied.is_empty());
 
         let client = plan_of(
             "[interfaces]\n[[Uplink]]\ntype = BackboneClientInterface\nenabled = Yes\n\
@@ -2639,7 +2654,6 @@ mod tests {
                 }
             }
         );
-        assert!(uplink.unapplied.is_empty());
     }
 
     #[test]
@@ -2648,7 +2662,6 @@ mod tests {
             "[interfaces]\n[[Off]]\ntype = TCPClientInterface\ntarget_host = h\ntarget_port = 1\n",
         );
         assert!(plan.interfaces.is_empty());
-        assert!(plan.deferred.is_empty());
     }
 
     #[test]
@@ -2731,7 +2744,6 @@ mod tests {
                 interval_seconds: 600,
             })
         );
-        assert!(radio.unapplied.is_empty());
     }
 
     #[test]
@@ -2943,9 +2955,6 @@ mod tests {
 
         assert_eq!(fast.policy.bitrate.get(), 5_000_000_000);
         assert_eq!(fast.policy.mtu.resolve(fast.policy.bitrate), Some(4_096));
-        assert!(!fast
-            .unapplied
-            .contains(&UnappliedSetting::MediumOption(interface_key::FIXED_MTU)));
     }
 
     #[test]
@@ -2984,7 +2993,7 @@ mod tests {
     }
 
     #[test]
-    fn common_settings_are_applied_while_medium_follow_ons_remain_visible() {
+    fn common_and_medium_settings_are_applied() {
         let plan = plan_of(
             "[interfaces]\n\
                [[Hub]]\n\
@@ -3027,9 +3036,6 @@ mod tests {
                 ..
             }
         ));
-        assert!(!hub
-            .unapplied
-            .contains(&UnappliedSetting::MediumOption(interface_key::KISS_FRAMING)));
     }
 
     #[test]
@@ -3082,27 +3088,22 @@ mod tests {
     }
 
     #[test]
-    fn an_oversize_ifac_defers_but_size_alone_does_not_enable_access() {
-        let protected = plan_of(
+    fn an_oversize_ifac_fails_before_a_plan_is_returned() {
+        let protected = parse_and_plan(
             "[interfaces]\n[[TooWide]]\ntype = TCPClientInterface\nenabled = Yes\ntarget_host = h\ntarget_port = 1\nnetwork_name = n\nifac_size = 520\n",
-        );
+        )
+        .expect_err("oversize IFAC is invalid");
         assert_eq!(
-            protected.deferred[0].why,
-            DeferReason::InvalidSetting {
-                key: interface_key::IFAC_SIZE
-            }
+            protected.diagnostics()[0].code(),
+            ConfigDiagnosticCode::InvalidValue
         );
-
-        let open = plan_of(
+        let open = parse_and_plan(
             "[interfaces]\n[[Open]]\ntype = TCPClientInterface\nenabled = Yes\ntarget_host = h\ntarget_port = 1\nifac_size = 520\n",
+        )
+        .expect_err("unused invalid IFAC is still invalid config");
+        assert_eq!(
+            open.diagnostics()[0].code(),
+            ConfigDiagnosticCode::InvalidValue
         );
-        assert_eq!(named(&open, "Open").access, InterfaceAccessPlan::Open);
-    }
-
-    #[test]
-    fn a_clean_interface_carries_no_unapplied_noise() {
-        let plan = plan_of(STOCK);
-        assert!(named(&plan, "Hub").unapplied.is_empty());
-        assert!(named(&plan, "Default Interface").unapplied.is_empty());
     }
 }

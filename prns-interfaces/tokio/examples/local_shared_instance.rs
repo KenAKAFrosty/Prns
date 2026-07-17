@@ -11,6 +11,7 @@ use personal_rns::runtime::{
     Diagnostic, Manual, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeRecipe,
 };
 use personal_rns::storage::GrowableHeap;
+use prns_core::interfaces::shared_instance::core::DEFAULT_LOCAL_PORT;
 use prns_interfaces_tokio::shared_instance::server::LocalServer;
 
 fn hex16(bytes: &[u8]) -> String {
@@ -23,6 +24,9 @@ fn hex16(bytes: &[u8]) -> String {
 
 #[tokio::main]
 async fn main() {
+    let port = std::env::var("PRNS_LOCAL_PORT").map_or(DEFAULT_LOCAL_PORT, |value| {
+        value.parse().expect("shared-instance port is a u16")
+    });
     let identity = Zeroizing::new([0x5au8; IDENTITY_SECRET_KEY_LEN]);
     let node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
@@ -58,7 +62,7 @@ async fn main() {
         },
     });
     let handle = node.handle();
-    handle.supervise(LocalServer::new());
-    println!("READY shared-instance on 127.0.0.1:37428");
+    handle.supervise(LocalServer::with_port(port));
+    println!("READY shared-instance on 127.0.0.1:{port}");
     node.run().await;
 }

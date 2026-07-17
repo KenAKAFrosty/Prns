@@ -27,8 +27,8 @@ use std::fmt;
 use std::process::{self, ExitCode};
 
 use personal_rns::config::{
-    discover, plan, SharedInstance, SharedInstanceTransport as ConfigSharedInstanceTransport,
-    TransportIdentityPolicy,
+    discover, parse_and_plan_named, SharedInstance,
+    SharedInstanceTransport as ConfigSharedInstanceTransport, TransportIdentityPolicy,
 };
 use personal_rns::engine::{
     EngineProtocolPolicy, LinkMtuDiscovery, LocalHopCountOverride, ProofForm,
@@ -304,7 +304,7 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
         None => (DEFAULT_CONFIG.to_string(), "<built-in config>".to_string()),
     };
 
-    let report = match personal_rns::config::reference::parse_named(&config_source, &config_text) {
+    let report = match parse_and_plan_named(&config_source, &config_text) {
         Ok(report) => report,
         Err(errors) => {
             for diagnostic in errors.diagnostics() {
@@ -313,7 +313,7 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
             process::exit(1);
         }
     };
-    let plan = plan(&report.value);
+    let plan = report.value;
     let observability = match observability::init(cli.log_format, plan.logging) {
         Ok(observability) => observability,
         Err(error) => {
@@ -657,7 +657,6 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
             "daemon_ready"
         },
         transport = routing_enabled,
-        deferred_interfaces = plan.deferred.len(),
         online = startup.online,
         listening = startup.listening,
         retrying = startup.retrying,

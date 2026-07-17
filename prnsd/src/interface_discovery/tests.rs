@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use personal_rns::config::{plan, reference};
+use personal_rns::config::parse_and_plan;
 use personal_rns::identity::IdentityHash;
 use personal_rns::interface_discovery::{
     AdvertisedInterfaceType, AdvertisedTransport, AdvertisementDetails, DiscoveredInterface,
@@ -68,9 +68,9 @@ fn discovered(received_at: InstantMillis) -> DiscoveredInterface {
 #[test]
 fn enabled_discovery_selects_the_well_known_config_directory_archive() {
     let directory = TestDirectory::new();
-    let config = reference::parse("[reticulum]\ndiscover_interfaces = Yes\n")
-        .expect("the fixture config is valid");
-    let plan = plan(&config);
+    let plan = parse_and_plan("[reticulum]\ndiscover_interfaces = Yes\n")
+        .expect("the fixture config is valid")
+        .value;
 
     let prepared = PreparedDiscovery::from_plan(&plan, None, &directory.0)
         .expect("the fixture enables discovery");
@@ -89,9 +89,9 @@ fn disabled_discovery_leaves_an_existing_archive_untouched() {
     let path = directory.0.join(DISCOVERED_INTERFACES_FILE);
     let original = b"existing archive contents\n";
     fs::write(&path, original).expect("the fixture archive is writable");
-    let config = reference::parse("[reticulum]\ndiscover_interfaces = No\n")
-        .expect("the fixture config is valid");
-    let plan = plan(&config);
+    let plan = parse_and_plan("[reticulum]\ndiscover_interfaces = No\n")
+        .expect("the fixture config is valid")
+        .value;
 
     let prepared = PreparedDiscovery::from_plan(&plan, None, &directory.0);
 
