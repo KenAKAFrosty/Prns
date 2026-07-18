@@ -105,8 +105,9 @@ fn seed_parallel<S: StorageLayout>(
     workers: NonZeroUsize,
     mut progress: impl FnMut(RouteSeedProgress),
 ) -> RouteRestoreExecution {
-    let mut pending = Vec::new();
-    let mut prepared = Vec::new();
+    let row_capacity = usize::try_from(total_count).unwrap_or_default();
+    let mut pending = Vec::with_capacity(row_capacity);
+    let mut prepared = Vec::with_capacity(row_capacity);
     let mut preflight_completed = 0u32;
     for row in rows {
         let Ok(row) = row else {

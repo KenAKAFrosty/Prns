@@ -26,6 +26,21 @@ const TAG_LEN: usize = 1;
 const HOPS_LEN: usize = 1;
 const APP_DATA_LEN_PREFIX_LEN: usize = 2;
 const RING_COUNT_PREFIX_LEN: usize = 1;
+const MIN_PERSISTED_ROUTE_ROW_WIRE_LEN: usize = TRUNCATED_HASH_BYTE_LEN
+    + HOPS_LEN
+    + INSTANT_LEN
+    + INSTANT_LEN
+    + TAG_LEN
+    + INTERFACE_ID_LEN
+    + TAG_LEN
+    + X25519PublicKey::LEN
+    + Ed25519PublicKey::LEN
+    + DOTTED_NAME_HASH_BYTE_LEN
+    + ANNOUNCE_ID_WIRE_LEN
+    + TAG_LEN
+    + SIGNATURE_BYTE_LEN
+    + APP_DATA_LEN_PREFIX_LEN
+    + RING_COUNT_PREFIX_LEN;
 
 const RESPONSIVENESS_UNKNOWN_TAG: u8 = 0;
 const RESPONSIVENESS_RESPONSIVE_TAG: u8 = 1;
@@ -51,32 +66,16 @@ impl From<SnapshotSealError> for RoutingTableSnapshotWriteError {
 }
 
 pub fn persisted_route_row_wire_len(row: &PersistedRouteRow<'_>) -> usize {
-    let next_hop_len = TAG_LEN
+    MIN_PERSISTED_ROUTE_ROW_WIRE_LEN
         + match row.entry.next_hop {
             NextHop::Direct => 0,
             NextHop::Via(_) => TRUNCATED_HASH_BYTE_LEN,
-        };
-    let ratchet_len = TAG_LEN
+        }
         + match row.ratchet {
             None => 0,
             Some(_) => RATCHET_BYTE_LEN,
-        };
-    TRUNCATED_HASH_BYTE_LEN
-        + HOPS_LEN
-        + INSTANT_LEN
-        + INSTANT_LEN
-        + TAG_LEN
-        + INTERFACE_ID_LEN
-        + next_hop_len
-        + X25519PublicKey::LEN
-        + Ed25519PublicKey::LEN
-        + DOTTED_NAME_HASH_BYTE_LEN
-        + ANNOUNCE_ID_WIRE_LEN
-        + ratchet_len
-        + SIGNATURE_BYTE_LEN
-        + APP_DATA_LEN_PREFIX_LEN
+        }
         + row.app_data.len()
-        + RING_COUNT_PREFIX_LEN
         + row.announce_id_ring.len().min(RING_MAX_PERSISTED_IDS) * ANNOUNCE_ID_WIRE_LEN
 }
 
@@ -228,9 +227,15 @@ pub fn read_routing_table_snapshot(
     let Some((row_count_bytes, rows)) = payload.split_first_chunk::<ROW_COUNT_LEN>() else {
         return Err(SnapshotReadError::MalformedPayload);
     };
+    let remaining_rows = u32::from_le_bytes(*row_count_bytes);
+    let remaining_rows_usize =
+        usize::try_from(remaining_rows).map_err(|_| SnapshotReadError::MalformedPayload)?;
+    if remaining_rows_usize > rows.len() / MIN_PERSISTED_ROUTE_ROW_WIRE_LEN {
+        return Err(SnapshotReadError::MalformedPayload);
+    }
     Ok(PersistedRouteRows {
         rest: rows,
-        remaining_rows: u32::from_le_bytes(*row_count_bytes),
+        remaining_rows,
         poisoned: false,
     })
 }
@@ -537,6 +542,24 @@ mod tests {
         let mut reader = read_routing_table_snapshot(&sealed[..len]).unwrap();
         assert!(matches!(
             reader.next().unwrap(),
+            Err(SnapshotReadError::MalformedPayload)
+        ));
+    }
+
+    #[test]
+    fn a_declared_row_count_that_cannot_fit_the_payload_is_refused() {
+        let mut payload = std::vec![0u8; ROW_COUNT_LEN];
+        payload.copy_from_slice(&u32::MAX.to_le_bytes());
+        let mut sealed = std::vec![0u8; SNAPSHOT_OVERHEAD_LEN + payload.len()];
+        let len = super::super::envelope::seal_snapshot(
+            SnapshotRegion::RoutingTable,
+            &payload,
+            &mut sealed,
+        )
+        .unwrap();
+
+        assert!(matches!(
+            read_routing_table_snapshot(&sealed[..len]),
             Err(SnapshotReadError::MalformedPayload)
         ));
     }
