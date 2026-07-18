@@ -18,8 +18,9 @@ use crate::wire::{
 };
 
 /// RNS 1.3.5 `Reticulum.DEFAULT_PER_HOP_TIMEOUT` (6s), serving both as the first-hop fallback (`Transport.first_hop_timeout` without bitrate data) and the per-hop increment (`Packet.TIMEOUT_PER_HOP`).
-pub const DEFAULT_FIRST_HOP_TIMEOUT_MS: u64 = 6_000;
-pub const DEFAULT_PER_HOP_TIMEOUT_MS: u64 = 6_000;
+pub const DEFAULT_PER_HOP_TIMEOUT_SECONDS: u32 = 6;
+pub const DEFAULT_FIRST_HOP_TIMEOUT_MS: u64 = DEFAULT_PER_HOP_TIMEOUT_SECONDS as u64 * 1_000;
+pub const DEFAULT_PER_HOP_TIMEOUT_MS: u64 = DEFAULT_PER_HOP_TIMEOUT_SECONDS as u64 * 1_000;
 
 pub const SEND_SINGLE_ENTROPY_LEN: usize = 32 + ENCRYPTION_IV_LEN;
 

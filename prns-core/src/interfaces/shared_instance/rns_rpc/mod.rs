@@ -17,7 +17,7 @@ pub use framing::{
     EncodedRpcFrameHeader, RpcFrameHeaderEncodeError, RpcFrameHeaderPrefix, RpcFrameLength,
     RpcFrameLengthDecodeError,
 };
-pub use reply::{RnsRpcReply, RnsRpcReplyEncodeError};
+pub use reply::{LegacyRpcReplyPlan, RnsRpcReply, RnsRpcReplyEncodeError, RpcOperationOutcome};
 pub use request::{
     DestinationDataOperation, PacketHashArgument, RnsInteger, RnsNumber, RnsRpcRequest,
     RpcRequestDecodeError,

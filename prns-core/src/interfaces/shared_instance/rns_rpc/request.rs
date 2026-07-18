@@ -5,6 +5,7 @@ use rmp::decode::{read_marker, Bytes, RmpRead};
 use rmp::Marker;
 
 use crate::identity::IdentityHash;
+use crate::routing::dedup::{PacketHash, PACKET_HASH_LEN};
 use crate::routing::BlackholeExpiry;
 use crate::units::InstantMillis;
 use crate::wire::{DestinationHash, TransportId};
@@ -91,6 +92,11 @@ pub struct PacketHashArgument(Vec<u8>);
 impl PacketHashArgument {
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
+    }
+
+    pub fn packet_hash(&self) -> Option<PacketHash> {
+        let bytes: [u8; PACKET_HASH_LEN] = self.0.as_slice().try_into().ok()?;
+        Some(PacketHash::new(bytes))
     }
 }
 
@@ -922,24 +928,24 @@ mod tests {
 
     #[test]
     fn packet_hash_arguments_preserve_the_rpc_lookup_key() {
-        assert_eq!(
-            decode(&request(vec![
-                ("get", Value::from("packet_rssi")),
-                ("packet_hash", binary::<16>(2)),
-            ])),
-            Ok(RnsRpcRequest::PacketRssi {
-                packet_hash: PacketHashArgument(vec![2; 16]),
-            })
-        );
-        assert_eq!(
-            decode(&request(vec![
-                ("get", Value::from("packet_rssi")),
-                ("packet_hash", binary::<32>(2)),
-            ])),
-            Ok(RnsRpcRequest::PacketRssi {
-                packet_hash: PacketHashArgument(vec![2; 32]),
-            })
-        );
+        let truncated = decode(&request(vec![
+            ("get", Value::from("packet_rssi")),
+            ("packet_hash", binary::<16>(2)),
+        ]));
+        assert!(matches!(
+            truncated,
+            Ok(RnsRpcRequest::PacketRssi { packet_hash }) if packet_hash.packet_hash().is_none()
+        ));
+
+        let full = decode(&request(vec![
+            ("get", Value::from("packet_rssi")),
+            ("packet_hash", binary::<32>(2)),
+        ]));
+        assert!(matches!(
+            full,
+            Ok(RnsRpcRequest::PacketRssi { packet_hash })
+                if packet_hash.packet_hash() == Some(PacketHash::new([2; PACKET_HASH_LEN]))
+        ));
     }
 
     #[test]

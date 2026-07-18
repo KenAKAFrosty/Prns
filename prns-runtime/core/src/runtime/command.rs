@@ -9,6 +9,7 @@ use crate::identity::{
     RetainIdentityOutcome,
 };
 use crate::routing::links::LinkId;
+pub use crate::routing::{ClearAnnounceQueuesOutcome, DropRouteOutcome, DropRoutesViaOutcome};
 use crate::wire::{DestinationHash, TransportId};
 
 use super::request_router::RespondToken;
@@ -31,22 +32,6 @@ pub enum SendError<F> {
 pub enum RoutingControlError {
     NodeStopped,
     Busy,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DropRouteOutcome {
-    Dropped,
-    NotFound,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DropRoutesViaOutcome {
-    pub dropped_routes: u32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ClearAnnounceQueuesOutcome {
-    pub dropped_announces: u32,
 }
 
 pub trait RoutingControl {
