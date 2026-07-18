@@ -9,7 +9,7 @@ use crate::engine::{Directive, EngineReaction};
 use crate::routing::dedup::{PacketHash, PACKET_HASH_LEN};
 use crate::routing::links::channel::{write_envelope, ChannelSequence, MessageType};
 use crate::routing::links::data::write_link_packet;
-use crate::routing::links::table::InitiatedLink;
+use crate::routing::links::table::{InitiatedLink, LinkActivation};
 use crate::routing::links::{LinkId, LinkKey};
 use crate::routing::proof::LINK_PROOF_WIRE_LEN;
 use crate::wire::{

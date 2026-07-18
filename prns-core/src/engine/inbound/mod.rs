@@ -1,21 +1,20 @@
 mod deferred_decryption;
 mod delivery;
 mod held_announce_release;
+mod link_handshake_completion;
 mod relay;
 
 use delivery::DeliveryIo;
 use relay::{RelayAudience, RelayPathRequest};
 
 use crate::crypto::ratchets::RatchetRotation;
-use crate::crypto::{
-    ed25519_sign, Ed25519Signature, X25519PublicKey, X25519SecretKey, X25519SharedSecret,
-};
+use crate::crypto::{ed25519_sign, X25519SecretKey};
 use crate::engine::execute::settle;
 use crate::engine::LinkClosedReason;
 use crate::engine::{
-    AnnounceIngest, AnnounceVerifyOwed, CommandId, DeferredCrypto, Directive, EngineReaction,
-    EngineState, IngestPacketOutcome, InstantMillis, Journaled, LinkEstablished, LinkRttOwed,
-    PathFound, PathResponseWriteOutcome, ProofIngest, SendRequestFailure, Settlement, WakeSchedule,
+    AnnounceIngest, AnnounceVerifyOwed, DeferredCrypto, Directive, EngineReaction, EngineState,
+    IngestPacketOutcome, InstantMillis, Journaled, LinkEstablished, PathFound,
+    PathResponseWriteOutcome, ProofIngest, SendRequestFailure, Settlement, WakeSchedule,
     WakeSchedules,
 };
 use crate::identity::{IdentitySigner, ENCRYPTION_IV_LEN};
@@ -25,19 +24,14 @@ use crate::routing::announce::{Announce, AnnounceArrival};
 use crate::routing::ingress::{AcceptedAnnounceEffect, ClassifiedInboundPacket, IngestEffects};
 use crate::routing::links::channel::receive::receive as channel_receive;
 use crate::routing::links::establish::link_mtu_ceiling;
-use crate::routing::links::handshake::{
-    negotiated_link_mtu, LinkProofSignOwed, LinkProofVerifyOwed,
-};
+use crate::routing::links::handshake::{negotiated_link_mtu, LinkProofSignOwed};
 use crate::routing::links::maintenance::{write_keepalive, KEEPALIVE_ECHO};
 use crate::routing::links::resources::ResourceOffer;
-use crate::routing::links::table::LinkActivation;
-use crate::routing::links::LinkId;
 use crate::routing::proof::{
     DeferredProofSign, ProofRequest, EXPLICIT_PROOF_WIRE_LEN, LINK_PROOF_WIRE_LEN,
 };
 use crate::routing::RemovedRoute;
 use crate::storage::StorageLayout;
-use crate::units::RttMillis;
 use crate::wire::{BROADCAST_MTU, HEADER_MAX_LEN};
 
 pub(crate) fn journal_route_removal(removed: RemovedRoute) -> Journaled<'static> {
@@ -63,169 +57,6 @@ where
 }
 
 impl<S: StorageLayout> EngineState<S> {
-    fn emit_link_established(
-        command_id: CommandId,
-        link_id: LinkId,
-        rtt: RttMillis,
-        target: InterfaceId,
-        written: &[u8],
-        sink: &mut impl FnMut(EngineReaction<'_>),
-    ) {
-        sink(EngineReaction::Directive(Directive::Send {
-            target,
-            bytes: written,
-        }));
-        settle(
-            sink,
-            command_id,
-            Settlement::EstablishLink(Ok(LinkEstablished {
-                link_id,
-                rtt_ms: rtt.millis(),
-            })),
-        );
-    }
-
-    fn process_owes_link_rtt<F>(
-        &mut self,
-        owed: LinkRttOwed,
-        source: InterfaceId,
-        interfaces: AttachedInterfaces<'_>,
-        now: InstantMillis,
-        fill_entropy: &mut F,
-        sink: &mut impl FnMut(EngineReaction<'_>),
-    ) -> WakeSchedule
-    where
-        F: FnMut(&mut [u8]),
-    {
-        if !interfaces.is_egress_eligible(source, Egress::Transmit) {
-            return WakeSchedule::Unchanged;
-        }
-        let mut iv = [0u8; ENCRYPTION_IV_LEN];
-        fill_entropy(&mut iv);
-        let mut buf = [0u8; BROADCAST_MTU];
-        if let Ok(written) = self.write_owed_link_rtt(
-            &owed.link_id,
-            &owed.responder_encryption,
-            &LinkActivation {
-                rtt: owed.rtt,
-                mtu: owed.mtu.min(link_mtu_ceiling(interfaces, source)),
-                attached_interface: source,
-                peer_signing: owed.responder_signing,
-            },
-            now,
-            &iv,
-            &mut buf,
-        ) {
-            Self::emit_link_established(
-                owed.command_id,
-                owed.link_id,
-                owed.rtt,
-                source,
-                &buf[..written],
-                sink,
-            );
-        }
-        self.link_deadlines_wake()
-    }
-
-    fn process_owes_link_rtt_with_shared<F>(
-        &mut self,
-        owed: LinkProofVerifyOwed,
-        shared: X25519SharedSecret,
-        interfaces: AttachedInterfaces<'_>,
-        now: InstantMillis,
-        fill_entropy: &mut F,
-        sink: &mut impl FnMut(EngineReaction<'_>),
-    ) -> WakeSchedule
-    where
-        F: FnMut(&mut [u8]),
-    {
-        let source = owed.source_interface;
-        if !interfaces.is_egress_eligible(source, Egress::Transmit) {
-            return WakeSchedule::Unchanged;
-        }
-        let mut iv = [0u8; ENCRYPTION_IV_LEN];
-        fill_entropy(&mut iv);
-        let mut buf = [0u8; BROADCAST_MTU];
-        if let Ok(written) = self.write_owed_link_rtt_with_shared(
-            &owed.link_id,
-            &shared,
-            &LinkActivation {
-                rtt: owed.rtt,
-                mtu: owed.mtu.min(link_mtu_ceiling(interfaces, source)),
-                attached_interface: source,
-                peer_signing: owed.responder_signing,
-            },
-            now,
-            &iv,
-            &mut buf,
-        ) {
-            Self::emit_link_established(
-                owed.command_id,
-                owed.link_id,
-                owed.rtt,
-                source,
-                &buf[..written],
-                sink,
-            );
-        }
-        self.link_deadlines_wake()
-    }
-
-    pub fn resume_link_proof<F>(
-        &mut self,
-        owed: LinkProofVerifyOwed,
-        shared: X25519SharedSecret,
-        interfaces: AttachedInterfaces<'_>,
-        now: InstantMillis,
-        fill_entropy: &mut F,
-        sink: &mut impl FnMut(EngineReaction<'_>),
-    ) -> WakeSchedules
-    where
-        F: FnMut(&mut [u8]),
-    {
-        let mut wake = WakeSchedules::UNCHANGED;
-        wake.link_deadlines = self.process_owes_link_rtt_with_shared(
-            owed,
-            shared,
-            interfaces,
-            now,
-            fill_entropy,
-            sink,
-        );
-        wake
-    }
-
-    pub fn resume_link_proof_sign(
-        &mut self,
-        owed: LinkProofSignOwed,
-        responder_encryption: X25519PublicKey,
-        shared: X25519SharedSecret,
-        signature: Ed25519Signature,
-        interfaces: AttachedInterfaces<'_>,
-        sink: &mut impl FnMut(EngineReaction<'_>),
-    ) -> WakeSchedules {
-        let mut wake = WakeSchedules::UNCHANGED;
-        if !interfaces.is_egress_eligible(owed.source_interface, Egress::Transmit) {
-            return wake;
-        }
-        let mut buf = [0u8; BROADCAST_MTU];
-        if let Ok(written) = self.write_owed_link_proof_with_parts(
-            &owed,
-            &responder_encryption,
-            &shared,
-            &signature,
-            &mut buf,
-        ) {
-            sink(EngineReaction::Directive(Directive::Send {
-                target: owed.source_interface,
-                bytes: &buf[..written],
-            }));
-        }
-        wake.link_deadlines = self.link_deadlines_wake();
-        wake
-    }
-
     fn apply_announce_ingest(
         &mut self,
         ingest: AnnounceIngest,
