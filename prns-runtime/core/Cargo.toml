@@ -20,6 +20,7 @@ interface-discovery-archive = ["std", "interface-discovery", "prns-core/interfac
 external-alloc = ["alloc", "prns-core/external-alloc"]
 std = ["alloc", "prns-core/std"]
 runtime-metrics = ["alloc", "prns-core/runtime-metrics"]
+rns-management = ["alloc", "prns-core/shared-instance-rpc"]
 
 [dependencies]
 prns-core = { path = "../../prns-core", default-features = false }

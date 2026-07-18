@@ -1,7 +1,12 @@
+#[cfg(feature = "alloc")]
+use alloc::vec::Vec;
+
 use prns_core::interfaces::ifac::IfacSize;
 use prns_core::interfaces::{
     ConnectionState, InterfaceId, InterfaceOriginKind, InterfaceSnapshot, Membership, TransferRates,
 };
+#[cfg(feature = "alloc")]
+use prns_core::{units::InstantMillis, wire::DestinationHash};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InterfaceIfacSnapshot<Label> {
@@ -16,6 +21,16 @@ pub struct InterfaceInventoryEntry<Label> {
     pub origin: InterfaceOriginKind,
     pub snapshot: InterfaceSnapshot,
     pub ifac: Option<InterfaceIfacSnapshot<Label>>,
+}
+
+#[cfg(feature = "alloc")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnnounceRateSnapshot {
+    pub destination: DestinationHash,
+    pub last_allowed_announce_at: InstantMillis,
+    pub blocked_until: InstantMillis,
+    pub rate_violations: u16,
+    pub observed_at: Vec<InstantMillis>,
 }
 
 struct FoldedInterface<Label> {
@@ -179,6 +194,16 @@ pub fn fold_logical_interface_inventory<Label: Ord>(
             .then_with(|| left.snapshot.id.cmp(&right.snapshot.id))
     });
     logical
+}
+
+#[cfg(feature = "alloc")]
+#[must_use]
+pub fn logical_interface_inventory<Label: Ord>(
+    mut inventory: Vec<InterfaceInventoryEntry<Label>>,
+) -> Vec<InterfaceInventoryEntry<Label>> {
+    let logical_len = fold_logical_interface_inventory(&mut inventory).len();
+    inventory.truncate(logical_len);
+    inventory
 }
 
 fn logical_interface_id<Label>(entry: &InterfaceInventoryEntry<Label>) -> InterfaceId {
