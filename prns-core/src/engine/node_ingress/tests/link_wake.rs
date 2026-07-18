@@ -1,11 +1,10 @@
-use super::super::*;
 use crate::engine::test_support::{routable_descriptor, TestStorageLayout};
 use crate::engine::{CommandId, EngineState, IngestIo};
-use crate::interfaces::{InboundPacket, InterfaceId};
+use crate::interfaces::{AttachedInterfaces, InboundPacket, InterfaceId};
 use crate::routing::links::maintenance::{write_keepalive, KEEPALIVE_ECHO};
 use crate::routing::links::table::{InitiatedLink, LinkActivation};
 use crate::routing::links::{LinkId, LinkKey};
-use crate::units::RttMillis;
+use crate::units::{InstantMillis, RttMillis};
 use crate::wire::{DestinationHash, BROADCAST_MTU};
 
 fn engine_with_active_link() -> (EngineState<TestStorageLayout>, LinkId, InterfaceId) {

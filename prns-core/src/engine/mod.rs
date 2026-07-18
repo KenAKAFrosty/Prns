@@ -4,9 +4,9 @@ mod deadlines;
 mod destination_identity;
 mod egress;
 mod execute;
-mod inbound;
 mod introspection;
 mod management;
+mod node_ingress;
 mod reaction;
 mod registration;
 mod state;
@@ -44,8 +44,8 @@ pub use egress::{
     write_retransmitted_announce_wire_packet, EgressSerializeError, ReemitAnnounce,
     PATH_REQUEST_DESTINATION, PATH_REQUEST_PAYLOAD_LEN,
 };
-pub use inbound::IngestIo;
 pub use introspection::{AnnounceRateState, RouteSnapshot};
+pub use node_ingress::IngestIo;
 pub use reaction::{Directive, EngineReaction, FanTarget, Journaled, LinkClosedReason};
 pub use registration::{
     PersistedRoutePreflightError, PersistedRouteSignaturePending, PersistedRouteVerificationError,

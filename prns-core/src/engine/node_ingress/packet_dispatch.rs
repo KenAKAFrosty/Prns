@@ -1,12 +1,6 @@
-mod announce_completion;
-mod deferred_decryption;
-mod delivery;
-mod held_announce_release;
-mod link_handshake_completion;
-mod relay;
-
-use delivery::DeliveryIo;
-use relay::{RelayAudience, RelayPathRequest};
+use super::delivery::DeliveryIo;
+use super::journal_route_removal;
+use super::relay::{RelayAudience, RelayPathRequest};
 
 use crate::crypto::ratchets::RatchetRotation;
 use crate::crypto::{ed25519_sign, X25519SecretKey};
@@ -29,16 +23,8 @@ use crate::routing::links::resources::ResourceOffer;
 use crate::routing::proof::{
     DeferredProofSign, ProofRequest, EXPLICIT_PROOF_WIRE_LEN, LINK_PROOF_WIRE_LEN,
 };
-use crate::routing::RemovedRoute;
 use crate::storage::StorageLayout;
 use crate::wire::{BROADCAST_MTU, HEADER_MAX_LEN};
-
-pub(crate) fn journal_route_removal(removed: RemovedRoute) -> Journaled<'static> {
-    Journaled::RouteRemoved {
-        destination: removed.destination,
-        cause: removed.cause,
-    }
-}
 
 pub struct IngestIo<'a, FillEntropy, OnProofRequest, OnResourceOffer, Sink>
 where
@@ -199,8 +185,6 @@ impl<S: StorageLayout> EngineState<S> {
                     },
                 );
             }
-            //Not dropped work: these outcomes only surface when `deferred` captured the job for the host's crypto pool.
-            //The engine re-enters through the matching resume_* call once the pool answers.
             IngestPacketOutcome::OwesDecrypt => {}
             IngestPacketOutcome::OwesRatchetDecrypt => {}
             IngestPacketOutcome::OwesAnnounceVerify => {}
@@ -306,8 +290,6 @@ impl<S: StorageLayout> EngineState<S> {
             IngestPacketOutcome::OwesLinkRtt(owed) => {
                 self.process_owes_link_rtt(owed, source, interfaces, now, fill_entropy, sink);
             }
-            //Not dropped work: these outcomes only surface when `deferred` captured the job for the host's crypto pool.
-            //The engine re-enters through the matching resume_* call once the pool answers.
             IngestPacketOutcome::OwesLinkProofVerify => {}
             IngestPacketOutcome::RequestReceived {
                 link_id,
@@ -565,11 +547,7 @@ impl<S: StorageLayout> EngineState<S> {
                 self.ignored_packet_counts.record(_reason);
             }
         }
-        //Recomputed for every packet rather than per-arm: any link packet's ingest may note activity and re-arm that link's keepalive or stale deadline, and both sources hold maintained minimums, so the read is O(1).
         wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
         wake_schedule_changes
     }
 }
-
-#[cfg(test)]
-mod tests;

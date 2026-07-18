@@ -78,7 +78,7 @@ impl<S: StorageLayout> EngineState<S> {
             &mut |removed| {
                 dirty.mark(removed.receiving_interface);
                 sink(EngineReaction::Journaled(
-                    crate::engine::inbound::journal_route_removal(removed),
+                    crate::engine::node_ingress::journal_route_removal(removed),
                 ));
             },
         );
