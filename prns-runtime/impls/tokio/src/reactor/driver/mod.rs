@@ -1,17 +1,14 @@
-use core::cell::RefCell;
 use prns_core::interfaces::IndexedAttachedInterfaces;
-use std::collections::HashMap;
 
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-use tokio::sync::oneshot;
+use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::time::Instant;
 
 use crate::engine::{
-    ClassifiedInboundPacket, CommandId, DeferredCrypto, Directive, EngineCommand, EngineReaction,
-    EngineState, IngestIo, InstantMillis, IssuedCommand, Journaled, NextWake, ProofIngest,
-    ProofRequest, Respond, RespondData, SendRequest, SendRequestData, SendRequestFailure,
-    SendSinglePacketEntropy, SendSinglePacketFailure, SendSinglePacketPrepared,
-    SendSinglePacketWriteError, Settlement, WakeReason, WakeSchedules,
+    ClassifiedInboundPacket, DeferredCrypto, Directive, EngineCommand, EngineReaction, EngineState,
+    IngestIo, InstantMillis, IssuedCommand, Journaled, NextWake, ProofIngest, ProofRequest,
+    Respond, RespondData, SendRequest, SendRequestData, SendSinglePacketEntropy,
+    SendSinglePacketFailure, SendSinglePacketPrepared, SendSinglePacketWriteError, Settlement,
+    WakeReason, WakeSchedules,
 };
 use crate::identity::{OpenedToken, Zeroizing};
 use crate::interfaces::ifac::InterfaceIfac;
@@ -21,7 +18,6 @@ use crate::reactor::kernel::{fire_due_reason, merge_wake_schedules_delta};
 use crate::reactor::AppDeciders;
 use crate::reactor::Host;
 use crate::routing::dedup::PacketHash;
-use crate::routing::links::channel::byte_stream::{self, StreamId, STREAM_DATA_TYPE};
 use crate::routing::links::request::{write_request_plaintext, RequestId, REQUEST_WIRE_OVERHEAD};
 use crate::routing::links::resources::build_outgoing::SALT_REROLL_CAP;
 use crate::routing::links::resources::receive::offload::OffloadedOpenSpan;
@@ -32,7 +28,6 @@ use crate::routing::links::resources::{
     ResourceBody, ResourceCorrelation, ResourceMetadata, ResourceSegment, ResourceSend,
 };
 use crate::routing::links::resources::{MAP_HASH_LEN, RESOURCE_NONCE_LEN};
-use crate::routing::links::LinkId;
 use crate::routing::proof::EXPLICIT_PROOF_WIRE_LEN;
 use crate::runtime::node_introspection::{AnnounceRateHistory, NodeIntrospectionRequest};
 use crate::runtime::{
@@ -42,7 +37,6 @@ use crate::runtime::{
 #[cfg(feature = "runtime-metrics")]
 use crate::runtime::{ReliabilityMetricsSnapshot, RuntimeMetricsSnapshot};
 use crate::storage::{DirtyInterfaceSet, StorageLayout};
-use crate::units::RttMillis;
 use crate::wire::DestinationHash;
 
 mod crypto_pool;
@@ -51,6 +45,7 @@ mod host;
 mod host_protocol;
 mod interface_seam;
 mod interface_status;
+mod journal_delivery;
 
 pub use super::grant_lane::{
     tokio_grant_lane, HeapFrameSlot, TokioGrantConsumer, TokioGrantProducer,
@@ -79,6 +74,7 @@ use egress::{
 #[cfg(test)]
 use egress::{offer_to_pacer, PacedAnnounce, TokioAnnouncePacer};
 use host::bounded_timer_deadline;
+use journal_delivery::JournalDelivery;
 
 fn retain_packet_phy(
     store: Option<&InterfaceStore>,
@@ -107,176 +103,6 @@ fn seal_self_ratchet(
             .ok()?;
     sealed.truncate(written);
     Some(sealed)
-}
-
-/// Fire an awaited command's settlement to the caller parked on it, or pass the event through. The reactor owns `pending` (a single-task `RefCell` map, no `Arc`/`Mutex`): a `CommandSettled` whose id a caller awaits is handed to that caller's [`oneshot`] and dropped from the event stream; every other journaled event — including a settlement nobody awaited — is returned for the app.
-fn settle_or_forward<'a>(
-    pending: &RefCell<HashMap<CommandId, oneshot::Sender<Settlement>>>,
-    journaled: Journaled<'a>,
-) -> Option<Journaled<'a>> {
-    if let Journaled::CommandSettled { id, settlement } = &journaled {
-        if let Some(completion) = pending.borrow_mut().remove(id) {
-            let _ = completion.send(settlement.clone());
-            return None;
-        }
-    }
-    Some(journaled)
-}
-
-/// A `request()` parked on its answer: the bytes land first (stashed here), then the round trip arrives with the settlement.
-struct RequestPending {
-    completion: oneshot::Sender<Result<(std::vec::Vec<u8>, RttMillis), SendRequestFailure>>,
-    data: Option<std::vec::Vec<u8>>,
-}
-
-/// The outbound-request demux, mirror of [`settle_or_forward`]: a `ResponseReceived` with a parked `request()` stashes its bytes (a split response's segments append, in the arrival order the engine's gate enforces); the matching `SendRequest` settlement then fires `(data, rtt)` or the typed failure to the awaiter and drops the events from the app stream.
-fn route_request_or_forward<'a>(
-    pending: &RefCell<HashMap<CommandId, RequestPending>>,
-    journaled: Journaled<'a>,
-) -> Option<Journaled<'a>> {
-    match &journaled {
-        Journaled::ResponseReceived {
-            command_id, data, ..
-        } => {
-            if let Some(entry) = pending.borrow_mut().get_mut(command_id) {
-                entry.data = Some(data.to_vec());
-                return None;
-            }
-        }
-        Journaled::ResponseSegmentReceived {
-            command_id, data, ..
-        } => {
-            if let Some(entry) = pending.borrow_mut().get_mut(command_id) {
-                entry
-                    .data
-                    .get_or_insert_with(std::vec::Vec::new)
-                    .extend_from_slice(data);
-                return None;
-            }
-        }
-
-        Journaled::CommandSettled {
-            id,
-            settlement: Settlement::SendRequest(result),
-        } => {
-            if let Some(entry) = pending.borrow_mut().remove(id) {
-                let resolved = match (*result, entry.data) {
-                    (Ok(delivered), Some(data)) => Ok((data, delivered.rtt)),
-                    (Ok(_), None) => Err(SendRequestFailure::WriteFailed),
-                    (Err(failure), _) => Err(failure),
-                };
-                let _ = entry.completion.send(resolved);
-                return None;
-            }
-        }
-        _ => {}
-    }
-    Some(journaled)
-}
-
-/// Resolve a parked `request()` with a typed failure — for the request-forming paths the size yardstick already rules out, so the awaiter never hangs even on the unreachable branch.
-fn fail_request(
-    pending: &RefCell<HashMap<CommandId, RequestPending>>,
-    id: CommandId,
-) -> WakeSchedules {
-    if let Some(entry) = pending.borrow_mut().remove(&id) {
-        let _ = entry.completion.send(Err(SendRequestFailure::WriteFailed));
-    }
-    WakeSchedules::UNCHANGED
-}
-
-/// The byte-stream demux: a `ChannelMessageReceived` of the reserved stream type whose `(link, id)` has a registered reader is parsed, pushed to that reader's sink, and dropped from the event stream; a reader whose receiver is gone is pruned. Everything else is returned for the app.
-fn route_stream_or_forward<'a>(
-    readers: &RefCell<HashMap<(LinkId, StreamId), UnboundedSender<StreamInbound>>>,
-    journaled: Journaled<'a>,
-) -> Option<Journaled<'a>> {
-    if let Journaled::ChannelMessageReceived {
-        link_id,
-        message_type,
-        data,
-    } = &journaled
-    {
-        if *message_type == STREAM_DATA_TYPE {
-            if let Ok(frame) = byte_stream::parse(data) {
-                let key = (*link_id, frame.header.stream_id);
-                let mut readers = readers.borrow_mut();
-                if let Some(sink) = readers.get(&key) {
-                    let inbound = StreamInbound {
-                        payload: frame.payload.to_vec(),
-                        eof: frame.header.eof,
-                        compressed: frame.header.compressed,
-                    };
-                    if sink.send(inbound).is_err() {
-                        readers.remove(&key);
-                    }
-                    return None;
-                }
-            }
-        }
-    }
-    Some(journaled)
-}
-
-/// The resource mirror of [`route_stream_or_forward`]: an inbound resource journal on a link with a registered `receive_resource` sink is routed to it and suppressed from the app event stream. The sink is one-shot: it retires on the resource's completion or failure, leaving the link free to register the next.
-fn route_resource_or_forward<'a>(
-    sinks: &RefCell<HashMap<LinkId, UnboundedSender<ResourceInbound>>>,
-    journaled: Journaled<'a>,
-) -> Option<Journaled<'a>> {
-    let link = match &journaled {
-        Journaled::ResourceReceived { link_id, .. }
-        | Journaled::ResourceSegmentReceived { link_id, .. }
-        | Journaled::ResourceAssembled { link_id, .. }
-        | Journaled::ResourceFailed { link_id, .. } => *link_id,
-        _ => return Some(journaled),
-    };
-    let sink = match sinks.borrow().get(&link) {
-        Some(sink) => sink.clone(),
-        None => return Some(journaled),
-    };
-    let retire = match &journaled {
-        Journaled::ResourceReceived {
-            hash,
-            metadata,
-            data,
-            ..
-        } => {
-            if let Some(metadata) = metadata {
-                let _ = sink.send(ResourceInbound::Metadata(metadata.to_vec()));
-            }
-            let _ = sink.send(ResourceInbound::Chunk(data.to_vec()));
-            let _ = sink.send(ResourceInbound::Complete {
-                original_hash: *hash,
-                total_size: data.len() as u64,
-            });
-            true
-        }
-        Journaled::ResourceSegmentReceived { metadata, data, .. } => {
-            if let Some(metadata) = metadata {
-                let _ = sink.send(ResourceInbound::Metadata(metadata.to_vec()));
-            }
-            sink.send(ResourceInbound::Chunk(data.to_vec())).is_err()
-        }
-        Journaled::ResourceAssembled {
-            original_hash,
-            total_size,
-            ..
-        } => {
-            let _ = sink.send(ResourceInbound::Complete {
-                original_hash: *original_hash,
-                total_size: *total_size,
-            });
-            true
-        }
-        Journaled::ResourceFailed { .. } => {
-            let _ = sink.send(ResourceInbound::Failed);
-            true
-        }
-        _ => unreachable!("the link only matched a resource journal above"),
-    };
-    if retire {
-        sinks.borrow_mut().remove(&link);
-    }
-    None
 }
 
 /// Everything the reactor is wired to for one run: the interface topology snapshot, per-interface IFAC state, the wake and command channels, the inbound grant lanes, and the egress fan-out.
@@ -401,14 +227,7 @@ async fn run_inner<S, H, J, P, A>(
         .unwrap_or(BROADCAST_WIRE_FRAME_LEN);
     let mut wire_scratch = WireScratch::new(scratch_cap);
     let mut unmask_scratch = std::vec![0u8; scratch_cap].into_boxed_slice();
-    let pending_completions: RefCell<HashMap<CommandId, oneshot::Sender<Settlement>>> =
-        RefCell::new(HashMap::new());
-    let pending_responses: RefCell<HashMap<CommandId, RequestPending>> =
-        RefCell::new(HashMap::new());
-    let stream_readers: RefCell<HashMap<(LinkId, StreamId), UnboundedSender<StreamInbound>>> =
-        RefCell::new(HashMap::new());
-    let resource_sinks: RefCell<HashMap<LinkId, UnboundedSender<ResourceInbound>>> =
-        RefCell::new(HashMap::new());
+    let journal_delivery = JournalDelivery::default();
     let mut announce_rate_history = AnnounceRateHistory::default();
     #[cfg(feature = "runtime-metrics")]
     let mut reliability = ReliabilityMetricsSnapshot::default();
@@ -428,18 +247,8 @@ async fn run_inner<S, H, J, P, A>(
                 }
                 #[cfg(feature = "runtime-metrics")]
                 reliability.record_journaled(&journaled);
-                if let Some(journaled) = settle_or_forward(&pending_completions, journaled) {
-                    if let Some(journaled) = route_request_or_forward(&pending_responses, journaled)
-                    {
-                        if let Some(journaled) = route_stream_or_forward(&stream_readers, journaled)
-                        {
-                            if let Some(journaled) =
-                                route_resource_or_forward(&resource_sinks, journaled)
-                            {
-                                on_journaled(journaled);
-                            }
-                        }
-                    }
+                if let Some(journaled) = journal_delivery.route(journaled) {
+                    on_journaled(journaled);
                 }
             }
         };
@@ -811,7 +620,7 @@ async fn run_inner<S, H, J, P, A>(
                     }
                     HostCommand::AwaitedEngine { issued, completion } => {
                         let id = issued.id;
-                        pending_completions.borrow_mut().insert(id, completion);
+                        journal_delivery.register_completion(id, completion);
                         match (crypto_pool.as_ref(), issued.command) {
                             (Some(pool), EngineCommand::SendSinglePacket(send)) => {
                                 defer_send_single_packet!(pool, id, send, now)
@@ -846,7 +655,7 @@ async fn run_inner<S, H, J, P, A>(
                         &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                     ),
                     HostCommand::SendResourceSegment(send) => {
-                        pending_completions.borrow_mut().insert(send.id, send.completion);
+                        journal_delivery.register_completion(send.id, send.completion);
                         engine.ingest_send_resource_segment_into(
                             &ResourceSend {
                                 id: send.id,
@@ -922,9 +731,7 @@ async fn run_inner<S, H, J, P, A>(
                             data,
                             completion,
                         } = request;
-                        pending_responses
-                            .borrow_mut()
-                            .insert(id, RequestPending { completion, data: None });
+                        journal_delivery.register_request(id, completion);
                         let payload = data.as_slice();
                         if engine.request_fits_packet(&link_id, payload) {
                             match SendRequestData::from_slice(payload) {
@@ -942,7 +749,7 @@ async fn run_inner<S, H, J, P, A>(
                                     &mut |entropy| host.fill_entropy(entropy),
                                     &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                                 ),
-                                Err(_) => fail_request(&pending_responses, id),
+                                Err(_) => journal_delivery.fail_request(id),
                             }
                         } else {
                             let mut packed =
@@ -967,7 +774,7 @@ async fn run_inner<S, H, J, P, A>(
                                         &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                                     )
                                 }
-                                Err(_) => fail_request(&pending_responses, id),
+                                Err(_) => journal_delivery.fail_request(id),
                             }
                         }
                     }
@@ -1135,9 +942,7 @@ async fn run_inner<S, H, J, P, A>(
                         sink,
                         ready,
                     } => {
-                        stream_readers
-                            .borrow_mut()
-                            .insert((link_id, stream_id), sink);
+                        journal_delivery.register_stream_reader(link_id, stream_id, sink);
                         let _ = ready.send(());
                         WakeSchedules::UNCHANGED
                     }
@@ -1146,7 +951,7 @@ async fn run_inner<S, H, J, P, A>(
                         sink,
                         ready,
                     } => {
-                        resource_sinks.borrow_mut().insert(link_id, sink);
+                        journal_delivery.register_resource_sink(link_id, sink);
                         let _ = ready.send(());
                         WakeSchedules::UNCHANGED
                     }
