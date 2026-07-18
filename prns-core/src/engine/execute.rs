@@ -1,12 +1,13 @@
 use crate::crypto::ratchets::RatchetRotation;
 use crate::crypto::{X25519PublicKey, X25519SharedSecret};
+use crate::engine::settlement::{culled_settlement, settle};
 #[cfg(feature = "runtime-metrics")]
 use crate::engine::AnnounceCommandOutcome;
 use crate::engine::{
     AllowRequesterFailure, AnnounceNowFailure, AnnounceTarget, AnnounceWriteFailure,
-    CloseLinkFailure, CommandId, CommandOutcome, CommandedAnnounceWriteOutcome, Directive,
-    EncryptOwed, EngineReaction, EngineState, EstablishLinkFailure, EstablishLinkWriteOutcome,
-    FanTarget, FinishSendSinglePacketOutcome, IdentifyFailure, IdentifyRejection, InstantMillis,
+    CloseLinkFailure, CommandOutcome, CommandedAnnounceWriteOutcome, Directive, EncryptOwed,
+    EngineReaction, EngineState, EstablishLinkFailure, EstablishLinkWriteOutcome, FanTarget,
+    FinishSendSinglePacketOutcome, IdentifyFailure, IdentifyRejection, InstantMillis,
     IssuedCommand, Journaled, PathRequestWriteOutcome, RequestPathFailure, RespondFailure,
     RespondRejection, SendGroupEntropy, SendGroupFailure, SendRequestFailure, SendRequestRejection,
     SendSinglePacketEntropy, SendSinglePacketFailure, SendSinglePacketWriteError,
@@ -16,7 +17,6 @@ use crate::engine::{
 use crate::identity::ENCRYPTION_IV_LEN;
 use crate::interfaces::AttachedInterfaces;
 use crate::interfaces::{InterfaceId, InterfaceKind, InterfaceMode};
-use crate::routing::delivery::receipts::ReceiptKind;
 use crate::routing::links::channel::send::SendToChannelWriteError;
 use crate::routing::links::channel::CHANNEL_ENVELOPE_HEADER_LEN;
 use crate::routing::links::data::{link_data_frame_ceiling, LinkDataError, SendToLinkWriteError};
@@ -619,37 +619,6 @@ impl<S: StorageLayout> EngineState<S> {
         let mut wake = WakeSchedules::UNCHANGED;
         wake.receipt_timeouts = self.receipt_timeouts_wake();
         wake
-    }
-}
-
-pub(crate) fn settle(
-    sink: &mut impl FnMut(EngineReaction<'_>),
-    id: CommandId,
-    settlement: Settlement,
-) {
-    sink(EngineReaction::Journaled(Journaled::CommandSettled {
-        id,
-        settlement,
-    }));
-}
-
-fn culled_settlement(kind: ReceiptKind) -> Settlement {
-    match kind {
-        ReceiptKind::SendSinglePacket => {
-            Settlement::SendSinglePacket(Err(SendSinglePacketFailure::Culled))
-        }
-        ReceiptKind::SendToLink => Settlement::SendToLink(Err(SendToLinkFailure::Culled)),
-        ReceiptKind::SendRequest => Settlement::SendRequest(Err(SendRequestFailure::Culled)),
-    }
-}
-
-pub(crate) fn timeout_settlement(kind: ReceiptKind) -> Settlement {
-    match kind {
-        ReceiptKind::SendSinglePacket => {
-            Settlement::SendSinglePacket(Err(SendSinglePacketFailure::Timeout))
-        }
-        ReceiptKind::SendToLink => Settlement::SendToLink(Err(SendToLinkFailure::Timeout)),
-        ReceiptKind::SendRequest => Settlement::SendRequest(Err(SendRequestFailure::Timeout)),
     }
 }
 

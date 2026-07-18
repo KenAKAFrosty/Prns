@@ -4,7 +4,7 @@ use super::relay::{RelayAudience, RelayPathRequest};
 
 use crate::crypto::ratchets::RatchetRotation;
 use crate::crypto::{ed25519_sign, X25519SecretKey};
-use crate::engine::execute::settle;
+use crate::engine::settlement::settle;
 use crate::engine::LinkClosedReason;
 use crate::engine::{
     DeferredCrypto, Directive, EngineReaction, EngineState, IngestPacketOutcome, InstantMillis,
