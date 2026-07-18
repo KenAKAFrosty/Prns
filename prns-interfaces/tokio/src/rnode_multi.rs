@@ -163,6 +163,12 @@ pub struct RNodeMultiSettings {
     pub members: RNodeMultiMembers,
 }
 
+pub struct RegisteredRNodeMultiInterface<Open> {
+    interface: RNodeMultiInterface<Open>,
+    handle: PrnsNodeHandle,
+    cycle: RuntimeCycle,
+}
+
 impl<Open> RNodeMultiInterface<Open> {
     #[must_use]
     pub fn new(
@@ -186,45 +192,73 @@ impl<Open> RNodeMultiInterface<Open> {
     pub fn member_ids(&self) -> impl Iterator<Item = InterfaceId> + '_ {
         self.members.iter().map(RNodeMultiMemberSettings::id)
     }
+
+    #[must_use]
+    pub fn register(self, handle: &PrnsNodeHandle) -> RegisteredRNodeMultiInterface<Open> {
+        let cycle = RuntimeCycle::attach(
+            handle,
+            self.members.iter(),
+            self.station_identification.clone(),
+        );
+        RegisteredRNodeMultiInterface {
+            interface: self,
+            handle: handle.clone(),
+            cycle,
+        }
+    }
 }
 
-impl<Open, Fut, S> RNodeMultiInterface<Open>
+impl<Open, Fut, S> RegisteredRNodeMultiInterface<Open>
 where
     Open: FnMut() -> Fut,
     Fut: Future<Output = io::Result<S>>,
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    pub async fn run(mut self, handle: PrnsNodeHandle) {
+    pub async fn run(mut self) {
         let mut decoder = Box::new(core::CommandDecoder::new());
         let mut read = vec![0u8; core::READ_BUF_LEN].into_boxed_slice();
+        let mut cycle = self.cycle;
         loop {
-            let mut cycle = RuntimeCycle::attach(
-                &handle,
-                self.members.iter(),
-                self.station_identification.clone(),
-            );
             let result = self
+                .interface
                 .run_connection(&mut cycle, &mut decoder, &mut read)
                 .await;
-            cycle.teardown();
+            drop(cycle);
             if let Err(error) = result {
-                report_connection_failure(&self.name, &self.device, self.reconnect_delay, &error);
+                report_connection_failure(
+                    &self.interface.name,
+                    &self.interface.device,
+                    self.interface.reconnect_delay,
+                    &error,
+                );
             }
-            tokio::time::sleep(self.reconnect_delay.duration()).await;
+            tokio::time::sleep(self.interface.reconnect_delay.duration()).await;
+            cycle = RuntimeCycle::attach(
+                &self.handle,
+                self.interface.members.iter(),
+                self.interface.station_identification.clone(),
+            );
         }
     }
+}
 
-    async fn run_connection(
+impl<Open> RNodeMultiInterface<Open> {
+    async fn run_connection<Fut, S>(
         &mut self,
         cycle: &mut RuntimeCycle,
         decoder: &mut core::CommandDecoder,
         read: &mut [u8],
-    ) -> io::Result<()> {
+    ) -> io::Result<()>
+    where
+        Open: FnMut() -> Fut,
+        Fut: Future<Output = io::Result<S>>,
+        S: AsyncRead + AsyncWrite + Unpin,
+    {
         let mut stream = (self.open)().await?;
         if !self.reset_delay.duration().is_zero() {
             tokio::time::sleep(self.reset_delay.duration()).await;
         }
-        bring_up(
+        let platform = bring_up(
             &mut stream,
             self.members.as_slice(),
             self.configure_delay,
@@ -232,7 +266,7 @@ where
             read,
         )
         .await?;
-        cycle.mark_connected();
+        cycle.mark_connected(platform);
         cycle.serve(&mut stream, decoder, read).await
     }
 }
