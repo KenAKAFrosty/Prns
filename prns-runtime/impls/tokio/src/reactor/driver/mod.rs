@@ -2,29 +2,23 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::time::Instant;
 
 use crate::engine::{
-    ClassifiedInboundPacket, DeferredCrypto, Directive, EngineReaction, EngineState, IngestIo,
-    InstantMillis, Journaled, NextWake, ProofIngest, ProofRequest, Settlement, WakeReason,
-    WakeSchedules,
+    ClassifiedInboundPacket, DeferredCrypto, EngineState, IngestIo, InstantMillis, Journaled,
+    NextWake, ProofIngest, ProofRequest, Settlement, WakeReason,
 };
-use crate::identity::OpenedToken;
 use crate::interfaces::ifac::InterfaceIfac;
 use crate::interfaces::{InboundPacket, InterfaceDescriptor, InterfaceId, PacketPhyStats};
 use crate::reactor::kernel::{fire_due_reason, merge_wake_schedules_delta};
 use crate::reactor::AppDeciders;
 use crate::reactor::Host;
 use crate::routing::dedup::PacketHash;
-use crate::routing::links::resources::build_outgoing::SALT_REROLL_CAP;
-use crate::routing::links::resources::receive::offload::OffloadedOpenSpan;
-use crate::routing::links::resources::send::OffloadedStagedSeal;
 use crate::routing::links::resources::streamed_open::ResourceOpenLane;
 use crate::routing::links::resources::ResourceOffer;
-use crate::routing::links::resources::{MAP_HASH_LEN, RESOURCE_NONCE_LEN};
-use crate::routing::proof::EXPLICIT_PROOF_WIRE_LEN;
 use crate::runtime::InterfaceStore;
 use crate::storage::{DirtyInterfaceSet, StorageLayout};
 use crate::wire::DestinationHash;
 
 mod command_dispatch;
+mod crypto_dispatch;
 mod crypto_pool;
 mod egress;
 mod host;
@@ -51,9 +45,8 @@ pub use interface_seam::TokioInterfaceSeam;
 pub use interface_status::TokioInterfaceStatus;
 
 use command_dispatch::{CommandDispatch, CommandEffect};
-use crypto_pool::{
-    CryptoJob, CryptoPool, CryptoResult, EngineVerifyJob, OpenSpanJob, StagedSealJob,
-};
+use crypto_dispatch::{dispatch_open_spans, CryptoCompletionEffect, CryptoDispatch};
+use crypto_pool::{CryptoJob, CryptoPool, CryptoResult, EngineVerifyJob};
 #[cfg(all(test, feature = "runtime-metrics"))]
 use egress::enqueue_announce_for_wire;
 use egress::{flush_due_pacers, ifac_for, route_reaction, soonest_pacer_release, WireScratch};
@@ -239,32 +232,6 @@ async fn run_inner<S, H, J, P, A>(
                 armed = Some((at, reason));
             }
         }
-        macro_rules! dispatch_owed_open_spans {
-            () => {{
-                if let Some(pool) = crypto_pool.as_ref() {
-                    while let Some((link_id, hash)) = engine.owed_open_span() {
-                        if !pool.has_queue_capacity(1) {
-                            break;
-                        }
-                        let Some(view) = engine.open_span_job_view(&link_id, &hash) else {
-                            break;
-                        };
-                        let span_start = view.span_start;
-                        let bytes = view.bytes.to_vec();
-                        let Some(state) = engine.begin_open_chew(&link_id, &hash) else {
-                            break;
-                        };
-                        pool.submit(CryptoJob::OpenSpan(Box::new(OpenSpanJob {
-                            link_id,
-                            hash,
-                            span_start,
-                            state,
-                            bytes,
-                        })));
-                    }
-                }
-            }};
-        }
         // Retaining lanes with queued frames prevents a batch tail from becoming stranded after its notification is consumed.
         macro_rules! process_dirty_lanes {
             () => {{
@@ -420,7 +387,7 @@ async fn run_inner<S, H, J, P, A>(
                             &engine,
                             topology.interfaces.view(),
                         );
-                        dispatch_owed_open_spans!();
+                        dispatch_open_spans(&mut engine, crypto_pool.as_ref());
                     }
                 }
                 dirty.retain(|source| {
@@ -454,39 +421,15 @@ async fn run_inner<S, H, J, P, A>(
                 process_dirty_lanes!();
             }
             _ = tokio::task::yield_now(), if dirty.is_empty() && engine.owed_staged_seal_link().is_some() => {
-                if let Some(link_id) = engine.owed_staged_seal_link() {
-                    match crypto_pool.as_ref() {
-                        Some(pool) => {
-                            if let Some(view) = engine.staged_seal_job_view(&link_id) {
-                                let mut seal_iv = [0u8; 16];
-                                host.fill_entropy(&mut seal_iv);
-                                let mut salts = [[0u8; RESOURCE_NONCE_LEN]; SALT_REROLL_CAP];
-                                for salt in &mut salts {
-                                    host.fill_entropy(salt);
-                                }
-                                let job = StagedSealJob {
-                                    link_id,
-                                    key: view.key.cloned(),
-                                    sdu: view.sdu,
-                                    nonce_prefixed_len: view.nonce_prefixed_len,
-                                    plaintext: view.plaintext.to_vec(),
-                                    seal_iv,
-                                    salts,
-                                };
-                                engine.mark_staged_sealing(&link_id);
-                                pool.submit(CryptoJob::SealStaged(Box::new(job)));
-                            }
-                        }
-                        None => {
-                            let now = host.now();
-                            engine.seal_staged_continuation(
-                                &link_id,
-                                &mut |entropy| host.fill_entropy(entropy),
-                                &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
-                            );
-                        }
-                    }
+                CryptoDispatch {
+                    engine: &mut engine,
+                    host: &mut host,
+                    topology: &mut topology,
+                    wire_scratch: &mut wire_scratch,
+                    journal: &mut journal,
+                    crypto_pool: crypto_pool.as_ref(),
                 }
+                .dispatch_staged_seal();
             }
             issued = commands.recv() => {
                 let Some(mut issued) = issued else { return };
@@ -557,189 +500,38 @@ async fn run_inner<S, H, J, P, A>(
                 let now = host.now();
                 let mut seal_buf = [0u8; crate::wire::BROADCAST_MTU];
                 while let Some(result) = next {
-                    if let Some(pool) = crypto_pool.as_ref() {
-                        #[cfg(feature = "runtime-metrics")]
-                        pool.record_completed();
-                        if result.settles_packet_verdict() {
-                            pool.packet_verdict_settled();
-                        }
+                    let effect = CryptoDispatch {
+                        engine: &mut engine,
+                        host: &mut host,
+                        topology: &mut topology,
+                        wire_scratch: &mut wire_scratch,
+                        journal: &mut journal,
+                        crypto_pool: crypto_pool.as_ref(),
                     }
-                    match result {
-                        CryptoResult::Verified { id, settlement, valid } => {
-                            if valid && engine.settle_resolved(id).is_some() {
-                                route_reaction(
-                                    EngineReaction::Journaled(Journaled::CommandSettled {
-                                        id,
-                                        settlement,
-                                    }),
-                                    &mut topology.egress,
-                                    &topology.ifacs,
-                                    &mut topology.pacers,
-                                    &mut wire_scratch,
-                                    now,
-                                    &mut journaled_sink!(),
-                                );
-                            }
-                        }
-                        CryptoResult::Sealed {
-                            owed,
-                            ephemeral_public,
-                            shared,
-                        } => {
-                            let delta = engine.complete_send_single_packet_deferred(
-                                owed,
-                                ephemeral_public,
-                                shared,
-                                topology.interfaces.view(),
-                                &mut seal_buf,
-                                &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
-                            );
-                            merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, topology.view());
-                        }
-                        CryptoResult::Signed {
-                            target,
-                            packet_hash,
-                            signature,
-                        } => {
-                            let mut proof = [0u8; EXPLICIT_PROOF_WIRE_LEN];
-                            if let Ok(written) =
-                                engine.write_signed_proof(&packet_hash, &signature, &mut proof)
-                            {
-                                route_reaction(
-                                    EngineReaction::Directive(Directive::Send {
-                                        target,
-                                        bytes: &proof[..written],
-                                    }),
-                                    &mut topology.egress,
-                                    &topology.ifacs,
-                                    &mut topology.pacers,
-                                    &mut wire_scratch,
-                                    now,
-                                    &mut journaled_sink!(),
-                                );
-                            }
-                        }
-                        CryptoResult::Decrypted { owed, shared } => {
-                            let mut deferred_sign = None;
-                            engine.resume_decrypt(
-                                owed,
-                                shared,
-                                topology.interfaces.view(),
-                                &mut should_prove,
-                                &mut deferred_sign,
-                                &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
-                            );
-                            if let Some(deferred) = deferred_sign {
-                                if let Some(pool) = crypto_pool.as_ref() {
-                                    pool.submit(CryptoJob::Sign(deferred));
-                                }
-                            }
-                        }
-                        CryptoResult::RatchetDecrypted { owed, opened } => {
-                            if let Some((opened_by, plaintext)) = opened {
-                                let mut deferred_sign = None;
-                                engine.resume_ratchet_decrypt(
-                                    *owed,
-                                    OpenedToken {
-                                        opened_by,
-                                        plaintext: &plaintext,
-                                    },
-                                    topology.interfaces.view(),
-                                    &mut should_prove,
-                                    &mut deferred_sign,
-                                    &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
-                                );
-                                if let Some(deferred) = deferred_sign {
-                                    if let Some(pool) = crypto_pool.as_ref() {
-                                        pool.submit(CryptoJob::Sign(deferred));
-                                    }
-                                }
-                            }
-                        }
-                        CryptoResult::LinkProofVerified { owed, shared } => {
-                            if let Some(shared) = shared {
-                                let delta = engine.resume_link_proof(
-                                    owed,
-                                    shared,
-                                    topology.interfaces.view(),
-                                    now,
-                                    &mut |entropy| host.fill_entropy(entropy),
-                                    &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
-                                );
-                                merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, topology.view());
-                            }
-                        }
-                        CryptoResult::LinkProofSigned { owed, responder_encryption, shared, signature } => {
-                            let delta = engine.resume_link_proof_sign(
-                                owed,
-                                responder_encryption,
-                                shared,
-                                signature,
-                                topology.interfaces.view(),
-                                &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
-                            );
-                            merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, topology.view());
-                        }
-                        CryptoResult::StagedSealed { link_id, stream_nonce, nonce_prefixed_len, transfer, names, outcome } => {
-                            let sealed_len = outcome.map_or(0, |sealed| sealed.sealed_transfer_len);
-                            let names_len = outcome.map_or(0, |sealed| sealed.part_count * MAP_HASH_LEN);
-                            engine.apply_offloaded_staged_seal(
-                                OffloadedStagedSeal {
-                                    link_id,
-                                    stream_nonce,
-                                    nonce_prefixed_len,
-                                    sealed_bytes: &transfer[..sealed_len],
-                                    names: &names[..names_len],
-                                    outcome,
-                                },
-                                &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
-                            );
-                            engine.promote_staged_resource(
-                                &link_id,
-                                now,
-                                &mut |entropy| host.fill_entropy(entropy),
-                                &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
-                            );
+                    .complete(result, now, &mut seal_buf, &mut should_prove);
+                    match effect {
+                        CryptoCompletionEffect::NoWakeChange => {}
+                        CryptoCompletionEffect::WakeSchedules(delta) => {
                             merge_wake_schedules_delta(
                                 &mut wake_schedules,
-                                WakeSchedules {
-                                    resource_deadlines: engine.resource_deadlines_wake(),
-                                    ..WakeSchedules::UNCHANGED
-                                },
+                                delta,
                                 &engine,
                                 topology.view(),
                             );
                         }
-                        CryptoResult::AnnounceVerified { owed, valid } => {
-                            if valid {
-                                let delta = engine.resume_announce(
-                                    owed,
-                                    topology.interfaces.view(),
-                                    &mut |entropy| host.fill_entropy(entropy),
-                                    &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
-                                );
-                                merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, topology.view());
-                            }
-                        }
-                        CryptoResult::SpanOpened { link_id, hash, span_start, state, bytes } => {
-                            let delta = engine.apply_opened_span(
-                                OffloadedOpenSpan {
-                                    link_id,
-                                    hash,
-                                    span_start,
-                                    state,
-                                    bytes: &bytes,
-                                },
-                                now,
-                                &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                        CryptoCompletionEffect::OpenSpanAdvanced(delta) => {
+                            merge_wake_schedules_delta(
+                                &mut wake_schedules,
+                                delta,
+                                &engine,
+                                topology.view(),
                             );
-                            merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, topology.view());
-                            dispatch_owed_open_spans!();
+                            dispatch_open_spans(&mut engine, crypto_pool.as_ref());
                         }
                     }
                     next = crypto_rx.try_recv().ok();
                 }
-                dispatch_owed_open_spans!();
+                dispatch_open_spans(&mut engine, crypto_pool.as_ref());
             }
             _ = tokio::task::yield_now(), if crypto_pool.as_ref().is_some_and(CryptoPool::awaits_packet_verdict) => {}
         }
