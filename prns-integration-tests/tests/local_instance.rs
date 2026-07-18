@@ -17,7 +17,7 @@ use personal_rns::runtime::{
 };
 use personal_rns::shared_instance::{
     join_shared_instance, InstancePorts, JoinError, OnExisting, RnsBlackholeFiles, Role,
-    SharedInstanceCredentials, SharedInstanceIntent,
+    SharedInstanceCredentials, SharedInstanceEndpoint, SharedInstanceIntent,
 };
 use personal_rns::storage::GrowableHeap;
 use tokio::net::{TcpListener, TcpStream};
@@ -51,22 +51,36 @@ async fn free_port() -> u16 {
         .port()
 }
 
+#[allow(clippy::expect_used)]
+async fn free_instance_ports() -> InstancePorts {
+    let bus = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a loopback bus port is free");
+    let control = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a loopback control port is free");
+    InstancePorts {
+        bus: bus.local_addr().expect("the bus has an address").port(),
+        control: control
+            .local_addr()
+            .expect("the control listener has an address")
+            .port(),
+    }
+}
+
 fn identity_dir(tag: u16) -> std::path::PathBuf {
     std::env::temp_dir().join(std::format!("prns-local-instance-test-{tag}"))
 }
 
-fn instance(bus: u16, on_existing: OnExisting) -> SharedInstanceIntent {
-    let identity_dir = identity_dir(bus);
+fn instance(ports: InstancePorts, on_existing: OnExisting) -> SharedInstanceIntent {
+    let identity_dir = identity_dir(ports.bus);
     let credentials =
         SharedInstanceCredentials::from_identity_secret(&[0xA1; IDENTITY_SECRET_KEY_LEN]);
     SharedInstanceIntent {
         blackhole_source: credentials.transport_identity_hash(),
         credentials,
         blackhole_files: RnsBlackholeFiles::new(identity_dir.join("storage/blackhole")),
-        ports: InstancePorts {
-            bus,
-            control: bus + 1,
-        },
+        ports,
         transport: personal_rns::shared_instance::SharedInstanceTransport::Tcp,
         policy: personal_rns::interfaces::shared_instance::core::configured_policy(
             Default::default(),
@@ -79,7 +93,9 @@ const EMPTY: [PreConfiguredDestination<'static>; 0] = [];
 
 #[tokio::test]
 async fn becomes_the_instance_when_none_is_running() {
-    let bus = free_port().await;
+    let ports = free_instance_ports().await;
+    let bus = ports.bus;
+    let control = ports.control;
     let node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: EMPTY,
@@ -90,7 +106,8 @@ async fn becomes_the_instance_when_none_is_running() {
         on_event: |_event, _state| {},
     });
 
-    let role = join_shared_instance(&node.handle(), instance(bus, OnExisting::JoinAsClient)).await;
+    let role =
+        join_shared_instance(&node.handle(), instance(ports, OnExisting::JoinAsClient)).await;
 
     assert_eq!(
         role,
@@ -105,6 +122,43 @@ async fn becomes_the_instance_when_none_is_running() {
         TcpStream::connect(("127.0.0.1", bus)).await.is_ok(),
         "the elected instance reserves its bus before its run loop starts"
     );
+    assert!(
+        TcpStream::connect(("127.0.0.1", control)).await.is_ok(),
+        "the elected instance reserves its control endpoint before reporting success"
+    );
+}
+
+#[tokio::test]
+async fn a_control_collision_prevents_election_and_releases_the_bus() {
+    let occupied_control = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("the control-port standin binds");
+    let control = occupied_control.local_addr().expect("addr").port();
+    let bus = free_port().await;
+    let node = PrnsNode::new(PrnsNodeRecipe {
+        transport_identity: None,
+        pre_configured_destinations: EMPTY,
+        app_state: (),
+        storage: GrowableHeap,
+        routes: routes![],
+        interfaces: Manual,
+        on_event: |_event, _state| {},
+    });
+    let intent = instance(InstancePorts { bus, control }, OnExisting::JoinAsClient);
+
+    let role = join_shared_instance(&node.handle(), intent).await;
+
+    assert_eq!(
+        role,
+        Err(JoinError::EndpointUnavailable {
+            endpoint: SharedInstanceEndpoint::TcpControl,
+            kind: std::io::ErrorKind::AddrInUse,
+        })
+    );
+    assert!(
+        TcpListener::bind(("127.0.0.1", bus)).await.is_ok(),
+        "a failed control bind cannot leave a partial shared-instance bus behind"
+    );
 }
 
 #[tokio::test]
@@ -114,6 +168,7 @@ async fn joins_as_a_client_when_an_instance_is_already_running() {
         .await
         .expect("the standin binds");
     let bus = standin.local_addr().expect("addr").port();
+    let control = free_port().await;
 
     let node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
@@ -125,7 +180,11 @@ async fn joins_as_a_client_when_an_instance_is_already_running() {
         on_event: |_event, _state| {},
     });
 
-    let role = join_shared_instance(&node.handle(), instance(bus, OnExisting::JoinAsClient)).await;
+    let role = join_shared_instance(
+        &node.handle(),
+        instance(InstancePorts { bus, control }, OnExisting::JoinAsClient),
+    )
+    .await;
 
     assert!(
         matches!(role, Ok(Role::JoinedAsClient { .. })),
@@ -139,6 +198,7 @@ async fn refuses_to_take_a_role_when_told_to_and_an_instance_exists() {
         .await
         .expect("the standin binds");
     let bus = standin.local_addr().expect("addr").port();
+    let control = free_port().await;
 
     let node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
@@ -150,7 +210,11 @@ async fn refuses_to_take_a_role_when_told_to_and_an_instance_exists() {
         on_event: |_event, _state| {},
     });
 
-    let role = join_shared_instance(&node.handle(), instance(bus, OnExisting::Refuse)).await;
+    let role = join_shared_instance(
+        &node.handle(),
+        instance(InstancePorts { bus, control }, OnExisting::Refuse),
+    )
+    .await;
 
     assert!(
         matches!(role, Err(JoinError::InstanceAlreadyRunning { .. })),
@@ -160,7 +224,7 @@ async fn refuses_to_take_a_role_when_told_to_and_an_instance_exists() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_client_rides_the_instances_bus() {
-    let bus = free_port().await;
+    let ports = free_instance_ports().await;
 
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_a = PrnsNode::new(PrnsNodeRecipe {
@@ -177,7 +241,7 @@ async fn a_client_rides_the_instances_bus() {
         },
     });
     let role_a =
-        join_shared_instance(&node_a.handle(), instance(bus, OnExisting::JoinAsClient)).await;
+        join_shared_instance(&node_a.handle(), instance(ports, OnExisting::JoinAsClient)).await;
     assert_eq!(role_a, Ok(Role::BecameInstance), "A becomes the instance");
 
     let single_b = single(secret(0xB2));
@@ -195,7 +259,8 @@ async fn a_client_rides_the_instances_bus() {
 
     let (role_tx, role_rx) = tokio::sync::oneshot::channel();
     tokio::spawn(async move {
-        let role_b = join_shared_instance(&handle_b, instance(bus, OnExisting::JoinAsClient)).await;
+        let role_b =
+            join_shared_instance(&handle_b, instance(ports, OnExisting::JoinAsClient)).await;
         let _ = role_tx.send(role_b);
 
         let mut ticker = tokio::time::interval(Duration::from_millis(200));

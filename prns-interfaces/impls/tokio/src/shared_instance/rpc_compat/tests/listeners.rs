@@ -40,7 +40,8 @@ async fn tcp_run_accepts_a_modern_client_connection() {
             interfaces: std::vec![],
         },
     );
-    let server_task = tokio::spawn(server.run());
+    let listener = server.bind().await.unwrap();
+    let server_task = tokio::spawn(listener.run());
 
     let mut stream = None;
     for _ in 0..20 {
@@ -107,5 +108,31 @@ async fn abstract_unix_constructor_and_binder_are_wired() {
     }
 
     let socket_name = std::format!("mutation-proof-{}", std::process::id());
-    assert!(bind_abstract_rpc(&socket_name).is_some());
+    assert!(bind_abstract_rpc(&socket_name).is_ok());
+}
+
+#[tokio::test]
+async fn tcp_bind_preserves_the_concrete_failure() {
+    let occupied = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = occupied.local_addr().unwrap().port();
+    let server = SharedInstanceRpcCompat::tcp(
+        test_credentials([0x5au8; 32]),
+        port,
+        StubQuery {
+            links: 0,
+            packet_phy: None,
+            rates: std::vec![],
+            routes: std::vec![],
+            interfaces: std::vec![],
+        },
+    );
+
+    let error = server.bind().await.err();
+
+    assert_eq!(
+        error,
+        Some(SharedInstanceRpcBindError::Tcp(
+            std::io::ErrorKind::AddrInUse
+        ))
+    );
 }

@@ -36,7 +36,7 @@ use super::dispatch::reply_for_decoded;
 use super::framing::{read_auth_frame, read_frame, write_frame, write_frame_header};
 #[cfg(target_os = "linux")]
 use super::server::{bind_abstract_rpc, RpcBind};
-use super::server::{serve_connection, SharedInstanceRpcCompat};
+use super::server::{serve_connection, SharedInstanceRpcBindError, SharedInstanceRpcCompat};
 use super::storage::{load_or_seed_rns_rpc_key, reticulum_storage_dir, RnsRpcKeyStorageError};
 use super::telemetry::RpcTelemetry;
 

@@ -378,7 +378,17 @@ fn run_engine(
         handle.add_interface(usb);
 
         handle.supervise(LocalServer::with_port(LOCAL_RNS_PORT));
-        tokio::spawn(SharedInstanceRpcCompat::tcp(credentials, RPC_PORT, handle.clone()).run());
+        let rpc = match SharedInstanceRpcCompat::tcp(credentials, RPC_PORT, handle.clone())
+            .bind()
+            .await
+        {
+            Ok(rpc) => rpc,
+            Err(error) => {
+                log::error!("shared-instance RPC listener failed to bind: {error:?}");
+                return;
+            }
+        };
+        tokio::spawn(rpc.run());
 
         let wifi = match mdns.take_receiver() {
             Some(rx) => AutoWifi::new().with_mdns(rx),

@@ -281,6 +281,52 @@ fn panic_on_interface_error_stops_before_readiness_after_an_initial_bind_failure
 }
 
 #[test]
+fn occupied_shared_instance_control_port_fails_before_readiness() {
+    let bus_probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let bus_port = bus_probe.local_addr().unwrap().port();
+    drop(bus_probe);
+    let occupied_control = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let control_port = occupied_control.local_addr().unwrap().port();
+    let directory = TestDirectory::new();
+    fs::write(
+        directory.0.join("config"),
+        format!(
+            "[reticulum]\nshare_instance = Yes\nshared_instance_type = TCP\nshared_instance_port = {bus_port}\ninstance_control_port = {control_port}\n[logging]\nloglevel = 7\nlogtimestamps = No\n"
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_prnsd"))
+        .args([
+            "run",
+            "--log-format",
+            "json",
+            "--config",
+            directory.0.to_str().unwrap(),
+        ])
+        .env_remove("RUST_LOG")
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let rendered = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(rendered.contains("\"event\":\"shared_instance_endpoint_unavailable\""));
+    assert!(rendered.contains("\"endpoint\":\"tcp_control\""));
+    assert!(rendered.contains("\"error_kind\":\"AddrInUse\""));
+    assert!(!rendered.contains("\"event\":\"shared_instance_started\""));
+    assert!(!rendered.contains("\"event\":\"daemon_ready\""));
+    assert!(!rendered.contains("\"event\":\"daemon_ready_degraded\""));
+    assert!(
+        std::net::TcpListener::bind(("127.0.0.1", bus_port)).is_ok(),
+        "the failed daemon cannot leave its data bus reserved"
+    );
+}
+
+#[test]
 fn a_retrying_interface_reports_degraded_readiness_without_panicking_by_default() {
     let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = probe.local_addr().unwrap().port();
