@@ -1,4 +1,5 @@
 use super::*;
+use crate::units::InstantMillis;
 use core::hint::black_box;
 use core::mem::size_of;
 use std::collections::BTreeMap;
@@ -210,10 +211,11 @@ fn randomized_deadline_heap_mutations_match_a_linear_oracle() {
         if let Some(row) = candidate {
             assert!(values[row].is_some_and(|deadline| deadline <= now));
         }
-        for (position, row) in index.heap.iter().copied().enumerate() {
-            assert_eq!(index.positions[row as usize], position as u32);
+        let (heap, positions) = index.heap_and_positions();
+        for (position, row) in heap.iter().copied().enumerate() {
+            assert_eq!(positions[row as usize], position as u32);
             if position > 0 {
-                let parent = index.heap[(position - 1) / 2] as usize;
+                let parent = heap[(position - 1) / 2] as usize;
                 assert!(values[parent] <= values[row as usize]);
             }
         }
@@ -431,8 +433,7 @@ fn profile_roaring<const QUANTUM_MS: u64>(
         values.push(deadline);
     }
     let churn = churn_started.elapsed().as_nanos() as f64 / mutation_iterations as f64;
-    let storage = index.keys.len() as usize * size_of::<u64>()
-        + index.row_buckets.capacity() * size_of::<Option<TemporalBucket>>();
+    let storage = index.storage_bytes();
 
     eprintln!(
         "{label} rows={rows} q={QUANTUM_MS} build_ms={:.3} exact_ns={query:.1} update_ns={update:.1} churn_ns={churn:.1} bytes_upper={storage}",
