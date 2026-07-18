@@ -6,6 +6,10 @@ pub mod node;
 pub mod node_introspection;
 pub mod packet_phy_retention;
 pub mod request_router;
+#[cfg(feature = "rns-management")]
+pub mod rns_management;
+#[cfg(feature = "rns-management")]
+pub mod rns_remote_management;
 
 pub use command::{
     ClearAnnounceQueuesOutcome, DestinationIdentityRetentionControl,

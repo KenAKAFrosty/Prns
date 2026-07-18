@@ -1,11 +1,10 @@
-use std::time::Duration;
-use std::vec::Vec;
+use alloc::string::String;
+use alloc::vec::Vec;
+use core::time::Duration;
 
+use prns_core::engine::RouteSnapshot;
 use prns_core::identity::IdentityHash;
 use prns_core::interfaces::rns_management::{RnsPathTable, RnsTransportStatus};
-use prns_runtime::node_introspection::{
-    AnnounceRateSnapshot, InterfaceInventoryEntry, RouteSnapshot,
-};
 
 pub use prns_core::interfaces::rns_management::{
     decode_remote_path_request as decode_path_request,
@@ -17,7 +16,8 @@ pub use prns_core::interfaces::rns_management::{
     RnsRemoteStatusRequest as RemoteStatusRequest,
 };
 
-use crate::shared_instance::rpc_compat::projections::{announce_rate_table, interface_stats};
+use super::node_introspection::{AnnounceRateSnapshot, InterfaceInventoryEntry};
+use super::rns_management::{announce_rate_table, interface_stats};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RemoteTransportStatus {
@@ -28,7 +28,7 @@ pub struct RemoteTransportStatus {
 
 pub fn encode_status_response(
     request: RemoteStatusRequest,
-    inventory: Vec<InterfaceInventoryEntry>,
+    inventory: Vec<InterfaceInventoryEntry<String>>,
     link_count: u32,
     transport: Option<RemoteTransportStatus>,
 ) -> Result<Vec<u8>, RemoteResponseEncodeError> {
@@ -70,11 +70,10 @@ pub fn encode_rate_table_response(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prns_core::engine::InstantMillis;
     use prns_core::interfaces::{InterfaceId, InterfaceKind};
     use prns_core::routing::types::NextHop;
+    use prns_core::units::InstantMillis;
     use prns_core::wire::DestinationHash;
-    use rmpv::Value;
 
     #[test]
     fn table_response_filters_before_using_the_shared_stock_projection() {
@@ -89,12 +88,15 @@ mod tests {
         )) else {
             panic!("stock fixture is a path-table request");
         };
+
         let encoded = encode_path_table_response(selection, entries).unwrap();
-        let decoded = decode(&encoded).unwrap();
-        let Value::Array(rows) = decoded else {
-            panic!("path response is an array");
-        };
-        assert_eq!(rows.len(), 1);
+
+        assert_eq!(
+            encoded,
+            RnsPathTable::new(vec![route(selected, 2)])
+                .encode_message_pack()
+                .unwrap()
+        );
     }
 
     #[test]
@@ -110,24 +112,13 @@ mod tests {
             }),
         )
         .unwrap();
+
         assert_eq!(
             encoded,
             bytes_from_hex(
                 "928aaa696e746572666163657390a372786200a374786200a372787300a374787300a3727373c0ac7472616e73706f72745f6964c41011111111111111111111111111111111aa6e6574776f726b5f6964c41022222222222222222222222222222222b07472616e73706f72745f757074696d65cb3ff8000000000000af70726f62655f726573706f6e646572c002",
             )
         );
-        let Value::Array(response) = decode(&encoded).unwrap() else {
-            panic!("status response is an array");
-        };
-        assert_eq!(response.len(), 2);
-        assert_eq!(response[1], Value::from(2));
-        let Value::Map(stats) = &response[0] else {
-            panic!("status body is a map");
-        };
-        assert!(stats
-            .iter()
-            .any(|(key, value)| key.as_str() == Some("transport_uptime")
-                && value == &Value::F64(1.5)));
     }
 
     fn route(destination: DestinationHash, hops: u8) -> RouteSnapshot {
@@ -146,11 +137,7 @@ mod tests {
         value
             .as_bytes()
             .chunks_exact(2)
-            .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+            .map(|pair| u8::from_str_radix(core::str::from_utf8(pair).unwrap(), 16).unwrap())
             .collect()
-    }
-
-    fn decode(bytes: &[u8]) -> Result<Value, rmpv::decode::Error> {
-        rmpv::decode::read_value(&mut std::io::Cursor::new(bytes))
     }
 }

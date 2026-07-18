@@ -8,13 +8,12 @@ use prns_core::interfaces::shared_instance::rns_rpc::{
 use prns_core::routing::{BlackholeExpiry, BlackholedIdentity};
 use prns_core::wire::DestinationHash;
 use prns_runtime::node_introspection::NodeIntrospection;
+use prns_runtime::runtime::rns_management::{announce_rate_table, interface_stats};
 use prns_runtime::runtime::{
     DestinationIdentityRetentionControl, DestinationIdentityRetentionControlError,
     IdentityBlackholeControl, IdentityBlackholeControlError, IdentityBlackholeSource,
     IdentityBlackholeSourceError, RoutingControl, RoutingControlError,
 };
-
-use super::projections::{announce_rate_table, interface_stats};
 
 pub(super) async fn reply_for_decoded<B>(
     request: &RpcRequest<'_>,

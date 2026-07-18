@@ -5,7 +5,6 @@
 mod authentication;
 mod dispatch;
 mod framing;
-pub(crate) mod projections;
 mod server;
 mod storage;
 mod telemetry;

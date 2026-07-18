@@ -18,28 +18,11 @@ type CoreInterfaceIfacSnapshot =
 type CoreInterfaceInventoryEntry =
     prns_runtime::runtime::node_introspection::InterfaceInventoryEntry<String>;
 
+pub use prns_runtime::runtime::node_introspection::{
+    logical_interface_inventory, AnnounceRateSnapshot,
+};
 pub type InterfaceIfacSnapshot = CoreInterfaceIfacSnapshot;
 pub type InterfaceInventoryEntry = CoreInterfaceInventoryEntry;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AnnounceRateSnapshot {
-    pub destination: DestinationHash,
-    pub last_allowed_announce_at: InstantMillis,
-    pub blocked_until: InstantMillis,
-    pub rate_violations: u16,
-    pub observed_at: Vec<InstantMillis>,
-}
-
-#[must_use]
-pub fn logical_interface_inventory(
-    mut inventory: Vec<InterfaceInventoryEntry>,
-) -> Vec<InterfaceInventoryEntry> {
-    let logical_len =
-        prns_runtime::runtime::node_introspection::fold_logical_interface_inventory(&mut inventory)
-            .len();
-    inventory.truncate(logical_len);
-    inventory
-}
 
 pub trait NodeIntrospection {
     fn interface_inventory(&self) -> Vec<InterfaceInventoryEntry>;

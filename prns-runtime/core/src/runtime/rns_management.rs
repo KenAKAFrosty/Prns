@@ -1,14 +1,16 @@
-use std::vec::Vec;
+use alloc::string::String;
+use alloc::vec::Vec;
 
 use prns_core::interfaces::rns_management::{
     RnsAnnounceRateEntry, RnsAnnounceRateTable, RnsInterfaceAccessCode, RnsInterfaceStats,
     RnsInterfaceStatsEntry,
 };
-use prns_runtime::node_introspection::{
+
+use super::node_introspection::{
     logical_interface_inventory, AnnounceRateSnapshot, InterfaceInventoryEntry,
 };
 
-pub(crate) fn interface_stats(inventory: Vec<InterfaceInventoryEntry>) -> RnsInterfaceStats {
+pub fn interface_stats(inventory: Vec<InterfaceInventoryEntry<String>>) -> RnsInterfaceStats {
     RnsInterfaceStats::new(
         logical_interface_inventory(inventory)
             .into_iter()
@@ -26,7 +28,7 @@ pub(crate) fn interface_stats(inventory: Vec<InterfaceInventoryEntry>) -> RnsInt
     )
 }
 
-pub(crate) fn announce_rate_table(entries: Vec<AnnounceRateSnapshot>) -> RnsAnnounceRateTable {
+pub fn announce_rate_table(entries: Vec<AnnounceRateSnapshot>) -> RnsAnnounceRateTable {
     RnsAnnounceRateTable::new(
         entries
             .into_iter()
