@@ -1,5 +1,27 @@
 use super::*;
 
+#[test]
+fn explicit_blackhole_source_is_independent_of_rpc_credentials() {
+    let query = StubQuery {
+        links: 0,
+        packet_phy: None,
+        rates: std::vec![],
+        routes: std::vec![],
+        interfaces: std::vec![],
+    };
+    let visible_transport = IdentityHash::new([0x99; 16]);
+    let server = SharedInstanceRpcCompat::tcp_with_blackholes(
+        test_credentials([0x5a; 32]),
+        visible_transport,
+        37_429,
+        query.clone(),
+        query,
+    );
+
+    assert_eq!(server.blackhole_source, visible_transport);
+    assert_ne!(server.blackhole_source, TEST_TRANSPORT_IDENTITY_HASH);
+}
+
 #[tokio::test]
 async fn tcp_run_accepts_a_modern_client_connection() {
     let rpc_key = [0x5au8; 32];

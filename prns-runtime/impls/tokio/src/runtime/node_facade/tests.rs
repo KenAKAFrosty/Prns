@@ -226,6 +226,69 @@ fn new_with_handle_builds_state_from_the_nodes_handle() {
     assert!(Arc::ptr_eq(&prns.handle.ids, &prns.node.state.ids));
 }
 
+#[test]
+fn a_runtime_destination_registers_only_its_selected_route_types() {
+    struct First;
+    impl RequestRoute<()> for First {
+        const PATH: &'static str = "/first";
+        const POLICY: super::super::request_router::RoutePolicy =
+            super::super::request_router::RoutePolicy::AllowList(&[]);
+
+        async fn handle(
+            _context: super::super::request_router::RequestContext<'_, ()>,
+        ) -> Result<(), super::super::request_router::Decline> {
+            Ok(())
+        }
+    }
+
+    struct Second;
+    impl RequestRoute<()> for Second {
+        const PATH: &'static str = "/second";
+        const POLICY: super::super::request_router::RoutePolicy =
+            super::super::request_router::RoutePolicy::AllowList(&[]);
+
+        async fn handle(
+            _context: super::super::request_router::RequestContext<'_, ()>,
+        ) -> Result<(), super::super::request_router::Decline> {
+            Ok(())
+        }
+    }
+
+    let mut prns = PrnsNode::new(PrnsNodeRecipe {
+        transport_identity: None,
+        pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
+        app_state: (),
+        storage: crate::storage::GrowableHeap,
+        routes: crate::routes![First, Second],
+        interfaces: Manual,
+        on_event: |_event, _state: &()| {},
+    });
+    let destination = prns
+        .register_preconfigured_destination(PreConfiguredDestination::Single {
+            app_name: "typed",
+            aspects: &["routes"],
+            identity: Zeroizing::new([0x42; IDENTITY_SECRET_KEY_LEN]),
+            announce_app_data: &[],
+            proof: crate::routing::ProofStrategy::ProveNone,
+            link_requests: crate::routing::LinkRequestPolicy::AcceptAll,
+            ratchet: crate::engine::RatchetPolicy::NoRatchets,
+            resource_strategy: ResourceStrategy::AcceptNone,
+            request_handlers: super::super::RequestHandlerRegistration::None,
+        })
+        .unwrap();
+    prns.register_request_route::<First>(&destination).unwrap();
+    let identity = crate::identity::IdentityHash::new([0x31; 16]);
+
+    assert_eq!(
+        prns.allow_requester(&destination, First::PATH, identity),
+        Ok(())
+    );
+    assert_eq!(
+        prns.allow_requester(&destination, Second::PATH, identity),
+        Err(RequestHandlerError::NoSuchHandler)
+    );
+}
+
 #[cfg(feature = "runtime-metrics")]
 #[tokio::test]
 async fn metrics_snapshots_are_requested_from_the_reactor() {
@@ -824,6 +887,35 @@ async fn establish_link_surfaces_a_typed_failure() {
     assert_eq!(
         establish.await.expect("the establish task joins"),
         Err(SendError::Failed(EstablishLinkFailure::Timeout)),
+    );
+}
+
+#[tokio::test]
+async fn request_path_mints_an_id_and_awaits_the_typed_result() {
+    let (prns, mut command_rx) = handle();
+    let issuer = prns.clone();
+    let requested = tokio::spawn(async move { issuer.request_path(PEER).await });
+
+    let HostCommand::AwaitedEngine { issued, completion } =
+        command_rx.recv().await.expect("the command was issued")
+    else {
+        panic!("request_path must issue an awaited engine command");
+    };
+    let EngineCommand::RequestPath(request) = issued.command else {
+        panic!("request_path must issue its matching engine command");
+    };
+    assert_eq!(request.destination, PEER);
+    completion
+        .send(Settlement::RequestPath(Ok(PathFound {
+            hops: crate::units::HopCount(3),
+        })))
+        .expect("the awaiter is still parked");
+
+    assert_eq!(
+        requested.await.expect("the request task joins"),
+        Ok(PathFound {
+            hops: crate::units::HopCount(3),
+        })
     );
 }
 

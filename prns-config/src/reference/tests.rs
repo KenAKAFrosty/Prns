@@ -832,22 +832,59 @@ fn recognized_follow_ons_warn_at_their_exact_source_locations() {
         .iter()
         .filter(|diagnostic| diagnostic.code() == ConfigDiagnosticCode::UnsupportedSetting)
         .collect::<Vec<_>>();
-    assert_eq!(warnings.len(), 2);
+    assert_eq!(warnings.len(), 1);
     assert_eq!(warnings[0].source(), "/tmp/rns/config");
-    assert_eq!(warnings[0].line(), 4);
-    assert_eq!(warnings[0].value(), Some("No"));
     assert!(!warnings
         .iter()
         .any(|warning| warning.path().ends_with("enable_remote_management")));
     assert!(!warnings
         .iter()
         .any(|warning| warning.path().ends_with("respond_to_probes")));
+    assert!(!warnings
+        .iter()
+        .any(|warning| warning.path().ends_with("publish_blackhole")));
     assert!(!warnings.iter().any(|warning| {
         warning.path().ends_with("discovery_port") || warning.path().ends_with("bootstrap_only")
     }));
     assert!(warnings
         .iter()
         .any(|warning| warning.correction().contains("correct each reported")));
+}
+
+#[test]
+fn blackhole_exchange_globals_are_typed_and_invalid_intervals_are_actionable() {
+    let source = "00112233445566778899aabbccddeeff";
+    let report = parse_named(
+        "/tmp/rns/config",
+        &format!(
+            "[reticulum]\npublish_blackhole = Yes\nblackhole_sources = {source}, {source}\nblackhole_update_interval = 2.5\n"
+        ),
+    )
+    .unwrap();
+    assert_eq!(report.value.blackhole_exchange.publish, Some(true));
+    assert_eq!(report.value.blackhole_exchange.sources.len(), 1);
+    assert_eq!(
+        report.value.blackhole_exchange.update_interval_minutes,
+        Some(2.5)
+    );
+    assert!(!report
+        .warnings
+        .iter()
+        .any(|warning| { matches!(warning.code(), ConfigDiagnosticCode::UnsupportedSetting) }));
+
+    let errors = parse_named(
+        "/tmp/rns/config",
+        "[reticulum]\nblackhole_update_interval = NaN\n",
+    )
+    .unwrap_err();
+    let diagnostic = errors
+        .diagnostics()
+        .iter()
+        .find(|diagnostic| diagnostic.path().ends_with("blackhole_update_interval"))
+        .unwrap();
+    assert_eq!(diagnostic.line(), 2);
+    assert!(diagnostic.accepted().unwrap().contains("finite"));
+    assert!(diagnostic.correction().contains("60.0"));
 }
 
 #[test]

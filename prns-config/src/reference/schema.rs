@@ -26,6 +26,7 @@ pub(super) enum ValueKind {
     RnodeMultiVport,
     RnodeMultiFrequency,
     RnodeMultiTxPower,
+    BlackholeUpdateInterval,
 }
 
 impl ValueKind {
@@ -61,6 +62,9 @@ impl ValueKind {
                 "137000000 through 1000000000 Hz, or 2200000000 through 2600000000 Hz"
             }
             ValueKind::RnodeMultiTxPower => "an integer from -9 through 37 dBm",
+            ValueKind::BlackholeUpdateInterval => {
+                "a finite number of minutes representable by the host; values below 2 use 2 minutes"
+            }
         }
     }
 
@@ -86,6 +90,7 @@ impl ValueKind {
             ValueKind::RnodeMultiVport => "0",
             ValueKind::RnodeMultiFrequency => "868000000",
             ValueKind::RnodeMultiTxPower => "7",
+            ValueKind::BlackholeUpdateInterval => "60.0",
         }
     }
 }
@@ -170,14 +175,14 @@ pub(super) const GLOBAL_RULES: &[(&str, KeyRule)] = &[
         global_key::REQUIRED_DISCOVERY_VALUE,
         Applied(ValueKind::StampCost),
     ),
-    (global_key::PUBLISH_BLACKHOLE, FollowOn(ValueKind::Bool)),
+    (global_key::PUBLISH_BLACKHOLE, Applied(ValueKind::Bool)),
     (
         global_key::BLACKHOLE_SOURCES,
-        FollowOn(ValueKind::IdentityHashes),
+        Applied(ValueKind::IdentityHashes),
     ),
     (
         global_key::BLACKHOLE_UPDATE_INTERVAL,
-        FollowOn(ValueKind::F64),
+        Applied(ValueKind::BlackholeUpdateInterval),
     ),
     (
         global_key::INTERFACE_DISCOVERY_SOURCES,
@@ -550,7 +555,7 @@ mod tests {
         );
         assert_eq!(
             global_application(global_key::PUBLISH_BLACKHOLE),
-            Some(KeyApplication::FollowOn)
+            Some(KeyApplication::Applied)
         );
         assert_eq!(
             interface_key_rule("AutoInterface", interface_key::DISCOVERY_PORT)

@@ -65,12 +65,12 @@ fn invalid_config_exits_before_startup_and_renders_every_actionable_error() {
 }
 
 #[test]
-fn recognized_follow_ons_emit_source_located_warnings_before_readiness() {
+fn remaining_follow_ons_warn_while_blackhole_exchange_does_not() {
     let directory = TestDirectory::new();
     let path = directory.0.join("config");
     fs::write(
         &path,
-        "[reticulum]\nshare_instance = No\nenable_remote_management = Yes\nremote_management_allowed = 00112233445566778899aabbccddeeff\nrespond_to_probes = No\npublish_blackhole = No\n[logging]\nloglevel = 7\n",
+        "[reticulum]\nshare_instance = No\nenable_remote_management = Yes\nremote_management_allowed = 00112233445566778899aabbccddeeff\nrespond_to_probes = No\npublish_blackhole = No\n[logging]\nloglevel = 7\n[interfaces]\n[[LAN]]\ntype = AutoInterface\nenabled = Yes\nignore_config_warnings = Yes\n",
     )
     .unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_prnsd"))
@@ -133,7 +133,7 @@ fn recognized_follow_ons_emit_source_located_warnings_before_readiness() {
         "missing config path in daemon output:\n{rendered}"
     );
     assert!(
-        rendered.contains("publish_blackhole"),
+        rendered.contains("ignore_config_warnings"),
         "missing setting name in daemon output:\n{rendered}"
     );
     assert!(
@@ -145,9 +145,10 @@ fn recognized_follow_ons_emit_source_located_warnings_before_readiness() {
             line.contains("\"event\":\"config_warning\"")
                 && (line.contains("enable_remote_management")
                     || line.contains("remote_management_allowed")
-                    || line.contains("respond_to_probes"))
+                    || line.contains("respond_to_probes")
+                    || line.contains("publish_blackhole"))
         }),
-        "applied remote-management settings still warned as unsupported:\n{rendered}"
+        "applied daemon settings still warned as unsupported:\n{rendered}"
     );
     assert!(
         rendered.contains("\"event\":\"daemon_ready\""),

@@ -13,9 +13,10 @@ use crate::crypto::ratchets::SeedSelfRatchetsOutcome;
 use crate::engine::{
     AnnounceNow, AnnounceNowFailure, CloseLink, CommandId, Departure,
     DestinationIdentitySeedOutcome, EngineCommand, EstablishLink, EstablishLinkFailure,
-    IssuedCommand, PacketReceiptDelivered, SendRequestFailure, SendResourceFailure,
-    SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload, SetTransportIdentityError,
-    Settlement,
+    IssuedCommand, PacketReceiptDelivered, PathFound, PathRequestId, RequestPath,
+    RequestPathFailure, SendRequestFailure, SendResourceFailure, SendSinglePacket,
+    SendSinglePacketFailure, SendSinglePacketPayload, SetTransportIdentityError, Settlement,
+    PATH_REQUEST_ID_LEN,
 };
 use crate::engine::{InstantMillis, Journaled};
 use crate::identity::held::HoldIdentityError;
@@ -57,13 +58,13 @@ use crate::routing::links::LinkId;
 use crate::routing::request_handlers::{RequestHandlerError, RequestPathHash};
 use crate::routing::tunnel::SeedTunnelOutcome;
 use crate::routing::{BlackholeIdentityOutcome, BlackholeInsertFailure, BlackholedIdentity};
-use crate::storage::StorageLayout;
+use crate::storage::{StorageLayout, TablePushError};
 use crate::units::RttMillis;
 use crate::wire::{DestinationHash, TransportId};
 
 use super::byte_stream::{ByteStreamReader, ByteStreamWriter, StreamId};
 use super::identity_blackhole::{settle_control, settle_source};
-use super::request_router::{RespondToken, RouteSet};
+use super::request_router::{RequestRoute, RespondToken, RouteSet};
 use super::request_runner::{run_router, RunnerRequest, REQUEST_QUEUE_DEPTH};
 use super::settle_destination_identity_retention;
 #[cfg(feature = "runtime-metrics")]
@@ -206,6 +207,19 @@ pub enum ResourceReceiveError {
     Failed,
     /// The node's reactor has stopped.
     NodeStopped,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequestPathError {
+    EntropyUnavailable,
+    Failed(RequestPathFailure),
+    NodeStopped,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RegisterRequestRouteError {
+    Registration(TablePushError),
+    Seed(RequestHandlerError),
 }
 
 impl PrnsNodeHandle {
@@ -694,6 +708,24 @@ impl PrnsNodeHandle {
                 .map(|established| established.link_id)
                 .map_err(SendError::Failed),
             Some(_) | None => Err(SendError::NodeStopped),
+        }
+    }
+
+    pub async fn request_path(
+        &self,
+        destination: DestinationHash,
+    ) -> Result<PathFound, RequestPathError> {
+        let mut request_id = [0; PATH_REQUEST_ID_LEN];
+        getrandom::getrandom(&mut request_id).map_err(|_| RequestPathError::EntropyUnavailable)?;
+        match self
+            .settle(EngineCommand::RequestPath(RequestPath {
+                destination,
+                id: PathRequestId::new(request_id),
+            }))
+            .await
+        {
+            Some(Settlement::RequestPath(result)) => result.map_err(RequestPathError::Failed),
+            Some(_) | None => Err(RequestPathError::NodeStopped),
         }
     }
 
@@ -1806,6 +1838,26 @@ where
         self.node
             .engine
             .allow_requester(destination, path, identity)
+    }
+
+    pub fn register_request_route<Route>(
+        &mut self,
+        destination: &DestinationHash,
+    ) -> Result<(), RegisterRequestRouteError>
+    where
+        Route: RequestRoute<St>,
+    {
+        self.node
+            .engine
+            .register_request_handler(destination, Route::PATH, Route::POLICY.engine_policy())
+            .map_err(RegisterRequestRouteError::Registration)?;
+        for identity in Route::POLICY.seed_list() {
+            self.node
+                .engine
+                .allow_requester(destination, Route::PATH, *identity)
+                .map_err(RegisterRequestRouteError::Seed)?;
+        }
+        Ok(())
     }
 
     /// Must precede [`seed_routes_from_store`](Self::seed_routes_from_store) so restored rows sit in this boot's past.

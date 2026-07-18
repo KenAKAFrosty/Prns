@@ -45,6 +45,13 @@ pub struct ReferenceDiscoveryConfig {
     pub auto_connect_limit: Option<usize>,
 }
 
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ReferenceBlackholeExchange {
+    pub publish: Option<bool>,
+    pub sources: Vec<IdentityHash>,
+    pub update_interval_minutes: Option<f64>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum ReferenceRemoteManagement {
     #[default]
@@ -232,6 +239,7 @@ pub struct ReferenceConfig {
     pub globals: BTreeMap<String, ReferenceValue>,
     pub network_identity_path: Option<String>,
     pub discovery: ReferenceDiscoveryConfig,
+    pub blackhole_exchange: ReferenceBlackholeExchange,
     pub remote_management: ReferenceRemoteManagement,
     pub other_sections: BTreeMap<String, BTreeMap<String, ReferenceValue>>,
 }

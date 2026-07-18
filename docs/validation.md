@@ -278,6 +278,7 @@ Then run the oracles:
 bash scripts/local-rpc-interop-smoke.sh
 bash scripts/remote-management-interop-smoke.sh
 bash scripts/probe-responder-interop-smoke.sh
+bash scripts/blackhole-exchange-interop-smoke.sh
 ```
 
 The first smoke stands up a Prns-owned shared instance, lets a stock RNS client
@@ -285,7 +286,9 @@ join it, and calls Reticulum's own `get_*` methods. Those methods issue msgpack
 control-RPC requests in 1.3.8 and decode msgpack replies. The second authenticates
 to `rnstransport.remote.management` and exercises the stock status, path, and
 rate request forms. The third sends an ordinary packet to `rnstransport.probe`
-and requires a cryptographically valid delivery proof.
+and requires a cryptographically valid delivery proof. The fourth runs both directions of the
+blackhole exchange: stock RNS fetches Prnsd's published aggregate, then Prnsd fetches and persists a
+stock RNS source list.
 
 The compatibility shim still answers legacy pickle-shaped basics so older LXMF
 clients do not fault on startup or resource/link telemetry, but full RPC parity

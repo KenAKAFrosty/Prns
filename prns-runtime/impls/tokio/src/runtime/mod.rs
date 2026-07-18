@@ -35,7 +35,7 @@ pub use node_facade::{
     BlackholeSeedReport, DestinationIdentitySeedReport, DetachedFleet, Fleet, FlushError,
     FlushMark, FlushReport, InterfaceAttachmentMetadata, InterfaceSupervisor,
     NonRoutingIdentityError, PrepareFlushError, PreparedFlush, PrnsNode, PrnsNodeHandle,
-    RatchetSeedReport, RegionFlush, ResourceReceipt, ResourceReceiveError, ResourceSendError,
-    RouteSeedProgress, RouteSeedReport, SegmentCompression, SharedInstanceIdentityError,
-    TunnelSeedReport, AUTO_COMPRESS_MAX_LEN,
+    RatchetSeedReport, RegionFlush, RegisterRequestRouteError, RequestPathError, ResourceReceipt,
+    ResourceReceiveError, ResourceSendError, RouteSeedProgress, RouteSeedReport,
+    SegmentCompression, SharedInstanceIdentityError, TunnelSeedReport, AUTO_COMPRESS_MAX_LEN,
 };

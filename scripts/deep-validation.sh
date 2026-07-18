@@ -80,6 +80,9 @@ if [ "${run_interop}" = "1" ]; then
   step "RNS 1.3.8 probe-responder oracle"
   bash scripts/probe-responder-interop-smoke.sh
 
+  step "RNS 1.3.8 blackhole-exchange oracle"
+  bash scripts/blackhole-exchange-interop-smoke.sh
+
   step "RNS 1.3.5 IFAC TCP resource oracle"
   bash scripts/ifac-tcp-interop-smoke.sh
 fi

@@ -29,6 +29,7 @@ pub enum RnsBlackholeDecodeError {
     ExpectedMap,
     ExpectedIdentityHash,
     ExpectedEntryMap,
+    InvalidSource,
     InvalidUntil,
     InvalidReason,
 }
@@ -41,6 +42,7 @@ impl core::fmt::Display for RnsBlackholeDecodeError {
             Self::ExpectedMap => "expected an identity map",
             Self::ExpectedIdentityHash => "expected a binary identity hash",
             Self::ExpectedEntryMap => "expected a blackhole entry map",
+            Self::InvalidSource => "invalid source identity",
             Self::InvalidUntil => "invalid until value",
             Self::InvalidReason => "invalid reason value",
         })
@@ -102,27 +104,31 @@ impl From<RnsBlackholeDecodeError> for RnsBlackholeFileError {
 }
 
 #[derive(Debug, Clone)]
-pub struct RnsLocalBlackholeFile {
+pub struct RnsBlackholeFiles {
     blackhole_dir: PathBuf,
 }
 
-impl RnsLocalBlackholeFile {
+impl RnsBlackholeFiles {
     pub fn new(blackhole_dir: impl Into<PathBuf>) -> Self {
         Self {
             blackhole_dir: blackhole_dir.into(),
         }
     }
 
-    pub fn path(&self) -> PathBuf {
+    pub fn local_path(&self) -> PathBuf {
         self.blackhole_dir.join("local")
     }
 
-    pub fn load(
+    pub fn source_path(&self, source: IdentityHash) -> PathBuf {
+        self.blackhole_dir.join(identity_hex(source))
+    }
+
+    pub fn load_local(
         &self,
         local_source: IdentityHash,
         now: InstantMillis,
     ) -> Result<Vec<BlackholedIdentity<String>>, RnsBlackholeFileError> {
-        let bytes = match fs::read(self.path()) {
+        let bytes = match fs::read(self.local_path()) {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
             Err(error) => return Err(error.into()),
@@ -130,22 +136,35 @@ impl RnsLocalBlackholeFile {
         decode_source(&bytes, local_source, now).map_err(Into::into)
     }
 
-    pub fn store<Reason: AsRef<str>>(
+    pub fn store_local<Reason: AsRef<str>>(
         &self,
         local_source: IdentityHash,
         entries: impl IntoIterator<Item = BlackholedIdentity<Reason>>,
     ) -> Result<(), RnsBlackholeFileError> {
         let bytes = encode_local(local_source, entries).map_err(RnsBlackholeFileError::Encode)?;
-        self.ensure_dir()?;
-        let final_path = self.path();
-        let staging_path = self.blackhole_dir.join("local.tmp");
-        let result = stage(&staging_path, &bytes).and_then(|()| {
-            replace_file(&staging_path, &final_path).map_err(RnsBlackholeFileError::from)
-        });
-        if result.is_err() {
-            let _ = fs::remove_file(staging_path);
-        }
-        result
+        self.store_path(self.local_path(), bytes)
+    }
+
+    pub fn load_source(
+        &self,
+        source: IdentityHash,
+        now: InstantMillis,
+    ) -> Result<Vec<BlackholedIdentity<String>>, RnsBlackholeFileError> {
+        let bytes = match fs::read(self.source_path(source)) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(error.into()),
+        };
+        decode_source(&bytes, source, now).map_err(Into::into)
+    }
+
+    pub fn store_source<Reason: AsRef<str>>(
+        &self,
+        source: IdentityHash,
+        entries: impl IntoIterator<Item = BlackholedIdentity<Reason>>,
+    ) -> Result<(), RnsBlackholeFileError> {
+        let bytes = encode_table(entries).map_err(RnsBlackholeFileError::Encode)?;
+        self.store_path(self.source_path(source), bytes)
     }
 
     fn ensure_dir(&self) -> Result<(), RnsBlackholeFileError> {
@@ -156,22 +175,34 @@ impl RnsLocalBlackholeFile {
         }
         Ok(())
     }
+
+    fn store_path(&self, final_path: PathBuf, bytes: Vec<u8>) -> Result<(), RnsBlackholeFileError> {
+        self.ensure_dir()?;
+        let staging_path = final_path.with_extension("tmp");
+        let result = stage(&staging_path, &bytes).and_then(|()| {
+            replace_file(&staging_path, &final_path).map_err(RnsBlackholeFileError::from)
+        });
+        if result.is_err() {
+            let _ = fs::remove_file(staging_path);
+        }
+        result
+    }
 }
 
 #[derive(Clone)]
 pub struct RnsPersistedBlackholes<C> {
     inner: C,
     local_source: IdentityHash,
-    file: RnsLocalBlackholeFile,
+    files: RnsBlackholeFiles,
     mutation: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl<C> RnsPersistedBlackholes<C> {
-    pub fn new(inner: C, local_source: IdentityHash, file: RnsLocalBlackholeFile) -> Self {
+    pub fn new(inner: C, local_source: IdentityHash, files: RnsBlackholeFiles) -> Self {
         Self {
             inner,
             local_source,
-            file,
+            files,
             mutation: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
@@ -238,8 +269,8 @@ where
             .blackholed_identities()
             .await
             .map_err(source_control_error)?;
-        self.file
-            .store(self.local_source, entries)
+        self.files
+            .store_local(self.local_source, entries)
             .map_err(|_| IdentityBlackholeControlError::DurabilityFailed)
     }
 }
@@ -255,6 +286,14 @@ pub fn decode_source(
     bytes: &[u8],
     source: IdentityHash,
     now: InstantMillis,
+) -> Result<Vec<BlackholedIdentity<String>>, RnsBlackholeDecodeError> {
+    decode(bytes, now, |_| Ok(source))
+}
+
+fn decode(
+    bytes: &[u8],
+    now: InstantMillis,
+    mut entry_source: impl FnMut(&[(Value, Value)]) -> Result<IdentityHash, RnsBlackholeDecodeError>,
 ) -> Result<Vec<BlackholedIdentity<String>>, RnsBlackholeDecodeError> {
     let mut cursor = Cursor::new(bytes);
     let value = rmpv::decode::read_value_with_max_depth(&mut cursor, VALUE_MAX_DEPTH)
@@ -289,6 +328,7 @@ pub fn decode_source(
         let Some(expiry) = decode_persisted_expiry(field(fields, "until"), now)? else {
             continue;
         };
+        let source = entry_source(fields)?;
         let reason = decode_reason(field(fields, "reason"))?;
         decoded.push(BlackholedIdentity {
             identity: IdentityHash::new(identity),
@@ -311,6 +351,24 @@ pub fn encode_local<Reason: AsRef<str>>(
     );
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &value).map_err(|_| RnsBlackholeEncodeError)?;
+    Ok(bytes)
+}
+
+pub fn decode_table(
+    bytes: &[u8],
+    now: InstantMillis,
+) -> Result<Vec<BlackholedIdentity<String>>, RnsBlackholeDecodeError> {
+    decode(bytes, now, |fields| {
+        decode_source_field(field(fields, "source"))
+    })
+}
+
+pub fn encode_table<Reason: AsRef<str>>(
+    entries: impl IntoIterator<Item = BlackholedIdentity<Reason>>,
+) -> Result<Vec<u8>, RnsBlackholeEncodeError> {
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &table_value(entries))
+        .map_err(|_| RnsBlackholeEncodeError)?;
     Ok(bytes)
 }
 
@@ -346,6 +404,25 @@ fn identity_bytes(value: &Value) -> Result<Option<[u8; 16]>, RnsBlackholeDecodeE
         return Err(RnsBlackholeDecodeError::ExpectedIdentityHash);
     };
     Ok(bytes.as_slice().try_into().ok())
+}
+
+fn decode_source_field(value: Option<&Value>) -> Result<IdentityHash, RnsBlackholeDecodeError> {
+    let Some(value) = value else {
+        return Err(RnsBlackholeDecodeError::InvalidSource);
+    };
+    identity_bytes(value)?
+        .map(IdentityHash::new)
+        .ok_or(RnsBlackholeDecodeError::InvalidSource)
+}
+
+fn identity_hex(identity: IdentityHash) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut text = String::with_capacity(32);
+    for byte in identity.as_bytes() {
+        text.push(HEX[usize::from(byte >> 4)] as char);
+        text.push(HEX[usize::from(byte & 0x0f)] as char);
+    }
+    text
 }
 
 fn field<'a>(fields: &'a [(Value, Value)], name: &str) -> Option<&'a Value> {
@@ -587,6 +664,47 @@ mod tests {
     }
 
     #[test]
+    fn published_table_decoding_preserves_each_entry_source() {
+        let decoded = decode_table(RNS_138_FIXTURE, InstantMillis(0));
+        assert!(decoded.is_ok_and(|entries| {
+            entries.len() == 2 && entries.iter().all(|entry| entry.source == source())
+        }));
+
+        let missing_source = Value::Map(vec![(
+            Value::Binary(vec![0x44; 16]),
+            Value::Map(vec![(Value::from("until"), Value::Nil)]),
+        )]);
+        let mut bytes = Vec::new();
+        rmpv::encode::write_value(&mut bytes, &missing_source).unwrap();
+        assert_eq!(
+            decode_table(&bytes, InstantMillis(0)),
+            Err(RnsBlackholeDecodeError::InvalidSource)
+        );
+    }
+
+    #[test]
+    fn remote_source_files_use_the_direct_source_name_and_override_it_on_reload() {
+        let dir = std::env::temp_dir().join(format!(
+            "prns-rns-remote-blackhole-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        let files = RnsBlackholeFiles::new(&dir);
+        let direct_source = IdentityHash::new([0xbb; 16]);
+
+        assert!(files.store_source(direct_source, fixture_entries()).is_ok());
+        assert_eq!(
+            files.source_path(direct_source),
+            dir.join("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+        );
+        assert!(files
+            .load_source(direct_source, InstantMillis(0))
+            .is_ok_and(|entries| entries.iter().all(|entry| entry.source == direct_source)));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn file_store_replaces_through_local_tmp_and_missing_load_is_empty() {
         let dir = std::env::temp_dir().join(format!(
             "prns-rns-blackhole-{}-{:?}",
@@ -594,19 +712,19 @@ mod tests {
             std::thread::current().id()
         ));
         let _ = fs::remove_dir_all(&dir);
-        let file = RnsLocalBlackholeFile::new(&dir);
+        let file = RnsBlackholeFiles::new(&dir);
         assert!(file
-            .load(source(), InstantMillis(0))
+            .load_local(source(), InstantMillis(0))
             .is_ok_and(|rows| rows.is_empty()));
 
-        assert!(file.store(source(), fixture_entries()).is_ok());
-        assert!(fs::read(file.path()).is_ok_and(|bytes| bytes == RNS_138_FIXTURE));
+        assert!(file.store_local(source(), fixture_entries()).is_ok());
+        assert!(fs::read(file.local_path()).is_ok_and(|bytes| bytes == RNS_138_FIXTURE));
         assert!(!dir.join("local.tmp").exists());
 
         assert!(file
-            .store(source(), Vec::<BlackholedIdentity<&str>>::new())
+            .store_local(source(), Vec::<BlackholedIdentity<&str>>::new())
             .is_ok());
-        assert!(fs::read(file.path()).is_ok_and(|bytes| bytes == [0x80]));
+        assert!(fs::read(file.local_path()).is_ok_and(|bytes| bytes == [0x80]));
         let _ = fs::remove_dir_all(dir);
     }
 
@@ -618,7 +736,7 @@ mod tests {
             std::thread::current().id()
         ));
         let _ = fs::remove_dir_all(&dir);
-        let file = RnsLocalBlackholeFile::new(&dir);
+        let file = RnsBlackholeFiles::new(&dir);
         let inner = MemoryBlackholes::default();
         let blackholes = RnsPersistedBlackholes::new(inner.clone(), source(), file.clone());
         let local_identity = IdentityHash::new([0x31; 16]);
@@ -636,7 +754,7 @@ mod tests {
             Ok(BlackholeIdentityOutcome::Added)
         );
         assert!(file
-            .load(source(), InstantMillis(0))
+            .load_local(source(), InstantMillis(0))
             .is_ok_and(|entries| entries.len() == 1 && entries[0].identity == local_identity));
 
         assert_eq!(
@@ -651,7 +769,7 @@ mod tests {
             Ok(BlackholeIdentityOutcome::Added)
         );
         assert!(file
-            .load(source(), InstantMillis(0))
+            .load_local(source(), InstantMillis(0))
             .is_ok_and(|entries| entries.len() == 1 && entries[0].identity == local_identity));
 
         assert_eq!(
@@ -659,7 +777,7 @@ mod tests {
             Ok(UnblackholeIdentityOutcome::Removed)
         );
         assert!(file
-            .load(source(), InstantMillis(0))
+            .load_local(source(), InstantMillis(0))
             .is_ok_and(|entries| entries.is_empty()));
         assert_eq!(
             inner.blackholed_identities().await,
@@ -686,7 +804,7 @@ mod tests {
         let blackholes = RnsPersistedBlackholes::new(
             inner.clone(),
             source(),
-            RnsLocalBlackholeFile::new(root.join("blackhole")),
+            RnsBlackholeFiles::new(root.join("blackhole")),
         );
         let identity = IdentityHash::new([0x31; 16]);
 

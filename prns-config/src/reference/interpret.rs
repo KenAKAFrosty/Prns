@@ -11,9 +11,9 @@ use super::keys::{
     common as common_key, global as global_key, interface as interface_key, section as section_key,
 };
 use super::types::{
-    RNodeRadio, RNodeSubinterface, ReferenceConfig, ReferenceDiscoveryConfig, ReferenceInterface,
-    ReferenceInterfaceDiscovery, ReferenceMode, ReferenceParams, ReferenceRemoteManagement,
-    ReferenceValue,
+    RNodeRadio, RNodeSubinterface, ReferenceBlackholeExchange, ReferenceConfig,
+    ReferenceDiscoveryConfig, ReferenceInterface, ReferenceInterfaceDiscovery, ReferenceMode,
+    ReferenceParams, ReferenceRemoteManagement, ReferenceValue,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -69,6 +69,7 @@ pub(super) fn interpret(root: &Section) -> Result<ReferenceConfig, ReferenceErro
     }
     config.network_identity_path = global_string(&config.globals, global_key::NETWORK_IDENTITY)?;
     config.discovery = interpret_discovery_config(&config.globals)?;
+    config.blackhole_exchange = interpret_blackhole_exchange(&config.globals)?;
     config.remote_management = interpret_remote_management(&config.globals)?;
     if let Some(interfaces) = root.section(section_key::INTERFACES) {
         for (name, section) in &interfaces.sections {
@@ -86,6 +87,16 @@ pub(super) fn interpret(root: &Section) -> Result<ReferenceConfig, ReferenceErro
             .insert(name.clone(), scalar_map(section));
     }
     Ok(config)
+}
+
+fn interpret_blackhole_exchange(
+    globals: &BTreeMap<String, ReferenceValue>,
+) -> Result<ReferenceBlackholeExchange, ReferenceError> {
+    Ok(ReferenceBlackholeExchange {
+        publish: global_bool(globals, global_key::PUBLISH_BLACKHOLE)?,
+        sources: global_identity_hashes(globals, global_key::BLACKHOLE_SOURCES)?,
+        update_interval_minutes: global_float(globals, global_key::BLACKHOLE_UPDATE_INTERVAL)?,
+    })
 }
 
 fn interpret_remote_management(
@@ -654,6 +665,21 @@ fn global_integer(
         .parse()
         .map(Some)
         .map_err(|_| bad_global_value(key, "expected an integer"))
+}
+
+fn global_float(
+    globals: &BTreeMap<String, ReferenceValue>,
+    key: &str,
+) -> Result<Option<f64>, ReferenceError> {
+    let Some(value) = global_scalar_text(globals, key)? else {
+        return Ok(None);
+    };
+    let cleaned =
+        cleaned_number(value.trim()).ok_or_else(|| bad_global_value(key, "expected a number"))?;
+    cleaned
+        .parse()
+        .map(Some)
+        .map_err(|_| bad_global_value(key, "expected a number"))
 }
 
 fn global_stamp_cost(

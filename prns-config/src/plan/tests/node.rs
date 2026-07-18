@@ -54,6 +54,16 @@ fn unrepresentable_global_policy_values_return_source_keyed_errors() {
         assert_eq!(diagnostic.path(), format!("[reticulum] > {key}"));
         assert!(diagnostic.correction().contains(key));
     }
+
+    let mut config = ReferenceConfig::default();
+    config.blackhole_exchange.update_interval_minutes = Some(f64::NAN);
+    let errors = build_plan(&config).expect_err("non-finite intervals cannot reach the runtime");
+    assert_eq!(
+        errors,
+        vec![PlanningError::Global(GlobalPlanError {
+            key: global_key::BLACKHOLE_UPDATE_INTERVAL,
+        })]
+    );
 }
 
 #[test]
@@ -82,6 +92,31 @@ fn probe_responder_follows_the_explicit_stock_flag() {
     let disabled = plan_of("[reticulum]\nrespond_to_probes = No\n");
     assert_eq!(disabled.probe_responder, ProbeResponderPlan::Disabled);
     assert!(!disabled.probe_responder.is_enabled());
+}
+
+#[test]
+fn blackhole_exchange_is_typed_with_stock_defaults_and_minimum_interval() {
+    let defaults = plan_of("");
+    assert_eq!(
+        defaults.blackhole_exchange.publication(),
+        BlackholePublicationPlan::Disabled
+    );
+    assert!(defaults.blackhole_exchange.sources().is_empty());
+    assert_eq!(
+        defaults.blackhole_exchange.update_interval(),
+        BlackholeUpdateInterval::DEFAULT
+    );
+
+    let source = "00112233445566778899aabbccddeeff";
+    let configured = plan_of(&format!(
+        "[reticulum]\npublish_blackhole = Yes\nblackhole_sources = {source}, {source}\nblackhole_update_interval = -5\n"
+    ));
+    assert!(configured.blackhole_exchange.publication().is_enabled());
+    assert_eq!(configured.blackhole_exchange.sources().len(), 1);
+    assert_eq!(
+        configured.blackhole_exchange.update_interval(),
+        BlackholeUpdateInterval::MINIMUM
+    );
 }
 
 #[test]

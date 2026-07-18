@@ -12,7 +12,7 @@ use prns_core::interfaces::EffectiveInterfacePolicy;
 use prns_runtime::runtime::PrnsNodeHandle;
 use tokio::net::TcpStream;
 
-use super::blackhole_compat::{RnsLocalBlackholeFile, RnsPersistedBlackholes};
+use super::blackhole_compat::{RnsBlackholeFiles, RnsPersistedBlackholes};
 use super::rpc_compat::{SharedInstanceCredentials, SharedInstanceRpcCompat};
 use super::server::{LocalClientInterface, LocalServer, LocalServerBindError};
 
@@ -22,7 +22,8 @@ const PROBE_TIMEOUT: Duration = Duration::from_millis(500);
 /// How a node should participate in the host's local shared instance.
 pub struct SharedInstanceIntent {
     pub credentials: SharedInstanceCredentials,
-    pub blackhole_file: RnsLocalBlackholeFile,
+    pub blackhole_source: prns_core::identity::IdentityHash,
+    pub blackhole_files: RnsBlackholeFiles,
     /// The bus and control ports (RNS defaults 37428 / 37429).
     pub ports: InstancePorts,
     pub transport: SharedInstanceTransport,
@@ -199,14 +200,15 @@ async fn become_instance(
     handle.supervise(server);
     let blackholes = RnsPersistedBlackholes::new(
         handle.clone(),
-        instance.credentials.transport_identity_hash,
-        instance.blackhole_file.clone(),
+        instance.blackhole_source,
+        instance.blackhole_files.clone(),
     );
     match &instance.transport {
         SharedInstanceTransport::Tcp => {
             tokio::spawn(
                 SharedInstanceRpcCompat::tcp_with_blackholes(
                     instance.credentials.clone(),
+                    instance.blackhole_source,
                     instance.ports.control,
                     handle.clone(),
                     blackholes,
@@ -219,6 +221,7 @@ async fn become_instance(
             tokio::spawn(
                 SharedInstanceRpcCompat::abstract_unix_with_blackholes(
                     instance.credentials.clone(),
+                    instance.blackhole_source,
                     socket_path,
                     handle.clone(),
                     blackholes,

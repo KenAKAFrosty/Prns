@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::time::Duration;
 
 use prns_core::identity::IdentityHash;
 use prns_core::interface_discovery::{
@@ -26,12 +27,86 @@ pub struct DaemonPlan {
     pub shared_instance: SharedInstance,
     pub remote_management: RemoteManagementPlan,
     pub probe_responder: ProbeResponderPlan,
+    pub blackhole_exchange: BlackholeExchangePlan,
     pub protocol: ProtocolPlan,
     pub logging: LoggingPlan,
     pub panic_on_interface_error: bool,
     pub network_identity_path: Option<PathBuf>,
     pub discovery: InterfaceDiscoveryPolicy,
     pub interfaces: Vec<PlannedInterface>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlackholeExchangePlan {
+    publication: BlackholePublicationPlan,
+    sources: BlackholeSources,
+    update_interval: BlackholeUpdateInterval,
+}
+
+impl BlackholeExchangePlan {
+    pub const fn publication(&self) -> BlackholePublicationPlan {
+        self.publication
+    }
+
+    pub fn sources(&self) -> &[IdentityHash] {
+        self.sources.as_slice()
+    }
+
+    pub const fn update_interval(&self) -> BlackholeUpdateInterval {
+        self.update_interval
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlackholePublicationPlan {
+    Disabled,
+    Enabled,
+}
+
+impl BlackholePublicationPlan {
+    pub const fn is_enabled(self) -> bool {
+        matches!(self, Self::Enabled)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlackholeSources(Vec<IdentityHash>);
+
+impl BlackholeSources {
+    fn from_identities(identities: &[IdentityHash]) -> Self {
+        let mut sources = Vec::new();
+        for identity in identities {
+            if !sources.contains(identity) {
+                sources.push(*identity);
+            }
+        }
+        Self(sources)
+    }
+
+    pub fn as_slice(&self) -> &[IdentityHash] {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BlackholeUpdateInterval(Duration);
+
+impl BlackholeUpdateInterval {
+    pub const DEFAULT: Self = Self(Duration::from_secs(60 * 60));
+    pub const MINIMUM: Self = Self(Duration::from_secs(2 * 60));
+
+    fn from_configured_minutes(minutes: f64) -> Option<Self> {
+        if !minutes.is_finite() {
+            return None;
+        }
+        Duration::try_from_secs_f64(minutes.max(2.0) * 60.0)
+            .ok()
+            .map(Self)
+    }
+
+    pub const fn duration(self) -> Duration {
+        self.0
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -189,6 +264,8 @@ pub(super) fn build_plan(config: &ReferenceConfig) -> Result<DaemonPlan, Vec<Pla
     let mut interfaces = Vec::new();
     let mut errors = Vec::new();
     let transport = transport_plan(config);
+    let blackhole_exchange =
+        blackhole_exchange(config).map_err(|error| vec![PlanningError::Global(error)])?;
     let common =
         global_common_policy(config).map_err(|error| vec![PlanningError::Global(error)])?;
     let announce_rate =
@@ -238,6 +315,7 @@ pub(super) fn build_plan(config: &ReferenceConfig) -> Result<DaemonPlan, Vec<Pla
         } else {
             ProbeResponderPlan::Disabled
         },
+        blackhole_exchange,
         protocol: ProtocolPlan {
             randomize_local_hop_count: global_bool(
                 &config.globals,
@@ -256,6 +334,26 @@ pub(super) fn build_plan(config: &ReferenceConfig) -> Result<DaemonPlan, Vec<Pla
         network_identity_path: config.network_identity_path.as_deref().map(PathBuf::from),
         discovery: discovery_policy(config),
         interfaces,
+    })
+}
+
+fn blackhole_exchange(config: &ReferenceConfig) -> Result<BlackholeExchangePlan, GlobalPlanError> {
+    let update_interval = match config.blackhole_exchange.update_interval_minutes {
+        Some(minutes) => {
+            BlackholeUpdateInterval::from_configured_minutes(minutes).ok_or(GlobalPlanError {
+                key: global_key::BLACKHOLE_UPDATE_INTERVAL,
+            })?
+        }
+        None => BlackholeUpdateInterval::DEFAULT,
+    };
+    Ok(BlackholeExchangePlan {
+        publication: if config.blackhole_exchange.publish == Some(true) {
+            BlackholePublicationPlan::Enabled
+        } else {
+            BlackholePublicationPlan::Disabled
+        },
+        sources: BlackholeSources::from_identities(&config.blackhole_exchange.sources),
+        update_interval,
     })
 }
 
