@@ -65,7 +65,6 @@ pub(super) struct LinkRequestArrival<'a> {
 }
 
 impl<S: StorageLayout> EngineState<S> {
-    /// Proof contexts never land here: proofs arrive as Proof packets and dispatch through their own lane; the remaining unhandled contexts are transport or announce business.
     pub(super) fn ingest_link_addressed<'p>(
         &mut self,
         data: DataPacket<'p>,
@@ -142,8 +141,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// RNS 1.3.5 never remembers a transported link's packets in the duplicate filter (`Transport.inbound` defers any destination in `link_table`): a byte-identical retry must cross again, and on a shared medium a neighbor's copy can arrive before our turn in the chain.
-    /// Loop protection is `switch_through`'s hop-and-direction gate alone.
+    /// Transported-link retries bypass packet dedup to match RNS 1.3.5; `switch_through` prevents loops by validating hop direction.
     pub(super) fn relay_if_transported(
         &mut self,
         address: WireAddress,
@@ -185,7 +183,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// RNS 1.3.5 switches a returning LRPROOF home on shape alone (one of the two proof lengths, the expected interface, the exact remaining hops); verification is the initiator's job, so a relay whose announce for the destination has been culled still completes the establishment.
+    /// RNS 1.3.5 relays returning link proofs after validating their wire shape, interface, and hop direction; end-to-end verification belongs to the initiator.
     fn ingest_transported_link_proof<'p>(
         &mut self,
         link_id: &LinkId,

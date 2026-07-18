@@ -48,8 +48,7 @@ pub enum RebroadcastDecision {
     RateBlocked,
 }
 
-/// Owns a copy of the payload because the arrival slot is recycled before the crypto pool finishes the verify, so borrowing it would dangle.
-/// Only the host reactor defers verification, so this copy is never built on the embedded inbound stack, which verifies inline.
+/// Owns the payload because the arrival slot may be recycled before deferred verification completes.
 pub struct AnnounceVerifyOwed {
     pub payload: HeaplessVec<u8, BROADCAST_MTU>,
     pub header: WirePacketHeader,
@@ -643,7 +642,7 @@ mod tests {
         assert_eq!(
             relay.scheduled_announce_count(),
             1,
-            "one pending per destination — the second schedule replaces the first",
+            "one pending per destination; the second schedule replaces the first",
         );
     }
 
@@ -1113,7 +1112,6 @@ mod tests {
         let interfaces = transporting_interfaces();
         let mut relay = transporting_node();
 
-        // Wire hops 200 -> received_hops 201, past MAX_HOP_COUNT. A stream this size trips the interface's burst limiter, so later announces reach the hold path; none may be parked, since an announce past the hop maximum can never route.
         for i in 0..16u8 {
             let mut wire = flood_announce(i, 200);
             let out = relay.ingest_packet_with(

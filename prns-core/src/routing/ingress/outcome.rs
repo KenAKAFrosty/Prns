@@ -90,14 +90,14 @@ pub enum IgnoreReason {
     DecryptFailed,
     ProofInvalid,
     UnknownIdentity,
-    /// RNS 1.3.5 `Destination.accept_link_requests` is off: the destination announces but answers no `LINKREQUEST`.
+    /// Link requests are disabled for the destination.
     LinkRequestsRefused,
     PermissionDenied,
     RateLimited,
     CapacityExhausted,
     /// The app's declared acceptance policy declined an offer that was well-formed and deliverable.
     StrategyDeclined,
-    /// RNS 1.3.5 drops response advertisements with no matching pending request.
+    /// A resource response advertisement has no matching pending request.
     UnmatchedResponse,
     IfacRefused,
 }
@@ -125,12 +125,10 @@ pub enum IngestPacketOutcome<'p> {
         destination: DestinationHash,
         id: PathRequestIdBytes,
     },
-    /// RNS `Transport.path_request`.
     RelayPathRequestToLocalClients {
         destination: DestinationHash,
         id: PathRequestIdBytes,
     },
-    /// RNS `remote_identified`.
     PeerIdentified {
         link_id: LinkId,
         identity: IdentityHash,
@@ -182,7 +180,6 @@ pub enum IngestPacketOutcome<'p> {
         link_id: LinkId,
         hash: ResourceHash,
         cause: ResourceFailureCause,
-        /// The pending request already removed from receipts.
         settled_request: Option<CommandId>,
     },
     ResourceRejectedByPeer {
