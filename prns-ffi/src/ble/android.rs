@@ -1,6 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::Duration;
 
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::Notify;
@@ -34,6 +35,47 @@ struct LinkSignal {
     notify: Notify,
 }
 
+#[derive(Default)]
+struct WorkSignal {
+    generation: Mutex<u64>,
+    ready: Condvar,
+}
+
+impl WorkSignal {
+    fn generation(&self) -> u64 {
+        self.generation.lock().map(|value| *value).unwrap_or(0)
+    }
+
+    fn wake(&self) {
+        if let Ok(mut generation) = self.generation.lock() {
+            *generation = generation.wrapping_add(1);
+            self.ready.notify_all();
+        }
+    }
+
+    fn wait(&self, observed: u64, timeout: Option<Duration>) -> u64 {
+        let Ok(mut generation) = self.generation.lock() else {
+            return observed.wrapping_add(1);
+        };
+        if let Some(timeout) = timeout {
+            if *generation == observed {
+                let Ok((next, _)) = self.ready.wait_timeout(generation, timeout) else {
+                    return observed.wrapping_add(1);
+                };
+                generation = next;
+            }
+        } else {
+            while *generation == observed {
+                let Ok(next) = self.ready.wait(generation) else {
+                    return observed.wrapping_add(1);
+                };
+                generation = next;
+            }
+        }
+        *generation
+    }
+}
+
 struct Endpoints {
     control_in_tx: UnboundedSender<Vec<u8>>,
     l2cap_in_tx: UnboundedSender<Vec<u8>>,
@@ -58,6 +100,7 @@ struct PendingLink {
     data_out: Arc<Mutex<VecDeque<Vec<u8>>>>,
     l2cap_up: Arc<LinkSignal>,
     l2cap_opens: Arc<Mutex<VecDeque<(u32, u16)>>>,
+    work: Arc<WorkSignal>,
 }
 
 enum Event {
@@ -103,6 +146,7 @@ struct Shared {
     events_ready: Notify,
     dial_requests: Mutex<VecDeque<[u8; 6]>>,
     l2cap_opens: Arc<Mutex<VecDeque<(u32, u16)>>>,
+    work: Arc<WorkSignal>,
 }
 
 pub struct AndroidBleBridge {
@@ -131,6 +175,7 @@ impl AndroidBleBridge {
                 events_ready: Notify::new(),
                 dial_requests: Mutex::new(VecDeque::new()),
                 l2cap_opens: Arc::new(Mutex::new(VecDeque::new())),
+                work: Arc::new(WorkSignal::default()),
             }),
         }
     }
@@ -169,18 +214,21 @@ impl AndroidBleBridge {
         if !enabled {
             self.clear_radio_state();
         }
+        self.shared.work.wake();
     }
 
     pub fn set_advertising(&self, enabled: bool) {
         if let Ok(mut radio) = self.shared.radio.lock() {
             radio.advertising = enabled;
         }
+        self.shared.work.wake();
     }
 
     pub fn set_scanning(&self, enabled: bool) {
         if let Ok(mut radio) = self.shared.radio.lock() {
             radio.scanning = enabled;
         }
+        self.shared.work.wake();
     }
 
     pub fn radio_state(&self) -> u32 {
@@ -189,6 +237,19 @@ impl AndroidBleBridge {
             .lock()
             .map(|state| state.bits())
             .unwrap_or(0)
+    }
+
+    pub fn work_generation(&self) -> u64 {
+        self.shared.work.generation()
+    }
+
+    pub fn wait_for_work(&self, observed: u64, timeout_millis: u64) -> u64 {
+        let timeout = (timeout_millis != 0).then(|| Duration::from_millis(timeout_millis));
+        self.shared.work.wait(observed, timeout)
+    }
+
+    pub fn wake_work(&self) {
+        self.shared.work.wake();
     }
 
     fn clear_radio_state(&self) {
@@ -319,6 +380,7 @@ impl AndroidBleBridge {
                 data_out,
                 l2cap_up,
                 l2cap_opens: Arc::clone(&self.shared.l2cap_opens),
+                work: Arc::clone(&self.shared.work),
             }));
         }
         self.shared.events_ready.notify_one();
@@ -395,12 +457,14 @@ impl AndroidBleBridge {
         if let Ok(mut links) = self.shared.links.lock() {
             links.remove(&conn_id);
         }
+        self.shared.work.wake();
     }
 
     pub fn push_dial(&self, address: [u8; 6]) {
         if let Ok(mut requests) = self.shared.dial_requests.lock() {
             requests.push_back(address);
         }
+        self.shared.work.wake();
     }
 
     pub fn next_dial(&self, out: &mut [u8]) -> bool {
@@ -579,6 +643,7 @@ impl BleBackend for AndroidBleBackend {
                         data_out: pending.data_out,
                         l2cap_up: pending.l2cap_up,
                         l2cap_opens: pending.l2cap_opens,
+                        work: pending.work,
                     };
                     if dialed {
                         return BleEvent::LinkReady {
@@ -611,6 +676,7 @@ pub struct AndroidBleLink {
     data_out: Arc<Mutex<VecDeque<Vec<u8>>>>,
     l2cap_up: Arc<LinkSignal>,
     l2cap_opens: Arc<Mutex<VecDeque<(u32, u16)>>>,
+    work: Arc<WorkSignal>,
 }
 
 impl BleLink for AndroidBleLink {
@@ -632,6 +698,7 @@ impl BleLink for AndroidBleLink {
                 if let Ok(mut out) = self.data_out.lock() {
                     out.push_back(identity.as_bytes().to_vec());
                 }
+                self.work.wake();
             }
             return Ok(());
         }
@@ -642,6 +709,7 @@ impl BleLink for AndroidBleLink {
         if let Ok(mut out) = self.control_out.lock() {
             out.extend(buf[..len].iter().copied());
         }
+        self.work.wake();
         Ok(())
     }
 
@@ -666,6 +734,7 @@ impl BleLink for AndroidBleLink {
             if let Ok(mut opens) = self.l2cap_opens.lock() {
                 opens.push_back((self.conn_id, psm.get()));
             }
+            self.work.wake();
         }
         Ok(())
     }
@@ -714,6 +783,7 @@ impl BleLink for AndroidBleLink {
                 l2cap_out: self.l2cap_out,
                 gatt_out: self.data_out,
                 l2cap_up: self.l2cap_up,
+                work: self.work,
             },
         )
     }
@@ -738,6 +808,7 @@ pub struct AndroidBleSink {
     l2cap_out: Arc<Mutex<VecDeque<u8>>>,
     gatt_out: Arc<Mutex<VecDeque<Vec<u8>>>>,
     l2cap_up: Arc<LinkSignal>,
+    work: Arc<WorkSignal>,
 }
 
 impl BleSink for AndroidBleSink {
@@ -762,6 +833,7 @@ impl BleSink for AndroidBleSink {
                 }
             }
         }
+        self.work.wake();
         Ok(())
     }
 }

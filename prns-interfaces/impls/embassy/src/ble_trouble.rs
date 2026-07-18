@@ -104,7 +104,7 @@ const IDLE_SCAN_WINDOW: Duration = Duration::from_millis(60);
 #[cfg(not(target_arch = "riscv32"))]
 const IDLE_SCAN_INTERVAL: Duration = Duration::from_secs(1);
 #[cfg(not(target_arch = "riscv32"))]
-const IDLE_SCAN_WINDOW: Duration = Duration::from_secs(1);
+const IDLE_SCAN_WINDOW: Duration = Duration::from_millis(50);
 
 /// The radio time-shares advertising (peripheral) and scanning (central) in alternating windows rather
 /// than running both at once — keeping one serve frame per active role off the deepest path and
