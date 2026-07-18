@@ -964,7 +964,27 @@ fn warnings_are_preserved_when_other_values_make_the_config_invalid() {
 }
 
 #[test]
-fn unsupported_rnode_uri_transport_is_a_focused_error() {
+fn unsupported_rnode_ble_transport_is_a_focused_error() {
+    let errors = parse_named(
+        "/tmp/rns/config",
+        "[interfaces]\n[[Radio]]\ntype = RNodeInterface\nenabled = Yes\nport = ble://RNode 1234\n",
+    )
+    .unwrap_err();
+    let diagnostic = errors
+        .diagnostics()
+        .iter()
+        .find(|diagnostic| diagnostic.code() == ConfigDiagnosticCode::UnsupportedTransport)
+        .unwrap();
+    assert!(diagnostic
+        .to_string()
+        .contains("local serial device path or tcp://"));
+    assert!(diagnostic
+        .to_string()
+        .contains("port = tcp://radio.example"));
+}
+
+#[test]
+fn an_rnode_tcp_uri_rejects_a_misleading_explicit_port() {
     let errors = parse_named(
         "/tmp/rns/config",
         "[interfaces]\n[[Radio]]\ntype = RNodeInterface\nenabled = Yes\nport = tcp://radio.example:7633\n",
@@ -973,10 +993,15 @@ fn unsupported_rnode_uri_transport_is_a_focused_error() {
     let diagnostic = errors
         .diagnostics()
         .iter()
-        .find(|diagnostic| diagnostic.code() == ConfigDiagnosticCode::UnsupportedTransport)
-        .unwrap();
-    assert!(diagnostic.to_string().contains("local serial device path"));
-    assert!(diagnostic.to_string().contains("port = /dev/ttyUSB0"));
+        .find(|diagnostic| diagnostic.path().ends_with("port"))
+        .expect("port diagnostic");
+    assert_eq!(diagnostic.code(), ConfigDiagnosticCode::InvalidValue);
+    assert!(diagnostic
+        .accepted()
+        .is_some_and(|accepted| { accepted.contains("host without a port") }));
+    assert!(diagnostic
+        .correction()
+        .contains("port = tcp://radio.example"));
 }
 
 #[test]

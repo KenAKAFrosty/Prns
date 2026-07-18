@@ -37,6 +37,7 @@ use crate::kiss::{KissInterface, KissSettings, DEFAULT_TNC_CONFIGURE_DELAY};
 use crate::pipe::{PipeInterface, PipeRespawnDelay};
 use crate::reconnect::ReconnectDelay;
 use crate::rnode::{RNodeInterface, RNodeSettings};
+use crate::rnode_host::{RNodeHostOpener, RNODE_BAUD};
 use crate::rnode_multi::{
     RNodeMultiAccess, RNodeMultiInterface, RNodeMultiMemberSettings, RNodeMultiMembers,
     RNodeMultiSettings, DEFAULT_RNODE_MULTI_CONFIGURE_DELAY,
@@ -63,8 +64,6 @@ const KISS_FLOW_CONTROL_TIMEOUT: ReadyTimeout = ReadyTimeout::new(Duration::from
 /// configure, validate), so a dropped or absent device is retried on a slower cadence than a bare
 /// serial port.
 const RNODE_RECONNECT_DELAY: ReconnectDelay = ReconnectDelay::new(Duration::from_secs(5));
-/// An RNode's host link is always 115200/8N1 — RNS hardcodes the speed; it is not a config knob.
-const RNODE_BAUD: u32 = 115_200;
 
 /// What became of one planned item, handed to the caller's reporter as it happens.
 pub enum PlanOutcome<'a> {
@@ -494,7 +493,7 @@ async fn stand_up(
             }
         }
         PlannedMedium::Rnode {
-            device,
+            transport,
             frequency_hz,
             bandwidth_hz,
             txpower_dbm,
@@ -528,20 +527,25 @@ async fn stand_up(
                             return;
                         }
                     };
-                    let open_path = device.clone();
+                    let opener = RNodeHostOpener::new(transport.clone());
+                    let channel_tag = transport.channel_tag();
+                    let detect_timeout = opener.detect_timeout();
+                    let keepalive = opener.keepalive();
                     let rnode = RNodeInterface::with_runtime_settings(
                         move || {
-                            let open_path = open_path.clone();
-                            async move { open_host_serial(&open_path, RNODE_BAUD) }
+                            let opener = opener.clone();
+                            async move { opener.open().await }
                         },
                         RNODE_RECONNECT_DELAY,
                         RNodeSettings {
                             reset_delay: crate::rnode::DEFAULT_RNODE_RESET_DELAY,
+                            detect_timeout,
+                            keepalive,
                             radio,
                             flow_control: runtime_rnode_flow_control(*flow_control),
                             station_identification,
                             policy: interface.policy,
-                            channel_tag: device.as_bytes(),
+                            channel_tag: &channel_tag,
                         },
                     );
                     let attached = attach_with_access(handle, access, rnode);

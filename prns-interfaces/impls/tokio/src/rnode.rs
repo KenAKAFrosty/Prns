@@ -44,7 +44,67 @@ pub const DEFAULT_RNODE_RESET_DELAY: RNodeResetDelay = RNodeResetDelay::new(Dura
 /// How long to wait for the device to answer the detect query before giving up on this connection
 /// and reconnecting. RNS's serial path waits a fixed `0.2s`; a slightly longer window is more
 /// forgiving of a device still settling without changing the requirement that it *must* answer.
-const DETECT_TIMEOUT: Duration = Duration::from_secs(2);
+pub const DEFAULT_RNODE_DETECT_TIMEOUT: RNodeDetectTimeout =
+    RNodeDetectTimeout::from_validated(Duration::from_secs(2));
+pub const TCP_RNODE_DETECT_TIMEOUT: RNodeDetectTimeout =
+    RNodeDetectTimeout::from_validated(Duration::from_secs(5));
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RNodeDetectTimeout(Duration);
+
+impl RNodeDetectTimeout {
+    #[must_use]
+    pub const fn new(duration: Duration) -> Option<Self> {
+        if duration.is_zero() {
+            None
+        } else {
+            Some(Self(duration))
+        }
+    }
+
+    const fn from_validated(duration: Duration) -> Self {
+        Self(duration)
+    }
+
+    #[must_use]
+    pub const fn duration(self) -> Duration {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RNodeKeepaliveInterval(Duration);
+
+impl RNodeKeepaliveInterval {
+    #[must_use]
+    pub const fn new(duration: Duration) -> Option<Self> {
+        if duration.is_zero() {
+            None
+        } else {
+            Some(Self(duration))
+        }
+    }
+
+    const fn from_validated(duration: Duration) -> Self {
+        Self(duration)
+    }
+
+    #[must_use]
+    pub const fn duration(self) -> Duration {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RNodeKeepalive {
+    #[default]
+    Disabled,
+    Detect(RNodeKeepaliveInterval),
+}
+
+pub const TCP_RNODE_KEEPALIVE: RNodeKeepalive = RNodeKeepalive::Detect(
+    RNodeKeepaliveInterval::from_validated(Duration::from_millis(3_500)),
+);
 
 /// How long to wait for the device to echo its radio parameters back after the configuration is
 /// written, before validating whatever has arrived. RNS sleeps `0.25s` then checks; reading until
@@ -68,7 +128,7 @@ impl RNodeBuffers {
 }
 
 /// A host RNode interface (RNS `RNodeInterface` parity): Reticulum packets carried by a LoRa
-/// RNode over USB serial. Like serial and KISS it owns its medium's whole lifecycle, but each
+/// RNode over a serial, TCP, or BLE byte stream. It owns its medium's whole lifecycle, but each
 /// connection first runs the RNode bring-up handshake (detect, write the radio configuration,
 /// validate the device's echoes) and only then pumps `CMD_DATA` frames; a bring-up that fails
 /// drops the link and retries, exactly as RNS closes the port and reconnects.
@@ -77,6 +137,8 @@ pub struct RNodeInterface<Open> {
     open: Open,
     reconnect_delay: ReconnectDelay,
     reset_delay: RNodeResetDelay,
+    detect_timeout: RNodeDetectTimeout,
+    keepalive: RNodeKeepalive,
     radio: RadioConfig,
     flow_control: ReadyCommandFlowControl,
     station_identification: Option<StationIdentification>,
@@ -87,6 +149,8 @@ pub struct RNodeInterface<Open> {
 
 pub struct RNodeSettings<'a> {
     pub reset_delay: RNodeResetDelay,
+    pub detect_timeout: RNodeDetectTimeout,
+    pub keepalive: RNodeKeepalive,
     pub radio: RadioConfig,
     pub flow_control: ReadyCommandFlowControl,
     pub station_identification: Option<StationIdentification>,
@@ -95,8 +159,8 @@ pub struct RNodeSettings<'a> {
 }
 
 impl<Open> RNodeInterface<Open> {
-    /// Build with RNS's default reset-settle delay. `channel_tag` names *which* serial device
-    /// this is, exactly as for serial and KISS: the same device across a reopen passes the same
+    /// Build with RNS's default reset-settle delay. `channel_tag` names *which* host transport
+    /// this is: the same endpoint across a reopen passes the same
     /// bytes so its routes survive. The radio determines the bitrate and bring-up configuration.
     #[must_use]
     pub fn new(
@@ -167,6 +231,8 @@ impl<Open> RNodeInterface<Open> {
             reconnect_delay,
             RNodeSettings {
                 reset_delay,
+                detect_timeout: DEFAULT_RNODE_DETECT_TIMEOUT,
+                keepalive: RNodeKeepalive::Disabled,
                 radio,
                 flow_control: ReadyCommandFlowControl::Disabled,
                 station_identification: None,
@@ -189,6 +255,8 @@ impl<Open> RNodeInterface<Open> {
             open,
             reconnect_delay,
             reset_delay: settings.reset_delay,
+            detect_timeout: settings.detect_timeout,
+            keepalive: settings.keepalive,
             radio: settings.radio,
             flow_control: settings.flow_control,
             station_identification: settings.station_identification,
@@ -221,6 +289,7 @@ async fn bring_up<S: AsyncRead + AsyncWrite + Unpin>(
     radio: &RadioConfig,
     decoder: &mut core::CommandDecoder,
     read_buf: &mut [u8],
+    detect_timeout: RNodeDetectTimeout,
 ) -> io::Result<()> {
     decoder.reset();
     let mut report = core::DeviceReport::default();
@@ -233,7 +302,7 @@ async fn bring_up<S: AsyncRead + AsyncWrite + Unpin>(
         decoder,
         read_buf,
         &mut report,
-        DETECT_TIMEOUT,
+        detect_timeout.duration(),
         |r| r.detected,
     )
     .await?
@@ -316,6 +385,33 @@ where
     }
 }
 
+struct RNodeKeepaliveSchedule {
+    interval: Option<RNodeKeepaliveInterval>,
+    deadline: Option<tokio::time::Instant>,
+}
+
+impl RNodeKeepaliveSchedule {
+    fn new(keepalive: RNodeKeepalive) -> Self {
+        let interval = match keepalive {
+            RNodeKeepalive::Disabled => None,
+            RNodeKeepalive::Detect(interval) => Some(interval),
+        };
+        let deadline = interval
+            .and_then(|interval| tokio::time::Instant::now().checked_add(interval.duration()));
+        Self { interval, deadline }
+    }
+
+    fn deadline(&self) -> Option<tokio::time::Instant> {
+        self.deadline
+    }
+
+    fn wrote(&mut self) {
+        self.deadline = self
+            .interval
+            .and_then(|interval| tokio::time::Instant::now().checked_add(interval.duration()));
+    }
+}
+
 /// Serve one configured connection until the stream drops: deliver `CMD_DATA` bodies to the
 /// seam (consuming telemetry and other commands) and frame the seam's outbound as `CMD_DATA`.
 /// Distinct from the generic [`framed_stream::serve`](crate::framed_stream) because the read
@@ -326,6 +422,7 @@ async fn serve_rnode<S, Seam>(
     buffers: &mut RNodeBuffers,
     seam: &mut Seam,
     control: &mut SerialControl,
+    keepalive: RNodeKeepalive,
     meters: &mut WireMeters<'_>,
 ) where
     S: AsyncRead + AsyncWrite + Unpin,
@@ -334,10 +431,18 @@ async fn serve_rnode<S, Seam>(
     let mut packet_phy = core::PacketPhyState::default();
     buffers.decoder.reset();
     control.connection_opened();
+    let mut keepalive = RNodeKeepaliveSchedule::new(keepalive);
     loop {
         if let Some(transmission) = control.take_queued(tokio::time::Instant::now()) {
-            if !write_rnode_transmission(stream, &mut buffers.frame, control, transmission, meters)
-                .await
+            if !write_rnode_transmission(
+                stream,
+                &mut buffers.frame,
+                control,
+                &mut keepalive,
+                transmission,
+                meters,
+            )
+            .await
             {
                 return;
             }
@@ -371,6 +476,7 @@ async fn serve_rnode<S, Seam>(
                                     stream,
                                     &mut buffers.frame,
                                     control,
+                                    &mut keepalive,
                                     transmission,
                                     meters,
                                 )
@@ -393,6 +499,7 @@ async fn serve_rnode<S, Seam>(
                         stream,
                         &mut buffers.frame,
                         control,
+                        &mut keepalive,
                         transmission,
                         meters,
                     )
@@ -408,6 +515,7 @@ async fn serve_rnode<S, Seam>(
                         stream,
                         &mut buffers.frame,
                         control,
+                        &mut keepalive,
                         transmission,
                         meters,
                     )
@@ -425,6 +533,7 @@ async fn serve_rnode<S, Seam>(
                         stream,
                         &mut buffers.frame,
                         control,
+                        &mut keepalive,
                         transmission,
                         meters,
                     )
@@ -434,6 +543,19 @@ async fn serve_rnode<S, Seam>(
                     }
                 }
             }
+            () = wait_for_deadline(keepalive.deadline()) => {
+                let Ok(framed) = kiss_framing::encode_with_command(
+                    core::CMD_DETECT,
+                    &[core::DETECT_REQ],
+                    &mut buffers.frame,
+                ) else {
+                    return;
+                };
+                if stream.write_all(&buffers.frame[..framed]).await.is_err() {
+                    return;
+                }
+                keepalive.wrote();
+            }
         }
     }
 }
@@ -442,6 +564,7 @@ async fn write_rnode_transmission<S: AsyncWrite + Unpin>(
     stream: &mut S,
     frame_buf: &mut [u8],
     control: &mut SerialControl,
+    keepalive: &mut RNodeKeepaliveSchedule,
     transmission: Transmission,
     meters: &mut WireMeters<'_>,
 ) -> bool {
@@ -453,6 +576,7 @@ async fn write_rnode_transmission<S: AsyncWrite + Unpin>(
     if stream.write_all(&frame_buf[..framed]).await.is_err() {
         return false;
     }
+    keepalive.wrote();
     let now = tokio::time::Instant::now();
     control.transmitted(&transmission, now);
     meters.status.add_tx(framed as u64);
@@ -511,6 +635,7 @@ where
                     &self.radio,
                     &mut buffers.decoder,
                     &mut buffers.read,
+                    self.detect_timeout,
                 )
                 .await
                 .is_ok()
@@ -522,6 +647,7 @@ where
                         &mut buffers,
                         &mut seam,
                         &mut control,
+                        self.keepalive,
                         &mut WireMeters {
                             status: &self.status,
                             airtime: &mut airtime,
@@ -818,6 +944,8 @@ mod tests {
             ReconnectDelay::new(Duration::from_millis(10)),
             RNodeSettings {
                 reset_delay: RNodeResetDelay::new(Duration::ZERO),
+                detect_timeout: DEFAULT_RNODE_DETECT_TIMEOUT,
+                keepalive: RNodeKeepalive::Disabled,
                 radio,
                 flow_control: ReadyCommandFlowControl::WaitForReady,
                 station_identification: Some(station_identification),

@@ -12,6 +12,7 @@ use prns_core::interfaces::wifi_auto::core::{
 use prns_core::interfaces::{BitrateBps, InterfaceDefaults};
 
 use super::PlanErrorKind;
+use crate::plan::rnode::RNodeTransportPlan;
 use crate::plan::RNodeMultiMemberPlan;
 use crate::reference::i2p::{validate_peer, validate_peers};
 use crate::reference::keys::interface as interface_key;
@@ -407,11 +408,11 @@ pub enum PlannedMedium {
         command: PipeCommandPlan,
         respawn_delay: PipeRespawnDelay,
     },
-    /// RNS `RNodeInterface`: a LoRa RNode driven over a USB-serial KISS link, configured to a radio
+    /// RNS `RNodeInterface`: a LoRa RNode driven over a host byte stream, configured to a radio
     /// channel at bring-up. The radio parameters are required; the airtime locks are the wire-scaled
     /// `int(percent * 100)` values, absent when unconfigured.
     Rnode {
-        device: String,
+        transport: RNodeTransportPlan,
         frequency_hz: u64,
         bandwidth_hz: u32,
         txpower_dbm: i16,
@@ -658,9 +659,10 @@ pub(super) fn plan_medium(interface: &ReferenceInterface) -> Result<PlannedMediu
             airtime_limit_short,
             airtime_limit_long,
         } => {
-            let device = port.clone().ok_or(PlanErrorKind::MissingRequiredField {
+            let configured_port = port.clone().ok_or(PlanErrorKind::MissingRequiredField {
                 key: interface_key::PORT,
             })?;
+            let transport = RNodeTransportPlan::from_configured_port(configured_port)?;
             let frequency_hz = radio.frequency.ok_or(PlanErrorKind::MissingRequiredField {
                 key: interface_key::FREQUENCY,
             })?;
@@ -682,7 +684,7 @@ pub(super) fn plan_medium(interface: &ReferenceInterface) -> Result<PlannedMediu
                 key: interface_key::TXPOWER,
             })?;
             Ok(PlannedMedium::Rnode {
-                device,
+                transport,
                 frequency_hz,
                 bandwidth_hz,
                 txpower_dbm,

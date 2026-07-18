@@ -4,6 +4,7 @@ mod error;
 mod interface;
 mod node;
 mod reference_globals;
+mod rnode;
 mod rnode_multi;
 
 pub use interface::{
@@ -24,6 +25,9 @@ pub use node::{
     BlackholeSources, BlackholeUpdateInterval, DaemonPlan, LogLevel, LoggingPlan,
     ProbeResponderPlan, ProtocolPlan, RemoteManagementAccessControlList, RemoteManagementPlan,
     SharedInstance, SharedInstanceTransport, TransportIdentityPolicy, TransportPlan,
+};
+pub use rnode::{
+    RNodeSerialDevice, RNodeTcpHost, RNodeTcpTarget, RNodeTransportPlan, RNODE_TCP_PORT,
 };
 pub use rnode_multi::{RNodeMultiDevicePlan, RNodeMultiMemberPlan};
 
