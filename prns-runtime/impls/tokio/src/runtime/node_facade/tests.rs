@@ -211,6 +211,21 @@ fn boot_blackholes_seed_against_the_resumed_timeline() {
     assert_eq!(prns.node.engine.blackholed_identity_count(), 1);
 }
 
+#[test]
+fn new_with_handle_builds_state_from_the_nodes_handle() {
+    let prns = PrnsNode::new_with_handle(|handle| PrnsNodeRecipe {
+        transport_identity: None,
+        pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
+        app_state: handle,
+        storage: crate::storage::GrowableHeap,
+        routes: crate::routes![],
+        interfaces: Manual,
+        on_event: |_event, _state: &PrnsNodeHandle| {},
+    });
+
+    assert!(Arc::ptr_eq(&prns.handle.ids, &prns.node.state.ids));
+}
+
 #[cfg(feature = "runtime-metrics")]
 #[tokio::test]
 async fn metrics_snapshots_are_requested_from_the_reactor() {

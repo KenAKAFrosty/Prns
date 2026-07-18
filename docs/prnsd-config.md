@@ -28,7 +28,7 @@ safe to retain an unavailable or incomplete stanza with `enabled = No`.
 Prnsd applies transport enablement and identity policy independently, shared-instance type/name/data
 and control ports, RPC key, forced shared bitrate, randomized local hop count, link MTU discovery,
 proof form, interface discovery policy, default announce pacing, ingress control, path-request egress
-control, and every configured `ic_*` and `ec_pr_freq` value.
+control, every configured `ic_*` and `ec_pr_freq` value, and authenticated remote management.
 
 `panic_on_interface_error` defaults to `No`. With the default, a failed interface remains visible as
 degraded while retry-capable interfaces continue supervising themselves. Set it to `Yes` to request
@@ -40,6 +40,14 @@ The built-in config enables transport routing explicitly. In an operator-supplie
 
 Log levels map as follows: 0–1 `error`, 2 `warn`, 3–4 `info`, 5–6 `debug`, and 7 `trace`.
 `RUST_LOG` overrides the configured level. `logtimestamps = No` removes daemon-provided timestamps.
+
+Set `enable_remote_management = Yes` to expose the stock
+`rnstransport.remote.management` destination with `/status` and `/path` handlers. Every identity in
+`remote_management_allowed` must be a 32-character hexadecimal identity hash. Both handlers require
+the peer to identify over the link as one of those identities; an empty list permits nobody. The
+service is owned only by a standalone daemon or the process that wins shared-instance election. A
+process that joins an existing shared instance does not register it. Stock RNS 1.3.8 `rnstatus -R`
+and the table/rate forms of `rnpath -R` use these endpoints.
 
 ## Common interface behavior
 
@@ -121,8 +129,7 @@ Recognized settings that belong to planned follow-on work emit `unsupported_sett
 their exact source lines. They are never silently ignored:
 
 - `ignore_config_warnings` is not honored; Prnsd always reports configuration problems.
-- Remote management and ACL settings, probe responses, and network blackhole exchange remain
-  separate daemon services.
+- Probe responses and network blackhole exchange remain separate daemon services.
 
 Role-inapplicable Backbone settings also warn instead of disappearing. Listener stanzas do not use
 client-only `target_port`, `i2p_tunneled`, `connect_timeout`, or `max_reconnect_tries`; client stanzas

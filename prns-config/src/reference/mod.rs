@@ -12,7 +12,8 @@ pub(crate) use interpret::cleaned_number;
 pub use parse::{parse, parse_named};
 pub use types::{
     RNodeRadio, RNodeSubinterface, ReferenceConfig, ReferenceDiscoveryConfig, ReferenceInterface,
-    ReferenceInterfaceDiscovery, ReferenceMode, ReferenceParams, ReferenceValue,
+    ReferenceInterfaceDiscovery, ReferenceMode, ReferenceParams, ReferenceRemoteManagement,
+    ReferenceValue,
 };
 
 #[cfg(test)]

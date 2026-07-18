@@ -9,6 +9,7 @@ use personal_rns::routes;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
     Diagnostic, Manual, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeRecipe,
+    RequestHandlerRegistration,
 };
 use personal_rns::storage::GrowableHeap;
 use prns_core::interfaces::shared_instance::core::DEFAULT_LOCAL_PORT;
@@ -40,6 +41,7 @@ async fn main() {
             proof: ProofStrategy::ProveAll,
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
+            request_handlers: RequestHandlerRegistration::None,
         }],
         app_state: (),
         storage: GrowableHeap,

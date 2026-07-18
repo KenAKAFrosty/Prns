@@ -35,7 +35,7 @@ use personal_rns::reactor::embassy::{
 use personal_rns::reactor::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
 use personal_rns::runtime::{
     CompletionPool, EmbassyInterfaceStore, PreConfiguredDestination, PrnsEvent, PrnsNode,
-    PrnsNodeHandle, PrnsNodeRecipe, ReactorPlumbing,
+    PrnsNodeHandle, PrnsNodeRecipe, ReactorPlumbing, RequestHandlerRegistration,
 };
 use personal_rns::usb::UsbAutoDevice;
 
@@ -463,6 +463,7 @@ pub async fn run(spawner: Spawner) {
                 proof: personal_rns::routing::ProofStrategy::ProveAll,
                 link_requests: personal_rns::routing::LinkRequestPolicy::AcceptAll,
                 ratchet: RatchetPolicy::Ratcheted,
+                request_handlers: RequestHandlerRegistration::None,
             }],
             app_state: (),
             storage: C6Storage,

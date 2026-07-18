@@ -10,6 +10,12 @@ use crate::wire::DestinationHash;
 
 use super::super::PrnsEvent;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequestHandlerRegistration {
+    None,
+    NodeRouteSet,
+}
+
 pub enum PreConfiguredDestination<'a> {
     Plain {
         app_name: &'a str,
@@ -25,6 +31,7 @@ pub enum PreConfiguredDestination<'a> {
         ratchet: RatchetPolicy,
         /// Whether links to this destination accept inbound resources, and how large. The runtime counterpart is the handle's `set_resource_strategy`; most destinations want `ResourceStrategy::AcceptNone` until they expect a transfer.
         resource_strategy: ResourceStrategy,
+        request_handlers: RequestHandlerRegistration,
     },
 }
 

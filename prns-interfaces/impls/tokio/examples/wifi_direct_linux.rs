@@ -11,6 +11,7 @@ mod linux_only {
     use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
     use personal_rns::runtime::{
         Diagnostic, Manual, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeRecipe,
+        RequestHandlerRegistration,
     };
     use personal_rns::storage::GrowableHeap;
     use prns_core::interfaces::wifi_direct::core::GoIntent;
@@ -42,6 +43,7 @@ mod linux_only {
             proof: ProofStrategy::ProveAll,
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
+            request_handlers: RequestHandlerRegistration::None,
         }
     }
 

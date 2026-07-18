@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use prns_core::identity::IdentityHash;
 use prns_core::interface_discovery::{
     AutoConnectPolicy, DiscoverySourcePolicy, InterfaceDiscoveryPolicy, DEFAULT_STAMP_COST,
 };
@@ -15,7 +16,7 @@ use crate::reference::keys::{
     global as global_key, interface as interface_key, logging as logging_key,
     section as section_key,
 };
-use crate::reference::{ReferenceConfig, ReferenceParams};
+use crate::reference::{ReferenceConfig, ReferenceParams, ReferenceRemoteManagement};
 use crate::{ConfigDiagnostic, ConfigDiagnosticCode, ConfigErrors, ConfigReport, SourceLocations};
 
 /// The complete, host-agnostic description of a node to stand up, projected from a stock RNS config.
@@ -24,12 +25,41 @@ pub struct DaemonPlan {
     pub transport: TransportPlan,
     /// Whether this node hosts a shared instance for local RNS apps (RNS `share_instance`, default on).
     pub shared_instance: SharedInstance,
+    pub remote_management: RemoteManagementPlan,
     pub protocol: ProtocolPlan,
     pub logging: LoggingPlan,
     pub panic_on_interface_error: bool,
     pub network_identity_path: Option<PathBuf>,
     pub discovery: InterfaceDiscoveryPolicy,
     pub interfaces: Vec<PlannedInterface>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemoteManagementPlan {
+    Disabled,
+    Enabled(RemoteManagementAccessControlList),
+}
+
+impl RemoteManagementPlan {
+    pub fn allowed(&self) -> Option<&[IdentityHash]> {
+        match self {
+            Self::Disabled => None,
+            Self::Enabled(acl) => Some(acl.as_slice()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteManagementAccessControlList(Vec<IdentityHash>);
+
+impl RemoteManagementAccessControlList {
+    pub fn from_identities(identities: Vec<IdentityHash>) -> Self {
+        Self(identities)
+    }
+
+    pub fn as_slice(&self) -> &[IdentityHash] {
+        &self.0
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -190,6 +220,7 @@ pub(super) fn build_plan(config: &ReferenceConfig) -> Result<DaemonPlan, Vec<Pla
     Ok(DaemonPlan {
         transport,
         shared_instance: shared_instance(config),
+        remote_management: remote_management(config),
         protocol: ProtocolPlan {
             randomize_local_hop_count: global_bool(
                 &config.globals,
@@ -209,6 +240,15 @@ pub(super) fn build_plan(config: &ReferenceConfig) -> Result<DaemonPlan, Vec<Pla
         discovery: discovery_policy(config),
         interfaces,
     })
+}
+
+fn remote_management(config: &ReferenceConfig) -> RemoteManagementPlan {
+    match &config.remote_management {
+        ReferenceRemoteManagement::Disabled => RemoteManagementPlan::Disabled,
+        ReferenceRemoteManagement::Enabled { allowed } => RemoteManagementPlan::Enabled(
+            RemoteManagementAccessControlList::from_identities(allowed.clone()),
+        ),
+    }
 }
 
 pub(super) fn planning_diagnostic(

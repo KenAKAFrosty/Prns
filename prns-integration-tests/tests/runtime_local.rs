@@ -10,7 +10,7 @@ use personal_rns::routes;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
     Diagnostic, Manual, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle,
-    PrnsNodeRecipe,
+    PrnsNodeRecipe, RequestHandlerRegistration,
 };
 use personal_rns::shared_instance::server::LocalServer;
 use personal_rns::storage::GrowableHeap;
@@ -33,6 +33,7 @@ fn single(identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>) -> PreConfiguredDe
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
+        request_handlers: RequestHandlerRegistration::None,
     }
 }
 

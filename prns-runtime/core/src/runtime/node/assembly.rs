@@ -1,11 +1,20 @@
 use core::marker::PhantomData;
 
 use crate::engine::EngineState;
+use crate::engine::RatchetPolicy;
+use crate::identity::held::HoldIdentityError;
+use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use crate::routing::links::resources::ResourceStrategy;
+use crate::routing::request_handlers::RequestHandlerError;
+use crate::routing::upstream_app_destinations::RegisterDestinationError;
+use crate::routing::{LinkRequestPolicy, ProofStrategy};
 use crate::storage::StorageLayout;
+use crate::storage::TablePushError;
+use crate::wire::DestinationHash;
 
 use super::super::request_router::RouteSet;
 use super::super::PrnsEvent;
-use super::recipe::{PreConfiguredDestination, PrnsNodeRecipe};
+use super::recipe::{PreConfiguredDestination, PrnsNodeRecipe, RequestHandlerRegistration};
 
 pub struct AssembledNode<St, R, F, S>
 where
@@ -15,6 +24,125 @@ where
     pub state: St,
     pub on_event: F,
     pub routes: PhantomData<R>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfigurePreconfiguredDestinationError {
+    HoldIdentity(HoldIdentityError),
+    Register(RegisterDestinationError),
+    RegisterRequestHandler(TablePushError),
+    SeedRequester(RequestHandlerError),
+}
+
+struct SingleDestinationConfiguration<'a> {
+    app_name: &'a str,
+    aspects: &'a [&'a str],
+    identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
+    app_data: &'a [u8],
+    proof: ProofStrategy,
+    link_requests: LinkRequestPolicy,
+    ratchet: RatchetPolicy,
+    resource_strategy: ResourceStrategy,
+}
+
+pub fn configure_preconfigured_destination<'a, St, R, S>(
+    engine: &mut EngineState<S>,
+    destination: PreConfiguredDestination<'a>,
+) -> Result<DestinationHash, ConfigurePreconfiguredDestinationError>
+where
+    R: RouteSet<St>,
+    S: StorageLayout,
+{
+    match destination {
+        PreConfiguredDestination::Plain { app_name, aspects } => engine
+            .register_plain_destination(app_name, aspects)
+            .map_err(ConfigurePreconfiguredDestinationError::Register),
+        PreConfiguredDestination::Single {
+            app_name,
+            aspects,
+            identity,
+            announce_app_data,
+            proof,
+            link_requests,
+            ratchet,
+            resource_strategy,
+            request_handlers,
+        } => configure_single_destination::<St, R, S>(
+            engine,
+            SingleDestinationConfiguration {
+                app_name,
+                aspects,
+                identity,
+                app_data: announce_app_data,
+                proof,
+                link_requests,
+                ratchet,
+                resource_strategy,
+            },
+            request_handlers,
+        ),
+    }
+}
+
+fn configure_single_destination<St, R, S>(
+    engine: &mut EngineState<S>,
+    configuration: SingleDestinationConfiguration<'_>,
+    request_handlers: RequestHandlerRegistration,
+) -> Result<DestinationHash, ConfigurePreconfiguredDestinationError>
+where
+    R: RouteSet<St>,
+    S: StorageLayout,
+{
+    let SingleDestinationConfiguration {
+        app_name,
+        aspects,
+        identity,
+        app_data,
+        proof,
+        link_requests,
+        ratchet,
+        resource_strategy,
+    } = configuration;
+    let held = engine
+        .hold_identity(identity)
+        .map_err(ConfigurePreconfiguredDestinationError::HoldIdentity)?;
+    let destination = engine
+        .register_single_destination(
+            &held,
+            app_name,
+            aspects,
+            app_data,
+            proof,
+            link_requests,
+            ratchet,
+        )
+        .map_err(ConfigurePreconfiguredDestinationError::Register)?;
+    engine.set_default_resource_strategy(&destination, resource_strategy);
+    if matches!(request_handlers, RequestHandlerRegistration::NodeRouteSet) {
+        register_request_routes_for::<St, R, S>(engine, destination)?;
+    }
+    Ok(destination)
+}
+
+fn register_request_routes_for<St, R, S>(
+    engine: &mut EngineState<S>,
+    destination: DestinationHash,
+) -> Result<(), ConfigurePreconfiguredDestinationError>
+where
+    R: RouteSet<St>,
+    S: StorageLayout,
+{
+    for (path, policy) in R::REGISTRATIONS {
+        engine
+            .register_request_handler(&destination, path, policy.engine_policy())
+            .map_err(ConfigurePreconfiguredDestinationError::RegisterRequestHandler)?;
+        for seed in policy.seed_list() {
+            engine
+                .allow_requester(&destination, path, *seed)
+                .map_err(ConfigurePreconfiguredDestinationError::SeedRequester)?;
+        }
+    }
+    Ok(())
 }
 
 #[allow(clippy::expect_used)]
@@ -39,49 +167,8 @@ where
 
     let mut engine = EngineState::<S>::default();
     for destination in pre_configured_destinations {
-        match destination {
-            PreConfiguredDestination::Plain { app_name, aspects } => {
-                engine
-                    .register_plain_destination(app_name, aspects)
-                    .expect("recipe plain destination is valid");
-            }
-            PreConfiguredDestination::Single {
-                app_name,
-                aspects,
-                identity,
-                announce_app_data: app_data,
-                proof,
-                link_requests,
-                ratchet,
-                resource_strategy,
-            } => {
-                let held = engine
-                    .hold_identity(identity)
-                    .expect("recipe identity fits the store");
-                let destination = engine
-                    .register_single_destination(
-                        &held,
-                        app_name,
-                        aspects,
-                        app_data,
-                        proof,
-                        link_requests,
-                        ratchet,
-                    )
-                    .expect("recipe single destination is valid");
-                engine.set_default_resource_strategy(&destination, resource_strategy);
-                for (path, policy) in R::REGISTRATIONS {
-                    engine
-                        .register_request_handler(&destination, path, policy.engine_policy())
-                        .expect("recipe request handler fits the store");
-                    for seed in policy.seed_list() {
-                        engine
-                            .allow_requester(&destination, path, *seed)
-                            .expect("recipe seed identity admits to its own fresh handler");
-                    }
-                }
-            }
-        }
+        configure_preconfigured_destination::<St, R, S>(&mut engine, destination)
+            .expect("recipe destination is valid and fits the store");
     }
 
     if let Some(secret) = transport_identity {
@@ -102,4 +189,71 @@ where
         },
         interfaces,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::identity::IdentityHash;
+    use crate::routing::request_handlers::RequestPathHash;
+    use crate::runtime::request_router::{Decline, RequestContext, RoutePolicy};
+    use crate::storage::TestFixedStorage;
+
+    type Storage = TestFixedStorage<4, 4, 128, 4, 4, 4, 2, 2, 2, 2, 2, 2>;
+
+    struct Routes;
+
+    impl RouteSet<()> for Routes {
+        const REGISTRATIONS: &'static [(&'static str, RoutePolicy)] =
+            &[("/test", RoutePolicy::AllowList(&[]))];
+
+        async fn dispatch(
+            _cx: RequestContext<'_, ()>,
+            _path_hash: RequestPathHash,
+        ) -> Result<(), Decline> {
+            Err(Decline::Ignore)
+        }
+    }
+
+    fn configured_engine(
+        request_handlers: RequestHandlerRegistration,
+    ) -> (EngineState<Storage>, DestinationHash) {
+        let mut engine = EngineState::<Storage>::default();
+        let destination = configure_preconfigured_destination::<(), Routes, Storage>(
+            &mut engine,
+            PreConfiguredDestination::Single {
+                app_name: "test",
+                aspects: &["requests"],
+                identity: Zeroizing::new([0x11; IDENTITY_SECRET_KEY_LEN]),
+                announce_app_data: &[],
+                proof: ProofStrategy::ProveAll,
+                link_requests: LinkRequestPolicy::AcceptAll,
+                ratchet: RatchetPolicy::NoRatchets,
+                resource_strategy: ResourceStrategy::AcceptNone,
+                request_handlers,
+            },
+        )
+        .expect("the test destination fits fixed storage");
+        (engine, destination)
+    }
+
+    #[test]
+    fn node_route_set_attaches_routes_to_the_destination() {
+        let (mut engine, destination) = configured_engine(RequestHandlerRegistration::NodeRouteSet);
+
+        assert_eq!(
+            engine.allow_requester(&destination, "/test", IdentityHash::new([0x22; 16])),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn none_leaves_routes_unattached_from_the_destination() {
+        let (mut engine, destination) = configured_engine(RequestHandlerRegistration::None);
+
+        assert_eq!(
+            engine.allow_requester(&destination, "/test", IdentityHash::new([0x22; 16])),
+            Err(RequestHandlerError::NoSuchHandler)
+        );
+    }
 }

@@ -20,7 +20,7 @@ use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::request_router::{Decline, RequestContext, RequestRoute, RoutePolicy};
 use personal_rns::runtime::{
     Diagnostic, Manual, Message, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle,
-    PrnsNodeRecipe,
+    PrnsNodeRecipe, RequestHandlerRegistration,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::client::TcpClientInterface;
@@ -82,13 +82,13 @@ async fn a_request_router_answers_a_live_request_over_tcp() {
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
+        request_handlers: RequestHandlerRegistration::NodeRouteSet,
     };
     let dest_a = responder_dest
         .destination_hash()
         .expect("the test destination name is valid");
 
-    // Responder node: a TCP server plus the route-backed Single it answers requests on. `PrnsNode::new`
-    // registers the routes' handlers on every Single it stands up, so the destination carries them.
+    // Responder node: a TCP server plus the route-backed Single it answers requests on.
     let server = TcpServer::bind("127.0.0.1:0", BITRATE)
         .await
         .expect("server binds");
@@ -136,6 +136,7 @@ async fn a_request_router_answers_a_live_request_over_tcp() {
             proof: ProofStrategy::ProveAll,
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
+            request_handlers: RequestHandlerRegistration::None,
         }],
         app_state: (),
         storage: GrowableHeap,
@@ -234,6 +235,7 @@ async fn request_auto_negotiates_both_rungs_over_tcp() {
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
+        request_handlers: RequestHandlerRegistration::NodeRouteSet,
     };
     let dest_a = responder_dest
         .destination_hash()
@@ -288,6 +290,7 @@ async fn request_auto_negotiates_both_rungs_over_tcp() {
             proof: ProofStrategy::ProveAll,
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
+            request_handlers: RequestHandlerRegistration::None,
         }],
         app_state: (),
         storage: GrowableHeap,
@@ -365,6 +368,7 @@ async fn a_split_response_answers_a_small_request_over_tcp() {
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
+        request_handlers: RequestHandlerRegistration::NodeRouteSet,
     };
     let dest_a = responder_dest
         .destination_hash()
@@ -417,6 +421,7 @@ async fn a_split_response_answers_a_small_request_over_tcp() {
             proof: ProofStrategy::ProveAll,
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
+            request_handlers: RequestHandlerRegistration::None,
         }],
         app_state: (),
         storage: GrowableHeap,

@@ -45,6 +45,15 @@ pub struct ReferenceDiscoveryConfig {
     pub auto_connect_limit: Option<usize>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum ReferenceRemoteManagement {
+    #[default]
+    Disabled,
+    Enabled {
+        allowed: Vec<IdentityHash>,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ReferenceInterfaceDiscovery {
     pub discoverable: Option<bool>,
@@ -223,5 +232,6 @@ pub struct ReferenceConfig {
     pub globals: BTreeMap<String, ReferenceValue>,
     pub network_identity_path: Option<String>,
     pub discovery: ReferenceDiscoveryConfig,
+    pub remote_management: ReferenceRemoteManagement,
     pub other_sections: BTreeMap<String, BTreeMap<String, ReferenceValue>>,
 }

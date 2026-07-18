@@ -96,7 +96,7 @@ use personal_rns::reactor::grant::FrameSlot;
 use personal_rns::reactor::interface_seam::{Interface, EMBEDDED_MAX_WIRE_FRAME_LEN};
 use personal_rns::runtime::{
     CompletionPool, EmbassyInterfaceStore, Fleet, MemberWire, PreConfiguredDestination, PrnsEvent,
-    PrnsNode, PrnsNodeHandle, PrnsNodeRecipe, ReactorPlumbing,
+    PrnsNode, PrnsNodeHandle, PrnsNodeRecipe, ReactorPlumbing, RequestHandlerRegistration,
 };
 use personal_rns::storage::StorageLayout;
 use personal_rns::tcp::client::TcpClient;
@@ -721,6 +721,7 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
             proof: personal_rns::routing::ProofStrategy::ProveAll,
             link_requests: personal_rns::routing::LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::Ratcheted,
+            request_handlers: RequestHandlerRegistration::None,
         }],
         app_state: (),
         storage: EngineStorageType::default(),

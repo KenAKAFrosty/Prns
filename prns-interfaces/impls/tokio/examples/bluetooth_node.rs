@@ -15,6 +15,7 @@ async fn main() {
     use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
     use personal_rns::runtime::{
         Diagnostic, Manual, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeRecipe,
+        RequestHandlerRegistration,
     };
     use personal_rns::storage::GrowableHeap;
     use prns_ffi::ble::macos::MacosBleBackend;
@@ -49,6 +50,7 @@ async fn main() {
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
+        request_handlers: RequestHandlerRegistration::None,
     };
 
     let node = PrnsNode::new(PrnsNodeRecipe {

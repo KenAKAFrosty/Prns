@@ -8,7 +8,7 @@ use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
     generate_identity_secret, Diagnostic, Manual, PreConfiguredDestination, PrnsEvent, PrnsNode,
-    PrnsNodeHandle, PrnsNodeRecipe,
+    PrnsNodeHandle, PrnsNodeRecipe, RequestHandlerRegistration,
 };
 use personal_rns::shared_instance::{
     join_shared_instance, InstancePorts, OnExisting, RnsLocalBlackholeFile, Role,
@@ -65,6 +65,7 @@ async fn run(port: u16, target: Vec<u8>, phase: Duration, payload_len: usize, wi
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
         resource_strategy: ResourceStrategy::AcceptNone,
+        request_handlers: RequestHandlerRegistration::None,
     };
     let (heard_tx, mut heard_rx) = mpsc::unbounded_channel::<DestinationHash>();
     let node = PrnsNode::new(PrnsNodeRecipe {

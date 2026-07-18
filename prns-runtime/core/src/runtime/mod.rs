@@ -18,7 +18,11 @@ pub use identity_blackhole::{
     IdentityBlackholeControl, IdentityBlackholeControlError, IdentityBlackholeSource,
     IdentityBlackholeSourceError,
 };
-pub use node::{assemble_node, AssembledNode, Manual, PreConfiguredDestination, PrnsNodeRecipe};
+pub use node::{
+    assemble_node, configure_preconfigured_destination, AssembledNode,
+    ConfigurePreconfiguredDestinationError, Manual, PreConfiguredDestination, PrnsNodeRecipe,
+    RequestHandlerRegistration,
+};
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "runtime-metrics")] {
