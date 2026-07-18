@@ -16,8 +16,8 @@ pub use session::{
     SamSession,
 };
 pub use value::{
-    I2pAddress, I2pDestinationKind, I2pPrivateDestination, I2pPublicDestination, SamSessionId,
-    SamValueError, I2PLIB_PRIVATE_DESTINATION_MIN_DECODED_BYTES,
+    I2pAddress, I2pBase32Address, I2pDestinationKind, I2pPrivateDestination, I2pPublicDestination,
+    SamSessionId, SamValueError, I2PLIB_PRIVATE_DESTINATION_MIN_DECODED_BYTES,
 };
 
 #[cfg(test)]

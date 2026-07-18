@@ -49,14 +49,15 @@ pub mod interface_discovery;
     feature = "rnode",
     feature = "pipe",
     feature = "shared-instance",
-    feature = "backbone"
+    feature = "backbone",
+    feature = "i2p"
 ))]
 mod framed_stream;
 
 #[cfg(any(feature = "kiss", feature = "ax25", feature = "rnode"))]
 pub mod serial_control;
 
-#[cfg(feature = "tcp")]
+#[cfg(any(feature = "tcp", feature = "i2p"))]
 pub mod tcp;
 
 #[cfg(feature = "udp")]
