@@ -19,7 +19,7 @@ use crate::reactor::driver::{
 use crate::routing::announce::AnnounceObservation;
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestHandlerError;
-use crate::storage::StorageLayout;
+use crate::storage::{StorageLayout, TablePushError};
 use crate::units::RttMillis;
 use crate::wire::DestinationHash;
 
@@ -35,7 +35,7 @@ use super::super::{
 };
 use super::interface_lifecycle::{drive_interfaces, DriverMsg};
 use super::resource_transfer::resource_segment_decompression_bound;
-use super::{persistence, AttachIntent, PrnsNodeHandle, RegisterRequestRouteError};
+use super::{persistence, AttachIntent, PrnsNodeHandle};
 
 const INFLATE_QUEUE_PER_WORKER: usize = 4;
 const MAX_INFLATE_PARALLELISM: usize = 8;
@@ -79,6 +79,12 @@ pub enum NonRoutingIdentityError {
 }
 
 pub type SharedInstanceIdentityError = NonRoutingIdentityError;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RegisterRequestRouteError {
+    Registration(TablePushError),
+    Seed(RequestHandlerError),
+}
 
 impl<St, R, F, S: StorageLayout> PrnsNode<St, R, F, S>
 where
