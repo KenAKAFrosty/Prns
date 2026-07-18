@@ -6,6 +6,7 @@ use prns_core::interfaces::rnode::core::{
     FREQUENCY_HZ_MIN, SPREADING_FACTOR_MAX, SPREADING_FACTOR_MIN, TXPOWER_DBM_MAX, TXPOWER_DBM_MIN,
 };
 
+use super::i2p::validate_peers;
 use super::interpret::{cleaned_number, parse_bool, parse_identity_hash, ReferenceError};
 use super::keys::{
     common as common_key, global as global_key, interface as interface_key, section as section_key,
@@ -1266,7 +1267,16 @@ fn validate_value(
     kind: ValueKind,
     errors: &mut ValidationErrorCollector,
 ) {
-    if normalized_value(value, kind).is_ok() && semantic_value_is_valid(key, value) {
+    let i2p_error = match kind {
+        ValueKind::I2pPeers => validate_peers(value.as_list())
+            .err()
+            .map(|error| error.to_string()),
+        _ => None,
+    };
+    if i2p_error.is_none()
+        && normalized_value(value, kind).is_ok()
+        && semantic_value_is_valid(key, value)
+    {
         return;
     }
     errors.push(ConfigDiagnostic::new(
@@ -1275,7 +1285,10 @@ fn validate_value(
         line,
         path,
         Some(value_text(value)),
-        format!("invalid value for {key:?}"),
+        i2p_error.map_or_else(
+            || format!("invalid value for {key:?}"),
+            |reason| format!("invalid value for {key:?}: {reason}"),
+        ),
         Some(accepted_for_key(key, kind)),
         format!("set `{key} = {}`", example_for_key(key, kind)),
     ));
@@ -1463,7 +1476,7 @@ fn fixed_milli_value_is_valid(value: f64) -> bool {
 }
 
 fn normalized_value(value: &Value, kind: ValueKind) -> Result<String, ()> {
-    if matches!(kind, ValueKind::List) {
+    if matches!(kind, ValueKind::List | ValueKind::I2pPeers) {
         return Ok(value_text(value));
     }
     if matches!(kind, ValueKind::IdentityHashes) {
@@ -1494,7 +1507,9 @@ fn normalized_value(value: &Value, kind: ValueKind) -> Result<String, ()> {
         }
         .to_string(),
         ValueKind::String => text.to_string(),
-        ValueKind::List => unreachable!("list values return before scalar coercion"),
+        ValueKind::List | ValueKind::I2pPeers => {
+            unreachable!("list values return before scalar coercion")
+        }
         ValueKind::Bitrate => {
             let value = parse_integer::<u64>(text)?;
             if value < prns_core::interfaces::BitrateBps::MINIMUM {

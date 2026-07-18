@@ -294,4 +294,5 @@ pub(crate) mod interface {
         REMOTE,
         LISTEN_ON,
     ];
+    pub const I2P: &[&str] = &[PEERS, CONNECTABLE];
 }

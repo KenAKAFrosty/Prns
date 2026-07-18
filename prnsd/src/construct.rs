@@ -2,7 +2,7 @@ use personal_rns::config::{
     DaemonPlan, DiscoveryPublicationProblem, InterfaceDiscoveryPlan, PlannedInterface,
     PlannedMedium,
 };
-use personal_rns::from_plan::{attach_plan, PlanOutcome};
+use personal_rns::from_plan::{attach_plan_with_context, PlanOutcome, PlanRuntimeContext};
 use personal_rns::interfaces::{InterfaceId, InterfaceOriginKind};
 use personal_rns::runtime::PrnsNodeHandle;
 
@@ -41,9 +41,10 @@ pub struct ConstructedInterfaces {
 pub async fn construct_interfaces(
     handle: &PrnsNodeHandle,
     plan: &DaemonPlan,
+    context: &PlanRuntimeContext,
 ) -> ConstructedInterfaces {
     let mut constructed = ConstructedInterfaces::default();
-    attach_plan(handle, plan, &mut |outcome| {
+    attach_plan_with_context(handle, plan, context, &mut |outcome| {
         constructed.startup.merge(classify(&outcome));
         if let PlanOutcome::Up { interface, id } = &outcome {
             constructed.attached.push(AttachedConfiguredInterface {
@@ -65,13 +66,18 @@ fn classify(outcome: &PlanOutcome<'_>) -> StartupInterfaceReport {
                 report.listening = 1;
             }
             PlannedMedium::AutoWifi { .. } | PlannedMedium::Udp { .. } => report.online = 1,
+            PlannedMedium::I2p {
+                peers,
+                reachability,
+            } if peers.is_empty() && !reachability.is_connectable() => report.online = 1,
             PlannedMedium::TcpClient { .. }
             | PlannedMedium::Serial { .. }
             | PlannedMedium::Kiss { .. }
             | PlannedMedium::Ax25Kiss { .. }
             | PlannedMedium::Rnode { .. }
             | PlannedMedium::BackboneClient { .. }
-            | PlannedMedium::Pipe { .. } => report.retrying = 1,
+            | PlannedMedium::Pipe { .. }
+            | PlannedMedium::I2p { .. } => report.retrying = 1,
         },
         PlanOutcome::Failed { .. } => report.failed = 1,
     }
@@ -160,12 +166,15 @@ fn medium_name(medium: &PlannedMedium) -> &'static str {
         PlannedMedium::Backbone { .. } => "backbone",
         PlannedMedium::BackboneClient { .. } => "backbone_client",
         PlannedMedium::Pipe { .. } => "pipe",
+        PlannedMedium::I2p { .. } => "i2p",
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::StartupInterfaceReport;
+    use super::{classify, PlanOutcome, StartupInterfaceReport};
+    use personal_rns::config::parse_and_plan;
+    use personal_rns::interfaces::InterfaceId;
 
     #[test]
     fn startup_counts_merge_and_expose_degraded_readiness() {
@@ -186,5 +195,41 @@ mod tests {
         assert_eq!(report.retrying, 1);
         assert_eq!(report.failed, 1);
         assert!(report.degraded());
+    }
+
+    #[test]
+    fn idle_i2p_is_ready_while_active_i2p_starts_retrying() {
+        let idle = parse_and_plan(
+            "[interfaces]\n[[Idle]]\ntype = I2PInterface\nenabled = Yes\n",
+        )
+        .expect("idle I2P configuration is valid")
+        .value;
+        let active = parse_and_plan(
+            "[interfaces]\n[[Active]]\ntype = I2PInterface\nenabled = Yes\npeers = example.i2p\n",
+        )
+        .expect("active I2P configuration is valid")
+        .value;
+        let id = InterfaceId::new([0; 8]);
+
+        assert_eq!(
+            classify(&PlanOutcome::Up {
+                interface: &idle.interfaces[0],
+                id,
+            }),
+            StartupInterfaceReport {
+                online: 1,
+                ..StartupInterfaceReport::default()
+            }
+        );
+        assert_eq!(
+            classify(&PlanOutcome::Up {
+                interface: &active.interfaces[0],
+                id,
+            }),
+            StartupInterfaceReport {
+                retrying: 1,
+                ..StartupInterfaceReport::default()
+            }
+        );
     }
 }

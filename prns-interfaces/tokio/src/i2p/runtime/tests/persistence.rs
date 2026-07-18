@@ -8,7 +8,10 @@ use std::sync::{Arc, Barrier};
 use super::fake_sam::{oracle_private_destination, private_destination};
 use crate::i2p::destination::{
     load_destination, persist_destination, I2pDestinationKeyPath, I2pDestinationStorageError,
+    RnsI2pStorage,
 };
+use crate::i2p::I2pInterfaceName;
+use prns_core::identity::IdentityHash;
 
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
@@ -163,4 +166,39 @@ fn private_destination_debug_output_is_redacted() {
 fn destination_paths_require_a_file_name() {
     assert!(I2pDestinationKeyPath::new(Path::new("")).is_err());
     assert!(I2pDestinationKeyPath::new(Path::new("/")).is_err());
+}
+
+#[test]
+fn stock_key_path_uses_the_transport_scoped_filename() {
+    let directory = TestDirectory::new("stock-current-key");
+    let storage = RnsI2pStorage::new(
+        &directory.0,
+        IdentityHash::new([
+            0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd,
+            0xee, 0xff,
+        ]),
+    );
+    let name = I2pInterfaceName::new("Private I2P").expect("the interface name is valid");
+
+    let path = storage.destination_key_path(&name);
+
+    assert_eq!(
+        path.as_path().file_name().and_then(|name| name.to_str()),
+        Some("4c621c0110154bbe086a0395dbeb07878a1613258d5e0346c96ddef1a5aeae2d.i2p")
+    );
+}
+
+#[test]
+fn stock_key_path_preserves_an_existing_legacy_identity() {
+    let directory = TestDirectory::new("stock-legacy-key");
+    let storage = RnsI2pStorage::new(&directory.0, IdentityHash::new([0x55; 16]));
+    let name = I2pInterfaceName::new("Private I2P").expect("the interface name is valid");
+    let legacy = directory
+        .0
+        .join("i2p/e806af1f5e462b259a1a03521180478d7ba8011fb0e84605c6c2ecbb6e7e4a46.i2p");
+    fs::create_dir_all(legacy.parent().expect("the legacy key has a parent"))
+        .expect("the I2P storage directory is created");
+    fs::write(&legacy, "existing").expect("the legacy key marker is written");
+
+    assert_eq!(storage.destination_key_path(&name).as_path(), legacy);
 }

@@ -109,7 +109,7 @@ ble-host = ["ble", "dep:tokio", "tokio/rt", "dep:prns-ffi"]
 pipe-host = ["pipe", "dep:tokio", "tokio/process"]
 auto = []
 interface-discovery = ["tcp", "backbone", "dep:getrandom", "prns-core/interface-discovery", "prns-runtime/interface-discovery"]
-from-plan = ["tcp", "udp", "serial", "serial-host", "kiss", "ax25", "rnode", "pipe", "pipe-host", "backbone", "wifi", "dep:prns-config", "dep:tokio", "tokio/rt"]
+from-plan = ["tcp", "udp", "serial", "serial-host", "kiss", "ax25", "rnode", "pipe", "pipe-host", "backbone", "wifi", "i2p", "dep:prns-config", "dep:tokio", "tokio/rt"]
 ble = ["dep:tokio", "dep:futures-util", "dep:bluer", "dep:prns-ffi"]
 
 [lints.clippy]

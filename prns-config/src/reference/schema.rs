@@ -4,6 +4,7 @@ pub(super) enum ValueKind {
     Mode,
     String,
     List,
+    I2pPeers,
     Bitrate,
     LinkMtu,
     U64,
@@ -29,6 +30,9 @@ impl ValueKind {
             }
             ValueKind::String => "one scalar value",
             ValueKind::List => "one value or a comma-separated list",
+            ValueKind::I2pPeers => {
+                "comma-separated .i2p names or I2P base64 destinations"
+            }
             ValueKind::Bitrate => "an integer from 5 through 18446744073709551615 bps",
             ValueKind::LinkMtu => "an integer from 1 through 524288 bytes",
             ValueKind::U64 => "a non-negative integer",
@@ -54,6 +58,7 @@ impl ValueKind {
             ValueKind::Mode => "full",
             ValueKind::String => "value",
             ValueKind::List => "first, second",
+            ValueKind::I2pPeers => "example.i2p, QUJDRA==",
             ValueKind::Bitrate => "500000000",
             ValueKind::LinkMtu => "131072",
             ValueKind::U64 | ValueKind::U32 => "1000000",
@@ -187,6 +192,7 @@ pub(super) const SUPPORTED_INTERFACES: &[&str] = &[
     "PipeInterface",
     "BackboneInterface",
     "BackboneClientInterface",
+    "I2PInterface",
 ];
 
 pub(super) fn interface_key_rule(
@@ -284,6 +290,7 @@ fn medium_interface_key_rule(type_name: &str, key: &str) -> Option<KeyRule> {
         "RNodeInterface" => rnode_interface_key_rule(key),
         "PipeInterface" => pipe_interface_key_rule(key),
         "BackboneInterface" | "BackboneClientInterface" => backbone_interface_key_rule(key),
+        "I2PInterface" => i2p_interface_key_rule(key),
         _ => None,
     }
 }
@@ -438,6 +445,14 @@ fn backbone_interface_key_rule(key: &str) -> Option<KeyRule> {
     }
 }
 
+fn i2p_interface_key_rule(key: &str) -> Option<KeyRule> {
+    match key {
+        interface_key::PEERS => Some(KeyRule::Validate(ValueKind::I2pPeers)),
+        interface_key::CONNECTABLE => Some(KeyRule::Validate(ValueKind::Bool)),
+        _ => None,
+    }
+}
+
 pub(super) fn known_interface_keys(type_name: &str) -> Vec<&'static str> {
     let mut known = interface_key::COMMON.to_vec();
     let medium = match type_name {
@@ -451,6 +466,7 @@ pub(super) fn known_interface_keys(type_name: &str) -> Vec<&'static str> {
         "RNodeInterface" => interface_key::RNODE,
         "PipeInterface" => interface_key::PIPE,
         "BackboneInterface" | "BackboneClientInterface" => interface_key::BACKBONE,
+        "I2PInterface" => interface_key::I2P,
         _ => &[],
     };
     known.extend_from_slice(medium);

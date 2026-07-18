@@ -533,6 +533,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "data-encoding"
+version = "2.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a4ae5f15dda3c708c0ade84bfee31ccab44a3da4f88015ed22f63732abe300c8"
+
+[[package]]
 name = "deranged"
 version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2027,7 +2033,9 @@ dependencies = [
 name = "prns-interfaces-tokio"
 version = "0.2.4"
 dependencies = [
+ "base64",
  "cfg-if",
+ "data-encoding",
  "getrandom 0.2.17",
  "heapless 0.8.0",
  "hmac",
@@ -2044,6 +2052,7 @@ dependencies = [
  "tokio",
  "tokio-serial",
  "tracing",
+ "zeroize",
 ]
 
 [[package]]

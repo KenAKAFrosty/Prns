@@ -56,7 +56,8 @@ impl PreparedDiscovery {
                 | PlannedMedium::Ax25Kiss { .. }
                 | PlannedMedium::Rnode { .. }
                 | PlannedMedium::Backbone { .. }
-                | PlannedMedium::Pipe { .. } => {}
+                | PlannedMedium::Pipe { .. }
+                | PlannedMedium::I2p { .. } => {}
             }
         }
         Some(Self {
