@@ -1,0 +1,126 @@
+use core::convert::Infallible;
+
+use embedded_graphics::mock_display::MockDisplay;
+use embedded_graphics::pixelcolor::BinaryColor;
+use embedded_graphics::prelude::*;
+use heapless::Vec as HVec;
+use personal_rns::interfaces::lora::core::{
+    Frequency, ModemPreset, RadioProfile, Region, DEFAULT_915_PROFILE,
+};
+use personal_rns::interfaces::InterfaceId;
+use personal_rns::storage::{DisplayedStorageLimits, StorageCapacity};
+
+use super::limits::{build_limit_rows, LimitValue};
+use super::render::cards::draw_card;
+use super::render::glyphs::{
+    draw_battery, draw_clock, draw_interface_icon, draw_lightning, draw_link, draw_person,
+};
+use super::render::layout::{
+    ACTIVITY_TEXT_X, CARD_H, CARD_SLOT_STEP, CARD_TOP, FIRST_CARD_WITH_GLOBAL_TOP,
+    FOOTER_FOURTH_LINE_OFFSET, FOOTER_SECOND_LINE_OFFSET, GLOBAL_BACKING_H, GLOBAL_BACKING_X,
+    GLOBAL_BACKING_Y, GLOBAL_ICON_X, GLOBAL_ROW_H, GLOBAL_ROW_TOP, HEIGHT, MENU_BACKING_X,
+    MENU_DIVIDER_Y, MENU_HEADER_Y, MENU_ITEM_STEP, MENU_ITEM_TOP, MENU_MARK_X, MENU_REASON_X,
+    NAME_BACKING_X, NAME_BACKING_Y, NAME_ICON_X, NAME_LINE_Y, STAT_ICON_X, STAT_TEXT_X, WIDTH,
+};
+use super::render::menus::draw_interface_menu;
+use super::render::menus::lora::{LORA_DOT_X, LORA_EDITOR_TOP};
+use super::render::metrics::{
+    compact_numeric_width, draw_compact_number, fmt_activity_age, fmt_count, fmt_rate_bytes_per_sec,
+};
+use super::state::lora::{
+    region_index, step_custom_row, CustomRow, EditMode, FreqRow, LoRaScreen, PresetChoice,
+    LORA_REGION_CANCEL, PRESET_CHOICES,
+};
+use super::state::{
+    UiMode, ANNOUNCE_MENU_ITEM, LORA_RESET_MENU_ITEM, LORA_TUNE_MENU_ITEM, OLED_OFF_MENU_ITEM,
+    POWER_MENU_ITEM, POWER_ONLY_MENU_ITEMS, SLEEP_MENU_ITEM,
+};
+use super::{
+    card_label, draw_with_state, draw_with_state_footer_at, push_interface_menu_info,
+    push_named_peer_row, push_supervisor_peer_rows, sort_cards_for_display, BatteryState, Card,
+    CardActivityTracker, CardKind, InputEvent, InterfaceMenuDetailKind, InterfaceMenuDetailRows,
+    Liveness, SupervisorPeerMenuStatus, UiAction, UiFooter, UiState,
+};
+
+const TEST_WIDTH: usize = WIDTH as usize;
+const TEST_HEIGHT: usize = HEIGHT as usize;
+
+struct PanelDisplay {
+    pixels: [[Option<BinaryColor>; TEST_WIDTH]; TEST_HEIGHT],
+}
+
+impl PanelDisplay {
+    fn new() -> Self {
+        Self {
+            pixels: [[None; TEST_WIDTH]; TEST_HEIGHT],
+        }
+    }
+
+    fn get_pixel(&self, point: Point) -> Option<BinaryColor> {
+        if point.x < 0 || point.y < 0 || point.x >= WIDTH || point.y >= HEIGHT {
+            return None;
+        }
+        self.pixels[point.y as usize][point.x as usize]
+    }
+}
+
+impl DrawTarget for PanelDisplay {
+    type Color = BinaryColor;
+    type Error = Infallible;
+
+    fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
+    where
+        I: IntoIterator<Item = Pixel<Self::Color>>,
+    {
+        for Pixel(point, color) in pixels {
+            if point.x >= 0 && point.y >= 0 && point.x < WIDTH && point.y < HEIGHT {
+                self.pixels[point.y as usize][point.x as usize] = Some(color);
+            }
+        }
+        Ok(())
+    }
+}
+
+impl OriginDimensions for PanelDisplay {
+    fn size(&self) -> Size {
+        Size::new(WIDTH as u32, HEIGHT as u32)
+    }
+}
+
+fn test_card(label: &'static str) -> Card {
+    Card {
+        id: InterfaceId::new([0; 8]),
+        kind: CardKind::Usb,
+        label: card_label(label),
+        selected: false,
+        liveness: Liveness::Live,
+        failure_reason: None,
+        tx_bytes: 0,
+        rx_bytes: 0,
+        links: 0,
+        destinations: 0,
+        rate_bytes_per_sec: 0,
+        last_activity_secs: None,
+    }
+}
+
+fn has_on_pixel(
+    display: &PanelDisplay,
+    xs: core::ops::Range<i32>,
+    ys: core::ops::Range<i32>,
+) -> bool {
+    for y in ys {
+        for x in xs.clone() {
+            if display.get_pixel(Point::new(x, y)) == Some(BinaryColor::On) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+mod limits;
+mod lora;
+mod model;
+mod render;
+mod state;
