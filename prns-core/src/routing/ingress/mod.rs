@@ -2,6 +2,7 @@ mod announce;
 mod classification;
 mod forward;
 mod links;
+mod outcome;
 mod path_requests;
 #[cfg(test)]
 pub(super) mod testkit;
@@ -13,6 +14,11 @@ use forward::ForwardingArrival;
 pub use forward::PacketToForward;
 pub use links::ForwardedLinkRequestBody;
 use links::{LinkRequestArrival, RelayOutcome};
+pub(crate) use outcome::{AcceptedAnnounceEffect, IngestEffects};
+pub use outcome::{
+    DeferredCrypto, IgnoreReason, IngestPacketOutcome, LinkRttOwed,
+    NON_TRANSPORTED_DATA_MAX_RECEIVED_HOPS,
+};
 use upstream_delivery::UpstreamDeliveryOutcome;
 pub use upstream_delivery::{
     DecryptOwed, RatchetDecryptOwed, MAX_POOLED_RATCHETS, MAX_RATCHET_DECRYPT_PAYLOAD_LEN,
@@ -20,8 +26,7 @@ pub use upstream_delivery::{
 };
 
 use crate::crypto::token_open_in_place;
-use crate::crypto::{Ed25519PublicKey, X25519PublicKey, X25519SecretKey};
-use crate::engine::CommandId;
+use crate::crypto::{X25519PublicKey, X25519SecretKey};
 use crate::engine::EngineState;
 use crate::engine::InstantMillis;
 use crate::engine::LinkClosedReason;
@@ -48,12 +53,12 @@ use crate::routing::delivery::send_single::DEFAULT_PER_HOP_TIMEOUT_MS;
 use crate::routing::delivery::{
     Delivery, GroupDelivery, LinkDelivery, PlainDelivery, SingleDelivery,
 };
+use crate::routing::links::channel::parse_envelope;
 use crate::routing::links::channel::table::ChannelTable;
-use crate::routing::links::channel::{parse_envelope, ChannelSequence, MessageType};
 use crate::routing::links::handshake::{
     link_proof_from, link_proof_parse, link_request_from, link_rtt_from, signalling_bytes_from,
-    AcceptedLinkRequest, LinkProofSignOwed, LinkProofVerifyOwed, LinkRequest, LinkRttError,
-    LINK_REQUEST_KEYS_LEN, SIGNALLED_LINK_REQUEST_LEN,
+    AcceptedLinkRequest, LinkProofVerifyOwed, LinkRequest, LinkRttError, LINK_REQUEST_KEYS_LEN,
+    SIGNALLED_LINK_REQUEST_LEN,
 };
 use crate::routing::links::identify::peer_identity_from;
 use crate::routing::links::maintenance::{KEEPALIVE_ECHO, KEEPALIVE_REQUEST};
@@ -61,8 +66,6 @@ use crate::routing::links::request::{
     parse_request_plaintext, parse_response_plaintext, RequestId,
 };
 use crate::routing::links::resources::send::ResourceProofClassification;
-use crate::routing::links::resources::table::AcceptedResource;
-use crate::routing::links::resources::{ResourceFailureCause, ResourceHash, ResourcePartRequest};
 use crate::routing::links::table::{LinkPhase, LinkRole};
 use crate::routing::links::transported::{extra_link_proof_timeout_ms, TransportedLink};
 use crate::routing::links::LinkId;
@@ -71,7 +74,6 @@ use crate::routing::path_requests::recursive::{
 };
 use crate::routing::path_requests::seen::{PathRequestIdBytes, PathRequestNovelty};
 use crate::routing::proof::{LinkProofOwed, ProofIngest, ProofObligation, ProofOwed};
-use crate::routing::request_handlers::RequestPathHash;
 use crate::routing::reverse_routes::{ReverseRouteEntry, DEFAULT_REVERSE_ROUTE_TIMEOUT_MS};
 use crate::routing::tunnel::{
     parse_synthesize_payload, TunnelTransition, TUNNEL_SYNTHESIZE_DESTINATION, TUNNEL_TIMEOUT_MS,
@@ -87,205 +89,6 @@ use crate::wire::{
     WirePacketHeader, BROADCAST_MTU, MAX_HOP_COUNT, TRUNCATED_HASH_BYTE_LEN,
 };
 use heapless::Vec as HeaplessVec;
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct IngestEffects<'a> {
-    pub destination_identity_expiry: Option<InstantMillis>,
-    pub accepted_announce: Option<AcceptedAnnounceEffect<'a>>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct AcceptedAnnounceEffect<'a> {
-    pub observation: crate::routing::announce::AnnounceObservation<'a>,
-    pub rate_accounting: crate::routing::announce::AnnounceRateAccounting,
-}
-
-impl IngestEffects<'_> {
-    pub(crate) fn note_destination_identity_expiry(&mut self, expiry: Option<InstantMillis>) {
-        if let Some(expiry) = expiry {
-            self.destination_identity_expiry = Some(
-                self.destination_identity_expiry
-                    .map_or(expiry, |current| current.min(expiry)),
-            );
-        }
-    }
-}
-
-/// RNS 1.3.5 `Transport.packet_filter` drops PLAIN and GROUP data received more than one hop out.
-pub const NON_TRANSPORTED_DATA_MAX_RECEIVED_HOPS: u8 = 1;
-
-#[derive(Default)]
-#[allow(clippy::large_enum_variant)]
-pub enum DeferredCrypto {
-    #[default]
-    Empty,
-    Decrypt(DecryptOwed),
-    RatchetDecrypt(RatchetDecryptOwed),
-    LinkProofVerify(LinkProofVerifyOwed),
-    LinkProofSign(LinkProofSignOwed),
-    AnnounceVerify(AnnounceVerifyOwed),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LinkRttOwed {
-    pub link_id: LinkId,
-    pub responder_encryption: X25519PublicKey,
-    pub responder_signing: Ed25519PublicKey,
-    pub command_id: CommandId,
-    pub rtt: RttMillis,
-    pub mtu: usize,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IgnoreReason {
-    Consumed,
-    Malformed,
-    UnhandledContext,
-    Duplicate,
-    Superseded,
-    NotForUs,
-    NoRoute,
-    HopLimitReached,
-    LoopPrevented,
-    RouteUnresponsive,
-    OtherInstance,
-    UnknownLink,
-    LinkPhaseMismatch,
-    LinkRttError(LinkRttError),
-    DecryptFailed,
-    ProofInvalid,
-    UnknownIdentity,
-    /// RNS 1.3.5 `Destination.accept_link_requests` is off: the destination announces but answers no `LINKREQUEST`.
-    LinkRequestsRefused,
-    PermissionDenied,
-    RateLimited,
-    CapacityExhausted,
-    /// The app's declared acceptance policy declined an offer that was well-formed and deliverable.
-    StrategyDeclined,
-    /// A response advertisement naming no pending request of ours; RNS 1.3.5's `RESOURCE_ADV` ladder drops these without consulting the strategy.
-    UnmatchedResponse,
-    IfacRefused,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IngestPacketOutcome<'p> {
-    Announce(AnnounceIngest),
-    Delivery {
-        delivery: Delivery<'p>,
-        proof: ProofObligation,
-    },
-    OwesDecrypt,
-    OwesRatchetDecrypt,
-    OwesAnnounceVerify,
-    Proof(ProofIngest),
-    Forward(PacketToForward<'p>),
-    AnswerPathRequest {
-        destination: DestinationHash,
-    },
-    ScheduledPathResponse {
-        destination: DestinationHash,
-    },
-    /// RNS `DISCOVER_PATHS_FOR`.
-    ForwardRecursivePathRequest {
-        destination: DestinationHash,
-        id: PathRequestIdBytes,
-    },
-    /// RNS `Transport.path_request`.
-    RelayPathRequestToLocalClients {
-        destination: DestinationHash,
-        id: PathRequestIdBytes,
-    },
-    /// RNS `remote_identified`.
-    PeerIdentified {
-        link_id: LinkId,
-        identity: IdentityHash,
-    },
-    RequestReceived {
-        link_id: LinkId,
-        request_id: RequestId,
-        path_hash: RequestPathHash,
-        requested_at: InstantMillis,
-        rtt: RttMillis,
-        data: &'p [u8],
-    },
-    ResponseSettled {
-        id: CommandId,
-        delivered: PacketReceiptDelivered,
-        link_id: LinkId,
-        request_id: RequestId,
-        data: &'p [u8],
-    },
-    ChannelDataReceived {
-        link_id: LinkId,
-        message_type: MessageType,
-        sequence: ChannelSequence,
-        payload: &'p [u8],
-        packet_hash: PacketHash,
-    },
-    OwesResourceParts(ResourcePartRequest<'p>),
-
-    ResourceDelivered {
-        id: CommandId,
-        link_id: LinkId,
-    },
-    OwesResourcePull {
-        link_id: LinkId,
-        hash: ResourceHash,
-    },
-    /// An advertisement `ResourceStrategy::AcceptIf` validated and now holds for the host decider's verdict — RNS 1.3.5's `ACCEPT_APP` callback point.
-    ResourceOffered {
-        link_id: LinkId,
-        original_hash: ResourceHash,
-        accepted: AcceptedResource<'p>,
-    },
-    OwesResourceAssembly {
-        link_id: LinkId,
-        hash: ResourceHash,
-    },
-    ResourceDeadlineAdvanced,
-    IncomingResourceFailed {
-        link_id: LinkId,
-        hash: ResourceHash,
-        cause: ResourceFailureCause,
-        /// The command whose pending request this transfer was answering, already settled out of the receipts; the reactor arm journals its failure.
-        settled_request: Option<CommandId>,
-    },
-    ResourceRejectedByPeer {
-        id: CommandId,
-        link_id: LinkId,
-    },
-    TransportedLinkRequest {
-        header: WirePacketHeader,
-        body: ForwardedLinkRequestBody,
-        fire_on: InterfaceId,
-    },
-    OwesLinkProof(AcceptedLinkRequest),
-    OwesLinkRtt(LinkRttOwed),
-    OwesLinkProofVerify,
-    LinkActivated {
-        link_id: LinkId,
-        rtt_ms: u64,
-    },
-    OwesKeepaliveEcho {
-        link_id: LinkId,
-    },
-    LinkClosedByPeer {
-        link_id: LinkId,
-    },
-    OwesLinkClose {
-        link_id: LinkId,
-        reason: LinkClosedReason,
-    },
-    LinkInterfaceMismatch {
-        link_id: LinkId,
-        attached_interface: InterfaceId,
-        arrived_on: InterfaceId,
-    },
-    TunnelObserved {
-        expires: InstantMillis,
-    },
-    Ignored(IgnoreReason),
-}
 
 impl<S: StorageLayout> EngineState<S> {
     pub(super) fn hops_across_local_boundary(
