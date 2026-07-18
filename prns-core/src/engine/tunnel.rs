@@ -1,5 +1,5 @@
 use crate::crypto::sha256;
-use crate::engine::{EgressSerializeError, EngineState};
+use crate::engine::EngineState;
 use crate::identity::{IdentityHash, IdentitySigner};
 use crate::interfaces::InterfaceId;
 use crate::routing::tunnel::{
@@ -7,6 +7,7 @@ use crate::routing::tunnel::{
     PersistedTunnelRow, SeedTunnelOutcome, RANDOM_HASH_LEN,
 };
 use crate::storage::StorageLayout;
+use crate::wire::WireError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WriteTunnelSynthesizeError {
@@ -50,9 +51,8 @@ impl<S: StorageLayout> EngineState<S> {
         let region = synthesize_signed_region(&public_key, &interface_hash, random_hash);
         let signature = signer.sign(&region);
         let payload = assemble_synthesize_payload(&region, &signature);
-        write_synthesize_wire_packet(&payload, buf).map_err(
-            |EgressSerializeError::BufferTooShort| WriteTunnelSynthesizeError::BufferTooShort,
-        )
+        write_synthesize_wire_packet(&payload, buf)
+            .map_err(|WireError::BufferTooShort| WriteTunnelSynthesizeError::BufferTooShort)
     }
 }
 
