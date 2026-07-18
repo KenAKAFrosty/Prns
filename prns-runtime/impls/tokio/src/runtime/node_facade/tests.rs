@@ -1,10 +1,14 @@
+use super::persistence::{
+    ratchet_label, try_zeroed_buffer, wall_clock_timeline_origin, MAX_BOOT_RECORD_LEN,
+};
 use super::*;
-use crate::engine::MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN;
-use crate::identity::vault::{IdentitySecretKey, Removal};
+use crate::engine::{InstantMillis, MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN};
+use crate::identity::vault::{IdentityLabel, IdentitySecretKey, IdentityVault, Removal};
 use crate::identity::IDENTITY_SECRET_KEY_LEN;
 use crate::interfaces::ifac::IfacSize;
 use crate::interfaces::{InterfaceStatus, InterfaceVitals};
-use crate::reactor::driver::TokioInterfaceStatus;
+use crate::reactor::driver::{SelfRatchetSnapshot, TokioInterfaceStatus};
+use crate::routing::BlackholeIdentityOutcome;
 
 const PEER: DestinationHash = DestinationHash::new([0xAB; 16]);
 
