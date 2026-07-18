@@ -758,7 +758,7 @@ fn coerce_bool(value: &Value, interface: &str, key: &str) -> Result<bool, Refere
     })
 }
 
-pub(super) fn parse_bool(text: &str) -> Option<bool> {
+pub(crate) fn parse_bool(text: &str) -> Option<bool> {
     match text.trim().to_ascii_lowercase().as_str() {
         "true" | "yes" | "on" | "1" => Some(true),
         "false" | "no" | "off" | "0" => Some(false),
