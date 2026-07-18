@@ -21,6 +21,7 @@ pub mod backbone;
 pub mod bluetooth_auto;
 pub mod channel_rendezvous;
 pub mod esp_now;
+pub mod i2p;
 pub mod kiss;
 pub mod lora;
 pub mod pipe;

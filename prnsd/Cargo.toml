@@ -31,6 +31,7 @@ tokio-host = [
     "personal-rns/rnode",
     "personal-rns/pipe",
     "personal-rns/backbone",
+    "personal-rns/i2p",
     "personal-rns/wifi",
     "personal-rns/shared-instance",
     "personal-rns/config",

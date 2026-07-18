@@ -2332,6 +2332,7 @@ version = "0.1.0"
 dependencies = [
  "dirs",
  "prns-core",
+ "shlex",
 ]
 
 [[package]]
@@ -2406,8 +2407,10 @@ dependencies = [
 name = "prns-interfaces-tokio"
 version = "0.2.4"
 dependencies = [
+ "base64",
  "bluer",
  "cfg-if",
+ "data-encoding",
  "futures-util",
  "getrandom 0.2.17",
  "heapless 0.8.0",
@@ -2422,13 +2425,13 @@ dependencies = [
  "prns-runtime-tokio",
  "rmpv",
  "serialport",
- "shlex",
  "socket2",
  "tokio",
  "tokio-serial",
  "tokio-tungstenite",
  "tracing",
  "zbus",
+ "zeroize",
 ]
 
 [[package]]

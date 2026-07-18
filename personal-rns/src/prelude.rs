@@ -85,7 +85,9 @@ pub use prns_interfaces_tokio::interface_discovery::{
 };
 
 #[cfg(all(feature = "config", feature = "tokio-host"))]
-pub use prns_interfaces_tokio::from_plan::{self, attach_plan, config, FromPlan, PlanOutcome};
+pub use prns_interfaces_tokio::from_plan::{
+    self, attach_plan, attach_plan_with_context, config, FromPlan, PlanOutcome, PlanRuntimeContext,
+};
 
 #[cfg(all(feature = "pipe", feature = "tokio-host"))]
 pub use prns_interfaces_tokio::pipe_host;
@@ -131,6 +133,9 @@ pub use prns_interfaces_tokio::backbone;
 
 #[cfg(all(feature = "websocket", feature = "tokio-host"))]
 pub use prns_interfaces_tokio::websocket;
+
+#[cfg(all(feature = "i2p", feature = "tokio-host"))]
+pub use prns_interfaces_tokio::i2p;
 
 #[cfg(all(feature = "shared-instance", feature = "tokio-host"))]
 pub use prns_interfaces_tokio::shared_instance;

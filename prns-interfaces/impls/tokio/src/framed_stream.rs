@@ -16,7 +16,8 @@ use prns_core::interfaces::kiss_framing::{self, KissScanner};
     feature = "serial",
     feature = "pipe",
     feature = "shared-instance",
-    feature = "backbone"
+    feature = "backbone",
+    feature = "i2p"
 ))]
 use prns_core::interfaces::rns_serial_framing::{self, RnsSerialScanner};
 use prns_core::interfaces::{BitrateBps, FrameSink};
@@ -66,7 +67,8 @@ pub trait Framing {
     feature = "serial",
     feature = "pipe",
     feature = "shared-instance",
-    feature = "backbone"
+    feature = "backbone",
+    feature = "i2p"
 ))]
 pub struct HdlcFraming;
 
@@ -75,7 +77,8 @@ pub struct HdlcFraming;
     feature = "serial",
     feature = "pipe",
     feature = "shared-instance",
-    feature = "backbone"
+    feature = "backbone",
+    feature = "i2p"
 ))]
 impl StreamDeframer for RnsSerialScanner {
     fn new() -> Self {
@@ -103,7 +106,8 @@ impl StreamDeframer for RnsSerialScanner {
     feature = "serial",
     feature = "pipe",
     feature = "shared-instance",
-    feature = "backbone"
+    feature = "backbone",
+    feature = "i2p"
 ))]
 impl Framing for HdlcFraming {
     type Deframer = RnsSerialScanner;
@@ -204,11 +208,62 @@ pub struct WireMeters<'a> {
     pub started: tokio::time::Instant,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct HdlcIdleWatchdog {
+    pub tick: std::time::Duration,
+    pub keepalive_after: std::time::Duration,
+    pub stale_after: std::time::Duration,
+    pub read_timeout: std::time::Duration,
+}
+
+#[cfg(any(
+    feature = "tcp",
+    feature = "serial",
+    feature = "kiss",
+    feature = "ax25",
+    feature = "rnode",
+    feature = "pipe",
+    feature = "shared-instance",
+    feature = "backbone"
+))]
 pub async fn serve<F, const READ_LEN: usize, const FRAMED_LEN: usize, S, Seam>(
+    stream: S,
+    buffers: &mut FramedBuffers<F, READ_LEN, FRAMED_LEN>,
+    seam: &mut Seam,
+    meters: &mut WireMeters<'_>,
+) where
+    F: Framing,
+    S: AsyncRead + AsyncWrite + Unpin,
+    Seam: InterfaceSeam,
+{
+    serve_inner(stream, buffers, seam, meters, None).await;
+}
+
+#[cfg(feature = "i2p")]
+pub(crate) async fn serve_with_hdlc_idle_watchdog<
+    const READ_LEN: usize,
+    const FRAMED_LEN: usize,
+    S,
+    Seam,
+>(
+    stream: S,
+    buffers: &mut FramedBuffers<HdlcFraming, READ_LEN, FRAMED_LEN>,
+    seam: &mut Seam,
+    meters: &mut WireMeters<'_>,
+    watchdog: HdlcIdleWatchdog,
+) where
+    S: AsyncRead + AsyncWrite + Unpin,
+    Seam: InterfaceSeam,
+{
+    serve_inner(stream, buffers, seam, meters, Some(watchdog)).await;
+}
+
+async fn serve_inner<F, const READ_LEN: usize, const FRAMED_LEN: usize, S, Seam>(
     mut stream: S,
     buffers: &mut FramedBuffers<F, READ_LEN, FRAMED_LEN>,
     seam: &mut Seam,
     meters: &mut WireMeters<'_>,
+    watchdog: Option<HdlcIdleWatchdog>,
 ) where
     F: Framing,
     S: AsyncRead + AsyncWrite + Unpin,
@@ -227,6 +282,13 @@ pub async fn serve<F, const READ_LEN: usize, const FRAMED_LEN: usize, S, Seam>(
         started,
     } = meters;
     let (bitrate, started) = (*bitrate, *started);
+    let mut last_read = tokio::time::Instant::now();
+    let mut last_write = last_read;
+    let mut watchdog_interval = watchdog.map(|policy| {
+        let mut interval = tokio::time::interval(policy.tick);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        interval
+    });
     deframer.reset();
     let read_buf: &mut [u8] = read_buf;
     let frame_buf: &mut [u8] = frame_buf;
@@ -238,6 +300,10 @@ pub async fn serve<F, const READ_LEN: usize, const FRAMED_LEN: usize, S, Seam>(
                     Ok(0) | Err(_) => return,
                     Ok(read) => read,
                 };
+                last_read = tokio::time::Instant::now();
+                if watchdog.is_some() {
+                    status.set_connection(prns_core::interfaces::ConnectionState::Connected);
+                }
                 status.add_rx(read as u64);
                 let now = InstantMillis(started.elapsed().as_millis() as u64);
                 throughput.record_rx(now, read as u64);
@@ -270,6 +336,7 @@ pub async fn serve<F, const READ_LEN: usize, const FRAMED_LEN: usize, S, Seam>(
                     if stream.write_all(&frame_buf[..filled]).await.is_err() {
                         return;
                     }
+                    last_write = tokio::time::Instant::now();
                     record_tx_write(filled);
                     filled = F::encode(next, &mut *frame_buf).unwrap_or(0);
                     break;
@@ -278,10 +345,37 @@ pub async fn serve<F, const READ_LEN: usize, const FRAMED_LEN: usize, S, Seam>(
                     if stream.write_all(&frame_buf[..filled]).await.is_err() {
                         return;
                     }
+                    last_write = tokio::time::Instant::now();
                     record_tx_write(filled);
                 }
             }
+            () = wait_watchdog_tick(&mut watchdog_interval) => {
+                let Some(policy) = watchdog else {
+                    continue;
+                };
+                let now = tokio::time::Instant::now();
+                if now.duration_since(last_read) > policy.read_timeout {
+                    return;
+                }
+                if now.duration_since(last_read) > policy.stale_after {
+                    status.set_connection(prns_core::interfaces::ConnectionState::Degraded);
+                }
+                if now.duration_since(last_write) > policy.keepalive_after
+                    && stream.write_all(&[0x7e, 0x7e]).await.is_err()
+                {
+                    return;
+                }
+            }
         }
+    }
+}
+
+async fn wait_watchdog_tick(interval: &mut Option<tokio::time::Interval>) {
+    match interval {
+        Some(interval) => {
+            interval.tick().await;
+        }
+        None => std::future::pending().await,
     }
 }
 

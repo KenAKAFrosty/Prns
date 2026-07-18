@@ -1,4 +1,5 @@
 use prns_config::configobj::{self, Section, Value};
+use prns_config::parse_and_plan;
 use prns_config::reference;
 use proptest::prelude::*;
 
@@ -78,11 +79,17 @@ proptest! {
     }
 
     #[test]
+    fn parse_and_plan_never_panics_on_arbitrary_text(text in ".*") {
+        let _ = parse_and_plan(&text);
+    }
+
+    #[test]
     fn neither_layer_panics_on_structural_noise(
         text in "[\\[\\]=#'\"a-z0-9 \t\n]{0,300}"
     ) {
         let _ = configobj::parse(&text);
         let _ = reference::parse(&text);
+        let _ = parse_and_plan(&text);
     }
 
     #[test]

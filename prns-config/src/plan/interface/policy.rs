@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 
 use prns_core::interfaces::ax25_kiss::core as ax25_core;
+use prns_core::interfaces::i2p::core as i2p_core;
 use prns_core::interfaces::kiss::core as kiss_core;
 use prns_core::interfaces::pipe::core as pipe_core;
-use prns_core::interfaces::rnode::policy as rnode_policy;
 use prns_core::interfaces::serial::core as serial_core;
 use prns_core::interfaces::tcp::core as tcp_core;
 use prns_core::interfaces::udp::core as udp_core;
@@ -17,8 +17,8 @@ use prns_core::interfaces::{
 use prns_core::routing::links::MAX_LINK_MTU;
 
 use super::discovery::InterfaceDiscoveryPlan;
-use super::medium::{PlannedMedium, UdpFlowPlan};
-use super::DeferReason;
+use super::medium::{rnode_defaults, PlannedMedium, UdpFlowPlan};
+use super::PlanErrorKind;
 use crate::plan::reference_globals::{global_bool, global_f64, global_i64};
 use crate::reference::keys::{
     common as common_key, global as global_key, interface as interface_key,
@@ -27,18 +27,35 @@ use crate::reference::{
     ReferenceConfig, ReferenceInterface, ReferenceMode, ReferenceParams, ReferenceValue,
 };
 
-pub(super) fn effective_policy(
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::plan) enum MemberEgressPolicy {
+    Inherit,
+    Disabled,
+}
+
+impl MemberEgressPolicy {
+    pub(in crate::plan) const fn from_outgoing(outgoing: Option<bool>) -> Self {
+        if matches!(outgoing, Some(false)) {
+            Self::Disabled
+        } else {
+            Self::Inherit
+        }
+    }
+}
+
+pub(in crate::plan) fn effective_policy(
     interface: &ReferenceInterface,
     medium: &PlannedMedium,
     discovery: &InterfaceDiscoveryPlan,
     global_common: InterfaceCommonPolicy,
     global_announce_rate: AnnounceRateLimit,
     transport_enabled: bool,
-) -> Result<EffectiveInterfacePolicy, DeferReason> {
+    member_egress: MemberEgressPolicy,
+) -> Result<EffectiveInterfacePolicy, PlanErrorKind> {
     let bitrate = interface
         .bitrate
         .map(|bitrate| {
-            BitrateBps::new(bitrate).ok_or(DeferReason::InvalidSetting {
+            BitrateBps::new(bitrate).ok_or(PlanErrorKind::InvalidSetting {
                 key: interface_key::BITRATE,
             })
         })
@@ -56,6 +73,7 @@ pub(super) fn effective_policy(
         defaults.capabilities.ingress
     };
     let egress = if interface.outgoing == Some(false)
+        || member_egress == MemberEgressPolicy::Disabled
         || matches!(
             medium,
             PlannedMedium::Udp {
@@ -97,7 +115,7 @@ fn planned_announce_rate_limit(
     interface: &ReferenceInterface,
     global: AnnounceRateLimit,
     transport_enabled: bool,
-) -> Result<Option<AnnounceRateLimit>, DeferReason> {
+) -> Result<Option<AnnounceRateLimit>, PlanErrorKind> {
     let source = match (interface.announce_rate_target, transport_enabled) {
         (Some(target_seconds), _) => AnnounceRateSource::Interface { target_seconds },
         (None, true) => AnnounceRateSource::TransportDefault(global),
@@ -117,7 +135,7 @@ fn planned_announce_rate_limit(
         .announce_rate_grace
         .map(u16::try_from)
         .transpose()
-        .map_err(|_| DeferReason::InvalidSetting {
+        .map_err(|_| PlanErrorKind::InvalidSetting {
             key: interface_key::ANNOUNCE_RATE_GRACE,
         })?
         .unwrap_or(default_grace);
@@ -133,13 +151,13 @@ fn planned_announce_rate_limit(
     }))
 }
 
-fn checked_milliseconds(seconds: u64, key: &'static str) -> Result<u64, DeferReason> {
+fn checked_milliseconds(seconds: u64, key: &'static str) -> Result<u64, PlanErrorKind> {
     seconds
         .checked_mul(1_000)
-        .ok_or(DeferReason::InvalidSetting { key })
+        .ok_or(PlanErrorKind::InvalidSetting { key })
 }
 
-fn interface_defaults(medium: &PlannedMedium) -> Result<InterfaceDefaults, DeferReason> {
+fn interface_defaults(medium: &PlannedMedium) -> Result<InterfaceDefaults, PlanErrorKind> {
     match medium {
         PlannedMedium::AutoWifi { .. } => Ok(wifi_core::DEFAULTS),
         PlannedMedium::TcpClient { .. }
@@ -147,10 +165,12 @@ fn interface_defaults(medium: &PlannedMedium) -> Result<InterfaceDefaults, Defer
         | PlannedMedium::Backbone { .. }
         | PlannedMedium::BackboneClient { .. } => Ok(tcp_core::DEFAULTS),
         PlannedMedium::Udp { .. } => Ok(udp_core::DEFAULTS),
-        PlannedMedium::Serial { baud, .. } => {
-            let bitrate = BitrateBps::new(u64::from(*baud)).ok_or(DeferReason::InvalidSetting {
-                key: interface_key::SPEED,
-            })?;
+        PlannedMedium::I2p { .. } => Ok(i2p_core::DEFAULTS),
+        PlannedMedium::Serial { line, .. } => {
+            let bitrate =
+                BitrateBps::new(u64::from(line.baud())).ok_or(PlanErrorKind::InvalidSetting {
+                    key: interface_key::SPEED,
+                })?;
             Ok(serial_core::defaults_for_bitrate(bitrate))
         }
         PlannedMedium::Kiss { .. } => Ok(kiss_core::DEFAULTS),
@@ -161,18 +181,19 @@ fn interface_defaults(medium: &PlannedMedium) -> Result<InterfaceDefaults, Defer
             spreading_factor,
             coding_rate,
             ..
-        } => {
-            let raw =
-                rnode_policy::nominal_bitrate_bps(*spreading_factor, *coding_rate, *bandwidth_hz);
-            let bitrate = BitrateBps::new(u64::from(raw)).ok_or(DeferReason::InvalidSetting {
-                key: "radio bitrate",
-            })?;
-            Ok(rnode_policy::defaults_for_bitrate(bitrate))
+        } => rnode_defaults(*spreading_factor, *coding_rate, *bandwidth_hz),
+        PlannedMedium::RnodeMulti { member } => {
+            let radio = member.radio();
+            rnode_defaults(
+                radio.spreading_factor(),
+                radio.coding_rate(),
+                radio.bandwidth_hz(),
+            )
         }
     }
 }
 
-fn configured_mtu(interface: &ReferenceInterface) -> Result<Option<MtuPolicy>, DeferReason> {
+fn configured_mtu(interface: &ReferenceInterface) -> Result<Option<MtuPolicy>, PlanErrorKind> {
     let fixed_mtu = match &interface.params {
         ReferenceParams::TcpClient { fixed_mtu, .. }
         | ReferenceParams::TcpServer { fixed_mtu, .. } => *fixed_mtu,
@@ -181,13 +202,13 @@ fn configured_mtu(interface: &ReferenceInterface) -> Result<Option<MtuPolicy>, D
     fixed_mtu
         .map(|fixed_mtu| {
             if fixed_mtu > MAX_LINK_MTU {
-                return Err(DeferReason::InvalidSetting {
+                return Err(PlanErrorKind::InvalidSetting {
                     key: interface_key::FIXED_MTU,
                 });
             }
             MtuBytes::new(fixed_mtu)
                 .map(MtuPolicy::Fixed)
-                .ok_or(DeferReason::InvalidSetting {
+                .ok_or(PlanErrorKind::InvalidSetting {
                     key: interface_key::FIXED_MTU,
                 })
         })
@@ -217,9 +238,9 @@ fn planned_mode(
     }
 }
 
-fn announce_bandwidth_cap(percent: f64) -> Result<AnnounceBandwidthCap, DeferReason> {
+fn announce_bandwidth_cap(percent: f64) -> Result<AnnounceBandwidthCap, PlanErrorKind> {
     if !percent.is_finite() || !(0.0..=100.0).contains(&percent) {
-        return Err(DeferReason::InvalidSetting {
+        return Err(PlanErrorKind::InvalidSetting {
             key: interface_key::ANNOUNCE_CAP,
         });
     }
@@ -232,7 +253,7 @@ fn announce_bandwidth_cap(percent: f64) -> Result<AnnounceBandwidthCap, DeferRea
 fn interface_common_policy(
     interface: &ReferenceInterface,
     global: InterfaceCommonPolicy,
-) -> Result<InterfaceCommonPolicy, DeferReason> {
+) -> Result<InterfaceCommonPolicy, PlanErrorKind> {
     let mut common = global;
     common.forwarding = InterfaceForwardingPolicy {
         recursive_path_requests: interface
@@ -250,7 +271,7 @@ fn interface_common_policy(
         .unwrap_or(common.path_request_egress.enabled);
     if let Some(value) = interface.ic_max_held_announces {
         common.ingress_control.max_held_announces =
-            usize::try_from(value).map_err(|_| DeferReason::InvalidSetting {
+            usize::try_from(value).map_err(|_| PlanErrorKind::InvalidSetting {
                 key: common_key::IC_MAX_HELD_ANNOUNCES,
             })?;
     }
@@ -307,7 +328,7 @@ impl CommonNumberOverrides {
 fn apply_common_numbers(
     configured: CommonNumberOverrides,
     common: &mut InterfaceCommonPolicy,
-) -> Result<(), DeferReason> {
+) -> Result<(), PlanErrorKind> {
     if let Some(value) = configured.new_time {
         common.ingress_control.new_interface_ms =
             seconds_to_millis(value, common_key::IC_NEW_TIME)?;
@@ -345,18 +366,21 @@ fn apply_common_numbers(
     Ok(())
 }
 
-fn seconds_to_millis(value: f64, key: &'static str) -> Result<u64, DeferReason> {
+fn seconds_to_millis(value: f64, key: &'static str) -> Result<u64, PlanErrorKind> {
     let millis = (value * 1_000.0).round();
     if !value.is_finite() || value < 0.0 || millis >= u64::MAX as f64 {
-        return Err(DeferReason::InvalidSetting { key });
+        return Err(PlanErrorKind::InvalidSetting { key });
     }
     Ok(millis as u64)
 }
 
-fn hertz_to_milli_hertz(value: f64, key: &'static str) -> Result<FrequencyMilliHertz, DeferReason> {
+fn hertz_to_milli_hertz(
+    value: f64,
+    key: &'static str,
+) -> Result<FrequencyMilliHertz, PlanErrorKind> {
     let milli_hertz = (value * 1_000.0).round();
     if !value.is_finite() || value < 0.0 || milli_hertz >= u64::MAX as f64 {
-        return Err(DeferReason::InvalidSetting { key });
+        return Err(PlanErrorKind::InvalidSetting { key });
     }
     Ok(FrequencyMilliHertz::new(milli_hertz as u64))
 }

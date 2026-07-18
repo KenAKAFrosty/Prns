@@ -25,12 +25,15 @@ pub struct RNodeRadio {
     pub txpower: Option<i16>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RNodeSubinterface {
     pub name: String,
-    pub enabled: Option<bool>,
-    pub vport: Option<String>,
+    pub vport: Option<u8>,
     pub radio: RNodeRadio,
+    pub flow_control: Option<bool>,
+    pub outgoing: Option<bool>,
+    pub airtime_limit_short: Option<f64>,
+    pub airtime_limit_long: Option<f64>,
     pub extra: BTreeMap<String, ReferenceValue>,
 }
 
@@ -115,11 +118,8 @@ pub enum ReferenceParams {
     },
     RnodeMulti {
         port: Option<String>,
-        flow_control: Option<bool>,
         id_callsign: Option<String>,
         id_interval: Option<u64>,
-        airtime_limit_short: Option<f64>,
-        airtime_limit_long: Option<f64>,
         subinterfaces: Vec<RNodeSubinterface>,
     },
     Kiss {

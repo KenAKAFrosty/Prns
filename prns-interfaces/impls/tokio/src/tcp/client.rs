@@ -17,7 +17,7 @@ use std::time::Duration;
 /// The initiating end of an RNS TCP pair (`TCPClientInterface` parity): owns the
 /// connection's whole lifecycle — resolve and connect to `target` (re-resolved every
 /// attempt, so a peer behind dynamic DNS heals), apply the socket discipline, serve until
-/// the stream drops, wait `reconnect`, connect again. Point-to-point: one engine
+/// the stream drops, wait for the reconnect delay, connect again. Point-to-point: one engine
 /// interface, one peer. `bitrate` is the host's claim about its pipe — it sets the
 /// declared hardware MTU through the reference's tier table, so claim honestly
 /// ([`core::TCP_BITRATE_ESTIMATE`] when genuinely unknown).
@@ -33,13 +33,13 @@ pub struct TcpClientInterface {
 
 impl TcpClientInterface {
     #[must_use]
-    pub fn new(target: String, bitrate: BitrateBps, reconnect: Duration) -> Self {
+    pub fn new(target: String, bitrate: BitrateBps, reconnect_delay: Duration) -> Self {
         let id = InterfaceId::from_channel_tag(InterfaceKind::TcpClient, target.as_bytes());
         Self::with_id_policy_and_framing(
             id,
             target,
             core::policy_for_bitrate(bitrate),
-            reconnect,
+            reconnect_delay,
             TcpWireFraming::Hdlc,
         )
     }
@@ -48,22 +48,22 @@ impl TcpClientInterface {
     pub fn with_policy(
         target: String,
         policy: EffectiveInterfacePolicy,
-        reconnect: Duration,
+        reconnect_delay: Duration,
     ) -> Self {
         let id = InterfaceId::from_channel_tag(InterfaceKind::TcpClient, target.as_bytes());
-        Self::with_id_policy_and_framing(id, target, policy, reconnect, TcpWireFraming::Hdlc)
+        Self::with_id_policy_and_framing(id, target, policy, reconnect_delay, TcpWireFraming::Hdlc)
     }
 
     #[must_use]
     pub fn with_policy_and_framing(
         target: String,
         policy: EffectiveInterfacePolicy,
-        reconnect: Duration,
+        reconnect_delay: Duration,
         framing: TcpWireFraming,
     ) -> Self {
         let channel_tag = channel_tag(&target, framing);
         let id = InterfaceId::from_channel_tag(InterfaceKind::TcpClient, &channel_tag);
-        Self::with_id_policy_and_framing(id, target, policy, reconnect, framing)
+        Self::with_id_policy_and_framing(id, target, policy, reconnect_delay, framing)
     }
 
     #[must_use]
@@ -84,7 +84,7 @@ impl TcpClientInterface {
     pub fn with_framing(
         target: String,
         bitrate: BitrateBps,
-        reconnect: Duration,
+        reconnect_delay: Duration,
         framing: TcpWireFraming,
     ) -> Self {
         let channel_tag = channel_tag(&target, framing);
@@ -93,7 +93,7 @@ impl TcpClientInterface {
             id,
             target,
             core::policy_for_bitrate(bitrate),
-            reconnect,
+            reconnect_delay,
             framing,
         )
     }
@@ -106,13 +106,13 @@ impl TcpClientInterface {
         id: InterfaceId,
         target: String,
         bitrate: BitrateBps,
-        reconnect: Duration,
+        reconnect_delay: Duration,
     ) -> Self {
         Self::with_id_policy_and_framing(
             id,
             target,
             core::policy_for_bitrate(bitrate),
-            reconnect,
+            reconnect_delay,
             TcpWireFraming::Hdlc,
         )
     }
@@ -122,14 +122,14 @@ impl TcpClientInterface {
         id: InterfaceId,
         target: String,
         bitrate: BitrateBps,
-        reconnect: Duration,
+        reconnect_delay: Duration,
         framing: TcpWireFraming,
     ) -> Self {
         Self::with_id_policy_and_framing(
             id,
             target,
             core::policy_for_bitrate(bitrate),
-            reconnect,
+            reconnect_delay,
             framing,
         )
     }
@@ -139,9 +139,9 @@ impl TcpClientInterface {
         id: InterfaceId,
         target: String,
         policy: EffectiveInterfacePolicy,
-        reconnect: Duration,
+        reconnect_delay: Duration,
     ) -> Self {
-        Self::with_id_policy_and_framing(id, target, policy, reconnect, TcpWireFraming::Hdlc)
+        Self::with_id_policy_and_framing(id, target, policy, reconnect_delay, TcpWireFraming::Hdlc)
     }
 
     #[must_use]
@@ -149,7 +149,7 @@ impl TcpClientInterface {
         id: InterfaceId,
         target: String,
         policy: EffectiveInterfacePolicy,
-        reconnect: Duration,
+        reconnect_delay: Duration,
         framing: TcpWireFraming,
     ) -> Self {
         Self::with_id_policy_framing_and_connection_settings(
@@ -158,7 +158,7 @@ impl TcpClientInterface {
             policy,
             framing,
             TcpConnectionSettings {
-                reconnect_wait: reconnect,
+                reconnect_wait: reconnect_delay,
                 ..TcpConnectionSettings::STOCK
             },
         )

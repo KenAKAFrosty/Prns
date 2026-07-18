@@ -401,21 +401,8 @@ fn interpret_params(
         },
         "RNodeMultiInterface" => ReferenceParams::RnodeMulti {
             port: opt(rest, interface_key::PORT, interface, coerce_string)?,
-            flow_control: opt(rest, interface_key::FLOW_CONTROL, interface, coerce_bool)?,
             id_callsign: opt(rest, interface_key::ID_CALLSIGN, interface, coerce_string)?,
             id_interval: opt(rest, interface_key::ID_INTERVAL, interface, coerce_u64)?,
-            airtime_limit_short: opt(
-                rest,
-                interface_key::AIRTIME_LIMIT_SHORT,
-                interface,
-                coerce_f64,
-            )?,
-            airtime_limit_long: opt(
-                rest,
-                interface_key::AIRTIME_LIMIT_LONG,
-                interface,
-                coerce_f64,
-            )?,
             subinterfaces: interpret_subinterfaces(section)?,
         },
         "KISSInterface" => ReferenceParams::Kiss {
@@ -489,13 +476,29 @@ fn interpret_subinterfaces(section: &Section) -> Result<Vec<RNodeSubinterface>, 
     for (name, sub) in &section.sections {
         let mut rest: BTreeMap<String, Value> = sub.scalars.iter().cloned().collect();
         let enabled = take_enabled(&mut rest, name)?;
-        let vport = opt(&mut rest, interface_key::VPORT, name, coerce_string)?;
+        if enabled != Some(true) {
+            continue;
+        }
+        let vport = opt(&mut rest, interface_key::VPORT, name, coerce_u8)?;
         let radio = take_radio(&mut rest, name)?;
         subinterfaces.push(RNodeSubinterface {
             name: name.clone(),
-            enabled,
             vport,
             radio,
+            flow_control: opt(&mut rest, interface_key::FLOW_CONTROL, name, coerce_bool)?,
+            outgoing: opt(&mut rest, interface_key::OUTGOING, name, coerce_bool)?,
+            airtime_limit_short: opt(
+                &mut rest,
+                interface_key::AIRTIME_LIMIT_SHORT,
+                name,
+                coerce_f64,
+            )?,
+            airtime_limit_long: opt(
+                &mut rest,
+                interface_key::AIRTIME_LIMIT_LONG,
+                name,
+                coerce_f64,
+            )?,
             extra: rest,
         });
     }

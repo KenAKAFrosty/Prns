@@ -1,8 +1,8 @@
 use personal_rns::config::{
-    DaemonPlan, DeferReason, DiscoveryPublicationProblem, InterfaceDiscoveryPlan, PlannedInterface,
-    PlannedMedium, UnappliedSetting,
+    DaemonPlan, DiscoveryPublicationProblem, InterfaceDiscoveryPlan, PlannedInterface,
+    PlannedMedium,
 };
-use personal_rns::from_plan::{attach_plan, PlanOutcome};
+use personal_rns::from_plan::{attach_plan_with_context, PlanOutcome, PlanRuntimeContext};
 use personal_rns::interfaces::{InterfaceId, InterfaceOriginKind};
 use personal_rns::runtime::PrnsNodeHandle;
 
@@ -41,9 +41,10 @@ pub struct ConstructedInterfaces {
 pub async fn construct_interfaces(
     handle: &PrnsNodeHandle,
     plan: &DaemonPlan,
+    context: &PlanRuntimeContext,
 ) -> ConstructedInterfaces {
     let mut constructed = ConstructedInterfaces::default();
-    attach_plan(handle, plan, &mut |outcome| {
+    attach_plan_with_context(handle, plan, context, &mut |outcome| {
         constructed.startup.merge(classify(&outcome));
         if let PlanOutcome::Up { interface, id } = &outcome {
             constructed.attached.push(AttachedConfiguredInterface {
@@ -65,16 +66,21 @@ fn classify(outcome: &PlanOutcome<'_>) -> StartupInterfaceReport {
                 report.listening = 1;
             }
             PlannedMedium::AutoWifi { .. } | PlannedMedium::Udp { .. } => report.online = 1,
+            PlannedMedium::I2p {
+                peers,
+                reachability,
+            } if peers.is_empty() && !reachability.is_connectable() => report.online = 1,
             PlannedMedium::TcpClient { .. }
             | PlannedMedium::Serial { .. }
             | PlannedMedium::Kiss { .. }
             | PlannedMedium::Ax25Kiss { .. }
             | PlannedMedium::Rnode { .. }
+            | PlannedMedium::RnodeMulti { .. }
             | PlannedMedium::BackboneClient { .. }
-            | PlannedMedium::Pipe { .. } => report.retrying = 1,
+            | PlannedMedium::Pipe { .. }
+            | PlannedMedium::I2p { .. } => report.retrying = 1,
         },
         PlanOutcome::Failed { .. } => report.failed = 1,
-        PlanOutcome::Unapplied(_) | PlanOutcome::Deferred(_) => {}
     }
     report
 }
@@ -145,35 +151,6 @@ fn render(outcome: PlanOutcome<'_>) {
                 error = %visible_error_message,
             );
         }
-        PlanOutcome::Unapplied(interface) => {
-            for setting in &interface.unapplied {
-                tracing::warn!(
-                    event = "interface_setting_unapplied",
-                    interface_origin = InterfaceOriginKind::Configured.as_str(),
-                    setting = unapplied_name(setting),
-                );
-                tracing::debug!(
-                    event = "interface_setting_unapplied_detail",
-                    interface_origin = InterfaceOriginKind::Configured.as_str(),
-                    interface_name = ?interface.name,
-                    setting = ?setting,
-                );
-            }
-        }
-        PlanOutcome::Deferred(deferred) => {
-            tracing::info!(
-                event = "interface_deferred",
-                interface_origin = InterfaceOriginKind::Configured.as_str(),
-                interface_name = ?deferred.name,
-                interface_type = ?deferred.type_name,
-                reason = defer_name(&deferred.why),
-            );
-            tracing::debug!(
-                event = "interface_deferred_detail",
-                interface_origin = InterfaceOriginKind::Configured.as_str(),
-                reason = ?deferred.why,
-            );
-        }
     }
 }
 
@@ -187,30 +164,19 @@ fn medium_name(medium: &PlannedMedium) -> &'static str {
         PlannedMedium::Kiss { .. } => "kiss",
         PlannedMedium::Ax25Kiss { .. } => "ax25_kiss",
         PlannedMedium::Rnode { .. } => "rnode",
+        PlannedMedium::RnodeMulti { .. } => "rnode_multi",
         PlannedMedium::Backbone { .. } => "backbone",
         PlannedMedium::BackboneClient { .. } => "backbone_client",
         PlannedMedium::Pipe { .. } => "pipe",
-    }
-}
-
-fn unapplied_name(setting: &UnappliedSetting) -> &'static str {
-    match setting {
-        UnappliedSetting::MediumOption(_) => "medium_option",
-    }
-}
-
-fn defer_name(reason: &DeferReason) -> &'static str {
-    match reason {
-        DeferReason::Disabled => "disabled",
-        DeferReason::UnsupportedKind => "unsupported_kind",
-        DeferReason::MissingRequiredField { .. } => "missing_required_field",
-        DeferReason::InvalidSetting { .. } => "invalid_setting",
+        PlannedMedium::I2p { .. } => "i2p",
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::StartupInterfaceReport;
+    use super::{classify, PlanOutcome, StartupInterfaceReport};
+    use personal_rns::config::parse_and_plan;
+    use personal_rns::interfaces::InterfaceId;
 
     #[test]
     fn startup_counts_merge_and_expose_degraded_readiness() {
@@ -231,5 +197,39 @@ mod tests {
         assert_eq!(report.retrying, 1);
         assert_eq!(report.failed, 1);
         assert!(report.degraded());
+    }
+
+    #[test]
+    fn idle_i2p_is_ready_while_active_i2p_starts_retrying() {
+        let idle = parse_and_plan("[interfaces]\n[[Idle]]\ntype = I2PInterface\nenabled = Yes\n")
+            .expect("idle I2P configuration is valid")
+            .value;
+        let active = parse_and_plan(
+            "[interfaces]\n[[Active]]\ntype = I2PInterface\nenabled = Yes\npeers = example.i2p\n",
+        )
+        .expect("active I2P configuration is valid")
+        .value;
+        let id = InterfaceId::new([0; 8]);
+
+        assert_eq!(
+            classify(&PlanOutcome::Up {
+                interface: &idle.interfaces[0],
+                id,
+            }),
+            StartupInterfaceReport {
+                online: 1,
+                ..StartupInterfaceReport::default()
+            }
+        );
+        assert_eq!(
+            classify(&PlanOutcome::Up {
+                interface: &active.interfaces[0],
+                id,
+            }),
+            StartupInterfaceReport {
+                retrying: 1,
+                ..StartupInterfaceReport::default()
+            }
+        );
     }
 }

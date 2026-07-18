@@ -6,17 +6,19 @@
 use core::time::Duration;
 
 pub use prns_config as config;
-#[cfg(feature = "tracing")]
-use prns_config::DeferReason;
 use prns_config::{
-    AddressFamilyPreference as PlannedAddressFamilyPreference, DaemonPlan, DeferredInterface,
-    InterfaceAccessPlan, PlannedInterface, PlannedMedium, ReconnectLimit as PlannedReconnectLimit,
-    TcpDialPlan, TcpTunnelMode as PlannedTcpTunnelMode, UdpFlowPlan,
+    AddressFamilyPreference as PlannedAddressFamilyPreference, DaemonPlan, I2pPeersPlan,
+    I2pReachabilityPlan as PlannedI2pReachability, InterfaceAccessPlan, PlannedInterface,
+    PlannedMedium, ReadyCommandFlowControl as PlannedReadyCommandFlowControl,
+    ReconnectLimit as PlannedReconnectLimit, SerialDataBits, SerialLinePlan, SerialParity,
+    SerialStopBits, StationIdentificationPlan, TcpDialPlan, TcpTunnelMode as PlannedTcpTunnelMode,
+    UdpFlowPlan,
 };
+use prns_core::identity::IdentityHash;
 use prns_core::interfaces::ifac::IfacContext;
 use prns_core::interfaces::{InterfaceId, InterfaceOriginKind};
 use prns_runtime::interfaces::kiss::core::TncConfig;
-use prns_runtime::interfaces::rnode::core::RadioConfig;
+use prns_runtime::interfaces::rnode::core::{RadioConfig, RadioConfigInput};
 use prns_runtime::runtime::{AttachIntent, Attachable, PrnsNodeHandle};
 
 use crate::ax25::{Ax25KissInterface, Ax25KissSettings};
@@ -25,11 +27,21 @@ use crate::backbone::server::BackboneServer;
 use crate::host_network::{
     resolve_tcp_listener, resolve_udp_endpoint, tcp_target, udp_ephemeral_bind,
 };
-use crate::kiss::{KissInterface, CONFIGURE_SETTLE};
-use crate::pipe::PipeInterface;
-use crate::rnode::RNodeInterface;
+use crate::i2p::{
+    I2pInterface, I2pInterfaceName, I2pPeerAddress, I2pPeers, I2pReachability, I2pRetryPolicy,
+    I2pRuntimeConfig, RnsI2pStorage, TokioSamBridge,
+};
+use crate::kiss::{KissInterface, KissSettings, DEFAULT_TNC_CONFIGURE_DELAY};
+use crate::pipe::{PipeInterface, PipeRespawnDelay};
+use crate::reconnect::ReconnectDelay;
+use crate::rnode::{RNodeInterface, RNodeSettings};
 use crate::serial::SerialInterface;
-use crate::serial_host::open_host_serial;
+use crate::serial_control::{ReadyCommandFlowControl, StationIdentification};
+use crate::serial_control::{ReadyTimeout, StationIdInterval, StationIdWireFormat};
+use crate::serial_host::{
+    open_host_serial, open_host_serial_with_settings, HostSerialDataBits, HostSerialLineSettings,
+    HostSerialParity, HostSerialStopBits,
+};
 use crate::tcp::client::TcpClientInterface;
 use crate::tcp::server::TcpServer;
 use crate::tcp::tokio_socket::{
@@ -38,12 +50,13 @@ use crate::tcp::tokio_socket::{
 use crate::udp::UdpInterface;
 use crate::wifi::AutoWifi;
 
-const TCP_RECONNECT: Duration = Duration::from_secs(5);
-const SERIAL_RECONNECT: Duration = Duration::from_millis(500);
+const TCP_RECONNECT_DELAY: Duration = Duration::from_secs(5);
+const SERIAL_RECONNECT_DELAY: ReconnectDelay = ReconnectDelay::new(Duration::from_millis(500));
+const KISS_FLOW_CONTROL_TIMEOUT: ReadyTimeout = ReadyTimeout::new(Duration::from_secs(5));
 /// RNS `RNodeInterface.RECONNECT_WAIT`: an RNode's bring-up handshake is expensive (settle, detect,
 /// configure, validate), so a dropped or absent device is retried on a slower cadence than a bare
 /// serial port.
-const RNODE_RECONNECT: Duration = Duration::from_secs(5);
+const RNODE_RECONNECT_DELAY: ReconnectDelay = ReconnectDelay::new(Duration::from_secs(5));
 /// An RNode's host link is always 115200/8N1 — RNS hardcodes the speed; it is not a config knob.
 const RNODE_BAUD: u32 = 115_200;
 
@@ -57,8 +70,22 @@ pub enum PlanOutcome<'a> {
         interface: &'a PlannedInterface,
         visible_error_message: String,
     },
-    Unapplied(&'a PlannedInterface),
-    Deferred(&'a DeferredInterface),
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PlanRuntimeContext {
+    i2p_storage: Option<RnsI2pStorage>,
+}
+
+impl PlanRuntimeContext {
+    pub fn with_rns_i2p_storage(
+        storage_dir: impl Into<std::path::PathBuf>,
+        transport_identity: IdentityHash,
+    ) -> Self {
+        Self {
+            i2p_storage: Some(RnsI2pStorage::new(storage_dir, transport_identity)),
+        }
+    }
 }
 
 /// The recipe intent for a config-driven node. Construction awaits socket binds, so it rides its
@@ -124,57 +151,6 @@ impl AttachIntent for FromPlan {
                         interface.name
                     );
                 }
-                PlanOutcome::Unapplied(interface) => {
-                    #[cfg(feature = "tracing")]
-                    {
-                        tracing::warn!(
-                            target: "prns.interface",
-                            event = "interface_settings_unapplied",
-                            interface_origin = InterfaceOriginKind::Configured.as_str(),
-                            setting_count = interface.unapplied.len(),
-                        );
-                        tracing::debug!(
-                            target: "prns.interface",
-                            event = "interface_settings_unapplied_detail",
-                            interface_origin = InterfaceOriginKind::Configured.as_str(),
-                            interface_name = ?interface.name,
-                            settings = ?interface.unapplied,
-                        );
-                    }
-                    #[cfg(not(feature = "tracing"))]
-                    crate::diagnostic_log::warn!(
-                        "settings parsed but not applied on [{}] {:?}: {:?}",
-                        InterfaceOriginKind::Configured.as_str(),
-                        interface.name,
-                        interface.unapplied
-                    );
-                }
-                PlanOutcome::Deferred(deferred) => {
-                    #[cfg(feature = "tracing")]
-                    {
-                        tracing::info!(
-                            target: "prns.interface",
-                            event = "interface_deferred",
-                            interface_origin = InterfaceOriginKind::Configured.as_str(),
-                            reason = defer_reason_name(&deferred.why),
-                        );
-                        tracing::debug!(
-                            target: "prns.interface",
-                            event = "interface_deferred_detail",
-                            interface_origin = InterfaceOriginKind::Configured.as_str(),
-                            interface_name = ?deferred.name,
-                            interface_type = ?deferred.type_name,
-                            reason = ?deferred.why,
-                        );
-                    }
-                    #[cfg(not(feature = "tracing"))]
-                    crate::diagnostic_log::info!(
-                        "interface deferred [{}]: {:?} ({:?})",
-                        InterfaceOriginKind::Configured.as_str(),
-                        deferred.name,
-                        deferred.why
-                    );
-                }
             })
             .await;
         });
@@ -188,20 +164,24 @@ pub async fn attach_plan(
     plan: &DaemonPlan,
     report: &mut impl FnMut(PlanOutcome<'_>),
 ) {
+    attach_plan_with_context(handle, plan, &PlanRuntimeContext::default(), report).await;
+}
+
+pub async fn attach_plan_with_context(
+    handle: &PrnsNodeHandle,
+    plan: &DaemonPlan,
+    context: &PlanRuntimeContext,
+    report: &mut impl FnMut(PlanOutcome<'_>),
+) {
     for interface in &plan.interfaces {
-        stand_up(handle, interface, report).await;
-        if !interface.unapplied.is_empty() {
-            report(PlanOutcome::Unapplied(interface));
-        }
-    }
-    for deferred in &plan.deferred {
-        report(PlanOutcome::Deferred(deferred));
+        stand_up(handle, interface, context, report).await;
     }
 }
 
 async fn stand_up(
     handle: &PrnsNodeHandle,
     interface: &PlannedInterface,
+    context: &PlanRuntimeContext,
     report: &mut impl FnMut(PlanOutcome<'_>),
 ) {
     let access = match &interface.access {
@@ -243,14 +223,15 @@ async fn stand_up(
             );
             report_up(handle, interface, attached.id(), report);
         }
-        PlannedMedium::TcpServer { listener } => {
+        PlannedMedium::TcpServer { listener, framing } => {
             let resolved = resolve_tcp_listener(listener).await;
             let opened = match resolved {
                 Ok(bind) => {
-                    TcpServer::bind_with_policy_and_tunnel(
+                    TcpServer::bind_with_policy_and_tunnel_and_framing(
                         bind,
                         interface.policy,
                         tcp_tunnel_mode(listener.tunnel),
+                        *framing,
                     )
                     .await
                 }
@@ -309,15 +290,15 @@ async fn stand_up(
                 }),
             }
         }
-        PlannedMedium::Serial { device, baud } => {
-            let baud = *baud;
+        PlannedMedium::Serial { device, line } => {
+            let line = host_serial_line(*line);
             let open_path = device.clone();
             let serial = SerialInterface::with_policy(
                 move || {
                     let open_path = open_path.clone();
-                    async move { open_host_serial(&open_path, baud) }
+                    async move { open_host_serial_with_settings(&open_path, line) }
                 },
-                SERIAL_RECONNECT,
+                SERIAL_RECONNECT_DELAY,
                 interface.policy,
                 device.as_bytes(),
             );
@@ -326,13 +307,15 @@ async fn stand_up(
         }
         PlannedMedium::Kiss {
             device,
-            baud,
+            line,
             preamble_ms,
             txtail_ms,
             persistence,
             slottime_ms,
+            flow_control,
+            station_id,
         } => {
-            let baud = *baud;
+            let line = host_serial_line(*line);
             let open_path = device.clone();
             let tnc = TncConfig {
                 preamble_ms: *preamble_ms,
@@ -340,31 +323,47 @@ async fn stand_up(
                 persistence: *persistence,
                 slottime_ms: *slottime_ms,
             };
-            let kiss = KissInterface::with_settings_and_policy(
+            let station_identification =
+                match runtime_station_identification(station_id, StationIdWireFormat::KissPadded) {
+                    Ok(station_identification) => station_identification,
+                    Err(message) => {
+                        report(PlanOutcome::Failed {
+                            interface,
+                            visible_error_message: message,
+                        });
+                        return;
+                    }
+                };
+            let kiss = KissInterface::with_runtime_settings(
                 move || {
                     let open_path = open_path.clone();
-                    async move { open_host_serial(&open_path, baud) }
+                    async move { open_host_serial_with_settings(&open_path, line) }
                 },
-                SERIAL_RECONNECT,
-                CONFIGURE_SETTLE,
-                tnc,
-                interface.policy,
-                device.as_bytes(),
+                SERIAL_RECONNECT_DELAY,
+                KissSettings {
+                    configure_delay: DEFAULT_TNC_CONFIGURE_DELAY,
+                    tnc,
+                    flow_control: runtime_kiss_flow_control(*flow_control),
+                    station_identification,
+                    policy: interface.policy,
+                    channel_tag: device.as_bytes(),
+                },
             );
             let attached = attach_with_access(handle, access, kiss);
             report_up(handle, interface, attached.id(), report);
         }
         PlannedMedium::Ax25Kiss {
             device,
-            baud,
+            line,
             preamble_ms,
             txtail_ms,
             persistence,
             slottime_ms,
+            flow_control,
             callsign,
             ssid,
         } => {
-            let baud = *baud;
+            let line = host_serial_line(*line);
             let open_path = device.clone();
             let tnc = TncConfig {
                 preamble_ms: *preamble_ms,
@@ -375,12 +374,13 @@ async fn stand_up(
             let opened = Ax25KissInterface::with_policy(
                 move || {
                     let open_path = open_path.clone();
-                    async move { open_host_serial(&open_path, baud) }
+                    async move { open_host_serial_with_settings(&open_path, line) }
                 },
-                SERIAL_RECONNECT,
+                SERIAL_RECONNECT_DELAY,
                 Ax25KissSettings {
-                    settle: CONFIGURE_SETTLE,
+                    configure_delay: DEFAULT_TNC_CONFIGURE_DELAY,
                     tnc,
+                    flow_control: runtime_kiss_flow_control(*flow_control),
                     callsign,
                     ssid: *ssid,
                     policy: interface.policy,
@@ -405,32 +405,49 @@ async fn stand_up(
             txpower_dbm,
             spreading_factor,
             coding_rate,
-            airtime_limit_short_centi,
-            airtime_limit_long_centi,
+            flow_control,
+            station_id,
+            airtime_limit_short,
+            airtime_limit_long,
         } => {
-            // Validate the radio against its operating envelope here (as RNS leaves range-checking to
-            // the device): a config the radio cannot accept fails to stand up with a clear reason
-            // rather than opening the port and timing out on validation.
-            match RadioConfig::new(
-                *frequency_hz,
-                *bandwidth_hz,
-                *txpower_dbm,
-                *spreading_factor,
-                *coding_rate,
-                *airtime_limit_short_centi,
-                *airtime_limit_long_centi,
-            ) {
+            match RadioConfig::new(RadioConfigInput {
+                frequency_hz: *frequency_hz,
+                bandwidth_hz: *bandwidth_hz,
+                txpower_dbm: *txpower_dbm,
+                spreading_factor: *spreading_factor,
+                coding_rate: *coding_rate,
+                airtime_limit_short_centi_percent: airtime_limit_short.map(|limit| limit.get()),
+                airtime_limit_long_centi_percent: airtime_limit_long.map(|limit| limit.get()),
+            }) {
                 Ok(radio) => {
+                    let station_identification = match runtime_station_identification(
+                        station_id,
+                        StationIdWireFormat::Exact,
+                    ) {
+                        Ok(station_identification) => station_identification,
+                        Err(message) => {
+                            report(PlanOutcome::Failed {
+                                interface,
+                                visible_error_message: message,
+                            });
+                            return;
+                        }
+                    };
                     let open_path = device.clone();
-                    let rnode = RNodeInterface::new_with_policy(
+                    let rnode = RNodeInterface::with_runtime_settings(
                         move || {
                             let open_path = open_path.clone();
                             async move { open_host_serial(&open_path, RNODE_BAUD) }
                         },
-                        RNODE_RECONNECT,
-                        radio,
-                        interface.policy,
-                        device.as_bytes(),
+                        RNODE_RECONNECT_DELAY,
+                        RNodeSettings {
+                            reset_delay: crate::rnode::DEFAULT_RNODE_RESET_DELAY,
+                            radio,
+                            flow_control: runtime_rnode_flow_control(*flow_control),
+                            station_identification,
+                            policy: interface.policy,
+                            channel_tag: device.as_bytes(),
+                        },
                     );
                     let attached = attach_with_access(handle, access, rnode);
                     report_up(handle, interface, attached.id(), report);
@@ -441,6 +458,11 @@ async fn stand_up(
                 }),
             }
         }
+        PlannedMedium::RnodeMulti { .. } => report(PlanOutcome::Failed {
+            interface,
+            visible_error_message: "RNodeMultiInterface runtime is not available in this build"
+                .to_string(),
+        }),
         PlannedMedium::Backbone { listener } => {
             let opened = match resolve_tcp_listener(listener).await {
                 Ok(bind) => BackboneServer::bind_with_policy(bind, interface.policy).await,
@@ -471,36 +493,135 @@ async fn stand_up(
         }
         PlannedMedium::Pipe {
             command,
-            respawn_delay_ms,
+            respawn_delay,
         } => {
-            let respawn = Duration::from_millis(*respawn_delay_ms);
-            match shlex::split(command) {
-                Some(argv) if !argv.is_empty() => {
-                    let pipe = PipeInterface::with_policy(
-                        move || {
-                            let argv = argv.clone();
-                            async move { crate::pipe_host::spawn(&argv).await }
-                        },
-                        respawn,
-                        interface.policy,
-                        command.as_bytes(),
-                    );
-                    let attached = attach_with_access(handle, access, pipe);
-                    report_up(handle, interface, attached.id(), report);
+            let respawn_delay = PipeRespawnDelay::new(respawn_delay.get());
+            let argv = command.argv().to_vec();
+            let pipe = PipeInterface::with_policy(
+                move || {
+                    let argv = argv.clone();
+                    async move { crate::pipe_host::spawn(&argv).await }
+                },
+                respawn_delay,
+                interface.policy,
+                command.source().as_bytes(),
+            );
+            let attached = attach_with_access(handle, access, pipe);
+            report_up(handle, interface, attached.id(), report);
+        }
+        PlannedMedium::I2p {
+            peers,
+            reachability,
+        } => {
+            let config = match i2p_runtime_config(interface, peers, *reachability, context) {
+                Ok(config) => config,
+                Err(visible_error_message) => {
+                    report(PlanOutcome::Failed {
+                        interface,
+                        visible_error_message,
+                    });
+                    return;
                 }
-                _ => report(PlanOutcome::Failed {
-                    interface,
-                    visible_error_message: String::from("could not parse command into arguments"),
-                }),
-            }
+            };
+            let i2p = I2pInterface::new(TokioSamBridge::default(), config);
+            let attached = attach_with_access(handle, access, i2p);
+            report_up(handle, interface, attached.id(), report);
         }
     }
+}
+
+fn i2p_runtime_config(
+    interface: &PlannedInterface,
+    planned_peers: &I2pPeersPlan,
+    planned_reachability: PlannedI2pReachability,
+    context: &PlanRuntimeContext,
+) -> Result<I2pRuntimeConfig, String> {
+    let name = I2pInterfaceName::new(interface.name.clone()).map_err(|error| error.to_string())?;
+    let peers = planned_peers
+        .iter()
+        .map(|peer| I2pPeerAddress::new(peer.as_str()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    let peers = I2pPeers::new(peers).map_err(|error| error.to_string())?;
+    let reachability = match planned_reachability {
+        PlannedI2pReachability::OutboundOnly => I2pReachability::OutboundOnly,
+        PlannedI2pReachability::Connectable => {
+            let storage = context.i2p_storage.as_ref().ok_or_else(|| {
+                "connectable I2P requires the daemon's RNS storage directory and transport identity"
+                    .to_string()
+            })?;
+            I2pReachability::Connectable {
+                key_path: storage.destination_key_path(&name),
+            }
+        }
+    };
+    Ok(I2pRuntimeConfig {
+        name,
+        peers,
+        reachability,
+        policy: interface.policy,
+        retry: I2pRetryPolicy::STOCK,
+    })
+}
+
+fn host_serial_line(line: SerialLinePlan) -> HostSerialLineSettings {
+    HostSerialLineSettings::new(
+        line.baud(),
+        match line.data_bits() {
+            SerialDataBits::Five => HostSerialDataBits::Five,
+            SerialDataBits::Six => HostSerialDataBits::Six,
+            SerialDataBits::Seven => HostSerialDataBits::Seven,
+            SerialDataBits::Eight => HostSerialDataBits::Eight,
+        },
+        match line.parity() {
+            SerialParity::None => HostSerialParity::None,
+            SerialParity::Even => HostSerialParity::Even,
+            SerialParity::Odd => HostSerialParity::Odd,
+        },
+        match line.stop_bits() {
+            SerialStopBits::One => HostSerialStopBits::One,
+            SerialStopBits::Two => HostSerialStopBits::Two,
+        },
+    )
+}
+
+fn runtime_kiss_flow_control(planned: PlannedReadyCommandFlowControl) -> ReadyCommandFlowControl {
+    match planned {
+        PlannedReadyCommandFlowControl::Disabled => ReadyCommandFlowControl::Disabled,
+        PlannedReadyCommandFlowControl::Enabled => {
+            ReadyCommandFlowControl::WaitForReadyOrTimeout(KISS_FLOW_CONTROL_TIMEOUT)
+        }
+    }
+}
+
+fn runtime_rnode_flow_control(planned: PlannedReadyCommandFlowControl) -> ReadyCommandFlowControl {
+    match planned {
+        PlannedReadyCommandFlowControl::Disabled => ReadyCommandFlowControl::Disabled,
+        PlannedReadyCommandFlowControl::Enabled => ReadyCommandFlowControl::WaitForReady,
+    }
+}
+
+fn runtime_station_identification(
+    planned: &Option<StationIdentificationPlan>,
+    wire_format: StationIdWireFormat,
+) -> Result<Option<StationIdentification>, String> {
+    planned
+        .as_ref()
+        .map(|planned| {
+            StationIdentification::new(
+                planned.callsign().as_bytes(),
+                StationIdInterval::new(Duration::from_secs(planned.interval_seconds())),
+                wire_format,
+            )
+            .map_err(|_| "station identification callsign cannot be empty".to_string())
+        })
+        .transpose()
 }
 
 fn tcp_connection_settings(plan: &TcpDialPlan) -> TcpConnectionSettings {
     TcpConnectionSettings {
         connect_timeout: Duration::from_secs(plan.connect_timeout.get()),
-        reconnect_wait: TCP_RECONNECT,
+        reconnect_wait: TCP_RECONNECT_DELAY,
         reconnect_limit: match plan.reconnect_limit {
             PlannedReconnectLimit::Unlimited => ReconnectLimit::Unlimited,
             PlannedReconnectLimit::Attempts(attempts) => ReconnectLimit::Attempts(attempts),
@@ -555,18 +676,199 @@ fn planned_medium_name(medium: &PlannedMedium) -> &'static str {
         PlannedMedium::Kiss { .. } => "kiss",
         PlannedMedium::Ax25Kiss { .. } => "ax25_kiss",
         PlannedMedium::Rnode { .. } => "rnode",
+        PlannedMedium::RnodeMulti { .. } => "rnode_multi",
         PlannedMedium::Backbone { .. } => "backbone",
         PlannedMedium::BackboneClient { .. } => "backbone_client",
         PlannedMedium::Pipe { .. } => "pipe",
+        PlannedMedium::I2p { .. } => "i2p",
     }
 }
 
-#[cfg(feature = "tracing")]
-fn defer_reason_name(reason: &DeferReason) -> &'static str {
-    match reason {
-        DeferReason::Disabled => "disabled",
-        DeferReason::UnsupportedKind => "unsupported_kind",
-        DeferReason::MissingRequiredField { .. } => "missing_required_field",
-        DeferReason::InvalidSetting { .. } => "invalid_setting",
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn planned_serial_line_reaches_the_host_transport_without_defaulting() {
+        let plan = prns_config::parse_and_plan(
+            "[interfaces]\n[[Serial]]\ntype = SerialInterface\nenabled = Yes\nport = test\nspeed = 57600\ndatabits = 7\nparity = odd\nstopbits = 2\n",
+        )
+        .expect("valid serial configuration")
+        .value;
+        let PlannedMedium::Serial { line, .. } = &plan.interfaces[0].medium else {
+            panic!("serial medium expected")
+        };
+        let host = host_serial_line(*line);
+        assert_eq!(host.baud(), 57_600);
+        assert_eq!(host.data_bits(), HostSerialDataBits::Seven);
+        assert_eq!(host.parity(), HostSerialParity::Odd);
+        assert_eq!(host.stop_bits(), HostSerialStopBits::Two);
+    }
+
+    #[tokio::test]
+    async fn planned_rnode_multi_members_fail_visibly_until_the_supervisor_is_attached() {
+        use prns_runtime::runtime::{Manual, PreConfiguredDestination, PrnsNode, PrnsNodeRecipe};
+        use prns_runtime::storage::GrowableHeap;
+
+        let plan = prns_config::parse_and_plan(
+            "[interfaces]\n[[Dual]]\ntype = RNodeMultiInterface\nenabled = Yes\nport = test\n\
+             [[[Low]]]\ninterface_enabled = Yes\nvport = 0\nfrequency = 868000000\n\
+             bandwidth = 125000\ntxpower = 7\nspreadingfactor = 8\ncodingrate = 5\n\
+             [[[High]]]\ninterface_enabled = Yes\nvport = 1\nfrequency = 2400000000\n\
+             bandwidth = 812500\ntxpower = 10\nspreadingfactor = 7\ncodingrate = 6\n",
+        )
+        .expect("valid RNodeMulti configuration")
+        .value;
+        let node = PrnsNode::new(PrnsNodeRecipe {
+            transport_identity: None,
+            pre_configured_destinations: std::iter::empty::<PreConfiguredDestination<'static>>(),
+            app_state: (),
+            storage: GrowableHeap,
+            routes: prns_runtime::routes![],
+            interfaces: Manual,
+            on_event: |_event, _state: &()| {},
+        });
+        let mut failures = Vec::new();
+        attach_plan(&node.handle(), &plan, &mut |outcome| {
+            if let PlanOutcome::Failed {
+                interface,
+                visible_error_message,
+            } = outcome
+            {
+                failures.push((interface.name.clone(), visible_error_message));
+            }
+        })
+        .await;
+
+        assert_eq!(failures.len(), 2);
+        assert_eq!(failures[0].0, "Dual[Low]");
+        assert_eq!(failures[1].0, "Dual[High]");
+        assert!(failures.iter().all(|(_, message)| {
+            message == "RNodeMultiInterface runtime is not available in this build"
+        }));
+    }
+
+    #[test]
+    fn planned_i2p_peers_cross_the_runtime_boundary_without_reinterpretation() {
+        let plan = prns_config::parse_and_plan(
+            "[interfaces]\n[[Private I2P]]\ntype = I2PInterface\nenabled = Yes\npeers = example.i2p, QUJDRA==\n",
+        )
+        .expect("valid I2P configuration")
+        .value;
+        let interface = &plan.interfaces[0];
+        let PlannedMedium::I2p {
+            peers,
+            reachability,
+        } = &interface.medium
+        else {
+            panic!("I2P medium expected")
+        };
+
+        let config = i2p_runtime_config(
+            interface,
+            peers,
+            *reachability,
+            &PlanRuntimeContext::default(),
+        )
+        .expect("the typed plan converts to runtime types");
+
+        assert_eq!(
+            config
+                .peers
+                .iter()
+                .map(I2pPeerAddress::as_str)
+                .collect::<Vec<_>>(),
+            vec!["example.i2p", "QUJDRA=="]
+        );
+        assert_eq!(config.reachability, I2pReachability::OutboundOnly);
+        assert_eq!(config.policy, interface.policy);
+        assert_eq!(config.retry, I2pRetryPolicy::STOCK);
+    }
+
+    #[test]
+    fn connectable_i2p_requires_host_runtime_context() {
+        let plan = prns_config::parse_and_plan(
+            "[interfaces]\n[[Private I2P]]\ntype = I2PInterface\nenabled = Yes\nconnectable = Yes\n",
+        )
+        .expect("valid I2P configuration")
+        .value;
+        let interface = &plan.interfaces[0];
+        let PlannedMedium::I2p {
+            peers,
+            reachability,
+        } = &interface.medium
+        else {
+            panic!("I2P medium expected")
+        };
+
+        let error = i2p_runtime_config(
+            interface,
+            peers,
+            *reachability,
+            &PlanRuntimeContext::default(),
+        )
+        .expect_err("connectable I2P needs persistent host context");
+
+        assert!(error.contains("RNS storage directory and transport identity"));
+    }
+
+    #[test]
+    fn connectable_i2p_uses_the_host_supplied_stock_key_scope() {
+        let plan = prns_config::parse_and_plan(
+            "[interfaces]\n[[Private I2P]]\ntype = I2PInterface\nenabled = Yes\nconnectable = Yes\n",
+        )
+        .expect("valid I2P configuration")
+        .value;
+        let interface = &plan.interfaces[0];
+        let PlannedMedium::I2p {
+            peers,
+            reachability,
+        } = &interface.medium
+        else {
+            panic!("I2P medium expected")
+        };
+        let context = PlanRuntimeContext::with_rns_i2p_storage(
+            "/var/lib/reticulum/storage",
+            IdentityHash::new([
+                0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd,
+                0xee, 0xff,
+            ]),
+        );
+
+        let config = i2p_runtime_config(interface, peers, *reachability, &context)
+            .expect("the daemon context completes connectable I2P");
+        let I2pReachability::Connectable { key_path } = config.reachability else {
+            panic!("connectable runtime expected")
+        };
+
+        assert_eq!(
+            key_path.as_path(),
+            std::path::Path::new(
+                "/var/lib/reticulum/storage/i2p/4c621c0110154bbe086a0395dbeb07878a1613258d5e0346c96ddef1a5aeae2d.i2p"
+            )
+        );
+    }
+
+    #[test]
+    fn config_peer_validation_matches_runtime_peer_types() {
+        for peer in [
+            "example.i2p",
+            "52chars.b32.i2p",
+            "QUJDRA==",
+            "EXAMPLE.I2P",
+            "abc",
+            "A=AA",
+            "not a peer",
+            "",
+        ] {
+            let config = format!(
+                "[interfaces]\n[[Private I2P]]\ntype = I2PInterface\nenabled = Yes\npeers = {peer}\n"
+            );
+            assert_eq!(
+                prns_config::parse_and_plan(&config).is_ok(),
+                I2pPeerAddress::new(peer).is_ok(),
+                "config and runtime must agree for {peer:?}"
+            );
+        }
     }
 }

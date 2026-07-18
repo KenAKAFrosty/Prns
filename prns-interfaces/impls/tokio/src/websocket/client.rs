@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use tokio_tungstenite::connect_async_with_config;
 
+use crate::reconnect::ReconnectDelay;
 use crate::websocket::tokio_wire;
 use prns_core::interfaces::websocket::core;
 use prns_core::interfaces::BitrateBps;
@@ -23,25 +24,30 @@ pub struct WebSocketClientInterface {
     id: InterfaceId,
     target: String,
     policy: EffectiveInterfacePolicy,
-    reconnect: Duration,
+    reconnect_delay: ReconnectDelay,
     status: TokioInterfaceStatus,
 }
 
 impl WebSocketClientInterface {
     #[must_use]
-    pub fn new(target: String, bitrate: BitrateBps, reconnect: Duration) -> Self {
+    pub fn new(target: String, bitrate: BitrateBps, reconnect_delay: Duration) -> Self {
         let id = InterfaceId::from_channel_tag(InterfaceKind::WebSocketClient, target.as_bytes());
-        Self::with_id_and_policy(id, target, core::policy_for_bitrate(bitrate), reconnect)
+        Self::with_id_and_policy(
+            id,
+            target,
+            core::policy_for_bitrate(bitrate),
+            reconnect_delay,
+        )
     }
 
     #[must_use]
     pub fn with_policy(
         target: String,
         policy: EffectiveInterfacePolicy,
-        reconnect: Duration,
+        reconnect_delay: Duration,
     ) -> Self {
         let id = InterfaceId::from_channel_tag(InterfaceKind::WebSocketClient, target.as_bytes());
-        Self::with_id_and_policy(id, target, policy, reconnect)
+        Self::with_id_and_policy(id, target, policy, reconnect_delay)
     }
 
     /// Build with a caller-chosen id instead of one derived from the dial target. Ordinary nodes
@@ -51,9 +57,14 @@ impl WebSocketClientInterface {
         id: InterfaceId,
         target: String,
         bitrate: BitrateBps,
-        reconnect: Duration,
+        reconnect_delay: Duration,
     ) -> Self {
-        Self::with_id_and_policy(id, target, core::policy_for_bitrate(bitrate), reconnect)
+        Self::with_id_and_policy(
+            id,
+            target,
+            core::policy_for_bitrate(bitrate),
+            reconnect_delay,
+        )
     }
 
     #[must_use]
@@ -61,13 +72,13 @@ impl WebSocketClientInterface {
         id: InterfaceId,
         target: String,
         policy: EffectiveInterfacePolicy,
-        reconnect: Duration,
+        reconnect_delay: Duration,
     ) -> Self {
         Self {
             id,
             target,
             policy,
-            reconnect,
+            reconnect_delay: ReconnectDelay::new(reconnect_delay),
             status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
         }
     }
@@ -150,7 +161,7 @@ impl Interface for WebSocketClientInterface {
                     );
                 }
             }
-            tokio::time::sleep(self.reconnect).await;
+            tokio::time::sleep(self.reconnect_delay.duration()).await;
         }
     }
 }
