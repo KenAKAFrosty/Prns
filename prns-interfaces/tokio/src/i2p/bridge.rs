@@ -9,6 +9,10 @@ use super::sam::{
     I2pGeneratedDestination, I2pPrivateDestination, I2pPublicDestination, SamProtocolError,
     SamSession, SamSessionDestination, SamSessionId, SamStreamError,
 };
+use super::transport::{
+    SamBridgeTransport, SamFailureClass, SamSessionTransport, SamTransportError,
+};
+use crate::tcp::tokio_socket::tune_i2p;
 
 const DEFAULT_SAM_BRIDGE_ADDRESS: &str = "127.0.0.1:7656";
 
@@ -123,6 +127,31 @@ impl std::error::Error for SamBridgeError {
     }
 }
 
+impl SamTransportError for SamBridgeError {
+    fn failure_class(&self) -> SamFailureClass {
+        match self {
+            Self::Protocol(SamProtocolError::Rejected { rejection, .. })
+                if is_peer_reachability_rejection(rejection) =>
+            {
+                SamFailureClass::PeerUnreachable
+            }
+            Self::Connect { .. } | Self::Protocol(_) | Self::Stream(_) => {
+                SamFailureClass::SamUnavailable
+            }
+        }
+    }
+}
+
+fn is_peer_reachability_rejection(rejection: &super::sam::SamRejection) -> bool {
+    matches!(
+        rejection,
+        super::sam::SamRejection::CantReachPeer
+            | super::sam::SamRejection::Timeout
+            | super::sam::SamRejection::KeyNotFound
+            | super::sam::SamRejection::PeerNotFound
+    )
+}
+
 impl From<SamProtocolError> for SamBridgeError {
     fn from(error: SamProtocolError) -> Self {
         Self::Protocol(error)
@@ -206,16 +235,65 @@ impl TokioSamSession {
         &self,
         destination: I2pPublicDestination,
     ) -> Result<BufReader<TcpStream>, SamBridgeError> {
-        Ok(self
+        let stream = self
             .session
             .connect_stream(self.bridge.open().await?, destination)
-            .await?)
+            .await?;
+        tune_i2p(stream.get_ref());
+        Ok(stream)
     }
 
     pub async fn accept(&self) -> Result<I2pAcceptedStream<TcpStream>, SamBridgeError> {
-        Ok(self
+        let accepted = self
             .session
             .accept_stream(self.bridge.open().await?)
-            .await?)
+            .await?;
+        tune_i2p(accepted.stream.get_ref());
+        Ok(accepted)
+    }
+}
+
+impl SamSessionTransport for TokioSamSession {
+    type Stream = TcpStream;
+    type Error = SamBridgeError;
+
+    fn private_destination(&self) -> &I2pPrivateDestination {
+        self.private_destination()
+    }
+
+    async fn connect(
+        &self,
+        destination: I2pPublicDestination,
+    ) -> Result<BufReader<Self::Stream>, Self::Error> {
+        self.connect(destination).await
+    }
+
+    async fn accept(&self) -> Result<I2pAcceptedStream<Self::Stream>, Self::Error> {
+        self.accept().await
+    }
+}
+
+impl SamBridgeTransport for TokioSamBridge {
+    type Stream = TcpStream;
+    type Session = TokioSamSession;
+    type Error = SamBridgeError;
+
+    async fn generate_destination(&self) -> Result<I2pGeneratedDestination, Self::Error> {
+        self.generate_destination().await
+    }
+
+    async fn resolve_destination(
+        &self,
+        name: I2pAddress,
+    ) -> Result<I2pPublicDestination, Self::Error> {
+        self.resolve_destination(name).await
+    }
+
+    async fn create_session(
+        &self,
+        id: SamSessionId,
+        destination: SamSessionDestination,
+    ) -> Result<Self::Session, Self::Error> {
+        self.create_session(id, destination).await
     }
 }

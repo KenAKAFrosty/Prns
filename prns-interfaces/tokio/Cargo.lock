@@ -1788,8 +1788,10 @@ dependencies = [
 name = "prns-interfaces-tokio"
 version = "0.2.4"
 dependencies = [
+ "base64",
  "bluer",
  "cfg-if",
+ "data-encoding",
  "env_logger",
  "futures-util",
  "getrandom 0.2.17",
@@ -1812,6 +1814,7 @@ dependencies = [
  "tokio-tungstenite",
  "tracing",
  "zbus",
+ "zeroize",
 ]
 
 [[package]]

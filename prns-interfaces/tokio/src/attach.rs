@@ -49,6 +49,7 @@ macro_rules! attaches_as_wire {
     feature = "websocket",
     feature = "shared-instance",
     feature = "backbone",
+    feature = "i2p",
     feature = "wifi-direct",
     feature = "ble"
 ))]
@@ -112,6 +113,8 @@ attaches_as_fleet!(impl[] crate::websocket::server::WebSocketServer);
 attaches_as_fleet!(impl[] crate::shared_instance::server::LocalServer);
 #[cfg(feature = "backbone")]
 attaches_as_fleet!(impl[] crate::backbone::server::BackboneServer);
+#[cfg(feature = "i2p")]
+attaches_as_fleet!(impl[B] crate::i2p::I2pInterface<B>);
 #[cfg(feature = "wifi-direct")]
 attaches_as_fleet!(impl[B] crate::wifi_direct::tokio::WifiDirectAuto<B>);
 #[cfg(feature = "ble")]

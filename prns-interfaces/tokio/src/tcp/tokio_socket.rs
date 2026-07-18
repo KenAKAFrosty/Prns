@@ -4,7 +4,9 @@
 //! and the connect/reconnect waits (`TCPClientInterface.INITIAL_CONNECT_TIMEOUT` /
 //! `RECONNECT_WAIT`). Both ends apply the same discipline, so it lives here once.
 
+#[cfg(feature = "tcp")]
 use std::io;
+#[cfg(feature = "tcp")]
 use std::net::SocketAddr;
 use std::time::Duration;
 
@@ -12,22 +14,29 @@ use socket2::{SockRef, TcpKeepalive};
 use tokio::net::TcpStream;
 
 /// How long one connect attempt gets (`TCPClientInterface.INITIAL_CONNECT_TIMEOUT`).
+#[cfg(feature = "tcp")]
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long a failed or dropped connection waits before the next attempt
 /// (`TCPClientInterface.RECONNECT_WAIT`).
+#[cfg(feature = "tcp")]
 pub const RECONNECT_WAIT: Duration = Duration::from_secs(5);
 /// The reference's keepalive discipline: probe after 5s idle, every 2s, and a peer that
 /// misses 12 probes — or leaves writes unacknowledged for 24s — is declared dead, so the
 /// stream drops and the reconnect loop takes over.
+#[cfg(feature = "tcp")]
 pub const TCP_PROBE_AFTER: Duration = Duration::from_secs(5);
+#[cfg(feature = "tcp")]
 pub const TCP_PROBE_INTERVAL: Duration = Duration::from_secs(2);
+#[cfg(feature = "tcp")]
 pub const TCP_PROBES: u32 = 12;
+#[cfg(feature = "tcp")]
 pub const TCP_USER_TIMEOUT: Duration = Duration::from_secs(24);
 pub const I2P_PROBE_AFTER: Duration = Duration::from_secs(10);
 pub const I2P_PROBE_INTERVAL: Duration = Duration::from_secs(9);
 pub const I2P_PROBES: u32 = 5;
 pub const I2P_USER_TIMEOUT: Duration = Duration::from_secs(45);
 
+#[cfg(feature = "tcp")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AddressFamilyPreference {
     System,
@@ -37,16 +46,19 @@ pub enum AddressFamilyPreference {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TcpTunnelMode {
+    #[cfg(feature = "tcp")]
     Direct,
     I2p,
 }
 
+#[cfg(feature = "tcp")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReconnectLimit {
     Unlimited,
     Attempts(u32),
 }
 
+#[cfg(feature = "tcp")]
 impl ReconnectLimit {
     pub const fn exhausted(self, completed_attempts: u32) -> bool {
         match self {
@@ -56,6 +68,7 @@ impl ReconnectLimit {
     }
 }
 
+#[cfg(feature = "tcp")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TcpConnectionSettings {
     pub connect_timeout: Duration,
@@ -65,6 +78,7 @@ pub struct TcpConnectionSettings {
     pub tunnel: TcpTunnelMode,
 }
 
+#[cfg(feature = "tcp")]
 impl TcpConnectionSettings {
     pub const STOCK: Self = Self {
         connect_timeout: CONNECT_TIMEOUT,
@@ -75,6 +89,7 @@ impl TcpConnectionSettings {
     };
 }
 
+#[cfg(feature = "tcp")]
 pub async fn connect(target: &str, settings: TcpConnectionSettings) -> io::Result<TcpStream> {
     let address = resolve(target, settings.address_family).await?;
     tokio::time::timeout(settings.connect_timeout, TcpStream::connect(address))
@@ -82,6 +97,7 @@ pub async fn connect(target: &str, settings: TcpConnectionSettings) -> io::Resul
         .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "TCP connect timed out"))?
 }
 
+#[cfg(feature = "tcp")]
 async fn resolve(target: &str, preference: AddressFamilyPreference) -> io::Result<SocketAddr> {
     let addresses = tokio::net::lookup_host(target)
         .await?
@@ -90,6 +106,7 @@ async fn resolve(target: &str, preference: AddressFamilyPreference) -> io::Resul
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "TCP target resolved to nothing"))
 }
 
+#[cfg(feature = "tcp")]
 fn select_address(
     addresses: &[SocketAddr],
     preference: AddressFamilyPreference,
@@ -106,14 +123,20 @@ fn select_address(
 /// the wire when it's written, not pool behind the ACK clock) and the keepalive probes
 /// above. A socket that refuses an option still carries frames, so refusals don't fail the
 /// connection.
+#[cfg(feature = "tcp")]
 pub fn tune(stream: &TcpStream) {
     tune_for_tunnel(stream, TcpTunnelMode::Direct);
+}
+
+pub fn tune_i2p(stream: &TcpStream) {
+    tune_for_tunnel(stream, TcpTunnelMode::I2p);
 }
 
 pub fn tune_for_tunnel(stream: &TcpStream, tunnel: TcpTunnelMode) {
     let _ = stream.set_nodelay(true);
     let socket = SockRef::from(stream);
     let (probe_after, probe_interval, probes, _user_timeout) = match tunnel {
+        #[cfg(feature = "tcp")]
         TcpTunnelMode::Direct => (
             TCP_PROBE_AFTER,
             TCP_PROBE_INTERVAL,
@@ -136,7 +159,7 @@ pub fn tune_for_tunnel(stream: &TcpStream, tunnel: TcpTunnelMode) {
     let _ = socket.set_tcp_user_timeout(Some(_user_timeout));
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "tcp"))]
 mod tests {
     use super::*;
 

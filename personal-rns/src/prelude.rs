@@ -132,6 +132,9 @@ pub use prns_interfaces_tokio::backbone;
 #[cfg(all(feature = "websocket", feature = "tokio-host"))]
 pub use prns_interfaces_tokio::websocket;
 
+#[cfg(all(feature = "i2p", feature = "tokio-host"))]
+pub use prns_interfaces_tokio::i2p;
+
 #[cfg(all(feature = "shared-instance", feature = "tokio-host"))]
 pub use prns_interfaces_tokio::shared_instance;
 
