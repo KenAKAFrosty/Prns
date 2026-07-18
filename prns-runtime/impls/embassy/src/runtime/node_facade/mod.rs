@@ -1,20 +1,12 @@
-//! The Embassy command surface. [`PrnsNodeHandle`] combines the command channel's [`Sender`] with an application-provided static [`CompletionPool`]; the node owns the matching receiver and shares the pool.
-
-use core::cell::RefCell;
 use core::future::Future;
 
 use embassy_futures::join::join;
 use embassy_sync::blocking_mutex::raw::RawMutex;
-use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
 use embassy_sync::channel::{Receiver, Sender};
 use embassy_sync::signal::Signal;
 use heapless::Vec as HeaplessVec;
-use portable_atomic::{AtomicU64, Ordering};
 
-use crate::engine::{
-    CloseLink, CommandId, EngineCommand, IssuedCommand, Journaled, PacketReceiptDelivered, Respond,
-    RespondData, SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload, Settlement,
-};
+use crate::engine::{IssuedCommand, Journaled};
 use crate::interfaces::ifac::{IfacContext, InterfaceIfac};
 use crate::interfaces::{InterfaceDescriptor, InterfaceId};
 use crate::reactor::driver::{
@@ -23,217 +15,18 @@ use crate::reactor::driver::{
 };
 use crate::reactor::grant::{FrameTarget, GrantConsumer, GrantProducer};
 use crate::reactor::Host;
-use crate::routing::links::LinkId;
 use crate::storage::StorageLayout;
-use crate::wire::DestinationHash;
 
-use super::request_router::{RespondToken, RouteSet};
+use super::request_router::RouteSet;
 use super::{
     EmbassyInterfaceStore, InterfaceInspectionStore, Manual, NoInterfaceInspectionStore,
-    PreConfiguredDestination, PrnsEvent, PrnsNodeRecipe, SendError,
+    PreConfiguredDestination, PrnsEvent, PrnsNodeRecipe,
 };
 use prns_runtime::runtime::{assemble_node, AssembledNode};
 
-/// The free-slot sentinel — no real [`CommandId`] reaches `u64::MAX` (the handle mints from zero).
-const NO_AWAITER: u64 = u64::MAX;
+mod command_handle;
 
-/// A fixed pool of completion slots an embassy app provides as a `static`: the embedded twin of tokio's per-command oneshot. An awaited send claims a slot, parks on its [`Signal`], and the binding fires that slot by command id when the engine settles; the send future releases its slot on drop, so a cancelled send can never wake a later claimant. All bookkeeping is serialized under one blocking mutex, and `settle` signals while holding it, closing the window where a freed slot could be reused mid-fire. `N` bounds awaited sends in flight.
-pub struct CompletionPool<M: RawMutex, const N: usize> {
-    next_id: AtomicU64,
-    awaited: BlockingMutex<M, RefCell<[u64; N]>>,
-    slots: [Signal<M, Settlement>; N],
-}
-
-impl<M: RawMutex, const N: usize> Default for CompletionPool<M, N> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<M: RawMutex, const N: usize> CompletionPool<M, N> {
-    /// A pool with every slot free — `const`, so it lives in a `static`.
-    #[must_use]
-    pub const fn new() -> Self {
-        Self {
-            next_id: AtomicU64::new(0),
-            awaited: BlockingMutex::new(RefCell::new([NO_AWAITER; N])),
-            slots: [const { Signal::new() }; N],
-        }
-    }
-
-    fn mint(&self) -> CommandId {
-        CommandId(self.next_id.fetch_add(1, Ordering::Relaxed))
-    }
-
-    /// Reserve a free slot for `id`, clearing any stale signal first. `None` when the pool is full — the caller already has more awaited sends in flight than `N`.
-    fn claim(&self, id: CommandId) -> Option<usize> {
-        self.awaited.lock(|cell| {
-            let mut awaited = cell.borrow_mut();
-            let slot = awaited.iter().position(|&a| a == NO_AWAITER)?;
-            self.slots[slot].reset();
-            awaited[slot] = id.0;
-            Some(slot)
-        })
-    }
-
-    /// Free `slot` only if it still belongs to `id` — the send future's drop path. After a settle has cleared the slot (and another send may have claimed it), this is a no-op, so a late drop can't clobber a newer claimant.
-    fn release(&self, slot: usize, id: CommandId) {
-        self.awaited.lock(|cell| {
-            let mut awaited = cell.borrow_mut();
-            if awaited[slot] == id.0 {
-                awaited[slot] = NO_AWAITER;
-                self.slots[slot].reset();
-            }
-        });
-    }
-
-    /// Hand `settlement` to the slot awaiting `id`, if any, and report whether it fired; the runner drops a fired settlement from the event stream so an awaited command resolves once. Signals under the lock so a concurrent release/claim can't slip the slot out from under the wakeup.
-    fn settle(&self, id: CommandId, settlement: Settlement) -> bool {
-        self.awaited.lock(|cell| {
-            let mut awaited = cell.borrow_mut();
-            match awaited.iter().position(|&a| a == id.0) {
-                Some(slot) => {
-                    awaited[slot] = NO_AWAITER;
-                    self.slots[slot].signal(settlement);
-                    true
-                }
-                None => false,
-            }
-        })
-    }
-
-    async fn parked(&self, slot: usize) -> Settlement {
-        self.slots[slot].wait().await
-    }
-}
-
-/// The Embassy command handle. It is `Copy`, so any task can drive the node, and mints every [`CommandId`] from the completion pool's shared counter.
-pub struct PrnsNodeHandle<'a, M: RawMutex, const COMMANDS: usize, const N: usize> {
-    commands: Sender<'a, M, IssuedCommand, COMMANDS>,
-    pool: &'a CompletionPool<M, N>,
-}
-
-impl<M: RawMutex, const COMMANDS: usize, const N: usize> Clone
-    for PrnsNodeHandle<'_, M, COMMANDS, N>
-{
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<M: RawMutex, const COMMANDS: usize, const N: usize> Copy
-    for PrnsNodeHandle<'_, M, COMMANDS, N>
-{
-}
-
-impl<'a, M: RawMutex, const COMMANDS: usize, const N: usize> PrnsNodeHandle<'a, M, COMMANDS, N> {
-    /// Pair the command channel's sender with the completion pool — the app holds both as `static`s and passes the matching [`CompletionPool`] reference to the runner too.
-    #[must_use]
-    pub fn new(
-        commands: Sender<'a, M, IssuedCommand, COMMANDS>,
-        pool: &'a CompletionPool<M, N>,
-    ) -> Self {
-        Self { commands, pool }
-    }
-
-    /// Queue an engine command and return the [`CommandId`] it was minted under — watch the event stream for the settlement tagged with it. `None` if the bounded command lane is full. The fire-and-forget escape hatch; to await the outcome, prefer [`send_single_packet`](Self::send_single_packet).
-    pub fn issue(&self, command: EngineCommand) -> Option<CommandId> {
-        let id = self.pool.mint();
-        self.commands.try_send(IssuedCommand { id, command }).ok()?;
-        Some(id)
-    }
-
-    /// Send one Single and await its delivery proof. Claims a pool slot and frees it on every exit, cancellation included; returns `SendError::Busy` when more awaited sends are in flight than the pool's `N`.
-    pub async fn send_single_packet(
-        &self,
-        destination: DestinationHash,
-        data: &[u8],
-    ) -> Result<PacketReceiptDelivered, SendError<SendSinglePacketFailure>> {
-        let payload =
-            SendSinglePacketPayload::from_slice(data).map_err(|()| SendError::PayloadTooLarge)?;
-        let id = self.pool.mint();
-        let slot = self.pool.claim(id).ok_or(SendError::Busy)?;
-        let _guard = SlotGuard {
-            pool: self.pool,
-            slot,
-            id,
-        };
-        self.commands
-            .try_send(IssuedCommand {
-                id,
-                command: EngineCommand::SendSinglePacket(SendSinglePacket {
-                    destination,
-                    payload,
-                }),
-            })
-            .map_err(|_| SendError::NodeStopped)?;
-        match self.pool.parked(slot).await {
-            Settlement::SendSinglePacket(result) => result.map_err(SendError::Failed),
-            _ => Err(SendError::NodeStopped),
-        }
-    }
-
-    /// Answer a request with `body` as a single RESPONSE packet — the request runner's path. Embedded responds inline, so a `body` past the link MDU is refused here (returns `false`); the host auto-upgrades to a resource instead.
-    pub fn respond(&self, responder: RespondToken, body: &[u8]) -> bool {
-        match RespondData::from_slice(body) {
-            Ok(data) => self.respond_owned(responder, data),
-            Err(_) => false,
-        }
-    }
-
-    /// Answer a request by moving a prebuilt [`RespondData`] in: one copy fewer than [`respond`](Self::respond) since the handler already filled a grant. `false` once the command lane is full.
-    pub fn respond_owned(&self, responder: RespondToken, data: RespondData) -> bool {
-        self.issue(EngineCommand::Respond(Respond {
-            link_id: responder.link_id,
-            request_id: responder.request_id,
-            data,
-        }))
-        .is_some()
-    }
-
-    /// Sever an active link. Returns `false` if the command lane is full.
-    pub fn close_link(&self, link_id: LinkId) -> bool {
-        self.issue(EngineCommand::CloseLink(CloseLink { link_id }))
-            .is_some()
-    }
-}
-
-/// Frees a claimed completion slot when its awaited send finishes or is cancelled. Release is guarded by the awaited id, so a late drop after the settle already reused the slot is a no-op.
-struct SlotGuard<'a, M: RawMutex, const N: usize> {
-    pool: &'a CompletionPool<M, N>,
-    slot: usize,
-    id: CommandId,
-}
-
-impl<M: RawMutex, const N: usize> Drop for SlotGuard<'_, M, N> {
-    fn drop(&mut self) {
-        self.pool.release(self.slot, self.id);
-    }
-}
-
-impl<M: RawMutex, const COMMANDS: usize, const N: usize> super::PrnsNodeApi
-    for PrnsNodeHandle<'_, M, COMMANDS, N>
-{
-    fn issue(&self, command: EngineCommand) -> Option<CommandId> {
-        self.issue(command)
-    }
-
-    async fn send_single_packet(
-        &self,
-        destination: DestinationHash,
-        data: &[u8],
-    ) -> Result<PacketReceiptDelivered, SendError<SendSinglePacketFailure>> {
-        self.send_single_packet(destination, data).await
-    }
-
-    fn respond(&self, responder: RespondToken, body: &[u8]) -> bool {
-        self.respond(responder, body)
-    }
-
-    fn close_link(&self, link_id: LinkId) -> bool {
-        self.close_link(link_id)
-    }
-}
+pub use command_handle::{CompletionPool, PrnsNodeHandle};
 
 /// The reactor-side wiring an embassy node runs on: the pool's inbound consumers and egress, the three channel receivers, and the command handle. The board declares the matching `static` channels and hands this bundle to [`PrnsNode::new`]; the interface-side seam halves come off the same pool separately.
 pub struct ReactorPlumbing<
@@ -525,7 +318,7 @@ where
             },
             |journaled| {
                 if let Journaled::CommandSettled { id, settlement } = &journaled {
-                    if handle.pool.settle(*id, settlement.clone()) {
+                    if handle.settle(*id, settlement.clone()) {
                         return;
                     }
                 }
@@ -598,7 +391,7 @@ where
             },
             |journaled| {
                 if let Journaled::CommandSettled { id, settlement } = &journaled {
-                    if handle.pool.settle(*id, settlement.clone()) {
+                    if handle.settle(*id, settlement.clone()) {
                         return;
                     }
                 }
