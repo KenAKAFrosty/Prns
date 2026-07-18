@@ -1,0 +1,320 @@
+use super::*;
+
+#[test]
+fn draw_with_state_marks_selected_card_below_global_row() {
+    let mut display = MockDisplay::new();
+    display.set_allow_overdraw(true);
+    display.set_allow_out_of_bounds_drawing(true);
+    let cards = [test_card("A"), test_card("B")];
+    let mut state = UiState::new();
+    state.handle_input(InputEvent::ShortPress, cards.len(), Some(CardKind::Usb));
+
+    draw_with_state(&mut display, &cards, BatteryState::Unknown, &state);
+
+    let selected_top = FIRST_CARD_WITH_GLOBAL_TOP;
+    assert_eq!(state.selected_card(cards.len()), Some(0));
+    assert_eq!(state.visible_start(cards.len()), 0);
+    assert_eq!(
+        display.get_pixel(Point::new(NAME_BACKING_X, selected_top + NAME_BACKING_Y)),
+        Some(BinaryColor::On)
+    );
+    assert_eq!(
+        display.get_pixel(Point::new(0, selected_top)),
+        Some(BinaryColor::On)
+    );
+    assert_ne!(
+        display.get_pixel(Point::new(
+            GLOBAL_BACKING_X,
+            GLOBAL_ROW_TOP + GLOBAL_BACKING_Y
+        )),
+        Some(BinaryColor::On)
+    );
+}
+
+#[test]
+fn draw_with_state_renders_selected_global_row() {
+    let mut display = MockDisplay::new();
+    display.set_allow_overdraw(true);
+    display.set_allow_out_of_bounds_drawing(true);
+    let cards = [test_card("USB")];
+    let state = UiState::new();
+
+    draw_with_state(&mut display, &cards, BatteryState::Unknown, &state);
+
+    assert!(state.global_selected());
+    assert_eq!(
+        display.get_pixel(Point::new(
+            GLOBAL_BACKING_X,
+            GLOBAL_ROW_TOP + GLOBAL_BACKING_Y
+        )),
+        Some(BinaryColor::On)
+    );
+    assert_eq!(
+        display.get_pixel(Point::new(GLOBAL_ICON_X, GLOBAL_ROW_TOP + NAME_LINE_Y)),
+        Some(BinaryColor::Off)
+    );
+    assert_eq!(
+        display.get_pixel(Point::new(NAME_ICON_X, GLOBAL_ROW_TOP + NAME_LINE_Y)),
+        Some(BinaryColor::Off)
+    );
+    assert_eq!(
+        display.get_pixel(Point::new(GLOBAL_BACKING_X, GLOBAL_ROW_TOP)),
+        Some(BinaryColor::Off)
+    );
+    assert_eq!(
+        display.get_pixel(Point::new(
+            GLOBAL_BACKING_X,
+            GLOBAL_ROW_TOP + GLOBAL_BACKING_Y + GLOBAL_BACKING_H as i32
+        )),
+        Some(BinaryColor::Off)
+    );
+    assert_eq!(
+        display.get_pixel(Point::new(0, GLOBAL_ROW_TOP + GLOBAL_ROW_H - 1)),
+        Some(BinaryColor::Off)
+    );
+    assert_eq!(
+        display.get_pixel(Point::new(0, FIRST_CARD_WITH_GLOBAL_TOP)),
+        Some(BinaryColor::On)
+    );
+}
+
+#[test]
+fn draw_with_state_footer_scrolls_after_the_last_card() {
+    let cards = [test_card("USB"), test_card("BLE"), test_card("WiFi")];
+    let mut state = UiState::new();
+    let footer = UiFooter::new("Docs", Some("127.0.0.1"));
+    for _ in 0..4 {
+        state.handle_input_with_footer(
+            InputEvent::ShortPress,
+            cards.len(),
+            true,
+            Some(CardKind::Usb),
+        );
+    }
+
+    assert_eq!(state.selected_card(cards.len()), None);
+    assert_eq!(state.visible_start_with_footer(cards.len(), true), 3);
+
+    let mut display = PanelDisplay::new();
+    draw_with_state_footer_at(
+        &mut display,
+        &cards,
+        BatteryState::Unknown,
+        &state,
+        Some(footer),
+        0,
+    );
+    assert!(has_on_pixel(
+        &display,
+        0..WIDTH,
+        (CARD_TOP + CARD_SLOT_STEP)..(CARD_TOP + CARD_SLOT_STEP + FOOTER_SECOND_LINE_OFFSET + 8)
+    ));
+}
+
+#[test]
+fn draw_with_state_footer_can_show_softap_docs_details() {
+    let cards = [test_card("USB"), test_card("BLE"), test_card("WiFi")];
+    let mut state = UiState::new();
+    let footer = UiFooter::with_lines(
+        "WifiAP",
+        Some("Hopspot-EW53"),
+        Some("docs @"),
+        Some("192.168.4.1"),
+    );
+    for _ in 0..4 {
+        state.handle_input_with_footer(
+            InputEvent::ShortPress,
+            cards.len(),
+            true,
+            Some(CardKind::Usb),
+        );
+    }
+
+    let mut display = PanelDisplay::new();
+    draw_with_state_footer_at(
+        &mut display,
+        &cards,
+        BatteryState::Unknown,
+        &state,
+        Some(footer),
+        0,
+    );
+    assert!(has_on_pixel(
+        &display,
+        0..WIDTH,
+        (CARD_TOP + CARD_SLOT_STEP + FOOTER_FOURTH_LINE_OFFSET)
+            ..(CARD_TOP + CARD_SLOT_STEP + FOOTER_FOURTH_LINE_OFFSET + 10)
+    ));
+}
+
+#[test]
+fn footer_focus_long_press_opens_docs() {
+    let mut state = UiState::new();
+
+    assert_eq!(
+        state.handle_input_with_footer(InputEvent::ShortPress, 1, true, Some(CardKind::Usb)),
+        UiAction::None
+    );
+    assert_eq!(state.selected_card(1), Some(0));
+
+    assert_eq!(
+        state.handle_input_with_footer(InputEvent::ShortPress, 1, true, None),
+        UiAction::None
+    );
+    assert_eq!(state.selected_card(1), None);
+
+    assert_eq!(
+        state.handle_input_with_footer(InputEvent::LongPress, 1, true, None),
+        UiAction::OpenDocs
+    );
+}
+
+#[test]
+fn draw_with_state_scrolls_global_row_out_of_card_window() {
+    let mut display = MockDisplay::new();
+    display.set_allow_overdraw(true);
+    display.set_allow_out_of_bounds_drawing(true);
+    let cards = [test_card("A"), test_card("B"), test_card("C")];
+    let mut state = UiState::new();
+    state.handle_input(InputEvent::ShortPress, cards.len(), Some(CardKind::Usb));
+    state.handle_input(InputEvent::ShortPress, cards.len(), Some(CardKind::Usb));
+    state.handle_input(InputEvent::ShortPress, cards.len(), Some(CardKind::Usb));
+
+    draw_with_state(&mut display, &cards, BatteryState::Unknown, &state);
+
+    assert_eq!(state.selected_card(cards.len()), Some(2));
+    assert_eq!(state.visible_start(cards.len()), 2);
+    assert_eq!(
+        display.get_pixel(Point::new(0, CARD_TOP)),
+        Some(BinaryColor::On)
+    );
+    assert_ne!(
+        display.get_pixel(Point::new(NAME_BACKING_X, CARD_TOP + NAME_BACKING_Y)),
+        Some(BinaryColor::On)
+    );
+}
+
+#[test]
+fn draw_with_state_renders_global_menu() {
+    let mut display = MockDisplay::new();
+    display.set_allow_overdraw(true);
+    display.set_allow_out_of_bounds_drawing(true);
+    let cards = [test_card("USB")];
+    let mut state = UiState::new();
+    state.handle_input(InputEvent::LongPress, cards.len(), Some(CardKind::Usb));
+
+    draw_with_state(&mut display, &cards, BatteryState::Unknown, &state);
+
+    assert_eq!(state.global_menu_selected_item(), Some(0));
+    assert_eq!(
+        display.get_pixel(Point::new(NAME_ICON_X, MENU_HEADER_Y)),
+        Some(BinaryColor::On)
+    );
+    assert_eq!(
+        display.get_pixel(Point::new(MENU_BACKING_X, MENU_ITEM_TOP - 1)),
+        Some(BinaryColor::On)
+    );
+    assert_eq!(
+        display.get_pixel(Point::new(MENU_MARK_X, MENU_ITEM_TOP + 2)),
+        Some(BinaryColor::Off)
+    );
+    assert_eq!(
+        display.get_pixel(Point::new(0, MENU_DIVIDER_Y)),
+        Some(BinaryColor::On)
+    );
+}
+
+#[test]
+fn draw_with_state_renders_selected_interface_menu() {
+    let mut display = MockDisplay::new();
+    display.set_allow_overdraw(true);
+    display.set_allow_out_of_bounds_drawing(true);
+    let cards = [
+        test_card("USB"),
+        Card {
+            id: InterfaceId::new([0; 8]),
+            kind: CardKind::Ble,
+            label: card_label("BLE"),
+            selected: false,
+            liveness: Liveness::Live,
+            failure_reason: None,
+            tx_bytes: 0,
+            rx_bytes: 0,
+            links: 0,
+            destinations: 0,
+            rate_bytes_per_sec: 0,
+            last_activity_secs: None,
+        },
+    ];
+    let mut state = UiState::new();
+    state.handle_input(InputEvent::ShortPress, cards.len(), Some(CardKind::Usb));
+    state.handle_input(InputEvent::ShortPress, cards.len(), Some(CardKind::Usb));
+    state.handle_input(InputEvent::LongPress, cards.len(), Some(CardKind::Usb));
+
+    draw_with_state(&mut display, &cards, BatteryState::Unknown, &state);
+
+    assert_eq!(state.selected_card(cards.len()), Some(1));
+    assert_eq!(state.interface_menu_selected_item(), Some(0));
+    assert_eq!(
+        display.get_pixel(Point::new(NAME_ICON_X + 4, MENU_HEADER_Y)),
+        Some(BinaryColor::On)
+    );
+    assert_eq!(
+        display.get_pixel(Point::new(MENU_BACKING_X, MENU_ITEM_TOP - 1)),
+        Some(BinaryColor::On)
+    );
+    assert_eq!(
+        display.get_pixel(Point::new(MENU_MARK_X, MENU_ITEM_TOP + 2)),
+        Some(BinaryColor::Off)
+    );
+    assert_eq!(
+        display.get_pixel(Point::new(0, MENU_DIVIDER_Y)),
+        Some(BinaryColor::On)
+    );
+    assert_eq!(
+        display.get_pixel(Point::new(0, CARD_TOP)),
+        Some(BinaryColor::Off)
+    );
+}
+
+#[test]
+fn interface_menu_draws_detail_rows_below_actions() {
+    let mut display = PanelDisplay::new();
+    let mut card = test_card("WiFi/LAN");
+    card.kind = CardKind::Wifi;
+    let mut rows = InterfaceMenuDetailRows::new();
+    push_interface_menu_info(&mut rows, "STA", "None");
+    push_interface_menu_info(&mut rows, "AP", "Hopspot-EW53");
+    let _ = push_supervisor_peer_rows(
+        &mut rows,
+        [SupervisorPeerMenuStatus {
+            id: InterfaceId::new([0, 0xab, 0xcd, 0, 0, 0, 0, 0]),
+            liveness: Liveness::Live,
+        }],
+    );
+
+    draw_interface_menu(&mut display, &card, POWER_MENU_ITEM, &rows);
+
+    let detail_top = MENU_ITEM_TOP + POWER_ONLY_MENU_ITEMS.len() as i32 * MENU_ITEM_STEP + 1;
+    assert!(
+        has_on_pixel(&display, MENU_REASON_X..WIDTH, detail_top..HEIGHT),
+        "interface menus should render supplied detail rows below the actions"
+    );
+}
+
+#[test]
+fn failed_interface_menu_draws_failure_reason() {
+    let mut display = PanelDisplay::new();
+    let mut card = test_card("BLE");
+    card.kind = CardKind::Ble;
+    card.liveness = Liveness::Failed;
+    card.failure_reason = Some("BlueZ GATT Channels >1; set Channels=1");
+
+    draw_interface_menu(&mut display, &card, POWER_MENU_ITEM, &[]);
+
+    let reason_top = MENU_ITEM_TOP + POWER_ONLY_MENU_ITEMS.len() as i32 * MENU_ITEM_STEP - 1;
+    assert!(
+        has_on_pixel(&display, MENU_REASON_X..WIDTH, reason_top..HEIGHT),
+        "failed-card menus should show the failure reason below the actions"
+    );
+}
