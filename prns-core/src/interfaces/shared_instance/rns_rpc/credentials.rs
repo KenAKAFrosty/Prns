@@ -14,6 +14,10 @@ impl RpcAuthenticationKey {
         Self(bytes)
     }
 
+    pub fn from_rns_transport_identity_secret(secret: &[u8; IDENTITY_SECRET_KEY_LEN]) -> Self {
+        Self(crate::crypto::sha256(secret).to_vec())
+    }
+
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
     }
@@ -51,9 +55,14 @@ impl SharedInstanceCredentials {
     pub fn from_identity_secret(secret: &[u8; IDENTITY_SECRET_KEY_LEN]) -> Self {
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(secret);
         Self::new(
-            RpcAuthenticationKey::new(crate::crypto::sha256(secret).to_vec()),
+            RpcAuthenticationKey::from_rns_transport_identity_secret(secret),
             identity.identity_hash(),
         )
+    }
+
+    pub fn with_rpc_authentication_key(mut self, rpc_key: RpcAuthenticationKey) -> Self {
+        self.rpc_key = rpc_key;
+        self
     }
 
     pub fn with_rpc_key(mut self, rpc_key: Vec<u8>) -> Self {

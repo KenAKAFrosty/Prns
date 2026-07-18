@@ -8,12 +8,11 @@ use crate::identity::{IdentitySigner, IDENTITY_SECRET_KEY_LEN};
 fn credentials_derive_authentication_and_transport_authority_together() {
     let secret = [0x42; IDENTITY_SECRET_KEY_LEN];
     let identity = InMemoryNodeIdentity::from_secret_key_bytes(&secret);
+    let rpc_key = RpcAuthenticationKey::from_rns_transport_identity_secret(&secret);
     let credentials = SharedInstanceCredentials::from_identity_secret(&secret);
 
-    assert_eq!(
-        credentials.rpc_key().as_bytes(),
-        crate::crypto::sha256(&secret)
-    );
+    assert_eq!(rpc_key.as_bytes(), crate::crypto::sha256(&secret));
+    assert_eq!(credentials.rpc_key().as_bytes(), rpc_key.as_bytes());
     assert_eq!(
         credentials.transport_identity_hash(),
         identity.identity_hash()
