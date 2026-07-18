@@ -13,7 +13,8 @@ pub use plan::{
     parse_and_plan, parse_and_plan_named, AddressFamilyPreference, AirtimeLimitCentiPercent,
     AutoInterfaceDataPort, AutoInterfaceDevicePolicy, AutoInterfaceDiscoveryPort,
     AutoInterfaceDiscoveryScope, AutoInterfaceGroupId, AutoInterfaceMulticastAddressType,
-    AutoInterfacePlan, ConfiguredInterfaceLifecycle, ConnectTimeoutSeconds, DaemonPlan,
+    AutoInterfacePlan, BlackholeExchangePlan, BlackholePublicationPlan, BlackholeSources,
+    BlackholeUpdateInterval, ConfiguredInterfaceLifecycle, ConnectTimeoutSeconds, DaemonPlan,
     DiscoveryAdvertisementPlan, DiscoveryAnnouncementPlan, DiscoveryEncryption,
     DiscoveryIfacPublication, DiscoveryLocationPlan, DiscoveryPublicationProblem, I2pPeerPlan,
     I2pPeersPlan, I2pReachabilityPlan, InterfaceAccessPlan, InterfaceDiscoveryPlan, LogLevel,
@@ -25,6 +26,7 @@ pub use plan::{
     UdpFlowPlan,
 };
 pub use reference::{
-    RNodeRadio, RNodeSubinterface, ReferenceConfig, ReferenceDiscoveryConfig, ReferenceInterface,
-    ReferenceInterfaceDiscovery, ReferenceMode, ReferenceParams, ReferenceValue,
+    RNodeRadio, RNodeSubinterface, ReferenceBlackholeExchange, ReferenceConfig,
+    ReferenceDiscoveryConfig, ReferenceInterface, ReferenceInterfaceDiscovery, ReferenceMode,
+    ReferenceParams, ReferenceValue,
 };

@@ -31,6 +31,7 @@ async fn a_modern_sha256_client_completes_the_mutual_auth_and_gets_a_reply() {
         let _ = serve_connection(
             server,
             test_credentials(rpc_key),
+            TEST_TRANSPORT_IDENTITY_HASH,
             query.clone(),
             query,
             server_telemetry,
@@ -78,6 +79,7 @@ async fn malformed_msgpack_is_a_protocol_failure_before_dispatch() {
         serve_connection(
             server,
             test_credentials(rpc_key),
+            TEST_TRANSPORT_IDENTITY_HASH,
             query.clone(),
             query,
             server_telemetry,
@@ -119,6 +121,7 @@ async fn a_legacy_md5_client_without_a_digest_prefix_still_authenticates() {
         let _ = serve_connection(
             server,
             test_credentials(rpc_key),
+            TEST_TRANSPORT_IDENTITY_HASH,
             query.clone(),
             query,
             server_telemetry,

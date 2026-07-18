@@ -1373,7 +1373,8 @@ fn accepted_for_key(key: &str, kind: ValueKind) -> String {
     match kind {
         ValueKind::RnodeMultiVport
         | ValueKind::RnodeMultiFrequency
-        | ValueKind::RnodeMultiTxPower => return kind.accepted().to_string(),
+        | ValueKind::RnodeMultiTxPower
+        | ValueKind::BlackholeUpdateInterval => return kind.accepted().to_string(),
         _ => {}
     }
     match key {
@@ -1461,7 +1462,8 @@ pub(super) fn example_for_key(key: &str, kind: ValueKind) -> &'static str {
     match kind {
         ValueKind::RnodeMultiVport
         | ValueKind::RnodeMultiFrequency
-        | ValueKind::RnodeMultiTxPower => return kind.example(),
+        | ValueKind::RnodeMultiTxPower
+        | ValueKind::BlackholeUpdateInterval => return kind.example(),
         _ => {}
     }
     match key {
@@ -1583,6 +1585,10 @@ fn semantic_value_is_valid(key: &str, value: &Value, kind: ValueKind) -> bool {
         interface_key::ANNOUNCE_RATE_GRACE => {
             parse_integer::<u64>(text).is_ok_and(|value| value <= u64::from(u16::MAX))
         }
+        global_key::BLACKHOLE_UPDATE_INTERVAL => parse_float(text).is_ok_and(|minutes| {
+            minutes.is_finite()
+                && std::time::Duration::try_from_secs_f64(minutes.max(2.0) * 60.0).is_ok()
+        }),
         _ => true,
     }
 }
@@ -1682,6 +1688,15 @@ fn normalized_value(value: &Value, kind: ValueKind) -> Result<String, ()> {
         ValueKind::RnodeMultiVport => parse_integer::<u8>(text)?.to_string(),
         ValueKind::RnodeMultiFrequency => parse_integer::<u64>(text)?.to_string(),
         ValueKind::RnodeMultiTxPower => parse_integer::<i16>(text)?.to_string(),
+        ValueKind::BlackholeUpdateInterval => {
+            let minutes = parse_float(text)?;
+            if !minutes.is_finite()
+                || std::time::Duration::try_from_secs_f64(minutes.max(2.0) * 60.0).is_err()
+            {
+                return Err(());
+            }
+            minutes.to_string()
+        }
     };
     Ok(normalized)
 }

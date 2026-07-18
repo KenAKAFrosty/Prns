@@ -16,7 +16,7 @@ use personal_rns::runtime::{
     RequestHandlerRegistration,
 };
 use personal_rns::shared_instance::{
-    join_shared_instance, InstancePorts, JoinError, OnExisting, RnsLocalBlackholeFile, Role,
+    join_shared_instance, InstancePorts, JoinError, OnExisting, RnsBlackholeFiles, Role,
     SharedInstanceCredentials, SharedInstanceIntent,
 };
 use personal_rns::storage::GrowableHeap;
@@ -57,11 +57,12 @@ fn identity_dir(tag: u16) -> std::path::PathBuf {
 
 fn instance(bus: u16, on_existing: OnExisting) -> SharedInstanceIntent {
     let identity_dir = identity_dir(bus);
+    let credentials =
+        SharedInstanceCredentials::from_identity_secret(&[0xA1; IDENTITY_SECRET_KEY_LEN]);
     SharedInstanceIntent {
-        credentials: SharedInstanceCredentials::from_identity_secret(
-            &[0xA1; IDENTITY_SECRET_KEY_LEN],
-        ),
-        blackhole_file: RnsLocalBlackholeFile::new(identity_dir.join("storage/blackhole")),
+        blackhole_source: credentials.transport_identity_hash,
+        credentials,
+        blackhole_files: RnsBlackholeFiles::new(identity_dir.join("storage/blackhole")),
         ports: InstancePorts {
             bus,
             control: bus + 1,

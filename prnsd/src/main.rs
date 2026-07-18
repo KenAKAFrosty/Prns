@@ -12,6 +12,7 @@
 // glue around the engine; syscalls go through tokio/std, so no `unsafe`.
 #![forbid(unsafe_code)]
 
+mod blackhole_exchange;
 mod cli;
 mod construct;
 mod identity;
@@ -23,6 +24,7 @@ mod observability;
 mod persist;
 mod probe_responder;
 mod remote_management;
+mod request_services;
 mod splash;
 mod startup_progress;
 
@@ -46,7 +48,7 @@ use personal_rns::runtime::{
     boot_timeline_origin, Diagnostic, Manual, PrnsEvent, PrnsNode, PrnsNodeRecipe,
 };
 use personal_rns::shared_instance::{
-    join_shared_instance, InstancePorts, JoinError, OnExisting, RnsLocalBlackholeFile, Role,
+    join_shared_instance, InstancePorts, JoinError, OnExisting, RnsBlackholeFiles, Role,
     SharedInstanceCredentials, SharedInstanceEndpoint, SharedInstanceIntent,
     SharedInstanceTransport as RuntimeSharedInstanceTransport,
 };
@@ -373,7 +375,7 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
     {
         shared_instance_credentials = shared_instance_credentials.with_rpc_key(rpc_key.clone());
     }
-    let blackhole_file = RnsLocalBlackholeFile::new(storage_dir.join("blackhole"));
+    let blackhole_files = RnsBlackholeFiles::new(storage_dir.join("blackhole"));
     let routing_enabled = plan.transport.routing_enabled();
     let visible_secret = match plan.transport.identity_policy() {
         TransportIdentityPolicy::Persistent => persistent_secret.clone(),
@@ -424,22 +426,26 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
         )
         .unzip();
     let remote_management_transport =
-        routing_enabled.then_some(remote_management::TransportStatusIdentity {
+        routing_enabled.then_some(request_services::TransportStatusIdentity {
             transport: visible_identity_hash,
             network: network_identity_hash,
         });
     let mut prns = PrnsNode::new_with_handle(move |handle| PrnsNodeRecipe {
         transport_identity: transport_secret,
         pre_configured_destinations: std::iter::empty(),
-        app_state: remote_management::RemoteManagementState::new(
+        app_state: request_services::DaemonRequestState::new(
             handle,
             remote_management_transport,
             started,
         ),
         storage: GrowableHeap,
-        routes: routes![remote_management::StatusRoute, remote_management::PathRoute],
+        routes: routes![
+            remote_management::StatusRoute,
+            remote_management::PathRoute,
+            blackhole_exchange::ListRoute
+        ],
         interfaces: Manual,
-        on_event: move |event, _state: &remote_management::RemoteManagementState| {
+        on_event: move |event, _state: &request_services::DaemonRequestState| {
             if let PrnsEvent::Diagnostic(Diagnostic::SelfRatchetRotated { destination }) = event {
                 let _ = rotated_tx.send(destination);
             }
@@ -520,7 +526,8 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
                 &prns_handle,
                 SharedInstanceIntent {
                     credentials: shared_instance_credentials.clone(),
-                    blackhole_file: blackhole_file.clone(),
+                    blackhole_source: visible_identity_hash,
+                    blackhole_files: blackhole_files.clone(),
                     ports,
                     transport: runtime_transport,
                     policy: shared_policy,
@@ -627,6 +634,25 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
                 }
             }
         }
+        if plan.blackhole_exchange.publication().is_enabled() {
+            match blackhole_exchange::activate(&mut prns, visible_secret.clone()) {
+                Ok(destination) => {
+                    management_destinations.push(destination);
+                    tracing::info!(
+                        event = "blackhole_publisher_enabled",
+                        destination = ?destination.as_bytes(),
+                    );
+                }
+                Err(error) => {
+                    tracing::error!(
+                        event = "blackhole_publisher_start_failed",
+                        error = ?error,
+                    );
+                    observability.shutdown().await;
+                    process::exit(1);
+                }
+            }
+        }
     }
 
     if plan.panic_on_interface_error && startup.failed != 0 {
@@ -642,16 +668,25 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
     if owns_tables {
         let mut restore_progress = observability.state_restore_progress();
         let vault = FileVault::new(&persist_dir);
-        let blackholes = match blackhole_file.load(
-            shared_instance_credentials.transport_identity_hash,
-            timeline_origin,
-        ) {
-            Ok(entries) => prns.seed_blackholed_identities(entries),
-            Err(error) => {
-                tracing::warn!(event = "blackhole_restore_failed", error = %error);
-                Default::default()
+        let mut restored_blackholes =
+            match blackhole_files.load_local(visible_identity_hash, timeline_origin) {
+                Ok(entries) => entries,
+                Err(error) => {
+                    tracing::warn!(event = "blackhole_restore_failed", error = %error);
+                    Vec::new()
+                }
+            };
+        for source in plan.blackhole_exchange.sources() {
+            match blackhole_files.load_source(*source, timeline_origin) {
+                Ok(entries) => restored_blackholes.extend(entries),
+                Err(error) => tracing::warn!(
+                    event = "blackhole_source_restore_failed",
+                    source = ?source.as_bytes(),
+                    error = %error,
+                ),
             }
-        };
+        }
+        let blackholes = prns.seed_blackholed_identities(restored_blackholes);
         let routes = match restore_progress.as_mut() {
             Some(progress) => prns.seed_routes_from_store_reporting(&store, |route_progress| {
                 progress.observe(route_progress);
@@ -742,6 +777,16 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
     };
     let management_announce_task =
         management_announces::spawn(prns_handle.clone(), management_destinations);
+    let blackhole_update_task = if owns_tables {
+        blackhole_exchange::spawn_updater(
+            prns_handle.clone(),
+            prns.clock(),
+            blackhole_files,
+            &plan.blackhole_exchange,
+        )
+    } else {
+        None
+    };
     #[cfg(feature = "otlp")]
     let metrics_task = observability.metrics_reporter().map(|reporter| {
         let runtime_up = reporter.runtime_up_handle();
@@ -795,6 +840,9 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
         }
     }
     if let Some(task) = management_announce_task {
+        task.shutdown().await;
+    }
+    if let Some(task) = blackhole_update_task {
         task.shutdown().await;
     }
     #[cfg(feature = "otlp")]

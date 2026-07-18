@@ -54,6 +54,15 @@ requests and proves every successfully delivered probe packet. Shared-instance c
 responder. Management destinations announce after 15 seconds and every two hours thereafter,
 matching the stock transport lifecycle.
 
+Set `publish_blackhole = Yes` to expose the stock `rnstransport.info.blackhole` destination and
+its public `/list` handler. `blackhole_sources` accepts comma-separated 32-character identity
+hashes; only a standalone daemon or the shared-instance winner imports those sources. The updater
+waits 20 seconds before its first pass, retries unavailable paths every minute, and uses
+`blackhole_update_interval` in minutes (60 by default; values below 2 select stock's two-minute
+minimum). Imported lists are persisted under `storage/blackhole/<source identity>`, reloaded in
+configured order after the local list, and included in this daemon's own published aggregate.
+Shared-instance clients neither publish nor import.
+
 ## Common interface behavior
 
 Every enabled interface applies `mode`, `outgoing`, `bitrate`, announce cap and rate controls, IFAC
@@ -134,7 +143,6 @@ Recognized settings that belong to planned follow-on work emit `unsupported_sett
 their exact source lines. They are never silently ignored:
 
 - `ignore_config_warnings` is not honored; Prnsd always reports configuration problems.
-- Probe responses and network blackhole exchange remain separate daemon services.
 
 Role-inapplicable Backbone settings also warn instead of disappearing. Listener stanzas do not use
 client-only `target_port`, `i2p_tunneled`, `connect_timeout`, or `max_reconnect_tries`; client stanzas

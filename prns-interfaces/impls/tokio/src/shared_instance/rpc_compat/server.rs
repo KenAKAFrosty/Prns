@@ -22,6 +22,7 @@ use super::telemetry::RpcTelemetry;
 /// Answers the RNS shared-instance control RPC for stock clients, with the minimal replies that keep attachment delivery from faulting. Stand one up beside a [`LocalServer`](crate::shared_instance::server::LocalServer) and drive it with [`run`](Self::run).
 pub struct SharedInstanceRpcCompat<Q, B = Q> {
     credentials: SharedInstanceCredentials,
+    pub(super) blackhole_source: prns_core::identity::IdentityHash,
     pub(super) bind: RpcBind,
     query: Q,
     blackholes: B,
@@ -49,8 +50,10 @@ where
     /// Answer on a loopback TCP port — RNS's `instance_control_port` (default 37428's sibling 37429), or whatever a client configured. `rpc_key` MUST equal the clients' key: RNS's `full_hash` of the shared transport identity's private key, or a value both sides set as `rpc_key` in config. `query` is the node handle the shim reads engine state through to answer each verb.
     #[must_use]
     pub fn tcp(credentials: SharedInstanceCredentials, port: u16, query: Q) -> Self {
+        let blackhole_source = credentials.transport_identity_hash;
         Self {
             credentials,
+            blackhole_source,
             bind: RpcBind::Tcp(std::format!("127.0.0.1:{port}")),
             blackholes: query.clone(),
             query,
@@ -66,8 +69,10 @@ where
         socket_path: impl Into<String>,
         query: Q,
     ) -> Self {
+        let blackhole_source = credentials.transport_identity_hash;
         Self {
             credentials,
+            blackhole_source,
             bind: RpcBind::Abstract(socket_path.into()),
             blackholes: query.clone(),
             query,
@@ -90,12 +95,14 @@ where
     #[must_use]
     pub fn tcp_with_blackholes(
         credentials: SharedInstanceCredentials,
+        blackhole_source: prns_core::identity::IdentityHash,
         port: u16,
         query: Q,
         blackholes: B,
     ) -> Self {
         Self {
             credentials,
+            blackhole_source,
             bind: RpcBind::Tcp(std::format!("127.0.0.1:{port}")),
             query,
             blackholes,
@@ -107,12 +114,14 @@ where
     #[must_use]
     pub fn abstract_unix_with_blackholes(
         credentials: SharedInstanceCredentials,
+        blackhole_source: prns_core::identity::IdentityHash,
         socket_path: impl Into<String>,
         query: Q,
         blackholes: B,
     ) -> Self {
         Self {
             credentials,
+            blackhole_source,
             bind: RpcBind::Abstract(socket_path.into()),
             query,
             blackholes,
@@ -143,13 +152,20 @@ where
                 loop {
                     if let Ok((stream, _)) = listener.accept().await {
                         let credentials = self.credentials.clone();
+                        let blackhole_source = self.blackhole_source;
                         let query = self.query.clone();
                         let blackholes = self.blackholes.clone();
                         let telemetry = self.telemetry.clone();
                         tokio::spawn(async move {
-                            let _ =
-                                serve_connection(stream, credentials, query, blackholes, telemetry)
-                                    .await;
+                            let _ = serve_connection(
+                                stream,
+                                credentials,
+                                blackhole_source,
+                                query,
+                                blackholes,
+                                telemetry,
+                            )
+                            .await;
                         });
                     }
                 }
@@ -162,13 +178,20 @@ where
                 loop {
                     if let Ok((stream, _)) = listener.accept().await {
                         let credentials = self.credentials.clone();
+                        let blackhole_source = self.blackhole_source;
                         let query = self.query.clone();
                         let blackholes = self.blackholes.clone();
                         let telemetry = self.telemetry.clone();
                         tokio::spawn(async move {
-                            let _ =
-                                serve_connection(stream, credentials, query, blackholes, telemetry)
-                                    .await;
+                            let _ = serve_connection(
+                                stream,
+                                credentials,
+                                blackhole_source,
+                                query,
+                                blackholes,
+                                telemetry,
+                            )
+                            .await;
                         });
                     }
                 }
@@ -191,6 +214,7 @@ pub(super) fn bind_abstract_rpc(socket_path: &str) -> Option<UnixListener> {
 pub(super) async fn serve_connection<S, Q, B>(
     mut stream: S,
     credentials: SharedInstanceCredentials,
+    blackhole_source: prns_core::identity::IdentityHash,
     query: Q,
     blackholes: B,
     telemetry: RpcTelemetry,
@@ -256,7 +280,7 @@ where
         &query,
         &query,
         &blackholes,
-        credentials.transport_identity_hash,
+        blackhole_source,
     )
     .await?;
     if let Err(err) = write_frame(&mut stream, &reply).await {
