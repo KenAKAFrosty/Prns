@@ -20,8 +20,8 @@ pub use interface::{
     UdpFlowPlan,
 };
 pub use node::{
-    parse_and_plan, parse_and_plan_named, DaemonPlan, LogLevel, LoggingPlan, ProtocolPlan,
-    RemoteManagementAccessControlList, RemoteManagementPlan, SharedInstance,
+    parse_and_plan, parse_and_plan_named, DaemonPlan, LogLevel, LoggingPlan, ProbeResponderPlan,
+    ProtocolPlan, RemoteManagementAccessControlList, RemoteManagementPlan, SharedInstance,
     SharedInstanceTransport, TransportIdentityPolicy, TransportPlan,
 };
 pub use rnode_multi::{RNodeMultiDevicePlan, RNodeMultiMemberPlan};

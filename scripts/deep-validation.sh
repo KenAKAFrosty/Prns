@@ -74,6 +74,12 @@ if [ "${run_interop}" = "1" ]; then
   step "RNS 1.3.8 shared-instance msgpack RPC oracle"
   bash scripts/local-rpc-interop-smoke.sh
 
+  step "RNS 1.3.8 remote-management oracle"
+  bash scripts/remote-management-interop-smoke.sh
+
+  step "RNS 1.3.8 probe-responder oracle"
+  bash scripts/probe-responder-interop-smoke.sh
+
   step "RNS 1.3.5 IFAC TCP resource oracle"
   bash scripts/ifac-tcp-interop-smoke.sh
 fi

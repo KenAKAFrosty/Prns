@@ -23,15 +23,27 @@ use crate::{ConfigDiagnostic, ConfigDiagnosticCode, ConfigErrors, ConfigReport, 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DaemonPlan {
     pub transport: TransportPlan,
-    /// Whether this node hosts a shared instance for local RNS apps (RNS `share_instance`, default on).
     pub shared_instance: SharedInstance,
     pub remote_management: RemoteManagementPlan,
+    pub probe_responder: ProbeResponderPlan,
     pub protocol: ProtocolPlan,
     pub logging: LoggingPlan,
     pub panic_on_interface_error: bool,
     pub network_identity_path: Option<PathBuf>,
     pub discovery: InterfaceDiscoveryPolicy,
     pub interfaces: Vec<PlannedInterface>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProbeResponderPlan {
+    Disabled,
+    Enabled,
+}
+
+impl ProbeResponderPlan {
+    pub const fn is_enabled(self) -> bool {
+        matches!(self, Self::Enabled)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -221,6 +233,11 @@ pub(super) fn build_plan(config: &ReferenceConfig) -> Result<DaemonPlan, Vec<Pla
         transport,
         shared_instance: shared_instance(config),
         remote_management: remote_management(config),
+        probe_responder: if global_bool(&config.globals, global_key::RESPOND_TO_PROBES, false) {
+            ProbeResponderPlan::Enabled
+        } else {
+            ProbeResponderPlan::Disabled
+        },
         protocol: ProtocolPlan {
             randomize_local_hop_count: global_bool(
                 &config.globals,

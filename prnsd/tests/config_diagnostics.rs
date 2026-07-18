@@ -70,7 +70,7 @@ fn recognized_follow_ons_emit_source_located_warnings_before_readiness() {
     let path = directory.0.join("config");
     fs::write(
         &path,
-        "[reticulum]\nshare_instance = No\nenable_remote_management = Yes\nremote_management_allowed = 00112233445566778899aabbccddeeff\nrespond_to_probes = No\n[logging]\nloglevel = 7\n",
+        "[reticulum]\nshare_instance = No\nenable_remote_management = Yes\nremote_management_allowed = 00112233445566778899aabbccddeeff\nrespond_to_probes = No\npublish_blackhole = No\n[logging]\nloglevel = 7\n",
     )
     .unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_prnsd"))
@@ -133,7 +133,7 @@ fn recognized_follow_ons_emit_source_located_warnings_before_readiness() {
         "missing config path in daemon output:\n{rendered}"
     );
     assert!(
-        rendered.contains("respond_to_probes"),
+        rendered.contains("publish_blackhole"),
         "missing setting name in daemon output:\n{rendered}"
     );
     assert!(
@@ -144,7 +144,8 @@ fn recognized_follow_ons_emit_source_located_warnings_before_readiness() {
         !rendered.lines().any(|line| {
             line.contains("\"event\":\"config_warning\"")
                 && (line.contains("enable_remote_management")
-                    || line.contains("remote_management_allowed"))
+                    || line.contains("remote_management_allowed")
+                    || line.contains("respond_to_probes"))
         }),
         "applied remote-management settings still warned as unsupported:\n{rendered}"
     );
@@ -152,6 +153,73 @@ fn recognized_follow_ons_emit_source_located_warnings_before_readiness() {
         rendered.contains("\"event\":\"daemon_ready\""),
         "missing readiness in daemon output:\n{rendered}"
     );
+}
+
+#[test]
+fn probe_responder_activates_before_readiness_without_a_follow_on_warning() {
+    let directory = TestDirectory::new();
+    fs::write(
+        directory.0.join("config"),
+        "[reticulum]\nshare_instance = No\nrespond_to_probes = Yes\n[logging]\nloglevel = 7\n",
+    )
+    .unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_prnsd"))
+        .args([
+            "run",
+            "--log-format",
+            "json",
+            "--config",
+            directory.0.to_str().unwrap(),
+        ])
+        .env_remove("RUST_LOG")
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let stderr = child.stderr.take().unwrap();
+    let (line_sender, line_receiver) = std::sync::mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        for line in std::io::BufReader::new(stderr)
+            .lines()
+            .map_while(Result::ok)
+        {
+            if line_sender.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let mut lines = Vec::new();
+    loop {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        match line_receiver.recv_timeout(remaining) {
+            Ok(line) => {
+                let ready = line.contains("\"event\":\"daemon_ready\"");
+                lines.push(line);
+                if ready {
+                    break;
+                }
+            }
+            Err(
+                std::sync::mpsc::RecvTimeoutError::Timeout
+                | std::sync::mpsc::RecvTimeoutError::Disconnected,
+            ) => break,
+        }
+    }
+    let _ = child.kill();
+    child.wait().unwrap();
+    reader.join().unwrap();
+    let rendered = lines.join("\n");
+    let activated = rendered
+        .find("\"event\":\"probe_responder_enabled\"")
+        .expect("probe responder activates");
+    let ready = rendered
+        .find("\"event\":\"daemon_ready\"")
+        .expect("daemon becomes ready");
+    assert!(activated < ready);
+    assert!(!rendered.lines().any(|line| {
+        line.contains("\"event\":\"config_warning\"") && line.contains("respond_to_probes")
+    }));
 }
 
 #[test]

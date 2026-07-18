@@ -155,7 +155,7 @@ pub(super) const GLOBAL_RULES: &[(&str, KeyRule)] = &[
         global_key::REMOTE_MANAGEMENT_ALLOWED,
         Applied(ValueKind::IdentityHashes),
     ),
-    (global_key::RESPOND_TO_PROBES, FollowOn(ValueKind::Bool)),
+    (global_key::RESPOND_TO_PROBES, Applied(ValueKind::Bool)),
     (
         global_key::FORCE_SHARED_INSTANCE_BITRATE,
         Applied(ValueKind::Bitrate),
@@ -538,11 +538,20 @@ mod tests {
 
     #[test]
     fn application_status_is_attached_to_the_authoritative_key_rule() {
-        let global_follow_on = GLOBAL_RULES
-            .iter()
-            .find(|(key, _)| *key == global_key::RESPOND_TO_PROBES)
-            .map(|(_, rule)| rule.application());
-        assert_eq!(global_follow_on, Some(KeyApplication::FollowOn));
+        let global_application = |selected| {
+            GLOBAL_RULES
+                .iter()
+                .find(|(key, _)| *key == selected)
+                .map(|(_, rule)| rule.application())
+        };
+        assert_eq!(
+            global_application(global_key::RESPOND_TO_PROBES),
+            Some(KeyApplication::Applied)
+        );
+        assert_eq!(
+            global_application(global_key::PUBLISH_BLACKHOLE),
+            Some(KeyApplication::FollowOn)
+        );
         assert_eq!(
             interface_key_rule("AutoInterface", interface_key::DISCOVERY_PORT)
                 .map(KeyRule::application),
