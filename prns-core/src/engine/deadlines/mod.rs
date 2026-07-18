@@ -6,9 +6,8 @@ use crate::engine::settlement::{settle, timeout_settlement};
 #[cfg(feature = "runtime-metrics")]
 use crate::engine::AnnounceOrigin;
 use crate::engine::{
-    write_path_request_wire_packet, Directive, EngineReaction, EngineState, EstablishLinkFailure,
-    FanTarget, InstantMillis, Journaled, LinkClosedReason, ReemitAnnounce, RequestPathFailure,
-    Settlement, WakeSchedules,
+    Directive, EngineReaction, EngineState, EstablishLinkFailure, FanTarget, InstantMillis,
+    Journaled, LinkClosedReason, ReemitAnnounce, RequestPathFailure, Settlement, WakeSchedules,
 };
 use crate::identity::ENCRYPTION_IV_LEN;
 use crate::interfaces::{AttachedInterfaces, Egress};
@@ -17,6 +16,7 @@ use crate::routing::announce::defaults::{MAX_OUR_EMISSIONS, REBROADCAST_RETRANSM
 use crate::routing::announce::schedule::ScheduledAnnounceQueue as _;
 use crate::routing::links::maintenance::{write_keepalive, KEEPALIVE_REQUEST};
 use crate::routing::links::table::OverdueLink;
+use crate::routing::path_requests::write_path_request_wire_packet;
 use crate::routing::warmth::WarmestOf;
 use crate::routing::RouteResponsiveness;
 use crate::storage::{DirtyInterfaceSet, StorageLayout};

@@ -1,4 +1,3 @@
-use crate::engine::{write_path_request_wire_packet, EgressSerializeError};
 use crate::engine::{CommandId, RequestPath};
 use crate::engine::{EngineState, InstantMillis};
 use crate::routing::path_requests::pending::{
@@ -6,7 +5,9 @@ use crate::routing::path_requests::pending::{
     PATH_REQUEST_TIMEOUT_MS,
 };
 use crate::storage::StorageLayout;
-use crate::wire::DestinationHash;
+use crate::wire::{DestinationHash, WireError};
+
+use super::write_path_request_wire_packet;
 
 #[must_use]
 pub enum PathRequestWriteOutcome {
@@ -14,7 +15,7 @@ pub enum PathRequestWriteOutcome {
         wire_len: usize,
         culled: Option<CulledPathRequest>,
     },
-    SerializeFailed(EgressSerializeError),
+    SerializeFailed(WireError),
 }
 
 impl<S: StorageLayout> EngineState<S> {

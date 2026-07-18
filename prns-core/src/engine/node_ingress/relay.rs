@@ -1,10 +1,10 @@
 #[cfg(feature = "runtime-metrics")]
 use crate::engine::AnnounceOrigin;
 use crate::engine::{
-    write_path_request_wire_packet, Directive, EngineReaction, EngineState, InstantMillis,
-    PathRequestIdBytes, ReemitAnnounce,
+    Directive, EngineReaction, EngineState, InstantMillis, PathRequestIdBytes, ReemitAnnounce,
 };
 use crate::interfaces::{AttachedInterfaces, InterfaceId, InterfaceKind};
+use crate::routing::path_requests::write_path_request_wire_packet;
 use crate::storage::StorageLayout;
 use crate::wire::{DestinationHash, BROADCAST_MTU};
 

@@ -957,9 +957,9 @@ fn an_unproved_transported_link_to_a_neighbor_marks_the_route_unresponsive() {
 
 #[test]
 fn an_unproved_neighbor_link_fires_a_path_request_away_from_the_received_lane() {
-    use crate::engine::PATH_REQUEST_DESTINATION;
     use crate::routing::links::transported::TransportedLink;
     use crate::routing::links::LinkId;
+    use crate::routing::path_requests::PATH_REQUEST_DESTINATION;
 
     let received = InterfaceId::new([0xA1; 8]);
     let away = InterfaceId::new([0xB2; 8]);

@@ -9,13 +9,14 @@ use super::outcome::{
     NON_TRANSPORTED_DATA_MAX_RECEIVED_HOPS,
 };
 use super::upstream_delivery::UpstreamDeliveryOutcome;
-use crate::engine::{EngineState, InstantMillis, PATH_REQUEST_DESTINATION};
+use crate::engine::{EngineState, InstantMillis};
 use crate::interfaces::{AttachedInterfaces, InterfaceCommonPolicy, InterfaceId, InterfaceKind};
 use crate::routing::announce::held::HoldOutcome;
 use crate::routing::announce::AnnounceArrival;
 use crate::routing::dedup::{PacketHashHistory, RememberPacketOutcome};
 use crate::routing::links::resources::send::ResourceProofClassification;
 use crate::routing::links::LinkId;
+use crate::routing::path_requests::PATH_REQUEST_DESTINATION;
 use crate::routing::proof::ProofIngest;
 use crate::routing::tunnel::{
     parse_synthesize_payload, TunnelTransition, TUNNEL_SYNTHESIZE_DESTINATION, TUNNEL_TIMEOUT_MS,

@@ -1,6 +1,5 @@
-use crate::engine::EgressSerializeError;
 use crate::units::HopCount;
-use crate::wire::{DestinationHash, TRUNCATED_HASH_BYTE_LEN};
+use crate::wire::{DestinationHash, WireError, TRUNCATED_HASH_BYTE_LEN};
 
 use super::{EngineCommand, Settleable, Settlement};
 
@@ -33,7 +32,7 @@ pub struct PathFound {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RequestPathFailure {
-    WriteFailed(EgressSerializeError),
+    WriteFailed(WireError),
     Timeout,
     Culled,
 }
