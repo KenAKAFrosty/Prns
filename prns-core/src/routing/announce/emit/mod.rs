@@ -1,21 +1,19 @@
 use crate::crypto::ratchets::RatchetRotation;
-use crate::engine::{
-    write_announce_wire_packet, write_path_response_announce_wire_packet, EgressSerializeError,
-};
 use crate::engine::{AnnounceAppData, AnnounceNow};
 use crate::engine::{EngineState, InstantMillis};
 use crate::identity::held::{HeldIdentities, HeldIdentityRef, HeldIdentityTable};
 use crate::identity::IdentitySigner;
 use crate::routing::announce::ANNOUNCE_FIXED_FIELDS_LEN;
 use crate::routing::announce::{
-    Announce, AnnounceBuildError, AnnounceEntropy, AnnounceId, DottedNameHash, RatchetKey,
+    write_announce_wire_packet, write_path_response_announce_wire_packet, Announce,
+    AnnounceBuildError, AnnounceEntropy, AnnounceId, DottedNameHash, RatchetKey,
 };
 use crate::routing::upstream_app_destinations::UpstreamAppDestinationKind;
 use crate::routing::upstream_app_destinations::{
     UpstreamAppDestinationTable, UpstreamAppDestinations,
 };
 use crate::storage::StorageLayout;
-use crate::wire::{DestinationHash, BROADCAST_MDU, RATCHET_BYTE_LEN};
+use crate::wire::{DestinationHash, WireError, BROADCAST_MDU, RATCHET_BYTE_LEN};
 use heapless::Vec as HeaplessVec;
 
 /// The wire maximum for our own announce's app data: the packet budget [`BROADCAST_MDU`] (worst-case header and minimum IFAC reserved, so a relayed copy still fits) minus the announce's fixed fields.
@@ -34,7 +32,7 @@ pub enum AnnounceRejection {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnnounceWriteError {
     Build(AnnounceBuildError),
-    Serialize(EgressSerializeError),
+    Serialize(WireError),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -36,14 +36,17 @@ cfg_if::cfg_if! {
     }
 }
 
+pub use crate::routing::announce::{
+    write_announce_wire_packet, write_path_response_announce_wire_packet,
+    write_relayed_path_response_wire_packet, write_retransmitted_announce_wire_packet,
+};
 pub use crate::routing::RouteRemovalCause;
+pub use crate::wire::WireError as EgressSerializeError;
 pub use commands::*;
 pub use introspection::{AnnounceRateState, RouteSnapshot};
 pub use node_egress::{
-    write_announce_wire_packet, write_explicit_proof_wire_packet, write_implicit_proof_wire_packet,
-    write_link_proof_wire_packet, write_path_request_wire_packet,
-    write_path_response_announce_wire_packet, write_relayed_path_response_wire_packet,
-    write_retransmitted_announce_wire_packet, EgressSerializeError, ReemitAnnounce,
+    write_explicit_proof_wire_packet, write_implicit_proof_wire_packet,
+    write_link_proof_wire_packet, write_path_request_wire_packet, ReemitAnnounce,
     PATH_REQUEST_DESTINATION, PATH_REQUEST_PAYLOAD_LEN,
 };
 pub use node_ingress::IngestIo;

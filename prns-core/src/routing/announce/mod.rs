@@ -7,12 +7,17 @@ mod id;
 pub mod interface_announce_limit;
 pub mod schedule;
 pub mod stored;
+mod wire;
 
 pub use acceptance::{
     determine_acceptance, AcceptReason, AnnounceAcceptanceDecision, AnnounceAcceptanceInput,
     RejectReason,
 };
 pub use id::{AnnounceEntropy, AnnounceId, AnnounceNonce, MonotonicTimebase, ANNOUNCE_ID_WIRE_LEN};
+pub use wire::{
+    write_announce_wire_packet, write_path_response_announce_wire_packet,
+    write_relayed_path_response_wire_packet, write_retransmitted_announce_wire_packet,
+};
 
 use crate::crypto::{ed25519_verify, sha256, Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
 pub use crate::identity::IdentityPublicKeys;
