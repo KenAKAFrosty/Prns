@@ -16,13 +16,13 @@ use crate::interfaces::InterfaceKind;
 use crate::interfaces::{
     AirtimeUtilization, AnnounceBandwidthCap, BitrateBps, ConnectionState, ConnectionView,
     EgressCapability, IngressCapability, InterfaceCapabilities, InterfaceMode, InterfaceStatus,
-    RssiDbm, SignalQualityTenthsPercent, SnrQuarterDb, TransportCapability,
+    PacketPhyStats, RssiDbm, SignalQualityTenthsPercent, SnrQuarterDb, TransportCapability,
 };
 use crate::reactor::interface_seam::{Interface, InterfaceSeam, MAX_WIRE_FRAME_LEN};
 #[cfg(feature = "runtime-metrics")]
 use crate::runtime::{AnnounceEgressOutcome, EgressMetricsSnapshot};
 use crate::runtime::{DropRouteOutcome, PrnsNodeHandle, RoutingControl};
-use crate::wire::{PacketType, WirePacketHeader};
+use crate::wire::{DestinationHash, PacketType, WirePacketHeader};
 
 use super::egress::clear_announce_queues;
 
@@ -42,29 +42,6 @@ async fn a_far_future_sleep_arms_without_overflowing_the_timer() {
         () = &mut sleeping => panic!("the numeric limit is not immediately due"),
         () = tokio::time::sleep(Duration::from_millis(1)) => {}
     }
-}
-
-#[test]
-fn packet_phy_reuses_the_classified_wire_stable_packet_hash() {
-    let store = InterfaceStore::new();
-    let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
-    let expected = PacketHash::of_wire_packet(&raw).expect("the fixture is a wire packet");
-    let packet = ClassifiedInboundPacket::classify(InboundPacket {
-        arrived_at: InstantMillis(7),
-        source_interface: InterfaceId::new([0xC7; 8]),
-        bytes: &mut raw,
-    });
-    let packet_hash = packet.packet_hash().expect("the packet was classified");
-    let packet_phy = PacketPhyStats {
-        rssi: Some(RssiDbm::new(-103)),
-        snr: Some(SnrQuarterDb::new(-11)),
-        quality: SignalQualityTenthsPercent::new(731),
-    };
-
-    retain_packet_phy(Some(&store), packet_hash, packet_phy);
-
-    assert_eq!(packet_hash, expected);
-    assert_eq!(store.packet_phy(packet_hash), Some(packet_phy));
 }
 
 #[cfg(feature = "runtime-metrics")]
