@@ -65,3 +65,26 @@ impl Host for TokioHost {
         getrandom::getrandom(bytes).expect("OS CSPRNG must provide reactor entropy");
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn logical_time_saturates_at_the_numeric_limit() {
+        let host = TokioHost::start_at(InstantMillis(u64::MAX - 5));
+        tokio::time::advance(Duration::from_millis(10)).await;
+        assert_eq!(host.now(), InstantMillis(u64::MAX));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_far_future_sleep_arms_without_overflowing_the_timer() {
+        let host = TokioHost::new();
+        let sleeping = host.sleep_until(InstantMillis(u64::MAX));
+        tokio::pin!(sleeping);
+        tokio::select! {
+            () = &mut sleeping => panic!("the numeric limit is not immediately due"),
+            () = tokio::time::sleep(Duration::from_millis(1)) => {}
+        }
+    }
+}

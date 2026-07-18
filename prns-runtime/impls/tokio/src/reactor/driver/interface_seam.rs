@@ -96,3 +96,62 @@ impl InterfaceSeam for TokioInterfaceSeam {
         }
     }
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::interfaces::{RssiDbm, SignalQualityTenthsPercent, SnrQuarterDb};
+    use crate::reactor::grant_lane::tokio_grant_lane;
+    use tokio::sync::mpsc;
+
+    #[tokio::test]
+    async fn the_seam_signals_a_synthesize_request_carrying_its_interface_id() {
+        let id = InterfaceId::new([0xC7; 8]);
+        let (in_producer, _in_consumer) = tokio_grant_lane(64, 2);
+        let (_out_producer, out_consumer) = tokio_grant_lane(64, 2);
+        let (notify_tx, _notify_rx) = mpsc::unbounded_channel();
+        let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<HostCommand>();
+        let mut seam =
+            TokioInterfaceSeam::new(id, in_producer, notify_tx, out_consumer).with_commands(cmd_tx);
+
+        seam.request_tunnel_synthesis().await;
+
+        let got = cmd_rx
+            .try_recv()
+            .expect("a synthesize request reached the reactor");
+        assert!(matches!(got, HostCommand::SynthesizeTunnel { interface } if interface == id));
+    }
+
+    #[tokio::test]
+    async fn a_seam_without_a_command_channel_drops_the_synthesize_request() {
+        let id = InterfaceId::new([0xC8; 8]);
+        let (in_producer, _in_consumer) = tokio_grant_lane(64, 2);
+        let (_out_producer, out_consumer) = tokio_grant_lane(64, 2);
+        let (notify_tx, _notify_rx) = mpsc::unbounded_channel();
+        let mut seam = TokioInterfaceSeam::new(id, in_producer, notify_tx, out_consumer);
+
+        seam.request_tunnel_synthesis().await;
+    }
+
+    #[tokio::test]
+    async fn packet_phy_crosses_the_tokio_ingress_seam_with_its_frame() {
+        let id = InterfaceId::new([0xC9; 8]);
+        let (in_producer, mut in_consumer) = tokio_grant_lane(64, 2);
+        let (_out_producer, out_consumer) = tokio_grant_lane(64, 2);
+        let (notify_tx, _notify_rx) = mpsc::unbounded_channel();
+        let mut seam = TokioInterfaceSeam::new(id, in_producer, notify_tx, out_consumer);
+        let packet_phy = PacketPhyStats {
+            rssi: Some(RssiDbm::new(-91)),
+            snr: Some(SnrQuarterDb::new(-7)),
+            quality: SignalQualityTenthsPercent::new(812),
+        };
+
+        seam.next_inbound_with_phy(b"observed", packet_phy).await;
+
+        let retained = in_consumer.try_peek().expect("the frame crossed the seam");
+        assert_eq!(
+            (retained.frame(), retained.packet_phy),
+            (b"observed".as_slice(), packet_phy)
+        );
+    }
+}
