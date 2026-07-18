@@ -9,6 +9,11 @@
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use prns_core::engine::InstantMillis;
+#[cfg(feature = "i2p")]
+use prns_core::interfaces::i2p::watchdog::{I2pIdleWatchdog, WATCHDOG_TICK_INTERVAL};
+use prns_core::interfaces::i2p::watchdog::{
+    I2pReadObservation, I2pWatchdogVerdict, HDLC_KEEPALIVE,
+};
 #[cfg(any(feature = "kiss", feature = "ax25", feature = "tcp"))]
 use prns_core::interfaces::kiss_framing::{self, KissScanner};
 #[cfg(any(
@@ -21,6 +26,7 @@ use prns_core::interfaces::kiss_framing::{self, KissScanner};
 ))]
 use prns_core::interfaces::rns_serial_framing::{self, RnsSerialScanner};
 use prns_core::interfaces::{BitrateBps, FrameSink};
+use prns_core::units::DurationMillis;
 use prns_runtime::reactor::airtime::{frame_airtime_us, AirtimeLedger};
 use prns_runtime::reactor::driver::TokioInterfaceStatus;
 use prns_runtime::reactor::interface_seam::InterfaceSeam;
@@ -208,12 +214,79 @@ pub struct WireMeters<'a> {
     pub started: tokio::time::Instant,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct HdlcIdleWatchdog {
-    pub tick: std::time::Duration,
-    pub keepalive_after: std::time::Duration,
-    pub stale_after: std::time::Duration,
-    pub read_timeout: std::time::Duration,
+trait StreamWatchdog {
+    fn observe_read(&mut self, now: InstantMillis) -> I2pReadObservation;
+    fn observe_ordinary_write(&mut self, now: InstantMillis);
+    async fn wait_for_tick(&mut self, started: tokio::time::Instant) -> I2pWatchdogVerdict;
+}
+
+#[cfg(any(
+    feature = "tcp",
+    feature = "serial",
+    feature = "kiss",
+    feature = "ax25",
+    feature = "rnode",
+    feature = "pipe",
+    feature = "shared-instance",
+    feature = "backbone"
+))]
+struct NoIdleWatchdog;
+
+#[cfg(any(
+    feature = "tcp",
+    feature = "serial",
+    feature = "kiss",
+    feature = "ax25",
+    feature = "rnode",
+    feature = "pipe",
+    feature = "shared-instance",
+    feature = "backbone"
+))]
+impl StreamWatchdog for NoIdleWatchdog {
+    fn observe_read(&mut self, _now: InstantMillis) -> I2pReadObservation {
+        I2pReadObservation::Responsive
+    }
+
+    fn observe_ordinary_write(&mut self, _now: InstantMillis) {}
+
+    async fn wait_for_tick(&mut self, _started: tokio::time::Instant) -> I2pWatchdogVerdict {
+        std::future::pending().await
+    }
+}
+
+#[cfg(feature = "i2p")]
+struct I2pStreamWatchdog {
+    state: I2pIdleWatchdog,
+    interval: tokio::time::Interval,
+}
+
+#[cfg(feature = "i2p")]
+impl I2pStreamWatchdog {
+    fn start(now: InstantMillis) -> Self {
+        let mut interval =
+            tokio::time::interval(std::time::Duration::from_millis(WATCHDOG_TICK_INTERVAL.0));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        Self {
+            state: I2pIdleWatchdog::start(now),
+            interval,
+        }
+    }
+}
+
+#[cfg(feature = "i2p")]
+impl StreamWatchdog for I2pStreamWatchdog {
+    fn observe_read(&mut self, now: InstantMillis) -> I2pReadObservation {
+        self.state.observe_read(now)
+    }
+
+    fn observe_ordinary_write(&mut self, now: InstantMillis) {
+        self.state.observe_ordinary_write(now);
+    }
+
+    async fn wait_for_tick(&mut self, started: tokio::time::Instant) -> I2pWatchdogVerdict {
+        self.interval.tick().await;
+        self.state.tick(elapsed_millis(started))
+    }
 }
 
 #[cfg(any(
@@ -236,7 +309,7 @@ pub async fn serve<F, const READ_LEN: usize, const FRAMED_LEN: usize, S, Seam>(
     S: AsyncRead + AsyncWrite + Unpin,
     Seam: InterfaceSeam,
 {
-    serve_inner(stream, buffers, seam, meters, None).await;
+    serve_inner(stream, buffers, seam, meters, NoIdleWatchdog).await;
 }
 
 #[cfg(feature = "i2p")]
@@ -250,24 +323,25 @@ pub(crate) async fn serve_with_hdlc_idle_watchdog<
     buffers: &mut FramedBuffers<HdlcFraming, READ_LEN, FRAMED_LEN>,
     seam: &mut Seam,
     meters: &mut WireMeters<'_>,
-    watchdog: HdlcIdleWatchdog,
 ) where
     S: AsyncRead + AsyncWrite + Unpin,
     Seam: InterfaceSeam,
 {
-    serve_inner(stream, buffers, seam, meters, Some(watchdog)).await;
+    let now = elapsed_millis(meters.started);
+    serve_inner(stream, buffers, seam, meters, I2pStreamWatchdog::start(now)).await;
 }
 
-async fn serve_inner<F, const READ_LEN: usize, const FRAMED_LEN: usize, S, Seam>(
+async fn serve_inner<F, const READ_LEN: usize, const FRAMED_LEN: usize, S, Seam, Watchdog>(
     mut stream: S,
     buffers: &mut FramedBuffers<F, READ_LEN, FRAMED_LEN>,
     seam: &mut Seam,
     meters: &mut WireMeters<'_>,
-    watchdog: Option<HdlcIdleWatchdog>,
+    mut watchdog: Watchdog,
 ) where
     F: Framing,
     S: AsyncRead + AsyncWrite + Unpin,
     Seam: InterfaceSeam,
+    Watchdog: StreamWatchdog,
 {
     let FramedBuffers {
         deframer,
@@ -282,13 +356,6 @@ async fn serve_inner<F, const READ_LEN: usize, const FRAMED_LEN: usize, S, Seam>
         started,
     } = meters;
     let (bitrate, started) = (*bitrate, *started);
-    let mut last_read = tokio::time::Instant::now();
-    let mut last_write = last_read;
-    let mut watchdog_interval = watchdog.map(|policy| {
-        let mut interval = tokio::time::interval(policy.tick);
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        interval
-    });
     deframer.reset();
     let read_buf: &mut [u8] = read_buf;
     let frame_buf: &mut [u8] = frame_buf;
@@ -300,12 +367,14 @@ async fn serve_inner<F, const READ_LEN: usize, const FRAMED_LEN: usize, S, Seam>
                     Ok(0) | Err(_) => return,
                     Ok(read) => read,
                 };
-                last_read = tokio::time::Instant::now();
-                if watchdog.is_some() {
+                let now = elapsed_millis(started);
+                if matches!(
+                    watchdog.observe_read(now),
+                    I2pReadObservation::Recovered
+                ) {
                     status.set_connection(prns_core::interfaces::ConnectionState::Connected);
                 }
                 status.add_rx(read as u64);
-                let now = InstantMillis(started.elapsed().as_millis() as u64);
                 throughput.record_rx(now, read as u64);
                 status.set_transfer_rates(throughput.rates());
                 let mut offset = 0;
@@ -336,7 +405,7 @@ async fn serve_inner<F, const READ_LEN: usize, const FRAMED_LEN: usize, S, Seam>
                     if stream.write_all(&frame_buf[..filled]).await.is_err() {
                         return;
                     }
-                    last_write = tokio::time::Instant::now();
+                    watchdog.observe_ordinary_write(elapsed_millis(started));
                     record_tx_write(filled);
                     filled = F::encode(next, &mut *frame_buf).unwrap_or(0);
                     break;
@@ -345,38 +414,36 @@ async fn serve_inner<F, const READ_LEN: usize, const FRAMED_LEN: usize, S, Seam>
                     if stream.write_all(&frame_buf[..filled]).await.is_err() {
                         return;
                     }
-                    last_write = tokio::time::Instant::now();
+                    watchdog.observe_ordinary_write(elapsed_millis(started));
                     record_tx_write(filled);
                 }
             }
-            () = wait_watchdog_tick(&mut watchdog_interval) => {
-                let Some(policy) = watchdog else {
-                    continue;
-                };
-                let now = tokio::time::Instant::now();
-                if now.duration_since(last_read) > policy.read_timeout {
-                    return;
-                }
-                if now.duration_since(last_read) > policy.stale_after {
-                    status.set_connection(prns_core::interfaces::ConnectionState::Degraded);
-                }
-                if now.duration_since(last_write) > policy.keepalive_after
-                    && stream.write_all(&[0x7e, 0x7e]).await.is_err()
-                {
-                    return;
+            verdict = watchdog.wait_for_tick(started) => {
+                match verdict {
+                    I2pWatchdogVerdict::Continue => {}
+                    I2pWatchdogVerdict::Degrade => {
+                        status.set_connection(prns_core::interfaces::ConnectionState::Degraded);
+                    }
+                    I2pWatchdogVerdict::TransmitKeepalive => {
+                        if stream.write_all(&HDLC_KEEPALIVE).await.is_err() {
+                            return;
+                        }
+                    }
+                    I2pWatchdogVerdict::DegradeAndTransmitKeepalive => {
+                        status.set_connection(prns_core::interfaces::ConnectionState::Degraded);
+                        if stream.write_all(&HDLC_KEEPALIVE).await.is_err() {
+                            return;
+                        }
+                    }
+                    I2pWatchdogVerdict::Disconnect => return,
                 }
             }
         }
     }
 }
 
-async fn wait_watchdog_tick(interval: &mut Option<tokio::time::Interval>) {
-    match interval {
-        Some(interval) => {
-            interval.tick().await;
-        }
-        None => std::future::pending().await,
-    }
+fn elapsed_millis(started: tokio::time::Instant) -> InstantMillis {
+    InstantMillis(DurationMillis::from_duration_saturating(started.elapsed()).0)
 }
 
 #[cfg(all(test, feature = "tcp"))]

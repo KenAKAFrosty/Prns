@@ -1,4 +1,7 @@
-use std::fmt;
+use alloc::format;
+use alloc::string::String;
+use alloc::vec::Vec;
+use core::fmt;
 
 use base64::engine::general_purpose::{GeneralPurpose, GeneralPurposeConfig};
 use base64::{alphabet, Engine as _};
@@ -101,7 +104,7 @@ impl fmt::Display for SamValueError {
     }
 }
 
-impl std::error::Error for SamValueError {}
+impl core::error::Error for SamValueError {}
 
 macro_rules! sam_token {
     ($name:ident) => {
@@ -149,7 +152,7 @@ impl I2pPublicDestination {
 
     pub fn base32_address(&self) -> Result<I2pBase32Address, SamValueError> {
         let decoded = decode_destination(&self.0, I2pDestinationKind::Public)?;
-        let digest = prns_core::crypto::sha256(&decoded);
+        let digest = crate::crypto::sha256(&decoded);
         let label = BASE32_NOPAD.encode(&digest).to_ascii_lowercase();
         I2pBase32Address::new(format!("{label}.b32.i2p"))
     }

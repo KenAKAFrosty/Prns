@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use tokio::io::BufReader;
 use tokio::sync::mpsc;
 
@@ -20,11 +18,6 @@ use super::super::{
 };
 use super::status::{I2pPeerStatus, I2pRuntimeIssue};
 use super::types::{I2pPeerAddress, I2pRetryPolicy};
-
-const WATCHDOG_TICK: Duration = Duration::from_secs(1);
-const KEEPALIVE_AFTER: Duration = Duration::from_secs(10);
-const STALE_AFTER: Duration = Duration::from_secs(20);
-const READ_TIMEOUT: Duration = Duration::from_secs(110);
 
 pub(crate) enum I2pMemberEvent {
     InitialAttempt(InterfaceId),
@@ -190,7 +183,6 @@ where
                     bitrate: self.policy.bitrate,
                     started,
                 },
-                watchdog(),
             )
             .await;
             self.status.set_connection(ConnectionState::Reconnecting);
@@ -288,7 +280,6 @@ where
                 bitrate: self.policy.bitrate,
                 started,
             },
-            watchdog(),
         )
         .await;
         self.status.set_connection(ConnectionState::Disconnected);
@@ -344,15 +335,6 @@ where
     match peer {
         I2pPeerAddress::Named(name) => bridge.resolve_destination(name.clone()).await,
         I2pPeerAddress::Destination(destination) => Ok(destination.clone()),
-    }
-}
-
-fn watchdog() -> framed_stream::HdlcIdleWatchdog {
-    framed_stream::HdlcIdleWatchdog {
-        tick: WATCHDOG_TICK,
-        keepalive_after: KEEPALIVE_AFTER,
-        stale_after: STALE_AFTER,
-        read_timeout: READ_TIMEOUT,
     }
 }
 

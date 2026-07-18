@@ -2,8 +2,8 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 
 use super::sam::{
-    I2pAddress, I2pPrivateDestination, I2pPublicDestination, SamProtocolError, SamRejection,
-    SamReplyKind, SamSessionDestination, SamSessionId,
+    I2pAddress, I2pPrivateDestination, I2pPublicDestination, SamControlError, SamProtocolError,
+    SamRejection, SamReplyKind, SamSessionDestination, SamSessionId,
 };
 use super::*;
 
@@ -77,16 +77,18 @@ fn bridge_addresses_reject_ambiguous_empty_values() {
 
 #[test]
 fn transport_failures_distinguish_peer_reachability_from_sam_availability() {
-    let unreachable = SamBridgeError::Protocol(SamProtocolError::Rejected {
-        kind: SamReplyKind::Stream,
-        rejection: SamRejection::CantReachPeer,
-        message: None,
-    });
-    let invalid_session = SamBridgeError::Protocol(SamProtocolError::Rejected {
-        kind: SamReplyKind::Stream,
-        rejection: SamRejection::InvalidId,
-        message: None,
-    });
+    let unreachable =
+        SamBridgeError::Control(SamControlError::Protocol(SamProtocolError::Rejected {
+            kind: SamReplyKind::Stream,
+            rejection: SamRejection::CantReachPeer,
+            message: None,
+        }));
+    let invalid_session =
+        SamBridgeError::Control(SamControlError::Protocol(SamProtocolError::Rejected {
+            kind: SamReplyKind::Stream,
+            rejection: SamRejection::InvalidId,
+            message: None,
+        }));
 
     assert_eq!(
         unreachable.failure_class(),

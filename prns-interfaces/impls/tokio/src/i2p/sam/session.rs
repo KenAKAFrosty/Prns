@@ -1,17 +1,14 @@
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, BufReader};
 
-use super::command::{SamCommand, SamSessionDestination};
-use super::control::SamControl;
-use super::error::{SamProtocolError, SamStreamError};
-use super::reply::{parse_reply, SamReply, SamReplyKind, SamSessionReplyDestination};
-use super::value::{I2pAddress, I2pPrivateDestination, I2pPublicDestination, SamSessionId};
-use super::MAX_SAM_LINE_BYTES;
+use prns_core::interfaces::i2p::sam::{
+    parse_incoming_peer_destination, AcceptStream, ConnectStream, CreateSession,
+    EstablishedSession, GenerateDestination, I2pAddress, I2pGeneratedDestination,
+    I2pPrivateDestination, I2pPublicDestination, ResolveName, SamSessionDestination, SamSessionId,
+};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct I2pGeneratedDestination {
-    pub public: Option<I2pPublicDestination>,
-    pub private: I2pPrivateDestination,
-}
+use super::control::SamControl;
+use super::error::{SamControlError, SamStreamError};
+use super::MAX_SAM_LINE_BYTES;
 
 pub struct SamSession<ControlStream> {
     control: SamControl<ControlStream>,
@@ -27,34 +24,14 @@ where
         stream: ControlStream,
         id: SamSessionId,
         requested_destination: SamSessionDestination,
-    ) -> Result<Self, SamProtocolError> {
-        let persistent_destination = match &requested_destination {
-            SamSessionDestination::Transient => None,
-            SamSessionDestination::Persistent(destination) => Some(destination.clone()),
-        };
+    ) -> Result<Self, SamControlError> {
         let mut control = SamControl::handshake(stream).await?;
-        let reply = control
-            .request(&SamCommand::SessionCreate {
-                id: id.clone(),
-                destination: requested_destination,
-            })
+        let EstablishedSession {
+            id,
+            private_destination,
+        } = control
+            .exchange(CreateSession::new(id, requested_destination))
             .await?;
-        let returned_destination = match reply {
-            SamReply::SessionCreated { destination } => destination,
-            SamReply::Rejected {
-                kind,
-                rejection,
-                message,
-            } => return Err(rejected(kind, rejection, message)),
-            reply => return Err(unexpected(SamReplyKind::Session, reply)),
-        };
-        let private_destination = match (persistent_destination, returned_destination) {
-            (Some(destination), _) => destination,
-            (None, SamSessionReplyDestination::Returned(destination)) => destination,
-            (None, SamSessionReplyDestination::Omitted) => {
-                return Err(SamProtocolError::MissingTransientSessionDestination)
-            }
-        };
         Ok(Self {
             control,
             id,
@@ -78,26 +55,15 @@ where
         &self,
         stream: Stream,
         destination: I2pPublicDestination,
-    ) -> Result<BufReader<Stream>, SamProtocolError>
+    ) -> Result<BufReader<Stream>, SamControlError>
     where
         Stream: AsyncRead + AsyncWrite + Unpin,
     {
         let mut control = SamControl::handshake(stream).await?;
-        match control
-            .request(&SamCommand::StreamConnect {
-                id: self.id.clone(),
-                destination,
-            })
-            .await?
-        {
-            SamReply::StreamReady => Ok(control.into_stream()),
-            SamReply::Rejected {
-                kind,
-                rejection,
-                message,
-            } => Err(rejected(kind, rejection, message)),
-            reply => Err(unexpected(SamReplyKind::Stream, reply)),
-        }
+        control
+            .exchange(ConnectStream::new(self.id.clone(), destination))
+            .await?;
+        Ok(control.into_stream())
     }
 
     pub async fn accept_stream<Stream>(
@@ -108,20 +74,7 @@ where
         Stream: AsyncRead + AsyncWrite + Unpin,
     {
         let mut control = SamControl::handshake(stream).await?;
-        match control
-            .request(&SamCommand::StreamAccept {
-                id: self.id.clone(),
-            })
-            .await?
-        {
-            SamReply::StreamReady => {}
-            SamReply::Rejected {
-                kind,
-                rejection,
-                message,
-            } => return Err(rejected(kind, rejection, message).into()),
-            reply => return Err(unexpected(SamReplyKind::Stream, reply).into()),
-        }
+        control.exchange(AcceptStream::new(self.id.clone())).await?;
         let mut stream = control.into_stream();
         let peer = read_peer_destination(&mut stream).await?;
         Ok(I2pAcceptedStream { peer, stream })
@@ -135,41 +88,23 @@ pub struct I2pAcceptedStream<Stream> {
 
 pub async fn generate_destination<Stream>(
     stream: Stream,
-) -> Result<I2pGeneratedDestination, SamProtocolError>
+) -> Result<I2pGeneratedDestination, SamControlError>
 where
     Stream: AsyncRead + AsyncWrite + Unpin,
 {
     let mut control = SamControl::handshake(stream).await?;
-    match control.request(&SamCommand::DestinationGenerate).await? {
-        SamReply::DestinationGenerated { public, private } => {
-            Ok(I2pGeneratedDestination { public, private })
-        }
-        SamReply::Rejected {
-            kind,
-            rejection,
-            message,
-        } => Err(rejected(kind, rejection, message)),
-        reply => Err(unexpected(SamReplyKind::Destination, reply)),
-    }
+    control.exchange(GenerateDestination).await
 }
 
 pub async fn resolve_destination<Stream>(
     stream: Stream,
     name: I2pAddress,
-) -> Result<I2pPublicDestination, SamProtocolError>
+) -> Result<I2pPublicDestination, SamControlError>
 where
     Stream: AsyncRead + AsyncWrite + Unpin,
 {
     let mut control = SamControl::handshake(stream).await?;
-    match control.request(&SamCommand::NamingLookup { name }).await? {
-        SamReply::NameResolved { destination } => Ok(destination),
-        SamReply::Rejected {
-            kind,
-            rejection,
-            message,
-        } => Err(rejected(kind, rejection, message)),
-        reply => Err(unexpected(SamReplyKind::Naming, reply)),
-    }
+    control.exchange(ResolveName::new(name)).await
 }
 
 async fn read_peer_destination<Stream>(
@@ -183,7 +118,7 @@ where
         .take(MAX_SAM_LINE_BYTES + 1)
         .read_until(b'\n', &mut bytes)
         .await
-        .map_err(SamProtocolError::from)?;
+        .map_err(SamControlError::from)?;
     if read == 0 {
         return Err(SamStreamError::PeerClosed);
     }
@@ -196,35 +131,5 @@ where
     }
     let line =
         std::str::from_utf8(&bytes).map_err(|_| SamStreamError::PeerDestinationInvalidUtf8)?;
-    if line.starts_with("STREAM STATUS ") {
-        return match parse_reply(line)? {
-            SamReply::Rejected {
-                kind,
-                rejection,
-                message,
-            } => Err(rejected(kind, rejection, message).into()),
-            reply => Err(unexpected(SamReplyKind::Stream, reply).into()),
-        };
-    }
-    I2pPublicDestination::new(line.trim_end_matches(['\r', '\n']))
-        .map_err(SamStreamError::InvalidPeerDestination)
-}
-
-fn rejected(
-    kind: SamReplyKind,
-    rejection: super::reply::SamRejection,
-    message: Option<String>,
-) -> SamProtocolError {
-    SamProtocolError::Rejected {
-        kind,
-        rejection,
-        message,
-    }
-}
-
-fn unexpected(expected: SamReplyKind, reply: SamReply) -> SamProtocolError {
-    SamProtocolError::UnexpectedReply {
-        expected,
-        actual: reply.kind(),
-    }
+    parse_incoming_peer_destination(line).map_err(SamStreamError::PeerIdentification)
 }

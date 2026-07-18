@@ -6,8 +6,8 @@ use tokio::net::TcpStream;
 
 use super::sam::{
     generate_destination, resolve_destination, I2pAcceptedStream, I2pAddress,
-    I2pGeneratedDestination, I2pPrivateDestination, I2pPublicDestination, SamProtocolError,
-    SamSession, SamSessionDestination, SamSessionId, SamStreamError,
+    I2pGeneratedDestination, I2pPrivateDestination, I2pPublicDestination, SamControlError,
+    SamProtocolError, SamSession, SamSessionDestination, SamSessionId, SamStreamError,
 };
 use super::transport::{
     SamBridgeTransport, SamFailureClass, SamSessionTransport, SamTransportError,
@@ -98,7 +98,7 @@ pub enum SamBridgeError {
         address: SamBridgeAddress,
         source: io::Error,
     },
-    Protocol(SamProtocolError),
+    Control(SamControlError),
     Stream(SamStreamError),
 }
 
@@ -111,7 +111,7 @@ impl fmt::Display for SamBridgeError {
                     "could not connect to SAM bridge at {address}; verify I2P is running and its SAM interface is enabled: {source}"
                 )
             }
-            Self::Protocol(error) => write!(formatter, "{error}"),
+            Self::Control(error) => write!(formatter, "{error}"),
             Self::Stream(error) => write!(formatter, "{error}"),
         }
     }
@@ -121,7 +121,7 @@ impl std::error::Error for SamBridgeError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Connect { source, .. } => Some(source),
-            Self::Protocol(error) => Some(error),
+            Self::Control(error) => Some(error),
             Self::Stream(error) => Some(error),
         }
     }
@@ -129,16 +129,14 @@ impl std::error::Error for SamBridgeError {
 
 impl SamTransportError for SamBridgeError {
     fn failure_class(&self) -> SamFailureClass {
-        match self {
-            Self::Protocol(SamProtocolError::Rejected { rejection, .. })
-                if is_peer_reachability_rejection(rejection) =>
-            {
-                SamFailureClass::PeerUnreachable
-            }
-            Self::Connect { .. } | Self::Protocol(_) | Self::Stream(_) => {
-                SamFailureClass::SamUnavailable
-            }
+        if self
+            .protocol_error()
+            .and_then(SamProtocolError::rejection)
+            .is_some_and(is_peer_reachability_rejection)
+        {
+            return SamFailureClass::PeerUnreachable;
         }
+        SamFailureClass::SamUnavailable
     }
 }
 
@@ -152,9 +150,19 @@ fn is_peer_reachability_rejection(rejection: &super::sam::SamRejection) -> bool 
     )
 }
 
-impl From<SamProtocolError> for SamBridgeError {
-    fn from(error: SamProtocolError) -> Self {
-        Self::Protocol(error)
+impl From<SamControlError> for SamBridgeError {
+    fn from(error: SamControlError) -> Self {
+        Self::Control(error)
+    }
+}
+
+impl SamBridgeError {
+    fn protocol_error(&self) -> Option<&SamProtocolError> {
+        match self {
+            Self::Control(error) => error.protocol_error(),
+            Self::Stream(error) => error.protocol_error(),
+            Self::Connect { .. } => None,
+        }
     }
 }
 

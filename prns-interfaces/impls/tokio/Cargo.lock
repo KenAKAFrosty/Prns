@@ -1927,9 +1927,11 @@ name = "prns-core"
 version = "0.2.4"
 dependencies = [
  "aes",
+ "base64",
  "cbc",
  "cfg-if",
  "crc32fast",
+ "data-encoding",
  "ed25519-dalek",
  "embedded-hal",
  "embedded-hal-async",
@@ -1967,7 +1969,6 @@ dependencies = [
  "bluer",
  "btleplug",
  "cfg-if",
- "data-encoding",
  "env_logger",
  "futures-util",
  "getrandom 0.2.17",
@@ -1992,7 +1993,6 @@ dependencies = [
  "tracing",
  "uuid",
  "zbus",
- "zeroize",
 ]
 
 [[package]]

@@ -1,35 +1,19 @@
 use std::fmt;
 use std::io;
 
-use super::reply::{SamRejection, SamReplyKind};
-use super::value::SamValueError;
+use prns_core::interfaces::i2p::sam::SamProtocolError;
 
 #[derive(Debug)]
-pub enum SamProtocolError {
+pub enum SamControlError {
     Io(io::Error),
     EndOfStream,
     TruncatedReply,
     ReplyTooLong,
     InvalidUtf8,
-    MalformedReply(&'static str),
-    InvalidToken {
-        field: &'static str,
-        source: SamValueError,
-    },
-    InvalidVersion(String),
-    MissingTransientSessionDestination,
-    UnexpectedReply {
-        expected: SamReplyKind,
-        actual: SamReplyKind,
-    },
-    Rejected {
-        kind: SamReplyKind,
-        rejection: SamRejection,
-        message: Option<String>,
-    },
+    Protocol(SamProtocolError),
 }
 
-impl fmt::Display for SamProtocolError {
+impl fmt::Display for SamControlError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io(error) => write!(formatter, "SAM I/O failed: {error}"),
@@ -37,52 +21,26 @@ impl fmt::Display for SamProtocolError {
             Self::TruncatedReply => formatter.write_str("SAM bridge closed during a reply"),
             Self::ReplyTooLong => formatter.write_str("SAM reply exceeded the protocol limit"),
             Self::InvalidUtf8 => formatter.write_str("SAM reply was not UTF-8"),
-            Self::MalformedReply(reason) => write!(formatter, "malformed SAM reply: {reason}"),
-            Self::InvalidToken { field, source } => {
-                write!(formatter, "invalid SAM {field} field: {source}")
-            }
-            Self::InvalidVersion(version) => write!(formatter, "invalid SAM version {version:?}"),
-            Self::MissingTransientSessionDestination => {
-                formatter.write_str("SAM bridge omitted the transient session destination")
-            }
-            Self::UnexpectedReply { expected, actual } => {
-                write!(
-                    formatter,
-                    "expected {expected:?} reply, received {actual:?}"
-                )
-            }
-            Self::Rejected {
-                kind,
-                rejection,
-                message,
-            } => {
-                write!(
-                    formatter,
-                    "SAM {kind:?} request was rejected with {rejection:?}"
-                )?;
-                if let Some(message) = message {
-                    write!(formatter, ": {message}")?;
-                }
-                Ok(())
-            }
+            Self::Protocol(error) => write!(formatter, "{error}"),
         }
     }
 }
 
 #[derive(Debug)]
 pub enum SamStreamError {
-    Protocol(SamProtocolError),
+    Control(SamControlError),
+    PeerIdentification(SamProtocolError),
     PeerClosed,
     PeerDestinationTruncated,
     PeerDestinationTooLong,
     PeerDestinationInvalidUtf8,
-    InvalidPeerDestination(SamValueError),
 }
 
 impl fmt::Display for SamStreamError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Protocol(error) => write!(formatter, "{error}"),
+            Self::Control(error) => write!(formatter, "{error}"),
+            Self::PeerIdentification(error) => write!(formatter, "{error}"),
             Self::PeerClosed => {
                 formatter.write_str("SAM bridge closed before identifying the incoming peer")
             }
@@ -95,9 +53,6 @@ impl fmt::Display for SamStreamError {
             Self::PeerDestinationInvalidUtf8 => {
                 formatter.write_str("SAM incoming peer destination was not UTF-8")
             }
-            Self::InvalidPeerDestination(error) => {
-                write!(formatter, "invalid SAM incoming peer destination: {error}")
-            }
         }
     }
 }
@@ -105,31 +60,56 @@ impl fmt::Display for SamStreamError {
 impl std::error::Error for SamStreamError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Protocol(error) => Some(error),
-            Self::InvalidPeerDestination(error) => Some(error),
+            Self::Control(error) => Some(error),
+            Self::PeerIdentification(error) => Some(error),
             _ => None,
         }
     }
 }
 
-impl From<SamProtocolError> for SamStreamError {
+impl From<SamControlError> for SamStreamError {
+    fn from(error: SamControlError) -> Self {
+        Self::Control(error)
+    }
+}
+
+impl std::error::Error for SamControlError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(error) => Some(error),
+            Self::Protocol(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+impl From<io::Error> for SamControlError {
+    fn from(error: io::Error) -> Self {
+        Self::Io(error)
+    }
+}
+
+impl From<SamProtocolError> for SamControlError {
     fn from(error: SamProtocolError) -> Self {
         Self::Protocol(error)
     }
 }
 
-impl std::error::Error for SamProtocolError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+impl SamControlError {
+    pub const fn protocol_error(&self) -> Option<&SamProtocolError> {
         match self {
-            Self::Io(error) => Some(error),
-            Self::InvalidToken { source, .. } => Some(source),
+            Self::Protocol(error) => Some(error),
             _ => None,
         }
     }
 }
 
-impl From<io::Error> for SamProtocolError {
-    fn from(error: io::Error) -> Self {
-        Self::Io(error)
+impl SamStreamError {
+    pub const fn protocol_error(&self) -> Option<&SamProtocolError> {
+        match self {
+            Self::Control(error) => error.protocol_error(),
+            Self::PeerIdentification(error) => Some(error),
+            _ => None,
+        }
     }
 }
