@@ -55,7 +55,7 @@ pub mod interface_discovery;
 mod framed_stream;
 
 #[cfg(any(feature = "kiss", feature = "ax25", feature = "rnode"))]
-pub mod serial_control;
+mod kiss_deadline;
 
 #[cfg(any(feature = "tcp", feature = "i2p"))]
 pub mod tcp;

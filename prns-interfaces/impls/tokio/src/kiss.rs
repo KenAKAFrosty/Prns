@@ -5,12 +5,13 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::framed_stream::WireMeters;
+use crate::kiss_deadline::{elapsed_millis, wait_for_deadline};
 use crate::reconnect::ReconnectDelay;
-use crate::serial_control::{
-    wait_for_deadline, ReadyCommandFlowControl, SerialControl, StationIdentification, Transmission,
-};
 use prns_core::engine::InstantMillis;
 use prns_core::interfaces::kiss::core::{self, TncConfig};
+use prns_core::interfaces::kiss::transmission_control::{
+    KissTransmissionControl, ReadyCommandFlowControl, StationIdentification, Transmission,
+};
 use prns_core::interfaces::kiss_framing;
 use prns_core::interfaces::{
     ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind,
@@ -211,7 +212,7 @@ pub(crate) async fn serve_controlled_kiss<
     stream: &mut S,
     buffers: &mut ControlledKissBuffers<FRAME_CAP, READ_LEN, FRAMED_LEN>,
     seam: &mut Seam,
-    control: &mut SerialControl,
+    control: &mut KissTransmissionControl,
     meters: &mut WireMeters<'_>,
 ) where
     S: AsyncRead + AsyncWrite + Unpin,
@@ -220,7 +221,7 @@ pub(crate) async fn serve_controlled_kiss<
     buffers.decoder.reset();
     control.connection_opened();
     loop {
-        if let Some(transmission) = control.take_queued(tokio::time::Instant::now()) {
+        if let Some(transmission) = control.next_queued(elapsed_millis(meters.started)) {
             if !write_transmission(
                 stream,
                 &mut buffers.frame_buf,
@@ -257,7 +258,7 @@ pub(crate) async fn serve_controlled_kiss<
                             }
                             kiss_framing::CMD_READY => {
                                 if let Some(transmission) =
-                                    control.ready(tokio::time::Instant::now())
+                                    control.ready_received(elapsed_millis(meters.started))
                                 {
                                     if !write_transmission(
                                         stream,
@@ -279,7 +280,7 @@ pub(crate) async fn serve_controlled_kiss<
             }
             outbound = seam.next_outbound() => {
                 if let Some(transmission) =
-                    control.accept_packet(outbound, tokio::time::Instant::now())
+                    control.accept_packet(outbound, elapsed_millis(meters.started))
                 {
                     if !write_transmission(
                         stream,
@@ -294,8 +295,10 @@ pub(crate) async fn serve_controlled_kiss<
                     }
                 }
             }
-            () = wait_for_deadline(flow_deadline) => {
-                if let Some(transmission) = control.ready(tokio::time::Instant::now()) {
+            () = wait_for_deadline(meters.started, flow_deadline) => {
+                if let Some(transmission) =
+                    control.flow_timeout_elapsed(elapsed_millis(meters.started))
+                {
                     if !write_transmission(
                         stream,
                         &mut buffers.frame_buf,
@@ -309,9 +312,9 @@ pub(crate) async fn serve_controlled_kiss<
                     }
                 }
             }
-            () = wait_for_deadline(station_deadline) => {
+            () = wait_for_deadline(meters.started, station_deadline) => {
                 if let Some(transmission) =
-                    control.station_identification_due(tokio::time::Instant::now())
+                    control.station_identification_elapsed(elapsed_millis(meters.started))
                 {
                     if !write_transmission(
                         stream,
@@ -333,7 +336,7 @@ pub(crate) async fn serve_controlled_kiss<
 async fn write_transmission<S: AsyncWrite + Unpin>(
     stream: &mut S,
     frame_buf: &mut [u8],
-    control: &mut SerialControl,
+    control: &mut KissTransmissionControl,
     transmission: Transmission,
     meters: &mut WireMeters<'_>,
 ) -> bool {
@@ -343,7 +346,7 @@ async fn write_transmission<S: AsyncWrite + Unpin>(
     if stream.write_all(&frame_buf[..framed]).await.is_err() {
         return false;
     }
-    let now = tokio::time::Instant::now();
+    let now = elapsed_millis(meters.started);
     control.transmitted(&transmission, now);
     record_tx(framed, meters);
     true
@@ -390,7 +393,8 @@ where
         let mut airtime = AirtimeLedger::new();
         let mut throughput = ThroughputLedger::new();
         let started = tokio::time::Instant::now();
-        let mut control = SerialControl::new(self.flow_control, self.station_identification);
+        let mut control =
+            KissTransmissionControl::new(self.flow_control, self.station_identification);
         let mut buffers: Option<
             ControlledKissBuffers<
                 { core::KISS_FRAME_LEN },
@@ -445,7 +449,9 @@ impl<Open> prns_core::interfaces::ReportsStatus for KissInterface<Open> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::serial_control::{ReadyTimeout, StationIdInterval, StationIdWireFormat};
+    use prns_core::interfaces::kiss::transmission_control::{
+        ReadyTimeout, StationIdInterval, StationIdWireFormat,
+    };
     use prns_core::interfaces::kiss_framing::{self, FEND, FESC};
     use prns_core::interfaces::InterfaceStatus;
     use prns_runtime::reactor::driver::{tokio_grant_lane, TokioGrantConsumer};

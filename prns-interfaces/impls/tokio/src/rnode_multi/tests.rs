@@ -3,16 +3,15 @@ use std::collections::{HashSet, VecDeque};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
 
+use prns_core::interfaces::kiss::transmission_control::{
+    KissTransmissionControl, ReadyCommandFlowControl, StationIdInterval, StationIdWireFormat,
+};
 use prns_core::interfaces::kiss_framing;
 use prns_core::interfaces::rnode::multi::{RadioConfigInput, VPort};
 use prns_core::interfaces::{BitrateBps, ConnectionState, InterfaceStatus};
 use prns_runtime::reactor::airtime::AirtimeLedger;
 use prns_runtime::reactor::driver::TokioInterfaceStatus;
 use prns_runtime::reactor::throughput::ThroughputLedger;
-
-use crate::serial_control::{
-    ReadyCommandFlowControl, SerialControl, StationIdInterval, StationIdWireFormat,
-};
 
 use super::bring_up::bring_up;
 use super::member::{InboundFrame, LiveMember, MemberMeters, OutboundFrame};
@@ -141,7 +140,10 @@ fn wire_cycle(
                 vport: settings.vport,
                 radio: settings.radio,
                 inbound,
-                control: SerialControl::new(settings.flow_control, station_identification.clone()),
+                control: KissTransmissionControl::new(
+                    settings.flow_control,
+                    station_identification.clone(),
+                ),
                 packet_phy: multi::PacketPhyState::default(),
                 meters: MemberMeters {
                     status: TokioInterfaceStatus::new(settings.id(), ConnectionState::Connected),
@@ -159,6 +161,7 @@ fn wire_cycle(
             outbound,
             selected: VPort::ZERO,
             platform: None,
+            started,
         },
         inbound_receivers,
     )
