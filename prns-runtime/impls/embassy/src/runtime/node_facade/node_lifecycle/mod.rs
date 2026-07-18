@@ -22,7 +22,7 @@ use super::super::{
 use super::command_handle::PrnsNodeHandle;
 use prns_runtime::runtime::{assemble_node, AssembledNode};
 
-/// The reactor-side wiring an embassy node runs on: the pool's inbound consumers and egress, the three channel receivers, and the command handle. The board declares the matching `static` channels and hands this bundle to [`PrnsNode::new`]; the interface-side seam halves come off the same pool separately.
+/// Reactor-side endpoints for a board-owned static interface pool.
 pub struct ReactorPlumbing<
     M,
     const SLOT: usize,
@@ -52,7 +52,6 @@ impl<
         const COMPLETIONS: usize,
     > ReactorPlumbing<M, SLOT, IFACES, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>
 {
-    /// Bundle the reactor's half of the pool: every slot's reactor-side endpoint, the receivers of the node's three `static` channels, and the command sender paired with the completion pool.
     #[must_use]
     pub fn new(
         inbound: HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, M, SLOT>), IFACES>,
@@ -73,7 +72,7 @@ impl<
     }
 }
 
-/// A node on an Embassy host, built from a [`PrnsNodeRecipe`] over a board-declared static interface pool ([`ReactorPlumbing`]). The wires are attached explicitly because the board owns their static storage: [`activate`](Self::activate) stands up a top-level interface on a pool slot, and [`run`](Self::run) joins the reactor with the caller's drive.
+/// An Embassy node over a board-owned static interface pool.
 pub struct PrnsNode<
     St,
     R,
@@ -127,7 +126,6 @@ where
     H: Host,
     M: RawMutex + 'static,
 {
-    /// Stand a node up from `recipe` over the board's `plumbing` and `host` (its clock + entropy). No interface is wired yet: [`activate`](Self::activate) names the top-level wires, and the supervisor drive names the rest.
     pub fn new<'d, D>(
         recipe: PrnsNodeRecipe<D, St, R, F, Manual, S>,
         plumbing: ReactorPlumbing<M, SLOT, IFACES, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
@@ -158,7 +156,6 @@ where
         self.handle
     }
 
-    /// Activate a top-level interface on pool `slot`.
     pub fn activate(&mut self, slot: usize, descriptor: InterfaceDescriptor) {
         let _ = self.activate_access(slot, descriptor, None);
     }
@@ -204,7 +201,7 @@ where
         }
     }
 
-    /// Register a supervisor's shared lane on pool `slot`, keyed by the supervisor's id. Unlike [`activate`](Self::activate) this adds no engine interface; inbound and egress for every child of the supervisor's kind route to this one lane (see `lane_serves`).
+    /// Assigns one pool lane to a supervisor without adding an engine interface.
     pub fn activate_fleet(&mut self, slot: usize, supervisor: InterfaceId) {
         let _ = self.activate_fleet_access(slot, supervisor, None);
     }
@@ -249,7 +246,7 @@ where
         }
     }
 
-    /// Drive the node until the executor drops it: the reactor joined with the caller's `drive`. Every engine event reaches the recipe's `on_event` with shared `&state`, zero-copy.
+    /// Runs the reactor with the caller's interface and supervisor tasks.
     pub async fn run(self, drive: impl Future<Output = ()>) {
         self.run_with_inspection_store(&NoInterfaceInspectionStore, drive)
             .await;
@@ -323,7 +320,7 @@ where
         join(reactor, drive).await;
     }
 
-    /// Drive only the reactor while the board runs interfaces and supervisors on separate tasks or cores.
+    /// Runs only the reactor for boards that schedule interfaces separately.
     pub async fn run_reactor(&mut self) {
         self.run_reactor_with_inspection_store(&NoInterfaceInspectionStore)
             .await;

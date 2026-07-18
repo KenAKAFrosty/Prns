@@ -18,7 +18,7 @@ use super::super::{PrnsNodeApi, SendError};
 
 const NO_AWAITER: u64 = u64::MAX;
 
-/// A fixed pool of completion slots an embassy app provides as a `static`: the embedded twin of tokio's per-command oneshot. An awaited send claims a slot, parks on its [`Signal`], and the binding fires that slot by command id when the engine settles; the send future releases its slot on drop, so a cancelled send can never wake a later claimant. All bookkeeping is serialized under one blocking mutex, and `settle` signals while holding it, closing the window where a freed slot could be reused mid-fire. `N` bounds awaited sends in flight.
+/// Fixed completion storage for at most `N` concurrently awaited commands.
 pub struct CompletionPool<M: RawMutex, const N: usize> {
     next_id: AtomicU64,
     awaited: BlockingMutex<M, RefCell<[u64; N]>>,
@@ -116,14 +116,14 @@ impl<'a, M: RawMutex, const COMMANDS: usize, const N: usize> PrnsNodeHandle<'a, 
         Self { commands, pool }
     }
 
-    /// Queue an engine command and return the [`CommandId`] it was minted under — watch the event stream for the settlement tagged with it. `None` if the bounded command lane is full. The fire-and-forget escape hatch; to await the outcome, prefer [`send_single_packet`](Self::send_single_packet).
+    /// Queues a command without awaiting settlement and returns its ID, or `None` when the command lane is full.
     pub fn issue(&self, command: EngineCommand) -> Option<CommandId> {
         let id = self.pool.mint();
         self.commands.try_send(IssuedCommand { id, command }).ok()?;
         Some(id)
     }
 
-    /// Send one Single and await its delivery proof. Claims a pool slot and frees it on every exit, cancellation included; returns `SendError::Busy` when more awaited sends are in flight than the pool's `N`.
+    /// Sends one packet and awaits proof, returning `Busy` when all `N` completion slots are claimed.
     pub async fn send_single_packet(
         &self,
         destination: DestinationHash,
@@ -153,7 +153,7 @@ impl<'a, M: RawMutex, const COMMANDS: usize, const N: usize> PrnsNodeHandle<'a, 
         }
     }
 
-    /// Answer a request with `body` as a single RESPONSE packet — the request runner's path. Embedded responds inline, so a `body` past the link MDU is refused here (returns `false`); the host auto-upgrades to a resource instead.
+    /// Responds inline; returns `false` when the body exceeds the link MDU or the command lane is full.
     pub fn respond(&self, responder: RespondToken, body: &[u8]) -> bool {
         match RespondData::from_slice(body) {
             Ok(data) => self.respond_owned(responder, data),
@@ -161,7 +161,7 @@ impl<'a, M: RawMutex, const COMMANDS: usize, const N: usize> PrnsNodeHandle<'a, 
         }
     }
 
-    /// Answer a request by moving a prebuilt [`RespondData`] in: one copy fewer than [`respond`](Self::respond) since the handler already filled a grant. `false` once the command lane is full.
+    /// Moves a prebuilt response into the command lane, returning `false` when full.
     pub fn respond_owned(&self, responder: RespondToken, data: RespondData) -> bool {
         self.issue(EngineCommand::Respond(Respond {
             link_id: responder.link_id,

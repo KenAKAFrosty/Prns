@@ -23,18 +23,18 @@ use super::egress::{
 };
 use super::packet_phy::retain_packet_phy;
 
-/// Everything the reactor is wired to for one run. All borrowed: the caller owns every lane for the reactor's whole life.
+/// Borrowed lanes and channels for one fixed-topology reactor run.
 pub struct ReactorWiring<'run, 'lane, M: RawMutex, const NOTIFY: usize, const COMMANDS: usize> {
     pub interfaces: AttachedInterfaces<'run>,
     pub ifacs: &'run [InterfaceIfac],
-    /// The inbound doorbell is not a queue. Seams and supervisors use `try_send`; a full channel means a sweep is already owed, and one ring drains every lane. A frame committed during the sweep either joins that sweep or rings again.
+    /// A doorbell rather than a frame count: one receive drains every lane, a full channel means a sweep is pending, and a frame committed during a sweep either joins it or rings again.
     pub notify: Receiver<'run, M, InterfaceId, NOTIFY>,
     pub inbound_lanes: &'run mut [(InterfaceId, &'lane mut dyn AnyGrantConsumer)],
     pub commands: Receiver<'run, M, IssuedCommand, COMMANDS>,
     pub egress: EmbassyEgress<'run>,
 }
 
-/// Run the reactor on an embassy executor until the task is dropped. `Idle` arms no timer, leaving the executor parked on its channels.
+/// Runs until dropped; an `Idle` wake schedule arms no timer.
 pub async fn run<S, H, M, const NOTIFY: usize, const COMMANDS: usize>(
     engine: EngineState<S>,
     host: H,
