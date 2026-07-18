@@ -14,14 +14,12 @@ use crate::routing::{NextHop, RouteResponsiveness};
 use crate::storage::StorageLayout;
 use crate::wire::{DestinationHash, DestinationType, TransportId, TRUNCATED_HASH_BYTE_LEN};
 
-/// RNS 1.3.5 `Transport.path_request_handler`; only the transport form carries the requester's transport id.
 struct PathRequest {
     destination: DestinationHash,
     requester_transport_id: Option<TransportId>,
     id: PathRequestIdBytes,
 }
 
-/// The reference's two non-answering cases (Transport.py:2866): one malformed, one well-formed policy.
 #[derive(Debug, PartialEq, Eq)]
 enum PathRequestError {
     NoDestination,
@@ -56,7 +54,6 @@ impl PathRequest {
         })
     }
 
-    /// RNS 1.3.5 `Transport.path_request`: the path loops if the requester is the very next hop we would answer with.
     fn loops_back_through_requester(&self, next_hop: NextHop) -> bool {
         matches!((next_hop, self.requester_transport_id), (NextHop::Via(via), Some(id)) if via == id)
     }
@@ -934,7 +931,7 @@ mod tests {
                 None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::Duplicate),
-            "a different transport id but the same id is the same request — deduped",
+            "a different transport id but the same id is the same request, so it is deduplicated",
         );
     }
 
@@ -1039,7 +1036,7 @@ mod tests {
                 None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::LoopPrevented),
-            "the requester is the via we'd route through — answering would loop",
+            "the requester is the next hop we would route through; answering would loop",
         );
 
         let mut other_requester = request([0xCC; 16], 0x02);
@@ -1079,7 +1076,7 @@ mod tests {
                 None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::Malformed),
-            "a bare destination carries no id — the reference ignores it",
+            "a bare destination carries no id, so the reference ignores it",
         );
     }
 
@@ -1250,7 +1247,7 @@ mod tests {
         assert_eq!(
             relay.scheduled_announces.iter().next().unwrap().directed_to,
             None,
-            "a fresher announce reclaims the entry as a flood — the grace answer is cancelled",
+            "a fresher announce reclaims the entry as a flood; the grace answer is cancelled",
         );
     }
 
