@@ -2,6 +2,7 @@ mod discovery;
 mod medium;
 mod policy;
 
+pub(super) use super::error::PlanErrorKind;
 pub(super) use discovery::plan_interface_discovery;
 pub use discovery::{
     DiscoveryAdvertisementPlan, DiscoveryAnnouncementPlan, DiscoveryEncryption,
@@ -49,13 +50,6 @@ pub enum InterfaceAccessPlan {
         passphrase: Option<String>,
         size: IfacSize,
     },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum PlanErrorKind {
-    UnsupportedKind,
-    MissingRequiredField { key: &'static str },
-    InvalidSetting { key: &'static str },
 }
 
 pub(super) fn plan_interface(

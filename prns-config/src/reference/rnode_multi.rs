@@ -1,16 +1,16 @@
 use std::str::FromStr;
 
 use crate::configobj::{Section, SourceLocations, Value};
-use crate::diagnostic::{ConfigDiagnostic, ConfigDiagnosticCode};
 use prns_core::interfaces::rnode::core::TXPOWER_DBM_MAX;
 use prns_core::interfaces::rnode::multi::{
     HIGH_FREQUENCY_MAX_HZ, HIGH_FREQUENCY_MIN_HZ, LOW_FREQUENCY_MAX_HZ, LOW_FREQUENCY_MIN_HZ,
     MAX_SUBINTERFACES, TX_POWER_MIN_DBM,
 };
 
+use super::diagnostics::{ErrorCode, ErrorDiagnostic, WarningCode, WarningDiagnostic};
 use super::interpret::cleaned_number;
 use super::keys::{interface as interface_key, section as section_key};
-use super::schema::{rnode_multi_subinterface_key_rule, KeyRule, ValueKind};
+use super::schema::{rnode_multi_subinterface_key_rule, ValueKind};
 use super::validation::{
     location, setting_location, unknown_key, validate_alias_group, validate_value,
     ValidationErrorCollector, ValidationWarnings,
@@ -132,16 +132,15 @@ impl EnabledSubinterface<'_> {
                 continue;
             }
             match rnode_multi_subinterface_key_rule(key) {
-                Some(KeyRule::Validate(kind)) => validate_value(
+                Some(rule) => validate_value(
                     self.context.source,
                     setting_location(self.context.locations, &self.source_path, key),
                     format!("{} > {key}", self.display_path),
                     key,
                     value,
-                    kind,
+                    rule.value_kind(),
                     errors,
                 ),
-                Some(KeyRule::Recognized) => {}
                 None => warnings.push(unknown_key(
                     self.context.source,
                     setting_location(self.context.locations, &self.source_path, key),
@@ -159,8 +158,8 @@ impl EnabledSubinterface<'_> {
             if self.context.section.get(required.key).is_some() {
                 continue;
             }
-            errors.push(ConfigDiagnostic::new(
-                ConfigDiagnosticCode::MissingRequiredKey,
+            errors.push(ErrorDiagnostic::new(
+                ErrorCode::MissingRequiredKey,
                 self.context.source,
                 location(self.context.locations, &self.source_path),
                 format!("{} > {}", self.display_path, required.key),
@@ -195,8 +194,8 @@ impl EnabledSubinterface<'_> {
         let Err(duplicate) = assigned_vports.register(vport, self.context.name) else {
             return;
         };
-        errors.push(ConfigDiagnostic::new(
-            ConfigDiagnosticCode::InvalidValue,
+        errors.push(ErrorDiagnostic::new(
+            ErrorCode::InvalidValue,
             self.context.source,
             setting_location(
                 self.context.locations,
@@ -221,8 +220,8 @@ impl EnabledSubinterface<'_> {
 
     fn warn_about_nested_sections(&self, warnings: &mut ValidationWarnings) {
         for (nested, _) in &self.context.section.sections {
-            warnings.push(ConfigDiagnostic::new(
-                ConfigDiagnosticCode::UnknownSection,
+            warnings.push(WarningDiagnostic::new(
+                WarningCode::UnknownSection,
                 self.context.source,
                 location(
                     self.context.locations,
@@ -331,8 +330,8 @@ fn require_enabled_subinterface(
     } else {
         "enabled RNodeMulti interface has no enabled subinterfaces"
     };
-    errors.push(ConfigDiagnostic::new(
-        ConfigDiagnosticCode::MissingRequiredKey,
+    errors.push(ErrorDiagnostic::new(
+        ErrorCode::MissingRequiredKey,
         source,
         location(locations, &[section_key::INTERFACES, parent]),
         format!("[interfaces] > [[{parent}]] > [[[subinterface]]]"),

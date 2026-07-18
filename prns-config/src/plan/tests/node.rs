@@ -1,4 +1,9 @@
 use super::*;
+use crate::plan::error::{GlobalPlanError, PlanningError};
+use crate::plan::node::{build_plan, planning_diagnostic};
+use crate::reference::keys::{common as common_key, global as global_key};
+use crate::reference::{ReferenceConfig, ReferenceValue};
+use crate::SourceLocations;
 
 #[test]
 fn global_flags_follow_the_reticulum_section() {
@@ -27,6 +32,28 @@ fn global_flags_follow_the_reticulum_section() {
             penalty_ms: 0,
         })
     );
+}
+
+#[test]
+fn unrepresentable_global_policy_values_return_source_keyed_errors() {
+    for (key, value) in [
+        (common_key::IC_NEW_TIME, "1e30"),
+        (global_key::DEFAULT_AR_TARGET, "9223372036854775807"),
+        (global_key::DEFAULT_AR_GRACE, "65536"),
+        (global_key::DEFAULT_AR_PENALTY, "9223372036854775807"),
+    ] {
+        let mut config = ReferenceConfig::default();
+        config
+            .globals
+            .insert(key.to_string(), ReferenceValue::Scalar(value.to_string()));
+        let errors = build_plan(&config).expect_err("the value is not representable");
+        assert_eq!(errors, vec![PlanningError::Global(GlobalPlanError { key })]);
+        let diagnostic =
+            planning_diagnostic("/tmp/rns/config", &SourceLocations::default(), &errors[0]);
+        assert_eq!(diagnostic.code(), ConfigDiagnosticCode::InvalidValue);
+        assert_eq!(diagnostic.path(), format!("[reticulum] > {key}"));
+        assert!(diagnostic.correction().contains(key));
+    }
 }
 
 #[test]

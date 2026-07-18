@@ -1,19 +1,19 @@
 use crate::configobj::{Section, SourceLocations, Value};
-use crate::diagnostic::{ConfigDiagnostic, ConfigDiagnosticCode, ConfigSeverity};
+use crate::diagnostic::{ConfigDiagnostic, ConfigDiagnosticCode};
 use prns_core::interfaces::ifac::IFAC_MAX_SIZE;
 use prns_core::interfaces::rnode::core::{
     BANDWIDTH_HZ_MAX, BANDWIDTH_HZ_MIN, CODING_RATE_MAX, CODING_RATE_MIN, FREQUENCY_HZ_MAX,
     FREQUENCY_HZ_MIN, SPREADING_FACTOR_MAX, SPREADING_FACTOR_MIN, TXPOWER_DBM_MAX, TXPOWER_DBM_MIN,
 };
 
+use super::diagnostics::{ErrorCode, ErrorDiagnostic, WarningCode, WarningDiagnostic};
 use super::i2p::validate_peers;
 use super::interpret::{cleaned_number, parse_bool, parse_identity_hash, ReferenceError};
 use super::keys::{
     common as common_key, global as global_key, interface as interface_key, section as section_key,
 };
 use super::schema::{
-    interface_key_rule, known_interface_keys, KeyRule, ValueKind, AUTO_INTERFACE_FOLLOW_ON_KEYS,
-    DISCOVERY_DETAIL_KEYS, GLOBAL_FOLLOW_ON_KEYS, GLOBAL_RULES, INTERFACE_FOLLOW_ON_KEYS,
+    interface_key_rule, known_interface_keys, KeyApplication, KeyRule, ValueKind, GLOBAL_RULES,
     LOGGING_RULES, SUPPORTED_INTERFACES,
 };
 
@@ -21,9 +21,8 @@ use super::schema::{
 pub(super) struct ValidationWarnings(Vec<ConfigDiagnostic>);
 
 impl ValidationWarnings {
-    pub(super) fn push(&mut self, diagnostic: ConfigDiagnostic) {
-        assert_eq!(diagnostic.severity(), ConfigSeverity::Warning);
-        self.0.push(diagnostic);
+    pub(super) fn push(&mut self, diagnostic: WarningDiagnostic) {
+        self.0.push(diagnostic.into_inner());
     }
 
     pub(super) fn into_inner(self) -> Vec<ConfigDiagnostic> {
@@ -35,9 +34,8 @@ impl ValidationWarnings {
 pub(super) struct ValidationErrorCollector(Vec<ConfigDiagnostic>);
 
 impl ValidationErrorCollector {
-    pub(super) fn push(&mut self, diagnostic: ConfigDiagnostic) {
-        assert_eq!(diagnostic.severity(), ConfigSeverity::Error);
-        self.0.push(diagnostic);
+    pub(super) fn push(&mut self, diagnostic: ErrorDiagnostic) {
+        self.0.push(diagnostic.into_inner());
     }
 
     fn finish(self) -> Option<ValidationErrors> {
@@ -91,8 +89,8 @@ pub(super) fn validate(
     for (key, value) in &root.scalars {
         let line = location(locations, &[key]);
         if global_keys.contains(&key.as_str()) {
-            errors.push(ConfigDiagnostic::new(
-                ConfigDiagnosticCode::MisplacedKey,
+            errors.push(ErrorDiagnostic::new(
+                ErrorCode::MisplacedKey,
                 source,
                 line,
                 format!("<root> > {key}"),
@@ -102,8 +100,8 @@ pub(super) fn validate(
                 format!("move `{key} = {}` into [reticulum]", value_text(value)),
             ));
         } else if logging_keys.contains(&key.as_str()) {
-            errors.push(ConfigDiagnostic::new(
-                ConfigDiagnosticCode::MisplacedKey,
+            errors.push(ErrorDiagnostic::new(
+                ErrorCode::MisplacedKey,
                 source,
                 line,
                 format!("<root> > {key}"),
@@ -137,16 +135,6 @@ pub(super) fn validate(
                     &mut warnings,
                     &mut errors,
                 );
-                warn_non_effective_settings(
-                    source,
-                    "[reticulum]",
-                    &[section_key::RETICULUM],
-                    section,
-                    GLOBAL_FOLLOW_ON_KEYS,
-                    locations,
-                    &mut warnings,
-                    SettingWarningKind::FollowOn,
-                );
             }
             section_key::LOGGING => validate_section(
                 source,
@@ -168,8 +156,8 @@ pub(super) fn validate(
                     section_key::INTERFACES,
                 ];
                 let suggestion = closest(name, &known);
-                warnings.push(ConfigDiagnostic::new(
-                    ConfigDiagnosticCode::UnknownSection,
+                warnings.push(WarningDiagnostic::new(
+                    WarningCode::UnknownSection,
                     source,
                     location(locations, &[name]),
                     format!("[{name}]"),
@@ -197,7 +185,7 @@ fn validate_section(
     display_path: &str,
     source_path: &[&str],
     section: &Section,
-    rules: &[(&str, ValueKind)],
+    rules: &[(&str, KeyRule)],
     locations: &SourceLocations,
     warnings: &mut ValidationWarnings,
     errors: &mut ValidationErrorCollector,
@@ -208,15 +196,30 @@ fn validate_section(
         key_path.push(key);
         let line = location(locations, &key_path);
         match rules.iter().find(|(known, _)| *known == key) {
-            Some((_, kind)) => validate_value(
-                source,
-                line,
-                format!("{display_path} > {key}"),
-                key,
-                value,
-                *kind,
-                errors,
-            ),
+            Some((_, rule)) => {
+                if let Some(kind) = rule.validation_kind(true) {
+                    validate_value(
+                        source,
+                        line,
+                        format!("{display_path} > {key}"),
+                        key,
+                        value,
+                        kind,
+                        errors,
+                    );
+                }
+                warn_for_application(
+                    source,
+                    display_path,
+                    source_path,
+                    key,
+                    value,
+                    rule.application(),
+                    true,
+                    locations,
+                    warnings,
+                );
+            }
             None => warnings.push(unknown_key(
                 source,
                 line,
@@ -231,8 +234,8 @@ fn validate_section(
     for (name, _) in &section.sections {
         let mut section_path = source_path.to_vec();
         section_path.push(name);
-        warnings.push(ConfigDiagnostic::new(
-            ConfigDiagnosticCode::UnknownSection,
+        warnings.push(WarningDiagnostic::new(
+            WarningCode::UnknownSection,
             source,
             location(locations, &section_path),
             format!("{display_path} > [[{name}]]"),
@@ -281,55 +284,108 @@ fn warn_non_effective_settings(
         let Some(value) = section.get(key) else {
             continue;
         };
-        let mut key_path = source_path.to_vec();
-        key_path.push(key);
-        let (code, message, accepted, correction) = match reason {
-            SettingWarningKind::FollowOn if *key == interface_key::IGNORE_CONFIG_WARNINGS => (
-                ConfigDiagnosticCode::UnsupportedSetting,
-                format!("stock RNS setting {key:?} is not applied by this build"),
-                "omit this setting".to_string(),
-                format!("remove `{key}` and correct each reported configuration problem"),
-            ),
-            SettingWarningKind::FollowOn => (
-                ConfigDiagnosticCode::UnsupportedSetting,
-                format!("stock RNS setting {key:?} is not applied by this build"),
-                "omit this setting or use a build that implements it".to_string(),
-                format!(
-                    "remove `{key} = {}` until this feature is available",
-                    value_text(value)
-                ),
-            ),
-            SettingWarningKind::InapplicableInterfaceRole => (
-                ConfigDiagnosticCode::IneffectiveSetting,
-                format!("setting {key:?} is not applied by this interface role"),
-                "omit this setting for the selected listener or client role".to_string(),
-                format!("remove `{key} = {}` from this stanza", value_text(value)),
-            ),
-            SettingWarningKind::DiscoveryDisabled => (
-                ConfigDiagnosticCode::IneffectiveSetting,
-                format!("setting {key:?} is not applied while discovery publication is disabled"),
-                format!(
-                    "omit this setting or set {} = Yes",
-                    interface_key::DISCOVERABLE
-                ),
-                format!(
-                    "remove `{key} = {}`, or set `{}` = Yes",
-                    value_text(value),
-                    interface_key::DISCOVERABLE
-                ),
-            ),
-        };
-        warnings.push(ConfigDiagnostic::new(
-            code,
+        warn_non_effective_setting(
             source,
-            location(locations, &key_path),
-            format!("{display_path} > {key}"),
-            Some(value_text(value)),
-            message,
-            Some(accepted),
-            correction,
-        ));
+            display_path,
+            source_path,
+            key,
+            value,
+            locations,
+            warnings,
+            reason,
+        );
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn warn_non_effective_setting(
+    source: &str,
+    display_path: &str,
+    source_path: &[&str],
+    key: &str,
+    value: &Value,
+    locations: &SourceLocations,
+    warnings: &mut ValidationWarnings,
+    reason: SettingWarningKind,
+) {
+    let mut key_path = source_path.to_vec();
+    key_path.push(key);
+    let (code, message, accepted, correction) = match reason {
+        SettingWarningKind::FollowOn if key == interface_key::IGNORE_CONFIG_WARNINGS => (
+            WarningCode::UnsupportedSetting,
+            format!("stock RNS setting {key:?} is not applied by this build"),
+            "omit this setting".to_string(),
+            format!("remove `{key}` and correct each reported configuration problem"),
+        ),
+        SettingWarningKind::FollowOn => (
+            WarningCode::UnsupportedSetting,
+            format!("stock RNS setting {key:?} is not applied by this build"),
+            "omit this setting or use a build that implements it".to_string(),
+            format!(
+                "remove `{key} = {}` until this feature is available",
+                value_text(value)
+            ),
+        ),
+        SettingWarningKind::InapplicableInterfaceRole => (
+            WarningCode::IneffectiveSetting,
+            format!("setting {key:?} is not applied by this interface role"),
+            "omit this setting for the selected listener or client role".to_string(),
+            format!("remove `{key} = {}` from this stanza", value_text(value)),
+        ),
+        SettingWarningKind::DiscoveryDisabled => (
+            WarningCode::IneffectiveSetting,
+            format!("setting {key:?} is not applied while discovery publication is disabled"),
+            format!(
+                "omit this setting or set {} = Yes",
+                interface_key::DISCOVERABLE
+            ),
+            format!(
+                "remove `{key} = {}`, or set `{}` = Yes",
+                value_text(value),
+                interface_key::DISCOVERABLE
+            ),
+        ),
+    };
+    warnings.push(WarningDiagnostic::new(
+        code,
+        source,
+        location(locations, &key_path),
+        format!("{display_path} > {key}"),
+        Some(value_text(value)),
+        message,
+        Some(accepted),
+        correction,
+    ));
+}
+
+#[allow(clippy::too_many_arguments)]
+fn warn_for_application(
+    source: &str,
+    display_path: &str,
+    source_path: &[&str],
+    key: &str,
+    value: &Value,
+    application: KeyApplication,
+    discovery_enabled: bool,
+    locations: &SourceLocations,
+    warnings: &mut ValidationWarnings,
+) {
+    let reason = match application {
+        KeyApplication::Applied => return,
+        KeyApplication::FollowOn => SettingWarningKind::FollowOn,
+        KeyApplication::DiscoveryOnly if discovery_enabled => return,
+        KeyApplication::DiscoveryOnly => SettingWarningKind::DiscoveryDisabled,
+    };
+    warn_non_effective_setting(
+        source,
+        display_path,
+        source_path,
+        key,
+        value,
+        locations,
+        warnings,
+        reason,
+    );
 }
 
 #[derive(Clone, Copy)]
@@ -372,8 +428,8 @@ fn validate_interface(
         .and_then(Value::as_scalar)
         .filter(|name| !name.is_empty())
     else {
-        errors.push(ConfigDiagnostic::new(
-            ConfigDiagnosticCode::MissingRequiredKey,
+        errors.push(ErrorDiagnostic::new(
+            ErrorCode::MissingRequiredKey,
             source,
             location(locations, &[section_key::INTERFACES, name]),
             format!("{interface_path} > {type_key}"),
@@ -388,8 +444,8 @@ fn validate_interface(
     };
 
     if !SUPPORTED_INTERFACES.contains(&type_name) {
-        errors.push(ConfigDiagnostic::new(
-            ConfigDiagnosticCode::UnsupportedInterface,
+        errors.push(ErrorDiagnostic::new(
+            ErrorCode::UnsupportedInterface,
             source,
             location(locations, &[section_key::INTERFACES, name, type_key]),
             format!("{interface_path} > {type_key}"),
@@ -451,17 +507,31 @@ fn validate_interface(
             continue;
         }
         let line = location(locations, &[section_key::INTERFACES, name, key]);
-        match interface_key_rule(type_name, key, discoverable) {
-            Some(KeyRule::Validate(kind)) => validate_value(
-                source,
-                line,
-                format!("{interface_path} > {key}"),
-                key,
-                value,
-                kind,
-                errors,
-            ),
-            Some(KeyRule::Recognized) => {}
+        match interface_key_rule(type_name, key) {
+            Some(rule) => {
+                if let Some(kind) = rule.validation_kind(discoverable) {
+                    validate_value(
+                        source,
+                        line,
+                        format!("{interface_path} > {key}"),
+                        key,
+                        value,
+                        kind,
+                        errors,
+                    );
+                }
+                warn_for_application(
+                    source,
+                    &interface_path,
+                    &interface_source_path,
+                    key,
+                    value,
+                    rule.application(),
+                    discoverable,
+                    locations,
+                    warnings,
+                );
+            }
             None => warnings.push(unknown_key(
                 source,
                 line,
@@ -471,34 +541,6 @@ fn validate_interface(
                 &known,
             )),
         }
-    }
-
-    let mut unsupported = INTERFACE_FOLLOW_ON_KEYS.to_vec();
-    if type_name == "AutoInterface" {
-        unsupported.extend(AUTO_INTERFACE_FOLLOW_ON_KEYS);
-    }
-    warn_non_effective_settings(
-        source,
-        &interface_path,
-        &[section_key::INTERFACES, name],
-        section,
-        &unsupported,
-        locations,
-        warnings,
-        SettingWarningKind::FollowOn,
-    );
-
-    if !discoverable {
-        warn_non_effective_settings(
-            source,
-            &interface_path,
-            &[section_key::INTERFACES, name],
-            section,
-            DISCOVERY_DETAIL_KEYS,
-            locations,
-            warnings,
-            SettingWarningKind::DiscoveryDisabled,
-        );
     }
 
     if matches!(type_name, "BackboneInterface" | "BackboneClientInterface") {
@@ -627,8 +669,8 @@ fn validate_interface(
             if let Some(port) = value.as_scalar() {
                 let transport = port.trim().to_ascii_lowercase();
                 if transport.starts_with("tcp://") || transport.starts_with("ble://") {
-                    errors.push(ConfigDiagnostic::new(
-                        ConfigDiagnosticCode::UnsupportedTransport,
+                    errors.push(ErrorDiagnostic::new(
+                        ErrorCode::UnsupportedTransport,
                         source,
                         location(
                             locations,
@@ -653,8 +695,8 @@ fn validate_interface(
         );
     } else {
         for (child, _) in &section.sections {
-            warnings.push(ConfigDiagnostic::new(
-                ConfigDiagnosticCode::UnknownSection,
+            warnings.push(WarningDiagnostic::new(
+                WarningCode::UnknownSection,
                 source,
                 location(locations, &[section_key::INTERFACES, name, child]),
                 format!("{interface_path} > [[[{child}]]]"),
@@ -979,8 +1021,8 @@ fn validate_rnode_station_callsign(
     if callsign.len() <= 32 {
         return;
     }
-    errors.push(ConfigDiagnostic::new(
-        ConfigDiagnosticCode::InvalidValue,
+    errors.push(ErrorDiagnostic::new(
+        ErrorCode::InvalidValue,
         context.source,
         location(
             context.locations,
@@ -1146,8 +1188,8 @@ fn missing_setting(
     errors: &mut ValidationErrorCollector,
 ) {
     let interface = context.interface;
-    errors.push(ConfigDiagnostic::new(
-        ConfigDiagnosticCode::MissingRequiredKey,
+    errors.push(ErrorDiagnostic::new(
+        ErrorCode::MissingRequiredKey,
         context.source,
         location(context.locations, &[section_key::INTERFACES, interface]),
         format!("[interfaces] > [[{interface}]] > {key}"),
@@ -1191,43 +1233,45 @@ pub(super) fn validate_alias_group(
     }
     let first = values.first()?;
     if let Some(second) = values.get(1) {
-        let (code, message) = if first.2 == second.2 {
-            (
-                ConfigDiagnosticCode::RedundantAliases,
+        let line = setting_location(locations, source_path, second.0);
+        let path = format!("{display_path} > {canonical}");
+        let value = Some(format!(
+            "{} = {}; {} = {}",
+            first.0,
+            value_text(first.1),
+            second.0,
+            value_text(second.1),
+        ));
+        let accepted = Some(kind.accepted().to_string());
+        let correction = format!("keep only `{canonical} = {}`", first.2);
+        if first.2 == second.2 {
+            warnings.push(WarningDiagnostic::new(
+                WarningCode::RedundantAliases,
+                source,
+                line,
+                path,
+                value,
                 format!(
                     "{0:?} and {1:?} specify the same setting",
                     first.0, second.0
                 ),
-            )
+                accepted,
+                correction,
+            ));
         } else {
-            (
-                ConfigDiagnosticCode::ConflictingAliases,
+            errors.push(ErrorDiagnostic::new(
+                ErrorCode::ConflictingAliases,
+                source,
+                line,
+                path,
+                value,
                 format!(
                     "{0:?} and {1:?} specify different values",
                     first.0, second.0
                 ),
-            )
-        };
-        let diagnostic = ConfigDiagnostic::new(
-            code,
-            source,
-            setting_location(locations, source_path, second.0),
-            format!("{display_path} > {canonical}"),
-            Some(format!(
-                "{} = {}; {} = {}",
-                first.0,
-                value_text(first.1),
-                second.0,
-                value_text(second.1),
-            )),
-            message,
-            Some(kind.accepted().to_string()),
-            format!("keep only `{canonical} = {}`", first.2),
-        );
-        if code.severity() == ConfigSeverity::Warning {
-            warnings.push(diagnostic);
-        } else {
-            errors.push(diagnostic);
+                accepted,
+                correction,
+            ));
         }
     }
     Some(first.2.clone())
@@ -1255,35 +1299,37 @@ fn compare_alias_pair(
     ) else {
         return;
     };
-    let (code, message) = if canonical_normalized == alias_normalized {
-        (
-            ConfigDiagnosticCode::RedundantAliases,
+    let line = location(locations, &[section_key::INTERFACES, interface, alias]);
+    let path = format!("[interfaces] > [[{interface}]] > {canonical}");
+    let value = Some(format!(
+        "{canonical} = {}; {alias} = {}",
+        value_text(canonical_value),
+        value_text(alias_value),
+    ));
+    let accepted = Some(kind.accepted().to_string());
+    let correction = format!("keep only {canonical} = {canonical_normalized}");
+    if canonical_normalized == alias_normalized {
+        warnings.push(WarningDiagnostic::new(
+            WarningCode::RedundantAliases,
+            source,
+            line,
+            path,
+            value,
             format!("{canonical:?} and {alias:?} specify the same setting"),
-        )
+            accepted,
+            correction,
+        ));
     } else {
-        (
-            ConfigDiagnosticCode::ConflictingAliases,
+        errors.push(ErrorDiagnostic::new(
+            ErrorCode::ConflictingAliases,
+            source,
+            line,
+            path,
+            value,
             format!("{canonical:?} and {alias:?} specify different values"),
-        )
-    };
-    let diagnostic = ConfigDiagnostic::new(
-        code,
-        source,
-        location(locations, &[section_key::INTERFACES, interface, alias]),
-        format!("[interfaces] > [[{interface}]] > {canonical}"),
-        Some(format!(
-            "{canonical} = {}; {alias} = {}",
-            value_text(canonical_value),
-            value_text(alias_value),
-        )),
-        message,
-        Some(kind.accepted().to_string()),
-        format!("keep only {canonical} = {canonical_normalized}"),
-    );
-    if code.severity() == ConfigSeverity::Warning {
-        warnings.push(diagnostic);
-    } else {
-        errors.push(diagnostic);
+            accepted,
+            correction,
+        ));
     }
 }
 
@@ -1308,8 +1354,8 @@ pub(super) fn validate_value(
     {
         return;
     }
-    errors.push(ConfigDiagnostic::new(
-        ConfigDiagnosticCode::InvalidValue,
+    errors.push(ErrorDiagnostic::new(
+        ErrorCode::InvalidValue,
         source,
         line,
         path,
@@ -1400,7 +1446,7 @@ fn accepted_for_key(key: &str, kind: ValueKind) -> String {
     }
 }
 
-fn example_for_key(key: &str, kind: ValueKind) -> &'static str {
+pub(super) fn example_for_key(key: &str, kind: ValueKind) -> &'static str {
     match kind {
         ValueKind::RnodeMultiVport
         | ValueKind::RnodeMultiFrequency
@@ -1635,10 +1681,10 @@ pub(super) fn unknown_key(
     key: &str,
     value: &Value,
     known: &[&str],
-) -> ConfigDiagnostic {
+) -> WarningDiagnostic {
     let suggestion = closest(key, known);
-    ConfigDiagnostic::new(
-        ConfigDiagnosticCode::UnknownKey,
+    WarningDiagnostic::new(
+        WarningCode::UnknownKey,
         source,
         line,
         path,

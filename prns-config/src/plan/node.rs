@@ -5,6 +5,7 @@ use prns_core::interface_discovery::{
 };
 use prns_core::interfaces::BitrateBps;
 
+use super::error::{GlobalPlanError, PlanError, PlanningError};
 use super::interface::{
     global_announce_rate, global_common_policy, plan_interface, PlanErrorKind, PlannedInterface,
 };
@@ -109,14 +110,6 @@ pub enum SharedInstanceTransport {
     Unix,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct PlanError {
-    interface_name: String,
-    interface_type: String,
-    subinterface_name: Option<String>,
-    kind: PlanErrorKind,
-}
-
 pub fn parse_and_plan(input: &str) -> Result<ConfigReport<DaemonPlan>, ConfigErrors> {
     parse_and_plan_named("config", input)
 }
@@ -150,12 +143,14 @@ pub fn parse_and_plan_named(
     }
 }
 
-fn build_plan(config: &ReferenceConfig) -> Result<DaemonPlan, Vec<PlanError>> {
+pub(super) fn build_plan(config: &ReferenceConfig) -> Result<DaemonPlan, Vec<PlanningError>> {
     let mut interfaces = Vec::new();
     let mut errors = Vec::new();
     let transport = transport_plan(config);
-    let common = global_common_policy(config);
-    let announce_rate = global_announce_rate(config);
+    let common =
+        global_common_policy(config).map_err(|error| vec![PlanningError::Global(error)])?;
+    let announce_rate =
+        global_announce_rate(config).map_err(|error| vec![PlanningError::Global(error)])?;
     for interface in &config.interfaces {
         if matches!(interface.params, ReferenceParams::RnodeMulti { .. }) {
             match rnode_multi::plan(
@@ -165,12 +160,12 @@ fn build_plan(config: &ReferenceConfig) -> Result<DaemonPlan, Vec<PlanError>> {
                 transport.routing_enabled(),
             ) {
                 Ok(planned) => interfaces.extend(planned),
-                Err(failure) => errors.push(PlanError {
+                Err(failure) => errors.push(PlanningError::Interface(PlanError {
                     interface_name: interface.name.clone(),
                     interface_type: interface.type_name.clone(),
                     subinterface_name: failure.subinterface_name,
                     kind: failure.kind,
-                }),
+                })),
             }
             continue;
         }
@@ -181,12 +176,12 @@ fn build_plan(config: &ReferenceConfig) -> Result<DaemonPlan, Vec<PlanError>> {
             transport.routing_enabled(),
         ) {
             Ok(planned) => interfaces.push(planned),
-            Err(kind) => errors.push(PlanError {
+            Err(kind) => errors.push(PlanningError::Interface(PlanError {
                 interface_name: interface.name.clone(),
                 interface_type: interface.type_name.clone(),
                 subinterface_name: None,
                 kind,
-            }),
+            })),
         }
     }
     if !errors.is_empty() {
@@ -216,7 +211,43 @@ fn build_plan(config: &ReferenceConfig) -> Result<DaemonPlan, Vec<PlanError>> {
     })
 }
 
-fn planning_diagnostic(
+pub(super) fn planning_diagnostic(
+    source: &str,
+    locations: &SourceLocations,
+    error: &PlanningError,
+) -> ConfigDiagnostic {
+    match error {
+        PlanningError::Global(error) => global_planning_diagnostic(source, locations, *error),
+        PlanningError::Interface(error) => interface_planning_diagnostic(source, locations, error),
+    }
+}
+
+fn global_planning_diagnostic(
+    source: &str,
+    locations: &SourceLocations,
+    error: GlobalPlanError,
+) -> ConfigDiagnostic {
+    ConfigDiagnostic::new(
+        ConfigDiagnosticCode::InvalidValue,
+        source,
+        locations
+            .line([section_key::RETICULUM, error.key])
+            .unwrap_or(1),
+        format!("[reticulum] > {}", error.key),
+        None,
+        format!(
+            "global setting {:?} cannot be represented by this build",
+            error.key
+        ),
+        Some("a non-negative value within the documented range".to_string()),
+        format!(
+            "replace `{}` under [reticulum] with a smaller value",
+            error.key
+        ),
+    )
+}
+
+fn interface_planning_diagnostic(
     source: &str,
     locations: &SourceLocations,
     error: &PlanError,

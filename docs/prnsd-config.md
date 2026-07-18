@@ -32,7 +32,8 @@ control, and every configured `ic_*` and `ec_pr_freq` value.
 
 `panic_on_interface_error` defaults to `No`. With the default, a failed interface remains visible as
 degraded while retry-capable interfaces continue supervising themselves. Set it to `Yes` to request
-a controlled daemon shutdown after an initial interface startup failure.
+a controlled daemon shutdown after an initial startup failure or a later configured-interface
+failure.
 
 The built-in config enables transport routing explicitly. In an operator-supplied config, omitting
 `enable_transport` retains stock RNS's `No` default.
@@ -51,7 +52,7 @@ An explicit `bitrate` overrides the medium estimate and recomputes optimized MTU
 `fixed_mtu` remains authoritative. Network-traversing TCP, UDP, Backbone, and WebSocket media use a
 500 Mbps estimate. Auto Wi-Fi and local shared-instance transports use 1 Gbps. Serial derives its
 estimate from baud, KISS and AX.25 KISS use 1200 bps, Pipe uses 1 Mbps, and RNode derives LoRa bitrate
-from its radio configuration.
+from its radio configuration. Every RNodeMulti radio derives its own bitrate and effective policy.
 
 ## Existing interface backends
 
@@ -66,10 +67,42 @@ from its radio configuration.
 | `KISSInterface` | Serial line, TNC timing/CSMA, READY flow control, and station identification. |
 | `AX25KISSInterface` | KISS settings plus validated callsign and SSID. |
 | `RNodeInterface` | Serial RNode radio settings, READY flow control, station identification, and airtime limits. |
+| `RNodeMultiInterface` | One serial device with nested, independently routed radio interfaces; per-radio LoRa settings, READY flow control, airtime limits, policy, and coordinated reconnect. |
 | `PipeInterface` | Parsed subprocess command and typed respawn delay. |
+| `I2PInterface` | Validated `.i2p` names or base64 destinations in `peers`, optional inbound reachability through `connectable`, and common policy and IFAC access. |
 
 Enabled interface types without a backend fail with “not available in this build.” RNode `tcp://`
-and `ble://` URIs fail similarly; the current RNode backend requires a local serial device.
+and `ble://` URIs fail similarly; the current RNode and RNodeMulti backends require a local serial
+device.
+
+RNodeMulti radios are nested beneath their physical device. Each enabled child requires a unique
+`vport` and complete radio configuration:
+
+```ini
+[interfaces]
+  [[Dual Radio]]
+    type = RNodeMultiInterface
+    enabled = Yes
+    port = /dev/ttyACM0
+
+    [[[Sub-GHz]]]
+      interface_enabled = Yes
+      vport = 0
+      frequency = 868000000
+      bandwidth = 125000
+      txpower = 7
+      spreadingfactor = 8
+      codingrate = 5
+
+    [[[2.4 GHz]]]
+      interface_enabled = Yes
+      vport = 1
+      frequency = 2400000000
+      bandwidth = 812500
+      txpower = 10
+      spreadingfactor = 7
+      codingrate = 6
+```
 
 ## Explicit follow-ons
 
@@ -88,8 +121,8 @@ client-only `target_port`, `i2p_tunneled`, `connect_timeout`, or `max_reconnect_
 do not use listener-only `listen_ip`, `listen_port`, `listen_on`, or `device`.
 Discovery publication details similarly warn when `discoverable` is absent or set to `No`.
 
-I2P interfaces, RNodeMulti, Weave, RNode TCP/BLE transport, and other unavailable backends are not
-partial plans: enabling one is a configuration error until that backend exists.
+Weave, RNode TCP/BLE transport, and other unavailable backends are not partial plans: enabling one
+is a configuration error until that backend exists.
 
 ## Minimal router
 

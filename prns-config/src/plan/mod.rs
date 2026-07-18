@@ -1,5 +1,6 @@
 //! The reference-to-ours mapping layer: a faithful [`crate::reference::ReferenceConfig`] becomes a [`DaemonPlan`], the host-agnostic description of the node a daemon should stand up.
 
+mod error;
 mod interface;
 mod node;
 mod reference_globals;

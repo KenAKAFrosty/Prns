@@ -4,12 +4,13 @@
 //! own lines.
 
 use core::time::Duration;
+use std::collections::HashSet;
 
 pub use prns_config as config;
 use prns_config::{
     AddressFamilyPreference as PlannedAddressFamilyPreference, DaemonPlan, I2pPeersPlan,
     I2pReachabilityPlan as PlannedI2pReachability, InterfaceAccessPlan, PlannedInterface,
-    PlannedMedium, ReadyCommandFlowControl as PlannedReadyCommandFlowControl,
+    PlannedMedium, RNodeMultiMemberPlan, ReadyCommandFlowControl as PlannedReadyCommandFlowControl,
     ReconnectLimit as PlannedReconnectLimit, SerialDataBits, SerialLinePlan, SerialParity,
     SerialStopBits, StationIdentificationPlan, TcpDialPlan, TcpTunnelMode as PlannedTcpTunnelMode,
     UdpFlowPlan,
@@ -35,6 +36,10 @@ use crate::kiss::{KissInterface, KissSettings, DEFAULT_TNC_CONFIGURE_DELAY};
 use crate::pipe::{PipeInterface, PipeRespawnDelay};
 use crate::reconnect::ReconnectDelay;
 use crate::rnode::{RNodeInterface, RNodeSettings};
+use crate::rnode_multi::{
+    RNodeMultiAccess, RNodeMultiInterface, RNodeMultiMemberSettings, RNodeMultiMembers,
+    RNodeMultiSettings, DEFAULT_RNODE_MULTI_CONFIGURE_DELAY,
+};
 use crate::serial::SerialInterface;
 use crate::serial_control::{ReadyCommandFlowControl, StationIdentification};
 use crate::serial_control::{ReadyTimeout, StationIdInterval, StationIdWireFormat};
@@ -173,8 +178,26 @@ pub async fn attach_plan_with_context(
     context: &PlanRuntimeContext,
     report: &mut impl FnMut(PlanOutcome<'_>),
 ) {
+    let mut rnode_multi_parents = HashSet::new();
     for interface in &plan.interfaces {
-        stand_up(handle, interface, context, report).await;
+        if let PlannedMedium::RnodeMulti { member } = &interface.medium {
+            let parent = member.parent();
+            let key = (parent.name(), parent.device());
+            if rnode_multi_parents.insert(key) {
+                stand_up_rnode_multi(
+                    handle,
+                    plan.interfaces.iter().filter_map(|candidate| {
+                        let PlannedMedium::RnodeMulti { member } = &candidate.medium else {
+                            return None;
+                        };
+                        (member.parent() == parent).then_some((candidate, member))
+                    }),
+                    report,
+                );
+            }
+        } else {
+            stand_up(handle, interface, context, report).await;
+        }
     }
 }
 
@@ -184,22 +207,15 @@ async fn stand_up(
     context: &PlanRuntimeContext,
     report: &mut impl FnMut(PlanOutcome<'_>),
 ) {
-    let access = match &interface.access {
-        InterfaceAccessPlan::Open => None,
-        InterfaceAccessPlan::Ifac {
-            network_name,
-            passphrase,
-            size,
-        } => match IfacContext::derive(network_name.as_deref(), passphrase.as_deref(), *size) {
-            Some(context) => Some((context, network_name.clone())),
-            None => {
-                report(PlanOutcome::Failed {
-                    interface,
-                    visible_error_message: "IFAC requires a network name or passphrase".to_string(),
-                });
-                return;
-            }
-        },
+    let access = match runtime_access(interface) {
+        Ok(access) => access,
+        Err(visible_error_message) => {
+            report(PlanOutcome::Failed {
+                interface,
+                visible_error_message,
+            });
+            return;
+        }
     };
     match &interface.medium {
         PlannedMedium::AutoWifi { .. } => {
@@ -460,7 +476,7 @@ async fn stand_up(
         }
         PlannedMedium::RnodeMulti { .. } => report(PlanOutcome::Failed {
             interface,
-            visible_error_message: "RNodeMultiInterface runtime is not available in this build"
+            visible_error_message: "RNodeMulti member was not grouped with its parent device"
                 .to_string(),
         }),
         PlannedMedium::Backbone { listener } => {
@@ -527,6 +543,119 @@ async fn stand_up(
             let attached = attach_with_access(handle, access, i2p);
             report_up(handle, interface, attached.id(), report);
         }
+    }
+}
+
+fn stand_up_rnode_multi<'a>(
+    handle: &PrnsNodeHandle,
+    interfaces: impl Iterator<Item = (&'a PlannedInterface, &'a RNodeMultiMemberPlan)>,
+    report: &mut impl FnMut(PlanOutcome<'a>),
+) {
+    let interfaces = interfaces.collect::<Vec<_>>();
+    let Some((first, first_member)) = interfaces.first().copied() else {
+        return;
+    };
+    let access = match runtime_access(first) {
+        Ok(None) => RNodeMultiAccess::Open,
+        Ok(Some((context, network_name))) => RNodeMultiAccess::Ifac {
+            context: Box::new(context),
+            network_name,
+        },
+        Err(visible_error_message) => {
+            for (interface, _) in interfaces {
+                report(PlanOutcome::Failed {
+                    interface,
+                    visible_error_message: visible_error_message.clone(),
+                });
+            }
+            return;
+        }
+    };
+    let station_plan = first_member.parent().station_id().cloned();
+    let station_identification =
+        match runtime_station_identification(&station_plan, StationIdWireFormat::Exact) {
+            Ok(station_identification) => station_identification,
+            Err(visible_error_message) => {
+                for (interface, _) in interfaces {
+                    report(PlanOutcome::Failed {
+                        interface,
+                        visible_error_message: visible_error_message.clone(),
+                    });
+                }
+                return;
+            }
+        };
+    let settings = interfaces
+        .iter()
+        .map(|(interface, member)| runtime_rnode_multi_member(interface, member, access.clone()))
+        .collect::<Vec<_>>();
+    let members = match RNodeMultiMembers::new(settings) {
+        Ok(members) => members,
+        Err(error) => {
+            let visible_error_message = error.to_string();
+            for (interface, _) in interfaces {
+                report(PlanOutcome::Failed {
+                    interface,
+                    visible_error_message: visible_error_message.clone(),
+                });
+            }
+            return;
+        }
+    };
+    let parent = first_member.parent();
+    let device = parent.device().to_string();
+    let open_path = device.clone();
+    let rnode_multi = RNodeMultiInterface::new(
+        parent.name(),
+        &device,
+        move || {
+            let open_path = open_path.clone();
+            async move { open_host_serial(&open_path, RNODE_BAUD) }
+        },
+        RNodeMultiSettings {
+            reconnect_delay: RNODE_RECONNECT_DELAY,
+            reset_delay: crate::rnode::DEFAULT_RNODE_RESET_DELAY,
+            configure_delay: DEFAULT_RNODE_MULTI_CONFIGURE_DELAY,
+            station_identification,
+            members,
+        },
+    );
+    let ids = rnode_multi.member_ids().collect::<Vec<_>>();
+    let registered = rnode_multi.register(handle);
+    tokio::spawn(registered.run());
+    for ((interface, _), id) in interfaces.into_iter().zip(ids) {
+        report_up(handle, interface, id, report);
+    }
+}
+
+fn runtime_rnode_multi_member(
+    interface: &PlannedInterface,
+    member: &RNodeMultiMemberPlan,
+    access: RNodeMultiAccess,
+) -> RNodeMultiMemberSettings {
+    RNodeMultiMemberSettings::new(
+        interface.name.clone(),
+        member.vport(),
+        member.radio(),
+        runtime_rnode_flow_control(member.flow_control()),
+        interface.policy,
+        access,
+        member.parent().device().as_bytes(),
+    )
+}
+
+fn runtime_access(
+    interface: &PlannedInterface,
+) -> Result<Option<(IfacContext, Option<String>)>, String> {
+    match &interface.access {
+        InterfaceAccessPlan::Open => Ok(None),
+        InterfaceAccessPlan::Ifac {
+            network_name,
+            passphrase,
+            size,
+        } => IfacContext::derive(network_name.as_deref(), passphrase.as_deref(), *size)
+            .map(|context| Some((context, network_name.clone())))
+            .ok_or_else(|| "IFAC requires a network name or passphrase".to_string()),
     }
 }
 
@@ -706,7 +835,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn planned_rnode_multi_members_fail_visibly_until_the_supervisor_is_attached() {
+    async fn planned_rnode_multi_members_register_once_under_one_device_supervisor() {
+        use prns_core::interfaces::ConnectionState;
         use prns_runtime::runtime::{Manual, PreConfiguredDestination, PrnsNode, PrnsNodeRecipe};
         use prns_runtime::storage::GrowableHeap;
 
@@ -728,24 +858,27 @@ mod tests {
             interfaces: Manual,
             on_event: |_event, _state: &()| {},
         });
-        let mut failures = Vec::new();
-        attach_plan(&node.handle(), &plan, &mut |outcome| {
-            if let PlanOutcome::Failed {
-                interface,
-                visible_error_message,
-            } = outcome
-            {
-                failures.push((interface.name.clone(), visible_error_message));
+        let mut outcomes = Vec::new();
+        attach_plan(&node.handle(), &plan, &mut |outcome| match outcome {
+            PlanOutcome::Up { interface, id } => {
+                outcomes.push((interface.name.clone(), Some(id)));
+            }
+            PlanOutcome::Failed { interface, .. } => {
+                outcomes.push((interface.name.clone(), None));
             }
         })
         .await;
 
-        assert_eq!(failures.len(), 2);
-        assert_eq!(failures[0].0, "Dual[Low]");
-        assert_eq!(failures[1].0, "Dual[High]");
-        assert!(failures.iter().all(|(_, message)| {
-            message == "RNodeMultiInterface runtime is not available in this build"
-        }));
+        assert_eq!(outcomes.len(), 2);
+        assert_eq!(outcomes[0].0, "Dual[Low]");
+        assert_eq!(outcomes[1].0, "Dual[High]");
+        assert!(outcomes.iter().all(|(_, id)| id.is_some()));
+        assert_ne!(outcomes[0].1, outcomes[1].1);
+        let registered = node.handle().interfaces();
+        assert_eq!(registered.len(), 2);
+        assert!(registered
+            .iter()
+            .all(|member| member.connection == ConnectionState::Initializing));
     }
 
     #[test]

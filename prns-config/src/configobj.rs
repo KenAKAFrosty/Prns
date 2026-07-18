@@ -148,16 +148,62 @@ struct Frame {
     section: Section,
 }
 
+#[derive(Default)]
+struct SectionStack {
+    root: Section,
+    open: Vec<Frame>,
+}
+
+impl SectionStack {
+    fn current_depth(&self) -> usize {
+        self.open.last().map_or(0, |frame| frame.depth)
+    }
+
+    fn current_section(&self) -> &Section {
+        self.open.last().map_or(&self.root, |frame| &frame.section)
+    }
+
+    fn current_section_mut(&mut self) -> &mut Section {
+        self.open
+            .last_mut()
+            .map_or(&mut self.root, |frame| &mut frame.section)
+    }
+
+    fn open(&mut self, name: String, depth: usize) {
+        self.open.push(Frame {
+            name,
+            depth,
+            section: Section::default(),
+        });
+    }
+
+    fn close_to(&mut self, target_depth: usize) {
+        while self
+            .open
+            .last()
+            .is_some_and(|frame| frame.depth > target_depth)
+        {
+            let Some(frame) = self.open.pop() else {
+                break;
+            };
+            self.current_section_mut()
+                .sections
+                .push((frame.name, frame.section));
+        }
+    }
+
+    fn finish(mut self) -> Section {
+        self.close_to(0);
+        self.root
+    }
+}
+
 pub fn parse(input: &str) -> Result<Section, ConfigError> {
     parse_located(input).map(|parsed| parsed.root)
 }
 
 pub fn parse_located(input: &str) -> Result<ParsedConfigObj, ConfigError> {
-    let mut stack = std::vec![Frame {
-        name: String::new(),
-        depth: 0,
-        section: Section::default(),
-    }];
+    let mut stack = SectionStack::default();
     let mut locations = SourceLocations::default();
     let mut current_path = Vec::new();
 
@@ -171,8 +217,8 @@ pub fn parse_located(input: &str) -> Result<ParsedConfigObj, ConfigError> {
 
         if trimmed.starts_with('[') {
             let (name, depth) = parse_section_header(trimmed, line_no)?;
-            close_to(&mut stack, depth - 1, line_no)?;
-            let parent_depth = stack.last().expect("root frame is never popped").depth;
+            stack.close_to(depth - 1);
+            let parent_depth = stack.current_depth();
             if depth != parent_depth + 1 {
                 return Err(ConfigError::SectionDepthJump {
                     line: line_no,
@@ -180,20 +226,13 @@ pub fn parse_located(input: &str) -> Result<ParsedConfigObj, ConfigError> {
                     parent: parent_depth,
                 });
             }
-            if stack
-                .last()
-                .is_some_and(|frame| frame.section.section(&name).is_some())
-            {
+            if stack.current_section().section(&name).is_some() {
                 return Err(ConfigError::DuplicateSection {
                     line: line_no,
                     name,
                 });
             }
-            stack.push(Frame {
-                name: name.clone(),
-                depth,
-                section: Section::default(),
-            });
+            stack.open(name.clone(), depth);
             current_path.truncate(depth - 1);
             current_path.push(name);
             locations.lines.insert(current_path.clone(), line_no);
@@ -201,10 +240,7 @@ pub fn parse_located(input: &str) -> Result<ParsedConfigObj, ConfigError> {
         }
 
         let (key, value) = parse_key_value(raw_line, line_no, &mut lines)?;
-        let current = &mut stack
-            .last_mut()
-            .expect("root frame is never popped")
-            .section;
+        let current = stack.current_section_mut();
         if current.get(&key).is_some() {
             return Err(ConfigError::DuplicateKey { line: line_no, key });
         }
@@ -214,28 +250,10 @@ pub fn parse_located(input: &str) -> Result<ParsedConfigObj, ConfigError> {
         current.scalars.push((key, value));
     }
 
-    close_to(&mut stack, 0, 0)?;
     Ok(ParsedConfigObj {
-        root: stack.pop().expect("root frame is never popped").section,
+        root: stack.finish(),
         locations,
     })
-}
-
-fn close_to(
-    stack: &mut Vec<Frame>,
-    target_depth: usize,
-    line_no: usize,
-) -> Result<(), ConfigError> {
-    while stack.last().is_some_and(|frame| frame.depth > target_depth) {
-        let frame = stack.pop().expect("checked non-empty");
-        let parent = stack.last_mut().ok_or(ConfigError::SectionDepthJump {
-            line: line_no,
-            found: frame.depth,
-            parent: 0,
-        })?;
-        parent.section.sections.push((frame.name, frame.section));
-    }
-    Ok(())
 }
 
 fn parse_section_header(trimmed: &str, line_no: usize) -> Result<(String, usize), ConfigError> {
