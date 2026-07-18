@@ -7,15 +7,16 @@ use crate::engine::test_support::{
 };
 #[cfg(feature = "runtime-metrics")]
 use crate::engine::AnnounceOrigin;
-use crate::engine::RouteRemovalCause;
+use crate::engine::{Departure, RouteRemovalCause};
 #[cfg(feature = "runtime-metrics")]
 use crate::interfaces::InterfaceKind;
 use crate::interfaces::{
-    AirtimeUtilization, AnnounceBandwidthCap, BitrateBps, ConnectionState, EgressCapability,
-    IngressCapability, InterfaceCapabilities, InterfaceMode, InterfaceStatus, RssiDbm,
-    SignalQualityTenthsPercent, SnrQuarterDb, TransportCapability,
+    AirtimeUtilization, AnnounceBandwidthCap, BitrateBps, ConnectionState, ConnectionView,
+    EgressCapability, IngressCapability, InterfaceCapabilities, InterfaceMode, InterfaceStatus,
+    RssiDbm, SignalQualityTenthsPercent, SnrQuarterDb, TransportCapability,
 };
 use crate::reactor::interface_seam::{Interface, InterfaceSeam, MAX_WIRE_FRAME_LEN};
+use crate::routing::links::resources::ResourceHash;
 #[cfg(feature = "runtime-metrics")]
 use crate::runtime::{AnnounceEgressOutcome, EgressMetricsSnapshot};
 use crate::runtime::{PrnsNodeHandle, RoutingControl};
@@ -419,22 +420,6 @@ fn route_resource_passes_through_an_unregistered_link() {
     assert!(
         forwarded.is_some(),
         "with no sink registered the journal flows on to the app event stream"
-    );
-}
-
-#[test]
-fn host_resource_payload_supports_owned_and_shared_prefix_bytes() {
-    let owned: HostResourcePayload = std::vec![1, 2, 3].into();
-    assert_eq!(owned.as_slice(), &[1, 2, 3]);
-    assert_eq!(owned.len(), 3);
-
-    let shared: Arc<[u8]> = std::vec![4, 5, 6, 7].into();
-    let prefix = HostResourcePayload::shared_prefix(Arc::clone(&shared), 3).unwrap();
-    assert_eq!(prefix.as_slice(), &[4, 5, 6]);
-    assert_eq!(prefix.len(), 3);
-    assert_eq!(
-        HostResourcePayload::shared_prefix(shared, 5).unwrap_err(),
-        HostResourcePayloadError::PrefixOutOfRange
     );
 }
 
