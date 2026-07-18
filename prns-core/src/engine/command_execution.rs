@@ -32,8 +32,7 @@ use crate::storage::StorageLayout;
 use crate::wire::BROADCAST_MTU;
 
 impl<S: StorageLayout> EngineState<S> {
-    /// Resolves the link's interface only so the grant-first directive can name its target; the reactor must know which lane to offer a slot from before `fill` runs.
-    /// The write inside `fill` looks the link up again and that second lookup is the authority: a link gone by then fails there as `LinkVanished`.
+    /// Resolves the link's interface only so the grant-first directive can name its target; the reactor must know which lane to offer a slot from before `fill` runs. The write inside `fill` looks the link up again and that second lookup is the authority: a link gone by then fails there as `LinkVanished`.
     fn active_link_interface(&self, link_id: &LinkId) -> Option<InterfaceId> {
         match self.links.phase_for(link_id)? {
             LinkPhase::Active {
@@ -54,7 +53,6 @@ impl<S: StorageLayout> EngineState<S> {
     where
         F: FnMut(&mut [u8]),
     {
-        //Match arms that set or clear a deadline will write that lane's recompute into this delta as they go. Most leave it UNCHANGED.
         let mut wake_schedule_changes = WakeSchedules::UNCHANGED;
         match self.ingest_command(issued, interfaces) {
             CommandOutcome::OwesAnnounce { id, announce } => {
@@ -270,7 +268,6 @@ impl<S: StorageLayout> EngineState<S> {
                                 settle(sink, culled.command_id, culled_settlement(culled.kind));
                             }
                             Some(Ok(None)) => {}
-                            //A fill the host never ran settles like a discard-slot grant: nothing went out, so the write failed.
                             None => settle(
                                 sink,
                                 id,
@@ -349,7 +346,6 @@ impl<S: StorageLayout> EngineState<S> {
                                 id,
                                 Settlement::SendToChannel(Err(send_to_channel_failure(error))),
                             ),
-                            //A fill the host never ran settles like a discard-slot grant: nothing went out, so the write failed.
                             None => settle(
                                 sink,
                                 id,
@@ -450,7 +446,6 @@ impl<S: StorageLayout> EngineState<S> {
                                     Settlement::SendRequest(Err(SendRequestFailure::WriteFailed)),
                                 );
                             }
-                            //A fill the host never ran settles like a discard-slot grant: nothing went out, so the write failed.
                             None => settle(
                                 sink,
                                 id,
