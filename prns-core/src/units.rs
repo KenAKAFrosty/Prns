@@ -53,6 +53,10 @@ impl InstantMillis {
 }
 
 impl DurationMillis {
+    pub fn from_duration_saturating(duration: core::time::Duration) -> DurationMillis {
+        DurationMillis(u64::try_from(duration.as_millis()).unwrap_or(u64::MAX))
+    }
+
     pub const fn saturating_add(self, rhs: DurationMillis) -> DurationMillis {
         DurationMillis(self.0.saturating_add(rhs.0))
     }

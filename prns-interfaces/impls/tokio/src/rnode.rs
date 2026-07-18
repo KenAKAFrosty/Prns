@@ -5,14 +5,17 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::framed_stream::WireMeters;
-use crate::kiss_deadline::{elapsed_millis, wait_for_deadline};
+use crate::kiss_deadline::{elapsed_millis, instant_for, wait_for_deadline};
 use crate::reconnect::ReconnectDelay;
 use prns_core::engine::InstantMillis;
 use prns_core::interfaces::kiss::transmission_control::{
     KissTransmissionControl, ReadyCommandFlowControl, StationIdentification, Transmission,
 };
-use prns_core::interfaces::kiss_framing;
+use prns_core::interfaces::rnode::bring_up::{
+    BringUp as BringUpProtocol, BringUpAction, BringUpError,
+};
 use prns_core::interfaces::rnode::core::{self, RadioConfig};
+use prns_core::interfaces::rnode::live::{KeepaliveSchedule, LiveCommand, LiveProtocol};
 use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{
     ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind,
@@ -45,74 +48,18 @@ pub const DEFAULT_RNODE_RESET_DELAY: RNodeResetDelay = RNodeResetDelay::new(Dura
 /// How long to wait for the device to answer the detect query before giving up on this connection
 /// and reconnecting. RNS's serial path waits a fixed `0.2s`; a slightly longer window is more
 /// forgiving of a device still settling without changing the requirement that it *must* answer.
+pub use prns_core::interfaces::rnode::bring_up::DetectTimeout as RNodeDetectTimeout;
+pub use prns_core::interfaces::rnode::live::{
+    Keepalive as RNodeKeepalive, KeepaliveInterval as RNodeKeepaliveInterval,
+};
+
 pub const DEFAULT_RNODE_DETECT_TIMEOUT: RNodeDetectTimeout =
-    RNodeDetectTimeout::from_validated(Duration::from_secs(2));
+    prns_core::interfaces::rnode::bring_up::DEFAULT_DETECT_TIMEOUT;
 pub const TCP_RNODE_DETECT_TIMEOUT: RNodeDetectTimeout =
-    RNodeDetectTimeout::from_validated(Duration::from_secs(5));
+    prns_core::interfaces::rnode::bring_up::REMOTE_DETECT_TIMEOUT;
 pub const BLE_RNODE_DETECT_TIMEOUT: RNodeDetectTimeout =
-    RNodeDetectTimeout::from_validated(Duration::from_secs(5));
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RNodeDetectTimeout(Duration);
-
-impl RNodeDetectTimeout {
-    #[must_use]
-    pub const fn new(duration: Duration) -> Option<Self> {
-        if duration.is_zero() {
-            None
-        } else {
-            Some(Self(duration))
-        }
-    }
-
-    const fn from_validated(duration: Duration) -> Self {
-        Self(duration)
-    }
-
-    #[must_use]
-    pub const fn duration(self) -> Duration {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RNodeKeepaliveInterval(Duration);
-
-impl RNodeKeepaliveInterval {
-    #[must_use]
-    pub const fn new(duration: Duration) -> Option<Self> {
-        if duration.is_zero() {
-            None
-        } else {
-            Some(Self(duration))
-        }
-    }
-
-    const fn from_validated(duration: Duration) -> Self {
-        Self(duration)
-    }
-
-    #[must_use]
-    pub const fn duration(self) -> Duration {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum RNodeKeepalive {
-    #[default]
-    Disabled,
-    Detect(RNodeKeepaliveInterval),
-}
-
-pub const TCP_RNODE_KEEPALIVE: RNodeKeepalive = RNodeKeepalive::Detect(
-    RNodeKeepaliveInterval::from_validated(Duration::from_millis(3_500)),
-);
-
-/// How long to wait for the device to echo its radio parameters back after the configuration is
-/// written, before validating whatever has arrived. RNS sleeps `0.25s` then checks; reading until
-/// every parameter is reported (or this elapses) is the same check, just not wall-clock-bound.
-const VALIDATE_TIMEOUT: Duration = Duration::from_secs(2);
+    prns_core::interfaces::rnode::bring_up::REMOTE_DETECT_TIMEOUT;
+pub const TCP_RNODE_KEEPALIVE: RNodeKeepalive = prns_core::interfaces::rnode::live::TCP_KEEPALIVE;
 
 struct RNodeBuffers {
     decoder: Box<core::CommandDecoder>,
@@ -295,123 +242,60 @@ async fn bring_up<S: AsyncRead + AsyncWrite + Unpin>(
     detect_timeout: RNodeDetectTimeout,
 ) -> io::Result<()> {
     decoder.reset();
-    let mut report = core::DeviceReport::default();
+    let started = tokio::time::Instant::now();
+    let mut protocol = BringUpProtocol::new(*radio, detect_timeout);
+    loop {
+        match protocol.next_action(elapsed_millis(started)) {
+            BringUpAction::WriteDetect(bytes) => stream.write_all(&bytes).await?,
+            BringUpAction::WriteRadioConfiguration {
+                bytes,
+                outdated_firmware,
+            } => {
+                if let Some(firmware) = outdated_firmware {
+                    eprintln!(
+                        "RNODE_FIRMWARE_OUTDATED reported={}.{} required={}.{} (continuing anyway)",
+                        firmware.major,
+                        firmware.minor,
+                        core::REQUIRED_FW_VER_MAJ,
+                        core::REQUIRED_FW_VER_MIN,
+                    );
+                }
+                stream.write_all(&bytes).await?;
+            }
+            BringUpAction::ReadUntil(deadline) => {
+                let Some(deadline) = instant_for(started, deadline) else {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "RNode bring-up deadline exceeds the host clock range",
+                    ));
+                };
+                match tokio::time::timeout_at(deadline, stream.read(read_buf)).await {
+                    Err(_) => protocol.deadline_elapsed(elapsed_millis(started)),
+                    Ok(Ok(0)) => return Err(io::Error::from(io::ErrorKind::UnexpectedEof)),
+                    Ok(Ok(read)) => {
+                        decoder.feed_slice(&read_buf[..read], |command, payload| {
+                            protocol.apply_command(command, payload);
+                        });
+                    }
+                    Ok(Err(error)) => return Err(error),
+                }
+            }
+            BringUpAction::Complete => return Ok(()),
+            BringUpAction::Failed(error) => return Err(bring_up_error(error)),
+        }
+    }
+}
 
-    // detect(): write the batched detect/firmware/platform/MCU query, then read until the device
-    // answers the detect request (or we time out waiting for a device that is not an RNode).
-    stream.write_all(&core::detect_frames()).await?;
-    if !pump(
-        stream,
-        decoder,
-        read_buf,
-        &mut report,
-        detect_timeout.duration(),
-        |r| r.detected,
-    )
-    .await?
-    {
-        return Err(io::Error::new(
+fn bring_up_error(error: BringUpError) -> io::Error {
+    match error {
+        BringUpError::DetectTimedOut => io::Error::new(
             io::ErrorKind::TimedOut,
             "RNode did not answer the detect query",
-        ));
-    }
-    if report.firmware_ok() == Some(false) {
-        eprintln!(
-            "RNODE_FIRMWARE_OUTDATED reported={}.{} required={}.{} (continuing anyway)",
-            report.fw_maj.unwrap_or(0),
-            report.fw_min.unwrap_or(0),
-            core::REQUIRED_FW_VER_MAJ,
-            core::REQUIRED_FW_VER_MIN,
-        );
-    }
-
-    // initRadio(): write the radio configuration, then read the device's parameter echoes until all
-    // have arrived (or the validation window elapses), and check them against the configuration.
-    stream.write_all(&radio.init_command_bytes()).await?;
-    pump(
-        stream,
-        decoder,
-        read_buf,
-        &mut report,
-        VALIDATE_TIMEOUT,
-        |r| r.all_radio_params_present(),
-    )
-    .await?;
-
-    if report.radio_validated(radio) {
-        Ok(())
-    } else {
-        Err(io::Error::new(
+        ),
+        BringUpError::RadioMismatch => io::Error::new(
             io::ErrorKind::InvalidData,
             "RNode reported radio parameters that do not match the configuration",
-        ))
-    }
-}
-
-/// Read device frames into `report` until `done` is satisfied or `timeout` elapses. An IO
-/// error or unexpected EOF propagates so bring-up treats the device as gone; a timeout returns
-/// `Ok(false)` so the caller decides what an incomplete picture means (a missed detect aborts;
-/// an incomplete validation simply fails the match).
-async fn pump<S, Done>(
-    stream: &mut S,
-    decoder: &mut core::CommandDecoder,
-    read_buf: &mut [u8],
-    report: &mut core::DeviceReport,
-    timeout: Duration,
-    mut done: Done,
-) -> io::Result<bool>
-where
-    S: AsyncRead + Unpin,
-    Done: FnMut(&core::DeviceReport) -> bool,
-{
-    if done(report) {
-        return Ok(true);
-    }
-    let deadline = tokio::time::Instant::now() + timeout;
-    loop {
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        if remaining.is_zero() {
-            return Ok(false);
-        }
-        let read = match tokio::time::timeout(remaining, stream.read(read_buf)).await {
-            Err(_elapsed) => return Ok(false),
-            Ok(Ok(0)) => return Err(io::Error::from(io::ErrorKind::UnexpectedEof)),
-            Ok(Ok(read)) => read,
-            Ok(Err(error)) => return Err(error),
-        };
-        decoder.feed_slice(&read_buf[..read], |command, payload| {
-            report.apply(command, payload);
-        });
-        if done(report) {
-            return Ok(true);
-        }
-    }
-}
-
-struct RNodeKeepaliveSchedule {
-    interval: Option<RNodeKeepaliveInterval>,
-    deadline: Option<tokio::time::Instant>,
-}
-
-impl RNodeKeepaliveSchedule {
-    fn new(keepalive: RNodeKeepalive) -> Self {
-        let interval = match keepalive {
-            RNodeKeepalive::Disabled => None,
-            RNodeKeepalive::Detect(interval) => Some(interval),
-        };
-        let deadline = interval
-            .and_then(|interval| tokio::time::Instant::now().checked_add(interval.duration()));
-        Self { interval, deadline }
-    }
-
-    fn deadline(&self) -> Option<tokio::time::Instant> {
-        self.deadline
-    }
-
-    fn wrote(&mut self) {
-        self.deadline = self
-            .interval
-            .and_then(|interval| tokio::time::Instant::now().checked_add(interval.duration()));
+        ),
     }
 }
 
@@ -431,10 +315,10 @@ async fn serve_rnode<S, Seam>(
     S: AsyncRead + AsyncWrite + Unpin,
     Seam: InterfaceSeam,
 {
-    let mut packet_phy = core::PacketPhyState::default();
+    let mut protocol = LiveProtocol::default();
     buffers.decoder.reset();
     control.connection_opened();
-    let mut keepalive = RNodeKeepaliveSchedule::new(keepalive);
+    let mut keepalive = KeepaliveSchedule::new(keepalive, elapsed_millis(meters.started));
     loop {
         if let Some(transmission) = control.next_queued(elapsed_millis(meters.started)) {
             if !write_rnode_transmission(
@@ -466,30 +350,29 @@ async fn serve_rnode<S, Seam>(
                     if let Some((command, payload)) =
                         buffers.decoder.feed_slice_next(chunk, &mut offset).ok().flatten()
                     {
-                        if command == core::CMD_DATA {
-                            let stats = packet_phy.take_for_data();
-                            if !payload.is_empty() {
-                                seam.next_inbound_with_phy(payload, stats).await;
+                        match protocol.apply(command, payload, radio) {
+                            LiveCommand::Data { payload, phy } => {
+                                seam.next_inbound_with_phy(payload, phy).await;
                             }
-                        } else if command == kiss_framing::CMD_READY {
-                            if let Some(transmission) =
-                                control.ready_received(elapsed_millis(meters.started))
-                            {
-                                if !write_rnode_transmission(
-                                    stream,
-                                    &mut buffers.frame,
-                                    control,
-                                    &mut keepalive,
-                                    transmission,
-                                    meters,
-                                )
-                                .await
+                            LiveCommand::Ready => {
+                                if let Some(transmission) =
+                                    control.ready_received(elapsed_millis(meters.started))
                                 {
-                                    return;
+                                    if !write_rnode_transmission(
+                                        stream,
+                                        &mut buffers.frame,
+                                        control,
+                                        &mut keepalive,
+                                        transmission,
+                                        meters,
+                                    )
+                                    .await
+                                    {
+                                        return;
+                                    }
                                 }
                             }
-                        } else {
-                            packet_phy.apply(command, payload, radio);
+                            LiveCommand::Consumed => {}
                         }
                     }
                 }
@@ -548,27 +431,17 @@ async fn serve_rnode<S, Seam>(
                     }
                 }
             }
-            () = wait_for_keepalive(keepalive.deadline()) => {
-                let Ok(framed) = kiss_framing::encode_with_command(
-                    core::CMD_DETECT,
-                    &[core::DETECT_REQ],
-                    &mut buffers.frame,
-                ) else {
-                    return;
+            () = wait_for_deadline(meters.started, keepalive.deadline()) => {
+                let now = elapsed_millis(meters.started);
+                let Some(transmission) = keepalive.due(now) else {
+                    continue;
                 };
-                if stream.write_all(&buffers.frame[..framed]).await.is_err() {
+                if stream.write_all(transmission.wire_bytes()).await.is_err() {
                     return;
                 }
-                keepalive.wrote();
+                keepalive.wrote(elapsed_millis(meters.started));
             }
         }
-    }
-}
-
-async fn wait_for_keepalive(deadline: Option<tokio::time::Instant>) {
-    match deadline {
-        Some(deadline) => tokio::time::sleep_until(deadline).await,
-        None => std::future::pending().await,
     }
 }
 
@@ -576,20 +449,18 @@ async fn write_rnode_transmission<S: AsyncWrite + Unpin>(
     stream: &mut S,
     frame_buf: &mut [u8],
     control: &mut KissTransmissionControl,
-    keepalive: &mut RNodeKeepaliveSchedule,
+    keepalive: &mut KeepaliveSchedule,
     transmission: Transmission,
     meters: &mut WireMeters<'_>,
 ) -> bool {
-    let Ok(framed) =
-        kiss_framing::encode_with_command(core::CMD_DATA, transmission.payload(), frame_buf)
-    else {
+    let Ok(framed) = core::encode_data_frame(transmission.payload(), frame_buf) else {
         return true;
     };
     if stream.write_all(&frame_buf[..framed]).await.is_err() {
         return false;
     }
-    keepalive.wrote();
     let now = elapsed_millis(meters.started);
+    keepalive.wrote(now);
     control.transmitted(&transmission, now);
     meters.status.add_tx(framed as u64);
     let elapsed = InstantMillis(meters.started.elapsed().as_millis() as u64);

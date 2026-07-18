@@ -2,7 +2,7 @@ use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 use core::time::Duration;
 
-use crate::units::InstantMillis;
+use crate::units::{DurationMillis, InstantMillis};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReadyCommandFlowControl {
@@ -232,8 +232,7 @@ impl KissTransmissionControl {
 }
 
 fn deadline_after(now: InstantMillis, duration: Duration) -> InstantMillis {
-    let milliseconds = u64::try_from(duration.as_millis()).unwrap_or(u64::MAX);
-    InstantMillis(now.0.saturating_add(milliseconds))
+    now.saturating_add(DurationMillis::from_duration_saturating(duration))
 }
 
 #[cfg(test)]

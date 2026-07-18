@@ -6,6 +6,9 @@ use tokio::sync::mpsc;
 use prns_core::interfaces::kiss::transmission_control::{
     KissTransmissionControl, StationIdentification, Transmission,
 };
+use prns_core::interfaces::rnode::multi::live::{
+    HardwareError, LiveCommand, LiveError, LiveProtocol,
+};
 use prns_core::interfaces::rnode::{core, multi};
 use prns_core::interfaces::ConnectionState;
 use prns_runtime::reactor::airtime::AirtimeLedger;
@@ -26,8 +29,7 @@ pub(super) struct RuntimeCycle {
 pub(super) struct WireCycle {
     pub(super) members: Vec<LiveMember>,
     pub(super) outbound: mpsc::UnboundedReceiver<OutboundFrame>,
-    pub(super) selected: multi::VPort,
-    pub(super) platform: Option<multi::DevicePlatform>,
+    pub(super) live: LiveProtocol,
     pub(super) started: tokio::time::Instant,
 }
 
@@ -74,7 +76,6 @@ impl RuntimeCycle {
                     settings.flow_control,
                     station_identification.clone(),
                 ),
-                packet_phy: multi::PacketPhyState::default(),
                 meters: MemberMeters {
                     status,
                     airtime: AirtimeLedger::new(),
@@ -85,12 +86,18 @@ impl RuntimeCycle {
             });
             attachments.push(attached);
         }
+        let live = LiveProtocol::new(
+            members.iter().map(|member| multi::ConfiguredRadio {
+                vport: member.vport,
+                radio: member.radio,
+            }),
+            None,
+        );
         Self {
             wire: WireCycle {
                 members,
                 outbound,
-                selected: multi::VPort::ZERO,
-                platform: None,
+                live,
                 started,
             },
             attachments,
@@ -107,7 +114,7 @@ impl RuntimeCycle {
     }
 
     pub(super) fn mark_connected(&mut self, platform: Option<multi::DevicePlatform>) {
-        self.wire.platform = platform;
+        self.wire.live.set_platform(platform);
         for member in &self.wire.members {
             member
                 .meters
@@ -194,53 +201,30 @@ impl WireCycle {
             else {
                 continue;
             };
-            match command {
-                multi::CMD_SELECT_INTERFACE => {
-                    if let Some(vport) = payload.first().and_then(|value| multi::VPort::new(*value))
-                    {
-                        self.selected = vport;
-                    }
-                }
-                core::CMD_DATA => self.deliver_inbound(payload),
-                prns_core::interfaces::kiss_framing::CMD_READY => {
-                    self.release_ready(stream).await?;
-                }
-                core::CMD_PLATFORM => {
-                    self.platform = payload
-                        .first()
-                        .copied()
-                        .map(multi::DevicePlatform::from_device_report);
-                }
-                core::CMD_ERROR => return Err(hardware_error(payload)),
-                core::CMD_RESET
-                    if self.platform == Some(multi::DevicePlatform::Esp32)
-                        && payload.first() == Some(&core::RESET_RESP) =>
-                {
-                    return Err(io::Error::new(
-                        io::ErrorKind::ConnectionReset,
-                        "RNodeMulti ESP32 reset while online",
-                    ));
-                }
-                _ => {
-                    if let Some(member) = self.member_mut(self.selected) {
-                        member.packet_phy.apply(command, payload, member.radio);
-                    }
-                }
+            match self.live.apply(command, payload) {
+                LiveCommand::Data {
+                    vport,
+                    payload,
+                    phy,
+                } => self.deliver_inbound(vport, payload, phy),
+                LiveCommand::AllRadiosReady => self.release_ready(stream).await?,
+                LiveCommand::Consumed => {}
+                LiveCommand::Failed(error) => return Err(live_error(error)),
             }
         }
         Ok(())
     }
 
-    fn deliver_inbound(&mut self, payload: &[u8]) {
-        if payload.is_empty() {
-            return;
-        }
-        let selected = self.selected;
-        let Some(member) = self.member_mut(selected) else {
+    fn deliver_inbound(
+        &mut self,
+        vport: multi::VPort,
+        payload: &[u8],
+        phy: prns_core::interfaces::PacketPhyStats,
+    ) {
+        let Some(member) = self.member_mut(vport) else {
             return;
         };
-        let phy = member.packet_phy.take_for_data();
-        let wire_len = multi::data_frame(selected, payload)
+        let wire_len = multi::data_frame(vport, payload)
             .map(|frame| frame.len())
             .unwrap_or(payload.len());
         member.meters.record_rx(wire_len);
@@ -346,12 +330,25 @@ impl WireCycle {
     }
 }
 
-fn hardware_error(payload: &[u8]) -> io::Error {
-    let message = match payload.first().copied() {
-        Some(core::ERROR_INIT_RADIO) => "RNodeMulti radio initialisation failure",
-        Some(core::ERROR_TX_FAILED) => "RNodeMulti hardware transmit failure",
-        Some(core::ERROR_EEPROM_LOCKED) => "RNodeMulti EEPROM is locked",
-        _ => "RNodeMulti unknown hardware failure",
+fn live_error(error: LiveError) -> io::Error {
+    let (kind, message) = match error {
+        LiveError::Hardware(HardwareError::RadioInitialization) => (
+            io::ErrorKind::Other,
+            "RNodeMulti radio initialisation failure",
+        ),
+        LiveError::Hardware(HardwareError::Transmit) => {
+            (io::ErrorKind::Other, "RNodeMulti hardware transmit failure")
+        }
+        LiveError::Hardware(HardwareError::EepromLocked) => {
+            (io::ErrorKind::Other, "RNodeMulti EEPROM is locked")
+        }
+        LiveError::Hardware(HardwareError::Unknown(_)) => {
+            (io::ErrorKind::Other, "RNodeMulti unknown hardware failure")
+        }
+        LiveError::Esp32Reset => (
+            io::ErrorKind::ConnectionReset,
+            "RNodeMulti ESP32 reset while online",
+        ),
     };
-    io::Error::other(message)
+    io::Error::new(kind, message)
 }

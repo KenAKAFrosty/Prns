@@ -1,8 +1,15 @@
+use alloc::vec::Vec;
+
 use crate::interfaces::kiss_framing::{FEND, FESC, TFEND, TFESC};
 use crate::interfaces::lora::core::SpreadingFactor;
 use crate::interfaces::{PacketPhyStats, RssiDbm, SnrQuarterDb};
 
-use super::core;
+use super::{core, FirmwareVersion};
+
+pub mod bring_up;
+pub mod live;
+
+pub use bring_up::ConfiguredRadio;
 
 pub const MAX_SUBINTERFACES: usize = 11;
 pub const REQUIRED_FW_VERSION_MAJOR: u8 = 1;
@@ -242,8 +249,8 @@ impl RadioConfig {
     }
 
     #[must_use]
-    pub fn init_command_bytes(self, vport: VPort) -> std::vec::Vec<u8> {
-        let mut output = std::vec::Vec::new();
+    pub fn init_command_bytes(self, vport: VPort) -> Vec<u8> {
+        let mut output = Vec::new();
         append_selected_command(
             &mut output,
             vport,
@@ -285,11 +292,11 @@ pub enum DataFrameError {
     PayloadTooLarge(usize),
 }
 
-pub fn data_frame(vport: VPort, payload: &[u8]) -> Result<std::vec::Vec<u8>, DataFrameError> {
+pub fn data_frame(vport: VPort, payload: &[u8]) -> Result<Vec<u8>, DataFrameError> {
     if payload.len() > core::RNODE_FRAME_LEN {
         return Err(DataFrameError::PayloadTooLarge(payload.len()));
     }
-    let mut output = std::vec::Vec::new();
+    let mut output = Vec::new();
     append_command(&mut output, CMD_SELECT_INTERFACE, &[vport.get()]);
     append_command(&mut output, core::CMD_DATA, payload);
     Ok(output)
@@ -317,17 +324,12 @@ pub const fn detect_frames() -> [u8; 16] {
     ]
 }
 
-fn append_selected_command(
-    output: &mut std::vec::Vec<u8>,
-    vport: VPort,
-    command: u8,
-    payload: &[u8],
-) {
+fn append_selected_command(output: &mut Vec<u8>, vport: VPort, command: u8, payload: &[u8]) {
     append_command(output, CMD_SELECT_INTERFACE, &[vport.get()]);
     append_command(output, command, payload);
 }
 
-fn append_command(output: &mut std::vec::Vec<u8>, command: u8, payload: &[u8]) {
+fn append_command(output: &mut Vec<u8>, command: u8, payload: &[u8]) {
     output.push(FEND);
     output.push(command);
     for byte in payload {
@@ -341,7 +343,7 @@ fn append_command(output: &mut std::vec::Vec<u8>, command: u8, payload: &[u8]) {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct ReportedInterfaces(std::vec::Vec<RadioType>);
+pub struct ReportedInterfaces(Vec<RadioType>);
 
 impl ReportedInterfaces {
     pub fn apply(&mut self, payload: &[u8]) {
@@ -504,9 +506,9 @@ impl DeviceReport {
     }
 
     #[must_use]
-    pub const fn firmware_version(&self) -> Option<(u8, u8)> {
+    pub const fn firmware_version(&self) -> Option<FirmwareVersion> {
         match (self.firmware_major, self.firmware_minor) {
-            (Some(major), Some(minor)) => Some((major, minor)),
+            (Some(major), Some(minor)) => Some(FirmwareVersion { major, minor }),
             _ => None,
         }
     }
@@ -667,7 +669,13 @@ mod tests {
         assert_eq!(report.firmware_ok(), Some(false));
         report.apply(core::CMD_FW_VERSION, &[1, 74]);
         assert_eq!(report.firmware_ok(), Some(true));
-        assert_eq!(report.firmware_version(), Some((1, 74)));
+        assert_eq!(
+            report.firmware_version(),
+            Some(FirmwareVersion {
+                major: 1,
+                minor: 74
+            })
+        );
     }
 
     #[test]

@@ -7,6 +7,9 @@
 //! command-aware [`KissCommandDecoder`], not the data-only KISS path. Reference: RNS
 //! `RNodeInterface.py` <https://github.com/markqvist/Reticulum/blob/1.3.5/RNS/Interfaces/RNodeInterface.py>
 
+use alloc::vec::Vec;
+
+use super::FirmwareVersion;
 use crate::interfaces::kiss_framing::{self, KissCommandDecoder, FEND};
 use crate::interfaces::lora::core::SpreadingFactor;
 pub use crate::interfaces::rnode::policy::{
@@ -235,8 +238,8 @@ impl RadioConfig {
     /// power, spreading factor, coding rate, the optional airtime locks, then radio state ON — each a
     /// KISS frame under its command byte, in this exact order.
     #[must_use]
-    pub fn init_command_bytes(&self) -> std::vec::Vec<u8> {
-        let mut out = std::vec::Vec::new();
+    pub fn init_command_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::new();
         push_command(&mut out, CMD_FREQUENCY, &self.frequency_hz.to_be_bytes());
         push_command(&mut out, CMD_BANDWIDTH, &self.bandwidth_hz.to_be_bytes());
         push_command(&mut out, CMD_TXPOWER, &[self.txpower_dbm]);
@@ -285,7 +288,7 @@ impl PacketPhyState {
 
 /// Encode `payload` under `command` as a KISS frame appended to `out`. The buffer is sized to
 /// the framing's worst case, so a too-small buffer drops the frame rather than panicking.
-fn push_command(out: &mut std::vec::Vec<u8>, command: u8, payload: &[u8]) {
+fn push_command(out: &mut Vec<u8>, command: u8, payload: &[u8]) {
     let mut scratch = [0u8; FRAME_SCRATCH];
     if let Ok(n) = kiss_framing::encode_with_command(command, payload, &mut scratch) {
         out.extend_from_slice(&scratch[..n]);
@@ -311,6 +314,18 @@ pub const fn detect_frames() -> [u8; 13] {
         0x00,
         FEND,
     ]
+}
+
+#[must_use]
+pub const fn detect_request_frame() -> [u8; 4] {
+    [FEND, CMD_DETECT, DETECT_REQ, FEND]
+}
+
+pub fn encode_data_frame(
+    payload: &[u8],
+    output: &mut [u8],
+) -> Result<usize, kiss_framing::EncodeError> {
+    kiss_framing::encode_with_command(CMD_DATA, payload, output)
 }
 
 /// What the device reported during bring-up: the async rendering of RNS `readLoop`'s side
@@ -412,6 +427,14 @@ impl DeviceReport {
         Some(
             maj > REQUIRED_FW_VER_MAJ || (maj == REQUIRED_FW_VER_MAJ && min >= REQUIRED_FW_VER_MIN),
         )
+    }
+
+    #[must_use]
+    pub const fn firmware_version(&self) -> Option<FirmwareVersion> {
+        match (self.fw_maj, self.fw_min) {
+            (Some(major), Some(minor)) => Some(FirmwareVersion { major, minor }),
+            _ => None,
+        }
     }
 }
 
@@ -584,6 +607,28 @@ mod tests {
                 (CMD_FW_VERSION, std::vec![0x00]),
                 (CMD_PLATFORM, std::vec![0x00]),
                 (CMD_MCU, std::vec![0x00]),
+            ]
+        );
+    }
+
+    #[test]
+    fn live_wire_frames_are_owned_by_the_rnode_codec() {
+        assert_eq!(detect_request_frame(), [FEND, CMD_DETECT, DETECT_REQ, FEND]);
+        let mut output = [0; 7];
+        assert_eq!(
+            encode_data_frame(&[FEND, kiss_framing::FESC], &mut output),
+            Ok(7)
+        );
+        assert_eq!(
+            output,
+            [
+                FEND,
+                CMD_DATA,
+                kiss_framing::FESC,
+                kiss_framing::TFEND,
+                kiss_framing::FESC,
+                kiss_framing::TFESC,
+                FEND
             ]
         );
     }

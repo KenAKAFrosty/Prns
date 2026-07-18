@@ -117,6 +117,5 @@ pub(super) struct LiveMember {
     pub(super) radio: multi::RadioConfig,
     pub(super) inbound: mpsc::UnboundedSender<InboundFrame>,
     pub(super) control: KissTransmissionControl,
-    pub(super) packet_phy: multi::PacketPhyState,
     pub(super) meters: MemberMeters,
 }
