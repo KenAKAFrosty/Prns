@@ -259,3 +259,61 @@ fn a_retrying_interface_reports_degraded_readiness_without_panicking_by_default(
     assert!(ready.contains("\"retrying\":1"));
     assert!(ready.contains("\"failed\":0"));
 }
+
+#[test]
+fn an_idle_i2p_interface_constructs_before_ready_without_a_sam_router() {
+    let directory = TestDirectory::new();
+    fs::write(
+        directory.0.join("config"),
+        "[reticulum]\nshare_instance = No\n[logging]\nloglevel = 7\n[interfaces]\n[[Private I2P]]\ntype = I2PInterface\nenabled = Yes\n",
+    )
+    .unwrap();
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_prnsd"))
+        .args([
+            "run",
+            "--log-format",
+            "json",
+            "--config",
+            directory.0.to_str().unwrap(),
+        ])
+        .env_remove("RUST_LOG")
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let stderr = child.stderr.take().unwrap();
+    let (line_tx, line_rx) = std::sync::mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        for line in std::io::BufReader::new(stderr)
+            .lines()
+            .map_while(Result::ok)
+        {
+            let _ = line_tx.send(line);
+        }
+    });
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let mut lines = Vec::new();
+    while std::time::Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        let Ok(line) = line_rx.recv_timeout(remaining) else {
+            break;
+        };
+        let ready = line.contains("\"event\":\"daemon_ready\"");
+        lines.push(line);
+        if ready {
+            break;
+        }
+    }
+    let _ = child.kill();
+    child.wait().unwrap();
+    reader.join().unwrap();
+    let rendered = lines.join("\n");
+
+    assert!(rendered.contains("\"event\":\"interface_started\""));
+    assert!(rendered.contains("\"medium\":\"i2p\""));
+    assert!(rendered.contains("\"event\":\"daemon_ready\""));
+    assert!(rendered.contains("\"online\":1"));
+    assert!(!rendered.contains("\"event\":\"daemon_ready_degraded\""));
+}

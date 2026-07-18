@@ -5,8 +5,50 @@ use std::io::{self, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
+use prns_core::crypto::{sha256, sha256_chunks};
+use prns_core::identity::IdentityHash;
+
+use super::runtime::I2pInterfaceName;
 use super::sam::{I2pPrivateDestination, SamValueError};
 use super::{generate_session_id, I2pSessionIdError};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RnsI2pStorage {
+    directory: PathBuf,
+    transport_identity: IdentityHash,
+}
+
+impl RnsI2pStorage {
+    pub fn new(storage_dir: impl Into<PathBuf>, transport_identity: IdentityHash) -> Self {
+        Self {
+            directory: storage_dir.into().join("i2p"),
+            transport_identity,
+        }
+    }
+
+    pub fn destination_key_path(&self, interface_name: &I2pInterfaceName) -> I2pDestinationKeyPath {
+        let name_hash = sha256(interface_name.as_str().as_bytes());
+        let old_hash = sha256(&name_hash);
+        let old_path = self.directory.join(destination_filename(old_hash));
+        if old_path.is_file() {
+            return I2pDestinationKeyPath(old_path);
+        }
+        let identity_hash = sha256(self.transport_identity.as_bytes());
+        let current_hash = sha256_chunks(&[&name_hash, &identity_hash]);
+        I2pDestinationKeyPath(self.directory.join(destination_filename(current_hash)))
+    }
+}
+
+fn destination_filename(hash: [u8; 32]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut filename = String::with_capacity(68);
+    for byte in hash {
+        filename.push(HEX[usize::from(byte >> 4)] as char);
+        filename.push(HEX[usize::from(byte & 0x0f)] as char);
+    }
+    filename.push_str(".i2p");
+    filename
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct I2pDestinationKeyPath(PathBuf);

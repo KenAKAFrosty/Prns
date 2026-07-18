@@ -7,12 +7,14 @@ use core::time::Duration;
 
 pub use prns_config as config;
 use prns_config::{
-    AddressFamilyPreference as PlannedAddressFamilyPreference, DaemonPlan, InterfaceAccessPlan,
-    PlannedInterface, PlannedMedium, ReadyCommandFlowControl as PlannedReadyCommandFlowControl,
+    AddressFamilyPreference as PlannedAddressFamilyPreference, DaemonPlan, I2pPeersPlan,
+    I2pReachabilityPlan as PlannedI2pReachability, InterfaceAccessPlan, PlannedInterface,
+    PlannedMedium, ReadyCommandFlowControl as PlannedReadyCommandFlowControl,
     ReconnectLimit as PlannedReconnectLimit, SerialDataBits, SerialLinePlan, SerialParity,
     SerialStopBits, StationIdentificationPlan, TcpDialPlan, TcpTunnelMode as PlannedTcpTunnelMode,
     UdpFlowPlan,
 };
+use prns_core::identity::IdentityHash;
 use prns_core::interfaces::ifac::IfacContext;
 use prns_core::interfaces::{InterfaceId, InterfaceOriginKind};
 use prns_runtime::interfaces::kiss::core::TncConfig;
@@ -24,6 +26,10 @@ use crate::backbone::client::BackboneClientInterface;
 use crate::backbone::server::BackboneServer;
 use crate::host_network::{
     resolve_tcp_listener, resolve_udp_endpoint, tcp_target, udp_ephemeral_bind,
+};
+use crate::i2p::{
+    I2pInterface, I2pInterfaceName, I2pPeerAddress, I2pPeers, I2pReachability, I2pRetryPolicy,
+    I2pRuntimeConfig, RnsI2pStorage, TokioSamBridge,
 };
 use crate::kiss::{KissInterface, KissSettings, DEFAULT_TNC_CONFIGURE_DELAY};
 use crate::pipe::{PipeInterface, PipeRespawnDelay};
@@ -64,6 +70,22 @@ pub enum PlanOutcome<'a> {
         interface: &'a PlannedInterface,
         visible_error_message: String,
     },
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PlanRuntimeContext {
+    i2p_storage: Option<RnsI2pStorage>,
+}
+
+impl PlanRuntimeContext {
+    pub fn with_rns_i2p_storage(
+        storage_dir: impl Into<std::path::PathBuf>,
+        transport_identity: IdentityHash,
+    ) -> Self {
+        Self {
+            i2p_storage: Some(RnsI2pStorage::new(storage_dir, transport_identity)),
+        }
+    }
 }
 
 /// The recipe intent for a config-driven node. Construction awaits socket binds, so it rides its
@@ -142,14 +164,24 @@ pub async fn attach_plan(
     plan: &DaemonPlan,
     report: &mut impl FnMut(PlanOutcome<'_>),
 ) {
+    attach_plan_with_context(handle, plan, &PlanRuntimeContext::default(), report).await;
+}
+
+pub async fn attach_plan_with_context(
+    handle: &PrnsNodeHandle,
+    plan: &DaemonPlan,
+    context: &PlanRuntimeContext,
+    report: &mut impl FnMut(PlanOutcome<'_>),
+) {
     for interface in &plan.interfaces {
-        stand_up(handle, interface, report).await;
+        stand_up(handle, interface, context, report).await;
     }
 }
 
 async fn stand_up(
     handle: &PrnsNodeHandle,
     interface: &PlannedInterface,
+    context: &PlanRuntimeContext,
     report: &mut impl FnMut(PlanOutcome<'_>),
 ) {
     let access = match &interface.access {
@@ -472,7 +504,59 @@ async fn stand_up(
             let attached = attach_with_access(handle, access, pipe);
             report_up(handle, interface, attached.id(), report);
         }
+        PlannedMedium::I2p {
+            peers,
+            reachability,
+        } => {
+            let config = match i2p_runtime_config(interface, peers, *reachability, context) {
+                Ok(config) => config,
+                Err(visible_error_message) => {
+                    report(PlanOutcome::Failed {
+                        interface,
+                        visible_error_message,
+                    });
+                    return;
+                }
+            };
+            let i2p = I2pInterface::new(TokioSamBridge::default(), config);
+            let attached = attach_with_access(handle, access, i2p);
+            report_up(handle, interface, attached.id(), report);
+        }
     }
+}
+
+fn i2p_runtime_config(
+    interface: &PlannedInterface,
+    planned_peers: &I2pPeersPlan,
+    planned_reachability: PlannedI2pReachability,
+    context: &PlanRuntimeContext,
+) -> Result<I2pRuntimeConfig, String> {
+    let name = I2pInterfaceName::new(interface.name.clone()).map_err(|error| error.to_string())?;
+    let peers = planned_peers
+        .iter()
+        .map(|peer| I2pPeerAddress::new(peer.as_str()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    let peers = I2pPeers::new(peers).map_err(|error| error.to_string())?;
+    let reachability = match planned_reachability {
+        PlannedI2pReachability::OutboundOnly => I2pReachability::OutboundOnly,
+        PlannedI2pReachability::Connectable => {
+            let storage = context.i2p_storage.as_ref().ok_or_else(|| {
+                "connectable I2P requires the daemon's RNS storage directory and transport identity"
+                    .to_string()
+            })?;
+            I2pReachability::Connectable {
+                key_path: storage.destination_key_path(&name),
+            }
+        }
+    };
+    Ok(I2pRuntimeConfig {
+        name,
+        peers,
+        reachability,
+        policy: interface.policy,
+        retry: I2pRetryPolicy::STOCK,
+    })
 }
 
 fn host_serial_line(line: SerialLinePlan) -> HostSerialLineSettings {
@@ -590,6 +674,7 @@ fn planned_medium_name(medium: &PlannedMedium) -> &'static str {
         PlannedMedium::Backbone { .. } => "backbone",
         PlannedMedium::BackboneClient { .. } => "backbone_client",
         PlannedMedium::Pipe { .. } => "pipe",
+        PlannedMedium::I2p { .. } => "i2p",
     }
 }
 
@@ -612,5 +697,129 @@ mod tests {
         assert_eq!(host.data_bits(), HostSerialDataBits::Seven);
         assert_eq!(host.parity(), HostSerialParity::Odd);
         assert_eq!(host.stop_bits(), HostSerialStopBits::Two);
+    }
+
+    #[test]
+    fn planned_i2p_peers_cross_the_runtime_boundary_without_reinterpretation() {
+        let plan = prns_config::parse_and_plan(
+            "[interfaces]\n[[Private I2P]]\ntype = I2PInterface\nenabled = Yes\npeers = example.i2p, QUJDRA==\n",
+        )
+        .expect("valid I2P configuration")
+        .value;
+        let interface = &plan.interfaces[0];
+        let PlannedMedium::I2p {
+            peers,
+            reachability,
+        } = &interface.medium
+        else {
+            panic!("I2P medium expected")
+        };
+
+        let config = i2p_runtime_config(
+            interface,
+            peers,
+            *reachability,
+            &PlanRuntimeContext::default(),
+        )
+        .expect("the typed plan converts to runtime types");
+
+        assert_eq!(
+            config
+                .peers
+                .iter()
+                .map(I2pPeerAddress::as_str)
+                .collect::<Vec<_>>(),
+            vec!["example.i2p", "QUJDRA=="]
+        );
+        assert_eq!(config.reachability, I2pReachability::OutboundOnly);
+        assert_eq!(config.policy, interface.policy);
+        assert_eq!(config.retry, I2pRetryPolicy::STOCK);
+    }
+
+    #[test]
+    fn connectable_i2p_requires_host_runtime_context() {
+        let plan = prns_config::parse_and_plan(
+            "[interfaces]\n[[Private I2P]]\ntype = I2PInterface\nenabled = Yes\nconnectable = Yes\n",
+        )
+        .expect("valid I2P configuration")
+        .value;
+        let interface = &plan.interfaces[0];
+        let PlannedMedium::I2p {
+            peers,
+            reachability,
+        } = &interface.medium
+        else {
+            panic!("I2P medium expected")
+        };
+
+        let error = i2p_runtime_config(
+            interface,
+            peers,
+            *reachability,
+            &PlanRuntimeContext::default(),
+        )
+        .expect_err("connectable I2P needs persistent host context");
+
+        assert!(error.contains("RNS storage directory and transport identity"));
+    }
+
+    #[test]
+    fn connectable_i2p_uses_the_host_supplied_stock_key_scope() {
+        let plan = prns_config::parse_and_plan(
+            "[interfaces]\n[[Private I2P]]\ntype = I2PInterface\nenabled = Yes\nconnectable = Yes\n",
+        )
+        .expect("valid I2P configuration")
+        .value;
+        let interface = &plan.interfaces[0];
+        let PlannedMedium::I2p {
+            peers,
+            reachability,
+        } = &interface.medium
+        else {
+            panic!("I2P medium expected")
+        };
+        let context = PlanRuntimeContext::with_rns_i2p_storage(
+            "/var/lib/reticulum/storage",
+            IdentityHash::new([
+                0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc,
+                0xdd, 0xee, 0xff,
+            ]),
+        );
+
+        let config = i2p_runtime_config(interface, peers, *reachability, &context)
+            .expect("the daemon context completes connectable I2P");
+        let I2pReachability::Connectable { key_path } = config.reachability else {
+            panic!("connectable runtime expected")
+        };
+
+        assert_eq!(
+            key_path.as_path(),
+            std::path::Path::new(
+                "/var/lib/reticulum/storage/i2p/4c621c0110154bbe086a0395dbeb07878a1613258d5e0346c96ddef1a5aeae2d.i2p"
+            )
+        );
+    }
+
+    #[test]
+    fn config_peer_validation_matches_runtime_peer_types() {
+        for peer in [
+            "example.i2p",
+            "52chars.b32.i2p",
+            "QUJDRA==",
+            "EXAMPLE.I2P",
+            "abc",
+            "A=AA",
+            "not a peer",
+            "",
+        ] {
+            let config = format!(
+                "[interfaces]\n[[Private I2P]]\ntype = I2PInterface\nenabled = Yes\npeers = {peer}\n"
+            );
+            assert_eq!(
+                prns_config::parse_and_plan(&config).is_ok(),
+                I2pPeerAddress::new(peer).is_ok(),
+                "config and runtime must agree for {peer:?}"
+            );
+        }
     }
 }

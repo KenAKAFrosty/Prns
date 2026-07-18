@@ -34,6 +34,8 @@ use personal_rns::engine::{
     EngineProtocolPolicy, LinkMtuDiscovery, LocalHopCountOverride, ProofForm,
 };
 use personal_rns::identity::vault::FileVault;
+use personal_rns::identity::in_memory::InMemoryNodeIdentity;
+use personal_rns::identity::IdentitySigner;
 use personal_rns::persistence::FileStore;
 use personal_rns::routes;
 use personal_rns::runtime::{
@@ -45,6 +47,7 @@ use personal_rns::shared_instance::{
     SharedInstanceTransport as RuntimeSharedInstanceTransport,
 };
 use personal_rns::storage::GrowableHeap;
+use personal_rns::PlanRuntimeContext;
 use prnsd_control::{
     LaunchSpec, LogLane, ManagedProcess, ServiceError, ServicePaths, ServiceRecord, ServiceState,
     StartOutcome, StateDirectoryError,
@@ -373,6 +376,10 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
         TransportIdentityPolicy::Persistent => persistent_secret.clone(),
         TransportIdentityPolicy::Ephemeral => personal_rns::runtime::generate_identity_secret(),
     };
+    let visible_identity_hash =
+        InMemoryNodeIdentity::from_secret_key_bytes(&visible_secret).identity_hash();
+    let interface_runtime =
+        PlanRuntimeContext::with_rns_i2p_storage(storage_dir.clone(), visible_identity_hash);
     let transport_secret = routing_enabled.then(|| visible_secret.clone());
     let non_routing_identity_secret = (!routing_enabled).then(|| visible_secret.clone());
     let protocol_policy = EngineProtocolPolicy {
@@ -504,7 +511,9 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
                         instance_name = %name,
                     );
                     startup.listening = startup.listening.saturating_add(1);
-                    let constructed = construct::construct_interfaces(&prns_handle, &plan).await;
+                    let constructed =
+                        construct::construct_interfaces(&prns_handle, &plan, &interface_runtime)
+                            .await;
                     startup.merge(constructed.startup);
                     constructed_interfaces = constructed.attached;
                     owns_tables = true;
@@ -537,7 +546,8 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
         }
         SharedInstance::Disabled => {
             tracing::info!(event = "standalone_node_started");
-            let constructed = construct::construct_interfaces(&prns_handle, &plan).await;
+            let constructed =
+                construct::construct_interfaces(&prns_handle, &plan, &interface_runtime).await;
             startup.merge(constructed.startup);
             constructed_interfaces = constructed.attached;
             owns_tables = true;

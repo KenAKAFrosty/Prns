@@ -85,7 +85,9 @@ pub use prns_interfaces_tokio::interface_discovery::{
 };
 
 #[cfg(all(feature = "config", feature = "tokio-host"))]
-pub use prns_interfaces_tokio::from_plan::{self, attach_plan, config, FromPlan, PlanOutcome};
+pub use prns_interfaces_tokio::from_plan::{
+    self, attach_plan, attach_plan_with_context, config, FromPlan, PlanOutcome, PlanRuntimeContext,
+};
 
 #[cfg(all(feature = "pipe", feature = "tokio-host"))]
 pub use prns_interfaces_tokio::pipe_host;

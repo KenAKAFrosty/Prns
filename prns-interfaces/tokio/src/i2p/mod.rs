@@ -13,7 +13,7 @@ pub use bridge::{
 };
 pub use destination::{
     load_destination, persist_destination, I2pDestinationKeyPath, I2pDestinationKeyPathError,
-    I2pDestinationStorageError,
+    I2pDestinationStorageError, RnsI2pStorage,
 };
 pub use runtime::{
     DuplicateI2pPeer, I2pInterface, I2pInterfaceName, I2pInterfaceNameError, I2pInterfaceStatus,

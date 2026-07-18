@@ -1,3 +1,4 @@
+pub(crate) mod i2p;
 mod interpret;
 pub(crate) mod keys;
 mod parse;

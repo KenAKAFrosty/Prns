@@ -10,6 +10,7 @@ use prns_core::interface_discovery::{
     DEFAULT_STAMP_COST,
 };
 use prns_core::interfaces::ax25_kiss::core as ax25_core;
+use prns_core::interfaces::i2p::core as i2p_core;
 use prns_core::interfaces::ifac::IfacSize;
 use prns_core::interfaces::kiss::core as kiss_core;
 use prns_core::interfaces::pipe::core as pipe_core;
@@ -28,6 +29,7 @@ use prns_core::interfaces::{
 use prns_core::routing::links::MAX_LINK_MTU;
 use prns_core::units::DurationMillis;
 
+use crate::reference::i2p::{validate_peer, validate_peers};
 use crate::reference::keys::{
     common as common_key, global as global_key, interface as interface_key, logging as logging_key,
     section as section_key,
@@ -401,6 +403,60 @@ impl PipeCommandPlan {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct I2pPeerPlan(String);
+
+impl I2pPeerPlan {
+    fn new(value: String) -> Result<Self, PlanErrorKind> {
+        validate_peer(&value).map_err(|_| PlanErrorKind::InvalidSetting {
+            key: interface_key::PEERS,
+        })?;
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct I2pPeersPlan(Vec<I2pPeerPlan>);
+
+impl I2pPeersPlan {
+    fn new(peers: Vec<String>) -> Result<Self, PlanErrorKind> {
+        validate_peers(peers.iter().map(String::as_str)).map_err(|_| {
+            PlanErrorKind::InvalidSetting {
+                key: interface_key::PEERS,
+            }
+        })?;
+        peers
+            .into_iter()
+            .map(I2pPeerPlan::new)
+            .collect::<Result<Vec<_>, _>>()
+            .map(Self)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &I2pPeerPlan> {
+        self.0.iter()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum I2pReachabilityPlan {
+    OutboundOnly,
+    Connectable,
+}
+
+impl I2pReachabilityPlan {
+    pub const fn is_connectable(self) -> bool {
+        matches!(self, Self::Connectable)
+    }
+}
+
 /// The wire a planned interface runs on. Only mediums a host can stand up appear here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlannedMedium {
@@ -474,6 +530,10 @@ pub enum PlannedMedium {
     /// RNS `BackboneClientInterface`: dial one backbone peer. Wire-identical to
     /// [`TcpClient`](Self::TcpClient).
     BackboneClient { connection: TcpDialPlan },
+    I2p {
+        peers: I2pPeersPlan,
+        reachability: I2pReachabilityPlan,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -842,6 +902,7 @@ fn interface_defaults(medium: &PlannedMedium) -> Result<InterfaceDefaults, PlanE
         | PlannedMedium::Backbone { .. }
         | PlannedMedium::BackboneClient { .. } => Ok(tcp_core::DEFAULTS),
         PlannedMedium::Udp { .. } => Ok(udp_core::DEFAULTS),
+        PlannedMedium::I2p { .. } => Ok(i2p_core::DEFAULTS),
         PlannedMedium::Serial { line, .. } => {
             let bitrate =
                 BitrateBps::new(u64::from(line.baud())).ok_or(PlanErrorKind::InvalidSetting {
@@ -1054,7 +1115,8 @@ fn plan_access(
         | PlannedMedium::TcpServer { .. }
         | PlannedMedium::Udp { .. }
         | PlannedMedium::Backbone { .. }
-        | PlannedMedium::BackboneClient { .. } => IfacSize::WIDE,
+        | PlannedMedium::BackboneClient { .. }
+        | PlannedMedium::I2p { .. } => IfacSize::WIDE,
         PlannedMedium::Serial { .. }
         | PlannedMedium::Kiss { .. }
         | PlannedMedium::Ax25Kiss { .. }
@@ -1374,6 +1436,14 @@ fn plan_medium(interface: &ReferenceInterface) -> Result<PlannedMedium, PlanErro
                 })
             }
         }
+        ReferenceParams::I2p { peers, connectable } => Ok(PlannedMedium::I2p {
+            peers: I2pPeersPlan::new(peers.clone().unwrap_or_default())?,
+            reachability: if *connectable == Some(true) {
+                I2pReachabilityPlan::Connectable
+            } else {
+                I2pReachabilityPlan::OutboundOnly
+            },
+        }),
         _ => Err(PlanErrorKind::UnsupportedKind),
     }
 }
@@ -3105,5 +3175,105 @@ mod tests {
             open.diagnostics()[0].code(),
             ConfigDiagnosticCode::InvalidValue
         );
+    }
+
+    #[test]
+    fn i2p_settings_become_one_effective_typed_plan() {
+        let plan = plan_of(
+            "[interfaces]\n\
+               [[Private I2P]]\n\
+                 type = I2PInterface\n\
+                 enabled = Yes\n\
+                 peers = example.i2p, QUJDRA==\n\
+                 connectable = Yes\n\
+                 outgoing = No\n\
+                 bitrate = 500000\n\
+                 network_name = private-overlay\n",
+        );
+        let interface = named(&plan, "Private I2P");
+        let PlannedMedium::I2p {
+            peers,
+            reachability,
+        } = &interface.medium
+        else {
+            panic!("I2P medium expected")
+        };
+
+        assert_eq!(
+            peers.iter().map(I2pPeerPlan::as_str).collect::<Vec<_>>(),
+            vec!["example.i2p", "QUJDRA=="]
+        );
+        assert_eq!(*reachability, I2pReachabilityPlan::Connectable);
+        assert_eq!(interface.policy.bitrate.get(), 500_000);
+        assert_eq!(
+            interface.policy.mtu.resolve(interface.policy.bitrate),
+            Some(1_064)
+        );
+        assert_eq!(
+            interface.policy.capabilities.egress,
+            EgressCapability::Disabled
+        );
+        assert!(matches!(
+            interface.access,
+            InterfaceAccessPlan::Ifac {
+                size: IfacSize::WIDE,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn i2p_omissions_are_outbound_only_with_stock_defaults() {
+        let plan = plan_of("[interfaces]\n[[Private I2P]]\ntype = I2PInterface\nenabled = Yes\n");
+        let interface = named(&plan, "Private I2P");
+        let PlannedMedium::I2p {
+            peers,
+            reachability,
+        } = &interface.medium
+        else {
+            panic!("I2P medium expected")
+        };
+
+        assert!(peers.is_empty());
+        assert_eq!(*reachability, I2pReachabilityPlan::OutboundOnly);
+        assert_eq!(interface.policy.bitrate.get(), 256_000);
+        assert_eq!(
+            interface.policy.mtu.resolve(interface.policy.bitrate),
+            Some(1_064)
+        );
+    }
+
+    #[test]
+    fn invalid_i2p_peers_have_source_keyed_corrections() {
+        let errors = parse_and_plan_named(
+            "/etc/reticulum/config",
+            "[interfaces]\n[[Private I2P]]\ntype = I2PInterface\nenabled = Yes\npeers = one.i2p, two.i2p, one.i2p\n",
+        )
+        .expect_err("duplicate I2P peers are invalid");
+        let diagnostic = &errors.diagnostics()[0];
+
+        assert_eq!(diagnostic.code(), ConfigDiagnosticCode::InvalidValue);
+        assert_eq!(diagnostic.source(), "/etc/reticulum/config");
+        assert_eq!(diagnostic.line(), 5);
+        assert_eq!(diagnostic.path(), "[interfaces] > [[Private I2P]] > peers");
+        assert!(diagnostic
+            .message()
+            .contains("I2P peer 3 duplicates peer 1"));
+        assert!(diagnostic
+            .accepted()
+            .is_some_and(|accepted| accepted.contains(".i2p names")));
+        assert_eq!(
+            diagnostic.correction(),
+            "set `peers = example.i2p, QUJDRA==`"
+        );
+    }
+
+    #[test]
+    fn disabled_i2p_stanzas_do_not_validate_unused_peer_settings() {
+        let plan = plan_of(
+            "[interfaces]\n[[Dormant I2P]]\ntype = I2PInterface\nenabled = No\npeers = not a destination\n",
+        );
+
+        assert!(plan.interfaces.is_empty());
     }
 }
