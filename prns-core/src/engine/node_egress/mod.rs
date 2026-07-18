@@ -1,3 +1,7 @@
+mod fanout;
+
+pub(super) use fanout::{fan_announce, fan_frame};
+
 use crate::crypto::Ed25519Signature;
 use crate::engine::FanTarget;
 use crate::interfaces::AttachedInterfaces;

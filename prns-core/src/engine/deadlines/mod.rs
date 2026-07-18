@@ -1,7 +1,6 @@
-use crate::engine::egress::{
-    firable_on, fleet_announce_fan_target, fleet_fan_target_reaches_any_member,
+use crate::engine::node_egress::{
+    fan_frame, firable_on, fleet_announce_fan_target, fleet_fan_target_reaches_any_member,
 };
-use crate::engine::execute::fan_frame;
 use crate::engine::settlement::{settle, timeout_settlement};
 #[cfg(feature = "runtime-metrics")]
 use crate::engine::AnnounceOrigin;

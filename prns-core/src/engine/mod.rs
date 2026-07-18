@@ -2,10 +2,10 @@ mod blackhole;
 mod commands;
 mod deadlines;
 mod destination_identity;
-mod egress;
 mod execute;
 mod introspection;
 mod management;
+mod node_egress;
 mod node_ingress;
 mod reaction;
 mod registration;
@@ -38,14 +38,14 @@ cfg_if::cfg_if! {
 
 pub use crate::routing::RouteRemovalCause;
 pub use commands::*;
-pub use egress::{
+pub use introspection::{AnnounceRateState, RouteSnapshot};
+pub use node_egress::{
     write_announce_wire_packet, write_explicit_proof_wire_packet, write_implicit_proof_wire_packet,
     write_link_proof_wire_packet, write_path_request_wire_packet,
     write_path_response_announce_wire_packet, write_relayed_path_response_wire_packet,
     write_retransmitted_announce_wire_packet, EgressSerializeError, ReemitAnnounce,
     PATH_REQUEST_DESTINATION, PATH_REQUEST_PAYLOAD_LEN,
 };
-pub use introspection::{AnnounceRateState, RouteSnapshot};
 pub use node_ingress::IngestIo;
 pub use reaction::{Directive, EngineReaction, FanTarget, Journaled, LinkClosedReason};
 pub use registration::{
