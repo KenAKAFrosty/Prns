@@ -1,5 +1,6 @@
 use crate::crypto::ratchets::RatchetRotation;
 use crate::crypto::{X25519PublicKey, X25519SharedSecret};
+use crate::engine::node_egress::{fan_announce, fan_frame};
 use crate::engine::settlement::{culled_settlement, settle};
 #[cfg(feature = "runtime-metrics")]
 use crate::engine::AnnounceCommandOutcome;
@@ -16,7 +17,7 @@ use crate::engine::{
 };
 use crate::identity::ENCRYPTION_IV_LEN;
 use crate::interfaces::AttachedInterfaces;
-use crate::interfaces::{InterfaceId, InterfaceKind, InterfaceMode};
+use crate::interfaces::InterfaceId;
 use crate::routing::links::channel::send::SendToChannelWriteError;
 use crate::routing::links::channel::CHANNEL_ENVELOPE_HEADER_LEN;
 use crate::routing::links::data::{link_data_frame_ceiling, LinkDataError, SendToLinkWriteError};
@@ -630,176 +631,5 @@ fn send_to_channel_failure(error: SendToChannelWriteError) -> SendToChannelFailu
         SendToChannelWriteError::Untrackable => SendToChannelFailure::Untrackable,
         SendToChannelWriteError::WindowFull => SendToChannelFailure::WindowFull,
         SendToChannelWriteError::Frame(error) => SendToChannelFailure::WriteFailed(error),
-    }
-}
-
-pub(crate) fn fan_frame(
-    interfaces: AttachedInterfaces<'_>,
-    fanout: FanTarget,
-    bytes: &[u8],
-    sink: &mut impl FnMut(EngineReaction<'_>),
-) {
-    fan(interfaces, fanout, bytes, FanKind::Frame, sink);
-}
-
-pub(crate) fn fan_announce(
-    interfaces: AttachedInterfaces<'_>,
-    fanout: FanTarget,
-    bytes: &[u8],
-    sink: &mut impl FnMut(EngineReaction<'_>),
-) {
-    fan(interfaces, fanout, bytes, FanKind::Announce, sink);
-}
-
-#[derive(Clone, Copy)]
-enum FanKind {
-    Frame,
-    Announce,
-}
-
-fn fan(
-    interfaces: AttachedInterfaces<'_>,
-    fanout: FanTarget,
-    bytes: &[u8],
-    emission: FanKind,
-    sink: &mut impl FnMut(EngineReaction<'_>),
-) {
-    //One SendToFleet per supervisor kind replaces a Send per member: the supervisor fans to its own fleet, so a second member of the same kind must not trigger another emission.
-    //The u128 is a seen-bitmask indexed by the supervisor kind's discriminant.
-    let mut fleets_emitted: u128 = 0;
-    for descriptor in interfaces {
-        if !descriptor.capabilities.allows_transmit() {
-            continue;
-        }
-        let targeted = match fanout {
-            FanTarget::All => true,
-            FanTarget::Only(id) => descriptor.id == id,
-            FanTarget::AllExcept(id) => descriptor.id != id,
-        };
-        if !targeted {
-            continue;
-        }
-        match descriptor
-            .id
-            .kind()
-            .and_then(InterfaceKind::supervisor_kind)
-        {
-            Some(supervisor) => {
-                debug_assert!(
-                    (supervisor as u8) < 128,
-                    "InterfaceKind discriminants must stay below 128 to index the fleet seen-bitmask",
-                );
-                let bit = 1u128 << (supervisor as u8);
-                if fleets_emitted & bit == 0 {
-                    fleets_emitted |= bit;
-                    match emission {
-                        FanKind::Frame => {
-                            sink(EngineReaction::Directive(Directive::SendToFleet {
-                                supervisor,
-                                fan: fanout,
-                                bytes,
-                            }));
-                        }
-                        FanKind::Announce => {
-                            #[cfg(feature = "runtime-metrics")]
-                            sink(EngineReaction::Directive(
-                                Directive::SendMeasuredLocalAnnounceToFleet {
-                                    supervisor,
-                                    fan: fanout,
-                                    bytes,
-                                },
-                            ));
-
-                            #[cfg(not(feature = "runtime-metrics"))]
-                            sink(EngineReaction::Directive(Directive::SendToFleet {
-                                supervisor,
-                                fan: fanout,
-                                bytes,
-                            }));
-                        }
-                    }
-                }
-            }
-            None => {
-                if matches!(emission, FanKind::Announce)
-                    && descriptor.mode == InterfaceMode::AccessPoint
-                // Withheld from an access-point interface, matching RNS 1.3.5 `Transport.outbound`.
-                {
-                    continue;
-                }
-                match emission {
-                    FanKind::Frame => sink(EngineReaction::Directive(Directive::Send {
-                        target: descriptor.id,
-                        bytes,
-                    })),
-                    FanKind::Announce => {
-                        #[cfg(feature = "runtime-metrics")]
-                        sink(EngineReaction::Directive(
-                            Directive::SendMeasuredLocalAnnounce {
-                                target: descriptor.id,
-                                bytes,
-                            },
-                        ));
-                        #[cfg(not(feature = "runtime-metrics"))]
-                        sink(EngineReaction::Directive(Directive::Send {
-                            target: descriptor.id,
-                            bytes,
-                        }));
-                    }
-                }
-            }
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::engine::test_support::routable_descriptor;
-    use crate::interfaces::InterfaceDescriptor;
-
-    fn iface(byte: u8) -> InterfaceId {
-        InterfaceId::new([byte; 8])
-    }
-
-    #[test]
-    fn a_self_announce_is_withheld_from_an_access_point_interface() {
-        let interfaces = [
-            routable_descriptor(iface(0x01)),
-            InterfaceDescriptor {
-                mode: InterfaceMode::AccessPoint,
-                ..routable_descriptor(iface(0x02))
-            },
-            InterfaceDescriptor {
-                mode: InterfaceMode::Roaming,
-                ..routable_descriptor(iface(0x03))
-            },
-        ];
-
-        let mut targets = std::vec::Vec::new();
-        fan_announce(
-            AttachedInterfaces::new(&interfaces),
-            FanTarget::All,
-            &[0xAB],
-            &mut |reaction| match reaction {
-                #[cfg(feature = "runtime-metrics")]
-                EngineReaction::Directive(Directive::SendMeasuredLocalAnnounce {
-                    target, ..
-                }) => {
-                    targets.push(target);
-                }
-                #[cfg(not(feature = "runtime-metrics"))]
-                EngineReaction::Directive(Directive::Send { target, .. }) => {
-                    targets.push(target);
-                }
-                _ => {}
-            },
-        );
-
-        assert_eq!(
-            targets,
-            std::vec![iface(0x01), iface(0x03)],
-            "a full and a roaming interface carry our own announce; the access point does not",
-        );
     }
 }
