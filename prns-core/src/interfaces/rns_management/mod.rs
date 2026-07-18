@@ -1,0 +1,60 @@
+use alloc::format;
+use alloc::string::String;
+
+use crate::engine::RouteSnapshot;
+use crate::interfaces::InterfaceId;
+use crate::routing::types::NextHop;
+use crate::units::InstantMillis;
+
+mod blackhole_table;
+mod interface_stats;
+mod message_pack;
+mod path_table;
+mod rate_table;
+pub(crate) mod wire_names;
+
+pub use blackhole_table::RnsBlackholeTable;
+pub use interface_stats::{
+    RnsInterfaceAccessCode, RnsInterfaceStats, RnsInterfaceStatsEntry, RnsTransportStatus,
+};
+pub(crate) use message_pack::MessagePackEncoder;
+pub use path_table::RnsPathTable;
+pub use rate_table::{RnsAnnounceRateEntry, RnsAnnounceRateTable};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RnsManagementEncodeError;
+
+impl core::fmt::Display for RnsManagementEncodeError {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str("RNS management value exceeds MessagePack limits")
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for RnsManagementEncodeError {}
+
+pub(crate) fn next_hop_bytes(entry: &RouteSnapshot) -> [u8; 16] {
+    match entry.via {
+        NextHop::Via(transport) => *transport.as_bytes(),
+        NextHop::Direct => *entry.destination.as_bytes(),
+    }
+}
+
+pub(crate) fn interface_name(id: InterfaceId) -> String {
+    let mut name = match id.kind() {
+        Some(kind) => format!("{kind:?}["),
+        None => String::from("Interface["),
+    };
+    for byte in id.as_bytes().iter().take(4) {
+        name.push_str(&format!("{byte:02x}"));
+    }
+    name.push(']');
+    name
+}
+
+pub(super) fn rns_timestamp(timestamp: InstantMillis) -> f64 {
+    core::time::Duration::from_millis(timestamp.0).as_secs_f64()
+}
+
+#[cfg(test)]
+mod tests;

@@ -34,7 +34,6 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use super::authentication::{deliver_our_challenge, SharedInstanceCredentials};
 use super::dispatch::reply_for_decoded;
 use super::framing::{read_auth_frame, read_frame, write_frame, write_frame_header};
-use super::reply::encode_msgpack;
 #[cfg(target_os = "linux")]
 use super::server::{bind_abstract_rpc, RpcBind};
 use super::server::{serve_connection, SharedInstanceRpcCompat};
@@ -52,3 +51,10 @@ mod storage;
 mod support;
 
 use support::*;
+
+fn encode_msgpack(value: Value) -> std::io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &value)
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    Ok(bytes)
+}

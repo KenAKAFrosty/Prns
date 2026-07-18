@@ -10,6 +10,7 @@ use std::vec::Vec;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 use prns_core::identity::IdentityHash;
+use prns_core::interfaces::rns_management::RnsBlackholeTable;
 use prns_core::routing::{
     BlackholeExpiry, BlackholeIdentityOutcome, BlackholedIdentity, UnblackholeIdentityOutcome,
 };
@@ -344,14 +345,13 @@ pub fn encode_local<Reason: AsRef<str>>(
     local_source: IdentityHash,
     entries: impl IntoIterator<Item = BlackholedIdentity<Reason>>,
 ) -> Result<Vec<u8>, RnsBlackholeEncodeError> {
-    let value = table_value(
+    RnsBlackholeTable::from_entries(
         entries
             .into_iter()
             .filter(|entry| entry.source == local_source),
-    );
-    let mut bytes = Vec::new();
-    rmpv::encode::write_value(&mut bytes, &value).map_err(|_| RnsBlackholeEncodeError)?;
-    Ok(bytes)
+    )
+    .encode_message_pack()
+    .map_err(|_| RnsBlackholeEncodeError)
 }
 
 pub fn decode_table(
@@ -366,37 +366,9 @@ pub fn decode_table(
 pub fn encode_table<Reason: AsRef<str>>(
     entries: impl IntoIterator<Item = BlackholedIdentity<Reason>>,
 ) -> Result<Vec<u8>, RnsBlackholeEncodeError> {
-    let mut bytes = Vec::new();
-    rmpv::encode::write_value(&mut bytes, &table_value(entries))
-        .map_err(|_| RnsBlackholeEncodeError)?;
-    Ok(bytes)
-}
-
-pub(crate) fn table_value<Reason: AsRef<str>>(
-    entries: impl IntoIterator<Item = BlackholedIdentity<Reason>>,
-) -> Value {
-    let mut map = Vec::new();
-    for entry in entries {
-        let expiry = match entry.expiry {
-            BlackholeExpiry::Indefinite => Value::Nil,
-            BlackholeExpiry::At(at) => Value::F64(at.0 as f64 / 1_000.0),
-        };
-        let reason = entry
-            .reason
-            .map_or(Value::Nil, |reason| Value::from(reason.as_ref()));
-        map.push((
-            Value::Binary(entry.identity.as_bytes().to_vec()),
-            Value::Map(vec![
-                (
-                    Value::from("source"),
-                    Value::Binary(entry.source.as_bytes().to_vec()),
-                ),
-                (Value::from("until"), expiry),
-                (Value::from("reason"), reason),
-            ]),
-        ));
-    }
-    Value::Map(map)
+    RnsBlackholeTable::from_entries(entries)
+        .encode_message_pack()
+        .map_err(|_| RnsBlackholeEncodeError)
 }
 
 fn identity_bytes(value: &Value) -> Result<Option<[u8; 16]>, RnsBlackholeDecodeError> {

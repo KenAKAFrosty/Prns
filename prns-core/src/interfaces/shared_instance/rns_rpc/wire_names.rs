@@ -18,12 +18,14 @@ pub(super) mod selector {
 }
 
 pub(super) mod argument {
+    use crate::interfaces::rns_management::wire_names::common;
+
     pub const MAX_HOPS: &str = "max_hops";
     pub const DESTINATION_HASH: &str = "destination_hash";
     pub const PACKET_HASH: &str = "packet_hash";
     pub const IDENTITY_HASH: &str = "identity_hash";
-    pub const UNTIL: &str = "until";
-    pub const REASON: &str = "reason";
+    pub const UNTIL: &str = common::UNTIL;
+    pub const REASON: &str = common::REASON;
 }
 
 pub(super) mod get {
@@ -51,6 +53,10 @@ pub(super) mod data_operation {
     pub const USED: &str = "used";
     pub const RETAIN: &str = "retain";
     pub const UNRETAIN: &str = "unretain";
+}
+
+pub(super) mod reply_value {
+    pub const NO_INTERFACE: &str = "None";
 }
 
 pub(super) mod verb {

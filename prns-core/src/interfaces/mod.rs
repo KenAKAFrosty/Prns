@@ -27,6 +27,8 @@ pub mod lora;
 pub mod pipe;
 pub mod radios;
 pub mod rnode;
+#[cfg(feature = "shared-instance-rpc")]
+pub mod rns_management;
 pub mod serial;
 pub mod shared_instance;
 pub mod tcp;
