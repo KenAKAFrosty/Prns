@@ -1,4 +1,3 @@
-mod byte_stream;
 mod destination_identity_retention;
 mod identity_blackhole;
 mod identity_bootstrap;
@@ -17,7 +16,6 @@ pub use crate::reactor::driver::{
     CryptoPoolConfig, PersistedStateSnapshot, PoolWorkers, SelfRatchetSnapshot,
     SelfRatchetsSnapshot,
 };
-pub use byte_stream::{ByteStreamReader, ByteStreamWriter, StreamId};
 pub(crate) use destination_identity_retention::{
     apply_destination_identity_retention_command, settle_destination_identity_retention,
     DestinationIdentityRetentionHostCommand,
@@ -32,10 +30,11 @@ pub use identity_bootstrap::{
 pub use interface_store::{InterfaceStore, Subscription};
 pub use node_facade::{
     boot_timeline_origin, AttachIntent, Attachable, AttachedInterface, AttachedSupervisor,
-    BlackholeSeedReport, DestinationIdentitySeedReport, DetachedFleet, Fleet, FlushError,
-    FlushMark, FlushReport, InterfaceAttachmentMetadata, InterfaceSupervisor,
-    NonRoutingIdentityError, PrepareFlushError, PreparedFlush, PrnsNode, PrnsNodeHandle,
-    RatchetSeedReport, RegionFlush, RegisterRequestRouteError, RequestPathError, ResourceReceipt,
-    ResourceReceiveError, ResourceSendError, RouteSeedProgress, RouteSeedReport,
-    SegmentCompression, SharedInstanceIdentityError, TunnelSeedReport, AUTO_COMPRESS_MAX_LEN,
+    BlackholeSeedReport, ByteStreamReader, ByteStreamWriter, DestinationIdentitySeedReport,
+    DetachedFleet, Fleet, FlushError, FlushMark, FlushReport, InterfaceAttachmentMetadata,
+    InterfaceSupervisor, NonRoutingIdentityError, PrepareFlushError, PreparedFlush, PrnsNode,
+    PrnsNodeHandle, RatchetSeedReport, RegionFlush, RegisterRequestRouteError, RequestPathError,
+    ResourceReceipt, ResourceReceiveError, ResourceSendError, RouteSeedProgress, RouteSeedReport,
+    SegmentCompression, SharedInstanceIdentityError, StreamId, TunnelSeedReport,
+    AUTO_COMPRESS_MAX_LEN,
 };

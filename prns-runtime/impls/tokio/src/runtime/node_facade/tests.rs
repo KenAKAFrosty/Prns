@@ -6,7 +6,6 @@ use crate::engine::{
 };
 use crate::reactor::driver::HostCommand;
 use crate::routing::links::LinkId;
-use crate::runtime::byte_stream::StreamId;
 use crate::runtime::SendError;
 use crate::wire::DestinationHash;
 
@@ -175,37 +174,6 @@ async fn announce_now_awaits_and_surfaces_its_typed_settlement() {
             crate::engine::AnnounceNowRejection::UnknownDestination,
         ))),
     );
-}
-
-#[tokio::test]
-async fn byte_stream_reader_is_withheld_until_the_run_loop_acks_registration() {
-    let (prns, mut command_rx) = handle();
-    let link = LinkId::new([5; 16]);
-    let stream = StreamId::new(2).unwrap();
-    let opener = prns.clone();
-    let open = tokio::spawn(async move { opener.byte_stream_reader(link, stream).await });
-
-    let HostCommand::RegisterStreamReader {
-        link_id,
-        stream_id,
-        ready,
-        ..
-    } = command_rx
-        .recv()
-        .await
-        .expect("the registration was issued")
-    else {
-        panic!("byte_stream_reader must register its sink");
-    };
-    assert_eq!(link_id, link);
-    assert_eq!(stream_id, stream);
-    assert!(
-        !open.is_finished(),
-        "the reader is held back until the run loop acknowledges the registration",
-    );
-
-    ready.send(()).expect("the opener is parked on the ack");
-    open.await.expect("the reader future resolves once acked");
 }
 
 #[test]
