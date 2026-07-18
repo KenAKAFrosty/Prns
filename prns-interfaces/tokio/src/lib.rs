@@ -75,6 +75,9 @@ pub mod kiss;
 #[cfg(feature = "rnode")]
 pub mod rnode;
 
+#[cfg(feature = "rnode")]
+pub mod rnode_multi;
+
 #[cfg(feature = "pipe")]
 pub mod pipe;
 

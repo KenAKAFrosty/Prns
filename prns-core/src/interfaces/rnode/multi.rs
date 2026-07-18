@@ -469,6 +469,14 @@ impl DeviceReport {
             _ => None,
         }
     }
+
+    #[must_use]
+    pub const fn firmware_version(&self) -> Option<(u8, u8)> {
+        match (self.firmware_major, self.firmware_minor) {
+            (Some(major), Some(minor)) => Some((major, minor)),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -606,6 +614,16 @@ mod tests {
                 0x00, 0xc0,
             ]
         );
+    }
+
+    #[test]
+    fn firmware_version_is_exposed_for_actionable_runtime_errors() {
+        let mut report = DeviceReport::default();
+        report.apply(core::CMD_FW_VERSION, &[1, 73]);
+        assert_eq!(report.firmware_ok(), Some(false));
+        report.apply(core::CMD_FW_VERSION, &[1, 74]);
+        assert_eq!(report.firmware_ok(), Some(true));
+        assert_eq!(report.firmware_version(), Some((1, 74)));
     }
 
     #[test]

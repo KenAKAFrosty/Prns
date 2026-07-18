@@ -87,6 +87,10 @@ impl Transmission {
     pub(crate) fn payload(&self) -> &[u8] {
         &self.payload
     }
+
+    pub(crate) const fn is_packet(&self) -> bool {
+        matches!(self.kind, TransmissionKind::Packet)
+    }
 }
 
 pub(crate) struct SerialControl {
@@ -156,6 +160,12 @@ impl SerialControl {
         let station = self.station_identification.as_ref()?;
         self.first_packet_transmitted_at
             .map(|first| first + station.interval.duration())
+    }
+
+    pub(crate) fn arm_station_identification(&mut self, now: Instant) {
+        if self.station_identification.is_some() {
+            self.first_packet_transmitted_at.get_or_insert(now);
+        }
     }
 
     pub(crate) fn station_identification_due(&mut self, now: Instant) -> Option<Transmission> {
