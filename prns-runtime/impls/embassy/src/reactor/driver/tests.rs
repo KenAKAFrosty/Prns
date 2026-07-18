@@ -6,7 +6,8 @@ use crate::interfaces::{
     AnnounceBandwidthCap, BitrateBps, EgressCapability, IngressCapability, InterfaceCapabilities,
     InterfaceMode, TransportCapability,
 };
-use crate::reactor::interface_seam::Interface;
+use crate::reactor::grant::{GrantConsumer, GrantProducer};
+use crate::reactor::interface_seam::{Interface, InterfaceSeam};
 use crate::wire::{PacketType, WirePacketHeader};
 
 use embassy_futures::block_on;
@@ -14,7 +15,7 @@ use embassy_futures::select::{select, select4, Either, Either4};
 use embassy_futures::yield_now;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
-use embassy_time::with_timeout;
+use embassy_time::{with_timeout, Duration, Timer};
 
 use std::cell::RefCell;
 use std::rc::Rc;

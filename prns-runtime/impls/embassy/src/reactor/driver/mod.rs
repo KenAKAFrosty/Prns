@@ -1,13 +1,8 @@
 use crate::interfaces::AttachedInterfaces;
 use embassy_futures::select::{select4, select5, Either4, Either5};
 use embassy_sync::blocking_mutex::raw::RawMutex;
-use embassy_sync::channel::{Receiver, Sender};
-use embassy_sync::signal::Signal;
-use embassy_sync::zerocopy_channel;
-use embassy_time::{Duration, Timer};
+use embassy_sync::channel::Receiver;
 use heapless::Vec as HeaplessVec;
-
-use portable_atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
 use crate::engine::{
     ClassifiedInboundPacket, EngineReaction, EngineState, FanTarget, IngestIo, InstantMillis,
@@ -15,21 +10,15 @@ use crate::engine::{
 };
 use crate::interfaces::ifac::InterfaceIfac;
 use crate::interfaces::{
-    AirtimeUtilization, ConnectionState, FrameSink, InboundPacket, InterfaceDescriptor,
-    InterfaceId, InterfaceKind, InterfaceStatus, PacketPhyStats, TransferRates,
+    InboundPacket, InterfaceDescriptor, InterfaceId, InterfaceKind, PacketPhyStats,
 };
 use crate::reactor::announce_pacer::{AnnouncePacer, FixedPacerQueue};
-use crate::reactor::grant::{
-    AnyGrantConsumer, AnyGrantProducer, FrameSlot, FrameTarget, GrantConsumer, GrantProducer,
-};
-use crate::reactor::interface_seam::{
-    InterfaceSeam, EMBEDDED_MAX_LINK_MTU, EMBEDDED_MAX_WIRE_FRAME_LEN,
-};
+use crate::reactor::grant::{AnyGrantConsumer, AnyGrantProducer, FrameTarget};
+use crate::reactor::interface_seam::{EMBEDDED_MAX_LINK_MTU, EMBEDDED_MAX_WIRE_FRAME_LEN};
 use crate::reactor::kernel::{
     fire_due_reason, merge_wake_schedules_delta, route_reaction as route_engine_reaction,
     AnnounceDirective, DirectiveEgress,
 };
-use crate::reactor::timebase::EmbassyTimebase;
 use crate::reactor::timers::{wait_for_due_reason, wait_for_pacer};
 use crate::reactor::AppDeciders;
 use crate::reactor::Host;
@@ -38,345 +27,16 @@ use crate::runtime::{EmbassyInterfaceStore, InterfaceInspectionStore, NoInterfac
 use crate::storage::DirtyInterfaceSet;
 use crate::storage::StorageLayout;
 
-/// A [`Host`] backed by embassy's clock and a caller-supplied entropy source: an [`EmbassyTimebase`] owns the clock and `draw_entropy` is whatever the board hands it. The engine never reads either; it asks the host.
-pub struct EmbassyHost<E> {
-    timebase: EmbassyTimebase,
-    draw_entropy: E,
-}
+mod host;
+mod interface_seam;
+mod interface_status;
 
-impl<E> EmbassyHost<E>
-where
-    E: FnMut(&mut [u8]),
-{
-    pub fn new(draw_entropy: E) -> Self {
-        Self::new_with_timebase(EmbassyTimebase::capture_now(), draw_entropy)
-    }
-
-    pub fn new_with_timebase(timebase: EmbassyTimebase, draw_entropy: E) -> Self {
-        Self {
-            timebase,
-            draw_entropy,
-        }
-    }
-}
-
-impl<E> Host for EmbassyHost<E>
-where
-    E: FnMut(&mut [u8]),
-{
-    fn now(&self) -> InstantMillis {
-        self.timebase.now()
-    }
-
-    async fn sleep_until(&self, deadline: InstantMillis) {
-        let remaining = deadline.0.saturating_sub(self.timebase.now().0);
-        Timer::after(Duration::from_millis(remaining)).await;
-    }
-
-    fn fill_entropy(&mut self, bytes: &mut [u8]) {
-        (self.draw_entropy)(bytes);
-    }
-}
-
-/// Lock-free live interface state shared by reference between the wire and display tasks. `portable-atomic` supplies the `u64` counters on 32-bit targets.
-pub struct EmbassyInterfaceStatus {
-    id: AtomicU64,
-    connection: AtomicU8,
-    rx: AtomicU64,
-    tx: AtomicU64,
-    airtime: AtomicU32,
-    transfer_rates: AtomicU64,
-    enabled: AtomicBool,
-}
-
-const AIRTIME_UNPUBLISHED: u32 = u32::MAX;
-const RATES_UNPUBLISHED: u64 = u64::MAX;
-
-impl EmbassyInterfaceStatus {
-    #[must_use]
-    pub const fn new(id: InterfaceId, connection: ConnectionState) -> Self {
-        Self {
-            id: AtomicU64::new(u64::from_be_bytes(*id.as_bytes())),
-            connection: AtomicU8::new(connection.as_u8()),
-            rx: AtomicU64::new(0),
-            tx: AtomicU64::new(0),
-            airtime: AtomicU32::new(AIRTIME_UNPUBLISHED),
-            transfer_rates: AtomicU64::new(RATES_UNPUBLISHED),
-            enabled: AtomicBool::new(true),
-        }
-    }
-
-    pub fn set_connection(&self, connection: ConnectionState) {
-        self.connection.store(connection.as_u8(), Ordering::Relaxed);
-    }
-
-    pub fn set_id(&self, id: InterfaceId) {
-        self.id
-            .store(u64::from_be_bytes(*id.as_bytes()), Ordering::Relaxed);
-    }
-
-    /// Turn this interface off or back on from the application. The driver reads [`is_enabled`](Self::is_enabled) and goes dormant (wire closed, nothing ingested, egress drained and discarded) while off, holding its slot and routes for an instant resume.
-    pub fn set_enabled(&self, enabled: bool) {
-        self.enabled.store(enabled, Ordering::Relaxed);
-    }
-
-    /// Whether the interface is enabled (the default). The driver polls this to leave or re-enter its dormant state.
-    #[must_use]
-    pub fn is_enabled(&self) -> bool {
-        self.enabled.load(Ordering::Relaxed)
-    }
-
-    pub fn add_rx(&self, bytes: u64) {
-        self.rx.fetch_add(bytes, Ordering::Relaxed);
-    }
-
-    pub fn add_tx(&self, bytes: u64) {
-        self.tx.fetch_add(bytes, Ordering::Relaxed);
-    }
-
-    pub fn set_airtime(&self, utilization: AirtimeUtilization) {
-        let packed =
-            (u32::from(utilization.short_per_mille) << 16) | u32::from(utilization.long_per_mille);
-        self.airtime.store(packed, Ordering::Relaxed);
-    }
-
-    pub fn set_transfer_rates(&self, rates: TransferRates) {
-        let packed = (u64::from(rates.rx_bps) << 32) | u64::from(rates.tx_bps);
-        self.transfer_rates.store(packed, Ordering::Relaxed);
-    }
-}
-
-impl InterfaceStatus for EmbassyInterfaceStatus {
-    fn id(&self) -> InterfaceId {
-        InterfaceId::new(self.id.load(Ordering::Relaxed).to_be_bytes())
-    }
-
-    fn connection(&self) -> ConnectionState {
-        if !self.is_enabled() {
-            return ConnectionState::Disabled;
-        }
-        ConnectionState::from_u8(self.connection.load(Ordering::Relaxed))
-    }
-
-    fn rx_bytes(&self) -> u64 {
-        self.rx.load(Ordering::Relaxed)
-    }
-
-    fn tx_bytes(&self) -> u64 {
-        self.tx.load(Ordering::Relaxed)
-    }
-
-    fn airtime(&self) -> Option<AirtimeUtilization> {
-        let packed = self.airtime.load(Ordering::Relaxed);
-        if packed == AIRTIME_UNPUBLISHED {
-            return None;
-        }
-        Some(AirtimeUtilization {
-            short_per_mille: (packed >> 16) as u16,
-            long_per_mille: packed as u16,
-        })
-    }
-
-    fn transfer_rates(&self) -> Option<TransferRates> {
-        let packed = self.transfer_rates.load(Ordering::Relaxed);
-        if packed == RATES_UNPUBLISHED {
-            return None;
-        }
-        Some(TransferRates {
-            rx_bps: (packed >> 32) as u32,
-            tx_bps: packed as u32,
-        })
-    }
-}
-
-/// One interface's grant lane on embassy: the slots live in a caller-parked buffer (a `StaticCell` on firmware) and recycle through a `zerocopy_channel`, so granting, committing, and releasing move ring indices while the frame bytes stay where they were written — and each interface's buffer is sized to its own `HW_MTU`.
-pub fn embassy_grant_lane<'a, M: RawMutex, const SLOT: usize>(
-    channel: &'a mut zerocopy_channel::Channel<'a, M, FrameSlot<SLOT>>,
-) -> (
-    EmbassyGrantProducer<'a, M, SLOT>,
-    EmbassyGrantConsumer<'a, M, SLOT>,
-) {
-    let (sender, receiver) = channel.split();
-    (
-        EmbassyGrantProducer {
-            sender,
-            granted: false,
-            wake: None,
-        },
-        EmbassyGrantConsumer {
-            receiver,
-            peeked: false,
-        },
-    )
-}
-
-/// `granted`/`peeked` guard the ring's done-calls: the channel's `send_done`/`receive_done` assert an open grant, so a `commit` or `release` with nothing outstanding must be a no-op, exactly as it is on the tokio lanes.
-pub struct EmbassyGrantProducer<'a, M: RawMutex, const SLOT: usize> {
-    sender: zerocopy_channel::Sender<'a, M, FrameSlot<SLOT>>,
-    granted: bool,
-    wake: Option<&'a Signal<M, ()>>,
-}
-
-impl<'a, M: RawMutex, const SLOT: usize> EmbassyGrantProducer<'a, M, SLOT> {
-    /// Arm this lane to signal `wake` whenever a frame is committed onto it. A fleet's shared egress lane is consumed by a supervisor on another task, which parks on this signal rather than the channel's own consumer waker, so the reactor's commit reliably rouses the cross-task drain. A 1:1 lane whose consumer is the reactor itself leaves this unset.
-    pub fn set_outbound_wake(&mut self, wake: &'a Signal<M, ()>) {
-        self.wake = Some(wake);
-    }
-}
-
-impl<M: RawMutex, const SLOT: usize> GrantProducer<SLOT> for EmbassyGrantProducer<'_, M, SLOT> {
-    fn try_grant(&mut self) -> Option<&mut FrameSlot<SLOT>> {
-        let granted = &mut self.granted;
-        let slot = self.sender.try_send()?;
-        *granted = true;
-        Some(slot)
-    }
-
-    async fn grant(&mut self) -> &mut FrameSlot<SLOT> {
-        let granted = &mut self.granted;
-        let slot = self.sender.send().await;
-        *granted = true;
-        slot
-    }
-
-    fn commit(&mut self) {
-        if self.granted {
-            self.granted = false;
-            self.sender.send_done();
-            if let Some(wake) = self.wake {
-                wake.signal(());
-            }
-        }
-    }
-}
-
-impl<M: RawMutex, const SLOT: usize> AnyGrantProducer for EmbassyGrantProducer<'_, M, SLOT> {
-    fn try_fill_frame_for(&mut self, interface_id: InterfaceId, frame: &[u8]) -> bool {
-        if frame.len() > SLOT {
-            return false;
-        }
-        let Some(slot) = GrantProducer::try_grant(self) else {
-            return false;
-        };
-        slot.fill_for(interface_id, frame);
-        GrantProducer::commit(self);
-        true
-    }
-
-    fn try_fill_frame_fan(&mut self, fan: FanTarget, frame: &[u8]) -> bool {
-        if frame.len() > SLOT {
-            return false;
-        }
-        let Some(slot) = GrantProducer::try_grant(self) else {
-            return false;
-        };
-        slot.fill_for_fan(fan, frame);
-        GrantProducer::commit(self);
-        true
-    }
-}
-
-pub struct EmbassyGrantConsumer<'a, M: RawMutex, const SLOT: usize> {
-    receiver: zerocopy_channel::Receiver<'a, M, FrameSlot<SLOT>>,
-    peeked: bool,
-}
-
-impl<M: RawMutex, const SLOT: usize> GrantConsumer<SLOT> for EmbassyGrantConsumer<'_, M, SLOT> {
-    fn try_peek(&mut self) -> Option<&mut FrameSlot<SLOT>> {
-        let peeked = &mut self.peeked;
-        let slot = self.receiver.try_receive()?;
-        *peeked = true;
-        Some(slot)
-    }
-
-    async fn peek(&mut self) -> &mut FrameSlot<SLOT> {
-        let peeked = &mut self.peeked;
-        let slot = self.receiver.receive().await;
-        *peeked = true;
-        slot
-    }
-
-    fn release(&mut self) {
-        if self.peeked {
-            self.peeked = false;
-            self.receiver.receive_done();
-        }
-    }
-}
-
-impl<M: RawMutex, const SLOT: usize> AnyGrantConsumer for EmbassyGrantConsumer<'_, M, SLOT> {
-    fn try_peek_frame(&mut self) -> Option<(FrameTarget, PacketPhyStats, &mut [u8])> {
-        let slot = GrantConsumer::try_peek(self)?;
-        let target = slot.target;
-        let packet_phy = slot.packet_phy;
-        Some((target, packet_phy, slot.frame_mut()))
-    }
-
-    fn release_frame(&mut self) {
-        GrantConsumer::release(self);
-    }
-}
-
-/// The embassy side of one interface's seam: `next_inbound` fills this interface's own inbound grant lane in place and announces the commit on the reactor's notify funnel, and `next_outbound` parks on its outbound lane until the reactor grants a frame in, lending it from the slot it was filled into.
-pub struct EmbassyInterfaceSeam<'a, M: RawMutex, const NOTIFY: usize, const SLOT: usize> {
-    id: InterfaceId,
-    inbound: EmbassyGrantProducer<'a, M, SLOT>,
-    notify: Sender<'a, M, InterfaceId, NOTIFY>,
-    outbound: EmbassyGrantConsumer<'a, M, SLOT>,
-}
-
-impl<'a, M: RawMutex, const NOTIFY: usize, const SLOT: usize>
-    EmbassyInterfaceSeam<'a, M, NOTIFY, SLOT>
-{
-    #[must_use]
-    pub fn new(
-        id: InterfaceId,
-        inbound: EmbassyGrantProducer<'a, M, SLOT>,
-        notify: Sender<'a, M, InterfaceId, NOTIFY>,
-        outbound: EmbassyGrantConsumer<'a, M, SLOT>,
-    ) -> Self {
-        Self {
-            id,
-            inbound,
-            notify,
-            outbound,
-        }
-    }
-}
-
-impl<M: RawMutex, const NOTIFY: usize, const SLOT: usize> InterfaceSeam
-    for EmbassyInterfaceSeam<'_, M, NOTIFY, SLOT>
-{
-    async fn inbound_sink(&mut self) -> &mut dyn FrameSink {
-        let slot = self.inbound.grant().await;
-        slot.target = FrameTarget::Direct(self.id);
-        slot
-    }
-
-    async fn commit_inbound(&mut self) {
-        let slot = self.inbound.grant().await;
-        if slot.len == 0 {
-            return;
-        }
-        self.inbound.commit();
-        let _ = self.notify.try_send(self.id);
-    }
-
-    async fn next_inbound_with_phy(&mut self, frame: &[u8], packet_phy: PacketPhyStats) {
-        let slot = self.inbound.grant().await;
-        slot.clear();
-        if slot.extend_from_slice(frame).is_err() {
-            return;
-        }
-        slot.packet_phy = packet_phy;
-        self.commit_inbound().await;
-    }
-
-    async fn next_outbound(&mut self) -> &[u8] {
-        self.outbound.release();
-        self.outbound.peek().await.frame()
-    }
-}
+#[cfg(any(test, feature = "std"))]
+pub use super::grant_lane::leaked_grant_lane;
+pub use super::grant_lane::{embassy_grant_lane, EmbassyGrantConsumer, EmbassyGrantProducer};
+pub use host::EmbassyHost;
+pub use interface_seam::EmbassyInterfaceSeam;
+pub use interface_status::EmbassyInterfaceStatus;
 
 /// Whether the lane keyed by `lane_key` carries traffic for `target`: an exact id match (a dedicated 1:1 lane owns exactly its interface), or `target` being a child of the fleet supervisor `lane_key` names. The second is how one shared lane serves a whole fleet with no per-child routing entry: a `WifiPeer` frame finds the lane keyed by the `AutoWifi` supervisor by the kind byte alone. With no supervisor lane registered, only the exact match fires.
 fn lane_serves(lane_key: InterfaceId, target: InterfaceId) -> bool {
@@ -1298,21 +958,6 @@ pub(crate) async fn run_pooled<
             }
         }
     }
-}
-
-/// A heap-backed grant lane for host-side tests of Embassy interfaces.
-#[cfg(any(test, feature = "std"))]
-pub fn leaked_grant_lane<const SLOT: usize>(
-    depth: usize,
-) -> (
-    EmbassyGrantProducer<'static, embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex, SLOT>,
-    EmbassyGrantConsumer<'static, embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex, SLOT>,
-) {
-    let slots: std::vec::Vec<FrameSlot<SLOT>> = (0..depth).map(|_| FrameSlot::empty()).collect();
-    let channel = std::boxed::Box::leak(std::boxed::Box::new(zerocopy_channel::Channel::new(
-        std::boxed::Box::leak(slots.into_boxed_slice()),
-    )));
-    embassy_grant_lane(channel)
 }
 
 #[cfg(test)]
