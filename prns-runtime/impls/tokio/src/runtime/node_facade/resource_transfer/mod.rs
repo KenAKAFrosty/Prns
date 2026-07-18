@@ -1,0 +1,332 @@
+use std::collections::VecDeque;
+use std::sync::Arc;
+
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::sync::{mpsc, oneshot};
+
+use crate::engine::{SendResourceFailure, Settlement};
+use crate::reactor::compression;
+use crate::reactor::driver::{
+    HostCommand, HostResourceMetadata, HostResourcePayload, ResourceInbound,
+    SendResourceSegmentHostCommand,
+};
+use crate::routing::links::request::RequestId;
+use crate::routing::links::resources::{
+    ResourceHash, ResourceStrategy, MAX_EFFICIENT_SIZE, METADATA_PREFIX_LEN,
+};
+use crate::routing::links::LinkId;
+use crate::wire::DestinationHash;
+
+use super::PrnsNodeHandle;
+
+#[derive(Debug)]
+pub enum ResourceSendError {
+    Source(std::io::Error),
+    UnrepresentableLength,
+    Rejected(SendResourceFailure),
+    NodeStopped,
+}
+
+/// RNS 1.3.5 `Resource.AUTO_COMPRESS_MAX_SIZE`
+pub const AUTO_COMPRESS_MAX_LEN: u64 = 64 * 1024 * 1024;
+
+pub(super) const fn resource_segment_decompression_bound(uncompressed_data_len: u64) -> u64 {
+    if uncompressed_data_len < MAX_EFFICIENT_SIZE as u64 {
+        uncompressed_data_len
+    } else {
+        MAX_EFFICIENT_SIZE as u64
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SegmentCompression {
+    Attempt { up_to_byte_len: u64 },
+    Never,
+}
+
+impl SegmentCompression {
+    /// The reference's `auto_compress=True`: attempt up to [`AUTO_COMPRESS_MAX_LEN`].
+    pub const AUTO: Self = Self::Attempt {
+        up_to_byte_len: AUTO_COMPRESS_MAX_LEN,
+    };
+}
+
+/// The bytes themselves were streamed to the caller's sink.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResourceReceipt {
+    pub original_hash: ResourceHash,
+    pub total_size: u64,
+    /// The transfer's packed metadata (msgpack the app unpacks), when one traveled.
+    pub metadata: Option<std::vec::Vec<u8>>,
+}
+
+#[derive(Debug)]
+pub enum ResourceReceiveError {
+    Sink(std::io::Error),
+    Failed,
+    NodeStopped,
+}
+
+const ENGINE_SEGMENT_LANES: usize = 2;
+
+async fn settle_sent_segment(
+    settled: oneshot::Receiver<Settlement>,
+) -> Result<(), ResourceSendError> {
+    match settled.await {
+        Ok(Settlement::SendResource(Ok(()))) => Ok(()),
+        Ok(Settlement::SendResource(Err(failure))) => Err(ResourceSendError::Rejected(failure)),
+        Ok(_) | Err(_) => Err(ResourceSendError::NodeStopped),
+    }
+}
+
+impl PrnsNodeHandle {
+    /// The length is explicit because every segment advertises the total up front; a payload at or under one segment crosses unsplit.
+    pub async fn send_resource(
+        &self,
+        link_id: LinkId,
+        total_len: u64,
+        source: impl AsyncRead + Unpin,
+    ) -> Result<(), ResourceSendError> {
+        self.send_resource_streaming(
+            link_id,
+            total_len,
+            source,
+            None,
+            SegmentCompression::AUTO,
+            None,
+        )
+        .await
+    }
+
+    /// The RNS 1.3.5 `auto_compress` parameter: [`SegmentCompression::Never`] ships every segment uncompressed where the default attempts bz2 per segment.
+    pub async fn send_resource_with_compression(
+        &self,
+        link_id: LinkId,
+        total_len: u64,
+        source: impl AsyncRead + Unpin,
+        compression: SegmentCompression,
+    ) -> Result<(), ResourceSendError> {
+        self.send_resource_streaming(link_id, total_len, source, None, compression, None)
+            .await
+    }
+
+    /// `packed_metadata` is msgpack the peer's app unpacks, opaque all the way down. The block rides ahead of the data in segment one's stream and inside the advertised total, so segment one carries that much less data and a payload near the segment boundary may split one segment sooner.
+    pub async fn send_resource_with_metadata(
+        &self,
+        link_id: LinkId,
+        total_len: u64,
+        source: impl AsyncRead + Unpin,
+        packed_metadata: &[u8],
+    ) -> Result<(), ResourceSendError> {
+        self.send_resource_streaming(
+            link_id,
+            total_len,
+            source,
+            Some(packed_metadata.into()),
+            SegmentCompression::AUTO,
+            None,
+        )
+        .await
+    }
+
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(
+            name = "prns.resource.send",
+            level = "debug",
+            skip_all,
+            fields(bytes = total_len, link_id = ?link_id.as_bytes()),
+            err(Debug)
+        )
+    )]
+    pub(super) async fn send_resource_streaming(
+        &self,
+        link_id: LinkId,
+        total_len: u64,
+        mut source: impl AsyncRead + Unpin,
+        packed_metadata: Option<Arc<[u8]>>,
+        compression: SegmentCompression,
+        answers_request: Option<RequestId>,
+    ) -> Result<(), ResourceSendError> {
+        let segment_size = MAX_EFFICIENT_SIZE as u64;
+        let block_len = match packed_metadata.as_ref() {
+            None => 0,
+            Some(packed) => u64::try_from(packed.len())
+                .ok()
+                .and_then(|len| len.checked_add(METADATA_PREFIX_LEN as u64))
+                .ok_or(ResourceSendError::UnrepresentableLength)?,
+        };
+        let stream_total_len = total_len
+            .checked_add(block_len)
+            .ok_or(ResourceSendError::UnrepresentableLength)?;
+        let total_segments = stream_total_len.div_ceil(segment_size).max(1);
+        let mut remaining = total_len;
+        let mut in_flight: VecDeque<oneshot::Receiver<Settlement>> =
+            VecDeque::with_capacity(ENGINE_SEGMENT_LANES);
+        for segment_index in 1..=total_segments {
+            let capacity = if segment_index == 1 {
+                segment_size.saturating_sub(block_len)
+            } else {
+                segment_size
+            };
+            let this_segment = remaining.min(capacity);
+            remaining -= this_segment;
+            let mut chunk = std::vec![0u8; this_segment as usize];
+            source
+                .read_exact(&mut chunk)
+                .await
+                .map_err(ResourceSendError::Source)?;
+            let first_segment_block = (segment_index == 1)
+                .then(|| packed_metadata.clone())
+                .flatten();
+            let segment_payload_len = if segment_index == 1 {
+                block_len + this_segment
+            } else {
+                this_segment
+            };
+            let attempt = match compression {
+                SegmentCompression::Attempt {
+                    up_to_byte_len: up_to,
+                } => segment_payload_len <= up_to,
+                SegmentCompression::Never => false,
+            };
+            let (chunk, compressed_candidate) = if attempt {
+                tokio::task::spawn_blocking(move || {
+                    let candidate = match &first_segment_block {
+                        Some(packed) => {
+                            let mut composite = Vec::with_capacity(
+                                METADATA_PREFIX_LEN + packed.len() + chunk.len(),
+                            );
+                            composite.extend_from_slice(&(packed.len() as u32).to_be_bytes()[1..]);
+                            composite.extend_from_slice(packed);
+                            composite.extend_from_slice(&chunk);
+                            compression::compress_if_smaller(&composite)
+                                .map(HostResourcePayload::from)
+                        }
+                        None => {
+                            compression::compress_if_smaller(&chunk).map(HostResourcePayload::from)
+                        }
+                    };
+                    (chunk, candidate)
+                })
+                .await
+                .map_err(|_| ResourceSendError::NodeStopped)?
+            } else {
+                (chunk, None)
+            };
+            let metadata = match (&packed_metadata, segment_index) {
+                (None, _) => HostResourceMetadata::None,
+                (Some(packed), 1) => HostResourceMetadata::Packed(packed.clone().into()),
+                (Some(packed), _) => HostResourceMetadata::SentInFirstSegment {
+                    packed_len: packed.len() as u32,
+                },
+            };
+            if in_flight.len() == ENGINE_SEGMENT_LANES {
+                if let Some(settled) = in_flight.pop_front() {
+                    settle_sent_segment(settled).await?;
+                }
+            }
+            let id = self.mint();
+            let (completion, settled) = oneshot::channel();
+            self.commands
+                .send(HostCommand::SendResourceSegment(
+                    SendResourceSegmentHostCommand {
+                        id,
+                        link_id,
+                        data: chunk.into(),
+                        compressed_candidate,
+                        metadata,
+                        request_id: answers_request,
+                        segment_index,
+                        total_segments,
+                        total_data_size: total_len,
+                        completion,
+                    },
+                ))
+                .map_err(|_| ResourceSendError::NodeStopped)?;
+            in_flight.push_back(settled);
+        }
+        for settled in in_flight {
+            settle_sent_segment(settled).await?;
+        }
+        Ok(())
+    }
+
+    /// Registers the sink before yielding, so a segment arriving the instant after cannot reach the app event stream instead.
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(
+            name = "prns.resource.receive",
+            level = "debug",
+            skip_all,
+            fields(link_id = ?link_id.as_bytes()),
+            err(Debug)
+        )
+    )]
+    pub async fn receive_resource(
+        &self,
+        link_id: LinkId,
+        mut sink: impl AsyncWrite + Unpin,
+    ) -> Result<ResourceReceipt, ResourceReceiveError> {
+        let (chunks, mut inbound) = mpsc::unbounded_channel();
+        let (ready, registered) = oneshot::channel();
+        self.commands
+            .send(HostCommand::RegisterResourceSink {
+                link_id,
+                sink: chunks,
+                ready,
+            })
+            .map_err(|_| ResourceReceiveError::NodeStopped)?;
+        registered
+            .await
+            .map_err(|_| ResourceReceiveError::NodeStopped)?;
+        let mut metadata = None;
+        loop {
+            match inbound.recv().await {
+                Some(ResourceInbound::Metadata(packed)) => metadata = Some(packed),
+                Some(ResourceInbound::Chunk(bytes)) => {
+                    sink.write_all(&bytes)
+                        .await
+                        .map_err(ResourceReceiveError::Sink)?;
+                }
+                Some(ResourceInbound::Complete {
+                    original_hash,
+                    total_size,
+                }) => {
+                    sink.flush().await.map_err(ResourceReceiveError::Sink)?;
+                    return Ok(ResourceReceipt {
+                        original_hash,
+                        total_size,
+                        metadata,
+                    });
+                }
+                Some(ResourceInbound::Failed) => return Err(ResourceReceiveError::Failed),
+                None => return Err(ResourceReceiveError::NodeStopped),
+            }
+        }
+    }
+
+    /// The recipe's `resource_strategy` sets this at construction; this is the runtime counterpart, for a destination re-tuned while the node runs.
+    pub async fn set_resource_strategy(
+        &self,
+        destination: DestinationHash,
+        strategy: ResourceStrategy,
+    ) -> bool {
+        let (ready, applied) = oneshot::channel();
+        if self
+            .commands
+            .send(HostCommand::SetResourceStrategy {
+                destination,
+                strategy,
+                ready,
+            })
+            .is_err()
+        {
+            return false;
+        }
+        applied.await.unwrap_or(false)
+    }
+}
+
+#[cfg(test)]
+mod tests;
