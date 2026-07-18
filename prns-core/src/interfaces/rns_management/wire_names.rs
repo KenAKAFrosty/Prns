@@ -47,3 +47,8 @@ pub(super) mod transport {
 pub(super) mod blackhole {
     pub const SOURCE: &str = "source";
 }
+
+pub(super) mod remote_path {
+    pub const TABLE: &str = "table";
+    pub const RATES: &str = "rates";
+}

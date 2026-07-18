@@ -2584,7 +2584,6 @@ dependencies = [
  "prns-core",
  "prns-ffi",
  "prns-runtime-tokio",
- "rmpv",
  "serialport",
  "socket2",
  "tokio",
