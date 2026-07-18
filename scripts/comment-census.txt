@@ -1,5 +1,5 @@
 prns-core 1822
-prns-runtime 282
+prns-runtime 278
 personal-rns 4
 prns-interfaces/impls/tokio 753
 prns-interfaces/impls/embassy 416

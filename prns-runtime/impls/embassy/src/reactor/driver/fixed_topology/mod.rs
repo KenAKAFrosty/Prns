@@ -277,3 +277,6 @@ async fn run_inner<S, H, M, P, A, Store, const NOTIFY: usize, const COMMANDS: us
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -13,7 +13,6 @@ use crate::reactor::kernel::{
 
 use super::EmbassyGrantProducer;
 
-/// Whether the lane keyed by `lane_key` carries traffic for `target`: an exact id match (a dedicated 1:1 lane owns exactly its interface), or `target` being a child of the fleet supervisor `lane_key` names. The second is how one shared lane serves a whole fleet with no per-child routing entry: a `WifiPeer` frame finds the lane keyed by the `AutoWifi` supervisor by the kind byte alone. With no supervisor lane registered, only the exact match fires.
 fn lane_serves(lane_key: InterfaceId, target: InterfaceId) -> bool {
     if lane_key == target {
         return true;
@@ -24,10 +23,9 @@ fn lane_serves(lane_key: InterfaceId, target: InterfaceId) -> bool {
     }
 }
 
-/// The reactor's egress: it routes one engine `Directive::Send` into the target interface's outbound grant lane, granted, filled in place, committed; a full lane drops the frame rather than stalling the reactor. [`EmbassyEgress`] and [`PooledEgress`] both satisfy it.
+/// Nonblocking direct and fleet egress.
 pub trait ReactorEgress {
     fn enqueue(&mut self, target: InterfaceId, bytes: &[u8]);
-    /// Route one fleet broadcast: find the standing lane owned by a supervisor of `supervisor` kind and commit a single frame carrying `fan`, for the supervisor to fan across the members it selects. A full lane drops it, exactly as [`enqueue`](Self::enqueue) does for a direct send.
     fn enqueue_broadcast(&mut self, supervisor: InterfaceKind, fan: FanTarget, bytes: &[u8]);
     fn lane_for(&self, target: InterfaceId) -> Option<InterfaceId> {
         Some(target)
@@ -37,7 +35,7 @@ pub trait ReactorEgress {
     }
 }
 
-/// The fixed-set egress: each lane's slot size is erased, so lanes sized to different interfaces share one slice. No alloc — the lanes are a borrowed slice the caller owns.
+/// Fixed-set egress with erased slot sizes, allowing heterogeneous lanes in one borrowed slice without allocation.
 pub struct EmbassyEgress<'a> {
     lanes: &'a mut [(InterfaceId, &'a mut dyn AnyGrantProducer)],
 }
@@ -164,7 +162,7 @@ impl<E: ReactorEgress> DirectiveEgress for EmbassyDirectiveEgress<'_, E> {
     }
 }
 
-/// Grant-first lands as build-then-copy here: the erased embassy egress exposes only `try_fill_frame`, so the frame is built in a stack scratch (wire-small on embassy faces) and copied once into the ring. `fill` runs exactly once — the `EmitFrame` contract — whether or not the lane has room.
+/// Erased slot sizes require one bounded stack buffer before the frame enters its lane. `fill` runs exactly once even when the lane is full.
 fn emit_for_wire(
     egress: &mut impl ReactorEgress,
     ifacs: &[InterfaceIfac],
@@ -223,7 +221,7 @@ pub(super) fn enqueue_broadcast_for_wire(
     }
 }
 
-/// Whether `id` owns one of the reactor's standing lanes outright: an exact-id match, not the kind match a fleet member rides. Only a dedicated-lane owner earns an announce pacer; a fleet member shares its supervisor's lane and so its medium's pacing, never its own ~1 KiB queue. This keeps the pacer pool bounded by lane count, not member count.
+/// Only exact lane owners receive a pacer; fleet members share the supervisor's lane and pacing budget.
 pub(super) fn owns_dedicated_lane<C>(lanes: &[(InterfaceId, C)], id: InterfaceId) -> bool {
     lanes.iter().any(|(lane_id, _)| *lane_id == id)
 }
@@ -268,13 +266,12 @@ pub(super) fn soonest_pacer_release(pacers: &[InterfacePacer]) -> Option<Instant
         .min_by_key(|deadline| deadline.0)
 }
 
-/// The dynamic egress: a fixed pool of `N` permanently owned outbound lane endpoints, each tagged with the id of the interface or fleet supervisor it serves. The uniform `SLOT` size (a board's one wire ceiling) lets the pool own concrete endpoints rather than the fixed path's erased `&mut dyn`, and the tag lets `lane_serves` route a whole fleet over one lane.
+/// Dynamic egress over a fixed, uniformly sized lane pool tagged by interface or fleet supervisor.
 pub struct PooledEgress<M: RawMutex + 'static, const SLOT: usize, const N: usize> {
     pub(super) lanes: HeaplessVec<(InterfaceId, EmbassyGrantProducer<'static, M, SLOT>), N>,
 }
 
 impl<M: RawMutex + 'static, const SLOT: usize, const N: usize> PooledEgress<M, SLOT, N> {
-    /// Build the egress over the reactor-side outbound endpoints, each at the slot it shares with the interface-side half and tagged at boot with the id it serves.
     #[must_use]
     pub fn new(
         lanes: HeaplessVec<(InterfaceId, EmbassyGrantProducer<'static, M, SLOT>), N>,
@@ -332,3 +329,6 @@ impl<M: RawMutex + 'static, const SLOT: usize, const N: usize> ReactorEgress
             .find(|id| id.kind() == Some(supervisor))
     }
 }
+
+#[cfg(test)]
+mod tests;
