@@ -11,15 +11,21 @@ mod interface_stats;
 mod message_pack;
 mod path_table;
 mod rate_table;
+mod remote_request;
 pub(crate) mod wire_names;
 
-pub use blackhole_table::RnsBlackholeTable;
+pub use blackhole_table::{RnsBlackholeDecodeError, RnsBlackholeTable};
 pub use interface_stats::{
     RnsInterfaceAccessCode, RnsInterfaceStats, RnsInterfaceStatsEntry, RnsTransportStatus,
 };
 pub(crate) use message_pack::MessagePackEncoder;
 pub use path_table::RnsPathTable;
 pub use rate_table::{RnsAnnounceRateEntry, RnsAnnounceRateTable};
+pub use remote_request::{
+    decode_remote_path_request, decode_remote_status_request, RnsRemotePathRequest,
+    RnsRemotePathTableRequest, RnsRemoteRateTableRequest, RnsRemoteRequestDecodeError,
+    RnsRemoteStatusRequest,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RnsManagementEncodeError;

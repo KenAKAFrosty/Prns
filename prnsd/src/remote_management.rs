@@ -57,11 +57,11 @@ impl RequestRoute<DaemonRequestState> for PathRoute {
         let request = decode_path_request(context.data).map_err(|_| Decline::Ignore)?;
         let handle = context.state.handle();
         let response = match request {
-            RemotePathRequest::Table { .. } => {
-                encode_path_table_response(request, handle.routes().await)
+            RemotePathRequest::Table(selection) => {
+                encode_path_table_response(selection, handle.routes().await)
             }
-            RemotePathRequest::Rates { .. } => {
-                encode_rate_table_response(request, handle.announce_rates().await)
+            RemotePathRequest::Rates(selection) => {
+                encode_rate_table_response(selection, handle.announce_rates().await)
             }
         }
         .map_err(|_| Decline::Ignore)?;

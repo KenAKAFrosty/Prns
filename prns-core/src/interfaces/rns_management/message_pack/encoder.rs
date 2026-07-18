@@ -3,7 +3,7 @@ use core::convert::Infallible;
 
 use rmp::encode::{self, ByteBuf, ValueWriteError};
 
-use super::RnsManagementEncodeError;
+use super::super::RnsManagementEncodeError;
 
 pub(crate) struct MessagePackEncoder {
     bytes: ByteBuf,

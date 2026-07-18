@@ -5,6 +5,7 @@ use personal_rns::config::BlackholeExchangePlan;
 use personal_rns::engine::RatchetPolicy;
 use personal_rns::engine::{EstablishLinkFailure, SendRequestFailure};
 use personal_rns::identity::{IdentityHash, Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::interfaces::rns_management::{RnsBlackholeDecodeError, RnsBlackholeTable};
 use personal_rns::node_introspection::NodeIntrospection;
 use personal_rns::reactor::tokio::TokioHost;
 use personal_rns::reactor::Host;
@@ -20,9 +21,7 @@ use personal_rns::runtime::{
     IdentityBlackholeControlError, IdentityBlackholeSource, PreConfiguredDestination, PrnsEvent,
     PrnsNode, PrnsNodeHandle, RegisterRequestRouteError, RequestHandlerRegistration, SendError,
 };
-use personal_rns::shared_instance::blackhole_compat::{
-    decode_table, encode_table, RnsBlackholeDecodeError, RnsBlackholeFileError, RnsBlackholeFiles,
-};
+use personal_rns::shared_instance::blackhole_compat::{RnsBlackholeFileError, RnsBlackholeFiles};
 use personal_rns::storage::StorageLayout;
 use personal_rns::wire::DestinationHash;
 
@@ -81,7 +80,9 @@ impl RequestRoute<DaemonRequestState> for ListRoute {
             .blackholed_identities()
             .await
             .map_err(|_| Decline::Ignore)?;
-        let response = encode_table(entries).map_err(|_| Decline::Ignore)?;
+        let response = RnsBlackholeTable::from_entries(entries)
+            .encode_message_pack()
+            .map_err(|_| Decline::Ignore)?;
         context.respond(&response)
     }
 }
@@ -209,7 +210,9 @@ async fn update_source(
         .await;
     handle.close_link(link);
     let (response, _) = response.map_err(BlackholeUpdateError::Request)?;
-    let entries = decode_table(&response, clock.now()).map_err(BlackholeUpdateError::Decode)?;
+    let entries = RnsBlackholeTable::decode_published_table(&response, clock.now())
+        .map(RnsBlackholeTable::into_entries)
+        .map_err(BlackholeUpdateError::Decode)?;
     let mut added = 0usize;
     for entry in &entries {
         let outcome = handle
