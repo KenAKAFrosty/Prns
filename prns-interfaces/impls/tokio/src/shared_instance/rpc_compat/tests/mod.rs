@@ -4,7 +4,7 @@ use std::vec::Vec;
 use prns_core::crypto::{hmac_sha256, hmac_sha256_verify};
 use prns_core::identity::{
     IdentityHash, MarkDestinationUsedOutcome, ReleaseDestinationOutcome, RetainDestinationOutcome,
-    RetainIdentityOutcome,
+    RetainIdentityOutcome, IDENTITY_SECRET_KEY_LEN,
 };
 use prns_core::interfaces::shared_instance::rns_rpc::{
     RnsRpcRequest, RpcAuthenticationControlMessage, RpcAuthenticationKey, RpcChallengeNonce,
@@ -37,7 +37,7 @@ use super::framing::{read_auth_frame, read_frame, write_frame, write_frame_heade
 #[cfg(target_os = "linux")]
 use super::server::{bind_abstract_rpc, RpcBind};
 use super::server::{serve_connection, SharedInstanceRpcCompat};
-use super::storage::{reticulum_storage_dir, rpc_key_from_rns_identity};
+use super::storage::{load_or_seed_rns_rpc_key, reticulum_storage_dir, RnsRpcKeyStorageError};
 use super::telemetry::RpcTelemetry;
 
 mod authentication;

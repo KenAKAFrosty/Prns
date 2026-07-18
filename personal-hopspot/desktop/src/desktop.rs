@@ -28,7 +28,7 @@ use personal_rns::reactor::tokio::TokioInterfaceStatus;
 use personal_rns::routes;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::shared_instance::rpc_compat::{
-    reticulum_storage_dir, rpc_key_from_rns_identity, SharedInstanceCredentials,
+    load_or_seed_rns_rpc_key, reticulum_storage_dir, SharedInstanceCredentials,
     SharedInstanceRpcCompat,
 };
 use personal_rns::shared_instance::server::LocalServer;
@@ -202,9 +202,16 @@ fn run_node(
 
     runtime.block_on(async move {
         let transport_secret = identity_secret_key.clone();
-        let rpc_key = rpc_key_from_rns_identity(&reticulum_storage_dir(), &identity_secret_key[..]);
+        let rpc_key = match load_or_seed_rns_rpc_key(&reticulum_storage_dir(), &identity_secret_key)
+        {
+            Ok(rpc_key) => rpc_key,
+            Err(error) => {
+                tracing::error!(event = "rns_rpc_key_load_failed", %error);
+                return;
+            }
+        };
         let credentials = SharedInstanceCredentials::from_identity_secret(&identity_secret_key)
-            .with_rpc_key(rpc_key.to_vec());
+            .with_rpc_authentication_key(rpc_key);
 
         let announce_destination = PreConfiguredDestination::Single {
             resource_strategy:

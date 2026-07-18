@@ -12,7 +12,7 @@ mod telemetry;
 
 pub use authentication::SharedInstanceCredentials;
 pub use server::SharedInstanceRpcCompat;
-pub use storage::{reticulum_storage_dir, rpc_key_from_rns_identity};
+pub use storage::{load_or_seed_rns_rpc_key, reticulum_storage_dir, RnsRpcKeyStorageError};
 pub use telemetry::{RpcTelemetry, RpcTelemetrySnapshot};
 
 #[cfg(test)]
