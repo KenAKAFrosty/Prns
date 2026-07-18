@@ -10,7 +10,7 @@ use crate::engine::{
     SendSinglePacketFailure, SendSinglePacketPrepared, SendSinglePacketWriteError, Settlement,
     WakeReason, WakeSchedules,
 };
-use crate::identity::{OpenedToken, Zeroizing};
+use crate::identity::OpenedToken;
 use crate::interfaces::ifac::InterfaceIfac;
 use crate::interfaces::{InboundPacket, InterfaceDescriptor, InterfaceId, PacketPhyStats};
 use crate::reactor::interface_seam::{frame_cap_for, BROADCAST_WIRE_FRAME_LEN};
@@ -46,6 +46,7 @@ mod host_protocol;
 mod interface_seam;
 mod interface_status;
 mod journal_delivery;
+mod persistence_snapshots;
 
 pub use super::grant_lane::{
     tokio_grant_lane, HeapFrameSlot, TokioGrantConsumer, TokioGrantProducer,
@@ -88,21 +89,6 @@ fn retain_packet_phy(
         return;
     };
     store.remember_packet_phy(packet_hash, packet_phy);
-}
-
-fn seal_self_ratchet(
-    last_rotated: crate::crypto::ratchets::LastRotated,
-    secrets: &[crate::crypto::X25519SecretKey],
-) -> Option<Zeroizing<std::vec::Vec<u8>>> {
-    let mut sealed = Zeroizing::new(std::vec![
-        0u8;
-        crate::persistence::self_ratchets_snapshot_len(secrets.len())
-    ]);
-    let written =
-        crate::persistence::write_self_ratchets_snapshot(last_rotated, secrets, &mut sealed)
-            .ok()?;
-    sealed.truncate(written);
-    Some(sealed)
 }
 
 /// Everything the reactor is wired to for one run: the interface topology snapshot, per-interface IFAC state, the wake and command channels, the inbound grant lanes, and the egress fan-out.
@@ -965,77 +951,17 @@ async fn run_inner<S, H, J, P, A>(
                         WakeSchedules::UNCHANGED
                     }
                     HostCommand::SnapshotPersistedState { reply } => {
-                        let mut routing_table = std::vec![
-                            0u8;
-                            crate::persistence::routing_table_snapshot_len(
-                                engine.persisted_route_rows(),
-                            )
-                        ];
-                        let mut tunnels = std::vec![
-                            0u8;
-                            crate::persistence::tunnels_snapshot_len(
-                                engine.persisted_tunnel_rows().count(),
-                            )
-                        ];
-                        let mut destination_identities = std::vec![
-                            0u8;
-                            crate::persistence::destination_identities_snapshot_len(
-                                engine.destination_identities(),
-                            )
-                        ];
-                        let written_routes = crate::persistence::write_routing_table_snapshot(
-                            engine.persisted_route_rows(),
-                            &mut routing_table,
-                        );
-                        let written_tunnels = crate::persistence::write_tunnels_snapshot(
-                            engine.persisted_tunnel_rows(),
-                            &mut tunnels,
-                        );
-                        let written_destination_identities =
-                            crate::persistence::write_destination_identities_snapshot(
-                                engine.destination_identities(),
-                                &mut destination_identities,
-                            );
-                        if let (Ok(routes_len), Ok(tunnels_len), Ok(destination_identities_len)) = (
-                            written_routes,
-                            written_tunnels,
-                            written_destination_identities,
-                        )
-                        {
-                            routing_table.truncate(routes_len);
-                            tunnels.truncate(tunnels_len);
-                            destination_identities.truncate(destination_identities_len);
-                            let _ = reply.send(PersistedStateSnapshot {
-                                routing_table,
-                                tunnels,
-                                destination_identities,
-                                taken_at: now,
-                            });
+                        if let Some(snapshot) = persistence_snapshots::persisted_state(&engine, now) {
+                            let _ = reply.send(snapshot);
                         }
                         WakeSchedules::UNCHANGED
                     }
                     HostCommand::SnapshotSelfRatchets { reply } => {
-                        let mut blobs = std::vec::Vec::new();
-                        for (destination, last_rotated, secrets) in
-                            engine.persisted_self_ratchet_rows()
-                        {
-                            if let Some(sealed) = seal_self_ratchet(last_rotated, secrets) {
-                                blobs.push((destination, sealed));
-                            }
-                        }
-                        let _ = reply.send(SelfRatchetsSnapshot { blobs });
+                        let _ = reply.send(persistence_snapshots::self_ratchets(&engine));
                         WakeSchedules::UNCHANGED
                     }
                     HostCommand::SnapshotSelfRatchet { destination, reply } => {
-                        let snapshot = engine
-                            .persisted_self_ratchet_row(&destination)
-                            .and_then(|(last_rotated, secrets)| {
-                                seal_self_ratchet(last_rotated, secrets)
-                            })
-                            .map(|sealed| SelfRatchetSnapshot {
-                                destination,
-                                sealed,
-                            });
+                        let snapshot = persistence_snapshots::self_ratchet(&engine, destination);
                         let _ = reply.send(snapshot);
                         WakeSchedules::UNCHANGED
                     }
