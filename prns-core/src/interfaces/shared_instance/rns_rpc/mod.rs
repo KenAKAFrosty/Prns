@@ -2,6 +2,7 @@ mod authentication;
 mod credentials;
 mod dialects;
 mod framing;
+mod reply;
 mod request;
 mod wire_names;
 
@@ -16,6 +17,7 @@ pub use framing::{
     EncodedRpcFrameHeader, RpcFrameHeaderEncodeError, RpcFrameHeaderPrefix, RpcFrameLength,
     RpcFrameLengthDecodeError,
 };
+pub use reply::{RnsRpcReply, RnsRpcReplyEncodeError};
 pub use request::{
     DestinationDataOperation, PacketHashArgument, RnsInteger, RnsNumber, RnsRpcRequest,
     RpcRequestDecodeError,

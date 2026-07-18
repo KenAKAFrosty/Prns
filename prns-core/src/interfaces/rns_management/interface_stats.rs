@@ -1,0 +1,223 @@
+use alloc::format;
+use alloc::string::String;
+use alloc::vec::Vec;
+use core::time::Duration;
+
+use crate::identity::IdentityHash;
+use crate::interfaces::ifac::IfacSize;
+use crate::interfaces::{ConnectionState, InterfaceId, InterfaceSnapshot, TransferRates};
+
+use super::message_pack::MessagePackEncoder;
+use super::wire_names::{interface, transport};
+use super::{interface_name, RnsManagementEncodeError};
+
+const RNS_INTERFACE_MODE_FULL: i64 = 0x01;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RnsInterfaceAccessCode {
+    signature: [u8; 64],
+    size: IfacSize,
+    network_name: Option<String>,
+}
+
+impl RnsInterfaceAccessCode {
+    pub fn new(signature: [u8; 64], size: IfacSize, network_name: Option<String>) -> Self {
+        Self {
+            signature,
+            size,
+            network_name,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RnsInterfaceStatsEntry {
+    name: Option<String>,
+    snapshot: InterfaceSnapshot,
+    access_code: Option<RnsInterfaceAccessCode>,
+}
+
+impl RnsInterfaceStatsEntry {
+    pub fn new(
+        name: Option<String>,
+        snapshot: InterfaceSnapshot,
+        access_code: Option<RnsInterfaceAccessCode>,
+    ) -> Self {
+        Self {
+            name,
+            snapshot,
+            access_code,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RnsTransportStatus {
+    transport_identity: IdentityHash,
+    network_identity: Option<IdentityHash>,
+    uptime: Duration,
+}
+
+impl RnsTransportStatus {
+    pub const fn new(
+        transport_identity: IdentityHash,
+        network_identity: Option<IdentityHash>,
+        uptime: Duration,
+    ) -> Self {
+        Self {
+            transport_identity,
+            network_identity,
+            uptime,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RnsInterfaceStats {
+    entries: Vec<RnsInterfaceStatsEntry>,
+    transport: Option<RnsTransportStatus>,
+}
+
+impl RnsInterfaceStats {
+    pub fn new(entries: Vec<RnsInterfaceStatsEntry>) -> Self {
+        Self {
+            entries,
+            transport: None,
+        }
+    }
+
+    pub fn with_transport(mut self, transport: RnsTransportStatus) -> Self {
+        self.transport = Some(transport);
+        self
+    }
+
+    pub fn encode_message_pack(&self) -> Result<Vec<u8>, RnsManagementEncodeError> {
+        let mut encoder = MessagePackEncoder::new();
+        self.encode_into(&mut encoder)?;
+        Ok(encoder.finish())
+    }
+
+    pub fn encode_remote_response(
+        &self,
+        link_count: Option<u32>,
+    ) -> Result<Vec<u8>, RnsManagementEncodeError> {
+        let mut encoder = MessagePackEncoder::new();
+        encoder.array(if link_count.is_some() { 2 } else { 1 })?;
+        self.encode_into(&mut encoder)?;
+        if let Some(link_count) = link_count {
+            encoder.unsigned(u64::from(link_count));
+        }
+        Ok(encoder.finish())
+    }
+
+    pub(crate) fn encode_into(
+        &self,
+        encoder: &mut MessagePackEncoder,
+    ) -> Result<(), RnsManagementEncodeError> {
+        encoder.map(if self.transport.is_some() { 10 } else { 6 })?;
+        encoder.field(interface::INTERFACES)?;
+        encoder.array(self.entries.len())?;
+
+        let mut total_receive_bytes = 0u64;
+        let mut total_transmit_bytes = 0u64;
+        let mut total_receive_speed = 0u64;
+        let mut total_transmit_speed = 0u64;
+        for entry in &self.entries {
+            encode_interface_entry(encoder, entry)?;
+            let rates = entry.snapshot.transfer_rates.unwrap_or(TransferRates {
+                rx_bps: 0,
+                tx_bps: 0,
+            });
+            total_receive_bytes = total_receive_bytes.saturating_add(entry.snapshot.rx_bytes);
+            total_transmit_bytes = total_transmit_bytes.saturating_add(entry.snapshot.tx_bytes);
+            total_receive_speed = total_receive_speed.saturating_add(u64::from(rates.rx_bps));
+            total_transmit_speed = total_transmit_speed.saturating_add(u64::from(rates.tx_bps));
+        }
+
+        encoder.unsigned_field(interface::RECEIVE_BYTES, total_receive_bytes)?;
+        encoder.unsigned_field(interface::TRANSMIT_BYTES, total_transmit_bytes)?;
+        encoder.unsigned_field(interface::RECEIVE_SPEED, total_receive_speed)?;
+        encoder.unsigned_field(interface::TRANSMIT_SPEED, total_transmit_speed)?;
+        encoder.field(interface::RESIDENT_SET_SIZE)?;
+        encoder.nil();
+
+        if let Some(status) = self.transport {
+            encoder.field(transport::IDENTITY)?;
+            encoder.binary(status.transport_identity.as_bytes())?;
+            encoder.field(transport::NETWORK_IDENTITY)?;
+            match status.network_identity {
+                Some(identity) => encoder.binary(identity.as_bytes())?,
+                None => encoder.nil(),
+            }
+            encoder.field(transport::UPTIME)?;
+            encoder.float(status.uptime.as_secs_f64());
+            encoder.field(transport::PROBE_RESPONDER)?;
+            encoder.nil();
+        }
+        Ok(())
+    }
+}
+
+fn encode_interface_entry(
+    encoder: &mut MessagePackEncoder,
+    entry: &RnsInterfaceStatsEntry,
+) -> Result<(), RnsManagementEncodeError> {
+    let name = entry
+        .name
+        .clone()
+        .unwrap_or_else(|| interface_name(entry.snapshot.id));
+    let rates = entry.snapshot.transfer_rates.unwrap_or(TransferRates {
+        rx_bps: 0,
+        tx_bps: 0,
+    });
+    encoder.map(13)?;
+    encoder.string_field(interface::NAME, &name)?;
+    encoder.string_field(interface::SHORT_NAME, &name)?;
+    encoder.string_field(interface::TYPE, &interface_type(entry.snapshot.id))?;
+    encoder.field(interface::STATUS)?;
+    encoder.boolean(is_online(entry.snapshot.connection));
+    encoder.field(interface::MODE)?;
+    encoder.signed(RNS_INTERFACE_MODE_FULL);
+    encoder.field(interface::CLIENTS)?;
+    encoder.nil();
+    encoder.unsigned_field(interface::RECEIVE_BYTES, entry.snapshot.rx_bytes)?;
+    encoder.unsigned_field(interface::TRANSMIT_BYTES, entry.snapshot.tx_bytes)?;
+    encoder.unsigned_field(interface::RECEIVE_SPEED, u64::from(rates.rx_bps))?;
+    encoder.unsigned_field(interface::TRANSMIT_SPEED, u64::from(rates.tx_bps))?;
+    encoder.field(interface::IFAC_SIGNATURE)?;
+    match &entry.access_code {
+        Some(access_code) => encoder.binary(&access_code.signature)?,
+        None => encoder.nil(),
+    }
+    encoder.field(interface::IFAC_SIZE)?;
+    match &entry.access_code {
+        Some(access_code) => {
+            encoder.unsigned(u64::try_from(access_code.size.bytes()).unwrap_or(u64::MAX))
+        }
+        None => encoder.nil(),
+    }
+    encoder.field(interface::IFAC_NETWORK_NAME)?;
+    match entry
+        .access_code
+        .as_ref()
+        .and_then(|access_code| access_code.network_name.as_deref())
+    {
+        Some(network_name) => encoder.string(network_name)?,
+        None => encoder.nil(),
+    }
+    Ok(())
+}
+
+fn interface_type(id: InterfaceId) -> String {
+    match id.kind() {
+        Some(kind) => format!("{kind:?}"),
+        None => String::from("Interface"),
+    }
+}
+
+fn is_online(connection: ConnectionState) -> bool {
+    matches!(
+        connection,
+        ConnectionState::Connected | ConnectionState::Degraded
+    )
+}

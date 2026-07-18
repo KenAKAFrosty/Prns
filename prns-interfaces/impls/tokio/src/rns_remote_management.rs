@@ -3,15 +3,14 @@ use std::time::Duration;
 use std::vec::Vec;
 
 use prns_core::identity::IdentityHash;
+use prns_core::interfaces::rns_management::{RnsPathTable, RnsTransportStatus};
 use prns_core::wire::DestinationHash;
 use prns_runtime::node_introspection::{
-    logical_interface_inventory, AnnounceRateSnapshot, InterfaceInventoryEntry, RouteSnapshot,
+    AnnounceRateSnapshot, InterfaceInventoryEntry, RouteSnapshot,
 };
 use rmpv::Value;
 
-use crate::shared_instance::rpc_compat::reply::{
-    encode_msgpack, interface_stats_value, path_table_value, rate_table_value,
-};
+use crate::shared_instance::rpc_compat::projections::{announce_rate_table, interface_stats};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RemoteStatusRequest {
@@ -126,29 +125,19 @@ pub fn encode_status_response(
     link_count: u32,
     transport: Option<RemoteTransportStatus>,
 ) -> Result<Vec<u8>, RemoteResponseEncodeError> {
-    let mut stats = interface_stats_value(&logical_interface_inventory(inventory));
-    if let (Value::Map(fields), Some(transport)) = (&mut stats, transport) {
-        fields.push((
-            "transport_id".into(),
-            Value::Binary(transport.transport_identity.as_bytes().to_vec()),
+    let mut stats = interface_stats(inventory);
+    if let Some(transport) = transport {
+        stats = stats.with_transport(RnsTransportStatus::new(
+            transport.transport_identity,
+            transport.network_identity,
+            transport.uptime,
         ));
-        fields.push((
-            "network_id".into(),
-            transport.network_identity.map_or(Value::Nil, |identity| {
-                Value::Binary(identity.as_bytes().to_vec())
-            }),
-        ));
-        fields.push((
-            "transport_uptime".into(),
-            Value::F64(transport.uptime.as_secs_f64()),
-        ));
-        fields.push(("probe_responder".into(), Value::Nil));
     }
-    let mut response = vec![stats];
-    if request == RemoteStatusRequest::InterfaceStatsAndLinkCount {
-        response.push(Value::from(u64::from(link_count)));
-    }
-    encode_msgpack(Value::Array(response)).map_err(|_| RemoteResponseEncodeError)
+    let link_count =
+        (request == RemoteStatusRequest::InterfaceStatsAndLinkCount).then_some(link_count);
+    stats
+        .encode_remote_response(link_count)
+        .map_err(|_| RemoteResponseEncodeError)
 }
 
 pub fn encode_path_table_response(
@@ -162,7 +151,9 @@ pub fn encode_path_table_response(
         .into_iter()
         .filter(|entry| destination.includes(entry.destination) && hops.includes(entry.hops))
         .collect();
-    encode_msgpack(path_table_value(entries)).map_err(|_| RemoteResponseEncodeError)
+    RnsPathTable::new(entries)
+        .encode_message_pack()
+        .map_err(|_| RemoteResponseEncodeError)
 }
 
 pub fn encode_rate_table_response(
@@ -176,7 +167,9 @@ pub fn encode_rate_table_response(
         .into_iter()
         .filter(|entry| destination.includes(entry.destination))
         .collect();
-    encode_msgpack(rate_table_value(entries)).map_err(|_| RemoteResponseEncodeError)
+    announce_rate_table(entries)
+        .encode_message_pack()
+        .map_err(|_| RemoteResponseEncodeError)
 }
 
 fn decode(bytes: &[u8]) -> Result<Value, RemoteRequestDecodeError> {
