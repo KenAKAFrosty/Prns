@@ -5,7 +5,7 @@ mod schema;
 mod types;
 mod validation;
 
-pub(crate) use interpret::cleaned_number;
+pub(crate) use interpret::{cleaned_number, parse_bool};
 pub use parse::{parse, parse_named};
 pub use types::{
     RNodeRadio, RNodeSubinterface, ReferenceConfig, ReferenceDiscoveryConfig, ReferenceInterface,
