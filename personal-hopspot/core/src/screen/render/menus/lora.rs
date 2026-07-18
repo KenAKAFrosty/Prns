@@ -8,7 +8,7 @@ use embedded_graphics::primitives::Rectangle;
 use embedded_graphics::text::{Baseline, Text};
 use personal_rns::interfaces::lora::core::{Modulation, RadioProfile, Region};
 
-use crate::screen::{
+use crate::screen::state::lora::{
     channel_count, current_channel, scroll_start, CustomRow, EditMode, FreqPlace, FreqRow,
     LoRaScreen, PresetChoice, CUSTOM_ROWS, FREQ_ROWS, LORA_REGION_CANCEL, LORA_REGION_COUNT,
     PRESET_CHOICES,
