@@ -263,7 +263,7 @@ The same-signature client binding contract is documented in
 
 ## RNS 1.3.8 Daemon Oracles
 
-The shared-instance and management-service promises are checked against stock
+The shared-instance, management-service, and host-interface promises are checked against stock
 RNS `1.3.8` at the client API boundary. Prepare their dedicated reference
 environment without changing the broader 1.3.5 target:
 
@@ -279,6 +279,7 @@ bash scripts/local-rpc-interop-smoke.sh
 bash scripts/remote-management-interop-smoke.sh
 bash scripts/probe-responder-interop-smoke.sh
 bash scripts/blackhole-exchange-interop-smoke.sh
+bash scripts/rnode-tcp-interop-smoke.sh
 ```
 
 The first smoke stands up a Prns-owned shared instance, lets a stock RNS client
@@ -288,7 +289,8 @@ to `rnstransport.remote.management` and exercises the stock status, path, and
 rate request forms. The third sends an ordinary packet to `rnstransport.probe`
 and requires a cryptographically valid delivery proof. The fourth runs both directions of the
 blackhole exchange: stock RNS fetches Prnsd's published aggregate, then Prnsd fetches and persists a
-stock RNS source list.
+stock RNS source list. The fifth uses the RNS 1.3.8 RNode command constants in a Python TCP device
+oracle and verifies Prnsd's detect, radio configuration, report validation, and idle keepalive bytes.
 
 The compatibility shim still answers legacy pickle-shaped basics so older LXMF
 clients do not fault on startup or resource/link telemetry, but full RPC parity

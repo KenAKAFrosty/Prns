@@ -39,6 +39,11 @@ pub(crate) mod logging {
     pub const TIMESTAMPS: &str = "logtimestamps";
 }
 
+pub(crate) mod rnode {
+    pub const TCP_SCHEME: &str = "tcp://";
+    pub const BLE_SCHEME: &str = "ble://";
+}
+
 pub(crate) mod common {
     pub const INGRESS_CONTROL: &str = "ingress_control";
     pub const EGRESS_CONTROL: &str = "egress_control";

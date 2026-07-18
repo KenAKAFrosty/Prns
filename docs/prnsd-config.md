@@ -88,14 +88,13 @@ from its radio configuration. Every RNodeMulti radio derives its own bitrate and
 | `SerialInterface` | Device, speed, data bits, parity, and stop bits. |
 | `KISSInterface` | Serial line, TNC timing/CSMA, READY flow control, and station identification. |
 | `AX25KISSInterface` | KISS settings plus validated callsign and SSID. |
-| `RNodeInterface` | Serial RNode radio settings, READY flow control, station identification, and airtime limits. |
+| `RNodeInterface` | Serial or `tcp://host` RNode transport, radio settings, READY flow control, station identification, and airtime limits. TCP uses stock's fixed port 7633; `tcp://` selects loopback. |
 | `RNodeMultiInterface` | One serial device with nested, independently routed radio interfaces; per-radio LoRa settings, READY flow control, airtime limits, policy, and coordinated reconnect. |
 | `PipeInterface` | Parsed subprocess command and typed respawn delay. |
 | `I2PInterface` | Validated `.i2p` names or base64 destinations in `peers`, optional inbound reachability through `connectable`, and common policy and IFAC access. |
 
-Enabled interface types without a backend fail with “not available in this build.” RNode `tcp://`
-and `ble://` URIs fail similarly; the current RNode and RNodeMulti backends require a local serial
-device.
+Enabled interface types without a backend fail with “not available in this build.” RNode `ble://`
+URIs fail similarly. RNodeMulti remains a local serial-device interface.
 
 RNodeMulti radios are nested beneath their physical device. Each enabled child requires a unique
 `vport` and complete radio configuration:
@@ -149,8 +148,8 @@ client-only `target_port`, `i2p_tunneled`, `connect_timeout`, or `max_reconnect_
 do not use listener-only `listen_ip`, `listen_port`, `listen_on`, or `device`.
 Discovery publication details similarly warn when `discoverable` is absent or set to `No`.
 
-Weave, RNode TCP/BLE transport, and other unavailable backends are not partial plans: enabling one
-is a configuration error until that backend exists.
+Weave, RNode BLE transport, and other unavailable backends are not partial plans: enabling one is a
+configuration error until that backend exists.
 
 ## Minimal router
 

@@ -425,21 +425,51 @@ fn an_rnode_plans_with_its_radio_channel_and_scales_its_airtime_locks() {
              frequency = 868000000\nbandwidth = 125000\ntxpower = 7\nspreadingfactor = 8\n\
              codingrate = 5\nairtime_limit_short = 1.5\nairtime_limit_long = 5.0\n",
     );
-    assert_eq!(
-        named(&plan, "Radio").medium,
-        PlannedMedium::Rnode {
-            device: "/dev/ttyUSB0".to_string(),
-            frequency_hz: 868_000_000,
-            bandwidth_hz: 125_000,
-            txpower_dbm: 7,
-            spreading_factor: 8,
-            coding_rate: 5,
-            flow_control: ReadyCommandFlowControl::Disabled,
-            station_id: None,
-            airtime_limit_short: Some(AirtimeLimitCentiPercent(150)),
-            airtime_limit_long: Some(AirtimeLimitCentiPercent(500)),
-        }
+    let PlannedMedium::Rnode {
+        transport,
+        frequency_hz,
+        bandwidth_hz,
+        txpower_dbm,
+        spreading_factor,
+        coding_rate,
+        flow_control,
+        station_id,
+        airtime_limit_short,
+        airtime_limit_long,
+    } = &named(&plan, "Radio").medium
+    else {
+        panic!("RNode medium expected")
+    };
+    let RNodeTransportPlan::Serial(device) = transport else {
+        panic!("serial RNode transport expected")
+    };
+    assert_eq!(device.as_str(), "/dev/ttyUSB0");
+    assert_eq!(*frequency_hz, 868_000_000);
+    assert_eq!(*bandwidth_hz, 125_000);
+    assert_eq!(*txpower_dbm, 7);
+    assert_eq!(*spreading_factor, 8);
+    assert_eq!(*coding_rate, 5);
+    assert_eq!(*flow_control, ReadyCommandFlowControl::Disabled);
+    assert_eq!(*station_id, None);
+    assert_eq!(*airtime_limit_short, Some(AirtimeLimitCentiPercent(150)));
+    assert_eq!(*airtime_limit_long, Some(AirtimeLimitCentiPercent(500)));
+}
+
+#[test]
+fn an_rnode_tcp_uri_plans_the_fixed_stock_endpoint() {
+    let plan = plan_of(
+        "[interfaces]\n[[Radio]]\ntype = RNodeInterface\nenabled = Yes\nport = tcp://radio.example\n\
+             frequency = 868000000\nbandwidth = 125000\ntxpower = 7\nspreadingfactor = 8\n\
+             codingrate = 5\n",
     );
+    let PlannedMedium::Rnode { transport, .. } = &named(&plan, "Radio").medium else {
+        panic!("RNode medium expected")
+    };
+    let RNodeTransportPlan::Tcp(target) = transport else {
+        panic!("TCP RNode transport expected")
+    };
+    assert_eq!(target.socket_target(), "radio.example:7633");
+    assert_eq!(transport.channel_tag(), b"tcp://radio.example");
 }
 
 #[test]

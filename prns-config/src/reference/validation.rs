@@ -9,6 +9,7 @@ use prns_core::interfaces::rnode::core::{
 use super::diagnostics::{ErrorCode, ErrorDiagnostic, WarningCode, WarningDiagnostic};
 use super::i2p::validate_peers;
 use super::interpret::{cleaned_number, parse_bool, parse_identity_hash, ReferenceError};
+use super::keys::rnode as rnode_key;
 use super::keys::{
     common as common_key, global as global_key, interface as interface_key, section as section_key,
 };
@@ -664,29 +665,13 @@ fn validate_interface(
     validate_medium_requirements(source, name, type_name, section, locations, errors);
 
     if matches!(type_name, "RNodeInterface" | "RNodeMultiInterface") {
-        let port_key = interface_key::PORT;
-        if let Some((_, value)) = section.scalars.iter().find(|(key, _)| key == port_key) {
-            if let Some(port) = value.as_scalar() {
-                let transport = port.trim().to_ascii_lowercase();
-                if transport.starts_with("tcp://") || transport.starts_with("ble://") {
-                    errors.push(ErrorDiagnostic::new(
-                        ErrorCode::UnsupportedTransport,
-                        source,
-                        location(
-                            locations,
-                            &[section_key::INTERFACES, name, port_key],
-                        ),
-                        format!("{interface_path} > {port_key}"),
-                        Some(port.to_string()),
-                        "this RNode URI transport is not available in this build",
-                        Some("a local serial device path".to_string()),
-                        format!(
-                            "set `{port_key} = /dev/ttyUSB0` for [[{name}]], or set `{enabled_key} = No`"
-                        ),
-                    ));
-                }
-            }
-        }
+        let context = InterfaceRequirementContext {
+            source,
+            interface: name,
+            section,
+            locations,
+        };
+        validate_rnode_uri_transport(&context, type_name, &interface_path, enabled_key, errors);
     }
 
     if type_name == "RNodeMultiInterface" {
@@ -707,6 +692,149 @@ fn validate_interface(
             ));
         }
     }
+}
+
+#[derive(Clone, Copy)]
+enum RNodeInterfaceFamily {
+    Single,
+    Multi,
+}
+
+#[derive(Clone, Copy)]
+enum RNodeUriTransport {
+    Tcp,
+    Ble,
+    Serial,
+}
+
+fn validate_rnode_uri_transport(
+    context: &InterfaceRequirementContext<'_>,
+    type_name: &str,
+    interface_path: &str,
+    enabled_key: &str,
+    errors: &mut ValidationErrorCollector,
+) {
+    let family = match type_name {
+        "RNodeInterface" => RNodeInterfaceFamily::Single,
+        "RNodeMultiInterface" => RNodeInterfaceFamily::Multi,
+        _ => return,
+    };
+    let Some(port) = rnode_port(context) else {
+        return;
+    };
+    match (family, rnode_uri_transport(port)) {
+        (RNodeInterfaceFamily::Single, RNodeUriTransport::Tcp) => {
+            validate_rnode_tcp_target(context, interface_path, port, errors);
+        }
+        (RNodeInterfaceFamily::Single, RNodeUriTransport::Ble)
+        | (RNodeInterfaceFamily::Multi, RNodeUriTransport::Tcp | RNodeUriTransport::Ble) => {
+            report_unavailable_rnode_transport(
+                context,
+                family,
+                interface_path,
+                enabled_key,
+                port,
+                errors,
+            );
+        }
+        (_, RNodeUriTransport::Serial) => {}
+    }
+}
+
+fn rnode_port<'a>(context: &'a InterfaceRequirementContext<'_>) -> Option<&'a str> {
+    context
+        .section
+        .scalars
+        .iter()
+        .find(|(key, _)| key == interface_key::PORT)
+        .and_then(|(_, value)| value.as_scalar())
+}
+
+fn rnode_uri_transport(port: &str) -> RNodeUriTransport {
+    let transport = port.trim().to_ascii_lowercase();
+    if transport.starts_with(rnode_key::TCP_SCHEME) {
+        RNodeUriTransport::Tcp
+    } else if transport.starts_with(rnode_key::BLE_SCHEME) {
+        RNodeUriTransport::Ble
+    } else {
+        RNodeUriTransport::Serial
+    }
+}
+
+fn validate_rnode_tcp_target(
+    context: &InterfaceRequirementContext<'_>,
+    interface_path: &str,
+    port: &str,
+    errors: &mut ValidationErrorCollector,
+) {
+    let target = &port.trim()[rnode_key::TCP_SCHEME.len()..];
+    let Some((host, configured_port)) = target.split_once(':') else {
+        return;
+    };
+    if host.is_empty()
+        || configured_port.is_empty()
+        || configured_port.contains(':')
+        || configured_port.parse::<u16>().is_err()
+    {
+        return;
+    }
+    let port_key = interface_key::PORT;
+    errors.push(ErrorDiagnostic::new(
+        ErrorCode::InvalidValue,
+        context.source,
+        location(
+            context.locations,
+            &[section_key::INTERFACES, context.interface, port_key],
+        ),
+        format!("{interface_path} > {port_key}"),
+        Some(port.to_string()),
+        "RNode TCP always uses port 7633",
+        Some("tcp:// followed by a host without a port".to_string()),
+        format!(
+            "set `{port_key} = tcp://{host}` for [[{}]]",
+            context.interface
+        ),
+    ));
+}
+
+fn report_unavailable_rnode_transport(
+    context: &InterfaceRequirementContext<'_>,
+    family: RNodeInterfaceFamily,
+    interface_path: &str,
+    enabled_key: &str,
+    port: &str,
+    errors: &mut ValidationErrorCollector,
+) {
+    let port_key = interface_key::PORT;
+    let (accepted, correction) = match family {
+        RNodeInterfaceFamily::Single => (
+            "a local serial device path or tcp:// followed by a host",
+            format!(
+                "set `{port_key} = tcp://radio.example` or `{port_key} = /dev/ttyUSB0` for [[{}]], or set `{enabled_key} = No`",
+                context.interface
+            ),
+        ),
+        RNodeInterfaceFamily::Multi => (
+            "a local serial device path",
+            format!(
+                "set `{port_key} = /dev/ttyUSB0` for [[{}]], or set `{enabled_key} = No`",
+                context.interface
+            ),
+        ),
+    };
+    errors.push(ErrorDiagnostic::new(
+        ErrorCode::UnsupportedTransport,
+        context.source,
+        location(
+            context.locations,
+            &[section_key::INTERFACES, context.interface, port_key],
+        ),
+        format!("{interface_path} > {port_key}"),
+        Some(port.to_string()),
+        "this RNode URI transport is not available in this build",
+        Some(accepted.to_string()),
+        correction,
+    ));
 }
 
 fn validate_medium_requirements(
@@ -831,9 +959,10 @@ fn validate_medium_requirements(
                 RequiredSetting {
                     primary: interface_key::PORT,
                     alternatives: &[],
-                    accepted: "a local serial device path",
+                    accepted: "a local serial device path or tcp:// followed by a host",
                     correction: format!(
-                        "add `{} = /dev/ttyUSB0` under [[{interface}]]",
+                        "add `{} = /dev/ttyUSB0` or `{} = tcp://radio.example` under [[{interface}]]",
+                        interface_key::PORT,
                         interface_key::PORT
                     ),
                 },

@@ -326,6 +326,8 @@ jobs:
         run: RPC_SMOKE_PYTHON=/tmp/rns-rpc/bin/python bash scripts/probe-responder-interop-smoke.sh
       - name: real-RNS blackhole-exchange smoke (1.3.8)
         run: RPC_SMOKE_PYTHON=/tmp/rns-rpc/bin/python bash scripts/blackhole-exchange-interop-smoke.sh
+      - name: real-RNS RNode TCP device smoke (1.3.8)
+        run: RPC_SMOKE_PYTHON=/tmp/rns-rpc/bin/python bash scripts/rnode-tcp-interop-smoke.sh
       - name: real-RNS transit smoke (links both ways through the bridge)
         run: SMOKE_PYTHON=/tmp/rns/bin/python bash scripts/local-transit-smoke.sh
       - name: real-RNS IFAC transit smoke (1 MiB resources both ways)
