@@ -1,8 +1,17 @@
-use super::*;
-
+use super::classification::DataPacket;
+use super::outcome::DeferredCrypto;
 use crate::crypto::ratchets::RatchetPolicy;
-use crate::crypto::sealed_len;
-use crate::identity::IdentityKeyFallback;
+use crate::crypto::{sealed_len, token_open_in_place, X25519PublicKey, X25519SecretKey};
+use crate::engine::{EngineState, InstantMillis, MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN};
+use crate::identity::{IdentityHash, IdentityKeyFallback, ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN};
+use crate::interfaces::InterfaceId;
+use crate::routing::dedup::PacketHash;
+use crate::routing::delivery::{Delivery, GroupDelivery, PlainDelivery, SingleDelivery};
+use crate::routing::proof::{ProofObligation, ProofOwed};
+use crate::routing::upstream_app_destinations::ProofStrategy;
+use crate::storage::StorageLayout;
+use crate::wire::{DestinationHash, DestinationType, WireContext};
+use heapless::Vec as HeaplessVec;
 
 pub const MAX_SINGLE_TOKEN_LEN: usize = sealed_len(MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN);
 
@@ -219,9 +228,15 @@ mod tests {
     use crate::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, RatchetPolicy};
     use crate::identity::in_memory::InMemoryNodeIdentity;
     use crate::identity::{IdentitySigner, OpenedBy};
-    use crate::interfaces::InboundPacket;
+    use crate::interfaces::{AttachedInterfaces, InboundPacket};
     use crate::routing::announce::derive_destination_hash;
     use crate::routing::ingress::testkit::iface;
+    use crate::routing::ingress::{IgnoreReason, IngestPacketOutcome};
+    use crate::routing::upstream_app_destinations::LinkRequestPolicy;
+    use crate::wire::{
+        ContextFlag, IfacFlag, PacketType, PropagationType, TransportId, WireAddress,
+        WirePacketHeader, BROADCAST_MTU,
+    };
 
     /// The ratchet [`ratcheted_personal_node_announcer`] mints from its `0x55` entropy fill, named by the reference's `Identity._get_ratchet_id` (pinned in the ratchets module tests).
     fn announced_ratchet_id() -> RatchetId {

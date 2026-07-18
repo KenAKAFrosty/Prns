@@ -1,5 +1,18 @@
-use super::*;
-use crate::interfaces::{AttachedInterfaces, InterfaceCommonPolicy};
+use super::classification::DataPacket;
+use super::outcome::{IgnoreReason, IngestPacketOutcome};
+use crate::engine::{EngineState, InstantMillis};
+use crate::interfaces::{
+    AttachedInterfaces, InterfaceCommonPolicy, InterfaceId, InterfaceKind, InterfaceMode,
+};
+use crate::routing::announce::defaults::{PATH_REQUEST_GRACE_MS, PATH_REQUEST_ROAMING_GRACE_MS};
+use crate::routing::announce::schedule::ScheduledAnnounceQueue;
+use crate::routing::path_requests::recursive::{
+    RecursiveOutcome, RECURSIVE_PATH_REQUEST_TIMEOUT_MS,
+};
+use crate::routing::path_requests::seen::{PathRequestIdBytes, PathRequestNovelty};
+use crate::routing::{NextHop, RouteResponsiveness};
+use crate::storage::StorageLayout;
+use crate::wire::{DestinationHash, DestinationType, TransportId, TRUNCATED_HASH_BYTE_LEN};
 
 /// RNS 1.3.5 `Transport.path_request_handler`; only the transport form carries the requester's transport id.
 struct PathRequest {
@@ -233,10 +246,14 @@ impl<S: StorageLayout> EngineState<S> {
 mod tests {
     use super::*;
     use crate::engine::test_support::*;
-    use crate::engine::{Directive, EngineReaction, IngestIo};
+    use crate::engine::{Directive, EngineReaction, IngestIo, PATH_REQUEST_DESTINATION};
     use crate::interfaces::{InboundPacket, InterfaceDescriptor};
     use crate::routing::ingress::testkit::iface;
-    use crate::wire::HEADER_MIN_LEN;
+    use crate::routing::ingress::AnnounceIngest;
+    use crate::wire::{
+        ContextFlag, IfacFlag, PacketType, PropagationType, WireContext, WirePacketHeader,
+        BROADCAST_MTU, HEADER_MIN_LEN,
+    };
 
     #[test]
     fn path_request_parse_names_its_two_non_answering_cases() {

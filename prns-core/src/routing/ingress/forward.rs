@@ -1,5 +1,14 @@
-use super::*;
+use crate::engine::{EngineState, InstantMillis};
+use crate::interfaces::{AttachedInterfaces, InterfaceId, InterfaceKind};
+use crate::routing::dedup::PacketHash;
+use crate::routing::reverse_routes::{ReverseRouteEntry, DEFAULT_REVERSE_ROUTE_TIMEOUT_MS};
 use crate::routing::warmth::WarmestOf;
+use crate::routing::NextHop;
+use crate::storage::StorageLayout;
+use crate::wire::{
+    ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
+    WireError, WirePacketHeader,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PacketToForward<'p> {
@@ -123,6 +132,8 @@ mod tests {
     use crate::engine::test_support::*;
     use crate::interfaces::InboundPacket;
     use crate::routing::ingress::testkit::iface;
+    use crate::routing::ingress::{IgnoreReason, IngestPacketOutcome};
+    use crate::wire::{TransportId, WireContext, BROADCAST_MTU};
 
     #[test]
     fn a_final_hop_forward_strips_the_transport_header_back_to_the_direct_wire() {
