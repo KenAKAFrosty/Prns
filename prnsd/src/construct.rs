@@ -75,6 +75,7 @@ fn classify(outcome: &PlanOutcome<'_>) -> StartupInterfaceReport {
             | PlannedMedium::Kiss { .. }
             | PlannedMedium::Ax25Kiss { .. }
             | PlannedMedium::Rnode { .. }
+            | PlannedMedium::RnodeMulti { .. }
             | PlannedMedium::BackboneClient { .. }
             | PlannedMedium::Pipe { .. }
             | PlannedMedium::I2p { .. } => report.retrying = 1,
@@ -163,6 +164,7 @@ fn medium_name(medium: &PlannedMedium) -> &'static str {
         PlannedMedium::Kiss { .. } => "kiss",
         PlannedMedium::Ax25Kiss { .. } => "ax25_kiss",
         PlannedMedium::Rnode { .. } => "rnode",
+        PlannedMedium::RnodeMulti { .. } => "rnode_multi",
         PlannedMedium::Backbone { .. } => "backbone",
         PlannedMedium::BackboneClient { .. } => "backbone_client",
         PlannedMedium::Pipe { .. } => "pipe",
@@ -199,11 +201,9 @@ mod tests {
 
     #[test]
     fn idle_i2p_is_ready_while_active_i2p_starts_retrying() {
-        let idle = parse_and_plan(
-            "[interfaces]\n[[Idle]]\ntype = I2PInterface\nenabled = Yes\n",
-        )
-        .expect("idle I2P configuration is valid")
-        .value;
+        let idle = parse_and_plan("[interfaces]\n[[Idle]]\ntype = I2PInterface\nenabled = Yes\n")
+            .expect("idle I2P configuration is valid")
+            .value;
         let active = parse_and_plan(
             "[interfaces]\n[[Active]]\ntype = I2PInterface\nenabled = Yes\npeers = example.i2p\n",
         )

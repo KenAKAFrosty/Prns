@@ -15,11 +15,11 @@ pub use plan::{
     DiscoveryEncryption, DiscoveryIfacPublication, DiscoveryLocationPlan,
     DiscoveryPublicationProblem, I2pPeerPlan, I2pPeersPlan, I2pReachabilityPlan,
     InterfaceAccessPlan, InterfaceDiscoveryPlan, LogLevel, LoggingPlan, PipeCommandPlan,
-    PipeRespawnDelay, PlannedInterface, PlannedMedium, ProtocolPlan, ReadyCommandFlowControl,
-    ReconnectLimit, SerialDataBits, SerialLinePlan, SerialParity, SerialStopBits, SharedInstance,
-    SharedInstanceTransport, StationIdentificationPlan, TcpDialPlan, TcpListenHost, TcpListenPlan,
-    TcpTunnelMode, TransportIdentityPolicy, TransportPlan, UdpEndpointHost, UdpEndpointPlan,
-    UdpFlowPlan,
+    PipeRespawnDelay, PlannedInterface, PlannedMedium, ProtocolPlan, RNodeMultiDevicePlan,
+    RNodeMultiMemberPlan, ReadyCommandFlowControl, ReconnectLimit, SerialDataBits, SerialLinePlan,
+    SerialParity, SerialStopBits, SharedInstance, SharedInstanceTransport,
+    StationIdentificationPlan, TcpDialPlan, TcpListenHost, TcpListenPlan, TcpTunnelMode,
+    TransportIdentityPolicy, TransportPlan, UdpEndpointHost, UdpEndpointPlan, UdpFlowPlan,
 };
 pub use reference::{
     RNodeRadio, RNodeSubinterface, ReferenceConfig, ReferenceDiscoveryConfig, ReferenceInterface,

@@ -39,6 +39,10 @@ use crate::reference::{
 };
 use crate::{ConfigDiagnostic, ConfigDiagnosticCode, ConfigErrors, ConfigReport, SourceLocations};
 
+mod rnode_multi;
+
+pub use rnode_multi::{RNodeMultiDevicePlan, RNodeMultiMemberPlan};
+
 /// The complete, host-agnostic description of a node to stand up, projected from a stock RNS config.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DaemonPlan {
@@ -461,7 +465,9 @@ impl I2pReachabilityPlan {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlannedMedium {
     /// RNS `AutoInterface`: multicast LAN discovery plus unicast peers (our `AutoWifi`).
-    AutoWifi { group: Option<String> },
+    AutoWifi {
+        group: Option<String>,
+    },
     /// RNS `TCPClientInterface`: dial one peer.
     TcpClient {
         connection: TcpDialPlan,
@@ -473,7 +479,9 @@ pub enum PlannedMedium {
         framing: TcpWireFraming,
     },
     /// RNS `UDPInterface`: receive, send, or do both over configured datagram endpoints.
-    Udp { flow: UdpFlowPlan },
+    Udp {
+        flow: UdpFlowPlan,
+    },
     /// RNS `SerialInterface`: a configured serial device.
     Serial {
         device: String,
@@ -525,11 +533,18 @@ pub enum PlannedMedium {
         airtime_limit_short: Option<AirtimeLimitCentiPercent>,
         airtime_limit_long: Option<AirtimeLimitCentiPercent>,
     },
+    RnodeMulti {
+        member: RNodeMultiMemberPlan,
+    },
     /// RNS `BackboneInterface`: the listening end of a TCP backbone link.
-    Backbone { listener: TcpListenPlan },
+    Backbone {
+        listener: TcpListenPlan,
+    },
     /// RNS `BackboneClientInterface`: dial one backbone peer. Wire-identical to
     /// [`TcpClient`](Self::TcpClient).
-    BackboneClient { connection: TcpDialPlan },
+    BackboneClient {
+        connection: TcpDialPlan,
+    },
     I2p {
         peers: I2pPeersPlan,
         reachability: I2pReachabilityPlan,
@@ -547,6 +562,7 @@ enum PlanErrorKind {
 struct PlanError {
     interface_name: String,
     interface_type: String,
+    subinterface_name: Option<String>,
     kind: PlanErrorKind,
 }
 
@@ -590,6 +606,23 @@ fn build_plan(config: &ReferenceConfig) -> Result<DaemonPlan, Vec<PlanError>> {
     let common = global_common_policy(config);
     let announce_rate = global_announce_rate(config);
     for interface in &config.interfaces {
+        if matches!(interface.params, ReferenceParams::RnodeMulti { .. }) {
+            match rnode_multi::plan(
+                interface,
+                common,
+                announce_rate,
+                transport.routing_enabled(),
+            ) {
+                Ok(planned) => interfaces.extend(planned),
+                Err(failure) => errors.push(PlanError {
+                    interface_name: interface.name.clone(),
+                    interface_type: interface.type_name.clone(),
+                    subinterface_name: failure.subinterface_name,
+                    kind: failure.kind,
+                }),
+            }
+            continue;
+        }
         match plan_interface(
             interface,
             common,
@@ -600,6 +633,7 @@ fn build_plan(config: &ReferenceConfig) -> Result<DaemonPlan, Vec<PlanError>> {
             Err(kind) => errors.push(PlanError {
                 interface_name: interface.name.clone(),
                 interface_type: interface.type_name.clone(),
+                subinterface_name: None,
                 kind,
             }),
         }
@@ -636,6 +670,19 @@ fn planning_diagnostic(
     locations: &SourceLocations,
     error: &PlanError,
 ) -> ConfigDiagnostic {
+    let display_section = error.subinterface_name.as_ref().map_or_else(
+        || format!("[interfaces] > [[{}]]", error.interface_name),
+        |name| format!("[interfaces] > [[{}]] > [[[{name}]]]", error.interface_name),
+    );
+    let correction_section = error.subinterface_name.as_ref().map_or_else(
+        || format!("[[{}]]", error.interface_name),
+        |name| format!("[[[{name}]]]"),
+    );
+    let configured_subject = if error.subinterface_name.is_some() {
+        "enabled RNodeMulti subinterface"
+    } else {
+        "enabled interface"
+    };
     let (code, key, message, accepted, correction) = match error.kind {
         PlanErrorKind::UnsupportedKind => (
             ConfigDiagnosticCode::UnsupportedInterface,
@@ -654,27 +701,32 @@ fn planning_diagnostic(
         PlanErrorKind::MissingRequiredField { key } => (
             ConfigDiagnosticCode::MissingRequiredKey,
             key,
-            format!("enabled interface is missing required setting {key:?}"),
+            format!("{configured_subject} is missing required setting {key:?}"),
             format!("a valid {key} value"),
-            format!("add `{key} = value` under [[{}]]", error.interface_name),
+            format!("add `{key} = value` under {correction_section}"),
         ),
         PlanErrorKind::InvalidSetting { key } => (
             ConfigDiagnosticCode::InvalidValue,
             key,
             format!("setting {key:?} cannot be represented by this build"),
             format!("a valid, representable {key} value"),
-            format!("replace `{key}` under [[{}]]", error.interface_name),
+            format!("replace `{key}` under {correction_section}"),
         ),
     };
-    let path = [section_key::INTERFACES, error.interface_name.as_str(), key];
+    let mut path = vec![section_key::INTERFACES, error.interface_name.as_str()];
+    if let Some(subinterface) = &error.subinterface_name {
+        path.push(subinterface);
+    }
+    let section_path = path.clone();
+    path.push(key);
     let line = locations
-        .line(path)
-        .or_else(|| locations.line([section_key::INTERFACES, error.interface_name.as_str()]));
+        .line(path.iter().copied())
+        .or_else(|| locations.line(section_path.iter().copied()));
     ConfigDiagnostic::new(
         code,
         source,
         line.unwrap_or(1),
-        format!("[interfaces] > [[{}]] > {key}", error.interface_name),
+        format!("{display_section} > {key}"),
         None,
         message,
         Some(accepted),
@@ -772,6 +824,7 @@ fn plan_interface(
         global_common,
         global_announce_rate,
         transport_enabled,
+        MemberEgressPolicy::Inherit,
     )?;
     Ok(PlannedInterface {
         name: interface.name.clone(),
@@ -782,6 +835,22 @@ fn plan_interface(
     })
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MemberEgressPolicy {
+    Inherit,
+    Disabled,
+}
+
+impl MemberEgressPolicy {
+    const fn from_outgoing(outgoing: Option<bool>) -> Self {
+        if matches!(outgoing, Some(false)) {
+            Self::Disabled
+        } else {
+            Self::Inherit
+        }
+    }
+}
+
 fn effective_policy(
     interface: &ReferenceInterface,
     medium: &PlannedMedium,
@@ -789,6 +858,7 @@ fn effective_policy(
     global_common: InterfaceCommonPolicy,
     global_announce_rate: AnnounceRateLimit,
     transport_enabled: bool,
+    member_egress: MemberEgressPolicy,
 ) -> Result<EffectiveInterfacePolicy, PlanErrorKind> {
     let bitrate = interface
         .bitrate
@@ -811,6 +881,7 @@ fn effective_policy(
         defaults.capabilities.ingress
     };
     let egress = if interface.outgoing == Some(false)
+        || member_egress == MemberEgressPolicy::Disabled
         || matches!(
             medium,
             PlannedMedium::Udp {
@@ -918,15 +989,28 @@ fn interface_defaults(medium: &PlannedMedium) -> Result<InterfaceDefaults, PlanE
             spreading_factor,
             coding_rate,
             ..
-        } => {
-            let raw =
-                rnode_policy::nominal_bitrate_bps(*spreading_factor, *coding_rate, *bandwidth_hz);
-            let bitrate = BitrateBps::new(u64::from(raw)).ok_or(PlanErrorKind::InvalidSetting {
-                key: interface_key::BANDWIDTH,
-            })?;
-            Ok(rnode_policy::defaults_for_bitrate(bitrate))
+        } => rnode_defaults(*spreading_factor, *coding_rate, *bandwidth_hz),
+        PlannedMedium::RnodeMulti { member } => {
+            let radio = member.radio();
+            rnode_defaults(
+                radio.spreading_factor(),
+                radio.coding_rate(),
+                radio.bandwidth_hz(),
+            )
         }
     }
+}
+
+fn rnode_defaults(
+    spreading_factor: u8,
+    coding_rate: u8,
+    bandwidth_hz: u32,
+) -> Result<InterfaceDefaults, PlanErrorKind> {
+    let raw = rnode_policy::nominal_bitrate_bps(spreading_factor, coding_rate, bandwidth_hz);
+    let bitrate = BitrateBps::new(u64::from(raw)).ok_or(PlanErrorKind::InvalidSetting {
+        key: interface_key::BANDWIDTH,
+    })?;
+    Ok(rnode_policy::defaults_for_bitrate(bitrate))
 }
 
 fn configured_mtu(interface: &ReferenceInterface) -> Result<Option<MtuPolicy>, PlanErrorKind> {
@@ -1056,12 +1140,21 @@ fn plan_discovery_advertisement(
                 ..
             },
             ReferenceParams::Rnode { .. },
-        ) => Ok(DiscoveryAdvertisementPlan::RNode {
-            frequency_hz: *frequency_hz,
-            bandwidth_hz: *bandwidth_hz,
-            spreading_factor: *spreading_factor,
-            coding_rate: *coding_rate,
-        }),
+        ) => Ok(rnode_discovery_advertisement(
+            *frequency_hz,
+            *bandwidth_hz,
+            *spreading_factor,
+            *coding_rate,
+        )),
+        (PlannedMedium::RnodeMulti { member }, ReferenceParams::RnodeMulti { .. }) => {
+            let radio = member.radio();
+            Ok(rnode_discovery_advertisement(
+                u64::from(radio.frequency().hz()),
+                radio.bandwidth_hz(),
+                radio.spreading_factor(),
+                radio.coding_rate(),
+            ))
+        }
         (PlannedMedium::Kiss { .. }, ReferenceParams::Kiss { .. }) => kiss(),
         (
             PlannedMedium::TcpClient {
@@ -1076,6 +1169,20 @@ fn plan_discovery_advertisement(
             })
         }
         _ => Err(DiscoveryPublicationProblem::UnsupportedInterfaceType),
+    }
+}
+
+fn rnode_discovery_advertisement(
+    frequency_hz: u64,
+    bandwidth_hz: u32,
+    spreading_factor: u8,
+    coding_rate: u8,
+) -> DiscoveryAdvertisementPlan {
+    DiscoveryAdvertisementPlan::RNode {
+        frequency_hz,
+        bandwidth_hz,
+        spreading_factor,
+        coding_rate,
     }
 }
 
@@ -1121,7 +1228,8 @@ fn plan_access(
         | PlannedMedium::Kiss { .. }
         | PlannedMedium::Ax25Kiss { .. }
         | PlannedMedium::Pipe { .. }
-        | PlannedMedium::Rnode { .. } => IfacSize::NARROW,
+        | PlannedMedium::Rnode { .. }
+        | PlannedMedium::RnodeMulti { .. } => IfacSize::NARROW,
     };
     let size = match interface.ifac_size_bits {
         Some(bits) if bits >= 8 => {
