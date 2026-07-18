@@ -10,11 +10,12 @@ use embedded_graphics::primitives::Rectangle;
 use embedded_graphics::text::{Baseline, Text};
 use heapless::String as HString;
 
-use crate::screen::{
-    interface_menu_items, limit_page_count, Card, InterfaceMenuDetailKind, InterfaceMenuDetailRow,
-    LimitRow, LimitValue, Liveness, UiNotice, GLOBAL_MENU_ITEMS, GLOBAL_MENU_ITEMS_AP,
-    GLOBAL_MENU_ITEMS_AP_DISPLAY, GLOBAL_MENU_ITEMS_DISPLAY, LIMITS_PER_PAGE, POWER_MENU_ITEM,
-    RADIO_MENU_ITEM, RADIO_MENU_ITEM_NO_DISPLAY,
+use crate::screen::limits::{limit_page_count, LimitRow, LimitValue, LIMITS_PER_PAGE};
+use crate::screen::model::{Card, InterfaceMenuDetailKind, InterfaceMenuDetailRow, Liveness};
+use crate::screen::state::{
+    interface_menu_items, UiNotice, GLOBAL_MENU_ITEMS, GLOBAL_MENU_ITEMS_AP,
+    GLOBAL_MENU_ITEMS_AP_DISPLAY, GLOBAL_MENU_ITEMS_DISPLAY, POWER_MENU_ITEM, RADIO_MENU_ITEM,
+    RADIO_MENU_ITEM_NO_DISPLAY,
 };
 
 use super::glyphs::{draw_global_icon, draw_interface_icon, draw_menu_cursor};
@@ -103,7 +104,7 @@ fn draw_interface_menu_details<D: DrawTarget<Color = BinaryColor>>(
         if y > HEIGHT - MENU_DETAIL_STEP {
             break;
         }
-        let x = match row.kind {
+        let x = match row.kind() {
             InterfaceMenuDetailKind::Info => MENU_REASON_X,
             InterfaceMenuDetailKind::Peer => MENU_REASON_X + 4,
         };
