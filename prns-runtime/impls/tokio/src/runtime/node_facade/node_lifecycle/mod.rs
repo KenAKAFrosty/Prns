@@ -34,10 +34,8 @@ use super::super::{
     InterfaceStore, Message, PreConfiguredDestination, PrnsEvent, PrnsNodeRecipe, SendError,
 };
 use super::interface_lifecycle::{drive_interfaces, DriverMsg};
-use super::{
-    persistence, resource_segment_decompression_bound, AttachIntent, PrnsNodeHandle,
-    RegisterRequestRouteError,
-};
+use super::resource_transfer::resource_segment_decompression_bound;
+use super::{persistence, AttachIntent, PrnsNodeHandle, RegisterRequestRouteError};
 
 const INFLATE_QUEUE_PER_WORKER: usize = 4;
 const MAX_INFLATE_PARALLELISM: usize = 8;
