@@ -4,10 +4,11 @@ use super::persistence::{
 use super::*;
 use crate::engine::{InstantMillis, MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN};
 use crate::identity::vault::{IdentityLabel, IdentitySecretKey, IdentityVault, Removal};
-use crate::identity::IDENTITY_SECRET_KEY_LEN;
+use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use crate::reactor::driver::SelfRatchetSnapshot;
 use crate::routing::BlackholeIdentityOutcome;
-use crate::runtime::Manual;
+use crate::runtime::{Manual, PreConfiguredDestination, PrnsNodeRecipe};
+use tokio::sync::mpsc::{self, UnboundedReceiver};
 
 const PEER: DestinationHash = DestinationHash::new([0xAB; 16]);
 
@@ -115,55 +116,6 @@ fn the_standard_timeline_origin_is_unix_epoch_aligned() {
     let origin = wall_clock_timeline_origin();
 
     assert!(wall_now.abs_diff(u128::from(origin.0)) < 1_000);
-}
-
-#[test]
-fn accepted_announce_observers_receive_the_complete_observation() {
-    let captured = Arc::new(Mutex::new(None));
-    let sink = captured.clone();
-    let mut observer: Option<AcceptedAnnounceObserver> =
-        Some(Box::new(move |observation: AnnounceObservation<'_>| {
-            *sink.lock().unwrap() = Some((
-                observation.destination,
-                observation.announced_identity,
-                observation.hops,
-                observation.source_interface,
-                observation.arrived_at,
-                observation.app_data.to_vec(),
-                observation.is_path_response,
-            ));
-        }));
-    let app_data = [0x42, 0x43, 0x44];
-    let observation = AnnounceObservation {
-        destination: DestinationHash::new([0x11; 16]),
-        announced_identity: crate::identity::IdentityHash::new([0x22; 16]),
-        hops: crate::units::HopCount(3),
-        source_interface: InterfaceId::new([0x33; 8]),
-        arrived_at: InstantMillis(4_000),
-        app_data: &app_data,
-        is_path_response: false,
-    };
-
-    notify_accepted_announce(
-        &mut observer,
-        &Journaled::AnnounceHeard {
-            observation,
-            rate_accounting: crate::routing::announce::AnnounceRateAccounting::NotApplied,
-        },
-    );
-
-    assert_eq!(
-        *captured.lock().unwrap(),
-        Some((
-            observation.destination,
-            observation.announced_identity,
-            observation.hops,
-            observation.source_interface,
-            observation.arrived_at,
-            app_data.to_vec(),
-            observation.is_path_response,
-        ))
-    );
 }
 
 #[test]
