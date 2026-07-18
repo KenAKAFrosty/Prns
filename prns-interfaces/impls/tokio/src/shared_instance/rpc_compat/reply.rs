@@ -1,15 +1,13 @@
 use std::string::String;
 use std::vec::Vec;
 
+use prns_core::interfaces::shared_instance::rns_rpc::{RnsInteger, RpcDialect};
 use prns_core::interfaces::{ConnectionState, InterfaceId};
 use prns_core::routing::types::NextHop;
 use prns_runtime::node_introspection::{
     logical_interface_inventory, AnnounceRateSnapshot, InterfaceInventoryEntry, RouteSnapshot,
 };
 use rmpv::Value;
-
-use super::protocol::RpcDialect;
-use super::request::RnsInteger;
 
 /// RNS's `Interface.MODE_FULL` — the default interface mode a stock client renders as "Full".
 const RNS_INTERFACE_MODE_FULL: i64 = 0x01;
@@ -55,15 +53,19 @@ pub(super) fn reply_path_table(
         RpcDialect::Msgpack => {
             let entries = entries
                 .into_iter()
-                .filter(|entry| match max_hops {
-                    None => true,
-                    Some(RnsInteger::Negative(_)) => false,
-                    Some(RnsInteger::Nonnegative(limit)) => u64::from(entry.hops) <= *limit,
-                })
+                .filter(|entry| within_hop_limit(entry.hops, max_hops))
                 .collect::<Vec<_>>();
             encode_msgpack(path_table_value(entries))
         }
     }
+}
+
+fn within_hop_limit(hops: u8, maximum: Option<&RnsInteger>) -> bool {
+    maximum.is_none_or(|maximum| {
+        maximum
+            .nonnegative_value()
+            .is_some_and(|maximum| u64::from(hops) <= maximum)
+    })
 }
 
 pub(crate) fn path_table_value(entries: Vec<RouteSnapshot>) -> Value {

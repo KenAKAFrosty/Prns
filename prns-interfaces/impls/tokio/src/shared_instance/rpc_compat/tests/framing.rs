@@ -31,12 +31,12 @@ async fn authenticated_rpc_frame_reader_accepts_a_reason_past_the_authentication
     write_frame_dup(&mut client, &payload).await;
     let received = read_frame(&mut server).await.unwrap();
     assert_eq!(
-        request::decode(&received),
-        Ok(RnsRpcRequest::BlackholeIdentity {
+        RpcRequest::decode(&received),
+        Ok(RpcRequest::Msgpack(RnsRpcRequest::BlackholeIdentity {
             identity_hash: prns_core::identity::IdentityHash::new([0x31; 16]),
             until: None,
             reason: Some(reason),
-        })
+        }))
     );
 }
 

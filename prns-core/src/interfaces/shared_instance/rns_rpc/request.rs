@@ -1,0 +1,1053 @@
+use alloc::string::String;
+use alloc::vec::Vec;
+
+use rmp::decode::{read_marker, Bytes, RmpRead};
+use rmp::Marker;
+
+use crate::identity::IdentityHash;
+use crate::routing::BlackholeExpiry;
+use crate::units::InstantMillis;
+use crate::wire::{DestinationHash, TransportId};
+
+use super::wire_names::{argument, data_operation, drop_operation, get, selector};
+
+const REQUEST_MAX_DEPTH: usize = 8;
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct RnsInteger(RnsIntegerRepresentation);
+
+#[derive(Debug, PartialEq, Eq)]
+enum RnsIntegerRepresentation {
+    Negative(i64),
+    Nonnegative(u64),
+}
+
+impl RnsInteger {
+    pub const fn from_i64(value: i64) -> Self {
+        if value < 0 {
+            Self(RnsIntegerRepresentation::Negative(value))
+        } else {
+            Self(RnsIntegerRepresentation::Nonnegative(value as u64))
+        }
+    }
+
+    pub const fn from_u64(value: u64) -> Self {
+        Self(RnsIntegerRepresentation::Nonnegative(value))
+    }
+
+    pub const fn nonnegative_value(&self) -> Option<u64> {
+        match self.0 {
+            RnsIntegerRepresentation::Negative(_) => None,
+            RnsIntegerRepresentation::Nonnegative(value) => Some(value),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum RnsNumber {
+    Integer(RnsInteger),
+    Float(f64),
+}
+
+impl RnsNumber {
+    pub fn blackhole_expiry(&self) -> BlackholeExpiry {
+        match self {
+            Self::Integer(RnsInteger(RnsIntegerRepresentation::Negative(_))) => {
+                BlackholeExpiry::At(InstantMillis(0))
+            }
+            Self::Integer(RnsInteger(RnsIntegerRepresentation::Nonnegative(0))) => {
+                BlackholeExpiry::Indefinite
+            }
+            Self::Integer(RnsInteger(RnsIntegerRepresentation::Nonnegative(seconds))) => {
+                BlackholeExpiry::At(InstantMillis(seconds.saturating_mul(1_000)))
+            }
+            Self::Float(seconds) if *seconds == 0.0 || seconds.is_nan() => {
+                BlackholeExpiry::Indefinite
+            }
+            Self::Float(seconds) if *seconds < 0.0 => BlackholeExpiry::At(InstantMillis(0)),
+            Self::Float(seconds) => {
+                let millis = *seconds * 1_000.0;
+                let deadline = if !millis.is_finite() || millis >= u64::MAX as f64 {
+                    u64::MAX
+                } else {
+                    millis as u64
+                };
+                BlackholeExpiry::At(InstantMillis(deadline))
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DestinationDataOperation {
+    Used,
+    Retain,
+    Unretain,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct PacketHashArgument(Vec<u8>);
+
+impl PacketHashArgument {
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum RnsRpcRequest {
+    InterfaceStats,
+    PathTable {
+        max_hops: Option<RnsInteger>,
+    },
+    RateTable,
+    NextHopInterface {
+        destination_hash: DestinationHash,
+    },
+    NextHop {
+        destination_hash: DestinationHash,
+    },
+    FirstHopTimeout {
+        destination_hash: DestinationHash,
+    },
+    LinkCount,
+    PacketRssi {
+        packet_hash: PacketHashArgument,
+    },
+    PacketSnr {
+        packet_hash: PacketHashArgument,
+    },
+    PacketQuality {
+        packet_hash: PacketHashArgument,
+    },
+    BlackholedIdentities,
+    IsBlackholed {
+        identity_hash: IdentityHash,
+    },
+    DropPath {
+        destination_hash: DestinationHash,
+    },
+    DropAllVia {
+        transport_id: TransportId,
+    },
+    DropAnnounceQueues,
+    BlackholeIdentity {
+        identity_hash: IdentityHash,
+        until: Option<RnsNumber>,
+        reason: Option<String>,
+    },
+    UnblackholeIdentity {
+        identity_hash: IdentityHash,
+    },
+    DestinationData {
+        operation: DestinationDataOperation,
+        destination_hash: DestinationHash,
+    },
+    RetainIdentity {
+        identity_hash: IdentityHash,
+    },
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum RpcRequestDecodeError {
+    MessagePack,
+    TrailingData,
+    ExpectedMap,
+    ExpectedStringKey,
+    DuplicateField(String),
+    UnknownField(String),
+    MissingOperation,
+    ContradictoryOperation,
+    MissingField(&'static str),
+    UnexpectedField(&'static str),
+    InvalidFieldType(&'static str),
+    InvalidHashLength {
+        field: &'static str,
+        expected: usize,
+        actual: usize,
+    },
+    UnknownOperation {
+        selector: &'static str,
+        operation: String,
+    },
+}
+
+type DecodeError = RpcRequestDecodeError;
+
+enum RpcValue {
+    Null,
+    String(String),
+    Binary(Vec<u8>),
+    Integer(RnsInteger),
+    Float(f64),
+    Unsupported,
+}
+
+#[derive(Default)]
+struct Fields {
+    get: Option<RpcValue>,
+    drop: Option<RpcValue>,
+    blackhole_identity: Option<RpcValue>,
+    unblackhole_identity: Option<RpcValue>,
+    destination_data: Option<RpcValue>,
+    identity_data: Option<RpcValue>,
+    max_hops: Option<RpcValue>,
+    destination_hash: Option<RpcValue>,
+    packet_hash: Option<RpcValue>,
+    identity_hash: Option<RpcValue>,
+    until: Option<RpcValue>,
+    reason: Option<RpcValue>,
+}
+
+impl Fields {
+    fn operation_count(&self) -> usize {
+        [
+            self.get.is_some(),
+            self.drop.is_some(),
+            self.blackhole_identity.is_some(),
+            self.unblackhole_identity.is_some(),
+            self.destination_data.is_some(),
+            self.identity_data.is_some(),
+        ]
+        .into_iter()
+        .filter(|present| *present)
+        .count()
+    }
+
+    fn ensure_only(&self, allowed: &[&str]) -> Result<(), DecodeError> {
+        for (name, present) in [
+            (selector::GET, self.get.is_some()),
+            (selector::DROP, self.drop.is_some()),
+            (
+                selector::BLACKHOLE_IDENTITY,
+                self.blackhole_identity.is_some(),
+            ),
+            (
+                selector::UNBLACKHOLE_IDENTITY,
+                self.unblackhole_identity.is_some(),
+            ),
+            (selector::DESTINATION_DATA, self.destination_data.is_some()),
+            (selector::IDENTITY_DATA, self.identity_data.is_some()),
+            (argument::MAX_HOPS, self.max_hops.is_some()),
+            (argument::DESTINATION_HASH, self.destination_hash.is_some()),
+            (argument::PACKET_HASH, self.packet_hash.is_some()),
+            (argument::IDENTITY_HASH, self.identity_hash.is_some()),
+            (argument::UNTIL, self.until.is_some()),
+            (argument::REASON, self.reason.is_some()),
+        ] {
+            if present && !allowed.contains(&name) {
+                return Err(DecodeError::UnexpectedField(name));
+            }
+        }
+        Ok(())
+    }
+}
+
+pub fn decode(bytes: &[u8]) -> Result<RnsRpcRequest, DecodeError> {
+    let mut reader = Bytes::new(bytes);
+    let marker = read_marker(&mut reader).map_err(|_| DecodeError::MessagePack)?;
+    let Some(field_count) = map_length(marker, &mut reader)? else {
+        consume_value_payload(marker, &mut reader, 0)?;
+        return if reader.remaining_slice().is_empty() {
+            Err(DecodeError::ExpectedMap)
+        } else {
+            Err(DecodeError::TrailingData)
+        };
+    };
+    let fields = decode_root_fields(&mut reader, field_count)?;
+    if !reader.remaining_slice().is_empty() {
+        return Err(DecodeError::TrailingData);
+    }
+    decode_fields(fields)
+}
+
+fn decode_root_fields(reader: &mut Bytes<'_>, field_count: usize) -> Result<Fields, DecodeError> {
+    let mut fields = Fields::default();
+    for _ in 0..field_count {
+        let RpcValue::String(key) = decode_value(reader, 1)? else {
+            return Err(DecodeError::ExpectedStringKey);
+        };
+        let value = decode_value(reader, 1)?;
+        let slot = match key.as_str() {
+            selector::GET => &mut fields.get,
+            selector::DROP => &mut fields.drop,
+            selector::BLACKHOLE_IDENTITY => &mut fields.blackhole_identity,
+            selector::UNBLACKHOLE_IDENTITY => &mut fields.unblackhole_identity,
+            selector::DESTINATION_DATA => &mut fields.destination_data,
+            selector::IDENTITY_DATA => &mut fields.identity_data,
+            argument::MAX_HOPS => &mut fields.max_hops,
+            argument::DESTINATION_HASH => &mut fields.destination_hash,
+            argument::PACKET_HASH => &mut fields.packet_hash,
+            argument::IDENTITY_HASH => &mut fields.identity_hash,
+            argument::UNTIL => &mut fields.until,
+            argument::REASON => &mut fields.reason,
+            _ => return Err(DecodeError::UnknownField(key)),
+        };
+        if slot.replace(value).is_some() {
+            return Err(DecodeError::DuplicateField(key));
+        }
+    }
+    Ok(fields)
+}
+
+fn decode_value(reader: &mut Bytes<'_>, depth: usize) -> Result<RpcValue, DecodeError> {
+    if depth > REQUEST_MAX_DEPTH {
+        return Err(DecodeError::MessagePack);
+    }
+    let marker = read_marker(reader).map_err(|_| DecodeError::MessagePack)?;
+    match marker {
+        Marker::FixPos(value) => Ok(RpcValue::Integer(RnsInteger::from_u64(u64::from(value)))),
+        Marker::FixNeg(value) => Ok(RpcValue::Integer(RnsInteger::from_i64(i64::from(value)))),
+        Marker::Null => Ok(RpcValue::Null),
+        Marker::U8 => {
+            read_u8(reader).map(|value| RpcValue::Integer(RnsInteger::from_u64(u64::from(value))))
+        }
+        Marker::U16 => {
+            read_u16(reader).map(|value| RpcValue::Integer(RnsInteger::from_u64(u64::from(value))))
+        }
+        Marker::U32 => {
+            read_u32(reader).map(|value| RpcValue::Integer(RnsInteger::from_u64(u64::from(value))))
+        }
+        Marker::U64 => read_u64(reader).map(|value| RpcValue::Integer(RnsInteger::from_u64(value))),
+        Marker::I8 => read_u8(reader)
+            .map(|value| RpcValue::Integer(RnsInteger::from_i64(i64::from(value as i8)))),
+        Marker::I16 => read_u16(reader)
+            .map(|value| RpcValue::Integer(RnsInteger::from_i64(i64::from(value as i16)))),
+        Marker::I32 => read_u32(reader)
+            .map(|value| RpcValue::Integer(RnsInteger::from_i64(i64::from(value as i32)))),
+        Marker::I64 => {
+            read_u64(reader).map(|value| RpcValue::Integer(RnsInteger::from_i64(value as i64)))
+        }
+        Marker::F32 => {
+            read_u32(reader).map(|value| RpcValue::Float(f64::from(f32::from_bits(value))))
+        }
+        Marker::F64 => read_u64(reader).map(|value| RpcValue::Float(f64::from_bits(value))),
+        Marker::FixStr(length) => decode_string(reader, usize::from(length)),
+        Marker::Str8 => {
+            let length = usize::from(read_u8(reader)?);
+            decode_string(reader, length)
+        }
+        Marker::Str16 => {
+            let length = usize::from(read_u16(reader)?);
+            decode_string(reader, length)
+        }
+        Marker::Str32 => {
+            let length =
+                usize::try_from(read_u32(reader)?).map_err(|_| DecodeError::MessagePack)?;
+            decode_string(reader, length)
+        }
+        Marker::Bin8 => {
+            let length = usize::from(read_u8(reader)?);
+            read_bytes(reader, length).map(RpcValue::Binary)
+        }
+        Marker::Bin16 => {
+            let length = usize::from(read_u16(reader)?);
+            read_bytes(reader, length).map(RpcValue::Binary)
+        }
+        Marker::Bin32 => {
+            let length =
+                usize::try_from(read_u32(reader)?).map_err(|_| DecodeError::MessagePack)?;
+            read_bytes(reader, length).map(RpcValue::Binary)
+        }
+        Marker::Reserved => Err(DecodeError::MessagePack),
+        marker => {
+            consume_value_payload(marker, reader, depth)?;
+            Ok(RpcValue::Unsupported)
+        }
+    }
+}
+
+fn consume_value_payload(
+    marker: Marker,
+    reader: &mut Bytes<'_>,
+    depth: usize,
+) -> Result<(), DecodeError> {
+    if depth > REQUEST_MAX_DEPTH {
+        return Err(DecodeError::MessagePack);
+    }
+    match marker {
+        Marker::False | Marker::True | Marker::Null | Marker::FixPos(_) | Marker::FixNeg(_) => {}
+        Marker::U8 | Marker::I8 => skip_bytes(reader, 1)?,
+        Marker::U16 | Marker::I16 => skip_bytes(reader, 2)?,
+        Marker::U32 | Marker::I32 | Marker::F32 => skip_bytes(reader, 4)?,
+        Marker::U64 | Marker::I64 | Marker::F64 => skip_bytes(reader, 8)?,
+        Marker::FixStr(length) => skip_bytes(reader, usize::from(length))?,
+        Marker::Str8 | Marker::Bin8 => {
+            let length = usize::from(read_u8(reader)?);
+            skip_bytes(reader, length)?;
+        }
+        Marker::Str16 | Marker::Bin16 => {
+            let length = usize::from(read_u16(reader)?);
+            skip_bytes(reader, length)?;
+        }
+        Marker::Str32 | Marker::Bin32 => {
+            let length =
+                usize::try_from(read_u32(reader)?).map_err(|_| DecodeError::MessagePack)?;
+            skip_bytes(reader, length)?;
+        }
+        Marker::FixArray(length) => consume_sequence(reader, usize::from(length), depth)?,
+        Marker::Array16 => {
+            let length = usize::from(read_u16(reader)?);
+            consume_sequence(reader, length, depth)?;
+        }
+        Marker::Array32 => {
+            let length =
+                usize::try_from(read_u32(reader)?).map_err(|_| DecodeError::MessagePack)?;
+            consume_sequence(reader, length, depth)?;
+        }
+        Marker::FixMap(length) => consume_map(reader, usize::from(length), depth)?,
+        Marker::Map16 => {
+            let length = usize::from(read_u16(reader)?);
+            consume_map(reader, length, depth)?;
+        }
+        Marker::Map32 => {
+            let length =
+                usize::try_from(read_u32(reader)?).map_err(|_| DecodeError::MessagePack)?;
+            consume_map(reader, length, depth)?;
+        }
+        Marker::FixExt1 => skip_bytes(reader, 2)?,
+        Marker::FixExt2 => skip_bytes(reader, 3)?,
+        Marker::FixExt4 => skip_bytes(reader, 5)?,
+        Marker::FixExt8 => skip_bytes(reader, 9)?,
+        Marker::FixExt16 => skip_bytes(reader, 17)?,
+        Marker::Ext8 => {
+            let length = usize::from(read_u8(reader)?);
+            skip_bytes(
+                reader,
+                length.checked_add(1).ok_or(DecodeError::MessagePack)?,
+            )?;
+        }
+        Marker::Ext16 => {
+            let length = usize::from(read_u16(reader)?);
+            skip_bytes(
+                reader,
+                length.checked_add(1).ok_or(DecodeError::MessagePack)?,
+            )?;
+        }
+        Marker::Ext32 => {
+            let length =
+                usize::try_from(read_u32(reader)?).map_err(|_| DecodeError::MessagePack)?;
+            skip_bytes(
+                reader,
+                length.checked_add(1).ok_or(DecodeError::MessagePack)?,
+            )?;
+        }
+        Marker::Reserved => return Err(DecodeError::MessagePack),
+    }
+    Ok(())
+}
+
+fn consume_sequence(
+    reader: &mut Bytes<'_>,
+    length: usize,
+    depth: usize,
+) -> Result<(), DecodeError> {
+    for _ in 0..length {
+        decode_value(reader, depth + 1)?;
+    }
+    Ok(())
+}
+
+fn consume_map(reader: &mut Bytes<'_>, length: usize, depth: usize) -> Result<(), DecodeError> {
+    for _ in 0..length {
+        decode_value(reader, depth + 1)?;
+        decode_value(reader, depth + 1)?;
+    }
+    Ok(())
+}
+
+fn map_length(marker: Marker, reader: &mut Bytes<'_>) -> Result<Option<usize>, DecodeError> {
+    match marker {
+        Marker::FixMap(length) => Ok(Some(usize::from(length))),
+        Marker::Map16 => Ok(Some(usize::from(read_u16(reader)?))),
+        Marker::Map32 => usize::try_from(read_u32(reader)?)
+            .map(Some)
+            .map_err(|_| DecodeError::MessagePack),
+        _ => Ok(None),
+    }
+}
+
+fn decode_string(reader: &mut Bytes<'_>, length: usize) -> Result<RpcValue, DecodeError> {
+    let bytes = read_bytes(reader, length)?;
+    Ok(String::from_utf8(bytes).map_or(RpcValue::Unsupported, RpcValue::String))
+}
+
+fn read_bytes(reader: &mut Bytes<'_>, length: usize) -> Result<Vec<u8>, DecodeError> {
+    if reader.remaining_slice().len() < length {
+        return Err(DecodeError::MessagePack);
+    }
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(length)
+        .map_err(|_| DecodeError::MessagePack)?;
+    bytes.resize(length, 0);
+    reader
+        .read_exact_buf(&mut bytes)
+        .map_err(|_| DecodeError::MessagePack)?;
+    Ok(bytes)
+}
+
+fn skip_bytes<'a>(reader: &mut Bytes<'a>, length: usize) -> Result<(), DecodeError> {
+    let remaining = reader.remaining_slice();
+    let after = remaining.get(length..).ok_or(DecodeError::MessagePack)?;
+    *reader = Bytes::new(after);
+    Ok(())
+}
+
+fn read_u8(reader: &mut Bytes<'_>) -> Result<u8, DecodeError> {
+    reader.read_u8().map_err(|_| DecodeError::MessagePack)
+}
+
+fn read_u16(reader: &mut Bytes<'_>) -> Result<u16, DecodeError> {
+    let mut bytes = [0u8; 2];
+    reader
+        .read_exact_buf(&mut bytes)
+        .map_err(|_| DecodeError::MessagePack)?;
+    Ok(u16::from_be_bytes(bytes))
+}
+
+fn read_u32(reader: &mut Bytes<'_>) -> Result<u32, DecodeError> {
+    let mut bytes = [0u8; 4];
+    reader
+        .read_exact_buf(&mut bytes)
+        .map_err(|_| DecodeError::MessagePack)?;
+    Ok(u32::from_be_bytes(bytes))
+}
+
+fn read_u64(reader: &mut Bytes<'_>) -> Result<u64, DecodeError> {
+    let mut bytes = [0u8; 8];
+    reader
+        .read_exact_buf(&mut bytes)
+        .map_err(|_| DecodeError::MessagePack)?;
+    Ok(u64::from_be_bytes(bytes))
+}
+
+fn decode_fields(fields: Fields) -> Result<RnsRpcRequest, DecodeError> {
+    match fields.operation_count() {
+        0 => Err(DecodeError::MissingOperation),
+        2.. => Err(DecodeError::ContradictoryOperation),
+        _ if fields.get.is_some() => decode_get(fields),
+        _ if fields.drop.is_some() => decode_drop(fields),
+        _ if fields.blackhole_identity.is_some() => decode_blackhole(fields),
+        _ if fields.unblackhole_identity.is_some() => decode_unblackhole(fields),
+        _ if fields.destination_data.is_some() => decode_destination_data(fields),
+        _ => decode_identity_data(fields),
+    }
+}
+
+fn decode_get(mut fields: Fields) -> Result<RnsRpcRequest, DecodeError> {
+    let operation = take_string(&mut fields.get, selector::GET)?;
+    match operation.as_str() {
+        get::INTERFACE_STATS => {
+            fields.ensure_only(&[selector::GET])?;
+            Ok(RnsRpcRequest::InterfaceStats)
+        }
+        get::PATH_TABLE => {
+            fields.ensure_only(&[selector::GET, argument::MAX_HOPS])?;
+            let max_hops = take_optional_integer(&mut fields.max_hops, argument::MAX_HOPS)?;
+            Ok(RnsRpcRequest::PathTable { max_hops })
+        }
+        get::RATE_TABLE => {
+            fields.ensure_only(&[selector::GET])?;
+            Ok(RnsRpcRequest::RateTable)
+        }
+        get::NEXT_HOP_INTERFACE_NAME => {
+            fields.ensure_only(&[selector::GET, argument::DESTINATION_HASH])?;
+            Ok(RnsRpcRequest::NextHopInterface {
+                destination_hash: take_destination_hash(&mut fields.destination_hash)?,
+            })
+        }
+        get::NEXT_HOP => {
+            fields.ensure_only(&[selector::GET, argument::DESTINATION_HASH])?;
+            Ok(RnsRpcRequest::NextHop {
+                destination_hash: take_destination_hash(&mut fields.destination_hash)?,
+            })
+        }
+        get::FIRST_HOP_TIMEOUT => {
+            fields.ensure_only(&[selector::GET, argument::DESTINATION_HASH])?;
+            Ok(RnsRpcRequest::FirstHopTimeout {
+                destination_hash: take_destination_hash(&mut fields.destination_hash)?,
+            })
+        }
+        get::LINK_COUNT => {
+            fields.ensure_only(&[selector::GET])?;
+            Ok(RnsRpcRequest::LinkCount)
+        }
+        get::PACKET_RSSI => {
+            fields.ensure_only(&[selector::GET, argument::PACKET_HASH])?;
+            Ok(RnsRpcRequest::PacketRssi {
+                packet_hash: take_packet_hash(&mut fields.packet_hash)?,
+            })
+        }
+        get::PACKET_SNR => {
+            fields.ensure_only(&[selector::GET, argument::PACKET_HASH])?;
+            Ok(RnsRpcRequest::PacketSnr {
+                packet_hash: take_packet_hash(&mut fields.packet_hash)?,
+            })
+        }
+        get::PACKET_QUALITY => {
+            fields.ensure_only(&[selector::GET, argument::PACKET_HASH])?;
+            Ok(RnsRpcRequest::PacketQuality {
+                packet_hash: take_packet_hash(&mut fields.packet_hash)?,
+            })
+        }
+        get::BLACKHOLED_IDENTITIES => {
+            fields.ensure_only(&[selector::GET])?;
+            Ok(RnsRpcRequest::BlackholedIdentities)
+        }
+        get::IS_BLACKHOLED => {
+            fields.ensure_only(&[selector::GET, argument::IDENTITY_HASH])?;
+            Ok(RnsRpcRequest::IsBlackholed {
+                identity_hash: take_identity_hash(&mut fields.identity_hash)?,
+            })
+        }
+        _ => Err(DecodeError::UnknownOperation {
+            selector: selector::GET,
+            operation,
+        }),
+    }
+}
+
+fn decode_drop(mut fields: Fields) -> Result<RnsRpcRequest, DecodeError> {
+    let operation = take_string(&mut fields.drop, selector::DROP)?;
+    match operation.as_str() {
+        drop_operation::PATH => {
+            fields.ensure_only(&[selector::DROP, argument::DESTINATION_HASH])?;
+            Ok(RnsRpcRequest::DropPath {
+                destination_hash: take_destination_hash(&mut fields.destination_hash)?,
+            })
+        }
+        drop_operation::ALL_VIA => {
+            fields.ensure_only(&[selector::DROP, argument::DESTINATION_HASH])?;
+            Ok(RnsRpcRequest::DropAllVia {
+                transport_id: take_transport_id(&mut fields.destination_hash)?,
+            })
+        }
+        drop_operation::ANNOUNCE_QUEUES => {
+            fields.ensure_only(&[selector::DROP])?;
+            Ok(RnsRpcRequest::DropAnnounceQueues)
+        }
+        _ => Err(DecodeError::UnknownOperation {
+            selector: selector::DROP,
+            operation,
+        }),
+    }
+}
+
+fn decode_blackhole(mut fields: Fields) -> Result<RnsRpcRequest, DecodeError> {
+    fields.ensure_only(&[
+        selector::BLACKHOLE_IDENTITY,
+        argument::UNTIL,
+        argument::REASON,
+    ])?;
+    Ok(RnsRpcRequest::BlackholeIdentity {
+        identity_hash: take_identity_hash(&mut fields.blackhole_identity)?,
+        until: take_optional_number(&mut fields.until, argument::UNTIL)?,
+        reason: take_optional_string(&mut fields.reason, argument::REASON)?,
+    })
+}
+
+fn decode_unblackhole(mut fields: Fields) -> Result<RnsRpcRequest, DecodeError> {
+    fields.ensure_only(&[selector::UNBLACKHOLE_IDENTITY])?;
+    Ok(RnsRpcRequest::UnblackholeIdentity {
+        identity_hash: take_identity_hash(&mut fields.unblackhole_identity)?,
+    })
+}
+
+fn decode_destination_data(mut fields: Fields) -> Result<RnsRpcRequest, DecodeError> {
+    fields.ensure_only(&[selector::DESTINATION_DATA, argument::DESTINATION_HASH])?;
+    let operation =
+        match take_string(&mut fields.destination_data, selector::DESTINATION_DATA)?.as_str() {
+            data_operation::USED => DestinationDataOperation::Used,
+            data_operation::RETAIN => DestinationDataOperation::Retain,
+            data_operation::UNRETAIN => DestinationDataOperation::Unretain,
+            operation => {
+                return Err(DecodeError::UnknownOperation {
+                    selector: selector::DESTINATION_DATA,
+                    operation: operation.into(),
+                });
+            }
+        };
+    Ok(RnsRpcRequest::DestinationData {
+        operation,
+        destination_hash: take_destination_hash(&mut fields.destination_hash)?,
+    })
+}
+
+fn decode_identity_data(mut fields: Fields) -> Result<RnsRpcRequest, DecodeError> {
+    fields.ensure_only(&[selector::IDENTITY_DATA, argument::IDENTITY_HASH])?;
+    let operation = take_string(&mut fields.identity_data, selector::IDENTITY_DATA)?;
+    if operation != data_operation::RETAIN {
+        return Err(DecodeError::UnknownOperation {
+            selector: selector::IDENTITY_DATA,
+            operation,
+        });
+    }
+    Ok(RnsRpcRequest::RetainIdentity {
+        identity_hash: take_identity_hash(&mut fields.identity_hash)?,
+    })
+}
+
+fn take_required(
+    slot: &mut Option<RpcValue>,
+    field: &'static str,
+) -> Result<RpcValue, DecodeError> {
+    slot.take().ok_or(DecodeError::MissingField(field))
+}
+
+fn take_string(slot: &mut Option<RpcValue>, field: &'static str) -> Result<String, DecodeError> {
+    match take_required(slot, field)? {
+        RpcValue::String(value) => Ok(value),
+        _ => Err(DecodeError::InvalidFieldType(field)),
+    }
+}
+
+fn take_optional_string(
+    slot: &mut Option<RpcValue>,
+    field: &'static str,
+) -> Result<Option<String>, DecodeError> {
+    match take_required(slot, field)? {
+        RpcValue::Null => Ok(None),
+        RpcValue::String(value) => Ok(Some(value)),
+        _ => Err(DecodeError::InvalidFieldType(field)),
+    }
+}
+
+fn take_optional_integer(
+    slot: &mut Option<RpcValue>,
+    field: &'static str,
+) -> Result<Option<RnsInteger>, DecodeError> {
+    match take_required(slot, field)? {
+        RpcValue::Null => Ok(None),
+        RpcValue::Integer(value) => Ok(Some(value)),
+        _ => Err(DecodeError::InvalidFieldType(field)),
+    }
+}
+
+fn take_optional_number(
+    slot: &mut Option<RpcValue>,
+    field: &'static str,
+) -> Result<Option<RnsNumber>, DecodeError> {
+    match take_required(slot, field)? {
+        RpcValue::Null => Ok(None),
+        RpcValue::Integer(value) => Ok(Some(RnsNumber::Integer(value))),
+        RpcValue::Float(value) => Ok(Some(RnsNumber::Float(value))),
+        _ => Err(DecodeError::InvalidFieldType(field)),
+    }
+}
+
+fn take_destination_hash(slot: &mut Option<RpcValue>) -> Result<DestinationHash, DecodeError> {
+    take_binary::<16>(slot, argument::DESTINATION_HASH).map(DestinationHash::new)
+}
+
+fn take_transport_id(slot: &mut Option<RpcValue>) -> Result<TransportId, DecodeError> {
+    take_binary::<16>(slot, argument::DESTINATION_HASH).map(TransportId::new)
+}
+
+fn take_identity_hash(slot: &mut Option<RpcValue>) -> Result<IdentityHash, DecodeError> {
+    take_binary::<16>(slot, argument::IDENTITY_HASH).map(IdentityHash::new)
+}
+
+fn take_packet_hash(slot: &mut Option<RpcValue>) -> Result<PacketHashArgument, DecodeError> {
+    let RpcValue::Binary(bytes) = take_required(slot, argument::PACKET_HASH)? else {
+        return Err(DecodeError::InvalidFieldType(argument::PACKET_HASH));
+    };
+    Ok(PacketHashArgument(bytes))
+}
+
+fn take_binary<const N: usize>(
+    slot: &mut Option<RpcValue>,
+    field: &'static str,
+) -> Result<[u8; N], DecodeError> {
+    let RpcValue::Binary(bytes) = take_required(slot, field)? else {
+        return Err(DecodeError::InvalidFieldType(field));
+    };
+    let actual = bytes.len();
+    bytes
+        .try_into()
+        .map_err(|_| DecodeError::InvalidHashLength {
+            field,
+            expected: N,
+            actual,
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rmpv::Value;
+
+    fn request(entries: Vec<(&str, Value)>) -> Vec<u8> {
+        let value = Value::Map(
+            entries
+                .into_iter()
+                .map(|(key, value)| (Value::from(key), value))
+                .collect(),
+        );
+        let mut bytes = Vec::new();
+        rmpv::encode::write_value(&mut bytes, &value).unwrap();
+        bytes
+    }
+
+    fn binary<const N: usize>(byte: u8) -> Value {
+        Value::Binary(vec![byte; N])
+    }
+
+    #[test]
+    fn decodes_every_rns_1_3_8_operation() {
+        let cases = [
+            request(vec![("get", Value::from("interface_stats"))]),
+            request(vec![
+                ("get", Value::from("path_table")),
+                ("max_hops", Value::Nil),
+            ]),
+            request(vec![("get", Value::from("rate_table"))]),
+            request(vec![
+                ("get", Value::from("next_hop_if_name")),
+                ("destination_hash", binary::<16>(1)),
+            ]),
+            request(vec![
+                ("get", Value::from("next_hop")),
+                ("destination_hash", binary::<16>(1)),
+            ]),
+            request(vec![
+                ("get", Value::from("first_hop_timeout")),
+                ("destination_hash", binary::<16>(1)),
+            ]),
+            request(vec![("get", Value::from("link_count"))]),
+            request(vec![
+                ("get", Value::from("packet_rssi")),
+                ("packet_hash", binary::<16>(2)),
+            ]),
+            request(vec![
+                ("get", Value::from("packet_snr")),
+                ("packet_hash", binary::<16>(2)),
+            ]),
+            request(vec![
+                ("get", Value::from("packet_q")),
+                ("packet_hash", binary::<16>(2)),
+            ]),
+            request(vec![("get", Value::from("blackholed_identities"))]),
+            request(vec![
+                ("get", Value::from("is_blackholed")),
+                ("identity_hash", binary::<16>(3)),
+            ]),
+            request(vec![
+                ("drop", Value::from("path")),
+                ("destination_hash", binary::<16>(4)),
+            ]),
+            request(vec![
+                ("drop", Value::from("all_via")),
+                ("destination_hash", binary::<16>(4)),
+            ]),
+            request(vec![("drop", Value::from("announce_queues"))]),
+            request(vec![
+                ("blackhole_identity", binary::<16>(5)),
+                ("until", Value::Nil),
+                ("reason", Value::Nil),
+            ]),
+            request(vec![("unblackhole_identity", binary::<16>(5))]),
+            request(vec![
+                ("destination_data", Value::from("used")),
+                ("destination_hash", binary::<16>(6)),
+            ]),
+            request(vec![
+                ("destination_data", Value::from("retain")),
+                ("destination_hash", binary::<16>(6)),
+            ]),
+            request(vec![
+                ("destination_data", Value::from("unretain")),
+                ("destination_hash", binary::<16>(6)),
+            ]),
+            request(vec![
+                ("identity_data", Value::from("retain")),
+                ("identity_hash", binary::<16>(7)),
+            ]),
+        ];
+
+        assert_eq!(cases.len(), 21);
+        for bytes in cases {
+            assert!(decode(&bytes).is_ok(), "request rejected: {bytes:02x?}");
+        }
+    }
+
+    #[test]
+    fn preserves_numeric_and_optional_blackhole_arguments() {
+        assert_eq!(
+            decode(&request(vec![
+                ("get", Value::from("path_table")),
+                ("max_hops", Value::from(u64::MAX)),
+            ])),
+            Ok(RnsRpcRequest::PathTable {
+                max_hops: Some(RnsInteger::from_u64(u64::MAX)),
+            })
+        );
+        assert_eq!(
+            decode(&request(vec![
+                ("blackhole_identity", binary::<16>(5)),
+                ("until", Value::F64(123.5)),
+                ("reason", Value::from("operator request")),
+            ])),
+            Ok(RnsRpcRequest::BlackholeIdentity {
+                identity_hash: IdentityHash::new([5; 16]),
+                until: Some(RnsNumber::Float(123.5)),
+                reason: Some("operator request".into()),
+            })
+        );
+    }
+
+    #[test]
+    fn blackhole_deadlines_preserve_rns_138_truthiness_and_epoch_seconds() {
+        assert_eq!(
+            RnsNumber::Integer(RnsInteger::from_i64(-1)).blackhole_expiry(),
+            BlackholeExpiry::At(InstantMillis(0))
+        );
+        assert_eq!(
+            RnsNumber::Integer(RnsInteger::from_u64(0)).blackhole_expiry(),
+            BlackholeExpiry::Indefinite
+        );
+        assert_eq!(
+            RnsNumber::Float(f64::NAN).blackhole_expiry(),
+            BlackholeExpiry::Indefinite
+        );
+        assert_eq!(
+            RnsNumber::Float(f64::INFINITY).blackhole_expiry(),
+            BlackholeExpiry::At(InstantMillis(u64::MAX))
+        );
+        assert_eq!(
+            RnsNumber::Float(123.4567).blackhole_expiry(),
+            BlackholeExpiry::At(InstantMillis(123_456))
+        );
+    }
+
+    #[test]
+    fn packet_hash_arguments_preserve_the_rpc_lookup_key() {
+        assert_eq!(
+            decode(&request(vec![
+                ("get", Value::from("packet_rssi")),
+                ("packet_hash", binary::<16>(2)),
+            ])),
+            Ok(RnsRpcRequest::PacketRssi {
+                packet_hash: PacketHashArgument(vec![2; 16]),
+            })
+        );
+        assert_eq!(
+            decode(&request(vec![
+                ("get", Value::from("packet_rssi")),
+                ("packet_hash", binary::<32>(2)),
+            ])),
+            Ok(RnsRpcRequest::PacketRssi {
+                packet_hash: PacketHashArgument(vec![2; 32]),
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_ambiguous_and_incomplete_requests() {
+        assert_eq!(decode(&[]), Err(DecodeError::MessagePack));
+        assert_eq!(decode(&[0xc0]), Err(DecodeError::ExpectedMap));
+        assert_eq!(
+            decode(&[
+                0x81, 0xa6, b'r', b'e', b'a', b's', b'o', b'n', 0xc6, 0xff, 0xff, 0xff, 0xff,
+            ]),
+            Err(DecodeError::MessagePack)
+        );
+
+        let mut trailing = request(vec![("get", Value::from("link_count"))]);
+        trailing.push(0xc0);
+        assert_eq!(decode(&trailing), Err(DecodeError::TrailingData));
+
+        assert_eq!(
+            decode(&request(vec![
+                ("get", Value::from("link_count")),
+                ("drop", Value::from("announce_queues")),
+            ])),
+            Err(DecodeError::ContradictoryOperation)
+        );
+        assert_eq!(
+            decode(&request(vec![("destination_hash", binary::<16>(1))])),
+            Err(DecodeError::MissingOperation)
+        );
+        assert_eq!(
+            decode(&request(vec![("get", Value::from("next_hop"))])),
+            Err(DecodeError::MissingField("destination_hash"))
+        );
+        assert_eq!(
+            decode(&request(vec![
+                ("get", Value::from("next_hop")),
+                ("destination_hash", binary::<15>(1)),
+            ])),
+            Err(DecodeError::InvalidHashLength {
+                field: "destination_hash",
+                expected: 16,
+                actual: 15,
+            })
+        );
+        assert_eq!(
+            decode(&request(vec![
+                ("get", Value::from("link_count")),
+                ("reason", Value::from("interface_stats")),
+            ])),
+            Err(DecodeError::UnexpectedField("reason"))
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_and_unknown_fields() {
+        assert_eq!(
+            decode(&request(vec![
+                ("get", Value::from("link_count")),
+                ("get", Value::from("rate_table")),
+            ])),
+            Err(DecodeError::DuplicateField("get".into()))
+        );
+        assert_eq!(
+            decode(&request(vec![("future", Value::from("link_count"))])),
+            Err(DecodeError::UnknownField("future".into()))
+        );
+    }
+
+    #[test]
+    fn signed_positive_integer_markers_remain_nonnegative() {
+        let bytes = [
+            0x82, 0xa3, b'g', b'e', b't', 0xaa, b'p', b'a', b't', b'h', b'_', b't', b'a', b'b',
+            b'l', b'e', 0xa8, b'm', b'a', b'x', b'_', b'h', b'o', b'p', b's', 0xd0, 0x03,
+        ];
+        assert_eq!(
+            decode(&bytes),
+            Ok(RnsRpcRequest::PathTable {
+                max_hops: Some(RnsInteger::from_u64(3)),
+            })
+        );
+    }
+
+    #[test]
+    fn nesting_beyond_the_protocol_limit_is_rejected() {
+        let mut nested = Value::Nil;
+        for _ in 0..=REQUEST_MAX_DEPTH {
+            nested = Value::Array(vec![nested]);
+        }
+        assert_eq!(
+            decode(&request(vec![
+                ("blackhole_identity", binary::<16>(5)),
+                ("until", Value::Nil),
+                ("reason", nested),
+            ])),
+            Err(DecodeError::MessagePack)
+        );
+    }
+
+    #[test]
+    fn generated_payload_corpus_has_total_decode_results() {
+        for seed in 0u16..256 {
+            let mut state = u32::from(seed).wrapping_add(1);
+            let bytes = (0..usize::from(seed % 128))
+                .map(|_| {
+                    state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                    state.to_be_bytes()[0]
+                })
+                .collect::<Vec<_>>();
+            let _ = decode(&bytes);
+        }
+    }
+}
