@@ -11,7 +11,12 @@ use crate::routing::BlackholedIdentity;
 use super::wire_names::reply_value;
 use super::{RnsInteger, RpcDialect};
 
+mod legacy;
+mod outcomes;
 mod pickle;
+
+pub use legacy::LegacyRpcReplyPlan;
+pub use outcomes::RpcOperationOutcome;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RnsRpcReplyEncodeError;
@@ -90,7 +95,7 @@ impl RnsRpcReply {
         Self(RnsRpcReplyKind::InterfaceStats(stats))
     }
 
-    pub fn blackholed_identities<Reason: AsRef<str>>(
+    fn blackhole_table<Reason: AsRef<str>>(
         entries: impl IntoIterator<Item = BlackholedIdentity<Reason>>,
     ) -> Self {
         Self(RnsRpcReplyKind::BlackholeTable(

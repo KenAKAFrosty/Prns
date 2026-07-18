@@ -1,5 +1,6 @@
 pub mod announce;
 pub mod blackhole;
+mod control;
 pub mod dedup;
 pub mod delivery;
 pub mod group_keys;
@@ -30,6 +31,7 @@ pub use blackhole::{
     BlackholeExpiry, BlackholeIdentityOutcome, BlackholeInsertFailure, BlackholedIdentity,
     UnblackholeIdentityOutcome,
 };
+pub use control::{ClearAnnounceQueuesOutcome, DropRouteOutcome, DropRoutesViaOutcome};
 pub use route_expiry::{LinearRouteExpiryIndex, RouteExpiryIndex, ROUTE_EXPIRY_QUANTUM_MS};
 pub use table::RoutingTable;
 pub use types::{
