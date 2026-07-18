@@ -62,16 +62,199 @@ fn parse_coerces_typed_fields_and_folds_dual_keys_and_aliases() {
     );
 }
 
+const RNODE_MULTI: &str = "[interfaces]\n\
+    [[Dual Radio]]\n\
+    type = RNodeMultiInterface\n\
+    enabled = Yes\n\
+    port = /dev/ttyACM0\n\
+    id_callsign = N0CALL\n\
+    id_interval = 600\n\
+    [[[Sub GHz]]]\n\
+    interface_enabled = Yes\n\
+    vport = 0\n\
+    frequency = 868000000\n\
+    bandwidth = 125000\n\
+    txpower = -4\n\
+    spreadingfactor = 8\n\
+    codingrate = 5\n\
+    flow_control = Yes\n\
+    outgoing = No\n\
+    airtime_limit_short = 0\n\
+    airtime_limit_long = 5.0\n\
+    [[[2.4 GHz]]]\n\
+    enabled = Yes\n\
+    vport = 1\n\
+    frequency = 2400000000\n\
+    bandwidth = 812500\n\
+    txpower = 10\n\
+    spreadingfactor = 7\n\
+    codingrate = 6\n";
+
 #[test]
-fn enabled_rnode_multi_is_an_explicit_unsupported_interface_error() {
-    let errors = parse(
-        "[interfaces]\n[[Radio]]\ntype = RNodeMultiInterface\nenabled = Yes\nport = /dev/ttyUSB0\n",
+fn rnode_multi_types_each_enabled_child_setting() {
+    let config = parse(RNODE_MULTI).expect("valid RNodeMulti config");
+    let ReferenceParams::RnodeMulti {
+        port,
+        id_callsign,
+        id_interval,
+        subinterfaces,
+    } = &config.interfaces[0].params
+    else {
+        panic!("RNodeMulti parameters expected")
+    };
+    assert_eq!(port.as_deref(), Some("/dev/ttyACM0"));
+    assert_eq!(id_callsign.as_deref(), Some("N0CALL"));
+    assert_eq!(*id_interval, Some(600));
+    assert_eq!(subinterfaces.len(), 2);
+    let low = &subinterfaces[0];
+    assert_eq!(low.name, "Sub GHz");
+    assert_eq!(low.vport, Some(0));
+    assert_eq!(low.radio.frequency, Some(868_000_000));
+    assert_eq!(low.radio.txpower, Some(-4));
+    assert_eq!(low.flow_control, Some(true));
+    assert_eq!(low.outgoing, Some(false));
+    assert_eq!(low.airtime_limit_short, Some(0.0));
+    assert_eq!(low.airtime_limit_long, Some(5.0));
+    assert!(low.extra.is_empty());
+    let high = &subinterfaces[1];
+    assert_eq!(high.vport, Some(1));
+    assert_eq!(high.radio.frequency, Some(2_400_000_000));
+    assert_eq!(high.flow_control, None);
+    assert_eq!(high.outgoing, None);
+}
+
+#[test]
+fn disabled_rnode_multi_children_are_skipped_before_their_contents() {
+    let config = format!(
+        "{RNODE_MULTI}[[[Unused]]]\ninterface_enabled = No\nfrquency = definitely-not-a-number\n"
+    );
+    let report = parse_named("/tmp/rns/config", &config).expect("disabled child is ignored");
+    let ReferenceParams::RnodeMulti { subinterfaces, .. } = &report.value.interfaces[0].params
+    else {
+        panic!("RNodeMulti parameters expected")
+    };
+    assert_eq!(subinterfaces.len(), 2);
+    assert!(report.warnings.is_empty());
+}
+
+#[test]
+fn rnode_multi_requires_an_enabled_complete_unique_vport() {
+    let errors = parse_named(
+        "/tmp/rns/config",
+        "[interfaces]\n[[Dual]]\ntype = RNodeMultiInterface\nenabled = Yes\nport = /dev/ttyACM0\n[[[First]]]\ninterface_enabled = Yes\nvport = 0\nfrequency = 868000000\nbandwidth = 125000\ntxpower = 7\nspreadingfactor = 8\ncodingrate = 5\n[[[Second]]]\ninterface_enabled = Yes\nvport = 0\n",
     )
     .unwrap_err();
-    assert!(has_code(
-        &errors,
-        ConfigDiagnosticCode::UnsupportedInterface
-    ));
+    assert_eq!(
+        errors
+            .diagnostics()
+            .iter()
+            .filter(|diagnostic| diagnostic.code() == ConfigDiagnosticCode::MissingRequiredKey)
+            .count(),
+        5
+    );
+    let duplicate = errors
+        .diagnostics()
+        .iter()
+        .find(|diagnostic| {
+            diagnostic.code() == ConfigDiagnosticCode::InvalidValue
+                && diagnostic.path().ends_with("vport")
+        })
+        .expect("duplicate vport diagnostic");
+    assert_eq!(duplicate.line(), 16);
+    assert!(duplicate
+        .message()
+        .contains("already assigned to subinterface \"First\""));
+    assert_eq!(duplicate.correction(), "set `vport = 1`");
+}
+
+#[test]
+fn rnode_multi_child_ranges_are_hardware_specific_and_aggregated() {
+    let errors = parse_named(
+        "/tmp/rns/config",
+        "[interfaces]\n[[Dual]]\ntype = RNodeMultiInterface\nenabled = Yes\nport = /dev/ttyACM0\n[[[Bad]]]\ninterface_enabled = Yes\nvport = 11\nfrequency = 1500000000\nbandwidth = 7799\ntxpower = -10\nspreadingfactor = 13\ncodingrate = 9\nairtime_limit_short = -1\nairtime_limit_long = 101\n",
+    )
+    .unwrap_err();
+    assert_eq!(errors.len(), 8);
+    let rendered = errors.to_string();
+    assert!(rendered.contains("an integer from 0 through 10"));
+    assert!(rendered.contains("137000000 through 1000000000 Hz"));
+    assert!(rendered.contains("2200000000 through 2600000000 Hz"));
+    assert!(rendered.contains("an integer from -9 through 37 dBm"));
+    assert!(rendered.contains("a percentage from 0 through 100"));
+}
+
+#[test]
+fn rnode_multi_nested_aliases_and_typos_keep_exact_locations() {
+    let errors = parse_named(
+        "/tmp/rns/config",
+        "[interfaces]\n[[Dual]]\ntype = RNodeMultiInterface\nenabled = Yes\nport = /dev/ttyACM0\n[[[Radio]]]\ninterface_enabled = Yes\nenabled = No\nvport = 0\nfrequency = 868000000\nbandwidth = 125000\ntxpower = 7\nspreadingfactor = 8\ncodingrate = 5\nflow_contol = Yes\n",
+    )
+    .unwrap_err();
+    let conflict = errors
+        .diagnostics()
+        .iter()
+        .find(|diagnostic| diagnostic.code() == ConfigDiagnosticCode::ConflictingAliases)
+        .expect("conflicting child aliases");
+    assert_eq!(conflict.line(), 8);
+    assert_eq!(
+        conflict.path(),
+        "[interfaces] > [[Dual]] > [[[Radio]]] > interface_enabled"
+    );
+    let typo = errors
+        .diagnostics()
+        .iter()
+        .find(|diagnostic| diagnostic.code() == ConfigDiagnosticCode::UnknownKey)
+        .expect("nested typo warning");
+    assert_eq!(typo.line(), 15);
+    assert!(typo.correction().contains("flow_control"));
+}
+
+#[test]
+fn rnode_multi_requires_at_least_one_enabled_child() {
+    for children in ["", "[[[Off]]]\ninterface_enabled = No\n"] {
+        let config = format!(
+            "[interfaces]\n[[Dual]]\ntype = RNodeMultiInterface\nenabled = Yes\nport = /dev/ttyACM0\n{children}"
+        );
+        let errors = parse(&config).unwrap_err();
+        assert!(errors.diagnostics().iter().any(|diagnostic| {
+            diagnostic.code() == ConfigDiagnosticCode::MissingRequiredKey
+                && diagnostic.path().ends_with("[[[subinterface]]]")
+        }));
+    }
+}
+
+#[test]
+fn rnode_multi_parent_does_not_absorb_child_only_radio_controls() {
+    let config = RNODE_MULTI.replacen(
+        "port = /dev/ttyACM0\n",
+        "port = /dev/ttyACM0\nflow_control = Yes\nairtime_limit_short = 2.0\n",
+        1,
+    );
+    let report = parse_named("/tmp/rns/config", &config).expect("warnings do not reject config");
+    let warnings = report
+        .warnings
+        .iter()
+        .filter(|warning| warning.code() == ConfigDiagnosticCode::UnknownKey)
+        .collect::<Vec<_>>();
+    assert_eq!(warnings.len(), 2);
+    assert!(warnings.iter().all(|warning| {
+        warning
+            .path()
+            .starts_with("[interfaces] > [[Dual Radio]] > ")
+            && !warning.path().contains("[[[Sub GHz]]]")
+    }));
+}
+
+#[test]
+fn rnode_multi_reference_parsing_does_not_claim_runtime_planning_support() {
+    let errors = crate::parse_and_plan(RNODE_MULTI).unwrap_err();
+    let unsupported = errors
+        .diagnostics()
+        .iter()
+        .find(|diagnostic| diagnostic.code() == ConfigDiagnosticCode::UnsupportedInterface)
+        .expect("runtime planning remains explicitly unavailable");
+    assert_eq!(unsupported.path(), "[interfaces] > [[Dual Radio]] > type");
+    assert!(unsupported.message().contains("RNodeMultiInterface"));
 }
 
 #[test]
