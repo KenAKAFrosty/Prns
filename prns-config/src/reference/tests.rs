@@ -355,7 +355,17 @@ fn disabled_publication_leaves_its_conditional_keys_uninterpreted() {
              listen_port = 4242\n\
              discoverable = No\n\
              announce_interval = not-an-integer\n\
-             discovery_stamp_value = not-an-integer\n",
+             discovery_stamp_value = not-an-integer\n\
+             discovery_name = anything\n\
+             discovery_encrypt = not-a-boolean\n\
+             reachable_on = anywhere\n\
+             publish_ifac = not-a-boolean\n\
+             latitude = not-a-number\n\
+             longitude = not-a-number\n\
+             height = not-a-number\n\
+             discovery_frequency = not-an-integer\n\
+             discovery_bandwidth = not-an-integer\n\
+             discovery_modulation = anything\n",
     )
     .unwrap();
     let config = report.value;
@@ -363,13 +373,17 @@ fn disabled_publication_leaves_its_conditional_keys_uninterpreted() {
     assert_eq!(spine.discovery.discoverable, Some(false));
     assert!(spine.extra.contains_key("announce_interval"));
     assert!(spine.extra.contains_key("discovery_stamp_value"));
+    assert!(spine.extra.contains_key("discovery_encrypt"));
+    assert!(spine.extra.contains_key("publish_ifac"));
+    assert!(spine.extra.contains_key("latitude"));
+    assert!(spine.extra.contains_key("discovery_frequency"));
     assert_eq!(
         report
             .warnings
             .iter()
             .filter(|diagnostic| diagnostic.code() == ConfigDiagnosticCode::IneffectiveSetting)
             .count(),
-        2
+        12
     );
     assert!(report
         .warnings

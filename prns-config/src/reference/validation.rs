@@ -12,8 +12,7 @@ use super::keys::{
     common as common_key, global as global_key, interface as interface_key, section as section_key,
 };
 use super::schema::{
-    interface_key_rule, known_interface_keys, KeyRule, ValueKind, AUTO_INTERFACE_FOLLOW_ON_KEYS,
-    DISCOVERY_DETAIL_KEYS, GLOBAL_FOLLOW_ON_KEYS, GLOBAL_RULES, INTERFACE_FOLLOW_ON_KEYS,
+    interface_key_rule, known_interface_keys, KeyApplication, KeyRule, ValueKind, GLOBAL_RULES,
     LOGGING_RULES, SUPPORTED_INTERFACES,
 };
 
@@ -137,16 +136,6 @@ pub(super) fn validate(
                     &mut warnings,
                     &mut errors,
                 );
-                warn_non_effective_settings(
-                    source,
-                    "[reticulum]",
-                    &[section_key::RETICULUM],
-                    section,
-                    GLOBAL_FOLLOW_ON_KEYS,
-                    locations,
-                    &mut warnings,
-                    SettingWarningKind::FollowOn,
-                );
             }
             section_key::LOGGING => validate_section(
                 source,
@@ -197,7 +186,7 @@ fn validate_section(
     display_path: &str,
     source_path: &[&str],
     section: &Section,
-    rules: &[(&str, ValueKind)],
+    rules: &[(&str, KeyRule)],
     locations: &SourceLocations,
     warnings: &mut ValidationWarnings,
     errors: &mut ValidationErrorCollector,
@@ -208,15 +197,30 @@ fn validate_section(
         key_path.push(key);
         let line = location(locations, &key_path);
         match rules.iter().find(|(known, _)| *known == key) {
-            Some((_, kind)) => validate_value(
-                source,
-                line,
-                format!("{display_path} > {key}"),
-                key,
-                value,
-                *kind,
-                errors,
-            ),
+            Some((_, rule)) => {
+                if let Some(kind) = rule.validation_kind(true) {
+                    validate_value(
+                        source,
+                        line,
+                        format!("{display_path} > {key}"),
+                        key,
+                        value,
+                        kind,
+                        errors,
+                    );
+                }
+                warn_for_application(
+                    source,
+                    display_path,
+                    source_path,
+                    key,
+                    value,
+                    rule.application(),
+                    true,
+                    locations,
+                    warnings,
+                );
+            }
             None => warnings.push(unknown_key(
                 source,
                 line,
@@ -281,55 +285,108 @@ fn warn_non_effective_settings(
         let Some(value) = section.get(key) else {
             continue;
         };
-        let mut key_path = source_path.to_vec();
-        key_path.push(key);
-        let (code, message, accepted, correction) = match reason {
-            SettingWarningKind::FollowOn if *key == interface_key::IGNORE_CONFIG_WARNINGS => (
-                ConfigDiagnosticCode::UnsupportedSetting,
-                format!("stock RNS setting {key:?} is not applied by this build"),
-                "omit this setting".to_string(),
-                format!("remove `{key}` and correct each reported configuration problem"),
-            ),
-            SettingWarningKind::FollowOn => (
-                ConfigDiagnosticCode::UnsupportedSetting,
-                format!("stock RNS setting {key:?} is not applied by this build"),
-                "omit this setting or use a build that implements it".to_string(),
-                format!(
-                    "remove `{key} = {}` until this feature is available",
-                    value_text(value)
-                ),
-            ),
-            SettingWarningKind::InapplicableInterfaceRole => (
-                ConfigDiagnosticCode::IneffectiveSetting,
-                format!("setting {key:?} is not applied by this interface role"),
-                "omit this setting for the selected listener or client role".to_string(),
-                format!("remove `{key} = {}` from this stanza", value_text(value)),
-            ),
-            SettingWarningKind::DiscoveryDisabled => (
-                ConfigDiagnosticCode::IneffectiveSetting,
-                format!("setting {key:?} is not applied while discovery publication is disabled"),
-                format!(
-                    "omit this setting or set {} = Yes",
-                    interface_key::DISCOVERABLE
-                ),
-                format!(
-                    "remove `{key} = {}`, or set `{}` = Yes",
-                    value_text(value),
-                    interface_key::DISCOVERABLE
-                ),
-            ),
-        };
-        warnings.push(ConfigDiagnostic::new(
-            code,
+        warn_non_effective_setting(
             source,
-            location(locations, &key_path),
-            format!("{display_path} > {key}"),
-            Some(value_text(value)),
-            message,
-            Some(accepted),
-            correction,
-        ));
+            display_path,
+            source_path,
+            key,
+            value,
+            locations,
+            warnings,
+            reason,
+        );
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn warn_non_effective_setting(
+    source: &str,
+    display_path: &str,
+    source_path: &[&str],
+    key: &str,
+    value: &Value,
+    locations: &SourceLocations,
+    warnings: &mut ValidationWarnings,
+    reason: SettingWarningKind,
+) {
+    let mut key_path = source_path.to_vec();
+    key_path.push(key);
+    let (code, message, accepted, correction) = match reason {
+        SettingWarningKind::FollowOn if key == interface_key::IGNORE_CONFIG_WARNINGS => (
+            ConfigDiagnosticCode::UnsupportedSetting,
+            format!("stock RNS setting {key:?} is not applied by this build"),
+            "omit this setting".to_string(),
+            format!("remove `{key}` and correct each reported configuration problem"),
+        ),
+        SettingWarningKind::FollowOn => (
+            ConfigDiagnosticCode::UnsupportedSetting,
+            format!("stock RNS setting {key:?} is not applied by this build"),
+            "omit this setting or use a build that implements it".to_string(),
+            format!(
+                "remove `{key} = {}` until this feature is available",
+                value_text(value)
+            ),
+        ),
+        SettingWarningKind::InapplicableInterfaceRole => (
+            ConfigDiagnosticCode::IneffectiveSetting,
+            format!("setting {key:?} is not applied by this interface role"),
+            "omit this setting for the selected listener or client role".to_string(),
+            format!("remove `{key} = {}` from this stanza", value_text(value)),
+        ),
+        SettingWarningKind::DiscoveryDisabled => (
+            ConfigDiagnosticCode::IneffectiveSetting,
+            format!("setting {key:?} is not applied while discovery publication is disabled"),
+            format!(
+                "omit this setting or set {} = Yes",
+                interface_key::DISCOVERABLE
+            ),
+            format!(
+                "remove `{key} = {}`, or set `{}` = Yes",
+                value_text(value),
+                interface_key::DISCOVERABLE
+            ),
+        ),
+    };
+    warnings.push(ConfigDiagnostic::new(
+        code,
+        source,
+        location(locations, &key_path),
+        format!("{display_path} > {key}"),
+        Some(value_text(value)),
+        message,
+        Some(accepted),
+        correction,
+    ));
+}
+
+#[allow(clippy::too_many_arguments)]
+fn warn_for_application(
+    source: &str,
+    display_path: &str,
+    source_path: &[&str],
+    key: &str,
+    value: &Value,
+    application: KeyApplication,
+    discovery_enabled: bool,
+    locations: &SourceLocations,
+    warnings: &mut ValidationWarnings,
+) {
+    let reason = match application {
+        KeyApplication::Applied => return,
+        KeyApplication::FollowOn => SettingWarningKind::FollowOn,
+        KeyApplication::DiscoveryOnly if discovery_enabled => return,
+        KeyApplication::DiscoveryOnly => SettingWarningKind::DiscoveryDisabled,
+    };
+    warn_non_effective_setting(
+        source,
+        display_path,
+        source_path,
+        key,
+        value,
+        locations,
+        warnings,
+        reason,
+    );
 }
 
 #[derive(Clone, Copy)]
@@ -451,17 +508,31 @@ fn validate_interface(
             continue;
         }
         let line = location(locations, &[section_key::INTERFACES, name, key]);
-        match interface_key_rule(type_name, key, discoverable) {
-            Some(KeyRule::Validate(kind)) => validate_value(
-                source,
-                line,
-                format!("{interface_path} > {key}"),
-                key,
-                value,
-                kind,
-                errors,
-            ),
-            Some(KeyRule::Recognized) => {}
+        match interface_key_rule(type_name, key) {
+            Some(rule) => {
+                if let Some(kind) = rule.validation_kind(discoverable) {
+                    validate_value(
+                        source,
+                        line,
+                        format!("{interface_path} > {key}"),
+                        key,
+                        value,
+                        kind,
+                        errors,
+                    );
+                }
+                warn_for_application(
+                    source,
+                    &interface_path,
+                    &interface_source_path,
+                    key,
+                    value,
+                    rule.application(),
+                    discoverable,
+                    locations,
+                    warnings,
+                );
+            }
             None => warnings.push(unknown_key(
                 source,
                 line,
@@ -471,34 +542,6 @@ fn validate_interface(
                 &known,
             )),
         }
-    }
-
-    let mut unsupported = INTERFACE_FOLLOW_ON_KEYS.to_vec();
-    if type_name == "AutoInterface" {
-        unsupported.extend(AUTO_INTERFACE_FOLLOW_ON_KEYS);
-    }
-    warn_non_effective_settings(
-        source,
-        &interface_path,
-        &[section_key::INTERFACES, name],
-        section,
-        &unsupported,
-        locations,
-        warnings,
-        SettingWarningKind::FollowOn,
-    );
-
-    if !discoverable {
-        warn_non_effective_settings(
-            source,
-            &interface_path,
-            &[section_key::INTERFACES, name],
-            section,
-            DISCOVERY_DETAIL_KEYS,
-            locations,
-            warnings,
-            SettingWarningKind::DiscoveryDisabled,
-        );
     }
 
     if matches!(type_name, "BackboneInterface" | "BackboneClientInterface") {
