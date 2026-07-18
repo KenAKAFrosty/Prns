@@ -243,10 +243,11 @@ impl<S: StorageLayout> EngineState<S> {
 mod tests {
     use super::*;
     use crate::engine::test_support::*;
-    use crate::engine::{Directive, EngineReaction, IngestIo, PATH_REQUEST_DESTINATION};
+    use crate::engine::{Directive, EngineReaction, IngestIo};
     use crate::interfaces::{InboundPacket, InterfaceDescriptor};
     use crate::routing::ingress::testkit::iface;
     use crate::routing::ingress::AnnounceIngest;
+    use crate::routing::path_requests::{write_path_request_wire_packet, PATH_REQUEST_DESTINATION};
     use crate::wire::{
         ContextFlag, IfacFlag, PacketType, PropagationType, WireContext, WirePacketHeader,
         BROADCAST_MTU, HEADER_MIN_LEN,
@@ -284,8 +285,7 @@ mod tests {
         let local = personal_node_destination();
 
         let mut buf = [0u8; BROADCAST_MTU];
-        let n = crate::engine::write_path_request_wire_packet(local, None, &[0x55; 16], &mut buf)
-            .unwrap();
+        let n = write_path_request_wire_packet(local, None, &[0x55; 16], &mut buf).unwrap();
         let mut wire = buf[..n].to_vec();
         assert_eq!(
             state.ingest_packet_with(
@@ -307,7 +307,7 @@ mod tests {
     fn a_leaf_ignores_a_path_request_for_a_stranger() {
         let mut leaf: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
         let mut buf = [0u8; BROADCAST_MTU];
-        let n = crate::engine::write_path_request_wire_packet(
+        let n = write_path_request_wire_packet(
             DestinationHash::new([0x44; 16]),
             None,
             &[0x55; 16],
@@ -428,13 +428,9 @@ mod tests {
 
     fn stranger_path_request(id: [u8; 16]) -> std::vec::Vec<u8> {
         let mut buf = [0u8; BROADCAST_MTU];
-        let n = crate::engine::write_path_request_wire_packet(
-            DestinationHash::new([0x44; 16]),
-            None,
-            &id,
-            &mut buf,
-        )
-        .unwrap();
+        let n =
+            write_path_request_wire_packet(DestinationHash::new([0x44; 16]), None, &id, &mut buf)
+                .unwrap();
         buf[..n].to_vec()
     }
 
@@ -480,7 +476,7 @@ mod tests {
         let mut dropped_after_forwarding = false;
         for dest_byte in 1..=8u8 {
             let mut buf = [0u8; BROADCAST_MTU];
-            let n = crate::engine::write_path_request_wire_packet(
+            let n = write_path_request_wire_packet(
                 DestinationHash::new([dest_byte; 16]),
                 None,
                 &[dest_byte; 16],
@@ -678,7 +674,7 @@ mod tests {
 
         for byte in 1..=7u8 {
             let mut buf = [0u8; BROADCAST_MTU];
-            let n = crate::engine::write_path_request_wire_packet(
+            let n = write_path_request_wire_packet(
                 DestinationHash::new([byte; 16]),
                 None,
                 &[byte; 16],
@@ -860,9 +856,7 @@ mod tests {
 
     fn path_request_wire(destination: DestinationHash) -> std::vec::Vec<u8> {
         let mut buf = [0u8; BROADCAST_MTU];
-        let n =
-            crate::engine::write_path_request_wire_packet(destination, None, &[0x55; 16], &mut buf)
-                .unwrap();
+        let n = write_path_request_wire_packet(destination, None, &[0x55; 16], &mut buf).unwrap();
         buf[..n].to_vec()
     }
 
