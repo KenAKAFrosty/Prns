@@ -1,28 +1,32 @@
-use std::vec::Vec;
+use alloc::vec::Vec;
 
 use prns_core::identity::IdentityHash;
 use prns_core::interfaces::shared_instance::rns_rpc::{
-    DestinationDataOperation, LegacyRpcReplyPlan, RnsRpcReply, RnsRpcRequest, RpcOperationOutcome,
-    RpcRequest, RpcVerb,
+    DestinationDataOperation, LegacyRpcReplyPlan, RnsRpcReply, RnsRpcReplyEncodeError,
+    RnsRpcRequest, RpcOperationOutcome, RpcRequest, RpcVerb,
 };
 use prns_core::routing::{BlackholeExpiry, BlackholedIdentity};
 use prns_core::wire::DestinationHash;
-use prns_runtime::node_introspection::NodeIntrospection;
-use prns_runtime::runtime::rns_management::{announce_rate_table, interface_stats};
-use prns_runtime::runtime::{
+
+use super::node_introspection::NodeIntrospection;
+use super::rns_management::{announce_rate_table, interface_stats};
+use super::{
     DestinationIdentityRetentionControl, DestinationIdentityRetentionControlError,
     IdentityBlackholeControl, IdentityBlackholeControlError, IdentityBlackholeSource,
     IdentityBlackholeSourceError, RoutingControl, RoutingControlError,
 };
 
-pub(super) async fn reply_for_decoded<B>(
+#[cfg(test)]
+mod tests;
+
+pub async fn reply<B>(
     request: &RpcRequest<'_>,
     query: &impl NodeIntrospection,
     control: &impl RoutingControl,
     retention: &impl DestinationIdentityRetentionControl,
     blackholes: &B,
     blackhole_source: IdentityHash,
-) -> std::io::Result<Vec<u8>>
+) -> Result<Vec<u8>, RnsRpcReplyEncodeError>
 where
     B: IdentityBlackholeSource + IdentityBlackholeControl,
 {
@@ -42,9 +46,7 @@ where
             .await
         }
     };
-    reply
-        .encode(request.dialect())
-        .map_err(std::io::Error::other)
+    reply.encode(request.dialect())
 }
 
 async fn reply_for_msgpack<B>(

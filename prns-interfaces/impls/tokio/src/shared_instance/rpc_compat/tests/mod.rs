@@ -10,13 +10,10 @@ use prns_core::interfaces::shared_instance::rns_rpc::{
     RnsRpcRequest, RpcAuthenticationControlMessage, RpcAuthenticationKey, RpcChallengeNonce,
     RpcDigest, RpcRequest, RpcVerb, AUTHENTICATION_FRAME_MAX_LENGTH, LEGACY_MD5_MESSAGE_LENGTH,
 };
-use prns_core::interfaces::{
-    ConnectionState, InterfaceId, PacketPhyStats, RssiDbm, SignalQualityTenthsPercent, SnrQuarterDb,
-};
-use prns_core::routing::dedup::{PacketHash, PACKET_HASH_LEN};
-use prns_core::routing::types::NextHop;
+use prns_core::interfaces::PacketPhyStats;
+use prns_core::routing::dedup::PacketHash;
 use prns_core::routing::{
-    BlackholeExpiry, BlackholeIdentityOutcome, BlackholedIdentity, UnblackholeIdentityOutcome,
+    BlackholeIdentityOutcome, BlackholedIdentity, UnblackholeIdentityOutcome,
 };
 use prns_core::wire::{DestinationHash, TransportId};
 use prns_runtime::node_introspection::{
@@ -32,7 +29,6 @@ use rmpv::Value;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 
 use super::authentication::{deliver_our_challenge, SharedInstanceCredentials};
-use super::dispatch::reply_for_decoded;
 use super::framing::{read_auth_frame, read_frame, write_frame, write_frame_header};
 #[cfg(target_os = "linux")]
 use super::server::{bind_abstract_rpc, RpcBind};
@@ -44,9 +40,6 @@ mod authentication;
 mod dialects;
 mod framing;
 mod listeners;
-mod management;
-mod queries;
-mod routes;
 mod storage;
 mod support;
 

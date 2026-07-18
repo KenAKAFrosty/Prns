@@ -1,14 +1,11 @@
 use std::collections::{BTreeMap, VecDeque};
-use std::future::Future;
 use std::string::String;
 use std::vec::Vec;
 
 use tokio::sync::oneshot;
 
 use crate::engine::{AnnounceRateState, InstantMillis};
-use crate::interfaces::PacketPhyStats;
 use crate::routing::announce::AnnounceRateAccounting;
-use crate::routing::dedup::PacketHash;
 use crate::wire::DestinationHash;
 
 pub use crate::engine::RouteSnapshot;
@@ -19,27 +16,10 @@ type CoreInterfaceInventoryEntry =
     prns_runtime::runtime::node_introspection::InterfaceInventoryEntry<String>;
 
 pub use prns_runtime::runtime::node_introspection::{
-    logical_interface_inventory, AnnounceRateSnapshot,
+    logical_interface_inventory, AnnounceRateSnapshot, NodeIntrospection,
 };
 pub type InterfaceIfacSnapshot = CoreInterfaceIfacSnapshot;
 pub type InterfaceInventoryEntry = CoreInterfaceInventoryEntry;
-
-pub trait NodeIntrospection {
-    fn interface_inventory(&self) -> Vec<InterfaceInventoryEntry>;
-
-    fn link_count(&self) -> impl Future<Output = u32> + Send;
-
-    fn packet_phy(&self, packet_hash: PacketHash) -> Option<PacketPhyStats>;
-
-    fn announce_rates(&self) -> impl Future<Output = Vec<AnnounceRateSnapshot>> + Send;
-
-    fn routes(&self) -> impl Future<Output = Vec<RouteSnapshot>> + Send;
-
-    fn route(
-        &self,
-        destination: DestinationHash,
-    ) -> impl Future<Output = Option<RouteSnapshot>> + Send;
-}
 
 pub enum NodeIntrospectionRequest {
     LinkCount {
