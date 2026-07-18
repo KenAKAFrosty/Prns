@@ -6,7 +6,7 @@ use crate::routing::links::resources::ResourceHash;
 
 #[test]
 fn settle_fires_the_awaited_completion_and_suppresses_the_event() {
-    let delivery = JournalDelivery::default();
+    let mut delivery = JournalDelivery::default();
     let (completion, mut settled) = oneshot::channel();
     delivery.register_completion(CommandId(7), completion);
 
@@ -29,14 +29,14 @@ fn settle_fires_the_awaited_completion_and_suppresses_the_event() {
         settlement
     );
     assert!(
-        delivery.completions.borrow().is_empty(),
+        delivery.completions.is_empty(),
         "the awaiter is removed from the registry once fired"
     );
 }
 
 #[test]
 fn settle_forwards_a_settlement_nobody_awaits() {
-    let delivery = JournalDelivery::default();
+    let mut delivery = JournalDelivery::default();
     let forwarded = delivery.route(Journaled::CommandSettled {
         id: CommandId(3),
         settlement: Settlement::SendSinglePacket(Ok(PacketReceiptDelivered {
@@ -52,7 +52,7 @@ fn settle_forwards_a_settlement_nobody_awaits() {
 const RES_LINK: LinkId = LinkId::new([0x44; 16]);
 
 fn resource_delivery() -> (JournalDelivery, mpsc::UnboundedReceiver<ResourceInbound>) {
-    let delivery = JournalDelivery::default();
+    let mut delivery = JournalDelivery::default();
     let (sink, receiver) = mpsc::unbounded_channel();
     delivery.register_resource_sink(RES_LINK, sink);
     (delivery, receiver)
@@ -60,7 +60,7 @@ fn resource_delivery() -> (JournalDelivery, mpsc::UnboundedReceiver<ResourceInbo
 
 #[test]
 fn route_resource_routes_a_segment_and_keeps_the_sink() {
-    let (delivery, mut receiver) = resource_delivery();
+    let (mut delivery, mut receiver) = resource_delivery();
     let forwarded = delivery.route(Journaled::ResourceSegmentReceived {
         link_id: RES_LINK,
         original_hash: ResourceHash::new([1; 32]),
@@ -78,14 +78,14 @@ fn route_resource_routes_a_segment_and_keeps_the_sink() {
         Ok(ResourceInbound::Chunk(chunk)) if chunk == b"first"
     ));
     assert!(
-        delivery.resource_sinks.borrow().contains_key(&RES_LINK),
+        delivery.resource_sinks.contains_key(&RES_LINK),
         "the sink stays for the segments still to come"
     );
 }
 
 #[test]
 fn route_resource_completes_and_retires_on_assembly() {
-    let (delivery, mut receiver) = resource_delivery();
+    let (mut delivery, mut receiver) = resource_delivery();
     let forwarded = delivery.route(Journaled::ResourceAssembled {
         link_id: RES_LINK,
         original_hash: ResourceHash::new([2; 32]),
@@ -100,14 +100,14 @@ fn route_resource_completes_and_retires_on_assembly() {
         })
     ));
     assert!(
-        delivery.resource_sinks.borrow().is_empty(),
+        delivery.resource_sinks.is_empty(),
         "an assembled resource retires its one-shot sink"
     );
 }
 
 #[test]
 fn route_resource_delivers_a_single_segment_then_retires() {
-    let (delivery, mut receiver) = resource_delivery();
+    let (mut delivery, mut receiver) = resource_delivery();
     let forwarded = delivery.route(Journaled::ResourceReceived {
         link_id: RES_LINK,
         hash: ResourceHash::new([3; 32]),
@@ -124,14 +124,14 @@ fn route_resource_delivers_a_single_segment_then_retires() {
         Ok(ResourceInbound::Complete { total_size: 5, .. })
     ));
     assert!(
-        delivery.resource_sinks.borrow().is_empty(),
+        delivery.resource_sinks.is_empty(),
         "a single-segment resource completes and retires in one go"
     );
 }
 
 #[test]
 fn route_resource_passes_through_an_unregistered_link() {
-    let delivery = JournalDelivery::default();
+    let mut delivery = JournalDelivery::default();
     let forwarded = delivery.route(Journaled::ResourceSegmentReceived {
         link_id: RES_LINK,
         original_hash: ResourceHash::new([4; 32]),
