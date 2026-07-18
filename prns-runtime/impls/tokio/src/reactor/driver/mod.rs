@@ -26,13 +26,13 @@ use crate::routing::links::resources::{
 };
 use crate::routing::links::resources::{MAP_HASH_LEN, RESOURCE_NONCE_LEN};
 use crate::routing::proof::EXPLICIT_PROOF_WIRE_LEN;
-use crate::runtime::node_introspection::{AnnounceRateHistory, NodeIntrospectionRequest};
+use crate::runtime::node_introspection::NodeIntrospectionRequest;
+#[cfg(feature = "runtime-metrics")]
+use crate::runtime::RuntimeMetricsSnapshot;
 use crate::runtime::{
     apply_destination_identity_retention_command, apply_identity_blackhole_command,
     ClearAnnounceQueuesOutcome, DropRouteOutcome, DropRoutesViaOutcome, InterfaceStore,
 };
-#[cfg(feature = "runtime-metrics")]
-use crate::runtime::{ReliabilityMetricsSnapshot, RuntimeMetricsSnapshot};
 use crate::storage::{DirtyInterfaceSet, StorageLayout};
 use crate::wire::DestinationHash;
 
@@ -74,7 +74,7 @@ use egress::{
 use egress::{offer_to_pacer, InterfacePacer, PacedAnnounce, TokioAnnouncePacer};
 use host::bounded_timer_deadline;
 use interface_topology::InterfaceTopology;
-use journal_delivery::JournalDelivery;
+use journal_delivery::JournalDispatch;
 
 fn retain_packet_phy(
     store: Option<&InterfaceStore>,
@@ -169,7 +169,7 @@ async fn run_inner<S, H, J, P, A>(
     mut engine: EngineState<S>,
     mut host: H,
     wiring: ReactorWiring,
-    mut on_journaled: J,
+    on_journaled: J,
     deciders: AppDeciders<P, A>,
     store: Option<InterfaceStore>,
     crypto_pool_config: CryptoPoolConfig,
@@ -198,30 +198,10 @@ async fn run_inner<S, H, J, P, A>(
     let mut scratch_cap = topology.frame_cap();
     let mut wire_scratch = WireScratch::new(scratch_cap);
     let mut unmask_scratch = std::vec![0u8; scratch_cap].into_boxed_slice();
-    let journal_delivery = JournalDelivery::default();
-    let mut announce_rate_history = AnnounceRateHistory::default();
-    #[cfg(feature = "runtime-metrics")]
-    let mut reliability = ReliabilityMetricsSnapshot::default();
+    let mut journal = JournalDispatch::new(on_journaled);
     macro_rules! journaled_sink {
         () => {
-            |journaled: Journaled<'_>| {
-                if let Journaled::AnnounceHeard {
-                    observation,
-                    rate_accounting,
-                } = &journaled
-                {
-                    announce_rate_history.record(
-                        observation.destination,
-                        observation.arrived_at,
-                        *rate_accounting,
-                    );
-                }
-                #[cfg(feature = "runtime-metrics")]
-                reliability.record_journaled(&journaled);
-                if let Some(journaled) = journal_delivery.route(journaled) {
-                    on_journaled(journaled);
-                }
-            }
+            |journaled| journal.route(journaled)
         };
     }
     macro_rules! defer_send_single_packet {
@@ -595,7 +575,7 @@ async fn run_inner<S, H, J, P, A>(
                     }
                     HostCommand::AwaitedEngine { issued, completion } => {
                         let id = issued.id;
-                        journal_delivery.register_completion(id, completion);
+                        journal.register_completion(id, completion);
                         match (crypto_pool.as_ref(), issued.command) {
                             (Some(pool), EngineCommand::SendSinglePacket(send)) => {
                                 defer_send_single_packet!(pool, id, send, now)
@@ -630,7 +610,7 @@ async fn run_inner<S, H, J, P, A>(
                         &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                     ),
                     HostCommand::SendResourceSegment(send) => {
-                        journal_delivery.register_completion(send.id, send.completion);
+                        journal.register_completion(send.id, send.completion);
                         engine.ingest_send_resource_segment_into(
                             &ResourceSend {
                                 id: send.id,
@@ -706,7 +686,7 @@ async fn run_inner<S, H, J, P, A>(
                             data,
                             completion,
                         } = request;
-                        journal_delivery.register_request(id, completion);
+                        journal.register_request(id, completion);
                         let payload = data.as_slice();
                         if engine.request_fits_packet(&link_id, payload) {
                             match SendRequestData::from_slice(payload) {
@@ -724,7 +704,7 @@ async fn run_inner<S, H, J, P, A>(
                                     &mut |entropy| host.fill_entropy(entropy),
                                     &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                                 ),
-                                Err(_) => journal_delivery.fail_request(id),
+                                Err(_) => journal.fail_request(id),
                             }
                         } else {
                             let mut packed =
@@ -749,7 +729,7 @@ async fn run_inner<S, H, J, P, A>(
                                         &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                                     )
                                 }
-                                Err(_) => journal_delivery.fail_request(id),
+                                Err(_) => journal.fail_request(id),
                             }
                         }
                     }
@@ -834,7 +814,7 @@ async fn run_inner<S, H, J, P, A>(
                             NodeIntrospectionRequest::AnnounceRates { reply } => {
                                 let mut snapshots = std::vec::Vec::new();
                                 engine.visit_announce_rate_states(|state| {
-                                    snapshots.push(announce_rate_history.snapshot(state));
+                                    snapshots.push(journal.announce_rate_snapshot(state));
                                 });
                                 let _ = reply.send(snapshots);
                             }
@@ -881,7 +861,7 @@ async fn run_inner<S, H, J, P, A>(
                         sink,
                         ready,
                     } => {
-                        journal_delivery.register_stream_reader(link_id, stream_id, sink);
+                        journal.register_stream_reader(link_id, stream_id, sink);
                         let _ = ready.send(());
                         WakeSchedules::UNCHANGED
                     }
@@ -890,7 +870,7 @@ async fn run_inner<S, H, J, P, A>(
                         sink,
                         ready,
                     } => {
-                        journal_delivery.register_resource_sink(link_id, sink);
+                        journal.register_resource_sink(link_id, sink);
                         let _ = ready.send(());
                         WakeSchedules::UNCHANGED
                     }
@@ -925,7 +905,7 @@ async fn run_inner<S, H, J, P, A>(
                             engine: engine.metrics_snapshot(),
                             egress: topology.egress.metrics_snapshot(&topology.pacers),
                             crypto: crypto_pool.as_ref().map(CryptoPool::metrics_snapshot),
-                            reliability,
+                            reliability: journal.reliability_metrics(),
                         });
                         WakeSchedules::UNCHANGED
                     }
