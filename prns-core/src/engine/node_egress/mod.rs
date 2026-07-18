@@ -1,11 +1,13 @@
+mod announce_selection;
 mod fanout;
 
+pub(super) use announce_selection::{
+    allows_announce_rebroadcast, fleet_announce_fan_target, fleet_fan_target_reaches_any_member,
+};
 pub(super) use fanout::{fan_announce, fan_frame};
 
 use crate::crypto::Ed25519Signature;
-use crate::engine::FanTarget;
-use crate::interfaces::AttachedInterfaces;
-use crate::interfaces::{InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceMode};
+use crate::interfaces::InterfaceId;
 use crate::routing::announce::Announce;
 use crate::routing::dedup::{PacketHash, PACKET_HASH_LEN};
 use crate::routing::links::LinkId;
@@ -262,96 +264,6 @@ pub fn write_path_request_wire_packet(
     Ok(total_len)
 }
 
-pub(crate) fn firable_on(
-    descriptor: &InterfaceDescriptor,
-    source: InterfaceId,
-    next_hop_mode: Option<InterfaceMode>,
-) -> bool {
-    let transports = if descriptor.id == source {
-        descriptor.capabilities.allows_same_interface_repeat()
-    } else {
-        descriptor.capabilities.allows_transport()
-    };
-    transports
-        && mode_allows_announce_egress(
-            descriptor.mode,
-            next_hop_mode,
-            descriptor.common.forwarding.announces_from_internal,
-        )
-}
-
-/// RNS 1.3.5 `Transport.outbound` announce mode gating.
-fn mode_allows_announce_egress(
-    egress: InterfaceMode,
-    next_hop_mode: Option<InterfaceMode>,
-    announces_from_internal: bool,
-) -> bool {
-    use InterfaceMode::{AccessPoint, Boundary, Full, Gateway, Internal, PointToPoint, Roaming};
-    if !announces_from_internal && next_hop_mode == Some(Internal) {
-        return false;
-    }
-    match egress {
-        AccessPoint => false,
-        Roaming => match next_hop_mode {
-            None | Some(Roaming | Boundary) => false,
-            Some(Full | PointToPoint | AccessPoint | Gateway | Internal) => true,
-        },
-        Boundary => match next_hop_mode {
-            None | Some(Roaming) => false,
-            Some(Full | PointToPoint | AccessPoint | Gateway | Boundary | Internal) => true,
-        },
-        Internal => !matches!(next_hop_mode, Some(Boundary)),
-        Full | PointToPoint | Gateway => true,
-    }
-}
-
-/// A fleet is one shared medium, so the engine emits one [`crate::engine::Directive::SendAnnounceToFleet`] per fleet instead of one send per member.
-/// That collapses the per-member eligibility verdicts into the single [`FanTarget`] the broadcast carries.
-/// The collapse is sound because a supervisor's members are uniform: the only member-by-member difference is whether the flood's own source interface is withheld, and the fan target captures exactly that.
-pub(crate) fn fleet_announce_fan_target(
-    interfaces: AttachedInterfaces<'_>,
-    supervisor: InterfaceKind,
-    source: InterfaceId,
-    directed_to: Option<InterfaceId>,
-) -> FanTarget {
-    if let Some(target) = directed_to {
-        return FanTarget::Only(target);
-    }
-    if source.kind() != supervisor.member_kind() {
-        return FanTarget::All;
-    }
-    let source_repeats = interfaces
-        .iter()
-        .find(|c| c.id == source)
-        .is_some_and(|c| c.capabilities.allows_same_interface_repeat());
-    if source_repeats {
-        FanTarget::All
-    } else {
-        FanTarget::AllExcept(source)
-    }
-}
-
-/// Whether the fan would reach at least one member of the supervisor's fleet among the attached interfaces.
-/// A flood that arrived from the fleet's only member fans to everyone except that member, which is nobody.
-/// The caller skips the fleet directive then, rather than spend the fleet's one shared lane delivering to no one.
-pub(crate) fn fleet_fan_target_reaches_any_member(
-    interfaces: AttachedInterfaces<'_>,
-    supervisor: InterfaceKind,
-    fan_target: FanTarget,
-) -> bool {
-    let Some(member_kind) = supervisor.member_kind() else {
-        return false;
-    };
-    interfaces
-        .iter()
-        .filter(|descriptor| descriptor.id.kind() == Some(member_kind))
-        .any(|descriptor| match fan_target {
-            FanTarget::All => true,
-            FanTarget::Only(target) => descriptor.id == target,
-            FanTarget::AllExcept(excluded) => descriptor.id != excluded,
-        })
-}
-
 #[derive(Debug)]
 pub struct ReemitAnnounce<'a> {
     pub announce: Announce<'a>,
@@ -374,50 +286,6 @@ impl ReemitAnnounce<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_fleet_flood_to_a_lone_source_member_reaches_nobody() {
-        use crate::engine::test_support::routable_descriptor;
-
-        let source = InterfaceId::new([InterfaceKind::BluetoothPeer as u8, 0x42, 0, 0, 0, 0, 0, 0]);
-        let other = InterfaceId::new([InterfaceKind::BluetoothPeer as u8, 0x77, 0, 0, 0, 0, 0, 0]);
-
-        let lone = [routable_descriptor(source)];
-        assert!(
-            !fleet_fan_target_reaches_any_member(
-                AttachedInterfaces::new(&lone),
-                InterfaceKind::BluetoothAuto,
-                FanTarget::AllExcept(source)
-            ),
-            "a flood whose fleet's only member is the source it arrived on reaches nobody"
-        );
-
-        let pair = [routable_descriptor(source), routable_descriptor(other)];
-        assert!(
-            fleet_fan_target_reaches_any_member(
-                AttachedInterfaces::new(&pair),
-                InterfaceKind::BluetoothAuto,
-                FanTarget::AllExcept(source)
-            ),
-            "with a second peer present the flood reaches it"
-        );
-        assert!(
-            fleet_fan_target_reaches_any_member(
-                AttachedInterfaces::new(&lone),
-                InterfaceKind::BluetoothAuto,
-                FanTarget::All
-            ),
-            "an unconditional flood reaches the lone member"
-        );
-        assert!(
-            !fleet_fan_target_reaches_any_member(
-                AttachedInterfaces::new(&[routable_descriptor(InterfaceId::new([0xFE; 8]))]),
-                InterfaceKind::BluetoothAuto,
-                FanTarget::All
-            ),
-            "a flood selects nobody when no member of the fleet's kind is attached"
-        );
-    }
 
     const TEST_VIA: TransportId = TransportId::new([0x7A; 16]);
 
@@ -500,34 +368,6 @@ mod tests {
             ),
             Err(EgressSerializeError::BufferTooShort),
         );
-    }
-
-    #[test]
-    fn internal_mode_blocks_boundary_announces_but_accepts_internal_announces() {
-        assert!(!mode_allows_announce_egress(
-            InterfaceMode::Internal,
-            Some(InterfaceMode::Boundary),
-            true,
-        ));
-        assert!(mode_allows_announce_egress(
-            InterfaceMode::Internal,
-            Some(InterfaceMode::Internal),
-            true,
-        ));
-    }
-
-    #[test]
-    fn announces_from_internal_can_close_the_internal_to_boundary_direction() {
-        assert!(!mode_allows_announce_egress(
-            InterfaceMode::Boundary,
-            Some(InterfaceMode::Internal),
-            false,
-        ));
-        assert!(mode_allows_announce_egress(
-            InterfaceMode::Boundary,
-            Some(InterfaceMode::Internal),
-            true,
-        ));
     }
 
     #[test]

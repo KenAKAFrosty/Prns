@@ -1,5 +1,6 @@
 use crate::engine::node_egress::{
-    fan_frame, firable_on, fleet_announce_fan_target, fleet_fan_target_reaches_any_member,
+    allows_announce_rebroadcast, fan_frame, fleet_announce_fan_target,
+    fleet_fan_target_reaches_any_member,
 };
 use crate::engine::settlement::{settle, timeout_settlement};
 #[cfg(feature = "runtime-metrics")]
@@ -152,7 +153,7 @@ impl<S: StorageLayout> EngineState<S> {
                         }
                         None => {
                             descriptor.id.kind() != Some(InterfaceKind::LocalClient)
-                                && firable_on(descriptor, source, next_hop_mode)
+                                && allows_announce_rebroadcast(descriptor, source, next_hop_mode)
                         }
                     };
                     if !eligible {
