@@ -6,13 +6,16 @@ use prns_core::interface_discovery::{
 use prns_core::interfaces::BitrateBps;
 
 use super::interface::{
-    global_announce_rate, global_common_policy, plan_interface, DeferredInterface, PlannedInterface,
+    global_announce_rate, global_common_policy, plan_interface, PlanErrorKind, PlannedInterface,
 };
-use super::reference_globals::{global_bool, global_string, global_u16, global_u64};
+use super::reference_globals::{decode_hex, global_bool, global_string, global_u16, global_u64};
+use super::rnode_multi;
 use crate::reference::keys::{
-    global as global_key, logging as logging_key, section as section_key,
+    global as global_key, interface as interface_key, logging as logging_key,
+    section as section_key,
 };
-use crate::reference::ReferenceConfig;
+use crate::reference::{ReferenceConfig, ReferenceParams};
+use crate::{ConfigDiagnostic, ConfigDiagnosticCode, ConfigErrors, ConfigReport, SourceLocations};
 
 /// The complete, host-agnostic description of a node to stand up, projected from a stock RNS config.
 #[derive(Debug, Clone, PartialEq)]
@@ -25,10 +28,7 @@ pub struct DaemonPlan {
     pub panic_on_interface_error: bool,
     pub network_identity_path: Option<PathBuf>,
     pub discovery: InterfaceDiscoveryPolicy,
-    /// The interfaces a host can construct from this config, in config order.
     pub interfaces: Vec<PlannedInterface>,
-    /// The interfaces this config named that the node will not stand up, each with its reason.
-    pub deferred: Vec<DeferredInterface>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,15 +109,71 @@ pub enum SharedInstanceTransport {
     Unix,
 }
 
-/// Project a faithful reference config onto the node a host should stand up.
-#[must_use]
-pub fn plan(config: &ReferenceConfig) -> DaemonPlan {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PlanError {
+    interface_name: String,
+    interface_type: String,
+    subinterface_name: Option<String>,
+    kind: PlanErrorKind,
+}
+
+pub fn parse_and_plan(input: &str) -> Result<ConfigReport<DaemonPlan>, ConfigErrors> {
+    parse_and_plan_named("config", input)
+}
+
+pub fn parse_and_plan_named(
+    source: impl Into<String>,
+    input: &str,
+) -> Result<ConfigReport<DaemonPlan>, ConfigErrors> {
+    let report = crate::reference::parse_named(source, input)?;
+    let ConfigReport {
+        value,
+        warnings,
+        source,
+        locations,
+    } = report;
+    match build_plan(&value) {
+        Ok(value) => Ok(ConfigReport {
+            value,
+            warnings,
+            source,
+            locations,
+        }),
+        Err(errors) => {
+            let mut diagnostics = errors
+                .iter()
+                .map(|error| planning_diagnostic(&source, &locations, error))
+                .collect::<Vec<_>>();
+            diagnostics.extend(warnings);
+            Err(ConfigErrors::new(diagnostics))
+        }
+    }
+}
+
+fn build_plan(config: &ReferenceConfig) -> Result<DaemonPlan, Vec<PlanError>> {
     let mut interfaces = Vec::new();
-    let mut deferred = Vec::new();
+    let mut errors = Vec::new();
     let transport = transport_plan(config);
     let common = global_common_policy(config);
     let announce_rate = global_announce_rate(config);
     for interface in &config.interfaces {
+        if matches!(interface.params, ReferenceParams::RnodeMulti { .. }) {
+            match rnode_multi::plan(
+                interface,
+                common,
+                announce_rate,
+                transport.routing_enabled(),
+            ) {
+                Ok(planned) => interfaces.extend(planned),
+                Err(failure) => errors.push(PlanError {
+                    interface_name: interface.name.clone(),
+                    interface_type: interface.type_name.clone(),
+                    subinterface_name: failure.subinterface_name,
+                    kind: failure.kind,
+                }),
+            }
+            continue;
+        }
         match plan_interface(
             interface,
             common,
@@ -125,14 +181,18 @@ pub fn plan(config: &ReferenceConfig) -> DaemonPlan {
             transport.routing_enabled(),
         ) {
             Ok(planned) => interfaces.push(planned),
-            Err(reason) => deferred.push(DeferredInterface {
-                name: interface.name.clone(),
-                type_name: interface.type_name.clone(),
-                why: reason,
+            Err(kind) => errors.push(PlanError {
+                interface_name: interface.name.clone(),
+                interface_type: interface.type_name.clone(),
+                subinterface_name: None,
+                kind,
             }),
         }
     }
-    DaemonPlan {
+    if !errors.is_empty() {
+        return Err(errors);
+    }
+    Ok(DaemonPlan {
         transport,
         shared_instance: shared_instance(config),
         protocol: ProtocolPlan {
@@ -153,8 +213,76 @@ pub fn plan(config: &ReferenceConfig) -> DaemonPlan {
         network_identity_path: config.network_identity_path.as_deref().map(PathBuf::from),
         discovery: discovery_policy(config),
         interfaces,
-        deferred,
+    })
+}
+
+fn planning_diagnostic(
+    source: &str,
+    locations: &SourceLocations,
+    error: &PlanError,
+) -> ConfigDiagnostic {
+    let display_section = error.subinterface_name.as_ref().map_or_else(
+        || format!("[interfaces] > [[{}]]", error.interface_name),
+        |name| format!("[interfaces] > [[{}]] > [[[{name}]]]", error.interface_name),
+    );
+    let correction_section = error.subinterface_name.as_ref().map_or_else(
+        || format!("[[{}]]", error.interface_name),
+        |name| format!("[[[{name}]]]"),
+    );
+    let configured_subject = if error.subinterface_name.is_some() {
+        "enabled RNodeMulti subinterface"
+    } else {
+        "enabled interface"
+    };
+    let (code, key, message, accepted, correction) = match error.kind {
+        PlanErrorKind::UnsupportedKind => (
+            ConfigDiagnosticCode::UnsupportedInterface,
+            interface_key::TYPE,
+            format!(
+                "interface type {:?} is not available in this build",
+                error.interface_type
+            ),
+            "an interface type supported by this build".to_string(),
+            format!(
+                "set `{}` = No for [[{}]]",
+                interface_key::ENABLED,
+                error.interface_name
+            ),
+        ),
+        PlanErrorKind::MissingRequiredField { key } => (
+            ConfigDiagnosticCode::MissingRequiredKey,
+            key,
+            format!("{configured_subject} is missing required setting {key:?}"),
+            format!("a valid {key} value"),
+            format!("add `{key} = value` under {correction_section}"),
+        ),
+        PlanErrorKind::InvalidSetting { key } => (
+            ConfigDiagnosticCode::InvalidValue,
+            key,
+            format!("setting {key:?} cannot be represented by this build"),
+            format!("a valid, representable {key} value"),
+            format!("replace `{key}` under {correction_section}"),
+        ),
+    };
+    let mut path = vec![section_key::INTERFACES, error.interface_name.as_str()];
+    if let Some(subinterface) = &error.subinterface_name {
+        path.push(subinterface);
     }
+    let section_path = path.clone();
+    path.push(key);
+    let line = locations
+        .line(path.iter().copied())
+        .or_else(|| locations.line(section_path.iter().copied()));
+    ConfigDiagnostic::new(
+        code,
+        source,
+        line.unwrap_or(1),
+        format!("{display_section} > {key}"),
+        None,
+        message,
+        Some(accepted),
+        correction,
+    )
 }
 
 fn discovery_policy(config: &ReferenceConfig) -> InterfaceDiscoveryPolicy {
@@ -229,18 +357,4 @@ fn logging_plan(config: &ReferenceConfig) -> LoggingPlan {
             .map(|section| global_bool(section, logging_key::TIMESTAMPS, true))
             .unwrap_or(true),
     }
-}
-
-fn decode_hex(value: &str) -> Option<Vec<u8>> {
-    let bytes = value.as_bytes();
-    if !bytes.len().is_multiple_of(2) {
-        return None;
-    }
-    bytes
-        .chunks_exact(2)
-        .map(|pair| {
-            let text = core::str::from_utf8(pair).ok()?;
-            u8::from_str_radix(text, 16).ok()
-        })
-        .collect()
 }

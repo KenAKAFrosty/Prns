@@ -41,10 +41,12 @@ pub enum InterfaceKind {
     WifiDirectPeer = 27,
     WifiAware = 28,
     WifiAwarePeer = 29,
+    I2p = 30,
+    I2pPeer = 31,
 }
 
 impl InterfaceKind {
-    pub const ALL: [Self; 30] = [
+    pub const ALL: [Self; 32] = [
         Self::Loopback,
         Self::TcpClient,
         Self::TcpServer,
@@ -75,6 +77,8 @@ impl InterfaceKind {
         Self::WifiDirectPeer,
         Self::WifiAware,
         Self::WifiAwarePeer,
+        Self::I2p,
+        Self::I2pPeer,
     ];
 
     /// Recover the kind from an id's first byte. `None` for an unknown discriminant — the byte is
@@ -113,6 +117,8 @@ impl InterfaceKind {
             27 => Some(Self::WifiDirectPeer),
             28 => Some(Self::WifiAware),
             29 => Some(Self::WifiAwarePeer),
+            30 => Some(Self::I2p),
+            31 => Some(Self::I2pPeer),
             _ => None,
         }
     }
@@ -132,6 +138,7 @@ impl InterfaceKind {
             Self::WebSocketServer => Some(Self::WebSocketServerPeer),
             Self::WifiDirect => Some(Self::WifiDirectPeer),
             Self::WifiAware => Some(Self::WifiAwarePeer),
+            Self::I2p => Some(Self::I2pPeer),
             _ => None,
         }
     }
@@ -152,6 +159,7 @@ impl InterfaceKind {
             Self::WebSocketServerPeer => Some(Self::WebSocketServer),
             Self::WifiDirectPeer => Some(Self::WifiDirect),
             Self::WifiAwarePeer => Some(Self::WifiAware),
+            Self::I2pPeer => Some(Self::I2p),
             _ => None,
         }
     }
@@ -305,6 +313,20 @@ mod tests {
         assert_eq!(
             InterfaceKind::WifiAwarePeer.supervisor_kind(),
             Some(InterfaceKind::WifiAware)
+        );
+    }
+
+    #[test]
+    fn i2p_supervises_i2p_peers() {
+        assert_eq!(InterfaceKind::from_u8(30), Some(InterfaceKind::I2p));
+        assert_eq!(InterfaceKind::from_u8(31), Some(InterfaceKind::I2pPeer));
+        assert_eq!(
+            InterfaceKind::I2p.member_kind(),
+            Some(InterfaceKind::I2pPeer)
+        );
+        assert_eq!(
+            InterfaceKind::I2pPeer.supervisor_kind(),
+            Some(InterfaceKind::I2p)
         );
     }
 }

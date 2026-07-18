@@ -4,11 +4,11 @@ use super::*;
 fn enabled_discovery_carries_stamp_trust_and_bounded_autoconnect_policy() {
     let plan = plan_of(
         "[reticulum]\n\
-           network_identity = ~/.reticulum/storage/identity/network\n\
-           discover_interfaces = Yes\n\
-           required_discovery_value = 18\n\
-           interface_discovery_sources = 00112233445566778899aabbccddeeff\n\
-           autoconnect_discovered_interfaces = 3\n",
+               network_identity = ~/.reticulum/storage/identity/network\n\
+               discover_interfaces = Yes\n\
+               required_discovery_value = 18\n\
+               interface_discovery_sources = 00112233445566778899aabbccddeeff\n\
+               autoconnect_discovered_interfaces = 3\n",
     );
     assert_eq!(
         plan.network_identity_path.as_deref(),
@@ -36,8 +36,8 @@ fn enabled_discovery_carries_stamp_trust_and_bounded_autoconnect_policy() {
 #[test]
 fn zero_discovery_controls_use_the_stock_stamp_and_disable_autoconnect() {
     let plan = plan_of(
-        "[reticulum]\ndiscover_interfaces = Yes\nrequired_discovery_value = 0\nautoconnect_discovered_interfaces = 0\n",
-    );
+            "[reticulum]\ndiscover_interfaces = Yes\nrequired_discovery_value = 0\nautoconnect_discovered_interfaces = 0\n",
+        );
     let policy = plan
         .discovery
         .enabled_policy()
@@ -58,20 +58,20 @@ fn disabled_discovery_cannot_plan_autoconnect() {
 fn a_discoverable_listener_plans_its_announcement_and_gateway_mode() {
     let plan = plan_of(
         "[interfaces]\n\
-           [[Spine]]\n\
-             type = BackboneInterface\n\
-             enabled = Yes\n\
-             listen_port = 4242\n\
-             discoverable = Yes\n\
-             announce_interval = 2\n\
-             discovery_stamp_value = 20\n\
-             discovery_name = Public Spine\n\
-             discovery_encrypt = Yes\n\
-             reachable_on = spine.example.com\n\
-             publish_ifac = Yes\n\
-             latitude = 41.88\n\
-             longitude = -87.63\n\
-             height = 181.5\n",
+               [[Spine]]\n\
+                 type = BackboneInterface\n\
+                 enabled = Yes\n\
+                 listen_port = 4242\n\
+                 discoverable = Yes\n\
+                 announce_interval = 2\n\
+                 discovery_stamp_value = 20\n\
+                 discovery_name = Public Spine\n\
+                 discovery_encrypt = Yes\n\
+                 reachable_on = spine.example.com\n\
+                 publish_ifac = Yes\n\
+                 latitude = 41.88\n\
+                 longitude = -87.63\n\
+                 height = 181.5\n",
     );
     let spine = named(&plan, "Spine");
     assert_eq!(spine.policy.mode, InterfaceMode::Gateway);
@@ -102,16 +102,16 @@ fn a_discoverable_listener_plans_its_announcement_and_gateway_mode() {
 fn a_discoverable_rnode_defaults_to_ap_and_six_hour_announcements() {
     let plan = plan_of(
         "[interfaces]\n\
-           [[Radio]]\n\
-             type = RNodeInterface\n\
-             enabled = Yes\n\
-             port = /dev/ttyUSB0\n\
-             frequency = 868000000\n\
-             bandwidth = 125000\n\
-             txpower = 7\n\
-             spreadingfactor = 8\n\
-             codingrate = 5\n\
-             discoverable = Yes\n",
+               [[Radio]]\n\
+                 type = RNodeInterface\n\
+                 enabled = Yes\n\
+                 port = /dev/ttyUSB0\n\
+                 frequency = 868000000\n\
+                 bandwidth = 125000\n\
+                 txpower = 7\n\
+                 spreadingfactor = 8\n\
+                 codingrate = 5\n\
+                 discoverable = Yes\n",
     );
     let radio = named(&plan, "Radio");
     assert_eq!(radio.policy.mode, InterfaceMode::AccessPoint);
@@ -137,23 +137,23 @@ fn a_discoverable_rnode_defaults_to_ap_and_six_hour_announcements() {
 fn discoverable_tcp_and_kiss_plans_are_wire_complete() {
     let plan = plan_of(
         "[interfaces]\n\
-           [[Public TCP]]\n\
-             type = TCPServerInterface\n\
-             enabled = Yes\n\
-             listen_ip = 0.0.0.0\n\
-             listen_port = 4242\n\
-             discoverable = Yes\n\
-             reachable_on = tcp.example.com\n\
-           [[KISS Tunnel]]\n\
-             type = TCPClientInterface\n\
-             enabled = Yes\n\
-             target_host = kiss.example.com\n\
-             target_port = 8001\n\
-             kiss_framing = Yes\n\
-             discoverable = Yes\n\
-             discovery_frequency = 144800000\n\
-             discovery_bandwidth = 12500\n\
-             discovery_modulation = AFSK\n",
+               [[Public TCP]]\n\
+                 type = TCPServerInterface\n\
+                 enabled = Yes\n\
+                 listen_ip = 0.0.0.0\n\
+                 listen_port = 4242\n\
+                 discoverable = Yes\n\
+                 reachable_on = tcp.example.com\n\
+               [[KISS Tunnel]]\n\
+                 type = TCPClientInterface\n\
+                 enabled = Yes\n\
+                 target_host = kiss.example.com\n\
+                 target_port = 8001\n\
+                 kiss_framing = Yes\n\
+                 discoverable = Yes\n\
+                 discovery_frequency = 144800000\n\
+                 discovery_bandwidth = 12500\n\
+                 discovery_modulation = AFSK\n",
     );
     let InterfaceDiscoveryPlan::Announce(tcp) = &named(&plan, "Public TCP").discovery else {
         panic!("the TCP listener should publish discovery announces");
@@ -190,31 +190,31 @@ fn discoverable_tcp_and_kiss_plans_are_wire_complete() {
 fn unpublishable_discovery_configuration_keeps_the_interface_and_the_reason() {
     let plan = plan_of(
         "[interfaces]\n\
-           [[Private TCP]]\n\
-             type = TCPClientInterface\n\
-             enabled = Yes\n\
-             target_host = peer.example.com\n\
-             target_port = 4242\n\
-             discoverable = Yes\n\
-           [[Incomplete Server]]\n\
-             type = TCPServerInterface\n\
-             enabled = Yes\n\
-             listen_ip = 0.0.0.0\n\
-             listen_port = 4243\n\
-             discoverable = Yes\n",
+               [[Private TCP]]\n\
+                 type = TCPClientInterface\n\
+                 enabled = Yes\n\
+                 target_host = peer.example.com\n\
+                 target_port = 4242\n\
+                 discoverable = Yes\n\
+               [[Incomplete Server]]\n\
+                 type = TCPServerInterface\n\
+                 enabled = Yes\n\
+                 listen_ip = 0.0.0.0\n\
+                 listen_port = 4243\n\
+                 discoverable = Yes\n",
     );
     assert_eq!(plan.interfaces.len(), 2);
     assert_eq!(
         named(&plan, "Private TCP").discovery,
         InterfaceDiscoveryPlan::Unpublishable(DiscoveryPublicationProblem::IncompatibleSetting {
-            key: "kiss_framing",
+            key: interface_key::KISS_FRAMING,
         })
     );
     assert_eq!(
         named(&plan, "Incomplete Server").discovery,
         InterfaceDiscoveryPlan::Unpublishable(
             DiscoveryPublicationProblem::MissingRequiredSetting {
-                key: "reachable_on",
+                key: interface_key::REACHABLE_ON,
             }
         )
     );

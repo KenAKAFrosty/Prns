@@ -1,3 +1,5 @@
+#[cfg(feature = "tcp")]
 pub mod client;
+#[cfg(feature = "tcp")]
 pub mod server;
-pub mod tokio_socket;
+pub(crate) mod tokio_socket;

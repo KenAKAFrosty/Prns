@@ -62,16 +62,197 @@ fn parse_coerces_typed_fields_and_folds_dual_keys_and_aliases() {
     );
 }
 
+const RNODE_MULTI: &str = "[interfaces]\n\
+    [[Dual Radio]]\n\
+    type = RNodeMultiInterface\n\
+    enabled = Yes\n\
+    port = /dev/ttyACM0\n\
+    id_callsign = N0CALL\n\
+    id_interval = 600\n\
+    [[[Sub GHz]]]\n\
+    interface_enabled = Yes\n\
+    vport = 0\n\
+    frequency = 868000000\n\
+    bandwidth = 125000\n\
+    txpower = -4\n\
+    spreadingfactor = 8\n\
+    codingrate = 5\n\
+    flow_control = Yes\n\
+    outgoing = No\n\
+    airtime_limit_short = 0\n\
+    airtime_limit_long = 5.0\n\
+    [[[2.4 GHz]]]\n\
+    enabled = Yes\n\
+    vport = 1\n\
+    frequency = 2400000000\n\
+    bandwidth = 812500\n\
+    txpower = 10\n\
+    spreadingfactor = 7\n\
+    codingrate = 6\n";
+
 #[test]
-fn enabled_rnode_multi_is_an_explicit_unsupported_interface_error() {
-    let errors = parse(
-        "[interfaces]\n[[Radio]]\ntype = RNodeMultiInterface\nenabled = Yes\nport = /dev/ttyUSB0\n",
+fn rnode_multi_types_each_enabled_child_setting() {
+    let config = parse(RNODE_MULTI).expect("valid RNodeMulti config");
+    let ReferenceParams::RnodeMulti {
+        port,
+        id_callsign,
+        id_interval,
+        subinterfaces,
+    } = &config.interfaces[0].params
+    else {
+        panic!("RNodeMulti parameters expected")
+    };
+    assert_eq!(port.as_deref(), Some("/dev/ttyACM0"));
+    assert_eq!(id_callsign.as_deref(), Some("N0CALL"));
+    assert_eq!(*id_interval, Some(600));
+    assert_eq!(subinterfaces.len(), 2);
+    let low = &subinterfaces[0];
+    assert_eq!(low.name, "Sub GHz");
+    assert_eq!(low.vport, Some(0));
+    assert_eq!(low.radio.frequency, Some(868_000_000));
+    assert_eq!(low.radio.txpower, Some(-4));
+    assert_eq!(low.flow_control, Some(true));
+    assert_eq!(low.outgoing, Some(false));
+    assert_eq!(low.airtime_limit_short, Some(0.0));
+    assert_eq!(low.airtime_limit_long, Some(5.0));
+    assert!(low.extra.is_empty());
+    let high = &subinterfaces[1];
+    assert_eq!(high.vport, Some(1));
+    assert_eq!(high.radio.frequency, Some(2_400_000_000));
+    assert_eq!(high.flow_control, None);
+    assert_eq!(high.outgoing, None);
+}
+
+#[test]
+fn disabled_rnode_multi_children_are_skipped_before_their_contents() {
+    let config = format!(
+        "{RNODE_MULTI}[[[Unused]]]\ninterface_enabled = No\nfrquency = definitely-not-a-number\n"
+    );
+    let report = parse_named("/tmp/rns/config", &config).expect("disabled child is ignored");
+    let ReferenceParams::RnodeMulti { subinterfaces, .. } = &report.value.interfaces[0].params
+    else {
+        panic!("RNodeMulti parameters expected")
+    };
+    assert_eq!(subinterfaces.len(), 2);
+    assert!(report.warnings.is_empty());
+}
+
+#[test]
+fn rnode_multi_requires_an_enabled_complete_unique_vport() {
+    let errors = parse_named(
+        "/tmp/rns/config",
+        "[interfaces]\n[[Dual]]\ntype = RNodeMultiInterface\nenabled = Yes\nport = /dev/ttyACM0\n[[[First]]]\ninterface_enabled = Yes\nvport = 0\nfrequency = 868000000\nbandwidth = 125000\ntxpower = 7\nspreadingfactor = 8\ncodingrate = 5\n[[[Second]]]\ninterface_enabled = Yes\nvport = 0\n",
     )
     .unwrap_err();
-    assert!(has_code(
-        &errors,
-        ConfigDiagnosticCode::UnsupportedInterface
-    ));
+    assert_eq!(
+        errors
+            .diagnostics()
+            .iter()
+            .filter(|diagnostic| diagnostic.code() == ConfigDiagnosticCode::MissingRequiredKey)
+            .count(),
+        5
+    );
+    let duplicate = errors
+        .diagnostics()
+        .iter()
+        .find(|diagnostic| {
+            diagnostic.code() == ConfigDiagnosticCode::InvalidValue
+                && diagnostic.path().ends_with("vport")
+        })
+        .expect("duplicate vport diagnostic");
+    assert_eq!(duplicate.line(), 16);
+    assert!(duplicate
+        .message()
+        .contains("already assigned to subinterface \"First\""));
+    assert_eq!(duplicate.correction(), "set `vport = 1`");
+}
+
+#[test]
+fn rnode_multi_child_ranges_are_hardware_specific_and_aggregated() {
+    let errors = parse_named(
+        "/tmp/rns/config",
+        "[interfaces]\n[[Dual]]\ntype = RNodeMultiInterface\nenabled = Yes\nport = /dev/ttyACM0\n[[[Bad]]]\ninterface_enabled = Yes\nvport = 11\nfrequency = 1500000000\nbandwidth = 7799\ntxpower = -10\nspreadingfactor = 13\ncodingrate = 9\nairtime_limit_short = -1\nairtime_limit_long = 101\n",
+    )
+    .unwrap_err();
+    assert_eq!(errors.len(), 8);
+    let rendered = errors.to_string();
+    assert!(rendered.contains("an integer from 0 through 10"));
+    assert!(rendered.contains("137000000 through 1000000000 Hz"));
+    assert!(rendered.contains("2200000000 through 2600000000 Hz"));
+    assert!(rendered.contains("an integer from -9 through 37 dBm"));
+    assert!(rendered.contains("a percentage from 0 through 100"));
+}
+
+#[test]
+fn rnode_multi_nested_aliases_and_typos_keep_exact_locations() {
+    let errors = parse_named(
+        "/tmp/rns/config",
+        "[interfaces]\n[[Dual]]\ntype = RNodeMultiInterface\nenabled = Yes\nport = /dev/ttyACM0\n[[[Radio]]]\ninterface_enabled = Yes\nenabled = No\nvport = 0\nfrequency = 868000000\nbandwidth = 125000\ntxpower = 7\nspreadingfactor = 8\ncodingrate = 5\nflow_contol = Yes\n",
+    )
+    .unwrap_err();
+    let conflict = errors
+        .diagnostics()
+        .iter()
+        .find(|diagnostic| diagnostic.code() == ConfigDiagnosticCode::ConflictingAliases)
+        .expect("conflicting child aliases");
+    assert_eq!(conflict.line(), 8);
+    assert_eq!(
+        conflict.path(),
+        "[interfaces] > [[Dual]] > [[[Radio]]] > interface_enabled"
+    );
+    let typo = errors
+        .diagnostics()
+        .iter()
+        .find(|diagnostic| diagnostic.code() == ConfigDiagnosticCode::UnknownKey)
+        .expect("nested typo warning");
+    assert_eq!(typo.line(), 15);
+    assert!(typo.correction().contains("flow_control"));
+}
+
+#[test]
+fn rnode_multi_requires_at_least_one_enabled_child() {
+    for children in ["", "[[[Off]]]\ninterface_enabled = No\n"] {
+        let config = format!(
+            "[interfaces]\n[[Dual]]\ntype = RNodeMultiInterface\nenabled = Yes\nport = /dev/ttyACM0\n{children}"
+        );
+        let errors = parse(&config).unwrap_err();
+        assert!(errors.diagnostics().iter().any(|diagnostic| {
+            diagnostic.code() == ConfigDiagnosticCode::MissingRequiredKey
+                && diagnostic.path().ends_with("[[[subinterface]]]")
+        }));
+    }
+}
+
+#[test]
+fn rnode_multi_parent_does_not_absorb_child_only_radio_controls() {
+    let config = RNODE_MULTI.replacen(
+        "port = /dev/ttyACM0\n",
+        "port = /dev/ttyACM0\nflow_control = Yes\nairtime_limit_short = 2.0\n",
+        1,
+    );
+    let report = parse_named("/tmp/rns/config", &config).expect("warnings do not reject config");
+    let warnings = report
+        .warnings
+        .iter()
+        .filter(|warning| warning.code() == ConfigDiagnosticCode::UnknownKey)
+        .collect::<Vec<_>>();
+    assert_eq!(warnings.len(), 2);
+    assert!(warnings.iter().all(|warning| {
+        warning
+            .path()
+            .starts_with("[interfaces] > [[Dual Radio]] > ")
+            && !warning.path().contains("[[[Sub GHz]]]")
+    }));
+}
+
+#[test]
+fn rnode_multi_reference_parsing_reaches_typed_member_planning() {
+    let plan = crate::parse_and_plan(RNODE_MULTI)
+        .expect("valid RNodeMulti planning")
+        .value;
+    assert_eq!(plan.interfaces.len(), 2);
+    assert_eq!(plan.interfaces[0].name, "Dual Radio[Sub GHz]");
+    assert_eq!(plan.interfaces[1].name, "Dual Radio[2.4 GHz]");
 }
 
 #[test]
@@ -165,7 +346,8 @@ fn nonpositive_discovery_numbers_select_reference_defaults() {
 
 #[test]
 fn disabled_publication_leaves_its_conditional_keys_uninterpreted() {
-    let config = parse(
+    let report = parse_named(
+        "/tmp/rns/config",
         "[interfaces]\n\
            [[Spine]]\n\
              type = BackboneInterface\n\
@@ -176,10 +358,23 @@ fn disabled_publication_leaves_its_conditional_keys_uninterpreted() {
              discovery_stamp_value = not-an-integer\n",
     )
     .unwrap();
+    let config = report.value;
     let spine = &config.interfaces[0];
     assert_eq!(spine.discovery.discoverable, Some(false));
     assert!(spine.extra.contains_key("announce_interval"));
     assert!(spine.extra.contains_key("discovery_stamp_value"));
+    assert_eq!(
+        report
+            .warnings
+            .iter()
+            .filter(|diagnostic| diagnostic.code() == ConfigDiagnosticCode::IneffectiveSetting)
+            .count(),
+        2
+    );
+    assert!(report
+        .warnings
+        .iter()
+        .all(|warning| { warning.correction().contains("set `discoverable` = Yes") }));
 }
 
 #[test]
@@ -469,6 +664,71 @@ fn unknown_sections_warn_with_a_nearby_stock_spelling() {
 }
 
 #[test]
+fn recognized_follow_ons_warn_at_their_exact_source_locations() {
+    let report = parse_named(
+        "/tmp/rns/config",
+        "[reticulum]\nenable_remote_management = Yes\nrespond_to_probes = No\n[interfaces]\n[[LAN]]\ntype = AutoInterface\nenabled = Yes\ndiscovery_port = 29716\nbootstrap_only = Yes\nignore_config_warnings = Yes\n",
+    )
+    .unwrap();
+    let warnings = report
+        .warnings
+        .iter()
+        .filter(|diagnostic| diagnostic.code() == ConfigDiagnosticCode::UnsupportedSetting)
+        .collect::<Vec<_>>();
+    assert_eq!(warnings.len(), 5);
+    assert_eq!(warnings[0].source(), "/tmp/rns/config");
+    assert_eq!(warnings[0].line(), 2);
+    assert_eq!(warnings[0].value(), Some("Yes"));
+    assert!(warnings
+        .iter()
+        .any(|warning| { warning.line() == 8 && warning.path().ends_with("discovery_port") }));
+    assert!(warnings
+        .iter()
+        .any(|warning| warning.correction().contains("correct each reported")));
+}
+
+#[test]
+fn backbone_role_specific_settings_never_disappear() {
+    let report = parse_named(
+        "/tmp/rns/config",
+        "[interfaces]\n[[Listener]]\ntype = BackboneInterface\nenabled = Yes\nlisten_port = 4242\ni2p_tunneled = Yes\nconnect_timeout = 8\nmax_reconnect_tries = 3\n[[Client]]\ntype = BackboneClientInterface\nenabled = Yes\ntarget_host = peer\ntarget_port = 4242\nlisten_ip = 0.0.0.0\ndevice = eth0\n",
+    )
+    .unwrap();
+    let warnings = report
+        .warnings
+        .iter()
+        .filter(|diagnostic| diagnostic.code() == ConfigDiagnosticCode::IneffectiveSetting)
+        .collect::<Vec<_>>();
+    assert_eq!(warnings.len(), 5);
+    assert!(warnings
+        .iter()
+        .all(|warning| warning.message().contains("interface role")));
+    assert!(warnings
+        .iter()
+        .any(|warning| warning.path().ends_with("i2p_tunneled")));
+    assert!(warnings
+        .iter()
+        .any(|warning| warning.path().ends_with("device")));
+}
+
+#[test]
+fn ifac_size_fails_when_its_floored_byte_count_exceeds_the_wire_limit() {
+    let errors = parse_named(
+        "/tmp/rns/config",
+        "[interfaces]\n[[Private]]\ntype = TCPClientInterface\nenabled = Yes\ntarget_host = host\ntarget_port = 4242\nifac_size = 520\n",
+    )
+    .unwrap_err();
+    let diagnostic = &errors.diagnostics()[0];
+    assert_eq!(diagnostic.code(), ConfigDiagnosticCode::InvalidValue);
+    assert_eq!(diagnostic.line(), 7);
+    assert_eq!(diagnostic.value(), Some("520"));
+    assert!(diagnostic
+        .accepted()
+        .is_some_and(|accepted| accepted.contains("519")));
+    assert!(diagnostic.correction().contains("ifac_size = 64"));
+}
+
+#[test]
 fn warnings_are_preserved_when_other_values_make_the_config_invalid() {
     let errors = parse_named(
         "/tmp/rns/config",
@@ -511,6 +771,80 @@ fn common_control_ranges_fail_with_a_concrete_correction() {
     assert!(rendered.contains("ec_pr_freq = 5.0"));
     assert!(rendered.contains("a percentage from 0 through 100"));
     assert!(rendered.contains("announce_cap = 2.0"));
+}
+
+#[test]
+fn serial_line_errors_are_aggregated_with_supported_forms() {
+    let errors = parse_named(
+        "/tmp/rns/config",
+        "[interfaces]\n[[Serial]]\ntype = SerialInterface\nenabled = Yes\nport = /dev/ttyUSB0\nspeed = 4\ndatabits = 9\nparity = mark\nstopbits = 3\n",
+    )
+    .unwrap_err();
+    assert_eq!(errors.len(), 4);
+    let rendered = errors.to_string();
+    assert!(rendered.contains("[[Serial]] > speed"));
+    assert!(rendered.contains("speed = 9600"));
+    assert!(rendered.contains("one of 5, 6, 7, or 8"));
+    assert!(rendered.contains("one of N, None, E, Even, O, or Odd"));
+    assert!(rendered.contains("one of 1 or 2"));
+}
+
+#[test]
+fn station_identification_must_be_complete() {
+    let errors = parse_named(
+        "/tmp/rns/config",
+        "[interfaces]\n[[TNC]]\ntype = KISSInterface\nenabled = Yes\nport = /dev/ttyUSB0\nid_callsign = N0CALL\n",
+    )
+    .unwrap_err();
+    assert_eq!(errors.len(), 1);
+    let rendered = errors.to_string();
+    assert!(rendered.contains("[[TNC]] > id_interval"));
+    assert!(rendered.contains("id_interval = 600"));
+    assert!(rendered.contains("or remove `id_callsign`"));
+}
+
+#[test]
+fn rnode_ranges_and_callsign_capacity_fail_before_startup() {
+    let errors = parse_named(
+        "/tmp/rns/config",
+        "[interfaces]\n[[Radio]]\ntype = RNodeInterface\nenabled = Yes\nport = /dev/ttyUSB0\nfrequency = 136999999\nbandwidth = 1625001\ntxpower = 38\nspreadingfactor = 13\ncodingrate = 9\nairtime_limit_short = -0.1\nairtime_limit_long = 100.1\nid_callsign = 123456789012345678901234567890123\nid_interval = 600\n",
+    )
+    .unwrap_err();
+    assert_eq!(errors.len(), 8);
+    let rendered = errors.to_string();
+    assert!(rendered.contains("137000000 through 3000000000 hertz"));
+    assert!(rendered.contains("7800 through 1625000 hertz"));
+    assert!(rendered.contains("0 through 37 dBm"));
+    assert!(rendered.contains("5 through 12"));
+    assert!(rendered.contains("5 through 8"));
+    assert!(rendered.contains("a percentage from 0 through 100"));
+    assert!(rendered.contains("at most 32 UTF-8 bytes"));
+}
+
+#[test]
+fn pipe_respawn_delay_rejects_negative_and_nonfinite_values() {
+    for value in ["-1", "NaN", "inf"] {
+        let config = format!(
+            "[interfaces]\n[[Pipe]]\ntype = PipeInterface\nenabled = Yes\ncommand = worker\nrespawn_delay = {value}\n"
+        );
+        let errors = parse_named("/tmp/rns/config", &config).unwrap_err();
+        let rendered = errors.to_string();
+        assert!(rendered.contains("non-negative finite duration"));
+        assert!(rendered.contains("respawn_delay = 5.0"));
+    }
+}
+
+#[test]
+fn pipe_command_rejects_empty_or_incomplete_quoting_before_startup() {
+    for value in ["\"\"", "\"program 'unterminated\""] {
+        let config = format!(
+            "[interfaces]\n[[Pipe]]\ntype = PipeInterface\nenabled = Yes\ncommand = {value}\n"
+        );
+        let errors = parse_named("/tmp/rns/config", &config).unwrap_err();
+        let rendered = errors.to_string();
+        assert!(rendered.contains("non-empty command with complete shell-style quoting"));
+        assert!(rendered.contains("command = /path/to/program --option value"));
+    }
 }
 
 #[test]

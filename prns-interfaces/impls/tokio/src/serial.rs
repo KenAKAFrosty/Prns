@@ -1,10 +1,10 @@
 use std::future::Future;
 use std::io;
-use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::framed_stream;
+use crate::reconnect::ReconnectDelay;
 use prns_core::interfaces::serial::core;
 use prns_core::interfaces::{
     ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind,
@@ -16,12 +16,12 @@ use prns_runtime::reactor::throughput::ThroughputLedger;
 
 /// A serial interface that owns its medium's whole lifecycle: `open` yields a fresh async
 /// byte stream (the consumer supplies it, e.g. a reopened `tokio_serial::SerialStream`), and
-/// the interface reconnects on its own — serve a connection until it drops, wait `reconnect`,
+/// the interface reconnects on its own — serve a connection until it drops, wait for the reconnect delay,
 /// reopen. A single never-dropping stream is just a factory that yields once.
 pub struct SerialInterface<Open> {
     id: InterfaceId,
     open: Open,
-    reconnect: Duration,
+    reconnect_delay: ReconnectDelay,
     policy: EffectiveInterfacePolicy,
     channel_tag: std::vec::Vec<u8>,
     status: TokioInterfaceStatus,
@@ -33,10 +33,10 @@ impl<Open> SerialInterface<Open> {
     /// us). Two distinct serial channels must pass distinct bytes; the same device across a
     /// reopen should pass the same, so its routes survive the reconnect.
     #[must_use]
-    pub fn new(open: Open, reconnect: Duration, channel_tag: &[u8]) -> Self {
+    pub fn new(open: Open, reconnect_delay: ReconnectDelay, channel_tag: &[u8]) -> Self {
         Self::with_policy(
             open,
-            reconnect,
+            reconnect_delay,
             core::policy_for_bitrate(core::SERIAL_BITRATE_BPS),
             channel_tag,
         )
@@ -45,7 +45,7 @@ impl<Open> SerialInterface<Open> {
     #[must_use]
     pub fn with_policy(
         open: Open,
-        reconnect: Duration,
+        reconnect_delay: ReconnectDelay,
         policy: EffectiveInterfacePolicy,
         channel_tag: &[u8],
     ) -> Self {
@@ -54,7 +54,7 @@ impl<Open> SerialInterface<Open> {
         Self {
             id,
             open,
-            reconnect,
+            reconnect_delay,
             policy,
             channel_tag,
             status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
@@ -129,7 +129,7 @@ where
                 .await;
                 self.status.set_connection(ConnectionState::Disconnected);
             }
-            tokio::time::sleep(self.reconnect).await;
+            tokio::time::sleep(self.reconnect_delay.duration()).await;
         }
     }
 }
@@ -153,6 +153,7 @@ mod tests {
     use prns_core::interfaces::rns_serial_framing::{self, ESC, FLAG};
     use prns_core::interfaces::InterfaceStatus;
     use prns_runtime::reactor::driver::{tokio_grant_lane, TokioGrantConsumer};
+    use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::sync::mpsc::{self, UnboundedSender};
 
@@ -202,7 +203,11 @@ mod tests {
             outbound: out_rx,
         };
 
-        let interface = SerialInterface::new(open, Duration::from_millis(10), b"test-serial");
+        let interface = SerialInterface::new(
+            open,
+            ReconnectDelay::new(Duration::from_millis(10)),
+            b"test-serial",
+        );
         let status = interface.status();
         tokio::spawn(interface.run(seam));
 

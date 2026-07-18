@@ -36,6 +36,9 @@ netdev = { version = "0.45", optional = true }
 md-5 = { version = "0.11", optional = true, default-features = false }
 hmac = { version = "0.13", optional = true, default-features = false }
 getrandom = { version = "0.2", optional = true }
+base64 = { version = "0.22", optional = true }
+data-encoding = { version = "2", optional = true }
+zeroize = { version = "1", optional = true }
 tokio-tungstenite = { version = "0.28", optional = true, default-features = false, features = ["connect", "handshake"] }
 futures-util = { version = "0.3", optional = true, default-features = false, features = ["alloc", "sink"] }
 log = { version = "0.4", optional = true, default-features = false }
@@ -51,7 +54,7 @@ prns-ffi = { path = "../../../prns-ffi", optional = true, default-features = fal
 
 [dev-dependencies]
 personal-rns = { path = "../../../personal-rns", default-features = false, features = ["tokio-host"] }
-tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util"] }
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util", "test-util"] }
 env_logger = "0.11"
 
 [[example]]
@@ -96,6 +99,7 @@ rnode = ["dep:tokio"]
 pipe = ["dep:tokio"]
 backbone = ["tcp"]
 websocket = ["dep:tokio", "tokio/net", "dep:tokio-tungstenite", "dep:futures-util"]
+i2p = ["dep:tokio", "tokio/net", "dep:socket2", "dep:getrandom", "dep:base64", "dep:data-encoding", "dep:zeroize"]
 shared-instance = ["dep:tokio", "tokio/net", "dep:md-5", "dep:hmac", "dep:getrandom", "dep:rmpv"]
 wifi = ["tcp", "dep:if-addrs", "dep:netdev"]
 wifi-direct = ["tcp", "tokio/process", "dep:zbus", "dep:futures-util", "dep:if-addrs"]
@@ -106,7 +110,7 @@ ble-host = ["ble", "dep:tokio", "tokio/rt", "dep:prns-ffi"]
 pipe-host = ["pipe", "dep:tokio", "tokio/process"]
 auto = []
 interface-discovery = ["tcp", "backbone", "dep:getrandom", "prns-core/interface-discovery", "prns-runtime/interface-discovery"]
-from-plan = ["tcp", "udp", "serial", "serial-host", "kiss", "ax25", "rnode", "pipe", "pipe-host", "backbone", "wifi", "dep:prns-config", "dep:shlex", "dep:tokio", "tokio/rt"]
+from-plan = ["tcp", "udp", "serial", "serial-host", "kiss", "ax25", "rnode", "pipe", "pipe-host", "backbone", "wifi", "i2p", "dep:prns-config", "dep:tokio", "tokio/rt"]
 ble = ["dep:tokio", "dep:futures-util", "dep:bluer", "dep:prns-ffi"]
 
 [lints.clippy]

@@ -1,17 +1,20 @@
 use std::collections::BTreeMap;
 
-use crate::reference::{parse_bool, ReferenceValue};
+use crate::reference::ReferenceValue;
 
 pub(super) fn global_bool(
     globals: &BTreeMap<String, ReferenceValue>,
     key: &str,
     default: bool,
 ) -> bool {
-    globals
-        .get(key)
-        .and_then(ReferenceValue::as_scalar)
-        .and_then(parse_bool)
-        .unwrap_or(default)
+    match globals.get(key).and_then(ReferenceValue::as_scalar) {
+        Some(text) => match text.trim().to_ascii_lowercase().as_str() {
+            "true" | "yes" | "on" | "1" => true,
+            "false" | "no" | "off" | "0" => false,
+            _ => default,
+        },
+        None => default,
+    }
 }
 
 pub(super) fn global_u16(globals: &BTreeMap<String, ReferenceValue>, key: &str) -> Option<u16> {
@@ -30,6 +33,20 @@ pub(super) fn global_string(
         .get(key)
         .and_then(ReferenceValue::as_scalar)
         .map(str::to_string)
+}
+
+pub(super) fn decode_hex(value: &str) -> Option<Vec<u8>> {
+    let bytes = value.as_bytes();
+    if !bytes.len().is_multiple_of(2) {
+        return None;
+    }
+    bytes
+        .chunks_exact(2)
+        .map(|pair| {
+            let text = core::str::from_utf8(pair).ok()?;
+            u8::from_str_radix(text, 16).ok()
+        })
+        .collect()
 }
 
 pub(super) fn global_i64(globals: &BTreeMap<String, ReferenceValue>, key: &str) -> Option<i64> {

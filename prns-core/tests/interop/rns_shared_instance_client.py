@@ -11,6 +11,7 @@ Prints ``ANNOUNCED dest=<hex>`` on stdout so the runner can match it against the
 line. RNS's own logs go to stderr, leaving stdout clean for the one machine-readable line.
 """
 
+import os
 import sys
 import tempfile
 import time
@@ -20,6 +21,17 @@ import RNS
 
 def main() -> int:
     configdir = tempfile.mkdtemp(prefix="rns-smoke-")
+    instance_port = os.environ.get("PRNS_LOCAL_PORT")
+    if instance_port is not None:
+        control_port = os.environ.get("PRNS_RPC_PORT", str(int(instance_port) + 1))
+        with open(f"{configdir}/config", "w", encoding="utf-8") as config:
+            config.write(
+                "[reticulum]\n"
+                "share_instance = Yes\n"
+                "shared_instance_type = tcp\n"
+                f"shared_instance_port = {instance_port}\n"
+                f"instance_control_port = {control_port}\n"
+            )
     # Quiet RNS's own chatter to stderr; stdout carries only our ANNOUNCED line.
     RNS.Reticulum(configdir=configdir, loglevel=RNS.LOG_WARNING)
     # Let the client settle its connection to the shared instance before announcing.

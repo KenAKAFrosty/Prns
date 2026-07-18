@@ -39,7 +39,7 @@ pub const CMD_FULLDUPLEX: u8 = 0x05;
 /// TNC set-hardware config command.
 pub const CMD_SETHARDWARE: u8 = 0x06;
 /// TNC flow-control READY command — RNS writes `CMD_READY 0x01` at startup and the TNC echoes it
-/// to pace transmission; we send it for parity but do not yet gate TX on the echo.
+/// to pace transmission.
 pub const CMD_READY: u8 = 0x0F;
 
 /// The sentinel [`KissDecoder`] holds before it has read a frame's command byte. `0xFE` (KISS

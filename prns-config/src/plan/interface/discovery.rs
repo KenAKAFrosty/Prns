@@ -3,6 +3,7 @@ use prns_core::interfaces::tcp::core::TcpWireFraming;
 use prns_core::units::DurationMillis;
 
 use super::medium::PlannedMedium;
+use crate::reference::keys::interface as interface_key;
 use crate::reference::{ReferenceInterface, ReferenceParams};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -72,7 +73,7 @@ pub struct DiscoveryLocationPlan {
     pub height: Option<f64>,
 }
 
-pub(super) fn plan_interface_discovery(
+pub(in crate::plan) fn plan_interface_discovery(
     interface: &ReferenceInterface,
     medium: &PlannedMedium,
 ) -> InterfaceDiscoveryPlan {
@@ -118,7 +119,7 @@ fn plan_discovery_advertisement(
     let reachable_on = || {
         interface.discovery.reachable_on.clone().ok_or(
             DiscoveryPublicationProblem::MissingRequiredSetting {
-                key: "reachable_on",
+                key: interface_key::REACHABLE_ON,
             },
         )
     };
@@ -126,17 +127,17 @@ fn plan_discovery_advertisement(
         Ok(DiscoveryAdvertisementPlan::Kiss {
             frequency_hz: interface.discovery.frequency_hz.ok_or(
                 DiscoveryPublicationProblem::MissingRequiredSetting {
-                    key: "discovery_frequency",
+                    key: interface_key::DISCOVERY_FREQUENCY,
                 },
             )?,
             bandwidth_hz: interface.discovery.bandwidth_hz.ok_or(
                 DiscoveryPublicationProblem::MissingRequiredSetting {
-                    key: "discovery_bandwidth",
+                    key: interface_key::DISCOVERY_BANDWIDTH,
                 },
             )?,
             modulation: interface.discovery.modulation.clone().ok_or(
                 DiscoveryPublicationProblem::MissingRequiredSetting {
-                    key: "discovery_modulation",
+                    key: interface_key::DISCOVERY_MODULATION,
                 },
             )?,
         })
@@ -150,7 +151,9 @@ fn plan_discovery_advertisement(
         ) => Ok(DiscoveryAdvertisementPlan::Backbone {
             reachable_on: reachable_on()?,
             port: port.or(*listen_port).ok_or(
-                DiscoveryPublicationProblem::MissingRequiredSetting { key: "listen_port" },
+                DiscoveryPublicationProblem::MissingRequiredSetting {
+                    key: interface_key::LISTEN_PORT,
+                },
             )?,
         }),
         (
@@ -161,7 +164,9 @@ fn plan_discovery_advertisement(
         ) => Ok(DiscoveryAdvertisementPlan::TcpServer {
             reachable_on: reachable_on()?,
             port: port.or(*listen_port).ok_or(
-                DiscoveryPublicationProblem::MissingRequiredSetting { key: "listen_port" },
+                DiscoveryPublicationProblem::MissingRequiredSetting {
+                    key: interface_key::LISTEN_PORT,
+                },
             )?,
         }),
         (
@@ -173,12 +178,21 @@ fn plan_discovery_advertisement(
                 ..
             },
             ReferenceParams::Rnode { .. },
-        ) => Ok(DiscoveryAdvertisementPlan::RNode {
-            frequency_hz: *frequency_hz,
-            bandwidth_hz: *bandwidth_hz,
-            spreading_factor: *spreading_factor,
-            coding_rate: *coding_rate,
-        }),
+        ) => Ok(rnode_discovery_advertisement(
+            *frequency_hz,
+            *bandwidth_hz,
+            *spreading_factor,
+            *coding_rate,
+        )),
+        (PlannedMedium::RnodeMulti { member }, ReferenceParams::RnodeMulti { .. }) => {
+            let radio = member.radio();
+            Ok(rnode_discovery_advertisement(
+                u64::from(radio.frequency().hz()),
+                radio.bandwidth_hz(),
+                radio.spreading_factor(),
+                radio.coding_rate(),
+            ))
+        }
         (PlannedMedium::Kiss { .. }, ReferenceParams::Kiss { .. }) => kiss(),
         (
             PlannedMedium::TcpClient {
@@ -189,9 +203,23 @@ fn plan_discovery_advertisement(
         ) => kiss(),
         (PlannedMedium::TcpClient { .. }, ReferenceParams::TcpClient { .. }) => {
             Err(DiscoveryPublicationProblem::IncompatibleSetting {
-                key: "kiss_framing",
+                key: interface_key::KISS_FRAMING,
             })
         }
         _ => Err(DiscoveryPublicationProblem::UnsupportedInterfaceType),
+    }
+}
+
+fn rnode_discovery_advertisement(
+    frequency_hz: u64,
+    bandwidth_hz: u32,
+    spreading_factor: u8,
+    coding_rate: u8,
+) -> DiscoveryAdvertisementPlan {
+    DiscoveryAdvertisementPlan::RNode {
+        frequency_hz,
+        bandwidth_hz,
+        spreading_factor,
+        coding_rate,
     }
 }

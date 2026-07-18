@@ -55,21 +55,21 @@ fn log_levels_cannot_represent_values_outside_the_stock_range() {
 fn global_protocol_identity_logging_and_shared_instance_settings_are_typed() {
     let plan = plan_of(
         "[reticulum]\n\
-         enable_transport = No\n\
-         static_transport_identity = Yes\n\
-         local_hops_delta = Yes\n\
-         link_mtu_discovery = No\n\
-         use_implicit_proof = No\n\
-         panic_on_interface_error = Yes\n\
-         instance_name = field\n\
-         shared_instance_type = TCP\n\
-         shared_instance_port = 41_000\n\
-         instance_control_port = 41_001\n\
-         rpc_key = 00112233\n\
-         force_shared_instance_bitrate = 250_000_000\n\
-         [logging]\n\
-         loglevel = 7\n\
-         logtimestamps = No\n",
+             enable_transport = No\n\
+             static_transport_identity = Yes\n\
+             local_hops_delta = Yes\n\
+             link_mtu_discovery = No\n\
+             use_implicit_proof = No\n\
+             panic_on_interface_error = Yes\n\
+             instance_name = field\n\
+             shared_instance_type = TCP\n\
+             shared_instance_port = 41_000\n\
+             instance_control_port = 41_001\n\
+             rpc_key = 00112233\n\
+             force_shared_instance_bitrate = 250_000_000\n\
+             [logging]\n\
+             loglevel = 7\n\
+             logtimestamps = No\n",
     );
     assert_eq!(
         plan.transport,
@@ -108,16 +108,16 @@ fn global_protocol_identity_logging_and_shared_instance_settings_are_typed() {
 fn grouped_global_controls_reach_the_effective_interface_policy() {
     let plan = plan_of(
         "[reticulum]\n\
-         enable_transport = Yes\n\
-         ic_max_held_announces = 1_024\n\
-         ic_burst_freq = 12_500.5\n\
-         default_ar_target = 3_600\n\
-         [interfaces]\n\
-         [[Hub]]\n\
-         type = TCPClientInterface\n\
-         enabled = Yes\n\
-         target_host = hub\n\
-         target_port = 4242\n",
+             enable_transport = Yes\n\
+             ic_max_held_announces = 1_024\n\
+             ic_burst_freq = 12_500.5\n\
+             default_ar_target = 3_600\n\
+             [interfaces]\n\
+             [[Hub]]\n\
+             type = TCPClientInterface\n\
+             enabled = Yes\n\
+             target_host = hub\n\
+             target_port = 4242\n",
     );
     let policy = named(&plan, "Hub").policy;
     assert_eq!(policy.common.ingress_control.max_held_announces, 1_024);
@@ -132,21 +132,21 @@ fn grouped_global_controls_reach_the_effective_interface_policy() {
 fn internal_outgoing_and_common_controls_form_one_effective_policy() {
     let plan = plan_of(
         "[reticulum]\n\
-         ic_burst_freq = 12.5\n\
-         egress_control = Yes\n\
-         [interfaces]\n\
-         [[Inside]]\n\
-         type = TCPClientInterface\n\
-         enabled = Yes\n\
-         target_host = inside\n\
-         target_port = 4242\n\
-         mode = internal\n\
-         outgoing = No\n\
-         recursive_prs = Yes\n\
-         announces_from_internal = No\n\
-         ingress_control = No\n\
-         ec_pr_freq = 0\n\
-         ic_max_held_announces = 0\n",
+             ic_burst_freq = 12.5\n\
+             egress_control = Yes\n\
+             [interfaces]\n\
+             [[Inside]]\n\
+             type = TCPClientInterface\n\
+             enabled = Yes\n\
+             target_host = inside\n\
+             target_port = 4242\n\
+             mode = internal\n\
+             outgoing = No\n\
+             recursive_prs = Yes\n\
+             announces_from_internal = No\n\
+             ingress_control = No\n\
+             ec_pr_freq = 0\n\
+             ic_max_held_announces = 0\n",
     );
     let policy = named(&plan, "Inside").policy;
     assert_eq!(policy.mode, InterfaceMode::Internal);
@@ -170,13 +170,13 @@ fn internal_outgoing_and_common_controls_form_one_effective_policy() {
 #[test]
 fn sharing_off_when_disabled_and_carries_explicit_ports() {
     let plan = plan_of(
-        "[reticulum]\nshare_instance = No\n[interfaces]\n[[A]]\ntype = AutoInterface\nenabled = Yes\n",
-    );
+            "[reticulum]\nshare_instance = No\n[interfaces]\n[[A]]\ntype = AutoInterface\nenabled = Yes\n",
+        );
     assert_eq!(plan.shared_instance, SharedInstance::Disabled);
 
     let ported = plan_of(
         "[reticulum]\nshared_instance_port = 40000\ninstance_control_port = 40001\n\
-         [interfaces]\n[[A]]\ntype = AutoInterface\nenabled = Yes\n",
+             [interfaces]\n[[A]]\ntype = AutoInterface\nenabled = Yes\n",
     );
     assert_eq!(
         ported.shared_instance,

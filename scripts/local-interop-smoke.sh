@@ -7,8 +7,8 @@
 # interface at the discounted hop (hops=0) — a genuine RNS-on-the-wire interop check.
 #
 # The Python interpreter is $SMOKE_PYTHON if set (CI points it at a uv-built venv with the pinned
-# rns from benchmarks/reference/requirements.txt), otherwise the local reference venv. Needs a
-# free loopback 37428. Prints PASS or FAIL and exits accordingly.
+# rns from benchmarks/reference/requirements.txt), otherwise the local reference venv. Allocates a
+# free loopback port pair. Prints PASS or FAIL and exits accordingly.
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -23,18 +23,35 @@ trap cleanup EXIT
 
 [ -x "$VENV_PY" ] || { echo "FAIL: reference venv python not found at $VENV_PY"; exit 1; }
 
+PORTS="$("$VENV_PY" - <<'PY'
+import socket
+sockets = [socket.socket(), socket.socket()]
+for candidate in sockets:
+    candidate.bind(("127.0.0.1", 0))
+print(*(candidate.getsockname()[1] for candidate in sockets))
+for candidate in sockets:
+    candidate.close()
+PY
+)"
+PORT="${PORTS%% *}"
+CONTROL_PORT="${PORTS##* }"
+[ -n "${PORT:-}" ] && [ -n "${CONTROL_PORT:-}" ] \
+    || { echo "FAIL: could not allocate shared-instance ports"; exit 1; }
+
 echo "building the daemon example..."
 ( cd "$ROOT/prns-interfaces/impls/tokio" && cargo build --quiet --example local_shared_instance --features shared-instance ) \
     || { echo "FAIL: daemon build"; exit 1; }
 
-"$ROOT/prns-interfaces/impls/tokio/target/debug/examples/local_shared_instance" > "$DAEMON_LOG" 2>&1 &
+PRNS_LOCAL_PORT="$PORT" \
+    "$ROOT/prns-interfaces/impls/tokio/target/debug/examples/local_shared_instance" > "$DAEMON_LOG" 2>&1 &
 DAEMON_PID=$!
 
 for _ in $(seq 1 50); do grep -q "READY" "$DAEMON_LOG" && break; sleep 0.2; done
 grep -q "READY" "$DAEMON_LOG" || { echo "FAIL: daemon never became READY"; cat "$DAEMON_LOG"; exit 1; }
 echo "daemon listening; running the RNS client..."
 
-"$VENV_PY" "$CLIENT" > "$CLIENT_LOG" 2>/dev/null
+PRNS_LOCAL_PORT="$PORT" PRNS_RPC_PORT="$CONTROL_PORT" \
+    "$VENV_PY" "$CLIENT" > "$CLIENT_LOG" 2>/dev/null
 DEST="$(grep -o 'ANNOUNCED dest=[0-9a-f]*' "$CLIENT_LOG" | head -1 | cut -d= -f2)"
 [ -n "$DEST" ] || { echo "FAIL: the RNS client never announced"; echo "--- client log ---"; tail -20 "$CLIENT_LOG"; exit 1; }
 echo "RNS client announced dest=$DEST"

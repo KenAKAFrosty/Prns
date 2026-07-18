@@ -44,6 +44,11 @@ guide](https://github.com/KenAKAFrosty/Prns/blob/main/docs/observability.md).
 
 ## Status
 
-The daemon's interface and config layout are still settling. Treat
-it as a moving target for now — pin a version if you build against
-it.
+The daemon reads the stock Reticulum ConfigObj dialect from the extensionless
+`config` file, validates the complete document before startup, and reports
+source-located corrections for invalid or unavailable settings. Existing host
+network, serial, RNode, and process interfaces are wired through one effective
+policy; settings reserved for clearly named follow-on services produce explicit
+warnings instead of disappearing. See the [operator configuration
+guide](https://github.com/KenAKAFrosty/Prns/blob/main/docs/prnsd-config.md) for
+the supported surface and current follow-ons.

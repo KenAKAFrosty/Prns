@@ -1,20 +1,27 @@
 use crate::configobj::{Section, SourceLocations, Value};
 use crate::diagnostic::{ConfigDiagnostic, ConfigDiagnosticCode, ConfigSeverity};
+use prns_core::interfaces::ifac::IFAC_MAX_SIZE;
+use prns_core::interfaces::rnode::core::{
+    BANDWIDTH_HZ_MAX, BANDWIDTH_HZ_MIN, CODING_RATE_MAX, CODING_RATE_MIN, FREQUENCY_HZ_MAX,
+    FREQUENCY_HZ_MIN, SPREADING_FACTOR_MAX, SPREADING_FACTOR_MIN, TXPOWER_DBM_MAX, TXPOWER_DBM_MIN,
+};
 
+use super::i2p::validate_peers;
 use super::interpret::{cleaned_number, parse_bool, parse_identity_hash, ReferenceError};
 use super::keys::{
     common as common_key, global as global_key, interface as interface_key, section as section_key,
 };
 use super::schema::{
-    interface_key_rule, known_interface_keys, KeyRule, ValueKind, GLOBAL_RULES, LOGGING_RULES,
-    SUPPORTED_INTERFACES,
+    interface_key_rule, known_interface_keys, KeyRule, ValueKind, AUTO_INTERFACE_FOLLOW_ON_KEYS,
+    DISCOVERY_DETAIL_KEYS, GLOBAL_FOLLOW_ON_KEYS, GLOBAL_RULES, INTERFACE_FOLLOW_ON_KEYS,
+    LOGGING_RULES, SUPPORTED_INTERFACES,
 };
 
 #[derive(Default)]
 pub(super) struct ValidationWarnings(Vec<ConfigDiagnostic>);
 
 impl ValidationWarnings {
-    fn push(&mut self, diagnostic: ConfigDiagnostic) {
+    pub(super) fn push(&mut self, diagnostic: ConfigDiagnostic) {
         assert_eq!(diagnostic.severity(), ConfigSeverity::Warning);
         self.0.push(diagnostic);
     }
@@ -25,10 +32,10 @@ impl ValidationWarnings {
 }
 
 #[derive(Default)]
-struct ValidationErrorCollector(Vec<ConfigDiagnostic>);
+pub(super) struct ValidationErrorCollector(Vec<ConfigDiagnostic>);
 
 impl ValidationErrorCollector {
-    fn push(&mut self, diagnostic: ConfigDiagnostic) {
+    pub(super) fn push(&mut self, diagnostic: ConfigDiagnostic) {
         assert_eq!(diagnostic.severity(), ConfigSeverity::Error);
         self.0.push(diagnostic);
     }
@@ -119,16 +126,28 @@ pub(super) fn validate(
 
     for (name, section) in &root.sections {
         match name.as_str() {
-            section_key::RETICULUM => validate_section(
-                source,
-                "[reticulum]",
-                &[section_key::RETICULUM],
-                section,
-                GLOBAL_RULES,
-                locations,
-                &mut warnings,
-                &mut errors,
-            ),
+            section_key::RETICULUM => {
+                validate_section(
+                    source,
+                    "[reticulum]",
+                    &[section_key::RETICULUM],
+                    section,
+                    GLOBAL_RULES,
+                    locations,
+                    &mut warnings,
+                    &mut errors,
+                );
+                warn_non_effective_settings(
+                    source,
+                    "[reticulum]",
+                    &[section_key::RETICULUM],
+                    section,
+                    GLOBAL_FOLLOW_ON_KEYS,
+                    locations,
+                    &mut warnings,
+                    SettingWarningKind::FollowOn,
+                );
+            }
             section_key::LOGGING => validate_section(
                 source,
                 "[logging]",
@@ -208,6 +227,7 @@ fn validate_section(
             )),
         }
     }
+
     for (name, _) in &section.sections {
         let mut section_path = source_path.to_vec();
         section_path.push(name);
@@ -246,6 +266,79 @@ fn validate_interfaces(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn warn_non_effective_settings(
+    source: &str,
+    display_path: &str,
+    source_path: &[&str],
+    section: &Section,
+    keys: &[&str],
+    locations: &SourceLocations,
+    warnings: &mut ValidationWarnings,
+    reason: SettingWarningKind,
+) {
+    for key in keys {
+        let Some(value) = section.get(key) else {
+            continue;
+        };
+        let mut key_path = source_path.to_vec();
+        key_path.push(key);
+        let (code, message, accepted, correction) = match reason {
+            SettingWarningKind::FollowOn if *key == interface_key::IGNORE_CONFIG_WARNINGS => (
+                ConfigDiagnosticCode::UnsupportedSetting,
+                format!("stock RNS setting {key:?} is not applied by this build"),
+                "omit this setting".to_string(),
+                format!("remove `{key}` and correct each reported configuration problem"),
+            ),
+            SettingWarningKind::FollowOn => (
+                ConfigDiagnosticCode::UnsupportedSetting,
+                format!("stock RNS setting {key:?} is not applied by this build"),
+                "omit this setting or use a build that implements it".to_string(),
+                format!(
+                    "remove `{key} = {}` until this feature is available",
+                    value_text(value)
+                ),
+            ),
+            SettingWarningKind::InapplicableInterfaceRole => (
+                ConfigDiagnosticCode::IneffectiveSetting,
+                format!("setting {key:?} is not applied by this interface role"),
+                "omit this setting for the selected listener or client role".to_string(),
+                format!("remove `{key} = {}` from this stanza", value_text(value)),
+            ),
+            SettingWarningKind::DiscoveryDisabled => (
+                ConfigDiagnosticCode::IneffectiveSetting,
+                format!("setting {key:?} is not applied while discovery publication is disabled"),
+                format!(
+                    "omit this setting or set {} = Yes",
+                    interface_key::DISCOVERABLE
+                ),
+                format!(
+                    "remove `{key} = {}`, or set `{}` = Yes",
+                    value_text(value),
+                    interface_key::DISCOVERABLE
+                ),
+            ),
+        };
+        warnings.push(ConfigDiagnostic::new(
+            code,
+            source,
+            location(locations, &key_path),
+            format!("{display_path} > {key}"),
+            Some(value_text(value)),
+            message,
+            Some(accepted),
+            correction,
+        ));
+    }
+}
+
+#[derive(Clone, Copy)]
+enum SettingWarningKind {
+    FollowOn,
+    InapplicableInterfaceRole,
+    DiscoveryDisabled,
+}
+
 fn validate_interface(
     source: &str,
     name: &str,
@@ -255,11 +348,13 @@ fn validate_interface(
     errors: &mut ValidationErrorCollector,
 ) {
     let interface_path = format!("[interfaces] > [[{name}]]");
+    let interface_source_path = [section_key::INTERFACES, name];
     let type_key = interface_key::TYPE;
     let enabled_key = interface_key::ENABLED;
     let enabled = validate_alias_group(
         source,
-        name,
+        &interface_source_path,
+        &interface_path,
         section,
         locations,
         interface_key::INTERFACE_ENABLED,
@@ -310,7 +405,8 @@ fn validate_interface(
 
     validate_alias_group(
         source,
-        name,
+        &interface_source_path,
+        &interface_path,
         section,
         locations,
         interface_key::INTERFACE_MODE,
@@ -321,7 +417,8 @@ fn validate_interface(
     );
     validate_alias_group(
         source,
-        name,
+        &interface_source_path,
+        &interface_path,
         section,
         locations,
         interface_key::NETWORK_NAME,
@@ -332,7 +429,8 @@ fn validate_interface(
     );
     validate_alias_group(
         source,
-        name,
+        &interface_source_path,
+        &interface_path,
         section,
         locations,
         interface_key::PASS_PHRASE,
@@ -373,6 +471,67 @@ fn validate_interface(
                 &known,
             )),
         }
+    }
+
+    let mut unsupported = INTERFACE_FOLLOW_ON_KEYS.to_vec();
+    if type_name == "AutoInterface" {
+        unsupported.extend(AUTO_INTERFACE_FOLLOW_ON_KEYS);
+    }
+    warn_non_effective_settings(
+        source,
+        &interface_path,
+        &[section_key::INTERFACES, name],
+        section,
+        &unsupported,
+        locations,
+        warnings,
+        SettingWarningKind::FollowOn,
+    );
+
+    if !discoverable {
+        warn_non_effective_settings(
+            source,
+            &interface_path,
+            &[section_key::INTERFACES, name],
+            section,
+            DISCOVERY_DETAIL_KEYS,
+            locations,
+            warnings,
+            SettingWarningKind::DiscoveryDisabled,
+        );
+    }
+
+    if matches!(type_name, "BackboneInterface" | "BackboneClientInterface") {
+        let client_role = type_name == "BackboneClientInterface"
+            || has_one_of(
+                section,
+                &[interface_key::TARGET_HOST, interface_key::REMOTE],
+            );
+        let inapplicable = if client_role {
+            &[
+                interface_key::LISTEN_IP,
+                interface_key::LISTEN_PORT,
+                interface_key::LISTEN_ON,
+                interface_key::DEVICE,
+            ][..]
+        } else {
+            &[
+                interface_key::TARGET_PORT,
+                interface_key::I2P_TUNNELED,
+                interface_key::CONNECT_TIMEOUT,
+                interface_key::MAX_RECONNECT_TRIES,
+            ][..]
+        };
+        warn_non_effective_settings(
+            source,
+            &interface_path,
+            &[section_key::INTERFACES, name],
+            section,
+            inapplicable,
+            locations,
+            warnings,
+            SettingWarningKind::InapplicableInterfaceRole,
+        );
     }
 
     match type_name {
@@ -460,9 +619,9 @@ fn validate_interface(
         _ => {}
     }
 
-    validate_host_network_requirements(source, name, type_name, section, locations, errors);
+    validate_medium_requirements(source, name, type_name, section, locations, errors);
 
-    if type_name == "RNodeInterface" {
+    if matches!(type_name, "RNodeInterface" | "RNodeMultiInterface") {
         let port_key = interface_key::PORT;
         if let Some((_, value)) = section.scalars.iter().find(|(key, _)| key == port_key) {
             if let Some(port) = value.as_scalar() {
@@ -488,21 +647,27 @@ fn validate_interface(
         }
     }
 
-    for (child, _) in &section.sections {
-        warnings.push(ConfigDiagnostic::new(
-            ConfigDiagnosticCode::UnknownSection,
-            source,
-            location(locations, &[section_key::INTERFACES, name, child]),
-            format!("{interface_path} > [[[{child}]]]"),
-            Some(child.clone()),
-            "nested interface sections are not supported by this interface type",
-            None,
-            format!("remove [[[{child}]]] from [[{name}]]"),
-        ));
+    if type_name == "RNodeMultiInterface" {
+        super::rnode_multi::validate_subinterfaces(
+            source, name, section, locations, warnings, errors,
+        );
+    } else {
+        for (child, _) in &section.sections {
+            warnings.push(ConfigDiagnostic::new(
+                ConfigDiagnosticCode::UnknownSection,
+                source,
+                location(locations, &[section_key::INTERFACES, name, child]),
+                format!("{interface_path} > [[[{child}]]]"),
+                Some(child.clone()),
+                "nested interface sections are not supported by this interface type",
+                None,
+                format!("remove [[[{child}]]] from [[{name}]]"),
+            ));
+        }
     }
 }
 
-fn validate_host_network_requirements(
+fn validate_medium_requirements(
     source: &str,
     interface: &str,
     type_name: &str,
@@ -563,6 +728,156 @@ fn validate_host_network_requirements(
         "UDPInterface" => {
             validate_udp_requirements(&context, errors);
         }
+        "SerialInterface" | "KISSInterface" => {
+            require_setting(
+                &context,
+                RequiredSetting {
+                    primary: interface_key::PORT,
+                    alternatives: &[],
+                    accepted: "a serial device path",
+                    correction: format!(
+                        "add `{} = /dev/ttyUSB0` under [[{interface}]]",
+                        interface_key::PORT
+                    ),
+                },
+                errors,
+            );
+            if type_name == "KISSInterface" {
+                validate_station_identification(&context, errors);
+            }
+        }
+        "AX25KISSInterface" => {
+            require_setting(
+                &context,
+                RequiredSetting {
+                    primary: interface_key::PORT,
+                    alternatives: &[],
+                    accepted: "a serial device path",
+                    correction: format!(
+                        "add `{} = /dev/ttyUSB0` under [[{interface}]]",
+                        interface_key::PORT
+                    ),
+                },
+                errors,
+            );
+            require_setting(
+                &context,
+                RequiredSetting {
+                    primary: interface_key::CALLSIGN,
+                    alternatives: &[],
+                    accepted: "an AX.25 source callsign",
+                    correction: format!(
+                        "add `{} = N0CALL` under [[{interface}]]",
+                        interface_key::CALLSIGN
+                    ),
+                },
+                errors,
+            );
+            require_setting(
+                &context,
+                RequiredSetting {
+                    primary: interface_key::SSID,
+                    alternatives: &[],
+                    accepted: "an AX.25 SSID",
+                    correction: format!("add `{} = 0` under [[{interface}]]", interface_key::SSID),
+                },
+                errors,
+            );
+        }
+        "RNodeInterface" => {
+            for required in [
+                RequiredSetting {
+                    primary: interface_key::PORT,
+                    alternatives: &[],
+                    accepted: "a local serial device path",
+                    correction: format!(
+                        "add `{} = /dev/ttyUSB0` under [[{interface}]]",
+                        interface_key::PORT
+                    ),
+                },
+                RequiredSetting {
+                    primary: interface_key::FREQUENCY,
+                    alternatives: &[],
+                    accepted: "a radio frequency",
+                    correction: format!(
+                        "add `{} = 868000000` under [[{interface}]]",
+                        interface_key::FREQUENCY
+                    ),
+                },
+                RequiredSetting {
+                    primary: interface_key::BANDWIDTH,
+                    alternatives: &[],
+                    accepted: "a radio bandwidth",
+                    correction: format!(
+                        "add `{} = 125000` under [[{interface}]]",
+                        interface_key::BANDWIDTH
+                    ),
+                },
+                RequiredSetting {
+                    primary: interface_key::TXPOWER,
+                    alternatives: &[],
+                    accepted: "a transmit power",
+                    correction: format!(
+                        "add `{} = 7` under [[{interface}]]",
+                        interface_key::TXPOWER
+                    ),
+                },
+                RequiredSetting {
+                    primary: interface_key::SPREADINGFACTOR,
+                    alternatives: &[],
+                    accepted: "a LoRa spreading factor",
+                    correction: format!(
+                        "add `{} = 8` under [[{interface}]]",
+                        interface_key::SPREADINGFACTOR
+                    ),
+                },
+                RequiredSetting {
+                    primary: interface_key::CODINGRATE,
+                    alternatives: &[],
+                    accepted: "a LoRa coding rate",
+                    correction: format!(
+                        "add `{} = 5` under [[{interface}]]",
+                        interface_key::CODINGRATE
+                    ),
+                },
+            ] {
+                require_setting(&context, required, errors);
+            }
+            validate_station_identification(&context, errors);
+            validate_rnode_station_callsign(&context, errors);
+        }
+        "RNodeMultiInterface" => {
+            require_setting(
+                &context,
+                RequiredSetting {
+                    primary: interface_key::PORT,
+                    alternatives: &[],
+                    accepted: "a local serial device path",
+                    correction: format!(
+                        "add `{} = /dev/ttyUSB0` under [[{interface}]]",
+                        interface_key::PORT
+                    ),
+                },
+                errors,
+            );
+            validate_station_identification(&context, errors);
+            validate_rnode_station_callsign(&context, errors);
+        }
+        "PipeInterface" => {
+            require_setting(
+                &context,
+                RequiredSetting {
+                    primary: interface_key::COMMAND,
+                    alternatives: &[],
+                    accepted: "a subprocess command",
+                    correction: format!(
+                        "add `{} = /path/to/program` under [[{interface}]]",
+                        interface_key::COMMAND
+                    ),
+                },
+                errors,
+            );
+        }
         "BackboneInterface" | "BackboneClientInterface" => {
             let client = type_name == "BackboneClientInterface"
                 || has_one_of(
@@ -614,6 +929,80 @@ fn validate_host_network_requirements(
         }
         _ => {}
     }
+}
+
+fn validate_station_identification(
+    context: &InterfaceRequirementContext<'_>,
+    errors: &mut ValidationErrorCollector,
+) {
+    let callsign = context.section.get(interface_key::ID_CALLSIGN).is_some();
+    let interval = context.section.get(interface_key::ID_INTERVAL).is_some();
+    match (callsign, interval) {
+        (true, false) => missing_setting(
+            context,
+            interface_key::ID_INTERVAL,
+            "id_interval whenever id_callsign is set",
+            format!(
+                "add `{} = 600` under [[{}]], or remove `{}`",
+                interface_key::ID_INTERVAL,
+                context.interface,
+                interface_key::ID_CALLSIGN
+            ),
+            errors,
+        ),
+        (false, true) => missing_setting(
+            context,
+            interface_key::ID_CALLSIGN,
+            "id_callsign whenever id_interval is set",
+            format!(
+                "add `{} = N0CALL` under [[{}]], or remove `{}`",
+                interface_key::ID_CALLSIGN,
+                context.interface,
+                interface_key::ID_INTERVAL
+            ),
+            errors,
+        ),
+        (false, false) | (true, true) => {}
+    }
+}
+
+fn validate_rnode_station_callsign(
+    context: &InterfaceRequirementContext<'_>,
+    errors: &mut ValidationErrorCollector,
+) {
+    let Some(value) = context.section.get(interface_key::ID_CALLSIGN) else {
+        return;
+    };
+    let Some(callsign) = value.as_scalar() else {
+        return;
+    };
+    if callsign.len() <= 32 {
+        return;
+    }
+    errors.push(ConfigDiagnostic::new(
+        ConfigDiagnosticCode::InvalidValue,
+        context.source,
+        location(
+            context.locations,
+            &[
+                section_key::INTERFACES,
+                context.interface,
+                interface_key::ID_CALLSIGN,
+            ],
+        ),
+        format!(
+            "[interfaces] > [[{}]] > {}",
+            context.interface,
+            interface_key::ID_CALLSIGN
+        ),
+        Some(callsign.to_string()),
+        "RNode station identification exceeds the device command capacity",
+        Some("a non-empty UTF-8 value no longer than 32 encoded bytes".to_string()),
+        format!(
+            "shorten `{}` to at most 32 UTF-8 bytes",
+            interface_key::ID_CALLSIGN
+        ),
+    ));
 }
 
 fn validate_udp_requirements(
@@ -770,9 +1159,10 @@ fn missing_setting(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn validate_alias_group(
+pub(super) fn validate_alias_group(
     source: &str,
-    interface: &str,
+    source_path: &[&str],
+    display_path: &str,
     section: &Section,
     locations: &SourceLocations,
     canonical: &str,
@@ -790,8 +1180,8 @@ fn validate_alias_group(
             Ok(normalized) => values.push((*key, value, normalized)),
             Err(()) => validate_value(
                 source,
-                location(locations, &[section_key::INTERFACES, interface, key]),
-                format!("[interfaces] > [[{interface}]] > {key}"),
+                setting_location(locations, source_path, key),
+                format!("{display_path} > {key}"),
                 key,
                 value,
                 kind,
@@ -821,8 +1211,8 @@ fn validate_alias_group(
         let diagnostic = ConfigDiagnostic::new(
             code,
             source,
-            location(locations, &[section_key::INTERFACES, interface, second.0]),
-            format!("[interfaces] > [[{interface}]] > {canonical}"),
+            setting_location(locations, source_path, second.0),
+            format!("{display_path} > {canonical}"),
             Some(format!(
                 "{} = {}; {} = {}",
                 first.0,
@@ -897,7 +1287,7 @@ fn compare_alias_pair(
     }
 }
 
-fn validate_value(
+pub(super) fn validate_value(
     source: &str,
     line: usize,
     path: String,
@@ -906,7 +1296,16 @@ fn validate_value(
     kind: ValueKind,
     errors: &mut ValidationErrorCollector,
 ) {
-    if normalized_value(value, kind).is_ok() && semantic_value_is_valid(key, value) {
+    let i2p_error = match kind {
+        ValueKind::I2pPeers => validate_peers(value.as_list())
+            .err()
+            .map(|error| error.to_string()),
+        _ => None,
+    };
+    if i2p_error.is_none()
+        && normalized_value(value, kind).is_ok()
+        && semantic_value_is_valid(key, value, kind)
+    {
         return;
     }
     errors.push(ConfigDiagnostic::new(
@@ -915,15 +1314,65 @@ fn validate_value(
         line,
         path,
         Some(value_text(value)),
-        format!("invalid value for {key:?}"),
+        i2p_error.map_or_else(
+            || format!("invalid value for {key:?}"),
+            |reason| format!("invalid value for {key:?}: {reason}"),
+        ),
         Some(accepted_for_key(key, kind)),
         format!("set `{key} = {}`", example_for_key(key, kind)),
     ));
 }
 
 fn accepted_for_key(key: &str, kind: ValueKind) -> String {
+    match kind {
+        ValueKind::RnodeMultiVport
+        | ValueKind::RnodeMultiFrequency
+        | ValueKind::RnodeMultiTxPower => return kind.accepted().to_string(),
+        _ => {}
+    }
     match key {
+        interface_key::IFAC_SIZE => format!(
+            "an integer from 0 through {} bits",
+            IFAC_MAX_SIZE * 8 + 7
+        ),
         interface_key::ANNOUNCE_CAP => "a percentage from 0 through 100".to_string(),
+        interface_key::SPEED => format!(
+            "an integer from {} through {} bits per second",
+            prns_core::interfaces::BitrateBps::MINIMUM,
+            u32::MAX
+        ),
+        interface_key::DATABITS => "one of 5, 6, 7, or 8".to_string(),
+        interface_key::PARITY => "one of N, None, E, Even, O, or Odd".to_string(),
+        interface_key::STOPBITS => "one of 1 or 2".to_string(),
+        interface_key::ID_CALLSIGN => "a non-empty station identifier".to_string(),
+        interface_key::CALLSIGN => {
+            "an ASCII AX.25 callsign containing 3 through 6 characters".to_string()
+        }
+        interface_key::SSID => "an integer from 0 through 15".to_string(),
+        interface_key::FREQUENCY => format!(
+            "an integer from {FREQUENCY_HZ_MIN} through {FREQUENCY_HZ_MAX} hertz"
+        ),
+        interface_key::BANDWIDTH => format!(
+            "an integer from {BANDWIDTH_HZ_MIN} through {BANDWIDTH_HZ_MAX} hertz"
+        ),
+        interface_key::TXPOWER => {
+            format!("an integer from {TXPOWER_DBM_MIN} through {TXPOWER_DBM_MAX} dBm")
+        }
+        interface_key::SPREADINGFACTOR => format!(
+            "an integer from {SPREADING_FACTOR_MIN} through {SPREADING_FACTOR_MAX}"
+        ),
+        interface_key::CODINGRATE => {
+            format!("an integer from {CODING_RATE_MIN} through {CODING_RATE_MAX}")
+        }
+        interface_key::AIRTIME_LIMIT_SHORT | interface_key::AIRTIME_LIMIT_LONG => {
+            "a percentage from 0 through 100".to_string()
+        }
+        interface_key::RESPAWN_DELAY => {
+            "a non-negative finite duration in seconds representable by the host".to_string()
+        }
+        interface_key::COMMAND => {
+            "a non-empty command with complete shell-style quoting".to_string()
+        }
         common_key::IC_BURST_HOLD | common_key::IC_NEW_TIME | common_key::IC_BURST_PENALTY | common_key::IC_HELD_RELEASE_INTERVAL => {
             "a non-negative duration in seconds whose rounded milliseconds are below 18446744073709551616"
                 .to_string()
@@ -952,8 +1401,30 @@ fn accepted_for_key(key: &str, kind: ValueKind) -> String {
 }
 
 fn example_for_key(key: &str, kind: ValueKind) -> &'static str {
+    match kind {
+        ValueKind::RnodeMultiVport
+        | ValueKind::RnodeMultiFrequency
+        | ValueKind::RnodeMultiTxPower => return kind.example(),
+        _ => {}
+    }
     match key {
+        interface_key::IFAC_SIZE => "64",
         interface_key::ANNOUNCE_CAP => "2.0",
+        interface_key::SPEED => "9600",
+        interface_key::DATABITS => "8",
+        interface_key::PARITY => "N",
+        interface_key::STOPBITS => "1",
+        interface_key::ID_CALLSIGN | interface_key::CALLSIGN => "N0CALL",
+        interface_key::SSID => "0",
+        interface_key::FREQUENCY => "868000000",
+        interface_key::BANDWIDTH => "125000",
+        interface_key::TXPOWER => "7",
+        interface_key::SPREADINGFACTOR => "8",
+        interface_key::CODINGRATE => "5",
+        interface_key::AIRTIME_LIMIT_SHORT => "1.5",
+        interface_key::AIRTIME_LIMIT_LONG => "5.0",
+        interface_key::RESPAWN_DELAY => "5.0",
+        interface_key::COMMAND => "/path/to/program --option value",
         common_key::IC_BURST_HOLD | common_key::IC_BURST_PENALTY => "15.0",
         common_key::IC_NEW_TIME => "7200.0",
         common_key::IC_HELD_RELEASE_INTERVAL => "5.0",
@@ -969,14 +1440,51 @@ fn example_for_key(key: &str, kind: ValueKind) -> &'static str {
     }
 }
 
-fn semantic_value_is_valid(key: &str, value: &Value) -> bool {
+fn semantic_value_is_valid(key: &str, value: &Value, kind: ValueKind) -> bool {
     let Some(text) = value.as_scalar() else {
         return true;
     };
+    if let Some(valid) = super::rnode_multi::semantic_value_is_valid(kind, text) {
+        return valid;
+    }
     match key {
+        interface_key::IFAC_SIZE => {
+            parse_integer::<u32>(text).is_ok_and(|value| value <= (IFAC_MAX_SIZE * 8 + 7) as u32)
+        }
         interface_key::ANNOUNCE_CAP => {
             parse_float(text).is_ok_and(|value| (0.0..=100.0).contains(&value))
         }
+        interface_key::SPEED => parse_integer::<u32>(text)
+            .is_ok_and(|value| u64::from(value) >= prns_core::interfaces::BitrateBps::MINIMUM),
+        interface_key::DATABITS => {
+            parse_integer::<u8>(text).is_ok_and(|value| matches!(value, 5..=8))
+        }
+        interface_key::PARITY => matches!(
+            text.trim().to_ascii_lowercase().as_str(),
+            "n" | "none" | "e" | "even" | "o" | "odd"
+        ),
+        interface_key::STOPBITS => {
+            parse_integer::<u8>(text).is_ok_and(|value| matches!(value, 1 | 2))
+        }
+        interface_key::ID_CALLSIGN => !text.is_empty(),
+        interface_key::CALLSIGN => text.is_ascii() && (3..=6).contains(&text.len()),
+        interface_key::SSID => parse_integer::<u8>(text).is_ok_and(|value| value <= 15),
+        interface_key::FREQUENCY => parse_integer::<u64>(text)
+            .is_ok_and(|value| (FREQUENCY_HZ_MIN..=FREQUENCY_HZ_MAX).contains(&value)),
+        interface_key::BANDWIDTH => parse_integer::<u32>(text)
+            .is_ok_and(|value| (BANDWIDTH_HZ_MIN..=BANDWIDTH_HZ_MAX).contains(&value)),
+        interface_key::TXPOWER => parse_integer::<i16>(text)
+            .is_ok_and(|value| (TXPOWER_DBM_MIN..=TXPOWER_DBM_MAX).contains(&value)),
+        interface_key::SPREADINGFACTOR => parse_integer::<u8>(text)
+            .is_ok_and(|value| (SPREADING_FACTOR_MIN..=SPREADING_FACTOR_MAX).contains(&value)),
+        interface_key::CODINGRATE => parse_integer::<u8>(text)
+            .is_ok_and(|value| (CODING_RATE_MIN..=CODING_RATE_MAX).contains(&value)),
+        interface_key::AIRTIME_LIMIT_SHORT | interface_key::AIRTIME_LIMIT_LONG => {
+            parse_float(text).is_ok_and(|value| value.is_finite() && (0.0..=100.0).contains(&value))
+        }
+        interface_key::RESPAWN_DELAY => parse_float(text)
+            .is_ok_and(|value| std::time::Duration::try_from_secs_f64(value).is_ok()),
+        interface_key::COMMAND => shlex::split(text).is_some_and(|argv| !argv.is_empty()),
         common_key::IC_BURST_HOLD
         | common_key::IC_BURST_FREQ_NEW
         | common_key::IC_BURST_FREQ
@@ -1012,7 +1520,7 @@ fn fixed_milli_value_is_valid(value: f64) -> bool {
 }
 
 fn normalized_value(value: &Value, kind: ValueKind) -> Result<String, ()> {
-    if matches!(kind, ValueKind::List) {
+    if matches!(kind, ValueKind::List | ValueKind::I2pPeers) {
         return Ok(value_text(value));
     }
     if matches!(kind, ValueKind::IdentityHashes) {
@@ -1043,7 +1551,9 @@ fn normalized_value(value: &Value, kind: ValueKind) -> Result<String, ()> {
         }
         .to_string(),
         ValueKind::String => text.to_string(),
-        ValueKind::List => unreachable!("list values return before scalar coercion"),
+        ValueKind::List | ValueKind::I2pPeers => {
+            unreachable!("list values return before scalar coercion")
+        }
         ValueKind::Bitrate => {
             let value = parse_integer::<u64>(text)?;
             if value < prns_core::interfaces::BitrateBps::MINIMUM {
@@ -1097,6 +1607,9 @@ fn normalized_value(value: &Value, kind: ValueKind) -> Result<String, ()> {
             }
             text.to_ascii_lowercase()
         }
+        ValueKind::RnodeMultiVport => parse_integer::<u8>(text)?.to_string(),
+        ValueKind::RnodeMultiFrequency => parse_integer::<u64>(text)?.to_string(),
+        ValueKind::RnodeMultiTxPower => parse_integer::<i16>(text)?.to_string(),
     };
     Ok(normalized)
 }
@@ -1115,7 +1628,7 @@ fn parse_float(text: &str) -> Result<f64, ()> {
     cleaned.parse::<f64>().map_err(|_| ())
 }
 
-fn unknown_key(
+pub(super) fn unknown_key(
     source: &str,
     line: usize,
     path: String,
@@ -1164,8 +1677,18 @@ fn edit_distance(left: &str, right: &str) -> usize {
     previous[right.chars().count()]
 }
 
-fn location(locations: &SourceLocations, path: &[&str]) -> usize {
+pub(super) fn location(locations: &SourceLocations, path: &[&str]) -> usize {
     locations.line(path.iter().copied()).unwrap_or(1)
+}
+
+pub(super) fn setting_location(
+    locations: &SourceLocations,
+    source_path: &[&str],
+    key: &str,
+) -> usize {
+    let mut path = source_path.to_vec();
+    path.push(key);
+    location(locations, &path)
 }
 
 fn value_text(value: &Value) -> String {

@@ -28,6 +28,8 @@ cfg_if::cfg_if! {
 
 mod attach;
 
+pub mod reconnect;
+
 pub mod interface_menu;
 
 #[cfg(feature = "auto")]
@@ -44,13 +46,18 @@ pub mod interface_discovery;
     feature = "serial",
     feature = "kiss",
     feature = "ax25",
+    feature = "rnode",
     feature = "pipe",
     feature = "shared-instance",
-    feature = "backbone"
+    feature = "backbone",
+    feature = "i2p"
 ))]
 mod framed_stream;
 
-#[cfg(feature = "tcp")]
+#[cfg(any(feature = "kiss", feature = "ax25", feature = "rnode"))]
+pub mod serial_control;
+
+#[cfg(any(feature = "tcp", feature = "i2p"))]
 pub mod tcp;
 
 #[cfg(feature = "udp")]
@@ -79,6 +86,9 @@ mod host_network;
 
 #[cfg(feature = "websocket")]
 pub mod websocket;
+
+#[cfg(feature = "i2p")]
+pub mod i2p;
 
 #[cfg(feature = "ax25")]
 pub mod ax25;

@@ -20,18 +20,125 @@ pub type HostSerial = tokio_serial::SerialStream;
 #[cfg(windows)]
 pub type HostSerial = windows_bridge::ThreadedSerial;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostSerialDataBits {
+    Five,
+    Six,
+    Seven,
+    Eight,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostSerialParity {
+    None,
+    Even,
+    Odd,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostSerialStopBits {
+    One,
+    Two,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HostSerialLineSettings {
+    baud: u32,
+    data_bits: HostSerialDataBits,
+    parity: HostSerialParity,
+    stop_bits: HostSerialStopBits,
+}
+
+impl HostSerialLineSettings {
+    pub const fn new(
+        baud: u32,
+        data_bits: HostSerialDataBits,
+        parity: HostSerialParity,
+        stop_bits: HostSerialStopBits,
+    ) -> Self {
+        Self {
+            baud,
+            data_bits,
+            parity,
+            stop_bits,
+        }
+    }
+
+    pub const fn eight_n_one(baud: u32) -> Self {
+        Self::new(
+            baud,
+            HostSerialDataBits::Eight,
+            HostSerialParity::None,
+            HostSerialStopBits::One,
+        )
+    }
+
+    pub const fn baud(self) -> u32 {
+        self.baud
+    }
+
+    pub const fn data_bits(self) -> HostSerialDataBits {
+        self.data_bits
+    }
+
+    pub const fn parity(self) -> HostSerialParity {
+        self.parity
+    }
+
+    pub const fn stop_bits(self) -> HostSerialStopBits {
+        self.stop_bits
+    }
+}
+
 /// Open `path` at `baud` (8N1) as an async stream for a serial-family interface, using the reliable
 /// transport for the platform. Called by each serial-family interface's open factory.
 #[cfg(not(windows))]
 pub fn open_host_serial(path: &str, baud: u32) -> io::Result<HostSerial> {
-    tokio_serial::new(path, baud)
+    open_host_serial_with_settings(path, HostSerialLineSettings::eight_n_one(baud))
+}
+
+#[cfg(not(windows))]
+pub fn open_host_serial_with_settings(
+    path: &str,
+    settings: HostSerialLineSettings,
+) -> io::Result<HostSerial> {
+    serial_builder(path, settings)
         .open_native_async()
         .map_err(io::Error::other)
 }
 
 #[cfg(windows)]
 pub fn open_host_serial(path: &str, baud: u32) -> io::Result<HostSerial> {
-    windows_bridge::open(path, baud)
+    open_host_serial_with_settings(path, HostSerialLineSettings::eight_n_one(baud))
+}
+
+#[cfg(windows)]
+pub fn open_host_serial_with_settings(
+    path: &str,
+    settings: HostSerialLineSettings,
+) -> io::Result<HostSerial> {
+    windows_bridge::open(path, settings)
+}
+
+fn serial_builder(path: &str, settings: HostSerialLineSettings) -> tokio_serial::SerialPortBuilder {
+    use tokio_serial::{DataBits, Parity, StopBits};
+
+    tokio_serial::new(path, settings.baud)
+        .data_bits(match settings.data_bits {
+            HostSerialDataBits::Five => DataBits::Five,
+            HostSerialDataBits::Six => DataBits::Six,
+            HostSerialDataBits::Seven => DataBits::Seven,
+            HostSerialDataBits::Eight => DataBits::Eight,
+        })
+        .parity(match settings.parity {
+            HostSerialParity::None => Parity::None,
+            HostSerialParity::Even => Parity::Even,
+            HostSerialParity::Odd => Parity::Odd,
+        })
+        .stop_bits(match settings.stop_bits {
+            HostSerialStopBits::One => StopBits::One,
+            HostSerialStopBits::Two => StopBits::Two,
+        })
 }
 
 #[cfg(windows)]
@@ -71,8 +178,8 @@ mod windows_bridge {
 
     /// Open `path` at `baud` with serialport's blocking `open` — a single `CreateFile`, no settings
     /// read-back, no overlapped re-open — and spawn the I/O thread that bridges it to the channels.
-    pub fn open(path: &str, baud: u32) -> io::Result<ThreadedSerial> {
-        let port = tokio_serial::new(path, baud)
+    pub fn open(path: &str, settings: super::HostSerialLineSettings) -> io::Result<ThreadedSerial> {
+        let port = super::serial_builder(path, settings)
             .timeout(READ_POLL)
             .open()
             .map_err(io::Error::other)?;

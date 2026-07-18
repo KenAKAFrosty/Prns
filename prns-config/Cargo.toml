@@ -12,8 +12,9 @@ publish = false
 [workspace]
 
 [dependencies]
-prns-core = { path = "../prns-core", default-features = false, features = ["interface-discovery"] }
+prns-core = { path = "../prns-core", default-features = false, features = ["interface-discovery", "std"] }
 dirs = "6"
+shlex = "1"
 
 [dev-dependencies]
 prns-core = { path = "../prns-core", default-features = false, features = ["interface-discovery-archive"] }

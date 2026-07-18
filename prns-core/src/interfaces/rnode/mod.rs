@@ -6,4 +6,6 @@
 
 #[cfg(feature = "std")]
 pub mod core;
+#[cfg(feature = "std")]
+pub mod multi;
 pub mod policy;

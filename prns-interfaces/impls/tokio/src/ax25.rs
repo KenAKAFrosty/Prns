@@ -1,11 +1,15 @@
 use std::future::Future;
 use std::io;
-use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use crate::framed_stream::{self, KissFraming};
-use crate::kiss::{configure_tnc, CONFIGURE_SETTLE};
+use crate::framed_stream::WireMeters;
+use crate::kiss::{
+    configure_tnc, serve_controlled_kiss, ControlledKissBuffers, TncConfigureDelay,
+    DEFAULT_TNC_CONFIGURE_DELAY,
+};
+use crate::reconnect::ReconnectDelay;
+use crate::serial_control::{ReadyCommandFlowControl, SerialControl};
 use prns_core::interfaces::ax25_kiss::core::{self, Ax25AddressError, AX25_HEADER_SIZE};
 use prns_core::interfaces::kiss::core::TncConfig;
 use prns_core::interfaces::{
@@ -75,9 +79,10 @@ impl<S: InterfaceSeam> InterfaceSeam for Ax25Seam<S> {
 pub struct Ax25KissInterface<Open> {
     id: InterfaceId,
     open: Open,
-    reconnect: Duration,
-    settle: Duration,
+    reconnect_delay: ReconnectDelay,
+    configure_delay: TncConfigureDelay,
     tnc: TncConfig,
+    flow_control: ReadyCommandFlowControl,
     policy: EffectiveInterfacePolicy,
     header: [u8; AX25_HEADER_SIZE],
     channel_tag: std::vec::Vec<u8>,
@@ -85,8 +90,9 @@ pub struct Ax25KissInterface<Open> {
 }
 
 pub struct Ax25KissSettings<'a> {
-    pub settle: Duration,
+    pub configure_delay: TncConfigureDelay,
     pub tnc: TncConfig,
+    pub flow_control: ReadyCommandFlowControl,
     pub callsign: &'a str,
     pub ssid: u8,
     pub policy: EffectiveInterfacePolicy,
@@ -99,15 +105,15 @@ impl<Open> Ax25KissInterface<Open> {
     /// device this is, exactly as for the serial and KISS interfaces.
     pub fn new(
         open: Open,
-        reconnect: Duration,
+        reconnect_delay: ReconnectDelay,
         callsign: &str,
         ssid: u8,
         channel_tag: &[u8],
     ) -> Result<Self, Ax25AddressError> {
         Self::with_settings(
             open,
-            reconnect,
-            CONFIGURE_SETTLE,
+            reconnect_delay,
+            DEFAULT_TNC_CONFIGURE_DELAY,
             TncConfig::default(),
             callsign,
             ssid,
@@ -120,8 +126,8 @@ impl<Open> Ax25KissInterface<Open> {
     /// the callsign/SSID is not a valid AX.25 address.
     pub fn with_settings(
         open: Open,
-        reconnect: Duration,
-        settle: Duration,
+        reconnect_delay: ReconnectDelay,
+        configure_delay: TncConfigureDelay,
         tnc: TncConfig,
         callsign: &str,
         ssid: u8,
@@ -129,10 +135,11 @@ impl<Open> Ax25KissInterface<Open> {
     ) -> Result<Self, Ax25AddressError> {
         Self::with_policy(
             open,
-            reconnect,
+            reconnect_delay,
             Ax25KissSettings {
-                settle,
+                configure_delay,
                 tnc,
+                flow_control: ReadyCommandFlowControl::Disabled,
                 callsign,
                 ssid,
                 policy: core::configured_policy(Default::default()),
@@ -143,7 +150,7 @@ impl<Open> Ax25KissInterface<Open> {
 
     pub fn with_policy(
         open: Open,
-        reconnect: Duration,
+        reconnect_delay: ReconnectDelay,
         settings: Ax25KissSettings<'_>,
     ) -> Result<Self, Ax25AddressError> {
         let header = core::build_header(settings.callsign, settings.ssid)?;
@@ -152,9 +159,10 @@ impl<Open> Ax25KissInterface<Open> {
         Ok(Self {
             id,
             open,
-            reconnect,
-            settle: settings.settle,
+            reconnect_delay,
+            configure_delay: settings.configure_delay,
             tnc: settings.tnc,
+            flow_control: settings.flow_control,
             policy: settings.policy,
             header,
             channel_tag,
@@ -198,6 +206,7 @@ where
         let mut airtime = AirtimeLedger::new();
         let mut throughput = ThroughputLedger::new();
         let started = tokio::time::Instant::now();
+        let mut control = SerialControl::new(self.flow_control, None);
         // The adapter owns the seam and persists across reconnects, carrying its reusable scratch.
         let mut seam = Ax25Seam {
             inner: seam,
@@ -206,26 +215,25 @@ where
             outbound: std::vec::Vec::with_capacity(core::AX25_FRAME_LEN),
         };
         let mut buffers: Option<
-            framed_stream::FramedBuffers<KissFraming, { core::READ_BUF_LEN }, { core::FRAMED_LEN }>,
+            ControlledKissBuffers<
+                { core::AX25_FRAME_LEN },
+                { core::READ_BUF_LEN },
+                { core::FRAMED_LEN },
+            >,
         > = None;
         loop {
             if let Ok(mut stream) = (self.open)().await {
-                if !self.settle.is_zero() {
-                    tokio::time::sleep(self.settle).await;
+                if !self.configure_delay.duration().is_zero() {
+                    tokio::time::sleep(self.configure_delay.duration()).await;
                 }
                 if configure_tnc(&mut stream, &self.tnc).await.is_ok() {
                     self.status.set_connection(ConnectionState::Connected);
-                    framed_stream::serve::<
-                        KissFraming,
-                        { core::READ_BUF_LEN },
-                        { core::FRAMED_LEN },
-                        _,
-                        _,
-                    >(
-                        stream,
-                        buffers.get_or_insert_with(framed_stream::FramedBuffers::new),
+                    serve_controlled_kiss(
+                        &mut stream,
+                        buffers.get_or_insert_with(ControlledKissBuffers::new),
                         &mut seam,
-                        &mut framed_stream::WireMeters {
+                        &mut control,
+                        &mut WireMeters {
                             status: &self.status,
                             airtime: &mut airtime,
                             throughput: &mut throughput,
@@ -237,7 +245,7 @@ where
                     self.status.set_connection(ConnectionState::Disconnected);
                 }
             }
-            tokio::time::sleep(self.reconnect).await;
+            tokio::time::sleep(self.reconnect_delay.duration()).await;
         }
     }
 }
@@ -258,9 +266,11 @@ impl<Open> prns_core::interfaces::ReportsStatus for Ax25KissInterface<Open> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::serial_control::ReadyTimeout;
     use prns_core::interfaces::kiss_framing::{self, FEND, FESC};
     use prns_core::interfaces::InterfaceStatus;
     use prns_runtime::reactor::driver::{tokio_grant_lane, TokioGrantConsumer};
+    use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::sync::mpsc::{self, UnboundedSender};
 
@@ -298,6 +308,21 @@ mod tests {
             .expect("writes the frame");
     }
 
+    async fn read_kiss(wire: &mut tokio::io::DuplexStream) -> Vec<u8> {
+        let mut decoder = core::Decoder::new();
+        let mut buf = [0u8; 128];
+        loop {
+            let read = wire.read(&mut buf).await.expect("reads from the wire");
+            for &byte in &buf[..read] {
+                if let Ok(Some(frame)) = decoder.feed(byte) {
+                    if !frame.is_empty() {
+                        return frame.to_vec();
+                    }
+                }
+            }
+        }
+    }
+
     #[tokio::test]
     async fn wraps_outbound_in_ax25_and_strips_the_header_inbound_over_a_real_stream() {
         let callsign = "N0CALL";
@@ -321,8 +346,8 @@ mod tests {
 
         let interface = Ax25KissInterface::with_settings(
             open,
-            Duration::from_millis(10),
-            Duration::ZERO,
+            ReconnectDelay::new(Duration::from_millis(10)),
+            TncConfigureDelay::new(Duration::ZERO),
             TncConfig::default(),
             callsign,
             ssid,
@@ -428,5 +453,68 @@ mod tests {
         })
         .await
         .expect("the live status reflects the connection + bytes both ways within the window");
+    }
+
+    #[tokio::test]
+    async fn ready_flow_control_gates_ax25_frames() {
+        let callsign = "N0CALL";
+        let ssid = 3;
+        let header = core::build_header(callsign, ssid).expect("valid address");
+        let (interface_wire, mut test_wire) = tokio::io::duplex(2048);
+        let mut wire = Some(interface_wire);
+        let open = move || {
+            let taken = wire.take();
+            async move { taken.ok_or_else(|| io::Error::from(io::ErrorKind::NotConnected)) }
+        };
+        let (in_tx, _in_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let (mut out_tx, out_rx) = tokio_grant_lane(core::AX25_FRAME_LEN, 3);
+        let seam = MockSeam {
+            inbound: in_tx,
+            sink: Vec::new(),
+            outbound: out_rx,
+        };
+        let interface = Ax25KissInterface::with_policy(
+            open,
+            ReconnectDelay::new(Duration::from_millis(10)),
+            Ax25KissSettings {
+                configure_delay: TncConfigureDelay::new(Duration::ZERO),
+                tnc: TncConfig::default(),
+                flow_control: ReadyCommandFlowControl::WaitForReadyOrTimeout(ReadyTimeout::new(
+                    Duration::from_millis(100),
+                )),
+                callsign,
+                ssid,
+                policy: core::configured_policy(Default::default()),
+                channel_tag: b"flow-ax25",
+            },
+        )
+        .expect("valid interface");
+        tokio::spawn(interface.run(seam));
+        let mut config = [0u8; 20];
+        test_wire
+            .read_exact(&mut config)
+            .await
+            .expect("reads config");
+
+        out_tx.try_grant().expect("first slot").fill(b"first");
+        out_tx.commit();
+        let first = read_kiss(&mut test_wire).await;
+        assert_eq!(&first[..AX25_HEADER_SIZE], &header);
+        assert_eq!(&first[AX25_HEADER_SIZE..], b"first");
+
+        out_tx.try_grant().expect("second slot").fill(b"second");
+        out_tx.commit();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), read_kiss(&mut test_wire))
+                .await
+                .is_err()
+        );
+        test_wire
+            .write_all(&kiss_framing::command_frame(kiss_framing::CMD_READY, 1))
+            .await
+            .expect("writes ready");
+        let second = read_kiss(&mut test_wire).await;
+        assert_eq!(&second[..AX25_HEADER_SIZE], &header);
+        assert_eq!(&second[AX25_HEADER_SIZE..], b"second");
     }
 }

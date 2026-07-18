@@ -10,6 +10,10 @@ separately targets RNS `1.3.8`, pinned in
 remains a compatibility fallback for legacy clients, but it is not the primary
 RPC parity target.
 
+Daemon configuration semantics additionally track the RNS `1.3.8` `internal`
+mode, recursive path-request forwarding, and internal-announcement controls.
+This does not change the broader wire and transport pin above.
+
 The normal workspace tests stay the first pass:
 
 ```sh

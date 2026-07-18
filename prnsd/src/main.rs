@@ -27,13 +27,15 @@ use std::fmt;
 use std::process::{self, ExitCode};
 
 use personal_rns::config::{
-    discover, plan, SharedInstance, SharedInstanceTransport as ConfigSharedInstanceTransport,
-    TransportIdentityPolicy,
+    discover, parse_and_plan_named, SharedInstance,
+    SharedInstanceTransport as ConfigSharedInstanceTransport, TransportIdentityPolicy,
 };
 use personal_rns::engine::{
     EngineProtocolPolicy, LinkMtuDiscovery, LocalHopCountOverride, ProofForm,
 };
+use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::vault::FileVault;
+use personal_rns::identity::IdentitySigner;
 use personal_rns::persistence::FileStore;
 use personal_rns::routes;
 use personal_rns::runtime::{
@@ -45,6 +47,7 @@ use personal_rns::shared_instance::{
     SharedInstanceTransport as RuntimeSharedInstanceTransport,
 };
 use personal_rns::storage::GrowableHeap;
+use personal_rns::PlanRuntimeContext;
 use prnsd_control::{
     LaunchSpec, LogLane, ManagedProcess, ServiceError, ServicePaths, ServiceRecord, ServiceState,
     StartOutcome, StateDirectoryError,
@@ -304,7 +307,7 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
         None => (DEFAULT_CONFIG.to_string(), "<built-in config>".to_string()),
     };
 
-    let report = match personal_rns::config::reference::parse_named(&config_source, &config_text) {
+    let report = match parse_and_plan_named(&config_source, &config_text) {
         Ok(report) => report,
         Err(errors) => {
             for diagnostic in errors.diagnostics() {
@@ -313,7 +316,7 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
             process::exit(1);
         }
     };
-    let plan = plan(&report.value);
+    let plan = report.value;
     let observability = match observability::init(cli.log_format, plan.logging) {
         Ok(observability) => observability,
         Err(error) => {
@@ -373,6 +376,10 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
         TransportIdentityPolicy::Persistent => persistent_secret.clone(),
         TransportIdentityPolicy::Ephemeral => personal_rns::runtime::generate_identity_secret(),
     };
+    let visible_identity_hash =
+        InMemoryNodeIdentity::from_secret_key_bytes(&visible_secret).identity_hash();
+    let interface_runtime =
+        PlanRuntimeContext::with_rns_i2p_storage(storage_dir.clone(), visible_identity_hash);
     let transport_secret = routing_enabled.then(|| visible_secret.clone());
     let non_routing_identity_secret = (!routing_enabled).then(|| visible_secret.clone());
     let protocol_policy = EngineProtocolPolicy {
@@ -504,7 +511,9 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
                         instance_name = %name,
                     );
                     startup.listening = startup.listening.saturating_add(1);
-                    let constructed = construct::construct_interfaces(&prns_handle, &plan).await;
+                    let constructed =
+                        construct::construct_interfaces(&prns_handle, &plan, &interface_runtime)
+                            .await;
                     startup.merge(constructed.startup);
                     constructed_interfaces = constructed.attached;
                     owns_tables = true;
@@ -537,7 +546,8 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
         }
         SharedInstance::Disabled => {
             tracing::info!(event = "standalone_node_started");
-            let constructed = construct::construct_interfaces(&prns_handle, &plan).await;
+            let constructed =
+                construct::construct_interfaces(&prns_handle, &plan, &interface_runtime).await;
             startup.merge(constructed.startup);
             constructed_interfaces = constructed.attached;
             owns_tables = true;
@@ -657,7 +667,6 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
             "daemon_ready"
         },
         transport = routing_enabled,
-        deferred_interfaces = plan.deferred.len(),
         online = startup.online,
         listening = startup.listening,
         retrying = startup.retrying,
