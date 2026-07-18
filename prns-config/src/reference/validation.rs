@@ -726,11 +726,12 @@ fn validate_rnode_uri_transport(
         (RNodeInterfaceFamily::Single, RNodeUriTransport::Tcp) => {
             validate_rnode_tcp_target(context, interface_path, port, errors);
         }
-        (RNodeInterfaceFamily::Single, RNodeUriTransport::Ble)
-        | (RNodeInterfaceFamily::Multi, RNodeUriTransport::Tcp | RNodeUriTransport::Ble) => {
-            report_unavailable_rnode_transport(
+        (RNodeInterfaceFamily::Single, RNodeUriTransport::Ble) => {
+            validate_rnode_ble_target(context, interface_path, port, errors);
+        }
+        (RNodeInterfaceFamily::Multi, RNodeUriTransport::Tcp | RNodeUriTransport::Ble) => {
+            report_unavailable_rnode_multi_transport(
                 context,
-                family,
                 interface_path,
                 enabled_key,
                 port,
@@ -739,6 +740,35 @@ fn validate_rnode_uri_transport(
         }
         (_, RNodeUriTransport::Serial) => {}
     }
+}
+
+fn validate_rnode_ble_target(
+    context: &InterfaceRequirementContext<'_>,
+    interface_path: &str,
+    port: &str,
+    errors: &mut ValidationErrorCollector,
+) {
+    let target = &port.trim()[rnode_key::BLE_SCHEME.len()..];
+    if crate::plan::RNodeBleTarget::from_uri_suffix(target.to_string()).is_ok() {
+        return;
+    }
+    let port_key = interface_key::PORT;
+    errors.push(ErrorDiagnostic::new(
+        ErrorCode::InvalidValue,
+        context.source,
+        location(
+            context.locations,
+            &[section_key::INTERFACES, context.interface, port_key],
+        ),
+        format!("{interface_path} > {port_key}"),
+        Some(port.to_string()),
+        "the RNode BLE target looks like an address but contains an invalid octet",
+        Some("ble://, ble:// followed by an exact device name, or six hexadecimal octets separated by colons".to_string()),
+        format!(
+            "set `{port_key} = ble://AA:BB:CC:DD:EE:FF` or `{port_key} = ble://RNode 1234` for [[{}]]",
+            context.interface
+        ),
+    ));
 }
 
 fn rnode_port<'a>(context: &'a InterfaceRequirementContext<'_>) -> Option<&'a str> {
@@ -797,31 +827,14 @@ fn validate_rnode_tcp_target(
     ));
 }
 
-fn report_unavailable_rnode_transport(
+fn report_unavailable_rnode_multi_transport(
     context: &InterfaceRequirementContext<'_>,
-    family: RNodeInterfaceFamily,
     interface_path: &str,
     enabled_key: &str,
     port: &str,
     errors: &mut ValidationErrorCollector,
 ) {
     let port_key = interface_key::PORT;
-    let (accepted, correction) = match family {
-        RNodeInterfaceFamily::Single => (
-            "a local serial device path or tcp:// followed by a host",
-            format!(
-                "set `{port_key} = tcp://radio.example` or `{port_key} = /dev/ttyUSB0` for [[{}]], or set `{enabled_key} = No`",
-                context.interface
-            ),
-        ),
-        RNodeInterfaceFamily::Multi => (
-            "a local serial device path",
-            format!(
-                "set `{port_key} = /dev/ttyUSB0` for [[{}]], or set `{enabled_key} = No`",
-                context.interface
-            ),
-        ),
-    };
     errors.push(ErrorDiagnostic::new(
         ErrorCode::UnsupportedTransport,
         context.source,
@@ -831,9 +844,12 @@ fn report_unavailable_rnode_transport(
         ),
         format!("{interface_path} > {port_key}"),
         Some(port.to_string()),
-        "this RNode URI transport is not available in this build",
-        Some(accepted.to_string()),
-        correction,
+        "RNodeMulti requires one local serial device for all of its radios",
+        Some("a local serial device path".to_string()),
+        format!(
+            "set `{port_key} = /dev/ttyUSB0` for [[{}]], or set `{enabled_key} = No`",
+            context.interface
+        ),
     ));
 }
 

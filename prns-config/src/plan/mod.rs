@@ -27,7 +27,8 @@ pub use node::{
     SharedInstance, SharedInstanceTransport, TransportIdentityPolicy, TransportPlan,
 };
 pub use rnode::{
-    RNodeSerialDevice, RNodeTcpHost, RNodeTcpTarget, RNodeTransportPlan, RNODE_TCP_PORT,
+    RNodeBleAddress, RNodeBleName, RNodeBleTarget, RNodeSerialDevice, RNodeTcpHost, RNodeTcpTarget,
+    RNodeTransportPlan, RNODE_TCP_PORT,
 };
 pub use rnode_multi::{RNodeMultiDevicePlan, RNodeMultiMemberPlan};
 

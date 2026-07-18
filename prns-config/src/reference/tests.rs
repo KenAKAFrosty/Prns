@@ -964,10 +964,36 @@ fn warnings_are_preserved_when_other_values_make_the_config_invalid() {
 }
 
 #[test]
-fn unsupported_rnode_ble_transport_is_a_focused_error() {
+fn an_rnode_ble_transport_is_supported_and_address_errors_are_focused() {
+    let parsed = parse_named(
+        "/tmp/rns/config",
+        "[interfaces]\n[[Radio]]\ntype = RNodeInterface\nenabled = Yes\nport = ble://RNode 1234\nfrequency = 868000000\nbandwidth = 125000\ntxpower = 7\nspreadingfactor = 8\ncodingrate = 5\n",
+    )
+    .expect("named RNode BLE target parses");
+    assert!(parsed.warnings.is_empty());
+
     let errors = parse_named(
         "/tmp/rns/config",
-        "[interfaces]\n[[Radio]]\ntype = RNodeInterface\nenabled = Yes\nport = ble://RNode 1234\n",
+        "[interfaces]\n[[Radio]]\ntype = RNodeInterface\nenabled = Yes\nport = ble://GG:BB:CC:DD:EE:FF\nfrequency = 868000000\nbandwidth = 125000\ntxpower = 7\nspreadingfactor = 8\ncodingrate = 5\n",
+    )
+    .unwrap_err();
+    let diagnostic = errors
+        .diagnostics()
+        .iter()
+        .find(|diagnostic| diagnostic.path().ends_with("port"))
+        .unwrap();
+    assert_eq!(diagnostic.code(), ConfigDiagnosticCode::InvalidValue);
+    assert!(diagnostic.to_string().contains("six hexadecimal octets"));
+    assert!(diagnostic
+        .to_string()
+        .contains("port = ble://AA:BB:CC:DD:EE:FF"));
+}
+
+#[test]
+fn rnode_multi_rejects_uri_transports_as_one_serial_device_requirement() {
+    let errors = parse_named(
+        "/tmp/rns/config",
+        "[interfaces]\n[[Dual]]\ntype = RNodeMultiInterface\nenabled = Yes\nport = ble://RNode Multi\n[[[Sub-GHz]]]\ninterface_enabled = Yes\nvport = 0\nfrequency = 868000000\nbandwidth = 125000\ntxpower = 7\nspreadingfactor = 8\ncodingrate = 5\n",
     )
     .unwrap_err();
     let diagnostic = errors
@@ -977,10 +1003,8 @@ fn unsupported_rnode_ble_transport_is_a_focused_error() {
         .unwrap();
     assert!(diagnostic
         .to_string()
-        .contains("local serial device path or tcp://"));
-    assert!(diagnostic
-        .to_string()
-        .contains("port = tcp://radio.example"));
+        .contains("RNodeMulti requires one local serial device"));
+    assert!(diagnostic.to_string().contains("port = /dev/ttyUSB0"));
 }
 
 #[test]

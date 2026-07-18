@@ -4,8 +4,8 @@ use prns_config::RNodeTransportPlan;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::rnode::{
-    RNodeDetectTimeout, RNodeKeepalive, DEFAULT_RNODE_DETECT_TIMEOUT, TCP_RNODE_DETECT_TIMEOUT,
-    TCP_RNODE_KEEPALIVE,
+    RNodeDetectTimeout, RNodeKeepalive, BLE_RNODE_DETECT_TIMEOUT, DEFAULT_RNODE_DETECT_TIMEOUT,
+    TCP_RNODE_DETECT_TIMEOUT, TCP_RNODE_KEEPALIVE,
 };
 use crate::serial_host::open_host_serial;
 use crate::tcp::tokio_socket::{connect, tune, TcpConnectionSettings};
@@ -32,6 +32,7 @@ impl RNodeHostOpener {
         match &self.transport {
             RNodeTransportPlan::Serial(_) => DEFAULT_RNODE_DETECT_TIMEOUT,
             RNodeTransportPlan::Tcp(_) => TCP_RNODE_DETECT_TIMEOUT,
+            RNodeTransportPlan::Ble(_) => BLE_RNODE_DETECT_TIMEOUT,
         }
     }
 
@@ -39,6 +40,7 @@ impl RNodeHostOpener {
         match &self.transport {
             RNodeTransportPlan::Serial(_) => RNodeKeepalive::Disabled,
             RNodeTransportPlan::Tcp(_) => TCP_RNODE_KEEPALIVE,
+            RNodeTransportPlan::Ble(_) => RNodeKeepalive::Disabled,
         }
     }
 
@@ -50,6 +52,10 @@ impl RNodeHostOpener {
             }
             RNodeTransportPlan::Tcp(target) => {
                 let stream = open_tcp(&target.socket_target()).await?;
+                Ok(Box::new(stream))
+            }
+            RNodeTransportPlan::Ble(target) => {
+                let stream = crate::rnode_ble::open(target).await?;
                 Ok(Box::new(stream))
             }
         }
@@ -90,6 +96,10 @@ mod tests {
         let tcp = RNodeHostOpener::new(planned_transport("tcp://radio.example"));
         assert_eq!(tcp.detect_timeout(), TCP_RNODE_DETECT_TIMEOUT);
         assert_eq!(tcp.keepalive(), TCP_RNODE_KEEPALIVE);
+
+        let ble = RNodeHostOpener::new(planned_transport("ble://RNode 1234"));
+        assert_eq!(ble.detect_timeout(), BLE_RNODE_DETECT_TIMEOUT);
+        assert_eq!(ble.keepalive(), RNodeKeepalive::Disabled);
     }
 
     #[tokio::test]

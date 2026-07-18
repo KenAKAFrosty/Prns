@@ -44,6 +44,8 @@ futures-util = { version = "0.3", optional = true, default-features = false, fea
 log = { version = "0.4", optional = true, default-features = false }
 tracing = { version = "0.1", optional = true, default-features = false, features = ["std"] }
 rmpv = { version = "1.3", optional = true }
+btleplug = { version = "0.12", optional = true }
+uuid = { version = "1", optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 bluer = { version = "0.17", optional = true, features = ["l2cap", "bluetoothd"] }
@@ -96,6 +98,7 @@ serial-host = ["dep:tokio", "dep:tokio-serial"]
 kiss = ["dep:tokio"]
 ax25 = ["kiss"]
 rnode = ["dep:tokio"]
+rnode-ble = ["rnode", "dep:prns-config", "dep:btleplug", "dep:uuid", "dep:futures-util", "dep:bluer", "tokio/rt"]
 pipe = ["dep:tokio"]
 backbone = ["tcp"]
 websocket = ["dep:tokio", "tokio/net", "dep:tokio-tungstenite", "dep:futures-util"]
@@ -110,7 +113,7 @@ ble-host = ["ble", "dep:tokio", "tokio/rt", "dep:prns-ffi"]
 pipe-host = ["pipe", "dep:tokio", "tokio/process"]
 auto = []
 interface-discovery = ["tcp", "backbone", "dep:getrandom", "prns-core/interface-discovery", "prns-runtime/interface-discovery"]
-from-plan = ["tcp", "udp", "serial", "serial-host", "kiss", "ax25", "rnode", "pipe", "pipe-host", "backbone", "wifi", "i2p", "dep:prns-config", "dep:tokio", "tokio/rt"]
+from-plan = ["tcp", "udp", "serial", "serial-host", "kiss", "ax25", "rnode-ble", "pipe", "pipe-host", "backbone", "wifi", "i2p", "dep:prns-config", "dep:tokio", "tokio/rt"]
 ble = ["dep:tokio", "dep:futures-util", "dep:bluer", "dep:prns-ffi"]
 
 [lints.clippy]

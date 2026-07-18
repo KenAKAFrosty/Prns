@@ -473,6 +473,44 @@ fn an_rnode_tcp_uri_plans_the_fixed_stock_endpoint() {
 }
 
 #[test]
+fn rnode_ble_uris_plan_automatic_name_and_address_targets() {
+    let plan_for = |port: &str| {
+        plan_of(&format!(
+            "[interfaces]\n[[Radio]]\ntype = RNodeInterface\nenabled = Yes\nport = {port}\n\
+             frequency = 868000000\nbandwidth = 125000\ntxpower = 7\nspreadingfactor = 8\n\
+             codingrate = 5\n"
+        ))
+    };
+
+    let automatic = plan_for("ble://");
+    let PlannedMedium::Rnode { transport, .. } = &named(&automatic, "Radio").medium else {
+        panic!("RNode medium expected")
+    };
+    assert_eq!(
+        transport,
+        &RNodeTransportPlan::Ble(RNodeBleTarget::FirstBondedRnode)
+    );
+
+    let named_target = plan_for("ble://RNode 1234");
+    let PlannedMedium::Rnode { transport, .. } = &named(&named_target, "Radio").medium else {
+        panic!("RNode medium expected")
+    };
+    let RNodeTransportPlan::Ble(RNodeBleTarget::Name(name)) = transport else {
+        panic!("named BLE target expected")
+    };
+    assert_eq!(name.as_str(), "RNode 1234");
+
+    let addressed = plan_for("ble://AA:BB:CC:DD:EE:FF");
+    let PlannedMedium::Rnode { transport, .. } = &named(&addressed, "Radio").medium else {
+        panic!("RNode medium expected")
+    };
+    let RNodeTransportPlan::Ble(RNodeBleTarget::Address(address)) = transport else {
+        panic!("addressed BLE target expected")
+    };
+    assert_eq!(address.octets(), [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]);
+}
+
+#[test]
 fn an_rnode_without_a_radio_field_is_invalid() {
     let no_freq = parse(
         "[interfaces]\n[[Radio]]\ntype = RNodeInterface\nenabled = Yes\nport = /dev/ttyUSB0\n\
