@@ -10,7 +10,7 @@ use prns_core::interfaces::rnode::multi::{
 
 use super::interpret::cleaned_number;
 use super::keys::{interface as interface_key, section as section_key};
-use super::schema::{rnode_multi_subinterface_key_rule, KeyRule, ValueKind};
+use super::schema::{rnode_multi_subinterface_key_rule, ValueKind};
 use super::validation::{
     location, setting_location, unknown_key, validate_alias_group, validate_value,
     ValidationErrorCollector, ValidationWarnings,
@@ -132,16 +132,15 @@ impl EnabledSubinterface<'_> {
                 continue;
             }
             match rnode_multi_subinterface_key_rule(key) {
-                Some(KeyRule::Validate(kind)) => validate_value(
+                Some(rule) => validate_value(
                     self.context.source,
                     setting_location(self.context.locations, &self.source_path, key),
                     format!("{} > {key}", self.display_path),
                     key,
                     value,
-                    kind,
+                    rule.value_kind(),
                     errors,
                 ),
-                Some(KeyRule::Recognized) => {}
                 None => warnings.push(unknown_key(
                     self.context.source,
                     setting_location(self.context.locations, &self.source_path, key),
