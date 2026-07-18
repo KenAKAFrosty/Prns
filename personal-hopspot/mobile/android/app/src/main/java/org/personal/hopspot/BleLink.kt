@@ -380,14 +380,19 @@ class BleLink(private val context: Context) {
     private fun startRadioStatePump() {
         Thread {
             var lastState = Int.MIN_VALUE
+            var generation = NativeBridge.nativeBleWorkGeneration()
             while (running) {
                 val state = NativeBridge.nativeBleDesiredState()
                 val wantsRadio = (state and NativeBridge.BLE_RADIO_ENABLED) != 0
                 if (state != lastState || wantsRadio && !radioActive) {
+                    val wasActive = radioActive
                     applyDesiredRadioState(state)
                     lastState = state
+                    if (!wasActive && radioActive) {
+                        NativeBridge.nativeBleWakePumps()
+                    }
                 }
-                Thread.sleep(RADIO_STATE_POLL_MS)
+                generation = NativeBridge.nativeBleWaitForWork(generation, RADIO_STATE_RETRY_MS)
             }
             applyDesiredRadioState(0)
         }.start()
@@ -496,6 +501,7 @@ class BleLink(private val context: Context) {
             val output = socket.outputStream
             val direct = ByteBuffer.allocateDirect(L2CAP_CHUNK)
             val scratch = ByteArray(L2CAP_CHUNK)
+            var generation = NativeBridge.nativeBleWorkGeneration()
             while (running && radioActive && links.containsKey(connId)) {
                 direct.clear()
                 val n = NativeBridge.nativeBleL2capOut(connId, direct)
@@ -509,7 +515,7 @@ class BleLink(private val context: Context) {
                         break
                     }
                 } else {
-                    Thread.sleep(IDLE_MS)
+                    generation = NativeBridge.nativeBleWaitForWork(generation, 0)
                 }
             }
         }.start()
@@ -519,9 +525,10 @@ class BleLink(private val context: Context) {
         Thread {
             val direct = ByteBuffer.allocateDirect(CONTROL_CHUNK)
             val scratch = ByteArray(CONTROL_CHUNK)
+            var generation = NativeBridge.nativeBleWorkGeneration()
             while (running) {
                 if (!radioActive) {
-                    Thread.sleep(IDLE_MS)
+                    generation = NativeBridge.nativeBleWaitForWork(generation, 0)
                     continue
                 }
                 var any = false
@@ -536,7 +543,7 @@ class BleLink(private val context: Context) {
                     }
                 }
                 if (!any) {
-                    Thread.sleep(IDLE_MS)
+                    generation = NativeBridge.nativeBleWaitForWork(generation, 0)
                 }
             }
         }.start()
@@ -609,9 +616,10 @@ class BleLink(private val context: Context) {
         Thread {
             val direct = ByteBuffer.allocateDirect(DATA_CHUNK)
             val scratch = ByteArray(DATA_CHUNK)
+            var generation = NativeBridge.nativeBleWorkGeneration()
             while (running) {
                 if (!radioActive) {
-                    Thread.sleep(IDLE_MS)
+                    generation = NativeBridge.nativeBleWaitForWork(generation, 0)
                     continue
                 }
                 var any = false
@@ -627,7 +635,7 @@ class BleLink(private val context: Context) {
                     }
                 }
                 if (!any) {
-                    Thread.sleep(IDLE_MS)
+                    generation = NativeBridge.nativeBleWaitForWork(generation, 0)
                 }
             }
         }.start()
@@ -681,14 +689,15 @@ class BleLink(private val context: Context) {
         Thread {
             val direct = ByteBuffer.allocateDirect(6)
             val octets = ByteArray(6)
+            var generation = NativeBridge.nativeBleWorkGeneration()
             while (running) {
                 if (!radioActive) {
-                    Thread.sleep(IDLE_MS)
+                    generation = NativeBridge.nativeBleWaitForWork(generation, 0)
                     continue
                 }
                 direct.clear()
                 if (!NativeBridge.nativeBleNextDial(direct)) {
-                    Thread.sleep(IDLE_MS)
+                    generation = NativeBridge.nativeBleWaitForWork(generation, 0)
                     continue
                 }
                 direct.position(0)
@@ -718,14 +727,15 @@ class BleLink(private val context: Context) {
         Thread {
             val direct = ByteBuffer.allocateDirect(6)
             val raw = ByteArray(6)
+            var generation = NativeBridge.nativeBleWorkGeneration()
             while (running) {
                 if (!radioActive) {
-                    Thread.sleep(IDLE_MS)
+                    generation = NativeBridge.nativeBleWaitForWork(generation, 0)
                     continue
                 }
                 direct.clear()
                 if (!NativeBridge.nativeBleNextL2capOpen(direct)) {
-                    Thread.sleep(IDLE_MS)
+                    generation = NativeBridge.nativeBleWaitForWork(generation, 0)
                     continue
                 }
                 direct.position(0)
@@ -784,9 +794,6 @@ class BleLink(private val context: Context) {
                     }
                     link.clientGatt = gatt
                     connectedAddrs.add(address)
-                    runCatching {
-                        gatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH)
-                    }
                     val mtuRequested = runCatching { gatt.requestMtu(MAX_ATT_MTU) }.getOrDefault(false)
                     Log.i(TAG, "dialer[$connId] connected; requested mtu=$mtuRequested")
                     if (!mtuRequested) {
@@ -1149,7 +1156,7 @@ class BleLink(private val context: Context) {
         val scanner = adapter.bluetoothLeScanner ?: return
         val filters = listOf(ScanFilter.Builder().setServiceUuid(ParcelUuid(PRNS_SERVICE)).build())
         val settings = ScanSettings.Builder()
-            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+            .setScanMode(ScanSettings.SCAN_MODE_LOW_POWER)
             .build()
         try {
             scanner.startScan(filters, settings, scanCallback)
@@ -1166,7 +1173,7 @@ class BleLink(private val context: Context) {
         }
         val advertiser = adapter.bluetoothLeAdvertiser ?: return
         val settings = AdvertiseSettings.Builder()
-            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
+            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_POWER)
             .setConnectable(true)
             .setTimeout(0)
             .build()
@@ -1198,6 +1205,7 @@ class BleLink(private val context: Context) {
 
     fun stop() {
         running = false
+        NativeBridge.nativeBleWakePumps()
         stopRadio()
     }
 
@@ -1251,8 +1259,7 @@ class BleLink(private val context: Context) {
         private const val CONTROL_CHUNK = 64
         private const val SEND_GATE_TIMEOUT_MS = 1000L
         private const val DATA_CHUNK = 512
-        private const val IDLE_MS = 2L
-        private const val RADIO_STATE_POLL_MS = 50L
+        private const val RADIO_STATE_RETRY_MS = 1_000L
         private const val RSSI_NONE = 127
         private const val MAX_ATT_MTU = 517
         private const val MTU_DISCOVERY_FALLBACK_MS = 750L

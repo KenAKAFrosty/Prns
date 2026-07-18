@@ -90,6 +90,8 @@ const SCAN_ERROR_BACKOFF: Duration = Duration::from_millis(500);
 /// One scan window before the scanner releases the central-radio permit (10 ms units), so a pending
 /// dial never waits longer than this for the radio. With no dial waiting the scanner re-takes it.
 const SCAN_WINDOW_TICKS: u16 = 200;
+const IDLE_SCAN_INTERVAL: u32 = 1600;
+const IDLE_SCAN_WINDOW: u32 = 80;
 /// How long a dial scans for its whitelisted peer before giving up (10 ms units). `central::connect`
 /// defaults to scanning *forever*, so without this a dial to a peer that has stopped advertising holds
 /// the central-radio permit indefinitely and starves both the scanner and every other dial.
@@ -965,7 +967,10 @@ async fn scanner(sd: &'static Softdevice, hub: &'static BleHub) -> ! {
         }
         hub.central_token.receive().await;
         let mut config = central::ScanConfig::default();
+        config.active = false;
         config.extended = false;
+        config.interval = IDLE_SCAN_INTERVAL;
+        config.window = IDLE_SCAN_WINDOW;
         config.timeout = SCAN_WINDOW_TICKS;
         let scan = central::scan(sd, &config, |report| {
             if report.data.len == 0 {

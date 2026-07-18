@@ -66,6 +66,12 @@ object NativeBridge {
 
     external fun nativeBleDesiredState(): Int
 
+    external fun nativeBleWorkGeneration(): Long
+
+    external fun nativeBleWaitForWork(observed: Long, timeoutMillis: Long): Long
+
+    external fun nativeBleWakePumps()
+
     external fun nativeBleIdentity(buffer: ByteBuffer): Int
 
     external fun nativeBleSighting(address: ByteBuffer, rssi: Int)

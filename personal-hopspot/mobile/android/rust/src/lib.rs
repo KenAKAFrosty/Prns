@@ -412,6 +412,32 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleDesiredSt
 }
 
 #[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleWorkGeneration(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jlong {
+    ble_bridge().work_generation() as jlong
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleWaitForWork(
+    _env: JNIEnv,
+    _class: JClass,
+    observed: jlong,
+    timeout_millis: jlong,
+) -> jlong {
+    ble_bridge().wait_for_work(observed as u64, timeout_millis.max(0) as u64) as jlong
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleWakePumps(
+    _env: JNIEnv,
+    _class: JClass,
+) {
+    ble_bridge().wake_work();
+}
+
+#[no_mangle]
 pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleIdentity(
     env: JNIEnv,
     _class: JClass,
