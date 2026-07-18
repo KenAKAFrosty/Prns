@@ -1,5 +1,5 @@
 use crate::crypto::{Ed25519Signature, X25519PublicKey, X25519SharedSecret};
-use crate::engine::execute::settle;
+use crate::engine::settlement::settle;
 use crate::engine::{
     CommandId, Directive, EngineReaction, EngineState, InstantMillis, LinkEstablished, LinkRttOwed,
     Settlement, WakeSchedule, WakeSchedules,

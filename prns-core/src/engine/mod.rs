@@ -9,6 +9,7 @@ mod management;
 mod node_ingress;
 mod reaction;
 mod registration;
+mod settlement;
 mod state;
 mod tunnel;
 mod wake;
