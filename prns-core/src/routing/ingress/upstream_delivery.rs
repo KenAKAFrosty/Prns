@@ -219,6 +219,7 @@ mod tests {
     use crate::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, RatchetPolicy};
     use crate::identity::in_memory::InMemoryNodeIdentity;
     use crate::identity::{IdentitySigner, OpenedBy};
+    use crate::interfaces::InboundPacket;
     use crate::routing::announce::derive_destination_hash;
     use crate::routing::ingress::testkit::iface;
 

@@ -314,7 +314,8 @@ mod tests {
         AnnounceAppData, AnnounceNow, AnnounceTarget, Directive, EngineReaction, IngestIo,
     };
     use crate::identity::in_memory::InMemoryNodeIdentity;
-    use crate::interfaces::InterfaceDescriptor;
+    use crate::interfaces::{InboundPacket, InterfaceDescriptor};
+    use crate::routing::announce::Announce;
     use crate::routing::ingress::testkit::iface;
     use crate::storage::TestFixedStorage;
     use crate::wire::HEADER_MIN_LEN;

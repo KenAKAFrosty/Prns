@@ -234,7 +234,7 @@ mod tests {
     use super::*;
     use crate::engine::test_support::*;
     use crate::engine::{Directive, EngineReaction, IngestIo};
-    use crate::interfaces::InterfaceDescriptor;
+    use crate::interfaces::{InboundPacket, InterfaceDescriptor};
     use crate::routing::ingress::testkit::iface;
     use crate::wire::HEADER_MIN_LEN;
 
