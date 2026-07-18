@@ -7,6 +7,7 @@ mod introspection;
 mod management;
 mod node_egress;
 mod node_ingress;
+mod proof;
 mod reaction;
 mod registration;
 mod settlement;
