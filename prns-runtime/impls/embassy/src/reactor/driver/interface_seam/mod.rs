@@ -7,7 +7,7 @@ use crate::reactor::interface_seam::InterfaceSeam;
 
 use super::{EmbassyGrantConsumer, EmbassyGrantProducer};
 
-/// The embassy side of one interface's seam: `next_inbound` fills this interface's own inbound grant lane in place and announces the commit on the reactor's notify funnel, and `next_outbound` parks on its outbound lane until the reactor grants a frame in, lending it from the slot it was filled into.
+/// The Embassy interface endpoint for inbound notifications and outbound grants.
 pub struct EmbassyInterfaceSeam<'a, M: RawMutex, const NOTIFY: usize, const SLOT: usize> {
     id: InterfaceId,
     inbound: EmbassyGrantProducer<'a, M, SLOT>,
@@ -67,3 +67,6 @@ impl<M: RawMutex, const NOTIFY: usize, const SLOT: usize> InterfaceSeam
         self.outbound.peek().await.frame()
     }
 }
+
+#[cfg(test)]
+mod tests;

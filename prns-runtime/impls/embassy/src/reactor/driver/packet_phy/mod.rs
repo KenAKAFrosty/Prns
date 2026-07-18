@@ -14,3 +14,6 @@ pub(super) fn retain_packet_phy<Store: InterfaceInspectionStore>(
         store.remember_packet_phy(packet_hash, packet_phy);
     }
 }
+
+#[cfg(test)]
+mod tests;
