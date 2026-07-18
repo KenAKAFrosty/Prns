@@ -126,3 +126,27 @@ impl InterfaceStatus for TokioInterfaceStatus {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn airtime_reads_none_until_published_then_round_trips() {
+        let status =
+            TokioInterfaceStatus::new(InterfaceId::new([0x5A; 8]), ConnectionState::Initializing);
+        assert_eq!(status.airtime(), None);
+
+        status.set_airtime(AirtimeUtilization {
+            short_per_mille: 137,
+            long_per_mille: 4,
+        });
+        assert_eq!(
+            status.airtime(),
+            Some(AirtimeUtilization {
+                short_per_mille: 137,
+                long_per_mille: 4,
+            }),
+        );
+    }
+}

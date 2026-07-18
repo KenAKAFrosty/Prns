@@ -673,3 +673,6 @@ pub(super) fn clear_announce_queues(pacers: &mut [InterfacePacer]) -> usize {
         dropped.saturating_add(entry.pacer.clear_queue())
     })
 }
+
+#[cfg(test)]
+mod tests;

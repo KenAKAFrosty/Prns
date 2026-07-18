@@ -349,4 +349,72 @@ mod tests {
             b"frame"
         );
     }
+
+    #[tokio::test]
+    async fn a_filled_grant_is_read_in_place_without_a_copy() {
+        let (mut producer, mut consumer) = tokio_grant_lane(512, 2);
+
+        let granted = producer.grant().await;
+        granted.fill(b"the frame is written once");
+        let written_at = granted.bytes.as_ptr() as usize;
+        producer.commit();
+
+        let received = consumer.peek().await;
+        assert_eq!(received.frame(), b"the frame is written once");
+        assert_eq!(
+            received.bytes.as_ptr() as usize,
+            written_at,
+            "the consumer reads the very slot the producer filled",
+        );
+        received.frame_mut()[0] ^= 0x20;
+        assert_eq!(&received.frame()[..3], b"The");
+        consumer.release();
+    }
+
+    #[test]
+    fn a_burst_earns_one_announcement_until_the_consumer_acknowledges() {
+        let (mut producer, mut consumer) = tokio_grant_lane(64, 8);
+
+        producer.try_grant().expect("lane grants").fill(b"one");
+        producer.commit();
+        assert!(producer.needs_announce(), "the first commit announces");
+
+        producer.try_grant().expect("lane grants").fill(b"two");
+        producer.commit();
+        assert!(
+            !producer.needs_announce(),
+            "a burst behind an unconsumed announcement stays silent",
+        );
+
+        consumer.acknowledge();
+        while consumer.try_peek().is_some() {
+            consumer.release();
+        }
+
+        producer.try_grant().expect("lane grants").fill(b"three");
+        producer.commit();
+        assert!(
+            producer.needs_announce(),
+            "a commit after the acknowledge announces again",
+        );
+    }
+
+    #[tokio::test]
+    async fn a_full_lane_refuses_grants_until_the_consumer_releases() {
+        let (mut producer, mut consumer) = tokio_grant_lane(64, 1);
+
+        producer
+            .try_grant()
+            .expect("an empty lane grants")
+            .fill(b"one");
+        producer.commit();
+        assert!(producer.try_grant().is_none(), "a depth-one lane is full");
+
+        consumer.try_peek().expect("the committed frame is there");
+        consumer.release();
+        assert!(
+            producer.try_grant().is_some(),
+            "the release frees the slot for the next grant",
+        );
+    }
 }

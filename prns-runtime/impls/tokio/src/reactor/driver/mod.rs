@@ -43,11 +43,7 @@ pub use interface_status::TokioInterfaceStatus;
 use command_dispatch::{CommandDispatch, CommandEffect};
 use crypto_dispatch::{dispatch_open_spans, CryptoCompletionEffect, CryptoDispatch};
 use crypto_pool::{CryptoPool, CryptoResult};
-#[cfg(all(test, feature = "runtime-metrics"))]
-use egress::enqueue_announce_for_wire;
 use egress::{flush_due_pacers, route_reaction, soonest_pacer_release, WireScratch};
-#[cfg(test)]
-use egress::{offer_to_pacer, InterfacePacer, PacedAnnounce, TokioAnnouncePacer};
 use host::bounded_timer_deadline;
 use inbound_dispatch::{InboundContext, InboundDispatch};
 use interface_topology::InterfaceTopology;
