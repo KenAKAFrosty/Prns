@@ -458,6 +458,11 @@ async fn stand_up(
                 }),
             }
         }
+        PlannedMedium::RnodeMulti { .. } => report(PlanOutcome::Failed {
+            interface,
+            visible_error_message: "RNodeMultiInterface runtime is not available in this build"
+                .to_string(),
+        }),
         PlannedMedium::Backbone { listener } => {
             let opened = match resolve_tcp_listener(listener).await {
                 Ok(bind) => BackboneServer::bind_with_policy(bind, interface.policy).await,
@@ -671,6 +676,7 @@ fn planned_medium_name(medium: &PlannedMedium) -> &'static str {
         PlannedMedium::Kiss { .. } => "kiss",
         PlannedMedium::Ax25Kiss { .. } => "ax25_kiss",
         PlannedMedium::Rnode { .. } => "rnode",
+        PlannedMedium::RnodeMulti { .. } => "rnode_multi",
         PlannedMedium::Backbone { .. } => "backbone",
         PlannedMedium::BackboneClient { .. } => "backbone_client",
         PlannedMedium::Pipe { .. } => "pipe",
@@ -697,6 +703,49 @@ mod tests {
         assert_eq!(host.data_bits(), HostSerialDataBits::Seven);
         assert_eq!(host.parity(), HostSerialParity::Odd);
         assert_eq!(host.stop_bits(), HostSerialStopBits::Two);
+    }
+
+    #[tokio::test]
+    async fn planned_rnode_multi_members_fail_visibly_until_the_supervisor_is_attached() {
+        use prns_runtime::runtime::{Manual, PreConfiguredDestination, PrnsNode, PrnsNodeRecipe};
+        use prns_runtime::storage::GrowableHeap;
+
+        let plan = prns_config::parse_and_plan(
+            "[interfaces]\n[[Dual]]\ntype = RNodeMultiInterface\nenabled = Yes\nport = test\n\
+             [[[Low]]]\ninterface_enabled = Yes\nvport = 0\nfrequency = 868000000\n\
+             bandwidth = 125000\ntxpower = 7\nspreadingfactor = 8\ncodingrate = 5\n\
+             [[[High]]]\ninterface_enabled = Yes\nvport = 1\nfrequency = 2400000000\n\
+             bandwidth = 812500\ntxpower = 10\nspreadingfactor = 7\ncodingrate = 6\n",
+        )
+        .expect("valid RNodeMulti configuration")
+        .value;
+        let node = PrnsNode::new(PrnsNodeRecipe {
+            transport_identity: None,
+            pre_configured_destinations: std::iter::empty::<PreConfiguredDestination<'static>>(),
+            app_state: (),
+            storage: GrowableHeap,
+            routes: prns_runtime::routes![],
+            interfaces: Manual,
+            on_event: |_event, _state: &()| {},
+        });
+        let mut failures = Vec::new();
+        attach_plan(&node.handle(), &plan, &mut |outcome| {
+            if let PlanOutcome::Failed {
+                interface,
+                visible_error_message,
+            } = outcome
+            {
+                failures.push((interface.name.clone(), visible_error_message));
+            }
+        })
+        .await;
+
+        assert_eq!(failures.len(), 2);
+        assert_eq!(failures[0].0, "Dual[Low]");
+        assert_eq!(failures[1].0, "Dual[High]");
+        assert!(failures.iter().all(|(_, message)| {
+            message == "RNodeMultiInterface runtime is not available in this build"
+        }));
     }
 
     #[test]
@@ -781,8 +830,8 @@ mod tests {
         let context = PlanRuntimeContext::with_rns_i2p_storage(
             "/var/lib/reticulum/storage",
             IdentityHash::new([
-                0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc,
-                0xdd, 0xee, 0xff,
+                0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd,
+                0xee, 0xff,
             ]),
         );
 

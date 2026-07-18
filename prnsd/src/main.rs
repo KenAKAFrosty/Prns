@@ -33,8 +33,8 @@ use personal_rns::config::{
 use personal_rns::engine::{
     EngineProtocolPolicy, LinkMtuDiscovery, LocalHopCountOverride, ProofForm,
 };
-use personal_rns::identity::vault::FileVault;
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
+use personal_rns::identity::vault::FileVault;
 use personal_rns::identity::IdentitySigner;
 use personal_rns::persistence::FileStore;
 use personal_rns::routes;

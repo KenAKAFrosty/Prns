@@ -246,15 +246,13 @@ fn rnode_multi_parent_does_not_absorb_child_only_radio_controls() {
 }
 
 #[test]
-fn rnode_multi_reference_parsing_does_not_claim_runtime_planning_support() {
-    let errors = crate::parse_and_plan(RNODE_MULTI).unwrap_err();
-    let unsupported = errors
-        .diagnostics()
-        .iter()
-        .find(|diagnostic| diagnostic.code() == ConfigDiagnosticCode::UnsupportedInterface)
-        .expect("runtime planning remains explicitly unavailable");
-    assert_eq!(unsupported.path(), "[interfaces] > [[Dual Radio]] > type");
-    assert!(unsupported.message().contains("RNodeMultiInterface"));
+fn rnode_multi_reference_parsing_reaches_typed_member_planning() {
+    let plan = crate::parse_and_plan(RNODE_MULTI)
+        .expect("valid RNodeMulti planning")
+        .value;
+    assert_eq!(plan.interfaces.len(), 2);
+    assert_eq!(plan.interfaces[0].name, "Dual Radio[Sub GHz]");
+    assert_eq!(plan.interfaces[1].name, "Dual Radio[2.4 GHz]");
 }
 
 #[test]
