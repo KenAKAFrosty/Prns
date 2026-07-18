@@ -1,24 +1,21 @@
 use core::cell::RefCell;
 use prns_core::interfaces::IndexedAttachedInterfaces;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 use tokio::time::Instant;
 
 use crate::engine::{
-    ClassifiedInboundPacket, CommandId, DeferredCrypto, Departure, Directive, EngineCommand,
-    EngineReaction, EngineState, IngestIo, InstantMillis, IssuedCommand, Journaled, NextWake,
-    ProofIngest, ProofRequest, Respond, RespondData, SendRequest, SendRequestData,
-    SendRequestFailure, SendSinglePacketEntropy, SendSinglePacketFailure, SendSinglePacketPrepared,
+    ClassifiedInboundPacket, CommandId, DeferredCrypto, Directive, EngineCommand, EngineReaction,
+    EngineState, IngestIo, InstantMillis, IssuedCommand, Journaled, NextWake, ProofIngest,
+    ProofRequest, Respond, RespondData, SendRequest, SendRequestData, SendRequestFailure,
+    SendSinglePacketEntropy, SendSinglePacketFailure, SendSinglePacketPrepared,
     SendSinglePacketWriteError, Settlement, WakeReason, WakeSchedules,
 };
 use crate::identity::{OpenedToken, Zeroizing};
 use crate::interfaces::ifac::InterfaceIfac;
-use crate::interfaces::{
-    ConnectionView, InboundPacket, InterfaceDescriptor, InterfaceId, PacketPhyStats,
-};
+use crate::interfaces::{InboundPacket, InterfaceDescriptor, InterfaceId, PacketPhyStats};
 use crate::reactor::interface_seam::{frame_cap_for, BROADCAST_WIRE_FRAME_LEN};
 use crate::reactor::kernel::{fire_due_reason, merge_wake_schedules_delta};
 use crate::reactor::AppDeciders;
@@ -32,28 +29,26 @@ use crate::routing::links::resources::send::OffloadedStagedSeal;
 use crate::routing::links::resources::streamed_open::ResourceOpenLane;
 use crate::routing::links::resources::ResourceOffer;
 use crate::routing::links::resources::{
-    ResourceBody, ResourceCorrelation, ResourceHash, ResourceMetadata, ResourceSegment,
-    ResourceSend, ResourceStrategy,
+    ResourceBody, ResourceCorrelation, ResourceMetadata, ResourceSegment, ResourceSend,
 };
 use crate::routing::links::resources::{MAP_HASH_LEN, RESOURCE_NONCE_LEN};
 use crate::routing::links::LinkId;
 use crate::routing::proof::EXPLICIT_PROOF_WIRE_LEN;
-use crate::routing::request_handlers::RequestPathHash;
 use crate::runtime::node_introspection::{AnnounceRateHistory, NodeIntrospectionRequest};
 use crate::runtime::{
     apply_destination_identity_retention_command, apply_identity_blackhole_command,
-    ClearAnnounceQueuesOutcome, DestinationIdentityRetentionHostCommand, DropRouteOutcome,
-    DropRoutesViaOutcome, IdentityBlackholeHostCommand, InterfaceStore,
+    ClearAnnounceQueuesOutcome, DropRouteOutcome, DropRoutesViaOutcome, InterfaceStore,
 };
 #[cfg(feature = "runtime-metrics")]
 use crate::runtime::{ReliabilityMetricsSnapshot, RuntimeMetricsSnapshot};
 use crate::storage::{DirtyInterfaceSet, StorageLayout};
 use crate::units::RttMillis;
-use crate::wire::{DestinationHash, TransportId};
+use crate::wire::DestinationHash;
 
 mod crypto_pool;
 mod egress;
 mod host;
+mod host_protocol;
 mod interface_seam;
 mod interface_status;
 
@@ -63,6 +58,12 @@ pub use super::grant_lane::{
 pub use crypto_pool::{CryptoPoolConfig, PoolWorkers};
 pub use egress::Egress;
 pub use host::TokioHost;
+pub use host_protocol::{
+    AddInterfaceCommand, HostCommand, HostResourceMetadata, HostResourcePayload,
+    HostResourcePayloadError, PersistedStateSnapshot, ProvideDecompressedHostCommand,
+    RequestAnyHostCommand, ResourceInbound, RespondAnyHostCommand, SelfRatchetSnapshot,
+    SelfRatchetsSnapshot, SendResourceHostCommand, SendResourceSegmentHostCommand, StreamInbound,
+};
 pub use interface_seam::TokioInterfaceSeam;
 pub use interface_status::TokioInterfaceStatus;
 
@@ -93,91 +94,6 @@ fn retain_packet_phy(
     store.remember_packet_phy(packet_hash, packet_phy);
 }
 
-/// What a std host feeds the reactor: the queueable engine commands, plus the owned-bytes verbs that deliberately never ride `EngineCommand`. A resource payload can reach a mebibyte, so the std host owns or shares the heap allocation and the engine borrows it for exactly one call; an embedded host calls the borrow-taking entry points directly instead.
-#[allow(clippy::large_enum_variant)]
-pub enum HostCommand {
-    Engine(IssuedCommand),
-    /// An engine command whose settlement a caller is awaiting: the `completion` rides the command to the single reactor task, which stashes it keyed by `issued.id` and fires it when the matching `CommandSettled` is journaled, so the await-correlation registry has one owner and needs no lock.
-    AwaitedEngine {
-        issued: IssuedCommand,
-        completion: oneshot::Sender<Settlement>,
-    },
-    SendResource(SendResourceHostCommand),
-    SendResourceSegment(SendResourceSegmentHostCommand),
-    RespondAny(RespondAnyHostCommand),
-    RequestAny(RequestAnyHostCommand),
-    ProvideDecompressed(ProvideDecompressedHostCommand),
-    /// Register a runtime-added interface's descriptor and lanes so the reactor routes to it; its run loop is driven separately on the runtime's interface driver, only the `Send` lane halves cross.
-    AddInterface(AddInterfaceCommand),
-    /// Deregister the interface with this id: drop its descriptor and lanes so the reactor stops routing to it (its run loop is stopped separately on the interface driver).
-    RemoveInterface {
-        id: InterfaceId,
-        departure: Departure,
-    },
-    DropRoute {
-        destination: DestinationHash,
-        reply: oneshot::Sender<DropRouteOutcome>,
-    },
-    DropRoutesVia {
-        transport: TransportId,
-        reply: oneshot::Sender<DropRoutesViaOutcome>,
-    },
-    ClearAnnounceQueues {
-        reply: oneshot::Sender<ClearAnnounceQueuesOutcome>,
-    },
-    IdentityBlackhole(IdentityBlackholeHostCommand),
-    DestinationIdentityRetention(DestinationIdentityRetentionHostCommand),
-    NodeIntrospection(NodeIntrospectionRequest),
-    SynthesizeTunnel {
-        interface: InterfaceId,
-    },
-    /// Register a byte-stream reader's inbound sink: the run loop routes matching channel messages to it, suppressed from the app event stream. `ready` fires once the sink is in the routing table, so the opener can hold back the reader until no arriving chunk can slip past; awaited, not raced.
-    RegisterStreamReader {
-        link_id: LinkId,
-        stream_id: StreamId,
-        sink: UnboundedSender<StreamInbound>,
-        ready: oneshot::Sender<()>,
-    },
-    /// Register a sink for the next inbound resource on this link: the run loop routes the resource's chunks to it and signals completion, suppressed from the app event stream. `ready` fires once registered, so a segment arriving the instant after cannot slip past to the app.
-    RegisterResourceSink {
-        link_id: LinkId,
-        sink: UnboundedSender<ResourceInbound>,
-        ready: oneshot::Sender<()>,
-    },
-    /// Set the default resource strategy for `destination`. `ready` carries back whether the destination was held, so a caller learns a misaddressed strategy rather than having it silently dropped.
-    SetResourceStrategy {
-        destination: DestinationHash,
-        strategy: ResourceStrategy,
-        ready: oneshot::Sender<bool>,
-    },
-    /// Serialize every persisted region on the reactor — the one place a consistent view exists — and hand the sealed images back; the caller owns the store IO, so flush cadence stays host policy.
-    SnapshotPersistedState {
-        reply: oneshot::Sender<PersistedStateSnapshot>,
-    },
-    /// Seal every tracked destination's self-ratchet record. Secrets ride these blobs, so they go to the caller's identity vault, never a `PersistedStore`.
-    SnapshotSelfRatchets {
-        reply: oneshot::Sender<SelfRatchetsSnapshot>,
-    },
-    SnapshotSelfRatchet {
-        destination: DestinationHash,
-        reply: oneshot::Sender<Option<SelfRatchetSnapshot>>,
-    },
-    #[cfg(feature = "runtime-metrics")]
-    SnapshotMetrics {
-        reply: oneshot::Sender<RuntimeMetricsSnapshot>,
-    },
-}
-
-/// One sealed self-ratchet blob per tracked destination, zeroized on drop.
-pub struct SelfRatchetsSnapshot {
-    pub blobs: std::vec::Vec<(DestinationHash, Zeroizing<std::vec::Vec<u8>>)>,
-}
-
-pub struct SelfRatchetSnapshot {
-    pub destination: DestinationHash,
-    pub sealed: Zeroizing<std::vec::Vec<u8>>,
-}
-
 fn seal_self_ratchet(
     last_rotated: crate::crypto::ratchets::LastRotated,
     secrets: &[crate::crypto::X25519SecretKey],
@@ -191,43 +107,6 @@ fn seal_self_ratchet(
             .ok()?;
     sealed.truncate(written);
     Some(sealed)
-}
-
-/// The sealed region images of one snapshot pass and the engine instant they were taken at — the timebase high-water a flush of these images should record.
-pub struct PersistedStateSnapshot {
-    pub routing_table: std::vec::Vec<u8>,
-    pub tunnels: std::vec::Vec<u8>,
-    pub destination_identities: std::vec::Vec<u8>,
-    pub taken_at: InstantMillis,
-}
-
-/// One inbound stream chunk handed from the run loop's demux to a `ByteStreamReader`'s sink: the payload bytes (owned, copied out of the borrowed reaction) with the eof and compressed flags.
-pub struct StreamInbound {
-    pub payload: std::vec::Vec<u8>,
-    pub eof: bool,
-    pub compressed: bool,
-}
-
-/// One inbound resource event handed from the run loop to a `receive_resource` future's sink: a chunk of bytes, the completion marker carrying the assembled identity and total size, or a failure. Owned, copied out of the borrowed reaction.
-pub enum ResourceInbound {
-    /// The transfer's packed metadata, arriving ahead of the first chunk when one traveled.
-    Metadata(std::vec::Vec<u8>),
-    Chunk(std::vec::Vec<u8>),
-    Complete {
-        original_hash: ResourceHash,
-        total_size: u64,
-    },
-    Failed,
-}
-
-/// The payload of [`HostCommand::AddInterface`]: a runtime-added interface's descriptor and the reactor's halves of its grant lanes. All `Send`, so the reactor stays `Send`; the interface's `!Send` run future is driven on the runtime's interface driver, not here.
-pub struct AddInterfaceCommand {
-    pub descriptor: InterfaceDescriptor,
-    pub logical_interface: InterfaceId,
-    pub inbound: TokioGrantConsumer,
-    pub egress: TokioGrantProducer,
-    pub connection: Option<ConnectionView>,
-    pub ifac: Option<crate::interfaces::ifac::IfacContext>,
 }
 
 /// Fire an awaited command's settlement to the caller parked on it, or pass the event through. The reactor owns `pending` (a single-task `RefCell` map, no `Arc`/`Mutex`): a `CommandSettled` whose id a caller awaits is handed to that caller's [`oneshot`] and dropped from the event stream; every other journaled event — including a settlement nobody awaited — is returned for the app.
@@ -398,149 +277,6 @@ fn route_resource_or_forward<'a>(
         sinks.borrow_mut().remove(&link);
     }
     None
-}
-
-#[derive(Debug)]
-enum HostResourceStorage {
-    Owned(std::vec::Vec<u8>),
-    Shared(Arc<[u8]>),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HostResourcePayloadError {
-    PrefixOutOfRange,
-}
-
-#[derive(Debug)]
-pub struct HostResourcePayload {
-    storage: HostResourceStorage,
-    len: usize,
-}
-
-impl HostResourcePayload {
-    #[must_use]
-    pub fn as_slice(&self) -> &[u8] {
-        match &self.storage {
-            HostResourceStorage::Owned(bytes) => &bytes[..self.len],
-            HostResourceStorage::Shared(bytes) => &bytes[..self.len],
-        }
-    }
-
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.len
-    }
-
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-
-    pub fn shared_prefix(bytes: Arc<[u8]>, len: usize) -> Result<Self, HostResourcePayloadError> {
-        if len > bytes.len() {
-            return Err(HostResourcePayloadError::PrefixOutOfRange);
-        }
-        Ok(Self {
-            storage: HostResourceStorage::Shared(bytes),
-            len,
-        })
-    }
-}
-
-impl AsRef<[u8]> for HostResourcePayload {
-    fn as_ref(&self) -> &[u8] {
-        self.as_slice()
-    }
-}
-
-impl From<std::vec::Vec<u8>> for HostResourcePayload {
-    fn from(bytes: std::vec::Vec<u8>) -> Self {
-        let len = bytes.len();
-        Self {
-            storage: HostResourceStorage::Owned(bytes),
-            len,
-        }
-    }
-}
-
-impl From<Arc<[u8]>> for HostResourcePayload {
-    fn from(bytes: Arc<[u8]>) -> Self {
-        let len = bytes.len();
-        Self {
-            storage: HostResourceStorage::Shared(bytes),
-            len,
-        }
-    }
-}
-
-/// The host half of [`ResourceMetadata`]: owned packed bytes crossing to the node thread.
-pub enum HostResourceMetadata {
-    None,
-    /// This (first or only) segment carries the block in-stream.
-    Packed(HostResourcePayload),
-    /// A later segment of a split whose first segment carried the block.
-    SentInFirstSegment {
-        packed_len: u32,
-    },
-}
-
-impl HostResourceMetadata {
-    fn as_engine(&self) -> ResourceMetadata<'_> {
-        match self {
-            Self::None => ResourceMetadata::None,
-            Self::Packed(payload) => ResourceMetadata::Packed(payload.as_slice()),
-            Self::SentInFirstSegment { packed_len } => ResourceMetadata::SentInFirstSegment {
-                packed_len: *packed_len,
-            },
-        }
-    }
-}
-
-pub struct SendResourceHostCommand {
-    pub id: CommandId,
-    pub link_id: LinkId,
-    pub data: HostResourcePayload,
-    pub compressed_candidate: Option<HostResourcePayload>,
-    pub metadata: HostResourceMetadata,
-    pub request_id: Option<RequestId>,
-}
-
-/// One segment of a resource send, awaited: the `completion` rides the command to the reactor, which stashes it keyed by `id` and fires it when the segment's proof settles — so a host `send_resource` loop drains its source one segment at a time, sending the next only once the last is proven. The engine threads the chain's original hash across segments; the host carries only the bytes.
-pub struct SendResourceSegmentHostCommand {
-    pub id: CommandId,
-    pub link_id: LinkId,
-    pub data: HostResourcePayload,
-    pub compressed_candidate: Option<HostResourcePayload>,
-    pub metadata: HostResourceMetadata,
-    pub request_id: Option<RequestId>,
-    pub segment_index: u64,
-    pub total_segments: u64,
-    pub total_data_size: u64,
-    pub completion: oneshot::Sender<Settlement>,
-}
-
-/// Answer a request with `data` of any length: the engine picks the rung, a single RESPONSE packet when it fits the link MDU, an outgoing resource (named back to `request_id`) when it doesn't. Host-held payload, since a large answer never rides an enum; the request router's verb.
-pub struct RespondAnyHostCommand {
-    pub id: CommandId,
-    pub link_id: LinkId,
-    pub request_id: RequestId,
-    pub data: HostResourcePayload,
-    pub compressed_candidate: Option<HostResourcePayload>,
-}
-
-/// Make a request of `path_hash` with `data` of any length: the reactor picks the rung and fires `completion` with the response bytes and the round trip once the answer settles. The payload is host-held like every owned-bytes verb.
-pub struct RequestAnyHostCommand {
-    pub id: CommandId,
-    pub link_id: LinkId,
-    pub path_hash: RequestPathHash,
-    pub data: HostResourcePayload,
-    pub completion: oneshot::Sender<Result<(std::vec::Vec<u8>, RttMillis), SendRequestFailure>>,
-}
-
-pub struct ProvideDecompressedHostCommand {
-    pub link_id: LinkId,
-    pub hash: ResourceHash,
-    pub plaintext: HostResourcePayload,
 }
 
 /// Everything the reactor is wired to for one run: the interface topology snapshot, per-interface IFAC state, the wake and command channels, the inbound grant lanes, and the egress fan-out.
