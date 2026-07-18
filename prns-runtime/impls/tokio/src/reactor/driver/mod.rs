@@ -1,5 +1,3 @@
-use prns_core::interfaces::IndexedAttachedInterfaces;
-
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::time::Instant;
 
@@ -13,7 +11,6 @@ use crate::engine::{
 use crate::identity::OpenedToken;
 use crate::interfaces::ifac::InterfaceIfac;
 use crate::interfaces::{InboundPacket, InterfaceDescriptor, InterfaceId, PacketPhyStats};
-use crate::reactor::interface_seam::{frame_cap_for, BROADCAST_WIRE_FRAME_LEN};
 use crate::reactor::kernel::{fire_due_reason, merge_wake_schedules_delta};
 use crate::reactor::AppDeciders;
 use crate::reactor::Host;
@@ -45,6 +42,7 @@ mod host;
 mod host_protocol;
 mod interface_seam;
 mod interface_status;
+mod interface_topology;
 mod journal_delivery;
 mod persistence_snapshots;
 
@@ -70,11 +68,12 @@ use crypto_pool::{
 use egress::enqueue_announce_for_wire;
 use egress::{
     clear_announce_queues, flush_due_pacers, ifac_for, route_reaction, soonest_pacer_release,
-    InterfacePacer, WireScratch,
+    WireScratch,
 };
 #[cfg(test)]
-use egress::{offer_to_pacer, PacedAnnounce, TokioAnnouncePacer};
+use egress::{offer_to_pacer, InterfacePacer, PacedAnnounce, TokioAnnouncePacer};
 use host::bounded_timer_deadline;
+use interface_topology::InterfaceTopology;
 use journal_delivery::JournalDelivery;
 
 fn retain_packet_phy(
@@ -187,30 +186,16 @@ async fn run_inner<S, H, J, P, A>(
     } = deciders;
     let ReactorWiring {
         interfaces,
-        mut ifacs,
+        ifacs,
         mut notify,
-        mut inbound_lanes,
+        inbound_lanes,
         mut commands,
-        mut egress,
+        egress,
     } = wiring;
-    let mut interfaces = IndexedAttachedInterfaces::from(interfaces);
-    for descriptor in interfaces.descriptors() {
-        #[cfg(feature = "runtime-metrics")]
-        engine.attach_metrics_interface(descriptor.id, descriptor.id);
-        engine.interface_attached(descriptor.id, host.now());
-    }
-    let mut wake_schedules = engine.wake_schedules(interfaces.view());
-    let mut pacers: std::vec::Vec<InterfacePacer> = interfaces
-        .descriptors()
-        .iter()
-        .map(|descriptor| InterfacePacer::from_descriptor(descriptor, descriptor.id))
-        .collect();
-    let mut scratch_cap = interfaces
-        .descriptors()
-        .iter()
-        .map(frame_cap_for)
-        .max()
-        .unwrap_or(BROADCAST_WIRE_FRAME_LEN);
+    let mut topology =
+        InterfaceTopology::new(interfaces, ifacs, inbound_lanes, egress, &mut engine, &host);
+    let mut wake_schedules = engine.wake_schedules(topology.view());
+    let mut scratch_cap = topology.frame_cap();
     let mut wire_scratch = WireScratch::new(scratch_cap);
     let mut unmask_scratch = std::vec![0u8; scratch_cap].into_boxed_slice();
     let journal_delivery = JournalDelivery::default();
@@ -260,9 +245,9 @@ async fn run_inner<S, H, J, P, A>(
                                 SendSinglePacketFailure::Rejected(rejection),
                             )),
                         }),
-                        &mut egress,
-                        &ifacs,
-                        &mut pacers,
+                        &mut topology.egress,
+                        &topology.ifacs,
+                        &mut topology.pacers,
                         &mut wire_scratch,
                         $now,
                         &mut journaled_sink!(),
@@ -278,9 +263,9 @@ async fn run_inner<S, H, J, P, A>(
                                 ),
                             )),
                         }),
-                        &mut egress,
-                        &ifacs,
-                        &mut pacers,
+                        &mut topology.egress,
+                        &topology.ifacs,
+                        &mut topology.pacers,
                         &mut wire_scratch,
                         $now,
                         &mut journaled_sink!(),
@@ -308,7 +293,7 @@ async fn run_inner<S, H, J, P, A>(
     tokio::pin!(pacer_timer);
     let mut pacer_armed: Option<InstantMillis> = None;
     loop {
-        match soonest_pacer_release(&pacers) {
+        match soonest_pacer_release(&topology.pacers) {
             None => pacer_armed = None,
             Some(at) => {
                 if pacer_armed != Some(at) {
@@ -369,7 +354,10 @@ async fn run_inner<S, H, J, P, A>(
             () => {{
                 let now = host.now();
                 for &source in &dirty {
-                    let Some((_, lane)) = inbound_lanes.iter_mut().find(|(id, _)| *id == source)
+                    let Some((_, lane)) = topology
+                        .inbound_lanes
+                        .iter_mut()
+                        .find(|(id, _)| *id == source)
                     else {
                         continue;
                     };
@@ -383,7 +371,7 @@ async fn run_inner<S, H, J, P, A>(
                         }
                         let Some(slot) = lane.try_peek() else { break };
                         let packet_phy = slot.packet_phy;
-                        let bytes = match ifac_for(&ifacs, source) {
+                        let bytes = match ifac_for(&topology.ifacs, source) {
                             Some(entry) => {
                                 let Some(clean_len) = entry
                                     .context
@@ -444,7 +432,7 @@ async fn run_inner<S, H, J, P, A>(
                                 let delta = engine.ingest_classified_into_deferring(
                                     packet,
                                     IngestIo {
-                                        interfaces: interfaces.view(),
+                                        interfaces: topology.interfaces.view(),
                                         now,
                                         fill_entropy: &mut |entropy| host.fill_entropy(entropy),
                                         should_prove: &mut should_prove,
@@ -452,9 +440,9 @@ async fn run_inner<S, H, J, P, A>(
                                         sink: &mut |reaction| {
                                             route_reaction(
                                                 reaction,
-                                                &mut egress,
-                                                &ifacs,
-                                                &mut pacers,
+                                                &mut topology.egress,
+                                                &topology.ifacs,
+                                                &mut topology.pacers,
                                                 &mut wire_scratch,
                                                 now,
                                                 &mut journaled_sink!(),
@@ -490,7 +478,7 @@ async fn run_inner<S, H, J, P, A>(
                             None => engine.ingest_classified_into(
                                 packet,
                                 IngestIo {
-                                    interfaces: interfaces.view(),
+                                    interfaces: topology.interfaces.view(),
                                     now,
                                     fill_entropy: &mut |entropy| host.fill_entropy(entropy),
                                     should_prove: &mut should_prove,
@@ -498,9 +486,9 @@ async fn run_inner<S, H, J, P, A>(
                                     sink: &mut |reaction| {
                                         route_reaction(
                                             reaction,
-                                            &mut egress,
-                                            &ifacs,
-                                            &mut pacers,
+                                            &mut topology.egress,
+                                            &topology.ifacs,
+                                            &mut topology.pacers,
                                             &mut wire_scratch,
                                             now,
                                             &mut journaled_sink!(),
@@ -514,13 +502,14 @@ async fn run_inner<S, H, J, P, A>(
                             &mut wake_schedules,
                             wake_schedules_delta,
                             &engine,
-                            interfaces.view(),
+                            topology.interfaces.view(),
                         );
                         dispatch_owed_open_spans!();
                     }
                 }
                 dirty.retain(|source| {
-                    inbound_lanes
+                    topology
+                        .inbound_lanes
                         .iter_mut()
                         .find(|(id, _)| id == source)
                         .is_some_and(|(_, lane)| lane.try_peek().is_some())
@@ -577,7 +566,7 @@ async fn run_inner<S, H, J, P, A>(
                             engine.seal_staged_continuation(
                                 &link_id,
                                 &mut |entropy| host.fill_entropy(entropy),
-                                &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                             );
                         }
                     }
@@ -597,10 +586,10 @@ async fn run_inner<S, H, J, P, A>(
                             }
                             (_, command) => engine.ingest_command_into(
                                 IssuedCommand { id, command },
-                                interfaces.view(),
+                                topology.interfaces.view(),
                                 now,
                                 &mut |entropy| host.fill_entropy(entropy),
-                                &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                             ),
                         }
                     }
@@ -613,10 +602,10 @@ async fn run_inner<S, H, J, P, A>(
                             }
                             (_, command) => engine.ingest_command_into(
                                 IssuedCommand { id, command },
-                                interfaces.view(),
+                                topology.interfaces.view(),
                                 now,
                                 &mut |entropy| host.fill_entropy(entropy),
-                                &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                             ),
                         }
                     }
@@ -638,7 +627,7 @@ async fn run_inner<S, H, J, P, A>(
                         },
                         now,
                         &mut |entropy| host.fill_entropy(entropy),
-                        &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                        &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                     ),
                     HostCommand::SendResourceSegment(send) => {
                         journal_delivery.register_completion(send.id, send.completion);
@@ -665,7 +654,7 @@ async fn run_inner<S, H, J, P, A>(
                             },
                             now,
                             &mut |entropy| host.fill_entropy(entropy),
-                            &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                            &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                         )
                     }
                     HostCommand::RespondAny(respond) => {
@@ -684,10 +673,10 @@ async fn run_inner<S, H, J, P, A>(
                                         data,
                                     }),
                                 },
-                                interfaces.view(),
+                                topology.interfaces.view(),
                                 now,
                                 &mut |entropy| host.fill_entropy(entropy),
-                                &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                             ),
                             None => engine.ingest_send_resource_into(
                                 &ResourceSend {
@@ -705,7 +694,7 @@ async fn run_inner<S, H, J, P, A>(
                                 },
                                 now,
                                 &mut |entropy| host.fill_entropy(entropy),
-                                &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                             ),
                         }
                     }
@@ -730,10 +719,10 @@ async fn run_inner<S, H, J, P, A>(
                                             data: send_data,
                                         }),
                                     },
-                                    interfaces.view(),
+                                    topology.interfaces.view(),
                                     now,
                                     &mut |entropy| host.fill_entropy(entropy),
-                                    &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                    &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                                 ),
                                 Err(_) => journal_delivery.fail_request(id),
                             }
@@ -757,7 +746,7 @@ async fn run_inner<S, H, J, P, A>(
                                         },
                                         now,
                                         &mut |entropy| host.fill_entropy(entropy),
-                                        &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                        &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                                     )
                                 }
                                 Err(_) => journal_delivery.fail_request(id),
@@ -769,58 +758,22 @@ async fn run_inner<S, H, J, P, A>(
                         provide.hash,
                         provide.plaintext.as_slice(),
                         now,
-                        &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                        &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                     ),
                     HostCommand::AddInterface(add) => {
-                        let AddInterfaceCommand {
-                            descriptor,
-                            logical_interface,
-                            inbound,
-                            egress: egress_producer,
-                            connection,
-                            ifac,
-                        } = add;
-                        let id = descriptor.id;
-                        if interfaces.view().descriptor_for(id).is_some() {
-                            debug_assert!(
-                                false,
-                                "interface id collision (kind byte {}): two live channels produced the same channel tag — an interface returned a non-unique channel_tag",
-                                id.as_bytes()[0],
-                            );
-                            drop((inbound, egress_producer));
-                            WakeSchedules::UNCHANGED
-                        } else {
-                            let frame_cap = frame_cap_for(&descriptor);
-                            pacers.push(InterfacePacer::from_descriptor(
-                                &descriptor,
-                                logical_interface,
-                            ));
-                            #[cfg(feature = "runtime-metrics")]
-                            engine.attach_metrics_interface(id, logical_interface);
-                            engine.interface_attached(id, now);
-                            interfaces.push(descriptor);
-                            inbound_lanes.push((id, inbound));
-                            egress.add_lane(id, logical_interface, egress_producer, connection);
-                            if let Some(context) = ifac {
-                                ifacs.push(InterfaceIfac { id, context });
-                            }
+                        if let Some(frame_cap) = topology.attach(&mut engine, add, now) {
                             if frame_cap > scratch_cap {
                                 scratch_cap = frame_cap;
                                 unmask_scratch = std::vec![0u8; scratch_cap].into_boxed_slice();
                                 wire_scratch.grow(scratch_cap);
                             }
-                            wake_schedules = engine.wake_schedules(interfaces.view());
-                            WakeSchedules::UNCHANGED
+                            wake_schedules = engine.wake_schedules(topology.view());
                         }
+                        WakeSchedules::UNCHANGED
                     }
                     HostCommand::RemoveInterface { id, departure } => {
-                        engine.interface_departed(id, departure, now);
-                        interfaces.remove(id);
-                        inbound_lanes.retain(|(lane_id, _)| *lane_id != id);
-                        pacers.retain(|pacer| pacer.id != id);
-                        ifacs.retain(|entry| entry.id != id);
-                        egress.remove_lane(id);
-                        wake_schedules = engine.wake_schedules(interfaces.view());
+                        topology.detach(&mut engine, id, departure, now);
+                        wake_schedules = engine.wake_schedules(topology.view());
                         WakeSchedules::UNCHANGED
                     }
                     HostCommand::DropRoute { destination, reply } => {
@@ -830,7 +783,7 @@ async fn run_inner<S, H, J, P, A>(
                                     destination: removed.destination,
                                     cause: removed.cause,
                                 });
-                                wake_schedules = engine.wake_schedules(interfaces.view());
+                                wake_schedules = engine.wake_schedules(topology.view());
                                 DropRouteOutcome::Dropped
                             }
                             None => DropRouteOutcome::NotFound,
@@ -846,7 +799,7 @@ async fn run_inner<S, H, J, P, A>(
                             });
                         });
                         if dropped != 0 {
-                            wake_schedules = engine.wake_schedules(interfaces.view());
+                            wake_schedules = engine.wake_schedules(topology.view());
                         }
                         let _ = reply.send(DropRoutesViaOutcome {
                             dropped_routes: u32::try_from(dropped).unwrap_or(u32::MAX),
@@ -854,7 +807,7 @@ async fn run_inner<S, H, J, P, A>(
                         WakeSchedules::UNCHANGED
                     }
                     HostCommand::ClearAnnounceQueues { reply } => {
-                        let dropped = clear_announce_queues(&mut pacers);
+                        let dropped = clear_announce_queues(&mut topology.pacers);
                         let _ = reply.send(ClearAnnounceQueuesOutcome {
                             dropped_announces: u32::try_from(dropped).unwrap_or(u32::MAX),
                         });
@@ -887,14 +840,14 @@ async fn run_inner<S, H, J, P, A>(
                             }
                             NodeIntrospectionRequest::Routes { reply } => {
                                 let mut snapshots = std::vec::Vec::new();
-                                engine.visit_route_snapshots(interfaces.view(), |snapshot| {
+                                engine.visit_route_snapshots(topology.view(), |snapshot| {
                                     snapshots.push(snapshot);
                                 });
                                 let _ = reply.send(snapshots);
                             }
                             NodeIntrospectionRequest::Route { destination, reply } => {
                                 let _ = reply.send(
-                                    engine.route_snapshot(destination, interfaces.view()),
+                                    engine.route_snapshot(destination, topology.view()),
                                 );
                             }
                         }
@@ -912,9 +865,9 @@ async fn run_inner<S, H, J, P, A>(
                                     target: interface,
                                     bytes: &buf[..len],
                                 }),
-                                &mut egress,
-                                &ifacs,
-                                &mut pacers,
+                                &mut topology.egress,
+                                &topology.ifacs,
+                                &mut topology.pacers,
                                 &mut wire_scratch,
                                 now,
                                 &mut journaled_sink!(),
@@ -970,14 +923,14 @@ async fn run_inner<S, H, J, P, A>(
                         let _ = reply.send(RuntimeMetricsSnapshot {
                             taken_at: now,
                             engine: engine.metrics_snapshot(),
-                            egress: egress.metrics_snapshot(&pacers),
+                            egress: topology.egress.metrics_snapshot(&topology.pacers),
                             crypto: crypto_pool.as_ref().map(CryptoPool::metrics_snapshot),
                             reliability,
                         });
                         WakeSchedules::UNCHANGED
                     }
                 };
-                merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, interfaces.view());
+                merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, topology.view());
                 command_budget -= 1;
                 if command_budget == 0 {
                     break;
@@ -996,18 +949,18 @@ async fn run_inner<S, H, J, P, A>(
                             &mut engine,
                             reason,
                             now,
-                            interfaces.view(),
+                            topology.interfaces.view(),
                             &mut |bytes| host.fill_entropy(bytes),
-                            &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                            &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                         );
-                        merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, interfaces.view());
+                        merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, topology.view());
                     }
                 }
             }
             () = &mut pacer_timer, if pacer_armed.is_some() => {
                 pacer_armed = None;
                 let now = host.now();
-                flush_due_pacers(&mut pacers, now, &mut egress, &ifacs);
+                flush_due_pacers(&mut topology.pacers, now, &mut topology.egress, &topology.ifacs);
             }
             verdict = crypto_rx.recv(), if crypto_pool.is_some() => {
                 let mut next = verdict;
@@ -1029,9 +982,9 @@ async fn run_inner<S, H, J, P, A>(
                                         id,
                                         settlement,
                                     }),
-                                    &mut egress,
-                                    &ifacs,
-                                    &mut pacers,
+                                    &mut topology.egress,
+                                    &topology.ifacs,
+                                    &mut topology.pacers,
                                     &mut wire_scratch,
                                     now,
                                     &mut journaled_sink!(),
@@ -1047,11 +1000,11 @@ async fn run_inner<S, H, J, P, A>(
                                 owed,
                                 ephemeral_public,
                                 shared,
-                                interfaces.view(),
+                                topology.interfaces.view(),
                                 &mut seal_buf,
-                                &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                             );
-                            merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, interfaces.view());
+                            merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, topology.view());
                         }
                         CryptoResult::Signed {
                             target,
@@ -1067,9 +1020,9 @@ async fn run_inner<S, H, J, P, A>(
                                         target,
                                         bytes: &proof[..written],
                                     }),
-                                    &mut egress,
-                                    &ifacs,
-                                    &mut pacers,
+                                    &mut topology.egress,
+                                    &topology.ifacs,
+                                    &mut topology.pacers,
                                     &mut wire_scratch,
                                     now,
                                     &mut journaled_sink!(),
@@ -1081,10 +1034,10 @@ async fn run_inner<S, H, J, P, A>(
                             engine.resume_decrypt(
                                 owed,
                                 shared,
-                                interfaces.view(),
+                                topology.interfaces.view(),
                                 &mut should_prove,
                                 &mut deferred_sign,
-                                &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                             );
                             if let Some(deferred) = deferred_sign {
                                 if let Some(pool) = crypto_pool.as_ref() {
@@ -1101,10 +1054,10 @@ async fn run_inner<S, H, J, P, A>(
                                         opened_by,
                                         plaintext: &plaintext,
                                     },
-                                    interfaces.view(),
+                                    topology.interfaces.view(),
                                     &mut should_prove,
                                     &mut deferred_sign,
-                                    &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                    &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                                 );
                                 if let Some(deferred) = deferred_sign {
                                     if let Some(pool) = crypto_pool.as_ref() {
@@ -1118,12 +1071,12 @@ async fn run_inner<S, H, J, P, A>(
                                 let delta = engine.resume_link_proof(
                                     owed,
                                     shared,
-                                    interfaces.view(),
+                                    topology.interfaces.view(),
                                     now,
                                     &mut |entropy| host.fill_entropy(entropy),
-                                    &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                    &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                                 );
-                                merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, interfaces.view());
+                                merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, topology.view());
                             }
                         }
                         CryptoResult::LinkProofSigned { owed, responder_encryption, shared, signature } => {
@@ -1132,10 +1085,10 @@ async fn run_inner<S, H, J, P, A>(
                                 responder_encryption,
                                 shared,
                                 signature,
-                                interfaces.view(),
-                                &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                topology.interfaces.view(),
+                                &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                             );
-                            merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, interfaces.view());
+                            merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, topology.view());
                         }
                         CryptoResult::StagedSealed { link_id, stream_nonce, nonce_prefixed_len, transfer, names, outcome } => {
                             let sealed_len = outcome.map_or(0, |sealed| sealed.sealed_transfer_len);
@@ -1149,13 +1102,13 @@ async fn run_inner<S, H, J, P, A>(
                                     names: &names[..names_len],
                                     outcome,
                                 },
-                                &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                             );
                             engine.promote_staged_resource(
                                 &link_id,
                                 now,
                                 &mut |entropy| host.fill_entropy(entropy),
-                                &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                             );
                             merge_wake_schedules_delta(
                                 &mut wake_schedules,
@@ -1164,18 +1117,18 @@ async fn run_inner<S, H, J, P, A>(
                                     ..WakeSchedules::UNCHANGED
                                 },
                                 &engine,
-                                interfaces.view(),
+                                topology.view(),
                             );
                         }
                         CryptoResult::AnnounceVerified { owed, valid } => {
                             if valid {
                                 let delta = engine.resume_announce(
                                     owed,
-                                    interfaces.view(),
+                                    topology.interfaces.view(),
                                     &mut |entropy| host.fill_entropy(entropy),
-                                    &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                    &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                                 );
-                                merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, interfaces.view());
+                                merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, topology.view());
                             }
                         }
                         CryptoResult::SpanOpened { link_id, hash, span_start, state, bytes } => {
@@ -1188,9 +1141,9 @@ async fn run_inner<S, H, J, P, A>(
                                     bytes: &bytes,
                                 },
                                 now,
-                                &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                             );
-                            merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, interfaces.view());
+                            merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, topology.view());
                             dispatch_owed_open_spans!();
                         }
                     }
@@ -1204,7 +1157,7 @@ async fn run_inner<S, H, J, P, A>(
             let mut dirty_interfaces = engine.take_dirty_interfaces();
             let mut changed = false;
             dirty_interfaces.drain(|interface| {
-                if interfaces.view().descriptor_for(interface).is_some() {
+                if topology.view().descriptor_for(interface).is_some() {
                     store.set(interface, engine.interface_counts(interface));
                 } else {
                     store.forget(interface);
