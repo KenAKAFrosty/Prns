@@ -19,12 +19,12 @@ pub use plan::{
     DiscoveryIfacPublication, DiscoveryLocationPlan, DiscoveryPublicationProblem, I2pPeerPlan,
     I2pPeersPlan, I2pReachabilityPlan, InterfaceAccessPlan, InterfaceDiscoveryPlan, LogLevel,
     LoggingPlan, PipeCommandPlan, PipeRespawnDelay, PlannedInterface, PlannedMedium, ProtocolPlan,
-    RNodeMultiDevicePlan, RNodeMultiMemberPlan, RNodeSerialDevice, RNodeTcpHost, RNodeTcpTarget,
-    RNodeTransportPlan, ReadyCommandFlowControl, ReconnectLimit, SerialDataBits, SerialLinePlan,
-    SerialParity, SerialStopBits, SharedInstance, SharedInstanceTransport,
-    StationIdentificationPlan, TcpDialPlan, TcpListenHost, TcpListenPlan, TcpTunnelMode,
-    TransportIdentityPolicy, TransportPlan, UdpEndpointHost, UdpEndpointPlan, UdpFlowPlan,
-    RNODE_TCP_PORT,
+    RNodeBleAddress, RNodeBleName, RNodeBleTarget, RNodeMultiDevicePlan, RNodeMultiMemberPlan,
+    RNodeSerialDevice, RNodeTcpHost, RNodeTcpTarget, RNodeTransportPlan, ReadyCommandFlowControl,
+    ReconnectLimit, SerialDataBits, SerialLinePlan, SerialParity, SerialStopBits, SharedInstance,
+    SharedInstanceTransport, StationIdentificationPlan, TcpDialPlan, TcpListenHost, TcpListenPlan,
+    TcpTunnelMode, TransportIdentityPolicy, TransportPlan, UdpEndpointHost, UdpEndpointPlan,
+    UdpFlowPlan, RNODE_TCP_PORT,
 };
 pub use reference::{
     RNodeRadio, RNodeSubinterface, ReferenceBlackholeExchange, ReferenceConfig,

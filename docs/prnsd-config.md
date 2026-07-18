@@ -88,13 +88,31 @@ from its radio configuration. Every RNodeMulti radio derives its own bitrate and
 | `SerialInterface` | Device, speed, data bits, parity, and stop bits. |
 | `KISSInterface` | Serial line, TNC timing/CSMA, READY flow control, and station identification. |
 | `AX25KISSInterface` | KISS settings plus validated callsign and SSID. |
-| `RNodeInterface` | Serial or `tcp://host` RNode transport, radio settings, READY flow control, station identification, and airtime limits. TCP uses stock's fixed port 7633; `tcp://` selects loopback. |
+| `RNodeInterface` | Serial, `tcp://host`, or Bluetooth LE RNode transport; radio settings, READY flow control, station identification, and airtime limits. TCP uses stock's fixed port 7633; `tcp://` selects loopback. |
 | `RNodeMultiInterface` | One serial device with nested, independently routed radio interfaces; per-radio LoRa settings, READY flow control, airtime limits, policy, and coordinated reconnect. |
 | `PipeInterface` | Parsed subprocess command and typed respawn delay. |
 | `I2PInterface` | Validated `.i2p` names or base64 destinations in `peers`, optional inbound reachability through `connectable`, and common policy and IFAC access. |
 
-Enabled interface types without a backend fail with “not available in this build.” RNode `ble://`
-URIs fail similarly. RNodeMulti remains a local serial-device interface.
+Enabled interface types without a backend fail with “not available in this build.” RNodeMulti
+remains a local serial-device interface.
+
+RNode Bluetooth LE uses the stock Nordic UART Service transport and accepts the same three target
+forms as RNS 1.3.8:
+
+```ini
+port = ble://
+port = ble://RNode 1234
+port = ble://AA:BB:CC:DD:EE:FF
+```
+
+The empty target selects the first paired device advertising the RNode service whose name starts
+with `RNode `. A name target must match exactly. A hexadecimal address target is supported on Linux
+and Windows; macOS Core Bluetooth does not expose device MAC addresses, so macOS configurations must
+use automatic or exact-name selection. Pair the RNode with the operating system before starting
+Prnsd and grant the daemon Bluetooth access when the platform asks. Missing adapters, permissions,
+pairing, services, and characteristics produce repair-focused interface errors. With the default
+`panic_on_interface_error = No`, Prnsd remains degraded and retries the connection every five
+seconds.
 
 RNodeMulti radios are nested beneath their physical device. Each enabled child requires a unique
 `vport` and complete radio configuration:
@@ -148,8 +166,8 @@ client-only `target_port`, `i2p_tunneled`, `connect_timeout`, or `max_reconnect_
 do not use listener-only `listen_ip`, `listen_port`, `listen_on`, or `device`.
 Discovery publication details similarly warn when `discoverable` is absent or set to `No`.
 
-Weave, RNode BLE transport, and other unavailable backends are not partial plans: enabling one is a
-configuration error until that backend exists.
+Weave and other unavailable backends are not partial plans: enabling one is a configuration error
+until that backend exists.
 
 ## Minimal router
 

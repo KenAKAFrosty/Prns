@@ -74,6 +74,8 @@ pub mod kiss;
 
 #[cfg(feature = "rnode")]
 pub mod rnode;
+#[cfg(feature = "rnode-ble")]
+mod rnode_ble;
 #[cfg(feature = "from-plan")]
 mod rnode_host;
 

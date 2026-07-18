@@ -48,6 +48,8 @@ pub const DEFAULT_RNODE_DETECT_TIMEOUT: RNodeDetectTimeout =
     RNodeDetectTimeout::from_validated(Duration::from_secs(2));
 pub const TCP_RNODE_DETECT_TIMEOUT: RNodeDetectTimeout =
     RNodeDetectTimeout::from_validated(Duration::from_secs(5));
+pub const BLE_RNODE_DETECT_TIMEOUT: RNodeDetectTimeout =
+    RNodeDetectTimeout::from_validated(Duration::from_secs(5));
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RNodeDetectTimeout(Duration);
@@ -624,42 +626,62 @@ where
         // rides the stack, and a device that never answers allocates these exactly once.
         let mut buffers = RNodeBuffers::new();
         loop {
-            if let Ok(mut stream) = (self.open)().await {
-                if !self.reset_delay.duration().is_zero() {
-                    tokio::time::sleep(self.reset_delay.duration()).await;
+            self.status.set_connection(ConnectionState::Reconnecting);
+            let mut stream = match (self.open)().await {
+                Ok(stream) => stream,
+                Err(error) => {
+                    crate::diagnostic_log::warn!(
+                        "RNode interface {:?} could not open: {error}; retrying in {} seconds",
+                        self.id.as_bytes(),
+                        self.reconnect_delay.duration().as_secs_f64(),
+                    );
+                    tokio::time::sleep(self.reconnect_delay.duration()).await;
+                    continue;
                 }
-                // A device that fails to detect or validate is treated like a dropped connection:
-                // skip serving and fall through to the reconnect wait, as RNS closes the port.
-                if bring_up(
-                    &mut stream,
-                    &self.radio,
-                    &mut buffers.decoder,
-                    &mut buffers.read,
-                    self.detect_timeout,
-                )
-                .await
-                .is_ok()
-                {
-                    self.status.set_connection(ConnectionState::Connected);
-                    serve_rnode(
-                        &mut stream,
-                        &self.radio,
-                        &mut buffers,
-                        &mut seam,
-                        &mut control,
-                        self.keepalive,
-                        &mut WireMeters {
-                            status: &self.status,
-                            airtime: &mut airtime,
-                            throughput: &mut throughput,
-                            bitrate: self.policy.bitrate,
-                            started,
-                        },
-                    )
-                    .await;
-                    self.status.set_connection(ConnectionState::Disconnected);
-                }
+            };
+            if !self.reset_delay.duration().is_zero() {
+                tokio::time::sleep(self.reset_delay.duration()).await;
             }
+            if let Err(error) = bring_up(
+                &mut stream,
+                &self.radio,
+                &mut buffers.decoder,
+                &mut buffers.read,
+                self.detect_timeout,
+            )
+            .await
+            {
+                crate::diagnostic_log::warn!(
+                    "RNode interface {:?} bring-up failed: {error}; retrying in {} seconds",
+                    self.id.as_bytes(),
+                    self.reconnect_delay.duration().as_secs_f64(),
+                );
+                tokio::time::sleep(self.reconnect_delay.duration()).await;
+                continue;
+            }
+            self.status.set_connection(ConnectionState::Connected);
+            serve_rnode(
+                &mut stream,
+                &self.radio,
+                &mut buffers,
+                &mut seam,
+                &mut control,
+                self.keepalive,
+                &mut WireMeters {
+                    status: &self.status,
+                    airtime: &mut airtime,
+                    throughput: &mut throughput,
+                    bitrate: self.policy.bitrate,
+                    started,
+                },
+            )
+            .await;
+            self.status.set_connection(ConnectionState::Reconnecting);
+            crate::diagnostic_log::warn!(
+                "RNode interface {:?} connection closed; retrying in {} seconds",
+                self.id.as_bytes(),
+                self.reconnect_delay.duration().as_secs_f64(),
+            );
             tokio::time::sleep(self.reconnect_delay.duration()).await;
         }
     }
@@ -915,6 +937,15 @@ mod tests {
         })
         .await
         .expect("the live status reflects the connection + bytes both ways within the window");
+
+        drop(device);
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while status.connection() != ConnectionState::Reconnecting {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("a closed RNode wire enters the reconnecting state");
     }
 
     #[tokio::test]
@@ -1044,5 +1075,38 @@ mod tests {
             ConnectionState::Connected,
             "a parameter mismatch must abort bring-up, not bring the link online"
         );
+    }
+
+    #[tokio::test]
+    async fn open_failures_are_visible_as_reconnecting() {
+        let open = || async {
+            Err::<tokio::io::DuplexStream, _>(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "Bluetooth access denied",
+            ))
+        };
+        let (in_tx, _in_rx) = mpsc::unbounded_channel::<(Vec<u8>, PacketPhyStats)>();
+        let (_out_tx, out_rx) = tokio_grant_lane(core::RNODE_FRAME_LEN, 1);
+        let seam = MockSeam {
+            inbound: in_tx,
+            sink: Vec::new(),
+            outbound: out_rx,
+        };
+        let interface = RNodeInterface::with_settings(
+            open,
+            ReconnectDelay::new(Duration::from_secs(1)),
+            RNodeResetDelay::new(Duration::ZERO),
+            sample_radio(),
+            b"failing-rnode",
+        );
+        let status = interface.status();
+        tokio::spawn(interface.run(seam));
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while status.connection() != ConnectionState::Reconnecting {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the failed interface enters its reconnecting state");
     }
 }
