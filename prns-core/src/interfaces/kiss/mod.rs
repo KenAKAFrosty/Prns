@@ -3,3 +3,5 @@
 //! the per-host driver lives in `prns-interfaces-tokio`.
 
 pub mod core;
+#[cfg(feature = "alloc")]
+pub mod transmission_control;

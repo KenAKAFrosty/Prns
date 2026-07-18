@@ -9,9 +9,11 @@ use crate::kiss::{
     DEFAULT_TNC_CONFIGURE_DELAY,
 };
 use crate::reconnect::ReconnectDelay;
-use crate::serial_control::{ReadyCommandFlowControl, SerialControl};
 use prns_core::interfaces::ax25_kiss::core::{self, Ax25AddressError, AX25_HEADER_SIZE};
 use prns_core::interfaces::kiss::core::TncConfig;
+use prns_core::interfaces::kiss::transmission_control::{
+    KissTransmissionControl, ReadyCommandFlowControl,
+};
 use prns_core::interfaces::{
     ConnectionState, EffectiveInterfacePolicy, FrameSink, InterfaceDescriptor, InterfaceId,
     InterfaceKind,
@@ -206,7 +208,7 @@ where
         let mut airtime = AirtimeLedger::new();
         let mut throughput = ThroughputLedger::new();
         let started = tokio::time::Instant::now();
-        let mut control = SerialControl::new(self.flow_control, None);
+        let mut control = KissTransmissionControl::new(self.flow_control, None);
         // The adapter owns the seam and persists across reconnects, carrying its reusable scratch.
         let mut seam = Ax25Seam {
             inner: seam,
@@ -266,7 +268,7 @@ impl<Open> prns_core::interfaces::ReportsStatus for Ax25KissInterface<Open> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::serial_control::ReadyTimeout;
+    use prns_core::interfaces::kiss::transmission_control::ReadyTimeout;
     use prns_core::interfaces::kiss_framing::{self, FEND, FESC};
     use prns_core::interfaces::InterfaceStatus;
     use prns_runtime::reactor::driver::{tokio_grant_lane, TokioGrantConsumer};

@@ -1,7 +1,8 @@
-use std::collections::VecDeque;
-use std::time::Duration;
+use alloc::collections::VecDeque;
+use alloc::vec::Vec;
+use core::time::Duration;
 
-use tokio::time::Instant;
+use crate::units::InstantMillis;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReadyCommandFlowControl {
@@ -78,32 +79,35 @@ enum TransmissionKind {
     StationIdentification,
 }
 
-pub(crate) struct Transmission {
+pub struct Transmission {
     payload: Vec<u8>,
     kind: TransmissionKind,
 }
 
 impl Transmission {
-    pub(crate) fn payload(&self) -> &[u8] {
+    #[must_use]
+    pub fn payload(&self) -> &[u8] {
         &self.payload
     }
 
-    pub(crate) const fn is_packet(&self) -> bool {
+    #[must_use]
+    pub const fn is_packet(&self) -> bool {
         matches!(self.kind, TransmissionKind::Packet)
     }
 }
 
-pub(crate) struct SerialControl {
+pub struct KissTransmissionControl {
     flow_control: ReadyCommandFlowControl,
-    locked_at: Option<Instant>,
+    locked_at: Option<InstantMillis>,
     queue: VecDeque<Transmission>,
     station_identification: Option<StationIdentification>,
-    first_packet_transmitted_at: Option<Instant>,
+    first_packet_transmitted_at: Option<InstantMillis>,
     station_identification_queued: bool,
 }
 
-impl SerialControl {
-    pub(crate) fn new(
+impl KissTransmissionControl {
+    #[must_use]
+    pub fn new(
         flow_control: ReadyCommandFlowControl,
         station_identification: Option<StationIdentification>,
     ) -> Self {
@@ -117,11 +121,11 @@ impl SerialControl {
         }
     }
 
-    pub(crate) fn connection_opened(&mut self) {
+    pub fn connection_opened(&mut self) {
         self.locked_at = None;
     }
 
-    pub(crate) fn accept_packet(&mut self, payload: &[u8], now: Instant) -> Option<Transmission> {
+    pub fn accept_packet(&mut self, payload: &[u8], now: InstantMillis) -> Option<Transmission> {
         self.accept(
             Transmission {
                 payload: payload.to_vec(),
@@ -131,12 +135,22 @@ impl SerialControl {
         )
     }
 
-    pub(crate) fn ready(&mut self, now: Instant) -> Option<Transmission> {
+    pub fn ready_received(&mut self, now: InstantMillis) -> Option<Transmission> {
         self.locked_at = None;
-        self.take_queued(now)
+        self.next_queued(now)
     }
 
-    pub(crate) fn take_queued(&mut self, now: Instant) -> Option<Transmission> {
+    pub fn flow_timeout_elapsed(&mut self, now: InstantMillis) -> Option<Transmission> {
+        if self
+            .flow_timeout_deadline()
+            .is_none_or(|deadline| deadline > now)
+        {
+            return None;
+        }
+        self.ready_received(now)
+    }
+
+    pub fn next_queued(&mut self, now: InstantMillis) -> Option<Transmission> {
         if self.locked_at.is_some() {
             return None;
         }
@@ -145,30 +159,38 @@ impl SerialControl {
         Some(transmission)
     }
 
-    pub(crate) fn flow_timeout_deadline(&self) -> Option<Instant> {
+    #[must_use]
+    pub fn flow_timeout_deadline(&self) -> Option<InstantMillis> {
         let ReadyCommandFlowControl::WaitForReadyOrTimeout(timeout) = self.flow_control else {
             return None;
         };
         self.locked_at
-            .map(|locked_at| locked_at + timeout.duration())
+            .map(|locked_at| deadline_after(locked_at, timeout.duration()))
     }
 
-    pub(crate) fn station_identification_deadline(&self) -> Option<Instant> {
+    #[must_use]
+    pub fn station_identification_deadline(&self) -> Option<InstantMillis> {
         if self.station_identification_queued {
             return None;
         }
         let station = self.station_identification.as_ref()?;
         self.first_packet_transmitted_at
-            .map(|first| first + station.interval.duration())
+            .map(|first| deadline_after(first, station.interval.duration()))
     }
 
-    pub(crate) fn arm_station_identification(&mut self, now: Instant) {
+    pub fn arm_station_identification(&mut self, now: InstantMillis) {
         if self.station_identification.is_some() {
             self.first_packet_transmitted_at.get_or_insert(now);
         }
     }
 
-    pub(crate) fn station_identification_due(&mut self, now: Instant) -> Option<Transmission> {
+    pub fn station_identification_elapsed(&mut self, now: InstantMillis) -> Option<Transmission> {
+        if self
+            .station_identification_deadline()
+            .is_none_or(|deadline| deadline > now)
+        {
+            return None;
+        }
         let station = self.station_identification.as_ref()?;
         self.station_identification_queued = true;
         self.accept(
@@ -180,7 +202,7 @@ impl SerialControl {
         )
     }
 
-    pub(crate) fn transmitted(&mut self, transmission: &Transmission, now: Instant) {
+    pub fn transmitted(&mut self, transmission: &Transmission, now: InstantMillis) {
         match transmission.kind {
             TransmissionKind::Packet => {
                 self.first_packet_transmitted_at.get_or_insert(now);
@@ -192,7 +214,7 @@ impl SerialControl {
         }
     }
 
-    fn accept(&mut self, transmission: Transmission, now: Instant) -> Option<Transmission> {
+    fn accept(&mut self, transmission: Transmission, now: InstantMillis) -> Option<Transmission> {
         if self.locked_at.is_none() {
             self.lock(now);
             Some(transmission)
@@ -202,18 +224,16 @@ impl SerialControl {
         }
     }
 
-    fn lock(&mut self, now: Instant) {
+    fn lock(&mut self, now: InstantMillis) {
         if !matches!(self.flow_control, ReadyCommandFlowControl::Disabled) {
             self.locked_at = Some(now);
         }
     }
 }
 
-pub(crate) async fn wait_for_deadline(deadline: Option<Instant>) {
-    match deadline {
-        Some(deadline) => tokio::time::sleep_until(deadline).await,
-        None => std::future::pending().await,
-    }
+fn deadline_after(now: InstantMillis, duration: Duration) -> InstantMillis {
+    let milliseconds = u64::try_from(duration.as_millis()).unwrap_or(u64::MAX);
+    InstantMillis(now.0.saturating_add(milliseconds))
 }
 
 #[cfg(test)]
@@ -222,50 +242,51 @@ mod tests {
 
     #[test]
     fn ready_and_timeout_release_one_queued_transmission_at_a_time() {
-        let now = Instant::now();
-        let mut control = SerialControl::new(
+        let mut control = KissTransmissionControl::new(
             ReadyCommandFlowControl::WaitForReadyOrTimeout(ReadyTimeout::new(Duration::from_secs(
                 5,
             ))),
             None,
         );
-        let first = control.accept_packet(b"one", now).unwrap();
+        let first = control.accept_packet(b"one", InstantMillis(0)).unwrap();
         assert_eq!(first.payload(), b"one");
-        assert!(control.accept_packet(b"two", now).is_none());
-        assert!(control.accept_packet(b"three", now).is_none());
-        assert_eq!(
-            control.flow_timeout_deadline(),
-            Some(now + Duration::from_secs(5))
-        );
-        let second = control.ready(now + Duration::from_secs(1)).unwrap();
+        assert!(control.accept_packet(b"two", InstantMillis(0)).is_none());
+        assert!(control.accept_packet(b"three", InstantMillis(0)).is_none());
+        assert_eq!(control.flow_timeout_deadline(), Some(InstantMillis(5_000)));
+        assert!(control.flow_timeout_elapsed(InstantMillis(4_999)).is_none());
+        let second = control.ready_received(InstantMillis(1_000)).unwrap();
         assert_eq!(second.payload(), b"two");
-        assert!(control.take_queued(now + Duration::from_secs(1)).is_none());
-        let third = control.ready(now + Duration::from_secs(6)).unwrap();
+        assert!(control.next_queued(InstantMillis(1_000)).is_none());
+        assert!(control.flow_timeout_elapsed(InstantMillis(5_999)).is_none());
+        let third = control.flow_timeout_elapsed(InstantMillis(6_000)).unwrap();
         assert_eq!(third.payload(), b"three");
     }
 
     #[test]
     fn station_identification_is_padded_once_and_rearmed_by_normal_traffic() {
-        let now = Instant::now();
         let station = StationIdentification::new(
             b"N0CALL",
             StationIdInterval::new(Duration::from_secs(60)),
             StationIdWireFormat::KissPadded,
         )
         .unwrap();
-        let mut control = SerialControl::new(ReadyCommandFlowControl::Disabled, Some(station));
-        let packet = control.accept_packet(b"packet", now).unwrap();
-        control.transmitted(&packet, now);
+        let mut control =
+            KissTransmissionControl::new(ReadyCommandFlowControl::Disabled, Some(station));
+        let packet = control.accept_packet(b"packet", InstantMillis(0)).unwrap();
+        control.transmitted(&packet, InstantMillis(0));
         assert_eq!(
             control.station_identification_deadline(),
-            Some(now + Duration::from_secs(60))
+            Some(InstantMillis(60_000))
         );
+        assert!(control
+            .station_identification_elapsed(InstantMillis(59_999))
+            .is_none());
         let station = control
-            .station_identification_due(now + Duration::from_secs(60))
+            .station_identification_elapsed(InstantMillis(60_000))
             .unwrap();
         assert_eq!(station.payload().len(), 15);
         assert_eq!(&station.payload()[..6], b"N0CALL");
-        control.transmitted(&station, now + Duration::from_secs(60));
+        control.transmitted(&station, InstantMillis(60_000));
         assert_eq!(control.station_identification_deadline(), None);
     }
 }

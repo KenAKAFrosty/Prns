@@ -5,11 +5,12 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::framed_stream::WireMeters;
+use crate::kiss_deadline::{elapsed_millis, wait_for_deadline};
 use crate::reconnect::ReconnectDelay;
-use crate::serial_control::{
-    wait_for_deadline, ReadyCommandFlowControl, SerialControl, StationIdentification, Transmission,
-};
 use prns_core::engine::InstantMillis;
+use prns_core::interfaces::kiss::transmission_control::{
+    KissTransmissionControl, ReadyCommandFlowControl, StationIdentification, Transmission,
+};
 use prns_core::interfaces::kiss_framing;
 use prns_core::interfaces::rnode::core::{self, RadioConfig};
 use prns_core::interfaces::BitrateBps;
@@ -423,7 +424,7 @@ async fn serve_rnode<S, Seam>(
     radio: &RadioConfig,
     buffers: &mut RNodeBuffers,
     seam: &mut Seam,
-    control: &mut SerialControl,
+    control: &mut KissTransmissionControl,
     keepalive: RNodeKeepalive,
     meters: &mut WireMeters<'_>,
 ) where
@@ -435,7 +436,7 @@ async fn serve_rnode<S, Seam>(
     control.connection_opened();
     let mut keepalive = RNodeKeepaliveSchedule::new(keepalive);
     loop {
-        if let Some(transmission) = control.take_queued(tokio::time::Instant::now()) {
+        if let Some(transmission) = control.next_queued(elapsed_millis(meters.started)) {
             if !write_rnode_transmission(
                 stream,
                 &mut buffers.frame,
@@ -472,7 +473,7 @@ async fn serve_rnode<S, Seam>(
                             }
                         } else if command == kiss_framing::CMD_READY {
                             if let Some(transmission) =
-                                control.ready(tokio::time::Instant::now())
+                                control.ready_received(elapsed_millis(meters.started))
                             {
                                 if !write_rnode_transmission(
                                     stream,
@@ -495,7 +496,7 @@ async fn serve_rnode<S, Seam>(
             }
             outbound = seam.next_outbound() => {
                 if let Some(transmission) =
-                    control.accept_packet(outbound, tokio::time::Instant::now())
+                    control.accept_packet(outbound, elapsed_millis(meters.started))
                 {
                     if !write_rnode_transmission(
                         stream,
@@ -511,25 +512,9 @@ async fn serve_rnode<S, Seam>(
                     }
                 }
             }
-            () = wait_for_deadline(flow_deadline) => {
-                if let Some(transmission) = control.ready(tokio::time::Instant::now()) {
-                    if !write_rnode_transmission(
-                        stream,
-                        &mut buffers.frame,
-                        control,
-                        &mut keepalive,
-                        transmission,
-                        meters,
-                    )
-                    .await
-                    {
-                        return;
-                    }
-                }
-            }
-            () = wait_for_deadline(station_deadline) => {
+            () = wait_for_deadline(meters.started, flow_deadline) => {
                 if let Some(transmission) =
-                    control.station_identification_due(tokio::time::Instant::now())
+                    control.flow_timeout_elapsed(elapsed_millis(meters.started))
                 {
                     if !write_rnode_transmission(
                         stream,
@@ -545,7 +530,25 @@ async fn serve_rnode<S, Seam>(
                     }
                 }
             }
-            () = wait_for_deadline(keepalive.deadline()) => {
+            () = wait_for_deadline(meters.started, station_deadline) => {
+                if let Some(transmission) =
+                    control.station_identification_elapsed(elapsed_millis(meters.started))
+                {
+                    if !write_rnode_transmission(
+                        stream,
+                        &mut buffers.frame,
+                        control,
+                        &mut keepalive,
+                        transmission,
+                        meters,
+                    )
+                    .await
+                    {
+                        return;
+                    }
+                }
+            }
+            () = wait_for_keepalive(keepalive.deadline()) => {
                 let Ok(framed) = kiss_framing::encode_with_command(
                     core::CMD_DETECT,
                     &[core::DETECT_REQ],
@@ -562,10 +565,17 @@ async fn serve_rnode<S, Seam>(
     }
 }
 
+async fn wait_for_keepalive(deadline: Option<tokio::time::Instant>) {
+    match deadline {
+        Some(deadline) => tokio::time::sleep_until(deadline).await,
+        None => std::future::pending().await,
+    }
+}
+
 async fn write_rnode_transmission<S: AsyncWrite + Unpin>(
     stream: &mut S,
     frame_buf: &mut [u8],
-    control: &mut SerialControl,
+    control: &mut KissTransmissionControl,
     keepalive: &mut RNodeKeepaliveSchedule,
     transmission: Transmission,
     meters: &mut WireMeters<'_>,
@@ -579,7 +589,7 @@ async fn write_rnode_transmission<S: AsyncWrite + Unpin>(
         return false;
     }
     keepalive.wrote();
-    let now = tokio::time::Instant::now();
+    let now = elapsed_millis(meters.started);
     control.transmitted(&transmission, now);
     meters.status.add_tx(framed as u64);
     let elapsed = InstantMillis(meters.started.elapsed().as_millis() as u64);
@@ -621,7 +631,8 @@ where
         let mut airtime = AirtimeLedger::new();
         let mut throughput = ThroughputLedger::new();
         let started = tokio::time::Instant::now();
-        let mut control = SerialControl::new(self.flow_control, self.station_identification);
+        let mut control =
+            KissTransmissionControl::new(self.flow_control, self.station_identification);
         // The decoder and buffers are heap-held and reused across reconnects — no megabyte of buffer
         // rides the stack, and a device that never answers allocates these exactly once.
         let mut buffers = RNodeBuffers::new();
@@ -703,7 +714,9 @@ impl<Open> prns_core::interfaces::ReportsStatus for RNodeInterface<Open> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::serial_control::{StationIdInterval, StationIdWireFormat};
+    use prns_core::interfaces::kiss::transmission_control::{
+        StationIdInterval, StationIdWireFormat,
+    };
     use prns_core::interfaces::kiss_framing::{self, FEND};
     use prns_core::interfaces::{
         InterfaceStatus, PacketPhyStats, RssiDbm, SignalQualityTenthsPercent, SnrQuarterDb,

@@ -3,6 +3,9 @@ use std::io;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
 
+use prns_core::interfaces::kiss::transmission_control::{
+    KissTransmissionControl, StationIdentification, Transmission,
+};
 use prns_core::interfaces::rnode::{core, multi};
 use prns_core::interfaces::ConnectionState;
 use prns_runtime::reactor::airtime::AirtimeLedger;
@@ -10,9 +13,7 @@ use prns_runtime::reactor::driver::TokioInterfaceStatus;
 use prns_runtime::reactor::throughput::ThroughputLedger;
 use prns_runtime::runtime::{AttachedInterface, PrnsNodeHandle};
 
-use crate::serial_control::{
-    wait_for_deadline, SerialControl, StationIdentification, Transmission,
-};
+use crate::kiss_deadline::{elapsed_millis, wait_for_deadline};
 
 use super::member::{InboundFrame, LiveMember, MemberMeters, OutboundFrame, RNodeMultiMember};
 use super::{RNodeMultiAccess, RNodeMultiMemberSettings};
@@ -27,6 +28,7 @@ pub(super) struct WireCycle {
     pub(super) outbound: mpsc::UnboundedReceiver<OutboundFrame>,
     pub(super) selected: multi::VPort,
     pub(super) platform: Option<multi::DevicePlatform>,
+    pub(super) started: tokio::time::Instant,
 }
 
 impl RuntimeCycle {
@@ -68,7 +70,10 @@ impl RuntimeCycle {
                 vport: settings.vport,
                 radio: settings.radio,
                 inbound,
-                control: SerialControl::new(settings.flow_control, station_identification.clone()),
+                control: KissTransmissionControl::new(
+                    settings.flow_control,
+                    station_identification.clone(),
+                ),
                 packet_phy: multi::PacketPhyState::default(),
                 meters: MemberMeters {
                     status,
@@ -86,6 +91,7 @@ impl RuntimeCycle {
                 outbound,
                 selected: multi::VPort::ZERO,
                 platform: None,
+                started,
             },
             attachments,
         }
@@ -165,10 +171,10 @@ impl WireCycle {
                     };
                     self.accept_outbound(outbound, stream).await?;
                 }
-                () = wait_for_deadline(flow_deadline) => {
+                () = wait_for_deadline(self.started, flow_deadline) => {
                     self.release_flow_timeouts(stream).await?;
                 }
-                () = wait_for_deadline(station_deadline) => {
+                () = wait_for_deadline(self.started, station_deadline) => {
                     self.emit_station_identification(stream).await?;
                 }
             }
@@ -249,7 +255,7 @@ impl WireCycle {
         outbound: OutboundFrame,
         stream: &mut S,
     ) -> io::Result<()> {
-        let now = tokio::time::Instant::now();
+        let now = elapsed_millis(self.started);
         let Some(index) = self.member_index(outbound.vport) else {
             return Ok(());
         };
@@ -266,9 +272,9 @@ impl WireCycle {
         &mut self,
         stream: &mut S,
     ) -> io::Result<()> {
-        let now = tokio::time::Instant::now();
+        let now = elapsed_millis(self.started);
         for index in 0..self.members.len() {
-            if let Some(transmission) = self.members[index].control.ready(now) {
+            if let Some(transmission) = self.members[index].control.ready_received(now) {
                 self.write_transmission(index, transmission, stream).await?;
             }
         }
@@ -279,16 +285,10 @@ impl WireCycle {
         &mut self,
         stream: &mut S,
     ) -> io::Result<()> {
-        let now = tokio::time::Instant::now();
+        let now = elapsed_millis(self.started);
         for index in 0..self.members.len() {
-            let due = self.members[index]
-                .control
-                .flow_timeout_deadline()
-                .is_some_and(|deadline| deadline <= now);
-            if due {
-                if let Some(transmission) = self.members[index].control.ready(now) {
-                    self.write_transmission(index, transmission, stream).await?;
-                }
+            if let Some(transmission) = self.members[index].control.flow_timeout_elapsed(now) {
+                self.write_transmission(index, transmission, stream).await?;
             }
         }
         Ok(())
@@ -298,18 +298,13 @@ impl WireCycle {
         &mut self,
         stream: &mut S,
     ) -> io::Result<()> {
-        let now = tokio::time::Instant::now();
+        let now = elapsed_millis(self.started);
         for index in 0..self.members.len() {
-            let due = self.members[index]
+            if let Some(transmission) = self.members[index]
                 .control
-                .station_identification_deadline()
-                .is_some_and(|deadline| deadline <= now);
-            if due {
-                if let Some(transmission) =
-                    self.members[index].control.station_identification_due(now)
-                {
-                    self.write_transmission(index, transmission, stream).await?;
-                }
+                .station_identification_elapsed(now)
+            {
+                self.write_transmission(index, transmission, stream).await?;
             }
         }
         Ok(())
@@ -330,7 +325,7 @@ impl WireCycle {
                 )
             })?;
         stream.write_all(&frame).await?;
-        let now = tokio::time::Instant::now();
+        let now = elapsed_millis(self.started);
         self.members[index].control.transmitted(&transmission, now);
         self.members[index].meters.record_tx(frame.len());
         if is_packet {

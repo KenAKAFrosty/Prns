@@ -1,6 +1,7 @@
 use tokio::sync::mpsc;
 
 use prns_core::engine::InstantMillis;
+use prns_core::interfaces::kiss::transmission_control::KissTransmissionControl;
 use prns_core::interfaces::rnode::{core, multi};
 use prns_core::interfaces::{
     ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind,
@@ -10,8 +11,6 @@ use prns_runtime::reactor::airtime::{frame_airtime_us, AirtimeLedger};
 use prns_runtime::reactor::driver::TokioInterfaceStatus;
 use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
 use prns_runtime::reactor::throughput::ThroughputLedger;
-
-use crate::serial_control::SerialControl;
 
 pub(super) struct InboundFrame {
     pub(super) payload: Vec<u8>,
@@ -117,7 +116,7 @@ pub(super) struct LiveMember {
     pub(super) vport: multi::VPort,
     pub(super) radio: multi::RadioConfig,
     pub(super) inbound: mpsc::UnboundedSender<InboundFrame>,
-    pub(super) control: SerialControl,
+    pub(super) control: KissTransmissionControl,
     pub(super) packet_phy: multi::PacketPhyState,
     pub(super) meters: MemberMeters,
 }

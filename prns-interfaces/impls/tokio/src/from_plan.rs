@@ -43,8 +43,6 @@ use crate::rnode_multi::{
     RNodeMultiSettings, DEFAULT_RNODE_MULTI_CONFIGURE_DELAY,
 };
 use crate::serial::SerialInterface;
-use crate::serial_control::{ReadyCommandFlowControl, StationIdentification};
-use crate::serial_control::{ReadyTimeout, StationIdInterval, StationIdWireFormat};
 use crate::serial_host::{
     open_host_serial, open_host_serial_with_settings, HostSerialDataBits, HostSerialLineSettings,
     HostSerialParity, HostSerialStopBits,
@@ -56,6 +54,10 @@ use crate::tcp::tokio_socket::{
 };
 use crate::udp::UdpInterface;
 use crate::wifi::{AutoWifi, AutoWifiDevicePolicy, AutoWifiSettings};
+use prns_core::interfaces::kiss::transmission_control::{
+    ReadyCommandFlowControl, ReadyTimeout, StationIdInterval, StationIdWireFormat,
+    StationIdentification,
+};
 
 const TCP_RECONNECT_DELAY: Duration = Duration::from_secs(5);
 const SERIAL_RECONNECT_DELAY: ReconnectDelay = ReconnectDelay::new(Duration::from_millis(500));
