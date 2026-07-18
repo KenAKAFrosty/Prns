@@ -6,6 +6,7 @@ use crate::crypto::{
 use crate::engine::test_support::{transporting_interfaces, TestStorageLayout};
 use crate::engine::CommandId;
 use crate::engine::{Directive, EngineReaction};
+use crate::interfaces::InterfaceId;
 use crate::routing::dedup::{PacketHash, PACKET_HASH_LEN};
 use crate::routing::links::channel::{write_envelope, ChannelSequence, MessageType};
 use crate::routing::links::data::write_link_packet;
