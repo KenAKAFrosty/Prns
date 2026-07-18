@@ -1,3 +1,4 @@
+use super::packet_phy::retain_packet_phy;
 use super::*;
 use crate::engine::test_support::{
     bytes_from_hex, pin_transport_id, TestStorageLayout, RNS_1_3_5_ANNOUNCE, TEST_TRANSPORT_ID,
@@ -5,10 +6,11 @@ use crate::engine::test_support::{
 use crate::engine::{FanTarget, InstantMillis};
 use crate::interfaces::{
     AnnounceBandwidthCap, BitrateBps, EgressCapability, IngressCapability, InterfaceCapabilities,
-    InterfaceKind, InterfaceMode, TransportCapability,
+    InterfaceKind, InterfaceMode, PacketPhyStats, TransportCapability,
 };
-use crate::reactor::grant::{AnyGrantProducer, GrantConsumer, GrantProducer};
+use crate::reactor::grant::{AnyGrantConsumer, AnyGrantProducer, GrantConsumer, GrantProducer};
 use crate::reactor::interface_seam::{Interface, InterfaceSeam};
+use crate::runtime::{EmbassyInterfaceStore, NoInterfaceInspectionStore};
 use crate::wire::{PacketType, WirePacketHeader};
 
 use embassy_futures::block_on;
