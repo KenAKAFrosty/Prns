@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 use std::future::Future;
 use std::io;
-use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncWrite};
 
@@ -23,23 +22,10 @@ mod wire;
 use bring_up::bring_up;
 use wire::RuntimeCycle;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RNodeMultiConfigureDelay(Duration);
-
-impl RNodeMultiConfigureDelay {
-    #[must_use]
-    pub const fn new(duration: Duration) -> Self {
-        Self(duration)
-    }
-
-    #[must_use]
-    pub const fn duration(self) -> Duration {
-        self.0
-    }
-}
+pub use prns_core::interfaces::rnode::multi::bring_up::ConfigureDelay as RNodeMultiConfigureDelay;
 
 pub const DEFAULT_RNODE_MULTI_CONFIGURE_DELAY: RNodeMultiConfigureDelay =
-    RNodeMultiConfigureDelay::new(Duration::from_secs(2));
+    prns_core::interfaces::rnode::multi::bring_up::DEFAULT_CONFIGURE_DELAY;
 
 #[derive(Clone)]
 pub enum RNodeMultiAccess {

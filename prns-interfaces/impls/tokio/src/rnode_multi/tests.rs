@@ -1,4 +1,5 @@
 use std::collections::{HashSet, VecDeque};
+use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
@@ -131,7 +132,7 @@ fn wire_cycle(
     let (_outbound_tx, outbound) = mpsc::unbounded_channel();
     let started = tokio::time::Instant::now();
     let mut inbound_receivers = Vec::new();
-    let members = members
+    let members: Vec<LiveMember> = members
         .iter()
         .map(|settings| {
             let (inbound, inbound_rx) = mpsc::unbounded_channel();
@@ -144,7 +145,6 @@ fn wire_cycle(
                     settings.flow_control,
                     station_identification.clone(),
                 ),
-                packet_phy: multi::PacketPhyState::default(),
                 meters: MemberMeters {
                     status: TokioInterfaceStatus::new(settings.id(), ConnectionState::Connected),
                     airtime: AirtimeLedger::new(),
@@ -155,12 +155,18 @@ fn wire_cycle(
             }
         })
         .collect();
+    let live = multi::live::LiveProtocol::new(
+        members.iter().map(|member| multi::ConfiguredRadio {
+            vport: member.vport,
+            radio: member.radio,
+        }),
+        None,
+    );
     (
         WireCycle {
             members,
             outbound,
-            selected: VPort::ZERO,
-            platform: None,
+            live,
             started,
         },
         inbound_receivers,
