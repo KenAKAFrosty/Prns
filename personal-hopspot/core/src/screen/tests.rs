@@ -1,7 +1,25 @@
 use core::convert::Infallible;
 
 use embedded_graphics::mock_display::MockDisplay;
+use embedded_graphics::pixelcolor::BinaryColor;
+use embedded_graphics::prelude::*;
 
+use super::render::cards::draw_card;
+use super::render::glyphs::{
+    draw_battery, draw_clock, draw_interface_icon, draw_lightning, draw_link, draw_person,
+};
+use super::render::layout::{
+    ACTIVITY_TEXT_X, CARD_H, CARD_SLOT_STEP, CARD_TOP, FIRST_CARD_WITH_GLOBAL_TOP,
+    FOOTER_FOURTH_LINE_OFFSET, FOOTER_SECOND_LINE_OFFSET, GLOBAL_BACKING_H, GLOBAL_BACKING_X,
+    GLOBAL_BACKING_Y, GLOBAL_ICON_X, GLOBAL_ROW_H, GLOBAL_ROW_TOP, HEIGHT, MENU_BACKING_X,
+    MENU_DIVIDER_Y, MENU_HEADER_Y, MENU_ITEM_STEP, MENU_ITEM_TOP, MENU_MARK_X, MENU_REASON_X,
+    NAME_BACKING_X, NAME_BACKING_Y, NAME_ICON_X, NAME_LINE_Y, STAT_ICON_X, STAT_TEXT_X, WIDTH,
+};
+use super::render::menus::draw_interface_menu;
+use super::render::menus::lora::{LORA_DOT_X, LORA_EDITOR_TOP};
+use super::render::metrics::{
+    compact_numeric_width, draw_compact_number, fmt_activity_age, fmt_count, fmt_rate_bytes_per_sec,
+};
 use super::*;
 
 const TEST_WIDTH: usize = WIDTH as usize;
