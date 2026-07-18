@@ -631,6 +631,10 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
     } else {
         None
     };
+    let monitored_interfaces = constructed_interfaces
+        .iter()
+        .map(|interface| interface.id)
+        .collect::<Vec<_>>();
     let discovery_publication_task = if owns_tables {
         match prepared_discovery_publisher {
             Some(publisher) => {
@@ -679,11 +683,6 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
             process::exit(1);
         }
     }
-    let monitored_interfaces = prns_handle
-        .interfaces()
-        .into_iter()
-        .map(|snapshot| snapshot.id)
-        .collect::<Vec<_>>();
     let mut interface_failure = None;
     tokio::select! {
         () = prns.run() => {}

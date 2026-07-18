@@ -621,8 +621,8 @@ fn stand_up_rnode_multi<'a>(
         },
     );
     let ids = rnode_multi.member_ids().collect::<Vec<_>>();
-    let run_handle = handle.clone();
-    tokio::spawn(rnode_multi.run(run_handle));
+    let registered = rnode_multi.register(handle);
+    tokio::spawn(registered.run());
     for ((interface, _), id) in interfaces.into_iter().zip(ids) {
         report_up(handle, interface, id, report);
     }
@@ -836,6 +836,7 @@ mod tests {
 
     #[tokio::test]
     async fn planned_rnode_multi_members_register_once_under_one_device_supervisor() {
+        use prns_core::interfaces::ConnectionState;
         use prns_runtime::runtime::{Manual, PreConfiguredDestination, PrnsNode, PrnsNodeRecipe};
         use prns_runtime::storage::GrowableHeap;
 
@@ -873,6 +874,11 @@ mod tests {
         assert_eq!(outcomes[1].0, "Dual[High]");
         assert!(outcomes.iter().all(|(_, id)| id.is_some()));
         assert_ne!(outcomes[0].1, outcomes[1].1);
+        let registered = node.handle().interfaces();
+        assert_eq!(registered.len(), 2);
+        assert!(registered
+            .iter()
+            .all(|member| member.connection == ConnectionState::Initializing));
     }
 
     #[test]

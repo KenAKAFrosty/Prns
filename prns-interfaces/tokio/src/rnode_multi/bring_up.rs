@@ -16,7 +16,7 @@ pub(super) async fn bring_up<S: AsyncRead + AsyncWrite + Unpin>(
     configure_delay: RNodeMultiConfigureDelay,
     decoder: &mut core::CommandDecoder,
     read: &mut [u8],
-) -> io::Result<()> {
+) -> io::Result<Option<multi::DevicePlatform>> {
     decoder.reset();
     let mut report = multi::DeviceReport::default();
     stream.write_all(&multi::detect_frames()).await?;
@@ -105,7 +105,7 @@ pub(super) async fn bring_up<S: AsyncRead + AsyncWrite + Unpin>(
             ));
         }
     }
-    Ok(())
+    Ok(report.platform())
 }
 
 async fn pump_report<S, Done>(

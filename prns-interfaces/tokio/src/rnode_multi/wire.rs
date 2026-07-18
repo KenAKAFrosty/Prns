@@ -26,6 +26,7 @@ pub(super) struct WireCycle {
     pub(super) members: Vec<LiveMember>,
     pub(super) outbound: mpsc::UnboundedReceiver<OutboundFrame>,
     pub(super) selected: multi::VPort,
+    pub(super) platform: Option<multi::DevicePlatform>,
 }
 
 impl RuntimeCycle {
@@ -84,6 +85,7 @@ impl RuntimeCycle {
                 members,
                 outbound,
                 selected: multi::VPort::ZERO,
+                platform: None,
             },
             attachments,
         }
@@ -98,7 +100,8 @@ impl RuntimeCycle {
         self.wire.serve(stream, decoder, read).await
     }
 
-    pub(super) fn mark_connected(&self) {
+    pub(super) fn mark_connected(&mut self, platform: Option<multi::DevicePlatform>) {
+        self.wire.platform = platform;
         for member in &self.wire.members {
             member
                 .meters
@@ -107,16 +110,22 @@ impl RuntimeCycle {
         }
     }
 
-    pub(super) fn teardown(self) {
-        for member in self.wire.members {
+    fn teardown(&mut self) {
+        for member in &self.wire.members {
             member
                 .meters
                 .status
                 .set_connection(ConnectionState::Disconnected);
         }
-        for attached in self.attachments {
+        for attached in self.attachments.drain(..) {
             attached.teardown();
         }
+    }
+}
+
+impl Drop for RuntimeCycle {
+    fn drop(&mut self) {
+        self.teardown();
     }
 }
 
@@ -189,6 +198,22 @@ impl WireCycle {
                 core::CMD_DATA => self.deliver_inbound(payload),
                 prns_core::interfaces::kiss_framing::CMD_READY => {
                     self.release_ready(stream).await?;
+                }
+                core::CMD_PLATFORM => {
+                    self.platform = payload
+                        .first()
+                        .copied()
+                        .map(multi::DevicePlatform::from_device_report);
+                }
+                core::CMD_ERROR => return Err(hardware_error(payload)),
+                core::CMD_RESET
+                    if self.platform == Some(multi::DevicePlatform::Esp32)
+                        && payload.first() == Some(&core::RESET_RESP) =>
+                {
+                    return Err(io::Error::new(
+                        io::ErrorKind::ConnectionReset,
+                        "RNodeMulti ESP32 reset while online",
+                    ));
                 }
                 _ => {
                     if let Some(member) = self.member_mut(self.selected) {
@@ -324,4 +349,14 @@ impl WireCycle {
         let index = self.member_index(vport)?;
         self.members.get_mut(index)
     }
+}
+
+fn hardware_error(payload: &[u8]) -> io::Error {
+    let message = match payload.first().copied() {
+        Some(core::ERROR_INIT_RADIO) => "RNodeMulti radio initialisation failure",
+        Some(core::ERROR_TX_FAILED) => "RNodeMulti hardware transmit failure",
+        Some(core::ERROR_EEPROM_LOCKED) => "RNodeMulti EEPROM is locked",
+        _ => "RNodeMulti unknown hardware failure",
+    };
+    io::Error::other(message)
 }

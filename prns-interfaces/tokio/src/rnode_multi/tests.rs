@@ -118,6 +118,7 @@ async fn answer_bring_up<RW: AsyncRead + AsyncWrite + Unpin>(
     assert_eq!(detect[4].0, multi::CMD_INTERFACES);
     write_command(wire, core::CMD_DETECT, &[core::DETECT_RESP]).await;
     write_command(wire, core::CMD_FW_VERSION, &[1, 80]).await;
+    write_command(wire, core::CMD_PLATFORM, &[0x80]).await;
     write_command(wire, multi::CMD_INTERFACES, &[0, 0x10, 1, 0x20]).await;
     for member in members {
         answer_radio(wire, member).await;
@@ -157,6 +158,7 @@ fn wire_cycle(
             members,
             outbound,
             selected: VPort::ZERO,
+            platform: None,
         },
         inbound_receivers,
     )
@@ -202,11 +204,12 @@ async fn bring_up_detects_inventory_and_validates_each_selected_radio() {
     });
 
     answer_bring_up(&mut device, &expected).await;
-    tokio::time::timeout(Duration::from_secs(2), task)
+    let platform = tokio::time::timeout(Duration::from_secs(2), task)
         .await
         .expect("bring-up completes")
         .expect("bring-up task joins")
         .expect("both radios validate");
+    assert_eq!(platform, Some(multi::DevicePlatform::Esp32));
 }
 
 #[tokio::test]
@@ -266,6 +269,71 @@ async fn selected_vport_demultiplexes_inbound_packets_and_metrics() {
         b"high"
     );
     assert!(wire.members[1].meters.status.rx_bytes() > 0);
+}
+
+#[tokio::test]
+async fn hardware_error_frames_end_the_live_wire_cycle_with_actionable_failures() {
+    let cases = [
+        (
+            core::ERROR_INIT_RADIO,
+            "RNodeMulti radio initialisation failure",
+        ),
+        (
+            core::ERROR_TX_FAILED,
+            "RNodeMulti hardware transmit failure",
+        ),
+        (core::ERROR_EEPROM_LOCKED, "RNodeMulti EEPROM is locked"),
+        (0xff, "RNodeMulti unknown hardware failure"),
+    ];
+    for (code, expected) in cases {
+        let (mut wire, _) = wire_cycle(&[member(0)], None);
+        let (mut host, _device) = tokio::io::duplex(1024);
+        let mut decoder = core::CommandDecoder::new();
+        let mut frame = [0u8; 16];
+        let frame_len = kiss_framing::encode_with_command(core::CMD_ERROR, &[code], &mut frame)
+            .expect("error frame fits");
+        let error = wire
+            .apply_read(&frame[..frame_len], &mut decoder, &mut host)
+            .await
+            .expect_err("hardware errors end the connection");
+        assert_eq!(error.to_string(), expected);
+    }
+}
+
+#[tokio::test]
+async fn only_an_online_esp32_reset_ends_the_live_wire_cycle() {
+    let (mut wire, _) = wire_cycle(&[member(0)], None);
+    let (mut host, _device) = tokio::io::duplex(1024);
+    let mut decoder = core::CommandDecoder::new();
+    let mut frame = [0u8; 16];
+    let platform_len = kiss_framing::encode_with_command(core::CMD_PLATFORM, &[0x80], &mut frame)
+        .expect("platform frame fits");
+    wire.apply_read(&frame[..platform_len], &mut decoder, &mut host)
+        .await
+        .expect("late platform report applies");
+    let frame_len =
+        kiss_framing::encode_with_command(core::CMD_RESET, &[core::RESET_RESP], &mut frame)
+            .expect("reset frame fits");
+    let error = wire
+        .apply_read(&frame[..frame_len], &mut decoder, &mut host)
+        .await
+        .expect_err("ESP32 reset ends the connection");
+    assert_eq!(error.kind(), io::ErrorKind::ConnectionReset);
+    assert_eq!(error.to_string(), "RNodeMulti ESP32 reset while online");
+
+    let (mut wire, _) = wire_cycle(&[member(0)], None);
+    let mut decoder = core::CommandDecoder::new();
+    let platform_len = kiss_framing::encode_with_command(core::CMD_PLATFORM, &[0x70], &mut frame)
+        .expect("platform frame fits");
+    wire.apply_read(&frame[..platform_len], &mut decoder, &mut host)
+        .await
+        .expect("late platform report applies");
+    let frame_len =
+        kiss_framing::encode_with_command(core::CMD_RESET, &[core::RESET_RESP], &mut frame)
+            .expect("reset frame fits");
+    wire.apply_read(&frame[..frame_len], &mut decoder, &mut host)
+        .await
+        .expect("the reference only reinitialises an ESP32 reset");
 }
 
 #[tokio::test]
@@ -408,7 +476,13 @@ async fn a_serial_drop_removes_and_recreates_every_logical_radio_together() {
         on_event: |_event, _state: &()| {},
     });
     let handle = node.handle();
-    let supervisor = tokio::spawn(interface.run(handle.clone()));
+    let registered = interface.register(&handle);
+    assert_eq!(interface_ids(&handle), expected_ids);
+    assert!(handle
+        .interfaces()
+        .iter()
+        .all(|snapshot| snapshot.connection == ConnectionState::Initializing));
+    let supervisor = tokio::spawn(registered.run());
 
     tokio::select! {
         () = node.run() => panic!("node stays running"),
