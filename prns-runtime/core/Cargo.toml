@@ -31,6 +31,8 @@ heapless = { version = "0.8", default-features = false }
 [dev-dependencies]
 prns-core = { path = "../../prns-core", default-features = false, features = ["test-support"] }
 futures-executor = "0.3"
+futures-test = "0.3"
+rmpv = "1.3"
 
 [lints]
 workspace = true

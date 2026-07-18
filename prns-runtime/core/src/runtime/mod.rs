@@ -10,6 +10,8 @@ pub mod request_router;
 pub mod rns_management;
 #[cfg(feature = "rns-management")]
 pub mod rns_remote_management;
+#[cfg(feature = "rns-management")]
+pub mod rns_rpc;
 
 pub use command::{
     ClearAnnounceQueuesOutcome, DestinationIdentityRetentionControl,

@@ -8,6 +8,7 @@ use tokio::net::UnixListener;
 
 use prns_core::interfaces::shared_instance::rns_rpc::RpcRequest;
 use prns_runtime::node_introspection::NodeIntrospection;
+use prns_runtime::runtime::rns_rpc;
 use prns_runtime::runtime::{
     DestinationIdentityRetentionControl, IdentityBlackholeControl, IdentityBlackholeSource,
     RoutingControl,
@@ -16,7 +17,6 @@ use prns_runtime::runtime::{
 use super::authentication::{
     answer_client_challenge, deliver_our_challenge, SharedInstanceCredentials,
 };
-use super::dispatch::reply_for_decoded;
 use super::framing::{read_frame, write_frame};
 use super::telemetry::RpcTelemetry;
 
@@ -374,7 +374,7 @@ where
         dialect = dialect.as_str(),
         verb = verb.as_str()
     );
-    let reply = reply_for_decoded(
+    let reply = rns_rpc::reply(
         &request,
         &query,
         &query,
@@ -382,7 +382,8 @@ where
         &blackholes,
         blackhole_source,
     )
-    .await?;
+    .await
+    .map_err(std::io::Error::other)?;
     if let Err(err) = write_frame(&mut stream, &reply).await {
         telemetry.record_write_failure();
         return Err(err);
