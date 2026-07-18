@@ -40,7 +40,6 @@ pub enum InterfaceLifecycle {
     },
 }
 
-/// Cap an interface's advertised link MTU to the reactor lane ceiling.
 fn clamp_to_embedded_ceiling(mut descriptor: InterfaceDescriptor) -> InterfaceDescriptor {
     if let Some(mtu) = descriptor.hardware_mtu {
         descriptor.hardware_mtu = Some(mtu.min(EMBEDDED_MAX_LINK_MTU));
@@ -48,7 +47,7 @@ fn clamp_to_embedded_ceiling(mut descriptor: InterfaceDescriptor) -> InterfaceDe
     descriptor
 }
 
-/// Everything the pooled reactor is wired to. All borrowed: the recipe owns every lane for the node's life.
+/// Borrowed lanes and channels for one pooled-topology reactor run.
 pub struct PooledWiring<
     'run,
     M: RawMutex + 'static,
@@ -69,7 +68,7 @@ pub struct PooledWiring<
     pub lifecycle: Receiver<'run, M, InterfaceLifecycle, LIFECYCLE>,
 }
 
-/// Run the reactor over a fixed pool of interface slots whose live descriptor set changes through the lifecycle lane. The endpoints never move, and pacers are bounded by `LANES` rather than `MAX_IFACES`.
+/// Runs a mutable descriptor set over a fixed lane pool; `LANES` bounds pacers.
 pub(crate) async fn run_pooled<
     S,
     H,

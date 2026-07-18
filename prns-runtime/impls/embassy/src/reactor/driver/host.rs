@@ -4,7 +4,7 @@ use crate::engine::InstantMillis;
 use crate::reactor::timebase::EmbassyTimebase;
 use crate::reactor::Host;
 
-/// A [`Host`] backed by embassy's clock and a caller-supplied entropy source: an [`EmbassyTimebase`] owns the clock and `draw_entropy` is whatever the board hands it. The engine never reads either; it asks the host.
+/// Embassy clock and caller-supplied entropy source.
 pub struct EmbassyHost<E> {
     timebase: EmbassyTimebase,
     draw_entropy: E,

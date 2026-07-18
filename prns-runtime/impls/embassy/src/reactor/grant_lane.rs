@@ -8,7 +8,7 @@ use crate::reactor::grant::{
     AnyGrantConsumer, AnyGrantProducer, FrameSlot, FrameTarget, GrantConsumer, GrantProducer,
 };
 
-/// One interface's grant lane on embassy: the slots live in a caller-parked buffer (a `StaticCell` on firmware) and recycle through a `zerocopy_channel`, so granting, committing, and releasing move ring indices while the frame bytes stay where they were written — and each interface's buffer is sized to its own `HW_MTU`.
+/// Splits caller-owned storage into a zero-copy frame lane.
 pub fn embassy_grant_lane<'a, M: RawMutex, const SLOT: usize>(
     channel: &'a mut zerocopy_channel::Channel<'a, M, FrameSlot<SLOT>>,
 ) -> (
@@ -29,7 +29,6 @@ pub fn embassy_grant_lane<'a, M: RawMutex, const SLOT: usize>(
     )
 }
 
-/// `granted`/`peeked` guard the ring's done-calls: the channel's `send_done`/`receive_done` assert an open grant, so a `commit` or `release` with nothing outstanding must be a no-op, exactly as it is on the tokio lanes.
 pub struct EmbassyGrantProducer<'a, M: RawMutex, const SLOT: usize> {
     sender: zerocopy_channel::Sender<'a, M, FrameSlot<SLOT>>,
     granted: bool,
@@ -37,7 +36,6 @@ pub struct EmbassyGrantProducer<'a, M: RawMutex, const SLOT: usize> {
 }
 
 impl<'a, M: RawMutex, const SLOT: usize> EmbassyGrantProducer<'a, M, SLOT> {
-    /// Arm this lane to signal `wake` whenever a frame is committed onto it. A fleet's shared egress lane is consumed by a supervisor on another task, which parks on this signal rather than the channel's own consumer waker, so the reactor's commit reliably rouses the cross-task drain. A 1:1 lane whose consumer is the reactor itself leaves this unset.
     pub fn set_outbound_wake(&mut self, wake: &'a Signal<M, ()>) {
         self.wake = Some(wake);
     }

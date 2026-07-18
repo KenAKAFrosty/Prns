@@ -45,7 +45,7 @@ impl<M: RawMutex + 'static, const SLOT: usize, const NOTIFY: usize, const LIFECY
         self.lifecycle.send(InterfaceLifecycle::Remove { id }).await;
     }
 
-    /// Funnel one inbound frame from peer `child` into the shared lane, tagged so the reactor ingests it as `child`'s, then announce the commit on the notify funnel. `false` if the lane is momentarily full (the frame drops, as a full lane does), so a slow reactor never stalls the medium read.
+    /// Returns `false` when the shared inbound lane is full.
     pub fn deliver_inbound(&mut self, child: InterfaceId, bytes: &[u8]) -> bool {
         let Some(grant) = self.wire.inbound.try_grant() else {
             return false;
@@ -56,7 +56,7 @@ impl<M: RawMutex + 'static, const SLOT: usize, const NOTIFY: usize, const LIFECY
         true
     }
 
-    /// Park until the reactor grants an outbound frame, returning a copy plus its [`FrameTarget`]: the one peer it addresses, or the fan a fleet broadcast selects members by. The frame is copied out rather than borrowed, so the returned value owns nothing of the fleet (it can ride a `select` arm without a borrow clash), and the slot is released before returning, so the depth-1 lane refills at once and each frame is carried exactly once.
+    /// Copies and releases the next outbound slot so callers can hold the frame across `select` branches.
     pub async fn next_outbound<const OUT: usize>(&mut self) -> (FrameTarget, HeaplessVec<u8, OUT>) {
         self.wire.outbound.release();
         let slot = self.wire.outbound.peek().await;
@@ -67,7 +67,7 @@ impl<M: RawMutex + 'static, const SLOT: usize, const NOTIFY: usize, const LIFECY
         (target, bytes)
     }
 
-    /// Park until the reactor commits an outbound frame onto this fleet's shared lane: the reactor signals every commit, rousing a waiting supervisor across the task boundary without depending on the lane's own consumer waker. On wake, drain with [`try_next_outbound`](Self::try_next_outbound) until `None`.
+    /// Waits for a shared-lane commit; drain with [`try_next_outbound`](Self::try_next_outbound) after waking.
     pub async fn outbound_ready(&self) {
         self.wire.outbound_wake.wait().await;
     }

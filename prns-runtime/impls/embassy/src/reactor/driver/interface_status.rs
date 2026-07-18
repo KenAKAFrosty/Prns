@@ -4,7 +4,7 @@ use crate::interfaces::{
     AirtimeUtilization, ConnectionState, InterfaceId, InterfaceStatus, TransferRates,
 };
 
-/// Lock-free live interface state shared by reference between the wire and display tasks. `portable-atomic` supplies the `u64` counters on 32-bit targets.
+/// Lock-free interface state shared between wire and presentation tasks.
 pub struct EmbassyInterfaceStatus {
     id: AtomicU64,
     connection: AtomicU8,
@@ -41,12 +41,11 @@ impl EmbassyInterfaceStatus {
             .store(u64::from_be_bytes(*id.as_bytes()), Ordering::Relaxed);
     }
 
-    /// Turn this interface off or back on from the application. The driver reads [`is_enabled`](Self::is_enabled) and goes dormant (wire closed, nothing ingested, egress drained and discarded) while off, holding its slot and routes for an instant resume.
+    /// Disabling retains the interface slot and routes for immediate resume.
     pub fn set_enabled(&self, enabled: bool) {
         self.enabled.store(enabled, Ordering::Relaxed);
     }
 
-    /// Whether the interface is enabled (the default). The driver polls this to leave or re-enter its dormant state.
     #[must_use]
     pub fn is_enabled(&self) -> bool {
         self.enabled.load(Ordering::Relaxed)

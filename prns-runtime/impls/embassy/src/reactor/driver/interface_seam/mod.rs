@@ -7,7 +7,6 @@ use crate::reactor::interface_seam::InterfaceSeam;
 
 use super::{EmbassyGrantConsumer, EmbassyGrantProducer};
 
-/// The Embassy interface endpoint for inbound notifications and outbound grants.
 pub struct EmbassyInterfaceSeam<'a, M: RawMutex, const NOTIFY: usize, const SLOT: usize> {
     id: InterfaceId,
     inbound: EmbassyGrantProducer<'a, M, SLOT>,
