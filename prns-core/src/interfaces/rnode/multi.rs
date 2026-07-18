@@ -16,6 +16,26 @@ pub const HIGH_FREQUENCY_MIN_HZ: u32 = 2_200_000_000;
 pub const HIGH_FREQUENCY_MAX_HZ: u32 = 2_600_000_000;
 pub const TX_POWER_MIN_DBM: i16 = -9;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DevicePlatform {
+    Avr,
+    Esp32,
+    Nrf52,
+    Other(u8),
+}
+
+impl DevicePlatform {
+    #[must_use]
+    pub const fn from_device_report(value: u8) -> Self {
+        match value {
+            0x90 => Self::Avr,
+            0x80 => Self::Esp32,
+            0x70 => Self::Nrf52,
+            other => Self::Other(other),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct VPort(u8);
 
@@ -401,6 +421,7 @@ impl RadioReport {
 pub struct DeviceReport {
     selected: VPort,
     detected: bool,
+    platform: Option<DevicePlatform>,
     firmware_major: Option<u8>,
     firmware_minor: Option<u8>,
     interfaces: ReportedInterfaces,
@@ -412,6 +433,7 @@ impl Default for DeviceReport {
         Self {
             selected: VPort::ZERO,
             detected: false,
+            platform: None,
             firmware_major: None,
             firmware_minor: None,
             interfaces: ReportedInterfaces::default(),
@@ -429,6 +451,12 @@ impl DeviceReport {
             core::CMD_FW_VERSION if payload.len() >= 2 => {
                 self.firmware_major = Some(payload[0]);
                 self.firmware_minor = Some(payload[1]);
+            }
+            core::CMD_PLATFORM => {
+                self.platform = payload
+                    .first()
+                    .copied()
+                    .map(DevicePlatform::from_device_report);
             }
             CMD_INTERFACES => self.interfaces.apply(payload),
             CMD_SELECT_INTERFACE => {
@@ -451,6 +479,11 @@ impl DeviceReport {
     }
 
     #[must_use]
+    pub const fn platform(&self) -> Option<DevicePlatform> {
+        self.platform
+    }
+
+    #[must_use]
     pub fn interfaces(&self) -> &ReportedInterfaces {
         &self.interfaces
     }
@@ -466,6 +499,14 @@ impl DeviceReport {
             (Some(major), Some(minor)) => {
                 Some(major >= REQUIRED_FW_VERSION_MAJOR && minor >= REQUIRED_FW_VERSION_MINOR)
             }
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn firmware_version(&self) -> Option<(u8, u8)> {
+        match (self.firmware_major, self.firmware_minor) {
+            (Some(major), Some(minor)) => Some((major, minor)),
             _ => None,
         }
     }
@@ -560,6 +601,17 @@ mod tests {
     }
 
     #[test]
+    fn reported_platforms_preserve_the_reference_reset_distinction() {
+        let mut report = DeviceReport::default();
+        report.apply(core::CMD_PLATFORM, &[0x80]);
+        assert_eq!(report.platform(), Some(DevicePlatform::Esp32));
+        report.apply(core::CMD_PLATFORM, &[0x70]);
+        assert_eq!(report.platform(), Some(DevicePlatform::Nrf52));
+        report.apply(core::CMD_PLATFORM, &[0xff]);
+        assert_eq!(report.platform(), Some(DevicePlatform::Other(0xff)));
+    }
+
+    #[test]
     fn frequencies_carry_their_hardware_band() {
         let low = RadioFrequency::new(868_000_000).expect("low-band frequency");
         let high = RadioFrequency::new(2_400_000_000).expect("high-band frequency");
@@ -606,6 +658,16 @@ mod tests {
                 0x00, 0xc0,
             ]
         );
+    }
+
+    #[test]
+    fn firmware_version_is_exposed_for_actionable_runtime_errors() {
+        let mut report = DeviceReport::default();
+        report.apply(core::CMD_FW_VERSION, &[1, 73]);
+        assert_eq!(report.firmware_ok(), Some(false));
+        report.apply(core::CMD_FW_VERSION, &[1, 74]);
+        assert_eq!(report.firmware_ok(), Some(true));
+        assert_eq!(report.firmware_version(), Some((1, 74)));
     }
 
     #[test]

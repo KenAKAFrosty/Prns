@@ -1,8 +1,18 @@
+use std::collections::BTreeMap;
+use std::fmt::Write as _;
+
 use prns_core::interface_discovery::StampCost;
 
 use crate::diagnostic::{ConfigDiagnosticCode, ConfigErrors};
 
-use super::keys::{global as global_key, logging as logging_key, section as section_key};
+use super::keys::{
+    global as global_key, interface as interface_key, logging as logging_key,
+    section as section_key,
+};
+use super::schema::{
+    interface_key_rule, known_interface_keys, KeyApplication, SUPPORTED_INTERFACES,
+};
+use super::validation::example_for_key;
 use super::*;
 
 const REALISTIC: &str = "[reticulum]\n\
@@ -355,7 +365,17 @@ fn disabled_publication_leaves_its_conditional_keys_uninterpreted() {
              listen_port = 4242\n\
              discoverable = No\n\
              announce_interval = not-an-integer\n\
-             discovery_stamp_value = not-an-integer\n",
+             discovery_stamp_value = not-an-integer\n\
+             discovery_name = anything\n\
+             discovery_encrypt = not-a-boolean\n\
+             reachable_on = anywhere\n\
+             publish_ifac = not-a-boolean\n\
+             latitude = not-a-number\n\
+             longitude = not-a-number\n\
+             height = not-a-number\n\
+             discovery_frequency = not-an-integer\n\
+             discovery_bandwidth = not-an-integer\n\
+             discovery_modulation = anything\n",
     )
     .unwrap();
     let config = report.value;
@@ -363,13 +383,17 @@ fn disabled_publication_leaves_its_conditional_keys_uninterpreted() {
     assert_eq!(spine.discovery.discoverable, Some(false));
     assert!(spine.extra.contains_key("announce_interval"));
     assert!(spine.extra.contains_key("discovery_stamp_value"));
+    assert!(spine.extra.contains_key("discovery_encrypt"));
+    assert!(spine.extra.contains_key("publish_ifac"));
+    assert!(spine.extra.contains_key("latitude"));
+    assert!(spine.extra.contains_key("discovery_frequency"));
     assert_eq!(
         report
             .warnings
             .iter()
             .filter(|diagnostic| diagnostic.code() == ConfigDiagnosticCode::IneffectiveSetting)
             .count(),
-        2
+        12
     );
     assert!(report
         .warnings
@@ -402,7 +426,7 @@ fn malformed_discovery_trust_and_cost_values_are_rejected_in_context() {
 }
 
 #[test]
-fn parse_lands_unmodeled_keys_in_extra() {
+fn inactive_discovery_keys_remain_in_extra() {
     let config = parse(
         "[interfaces]\n\
            [[Custom]]\n\
@@ -417,6 +441,130 @@ fn parse_lands_unmodeled_keys_in_extra() {
     let extra = &config.interfaces[0].extra;
     assert!(extra.contains_key("announce_interval"));
     assert!(extra.contains_key("discovery_frequency"));
+}
+
+#[test]
+fn every_active_interface_setting_leaves_the_loose_parser_remainder() {
+    let mut checked = 0;
+    for type_name in SUPPORTED_INTERFACES {
+        for key in known_interface_keys(type_name) {
+            if key == interface_key::TYPE || interface_key::ALIASES.contains(&key) {
+                continue;
+            }
+            let rule = interface_key_rule(type_name, key)
+                .unwrap_or_else(|| panic!("{type_name} key {key:?} has no schema rule"));
+            if rule.application() == KeyApplication::FollowOn {
+                continue;
+            }
+            let config = application_contract_config(
+                type_name,
+                key,
+                example_for_key(key, rule.value_kind()),
+            );
+            let report =
+                parse_named("/tmp/rns/application-contract", &config).unwrap_or_else(|errors| {
+                    panic!("{type_name} key {key:?} did not parse:\n{errors:?}\n{config}")
+                });
+            let interface = report
+                .value
+                .interfaces
+                .first()
+                .unwrap_or_else(|| panic!("{type_name} key {key:?} produced no interface"));
+            assert!(
+                !interface.extra.contains_key(key),
+                "{type_name} key {key:?} was marked active but remained loose"
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked > 100);
+}
+
+fn application_contract_config(type_name: &'static str, key: &'static str, value: &str) -> String {
+    let mut settings = application_contract_baseline(type_name);
+    if key == interface_key::REMOTE {
+        settings.remove(interface_key::TARGET_HOST);
+    }
+    let rule = interface_key_rule(type_name, key).expect("contract keys have schema rules");
+    if rule.application() == KeyApplication::DiscoveryOnly {
+        settings.insert(interface_key::DISCOVERABLE, "Yes");
+    }
+    settings.insert(key, value);
+
+    let mut config = String::from("[interfaces]\n[[Application Contract]]\n");
+    for (setting, configured) in settings {
+        writeln!(&mut config, "{setting} = {configured}").expect("writing to a string succeeds");
+    }
+    if type_name == "RNodeMultiInterface" {
+        config.push_str(
+            "[[[Radio]]]\n\
+             enabled = Yes\n\
+             vport = 0\n\
+             frequency = 868000000\n\
+             bandwidth = 125000\n\
+             txpower = 7\n\
+             spreadingfactor = 8\n\
+             codingrate = 5\n",
+        );
+    }
+    config
+}
+
+fn application_contract_baseline(type_name: &'static str) -> BTreeMap<&'static str, &'static str> {
+    let mut settings = BTreeMap::from([
+        (interface_key::TYPE, type_name),
+        (interface_key::ENABLED, "Yes"),
+    ]);
+    match type_name {
+        "AutoInterface" | "I2PInterface" => {}
+        "TCPClientInterface" => {
+            settings.insert(interface_key::TARGET_HOST, "peer.example");
+            settings.insert(interface_key::TARGET_PORT, "4242");
+        }
+        "TCPServerInterface" => {
+            settings.insert(interface_key::LISTEN_PORT, "4242");
+        }
+        "UDPInterface" => {
+            settings.insert(interface_key::LISTEN_IP, "0.0.0.0");
+            settings.insert(interface_key::LISTEN_PORT, "4242");
+            settings.insert(interface_key::FORWARD_IP, "127.0.0.1");
+            settings.insert(interface_key::FORWARD_PORT, "4242");
+        }
+        "SerialInterface" => {
+            settings.insert(interface_key::PORT, "/dev/ttyACM0");
+        }
+        "KISSInterface" => {
+            settings.insert(interface_key::PORT, "/dev/ttyACM0");
+            settings.insert(interface_key::ID_CALLSIGN, "N0CALL");
+            settings.insert(interface_key::ID_INTERVAL, "600");
+        }
+        "AX25KISSInterface" => {
+            settings.insert(interface_key::PORT, "/dev/ttyACM0");
+            settings.insert(interface_key::CALLSIGN, "N0CALL");
+            settings.insert(interface_key::SSID, "0");
+        }
+        "RNodeInterface" | "RNodeMultiInterface" => {
+            settings.insert(interface_key::PORT, "/dev/ttyACM0");
+            settings.insert(interface_key::ID_CALLSIGN, "N0CALL");
+            settings.insert(interface_key::ID_INTERVAL, "600");
+            if type_name == "RNodeInterface" {
+                settings.insert(interface_key::FREQUENCY, "868000000");
+                settings.insert(interface_key::BANDWIDTH, "125000");
+                settings.insert(interface_key::TXPOWER, "7");
+                settings.insert(interface_key::SPREADINGFACTOR, "8");
+                settings.insert(interface_key::CODINGRATE, "5");
+            }
+        }
+        "PipeInterface" => {
+            settings.insert(interface_key::COMMAND, "/path/to/program");
+        }
+        "BackboneInterface" | "BackboneClientInterface" => {
+            settings.insert(interface_key::TARGET_HOST, "peer.example");
+            settings.insert(interface_key::TARGET_PORT, "4242");
+        }
+        _ => panic!("unsupported contract interface {type_name}"),
+    }
+    settings
 }
 
 #[test]
@@ -569,14 +717,23 @@ fn conflicting_aliases_fail_and_identical_aliases_warn() {
 
     let report = parse_named(
         "/tmp/rns/config",
-        "[interfaces]\n[[Hub]]\ntype = TCPClientInterface\ninterface_enabled = Yes\nenabled = true\ntarget_host = host\ntarget_port = 4242\n",
+        "[interfaces]\n[[Hub]]\ntype = TCPClientInterface\ninterface_enabled = Yes\nenabled = true\ninterface_mode = full\nmode = full\nnetwork_name = mesh\nnetworkname = mesh\npass_phrase = secret\npassphrase = secret\ntarget_host = host\ntarget_port = 4242\n",
     )
     .unwrap();
     assert_eq!(report.value.interfaces.len(), 1);
-    assert!(report
-        .warnings
-        .iter()
-        .any(|diagnostic| diagnostic.code() == ConfigDiagnosticCode::RedundantAliases));
+    let interface = &report.value.interfaces[0];
+    assert_eq!(interface.mode, Some(ReferenceMode::Full));
+    assert_eq!(interface.network_name.as_deref(), Some("mesh"));
+    assert_eq!(interface.passphrase.as_deref(), Some("secret"));
+    assert!(interface.extra.is_empty());
+    assert_eq!(
+        report
+            .warnings
+            .iter()
+            .filter(|diagnostic| diagnostic.code() == ConfigDiagnosticCode::RedundantAliases)
+            .count(),
+        4
+    );
 }
 
 #[test]

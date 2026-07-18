@@ -1,7 +1,7 @@
 //! The Personal Reticulum daemon: a configurable shared-instance node built on [`PrnsNode`].
 //!
 //! It reads a stock RNS config the way a stock RNS user expects (`<dir>/config`, discovered along
-//! RNS's own search order) and projects it onto a [`DaemonPlan`]. Then it elects its role on the
+//! RNS's own search order) and projects it onto a [`personal_rns::config::DaemonPlan`]. Then it elects its role on the
 //! host's shared instance: with none running it becomes the instance — standing up the plan's
 //! interfaces and serving the bus and control RPC for local apps (Sideband, NomadNet, MeshChat),
 //! keyed on the node's own persistent identity; with one already running it defers, joining as a
@@ -631,6 +631,10 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
     } else {
         None
     };
+    let monitored_interfaces = constructed_interfaces
+        .iter()
+        .map(|interface| interface.id)
+        .collect::<Vec<_>>();
     let discovery_publication_task = if owns_tables {
         match prepared_discovery_publisher {
             Some(publisher) => {
@@ -679,11 +683,6 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
             process::exit(1);
         }
     }
-    let monitored_interfaces = prns_handle
-        .interfaces()
-        .into_iter()
-        .map(|snapshot| snapshot.id)
-        .collect::<Vec<_>>();
     let mut interface_failure = None;
     tokio::select! {
         () = prns.run() => {}

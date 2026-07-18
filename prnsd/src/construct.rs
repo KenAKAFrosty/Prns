@@ -232,4 +232,33 @@ mod tests {
             }
         );
     }
+
+    #[test]
+    fn every_rnode_multi_radio_is_counted_before_degraded_readiness() {
+        let plan = parse_and_plan(
+            "[interfaces]\n[[Dual]]\ntype = RNodeMultiInterface\nenabled = Yes\nport = test\n\
+             [[[Low]]]\ninterface_enabled = Yes\nvport = 0\nfrequency = 868000000\n\
+             bandwidth = 125000\ntxpower = 7\nspreadingfactor = 8\ncodingrate = 5\n\
+             [[[High]]]\ninterface_enabled = Yes\nvport = 1\nfrequency = 2400000000\n\
+             bandwidth = 812500\ntxpower = 10\nspreadingfactor = 7\ncodingrate = 6\n",
+        )
+        .expect("valid RNodeMulti configuration")
+        .value;
+        let mut report = StartupInterfaceReport::default();
+        for interface in &plan.interfaces {
+            report.merge(classify(&PlanOutcome::Up {
+                interface,
+                id: InterfaceId::new([0; 8]),
+            }));
+        }
+
+        assert_eq!(
+            report,
+            StartupInterfaceReport {
+                retrying: 2,
+                ..StartupInterfaceReport::default()
+            }
+        );
+        assert!(report.degraded());
+    }
 }

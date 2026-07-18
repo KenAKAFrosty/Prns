@@ -53,7 +53,8 @@ pub const CMD_STAT_RSSI: u8 = 0x23;
 pub const CMD_STAT_SNR: u8 = 0x24;
 /// Firmware version response (`major`, `minor`).
 pub const CMD_FW_VERSION: u8 = 0x50;
-/// Hardware platform response (queried during detect; consumed, not acted on in v1).
+pub const CMD_RESET: u8 = 0x55;
+pub const CMD_ERROR: u8 = 0x90;
 pub const CMD_PLATFORM: u8 = 0x48;
 /// MCU type response (queried during detect; consumed, not acted on in v1).
 pub const CMD_MCU: u8 = 0x49;
@@ -62,6 +63,11 @@ pub const CMD_MCU: u8 = 0x49;
 pub const DETECT_REQ: u8 = 0x73;
 /// Detect response payload byte a genuine RNode answers with.
 pub const DETECT_RESP: u8 = 0x46;
+
+pub const ERROR_INIT_RADIO: u8 = 0x01;
+pub const ERROR_TX_FAILED: u8 = 0x02;
+pub const ERROR_EEPROM_LOCKED: u8 = 0x03;
+pub const RESET_RESP: u8 = 0xf8;
 
 /// Radio powered down.
 pub const RADIO_STATE_OFF: u8 = 0x00;

@@ -19,6 +19,7 @@ use prns_core::routing::links::MAX_LINK_MTU;
 use super::discovery::InterfaceDiscoveryPlan;
 use super::medium::{rnode_defaults, PlannedMedium, UdpFlowPlan};
 use super::PlanErrorKind;
+use crate::plan::error::{GlobalPlanError, SettingRepresentationError};
 use crate::plan::reference_globals::{global_bool, global_f64, global_i64};
 use crate::reference::keys::{
     common as common_key, global as global_key, interface as interface_key,
@@ -278,7 +279,8 @@ fn interface_common_policy(
     apply_common_numbers(
         CommonNumberOverrides::from_interface(interface),
         &mut common,
-    )?;
+    )
+    .map_err(PlanErrorKind::from)?;
     Ok(common)
 }
 
@@ -328,7 +330,7 @@ impl CommonNumberOverrides {
 fn apply_common_numbers(
     configured: CommonNumberOverrides,
     common: &mut InterfaceCommonPolicy,
-) -> Result<(), PlanErrorKind> {
+) -> Result<(), SettingRepresentationError> {
     if let Some(value) = configured.new_time {
         common.ingress_control.new_interface_ms =
             seconds_to_millis(value, common_key::IC_NEW_TIME)?;
@@ -366,10 +368,10 @@ fn apply_common_numbers(
     Ok(())
 }
 
-fn seconds_to_millis(value: f64, key: &'static str) -> Result<u64, PlanErrorKind> {
+fn seconds_to_millis(value: f64, key: &'static str) -> Result<u64, SettingRepresentationError> {
     let millis = (value * 1_000.0).round();
     if !value.is_finite() || value < 0.0 || millis >= u64::MAX as f64 {
-        return Err(PlanErrorKind::InvalidSetting { key });
+        return Err(SettingRepresentationError { key });
     }
     Ok(millis as u64)
 }
@@ -377,49 +379,71 @@ fn seconds_to_millis(value: f64, key: &'static str) -> Result<u64, PlanErrorKind
 fn hertz_to_milli_hertz(
     value: f64,
     key: &'static str,
-) -> Result<FrequencyMilliHertz, PlanErrorKind> {
+) -> Result<FrequencyMilliHertz, SettingRepresentationError> {
     let milli_hertz = (value * 1_000.0).round();
     if !value.is_finite() || value < 0.0 || milli_hertz >= u64::MAX as f64 {
-        return Err(PlanErrorKind::InvalidSetting { key });
+        return Err(SettingRepresentationError { key });
     }
     Ok(FrequencyMilliHertz::new(milli_hertz as u64))
 }
 
-pub(in crate::plan) fn global_common_policy(config: &ReferenceConfig) -> InterfaceCommonPolicy {
+pub(in crate::plan) fn global_common_policy(
+    config: &ReferenceConfig,
+) -> Result<InterfaceCommonPolicy, GlobalPlanError> {
     let mut common = InterfaceCommonPolicy::RNS_DEFAULT;
     common.path_request_egress.enabled =
         global_bool(&config.globals, common_key::EGRESS_CONTROL, false);
-    if let Some(value) = global_i64(&config.globals, common_key::IC_MAX_HELD_ANNOUNCES) {
-        common.ingress_control.max_held_announces = usize::try_from(value)
-            .expect("validated ic_max_held_announces must fit the current platform");
+    if config
+        .globals
+        .contains_key(common_key::IC_MAX_HELD_ANNOUNCES)
+    {
+        common.ingress_control.max_held_announces =
+            global_i64(&config.globals, common_key::IC_MAX_HELD_ANNOUNCES)
+                .and_then(|value| usize::try_from(value).ok())
+                .ok_or(GlobalPlanError {
+                    key: common_key::IC_MAX_HELD_ANNOUNCES,
+                })?;
     }
     apply_common_numbers(
         CommonNumberOverrides::from_globals(&config.globals),
         &mut common,
     )
-    .expect("validated common interface controls must have representable values");
-    common
+    .map_err(GlobalPlanError::from)?;
+    Ok(common)
 }
 
-pub(in crate::plan) fn global_announce_rate(config: &ReferenceConfig) -> AnnounceRateLimit {
-    let seconds = |key, default| {
-        global_i64(&config.globals, key)
-            .and_then(|value| u64::try_from(value).ok())
-            .unwrap_or(default)
-    };
-    let target_seconds = seconds(global_key::DEFAULT_AR_TARGET, 3_600);
-    let penalty_seconds = seconds(global_key::DEFAULT_AR_PENALTY, 0);
-    AnnounceRateLimit {
-        target_ms: target_seconds
-            .checked_mul(1_000)
-            .expect("validated default_ar_target must fit milliseconds"),
-        grace: seconds(global_key::DEFAULT_AR_GRACE, 5)
-            .try_into()
-            .expect("validated default_ar_grace must fit u16"),
-        penalty_ms: penalty_seconds
-            .checked_mul(1_000)
-            .expect("validated default_ar_penalty must fit milliseconds"),
+pub(in crate::plan) fn global_announce_rate(
+    config: &ReferenceConfig,
+) -> Result<AnnounceRateLimit, GlobalPlanError> {
+    let target_seconds =
+        global_nonnegative_integer(&config.globals, global_key::DEFAULT_AR_TARGET, 3_600)?;
+    let grace = global_nonnegative_integer(&config.globals, global_key::DEFAULT_AR_GRACE, 5)?;
+    let penalty_seconds =
+        global_nonnegative_integer(&config.globals, global_key::DEFAULT_AR_PENALTY, 0)?;
+    Ok(AnnounceRateLimit {
+        target_ms: target_seconds.checked_mul(1_000).ok_or(GlobalPlanError {
+            key: global_key::DEFAULT_AR_TARGET,
+        })?,
+        grace: grace.try_into().map_err(|_| GlobalPlanError {
+            key: global_key::DEFAULT_AR_GRACE,
+        })?,
+        penalty_ms: penalty_seconds.checked_mul(1_000).ok_or(GlobalPlanError {
+            key: global_key::DEFAULT_AR_PENALTY,
+        })?,
+    })
+}
+
+fn global_nonnegative_integer(
+    globals: &BTreeMap<String, ReferenceValue>,
+    key: &'static str,
+    default: u64,
+) -> Result<u64, GlobalPlanError> {
+    if !globals.contains_key(key) {
+        return Ok(default);
     }
+    global_i64(globals, key)
+        .and_then(|value| u64::try_from(value).ok())
+        .ok_or(GlobalPlanError { key })
 }
 
 fn map_mode(mode: ReferenceMode) -> InterfaceMode {
