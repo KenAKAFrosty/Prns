@@ -7,8 +7,8 @@ use prns_core::identity::{
     RetainIdentityOutcome,
 };
 use prns_core::interfaces::shared_instance::rns_rpc::{
-    RpcAuthenticationControlMessage, RpcAuthenticationKey, RpcChallengeNonce, RpcDigest,
-    AUTHENTICATION_FRAME_MAX_LENGTH, LEGACY_MD5_MESSAGE_LENGTH,
+    RnsRpcRequest, RpcAuthenticationControlMessage, RpcAuthenticationKey, RpcChallengeNonce,
+    RpcDigest, RpcRequest, RpcVerb, AUTHENTICATION_FRAME_MAX_LENGTH, LEGACY_MD5_MESSAGE_LENGTH,
 };
 use prns_core::interfaces::{
     ConnectionState, InterfaceId, PacketPhyStats, RssiDbm, SignalQualityTenthsPercent, SnrQuarterDb,
@@ -34,9 +34,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use super::authentication::{deliver_our_challenge, SharedInstanceCredentials};
 use super::dispatch::reply_for_decoded;
 use super::framing::{read_auth_frame, read_frame, write_frame, write_frame_header};
-use super::protocol::{RpcRequest, RpcVerb};
 use super::reply::encode_msgpack;
-use super::request::{self, RnsRpcRequest};
 #[cfg(target_os = "linux")]
 use super::server::{bind_abstract_rpc, RpcBind};
 use super::server::{serve_connection, SharedInstanceRpcCompat};
@@ -44,10 +42,10 @@ use super::storage::{reticulum_storage_dir, rpc_key_from_rns_identity};
 use super::telemetry::RpcTelemetry;
 
 mod authentication;
+mod dialects;
 mod framing;
 mod listeners;
 mod management;
-mod protocol;
 mod queries;
 mod routes;
 mod storage;

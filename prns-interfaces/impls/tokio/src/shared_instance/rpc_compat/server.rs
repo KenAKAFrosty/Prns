@@ -5,6 +5,7 @@ use tokio::net::TcpListener;
 #[cfg(target_os = "linux")]
 use tokio::net::UnixListener;
 
+use prns_core::interfaces::shared_instance::rns_rpc::RpcRequest;
 use prns_runtime::node_introspection::NodeIntrospection;
 use prns_runtime::runtime::{
     DestinationIdentityRetentionControl, IdentityBlackholeControl, IdentityBlackholeSource,
@@ -16,7 +17,6 @@ use super::authentication::{
 };
 use super::dispatch::reply_for_decoded;
 use super::framing::{read_frame, write_frame};
-use super::protocol::RpcRequest;
 use super::telemetry::RpcTelemetry;
 
 /// Answers the RNS shared-instance control RPC for stock clients, with the minimal replies that keep attachment delivery from faulting. Stand one up beside a [`LocalServer`](crate::shared_instance::server::LocalServer) and drive it with [`run`](Self::run).

@@ -1,6 +1,9 @@
 mod authentication;
 mod credentials;
+mod dialects;
 mod framing;
+mod request;
+mod wire_names;
 
 pub use authentication::{
     RpcAuthenticationControlMessage, RpcAuthenticationError, RpcAuthenticationResponse,
@@ -8,9 +11,14 @@ pub use authentication::{
     AUTHENTICATION_FRAME_MAX_LENGTH, LEGACY_MD5_DIGEST_LENGTH, LEGACY_MD5_MESSAGE_LENGTH,
 };
 pub use credentials::{RpcAuthenticationKey, SharedInstanceCredentials};
+pub use dialects::{RpcDialect, RpcRequest, RpcVerb};
 pub use framing::{
     EncodedRpcFrameHeader, RpcFrameHeaderEncodeError, RpcFrameHeaderPrefix, RpcFrameLength,
     RpcFrameLengthDecodeError,
+};
+pub use request::{
+    DestinationDataOperation, PacketHashArgument, RnsInteger, RnsNumber, RnsRpcRequest,
+    RpcRequestDecodeError,
 };
 
 #[cfg(test)]

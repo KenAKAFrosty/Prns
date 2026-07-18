@@ -3,7 +3,7 @@ use std::sync::{
     Arc,
 };
 
-use super::protocol::{RpcDialect, RpcVerb};
+use prns_core::interfaces::shared_instance::rns_rpc::{RpcDialect, RpcVerb};
 
 /// Shared-instance RPC counters. Clone this before handing it to [`SharedInstanceRpcCompat::with_telemetry`](super::server::SharedInstanceRpcCompat::with_telemetry) and expose snapshots from your host status surface.
 #[derive(Clone, Default)]
@@ -113,26 +113,26 @@ impl RpcTelemetry {
             RpcDialect::Msgpack => self.inner.msgpack_requests.fetch_add(1, Ordering::Relaxed),
         };
         match verb {
-            RpcVerb::InterfaceStats => self
+            RpcVerb::GetInterfaceStats => self
                 .inner
                 .get_interface_stats
                 .fetch_add(1, Ordering::Relaxed),
-            RpcVerb::PathTable => self.inner.get_path_table.fetch_add(1, Ordering::Relaxed),
-            RpcVerb::RateTable => self.inner.get_rate_table.fetch_add(1, Ordering::Relaxed),
-            RpcVerb::LinkCount => self.inner.get_link_count.fetch_add(1, Ordering::Relaxed),
-            RpcVerb::NextHop => self.inner.get_next_hop.fetch_add(1, Ordering::Relaxed),
-            RpcVerb::NextHopIfName => self
+            RpcVerb::GetPathTable => self.inner.get_path_table.fetch_add(1, Ordering::Relaxed),
+            RpcVerb::GetRateTable => self.inner.get_rate_table.fetch_add(1, Ordering::Relaxed),
+            RpcVerb::GetLinkCount => self.inner.get_link_count.fetch_add(1, Ordering::Relaxed),
+            RpcVerb::GetNextHop => self.inner.get_next_hop.fetch_add(1, Ordering::Relaxed),
+            RpcVerb::GetNextHopInterfaceName => self
                 .inner
                 .get_next_hop_if_name
                 .fetch_add(1, Ordering::Relaxed),
-            RpcVerb::FirstHopTimeout => self
+            RpcVerb::GetFirstHopTimeout => self
                 .inner
                 .get_first_hop_timeout
                 .fetch_add(1, Ordering::Relaxed),
-            RpcVerb::PacketRssi | RpcVerb::PacketSnr | RpcVerb::PacketQuality => {
+            RpcVerb::GetPacketRssi | RpcVerb::GetPacketSnr | RpcVerb::GetPacketQuality => {
                 self.inner.get_phy_stats.fetch_add(1, Ordering::Relaxed)
             }
-            RpcVerb::BlackholedIdentities | RpcVerb::IsBlackholed => {
+            RpcVerb::GetBlackholedIdentities | RpcVerb::CheckIdentityBlackholed => {
                 self.inner.management_reads.fetch_add(1, Ordering::Relaxed)
             }
             RpcVerb::DropPath
@@ -140,8 +140,10 @@ impl RpcTelemetry {
             | RpcVerb::DropAnnounceQueues
             | RpcVerb::BlackholeIdentity
             | RpcVerb::UnblackholeIdentity
-            | RpcVerb::DestinationData
-            | RpcVerb::IdentityData => self.inner.management_writes.fetch_add(1, Ordering::Relaxed),
+            | RpcVerb::UpdateDestinationData
+            | RpcVerb::RetainIdentity => {
+                self.inner.management_writes.fetch_add(1, Ordering::Relaxed)
+            }
             RpcVerb::Unknown => self.inner.unknown_requests.fetch_add(1, Ordering::Relaxed),
         };
     }

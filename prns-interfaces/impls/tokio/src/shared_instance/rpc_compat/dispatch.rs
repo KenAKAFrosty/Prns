@@ -3,6 +3,9 @@ use std::vec::Vec;
 use prns_core::identity::{
     IdentityHash, MarkDestinationUsedOutcome, ReleaseDestinationOutcome, RetainDestinationOutcome,
 };
+use prns_core::interfaces::shared_instance::rns_rpc::{
+    DestinationDataOperation, PacketHashArgument, RnsRpcRequest, RpcDialect, RpcRequest, RpcVerb,
+};
 use prns_core::interfaces::PacketPhyStats;
 use prns_core::routing::dedup::{PacketHash, PACKET_HASH_LEN};
 use prns_core::routing::{
@@ -19,12 +22,10 @@ use rmpv::Value;
 
 use crate::shared_instance::blackhole_compat::table_value as blackhole_table_value;
 
-use super::protocol::{contains, position_of, RpcDialect, RpcRequest};
 use super::reply::{
     encode_msgpack, reply_bool, reply_empty_map, reply_int, reply_interface_stats, reply_next_hop,
     reply_next_hop_if_name, reply_none, reply_path_table, reply_rate_table,
 };
-use super::request::{self, DestinationDataOperation, RnsRpcRequest};
 
 const DEFAULT_PER_HOP_TIMEOUT_SECS: i64 = 6;
 
@@ -40,7 +41,9 @@ where
     B: IdentityBlackholeSource + IdentityBlackholeControl,
 {
     match request {
-        RpcRequest::Pickle(request) => reply_for_pickle(request, query).await,
+        RpcRequest::Pickle(_) => {
+            reply_for_pickle(request.verb(), request.legacy_destination_hash(), query).await
+        }
         RpcRequest::Msgpack(request) => {
             reply_for_msgpack(
                 request,
@@ -263,65 +266,50 @@ where
 
 fn packet_phy(
     query: &impl NodeIntrospection,
-    packet_hash: &request::PacketHashArgument,
+    packet_hash: &PacketHashArgument,
 ) -> Option<PacketPhyStats> {
     let bytes: [u8; PACKET_HASH_LEN] = packet_hash.as_bytes().try_into().ok()?;
     query.packet_phy(PacketHash::new(bytes))
 }
 
 async fn reply_for_pickle(
-    request: &[u8],
+    verb: RpcVerb,
+    destination_hash: Option<DestinationHash>,
     query: &impl NodeIntrospection,
 ) -> std::io::Result<Vec<u8>> {
     let dialect = RpcDialect::Pickle;
-    if contains(request, b"interface_stats") {
-        reply_interface_stats(dialect, query.interface_inventory())
-    } else if contains(request, b"rate_table") {
-        reply_rate_table(dialect, Vec::new())
-    } else if contains(request, b"blackholed_identities") {
-        reply_empty_map(dialect)
-    } else if contains(request, b"is_blackholed") {
-        reply_bool(dialect, false)
-    } else if contains(request, b"path_table") {
-        reply_path_table(dialect, query.routes().await, None)
-    } else if contains(request, b"next_hop_if_name") {
-        reply_next_hop_if_name(dialect, legacy_route_arg(request, query).await)
-    } else if contains(request, b"next_hop") {
-        reply_next_hop(dialect, legacy_route_arg(request, query).await)
-    } else if contains(request, b"first_hop_timeout") {
-        reply_int(dialect, DEFAULT_PER_HOP_TIMEOUT_SECS)
-    } else if contains(request, b"link_count") {
-        reply_int(dialect, i64::from(query.link_count().await))
-    } else if contains(request, b"drop") && contains(request, b"announce_queues") {
-        reply_none(dialect)
-    } else if contains(request, b"drop") && contains(request, b"all_via") {
-        reply_int(dialect, 0)
-    } else if (contains(request, b"drop") && contains(request, b"path"))
-        || contains(request, b"blackhole_identity")
-        || contains(request, b"unblackhole_identity")
-        || contains(request, b"destination_data")
-        || contains(request, b"identity_data")
-    {
-        reply_bool(dialect, false)
-    } else {
-        reply_none(dialect)
+    match verb {
+        RpcVerb::GetInterfaceStats => reply_interface_stats(dialect, query.interface_inventory()),
+        RpcVerb::GetRateTable => reply_rate_table(dialect, Vec::new()),
+        RpcVerb::GetBlackholedIdentities => reply_empty_map(dialect),
+        RpcVerb::CheckIdentityBlackholed => reply_bool(dialect, false),
+        RpcVerb::GetPathTable => reply_path_table(dialect, query.routes().await, None),
+        RpcVerb::GetNextHopInterfaceName => {
+            reply_next_hop_if_name(dialect, legacy_route(destination_hash, query).await)
+        }
+        RpcVerb::GetNextHop => reply_next_hop(dialect, legacy_route(destination_hash, query).await),
+        RpcVerb::GetFirstHopTimeout => reply_int(dialect, DEFAULT_PER_HOP_TIMEOUT_SECS),
+        RpcVerb::GetLinkCount => reply_int(dialect, i64::from(query.link_count().await)),
+        RpcVerb::DropAnnounceQueues => reply_none(dialect),
+        RpcVerb::DropAllVia => reply_int(dialect, 0),
+        RpcVerb::DropPath
+        | RpcVerb::BlackholeIdentity
+        | RpcVerb::UnblackholeIdentity
+        | RpcVerb::UpdateDestinationData
+        | RpcVerb::RetainIdentity => reply_bool(dialect, false),
+        RpcVerb::GetPacketRssi
+        | RpcVerb::GetPacketSnr
+        | RpcVerb::GetPacketQuality
+        | RpcVerb::Unknown => reply_none(dialect),
     }
 }
 
-async fn legacy_route_arg(request: &[u8], query: &impl NodeIntrospection) -> Option<RouteSnapshot> {
-    match legacy_destination_hash_arg(request) {
+async fn legacy_route(
+    destination_hash: Option<DestinationHash>,
+    query: &impl NodeIntrospection,
+) -> Option<RouteSnapshot> {
+    match destination_hash {
         Some(destination) => query.route(destination).await,
         None => None,
     }
-}
-
-fn legacy_destination_hash_arg(request: &[u8]) -> Option<DestinationHash> {
-    let key_end = position_of(request, b"destination_hash")? + b"destination_hash".len();
-    let tail = &request[key_end..];
-    let value_start = tail
-        .windows(2)
-        .position(|window| matches!(window, [0x43, 0x10]))?
-        + 2;
-    let bytes: [u8; 16] = tail.get(value_start..value_start + 16)?.try_into().ok()?;
-    Some(DestinationHash::new(bytes))
 }

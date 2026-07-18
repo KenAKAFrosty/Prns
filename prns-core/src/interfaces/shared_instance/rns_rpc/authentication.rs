@@ -3,6 +3,7 @@ use alloc::vec::Vec;
 use hmac::{Hmac, KeyInit, Mac};
 use md5::Md5;
 
+use super::wire_names::digest;
 use super::RpcAuthenticationKey;
 
 const CHALLENGE: &[u8] = b"#CHALLENGE#";
@@ -61,8 +62,8 @@ impl RpcDigest {
 
     fn label(self) -> &'static [u8] {
         match self {
-            Self::Md5 => b"md5",
-            Self::Sha256 => b"sha256",
+            Self::Md5 => digest::MD5,
+            Self::Sha256 => digest::SHA256,
         }
     }
 }
@@ -216,8 +217,8 @@ impl<'a> NegotiatedDigest<'a> {
             .position(|byte| *byte == b'}')
             .ok_or(RpcAuthenticationError::UnsupportedDigest)?;
         let digest = match &tagged[..closing_brace] {
-            b"sha256" => RpcDigest::Sha256,
-            b"md5" => RpcDigest::Md5,
+            digest::SHA256 => RpcDigest::Sha256,
+            digest::MD5 => RpcDigest::Md5,
             _ => return Err(RpcAuthenticationError::UnsupportedDigest),
         };
         Ok(Self::Tagged {
