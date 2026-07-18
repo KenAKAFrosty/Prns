@@ -1,9 +1,24 @@
-use super::*;
-use crate::engine::RememberAnnouncedDestinationIdentityOutcome;
-use crate::interfaces::AttachedInterfaces;
-use crate::routing::announce::destination_announce_limit::DestinationAnnounceObservation;
-use crate::routing::announce::AnnounceRateAccounting;
+use super::outcome::{AcceptedAnnounceEffect, IngestEffects};
+use crate::engine::{EngineState, InstantMillis, RememberAnnouncedDestinationIdentityOutcome};
+use crate::identity::IdentityHash;
+use crate::interfaces::{AttachedInterfaces, InterfaceId, InterfaceKind};
+use crate::routing::announce::defaults::{
+    jitter_offset, DEFAULT_REBROADCAST_JITTER_WINDOW_MS, MAX_PEER_EMISSIONS,
+};
+use crate::routing::announce::destination_announce_limit::{
+    DestinationAnnounceObservation, DestinationAnnounceVerdict,
+};
+use crate::routing::announce::held::HeldDropCause;
+use crate::routing::announce::schedule::ScheduledAnnounceQueue;
+use crate::routing::announce::{
+    determine_acceptance, AnnounceAcceptanceDecision, AnnounceAcceptanceInput, AnnounceArrival,
+    AnnounceRateAccounting,
+};
 use crate::routing::warmth::WarmestOf;
+use crate::routing::{DropCause, NextHop, RemovedRoute, UpsertRouteOutcome};
+use crate::storage::{DirtyInterfaceSet, StorageLayout};
+use crate::wire::{DestinationHash, DestinationType, WirePacketHeader, BROADCAST_MTU};
+use heapless::Vec as HeaplessVec;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnnounceIngest {
@@ -317,8 +332,9 @@ mod tests {
     use crate::interfaces::{InboundPacket, InterfaceDescriptor};
     use crate::routing::announce::Announce;
     use crate::routing::ingress::testkit::iface;
+    use crate::routing::ingress::{DeferredCrypto, IgnoreReason, IngestPacketOutcome};
     use crate::storage::TestFixedStorage;
-    use crate::wire::HEADER_MIN_LEN;
+    use crate::wire::{TransportId, WireContext, HEADER_MIN_LEN};
 
     #[test]
     fn a_path_response_is_learned_as_a_route_but_never_rebroadcast() {

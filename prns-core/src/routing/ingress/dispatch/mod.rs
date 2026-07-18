@@ -1,4 +1,32 @@
-use super::*;
+use super::announce::{AnnounceIngest, AnnounceVerifyOwed};
+#[cfg(test)]
+use super::classification::ClassifiedInboundPacket;
+use super::classification::{DataPacket, Ingress};
+use super::forward::{ForwardingArrival, PacketToForward};
+use super::links::{LinkRequestArrival, RelayOutcome};
+use super::outcome::{
+    DeferredCrypto, IgnoreReason, IngestEffects, IngestPacketOutcome,
+    NON_TRANSPORTED_DATA_MAX_RECEIVED_HOPS,
+};
+use super::upstream_delivery::UpstreamDeliveryOutcome;
+use crate::engine::{EngineState, InstantMillis, PATH_REQUEST_DESTINATION};
+use crate::interfaces::{AttachedInterfaces, InterfaceCommonPolicy, InterfaceId, InterfaceKind};
+use crate::routing::announce::held::HoldOutcome;
+use crate::routing::announce::AnnounceArrival;
+use crate::routing::dedup::{PacketHashHistory, RememberPacketOutcome};
+use crate::routing::links::resources::send::ResourceProofClassification;
+use crate::routing::links::LinkId;
+use crate::routing::proof::ProofIngest;
+use crate::routing::tunnel::{
+    parse_synthesize_payload, TunnelTransition, TUNNEL_SYNTHESIZE_DESTINATION, TUNNEL_TIMEOUT_MS,
+};
+use crate::routing::RemovedRoute;
+use crate::storage::StorageLayout;
+use crate::wire::{
+    ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
+    WireContext, WirePacketHeader, MAX_HOP_COUNT,
+};
+use heapless::Vec as HeaplessVec;
 
 impl<S: StorageLayout> EngineState<S> {
     pub(super) fn hops_across_local_boundary(
