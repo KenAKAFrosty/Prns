@@ -1,5 +1,6 @@
 use super::*;
 use crate::crypto::{ed25519_public_key, ed25519_sign, sha256, Ed25519SecretKey};
+use crate::wire::{WireContext, HEADER_MIN_LEN};
 
 const RAW: &str = "010016f8a6d3f7d7c5b6f106d293804d73140002281f6d21232cbba9d12e516183197f08e\
                    59b7afba27e99e4fe39f01b0d4d2583a5920220253970a16861e82e52e955a05ee39e2b6d2\
@@ -62,6 +63,42 @@ fn to_wire_reproduces_the_real_payload_exactly() {
     assert_eq!(n, payload.len());
     assert_eq!(&buf[..n], payload);
     assert_eq!(n, announce.wire_len());
+}
+
+#[test]
+fn a_path_response_is_a_normal_announce_with_only_the_context_byte_flipped() {
+    let raw = bytes_from_hex(RAW);
+    let (header, payload) = WirePacketHeader::parse(&raw).unwrap();
+    let announce = Announce::from_wire(&header, payload).unwrap();
+
+    let mut normal = [0u8; 500];
+    let n = write_announce_wire_packet(&announce, 0, &mut normal).unwrap();
+    let mut response = [0u8; 500];
+    let m = write_path_response_announce_wire_packet(&announce, 0, &mut response).unwrap();
+    assert_eq!(n, m);
+
+    let context_offset = HEADER_MIN_LEN - 1;
+    assert_eq!(normal[context_offset], WireContext::None.to_byte());
+    assert_eq!(
+        response[context_offset],
+        WireContext::PathResponse.to_byte()
+    );
+
+    let mut patched = response;
+    patched[context_offset] = WireContext::None.to_byte();
+    assert_eq!(
+        &patched[..m],
+        &normal[..n],
+        "the only difference from a normal announce is the context byte",
+    );
+
+    let (re_header, re_payload) = WirePacketHeader::parse(&response[..m]).unwrap();
+    assert_eq!(re_header.context, WireContext::PathResponse);
+    assert_eq!(re_header.packet_type, PacketType::Announce);
+    assert_eq!(
+        Announce::from_wire(&re_header, re_payload).unwrap(),
+        announce
+    );
 }
 
 #[test]
