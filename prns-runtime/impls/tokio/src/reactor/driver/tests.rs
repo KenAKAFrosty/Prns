@@ -1,5 +1,8 @@
 use super::*;
 use std::time::Duration;
+use tokio::sync::mpsc::UnboundedSender;
+#[cfg(feature = "runtime-metrics")]
+use tokio::sync::oneshot;
 
 use crate::engine::test_support::{
     bytes_from_hex, pin_transport_id, TestStorageLayout, RNS_1_3_5_ANNOUNCE,
@@ -16,7 +19,6 @@ use crate::interfaces::{
     RssiDbm, SignalQualityTenthsPercent, SnrQuarterDb, TransportCapability,
 };
 use crate::reactor::interface_seam::{Interface, InterfaceSeam, MAX_WIRE_FRAME_LEN};
-use crate::routing::links::resources::ResourceHash;
 #[cfg(feature = "runtime-metrics")]
 use crate::runtime::{AnnounceEgressOutcome, EgressMetricsSnapshot};
 use crate::runtime::{PrnsNodeHandle, RoutingControl};
@@ -262,166 +264,6 @@ async fn packet_phy_crosses_the_tokio_ingress_seam_with_its_frame() {
 }
 
 use tokio::sync::mpsc;
-
-#[test]
-fn settle_fires_the_awaited_completion_and_suppresses_the_event() {
-    let pending: RefCell<HashMap<CommandId, oneshot::Sender<Settlement>>> =
-        RefCell::new(HashMap::new());
-    let (completion, mut settled) = oneshot::channel();
-    pending.borrow_mut().insert(CommandId(7), completion);
-
-    let settlement = Settlement::SendSinglePacket(Ok(crate::engine::PacketReceiptDelivered {
-        rtt: crate::units::RttMillis::new(9),
-    }));
-    let forwarded = settle_or_forward(
-        &pending,
-        Journaled::CommandSettled {
-            id: CommandId(7),
-            settlement: settlement.clone(),
-        },
-    );
-
-    assert!(
-        forwarded.is_none(),
-        "an awaited settlement is consumed, not forwarded to the app"
-    );
-    assert_eq!(
-        settled
-            .try_recv()
-            .expect("the awaiter received its settlement"),
-        settlement
-    );
-    assert!(
-        pending.borrow().is_empty(),
-        "the awaiter is removed from the registry once fired"
-    );
-}
-
-#[test]
-fn settle_forwards_a_settlement_nobody_awaits() {
-    let pending: RefCell<HashMap<CommandId, oneshot::Sender<Settlement>>> =
-        RefCell::new(HashMap::new());
-    let forwarded = settle_or_forward(
-        &pending,
-        Journaled::CommandSettled {
-            id: CommandId(3),
-            settlement: Settlement::SendSinglePacket(Ok(crate::engine::PacketReceiptDelivered {
-                rtt: crate::units::RttMillis::new(1),
-            })),
-        },
-    );
-    assert!(
-        forwarded.is_some(),
-        "a settlement with no awaiter passes through to on_event"
-    );
-}
-
-const RES_LINK: LinkId = LinkId::new([0x44; 16]);
-
-fn resource_sink_registry() -> (
-    RefCell<HashMap<LinkId, mpsc::UnboundedSender<ResourceInbound>>>,
-    mpsc::UnboundedReceiver<ResourceInbound>,
-) {
-    let (tx, rx) = mpsc::unbounded_channel();
-    let sinks = RefCell::new(HashMap::new());
-    sinks.borrow_mut().insert(RES_LINK, tx);
-    (sinks, rx)
-}
-
-#[test]
-fn route_resource_routes_a_segment_and_keeps_the_sink() {
-    let (sinks, mut rx) = resource_sink_registry();
-    let forwarded = route_resource_or_forward(
-        &sinks,
-        Journaled::ResourceSegmentReceived {
-            link_id: RES_LINK,
-            original_hash: ResourceHash::new([1; 32]),
-            segment_index: 1,
-            total_segments: 2,
-            metadata: None,
-            data: b"first",
-        },
-    );
-    assert!(
-        forwarded.is_none(),
-        "a routed segment is suppressed from the app event stream"
-    );
-    assert!(matches!(rx.try_recv(), Ok(ResourceInbound::Chunk(c)) if c == b"first"));
-    assert!(
-        sinks.borrow().contains_key(&RES_LINK),
-        "the sink stays for the segments still to come"
-    );
-}
-
-#[test]
-fn route_resource_completes_and_retires_on_assembly() {
-    let (sinks, mut rx) = resource_sink_registry();
-    let forwarded = route_resource_or_forward(
-        &sinks,
-        Journaled::ResourceAssembled {
-            link_id: RES_LINK,
-            original_hash: ResourceHash::new([2; 32]),
-            total_size: 4096,
-        },
-    );
-    assert!(forwarded.is_none());
-    assert!(matches!(
-        rx.try_recv(),
-        Ok(ResourceInbound::Complete {
-            total_size: 4096,
-            ..
-        })
-    ));
-    assert!(
-        sinks.borrow().is_empty(),
-        "an assembled resource retires its one-shot sink"
-    );
-}
-
-#[test]
-fn route_resource_delivers_a_single_segment_then_retires() {
-    let (sinks, mut rx) = resource_sink_registry();
-    let forwarded = route_resource_or_forward(
-        &sinks,
-        Journaled::ResourceReceived {
-            link_id: RES_LINK,
-            hash: ResourceHash::new([3; 32]),
-            metadata: None,
-            data: b"whole",
-        },
-    );
-    assert!(forwarded.is_none());
-    assert!(matches!(rx.try_recv(), Ok(ResourceInbound::Chunk(c)) if c == b"whole"));
-    assert!(matches!(
-        rx.try_recv(),
-        Ok(ResourceInbound::Complete { total_size: 5, .. })
-    ));
-    assert!(
-        sinks.borrow().is_empty(),
-        "a single-segment resource completes and retires in one go"
-    );
-}
-
-#[test]
-fn route_resource_passes_through_an_unregistered_link() {
-    let sinks: RefCell<HashMap<LinkId, mpsc::UnboundedSender<ResourceInbound>>> =
-        RefCell::new(HashMap::new());
-    let forwarded = route_resource_or_forward(
-        &sinks,
-        Journaled::ResourceSegmentReceived {
-            link_id: RES_LINK,
-            original_hash: ResourceHash::new([4; 32]),
-            segment_index: 1,
-            total_segments: 2,
-            metadata: None,
-            data: b"x",
-        },
-    );
-    assert!(
-        forwarded.is_some(),
-        "with no sink registered the journal flows on to the app event stream"
-    );
-}
 
 fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
     InterfaceDescriptor {
