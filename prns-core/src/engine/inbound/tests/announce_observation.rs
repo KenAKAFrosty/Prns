@@ -2,6 +2,7 @@ use super::super::*;
 use crate::engine::test_support::{
     bytes_from_hex, transporting_interfaces, transporting_node, RNS_1_3_5_ANNOUNCE,
 };
+use crate::interfaces::InterfaceId;
 use crate::routing::ingress::Ingress;
 
 #[test]
