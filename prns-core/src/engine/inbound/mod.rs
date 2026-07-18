@@ -1,28 +1,27 @@
 mod delivery;
 mod held_announce_release;
+mod relay;
 
 use delivery::DeliveryIo;
+use relay::{RelayAudience, RelayPathRequest};
 
 use crate::crypto::ratchets::RatchetRotation;
 use crate::crypto::{
     ed25519_sign, Ed25519Signature, X25519PublicKey, X25519SecretKey, X25519SharedSecret,
 };
 use crate::engine::execute::settle;
-#[cfg(feature = "runtime-metrics")]
-use crate::engine::AnnounceOrigin;
 use crate::engine::LinkClosedReason;
 use crate::engine::{
-    write_path_request_wire_packet, AnnounceIngest, AnnounceVerifyOwed, CommandId, DecryptOwed,
-    DeferredCrypto, Directive, EngineReaction, EngineState, IngestPacketOutcome, InstantMillis,
-    Journaled, LinkEstablished, LinkRttOwed, PathFound, PathRequestIdBytes,
-    PathResponseWriteOutcome, ProofIngest, RatchetDecryptOwed, ReemitAnnounce, SendRequestFailure,
-    Settlement, WakeSchedule, WakeSchedules,
+    AnnounceIngest, AnnounceVerifyOwed, CommandId, DecryptOwed, DeferredCrypto, Directive,
+    EngineReaction, EngineState, IngestPacketOutcome, InstantMillis, Journaled, LinkEstablished,
+    LinkRttOwed, PathFound, PathResponseWriteOutcome, ProofIngest, RatchetDecryptOwed,
+    SendRequestFailure, Settlement, WakeSchedule, WakeSchedules,
 };
 use crate::identity::{
     decrypt_finish_in_place, IdentitySigner, OpenedBy, OpenedToken, ENCRYPTION_IV_LEN,
 };
 use crate::interfaces::AttachedInterfaces;
-use crate::interfaces::{Egress, InboundPacket, InterfaceId, InterfaceKind};
+use crate::interfaces::{Egress, InboundPacket, InterfaceId};
 use crate::routing::announce::{Announce, AnnounceArrival};
 use crate::routing::delivery::{Delivery, SingleDelivery};
 use crate::routing::ingress::{AcceptedAnnounceEffect, ClassifiedInboundPacket, IngestEffects};
@@ -42,7 +41,7 @@ use crate::routing::proof::{
 use crate::routing::RemovedRoute;
 use crate::storage::StorageLayout;
 use crate::units::RttMillis;
-use crate::wire::{DestinationHash, BROADCAST_MTU, HEADER_MAX_LEN};
+use crate::wire::{BROADCAST_MTU, HEADER_MAX_LEN};
 
 pub(crate) fn journal_route_removal(removed: RemovedRoute) -> Journaled<'static> {
     Journaled::RouteRemoved {
@@ -67,100 +66,6 @@ where
 }
 
 impl<S: StorageLayout> EngineState<S> {
-    fn relay_path_request(
-        &mut self,
-        request: RelayPathRequest<'_>,
-        source: InterfaceId,
-        interfaces: AttachedInterfaces<'_>,
-        audience: RelayAudience,
-        now: InstantMillis,
-        sink: &mut impl FnMut(EngineReaction<'_>),
-    ) {
-        let mut buf = [0u8; BROADCAST_MTU];
-        let transport_id = self
-            .network_transport_enabled()
-            .then(|| self.transport_id())
-            .flatten();
-        let Ok(wire_len) =
-            write_path_request_wire_packet(request.destination, transport_id, request.id, &mut buf)
-        else {
-            return;
-        };
-        for descriptor in interfaces {
-            let in_audience = match audience {
-                RelayAudience::Transports => true,
-                RelayAudience::LocalClients => {
-                    descriptor.id.kind() == Some(InterfaceKind::LocalClient)
-                }
-            };
-            if in_audience && descriptor.id != source && descriptor.capabilities.allows_transmit() {
-                if matches!(audience, RelayAudience::Transports)
-                    && self.egress_path_request_limits.should_egress_limit(
-                        descriptor.id,
-                        now,
-                        descriptor.common.path_request_egress,
-                    )
-                {
-                    continue;
-                }
-                if matches!(audience, RelayAudience::Transports) {
-                    self.egress_path_request_limits
-                        .record_egress(descriptor.id, now);
-                }
-                sink(EngineReaction::Directive(Directive::Send {
-                    target: descriptor.id,
-                    bytes: &buf[..wire_len],
-                }));
-            }
-        }
-    }
-
-    fn relay_announce_to_local_clients(
-        &self,
-        destination: DestinationHash,
-        hops: u8,
-        source: InterfaceId,
-        interfaces: AttachedInterfaces<'_>,
-        sink: &mut impl FnMut(EngineReaction<'_>),
-    ) {
-        let Some(via) = self.transport_id() else {
-            return;
-        };
-        let Some(stored) = self.routing_table.stored_announce_for(&destination) else {
-            return;
-        };
-        let mut buf = [0u8; BROADCAST_MTU];
-        let relay = ReemitAnnounce {
-            announce: stored.announce.clone(),
-            emit_hops: hops,
-            via,
-            target: source,
-            is_path_response: false,
-        };
-        let Ok(written) = relay.to_wire(&mut buf) else {
-            return;
-        };
-        for descriptor in interfaces {
-            if descriptor.id == source
-                || descriptor.id.kind() != Some(InterfaceKind::LocalClient)
-                || !descriptor.capabilities.allows_transmit()
-            {
-                continue;
-            }
-            sink(EngineReaction::Directive(Directive::SendAnnounce {
-                target: descriptor.id,
-                bytes: &buf[..written],
-                hops,
-                #[cfg(feature = "runtime-metrics")]
-                origin: if source.kind() == Some(InterfaceKind::LocalClient) {
-                    AnnounceOrigin::SharedClient
-                } else {
-                    AnnounceOrigin::Relay
-                },
-            }));
-        }
-    }
-
     pub fn resume_decrypt(
         &mut self,
         owed: DecryptOwed,
@@ -1037,17 +942,6 @@ impl<S: StorageLayout> EngineState<S> {
         wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
         wake_schedule_changes
     }
-}
-
-#[derive(Clone, Copy)]
-enum RelayAudience {
-    Transports,
-    LocalClients,
-}
-
-struct RelayPathRequest<'a> {
-    destination: DestinationHash,
-    id: &'a PathRequestIdBytes,
 }
 
 #[cfg(test)]
