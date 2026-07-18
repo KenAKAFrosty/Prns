@@ -2501,9 +2501,11 @@ version = "0.2.4"
 dependencies = [
  "aes",
  "allocator-api2",
+ "base64",
  "cbc",
  "cfg-if",
  "crc32fast",
+ "data-encoding",
  "ed25519-dalek",
  "embedded-hal 1.0.0",
  "embedded-hal-async",
@@ -2567,11 +2569,9 @@ dependencies = [
 name = "prns-interfaces-tokio"
 version = "0.2.4"
 dependencies = [
- "base64",
  "bluer",
  "btleplug",
  "cfg-if",
- "data-encoding",
  "futures-util",
  "getrandom 0.2.17",
  "heapless 0.8.0",
@@ -2593,7 +2593,6 @@ dependencies = [
  "tracing",
  "uuid",
  "zbus",
- "zeroize",
 ]
 
 [[package]]

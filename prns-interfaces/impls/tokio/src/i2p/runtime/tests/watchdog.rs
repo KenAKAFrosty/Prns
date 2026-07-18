@@ -11,9 +11,7 @@ use prns_runtime::reactor::driver::TokioInterfaceStatus;
 use prns_runtime::reactor::interface_seam::InterfaceSeam;
 use prns_runtime::reactor::throughput::ThroughputLedger;
 
-use crate::framed_stream::{
-    serve_with_hdlc_idle_watchdog, FramedBuffers, HdlcFraming, HdlcIdleWatchdog, WireMeters,
-};
+use crate::framed_stream::{serve_with_hdlc_idle_watchdog, FramedBuffers, HdlcFraming, WireMeters};
 
 struct PendingSeam {
     inbound: Vec<u8>,
@@ -58,12 +56,6 @@ async fn watchdog_keepalive_degradation_recovery_and_timeout_match_reference_tim
                 throughput: &mut throughput,
                 bitrate: policy.bitrate,
                 started,
-            },
-            HdlcIdleWatchdog {
-                tick: Duration::from_secs(1),
-                keepalive_after: Duration::from_secs(10),
-                stale_after: Duration::from_secs(20),
-                read_timeout: Duration::from_secs(110),
             },
         )
         .await;

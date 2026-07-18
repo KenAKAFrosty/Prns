@@ -1,4 +1,6 @@
-use super::reply::SamReplyKind;
+use alloc::format;
+use alloc::string::String;
+
 use super::value::{I2pAddress, I2pPrivateDestination, I2pPublicDestination, SamSessionId};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,16 +39,6 @@ pub enum SamCommand {
 }
 
 impl SamCommand {
-    pub const fn reply_kind(&self) -> SamReplyKind {
-        match self {
-            Self::HelloVersion => SamReplyKind::Hello,
-            Self::DestinationGenerate => SamReplyKind::Destination,
-            Self::SessionCreate { .. } => SamReplyKind::Session,
-            Self::StreamConnect { .. } | Self::StreamAccept { .. } => SamReplyKind::Stream,
-            Self::NamingLookup { .. } => SamReplyKind::Naming,
-        }
-    }
-
     pub fn encode(&self) -> String {
         match self {
             Self::HelloVersion => String::from("HELLO VERSION MIN=3.1 MAX=3.1\n"),

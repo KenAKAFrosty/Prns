@@ -1,4 +1,7 @@
-use std::collections::BTreeMap;
+use alloc::collections::BTreeMap;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::mem;
 
 use super::error::SamProtocolError;
 use super::value::{I2pPrivateDestination, I2pPublicDestination, SamValueError};
@@ -77,7 +80,7 @@ impl SamReply {
     }
 }
 
-pub(super) fn parse_reply(line: &str) -> Result<SamReply, SamProtocolError> {
+pub fn parse_reply(line: &str) -> Result<SamReply, SamProtocolError> {
     let words = tokenize(line.trim_end_matches(['\r', '\n']))?;
     let domain = words
         .first()
@@ -137,7 +140,7 @@ fn tokenize(line: &str) -> Result<Vec<String>, SamProtocolError> {
             quoted = !quoted;
         } else if character.is_whitespace() && !quoted {
             if !current.is_empty() {
-                words.push(std::mem::take(&mut current));
+                words.push(mem::take(&mut current));
             }
         } else {
             current.push(character);
