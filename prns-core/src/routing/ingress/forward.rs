@@ -121,6 +121,7 @@ impl<S: StorageLayout> EngineState<S> {
 mod tests {
     use super::*;
     use crate::engine::test_support::*;
+    use crate::interfaces::InboundPacket;
     use crate::routing::ingress::testkit::iface;
 
     #[test]
