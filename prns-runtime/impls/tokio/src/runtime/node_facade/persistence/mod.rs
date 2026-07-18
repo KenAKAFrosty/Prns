@@ -361,7 +361,6 @@ pub(super) fn wall_clock_timeline_origin() -> InstantMillis {
     InstantMillis(millis)
 }
 
-/// What a boot-restore pass did with the stored rows.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct RouteSeedReport {
     pub seeded_count: u32,
@@ -389,7 +388,6 @@ pub struct DestinationIdentitySeedReport {
     pub dropped_count: u32,
 }
 
-/// What a boot-restore pass did with the stored tunnels.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct TunnelSeedReport {
     pub seeded_count: u32,
@@ -397,7 +395,6 @@ pub struct TunnelSeedReport {
     pub dropped_count: u32,
 }
 
-/// What a boot-restore pass did with the stored self-ratchet records.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct RatchetSeedReport {
     pub seeded_count: u32,
@@ -405,7 +402,6 @@ pub struct RatchetSeedReport {
     pub dropped_count: u32,
 }
 
-/// The vault label addressing one destination's self-ratchet record.
 #[allow(clippy::expect_used)]
 pub(super) fn ratchet_label(destination: &DestinationHash) -> IdentityLabel {
     let mut label = String::with_capacity("ratchets.".len() + destination.as_bytes().len() * 2);
@@ -511,7 +507,6 @@ pub enum RegionFlush {
     UnchangedSkipped,
 }
 
-/// What one changed-flush pass did: the high-water it stamped and each region's write-or-skip.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FlushReport {
     pub high_water: InstantMillis,
@@ -525,3 +520,6 @@ pub enum FlushError<E> {
     NodeStopped,
     Store(E),
 }
+
+#[cfg(test)]
+mod tests;
