@@ -10,7 +10,7 @@ use crate::engine::test_support::{
 };
 #[cfg(feature = "runtime-metrics")]
 use crate::engine::AnnounceOrigin;
-use crate::engine::{Departure, RouteRemovalCause};
+use crate::engine::{Departure, IssuedCommand, RouteRemovalCause};
 #[cfg(feature = "runtime-metrics")]
 use crate::interfaces::InterfaceKind;
 use crate::interfaces::{
@@ -21,8 +21,10 @@ use crate::interfaces::{
 use crate::reactor::interface_seam::{Interface, InterfaceSeam, MAX_WIRE_FRAME_LEN};
 #[cfg(feature = "runtime-metrics")]
 use crate::runtime::{AnnounceEgressOutcome, EgressMetricsSnapshot};
-use crate::runtime::{PrnsNodeHandle, RoutingControl};
+use crate::runtime::{DropRouteOutcome, PrnsNodeHandle, RoutingControl};
 use crate::wire::{PacketType, WirePacketHeader};
+
+use super::egress::clear_announce_queues;
 
 #[tokio::test(start_paused = true)]
 async fn logical_time_saturates_at_the_numeric_limit() {

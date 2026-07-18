@@ -2,11 +2,9 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::time::Instant;
 
 use crate::engine::{
-    ClassifiedInboundPacket, DeferredCrypto, Directive, EngineCommand, EngineReaction, EngineState,
-    IngestIo, InstantMillis, IssuedCommand, Journaled, NextWake, ProofIngest, ProofRequest,
-    Respond, RespondData, SendRequest, SendRequestData, SendSinglePacketEntropy,
-    SendSinglePacketFailure, SendSinglePacketPrepared, SendSinglePacketWriteError, Settlement,
-    WakeReason, WakeSchedules,
+    ClassifiedInboundPacket, DeferredCrypto, Directive, EngineReaction, EngineState, IngestIo,
+    InstantMillis, Journaled, NextWake, ProofIngest, ProofRequest, Settlement, WakeReason,
+    WakeSchedules,
 };
 use crate::identity::OpenedToken;
 use crate::interfaces::ifac::InterfaceIfac;
@@ -15,27 +13,18 @@ use crate::reactor::kernel::{fire_due_reason, merge_wake_schedules_delta};
 use crate::reactor::AppDeciders;
 use crate::reactor::Host;
 use crate::routing::dedup::PacketHash;
-use crate::routing::links::request::{write_request_plaintext, RequestId, REQUEST_WIRE_OVERHEAD};
 use crate::routing::links::resources::build_outgoing::SALT_REROLL_CAP;
 use crate::routing::links::resources::receive::offload::OffloadedOpenSpan;
 use crate::routing::links::resources::send::OffloadedStagedSeal;
 use crate::routing::links::resources::streamed_open::ResourceOpenLane;
 use crate::routing::links::resources::ResourceOffer;
-use crate::routing::links::resources::{
-    ResourceBody, ResourceCorrelation, ResourceMetadata, ResourceSegment, ResourceSend,
-};
 use crate::routing::links::resources::{MAP_HASH_LEN, RESOURCE_NONCE_LEN};
 use crate::routing::proof::EXPLICIT_PROOF_WIRE_LEN;
-use crate::runtime::node_introspection::NodeIntrospectionRequest;
-#[cfg(feature = "runtime-metrics")]
-use crate::runtime::RuntimeMetricsSnapshot;
-use crate::runtime::{
-    apply_destination_identity_retention_command, apply_identity_blackhole_command,
-    ClearAnnounceQueuesOutcome, DropRouteOutcome, DropRoutesViaOutcome, InterfaceStore,
-};
+use crate::runtime::InterfaceStore;
 use crate::storage::{DirtyInterfaceSet, StorageLayout};
 use crate::wire::DestinationHash;
 
+mod command_dispatch;
 mod crypto_pool;
 mod egress;
 mod host;
@@ -61,15 +50,13 @@ pub use host_protocol::{
 pub use interface_seam::TokioInterfaceSeam;
 pub use interface_status::TokioInterfaceStatus;
 
+use command_dispatch::{CommandDispatch, CommandEffect};
 use crypto_pool::{
     CryptoJob, CryptoPool, CryptoResult, EngineVerifyJob, OpenSpanJob, StagedSealJob,
 };
 #[cfg(all(test, feature = "runtime-metrics"))]
 use egress::enqueue_announce_for_wire;
-use egress::{
-    clear_announce_queues, flush_due_pacers, ifac_for, route_reaction, soonest_pacer_release,
-    WireScratch,
-};
+use egress::{flush_due_pacers, ifac_for, route_reaction, soonest_pacer_release, WireScratch};
 #[cfg(test)]
 use egress::{offer_to_pacer, InterfacePacer, PacedAnnounce, TokioAnnouncePacer};
 use host::bounded_timer_deadline;
@@ -203,57 +190,6 @@ async fn run_inner<S, H, J, P, A>(
         () => {
             |journaled| journal.route(journaled)
         };
-    }
-    macro_rules! defer_send_single_packet {
-        ($pool:expr, $id:expr, $send:expr, $now:expr) => {{
-            let mut entropy_bytes = [0u8; SendSinglePacketEntropy::LEN];
-            host.fill_entropy(&mut entropy_bytes);
-            match engine.prepare_send_single_packet_deferred(
-                $id,
-                $send,
-                $now,
-                SendSinglePacketEntropy::new(entropy_bytes),
-            ) {
-                SendSinglePacketPrepared::Owed(owed) => {
-                    $pool.submit(CryptoJob::SealScalars(owed));
-                }
-                SendSinglePacketPrepared::Rejected { id, rejection } => {
-                    route_reaction(
-                        EngineReaction::Journaled(Journaled::CommandSettled {
-                            id,
-                            settlement: Settlement::SendSinglePacket(Err(
-                                SendSinglePacketFailure::Rejected(rejection),
-                            )),
-                        }),
-                        &mut topology.egress,
-                        &topology.ifacs,
-                        &mut topology.pacers,
-                        &mut wire_scratch,
-                        $now,
-                        &mut journaled_sink!(),
-                    );
-                }
-                SendSinglePacketPrepared::RouteVanished { id } => {
-                    route_reaction(
-                        EngineReaction::Journaled(Journaled::CommandSettled {
-                            id,
-                            settlement: Settlement::SendSinglePacket(Err(
-                                SendSinglePacketFailure::WriteFailed(
-                                    SendSinglePacketWriteError::RouteVanished,
-                                ),
-                            )),
-                        }),
-                        &mut topology.egress,
-                        &topology.ifacs,
-                        &mut topology.pacers,
-                        &mut wire_scratch,
-                        $now,
-                        &mut journaled_sink!(),
-                    );
-                }
-            }
-            WakeSchedules::UNCHANGED
-        }};
     }
     const MAX_INBOUND_BATCH: usize = 64;
     const MAX_COMMAND_BATCH: usize = 64;
@@ -557,360 +493,34 @@ async fn run_inner<S, H, J, P, A>(
                 let now = host.now();
                 let mut command_budget = MAX_COMMAND_BATCH;
                 loop {
-                let wake_schedules_delta = match issued {
-                    HostCommand::Engine(issued) => {
-                        let id = issued.id;
-                        match (crypto_pool.as_ref(), issued.command) {
-                            (Some(pool), EngineCommand::SendSinglePacket(send)) => {
-                                defer_send_single_packet!(pool, id, send, now)
-                            }
-                            (_, command) => engine.ingest_command_into(
-                                IssuedCommand { id, command },
-                                topology.interfaces.view(),
-                                now,
-                                &mut |entropy| host.fill_entropy(entropy),
-                                &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
-                            ),
-                        }
-                    }
-                    HostCommand::AwaitedEngine { issued, completion } => {
-                        let id = issued.id;
-                        journal.register_completion(id, completion);
-                        match (crypto_pool.as_ref(), issued.command) {
-                            (Some(pool), EngineCommand::SendSinglePacket(send)) => {
-                                defer_send_single_packet!(pool, id, send, now)
-                            }
-                            (_, command) => engine.ingest_command_into(
-                                IssuedCommand { id, command },
-                                topology.interfaces.view(),
-                                now,
-                                &mut |entropy| host.fill_entropy(entropy),
-                                &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
-                            ),
-                        }
-                    }
-                    HostCommand::SendResource(send) => engine.ingest_send_resource_into(
-                        &ResourceSend {
-                            id: send.id,
-                            link_id: send.link_id,
-                            body: ResourceBody {
-                                data: send.data.as_slice(),
-                                compressed_candidate: send
-                                    .compressed_candidate
-                                    .as_ref()
-                                    .map(HostResourcePayload::as_slice),
-                                metadata: send.metadata.as_engine(),
-                            },
-                            correlation: send
-                                .request_id
-                                .map_or(ResourceCorrelation::Unsolicited, ResourceCorrelation::Response),
-                        },
-                        now,
-                        &mut |entropy| host.fill_entropy(entropy),
-                        &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                let effect = CommandDispatch {
+                    engine: &mut engine,
+                    host: &mut host,
+                    topology: &mut topology,
+                    wire_scratch: &mut wire_scratch,
+                    journal: &mut journal,
+                    crypto_pool: crypto_pool.as_ref(),
+                }
+                .dispatch(issued, now);
+                match effect {
+                    CommandEffect::Delta(delta) => merge_wake_schedules_delta(
+                        &mut wake_schedules,
+                        delta,
+                        &engine,
+                        topology.view(),
                     ),
-                    HostCommand::SendResourceSegment(send) => {
-                        journal.register_completion(send.id, send.completion);
-                        engine.ingest_send_resource_segment_into(
-                            &ResourceSend {
-                                id: send.id,
-                                link_id: send.link_id,
-                                body: ResourceBody {
-                                    data: send.data.as_slice(),
-                                    compressed_candidate: send
-                                        .compressed_candidate
-                                        .as_ref()
-                                        .map(HostResourcePayload::as_slice),
-                                    metadata: send.metadata.as_engine(),
-                                },
-                                correlation: send
-                                    .request_id
-                                    .map_or(ResourceCorrelation::Unsolicited, ResourceCorrelation::Response),
-                            },
-                            ResourceSegment {
-                                index: send.segment_index,
-                                total_segments: send.total_segments,
-                                total_data_size: send.total_data_size,
-                            },
-                            now,
-                            &mut |entropy| host.fill_entropy(entropy),
-                            &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
-                        )
-                    }
-                    HostCommand::RespondAny(respond) => {
-                        let data = respond.data.as_slice();
-                        let as_packet = engine
-                            .response_fits_packet(&respond.link_id, data)
-                            .then(|| RespondData::from_slice(data).ok())
-                            .flatten();
-                        match as_packet {
-                            Some(data) => engine.ingest_command_into(
-                                IssuedCommand {
-                                    id: respond.id,
-                                    command: EngineCommand::Respond(Respond {
-                                        link_id: respond.link_id,
-                                        request_id: respond.request_id,
-                                        data,
-                                    }),
-                                },
-                                topology.interfaces.view(),
-                                now,
-                                &mut |entropy| host.fill_entropy(entropy),
-                                &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
-                            ),
-                            None => engine.ingest_send_resource_into(
-                                &ResourceSend {
-                                    id: respond.id,
-                                    link_id: respond.link_id,
-                                    body: ResourceBody {
-                                        data,
-                                        compressed_candidate: respond
-                                            .compressed_candidate
-                                            .as_ref()
-                                            .map(HostResourcePayload::as_slice),
-                                        metadata: ResourceMetadata::None,
-                                    },
-                                    correlation: ResourceCorrelation::Response(respond.request_id),
-                                },
-                                now,
-                                &mut |entropy| host.fill_entropy(entropy),
-                                &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
-                            ),
-                        }
-                    }
-                    HostCommand::RequestAny(request) => {
-                        let RequestAnyHostCommand {
-                            id,
-                            link_id,
-                            path_hash,
-                            data,
-                            completion,
-                        } = request;
-                        journal.register_request(id, completion);
-                        let payload = data.as_slice();
-                        if engine.request_fits_packet(&link_id, payload) {
-                            match SendRequestData::from_slice(payload) {
-                                Ok(send_data) => engine.ingest_command_into(
-                                    IssuedCommand {
-                                        id,
-                                        command: EngineCommand::SendRequest(SendRequest {
-                                            link_id,
-                                            path_hash,
-                                            data: send_data,
-                                        }),
-                                    },
-                                    topology.interfaces.view(),
-                                    now,
-                                    &mut |entropy| host.fill_entropy(entropy),
-                                    &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
-                                ),
-                                Err(_) => journal.fail_request(id),
-                            }
-                        } else {
-                            let mut packed =
-                                std::vec![0u8; REQUEST_WIRE_OVERHEAD + payload.len().max(1)];
-                            match write_request_plaintext(now, &path_hash, payload, &mut packed) {
-                                Ok(plain_len) => {
-                                    let packed_request = &packed[..plain_len];
-                                    let request_id = RequestId::of_request_data(packed_request);
-                                    engine.ingest_send_resource_into(
-                                        &ResourceSend {
-                                            id,
-                                            link_id,
-                                            body: ResourceBody {
-                                                data: packed_request,
-                                                compressed_candidate: None,
-                                                metadata: ResourceMetadata::None,
-                                            },
-                                            correlation: ResourceCorrelation::Request(request_id),
-                                        },
-                                        now,
-                                        &mut |entropy| host.fill_entropy(entropy),
-                                        &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
-                                    )
-                                }
-                                Err(_) => journal.fail_request(id),
-                            }
-                        }
-                    }
-                    HostCommand::ProvideDecompressed(provide) => engine.provide_decompressed(
-                        provide.link_id,
-                        provide.hash,
-                        provide.plaintext.as_slice(),
-                        now,
-                        &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
-                    ),
-                    HostCommand::AddInterface(add) => {
-                        if let Some(frame_cap) = topology.attach(&mut engine, add, now) {
-                            if frame_cap > scratch_cap {
-                                scratch_cap = frame_cap;
-                                unmask_scratch = std::vec![0u8; scratch_cap].into_boxed_slice();
-                                wire_scratch.grow(scratch_cap);
-                            }
-                            wake_schedules = engine.wake_schedules(topology.view());
-                        }
-                        WakeSchedules::UNCHANGED
-                    }
-                    HostCommand::RemoveInterface { id, departure } => {
-                        topology.detach(&mut engine, id, departure, now);
+                    CommandEffect::RecomputeWakeSchedules => {
                         wake_schedules = engine.wake_schedules(topology.view());
-                        WakeSchedules::UNCHANGED
                     }
-                    HostCommand::DropRoute { destination, reply } => {
-                        let outcome = match engine.drop_route(&destination) {
-                            Some(removed) => {
-                                (journaled_sink!())(Journaled::RouteRemoved {
-                                    destination: removed.destination,
-                                    cause: removed.cause,
-                                });
-                                wake_schedules = engine.wake_schedules(topology.view());
-                                DropRouteOutcome::Dropped
-                            }
-                            None => DropRouteOutcome::NotFound,
-                        };
-                        let _ = reply.send(outcome);
-                        WakeSchedules::UNCHANGED
-                    }
-                    HostCommand::DropRoutesVia { transport, reply } => {
-                        let dropped = engine.drop_routes_via(transport, &mut |removed| {
-                            (journaled_sink!())(Journaled::RouteRemoved {
-                                destination: removed.destination,
-                                cause: removed.cause,
-                            });
-                        });
-                        if dropped != 0 {
-                            wake_schedules = engine.wake_schedules(topology.view());
+                    CommandEffect::InterfaceAttached { frame_capacity } => {
+                        if frame_capacity > scratch_cap {
+                            scratch_cap = frame_capacity;
+                            unmask_scratch = std::vec![0u8; scratch_cap].into_boxed_slice();
+                            wire_scratch.grow(scratch_cap);
                         }
-                        let _ = reply.send(DropRoutesViaOutcome {
-                            dropped_routes: u32::try_from(dropped).unwrap_or(u32::MAX),
-                        });
-                        WakeSchedules::UNCHANGED
+                        wake_schedules = engine.wake_schedules(topology.view());
                     }
-                    HostCommand::ClearAnnounceQueues { reply } => {
-                        let dropped = clear_announce_queues(&mut topology.pacers);
-                        let _ = reply.send(ClearAnnounceQueuesOutcome {
-                            dropped_announces: u32::try_from(dropped).unwrap_or(u32::MAX),
-                        });
-                        WakeSchedules::UNCHANGED
-                    }
-                    HostCommand::IdentityBlackhole(command) => apply_identity_blackhole_command(
-                        &mut engine,
-                        command,
-                        &mut |removed| {
-                            (journaled_sink!())(Journaled::RouteRemoved {
-                                destination: removed.destination,
-                                cause: removed.cause,
-                            });
-                        },
-                    ),
-                    HostCommand::DestinationIdentityRetention(command) => {
-                        apply_destination_identity_retention_command(&mut engine, command, now)
-                    }
-                    HostCommand::NodeIntrospection(request) => {
-                        match request {
-                            NodeIntrospectionRequest::LinkCount { reply } => {
-                                let _ = reply.send(engine.link_count());
-                            }
-                            NodeIntrospectionRequest::AnnounceRates { reply } => {
-                                let mut snapshots = std::vec::Vec::new();
-                                engine.visit_announce_rate_states(|state| {
-                                    snapshots.push(journal.announce_rate_snapshot(state));
-                                });
-                                let _ = reply.send(snapshots);
-                            }
-                            NodeIntrospectionRequest::Routes { reply } => {
-                                let mut snapshots = std::vec::Vec::new();
-                                engine.visit_route_snapshots(topology.view(), |snapshot| {
-                                    snapshots.push(snapshot);
-                                });
-                                let _ = reply.send(snapshots);
-                            }
-                            NodeIntrospectionRequest::Route { destination, reply } => {
-                                let _ = reply.send(
-                                    engine.route_snapshot(destination, topology.view()),
-                                );
-                            }
-                        }
-                        WakeSchedules::UNCHANGED
-                    }
-                    HostCommand::SynthesizeTunnel { interface } => {
-                        let mut random_hash = [0u8; crate::routing::tunnel::RANDOM_HASH_LEN];
-                        host.fill_entropy(&mut random_hash);
-                        let mut buf = [0u8; 256];
-                        if let Ok(len) =
-                            engine.write_tunnel_synthesize(interface, &random_hash, &mut buf)
-                        {
-                            route_reaction(
-                                EngineReaction::Directive(Directive::Send {
-                                    target: interface,
-                                    bytes: &buf[..len],
-                                }),
-                                &mut topology.egress,
-                                &topology.ifacs,
-                                &mut topology.pacers,
-                                &mut wire_scratch,
-                                now,
-                                &mut journaled_sink!(),
-                            );
-                        }
-                        WakeSchedules::UNCHANGED
-                    }
-                    HostCommand::RegisterStreamReader {
-                        link_id,
-                        stream_id,
-                        sink,
-                        ready,
-                    } => {
-                        journal.register_stream_reader(link_id, stream_id, sink);
-                        let _ = ready.send(());
-                        WakeSchedules::UNCHANGED
-                    }
-                    HostCommand::RegisterResourceSink {
-                        link_id,
-                        sink,
-                        ready,
-                    } => {
-                        journal.register_resource_sink(link_id, sink);
-                        let _ = ready.send(());
-                        WakeSchedules::UNCHANGED
-                    }
-                    HostCommand::SetResourceStrategy {
-                        destination,
-                        strategy,
-                        ready,
-                    } => {
-                        let applied = engine.set_default_resource_strategy(&destination, strategy);
-                        let _ = ready.send(applied);
-                        WakeSchedules::UNCHANGED
-                    }
-                    HostCommand::SnapshotPersistedState { reply } => {
-                        if let Some(snapshot) = persistence_snapshots::persisted_state(&engine, now) {
-                            let _ = reply.send(snapshot);
-                        }
-                        WakeSchedules::UNCHANGED
-                    }
-                    HostCommand::SnapshotSelfRatchets { reply } => {
-                        let _ = reply.send(persistence_snapshots::self_ratchets(&engine));
-                        WakeSchedules::UNCHANGED
-                    }
-                    HostCommand::SnapshotSelfRatchet { destination, reply } => {
-                        let snapshot = persistence_snapshots::self_ratchet(&engine, destination);
-                        let _ = reply.send(snapshot);
-                        WakeSchedules::UNCHANGED
-                    }
-                    #[cfg(feature = "runtime-metrics")]
-                    HostCommand::SnapshotMetrics { reply } => {
-                        let _ = reply.send(RuntimeMetricsSnapshot {
-                            taken_at: now,
-                            engine: engine.metrics_snapshot(),
-                            egress: topology.egress.metrics_snapshot(&topology.pacers),
-                            crypto: crypto_pool.as_ref().map(CryptoPool::metrics_snapshot),
-                            reliability: journal.reliability_metrics(),
-                        });
-                        WakeSchedules::UNCHANGED
-                    }
-                };
-                merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, topology.view());
+                }
                 command_budget -= 1;
                 if command_budget == 0 {
                     break;
