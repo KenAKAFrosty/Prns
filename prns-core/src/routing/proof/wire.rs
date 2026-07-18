@@ -1,13 +1,17 @@
-use super::{EXPLICIT_PROOF_WIRE_LEN, IMPLICIT_PROOF_WIRE_LEN, LINK_PROOF_WIRE_LEN};
 use crate::crypto::Ed25519Signature;
 use crate::routing::dedup::{PacketHash, PACKET_HASH_LEN};
 use crate::routing::links::LinkId;
 use crate::wire::{
     ContextFlag, DestinationType, IfacFlag, PacketType, PropagationType, WireContext, WireError,
-    WirePacketHeader, HEADER_MIN_LEN,
+    WirePacketHeader, HEADER_MIN_LEN, SIGNATURE_BYTE_LEN,
 };
 
-/// RNS 1.3.5 `Identity.prove` in its implicit form
+pub const IMPLICIT_PROOF_WIRE_LEN: usize = HEADER_MIN_LEN + SIGNATURE_BYTE_LEN;
+pub const IMPLICIT_PROOF_PAYLOAD_LEN: usize = SIGNATURE_BYTE_LEN;
+pub const EXPLICIT_PROOF_PAYLOAD_LEN: usize = PACKET_HASH_LEN + SIGNATURE_BYTE_LEN;
+pub const EXPLICIT_PROOF_WIRE_LEN: usize = HEADER_MIN_LEN + EXPLICIT_PROOF_PAYLOAD_LEN;
+pub const LINK_PROOF_WIRE_LEN: usize = HEADER_MIN_LEN + EXPLICIT_PROOF_PAYLOAD_LEN;
+
 pub fn write_implicit_proof_wire_packet(
     packet_hash: &PacketHash,
     signature: &Ed25519Signature,
