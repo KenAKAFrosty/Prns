@@ -49,7 +49,7 @@ use personal_rns::interfaces::bluetooth_auto::limits;
 use personal_rns::interfaces::InterfaceKind;
 use personal_rns::reactor::embassy::embassy_grant_lane;
 use personal_rns::reactor::grant::FrameSlot;
-use personal_rns::runtime::{Fleet, MemberWire};
+use personal_rns::runtime::{Fleet, FleetWire};
 use static_cell::ConstStaticCell;
 
 #[cfg(feature = "espnow-c6")]
@@ -428,7 +428,7 @@ pub async fn run(spawner: Spawner) {
         let _ = inbound.push((FREE_SLOT, in_consumer));
         let _ = egress_lanes.push((FREE_SLOT, out_producer));
         Fleet::new(
-            MemberWire {
+            FleetWire {
                 inbound: in_producer,
                 outbound: out_consumer,
                 notify: NOTIFY.sender(),

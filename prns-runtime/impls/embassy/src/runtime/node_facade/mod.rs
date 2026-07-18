@@ -2,18 +2,15 @@ use core::future::Future;
 
 use embassy_futures::join::join;
 use embassy_sync::blocking_mutex::raw::RawMutex;
-use embassy_sync::channel::{Receiver, Sender};
-use embassy_sync::signal::Signal;
+use embassy_sync::channel::Receiver;
 use heapless::Vec as HeaplessVec;
 
 use crate::engine::{IssuedCommand, Journaled};
 use crate::interfaces::ifac::{IfacContext, InterfaceIfac};
 use crate::interfaces::{InterfaceDescriptor, InterfaceId};
 use crate::reactor::driver::{
-    run_pooled, EmbassyGrantConsumer, EmbassyGrantProducer, InterfaceLifecycle, PooledEgress,
-    PooledWiring,
+    run_pooled, EmbassyGrantConsumer, InterfaceLifecycle, PooledEgress, PooledWiring,
 };
-use crate::reactor::grant::{FrameTarget, GrantConsumer, GrantProducer};
 use crate::reactor::Host;
 use crate::storage::StorageLayout;
 
@@ -25,8 +22,10 @@ use super::{
 use prns_runtime::runtime::{assemble_node, AssembledNode};
 
 mod command_handle;
+mod interface_lifecycle;
 
 pub use command_handle::{CompletionPool, PrnsNodeHandle};
+pub use interface_lifecycle::{Fleet, FleetWire};
 
 /// The reactor-side wiring an embassy node runs on: the pool's inbound consumers and egress, the three channel receivers, and the command handle. The board declares the matching `static` channels and hands this bundle to [`PrnsNode::new`]; the interface-side seam halves come off the same pool separately.
 pub struct ReactorPlumbing<
@@ -401,91 +400,6 @@ where
             store,
         )
         .await;
-    }
-}
-
-/// One member slot's reactor wire, lent to a supervisor: the inbound producer, the outbound consumer, and the notify funnel, tagged with the member's *current* id (the slot's id changes as peers come and go). The endpoints are permanent, so the slot reuses for the next peer with no re-split.
-pub struct MemberWire<M: RawMutex + 'static, const SLOT: usize, const NOTIFY: usize> {
-    pub inbound: EmbassyGrantProducer<'static, M, SLOT>,
-    pub outbound: EmbassyGrantConsumer<'static, M, SLOT>,
-    pub notify: Sender<'static, M, InterfaceId, NOTIFY>,
-    pub outbound_wake: &'static Signal<M, ()>,
-}
-
-/// A supervisor's lever onto the node's reactor: the embedded twin of the host `Fleet`, minus the spawn. The whole fleet shares **one** [`MemberWire`]: every peer's inbound frame is funneled in tagged with that peer's id, and the reactor's outbound frames drain off tagged with their target, so the kind-routing demuxes a whole fleet over one lane-pair. A confirmed peer becomes a distinct engine interface with [`register_member`](Self::register_member); each costs only a descriptor, never a lane.
-pub struct Fleet<
-    M: RawMutex + 'static,
-    const SLOT: usize,
-    const NOTIFY: usize,
-    const LIFECYCLE: usize,
-> {
-    wire: MemberWire<M, SLOT, NOTIFY>,
-    lifecycle: Sender<'static, M, InterfaceLifecycle, LIFECYCLE>,
-}
-
-impl<M: RawMutex + 'static, const SLOT: usize, const NOTIFY: usize, const LIFECYCLE: usize>
-    Fleet<M, SLOT, NOTIFY, LIFECYCLE>
-{
-    /// Build a fleet over its one shared `wire` (the interface-side halves of the supervisor's lane) and the `lifecycle` sender whose receiver the reactor parks on.
-    #[must_use]
-    pub fn new(
-        wire: MemberWire<M, SLOT, NOTIFY>,
-        lifecycle: Sender<'static, M, InterfaceLifecycle, LIFECYCLE>,
-    ) -> Self {
-        Self { wire, lifecycle }
-    }
-
-    /// Register a confirmed peer as a distinct engine interface under `descriptor`: the engine forwards to it at once, its frames routing to this fleet's one lane by kind. `false` if the lifecycle lane is full.
-    pub fn register_member(&self, descriptor: InterfaceDescriptor) -> bool {
-        self.lifecycle
-            .try_send(InterfaceLifecycle::Add { descriptor })
-            .is_ok()
-    }
-
-    /// Drop the member with this id: the reactor culls its routes and forgets its descriptor. The shared lane stays for the rest of the fleet. `false` if the lifecycle lane is full.
-    pub fn deregister_member(&self, id: InterfaceId) -> bool {
-        self.lifecycle
-            .try_send(InterfaceLifecycle::Remove { id })
-            .is_ok()
-    }
-
-    /// Funnel one inbound frame from peer `child` into the shared lane, tagged so the reactor ingests it as `child`'s, then announce the commit on the notify funnel. `false` if the lane is momentarily full (the frame drops, as a full lane does), so a slow reactor never stalls the medium read.
-    pub fn deliver_inbound(&mut self, child: InterfaceId, bytes: &[u8]) -> bool {
-        let Some(grant) = self.wire.inbound.try_grant() else {
-            return false;
-        };
-        grant.fill_for(child, bytes);
-        self.wire.inbound.commit();
-        let _ = self.wire.notify.try_send(child);
-        true
-    }
-
-    /// Park until the reactor grants an outbound frame, returning a copy plus its [`FrameTarget`]: the one peer it addresses, or the fan a fleet broadcast selects members by. The frame is copied out rather than borrowed, so the returned value owns nothing of the fleet (it can ride a `select` arm without a borrow clash), and the slot is released before returning, so the depth-1 lane refills at once and each frame is carried exactly once.
-    pub async fn next_outbound<const OUT: usize>(&mut self) -> (FrameTarget, HeaplessVec<u8, OUT>) {
-        self.wire.outbound.release();
-        let slot = self.wire.outbound.peek().await;
-        let target = slot.target;
-        let mut bytes: HeaplessVec<u8, OUT> = HeaplessVec::new();
-        let _ = bytes.extend_from_slice(slot.frame());
-        self.wire.outbound.release();
-        (target, bytes)
-    }
-
-    /// Park until the reactor commits an outbound frame onto this fleet's shared lane: the reactor signals every commit, rousing a waiting supervisor across the task boundary without depending on the lane's own consumer waker. On wake, drain with [`try_next_outbound`](Self::try_next_outbound) until `None`.
-    pub async fn outbound_ready(&self) {
-        self.wire.outbound_wake.wait().await;
-    }
-
-    /// Take the next outbound frame without parking; `None` when the lane is momentarily empty. The copy/release contract matches [`next_outbound`](Self::next_outbound). The signal-then-drain pair replaces awaiting the lane directly, so several frames committed before the supervisor runs all flush.
-    pub fn try_next_outbound<const OUT: usize>(
-        &mut self,
-    ) -> Option<(FrameTarget, HeaplessVec<u8, OUT>)> {
-        let slot = self.wire.outbound.try_peek()?;
-        let target = slot.target;
-        let mut bytes: HeaplessVec<u8, OUT> = HeaplessVec::new();
-        let _ = bytes.extend_from_slice(slot.frame());
-        self.wire.outbound.release();
-        Some((target, bytes))
     }
 }
 

@@ -95,7 +95,7 @@ use personal_rns::reactor::embassy::{
 use personal_rns::reactor::grant::FrameSlot;
 use personal_rns::reactor::interface_seam::{Interface, EMBEDDED_MAX_WIRE_FRAME_LEN};
 use personal_rns::runtime::{
-    CompletionPool, EmbassyInterfaceStore, Fleet, MemberWire, PreConfiguredDestination, PrnsEvent,
+    CompletionPool, EmbassyInterfaceStore, Fleet, FleetWire, PreConfiguredDestination, PrnsEvent,
     PrnsNode, PrnsNodeHandle, PrnsNodeRecipe, ReactorPlumbing, RequestHandlerRegistration,
 };
 use personal_rns::storage::StorageLayout;
@@ -813,7 +813,7 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
             .take()
             .expect("wifi fleet half");
         Fleet::new(
-            MemberWire {
+            FleetWire {
                 inbound: in_producer,
                 outbound: out_consumer,
                 notify: NOTIFY.sender(),
@@ -834,7 +834,7 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
         let (in_producer, out_consumer) =
             iface_halves[BLE_FLEET_SLOT].take().expect("ble fleet half");
         Fleet::new(
-            MemberWire {
+            FleetWire {
                 inbound: in_producer,
                 outbound: out_consumer,
                 notify: NOTIFY.sender(),

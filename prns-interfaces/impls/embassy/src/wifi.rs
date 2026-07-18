@@ -373,7 +373,8 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                     &mut peer_on_secondary,
                     &self.status,
                     &fleet,
-                );
+                )
+                .await;
                 Timer::after(BEACON_INTERVAL).await;
             }
             match select(
@@ -405,7 +406,8 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                                 &discovery_buf[..len],
                                 now_ms,
                                 false,
-                            );
+                            )
+                            .await;
                         }
                     }
                 }
@@ -474,7 +476,8 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                         &self.status,
                         &fleet,
                         now_ms,
-                    );
+                    )
+                    .await;
                 }
                 Either::First(Either4::Fourth((target, frame))) => {
                     if !frame.is_empty() {
@@ -527,7 +530,8 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                                 &sec_discovery_buf[..len],
                                 now_ms,
                                 true,
-                            );
+                            )
+                            .await;
                         }
                     }
                 }
@@ -566,7 +570,7 @@ async fn recv_or_pending(
     clippy::too_many_arguments,
     reason = "embedded serve-loop internals pass the loop's split-borrowed locals; bundling awaits an on-hardware validation pass"
 )]
-fn ingest_beacon<
+async fn ingest_beacon<
     M: RawMutex + 'static,
     const SLOT: usize,
     const MEMBERS: usize,
@@ -601,12 +605,14 @@ fn ingest_beacon<
         return;
     };
     let id = InterfaceId::from_channel_tag(InterfaceKind::WifiPeer, &addr.octets());
+    fleet
+        .register_member(core::descriptor(id, core::policy_for_bitrate(bitrate)))
+        .await;
     peers[slot] = Some(addr);
     ids[slot] = id;
     peer_on_secondary[slot] = on_secondary;
     status.member(slot).assign(id);
     status.republish_peer_count();
-    fleet.register_member(core::descriptor(id, core::policy_for_bitrate(bitrate)));
 }
 
 fn route_inbound<
@@ -634,7 +640,7 @@ fn route_inbound<
     }
 }
 
-fn clear_members<
+async fn clear_members<
     M: RawMutex + 'static,
     const SLOT: usize,
     const MEMBERS: usize,
@@ -652,7 +658,7 @@ fn clear_members<
         if peers[slot].is_none() {
             continue;
         }
-        fleet.deregister_member(ids[slot]);
+        fleet.deregister_member(ids[slot]).await;
         peers[slot] = None;
         peer_on_secondary[slot] = false;
         status.member(slot).retire();
@@ -663,7 +669,7 @@ fn clear_members<
     }
 }
 
-fn retire_stale<
+async fn retire_stale<
     M: RawMutex + 'static,
     const SLOT: usize,
     const MEMBERS: usize,
@@ -686,7 +692,7 @@ fn retire_stale<
         if brain.known_peer_addresses().any(|known| known == addr) {
             continue;
         }
-        fleet.deregister_member(ids[slot]);
+        fleet.deregister_member(ids[slot]).await;
         peers[slot] = None;
         peer_on_secondary[slot] = false;
         status.member(slot).retire();

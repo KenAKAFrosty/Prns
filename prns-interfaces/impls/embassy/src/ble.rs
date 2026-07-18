@@ -526,8 +526,9 @@ async fn apply_one<
     match action {
         ManagerAction::Dial(address) => backend.dial(address).await,
         ManagerAction::Evict { slot, .. } => {
-            if let Some(member) = members[slot].take() {
-                fleet.deregister_member(member.id);
+            if let Some(id) = members[slot].as_ref().map(|member| member.id) {
+                fleet.deregister_member(id).await;
+                let _ = members[slot].take();
                 status.member(slot).retire();
                 status.republish_peer_count();
             }
@@ -583,8 +584,11 @@ async fn disable_members<
     let _ = backend.set_scanning(false).await;
     let mut changed = false;
     for (slot, entry) in members.iter_mut().enumerate() {
-        if let Some(member) = entry.take() {
-            fleet.deregister_member(member.id);
+        if let Some(id) = entry.as_ref().map(|member| member.id) {
+            fleet.deregister_member(id).await;
+            let Some(member) = entry.take() else {
+                continue;
+            };
             status.member(slot).retire();
             backend.on_link_closed(member.address).await;
             changed = true;
@@ -613,10 +617,13 @@ async fn close_member<
     backend: &mut B,
     members: &mut [Option<Active<B::Link>>; MEMBERS],
 ) {
+    let Some(id) = members[slot].as_ref().map(|member| member.id) else {
+        return;
+    };
+    fleet.deregister_member(id).await;
     let Some(member) = members[slot].take() else {
         return;
     };
-    fleet.deregister_member(member.id);
     status.member(slot).retire();
     status.republish_peer_count();
     manager.handle(
@@ -814,9 +821,9 @@ async fn settle_into_fleet<
                         InterfaceKind::BluetoothPeer,
                         identity.as_bytes(),
                     );
+                    fleet.register_member(core::descriptor(id, bitrate)).await;
                     status.member(slot).assign(id);
                     status.republish_peer_count();
-                    let _ = fleet.register_member(core::descriptor(id, bitrate));
                     members[slot] = Some(Active {
                         identity,
                         id,
