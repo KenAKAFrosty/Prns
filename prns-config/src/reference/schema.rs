@@ -19,6 +19,9 @@ pub(super) enum ValueKind {
     LogLevel,
     SharedInstanceType,
     HexBytes,
+    RnodeMultiVport,
+    RnodeMultiFrequency,
+    RnodeMultiTxPower,
 }
 
 impl ValueKind {
@@ -49,6 +52,11 @@ impl ValueKind {
             ValueKind::LogLevel => "an integer from 0 through 7",
             ValueKind::SharedInstanceType => "tcp or unix",
             ValueKind::HexBytes => "an even-length hexadecimal byte string",
+            ValueKind::RnodeMultiVport => "an integer from 0 through 10",
+            ValueKind::RnodeMultiFrequency => {
+                "137000000 through 1000000000 Hz, or 2200000000 through 2600000000 Hz"
+            }
+            ValueKind::RnodeMultiTxPower => "an integer from -9 through 37 dBm",
         }
     }
 
@@ -71,6 +79,9 @@ impl ValueKind {
             ValueKind::LogLevel => "4",
             ValueKind::SharedInstanceType => "tcp",
             ValueKind::HexBytes => "00112233aabbccdd",
+            ValueKind::RnodeMultiVport => "0",
+            ValueKind::RnodeMultiFrequency => "868000000",
+            ValueKind::RnodeMultiTxPower => "7",
         }
     }
 }
@@ -189,6 +200,7 @@ pub(super) const SUPPORTED_INTERFACES: &[&str] = &[
     "KISSInterface",
     "AX25KISSInterface",
     "RNodeInterface",
+    "RNodeMultiInterface",
     "PipeInterface",
     "BackboneInterface",
     "BackboneClientInterface",
@@ -288,6 +300,7 @@ fn medium_interface_key_rule(type_name: &str, key: &str) -> Option<KeyRule> {
         "KISSInterface" => kiss_interface_key_rule(key),
         "AX25KISSInterface" => ax25_kiss_interface_key_rule(key),
         "RNodeInterface" => rnode_interface_key_rule(key),
+        "RNodeMultiInterface" => rnode_multi_interface_key_rule(key),
         "PipeInterface" => pipe_interface_key_rule(key),
         "BackboneInterface" | "BackboneClientInterface" => backbone_interface_key_rule(key),
         "I2PInterface" => i2p_interface_key_rule(key),
@@ -418,6 +431,38 @@ fn rnode_interface_key_rule(key: &str) -> Option<KeyRule> {
     }
 }
 
+fn rnode_multi_interface_key_rule(key: &str) -> Option<KeyRule> {
+    match key {
+        interface_key::PORT | interface_key::ID_CALLSIGN => {
+            Some(KeyRule::Validate(ValueKind::String))
+        }
+        interface_key::ID_INTERVAL => Some(KeyRule::Validate(ValueKind::U64)),
+        _ => None,
+    }
+}
+
+pub(super) fn rnode_multi_subinterface_key_rule(key: &str) -> Option<KeyRule> {
+    match key {
+        interface_key::INTERFACE_ENABLED | interface_key::ENABLED => {
+            Some(KeyRule::Validate(ValueKind::Bool))
+        }
+        interface_key::VPORT => Some(KeyRule::Validate(ValueKind::RnodeMultiVport)),
+        interface_key::FREQUENCY => Some(KeyRule::Validate(ValueKind::RnodeMultiFrequency)),
+        interface_key::TXPOWER => Some(KeyRule::Validate(ValueKind::RnodeMultiTxPower)),
+        interface_key::BANDWIDTH => Some(KeyRule::Validate(ValueKind::U32)),
+        interface_key::SPREADINGFACTOR | interface_key::CODINGRATE => {
+            Some(KeyRule::Validate(ValueKind::U8))
+        }
+        interface_key::FLOW_CONTROL | interface_key::OUTGOING => {
+            Some(KeyRule::Validate(ValueKind::Bool))
+        }
+        interface_key::AIRTIME_LIMIT_SHORT | interface_key::AIRTIME_LIMIT_LONG => {
+            Some(KeyRule::Validate(ValueKind::F64))
+        }
+        _ => None,
+    }
+}
+
 fn pipe_interface_key_rule(key: &str) -> Option<KeyRule> {
     match key {
         interface_key::COMMAND => Some(KeyRule::Validate(ValueKind::String)),
@@ -464,6 +509,7 @@ pub(super) fn known_interface_keys(type_name: &str) -> Vec<&'static str> {
         "KISSInterface" => interface_key::KISS,
         "AX25KISSInterface" => interface_key::AX25_KISS,
         "RNodeInterface" => interface_key::RNODE,
+        "RNodeMultiInterface" => interface_key::RNODE_MULTI,
         "PipeInterface" => interface_key::PIPE,
         "BackboneInterface" | "BackboneClientInterface" => interface_key::BACKBONE,
         "I2PInterface" => interface_key::I2P,

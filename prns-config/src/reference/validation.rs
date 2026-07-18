@@ -21,7 +21,7 @@ use super::schema::{
 pub(super) struct ValidationWarnings(Vec<ConfigDiagnostic>);
 
 impl ValidationWarnings {
-    fn push(&mut self, diagnostic: ConfigDiagnostic) {
+    pub(super) fn push(&mut self, diagnostic: ConfigDiagnostic) {
         assert_eq!(diagnostic.severity(), ConfigSeverity::Warning);
         self.0.push(diagnostic);
     }
@@ -32,10 +32,10 @@ impl ValidationWarnings {
 }
 
 #[derive(Default)]
-struct ValidationErrorCollector(Vec<ConfigDiagnostic>);
+pub(super) struct ValidationErrorCollector(Vec<ConfigDiagnostic>);
 
 impl ValidationErrorCollector {
-    fn push(&mut self, diagnostic: ConfigDiagnostic) {
+    pub(super) fn push(&mut self, diagnostic: ConfigDiagnostic) {
         assert_eq!(diagnostic.severity(), ConfigSeverity::Error);
         self.0.push(diagnostic);
     }
@@ -348,11 +348,13 @@ fn validate_interface(
     errors: &mut ValidationErrorCollector,
 ) {
     let interface_path = format!("[interfaces] > [[{name}]]");
+    let interface_source_path = [section_key::INTERFACES, name];
     let type_key = interface_key::TYPE;
     let enabled_key = interface_key::ENABLED;
     let enabled = validate_alias_group(
         source,
-        name,
+        &interface_source_path,
+        &interface_path,
         section,
         locations,
         interface_key::INTERFACE_ENABLED,
@@ -403,7 +405,8 @@ fn validate_interface(
 
     validate_alias_group(
         source,
-        name,
+        &interface_source_path,
+        &interface_path,
         section,
         locations,
         interface_key::INTERFACE_MODE,
@@ -414,7 +417,8 @@ fn validate_interface(
     );
     validate_alias_group(
         source,
-        name,
+        &interface_source_path,
+        &interface_path,
         section,
         locations,
         interface_key::NETWORK_NAME,
@@ -425,7 +429,8 @@ fn validate_interface(
     );
     validate_alias_group(
         source,
-        name,
+        &interface_source_path,
+        &interface_path,
         section,
         locations,
         interface_key::PASS_PHRASE,
@@ -616,7 +621,7 @@ fn validate_interface(
 
     validate_medium_requirements(source, name, type_name, section, locations, errors);
 
-    if type_name == "RNodeInterface" {
+    if matches!(type_name, "RNodeInterface" | "RNodeMultiInterface") {
         let port_key = interface_key::PORT;
         if let Some((_, value)) = section.scalars.iter().find(|(key, _)| key == port_key) {
             if let Some(port) = value.as_scalar() {
@@ -642,17 +647,23 @@ fn validate_interface(
         }
     }
 
-    for (child, _) in &section.sections {
-        warnings.push(ConfigDiagnostic::new(
-            ConfigDiagnosticCode::UnknownSection,
-            source,
-            location(locations, &[section_key::INTERFACES, name, child]),
-            format!("{interface_path} > [[[{child}]]]"),
-            Some(child.clone()),
-            "nested interface sections are not supported by this interface type",
-            None,
-            format!("remove [[[{child}]]] from [[{name}]]"),
-        ));
+    if type_name == "RNodeMultiInterface" {
+        super::rnode_multi::validate_subinterfaces(
+            source, name, section, locations, warnings, errors,
+        );
+    } else {
+        for (child, _) in &section.sections {
+            warnings.push(ConfigDiagnostic::new(
+                ConfigDiagnosticCode::UnknownSection,
+                source,
+                location(locations, &[section_key::INTERFACES, name, child]),
+                format!("{interface_path} > [[[{child}]]]"),
+                Some(child.clone()),
+                "nested interface sections are not supported by this interface type",
+                None,
+                format!("remove [[[{child}]]] from [[{name}]]"),
+            ));
+        }
     }
 }
 
@@ -832,6 +843,23 @@ fn validate_medium_requirements(
             ] {
                 require_setting(&context, required, errors);
             }
+            validate_station_identification(&context, errors);
+            validate_rnode_station_callsign(&context, errors);
+        }
+        "RNodeMultiInterface" => {
+            require_setting(
+                &context,
+                RequiredSetting {
+                    primary: interface_key::PORT,
+                    alternatives: &[],
+                    accepted: "a local serial device path",
+                    correction: format!(
+                        "add `{} = /dev/ttyUSB0` under [[{interface}]]",
+                        interface_key::PORT
+                    ),
+                },
+                errors,
+            );
             validate_station_identification(&context, errors);
             validate_rnode_station_callsign(&context, errors);
         }
@@ -1131,9 +1159,10 @@ fn missing_setting(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn validate_alias_group(
+pub(super) fn validate_alias_group(
     source: &str,
-    interface: &str,
+    source_path: &[&str],
+    display_path: &str,
     section: &Section,
     locations: &SourceLocations,
     canonical: &str,
@@ -1151,8 +1180,8 @@ fn validate_alias_group(
             Ok(normalized) => values.push((*key, value, normalized)),
             Err(()) => validate_value(
                 source,
-                location(locations, &[section_key::INTERFACES, interface, key]),
-                format!("[interfaces] > [[{interface}]] > {key}"),
+                setting_location(locations, source_path, key),
+                format!("{display_path} > {key}"),
                 key,
                 value,
                 kind,
@@ -1182,8 +1211,8 @@ fn validate_alias_group(
         let diagnostic = ConfigDiagnostic::new(
             code,
             source,
-            location(locations, &[section_key::INTERFACES, interface, second.0]),
-            format!("[interfaces] > [[{interface}]] > {canonical}"),
+            setting_location(locations, source_path, second.0),
+            format!("{display_path} > {canonical}"),
             Some(format!(
                 "{} = {}; {} = {}",
                 first.0,
@@ -1258,7 +1287,7 @@ fn compare_alias_pair(
     }
 }
 
-fn validate_value(
+pub(super) fn validate_value(
     source: &str,
     line: usize,
     path: String,
@@ -1275,7 +1304,7 @@ fn validate_value(
     };
     if i2p_error.is_none()
         && normalized_value(value, kind).is_ok()
-        && semantic_value_is_valid(key, value)
+        && semantic_value_is_valid(key, value, kind)
     {
         return;
     }
@@ -1295,6 +1324,12 @@ fn validate_value(
 }
 
 fn accepted_for_key(key: &str, kind: ValueKind) -> String {
+    match kind {
+        ValueKind::RnodeMultiVport
+        | ValueKind::RnodeMultiFrequency
+        | ValueKind::RnodeMultiTxPower => return kind.accepted().to_string(),
+        _ => {}
+    }
     match key {
         interface_key::IFAC_SIZE => format!(
             "an integer from 0 through {} bits",
@@ -1366,6 +1401,12 @@ fn accepted_for_key(key: &str, kind: ValueKind) -> String {
 }
 
 fn example_for_key(key: &str, kind: ValueKind) -> &'static str {
+    match kind {
+        ValueKind::RnodeMultiVport
+        | ValueKind::RnodeMultiFrequency
+        | ValueKind::RnodeMultiTxPower => return kind.example(),
+        _ => {}
+    }
     match key {
         interface_key::IFAC_SIZE => "64",
         interface_key::ANNOUNCE_CAP => "2.0",
@@ -1399,10 +1440,13 @@ fn example_for_key(key: &str, kind: ValueKind) -> &'static str {
     }
 }
 
-fn semantic_value_is_valid(key: &str, value: &Value) -> bool {
+fn semantic_value_is_valid(key: &str, value: &Value, kind: ValueKind) -> bool {
     let Some(text) = value.as_scalar() else {
         return true;
     };
+    if let Some(valid) = super::rnode_multi::semantic_value_is_valid(kind, text) {
+        return valid;
+    }
     match key {
         interface_key::IFAC_SIZE => {
             parse_integer::<u32>(text).is_ok_and(|value| value <= (IFAC_MAX_SIZE * 8 + 7) as u32)
@@ -1563,6 +1607,9 @@ fn normalized_value(value: &Value, kind: ValueKind) -> Result<String, ()> {
             }
             text.to_ascii_lowercase()
         }
+        ValueKind::RnodeMultiVport => parse_integer::<u8>(text)?.to_string(),
+        ValueKind::RnodeMultiFrequency => parse_integer::<u64>(text)?.to_string(),
+        ValueKind::RnodeMultiTxPower => parse_integer::<i16>(text)?.to_string(),
     };
     Ok(normalized)
 }
@@ -1581,7 +1628,7 @@ fn parse_float(text: &str) -> Result<f64, ()> {
     cleaned.parse::<f64>().map_err(|_| ())
 }
 
-fn unknown_key(
+pub(super) fn unknown_key(
     source: &str,
     line: usize,
     path: String,
@@ -1630,8 +1677,18 @@ fn edit_distance(left: &str, right: &str) -> usize {
     previous[right.chars().count()]
 }
 
-fn location(locations: &SourceLocations, path: &[&str]) -> usize {
+pub(super) fn location(locations: &SourceLocations, path: &[&str]) -> usize {
     locations.line(path.iter().copied()).unwrap_or(1)
+}
+
+pub(super) fn setting_location(
+    locations: &SourceLocations,
+    source_path: &[&str],
+    key: &str,
+) -> usize {
+    let mut path = source_path.to_vec();
+    path.push(key);
+    location(locations, &path)
 }
 
 fn value_text(value: &Value) -> String {

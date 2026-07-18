@@ -279,6 +279,21 @@ pub(crate) mod interface {
         AIRTIME_LIMIT_SHORT,
         AIRTIME_LIMIT_LONG,
     ];
+    pub const RNODE_MULTI: &[&str] = &[PORT, ID_CALLSIGN, ID_INTERVAL];
+    pub const RNODE_MULTI_SUBINTERFACE: &[&str] = &[
+        INTERFACE_ENABLED,
+        ENABLED,
+        VPORT,
+        FREQUENCY,
+        BANDWIDTH,
+        SPREADINGFACTOR,
+        CODINGRATE,
+        TXPOWER,
+        FLOW_CONTROL,
+        AIRTIME_LIMIT_SHORT,
+        AIRTIME_LIMIT_LONG,
+        OUTGOING,
+    ];
     pub const PIPE: &[&str] = &[COMMAND, RESPAWN_DELAY];
     pub const BACKBONE: &[&str] = &[
         LISTEN_IP,

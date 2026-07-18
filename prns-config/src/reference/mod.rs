@@ -2,6 +2,7 @@ pub(crate) mod i2p;
 mod interpret;
 pub(crate) mod keys;
 mod parse;
+mod rnode_multi;
 mod schema;
 mod types;
 mod validation;
