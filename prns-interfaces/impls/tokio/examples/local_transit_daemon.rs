@@ -81,10 +81,8 @@ async fn main() {
     );
 
     let secret = Zeroizing::new([0xD1u8; IDENTITY_SECRET_KEY_LEN]);
-    let credentials = SharedInstanceCredentials {
-        rpc_key: rpc_key.to_vec(),
-        ..SharedInstanceCredentials::from_identity_secret(&secret)
-    };
+    let credentials =
+        SharedInstanceCredentials::from_identity_secret(&secret).with_rpc_key(rpc_key.to_vec());
 
     let node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: Some(secret),

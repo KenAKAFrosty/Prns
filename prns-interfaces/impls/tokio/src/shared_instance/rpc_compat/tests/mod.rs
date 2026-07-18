@@ -2,10 +2,13 @@ use std::string::String;
 use std::vec::Vec;
 
 use prns_core::crypto::{hmac_sha256, hmac_sha256_verify};
-use prns_core::identity::in_memory::InMemoryNodeIdentity;
 use prns_core::identity::{
-    IdentityHash, IdentitySigner, MarkDestinationUsedOutcome, ReleaseDestinationOutcome,
-    RetainDestinationOutcome, RetainIdentityOutcome, IDENTITY_SECRET_KEY_LEN,
+    IdentityHash, MarkDestinationUsedOutcome, ReleaseDestinationOutcome, RetainDestinationOutcome,
+    RetainIdentityOutcome,
+};
+use prns_core::interfaces::shared_instance::rns_rpc::{
+    RpcAuthenticationControlMessage, RpcAuthenticationKey, RpcChallengeNonce, RpcDigest,
+    AUTHENTICATION_FRAME_MAX_LENGTH, LEGACY_MD5_MESSAGE_LENGTH,
 };
 use prns_core::interfaces::{
     ConnectionState, InterfaceId, PacketPhyStats, RssiDbm, SignalQualityTenthsPercent, SnrQuarterDb,
@@ -28,15 +31,9 @@ use prns_runtime::runtime::{
 use rmpv::Value;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 
-use super::authentication::{
-    create_response, deliver_our_challenge, response_authenticates, Digest,
-    SharedInstanceCredentials, CHALLENGE, CHALLENGE_NONCE_LEN, DIGEST_PREFIX, FAILURE,
-    LEGACY_MD5_DIGEST_LEN, LEGACY_MD5_MESSAGE_LEN, WELCOME,
-};
+use super::authentication::{deliver_our_challenge, SharedInstanceCredentials};
 use super::dispatch::reply_for_decoded;
-use super::framing::{
-    read_auth_frame, read_frame, write_frame, write_frame_header, AUTH_FRAME_MAX_LEN,
-};
+use super::framing::{read_auth_frame, read_frame, write_frame, write_frame_header};
 use super::protocol::{RpcRequest, RpcVerb};
 use super::reply::encode_msgpack;
 use super::request::{self, RnsRpcRequest};

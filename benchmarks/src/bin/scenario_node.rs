@@ -706,7 +706,7 @@ async fn join_bus(commands: &PrnsNodeHandle, port: u16) {
     let role = join_shared_instance(
         commands,
         SharedInstanceIntent {
-            blackhole_source: credentials.transport_identity_hash,
+            blackhole_source: credentials.transport_identity_hash(),
             credentials,
             blackhole_files: RnsBlackholeFiles::new(
                 std::env::temp_dir().join(std::format!("prns-scenario-{port}-blackhole")),

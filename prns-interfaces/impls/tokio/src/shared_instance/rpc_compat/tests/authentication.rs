@@ -1,19 +1,5 @@
 use super::*;
 
-#[test]
-fn credentials_derive_authentication_and_transport_authority_together() {
-    let secret = [0x42; IDENTITY_SECRET_KEY_LEN];
-    let identity = InMemoryNodeIdentity::from_secret_key_bytes(&secret);
-
-    assert_eq!(
-        SharedInstanceCredentials::from_identity_secret(&secret),
-        SharedInstanceCredentials {
-            rpc_key: prns_core::crypto::sha256(&secret).to_vec(),
-            transport_identity_hash: identity.identity_hash(),
-        }
-    );
-}
-
 #[tokio::test]
 async fn a_modern_sha256_client_completes_the_mutual_auth_and_gets_a_reply() {
     let rpc_key = [0x5au8; 32];
@@ -130,17 +116,36 @@ async fn a_legacy_md5_client_without_a_digest_prefix_still_authenticates() {
     });
 
     let server_challenge = read_frame_dup(&mut client).await;
-    let server_message = server_challenge.strip_prefix(CHALLENGE).unwrap();
-    write_frame_dup(&mut client, &Digest::Md5.mac(&rpc_key, server_message)).await;
-    assert_eq!(read_frame_dup(&mut client).await, WELCOME);
+    let server_message = server_challenge.strip_prefix(b"#CHALLENGE#").unwrap();
+    let authentication_key = RpcAuthenticationKey::new(rpc_key.to_vec());
+    write_frame_dup(
+        &mut client,
+        &RpcDigest::Md5
+            .message_authentication_code(&authentication_key, server_message)
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(
+        read_frame_dup(&mut client).await,
+        RpcAuthenticationControlMessage::Welcome.wire_payload()
+    );
 
-    let our_message = [0x22u8; LEGACY_MD5_MESSAGE_LEN];
-    let mut our_challenge = CHALLENGE.to_vec();
+    let our_message = [0x22u8; LEGACY_MD5_MESSAGE_LENGTH];
+    let mut our_challenge = b"#CHALLENGE#".to_vec();
     our_challenge.extend_from_slice(&our_message);
     write_frame_dup(&mut client, &our_challenge).await;
     let server_reply = read_frame_dup(&mut client).await;
-    assert_eq!(server_reply, Digest::Md5.mac(&rpc_key, &our_message));
-    write_frame_dup(&mut client, WELCOME).await;
+    assert_eq!(
+        server_reply,
+        RpcDigest::Md5
+            .message_authentication_code(&authentication_key, &our_message)
+            .unwrap()
+    );
+    write_frame_dup(
+        &mut client,
+        RpcAuthenticationControlMessage::Welcome.wire_payload(),
+    )
+    .await;
 
     write_frame_dup(&mut client, b"{'get': 'packet_rssi'}").await;
     assert_eq!(read_frame_dup(&mut client).await, b"N.");
@@ -154,34 +159,13 @@ async fn a_legacy_md5_client_without_a_digest_prefix_still_authenticates() {
     assert_eq!(snapshot.get_phy_stats, 1);
 }
 
-#[test]
-fn explicit_md5_digest_messages_are_supported_and_bad_macs_fail() {
-    let rpc_key = [0x5au8; 32];
-    let mut md5_message = b"{md5}".to_vec();
-    md5_message.extend_from_slice(b"client nonce");
-
-    let response = create_response(&rpc_key, &md5_message).unwrap();
-    let mac = response.strip_prefix(b"{md5}").unwrap();
-    assert!(Digest::Md5.verify(&rpc_key, &md5_message, mac));
-    assert!(response_authenticates(&rpc_key, &md5_message, &response));
-
-    let mut bad_md5 = b"{md5}".to_vec();
-    bad_md5.extend_from_slice(&[0u8; LEGACY_MD5_DIGEST_LEN]);
-    assert!(!response_authenticates(&rpc_key, &md5_message, &bad_md5));
-
-    let mut sha_message = DIGEST_PREFIX.to_vec();
-    sha_message.extend_from_slice(b"server nonce");
-    let mut bad_sha = DIGEST_PREFIX.to_vec();
-    bad_sha.extend_from_slice(&[0u8; 32]);
-    assert!(!response_authenticates(&rpc_key, &sha_message, &bad_sha));
-}
-
 #[tokio::test]
 async fn deliver_our_challenge_rejects_a_bad_client_mac() {
     let rpc_key = [0x5au8; 32];
+    let authentication_key = RpcAuthenticationKey::new(rpc_key.to_vec());
     let (mut client, mut server) = tokio::io::duplex(8192);
     let server_task =
-        tokio::spawn(async move { deliver_our_challenge(&mut server, &rpc_key).await });
+        tokio::spawn(async move { deliver_our_challenge(&mut server, &authentication_key).await });
 
     let challenge = tokio::time::timeout(
         std::time::Duration::from_secs(1),
@@ -189,9 +173,9 @@ async fn deliver_our_challenge_rejects_a_bad_client_mac() {
     )
     .await
     .expect("server sends a challenge before authenticating");
-    assert!(challenge.starts_with(CHALLENGE));
+    assert!(challenge.starts_with(b"#CHALLENGE#"));
 
-    let mut bad_response = DIGEST_PREFIX.to_vec();
+    let mut bad_response = b"{sha256}".to_vec();
     bad_response.extend_from_slice(&[0u8; 32]);
     write_frame_dup(&mut client, &bad_response).await;
 
@@ -201,6 +185,9 @@ async fn deliver_our_challenge_rejects_a_bad_client_mac() {
     )
     .await
     .expect("server rejects a bad response with #FAILURE#");
-    assert_eq!(failure, FAILURE);
+    assert_eq!(
+        failure,
+        RpcAuthenticationControlMessage::Failure.wire_payload()
+    );
     assert!(!server_task.await.unwrap().unwrap());
 }

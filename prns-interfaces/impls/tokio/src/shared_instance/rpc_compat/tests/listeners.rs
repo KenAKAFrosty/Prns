@@ -55,21 +55,29 @@ async fn tcp_run_accepts_a_modern_client_connection() {
     let mut client = stream.expect("RPC listener accepts loopback clients");
 
     let server_challenge = read_test_frame(&mut client).await;
-    let server_message = server_challenge.strip_prefix(CHALLENGE).unwrap();
-    let mut response = DIGEST_PREFIX.to_vec();
+    let server_message = server_challenge.strip_prefix(b"#CHALLENGE#").unwrap();
+    let mut response = b"{sha256}".to_vec();
     response.extend_from_slice(&hmac_sha256(&rpc_key, server_message));
     write_frame(&mut client, &response).await.unwrap();
-    assert_eq!(read_test_frame(&mut client).await, WELCOME);
+    assert_eq!(
+        read_test_frame(&mut client).await,
+        RpcAuthenticationControlMessage::Welcome.wire_payload()
+    );
 
-    let mut our_msg = DIGEST_PREFIX.to_vec();
-    our_msg.extend_from_slice(&[0x44u8; CHALLENGE_NONCE_LEN]);
-    let mut our_challenge = CHALLENGE.to_vec();
+    let mut our_msg = b"{sha256}".to_vec();
+    our_msg.extend_from_slice(&[0x44u8; RpcChallengeNonce::LENGTH]);
+    let mut our_challenge = b"#CHALLENGE#".to_vec();
     our_challenge.extend_from_slice(&our_msg);
     write_frame(&mut client, &our_challenge).await.unwrap();
     let server_reply = read_test_frame(&mut client).await;
-    let server_mac = server_reply.strip_prefix(DIGEST_PREFIX).unwrap();
+    let server_mac = server_reply.strip_prefix(b"{sha256}").unwrap();
     assert!(hmac_sha256_verify(&rpc_key, &our_msg, server_mac).is_ok());
-    write_frame(&mut client, WELCOME).await.unwrap();
+    write_frame(
+        &mut client,
+        RpcAuthenticationControlMessage::Welcome.wire_payload(),
+    )
+    .await
+    .unwrap();
 
     write_frame(&mut client, b"\x81\xa3get\xaalink_count")
         .await

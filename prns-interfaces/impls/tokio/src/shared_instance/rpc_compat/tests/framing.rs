@@ -2,14 +2,14 @@ use super::*;
 
 #[tokio::test]
 async fn authentication_frame_reader_enforces_the_cpython_limit() {
-    let max_payload = std::vec![0x42; AUTH_FRAME_MAX_LEN];
-    let (mut client, mut server) = tokio::io::duplex(AUTH_FRAME_MAX_LEN + 16);
+    let max_payload = std::vec![0x42; AUTHENTICATION_FRAME_MAX_LENGTH];
+    let (mut client, mut server) = tokio::io::duplex(AUTHENTICATION_FRAME_MAX_LENGTH + 16);
     write_frame_dup(&mut client, &max_payload).await;
     assert_eq!(read_auth_frame(&mut server).await.unwrap(), max_payload);
 
     let (mut client, mut server) = tokio::io::duplex(16);
     client
-        .write_all(&((AUTH_FRAME_MAX_LEN + 1) as i32).to_be_bytes())
+        .write_all(&((AUTHENTICATION_FRAME_MAX_LENGTH + 1) as i32).to_be_bytes())
         .await
         .unwrap();
     client.flush().await.unwrap();

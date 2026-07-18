@@ -203,10 +203,8 @@ fn run_node(
     runtime.block_on(async move {
         let transport_secret = identity_secret_key.clone();
         let rpc_key = rpc_key_from_rns_identity(&reticulum_storage_dir(), &identity_secret_key[..]);
-        let credentials = SharedInstanceCredentials {
-            rpc_key: rpc_key.to_vec(),
-            ..SharedInstanceCredentials::from_identity_secret(&identity_secret_key)
-        };
+        let credentials = SharedInstanceCredentials::from_identity_secret(&identity_secret_key)
+            .with_rpc_key(rpc_key.to_vec());
 
         let announce_destination = PreConfiguredDestination::Single {
             resource_strategy:
