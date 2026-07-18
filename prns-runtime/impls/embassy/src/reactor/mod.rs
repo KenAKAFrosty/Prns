@@ -4,4 +4,5 @@ pub use prns_runtime::reactor::{
 };
 
 pub mod driver;
+mod grant_lane;
 pub mod timebase;

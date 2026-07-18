@@ -5,11 +5,11 @@ use crate::engine::test_support::{
 };
 use crate::engine::RouteRemovalCause;
 use crate::interfaces::{
-    AnnounceBandwidthCap, BitrateBps, EgressCapability, IngressCapability, InterfaceCapabilities,
-    InterfaceMode, RssiDbm, SignalQualityTenthsPercent, SnrQuarterDb, TransportCapability,
+    AirtimeUtilization, AnnounceBandwidthCap, BitrateBps, ConnectionState, EgressCapability,
+    IngressCapability, InterfaceCapabilities, InterfaceMode, InterfaceStatus, RssiDbm,
+    SignalQualityTenthsPercent, SnrQuarterDb, TransportCapability,
 };
-use crate::reactor::interface_seam::Interface;
-use crate::reactor::interface_seam::MAX_WIRE_FRAME_LEN;
+use crate::reactor::interface_seam::{Interface, InterfaceSeam, MAX_WIRE_FRAME_LEN};
 use crate::runtime::{PrnsNodeHandle, RoutingControl};
 use crate::wire::{PacketType, WirePacketHeader};
 

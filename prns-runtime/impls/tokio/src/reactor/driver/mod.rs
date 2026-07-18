@@ -1,7 +1,7 @@
 use core::cell::{Cell, RefCell};
-use prns_core::interfaces::{IndexedAttachedInterfaces, InterfaceOriginKind};
+use prns_core::interfaces::IndexedAttachedInterfaces;
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
@@ -29,16 +29,12 @@ use crate::identity::{
 };
 use crate::interfaces::ifac::InterfaceIfac;
 use crate::interfaces::{
-    AirtimeUtilization, ConnectionState, ConnectionView, FrameSink, InboundPacket,
-    InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceStatus, PacketPhyStats,
-    TransferRates,
+    ConnectionView, InboundPacket, InterfaceDescriptor, InterfaceId, InterfaceKind, PacketPhyStats,
 };
 #[cfg(feature = "runtime-metrics")]
 use crate::reactor::announce_pacer::PacerOffer;
 use crate::reactor::announce_pacer::{AnnouncePacer, HeapPacerQueue};
-use crate::reactor::interface_seam::{
-    frame_cap_for, InterfaceSeam, BROADCAST_WIRE_FRAME_LEN, MAX_WIRE_FRAME_LEN,
-};
+use crate::reactor::interface_seam::{frame_cap_for, BROADCAST_WIRE_FRAME_LEN, MAX_WIRE_FRAME_LEN};
 use crate::reactor::kernel::{
     fire_due_reason, merge_wake_schedules_delta, route_reaction as route_engine_reaction,
     AnnounceDirective, DirectiveEgress,
@@ -85,16 +81,18 @@ use crate::units::RttMillis;
 use crate::wire::{DestinationHash, TransportId};
 use heapless::Vec as HeaplessVec;
 
+mod host;
+mod interface_seam;
+mod interface_status;
+
 pub use super::grant_lane::{
     tokio_grant_lane, HeapFrameSlot, TokioGrantConsumer, TokioGrantProducer,
 };
+pub use host::TokioHost;
+pub use interface_seam::TokioInterfaceSeam;
+pub use interface_status::TokioInterfaceStatus;
 
-const MAX_TIMER_ARM_MILLIS: u64 = 24 * 60 * 60 * 1_000;
-
-fn bounded_timer_deadline(now: Instant, logical_now: InstantMillis, at: InstantMillis) -> Instant {
-    let delay = at.0.saturating_sub(logical_now.0).min(MAX_TIMER_ARM_MILLIS);
-    now.checked_add(Duration::from_millis(delay)).unwrap_or(now)
-}
+use host::bounded_timer_deadline;
 
 fn retain_packet_phy(
     store: Option<&InterfaceStore>,
@@ -108,148 +106,6 @@ fn retain_packet_phy(
         return;
     };
     store.remember_packet_phy(packet_hash, packet_phy);
-}
-
-#[derive(Clone)]
-pub struct TokioHost {
-    base: Instant,
-    logical_start: InstantMillis,
-}
-
-impl TokioHost {
-    #[must_use]
-    pub fn new() -> Self {
-        Self::start_at(InstantMillis(0))
-    }
-
-    /// Mirrors `EmbassyTimebase::start_at`: the logical timeline resumes from `logical_start` instead of zero, so persisted timestamps stay in this boot's past.
-    #[must_use]
-    pub fn start_at(logical_start: InstantMillis) -> Self {
-        Self {
-            base: Instant::now(),
-            logical_start,
-        }
-    }
-}
-
-impl Default for TokioHost {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Host for TokioHost {
-    fn now(&self) -> InstantMillis {
-        let elapsed = u64::try_from(self.base.elapsed().as_millis()).unwrap_or(u64::MAX);
-        InstantMillis(self.logical_start.0.saturating_add(elapsed))
-    }
-
-    async fn sleep_until(&self, deadline: InstantMillis) {
-        loop {
-            let remaining = deadline.0.saturating_sub(self.now().0);
-            if remaining == 0 {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(remaining.min(MAX_TIMER_ARM_MILLIS))).await;
-        }
-    }
-
-    #[allow(clippy::expect_used)]
-    fn fill_entropy(&mut self, bytes: &mut [u8]) {
-        getrandom::getrandom(bytes).expect("OS CSPRNG must provide reactor entropy");
-    }
-}
-
-/// The tokio side of one interface's seam: `next_inbound` frames funnel into the reactor's one inbound stream (tagged with this interface's id), and `next_outbound` parks on this interface's own outbound queue until the reactor enqueues a frame for it.
-pub struct TokioInterfaceSeam {
-    id: InterfaceId,
-    origin: InterfaceOriginKind,
-    inbound: TokioGrantProducer,
-    notify: UnboundedSender<InterfaceId>,
-    outbound: TokioGrantConsumer,
-    commands: Option<UnboundedSender<HostCommand>>,
-}
-
-impl TokioInterfaceSeam {
-    #[must_use]
-    pub fn new(
-        id: InterfaceId,
-        inbound: TokioGrantProducer,
-        notify: UnboundedSender<InterfaceId>,
-        outbound: TokioGrantConsumer,
-    ) -> Self {
-        Self {
-            id,
-            origin: InterfaceOriginKind::Configured,
-            inbound,
-            notify,
-            outbound,
-            commands: None,
-        }
-    }
-
-    #[must_use]
-    pub fn with_origin(mut self, origin: InterfaceOriginKind) -> Self {
-        self.origin = origin;
-        self
-    }
-
-    #[must_use]
-    pub fn with_commands(mut self, commands: UnboundedSender<HostCommand>) -> Self {
-        self.commands = Some(commands);
-        self
-    }
-}
-
-impl InterfaceSeam for TokioInterfaceSeam {
-    fn interface_origin(&self) -> InterfaceOriginKind {
-        self.origin
-    }
-
-    async fn inbound_sink(&mut self) -> &mut dyn FrameSink {
-        self.inbound.grant().await
-    }
-
-    async fn commit_inbound(&mut self) {
-        let Some(slot) = self.inbound.granted.as_mut() else {
-            return;
-        };
-        if slot.bytes.is_empty() {
-            return;
-        }
-        slot.len = slot.bytes.len();
-        self.inbound.commit();
-        if self.inbound.needs_announce() {
-            let _ = self.notify.send(self.id);
-        }
-    }
-
-    async fn next_inbound_with_phy(&mut self, frame: &[u8], packet_phy: PacketPhyStats) {
-        let slot = self.inbound.grant().await;
-        if frame.len() > slot.cap {
-            slot.clear();
-            return;
-        }
-        slot.fill(frame);
-        slot.packet_phy = packet_phy;
-        self.commit_inbound().await;
-    }
-
-    async fn next_outbound(&mut self) -> &[u8] {
-        self.outbound.release();
-        self.outbound.peek().await.frame()
-    }
-
-    fn try_next_outbound(&mut self) -> Option<&[u8]> {
-        self.outbound.release();
-        Some(self.outbound.try_peek()?.frame())
-    }
-
-    async fn request_tunnel_synthesis(&mut self) {
-        if let Some(commands) = &self.commands {
-            let _ = commands.send(HostCommand::SynthesizeTunnel { interface: self.id });
-        }
-    }
 }
 
 pub struct Egress {
@@ -488,128 +344,6 @@ impl Egress {
                 .add_pacer_depth(entry.logical_interface, entry.pacer.queued_len());
         }
         snapshot
-    }
-}
-
-/// A cheap-clone handle to one interface's live state: the interface holds a clone and writes it as the wire moves (connection on connect/disconnect, bytes as they cross); the app holds a clone and reads it lock-free via [`InterfaceStatus`] on its own render cadence.
-#[derive(Clone)]
-pub struct TokioInterfaceStatus {
-    inner: Arc<StatusCell>,
-}
-
-struct StatusCell {
-    id: InterfaceId,
-    connection: AtomicU8,
-    rx: AtomicU64,
-    tx: AtomicU64,
-    airtime: AtomicU32,
-    transfer_rates: AtomicU64,
-    enabled: AtomicBool,
-}
-
-const AIRTIME_UNPUBLISHED: u32 = u32::MAX;
-const RATES_UNPUBLISHED: u64 = u64::MAX;
-
-fn pack_airtime(utilization: AirtimeUtilization) -> u32 {
-    (u32::from(utilization.short_per_mille) << 16) | u32::from(utilization.long_per_mille)
-}
-
-fn unpack_airtime(packed: u32) -> Option<AirtimeUtilization> {
-    if packed == AIRTIME_UNPUBLISHED {
-        return None;
-    }
-    Some(AirtimeUtilization {
-        short_per_mille: (packed >> 16) as u16,
-        long_per_mille: packed as u16,
-    })
-}
-
-impl TokioInterfaceStatus {
-    #[must_use]
-    pub fn new(id: InterfaceId, connection: ConnectionState) -> Self {
-        Self {
-            inner: Arc::new(StatusCell {
-                id,
-                connection: AtomicU8::new(connection.as_u8()),
-                rx: AtomicU64::new(0),
-                tx: AtomicU64::new(0),
-                airtime: AtomicU32::new(AIRTIME_UNPUBLISHED),
-                transfer_rates: AtomicU64::new(RATES_UNPUBLISHED),
-                enabled: AtomicBool::new(true),
-            }),
-        }
-    }
-
-    /// Turn this interface off or back on from the application. The driver reads [`is_enabled`](Self::is_enabled) and tears its wires down — releasing any resource it holds, e.g. an open serial port — while off, standing them back up on resume.
-    pub fn set_enabled(&self, enabled: bool) {
-        self.inner.enabled.store(enabled, Ordering::Relaxed);
-    }
-
-    /// Whether the interface is enabled (the default). The driver polls this to leave or re-enter its dormant state.
-    #[must_use]
-    pub fn is_enabled(&self) -> bool {
-        self.inner.enabled.load(Ordering::Relaxed)
-    }
-
-    pub fn set_connection(&self, connection: ConnectionState) {
-        self.inner
-            .connection
-            .store(connection.as_u8(), Ordering::Relaxed);
-    }
-
-    pub fn add_rx(&self, bytes: u64) {
-        self.inner.rx.fetch_add(bytes, Ordering::Relaxed);
-    }
-
-    pub fn add_tx(&self, bytes: u64) {
-        self.inner.tx.fetch_add(bytes, Ordering::Relaxed);
-    }
-
-    pub fn set_airtime(&self, utilization: AirtimeUtilization) {
-        self.inner
-            .airtime
-            .store(pack_airtime(utilization), Ordering::Relaxed);
-    }
-
-    pub fn set_transfer_rates(&self, rates: TransferRates) {
-        let packed = (u64::from(rates.rx_bps) << 32) | u64::from(rates.tx_bps);
-        self.inner.transfer_rates.store(packed, Ordering::Relaxed);
-    }
-}
-
-impl InterfaceStatus for TokioInterfaceStatus {
-    fn id(&self) -> InterfaceId {
-        self.inner.id
-    }
-
-    fn connection(&self) -> ConnectionState {
-        if !self.is_enabled() {
-            return ConnectionState::Disabled;
-        }
-        ConnectionState::from_u8(self.inner.connection.load(Ordering::Relaxed))
-    }
-
-    fn rx_bytes(&self) -> u64 {
-        self.inner.rx.load(Ordering::Relaxed)
-    }
-
-    fn tx_bytes(&self) -> u64 {
-        self.inner.tx.load(Ordering::Relaxed)
-    }
-
-    fn airtime(&self) -> Option<AirtimeUtilization> {
-        unpack_airtime(self.inner.airtime.load(Ordering::Relaxed))
-    }
-
-    fn transfer_rates(&self) -> Option<TransferRates> {
-        let packed = self.inner.transfer_rates.load(Ordering::Relaxed);
-        if packed == RATES_UNPUBLISHED {
-            return None;
-        }
-        Some(TransferRates {
-            rx_bps: (packed >> 32) as u32,
-            tx_bps: packed as u32,
-        })
     }
 }
 
