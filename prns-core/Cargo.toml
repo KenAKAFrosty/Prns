@@ -17,6 +17,7 @@ default = ["std", "std-sync-host"]
 # `zeroize/alloc` rides our own `alloc` gate so `Zeroize for Vec<u8>` is present by declaration rather than incidental dependency feature unification. The host identity vault's keyring backend zeroizes the secret bytes the OS store hands back.
 alloc = ["zeroize/alloc"]
 i2p = ["alloc", "dep:base64", "dep:data-encoding"]
+shared-instance-rpc = ["alloc", "dep:md-5"]
 interface-discovery = ["alloc", "dep:rmp"]
 interface-discovery-archive = ["interface-discovery", "std", "dep:serde", "dep:serde_json"]
 # Place fixed-capacity bulk in a caller-chosen heap region (PSRAM) via a custom `Allocator`: pulls the `allocator_api2` backport and unlocks the allocator-generic `FixedHeap*` columns + the `Esp32S3` prepackage. Off by default. Ordinary hosts never link the backport; they use the inline or growable residences.
@@ -53,6 +54,7 @@ x25519-dalek = { version = "2", default-features = false, features = ["precomput
 zeroize = { version = "1", default-features = false, features = ["derive"] }
 base64 = { version = "0.22", optional = true, default-features = false, features = ["alloc"] }
 data-encoding = { version = "2", optional = true, default-features = false, features = ["alloc"] }
+md-5 = { version = "0.11", optional = true, default-features = false }
 
 # Fixed-capacity collections for retained engine state (alloc-free, inline storage)
 heapless = { version = "0.8", default-features = false }

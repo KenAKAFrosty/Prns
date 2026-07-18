@@ -41,10 +41,9 @@ async fn main() {
         .ok()
         .and_then(|hex| decode_key(&hex))
         .unwrap_or([0x5a; 32]);
-    let credentials = SharedInstanceCredentials {
-        rpc_key: rpc_key.to_vec(),
-        ..SharedInstanceCredentials::from_identity_secret(&[0xD2; IDENTITY_SECRET_KEY_LEN])
-    };
+    let credentials =
+        SharedInstanceCredentials::from_identity_secret(&[0xD2; IDENTITY_SECRET_KEY_LEN])
+            .with_rpc_key(rpc_key.to_vec());
 
     let node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,

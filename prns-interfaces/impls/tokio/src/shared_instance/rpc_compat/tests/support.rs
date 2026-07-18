@@ -84,10 +84,10 @@ pub(super) async fn reply_for_with_retention(
 }
 
 pub(super) fn test_credentials(rpc_key: [u8; 32]) -> SharedInstanceCredentials {
-    SharedInstanceCredentials {
-        rpc_key: rpc_key.to_vec(),
-        transport_identity_hash: TEST_TRANSPORT_IDENTITY_HASH,
-    }
+    SharedInstanceCredentials::new(
+        RpcAuthenticationKey::new(rpc_key.to_vec()),
+        TEST_TRANSPORT_IDENTITY_HASH,
+    )
 }
 
 pub(super) struct EnvVarRestore {
@@ -137,21 +137,28 @@ pub(super) async fn authenticate_modern_client(
     rpc_key: &[u8; 32],
 ) {
     let server_challenge = read_frame_dup(client).await;
-    let server_message = server_challenge.strip_prefix(CHALLENGE).unwrap();
-    let mut response = DIGEST_PREFIX.to_vec();
+    let server_message = server_challenge.strip_prefix(b"#CHALLENGE#").unwrap();
+    let mut response = b"{sha256}".to_vec();
     response.extend_from_slice(&hmac_sha256(rpc_key, server_message));
     write_frame_dup(client, &response).await;
-    assert_eq!(read_frame_dup(client).await, WELCOME);
+    assert_eq!(
+        read_frame_dup(client).await,
+        RpcAuthenticationControlMessage::Welcome.wire_payload()
+    );
 
-    let mut our_message = DIGEST_PREFIX.to_vec();
-    our_message.extend_from_slice(&[0x11u8; CHALLENGE_NONCE_LEN]);
-    let mut our_challenge = CHALLENGE.to_vec();
+    let mut our_message = b"{sha256}".to_vec();
+    our_message.extend_from_slice(&[0x11u8; RpcChallengeNonce::LENGTH]);
+    let mut our_challenge = b"#CHALLENGE#".to_vec();
     our_challenge.extend_from_slice(&our_message);
     write_frame_dup(client, &our_challenge).await;
     let server_reply = read_frame_dup(client).await;
-    let server_mac = server_reply.strip_prefix(DIGEST_PREFIX).unwrap();
+    let server_mac = server_reply.strip_prefix(b"{sha256}").unwrap();
     assert!(hmac_sha256_verify(rpc_key, &our_message, server_mac).is_ok());
-    write_frame_dup(client, WELCOME).await;
+    write_frame_dup(
+        client,
+        RpcAuthenticationControlMessage::Welcome.wire_payload(),
+    )
+    .await;
 }
 
 pub(super) fn msgpack_request(entries: Vec<(&str, Value)>) -> Vec<u8> {

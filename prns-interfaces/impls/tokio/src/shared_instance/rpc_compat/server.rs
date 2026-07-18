@@ -50,7 +50,7 @@ where
     /// Answer on a loopback TCP port — RNS's `instance_control_port` (default 37428's sibling 37429), or whatever a client configured. `rpc_key` MUST equal the clients' key: RNS's `full_hash` of the shared transport identity's private key, or a value both sides set as `rpc_key` in config. `query` is the node handle the shim reads engine state through to answer each verb.
     #[must_use]
     pub fn tcp(credentials: SharedInstanceCredentials, port: u16, query: Q) -> Self {
-        let blackhole_source = credentials.transport_identity_hash;
+        let blackhole_source = credentials.transport_identity_hash();
         Self {
             credentials,
             blackhole_source,
@@ -69,7 +69,7 @@ where
         socket_path: impl Into<String>,
         query: Q,
     ) -> Self {
-        let blackhole_source = credentials.transport_identity_hash;
+        let blackhole_source = credentials.transport_identity_hash();
         Self {
             credentials,
             blackhole_source,
@@ -225,7 +225,7 @@ where
     B: IdentityBlackholeSource + IdentityBlackholeControl,
 {
     let _active = telemetry.connection_opened();
-    let client_authenticated = match deliver_our_challenge(&mut stream, &credentials.rpc_key).await
+    let client_authenticated = match deliver_our_challenge(&mut stream, credentials.rpc_key()).await
     {
         Ok(authenticated) => authenticated,
         Err(err) => {
@@ -238,7 +238,7 @@ where
         return Ok(());
     }
     let server_authenticated =
-        match answer_client_challenge(&mut stream, &credentials.rpc_key).await {
+        match answer_client_challenge(&mut stream, credentials.rpc_key()).await {
             Ok(authenticated) => authenticated,
             Err(err) => {
                 telemetry.record_read_failure(err.kind());

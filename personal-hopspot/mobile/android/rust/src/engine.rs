@@ -322,7 +322,7 @@ fn run_engine(
     runtime.block_on(async move {
         let identity = load_identity_secret_key();
         let credentials = SharedInstanceCredentials::from_identity_secret(&identity);
-        let rpc_key = credentials.rpc_key.clone();
+        let rpc_key = credentials.rpc_key().as_bytes().to_vec();
         let transport_secret = identity.clone();
         let ble_identity = ephemeral_ble_identity();
         ble.set_local_identity(ble_identity);

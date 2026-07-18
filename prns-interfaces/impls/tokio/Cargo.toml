@@ -33,8 +33,6 @@ tokio = { version = "1", optional = true, default-features = false, features = [
 socket2 = { version = "0.6", optional = true, features = ["all"] }
 if-addrs = { version = "0.13", optional = true }
 netdev = { version = "0.45", optional = true }
-md-5 = { version = "0.11", optional = true, default-features = false }
-hmac = { version = "0.13", optional = true, default-features = false }
 getrandom = { version = "0.2", optional = true }
 tokio-tungstenite = { version = "0.28", optional = true, default-features = false, features = ["connect", "handshake"] }
 futures-util = { version = "0.3", optional = true, default-features = false, features = ["alloc", "sink"] }
@@ -101,7 +99,7 @@ pipe = ["dep:tokio"]
 backbone = ["tcp"]
 websocket = ["dep:tokio", "tokio/net", "dep:tokio-tungstenite", "dep:futures-util"]
 i2p = ["dep:tokio", "tokio/net", "dep:socket2", "dep:getrandom", "prns-core/i2p"]
-shared-instance = ["dep:tokio", "tokio/net", "dep:md-5", "dep:hmac", "dep:getrandom", "dep:rmpv"]
+shared-instance = ["dep:tokio", "tokio/net", "dep:getrandom", "dep:rmpv", "prns-core/shared-instance-rpc"]
 wifi = ["tcp", "dep:if-addrs", "dep:netdev"]
 wifi-direct = ["tcp", "tokio/process", "dep:zbus", "dep:futures-util", "dep:if-addrs"]
 wifi-aware = ["tcp"]
