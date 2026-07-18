@@ -3,13 +3,19 @@ use crate::engine::test_support::{
     bytes_from_hex, pin_transport_id, TestStorageLayout, RNS_1_3_5_ANNOUNCE,
     RNS_1_3_5_RATCHETED_ANNOUNCE, TEST_TRANSPORT_ID,
 };
+#[cfg(feature = "runtime-metrics")]
+use crate::engine::AnnounceOrigin;
 use crate::engine::RouteRemovalCause;
+#[cfg(feature = "runtime-metrics")]
+use crate::interfaces::InterfaceKind;
 use crate::interfaces::{
     AirtimeUtilization, AnnounceBandwidthCap, BitrateBps, ConnectionState, EgressCapability,
     IngressCapability, InterfaceCapabilities, InterfaceMode, InterfaceStatus, RssiDbm,
     SignalQualityTenthsPercent, SnrQuarterDb, TransportCapability,
 };
 use crate::reactor::interface_seam::{Interface, InterfaceSeam, MAX_WIRE_FRAME_LEN};
+#[cfg(feature = "runtime-metrics")]
+use crate::runtime::{AnnounceEgressOutcome, EgressMetricsSnapshot};
 use crate::runtime::{PrnsNodeHandle, RoutingControl};
 use crate::wire::{PacketType, WirePacketHeader};
 

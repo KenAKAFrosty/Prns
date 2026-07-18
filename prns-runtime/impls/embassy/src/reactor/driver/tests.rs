@@ -2,11 +2,12 @@ use super::*;
 use crate::engine::test_support::{
     bytes_from_hex, pin_transport_id, TestStorageLayout, RNS_1_3_5_ANNOUNCE, TEST_TRANSPORT_ID,
 };
+use crate::engine::{FanTarget, InstantMillis};
 use crate::interfaces::{
     AnnounceBandwidthCap, BitrateBps, EgressCapability, IngressCapability, InterfaceCapabilities,
-    InterfaceMode, TransportCapability,
+    InterfaceKind, InterfaceMode, TransportCapability,
 };
-use crate::reactor::grant::{GrantConsumer, GrantProducer};
+use crate::reactor::grant::{AnyGrantProducer, GrantConsumer, GrantProducer};
 use crate::reactor::interface_seam::{Interface, InterfaceSeam};
 use crate::wire::{PacketType, WirePacketHeader};
 
