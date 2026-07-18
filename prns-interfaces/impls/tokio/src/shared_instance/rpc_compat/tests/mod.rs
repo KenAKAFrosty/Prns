@@ -37,10 +37,12 @@ use super::dispatch::reply_for_decoded;
 use super::framing::{
     read_auth_frame, read_frame, write_frame, write_frame_header, AUTH_FRAME_MAX_LEN,
 };
-use super::protocol::{RpcDialect, RpcRequest, RpcVerb};
+use super::protocol::{RpcRequest, RpcVerb};
 use super::reply::encode_msgpack;
 use super::request::{self, RnsRpcRequest};
-use super::server::{bind_abstract_rpc, serve_connection, RpcBind, SharedInstanceRpcCompat};
+#[cfg(target_os = "linux")]
+use super::server::{bind_abstract_rpc, RpcBind};
+use super::server::{serve_connection, SharedInstanceRpcCompat};
 use super::storage::{reticulum_storage_dir, rpc_key_from_rns_identity};
 use super::telemetry::RpcTelemetry;
 

@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(feature = "tracing")]
+use crate::shared_instance::rpc_compat::protocol::RpcDialect;
 
 #[test]
 fn telemetry_classification_uses_the_decoded_operation() {

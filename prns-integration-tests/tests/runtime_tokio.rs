@@ -18,7 +18,7 @@ use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
     Diagnostic, Fleet, InterfaceSupervisor, Manual, PreConfiguredDestination, PrnsEvent, PrnsNode,
-    PrnsNodeHandle, PrnsNodeRecipe,
+    PrnsNodeHandle, PrnsNodeRecipe, RequestHandlerRegistration,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::client::TcpClientInterface;
@@ -66,6 +66,7 @@ fn single(identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>) -> PreConfiguredDe
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
+        request_handlers: RequestHandlerRegistration::None,
     }
 }
 
@@ -478,6 +479,7 @@ async fn a_recipe_accept_destination_receives_a_resource() {
             max_uncompressed_len: 1024 * 1024,
             accept_compressed: true,
         },
+        request_handlers: RequestHandlerRegistration::None,
     };
     let dest_a = single_a.destination_hash().expect("valid destination");
 

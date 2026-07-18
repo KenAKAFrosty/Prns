@@ -20,6 +20,7 @@ mod interface_discovery;
 mod metrics;
 mod observability;
 mod persist;
+mod remote_management;
 mod splash;
 mod startup_progress;
 
@@ -30,10 +31,10 @@ use personal_rns::config::{
     discover, parse_and_plan_named, ConfiguredInterfaceLifecycle, SharedInstance,
     SharedInstanceTransport as ConfigSharedInstanceTransport, TransportIdentityPolicy,
 };
-use personal_rns::from_plan::PlanAttachments;
 use personal_rns::engine::{
     EngineProtocolPolicy, LinkMtuDiscovery, LocalHopCountOverride, ProofForm,
 };
+use personal_rns::from_plan::PlanAttachments;
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::vault::FileVault;
 use personal_rns::identity::IdentitySigner;
@@ -288,7 +289,6 @@ fn explicit_launch_configuration(args: &cli::DaemonArgs) -> bool {
 }
 
 async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
-    #[cfg(feature = "otlp")]
     let started = std::time::Instant::now();
     let discovered_config = match discover(cli.config.as_deref()) {
         Ok(config) => config,
@@ -379,6 +379,9 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
     };
     let visible_identity_hash =
         InMemoryNodeIdentity::from_secret_key_bytes(&visible_secret).identity_hash();
+    let network_identity_hash = network_identity
+        .as_ref()
+        .map(|identity| InMemoryNodeIdentity::from_secret_key_bytes(identity).identity_hash());
     let interface_runtime =
         PlanRuntimeContext::with_rns_i2p_storage(storage_dir.clone(), visible_identity_hash);
     let transport_secret = routing_enabled.then(|| visible_secret.clone());
@@ -418,14 +421,23 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
             network_identity.as_ref(),
         )
         .unzip();
-    let mut prns = PrnsNode::new(PrnsNodeRecipe {
+    let remote_management_transport =
+        routing_enabled.then_some(remote_management::TransportStatusIdentity {
+            transport: visible_identity_hash,
+            network: network_identity_hash,
+        });
+    let mut prns = PrnsNode::new_with_handle(move |handle| PrnsNodeRecipe {
         transport_identity: transport_secret,
-        pre_configured_destinations: discovery_destination,
-        app_state: (),
+        pre_configured_destinations: std::iter::empty(),
+        app_state: remote_management::RemoteManagementState::new(
+            handle,
+            remote_management_transport,
+            started,
+        ),
         storage: GrowableHeap,
-        routes: routes![],
+        routes: routes![remote_management::StatusRoute, remote_management::PathRoute],
         interfaces: Manual,
-        on_event: move |event, _state: &()| {
+        on_event: move |event, _state: &remote_management::RemoteManagementState| {
             if let PrnsEvent::Diagnostic(Diagnostic::SelfRatchetRotated { destination }) = event {
                 let _ = rotated_tx.send(destination);
             }
@@ -433,6 +445,16 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
     })
     .with_timeline_origin(timeline_origin)
     .with_protocol_policy(protocol_policy);
+    if let Some(destination) = discovery_destination {
+        if let Err(error) = prns.register_preconfigured_destination(destination) {
+            tracing::error!(
+                event = "interface_discovery_destination_failed",
+                error = ?error,
+            );
+            observability.shutdown().await;
+            process::exit(1);
+        }
+    }
     if let Some(secret) = non_routing_identity_secret {
         prns = match prns.with_non_routing_identity(secret) {
             Ok(prns) => prns,
@@ -562,6 +584,28 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
         }
     }
 
+    if owns_tables {
+        if let Some(allowed) = plan.remote_management.allowed() {
+            match remote_management::activate(&mut prns, visible_secret.clone(), allowed) {
+                Ok(destination) => {
+                    tracing::info!(
+                        event = "remote_management_enabled",
+                        destination = ?destination.as_bytes(),
+                        allowed_identities = allowed.len(),
+                    );
+                }
+                Err(error) => {
+                    tracing::error!(
+                        event = "remote_management_start_failed",
+                        error = ?error,
+                    );
+                    observability.shutdown().await;
+                    process::exit(1);
+                }
+            }
+        }
+    }
+
     if plan.panic_on_interface_error && startup.failed != 0 {
         tracing::error!(
             event = "interface_failure_shutdown",
@@ -625,9 +669,7 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
     }
 
     let monitored_interfaces = interface_discovery::MonitoredInterfaces::new(
-        constructed_interfaces
-            .iter()
-            .map(|interface| interface.id),
+        constructed_interfaces.iter().map(|interface| interface.id),
     );
     let interface_failure_watch = monitored_interfaces.subscribe();
     let bootstrap_interfaces = if owns_tables {
@@ -648,11 +690,7 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
                     observer.observe(observation);
                 });
                 let clock = prns.clock();
-                Some(discovery.spawn(
-                    prns_handle.clone(),
-                    clock,
-                    bootstrap_interfaces,
-                ))
+                Some(discovery.spawn(prns_handle.clone(), clock, bootstrap_interfaces))
             }
             None => None,
         }

@@ -22,7 +22,7 @@ use personal_rns::routes;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
     ephemeral_ble_identity, Manual, PreConfiguredDestination, PrnsNode, PrnsNodeHandle,
-    PrnsNodeRecipe, RuntimeHealth,
+    PrnsNodeRecipe, RequestHandlerRegistration, RuntimeHealth,
 };
 use personal_rns::shared_instance::rpc_compat::{
     SharedInstanceCredentials, SharedInstanceRpcCompat,
@@ -337,6 +337,7 @@ fn run_engine(
             proof: ProofStrategy::ProveAll,
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::Ratcheted,
+            request_handlers: RequestHandlerRegistration::None,
         };
         let destination = announce_destination
             .destination_hash()

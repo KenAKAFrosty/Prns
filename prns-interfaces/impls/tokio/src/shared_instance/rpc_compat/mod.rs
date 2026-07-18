@@ -6,7 +6,7 @@ mod authentication;
 mod dispatch;
 mod framing;
 mod protocol;
-mod reply;
+pub(crate) mod reply;
 mod request;
 mod server;
 mod storage;

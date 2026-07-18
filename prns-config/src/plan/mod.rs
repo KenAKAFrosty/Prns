@@ -21,7 +21,8 @@ pub use interface::{
 };
 pub use node::{
     parse_and_plan, parse_and_plan_named, DaemonPlan, LogLevel, LoggingPlan, ProtocolPlan,
-    SharedInstance, SharedInstanceTransport, TransportIdentityPolicy, TransportPlan,
+    RemoteManagementAccessControlList, RemoteManagementPlan, SharedInstance,
+    SharedInstanceTransport, TransportIdentityPolicy, TransportPlan,
 };
 pub use rnode_multi::{RNodeMultiDevicePlan, RNodeMultiMemberPlan};
 

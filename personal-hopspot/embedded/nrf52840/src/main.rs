@@ -60,7 +60,7 @@ use personal_rns::reactor::grant::FrameSlot;
 use personal_rns::reactor::interface_seam::{Interface, EMBEDDED_MAX_WIRE_FRAME_LEN};
 use personal_rns::runtime::{
     CompletionPool, EmbassyInterfaceStore, PreConfiguredDestination, PrnsEvent, PrnsNode,
-    PrnsNodeHandle, PrnsNodeRecipe, ReactorPlumbing,
+    PrnsNodeHandle, PrnsNodeRecipe, ReactorPlumbing, RequestHandlerRegistration,
 };
 use personal_rns::storage::{StorageCapacity, StorageLayout};
 
@@ -477,6 +477,7 @@ async fn main(_spawner: Spawner) -> ! {
                 proof: personal_rns::routing::ProofStrategy::ProveAll,
                 link_requests: personal_rns::routing::LinkRequestPolicy::AcceptAll,
                 ratchet: RatchetPolicy::Ratcheted,
+                request_handlers: RequestHandlerRegistration::None,
             }],
             app_state: (),
             storage: storage::TechoStorage,

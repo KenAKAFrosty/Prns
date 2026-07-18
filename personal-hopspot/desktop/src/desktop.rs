@@ -218,6 +218,7 @@ fn run_node(
             proof: ProofStrategy::ProveAll,
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::Ratcheted,
+            request_handlers: personal_rns::runtime::RequestHandlerRegistration::None,
         };
         let destination = announce_destination
             .destination_hash()

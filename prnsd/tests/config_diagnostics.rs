@@ -70,7 +70,7 @@ fn recognized_follow_ons_emit_source_located_warnings_before_readiness() {
     let path = directory.0.join("config");
     fs::write(
         &path,
-        "[reticulum]\nshare_instance = No\nrespond_to_probes = No\n[logging]\nloglevel = 7\n",
+        "[reticulum]\nshare_instance = No\nenable_remote_management = Yes\nremote_management_allowed = 00112233445566778899aabbccddeeff\nrespond_to_probes = No\n[logging]\nloglevel = 7\n",
     )
     .unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_prnsd"))
@@ -135,6 +135,18 @@ fn recognized_follow_ons_emit_source_located_warnings_before_readiness() {
     assert!(
         rendered.contains("respond_to_probes"),
         "missing setting name in daemon output:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("\"event\":\"remote_management_enabled\""),
+        "remote management was not activated before readiness:\n{rendered}"
+    );
+    assert!(
+        !rendered.lines().any(|line| {
+            line.contains("\"event\":\"config_warning\"")
+                && (line.contains("enable_remote_management")
+                    || line.contains("remote_management_allowed"))
+        }),
+        "applied remote-management settings still warned as unsupported:\n{rendered}"
     );
     assert!(
         rendered.contains("\"event\":\"daemon_ready\""),

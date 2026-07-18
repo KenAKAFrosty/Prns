@@ -13,6 +13,7 @@ use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::request_router::{Decline, RequestContext, RequestRoute, RoutePolicy};
 use personal_rns::runtime::{
     Diagnostic, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe,
+    RequestHandlerRegistration,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::udp::UdpInterface;
@@ -62,6 +63,7 @@ async fn a_link_establishes_and_carries_data_across_two_nodes_over_udp() {
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
+        request_handlers: RequestHandlerRegistration::NodeRouteSet,
     };
     let dest_a = responder_dest
         .destination_hash()
@@ -118,6 +120,7 @@ async fn a_link_establishes_and_carries_data_across_two_nodes_over_udp() {
             proof: ProofStrategy::ProveAll,
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
+            request_handlers: RequestHandlerRegistration::None,
         }],
         app_state: (),
         storage: GrowableHeap,

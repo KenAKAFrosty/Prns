@@ -12,7 +12,8 @@ use super::keys::{
 };
 use super::types::{
     RNodeRadio, RNodeSubinterface, ReferenceConfig, ReferenceDiscoveryConfig, ReferenceInterface,
-    ReferenceInterfaceDiscovery, ReferenceMode, ReferenceParams, ReferenceValue,
+    ReferenceInterfaceDiscovery, ReferenceMode, ReferenceParams, ReferenceRemoteManagement,
+    ReferenceValue,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -68,6 +69,7 @@ pub(super) fn interpret(root: &Section) -> Result<ReferenceConfig, ReferenceErro
     }
     config.network_identity_path = global_string(&config.globals, global_key::NETWORK_IDENTITY)?;
     config.discovery = interpret_discovery_config(&config.globals)?;
+    config.remote_management = interpret_remote_management(&config.globals)?;
     if let Some(interfaces) = root.section(section_key::INTERFACES) {
         for (name, section) in &interfaces.sections {
             if let Some(interface) = interpret_interface(name, section)? {
@@ -84,6 +86,17 @@ pub(super) fn interpret(root: &Section) -> Result<ReferenceConfig, ReferenceErro
             .insert(name.clone(), scalar_map(section));
     }
     Ok(config)
+}
+
+fn interpret_remote_management(
+    globals: &BTreeMap<String, ReferenceValue>,
+) -> Result<ReferenceRemoteManagement, ReferenceError> {
+    if global_bool(globals, global_key::ENABLE_REMOTE_MANAGEMENT)? != Some(true) {
+        return Ok(ReferenceRemoteManagement::Disabled);
+    }
+    Ok(ReferenceRemoteManagement::Enabled {
+        allowed: global_identity_hashes(globals, global_key::REMOTE_MANAGEMENT_ALLOWED)?,
+    })
 }
 
 fn scalar_map(section: &Section) -> BTreeMap<String, ReferenceValue> {

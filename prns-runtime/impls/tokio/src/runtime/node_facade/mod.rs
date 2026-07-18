@@ -20,7 +20,7 @@ use crate::engine::{
 use crate::engine::{InstantMillis, Journaled};
 use crate::identity::held::HoldIdentityError;
 use crate::identity::vault::{IdentityLabel, IdentityVault};
-use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use crate::identity::{IdentityHash, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::ifac::IfacContext;
 use crate::interfaces::{
     ConnectionView, InterfaceId, InterfaceKind, InterfaceOriginKind, InterfaceSnapshot, Membership,
@@ -54,7 +54,7 @@ use crate::routing::links::resources::{
     ResourceHash, ResourceStrategy, MAX_EFFICIENT_SIZE, METADATA_PREFIX_LEN,
 };
 use crate::routing::links::LinkId;
-use crate::routing::request_handlers::RequestPathHash;
+use crate::routing::request_handlers::{RequestHandlerError, RequestPathHash};
 use crate::routing::tunnel::SeedTunnelOutcome;
 use crate::routing::{BlackholeIdentityOutcome, BlackholeInsertFailure, BlackholedIdentity};
 use crate::storage::StorageLayout;
@@ -76,7 +76,10 @@ use super::{
     IdentityBlackholeSourceError, InterfaceStore, Manual, Message, PreConfiguredDestination,
     PrnsEvent, PrnsNodeRecipe, RoutingControl, RoutingControlError, SendError,
 };
-use prns_runtime::runtime::{assemble_node, AssembledNode};
+use prns_runtime::runtime::{
+    assemble_node, configure_preconfigured_destination, AssembledNode,
+    ConfigurePreconfiguredDestinationError,
+};
 
 /// How many frames a host lane holds in flight. RNS resource transfer bursts a whole window of parts at once (`Resource.WINDOW_MAX_FAST` is 75, plus its flexibility), so a lane carrying a transfer must be deeper than that window or it sheds parts and the transfer stalls; the old byte-budget collapsed a fat-MTU lane to a handful of slots, exactly that failure. Growable slots (`HeapFrameSlot`) cost only the frames actually in flight, so the depth is generous.
 const HOST_LANE_DEPTH: usize = 256;
@@ -1722,10 +1725,18 @@ where
         D: IntoIterator<Item = PreConfiguredDestination<'a>>,
         I: AttachIntent,
     {
+        Self::new_with_handle(|_| recipe)
+    }
+
+    pub fn new_with_handle<'a, D, I, B>(build_recipe: B) -> Self
+    where
+        D: IntoIterator<Item = PreConfiguredDestination<'a>>,
+        I: AttachIntent,
+        B: FnOnce(PrnsNodeHandle) -> PrnsNodeRecipe<D, St, R, F, I, S>,
+    {
         let (notify_tx, notify_rx) = mpsc::unbounded_channel();
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         let (iface_build_tx, iface_build_rx) = mpsc::unbounded_channel();
-        let (node, interfaces) = assemble_node(recipe);
 
         let handle = PrnsNodeHandle {
             commands: command_tx,
@@ -1735,6 +1746,7 @@ where
             interfaces: Arc::new(Mutex::new(HashMap::new())),
             store: InterfaceStore::new(),
         };
+        let (node, interfaces) = assemble_node(build_recipe(handle.clone()));
         interfaces.attach(&handle);
 
         PrnsNode {
@@ -1776,6 +1788,24 @@ where
     pub fn with_protocol_policy(mut self, policy: crate::engine::EngineProtocolPolicy) -> Self {
         self.node.engine.set_protocol_policy(policy);
         self
+    }
+
+    pub fn register_preconfigured_destination<'a>(
+        &mut self,
+        destination: PreConfiguredDestination<'a>,
+    ) -> Result<DestinationHash, ConfigurePreconfiguredDestinationError> {
+        configure_preconfigured_destination::<St, R, S>(&mut self.node.engine, destination)
+    }
+
+    pub fn allow_requester(
+        &mut self,
+        destination: &DestinationHash,
+        path: &str,
+        identity: IdentityHash,
+    ) -> Result<(), RequestHandlerError> {
+        self.node
+            .engine
+            .allow_requester(destination, path, identity)
     }
 
     /// Must precede [`seed_routes_from_store`](Self::seed_routes_from_store) so restored rows sit in this boot's past.

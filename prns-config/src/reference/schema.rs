@@ -149,11 +149,11 @@ pub(super) const GLOBAL_RULES: &[(&str, KeyRule)] = &[
     (global_key::LINK_MTU_DISCOVERY, Applied(ValueKind::Bool)),
     (
         global_key::ENABLE_REMOTE_MANAGEMENT,
-        FollowOn(ValueKind::Bool),
+        Applied(ValueKind::Bool),
     ),
     (
         global_key::REMOTE_MANAGEMENT_ALLOWED,
-        FollowOn(ValueKind::IdentityHashes),
+        Applied(ValueKind::IdentityHashes),
     ),
     (global_key::RESPOND_TO_PROBES, FollowOn(ValueKind::Bool)),
     (

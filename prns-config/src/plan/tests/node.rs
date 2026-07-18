@@ -132,6 +132,37 @@ fn global_protocol_identity_logging_and_shared_instance_settings_are_typed() {
 }
 
 #[test]
+fn remote_management_is_a_role_complete_plan_with_a_deduplicated_acl() {
+    let allowed = "00112233445566778899aabbccddeeff";
+    let plan = plan_of(&format!(
+        "[reticulum]\nenable_remote_management = Yes\nremote_management_allowed = {allowed}, {allowed}, ffeeddccbbaa99887766554433221100\n"
+    ));
+    let identities = plan
+        .remote_management
+        .allowed()
+        .expect("remote management is enabled");
+    assert_eq!(identities.len(), 2);
+    assert_eq!(identities[0].as_bytes(), &hex_16(allowed));
+    assert_eq!(
+        identities[1].as_bytes(),
+        &hex_16("ffeeddccbbaa99887766554433221100")
+    );
+
+    let disabled = plan_of(
+        "[reticulum]\nenable_remote_management = No\nremote_management_allowed = 00112233445566778899aabbccddeeff\n",
+    );
+    assert_eq!(disabled.remote_management, RemoteManagementPlan::Disabled);
+}
+
+fn hex_16(value: &str) -> [u8; 16] {
+    let mut bytes = [0u8; 16];
+    for (index, byte) in bytes.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&value[index * 2..index * 2 + 2], 16).unwrap();
+    }
+    bytes
+}
+
+#[test]
 fn grouped_global_controls_reach_the_effective_interface_policy() {
     let plan = plan_of(
         "[reticulum]\n\

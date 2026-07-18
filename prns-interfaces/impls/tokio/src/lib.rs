@@ -117,6 +117,9 @@ pub mod usb_host;
 #[cfg(feature = "shared-instance")]
 pub mod shared_instance;
 
+#[cfg(feature = "shared-instance")]
+pub mod rns_remote_management;
+
 #[cfg(feature = "ble")]
 pub mod ble;
 

@@ -38,7 +38,7 @@ use personal_rns::runtime::request_router::{
 };
 use personal_rns::runtime::{
     generate_identity_secret, Diagnostic, Manual, Message, PreConfiguredDestination, PrnsEvent,
-    PrnsNode, PrnsNodeHandle, PrnsNodeRecipe, SegmentCompression,
+    PrnsNode, PrnsNodeHandle, PrnsNodeRecipe, RequestHandlerRegistration, SegmentCompression,
 };
 use personal_rns::shared_instance::{
     join_shared_instance, InstancePorts, OnExisting, RnsLocalBlackholeFile, Role,
@@ -559,6 +559,7 @@ async fn run_runtime_endpoint(manifest: &Manifest, role: &str, addr: &str, durat
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
         resource_strategy: ResourceStrategy::AcceptNone,
+        request_handlers: RequestHandlerRegistration::None,
     };
     let destination = single
         .destination_hash()
@@ -753,6 +754,11 @@ async fn run_request_bus_client(manifest: &Manifest, role: &str, duration: Durat
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
         resource_strategy: ResourceStrategy::AcceptNone,
+        request_handlers: if role == "responder" {
+            RequestHandlerRegistration::NodeRouteSet
+        } else {
+            RequestHandlerRegistration::None
+        },
     };
     if role == "responder" {
         let served = Arc::new(AtomicU64::new(0));
@@ -859,6 +865,7 @@ async fn run_churn_bus_client(manifest: &Manifest, role: &str, duration: Duratio
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
         resource_strategy: ResourceStrategy::AcceptNone,
+        request_handlers: RequestHandlerRegistration::None,
     };
     if role == "responder" {
         let links = Arc::new(AtomicU64::new(0));
@@ -957,6 +964,7 @@ async fn run_resource_bus_client(manifest: &Manifest, role: &str, duration: Dura
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
         resource_strategy: ResourceStrategy::AcceptNone,
+        request_handlers: RequestHandlerRegistration::None,
     };
     if role == "responder" {
         run_resource_responder(
@@ -1129,6 +1137,7 @@ async fn run_resource_fanout_bus_client(
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
         resource_strategy: ResourceStrategy::AcceptNone,
+        request_handlers: RequestHandlerRegistration::None,
     };
     if role == "responder" {
         run_resource_responder(
@@ -1413,6 +1422,7 @@ async fn run_resource_endpoint(manifest: &Manifest, role: &str, addr: &str, dura
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
         resource_strategy,
+        request_handlers: RequestHandlerRegistration::None,
     };
     let destination = single
         .destination_hash()
@@ -1681,6 +1691,11 @@ async fn run_request_endpoint(manifest: &Manifest, role: &str, addr: &str, durat
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
         resource_strategy: ResourceStrategy::AcceptNone,
+        request_handlers: if role == "responder" {
+            RequestHandlerRegistration::NodeRouteSet
+        } else {
+            RequestHandlerRegistration::None
+        },
     };
     let destination = single
         .destination_hash()
@@ -1981,6 +1996,7 @@ async fn run_churn_endpoint(manifest: &Manifest, role: &str, addr: &str, duratio
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
         resource_strategy,
+        request_handlers: RequestHandlerRegistration::None,
     };
     let destination = single
         .destination_hash()

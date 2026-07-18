@@ -20,6 +20,7 @@ use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
     Manual, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe,
+    RequestHandlerRegistration,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wifi::{AutoWifi, AutoWifiStatus};
@@ -171,6 +172,7 @@ fn run_engine(ready_tx: Sender<Ready>) {
             proof: ProofStrategy::ProveAll,
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::Ratcheted,
+            request_handlers: RequestHandlerRegistration::None,
         };
         let destination = announce_destination
             .destination_hash()

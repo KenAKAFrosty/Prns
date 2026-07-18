@@ -53,37 +53,45 @@ pub(super) fn reply_path_table(
     match dialect {
         RpcDialect::Pickle => Ok(b"].".to_vec()),
         RpcDialect::Msgpack => {
-            let rows = entries
+            let entries = entries
                 .into_iter()
                 .filter(|entry| match max_hops {
                     None => true,
                     Some(RnsInteger::Negative(_)) => false,
                     Some(RnsInteger::Nonnegative(limit)) => u64::from(entry.hops) <= *limit,
                 })
-                .map(|entry| {
-                    let via = next_hop_bytes(&entry);
-                    let last_active_at = prns_core::engine::InstantMillis(
-                        entry.learned_at.0.max(entry.last_relayed_at.0),
-                    );
-                    Value::Map(std::vec![
-                        (
-                            "hash".into(),
-                            Value::Binary(entry.destination.as_bytes().to_vec())
-                        ),
-                        ("via".into(), Value::Binary(via)),
-                        ("hops".into(), Value::from(i64::from(entry.hops))),
-                        ("timestamp".into(), rns_timestamp(last_active_at)),
-                        ("expires".into(), rns_timestamp(entry.expires_at)),
-                        (
-                            "interface".into(),
-                            Value::from(interface_name(entry.interface))
-                        ),
-                    ])
-                })
-                .collect();
-            encode_msgpack(Value::Array(rows))
+                .collect::<Vec<_>>();
+            encode_msgpack(path_table_value(entries))
         }
     }
+}
+
+pub(crate) fn path_table_value(entries: Vec<RouteSnapshot>) -> Value {
+    Value::Array(
+        entries
+            .into_iter()
+            .map(|entry| {
+                let via = next_hop_bytes(&entry);
+                let last_active_at = prns_core::engine::InstantMillis(
+                    entry.learned_at.0.max(entry.last_relayed_at.0),
+                );
+                Value::Map(std::vec![
+                    (
+                        "hash".into(),
+                        Value::Binary(entry.destination.as_bytes().to_vec()),
+                    ),
+                    ("via".into(), Value::Binary(via)),
+                    ("hops".into(), Value::from(i64::from(entry.hops))),
+                    ("timestamp".into(), rns_timestamp(last_active_at)),
+                    ("expires".into(), rns_timestamp(entry.expires_at)),
+                    (
+                        "interface".into(),
+                        Value::from(interface_name(entry.interface)),
+                    ),
+                ])
+            })
+            .collect(),
+    )
 }
 
 /// A human name for an interface in the path table — RNS shows `str(interface)`. The kind names the medium; a short hash prefix disambiguates instances of the same kind.
@@ -136,37 +144,39 @@ pub(super) fn reply_rate_table(
 ) -> std::io::Result<Vec<u8>> {
     match dialect {
         RpcDialect::Pickle => Ok(b"].".to_vec()),
-        RpcDialect::Msgpack => encode_msgpack(Value::Array(
-            entries
-                .into_iter()
-                .map(|entry| {
-                    let blocked_until = if entry.blocked_until.0 == 0 {
-                        Value::from(0)
-                    } else {
-                        rns_timestamp(entry.blocked_until)
-                    };
-                    Value::Map(std::vec![
-                        (
-                            "hash".into(),
-                            Value::Binary(entry.destination.as_bytes().to_vec()),
-                        ),
-                        ("last".into(), rns_timestamp(entry.last_allowed_announce_at)),
-                        (
-                            "rate_violations".into(),
-                            Value::from(u64::from(entry.rate_violations)),
-                        ),
-                        ("blocked_until".into(), blocked_until),
-                        (
-                            "timestamps".into(),
-                            Value::Array(
-                                entry.observed_at.into_iter().map(rns_timestamp).collect(),
-                            ),
-                        ),
-                    ])
-                })
-                .collect(),
-        )),
+        RpcDialect::Msgpack => encode_msgpack(rate_table_value(entries)),
     }
+}
+
+pub(crate) fn rate_table_value(entries: Vec<AnnounceRateSnapshot>) -> Value {
+    Value::Array(
+        entries
+            .into_iter()
+            .map(|entry| {
+                let blocked_until = if entry.blocked_until.0 == 0 {
+                    Value::from(0)
+                } else {
+                    rns_timestamp(entry.blocked_until)
+                };
+                Value::Map(std::vec![
+                    (
+                        "hash".into(),
+                        Value::Binary(entry.destination.as_bytes().to_vec()),
+                    ),
+                    ("last".into(), rns_timestamp(entry.last_allowed_announce_at)),
+                    (
+                        "rate_violations".into(),
+                        Value::from(u64::from(entry.rate_violations)),
+                    ),
+                    ("blocked_until".into(), blocked_until),
+                    (
+                        "timestamps".into(),
+                        Value::Array(entry.observed_at.into_iter().map(rns_timestamp).collect(),),
+                    ),
+                ])
+            })
+            .collect(),
+    )
 }
 
 fn rns_timestamp(timestamp: prns_core::engine::InstantMillis) -> Value {
@@ -218,11 +228,13 @@ pub(super) fn reply_interface_stats(
             0x80, 0x02, 0x7d, 0x71, 0x00, 0x58, 0x0a, 0x00, 0x00, 0x00, b'i', b'n', b't', b'e',
             b'r', b'f', b'a', b'c', b'e', b's', 0x71, 0x01, 0x5d, 0x71, 0x02, 0x73, 0x2e,
         ]),
-        RpcDialect::Msgpack => interface_stats_msgpack(&logical_interface_inventory(inventory)),
+        RpcDialect::Msgpack => encode_msgpack(interface_stats_value(&logical_interface_inventory(
+            inventory,
+        ))),
     }
 }
 
-fn interface_stats_msgpack(inventory: &[InterfaceInventoryEntry]) -> std::io::Result<Vec<u8>> {
+pub(crate) fn interface_stats_value(inventory: &[InterfaceInventoryEntry]) -> Value {
     let mut total_rxb = 0u64;
     let mut total_txb = 0u64;
     let mut total_rxs = 0u64;
@@ -276,17 +288,17 @@ fn interface_stats_msgpack(inventory: &[InterfaceInventoryEntry]) -> std::io::Re
             ])
         })
         .collect();
-    encode_msgpack(Value::Map(std::vec![
+    Value::Map(std::vec![
         ("interfaces".into(), Value::Array(rows)),
         ("rxb".into(), Value::from(total_rxb as i64)),
         ("txb".into(), Value::from(total_txb as i64)),
         ("rxs".into(), Value::from(total_rxs as i64)),
         ("txs".into(), Value::from(total_txs as i64)),
         ("rss".into(), Value::Nil),
-    ]))
+    ])
 }
 
-pub(super) fn encode_msgpack(value: Value) -> std::io::Result<Vec<u8>> {
+pub(crate) fn encode_msgpack(value: Value) -> std::io::Result<Vec<u8>> {
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &value)
         .map_err(|error| std::io::Error::other(error.to_string()))?;

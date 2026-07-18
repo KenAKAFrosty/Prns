@@ -832,16 +832,43 @@ fn recognized_follow_ons_warn_at_their_exact_source_locations() {
         .iter()
         .filter(|diagnostic| diagnostic.code() == ConfigDiagnosticCode::UnsupportedSetting)
         .collect::<Vec<_>>();
-    assert_eq!(warnings.len(), 3);
+    assert_eq!(warnings.len(), 2);
     assert_eq!(warnings[0].source(), "/tmp/rns/config");
-    assert_eq!(warnings[0].line(), 2);
-    assert_eq!(warnings[0].value(), Some("Yes"));
+    assert_eq!(warnings[0].line(), 3);
+    assert_eq!(warnings[0].value(), Some("No"));
+    assert!(!warnings
+        .iter()
+        .any(|warning| warning.path().ends_with("enable_remote_management")));
     assert!(!warnings.iter().any(|warning| {
         warning.path().ends_with("discovery_port") || warning.path().ends_with("bootstrap_only")
     }));
     assert!(warnings
         .iter()
         .any(|warning| warning.correction().contains("correct each reported")));
+}
+
+#[test]
+fn malformed_remote_management_acl_fails_with_a_source_located_correction() {
+    let errors = parse_named(
+        "/tmp/rns/config",
+        "[reticulum]\nenable_remote_management = Yes\nremote_management_allowed = not-an-identity\n",
+    )
+    .unwrap_err();
+    let diagnostic = errors
+        .diagnostics()
+        .iter()
+        .find(|diagnostic| diagnostic.path().ends_with("remote_management_allowed"))
+        .expect("remote-management ACL diagnostic");
+    assert_eq!(diagnostic.code(), ConfigDiagnosticCode::InvalidValue);
+    assert_eq!(diagnostic.source(), "/tmp/rns/config");
+    assert_eq!(diagnostic.line(), 3);
+    assert_eq!(diagnostic.value(), Some("not-an-identity"));
+    assert!(diagnostic
+        .accepted()
+        .is_some_and(|accepted| accepted.contains("32-character hexadecimal")));
+    assert!(diagnostic
+        .correction()
+        .contains("remote_management_allowed"));
 }
 
 #[test]
