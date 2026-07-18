@@ -44,7 +44,7 @@ pub mod runtime {
 
     #[cfg(all(feature = "tokio-host", feature = "embassy-host"))]
     pub use prns_runtime_embassy::runtime::{
-        CompletionPool, EmbassyFleet, EmbassyInterfaceStore, MemberWire,
+        CompletionPool, EmbassyFleet, EmbassyInterfaceStore, FleetWire,
         PrnsNode as EmbassyPrnsNode, PrnsNodeHandle as EmbassyPrnsNodeHandle, ReactorPlumbing,
     };
 }

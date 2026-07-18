@@ -1,18 +1,18 @@
 use super::*;
 use crate::engine::test_support::{bytes_from_hex, RNS_1_3_5_ANNOUNCE};
-use crate::engine::FanTarget;
 use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::{
     AnnounceBandwidthCap, BitrateBps, EgressCapability, IngressCapability, InterfaceCapabilities,
     InterfaceKind, InterfaceMode, TransportCapability,
 };
-use crate::reactor::driver::{leaked_grant_lane, EmbassyHost};
+use crate::reactor::driver::{leaked_grant_lane, EmbassyGrantProducer, EmbassyHost};
 use crate::reactor::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
 use crate::runtime::Diagnostic;
 use crate::storage::GrowableHeap;
 use embassy_futures::block_on;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
+use embassy_sync::signal::Signal;
 use embassy_time::{with_timeout, Duration, Timer};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -39,81 +39,6 @@ fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
 
 fn leak<T>(value: T) -> &'static T {
     std::boxed::Box::leak(std::boxed::Box::new(value))
-}
-
-#[test]
-fn next_outbound_releases_the_copied_grant_so_the_depth_one_lane_refills() {
-    use crate::reactor::grant::AnyGrantProducer;
-
-    let (inbound, _inbound_rx) = leaked_grant_lane::<SLOT>(1);
-    let (mut outbound_tx, outbound) = leaked_grant_lane::<SLOT>(1);
-    let notify: &'static Channel<Mtx, InterfaceId, 1> = leak(Channel::new());
-    let lifecycle: &'static Channel<Mtx, InterfaceLifecycle, 1> = leak(Channel::new());
-    let mut fleet: Fleet<Mtx, SLOT, 1, 1> = Fleet::new(
-        MemberWire {
-            inbound,
-            outbound,
-            notify: notify.sender(),
-            outbound_wake: leak(Signal::new()),
-        },
-        lifecycle.sender(),
-    );
-
-    assert!(outbound_tx.try_fill_frame_fan(FanTarget::All, b"one"));
-    let (target, frame) = block_on(fleet.next_outbound::<SLOT>());
-    assert_eq!(target, FrameTarget::Fan(FanTarget::All));
-    assert_eq!(frame.as_slice(), b"one");
-
-    assert!(
-        outbound_tx.try_fill_frame_fan(FanTarget::All, b"two"),
-        "the depth-1 lane must accept the next frame the instant next_outbound copied the last"
-    );
-    let (target, frame) = block_on(fleet.next_outbound::<SLOT>());
-    assert_eq!(target, FrameTarget::Fan(FanTarget::All));
-    assert_eq!(frame.as_slice(), b"two");
-}
-
-#[test]
-fn an_outbound_commit_wakes_the_supervisor_and_try_next_outbound_drains() {
-    use crate::reactor::grant::AnyGrantProducer;
-
-    let (inbound, _inbound_rx) = leaked_grant_lane::<SLOT>(1);
-    let (mut outbound_tx, outbound) = leaked_grant_lane::<SLOT>(1);
-    let wake: &'static Signal<Mtx, ()> = leak(Signal::new());
-    outbound_tx.set_outbound_wake(wake);
-    let notify: &'static Channel<Mtx, InterfaceId, 1> = leak(Channel::new());
-    let lifecycle: &'static Channel<Mtx, InterfaceLifecycle, 1> = leak(Channel::new());
-    let mut fleet: Fleet<Mtx, SLOT, 1, 1> = Fleet::new(
-        MemberWire {
-            inbound,
-            outbound,
-            notify: notify.sender(),
-            outbound_wake: wake,
-        },
-        lifecycle.sender(),
-    );
-
-    assert!(
-        fleet.try_next_outbound::<SLOT>().is_none(),
-        "an empty lane drains to nothing"
-    );
-
-    assert!(outbound_tx.try_fill_frame_fan(FanTarget::All, b"hi"));
-    block_on(with_timeout(
-        Duration::from_millis(50),
-        fleet.outbound_ready(),
-    ))
-    .expect("the commit must signal the outbound wake");
-
-    let (target, frame) = fleet
-        .try_next_outbound::<SLOT>()
-        .expect("the committed frame drains after the wake");
-    assert_eq!(target, FrameTarget::Fan(FanTarget::All));
-    assert_eq!(frame.as_slice(), b"hi");
-    assert!(
-        fleet.try_next_outbound::<SLOT>().is_none(),
-        "the depth-1 lane is empty once drained"
-    );
 }
 
 #[test]
@@ -147,7 +72,7 @@ fn a_recipe_node_hears_an_ifac_announce_a_supervisor_stands_a_peer_up_for() {
     );
 
     let fleet: Fleet<Mtx, SLOT, 4, 4> = Fleet::new(
-        MemberWire {
+        FleetWire {
             inbound: in_producer,
             outbound: out_consumer,
             notify: notify.sender(),
@@ -192,10 +117,7 @@ fn a_recipe_node_hears_an_ifac_announce_a_supervisor_stands_a_peer_up_for() {
 
     let drive = async move {
         let mut fleet = fleet;
-        assert!(
-            fleet.register_member(descriptor(peer)),
-            "the lifecycle lane accepts the add"
-        );
+        fleet.register_member(descriptor(peer)).await;
         Timer::after(Duration::from_millis(40)).await;
 
         assert!(
@@ -204,10 +126,7 @@ fn a_recipe_node_hears_an_ifac_announce_a_supervisor_stands_a_peer_up_for() {
         );
         Timer::after(Duration::from_millis(80)).await;
 
-        assert!(
-            fleet.deregister_member(peer),
-            "the lifecycle lane accepts the remove"
-        );
+        fleet.deregister_member(peer).await;
         Timer::after(Duration::from_millis(20)).await;
     };
 

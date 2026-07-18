@@ -60,7 +60,7 @@ use personal_rns::reactor::embassy::{
 };
 use personal_rns::reactor::interface_seam::{Interface, EMBEDDED_MAX_WIRE_FRAME_LEN};
 use personal_rns::runtime::{
-    Fleet, MemberWire, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle,
+    Fleet, FleetWire, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle,
     PrnsNodeRecipe, ReactorPlumbing, RequestHandlerRegistration,
 };
 use personal_rns::storage::StorageLayout;
@@ -1313,7 +1313,7 @@ pub async fn run(spawner: Spawner) -> ! {
         { crate::NOTIFY_CAP },
         { crate::LIFECYCLE_CAP },
     > = Fleet::new(
-        MemberWire {
+        FleetWire {
             inbound: ble_in_producer,
             outbound: ble_out_consumer,
             notify: crate::NOTIFY.sender(),
