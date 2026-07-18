@@ -10,7 +10,7 @@ use core::net::Ipv6Addr;
 
 use heapless::{String as HString, Vec as HVec};
 
-use crate::crypto::sha256;
+use crate::crypto::{sha256, Sha256PrefixState};
 use crate::interfaces::{
     AnnounceBandwidthCap, BitrateBps, ConfiguredInterfacePolicy, EffectiveInterfacePolicy,
     EgressCapability, IngressCapability, InterfaceCapabilities, InterfaceDefaults,
@@ -19,7 +19,8 @@ use crate::interfaces::{
 };
 use crate::routing::links::MAX_LINK_MTU;
 
-pub const GROUP_ID: &[u8] = b"reticulum";
+pub const GROUP_NAME: &str = "reticulum";
+pub const GROUP_ID: &[u8] = GROUP_NAME.as_bytes();
 /// Discovery multicast group for the default "reticulum" group id:
 /// `ff12:0:d70b:fb1c:16e4:5e39:485e:31e1`. RNS builds it as `"ff" + type"1" + scope"2" + ":0:"`
 /// followed by group-hash bytes `[2..14]` as six big-endian hextets
@@ -27,6 +28,86 @@ pub const GROUP_ID: &[u8] = b"reticulum";
 /// Constant because the group id is fixed; recompute the literal if [`GROUP_ID`] ever changes.
 pub const DISCOVERY_GROUP: Ipv6Addr =
     Ipv6Addr::new(0xff12, 0x0, 0xd70b, 0xfb1c, 0x16e4, 0x5e39, 0x485e, 0x31e1);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiscoveryScope {
+    Link,
+    Admin,
+    Site,
+    Organisation,
+    Global,
+}
+
+impl DiscoveryScope {
+    pub fn from_name(value: &str) -> Option<Self> {
+        if value.eq_ignore_ascii_case("link") {
+            Some(Self::Link)
+        } else if value.eq_ignore_ascii_case("admin") {
+            Some(Self::Admin)
+        } else if value.eq_ignore_ascii_case("site") {
+            Some(Self::Site)
+        } else if value.eq_ignore_ascii_case("organisation") {
+            Some(Self::Organisation)
+        } else if value.eq_ignore_ascii_case("global") {
+            Some(Self::Global)
+        } else {
+            None
+        }
+    }
+
+    const fn multicast_nibble(self) -> u16 {
+        match self {
+            Self::Link => 0x2,
+            Self::Admin => 0x4,
+            Self::Site => 0x5,
+            Self::Organisation => 0x8,
+            Self::Global => 0xe,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MulticastAddressType {
+    Temporary,
+    Permanent,
+}
+
+impl MulticastAddressType {
+    pub fn from_name(value: &str) -> Option<Self> {
+        if value.eq_ignore_ascii_case("temporary") {
+            Some(Self::Temporary)
+        } else if value.eq_ignore_ascii_case("permanent") {
+            Some(Self::Permanent)
+        } else {
+            None
+        }
+    }
+
+    const fn multicast_nibble(self) -> u16 {
+        match self {
+            Self::Temporary => 0x1,
+            Self::Permanent => 0x0,
+        }
+    }
+}
+
+pub fn discovery_group(
+    group_id: &[u8],
+    scope: DiscoveryScope,
+    address_type: MulticastAddressType,
+) -> Ipv6Addr {
+    let hash = sha256(group_id);
+    Ipv6Addr::new(
+        0xff00 | (address_type.multicast_nibble() << 4) | scope.multicast_nibble(),
+        0,
+        u16::from_be_bytes([hash[2], hash[3]]),
+        u16::from_be_bytes([hash[4], hash[5]]),
+        u16::from_be_bytes([hash[6], hash[7]]),
+        u16::from_be_bytes([hash[8], hash[9]]),
+        u16::from_be_bytes([hash[10], hash[11]]),
+        u16::from_be_bytes([hash[12], hash[13]]),
+    )
+}
 
 pub const DEFAULT_DISCOVERY_PORT: u16 = 29716;
 pub const UNICAST_DISCOVERY_PORT: u16 = DEFAULT_DISCOVERY_PORT + 1;
@@ -153,13 +234,13 @@ impl PeeringToken {
 /// `socket.recvfrom` reports, so our token equals the peer's `expected_hash`
 /// ([`AutoInterface.py` L364-L366](https://github.com/markqvist/Reticulum/blob/1.3.5/RNS/Interfaces/AutoInterface.py#L364-L366)).
 pub fn peering_token(addr: &Ipv6Addr) -> PeeringToken {
+    peering_token_for_group(GROUP_ID, addr)
+}
+
+pub fn peering_token_for_group(group_id: &[u8], addr: &Ipv6Addr) -> PeeringToken {
     let mut rendered: HString<48> = HString::new();
     let _ = write!(rendered, "{addr}");
-
-    let mut material: HVec<u8, 64> = HVec::new();
-    let _ = material.extend_from_slice(GROUP_ID);
-    let _ = material.extend_from_slice(rendered.as_bytes());
-    PeeringToken(sha256(&material))
+    PeeringToken(Sha256PrefixState::absorb(&[group_id]).digest_with_suffix(rendered.as_bytes()))
 }
 
 pub enum BeaconVerdict {
@@ -170,13 +251,22 @@ pub enum BeaconVerdict {
 }
 
 pub fn classify_beacon(bytes: &[u8], src: &Ipv6Addr, self_addr: &Ipv6Addr) -> BeaconVerdict {
+    classify_beacon_for_group(bytes, src, self_addr, GROUP_ID)
+}
+
+pub fn classify_beacon_for_group(
+    bytes: &[u8],
+    src: &Ipv6Addr,
+    self_addr: &Ipv6Addr,
+    group_id: &[u8],
+) -> BeaconVerdict {
     if src == self_addr {
         return BeaconVerdict::SelfEcho;
     }
     let Some(claimed) = PeeringToken::from_beacon_prefix(bytes) else {
         return BeaconVerdict::TooShort;
     };
-    if claimed == peering_token(src) {
+    if claimed == peering_token_for_group(group_id, src) {
         BeaconVerdict::Peer(*src)
     } else {
         BeaconVerdict::AuthenticationFailed
@@ -309,6 +399,7 @@ pub type FixedAutoInterfaceProtocol<const N: usize> = AutoInterfaceProtocol<HVec
 pub struct AutoInterfaceProtocol<S> {
     our_link_local: Ipv6Addr,
     our_token: PeeringToken,
+    group_token_prefix: Sha256PrefixState,
     peers: PeerTable<S>,
     auth_failure_count: u32,
 }
@@ -319,9 +410,14 @@ impl<S: PeerStore + Default> AutoInterfaceProtocol<S> {
     }
 
     pub fn from_link_local(our_link_local: Ipv6Addr) -> Self {
+        Self::from_link_local_with_group(our_link_local, GROUP_ID)
+    }
+
+    pub fn from_link_local_with_group(our_link_local: Ipv6Addr, group_id: &[u8]) -> Self {
         Self {
-            our_token: peering_token(&our_link_local),
+            our_token: peering_token_for_group(group_id, &our_link_local),
             our_link_local,
+            group_token_prefix: Sha256PrefixState::absorb(&[group_id]),
             peers: PeerTable::new(),
             auth_failure_count: 0,
         }
@@ -341,7 +437,12 @@ impl<S: PeerStore + Default> AutoInterfaceProtocol<S> {
         bytes: &[u8],
         now_ms: u64,
     ) -> BeaconVerdict {
-        let verdict = classify_beacon(bytes, &src, &self.our_link_local);
+        let verdict = classify_beacon_with_prefix(
+            bytes,
+            &src,
+            &self.our_link_local,
+            &self.group_token_prefix,
+        );
         match verdict {
             BeaconVerdict::Peer(addr) => {
                 self.peers.upsert_peer(addr, now_ms);
@@ -371,6 +472,27 @@ impl<S: PeerStore + Default> AutoInterfaceProtocol<S> {
     }
 }
 
+fn classify_beacon_with_prefix(
+    bytes: &[u8],
+    src: &Ipv6Addr,
+    self_addr: &Ipv6Addr,
+    group_token_prefix: &Sha256PrefixState,
+) -> BeaconVerdict {
+    if src == self_addr {
+        return BeaconVerdict::SelfEcho;
+    }
+    let Some(claimed) = PeeringToken::from_beacon_prefix(bytes) else {
+        return BeaconVerdict::TooShort;
+    };
+    let mut rendered: HString<48> = HString::new();
+    let _ = write!(rendered, "{src}");
+    if claimed == PeeringToken(group_token_prefix.digest_with_suffix(rendered.as_bytes())) {
+        BeaconVerdict::Peer(*src)
+    } else {
+        BeaconVerdict::AuthenticationFailed
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -385,6 +507,57 @@ mod tests {
         assert_eq!(
             brain.our_peering_token().as_bytes(),
             peering_token(&addr).as_bytes(),
+        );
+    }
+
+    #[test]
+    fn configured_group_changes_both_multicast_address_and_peer_authentication() {
+        let addr = Ipv6Addr::new(0xfe80, 0, 0, 0, 0x0211, 0x22ff, 0xfe33, 0x4455);
+        let custom_group = b"field-team";
+        let mut brain =
+            FixedAutoInterfaceProtocol::<MAX_PEERS>::from_link_local_with_group(addr, custom_group);
+        let peer = nth_peer(4);
+        let custom_token = peering_token_for_group(custom_group, &peer);
+
+        assert!(matches!(
+            brain.ingest_discovery_datagram(peer, custom_token.as_bytes(), 10),
+            BeaconVerdict::Peer(observed) if observed == peer,
+        ));
+        assert!(matches!(
+            brain.ingest_discovery_datagram(peer, peering_token(&peer).as_bytes(), 11),
+            BeaconVerdict::AuthenticationFailed,
+        ));
+        assert_ne!(
+            discovery_group(
+                custom_group,
+                DiscoveryScope::Link,
+                MulticastAddressType::Temporary,
+            ),
+            DISCOVERY_GROUP,
+        );
+        assert_eq!(
+            discovery_group(
+                custom_group,
+                DiscoveryScope::Site,
+                MulticastAddressType::Temporary,
+            ),
+            Ipv6Addr::new(0xff15, 0, 0x5b71, 0x4c9f, 0x5d9a, 0xaa08, 0x8834, 0x28c8,),
+        );
+        assert_eq!(
+            discovery_group(
+                GROUP_ID,
+                DiscoveryScope::Link,
+                MulticastAddressType::Temporary,
+            ),
+            DISCOVERY_GROUP,
+        );
+        assert_eq!(
+            DiscoveryScope::from_name("OrGaNiSaTiOn"),
+            Some(DiscoveryScope::Organisation),
+        );
+        assert_eq!(
+            MulticastAddressType::from_name("PERMANENT"),
+            Some(MulticastAddressType::Permanent),
         );
     }
 

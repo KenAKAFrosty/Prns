@@ -245,9 +245,8 @@ fn common_interface_key_rule(key: &str) -> Option<KeyRule> {
         | interface_key::RECURSIVE_PRS
         | interface_key::ANNOUNCES_FROM_INTERNAL => Some(Applied(ValueKind::Bool)),
 
-        interface_key::BOOTSTRAP_ONLY | interface_key::IGNORE_CONFIG_WARNINGS => {
-            Some(FollowOn(ValueKind::Bool))
-        }
+        interface_key::BOOTSTRAP_ONLY => Some(Applied(ValueKind::Bool)),
+        interface_key::IGNORE_CONFIG_WARNINGS => Some(FollowOn(ValueKind::Bool)),
 
         interface_key::BITRATE => Some(Applied(ValueKind::Bitrate)),
 
@@ -322,10 +321,10 @@ fn auto_interface_key_rule(key: &str) -> Option<KeyRule> {
     match key {
         interface_key::GROUP_ID => Some(Applied(ValueKind::String)),
         interface_key::DISCOVERY_SCOPE | interface_key::MULTICAST_ADDRESS_TYPE => {
-            Some(FollowOn(ValueKind::String))
+            Some(Applied(ValueKind::String))
         }
-        interface_key::DISCOVERY_PORT | interface_key::DATA_PORT => Some(FollowOn(ValueKind::U16)),
-        interface_key::DEVICES | interface_key::IGNORED_DEVICES => Some(FollowOn(ValueKind::List)),
+        interface_key::DISCOVERY_PORT | interface_key::DATA_PORT => Some(Applied(ValueKind::U16)),
+        interface_key::DEVICES | interface_key::IGNORED_DEVICES => Some(Applied(ValueKind::List)),
         _ => None,
     }
 }
@@ -547,7 +546,12 @@ mod tests {
         assert_eq!(
             interface_key_rule("AutoInterface", interface_key::DISCOVERY_PORT)
                 .map(KeyRule::application),
-            Some(KeyApplication::FollowOn)
+            Some(KeyApplication::Applied)
+        );
+        assert_eq!(
+            interface_key_rule("TCPClientInterface", interface_key::BOOTSTRAP_ONLY)
+                .map(KeyRule::application),
+            Some(KeyApplication::Applied)
         );
         assert_eq!(
             interface_key_rule("TCPClientInterface", interface_key::ANNOUNCE_INTERVAL)

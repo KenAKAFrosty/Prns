@@ -1382,6 +1382,17 @@ fn accepted_for_key(key: &str, kind: ValueKind) -> String {
             IFAC_MAX_SIZE * 8 + 7
         ),
         interface_key::ANNOUNCE_CAP => "a percentage from 0 through 100".to_string(),
+        interface_key::DISCOVERY_SCOPE => {
+            "one of link, admin, site, organisation, or global".to_string()
+        }
+        interface_key::MULTICAST_ADDRESS_TYPE => {
+            "one of temporary or permanent".to_string()
+        }
+        interface_key::DISCOVERY_PORT => {
+            "an integer from 1 through 65534; the following port is reserved for reverse discovery"
+                .to_string()
+        }
+        interface_key::DATA_PORT => "an integer from 1 through 65535".to_string(),
         interface_key::SPEED => format!(
             "an integer from {} through {} bits per second",
             prns_core::interfaces::BitrateBps::MINIMUM,
@@ -1456,6 +1467,10 @@ pub(super) fn example_for_key(key: &str, kind: ValueKind) -> &'static str {
     match key {
         interface_key::IFAC_SIZE => "64",
         interface_key::ANNOUNCE_CAP => "2.0",
+        interface_key::DISCOVERY_SCOPE => "link",
+        interface_key::MULTICAST_ADDRESS_TYPE => "temporary",
+        interface_key::DISCOVERY_PORT => "29716",
+        interface_key::DATA_PORT => "42671",
         interface_key::SPEED => "9600",
         interface_key::DATABITS => "8",
         interface_key::PARITY => "N",
@@ -1500,6 +1515,17 @@ fn semantic_value_is_valid(key: &str, value: &Value, kind: ValueKind) -> bool {
         interface_key::ANNOUNCE_CAP => {
             parse_float(text).is_ok_and(|value| (0.0..=100.0).contains(&value))
         }
+        interface_key::DISCOVERY_SCOPE => {
+            prns_core::interfaces::wifi_auto::core::DiscoveryScope::from_name(text.trim()).is_some()
+        }
+        interface_key::MULTICAST_ADDRESS_TYPE => {
+            prns_core::interfaces::wifi_auto::core::MulticastAddressType::from_name(text.trim())
+                .is_some()
+        }
+        interface_key::DISCOVERY_PORT => {
+            parse_integer::<u16>(text).is_ok_and(|value| (1..=u16::MAX - 1).contains(&value))
+        }
+        interface_key::DATA_PORT => parse_integer::<u16>(text).is_ok_and(|value| value != 0),
         interface_key::SPEED => parse_integer::<u32>(text)
             .is_ok_and(|value| u64::from(value) >= prns_core::interfaces::BitrateBps::MINIMUM),
         interface_key::DATABITS => {

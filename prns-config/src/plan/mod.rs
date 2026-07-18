@@ -7,14 +7,17 @@ mod reference_globals;
 mod rnode_multi;
 
 pub use interface::{
-    AddressFamilyPreference, AirtimeLimitCentiPercent, ConnectTimeoutSeconds,
-    DiscoveryAdvertisementPlan, DiscoveryAnnouncementPlan, DiscoveryEncryption,
-    DiscoveryIfacPublication, DiscoveryLocationPlan, DiscoveryPublicationProblem, I2pPeerPlan,
-    I2pPeersPlan, I2pReachabilityPlan, InterfaceAccessPlan, InterfaceDiscoveryPlan,
-    PipeCommandPlan, PipeRespawnDelay, PlannedInterface, PlannedMedium, ReadyCommandFlowControl,
-    ReconnectLimit, SerialDataBits, SerialLinePlan, SerialParity, SerialStopBits,
-    StationIdentificationPlan, TcpDialPlan, TcpListenHost, TcpListenPlan, TcpTunnelMode,
-    UdpEndpointHost, UdpEndpointPlan, UdpFlowPlan,
+    AddressFamilyPreference, AirtimeLimitCentiPercent, AutoInterfaceDataPort,
+    AutoInterfaceDevicePolicy, AutoInterfaceDiscoveryPort, AutoInterfaceDiscoveryScope,
+    AutoInterfaceGroupId, AutoInterfaceMulticastAddressType, AutoInterfacePlan,
+    ConfiguredInterfaceLifecycle, ConnectTimeoutSeconds, DiscoveryAdvertisementPlan,
+    DiscoveryAnnouncementPlan, DiscoveryEncryption, DiscoveryIfacPublication,
+    DiscoveryLocationPlan, DiscoveryPublicationProblem, I2pPeerPlan, I2pPeersPlan,
+    I2pReachabilityPlan, InterfaceAccessPlan, InterfaceDiscoveryPlan, PipeCommandPlan,
+    PipeRespawnDelay, PlannedInterface, PlannedMedium, ReadyCommandFlowControl, ReconnectLimit,
+    SerialDataBits, SerialLinePlan, SerialParity, SerialStopBits, StationIdentificationPlan,
+    TcpDialPlan, TcpListenHost, TcpListenPlan, TcpTunnelMode, UdpEndpointHost, UdpEndpointPlan,
+    UdpFlowPlan,
 };
 pub use node::{
     parse_and_plan, parse_and_plan_named, DaemonPlan, LogLevel, LoggingPlan, ProtocolPlan,

@@ -2,6 +2,13 @@ use std::time::Duration;
 
 use prns_core::interfaces::rnode::policy as rnode_policy;
 use prns_core::interfaces::tcp::core::TcpWireFraming;
+pub use prns_core::interfaces::wifi_auto::core::{
+    DiscoveryScope as AutoInterfaceDiscoveryScope,
+    MulticastAddressType as AutoInterfaceMulticastAddressType,
+};
+use prns_core::interfaces::wifi_auto::core::{
+    DEFAULT_DATA_PORT, DEFAULT_DISCOVERY_PORT, GROUP_NAME,
+};
 use prns_core::interfaces::{BitrateBps, InterfaceDefaults};
 
 use super::PlanErrorKind;
@@ -250,13 +257,106 @@ impl I2pReachabilityPlan {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AutoInterfaceGroupId(String);
+
+impl AutoInterfaceGroupId {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.as_bytes()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AutoInterfaceDiscoveryPort(u16);
+
+impl AutoInterfaceDiscoveryPort {
+    fn new(port: u16) -> Option<Self> {
+        (port != 0 && port < u16::MAX).then_some(Self(port))
+    }
+
+    pub const fn get(self) -> u16 {
+        self.0
+    }
+
+    pub const fn reverse_discovery_port(self) -> u16 {
+        self.0 + 1
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AutoInterfaceDataPort(u16);
+
+impl AutoInterfaceDataPort {
+    fn new(port: u16) -> Option<Self> {
+        (port != 0).then_some(Self(port))
+    }
+
+    pub const fn get(self) -> u16 {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AutoInterfaceDevicePolicy {
+    allowed: Vec<String>,
+    ignored: Vec<String>,
+}
+
+impl AutoInterfaceDevicePolicy {
+    pub fn allowed(&self) -> &[String] {
+        &self.allowed
+    }
+
+    pub fn ignored(&self) -> &[String] {
+        &self.ignored
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AutoInterfacePlan {
+    group_id: AutoInterfaceGroupId,
+    discovery_scope: AutoInterfaceDiscoveryScope,
+    discovery_port: AutoInterfaceDiscoveryPort,
+    data_port: AutoInterfaceDataPort,
+    devices: AutoInterfaceDevicePolicy,
+    multicast_address_type: AutoInterfaceMulticastAddressType,
+}
+
+impl AutoInterfacePlan {
+    pub fn group_id(&self) -> &AutoInterfaceGroupId {
+        &self.group_id
+    }
+
+    pub const fn discovery_scope(&self) -> AutoInterfaceDiscoveryScope {
+        self.discovery_scope
+    }
+
+    pub const fn discovery_port(&self) -> AutoInterfaceDiscoveryPort {
+        self.discovery_port
+    }
+
+    pub const fn data_port(&self) -> AutoInterfaceDataPort {
+        self.data_port
+    }
+
+    pub const fn devices(&self) -> &AutoInterfaceDevicePolicy {
+        &self.devices
+    }
+
+    pub const fn multicast_address_type(&self) -> AutoInterfaceMulticastAddressType {
+        self.multicast_address_type
+    }
+}
+
 /// The wire a planned interface runs on. Only mediums a host can stand up appear here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlannedMedium {
     /// RNS `AutoInterface`: multicast LAN discovery plus unicast peers (our `AutoWifi`).
-    AutoWifi {
-        group: Option<String>,
-    },
+    AutoWifi(AutoInterfacePlan),
     /// RNS `TCPClientInterface`: dial one peer.
     TcpClient {
         connection: TcpDialPlan,
@@ -354,9 +454,23 @@ pub(super) fn rnode_defaults(
 
 pub(super) fn plan_medium(interface: &ReferenceInterface) -> Result<PlannedMedium, PlanErrorKind> {
     match &interface.params {
-        ReferenceParams::Auto { group_id, .. } => Ok(PlannedMedium::AutoWifi {
-            group: group_id.clone(),
-        }),
+        ReferenceParams::Auto {
+            group_id,
+            discovery_scope,
+            discovery_port,
+            data_port,
+            devices,
+            ignored_devices,
+            multicast_address_type,
+        } => Ok(PlannedMedium::AutoWifi(auto_interface_plan(
+            group_id,
+            discovery_scope,
+            *discovery_port,
+            *data_port,
+            devices,
+            ignored_devices,
+            multicast_address_type,
+        )?)),
         ReferenceParams::TcpClient {
             target_host,
             target_port,
@@ -660,6 +774,60 @@ pub(super) fn plan_medium(interface: &ReferenceInterface) -> Result<PlannedMediu
         }),
         _ => Err(PlanErrorKind::UnsupportedKind),
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn auto_interface_plan(
+    group_id: &Option<String>,
+    discovery_scope: &Option<String>,
+    discovery_port: Option<u16>,
+    data_port: Option<u16>,
+    devices: &Option<Vec<String>>,
+    ignored_devices: &Option<Vec<String>>,
+    multicast_address_type: &Option<String>,
+) -> Result<AutoInterfacePlan, PlanErrorKind> {
+    let discovery_scope =
+        discovery_scope
+            .as_deref()
+            .map_or(Ok(AutoInterfaceDiscoveryScope::Link), |value| {
+                AutoInterfaceDiscoveryScope::from_name(value.trim()).ok_or(
+                    PlanErrorKind::InvalidSetting {
+                        key: interface_key::DISCOVERY_SCOPE,
+                    },
+                )
+            })?;
+    let multicast_address_type = multicast_address_type.as_deref().map_or(
+        Ok(AutoInterfaceMulticastAddressType::Temporary),
+        |value| {
+            AutoInterfaceMulticastAddressType::from_name(value.trim()).ok_or(
+                PlanErrorKind::InvalidSetting {
+                    key: interface_key::MULTICAST_ADDRESS_TYPE,
+                },
+            )
+        },
+    )?;
+    let discovery_port = AutoInterfaceDiscoveryPort::new(
+        discovery_port.unwrap_or(DEFAULT_DISCOVERY_PORT),
+    )
+    .ok_or(PlanErrorKind::InvalidSetting {
+        key: interface_key::DISCOVERY_PORT,
+    })?;
+    let data_port = AutoInterfaceDataPort::new(data_port.unwrap_or(DEFAULT_DATA_PORT)).ok_or(
+        PlanErrorKind::InvalidSetting {
+            key: interface_key::DATA_PORT,
+        },
+    )?;
+    Ok(AutoInterfacePlan {
+        group_id: AutoInterfaceGroupId(group_id.clone().unwrap_or_else(|| GROUP_NAME.to_string())),
+        discovery_scope,
+        discovery_port,
+        data_port,
+        devices: AutoInterfaceDevicePolicy {
+            allowed: devices.clone().unwrap_or_default(),
+            ignored: ignored_devices.clone().unwrap_or_default(),
+        },
+        multicast_address_type,
+    })
 }
 
 fn tcp_dial_plan(

@@ -11,11 +11,13 @@ pub use discovery::{
 };
 pub(super) use medium::{airtime_limit, ready_command_flow_control, station_identification};
 pub use medium::{
-    AddressFamilyPreference, AirtimeLimitCentiPercent, ConnectTimeoutSeconds, I2pPeerPlan,
-    I2pPeersPlan, I2pReachabilityPlan, PipeCommandPlan, PipeRespawnDelay, PlannedMedium,
-    ReadyCommandFlowControl, ReconnectLimit, SerialDataBits, SerialLinePlan, SerialParity,
-    SerialStopBits, StationIdentificationPlan, TcpDialPlan, TcpListenHost, TcpListenPlan,
-    TcpTunnelMode, UdpEndpointHost, UdpEndpointPlan, UdpFlowPlan,
+    AddressFamilyPreference, AirtimeLimitCentiPercent, AutoInterfaceDataPort,
+    AutoInterfaceDevicePolicy, AutoInterfaceDiscoveryPort, AutoInterfaceDiscoveryScope,
+    AutoInterfaceGroupId, AutoInterfaceMulticastAddressType, AutoInterfacePlan,
+    ConnectTimeoutSeconds, I2pPeerPlan, I2pPeersPlan, I2pReachabilityPlan, PipeCommandPlan,
+    PipeRespawnDelay, PlannedMedium, ReadyCommandFlowControl, ReconnectLimit, SerialDataBits,
+    SerialLinePlan, SerialParity, SerialStopBits, StationIdentificationPlan, TcpDialPlan,
+    TcpListenHost, TcpListenPlan, TcpTunnelMode, UdpEndpointHost, UdpEndpointPlan, UdpFlowPlan,
 };
 pub(super) use policy::{
     effective_policy, global_announce_rate, global_common_policy, MemberEgressPolicy,
@@ -40,6 +42,13 @@ pub struct PlannedInterface {
     pub access: InterfaceAccessPlan,
     pub medium: PlannedMedium,
     pub discovery: InterfaceDiscoveryPlan,
+    pub lifecycle: ConfiguredInterfaceLifecycle,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfiguredInterfaceLifecycle {
+    Persistent,
+    BootstrapOnly,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,6 +85,11 @@ pub(super) fn plan_interface(
         access,
         medium,
         discovery,
+        lifecycle: if interface.bootstrap_only == Some(true) {
+            ConfiguredInterfaceLifecycle::BootstrapOnly
+        } else {
+            ConfiguredInterfaceLifecycle::Persistent
+        },
     })
 }
 
@@ -87,7 +101,7 @@ pub(super) fn plan_access(
         return Ok(InterfaceAccessPlan::Open);
     }
     let default_size = match medium {
-        PlannedMedium::AutoWifi { .. }
+        PlannedMedium::AutoWifi(_)
         | PlannedMedium::TcpClient { .. }
         | PlannedMedium::TcpServer { .. }
         | PlannedMedium::Udp { .. }

@@ -110,6 +110,7 @@ fn interpret_interface(
 
     let mode = take_mode(&mut rest, name)?;
     let outgoing = opt(&mut rest, interface_key::OUTGOING, name, coerce_bool)?;
+    let bootstrap_only = opt(&mut rest, interface_key::BOOTSTRAP_ONLY, name, coerce_bool)?;
     let bitrate = opt(&mut rest, interface_key::BITRATE, name, coerce_u64)?;
     let announce_cap = opt(&mut rest, interface_key::ANNOUNCE_CAP, name, coerce_f64)?;
     let announce_rate_target = opt(
@@ -177,6 +178,7 @@ fn interpret_interface(
         enabled,
         mode,
         outgoing,
+        bootstrap_only,
         bitrate,
         announce_cap,
         announce_rate_target,

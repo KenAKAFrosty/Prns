@@ -2,7 +2,9 @@ use personal_rns::config::{
     DaemonPlan, DiscoveryPublicationProblem, InterfaceDiscoveryPlan, PlannedInterface,
     PlannedMedium,
 };
-use personal_rns::from_plan::{attach_plan_with_context, PlanOutcome, PlanRuntimeContext};
+use personal_rns::from_plan::{
+    attach_plan_with_context, PlanAttachments, PlanOutcome, PlanRuntimeContext,
+};
 use personal_rns::interfaces::{InterfaceId, InterfaceOriginKind};
 use personal_rns::runtime::PrnsNodeHandle;
 
@@ -35,6 +37,7 @@ impl StartupInterfaceReport {
 #[derive(Default)]
 pub struct ConstructedInterfaces {
     pub attached: Vec<AttachedConfiguredInterface>,
+    pub runtime: PlanAttachments,
     pub startup: StartupInterfaceReport,
 }
 
@@ -44,7 +47,7 @@ pub async fn construct_interfaces(
     context: &PlanRuntimeContext,
 ) -> ConstructedInterfaces {
     let mut constructed = ConstructedInterfaces::default();
-    attach_plan_with_context(handle, plan, context, &mut |outcome| {
+    let runtime = attach_plan_with_context(handle, plan, context, &mut |outcome| {
         constructed.startup.merge(classify(&outcome));
         if let PlanOutcome::Up { interface, id } = &outcome {
             constructed.attached.push(AttachedConfiguredInterface {
@@ -55,6 +58,7 @@ pub async fn construct_interfaces(
         render(outcome);
     })
     .await;
+    constructed.runtime = runtime;
     constructed
 }
 
@@ -65,7 +69,7 @@ fn classify(outcome: &PlanOutcome<'_>) -> StartupInterfaceReport {
             PlannedMedium::TcpServer { .. } | PlannedMedium::Backbone { .. } => {
                 report.listening = 1;
             }
-            PlannedMedium::AutoWifi { .. } | PlannedMedium::Udp { .. } => report.online = 1,
+            PlannedMedium::AutoWifi(_) | PlannedMedium::Udp { .. } => report.online = 1,
             PlannedMedium::I2p {
                 peers,
                 reachability,
@@ -156,7 +160,7 @@ fn render(outcome: PlanOutcome<'_>) {
 
 fn medium_name(medium: &PlannedMedium) -> &'static str {
     match medium {
-        PlannedMedium::AutoWifi { .. } => "auto_wifi",
+        PlannedMedium::AutoWifi(_) => "auto_wifi",
         PlannedMedium::TcpClient { .. } => "tcp_client",
         PlannedMedium::TcpServer { .. } => "tcp_server",
         PlannedMedium::Udp { .. } => "udp",
