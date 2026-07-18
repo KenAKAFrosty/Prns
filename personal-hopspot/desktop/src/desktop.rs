@@ -305,19 +305,43 @@ fn run_node(
             _ => (None, None, None),
         };
 
-        tokio::spawn(
-            SharedInstanceRpcCompat::tcp(credentials.clone(), rpc_port, handle.clone()).run(),
-        );
+        let tcp_rpc =
+            match SharedInstanceRpcCompat::tcp(credentials.clone(), rpc_port, handle.clone())
+                .bind()
+                .await
+            {
+                Ok(rpc) => rpc,
+                Err(error) => {
+                    tracing::error!(
+                        event = "shared_instance_rpc_bind_failed",
+                        transport = "tcp",
+                        error = ?error,
+                    );
+                    return;
+                }
+            };
+        tokio::spawn(tcp_rpc.run());
         #[cfg(target_os = "linux")]
         {
-            tokio::spawn(
-                SharedInstanceRpcCompat::abstract_unix(
-                    credentials,
-                    instance_core::DEFAULT_SOCKET_PATH,
-                    handle.clone(),
-                )
-                .run(),
-            );
+            let abstract_unix_rpc = match SharedInstanceRpcCompat::abstract_unix(
+                credentials,
+                instance_core::DEFAULT_SOCKET_PATH,
+                handle.clone(),
+            )
+            .bind()
+            .await
+            {
+                Ok(rpc) => rpc,
+                Err(error) => {
+                    tracing::error!(
+                        event = "shared_instance_rpc_bind_failed",
+                        transport = "abstract_unix",
+                        error = ?error,
+                    );
+                    return;
+                }
+            };
+            tokio::spawn(abstract_unix_rpc.run());
         }
 
         let _ = ready_tx.send(WindowHandles {

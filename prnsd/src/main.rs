@@ -49,7 +49,7 @@ use personal_rns::runtime::{
 };
 use personal_rns::shared_instance::{
     join_shared_instance, InstancePorts, JoinError, OnExisting, RnsBlackholeFiles, Role,
-    SharedInstanceCredentials, SharedInstanceEndpoint, SharedInstanceIntent,
+    SharedInstanceCredentials, SharedInstanceIntent,
     SharedInstanceTransport as RuntimeSharedInstanceTransport,
 };
 use personal_rns::storage::GrowableHeap;
@@ -564,15 +564,10 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
                     observability.shutdown().await;
                     process::exit(1);
                 }
-                Err(JoinError::InstanceBusUnavailable { endpoint, kind }) => {
-                    let endpoint = match endpoint {
-                        SharedInstanceEndpoint::TcpBus => "tcp_bus",
-                        #[cfg(target_os = "linux")]
-                        SharedInstanceEndpoint::AbstractUnixBus => "abstract_unix_bus",
-                    };
+                Err(JoinError::EndpointUnavailable { endpoint, kind }) => {
                     tracing::error!(
-                        event = "shared_instance_bus_unavailable",
-                        endpoint,
+                        event = "shared_instance_endpoint_unavailable",
+                        endpoint = endpoint.as_str(),
                         error_kind = ?kind,
                     );
                     observability.shutdown().await;

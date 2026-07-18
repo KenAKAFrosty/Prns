@@ -118,7 +118,11 @@ async fn main() {
     // The control-RPC compatibility shim: stock RNS clients fetch per-packet phy stats over this
     // channel during attachment (resource) delivery, and fault if nobody answers. It reads engine
     // state (e.g. link_count) through the handle to answer with real values.
-    tokio::spawn(SharedInstanceRpcCompat::tcp(credentials, rpc_port, handle.clone()).run());
+    let rpc = SharedInstanceRpcCompat::tcp(credentials, rpc_port, handle.clone())
+        .bind()
+        .await
+        .expect("the shared-instance RPC listener binds");
+    tokio::spawn(rpc.run());
 
     println!("READY bridge local=127.0.0.1:{local_port} rpc=127.0.0.1:{rpc_port} peer={peer_addr}");
     node.run().await;

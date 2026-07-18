@@ -1,4 +1,5 @@
 use std::string::String;
+use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpListener;
@@ -19,11 +20,24 @@ use super::dispatch::reply_for_decoded;
 use super::framing::{read_frame, write_frame};
 use super::telemetry::RpcTelemetry;
 
-/// Answers the RNS shared-instance control RPC for stock clients, with the minimal replies that keep attachment delivery from faulting. Stand one up beside a [`LocalServer`](crate::shared_instance::server::LocalServer) and drive it with [`run`](Self::run).
+/// Answers the RNS shared-instance control RPC for stock clients, with the minimal replies that keep attachment delivery from faulting. Stand one up beside a [`LocalServer`](crate::shared_instance::server::LocalServer), [`bind`](Self::bind) it, then drive the returned listener.
 pub struct SharedInstanceRpcCompat<Q, B = Q> {
     credentials: SharedInstanceCredentials,
     pub(super) blackhole_source: prns_core::identity::IdentityHash,
     pub(super) bind: RpcBind,
+    query: Q,
+    blackholes: B,
+    telemetry: RpcTelemetry,
+}
+
+pub struct SharedInstanceRpcListener<Q, B = Q> {
+    listener: RpcListener,
+    service: RpcService<Q, B>,
+}
+
+struct RpcService<Q, B> {
+    credentials: SharedInstanceCredentials,
+    blackhole_source: prns_core::identity::IdentityHash,
     query: Q,
     blackholes: B,
     telemetry: RpcTelemetry,
@@ -34,6 +48,38 @@ pub(super) enum RpcBind {
     #[cfg(target_os = "linux")]
     Abstract(String),
 }
+
+enum RpcListener {
+    Tcp(TcpListener),
+    #[cfg(target_os = "linux")]
+    AbstractUnix(UnixListener),
+}
+
+enum RpcListenerKind {
+    Tcp,
+    #[cfg(target_os = "linux")]
+    AbstractUnix,
+}
+
+impl RpcListenerKind {
+    #[cfg(feature = "tracing")]
+    const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Tcp => "tcp",
+            #[cfg(target_os = "linux")]
+            Self::AbstractUnix => "abstract_unix",
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum SharedInstanceRpcBindError {
+    Tcp(std::io::ErrorKind),
+    #[cfg(target_os = "linux")]
+    AbstractUnix(std::io::ErrorKind),
+}
+
+const ACCEPT_RETRY_INTERVAL: Duration = Duration::from_secs(1);
 
 impl<Q> SharedInstanceRpcCompat<Q, Q>
 where
@@ -142,73 +188,127 @@ where
         self
     }
 
-    /// Accept control connections forever, serving each on its own task. Returns only if the listener cannot be bound.
-    pub async fn run(self) {
-        match self.bind {
-            RpcBind::Tcp(addr) => {
-                let Ok(listener) = TcpListener::bind(addr.as_str()).await else {
-                    return;
-                };
-                loop {
-                    if let Ok((stream, _)) = listener.accept().await {
-                        let credentials = self.credentials.clone();
-                        let blackhole_source = self.blackhole_source;
-                        let query = self.query.clone();
-                        let blackholes = self.blackholes.clone();
-                        let telemetry = self.telemetry.clone();
-                        tokio::spawn(async move {
-                            let _ = serve_connection(
-                                stream,
-                                credentials,
-                                blackhole_source,
-                                query,
-                                blackholes,
-                                telemetry,
-                            )
-                            .await;
-                        });
-                    }
-                }
-            }
+    pub async fn bind(self) -> Result<SharedInstanceRpcListener<Q, B>, SharedInstanceRpcBindError> {
+        let Self {
+            credentials,
+            blackhole_source,
+            bind,
+            query,
+            blackholes,
+            telemetry,
+        } = self;
+        let listener = match bind {
+            RpcBind::Tcp(address) => RpcListener::Tcp(
+                TcpListener::bind(address)
+                    .await
+                    .map_err(|error| SharedInstanceRpcBindError::Tcp(error.kind()))?,
+            ),
             #[cfg(target_os = "linux")]
-            RpcBind::Abstract(socket_path) => {
-                let Some(listener) = bind_abstract_rpc(&socket_path) else {
-                    return;
-                };
-                loop {
-                    if let Ok((stream, _)) = listener.accept().await {
-                        let credentials = self.credentials.clone();
-                        let blackhole_source = self.blackhole_source;
-                        let query = self.query.clone();
-                        let blackholes = self.blackholes.clone();
-                        let telemetry = self.telemetry.clone();
-                        tokio::spawn(async move {
-                            let _ = serve_connection(
-                                stream,
-                                credentials,
-                                blackhole_source,
-                                query,
-                                blackholes,
-                                telemetry,
-                            )
-                            .await;
-                        });
+            RpcBind::Abstract(socket_path) => RpcListener::AbstractUnix(
+                bind_abstract_rpc(&socket_path)
+                    .map_err(|error| SharedInstanceRpcBindError::AbstractUnix(error.kind()))?,
+            ),
+        };
+        Ok(SharedInstanceRpcListener {
+            listener,
+            service: RpcService {
+                credentials,
+                blackhole_source,
+                query,
+                blackholes,
+                telemetry,
+            },
+        })
+    }
+}
+
+impl<Q, B> SharedInstanceRpcListener<Q, B>
+where
+    Q: NodeIntrospection
+        + RoutingControl
+        + DestinationIdentityRetentionControl
+        + Clone
+        + Send
+        + Sync
+        + 'static,
+    B: IdentityBlackholeSource + IdentityBlackholeControl + Clone + Send + Sync + 'static,
+{
+    pub async fn run(self) {
+        match self.listener {
+            RpcListener::Tcp(listener) => loop {
+                match listener.accept().await {
+                    Ok((stream, _)) => self.service.serve(stream),
+                    Err(error) => recover_from_accept_error(error, RpcListenerKind::Tcp).await,
+                }
+            },
+            #[cfg(target_os = "linux")]
+            RpcListener::AbstractUnix(listener) => loop {
+                match listener.accept().await {
+                    Ok((stream, _)) => self.service.serve(stream),
+                    Err(error) => {
+                        recover_from_accept_error(error, RpcListenerKind::AbstractUnix).await;
                     }
                 }
-            }
+            },
         }
     }
 }
 
+impl<Q, B> RpcService<Q, B>
+where
+    Q: NodeIntrospection
+        + RoutingControl
+        + DestinationIdentityRetentionControl
+        + Clone
+        + Send
+        + Sync
+        + 'static,
+    B: IdentityBlackholeSource + IdentityBlackholeControl + Clone + Send + Sync + 'static,
+{
+    fn serve<S>(&self, stream: S)
+    where
+        S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    {
+        let credentials = self.credentials.clone();
+        let blackhole_source = self.blackhole_source;
+        let query = self.query.clone();
+        let blackholes = self.blackholes.clone();
+        let telemetry = self.telemetry.clone();
+        tokio::spawn(async move {
+            let _ = serve_connection(
+                stream,
+                credentials,
+                blackhole_source,
+                query,
+                blackholes,
+                telemetry,
+            )
+            .await;
+        });
+    }
+}
+
+async fn recover_from_accept_error(error: std::io::Error, listener: RpcListenerKind) {
+    #[cfg(feature = "tracing")]
+    tracing::warn!(
+        event = "shared_instance_rpc_accept_failed",
+        transport = listener.as_str(),
+        error_kind = ?error.kind(),
+    );
+    #[cfg(not(feature = "tracing"))]
+    let _ = (error, listener);
+    tokio::time::sleep(ACCEPT_RETRY_INTERVAL).await;
+}
+
 /// Bind `\0rns/{socket_path}/rpc` in the Linux abstract namespace (leading null implied), mirroring how the data bus binds `\0rns/{socket_path}`.
 #[cfg(target_os = "linux")]
-pub(super) fn bind_abstract_rpc(socket_path: &str) -> Option<UnixListener> {
+pub(super) fn bind_abstract_rpc(socket_path: &str) -> std::io::Result<UnixListener> {
     use std::os::linux::net::SocketAddrExt;
     let name = std::format!("rns/{socket_path}/rpc");
-    let addr = std::os::unix::net::SocketAddr::from_abstract_name(name.as_bytes()).ok()?;
-    let listener = std::os::unix::net::UnixListener::bind_addr(&addr).ok()?;
-    listener.set_nonblocking(true).ok()?;
-    UnixListener::from_std(listener).ok()
+    let addr = std::os::unix::net::SocketAddr::from_abstract_name(name.as_bytes())?;
+    let listener = std::os::unix::net::UnixListener::bind_addr(&addr)?;
+    listener.set_nonblocking(true)?;
+    UnixListener::from_std(listener)
 }
 
 pub(super) async fn serve_connection<S, Q, B>(

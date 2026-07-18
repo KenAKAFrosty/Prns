@@ -13,7 +13,9 @@ use prns_runtime::runtime::PrnsNodeHandle;
 use tokio::net::TcpStream;
 
 use super::blackhole_compat::{RnsBlackholeFiles, RnsPersistedBlackholes};
-use super::rpc_compat::{SharedInstanceCredentials, SharedInstanceRpcCompat};
+use super::rpc_compat::{
+    SharedInstanceCredentials, SharedInstanceRpcBindError, SharedInstanceRpcCompat,
+};
 use super::server::{LocalClientInterface, LocalServer, LocalServerBindError};
 
 /// How long the probe waits for the bus to answer before concluding no instance is running.
@@ -86,7 +88,7 @@ pub enum Role {
 pub enum JoinError {
     /// An instance was already running at `at`, and [`OnExisting::Refuse`] forbade joining it.
     InstanceAlreadyRunning { at: String },
-    InstanceBusUnavailable {
+    EndpointUnavailable {
         endpoint: SharedInstanceEndpoint,
         kind: std::io::ErrorKind,
     },
@@ -95,8 +97,30 @@ pub enum JoinError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SharedInstanceEndpoint {
     TcpBus,
+    TcpControl,
     #[cfg(target_os = "linux")]
     AbstractUnixBus,
+    #[cfg(target_os = "linux")]
+    AbstractUnixControl,
+}
+
+impl SharedInstanceEndpoint {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::TcpBus => "tcp_bus",
+            Self::TcpControl => "tcp_control",
+            #[cfg(target_os = "linux")]
+            Self::AbstractUnixBus => "abstract_unix_bus",
+            #[cfg(target_os = "linux")]
+            Self::AbstractUnixControl => "abstract_unix_control",
+        }
+    }
+}
+
+struct SharedInstanceActivationError {
+    endpoint: SharedInstanceEndpoint,
+    kind: std::io::ErrorKind,
 }
 
 /// Participate in the host's local Reticulum shared instance, electing the node's role.
@@ -120,14 +144,10 @@ pub async fn join_shared_instance(
             if let Some(role) = join_existing(handle, &instance).await? {
                 return Ok(role);
             }
-            let (endpoint, kind) = match error {
-                LocalServerBindError::Tcp(kind) => (SharedInstanceEndpoint::TcpBus, kind),
-                #[cfg(target_os = "linux")]
-                LocalServerBindError::AbstractUnix(kind) => {
-                    (SharedInstanceEndpoint::AbstractUnixBus, kind)
-                }
-            };
-            Err(JoinError::InstanceBusUnavailable { endpoint, kind })
+            Err(JoinError::EndpointUnavailable {
+                endpoint: error.endpoint,
+                kind: error.kind,
+            })
         }
     }
 }
@@ -186,7 +206,7 @@ where
 async fn become_instance(
     handle: &PrnsNodeHandle,
     instance: &SharedInstanceIntent,
-) -> Result<(), LocalServerBindError> {
+) -> Result<(), SharedInstanceActivationError> {
     let server = match &instance.transport {
         SharedInstanceTransport::Tcp => LocalServer::with_port(instance.ports.bus),
         #[cfg(target_os = "linux")]
@@ -196,41 +216,68 @@ async fn become_instance(
     }
     .with_policy(instance.policy)
     .bind()
-    .await?;
-    handle.supervise(server);
+    .await
+    .map_err(SharedInstanceActivationError::from_bus)?;
     let blackholes = RnsPersistedBlackholes::new(
         handle.clone(),
         instance.blackhole_source,
         instance.blackhole_files.clone(),
     );
-    match &instance.transport {
-        SharedInstanceTransport::Tcp => {
-            tokio::spawn(
-                SharedInstanceRpcCompat::tcp_with_blackholes(
-                    instance.credentials.clone(),
-                    instance.blackhole_source,
-                    instance.ports.control,
-                    handle.clone(),
-                    blackholes,
-                )
-                .run(),
-            );
-        }
+    let rpc = match &instance.transport {
+        SharedInstanceTransport::Tcp => SharedInstanceRpcCompat::tcp_with_blackholes(
+            instance.credentials.clone(),
+            instance.blackhole_source,
+            instance.ports.control,
+            handle.clone(),
+            blackholes,
+        ),
         #[cfg(target_os = "linux")]
         SharedInstanceTransport::AbstractUnix { socket_path } => {
-            tokio::spawn(
-                SharedInstanceRpcCompat::abstract_unix_with_blackholes(
-                    instance.credentials.clone(),
-                    instance.blackhole_source,
-                    socket_path,
-                    handle.clone(),
-                    blackholes,
-                )
-                .run(),
-            );
+            SharedInstanceRpcCompat::abstract_unix_with_blackholes(
+                instance.credentials.clone(),
+                instance.blackhole_source,
+                socket_path,
+                handle.clone(),
+                blackholes,
+            )
         }
     }
+    .bind()
+    .await
+    .map_err(SharedInstanceActivationError::from_control)?;
+    handle.supervise(server);
+    tokio::spawn(rpc.run());
     Ok(())
+}
+
+impl SharedInstanceActivationError {
+    fn from_bus(error: LocalServerBindError) -> Self {
+        match error {
+            LocalServerBindError::Tcp(kind) => Self {
+                endpoint: SharedInstanceEndpoint::TcpBus,
+                kind,
+            },
+            #[cfg(target_os = "linux")]
+            LocalServerBindError::AbstractUnix(kind) => Self {
+                endpoint: SharedInstanceEndpoint::AbstractUnixBus,
+                kind,
+            },
+        }
+    }
+
+    fn from_control(error: SharedInstanceRpcBindError) -> Self {
+        match error {
+            SharedInstanceRpcBindError::Tcp(kind) => Self {
+                endpoint: SharedInstanceEndpoint::TcpControl,
+                kind,
+            },
+            #[cfg(target_os = "linux")]
+            SharedInstanceRpcBindError::AbstractUnix(kind) => Self {
+                endpoint: SharedInstanceEndpoint::AbstractUnixControl,
+                kind,
+            },
+        }
+    }
 }
 
 /// Dial the bus over TCP: `Some(stream)` if an instance is listening (the stream becomes the client
