@@ -1,10 +1,10 @@
+mod handle_capabilities;
 mod interface_lifecycle;
 mod node_lifecycle;
 mod persistence;
 mod resource_transfer;
 
 use std::collections::HashMap;
-use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -17,45 +17,30 @@ use crate::engine::{
     RequestPath, RequestPathFailure, SendRequestFailure, SendSinglePacket, SendSinglePacketFailure,
     SendSinglePacketPayload, Settlement, PATH_REQUEST_ID_LEN,
 };
-use crate::interfaces::{InterfaceId, PacketPhyStats};
-use crate::node_introspection::{
-    AnnounceRateSnapshot, InterfaceInventoryEntry, NodeIntrospection, NodeIntrospectionRequest,
-    RouteSnapshot,
-};
+use crate::interfaces::InterfaceId;
 use crate::reactor::compression;
 use crate::reactor::driver::{
     HostCommand, HostResourcePayload, RequestAnyHostCommand, RespondAnyHostCommand,
 };
-use crate::routing::dedup::PacketHash;
 use crate::routing::links::data::LINK_MDU;
 use crate::routing::links::request::RESPONSE_WIRE_OVERHEAD;
 use crate::routing::links::resources::MAX_EFFICIENT_SIZE;
 use crate::routing::links::LinkId;
-use crate::routing::request_handlers::{RequestHandlerError, RequestPathHash};
-use crate::routing::BlackholedIdentity;
-use crate::storage::TablePushError;
+use crate::routing::request_handlers::RequestPathHash;
 use crate::units::RttMillis;
-use crate::wire::{DestinationHash, TransportId};
+use crate::wire::DestinationHash;
 
 use super::byte_stream::{ByteStreamReader, ByteStreamWriter, StreamId};
-use super::identity_blackhole::{settle_control, settle_source};
 use super::request_router::RespondToken;
-use super::settle_destination_identity_retention;
-#[cfg(feature = "runtime-metrics")]
-use super::RuntimeMetricsSnapshot;
-use super::{
-    ClearAnnounceQueuesOutcome, DestinationIdentityRetentionControl,
-    DestinationIdentityRetentionControlError, DestinationIdentityRetentionHostCommand,
-    DropRouteOutcome, DropRoutesViaOutcome, IdentityBlackholeControl,
-    IdentityBlackholeControlError, IdentityBlackholeHostCommand, IdentityBlackholeSource,
-    IdentityBlackholeSourceError, InterfaceStore, RoutingControl, RoutingControlError, SendError,
-};
+use super::{InterfaceStore, SendError};
 pub use interface_lifecycle::{
     AttachIntent, Attachable, AttachedInterface, AttachedSupervisor, DetachedFleet, Fleet,
     InterfaceAttachmentMetadata, InterfaceSupervisor,
 };
 use interface_lifecycle::{DriverMsg, RegisteredInterface};
-pub use node_lifecycle::{NonRoutingIdentityError, PrnsNode, SharedInstanceIdentityError};
+pub use node_lifecycle::{
+    NonRoutingIdentityError, PrnsNode, RegisterRequestRouteError, SharedInstanceIdentityError,
+};
 pub use persistence::{
     boot_timeline_origin, BlackholeSeedReport, DestinationIdentitySeedReport, FlushError,
     FlushMark, FlushReport, PrepareFlushError, PreparedFlush, RatchetSeedReport, RegionFlush,
@@ -87,11 +72,6 @@ pub enum RequestPathError {
     NodeStopped,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RegisterRequestRouteError {
-    Registration(TablePushError),
-    Seed(RequestHandlerError),
-}
 impl PrnsNodeHandle {
     #[cfg(test)]
     pub(crate) fn over(commands: UnboundedSender<HostCommand>) -> Self {
@@ -188,19 +168,6 @@ impl PrnsNodeHandle {
         }
     }
 
-    #[cfg(feature = "runtime-metrics")]
-    pub async fn metrics_snapshot(&self) -> Option<RuntimeMetricsSnapshot> {
-        let (reply, snapshot) = oneshot::channel();
-        if self
-            .commands
-            .send(HostCommand::SnapshotMetrics { reply })
-            .is_err()
-        {
-            return None;
-        }
-        snapshot.await.ok()
-    }
-
     /// Bring a link up to `destination` and await it: `Ok(LinkId)` once the peer's proof validates, or the typed reason it never established. The resolved id is the handle every link-scoped verb takes.
     #[cfg_attr(
         feature = "tracing",
@@ -265,17 +232,6 @@ impl PrnsNodeHandle {
             })
             .ok()?;
         settled.await.ok()
-    }
-
-    async fn introspect<T>(
-        &self,
-        request: impl FnOnce(oneshot::Sender<T>) -> NodeIntrospectionRequest,
-    ) -> Option<T> {
-        let (reply, response) = oneshot::channel();
-        self.commands
-            .send(HostCommand::NodeIntrospection(request(reply)))
-            .ok()?;
-        response.await.ok()
     }
 
     fn send_response(
@@ -395,195 +351,6 @@ impl PrnsNodeHandle {
     pub fn close_link(&self, link_id: LinkId) -> bool {
         self.issue(EngineCommand::CloseLink(CloseLink { link_id }))
             .is_some()
-    }
-}
-
-async fn settle_routing_control<T, F>(
-    commands: UnboundedSender<HostCommand>,
-    build: F,
-) -> Result<T, RoutingControlError>
-where
-    T: Send,
-    F: FnOnce(oneshot::Sender<T>) -> HostCommand + Send,
-{
-    let (reply, settled) = oneshot::channel();
-    commands
-        .send(build(reply))
-        .map_err(|_| RoutingControlError::NodeStopped)?;
-    settled.await.map_err(|_| RoutingControlError::NodeStopped)
-}
-
-impl RoutingControl for PrnsNodeHandle {
-    fn drop_route(
-        &self,
-        destination: DestinationHash,
-    ) -> impl Future<Output = Result<DropRouteOutcome, RoutingControlError>> + Send {
-        settle_routing_control(self.commands.clone(), move |reply| HostCommand::DropRoute {
-            destination,
-            reply,
-        })
-    }
-
-    fn drop_routes_via(
-        &self,
-        transport: TransportId,
-    ) -> impl Future<Output = Result<DropRoutesViaOutcome, RoutingControlError>> + Send {
-        settle_routing_control(self.commands.clone(), move |reply| {
-            HostCommand::DropRoutesVia { transport, reply }
-        })
-    }
-
-    fn clear_announce_queues(
-        &self,
-    ) -> impl Future<Output = Result<ClearAnnounceQueuesOutcome, RoutingControlError>> + Send {
-        settle_routing_control(self.commands.clone(), |reply| {
-            HostCommand::ClearAnnounceQueues { reply }
-        })
-    }
-}
-
-impl DestinationIdentityRetentionControl for PrnsNodeHandle {
-    fn mark_destination_used(
-        &self,
-        destination: DestinationHash,
-    ) -> impl Future<
-        Output = Result<
-            crate::identity::MarkDestinationUsedOutcome,
-            DestinationIdentityRetentionControlError,
-        >,
-    > + Send {
-        settle_destination_identity_retention(self.commands.clone(), move |reply| {
-            DestinationIdentityRetentionHostCommand::MarkUsed { destination, reply }
-        })
-    }
-
-    fn retain_destination(
-        &self,
-        destination: DestinationHash,
-    ) -> impl Future<
-        Output = Result<
-            crate::identity::RetainDestinationOutcome,
-            DestinationIdentityRetentionControlError,
-        >,
-    > + Send {
-        settle_destination_identity_retention(self.commands.clone(), move |reply| {
-            DestinationIdentityRetentionHostCommand::RetainDestination { destination, reply }
-        })
-    }
-
-    fn release_destination(
-        &self,
-        destination: DestinationHash,
-    ) -> impl Future<
-        Output = Result<
-            crate::identity::ReleaseDestinationOutcome,
-            DestinationIdentityRetentionControlError,
-        >,
-    > + Send {
-        settle_destination_identity_retention(self.commands.clone(), move |reply| {
-            DestinationIdentityRetentionHostCommand::ReleaseDestination { destination, reply }
-        })
-    }
-
-    fn retain_identity(
-        &self,
-        identity: crate::identity::IdentityHash,
-    ) -> impl Future<
-        Output = Result<
-            crate::identity::RetainIdentityOutcome,
-            DestinationIdentityRetentionControlError,
-        >,
-    > + Send {
-        settle_destination_identity_retention(self.commands.clone(), move |reply| {
-            DestinationIdentityRetentionHostCommand::RetainIdentity { identity, reply }
-        })
-    }
-}
-
-impl IdentityBlackholeSource for PrnsNodeHandle {
-    type Reason = String;
-    type Entries = std::vec::Vec<BlackholedIdentity<String>>;
-
-    fn blackholed_identities(
-        &self,
-    ) -> impl Future<Output = Result<Self::Entries, IdentityBlackholeSourceError>> + Send {
-        settle_source(self.commands.clone(), |reply| {
-            IdentityBlackholeHostCommand::ReadAll { reply }
-        })
-    }
-
-    fn is_blackholed(
-        &self,
-        identity: crate::identity::IdentityHash,
-    ) -> impl Future<Output = Result<bool, IdentityBlackholeSourceError>> + Send {
-        settle_source(self.commands.clone(), move |reply| {
-            IdentityBlackholeHostCommand::IsBlackholed { identity, reply }
-        })
-    }
-}
-
-impl IdentityBlackholeControl for PrnsNodeHandle {
-    fn blackhole_identity<'a>(
-        &'a self,
-        entry: BlackholedIdentity<&'a str>,
-    ) -> impl Future<
-        Output = Result<crate::routing::BlackholeIdentityOutcome, IdentityBlackholeControlError>,
-    > + Send
-           + 'a {
-        let entry = BlackholedIdentity {
-            identity: entry.identity,
-            source: entry.source,
-            expiry: entry.expiry,
-            reason: entry.reason.map(String::from),
-        };
-        settle_control(self.commands.clone(), move |reply| {
-            IdentityBlackholeHostCommand::Blackhole { entry, reply }
-        })
-    }
-
-    fn unblackhole_identity(
-        &self,
-        identity: crate::identity::IdentityHash,
-    ) -> impl Future<
-        Output = Result<crate::routing::UnblackholeIdentityOutcome, IdentityBlackholeControlError>,
-    > + Send {
-        settle_control(self.commands.clone(), move |reply| {
-            IdentityBlackholeHostCommand::Unblackhole { identity, reply }
-        })
-    }
-}
-
-impl NodeIntrospection for PrnsNodeHandle {
-    fn interface_inventory(&self) -> std::vec::Vec<InterfaceInventoryEntry> {
-        PrnsNodeHandle::interface_inventory(self)
-    }
-
-    async fn link_count(&self) -> u32 {
-        self.introspect(|reply| NodeIntrospectionRequest::LinkCount { reply })
-            .await
-            .unwrap_or_default()
-    }
-
-    fn packet_phy(&self, packet_hash: PacketHash) -> Option<PacketPhyStats> {
-        self.store.packet_phy(packet_hash)
-    }
-
-    async fn announce_rates(&self) -> std::vec::Vec<AnnounceRateSnapshot> {
-        self.introspect(|reply| NodeIntrospectionRequest::AnnounceRates { reply })
-            .await
-            .unwrap_or_default()
-    }
-
-    async fn routes(&self) -> std::vec::Vec<RouteSnapshot> {
-        self.introspect(|reply| NodeIntrospectionRequest::Routes { reply })
-            .await
-            .unwrap_or_default()
-    }
-
-    async fn route(&self, destination: DestinationHash) -> Option<RouteSnapshot> {
-        self.introspect(|reply| NodeIntrospectionRequest::Route { destination, reply })
-            .await
-            .flatten()
     }
 }
 

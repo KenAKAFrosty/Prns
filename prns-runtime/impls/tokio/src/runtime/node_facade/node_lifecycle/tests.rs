@@ -1,11 +1,18 @@
 use std::sync::{Arc, Mutex};
 
 use crate::engine::{InstantMillis, Journaled};
+use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::InterfaceId;
 use crate::routing::announce::AnnounceObservation;
+use crate::routing::links::resources::ResourceStrategy;
+use crate::routing::request_handlers::RequestHandlerError;
+use crate::runtime::{
+    Manual, PreConfiguredDestination, PrnsNodeHandle, PrnsNodeRecipe, RequestHandlerRegistration,
+};
 use crate::wire::DestinationHash;
 
-use super::{notify_accepted_announce, AcceptedAnnounceObserver};
+use super::super::super::request_router::{Decline, RequestContext, RequestRoute, RoutePolicy};
+use super::{notify_accepted_announce, AcceptedAnnounceObserver, PrnsNode};
 
 #[test]
 fn accepted_announce_observers_receive_the_complete_observation() {
@@ -53,5 +60,77 @@ fn accepted_announce_observers_receive_the_complete_observation() {
             app_data.to_vec(),
             observation.is_path_response,
         ))
+    );
+}
+
+#[test]
+fn new_with_handle_builds_state_from_the_nodes_handle() {
+    let prns = PrnsNode::new_with_handle(|handle| PrnsNodeRecipe {
+        transport_identity: None,
+        pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
+        app_state: handle,
+        storage: crate::storage::GrowableHeap,
+        routes: crate::routes![],
+        interfaces: Manual,
+        on_event: |_event, _state: &PrnsNodeHandle| {},
+    });
+
+    assert!(Arc::ptr_eq(&prns.handle.ids, &prns.node.state.ids));
+}
+
+#[test]
+fn a_runtime_destination_registers_only_its_selected_route_types() {
+    struct First;
+    impl RequestRoute<()> for First {
+        const PATH: &'static str = "/first";
+        const POLICY: RoutePolicy = RoutePolicy::AllowList(&[]);
+
+        async fn handle(_context: RequestContext<'_, ()>) -> Result<(), Decline> {
+            Ok(())
+        }
+    }
+
+    struct Second;
+    impl RequestRoute<()> for Second {
+        const PATH: &'static str = "/second";
+        const POLICY: RoutePolicy = RoutePolicy::AllowList(&[]);
+
+        async fn handle(_context: RequestContext<'_, ()>) -> Result<(), Decline> {
+            Ok(())
+        }
+    }
+
+    let mut prns = PrnsNode::new(PrnsNodeRecipe {
+        transport_identity: None,
+        pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
+        app_state: (),
+        storage: crate::storage::GrowableHeap,
+        routes: crate::routes![First, Second],
+        interfaces: Manual,
+        on_event: |_event, _state: &()| {},
+    });
+    let destination = prns
+        .register_preconfigured_destination(PreConfiguredDestination::Single {
+            app_name: "typed",
+            aspects: &["routes"],
+            identity: Zeroizing::new([0x42; IDENTITY_SECRET_KEY_LEN]),
+            announce_app_data: &[],
+            proof: crate::routing::ProofStrategy::ProveNone,
+            link_requests: crate::routing::LinkRequestPolicy::AcceptAll,
+            ratchet: crate::engine::RatchetPolicy::NoRatchets,
+            resource_strategy: ResourceStrategy::AcceptNone,
+            request_handlers: RequestHandlerRegistration::None,
+        })
+        .unwrap();
+    prns.register_request_route::<First>(&destination).unwrap();
+    let identity = crate::identity::IdentityHash::new([0x31; 16]);
+
+    assert_eq!(
+        prns.allow_requester(&destination, First::PATH, identity),
+        Ok(())
+    );
+    assert_eq!(
+        prns.allow_requester(&destination, Second::PATH, identity),
+        Err(RequestHandlerError::NoSuchHandler)
     );
 }
