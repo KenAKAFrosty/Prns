@@ -1,3 +1,4 @@
+use super::super::{CompletionPool, Fleet, FleetWire};
 use super::*;
 use crate::engine::test_support::{bytes_from_hex, RNS_1_3_5_ANNOUNCE};
 use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
