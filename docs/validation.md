@@ -4,11 +4,11 @@
 
 Wire, transport, and the shared-instance data plane target Reticulum `1.3.5`
 through completion. That reference install is pinned in
-`benchmarks/reference/requirements.txt`. The local shared-instance control RPC
-separately targets RNS `1.3.8`, pinned in
-`benchmarks/reference/rpc-requirements.txt`. Older pickle-shaped control RPC
-remains a compatibility fallback for legacy clients, but it is not the primary
-RPC parity target.
+`benchmarks/reference/requirements.txt`. Daemon configuration, management
+destinations, and the local shared-instance control RPC separately target RNS
+`1.3.8`, pinned in `benchmarks/reference/rpc-requirements.txt`. Older
+pickle-shaped control RPC remains a compatibility fallback for legacy clients,
+but it is not the primary RPC parity target.
 
 Daemon configuration semantics additionally track the RNS `1.3.8` `internal`
 mode, recursive path-request forwarding, and internal-announcement controls.
@@ -261,25 +261,31 @@ The stable `MSG_STATUS` Bundle keys are:
 The same-signature client binding contract is documented in
 [`docs/android-shared-instance-client.md`](android-shared-instance-client.md).
 
-## Local Shared-Instance RPC Oracle
+## RNS 1.3.8 Daemon Oracles
 
-The local server/client promise is checked against stock RNS `1.3.8` at the
-client API boundary. The smoke stands up a Prns-owned shared instance, lets a
-stock RNS client join it, and calls Reticulum's own `get_*` methods. Those
-methods issue msgpack control-RPC requests in 1.3.8 and decode msgpack replies.
-Prepare its dedicated reference environment without changing the broader 1.3.5
-target:
+The shared-instance and management-service promises are checked against stock
+RNS `1.3.8` at the client API boundary. Prepare their dedicated reference
+environment without changing the broader 1.3.5 target:
 
 ```sh
 uv venv benchmarks/reference/.rpc-venv
 uv pip install --python benchmarks/reference/.rpc-venv/bin/python -r benchmarks/reference/rpc-requirements.txt
 ```
 
-Then run the oracle:
+Then run the oracles:
 
 ```sh
 bash scripts/local-rpc-interop-smoke.sh
+bash scripts/remote-management-interop-smoke.sh
+bash scripts/probe-responder-interop-smoke.sh
 ```
+
+The first smoke stands up a Prns-owned shared instance, lets a stock RNS client
+join it, and calls Reticulum's own `get_*` methods. Those methods issue msgpack
+control-RPC requests in 1.3.8 and decode msgpack replies. The second authenticates
+to `rnstransport.remote.management` and exercises the stock status, path, and
+rate request forms. The third sends an ordinary packet to `rnstransport.probe`
+and requires a cryptographically valid delivery proof.
 
 The compatibility shim still answers legacy pickle-shaped basics so older LXMF
 clients do not fault on startup or resource/link telemetry, but full RPC parity

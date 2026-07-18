@@ -824,7 +824,7 @@ fn unknown_sections_warn_with_a_nearby_stock_spelling() {
 fn recognized_follow_ons_warn_at_their_exact_source_locations() {
     let report = parse_named(
         "/tmp/rns/config",
-        "[reticulum]\nenable_remote_management = Yes\nrespond_to_probes = No\n[interfaces]\n[[LAN]]\ntype = AutoInterface\nenabled = Yes\ndiscovery_port = 29716\nbootstrap_only = Yes\nignore_config_warnings = Yes\n",
+        "[reticulum]\nenable_remote_management = Yes\nrespond_to_probes = No\npublish_blackhole = No\n[interfaces]\n[[LAN]]\ntype = AutoInterface\nenabled = Yes\ndiscovery_port = 29716\nbootstrap_only = Yes\nignore_config_warnings = Yes\n",
     )
     .unwrap();
     let warnings = report
@@ -834,11 +834,14 @@ fn recognized_follow_ons_warn_at_their_exact_source_locations() {
         .collect::<Vec<_>>();
     assert_eq!(warnings.len(), 2);
     assert_eq!(warnings[0].source(), "/tmp/rns/config");
-    assert_eq!(warnings[0].line(), 3);
+    assert_eq!(warnings[0].line(), 4);
     assert_eq!(warnings[0].value(), Some("No"));
     assert!(!warnings
         .iter()
         .any(|warning| warning.path().ends_with("enable_remote_management")));
+    assert!(!warnings
+        .iter()
+        .any(|warning| warning.path().ends_with("respond_to_probes")));
     assert!(!warnings.iter().any(|warning| {
         warning.path().ends_with("discovery_port") || warning.path().ends_with("bootstrap_only")
     }));

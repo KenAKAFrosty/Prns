@@ -16,10 +16,12 @@ mod cli;
 mod construct;
 mod identity;
 mod interface_discovery;
+mod management_announces;
 #[cfg(feature = "otlp")]
 mod metrics;
 mod observability;
 mod persist;
+mod probe_responder;
 mod remote_management;
 mod splash;
 mod startup_progress;
@@ -584,10 +586,12 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
         }
     }
 
+    let mut management_destinations = Vec::new();
     if owns_tables {
         if let Some(allowed) = plan.remote_management.allowed() {
             match remote_management::activate(&mut prns, visible_secret.clone(), allowed) {
                 Ok(destination) => {
+                    management_destinations.push(destination);
                     tracing::info!(
                         event = "remote_management_enabled",
                         destination = ?destination.as_bytes(),
@@ -597,6 +601,25 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
                 Err(error) => {
                     tracing::error!(
                         event = "remote_management_start_failed",
+                        error = ?error,
+                    );
+                    observability.shutdown().await;
+                    process::exit(1);
+                }
+            }
+        }
+        if plan.probe_responder.is_enabled() {
+            match probe_responder::activate(&mut prns, visible_secret.clone()) {
+                Ok(destination) => {
+                    management_destinations.push(destination);
+                    tracing::info!(
+                        event = "probe_responder_enabled",
+                        destination = ?destination.as_bytes(),
+                    );
+                }
+                Err(error) => {
+                    tracing::error!(
+                        event = "probe_responder_start_failed",
                         error = ?error,
                     );
                     observability.shutdown().await;
@@ -717,6 +740,8 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
     } else {
         None
     };
+    let management_announce_task =
+        management_announces::spawn(prns_handle.clone(), management_destinations);
     #[cfg(feature = "otlp")]
     let metrics_task = observability.metrics_reporter().map(|reporter| {
         let runtime_up = reporter.runtime_up_handle();
@@ -768,6 +793,9 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
         if let Err(error) = publisher.shutdown().await {
             tracing::warn!(event = "interface_discovery_publisher_task_failed", error = %error);
         }
+    }
+    if let Some(task) = management_announce_task {
+        task.shutdown().await;
     }
     #[cfg(feature = "otlp")]
     if let Some((task, runtime_up)) = metrics_task {

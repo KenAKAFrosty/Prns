@@ -69,7 +69,19 @@ fn transport_is_off_and_sharing_on_by_default() {
         plan.shared_instance,
         SharedInstance::Enabled { .. }
     ));
+    assert_eq!(plan.probe_responder, ProbeResponderPlan::Disabled);
     assert_eq!(named(&plan, "A").policy.announce_rate_limit, None);
+}
+
+#[test]
+fn probe_responder_follows_the_explicit_stock_flag() {
+    let enabled = plan_of("[reticulum]\nrespond_to_probes = Yes\n");
+    assert_eq!(enabled.probe_responder, ProbeResponderPlan::Enabled);
+    assert!(enabled.probe_responder.is_enabled());
+
+    let disabled = plan_of("[reticulum]\nrespond_to_probes = No\n");
+    assert_eq!(disabled.probe_responder, ProbeResponderPlan::Disabled);
+    assert!(!disabled.probe_responder.is_enabled());
 }
 
 #[test]

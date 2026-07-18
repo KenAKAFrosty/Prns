@@ -49,6 +49,11 @@ service is owned only by a standalone daemon or the process that wins shared-ins
 process that joins an existing shared instance does not register it. Stock RNS 1.3.8 `rnstatus -R`
 and the table/rate forms of `rnpath -R` use these endpoints.
 
+Set `respond_to_probes = Yes` to expose the stock `rnstransport.probe` destination. It refuses link
+requests and proves every successfully delivered probe packet. Shared-instance clients never own the
+responder. Management destinations announce after 15 seconds and every two hours thereafter,
+matching the stock transport lifecycle.
+
 ## Common interface behavior
 
 Every enabled interface applies `mode`, `outgoing`, `bitrate`, announce cap and rate controls, IFAC

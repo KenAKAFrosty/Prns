@@ -3,11 +3,10 @@ set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PYTHON="${RPC_SMOKE_PYTHON:-$ROOT/benchmarks/reference/.rpc-venv/bin/python}"
-CLIENT="$ROOT/prns-core/tests/interop/rns_remote_management_client.py"
+CLIENT="$ROOT/prns-core/tests/interop/rns_probe_client.py"
 WORK="$(mktemp -d)"
 SERVER_CONFIG="$WORK/server"
 CLIENT_CONFIG="$WORK/client"
-MANAGEMENT_IDENTITY="$WORK/management_identity"
 DAEMON_PID=""
 
 cleanup() {
@@ -19,8 +18,7 @@ trap cleanup EXIT
 [ -x "$PYTHON" ] || { echo "FAIL: reference venv python not found at $PYTHON"; exit 1; }
 
 PORT="$($PYTHON -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
-ACL="$($PYTHON "$CLIENT" prepare "$SERVER_CONFIG" "$CLIENT_CONFIG" "$PORT" "$MANAGEMENT_IDENTITY")"
-[ -n "$ACL" ] || { echo "FAIL: management identity was not created"; exit 1; }
+$PYTHON "$CLIENT" prepare "$SERVER_CONFIG" "$CLIENT_CONFIG" "$PORT"
 
 ( cd "$ROOT/prnsd" && cargo build --quiet ) || { echo "FAIL: prnsd build"; exit 1; }
 "$ROOT/prnsd/target/debug/prnsd" run --log-format json --config "$SERVER_CONFIG" &
@@ -36,13 +34,13 @@ done
 TRANSPORT_HASH="$($PYTHON "$CLIENT" identity-hash "$SERVER_CONFIG/storage/transport_identity")"
 [ -n "$TRANSPORT_HASH" ] || { echo "FAIL: transport identity was not readable by RNS"; exit 1; }
 
-RESULT="$($PYTHON "$CLIENT" query "$CLIENT_CONFIG" "$TRANSPORT_HASH" "$MANAGEMENT_IDENTITY" 2>&1)"
-if [[ "$RESULT" == *"REMOTE_MANAGEMENT_OK"* ]]; then
-    echo "PASS: stock RNS 1.3.8 authenticated and queried Prnsd remote status, paths, and rates"
-    echo "$RESULT" | grep "REMOTE_MANAGEMENT_OK"
+RESULT="$($PYTHON "$CLIENT" probe "$CLIENT_CONFIG" "$TRANSPORT_HASH" 2>&1)"
+if [[ "$RESULT" == *"PROBE_RESPONDER_OK"* ]]; then
+    echo "PASS: stock RNS 1.3.8 received Prnsd's delivery proof from rnstransport.probe"
+    echo "$RESULT" | grep "PROBE_RESPONDER_OK"
     exit 0
 fi
 
-echo "FAIL: stock RNS remote-management query did not complete"
+echo "FAIL: stock RNS probe did not receive a valid delivery proof"
 echo "$RESULT"
 exit 1
