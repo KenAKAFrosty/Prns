@@ -1,5 +1,11 @@
+mod wire;
+
+pub use wire::{
+    write_explicit_proof_wire_packet, write_implicit_proof_wire_packet,
+    write_link_proof_wire_packet,
+};
+
 use crate::crypto::{ed25519_sign, Ed25519SecretKey, Ed25519Signature};
-use crate::engine::EgressSerializeError;
 use crate::engine::InstantMillis;
 use crate::engine::{CommandId, PacketReceiptDelivered};
 use crate::identity::{IdentityHash, IdentitySigningPublicKey};
@@ -9,7 +15,7 @@ use crate::routing::links::table::{LinkPhase, LinkRole};
 use crate::routing::links::LinkId;
 use crate::routing::upstream_app_destinations::ProofStrategy;
 use crate::units::RttMillis;
-use crate::wire::{DestinationHash, HEADER_MIN_LEN, SIGNATURE_BYTE_LEN};
+use crate::wire::{DestinationHash, WireError, HEADER_MIN_LEN, SIGNATURE_BYTE_LEN};
 
 pub const IMPLICIT_PROOF_WIRE_LEN: usize = HEADER_MIN_LEN + SIGNATURE_BYTE_LEN;
 
@@ -98,7 +104,7 @@ impl ProofObligation {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WriteProofError {
     IdentityNotHeld,
-    Serialize(EgressSerializeError),
+    Serialize(WireError),
 }
 
 /// The responder signs with the held destination identity; the initiator signs with the link's own ephemeral key, so only the responder path can miss its key.
@@ -106,14 +112,10 @@ pub enum WriteProofError {
 pub enum WriteChannelAckError {
     LinkNotActive,
     IdentityNotHeld,
-    Serialize(EgressSerializeError),
+    Serialize(WireError),
 }
 
-use crate::engine::EngineState;
-use crate::engine::{
-    write_explicit_proof_wire_packet, write_implicit_proof_wire_packet,
-    write_link_proof_wire_packet, ProofForm,
-};
+use crate::engine::{EngineState, ProofForm};
 use crate::identity::IdentitySigner;
 use crate::routing::delivery::receipts::{ProvenReceipt, ReceiptKind};
 use crate::storage::StorageLayout;
@@ -135,7 +137,7 @@ impl<S: StorageLayout> EngineState<S> {
         packet_hash: &PacketHash,
         signature: &Ed25519Signature,
         buf: &mut [u8],
-    ) -> Result<usize, EgressSerializeError> {
+    ) -> Result<usize, WireError> {
         match self.protocol.proof_form {
             ProofForm::Implicit => write_implicit_proof_wire_packet(packet_hash, signature, buf),
             ProofForm::Explicit => write_explicit_proof_wire_packet(packet_hash, signature, buf),
@@ -484,9 +486,7 @@ mod tests {
         let mut buf = [0u8; 8];
         assert_eq!(
             state.write_proof(&owed, &mut buf),
-            Err(WriteProofError::Serialize(
-                EgressSerializeError::BufferTooShort
-            )),
+            Err(WriteProofError::Serialize(WireError::BufferTooShort)),
         );
     }
 
