@@ -160,7 +160,7 @@ fn checked_milliseconds(seconds: u64, key: &'static str) -> Result<u64, PlanErro
 
 fn interface_defaults(medium: &PlannedMedium) -> Result<InterfaceDefaults, PlanErrorKind> {
     match medium {
-        PlannedMedium::AutoWifi { .. } => Ok(wifi_core::DEFAULTS),
+        PlannedMedium::AutoWifi(_) => Ok(wifi_core::DEFAULTS),
         PlannedMedium::TcpClient { .. }
         | PlannedMedium::TcpServer { .. }
         | PlannedMedium::Backbone { .. }

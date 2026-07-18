@@ -96,6 +96,41 @@ fn ingress_only_copies_discovery_aspect_announces_when_enabled() {
 }
 
 #[test]
+fn auto_connect_capacity_reports_only_when_auto_connect_is_enabled() {
+    let (mut service, _) = TokioInterfaceDiscovery::new(enabled_policy(2), None);
+    let mut capacities = Vec::new();
+    service.report_auto_connect_capacity(&mut |event| {
+        if let TokioDiscoveryEvent::AutoConnectCapacity { online, maximum } = event {
+            capacities.push((online, maximum));
+        }
+    });
+    let interface = InterfaceId::new([0x35; 8]);
+    service.statuses.insert(
+        interface,
+        TokioInterfaceStatus::new(interface, prns_core::interfaces::ConnectionState::Connected),
+    );
+    service.report_auto_connect_capacity(&mut |event| {
+        if let TokioDiscoveryEvent::AutoConnectCapacity { online, maximum } = event {
+            capacities.push((online, maximum));
+        }
+    });
+
+    assert_eq!(capacities, vec![(0, 2), (1, 2)]);
+
+    let (disabled, _) = TokioInterfaceDiscovery::new(
+        InterfaceDiscoveryPolicy::enabled(
+            StampCost::new(1).expect("one is a valid stamp cost"),
+            DiscoverySourcePolicy::from_sources(Vec::new()),
+            AutoConnectPolicy::Disabled,
+        ),
+        None,
+    );
+    let mut reported = false;
+    disabled.report_auto_connect_capacity(&mut |_| reported = true);
+    assert!(!reported);
+}
+
+#[test]
 fn accepted_observations_update_the_generic_catalog_with_full_provenance() {
     let (mut service, _ingress) = TokioInterfaceDiscovery::new(enabled_policy(0), None);
     let identity = IdentityHash::new([0x22; 16]);

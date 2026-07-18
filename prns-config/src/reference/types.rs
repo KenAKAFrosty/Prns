@@ -183,6 +183,7 @@ pub struct ReferenceInterface {
     pub enabled: Option<bool>,
     pub mode: Option<ReferenceMode>,
     pub outgoing: Option<bool>,
+    pub bootstrap_only: Option<bool>,
     pub bitrate: Option<u64>,
     pub announce_cap: Option<f64>,
     pub announce_rate_target: Option<u64>,

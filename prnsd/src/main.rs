@@ -27,9 +27,10 @@ use std::fmt;
 use std::process::{self, ExitCode};
 
 use personal_rns::config::{
-    discover, parse_and_plan_named, SharedInstance,
+    discover, parse_and_plan_named, ConfiguredInterfaceLifecycle, SharedInstance,
     SharedInstanceTransport as ConfigSharedInstanceTransport, TransportIdentityPolicy,
 };
+use personal_rns::from_plan::PlanAttachments;
 use personal_rns::engine::{
     EngineProtocolPolicy, LinkMtuDiscovery, LocalHopCountOverride, ProofForm,
 };
@@ -450,6 +451,7 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
     // for shared-instance clients).
     let mut owns_tables = false;
     let mut constructed_interfaces = Vec::new();
+    let mut bootstrap_attachments = PlanAttachments::default();
     let mut startup = construct::StartupInterfaceReport::default();
     match &plan.shared_instance {
         SharedInstance::Enabled {
@@ -515,6 +517,9 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
                         construct::construct_interfaces(&prns_handle, &plan, &interface_runtime)
                             .await;
                     startup.merge(constructed.startup);
+                    bootstrap_attachments = constructed
+                        .runtime
+                        .for_lifecycle(ConfiguredInterfaceLifecycle::BootstrapOnly);
                     constructed_interfaces = constructed.attached;
                     owns_tables = true;
                 }
@@ -549,6 +554,9 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
             let constructed =
                 construct::construct_interfaces(&prns_handle, &plan, &interface_runtime).await;
             startup.merge(constructed.startup);
+            bootstrap_attachments = constructed
+                .runtime
+                .for_lifecycle(ConfiguredInterfaceLifecycle::BootstrapOnly);
             constructed_interfaces = constructed.attached;
             owns_tables = true;
         }
@@ -616,6 +624,22 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
         ));
     }
 
+    let monitored_interfaces = interface_discovery::MonitoredInterfaces::new(
+        constructed_interfaces
+            .iter()
+            .map(|interface| interface.id),
+    );
+    let interface_failure_watch = monitored_interfaces.subscribe();
+    let bootstrap_interfaces = if owns_tables {
+        interface_discovery::BootstrapInterfaces::prepare(
+            &plan,
+            interface_runtime.clone(),
+            bootstrap_attachments,
+            monitored_interfaces,
+        )
+    } else {
+        None
+    };
     let discovery_task = if owns_tables {
         match prepared_discovery.take() {
             Some(discovery) => {
@@ -624,17 +648,17 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
                     observer.observe(observation);
                 });
                 let clock = prns.clock();
-                Some(discovery.spawn(prns_handle.clone(), clock))
+                Some(discovery.spawn(
+                    prns_handle.clone(),
+                    clock,
+                    bootstrap_interfaces,
+                ))
             }
             None => None,
         }
     } else {
         None
     };
-    let monitored_interfaces = constructed_interfaces
-        .iter()
-        .map(|interface| interface.id)
-        .collect::<Vec<_>>();
     let discovery_publication_task = if owns_tables {
         match prepared_discovery_publisher {
             Some(publisher) => {
@@ -689,7 +713,7 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
         () = persist::run_until_shutdown(persistence, managed.as_ref()) => {}
         failed = wait_for_interface_failure(
             &prns_handle,
-            &monitored_interfaces,
+            interface_failure_watch,
             plan.panic_on_interface_error,
         ) => {
             interface_failure = Some(failed);
@@ -724,7 +748,9 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
 
 async fn wait_for_interface_failure(
     handle: &personal_rns::runtime::PrnsNodeHandle,
-    expected: &[personal_rns::interfaces::InterfaceId],
+    expected: tokio::sync::watch::Receiver<
+        std::collections::BTreeSet<personal_rns::interfaces::InterfaceId>,
+    >,
     enabled: bool,
 ) -> personal_rns::interfaces::InterfaceId {
     if !enabled {
@@ -738,7 +764,8 @@ async fn wait_for_interface_failure(
             .into_iter()
             .map(|snapshot| (snapshot.id, snapshot.connection))
             .collect::<Vec<_>>();
-        if let Some(failed) = first_interface_failure(expected, &current) {
+        let expected = expected.borrow().iter().copied().collect::<Vec<_>>();
+        if let Some(failed) = first_interface_failure(&expected, &current) {
             return failed;
         }
     }

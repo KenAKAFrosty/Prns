@@ -58,7 +58,7 @@ from its radio configuration. Every RNodeMulti radio derives its own bitrate and
 
 | Stock interface | Applied configuration |
 | --- | --- |
-| `AutoInterface` | Group ID and common policy. Discovery-owned tuning is listed below. |
+| `AutoInterface` | Group ID, multicast scope/address type, discovery and data ports, allowed and ignored devices, and common policy. |
 | `TCPClientInterface` | Target, port, KISS framing, I2P socket discipline, connect timeout, reconnect limit, fixed MTU. |
 | `TCPServerInterface` | Port aliases, address/device binding, IPv6 preference, KISS framing, I2P socket discipline, fixed MTU. Accepted members inherit the full policy and IFAC access. |
 | `UDPInterface` | Receive-only, send-only, or bidirectional endpoints; shared port alias; device broadcast resolution. |
@@ -104,14 +104,22 @@ RNodeMulti radios are nested beneath their physical device. Each enabled child r
       codingrate = 6
 ```
 
+AutoInterface defaults to group `reticulum`, link scope, temporary multicast addressing, discovery
+port 29716, and data port 42671. `discovery_scope` accepts `link`, `admin`, `site`, `organisation`,
+or `global`; `multicast_address_type` accepts `temporary` or `permanent`. A custom group changes
+both the multicast group and peer-authentication token. `devices` is an allowlist when present,
+`ignored_devices` always wins, and loopback devices are never selected.
+
+An interface with `bootstrap_only = Yes` starts normally while no auto-connected discovered
+interface is available. When the configured `autoconnect_discovered_interfaces` limit is full,
+Prnsd retires all bootstrap-only interfaces. It restores them after every auto-connected interface
+is gone. As in RNS, this lifecycle is inactive when discovery auto-connect is disabled.
+
 ## Explicit follow-ons
 
 Recognized settings that belong to planned follow-on work emit `unsupported_setting` warnings at
 their exact source lines. They are never silently ignored:
 
-- AutoInterface `discovery_scope`, `discovery_port`, `data_port`, `devices`, `ignored_devices`, and
-  `multicast_address_type` remain with interface auto-discovery work.
-- Interface `bootstrap_only` remains with discovery behavior.
 - `ignore_config_warnings` is not honored; Prnsd always reports configuration problems.
 - Remote management and ACL settings, probe responses, and network blackhole exchange remain
   separate daemon services.

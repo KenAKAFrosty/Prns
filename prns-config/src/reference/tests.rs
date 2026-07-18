@@ -832,13 +832,13 @@ fn recognized_follow_ons_warn_at_their_exact_source_locations() {
         .iter()
         .filter(|diagnostic| diagnostic.code() == ConfigDiagnosticCode::UnsupportedSetting)
         .collect::<Vec<_>>();
-    assert_eq!(warnings.len(), 5);
+    assert_eq!(warnings.len(), 3);
     assert_eq!(warnings[0].source(), "/tmp/rns/config");
     assert_eq!(warnings[0].line(), 2);
     assert_eq!(warnings[0].value(), Some("Yes"));
-    assert!(warnings
-        .iter()
-        .any(|warning| { warning.line() == 8 && warning.path().ends_with("discovery_port") }));
+    assert!(!warnings.iter().any(|warning| {
+        warning.path().ends_with("discovery_port") || warning.path().ends_with("bootstrap_only")
+    }));
     assert!(warnings
         .iter()
         .any(|warning| warning.correction().contains("correct each reported")));

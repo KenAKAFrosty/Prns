@@ -113,6 +113,10 @@ pub enum TokioDiscoveryEvent<'a> {
         discovery: DiscoveredInterfaceId,
         interface: InterfaceId,
     },
+    AutoConnectCapacity {
+        online: usize,
+        maximum: usize,
+    },
 }
 
 pub struct TokioInterfaceDiscovery {
@@ -120,6 +124,7 @@ pub struct TokioInterfaceDiscovery {
     network_identity: Option<InMemoryNodeIdentity>,
     statuses: BTreeMap<InterfaceId, TokioInterfaceStatus>,
     observations: Receiver<OwnedAnnounceObservation>,
+    auto_connect_maximum: Option<usize>,
 }
 
 impl TokioInterfaceDiscovery {
@@ -127,6 +132,9 @@ impl TokioInterfaceDiscovery {
         policy: InterfaceDiscoveryPolicy,
         network_identity: Option<Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>>,
     ) -> (Self, TokioDiscoveryIngress) {
+        let auto_connect_maximum = policy
+            .enabled_policy()
+            .and_then(|enabled| enabled.auto_connect().maximum());
         let coordinator = DiscoveryCoordinator::new(policy);
         let filter = coordinator.ingress_filter();
         let (observations_tx, observations) = mpsc::channel(OBSERVATION_QUEUE_DEPTH);
@@ -138,6 +146,7 @@ impl TokioInterfaceDiscovery {
                     .map(InMemoryNodeIdentity::from_secret_key_bytes),
                 statuses: BTreeMap::new(),
                 observations,
+                auto_connect_maximum,
             },
             TokioDiscoveryIngress {
                 filter,
@@ -172,6 +181,7 @@ impl TokioInterfaceDiscovery {
     ) {
         let outputs = self.coordinator.startup(clock.now());
         self.process_outputs(&handle, outputs, &mut report);
+        self.report_auto_connect_capacity(&mut report);
         let mut monitor = tokio::time::interval(MONITOR_INTERVAL);
         monitor.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         monitor.tick().await;
@@ -183,10 +193,12 @@ impl TokioInterfaceDiscovery {
                     };
                     let outputs = self.ingest_observation(observation, clock.now());
                     self.process_outputs(&handle, outputs, &mut report);
+                    self.report_auto_connect_capacity(&mut report);
                 }
                 _ = monitor.tick() => {
                     let outputs = self.maintenance_outputs(clock.now());
                     self.process_outputs(&handle, outputs, &mut report);
+                    self.report_auto_connect_capacity(&mut report);
                 }
             }
         }
@@ -334,6 +346,21 @@ impl TokioInterfaceDiscovery {
                 interface: *interface,
             }),
         }
+    }
+
+    fn report_auto_connect_capacity(
+        &self,
+        report: &mut impl for<'a> FnMut(TokioDiscoveryEvent<'a>),
+    ) {
+        let Some(maximum) = self.auto_connect_maximum else {
+            return;
+        };
+        let online = self
+            .statuses
+            .values()
+            .filter(|status| status.connection().is_online())
+            .count();
+        report(TokioDiscoveryEvent::AutoConnectCapacity { online, maximum });
     }
 }
 

@@ -6,8 +6,9 @@ use crate::reference::{RNodeSubinterface, ReferenceInterface, ReferenceParams};
 
 use super::interface::{
     airtime_limit, effective_policy, plan_access, plan_interface_discovery,
-    ready_command_flow_control, station_identification, MemberEgressPolicy, PlanErrorKind,
-    PlannedInterface, PlannedMedium, ReadyCommandFlowControl, StationIdentificationPlan,
+    ready_command_flow_control, station_identification, ConfiguredInterfaceLifecycle,
+    MemberEgressPolicy, PlanErrorKind, PlannedInterface, PlannedMedium, ReadyCommandFlowControl,
+    StationIdentificationPlan,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -156,6 +157,11 @@ fn plan_member(
         access: plan_access(interface, &medium)?,
         medium,
         discovery,
+        lifecycle: if interface.bootstrap_only == Some(true) {
+            ConfiguredInterfaceLifecycle::BootstrapOnly
+        } else {
+            ConfiguredInterfaceLifecycle::Persistent
+        },
     })
 }
 

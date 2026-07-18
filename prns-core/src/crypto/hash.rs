@@ -49,10 +49,14 @@ impl Sha256PrefixState {
         self.base.update(chunk);
     }
 
+    pub fn digest_with_suffix(&self, suffix: &[u8]) -> [u8; SHA256_OUTPUT_LEN] {
+        let mut digest = self.base.clone();
+        digest.update(suffix);
+        digest.finalize().into()
+    }
+
     pub fn digests_with_suffix(&self, first_suffix: &[u8]) -> SharedPrefixDigests {
-        let mut first = self.base.clone();
-        first.update(first_suffix);
-        let with_suffix: [u8; SHA256_OUTPUT_LEN] = first.finalize().into();
+        let with_suffix = self.digest_with_suffix(first_suffix);
 
         let mut second = self.base.clone();
         second.update(with_suffix);
@@ -86,6 +90,10 @@ mod tests {
         assert_eq!(
             with_first_digest,
             sha256_chunks(&[b"shared payload", &with_suffix])
+        );
+        assert_eq!(
+            Sha256PrefixState::absorb(&[b"shared ", b"payload"]).digest_with_suffix(b" salt"),
+            with_suffix,
         );
     }
 }

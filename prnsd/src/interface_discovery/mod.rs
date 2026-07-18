@@ -16,7 +16,11 @@ use personal_rns::{
 };
 use tokio::sync::oneshot;
 
+mod bootstrap;
+
 pub(crate) mod publication;
+
+pub use bootstrap::{BootstrapInterfaces, MonitoredInterfaces};
 
 pub struct PreparedDiscovery {
     service: TokioInterfaceDiscovery,
@@ -48,7 +52,7 @@ impl PreparedDiscovery {
                         return None;
                     }
                 }
-                PlannedMedium::AutoWifi { .. }
+                PlannedMedium::AutoWifi(_)
                 | PlannedMedium::TcpServer { .. }
                 | PlannedMedium::Udp { .. }
                 | PlannedMedium::Serial { .. }
@@ -74,10 +78,22 @@ impl PreparedDiscovery {
         }
     }
 
-    pub fn spawn(self, handle: PrnsNodeHandle, clock: TokioHost) -> RunningDiscovery {
+    pub fn spawn(
+        self,
+        handle: PrnsNodeHandle,
+        clock: TokioHost,
+        bootstrap: Option<BootstrapInterfaces>,
+    ) -> RunningDiscovery {
         let (shutdown, shutdown_requested) = oneshot::channel();
-        let task = tokio::spawn(self.run(handle, clock, shutdown_requested));
-        RunningDiscovery { shutdown, task }
+        let (capacities, capacity_events) = tokio::sync::watch::channel(None);
+        let bootstrap_task =
+            bootstrap.map(|bootstrap| tokio::spawn(bootstrap.run(handle.clone(), capacity_events)));
+        let task = tokio::spawn(self.run(handle, clock, shutdown_requested, capacities));
+        RunningDiscovery {
+            shutdown,
+            task,
+            bootstrap_task,
+        }
     }
 
     async fn run(
@@ -85,6 +101,7 @@ impl PreparedDiscovery {
         handle: PrnsNodeHandle,
         clock: TokioHost,
         shutdown: oneshot::Receiver<()>,
+        capacities: tokio::sync::watch::Sender<Option<bootstrap::AutoConnectCapacity>>,
     ) {
         let (archive_sink, archive_worker) = match load_discovery_archive(self.archive_path).await {
             Some(loaded) => {
@@ -97,6 +114,12 @@ impl PreparedDiscovery {
         tokio::select! {
             () = self.service.run(handle, clock, move |event| {
                 trace_discovery_event(&event);
+                if let TokioDiscoveryEvent::AutoConnectCapacity { online, maximum } = &event {
+                    capacities.send_replace(Some(bootstrap::AutoConnectCapacity {
+                        online: *online,
+                        maximum: *maximum,
+                    }));
+                }
                 if let Some(archive_sink) = archive_sink.as_ref() {
                     archive_sink.record(&event);
                 }
@@ -112,6 +135,7 @@ impl PreparedDiscovery {
 pub struct RunningDiscovery {
     shutdown: oneshot::Sender<()>,
     task: tokio::task::JoinHandle<()>,
+    bootstrap_task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl RunningDiscovery {
@@ -119,6 +143,11 @@ impl RunningDiscovery {
         let _ = self.shutdown.send(());
         if let Err(error) = self.task.await {
             tracing::warn!(event = "interface_discovery_task_failed", error = %error);
+        }
+        if let Some(task) = self.bootstrap_task {
+            if let Err(error) = task.await {
+                tracing::warn!(event = "bootstrap_interface_task_failed", error = %error);
+            }
         }
     }
 }
@@ -383,6 +412,13 @@ fn trace_discovery_event(event: &TokioDiscoveryEvent<'_>) {
                 interface_origin = InterfaceOriginKind::Discovered.as_str(),
                 discovery_id = ?discovery.as_bytes(),
                 interface = ?interface.as_bytes(),
+            );
+        }
+        TokioDiscoveryEvent::AutoConnectCapacity { online, maximum } => {
+            tracing::trace!(
+                event = "interface_discovery_auto_connect_capacity",
+                online,
+                maximum,
             );
         }
     }

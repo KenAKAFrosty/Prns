@@ -4,9 +4,19 @@ use super::*;
 fn every_host_constructible_medium_maps() {
     let plan = plan_of(STOCK);
     assert_eq!(plan.interfaces.len(), 5);
+    let PlannedMedium::AutoWifi(auto) = &named(&plan, "Default Interface").medium else {
+        panic!("AutoInterface medium expected")
+    };
+    assert_eq!(auto.group_id().as_str(), "reticulum");
+    assert_eq!(auto.discovery_scope(), AutoInterfaceDiscoveryScope::Link);
+    assert_eq!(auto.discovery_port().get(), 29_716);
+    assert_eq!(auto.discovery_port().reverse_discovery_port(), 29_717);
+    assert_eq!(auto.data_port().get(), 42_671);
+    assert!(auto.devices().allowed().is_empty());
+    assert!(auto.devices().ignored().is_empty());
     assert_eq!(
-        named(&plan, "Default Interface").medium,
-        PlannedMedium::AutoWifi { group: None }
+        auto.multicast_address_type(),
+        AutoInterfaceMulticastAddressType::Temporary,
     );
     assert_eq!(
         named(&plan, "Hub").medium,
@@ -38,6 +48,67 @@ fn every_host_constructible_medium_maps() {
             line: serial_line_plan(115_200),
         }
     );
+}
+
+#[test]
+fn auto_interface_settings_and_bootstrap_lifecycle_are_fully_typed() {
+    let plan = plan_of(
+        "[interfaces]\n[[Field LAN]]\ntype = AutoInterface\nenabled = Yes\n\
+         bootstrap_only = Yes\ngroup_id = field-team\ndiscovery_scope = organisation\n\
+         discovery_port = 30100\ndata_port = 30200\ndevices = en0, eth0\n\
+         ignored_devices = eth0\nmulticast_address_type = permanent\n",
+    );
+    let interface = named(&plan, "Field LAN");
+    let PlannedMedium::AutoWifi(auto) = &interface.medium else {
+        panic!("AutoInterface medium expected")
+    };
+
+    assert_eq!(
+        interface.lifecycle,
+        ConfiguredInterfaceLifecycle::BootstrapOnly,
+    );
+    assert_eq!(auto.group_id().as_str(), "field-team");
+    assert_eq!(
+        auto.discovery_scope(),
+        AutoInterfaceDiscoveryScope::Organisation,
+    );
+    assert_eq!(auto.discovery_port().get(), 30_100);
+    assert_eq!(auto.discovery_port().reverse_discovery_port(), 30_101);
+    assert_eq!(auto.data_port().get(), 30_200);
+    assert_eq!(auto.devices().allowed(), ["en0", "eth0"]);
+    assert_eq!(auto.devices().ignored(), ["eth0"]);
+    assert_eq!(
+        auto.multicast_address_type(),
+        AutoInterfaceMulticastAddressType::Permanent,
+    );
+}
+
+#[test]
+fn invalid_auto_interface_values_report_exact_source_corrections() {
+    for (line, key, value, accepted) in [
+        (5, "discovery_scope", "neighborhood", "organisation"),
+        (5, "multicast_address_type", "stable", "temporary"),
+        (5, "discovery_port", "65535", "65534"),
+        (5, "data_port", "0", "65535"),
+    ] {
+        let errors = parse_and_plan_named(
+            "/etc/reticulum/config",
+            &format!(
+                "[interfaces]\n[[LAN]]\ntype = AutoInterface\nenabled = Yes\n{key} = {value}\n"
+            ),
+        )
+        .expect_err("invalid AutoInterface setting must fail");
+        let diagnostic = &errors.diagnostics()[0];
+
+        assert_eq!(diagnostic.code(), ConfigDiagnosticCode::InvalidValue);
+        assert_eq!(diagnostic.source(), "/etc/reticulum/config");
+        assert_eq!(diagnostic.line(), line);
+        assert_eq!(diagnostic.path(), format!("[interfaces] > [[LAN]] > {key}"));
+        assert_eq!(diagnostic.value(), Some(value));
+        assert!(diagnostic
+            .accepted()
+            .is_some_and(|forms| forms.contains(accepted)));
+    }
 }
 
 #[test]

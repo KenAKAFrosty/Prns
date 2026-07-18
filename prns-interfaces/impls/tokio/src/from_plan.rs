@@ -8,7 +8,8 @@ use std::collections::HashSet;
 
 pub use prns_config as config;
 use prns_config::{
-    AddressFamilyPreference as PlannedAddressFamilyPreference, DaemonPlan, I2pPeersPlan,
+    AddressFamilyPreference as PlannedAddressFamilyPreference, AutoInterfacePlan,
+    ConfiguredInterfaceLifecycle, DaemonPlan, I2pPeersPlan,
     I2pReachabilityPlan as PlannedI2pReachability, InterfaceAccessPlan, PlannedInterface,
     PlannedMedium, RNodeMultiMemberPlan, ReadyCommandFlowControl as PlannedReadyCommandFlowControl,
     ReconnectLimit as PlannedReconnectLimit, SerialDataBits, SerialLinePlan, SerialParity,
@@ -53,7 +54,7 @@ use crate::tcp::tokio_socket::{
     AddressFamilyPreference, ReconnectLimit, TcpConnectionSettings, TcpTunnelMode,
 };
 use crate::udp::UdpInterface;
-use crate::wifi::AutoWifi;
+use crate::wifi::{AutoWifi, AutoWifiDevicePolicy, AutoWifiSettings};
 
 const TCP_RECONNECT_DELAY: Duration = Duration::from_secs(5);
 const SERIAL_RECONNECT_DELAY: ReconnectDelay = ReconnectDelay::new(Duration::from_millis(500));
@@ -90,6 +91,72 @@ impl PlanRuntimeContext {
         Self {
             i2p_storage: Some(RnsI2pStorage::new(storage_dir, transport_identity)),
         }
+    }
+}
+
+#[derive(Default)]
+pub struct PlanAttachments {
+    groups: Vec<PlanAttachmentGroup>,
+}
+
+struct PlanAttachmentGroup {
+    lifecycle: ConfiguredInterfaceLifecycle,
+    interfaces: Vec<InterfaceId>,
+    supervisor_task: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl PlanAttachments {
+    pub fn for_lifecycle(mut self, lifecycle: ConfiguredInterfaceLifecycle) -> Self {
+        self.groups
+            .retain(|attachment| attachment.lifecycle == lifecycle);
+        self
+    }
+
+    pub fn interfaces(&self) -> impl Iterator<Item = InterfaceId> + '_ {
+        self.groups
+            .iter()
+            .flat_map(|attachment| attachment.interfaces.iter().copied())
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.groups.is_empty()
+    }
+
+    pub async fn detach(self, handle: &PrnsNodeHandle) {
+        let mut supervisor_tasks = Vec::new();
+        for attachment in self.groups {
+            if let Some(task) = attachment.supervisor_task {
+                task.abort();
+                supervisor_tasks.push(task);
+            }
+            for interface in attachment.interfaces {
+                handle.remove_interface(interface);
+            }
+        }
+        for task in supervisor_tasks {
+            let _ = task.await;
+        }
+    }
+
+    fn push_interface(&mut self, lifecycle: ConfiguredInterfaceLifecycle, interface: InterfaceId) {
+        self.groups.push(PlanAttachmentGroup {
+            lifecycle,
+            interfaces: vec![interface],
+            supervisor_task: None,
+        });
+    }
+
+    fn push_supervisor(
+        &mut self,
+        lifecycle: ConfiguredInterfaceLifecycle,
+        interfaces: Vec<InterfaceId>,
+        supervisor_task: tokio::task::JoinHandle<()>,
+    ) {
+        self.groups.push(PlanAttachmentGroup {
+            lifecycle,
+            interfaces,
+            supervisor_task: Some(supervisor_task),
+        });
     }
 }
 
@@ -162,14 +229,12 @@ impl AttachIntent for FromPlan {
     }
 }
 
-/// Stand up every planned interface on `handle`, reporting each outcome. The runtime tracks
-/// attached interfaces' statuses itself, so nothing is returned to hold.
 pub async fn attach_plan(
     handle: &PrnsNodeHandle,
     plan: &DaemonPlan,
     report: &mut impl FnMut(PlanOutcome<'_>),
-) {
-    attach_plan_with_context(handle, plan, &PlanRuntimeContext::default(), report).await;
+) -> PlanAttachments {
+    attach_plan_with_context(handle, plan, &PlanRuntimeContext::default(), report).await
 }
 
 pub async fn attach_plan_with_context(
@@ -177,7 +242,8 @@ pub async fn attach_plan_with_context(
     plan: &DaemonPlan,
     context: &PlanRuntimeContext,
     report: &mut impl FnMut(PlanOutcome<'_>),
-) {
+) -> PlanAttachments {
+    let mut attachments = PlanAttachments::default();
     let mut rnode_multi_parents = HashSet::new();
     for interface in &plan.interfaces {
         if let PlannedMedium::RnodeMulti { member } = &interface.medium {
@@ -192,19 +258,22 @@ pub async fn attach_plan_with_context(
                         };
                         (member.parent() == parent).then_some((candidate, member))
                     }),
+                    &mut attachments,
                     report,
                 );
             }
         } else {
-            stand_up(handle, interface, context, report).await;
+            stand_up(handle, interface, context, &mut attachments, report).await;
         }
     }
+    attachments
 }
 
 async fn stand_up(
     handle: &PrnsNodeHandle,
     interface: &PlannedInterface,
     context: &PlanRuntimeContext,
+    attachments: &mut PlanAttachments,
     report: &mut impl FnMut(PlanOutcome<'_>),
 ) {
     let access = match runtime_access(interface) {
@@ -218,10 +287,20 @@ async fn stand_up(
         }
     };
     match &interface.medium {
-        PlannedMedium::AutoWifi { .. } => {
-            let wifi = AutoWifi::with_policy(interface.policy);
+        PlannedMedium::AutoWifi(planned) => {
+            let settings = match auto_wifi_settings(&interface.name, planned) {
+                Ok(settings) => settings,
+                Err(error) => {
+                    report(PlanOutcome::Failed {
+                        interface,
+                        visible_error_message: error.to_string(),
+                    });
+                    return;
+                }
+            };
+            let wifi = AutoWifi::with_policy_and_settings(interface.policy, settings);
             let attached = attach_with_access(handle, access, wifi);
-            report_up(handle, interface, attached.id(), report);
+            report_attached(handle, interface, attached.id(), attachments, report);
         }
         PlannedMedium::TcpClient {
             connection,
@@ -237,7 +316,7 @@ async fn stand_up(
                     tcp_connection_settings(connection),
                 ),
             );
-            report_up(handle, interface, attached.id(), report);
+            report_attached(handle, interface, attached.id(), attachments, report);
         }
         PlannedMedium::TcpServer { listener, framing } => {
             let resolved = resolve_tcp_listener(listener).await;
@@ -256,7 +335,7 @@ async fn stand_up(
             match opened {
                 Ok(server) => {
                     let attached = attach_with_access(handle, access, server);
-                    report_up(handle, interface, attached.id(), report);
+                    report_attached(handle, interface, attached.id(), attachments, report);
                 }
                 Err(error) => report(PlanOutcome::Failed {
                     interface,
@@ -298,7 +377,7 @@ async fn stand_up(
             match opened {
                 Ok(udp) => {
                     let attached = attach_with_access(handle, access, udp);
-                    report_up(handle, interface, attached.id(), report);
+                    report_attached(handle, interface, attached.id(), attachments, report);
                 }
                 Err(error) => report(PlanOutcome::Failed {
                     interface,
@@ -319,7 +398,7 @@ async fn stand_up(
                 device.as_bytes(),
             );
             let attached = attach_with_access(handle, access, serial);
-            report_up(handle, interface, attached.id(), report);
+            report_attached(handle, interface, attached.id(), attachments, report);
         }
         PlannedMedium::Kiss {
             device,
@@ -366,7 +445,7 @@ async fn stand_up(
                 },
             );
             let attached = attach_with_access(handle, access, kiss);
-            report_up(handle, interface, attached.id(), report);
+            report_attached(handle, interface, attached.id(), attachments, report);
         }
         PlannedMedium::Ax25Kiss {
             device,
@@ -406,7 +485,7 @@ async fn stand_up(
             match opened {
                 Ok(ax25) => {
                     let attached = attach_with_access(handle, access, ax25);
-                    report_up(handle, interface, attached.id(), report);
+                    report_attached(handle, interface, attached.id(), attachments, report);
                 }
                 Err(error) => report(PlanOutcome::Failed {
                     interface,
@@ -466,7 +545,7 @@ async fn stand_up(
                         },
                     );
                     let attached = attach_with_access(handle, access, rnode);
-                    report_up(handle, interface, attached.id(), report);
+                    report_attached(handle, interface, attached.id(), attachments, report);
                 }
                 Err(error) => report(PlanOutcome::Failed {
                     interface,
@@ -487,7 +566,7 @@ async fn stand_up(
             match opened {
                 Ok(server) => {
                     let attached = attach_with_access(handle, access, server);
-                    report_up(handle, interface, attached.id(), report);
+                    report_attached(handle, interface, attached.id(), attachments, report);
                 }
                 Err(error) => report(PlanOutcome::Failed {
                     interface,
@@ -505,7 +584,7 @@ async fn stand_up(
                     tcp_connection_settings(connection),
                 ),
             );
-            report_up(handle, interface, attached.id(), report);
+            report_attached(handle, interface, attached.id(), attachments, report);
         }
         PlannedMedium::Pipe {
             command,
@@ -523,7 +602,7 @@ async fn stand_up(
                 command.source().as_bytes(),
             );
             let attached = attach_with_access(handle, access, pipe);
-            report_up(handle, interface, attached.id(), report);
+            report_attached(handle, interface, attached.id(), attachments, report);
         }
         PlannedMedium::I2p {
             peers,
@@ -541,14 +620,37 @@ async fn stand_up(
             };
             let i2p = I2pInterface::new(TokioSamBridge::default(), config);
             let attached = attach_with_access(handle, access, i2p);
-            report_up(handle, interface, attached.id(), report);
+            report_attached(handle, interface, attached.id(), attachments, report);
         }
     }
+}
+
+fn auto_wifi_settings(
+    interface_name: &str,
+    planned: &AutoInterfacePlan,
+) -> Result<AutoWifiSettings, crate::wifi::AutoWifiSettingsError> {
+    let group_id = planned.group_id().as_bytes();
+    let mut instance_tag = (group_id.len() as u64).to_be_bytes().to_vec();
+    instance_tag.extend_from_slice(group_id);
+    instance_tag.extend_from_slice(interface_name.as_bytes());
+    AutoWifiSettings::new(
+        group_id.to_vec(),
+        planned.discovery_scope(),
+        planned.multicast_address_type(),
+        planned.discovery_port().get(),
+        planned.data_port().get(),
+        AutoWifiDevicePolicy::new(
+            planned.devices().allowed().to_vec(),
+            planned.devices().ignored().to_vec(),
+        ),
+    )
+    .map(|settings| settings.with_instance_tag(instance_tag))
 }
 
 fn stand_up_rnode_multi<'a>(
     handle: &PrnsNodeHandle,
     interfaces: impl Iterator<Item = (&'a PlannedInterface, &'a RNodeMultiMemberPlan)>,
+    attachments: &mut PlanAttachments,
     report: &mut impl FnMut(PlanOutcome<'a>),
 ) {
     let interfaces = interfaces.collect::<Vec<_>>();
@@ -622,7 +724,8 @@ fn stand_up_rnode_multi<'a>(
     );
     let ids = rnode_multi.member_ids().collect::<Vec<_>>();
     let registered = rnode_multi.register(handle);
-    tokio::spawn(registered.run());
+    let task = tokio::spawn(registered.run());
+    attachments.push_supervisor(first.lifecycle, ids.clone(), task);
     for ((interface, _), id) in interfaces.into_iter().zip(ids) {
         report_up(handle, interface, id, report);
     }
@@ -781,6 +884,17 @@ fn report_up<'a>(
     report(PlanOutcome::Up { interface, id });
 }
 
+fn report_attached<'a>(
+    handle: &PrnsNodeHandle,
+    interface: &'a PlannedInterface,
+    id: InterfaceId,
+    attachments: &mut PlanAttachments,
+    report: &mut impl FnMut(PlanOutcome<'a>),
+) {
+    attachments.push_interface(interface.lifecycle, id);
+    report_up(handle, interface, id, report);
+}
+
 fn attach_with_access<A: Attachable>(
     handle: &PrnsNodeHandle,
     access: Option<(IfacContext, Option<String>)>,
@@ -797,7 +911,7 @@ fn attach_with_access<A: Attachable>(
 #[cfg(feature = "tracing")]
 fn planned_medium_name(medium: &PlannedMedium) -> &'static str {
     match medium {
-        PlannedMedium::AutoWifi { .. } => "auto_wifi",
+        PlannedMedium::AutoWifi(_) => "auto_wifi",
         PlannedMedium::TcpClient { .. } => "tcp_client",
         PlannedMedium::TcpServer { .. } => "tcp_server",
         PlannedMedium::Udp { .. } => "udp",
@@ -834,6 +948,37 @@ mod tests {
         assert_eq!(host.stop_bits(), HostSerialStopBits::Two);
     }
 
+    #[test]
+    fn planned_auto_interface_settings_cross_the_runtime_boundary_without_defaulting() {
+        let plan = prns_config::parse_and_plan(
+            "[interfaces]\n[[Mesh]]\ntype = AutoInterface\nenabled = Yes\ngroup_id = field-mesh\n\
+             discovery_scope = organisation\nmulticast_address_type = permanent\ndiscovery_port = 31000\n\
+             data_port = 32000\ndevices = en0, wlan0\nignored_devices = wlan0\n",
+        )
+        .expect("valid AutoInterface configuration")
+        .value;
+        let PlannedMedium::AutoWifi(planned) = &plan.interfaces[0].medium else {
+            panic!("AutoInterface medium expected")
+        };
+
+        let settings = auto_wifi_settings(&plan.interfaces[0].name, planned)
+            .expect("typed plan maps to runtime settings");
+
+        assert_eq!(settings.group_id(), b"field-mesh");
+        assert_eq!(
+            settings.discovery_scope(),
+            prns_core::interfaces::wifi_auto::core::DiscoveryScope::Organisation
+        );
+        assert_eq!(
+            settings.multicast_address_type(),
+            prns_core::interfaces::wifi_auto::core::MulticastAddressType::Permanent
+        );
+        assert_eq!(settings.discovery_port(), 31_000);
+        assert_eq!(settings.data_port(), 32_000);
+        assert_eq!(settings.devices().allowed(), &["en0", "wlan0"]);
+        assert_eq!(settings.devices().ignored(), &["wlan0"]);
+    }
+
     #[tokio::test]
     async fn planned_rnode_multi_members_register_once_under_one_device_supervisor() {
         use prns_core::interfaces::ConnectionState;
@@ -841,7 +986,7 @@ mod tests {
         use prns_runtime::storage::GrowableHeap;
 
         let plan = prns_config::parse_and_plan(
-            "[interfaces]\n[[Dual]]\ntype = RNodeMultiInterface\nenabled = Yes\nport = test\n\
+            "[interfaces]\n[[Dual]]\ntype = RNodeMultiInterface\nenabled = Yes\nbootstrap_only = Yes\nport = test\n\
              [[[Low]]]\ninterface_enabled = Yes\nvport = 0\nfrequency = 868000000\n\
              bandwidth = 125000\ntxpower = 7\nspreadingfactor = 8\ncodingrate = 5\n\
              [[[High]]]\ninterface_enabled = Yes\nvport = 1\nfrequency = 2400000000\n\
@@ -859,7 +1004,7 @@ mod tests {
             on_event: |_event, _state: &()| {},
         });
         let mut outcomes = Vec::new();
-        attach_plan(&node.handle(), &plan, &mut |outcome| match outcome {
+        let attachments = attach_plan(&node.handle(), &plan, &mut |outcome| match outcome {
             PlanOutcome::Up { interface, id } => {
                 outcomes.push((interface.name.clone(), Some(id)));
             }
@@ -879,6 +1024,14 @@ mod tests {
         assert!(registered
             .iter()
             .all(|member| member.connection == ConnectionState::Initializing));
+        assert_eq!(attachments.groups.len(), 1);
+        assert_eq!(attachments.groups[0].interfaces.len(), 2);
+        assert_eq!(
+            attachments.groups[0].lifecycle,
+            ConfiguredInterfaceLifecycle::BootstrapOnly
+        );
+        assert!(attachments.groups[0].supervisor_task.is_some());
+        attachments.detach(&node.handle()).await;
     }
 
     #[test]
