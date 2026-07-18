@@ -1,4 +1,5 @@
 mod interface_lifecycle;
+mod node_lifecycle;
 mod persistence;
 
 use std::collections::{HashMap, VecDeque};
@@ -7,19 +8,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::sync::oneshot;
 
-use crate::engine::Journaled;
 use crate::engine::{
     AnnounceNow, AnnounceNowFailure, CloseLink, CommandId, EngineCommand, EstablishLink,
     EstablishLinkFailure, IssuedCommand, PacketReceiptDelivered, PathFound, PathRequestId,
     RequestPath, RequestPathFailure, SendRequestFailure, SendResourceFailure, SendSinglePacket,
-    SendSinglePacketFailure, SendSinglePacketPayload, SetTransportIdentityError, Settlement,
-    PATH_REQUEST_ID_LEN,
+    SendSinglePacketFailure, SendSinglePacketPayload, Settlement, PATH_REQUEST_ID_LEN,
 };
-use crate::identity::held::HoldIdentityError;
-use crate::identity::{IdentityHash, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::{InterfaceId, PacketPhyStats};
 use crate::node_introspection::{
     AnnounceRateSnapshot, InterfaceInventoryEntry, NodeIntrospection, NodeIntrospectionRequest,
@@ -27,11 +24,9 @@ use crate::node_introspection::{
 };
 use crate::reactor::compression;
 use crate::reactor::driver::{
-    self as reactor_driver, CryptoPoolConfig, Egress, HostCommand, HostResourceMetadata,
-    HostResourcePayload, ProvideDecompressedHostCommand, RequestAnyHostCommand, ResourceInbound,
-    RespondAnyHostCommand, SendResourceSegmentHostCommand, TokioHost,
+    HostCommand, HostResourceMetadata, HostResourcePayload, RequestAnyHostCommand, ResourceInbound,
+    RespondAnyHostCommand, SendResourceSegmentHostCommand,
 };
-use crate::routing::announce::AnnounceObservation;
 use crate::routing::dedup::PacketHash;
 use crate::routing::links::data::LINK_MDU;
 use crate::routing::links::request::{RequestId, RESPONSE_WIRE_OVERHEAD};
@@ -41,14 +36,13 @@ use crate::routing::links::resources::{
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::{RequestHandlerError, RequestPathHash};
 use crate::routing::BlackholedIdentity;
-use crate::storage::{StorageLayout, TablePushError};
+use crate::storage::TablePushError;
 use crate::units::RttMillis;
 use crate::wire::{DestinationHash, TransportId};
 
 use super::byte_stream::{ByteStreamReader, ByteStreamWriter, StreamId};
 use super::identity_blackhole::{settle_control, settle_source};
-use super::request_router::{RequestRoute, RespondToken, RouteSet};
-use super::request_runner::{run_router, RunnerRequest, REQUEST_QUEUE_DEPTH};
+use super::request_router::RespondToken;
 use super::settle_destination_identity_retention;
 #[cfg(feature = "runtime-metrics")]
 use super::RuntimeMetricsSnapshot;
@@ -57,19 +51,14 @@ use super::{
     DestinationIdentityRetentionControlError, DestinationIdentityRetentionHostCommand,
     DropRouteOutcome, DropRoutesViaOutcome, IdentityBlackholeControl,
     IdentityBlackholeControlError, IdentityBlackholeHostCommand, IdentityBlackholeSource,
-    IdentityBlackholeSourceError, InterfaceStore, Message, PreConfiguredDestination, PrnsEvent,
-    PrnsNodeRecipe, RoutingControl, RoutingControlError, SendError,
+    IdentityBlackholeSourceError, InterfaceStore, RoutingControl, RoutingControlError, SendError,
 };
-use prns_runtime::runtime::{
-    assemble_node, configure_preconfigured_destination, AssembledNode,
-    ConfigurePreconfiguredDestinationError,
-};
-
-use interface_lifecycle::{drive_interfaces, DriverMsg, RegisteredInterface};
 pub use interface_lifecycle::{
     AttachIntent, Attachable, AttachedInterface, AttachedSupervisor, DetachedFleet, Fleet,
     InterfaceAttachmentMetadata, InterfaceSupervisor,
 };
+use interface_lifecycle::{DriverMsg, RegisteredInterface};
+pub use node_lifecycle::{NonRoutingIdentityError, PrnsNode, SharedInstanceIdentityError};
 pub use persistence::{
     boot_timeline_origin, BlackholeSeedReport, DestinationIdentitySeedReport, FlushError,
     FlushMark, FlushReport, PrepareFlushError, PreparedFlush, RatchetSeedReport, RegionFlush,
@@ -111,16 +100,6 @@ const fn resource_segment_decompression_bound(uncompressed_data_len: u64) -> u64
     } else {
         MAX_EFFICIENT_SIZE as u64
     }
-}
-
-const INFLATE_QUEUE_PER_WORKER: usize = 4;
-const MAX_INFLATE_PARALLELISM: usize = 8;
-
-fn inflate_parallelism() -> usize {
-    std::thread::available_parallelism()
-        .map(std::num::NonZeroUsize::get)
-        .unwrap_or(1)
-        .clamp(1, MAX_INFLATE_PARALLELISM)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -944,335 +923,6 @@ async fn settle_sent_segment(
         Ok(Settlement::SendResource(Ok(()))) => Ok(()),
         Ok(Settlement::SendResource(Err(failure))) => Err(ResourceSendError::Rejected(failure)),
         Ok(_) | Err(_) => Err(ResourceSendError::NodeStopped),
-    }
-}
-
-type AcceptedAnnounceObserver = Box<dyn for<'a> FnMut(AnnounceObservation<'a>) + Send>;
-
-fn notify_accepted_announce(
-    observer: &mut Option<AcceptedAnnounceObserver>,
-    journaled: &Journaled<'_>,
-) {
-    if let Journaled::AnnounceHeard { observation, .. } = journaled {
-        if let Some(observer) = observer.as_mut() {
-            observer(*observation);
-        }
-    }
-}
-
-/// A node on the tokio host. Built from a [`PrnsNodeRecipe`] with [`new`](Self::new) (synchronous: it wires the engine and spawns each interface), then driven by [`run`](Self::run). Hold [`handle`](Self::handle) clones to drive it from other tasks/threads while `run` owns the loop.
-pub struct PrnsNode<St, R, F, S: StorageLayout> {
-    handle: PrnsNodeHandle,
-    host: TokioHost,
-    node: AssembledNode<St, R, F, S>,
-    notify_rx: UnboundedReceiver<InterfaceId>,
-    command_rx: UnboundedReceiver<HostCommand>,
-    iface_build_rx: UnboundedReceiver<DriverMsg>,
-    accepted_announce_observer: Option<AcceptedAnnounceObserver>,
-    crypto_pool: CryptoPoolConfig,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NonRoutingIdentityError {
-    Hold(HoldIdentityError),
-    Configure(SetTransportIdentityError),
-}
-
-pub type SharedInstanceIdentityError = NonRoutingIdentityError;
-
-impl<St, R, F, S: StorageLayout> PrnsNode<St, R, F, S>
-where
-    R: RouteSet<St>,
-    F: FnMut(PrnsEvent<'_>, &St),
-{
-    /// Stand a node up from `recipe` on the storage layout it names: assemble the engine (transport role, destinations, the routes' request handlers), then let the recipe's `interfaces` intent attach the node's edges through its own handle. Only [`run`](Self::run) awaits.
-    pub fn new<'a, D, I>(recipe: PrnsNodeRecipe<D, St, R, F, I, S>) -> Self
-    where
-        D: IntoIterator<Item = PreConfiguredDestination<'a>>,
-        I: AttachIntent,
-    {
-        Self::new_with_handle(|_| recipe)
-    }
-
-    pub fn new_with_handle<'a, D, I, B>(build_recipe: B) -> Self
-    where
-        D: IntoIterator<Item = PreConfiguredDestination<'a>>,
-        I: AttachIntent,
-        B: FnOnce(PrnsNodeHandle) -> PrnsNodeRecipe<D, St, R, F, I, S>,
-    {
-        let (notify_tx, notify_rx) = mpsc::unbounded_channel();
-        let (command_tx, command_rx) = mpsc::unbounded_channel();
-        let (iface_build_tx, iface_build_rx) = mpsc::unbounded_channel();
-
-        let handle = PrnsNodeHandle {
-            commands: command_tx,
-            ids: Arc::new(AtomicU64::new(0)),
-            notify_tx,
-            iface_build: iface_build_tx,
-            interfaces: Arc::new(Mutex::new(HashMap::new())),
-            store: InterfaceStore::new(),
-        };
-        let (node, interfaces) = assemble_node(build_recipe(handle.clone()));
-        interfaces.attach(&handle);
-
-        PrnsNode {
-            handle,
-            host: TokioHost::start_at(persistence::wall_clock_timeline_origin()),
-            node,
-            notify_rx,
-            command_rx,
-            iface_build_rx,
-            accepted_announce_observer: None,
-            crypto_pool: CryptoPoolConfig::host_default(),
-        }
-    }
-
-    pub fn with_non_routing_identity(
-        mut self,
-        secret: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
-    ) -> Result<Self, NonRoutingIdentityError> {
-        let identity = self
-            .node
-            .engine
-            .hold_identity(secret)
-            .map_err(NonRoutingIdentityError::Hold)?;
-        self.node
-            .engine
-            .set_non_routing_identity(&identity)
-            .map_err(NonRoutingIdentityError::Configure)?;
-        Ok(self)
-    }
-
-    pub fn with_shared_instance_identity(
-        self,
-        secret: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
-    ) -> Result<Self, SharedInstanceIdentityError> {
-        self.with_non_routing_identity(secret)
-    }
-
-    #[must_use]
-    pub fn with_protocol_policy(mut self, policy: crate::engine::EngineProtocolPolicy) -> Self {
-        self.node.engine.set_protocol_policy(policy);
-        self
-    }
-
-    pub fn register_preconfigured_destination<'a>(
-        &mut self,
-        destination: PreConfiguredDestination<'a>,
-    ) -> Result<DestinationHash, ConfigurePreconfiguredDestinationError> {
-        configure_preconfigured_destination::<St, R, S>(&mut self.node.engine, destination)
-    }
-
-    pub fn allow_requester(
-        &mut self,
-        destination: &DestinationHash,
-        path: &str,
-        identity: IdentityHash,
-    ) -> Result<(), RequestHandlerError> {
-        self.node
-            .engine
-            .allow_requester(destination, path, identity)
-    }
-
-    pub fn register_request_route<Route>(
-        &mut self,
-        destination: &DestinationHash,
-    ) -> Result<(), RegisterRequestRouteError>
-    where
-        Route: RequestRoute<St>,
-    {
-        self.node
-            .engine
-            .register_request_handler(destination, Route::PATH, Route::POLICY.engine_policy())
-            .map_err(RegisterRequestRouteError::Registration)?;
-        for identity in Route::POLICY.seed_list() {
-            self.node
-                .engine
-                .allow_requester(destination, Route::PATH, *identity)
-                .map_err(RegisterRequestRouteError::Seed)?;
-        }
-        Ok(())
-    }
-    #[must_use]
-    pub fn with_accepted_announce_observer(
-        mut self,
-        observer: impl for<'a> FnMut(AnnounceObservation<'a>) + Send + 'static,
-    ) -> Self {
-        self.accepted_announce_observer = Some(Box::new(observer));
-        self
-    }
-
-    #[must_use]
-    pub fn clock(&self) -> TokioHost {
-        self.host.clone()
-    }
-
-    /// Override how this node runs its asymmetric crypto. Defaults to `CryptoPoolConfig::host_default` (pooled on capable hosts, inline on mobile).
-    #[must_use]
-    pub fn with_crypto_pool(mut self, crypto_pool: CryptoPoolConfig) -> Self {
-        self.crypto_pool = crypto_pool;
-        self
-    }
-
-    /// A `Send + Clone` handle for other tasks/threads to drive the node while [`run`](Self::run) owns the loop.
-    #[must_use]
-    pub fn handle(&self) -> PrnsNodeHandle {
-        self.handle.clone()
-    }
-
-    pub fn issue(&self, command: EngineCommand) -> Option<CommandId> {
-        self.handle.issue(command)
-    }
-
-    pub async fn send_single_packet(
-        &self,
-        destination: DestinationHash,
-        data: &[u8],
-    ) -> Result<PacketReceiptDelivered, SendError<SendSinglePacketFailure>> {
-        self.handle.send_single_packet(destination, data).await
-    }
-
-    pub async fn establish_link(
-        &self,
-        destination: DestinationHash,
-    ) -> Result<LinkId, SendError<EstablishLinkFailure>> {
-        self.handle.establish_link(destination).await
-    }
-
-    pub fn respond(&self, responder: RespondToken, body: &[u8]) -> Option<RttMillis> {
-        self.handle.respond(responder, body)
-    }
-
-    pub fn close_link(&self, link_id: LinkId) -> bool {
-        self.handle.close_link(link_id)
-    }
-
-    /// Drive the node until it stops (in practice forever). The reactor and the request runner run joined: every inbound request forks to the runner, while that event, and every other, reaches the recipe's `on_event` with shared `&state`, zero-copy.
-    pub async fn run(self) {
-        let PrnsNode {
-            handle,
-            host,
-            node,
-            notify_rx,
-            command_rx,
-            iface_build_rx,
-            mut accepted_announce_observer,
-            crypto_pool,
-        } = self;
-        let AssembledNode {
-            engine,
-            state,
-            mut on_event,
-            routes: _,
-        } = node;
-        let egress = Egress::new(std::vec::Vec::new());
-        let store = handle.store.clone();
-        let (req_tx, req_rx) = mpsc::channel(REQUEST_QUEUE_DEPTH);
-        let inflate_commands = handle.commands.clone();
-        let inflate_workers = inflate_parallelism();
-        let inflate_admission = Arc::new(tokio::sync::Semaphore::new(
-            inflate_workers.saturating_mul(INFLATE_QUEUE_PER_WORKER),
-        ));
-        let inflate_execution = Arc::new(tokio::sync::Semaphore::new(inflate_workers));
-        let reactor = reactor_driver::run_with_store(
-            engine,
-            host,
-            reactor_driver::ReactorWiring {
-                interfaces: std::vec::Vec::new(),
-                ifacs: std::vec::Vec::new(),
-                notify: notify_rx,
-                inbound_lanes: std::vec::Vec::new(),
-                commands: command_rx,
-                egress,
-            },
-            |journaled| {
-                if let Journaled::ResourceNeedsDecompression {
-                    link_id,
-                    hash,
-                    stream,
-                    uncompressed_data_len,
-                } = &journaled
-                {
-                    let (link_id, hash, uncompressed_data_len) =
-                        (*link_id, *hash, *uncompressed_data_len);
-                    let stream = stream.to_vec();
-                    let commands = inflate_commands.clone();
-                    let admission = inflate_admission.clone().try_acquire_owned();
-                    let execution = inflate_execution.clone();
-                    let Ok(admission) = admission else {
-                        let _ = commands.send(HostCommand::ProvideDecompressed(
-                            ProvideDecompressedHostCommand {
-                                link_id,
-                                hash,
-                                plaintext: std::vec::Vec::new().into(),
-                            },
-                        ));
-                        return;
-                    };
-                    tokio::spawn(async move {
-                        let Ok(execution) = execution.acquire_owned().await else {
-                            return;
-                        };
-                        let plaintext = tokio::task::spawn_blocking(move || {
-                            compression::decompress_bounded(
-                                &stream,
-                                resource_segment_decompression_bound(uncompressed_data_len),
-                            )
-                            .unwrap_or_default()
-                        })
-                        .await
-                        .unwrap_or_default();
-                        drop(execution);
-                        drop(admission);
-                        let _ = commands.send(HostCommand::ProvideDecompressed(
-                            ProvideDecompressedHostCommand {
-                                link_id,
-                                hash,
-                                plaintext: plaintext.into(),
-                            },
-                        ));
-                    });
-                    return;
-                }
-                notify_accepted_announce(&mut accepted_announce_observer, &journaled);
-                let event = PrnsEvent::from(journaled);
-                #[cfg(feature = "tracing")]
-                super::tracing_events::emit(&event);
-                if let PrnsEvent::Message(Message::Request {
-                    link_id,
-                    request_id,
-                    path_hash,
-                    requested_at,
-                    rtt,
-                    data,
-                }) = &event
-                {
-                    let _ = req_tx.try_send(RunnerRequest {
-                        link_id: *link_id,
-                        request_id: *request_id,
-                        path_hash: *path_hash,
-                        requested_at: *requested_at,
-                        rtt: *rtt,
-                        data: data.to_vec(),
-                    });
-                }
-                on_event(event, &state);
-            },
-            store,
-            crypto_pool,
-        );
-        let driver_commands = handle.commands.clone();
-        let driver_interfaces = handle.interfaces.clone();
-        tokio::join!(
-            reactor,
-            run_router::<St, R>(&state, req_rx, handle),
-            drive_interfaces(
-                std::vec::Vec::new(),
-                iface_build_rx,
-                driver_commands,
-                driver_interfaces
-            ),
-        );
     }
 }
 
