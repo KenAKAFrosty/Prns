@@ -65,12 +65,12 @@ bench = false
 # --- Live scenarios: the pairing harness (one node binary, one orchestrator) ---
 [[bin]]
 name = "scenario_node"
-path = "src/bin/scenario_node.rs"
+path = "src/bin/scenario_node/main.rs"
 bench = false
 
 [[bin]]
 name = "orchestrate"
-path = "src/bin/orchestrate.rs"
+path = "src/bin/orchestrate/main.rs"
 bench = false
 
 [[bin]]
