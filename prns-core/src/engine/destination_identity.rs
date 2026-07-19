@@ -29,6 +29,35 @@ pub enum DestinationIdentitySeedOutcome {
     CapacityExhausted,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+#[must_use]
+pub struct DestinationIdentityRetentionEffect<Outcome> {
+    outcome: Outcome,
+    wake_schedules: WakeSchedules,
+}
+
+impl<Outcome: Copy> DestinationIdentityRetentionEffect<Outcome> {
+    pub fn outcome(&self) -> Outcome {
+        self.outcome
+    }
+}
+
+impl<Outcome> DestinationIdentityRetentionEffect<Outcome> {
+    pub fn wake_schedules(&self) -> WakeSchedules {
+        self.wake_schedules
+    }
+}
+
+pub type MarkDestinationUsedEffect = DestinationIdentityRetentionEffect<MarkDestinationUsedOutcome>;
+pub type RetainDestinationEffect = DestinationIdentityRetentionEffect<RetainDestinationOutcome>;
+pub type ReleaseDestinationEffect = DestinationIdentityRetentionEffect<ReleaseDestinationOutcome>;
+pub type RetainIdentityEffect = DestinationIdentityRetentionEffect<RetainIdentityOutcome>;
+
+enum DestinationIdentityRetentionMutation {
+    Changed,
+    Unchanged,
+}
+
 impl<S: StorageLayout> EngineState<S> {
     pub fn destination_identity_count(&self) -> usize {
         self.destination_identities.len()
@@ -49,27 +78,55 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         destination: &DestinationHash,
         now: InstantMillis,
-    ) -> MarkDestinationUsedOutcome {
-        self.destination_identities.mark_used(destination, now)
+    ) -> MarkDestinationUsedEffect {
+        let outcome = self.destination_identities.mark_used(destination, now);
+        let mutation = match outcome {
+            MarkDestinationUsedOutcome::Recorded | MarkDestinationUsedOutcome::Refreshed => {
+                DestinationIdentityRetentionMutation::Changed
+            }
+            MarkDestinationUsedOutcome::Retained | MarkDestinationUsedOutcome::NotFound => {
+                DestinationIdentityRetentionMutation::Unchanged
+            }
+        };
+        self.destination_identity_retention_effect(outcome, mutation)
     }
 
-    pub fn retain_destination(
-        &mut self,
-        destination: &DestinationHash,
-    ) -> RetainDestinationOutcome {
-        self.destination_identities.retain(destination)
+    pub fn retain_destination(&mut self, destination: &DestinationHash) -> RetainDestinationEffect {
+        let outcome = self.destination_identities.retain(destination);
+        let mutation = match outcome {
+            RetainDestinationOutcome::Retained => DestinationIdentityRetentionMutation::Changed,
+            RetainDestinationOutcome::AlreadyRetained | RetainDestinationOutcome::NotFound => {
+                DestinationIdentityRetentionMutation::Unchanged
+            }
+        };
+        self.destination_identity_retention_effect(outcome, mutation)
     }
 
     pub fn release_destination(
         &mut self,
         destination: &DestinationHash,
         now: InstantMillis,
-    ) -> ReleaseDestinationOutcome {
-        self.destination_identities.release(destination, now)
+    ) -> ReleaseDestinationEffect {
+        let outcome = self.destination_identities.release(destination, now);
+        let mutation = match outcome {
+            ReleaseDestinationOutcome::Released
+            | ReleaseDestinationOutcome::UseRecorded
+            | ReleaseDestinationOutcome::UseRefreshed => {
+                DestinationIdentityRetentionMutation::Changed
+            }
+            ReleaseDestinationOutcome::NotFound => DestinationIdentityRetentionMutation::Unchanged,
+        };
+        self.destination_identity_retention_effect(outcome, mutation)
     }
 
-    pub fn retain_identity(&mut self, identity: &IdentityHash) -> RetainIdentityOutcome {
-        self.destination_identities.retain_identity(identity)
+    pub fn retain_identity(&mut self, identity: &IdentityHash) -> RetainIdentityEffect {
+        let outcome = self.destination_identities.retain_identity(identity);
+        let mutation = if outcome.newly_retained_destination_count == 0 {
+            DestinationIdentityRetentionMutation::Unchanged
+        } else {
+            DestinationIdentityRetentionMutation::Changed
+        };
+        self.destination_identity_retention_effect(outcome, mutation)
     }
 
     pub fn seed_destination_identity(
@@ -184,6 +241,23 @@ impl<S: StorageLayout> EngineState<S> {
             self.destination_identity_expiry(destination)
         }
     }
+
+    fn destination_identity_retention_effect<Outcome>(
+        &self,
+        outcome: Outcome,
+        mutation: DestinationIdentityRetentionMutation,
+    ) -> DestinationIdentityRetentionEffect<Outcome> {
+        DestinationIdentityRetentionEffect {
+            outcome,
+            wake_schedules: match mutation {
+                DestinationIdentityRetentionMutation::Changed => WakeSchedules {
+                    expired_destination_identities: self.destination_identity_expiry_wake(),
+                    ..WakeSchedules::UNCHANGED
+                },
+                DestinationIdentityRetentionMutation::Unchanged => WakeSchedules::UNCHANGED,
+            },
+        }
+    }
 }
 
 #[cfg(test)]
@@ -199,6 +273,7 @@ mod tests {
         USED_DESTINATION_LINGER_MILLIS,
     };
     use crate::interfaces::{AttachedInterfaces, InboundPacket, InterfaceId};
+    use crate::routing::DropRouteOutcome;
 
     const DESTINATION: DestinationHash = DestinationHash::new([
         0x16, 0xf8, 0xa6, 0xd3, 0xf7, 0xd7, 0xc5, 0xb6, 0xf1, 0x06, 0xd2, 0x93, 0x80, 0x4d, 0x73,
@@ -240,7 +315,15 @@ mod tests {
         );
         assert_eq!(identity.app_data, b"hello-personal");
 
-        assert!(engine.drop_route(&DESTINATION).is_some());
+        assert_eq!(
+            engine
+                .drop_route(
+                    &DESTINATION,
+                    AttachedInterfaces::new(&transporting_interfaces()),
+                )
+                .outcome(),
+            DropRouteOutcome::Dropped,
+        );
         assert_eq!(engine.route_count(), 0);
         assert_eq!(engine.destination_identity_count(), 1);
         assert_eq!(
@@ -263,19 +346,31 @@ mod tests {
         let mut engine = transporting_node();
         hear_reference_announce(&mut engine);
         let identity = engine.destination_identity(&DESTINATION).unwrap().identity;
-        assert!(engine.drop_route(&DESTINATION).is_some());
-
         assert_eq!(
-            engine.retain_identity(&identity),
+            engine
+                .drop_route(
+                    &DESTINATION,
+                    AttachedInterfaces::new(&transporting_interfaces()),
+                )
+                .outcome(),
+            DropRouteOutcome::Dropped,
+        );
+
+        let retain = engine.retain_identity(&identity);
+        assert_eq!(
+            retain.outcome(),
             RetainIdentityOutcome {
                 newly_retained_destination_count: 1,
                 already_retained_destination_count: 0,
             },
         );
         assert_eq!(
-            engine.mark_destination_used(&DESTINATION, InstantMillis(5_000)),
-            MarkDestinationUsedOutcome::Retained,
+            retain.wake_schedules().expired_destination_identities,
+            WakeSchedule::Idle,
         );
+        let used = engine.mark_destination_used(&DESTINATION, InstantMillis(5_000));
+        assert_eq!(used.outcome(), MarkDestinationUsedOutcome::Retained);
+        assert_eq!(used.wake_schedules(), WakeSchedules::UNCHANGED);
         assert_eq!(
             engine.destination_identity_expiry_wake(),
             WakeSchedule::Idle
@@ -283,18 +378,93 @@ mod tests {
         engine.cull_expired_destination_identities(InstantMillis(u64::MAX));
         assert_eq!(engine.destination_identity_count(), 1);
 
+        let release = engine.release_destination(&DESTINATION, InstantMillis(10_000));
+        assert_eq!(release.outcome(), ReleaseDestinationOutcome::Released);
         assert_eq!(
-            engine.release_destination(&DESTINATION, InstantMillis(10_000)),
-            ReleaseDestinationOutcome::Released,
-        );
-        assert_eq!(
-            engine.destination_identity_expiry_wake(),
+            release.wake_schedules().expired_destination_identities,
             WakeSchedule::At(InstantMillis(10_000 + USED_DESTINATION_LINGER_MILLIS + 1)),
         );
         engine.cull_expired_destination_identities(InstantMillis(
             10_000 + USED_DESTINATION_LINGER_MILLIS + 1,
         ));
         assert_eq!(engine.destination_identity_count(), 0);
+    }
+
+    #[test]
+    fn retention_mutations_return_only_the_wake_delta_they_change() {
+        let mut engine = transporting_node();
+        hear_reference_announce(&mut engine);
+        let identity = engine.destination_identity(&DESTINATION).unwrap().identity;
+        assert_eq!(
+            engine
+                .drop_route(
+                    &DESTINATION,
+                    AttachedInterfaces::new(&transporting_interfaces()),
+                )
+                .outcome(),
+            DropRouteOutcome::Dropped,
+        );
+
+        let recorded = engine.mark_destination_used(&DESTINATION, InstantMillis(5_000));
+        assert_eq!(recorded.outcome(), MarkDestinationUsedOutcome::Recorded);
+        assert_eq!(
+            recorded.wake_schedules().expired_destination_identities,
+            WakeSchedule::At(InstantMillis(5_000 + USED_DESTINATION_LINGER_MILLIS + 1)),
+        );
+
+        let refreshed = engine.mark_destination_used(&DESTINATION, InstantMillis(6_000));
+        assert_eq!(refreshed.outcome(), MarkDestinationUsedOutcome::Refreshed);
+        assert_eq!(
+            refreshed.wake_schedules().expired_destination_identities,
+            WakeSchedule::At(InstantMillis(6_000 + USED_DESTINATION_LINGER_MILLIS + 1)),
+        );
+
+        let retained = engine.retain_destination(&DESTINATION);
+        assert_eq!(retained.outcome(), RetainDestinationOutcome::Retained);
+        assert_eq!(
+            retained.wake_schedules().expired_destination_identities,
+            WakeSchedule::Idle,
+        );
+        let already_retained = engine.retain_destination(&DESTINATION);
+        assert_eq!(
+            already_retained.outcome(),
+            RetainDestinationOutcome::AlreadyRetained,
+        );
+        assert_eq!(already_retained.wake_schedules(), WakeSchedules::UNCHANGED);
+
+        let released = engine.release_destination(&DESTINATION, InstantMillis(7_000));
+        assert_eq!(released.outcome(), ReleaseDestinationOutcome::Released);
+        assert_eq!(
+            released.wake_schedules().expired_destination_identities,
+            WakeSchedule::At(InstantMillis(7_000 + USED_DESTINATION_LINGER_MILLIS + 1)),
+        );
+
+        let identity_retained = engine.retain_identity(&identity);
+        assert_eq!(
+            identity_retained.outcome(),
+            RetainIdentityOutcome {
+                newly_retained_destination_count: 1,
+                already_retained_destination_count: 0,
+            },
+        );
+        assert_eq!(
+            identity_retained
+                .wake_schedules()
+                .expired_destination_identities,
+            WakeSchedule::Idle,
+        );
+        let identity_already_retained = engine.retain_identity(&identity);
+        assert_eq!(
+            identity_already_retained.outcome(),
+            RetainIdentityOutcome {
+                newly_retained_destination_count: 0,
+                already_retained_destination_count: 1,
+            },
+        );
+        assert_eq!(
+            identity_already_retained.wake_schedules(),
+            WakeSchedules::UNCHANGED,
+        );
     }
 
     #[test]

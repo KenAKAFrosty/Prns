@@ -14,7 +14,7 @@ use crate::runtime::node_introspection::NodeIntrospectionRequest;
 use crate::runtime::RuntimeMetricsSnapshot;
 use crate::runtime::{
     apply_destination_identity_retention_command, apply_identity_blackhole_command,
-    ClearAnnounceQueuesOutcome, DropRouteOutcome, DropRoutesViaOutcome,
+    ClearAnnounceQueuesOutcome, DropRoutesViaOutcome,
 };
 use crate::storage::StorageLayout;
 use prns_runtime::runtime::persistence_snapshots;
@@ -337,37 +337,27 @@ where
                 CommandEffect::RecomputeWakeSchedules
             }
             HostCommand::DropRoute { destination, reply } => {
-                let (outcome, effect) = match engine.drop_route(&destination) {
-                    Some(removed) => {
-                        journal.route(Journaled::RouteRemoved {
-                            destination: removed.destination,
-                            cause: removed.cause,
-                        });
-                        (
-                            DropRouteOutcome::Dropped,
-                            CommandEffect::RecomputeWakeSchedules,
-                        )
-                    }
-                    None => (DropRouteOutcome::NotFound, CommandEffect::UNCHANGED),
-                };
-                let _ = reply.send(outcome);
-                effect
+                let effect = engine.drop_route(&destination, topology.view());
+                if let Some(removed) = effect.removed_route() {
+                    journal.route(Journaled::RouteRemoved {
+                        destination: removed.destination,
+                        cause: removed.cause,
+                    });
+                }
+                let _ = reply.send(effect.outcome());
+                CommandEffect::Delta(effect.wake_schedules())
             }
             HostCommand::DropRoutesVia { transport, reply } => {
-                let dropped = engine.drop_routes_via(transport, &mut |removed| {
+                let effect = engine.drop_routes_via(transport, topology.view(), &mut |removed| {
                     journal.route(Journaled::RouteRemoved {
                         destination: removed.destination,
                         cause: removed.cause,
                     });
                 });
                 let _ = reply.send(DropRoutesViaOutcome {
-                    dropped_routes: u32::try_from(dropped).unwrap_or(u32::MAX),
+                    dropped_routes: u32::try_from(effect.dropped_route_count()).unwrap_or(u32::MAX),
                 });
-                if dropped == 0 {
-                    CommandEffect::UNCHANGED
-                } else {
-                    CommandEffect::RecomputeWakeSchedules
-                }
+                CommandEffect::Delta(effect.wake_schedules())
             }
             HostCommand::ClearAnnounceQueues { reply } => {
                 let dropped = clear_announce_queues(&mut topology.pacers);
