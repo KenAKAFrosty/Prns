@@ -1,4 +1,4 @@
-prns-core 1759
+prns-core 1750
 prns-runtime 268
 personal-rns 4
 prns-interfaces/impls/tokio 714
