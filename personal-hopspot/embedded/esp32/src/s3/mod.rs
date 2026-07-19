@@ -406,7 +406,7 @@ pub struct Bringup<D, B> {
 
 /// The per-board seam: the ~6% of an ESP32-S3 Hopspot that differs between boards (identity
 /// strings, display driver + flush, battery source, power/pin bring-up). Everything else lives in
-/// [`runtime::run_core`], so a shared-path change can never again rot one board while the other compiles.
+/// [`firmware::run_core`], so a shared-path change can never again rot one board while the other compiles.
 #[allow(async_fn_in_trait)]
 pub trait Esp32S3Board {
     const ANNOUNCE_APP_DATA: &'static [u8];
@@ -524,5 +524,5 @@ fn request_radio_mode(mode: RadioMode) -> ! {
     esp_hal::system::software_reset();
 }
 
-mod runtime;
-pub(super) use runtime::run;
+mod firmware;
+pub(super) use firmware::run;
