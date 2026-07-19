@@ -18,6 +18,7 @@ use crate::interfaces::{InterfaceDescriptor, InterfaceId};
 use crate::reactor::grant::GrantProducer;
 use crate::reactor::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
 use crate::runtime::NoInterfaceInspectionStore;
+use crate::storage::GrowableHeap;
 
 use super::super::test_support::{descriptor, WATCHDOG};
 use super::super::{
@@ -32,7 +33,7 @@ fn a_pooled_ifac_slot_added_at_runtime_opens_inbound_then_frees_on_remove() {
     let source = InterfaceId::new([0xA1; 8]);
     let network = IfacContext::derive(Some("testnet"), Some("s3cret"), IfacSize::NARROW).unwrap();
 
-    let mut engine = EngineState::<TestStorageLayout>::default();
+    let mut engine = EngineState::<GrowableHeap>::default();
     pin_transport_id(&mut engine, TEST_TRANSPORT_ID);
 
     let notify: Channel<CriticalSectionRawMutex, InterfaceId, 4> = Channel::new();

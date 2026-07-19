@@ -4,7 +4,8 @@ use embassy_sync::channel::Receiver;
 use heapless::Vec as HeaplessVec;
 
 use crate::engine::{
-    ClassifiedInboundPacket, EngineState, IngestIo, IssuedCommand, Journaled, ProofRequest,
+    ClassifiedInboundPacket, Departure, EngineState, IngestIo, IssuedCommand, Journaled,
+    ProofRequest,
 };
 use crate::interfaces::ifac::InterfaceIfac;
 use crate::interfaces::{AttachedInterfaces, InboundPacket, InterfaceDescriptor, InterfaceId};
@@ -265,6 +266,8 @@ pub(crate) async fn run_pooled<
                     );
                 }
                 InterfaceLifecycle::Remove { id } => {
+                    let now = host.now();
+                    engine.interface_departed(id, Departure::Forgotten, now);
                     let found = descriptors
                         .iter()
                         .position(|descriptor| descriptor.id == id);
@@ -281,7 +284,6 @@ pub(crate) async fn run_pooled<
                     if let Some(pos) = pacers.iter().position(|pacer| pacer.id == id) {
                         let _ = pacers.swap_remove(pos);
                     }
-                    let now = host.now();
                     engine.cull_expired_routes(
                         now,
                         AttachedInterfaces::new(&descriptors),
