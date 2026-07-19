@@ -8,6 +8,6 @@ prns-config 25
 prnsd 3
 prns-ffi 40
 prns-wasm 2
-personal-hopspot 600
+personal-hopspot 568
 benchmarks 532
 fuzz 0
