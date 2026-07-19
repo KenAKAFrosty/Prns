@@ -12,7 +12,7 @@ pub(crate) use configuration::DEFAULT_CONFIG;
 
 use std::process;
 
-use crate::{cli, interface_discovery, observability, persist, services, splash};
+use crate::{cli, interface_discovery, observability, persistence, services, splash};
 use personal_rns::config::{SharedInstance, TransportIdentityPolicy};
 use personal_rns::engine::{
     EngineProtocolPolicy, LinkMtuDiscovery, LocalHopCountOverride, ProofForm,
@@ -125,7 +125,7 @@ pub(super) async fn run(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
         },
     };
 
-    let persist_dir = persist::store_dir(&storage_dir);
+    let persist_dir = persistence::store_dir(&storage_dir);
     let store = FileStore::new(&persist_dir);
     let timeline_origin = boot_timeline_origin(&store);
     let (rotated_tx, rotated_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -229,63 +229,24 @@ pub(super) async fn run(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
 
     let mut persistence = None;
     if interface_ownership.routing_tables().is_some() {
-        let mut restore_progress = observability.state_restore_progress();
         let vault = FileVault::new(&persist_dir);
-        let mut restored_blackholes =
-            match blackhole_files.load_local(visible_identity_hash, timeline_origin) {
-                Ok(entries) => entries,
-                Err(error) => {
-                    tracing::warn!(event = "blackhole_restore_failed", error = %error);
-                    Vec::new()
-                }
-            };
-        for source in plan.blackhole_exchange.sources() {
-            match blackhole_files.load_source(*source, timeline_origin) {
-                Ok(entries) => restored_blackholes.extend(entries),
-                Err(error) => tracing::warn!(
-                    event = "blackhole_source_restore_failed",
-                    source = ?source.as_bytes(),
-                    error = %error,
-                ),
-            }
-        }
-        let blackholes = prns.seed_blackholed_identities(restored_blackholes);
-        let routes = match restore_progress.as_mut() {
-            Some(progress) => prns.seed_routes_from_store_reporting(&store, |route_progress| {
-                progress.observe(route_progress);
-            }),
-            None => prns.seed_routes_from_store(&store),
-        };
-        let destination_identities = prns.seed_destination_identities_from_store(&store);
-        let tunnels = prns.seed_tunnels_from_store(&store);
-        let ratchets = prns.seed_self_ratchets_from_vault(&vault);
-        if let Some(progress) = restore_progress {
-            progress.finish();
-        }
-        tracing::info!(
-            event = "state_restored",
-            blackholes = blackholes.seeded_count,
-            routes = routes.seeded_count,
-            destination_identities = destination_identities.seeded_count,
-            tunnels = tunnels.seeded_count,
-            ratchets = ratchets.seeded_count,
-            refused = blackholes.refused_count
-                + routes.refused_count
-                + destination_identities.refused_count
-                + tunnels.refused_count
-                + ratchets.refused_count,
-            dropped = blackholes.dropped_count
-                + routes.dropped_count
-                + destination_identities.dropped_count
-                + tunnels.dropped_count
-                + ratchets.dropped_count,
+        persistence::restore(
+            &mut prns,
+            persistence::RestoreInputs {
+                store: &store,
+                vault: &vault,
+                blackhole_files: &blackhole_files,
+                blackhole_exchange: &plan.blackhole_exchange,
+                local_identity: visible_identity_hash,
+                timeline_origin,
+                progress: observability.state_restore_progress(),
+            },
         );
-        persistence = Some(persist::Persistence::new(
+        persistence = Some(persistence::prepare_worker(
             prns_handle.clone(),
             store,
             vault,
             rotated_rx,
-            persist::PERSIST_INTERVAL,
         ));
     }
 
@@ -388,7 +349,7 @@ pub(super) async fn run(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
     let mut interface_failure = None;
     tokio::select! {
         () = prns.run() => {}
-        () = persist::run_until_shutdown(persistence, managed.as_ref()) => {}
+        () = persistence::run_until_shutdown(persistence, managed.as_ref()) => {}
         failed = interface_failure::wait(
             &prns_handle,
             interface_failure_watch,

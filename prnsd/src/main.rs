@@ -9,7 +9,7 @@ mod managed_service;
 #[cfg(feature = "otlp")]
 mod metrics;
 mod observability;
-mod persist;
+mod persistence;
 mod services;
 mod splash;
 mod startup_progress;
