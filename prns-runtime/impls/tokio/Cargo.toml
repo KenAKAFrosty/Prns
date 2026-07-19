@@ -16,6 +16,7 @@ path = "src/lib.rs"
 
 [features]
 default = []
+rnx = ["prns-runtime/rnx", "tokio/process", "dep:shlex", "dep:nix"]
 interface-discovery = ["prns-runtime/interface-discovery"]
 interface-discovery-archive = ["interface-discovery", "prns-runtime/interface-discovery-archive"]
 runtime-metrics = ["prns-core/runtime-metrics", "prns-runtime/runtime-metrics"]
@@ -33,6 +34,10 @@ futures-util = { version = "0.3", default-features = false, features = ["alloc",
 getrandom = { version = "0.2" }
 bzip2 = { version = "0.6" }
 tracing = { version = "0.1", optional = true, default-features = false, features = ["std", "attributes"] }
+shlex = { version = "1", optional = true }
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.31", optional = true, default-features = false, features = ["process", "signal"] }
 
 [dev-dependencies]
 prns-core = { path = "../../../prns-core", default-features = false, features = ["test-support"] }

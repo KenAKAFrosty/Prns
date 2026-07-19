@@ -292,6 +292,7 @@ impl<S: StorageLayout> EngineState<S> {
             }
             IngestPacketOutcome::OwesLinkProofVerify => {}
             IngestPacketOutcome::RequestReceived {
+                destination,
                 link_id,
                 request_id,
                 requester,
@@ -301,6 +302,7 @@ impl<S: StorageLayout> EngineState<S> {
                 data,
             } => {
                 sink(EngineReaction::Journaled(Journaled::RequestReceived {
+                    destination,
                     link_id,
                     request_id,
                     requester,

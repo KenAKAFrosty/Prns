@@ -4,6 +4,7 @@ use crate::routing::links::request::RequestId;
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::{RequestPathHash, RequestPolicy};
 use crate::units::RttMillis;
+use crate::wire::DestinationHash;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RoutePolicy {
@@ -39,16 +40,28 @@ pub enum Decline {
     /// See [`respond_token`](RequestContext::respond_token)
     Ignore,
     CloseLink,
+    ResponseTooLarge,
 }
 
 pub trait ResponseSink {
-    fn put(&mut self, bytes: &[u8]);
+    fn put(&mut self, bytes: &[u8]) -> Result<(), ResponseCapacityExceeded>;
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResponseCapacityExceeded;
 
 #[cfg(feature = "alloc")]
 impl ResponseSink for alloc::vec::Vec<u8> {
-    fn put(&mut self, bytes: &[u8]) {
+    fn put(&mut self, bytes: &[u8]) -> Result<(), ResponseCapacityExceeded> {
         self.extend_from_slice(bytes);
+        Ok(())
+    }
+}
+
+impl<const N: usize> ResponseSink for heapless::Vec<u8, N> {
+    fn put(&mut self, bytes: &[u8]) -> Result<(), ResponseCapacityExceeded> {
+        self.extend_from_slice(bytes)
+            .map_err(|_| ResponseCapacityExceeded)
     }
 }
 
@@ -63,6 +76,7 @@ pub struct RespondToken {
 }
 
 pub struct InboundRequest<'a> {
+    pub destination: DestinationHash,
     pub data: &'a [u8],
     pub requester: Option<IdentityHash>,
     pub requested_at: InstantMillis,
@@ -72,6 +86,7 @@ pub struct InboundRequest<'a> {
 impl<'a> InboundRequest<'a> {
     #[must_use]
     pub fn new(
+        destination: DestinationHash,
         link_id: LinkId,
         request_id: RequestId,
         requester: Option<IdentityHash>,
@@ -80,6 +95,7 @@ impl<'a> InboundRequest<'a> {
         data: &'a [u8],
     ) -> Self {
         Self {
+            destination,
             data,
             requester,
             requested_at,
@@ -99,6 +115,7 @@ impl<'a> InboundRequest<'a> {
 
 pub struct RequestContext<'a, S> {
     pub state: &'a S,
+    pub destination: DestinationHash,
     pub data: &'a [u8],
     pub requester: Option<IdentityHash>,
     pub requested_at: InstantMillis,
@@ -108,16 +125,15 @@ pub struct RequestContext<'a, S> {
 
 impl<S> RequestContext<'_, S> {
     pub fn respond(&mut self, bytes: &[u8]) -> Result<(), Decline> {
-        self.sink.put(bytes);
-        Ok(())
+        self.sink.put(bytes).map_err(|_| Decline::ResponseTooLarge)
     }
 
     /// Append `bytes` without finishing, to assemble a multi-part body straight into the grant;
     /// finish with a bare `Ok(())`. An advanced path for constrained targets or perf: if
     /// unsure, reach for [`respond`](Self::respond).
-    pub fn write(&mut self, bytes: &[u8]) -> &mut Self {
-        self.sink.put(bytes);
-        self
+    pub fn write(&mut self, bytes: &[u8]) -> Result<&mut Self, ResponseCapacityExceeded> {
+        self.sink.put(bytes)?;
+        Ok(self)
     }
 
     /// The token to answer this request later. You can keep it, return `Err(Decline::Ignore)` now, and
@@ -172,6 +188,7 @@ pub async fn dispatch_request<'a, S, R: RouteSet<S>>(
 ) -> Result<(), Decline> {
     let cx = RequestContext {
         state,
+        destination: request.destination,
         data: request.data,
         requester: request.requester,
         requested_at: request.requested_at,
@@ -295,6 +312,7 @@ mod tests {
                 sink: &mut dyn ResponseSink,
             ) -> Result<(), Decline> {
                 let request = InboundRequest::new(
+                    DestinationHash::new([3; 16]),
                     LinkId::new([1; 16]),
                     RequestId([2; 16]),
                     None,

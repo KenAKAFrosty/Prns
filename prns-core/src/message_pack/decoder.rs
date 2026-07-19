@@ -1,3 +1,4 @@
+#[cfg(feature = "alloc")]
 use core::str;
 
 use rmp::decode::{read_marker, Bytes, RmpRead};
@@ -42,6 +43,7 @@ impl<'a> MessagePackReader<'a> {
         }
     }
 
+    #[cfg(feature = "alloc")]
     pub(crate) fn map_length(
         &mut self,
         marker: Marker,
@@ -54,6 +56,7 @@ impl<'a> MessagePackReader<'a> {
         }
     }
 
+    #[cfg(feature = "alloc")]
     pub(crate) const fn is_string(marker: Marker) -> bool {
         matches!(
             marker,
@@ -61,6 +64,7 @@ impl<'a> MessagePackReader<'a> {
         )
     }
 
+    #[cfg(feature = "alloc")]
     pub(crate) fn string(
         &mut self,
         marker: Marker,

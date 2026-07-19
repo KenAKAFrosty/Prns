@@ -2,10 +2,10 @@ use core::future::Future;
 
 use embassy_futures::join::join;
 use embassy_sync::blocking_mutex::raw::RawMutex;
-use embassy_sync::channel::Receiver;
+use embassy_sync::channel::{Channel, Receiver};
 use heapless::Vec as HeaplessVec;
 
-use crate::engine::{IssuedCommand, Journaled};
+use crate::engine::{IssuedCommand, Journaled, MAX_SEND_REQUEST_DATA_LEN};
 use crate::interfaces::ifac::{IfacContext, InterfaceIfac};
 use crate::interfaces::{InterfaceDescriptor, InterfaceId};
 use crate::reactor::driver::{
@@ -15,6 +15,7 @@ use crate::reactor::Host;
 use crate::storage::StorageLayout;
 
 use super::super::request_router::RouteSet;
+use super::super::request_runner::{run_router, RunnerRequest};
 use super::super::{
     EmbassyInterfaceStore, InterfaceInspectionStore, Manual, NoInterfaceInspectionStore,
     PreConfiguredDestination, PrnsEvent, PrnsNodeRecipe,
@@ -87,6 +88,8 @@ pub struct PrnsNode<
     const COMMANDS: usize,
     const LIFECYCLE: usize,
     const COMPLETIONS: usize,
+    const ROUTED_REQUESTS: usize = 4,
+    const ROUTED_REQUEST_BYTES: usize = MAX_SEND_REQUEST_DATA_LEN,
 > where
     S: StorageLayout,
     M: RawMutex + 'static,
@@ -101,6 +104,25 @@ pub struct PrnsNode<
     host: H,
     initial: HeaplessVec<InterfaceDescriptor, MAX_IFACES>,
     ifacs: HeaplessVec<InterfaceIfac, IFACES>,
+}
+
+pub struct RequestRoutingCapacity<const REQUESTS: usize, const REQUEST_BYTES: usize>;
+
+impl<const REQUESTS: usize, const REQUEST_BYTES: usize> Default
+    for RequestRoutingCapacity<REQUESTS, REQUEST_BYTES>
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<const REQUESTS: usize, const REQUEST_BYTES: usize>
+    RequestRoutingCapacity<REQUESTS, REQUEST_BYTES>
+{
+    #[must_use]
+    pub const fn new() -> Self {
+        Self
+    }
 }
 
 impl<
@@ -118,7 +140,23 @@ impl<
         const LIFECYCLE: usize,
         const COMPLETIONS: usize,
     >
-    PrnsNode<St, R, F, S, H, M, SLOT, IFACES, MAX_IFACES, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>
+    PrnsNode<
+        St,
+        R,
+        F,
+        S,
+        H,
+        M,
+        SLOT,
+        IFACES,
+        MAX_IFACES,
+        NOTIFY,
+        COMMANDS,
+        LIFECYCLE,
+        COMPLETIONS,
+        4,
+        MAX_SEND_REQUEST_DATA_LEN,
+    >
 where
     R: RouteSet<St>,
     F: FnMut(PrnsEvent<'_>, &St),
@@ -127,6 +165,73 @@ where
     M: RawMutex + 'static,
 {
     pub fn new<'d, D>(
+        recipe: PrnsNodeRecipe<D, St, R, F, Manual, S>,
+        plumbing: ReactorPlumbing<M, SLOT, IFACES, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
+        host: H,
+        initial: HeaplessVec<InterfaceDescriptor, MAX_IFACES>,
+    ) -> Self
+    where
+        D: IntoIterator<Item = PreConfiguredDestination<'d>>,
+    {
+        Self::build(recipe, plumbing, host, initial)
+    }
+}
+
+impl<
+        St,
+        R,
+        F,
+        S,
+        H,
+        M,
+        const SLOT: usize,
+        const IFACES: usize,
+        const MAX_IFACES: usize,
+        const NOTIFY: usize,
+        const COMMANDS: usize,
+        const LIFECYCLE: usize,
+        const COMPLETIONS: usize,
+        const ROUTED_REQUESTS: usize,
+        const ROUTED_REQUEST_BYTES: usize,
+    >
+    PrnsNode<
+        St,
+        R,
+        F,
+        S,
+        H,
+        M,
+        SLOT,
+        IFACES,
+        MAX_IFACES,
+        NOTIFY,
+        COMMANDS,
+        LIFECYCLE,
+        COMPLETIONS,
+        ROUTED_REQUESTS,
+        ROUTED_REQUEST_BYTES,
+    >
+where
+    R: RouteSet<St>,
+    F: FnMut(PrnsEvent<'_>, &St),
+    S: StorageLayout,
+    H: Host,
+    M: RawMutex + 'static,
+{
+    pub fn new_with_request_capacity<'d, D>(
+        recipe: PrnsNodeRecipe<D, St, R, F, Manual, S>,
+        plumbing: ReactorPlumbing<M, SLOT, IFACES, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
+        host: H,
+        initial: HeaplessVec<InterfaceDescriptor, MAX_IFACES>,
+        _capacity: RequestRoutingCapacity<ROUTED_REQUESTS, ROUTED_REQUEST_BYTES>,
+    ) -> Self
+    where
+        D: IntoIterator<Item = PreConfiguredDestination<'d>>,
+    {
+        Self::build(recipe, plumbing, host, initial)
+    }
+
+    fn build<'d, D>(
         recipe: PrnsNodeRecipe<D, St, R, F, Manual, S>,
         plumbing: ReactorPlumbing<M, SLOT, IFACES, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
         host: H,
@@ -294,6 +399,9 @@ where
             mut on_event,
             routes: _,
         } = node;
+        let request_channel =
+            Channel::<M, RunnerRequest<ROUTED_REQUEST_BYTES>, ROUTED_REQUESTS>::new();
+        let request_sender = request_channel.sender();
         let reactor = run_pooled(
             &mut engine,
             &mut host,
@@ -312,12 +420,21 @@ where
                         return;
                     }
                 }
+                if let Some(request) = RunnerRequest::copy_from(&journaled) {
+                    let _ = request_sender.try_send(request);
+                }
                 on_event(PrnsEvent::from(journaled), &state);
             },
             crate::reactor::decline_all(),
             store,
         );
-        join(reactor, drive).await;
+        let router =
+            run_router::<St, R, M, COMMANDS, COMPLETIONS, ROUTED_REQUESTS, ROUTED_REQUEST_BYTES>(
+                &state,
+                request_channel.receiver(),
+                handle,
+            );
+        join(join(reactor, router), drive).await;
     }
 
     /// Runs only the reactor for boards that schedule interfaces separately.
@@ -367,7 +484,10 @@ where
             on_event,
             routes: _,
         } = node;
-        run_pooled(
+        let request_channel =
+            Channel::<M, RunnerRequest<ROUTED_REQUEST_BYTES>, ROUTED_REQUESTS>::new();
+        let request_sender = request_channel.sender();
+        let reactor = run_pooled(
             engine,
             host,
             PooledWiring {
@@ -385,12 +505,21 @@ where
                         return;
                     }
                 }
+                if let Some(request) = RunnerRequest::copy_from(&journaled) {
+                    let _ = request_sender.try_send(request);
+                }
                 on_event(PrnsEvent::from(journaled), state);
             },
             crate::reactor::decline_all(),
             store,
-        )
-        .await;
+        );
+        let router =
+            run_router::<St, R, M, COMMANDS, COMPLETIONS, ROUTED_REQUESTS, ROUTED_REQUEST_BYTES>(
+                state,
+                request_channel.receiver(),
+                *handle,
+            );
+        join(reactor, router).await;
     }
 }
 

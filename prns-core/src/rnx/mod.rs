@@ -1,11 +1,18 @@
 mod codec;
 mod model;
 
+#[cfg(feature = "alloc")]
 pub use codec::{
     decode_execution_request, decode_execution_result, encode_execution_request,
-    encode_execution_result, RnxCodecError, RnxField,
+    encode_execution_result,
 };
-pub use model::{ExecutedCommand, ExecutionConclusion, ExecutionRequest, ExecutionResult};
+pub use codec::{
+    decode_execution_request_ref, encode_execution_result_into, encode_execution_result_to,
+    EncodeExecutionResultError, RnxCodecError, RnxEncodeSink, RnxField,
+};
+#[cfg(feature = "alloc")]
+pub use model::{ExecutedCommand, ExecutionRequest, ExecutionResult};
+pub use model::{ExecutedCommandRef, ExecutionConclusion, ExecutionRequestRef, ExecutionResultRef};
 
 pub const APP_NAME: &str = "rnx";
 pub const EXECUTE_ASPECT: &str = "execute";

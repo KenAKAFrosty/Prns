@@ -636,6 +636,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
         self.links.note_inbound(&link_id, arrived_at);
         IngestPacketOutcome::RequestReceived {
+            destination,
             link_id,
             request_id: RequestId::of_packet(&packet_hash),
             requester: remote_identity,

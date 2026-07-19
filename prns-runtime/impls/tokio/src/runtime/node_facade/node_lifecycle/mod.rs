@@ -399,6 +399,7 @@ where
                 #[cfg(feature = "tracing")]
                 super::super::tracing_events::emit(&event);
                 if let PrnsEvent::Message(Message::Request {
+                    destination,
                     link_id,
                     request_id,
                     requester,
@@ -409,6 +410,7 @@ where
                 }) = &event
                 {
                     let _ = req_tx.try_send(RunnerRequest {
+                        destination: *destination,
                         link_id: *link_id,
                         request_id: *request_id,
                         requester: *requester,

@@ -17,7 +17,7 @@ default = ["std", "std-sync-host"]
 # `zeroize/alloc` rides our own `alloc` gate so `Zeroize for Vec<u8>` is present by declaration rather than incidental dependency feature unification. The host identity vault's keyring backend zeroizes the secret bytes the OS store hands back.
 alloc = ["zeroize/alloc"]
 signed-artifact = ["alloc", "dep:rmp"]
-rnx = ["alloc", "dep:rmp"]
+rnx = ["dep:rmp"]
 i2p = ["alloc", "dep:base64", "dep:data-encoding"]
 shared-instance-rpc = ["alloc", "dep:md-5", "dep:rmp"]
 interface-discovery = ["alloc", "dep:rmp"]

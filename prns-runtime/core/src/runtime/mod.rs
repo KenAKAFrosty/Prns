@@ -12,6 +12,8 @@ pub mod rns_management;
 pub mod rns_remote_management;
 #[cfg(feature = "rns-management")]
 pub mod rns_rpc;
+#[cfg(feature = "rnx")]
+pub mod rnx;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "alloc")] {

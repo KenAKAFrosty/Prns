@@ -62,6 +62,7 @@ pub enum Journaled<'a> {
 
     /// RNS 1.3.5's request handler callback as data.
     RequestReceived {
+        destination: DestinationHash,
         link_id: LinkId,
         request_id: RequestId,
         requester: Option<IdentityHash>,

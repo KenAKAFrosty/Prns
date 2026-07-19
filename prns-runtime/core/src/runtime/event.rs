@@ -33,6 +33,7 @@ pub enum PrnsEvent<'a> {
 pub enum Message<'a> {
     Delivered(Delivery<'a>),
     Request {
+        destination: DestinationHash,
         link_id: LinkId,
         request_id: RequestId,
         requester: Option<IdentityHash>,
@@ -144,6 +145,7 @@ impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
         match journaled {
             Journaled::Delivered(delivery) => PrnsEvent::Message(Message::Delivered(delivery)),
             Journaled::RequestReceived {
+                destination,
                 link_id,
                 request_id,
                 requester,
@@ -152,6 +154,7 @@ impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
                 rtt,
                 data,
             } => PrnsEvent::Message(Message::Request {
+                destination,
                 link_id,
                 request_id,
                 requester,

@@ -4,6 +4,8 @@ mod identity_bootstrap;
 mod interface_store;
 mod node_facade;
 pub mod node_introspection;
+#[cfg(feature = "rnx")]
+mod process_commands;
 mod request_runner;
 mod route_restore;
 
@@ -37,3 +39,5 @@ pub use node_facade::{
     ResourceSendError, RouteSeedProgress, RouteSeedReport, SegmentCompression,
     SharedInstanceIdentityError, StreamId, TunnelSeedReport, AUTO_COMPRESS_MAX_LEN,
 };
+#[cfg(feature = "rnx")]
+pub use process_commands::ProcessCommands;

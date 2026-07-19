@@ -162,6 +162,7 @@ impl<S: StorageLayout> EngineState<S> {
                         deliver_single_segment(
                             &mut self.receipts,
                             AssembledSingleSegment {
+                                destination: responder_destination,
                                 link_id,
                                 hash,
                                 correlation: state.correlation,
@@ -430,6 +431,7 @@ impl<S: StorageLayout> EngineState<S> {
             deliver_single_segment(
                 &mut self.receipts,
                 AssembledSingleSegment {
+                    destination: responder_destination,
                     link_id: &link_id,
                     hash: &hash,
                     correlation: state.correlation,
@@ -494,6 +496,7 @@ fn split_metadata_block<'p>(
 }
 
 struct AssembledSingleSegment<'a> {
+    destination: Option<crate::wire::DestinationHash>,
     link_id: &'a LinkId,
     hash: &'a ResourceHash,
     correlation: ResourceCorrelation,
@@ -512,6 +515,7 @@ fn deliver_single_segment<C: ReceiptTable>(
     sink: &mut impl FnMut(EngineReaction<'_>),
 ) {
     let AssembledSingleSegment {
+        destination,
         link_id,
         hash,
         correlation,
@@ -548,11 +552,12 @@ fn deliver_single_segment<C: ReceiptTable>(
             }
         }
         ResourceCorrelation::Request { .. } => {
-            if request_permitted {
+            if let (true, Some(destination)) = (request_permitted, destination) {
                 let Ok(parsed) = parse_request_plaintext(data) else {
                     return;
                 };
                 sink(EngineReaction::Journaled(Journaled::RequestReceived {
+                    destination,
                     link_id: *link_id,
                     request_id: RequestId::of_request_data(data),
                     requester,
@@ -1368,12 +1373,14 @@ mod seam_tests {
             InstantMillis(2_400),
             &mut |reaction| {
                 if let EngineReaction::Journaled(Journaled::RequestReceived {
+                    destination,
                     request_id: rid,
                     path_hash: ph,
                     data,
                     ..
                 }) = reaction
                 {
+                    assert_eq!(destination, RESPONDER_DESTINATION);
                     requests.push((rid, ph, data.to_vec()));
                 }
             },

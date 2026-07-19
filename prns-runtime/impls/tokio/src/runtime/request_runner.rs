@@ -10,6 +10,7 @@ use crate::routing::links::request::RequestId;
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::units::RttMillis;
+use crate::wire::DestinationHash;
 
 use super::node_facade::PrnsNodeHandle;
 use super::request_router::{dispatch_request, Decline, InboundRequest, RouteSet};
@@ -18,6 +19,7 @@ pub(super) const REQUEST_QUEUE_DEPTH: usize = 1024;
 const MAX_IN_FLIGHT: usize = 256;
 
 pub(super) struct RunnerRequest {
+    pub destination: DestinationHash,
     pub link_id: LinkId,
     pub request_id: RequestId,
     pub requester: Option<IdentityHash>,
@@ -67,6 +69,7 @@ async fn dispatch<St, R: RouteSet<St>>(
     request: RunnerRequest,
 ) {
     let inbound = InboundRequest::new(
+        request.destination,
         request.link_id,
         request.request_id,
         request.requester,
@@ -84,6 +87,7 @@ async fn dispatch<St, R: RouteSet<St>>(
         Err(Decline::CloseLink) => {
             commands.close_link(responder.link_id);
         }
+        Err(Decline::ResponseTooLarge) => {}
     }
 }
 
