@@ -36,9 +36,9 @@ pub use node_lifecycle::{
     NonRoutingIdentityError, PrnsNode, RegisterRequestRouteError, SharedInstanceIdentityError,
 };
 pub use persistence::{
-    boot_timeline_origin, BlackholeSeedReport, DestinationIdentitySeedReport, FlushError,
-    FlushMark, FlushReport, PrepareFlushError, PreparedFlush, RatchetSeedReport, RegionFlush,
-    RouteSeedProgress, RouteSeedReport, TunnelSeedReport,
+    boot_timeline_origin, DestinationIdentitySeedReport, FlushError, FlushMark, FlushReport,
+    PrepareFlushError, PreparedFlush, RatchetSeedReport, RegionFlush, RouteSeedProgress,
+    RouteSeedReport, TunnelSeedReport,
 };
 pub use resource_transfer::{
     ResourceReceipt, ResourceReceiveError, ResourceSendError, SegmentCompression,

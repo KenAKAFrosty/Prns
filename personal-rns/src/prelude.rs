@@ -141,8 +141,8 @@ pub use prns_interfaces_tokio::i2p;
 #[cfg(all(feature = "shared-instance", feature = "tokio-host"))]
 pub use prns_interfaces_tokio::shared_instance;
 
-#[cfg(all(feature = "shared-instance", feature = "tokio-host"))]
-pub use prns_interfaces_tokio::rns_remote_management;
+#[cfg(feature = "shared-instance")]
+pub use prns_runtime::runtime::rns_remote_management;
 
 #[cfg(all(feature = "lora", feature = "embassy-host"))]
 pub use prns_interfaces_embassy::lora;

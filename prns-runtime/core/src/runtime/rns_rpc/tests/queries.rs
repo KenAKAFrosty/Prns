@@ -1,6 +1,6 @@
 use super::*;
 
-#[tokio::test]
+#[futures_test::test]
 async fn the_set_answers_phy_stats_none_timeout_default_and_a_real_link_count() {
     let query = StubQuery {
         links: 2,
@@ -23,7 +23,7 @@ async fn the_set_answers_phy_stats_none_timeout_default_and_a_real_link_count() 
     assert_eq!(reply_for(blackholes, &query).await, b"}.");
 }
 
-#[tokio::test]
+#[futures_test::test]
 async fn a_msgpack_client_gets_msgpack_replies_in_its_own_dialect() {
     let query = StubQuery {
         links: 2,
@@ -61,7 +61,7 @@ async fn a_msgpack_client_gets_msgpack_replies_in_its_own_dialect() {
     assert_eq!(reply_for(&blackholes, &query).await, b"\x80");
 }
 
-#[tokio::test]
+#[futures_test::test]
 async fn packet_phy_reads_project_rns_units_and_truthful_absence() {
     let packet_hash = PacketHash::new([0x42; PACKET_HASH_LEN]);
     let query = StubQuery {
@@ -124,7 +124,7 @@ async fn packet_phy_reads_project_rns_units_and_truthful_absence() {
     );
 }
 
-#[tokio::test]
+#[futures_test::test]
 async fn a_msgpack_rate_table_projects_complete_rns_rows_in_seconds() {
     let query = StubQuery {
         links: 0,

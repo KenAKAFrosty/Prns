@@ -5,10 +5,9 @@ use tokio::sync::oneshot;
 
 use crate::engine::{EngineState, WakeSchedules};
 use crate::identity::IdentityHash;
-use crate::routing::blackhole::BlackholeTable;
+use crate::interfaces::AttachedInterfaces;
 use crate::routing::{
-    BlackholeIdentityOutcome, BlackholeInsertFailure, BlackholedIdentity, RemovedRoute,
-    UnblackholeIdentityOutcome,
+    BlackholeIdentityOutcome, BlackholedIdentity, RemovedRoute, UnblackholeIdentityOutcome,
 };
 use crate::storage::StorageLayout;
 
@@ -35,6 +34,7 @@ pub enum IdentityBlackholeHostCommand {
 pub(crate) fn apply_identity_blackhole_command<S: StorageLayout>(
     engine: &mut EngineState<S>,
     command: IdentityBlackholeHostCommand,
+    interfaces: AttachedInterfaces<'_>,
     on_removed: &mut impl FnMut(RemovedRoute),
 ) -> WakeSchedules {
     match command {
@@ -56,52 +56,24 @@ pub(crate) fn apply_identity_blackhole_command<S: StorageLayout>(
             WakeSchedules::UNCHANGED
         }
         IdentityBlackholeHostCommand::Blackhole { entry, reply } => {
-            let result = engine
-                .blackhole_identity(
-                    BlackholedIdentity {
-                        identity: entry.identity,
-                        source: entry.source,
-                        expiry: entry.expiry,
-                        reason: entry.reason.as_deref(),
-                    },
-                    on_removed,
-                )
-                .map_err(|error| {
-                    match <S::Blackholes as BlackholeTable>::classify_insert_error(error) {
-                        BlackholeInsertFailure::CapacityExhausted => {
-                            IdentityBlackholeControlError::CapacityExhausted
-                        }
-                        BlackholeInsertFailure::ReasonTooLong => {
-                            IdentityBlackholeControlError::ReasonTooLong
-                        }
-                    }
-                });
-            let changed = result == Ok(BlackholeIdentityOutcome::Added);
-            let _ = reply.send(result);
-            if changed {
-                blackhole_wake(engine)
-            } else {
-                WakeSchedules::UNCHANGED
-            }
+            let effect = engine.blackhole_identity(
+                BlackholedIdentity {
+                    identity: entry.identity,
+                    source: entry.source,
+                    expiry: entry.expiry,
+                    reason: entry.reason.as_deref(),
+                },
+                interfaces,
+                on_removed,
+            );
+            let _ = reply.send(effect.outcome.map_err(IdentityBlackholeControlError::from));
+            effect.wake_schedules
         }
         IdentityBlackholeHostCommand::Unblackhole { identity, reply } => {
-            let outcome = engine.unblackhole_identity(&identity);
-            let changed = outcome == UnblackholeIdentityOutcome::Removed;
-            let _ = reply.send(Ok(outcome));
-            if changed {
-                blackhole_wake(engine)
-            } else {
-                WakeSchedules::UNCHANGED
-            }
+            let effect = engine.unblackhole_identity(&identity);
+            let _ = reply.send(Ok(effect.outcome));
+            effect.wake_schedules
         }
-    }
-}
-
-fn blackhole_wake<S: StorageLayout>(engine: &EngineState<S>) -> WakeSchedules {
-    WakeSchedules {
-        expired_destination_identities: engine.destination_identity_expiry_wake(),
-        expired_blackholes: engine.blackhole_expiry_wake(),
-        ..WakeSchedules::UNCHANGED
     }
 }
 
@@ -164,6 +136,7 @@ mod tests {
                 entry: entry(Some("operator".into())),
                 reply,
             },
+            AttachedInterfaces::new(&[]),
             &mut |_| {},
         );
         assert_eq!(settled.await, Ok(Ok(BlackholeIdentityOutcome::Added)));
@@ -177,6 +150,7 @@ mod tests {
             apply_identity_blackhole_command(
                 &mut engine,
                 IdentityBlackholeHostCommand::ReadAll { reply },
+                AttachedInterfaces::new(&[]),
                 &mut |_| {},
             ),
             WakeSchedules::UNCHANGED,
@@ -190,6 +164,7 @@ mod tests {
                 identity: IdentityHash::new([0x31; 16]),
                 reply,
             },
+            AttachedInterfaces::new(&[]),
             &mut |_| {},
         );
         assert_eq!(settled.await, Ok(Ok(UnblackholeIdentityOutcome::Removed)));
@@ -206,6 +181,7 @@ mod tests {
                 entry: entry(Some("x".repeat(65))),
                 reply,
             },
+            AttachedInterfaces::new(&[]),
             &mut |_| {},
         );
         assert_eq!(
@@ -221,6 +197,7 @@ mod tests {
             let _ = apply_identity_blackhole_command(
                 &mut engine,
                 IdentityBlackholeHostCommand::Blackhole { entry, reply },
+                AttachedInterfaces::new(&[]),
                 &mut |_| {},
             );
             assert_eq!(settled.await, Ok(Ok(BlackholeIdentityOutcome::Added)));
@@ -234,6 +211,7 @@ mod tests {
                 entry: overflow,
                 reply,
             },
+            AttachedInterfaces::new(&[]),
             &mut |_| {},
         );
         assert_eq!(

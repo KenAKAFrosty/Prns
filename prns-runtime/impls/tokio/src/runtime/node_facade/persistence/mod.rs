@@ -1,9 +1,10 @@
 use tokio::sync::oneshot;
 
 use crate::crypto::ratchets::SeedSelfRatchetsOutcome;
-use crate::engine::{DestinationIdentitySeedOutcome, InstantMillis};
-use crate::identity::vault::{IdentityLabel, IdentityVault};
+use crate::engine::{BlackholeSeedReport, DestinationIdentitySeedOutcome, InstantMillis};
+use crate::identity::vault::IdentityVault;
 use crate::identity::Zeroizing;
+use crate::interfaces::AttachedInterfaces;
 use crate::persistence::{
     read_destination_identities_snapshot, read_routing_table_snapshot, read_self_ratchets_snapshot,
     read_timebase_snapshot, read_tunnels_snapshot, snapshot_fingerprint, write_timebase_snapshot,
@@ -13,11 +14,11 @@ use crate::reactor::driver::{
     HostCommand, PersistedStateSnapshot, SelfRatchetSnapshot, SelfRatchetsSnapshot, TokioHost,
 };
 use crate::reactor::Host;
-use crate::routing::blackhole::BlackholeTable;
 use crate::routing::tunnel::SeedTunnelOutcome;
-use crate::routing::{BlackholeIdentityOutcome, BlackholeInsertFailure, BlackholedIdentity};
+use crate::routing::BlackholedIdentity;
 use crate::storage::StorageLayout;
 use crate::wire::DestinationHash;
+use prns_runtime::runtime::persistence_snapshots::self_ratchet_identity_label;
 
 use super::super::request_router::RouteSet;
 use super::super::PrnsEvent;
@@ -160,34 +161,15 @@ where
         &mut self,
         entries: impl IntoIterator<Item = BlackholedIdentity<Reason>>,
     ) -> BlackholeSeedReport {
-        let mut report = BlackholeSeedReport::default();
-        let now = self.host.now();
-        for entry in entries {
-            if entry.expiry.is_expired_at(now) {
-                report.refused_count += 1;
-                continue;
-            }
-            let reason = entry.reason.as_ref().map(AsRef::as_ref);
-            match self.node.engine.blackhole_identity(
-                BlackholedIdentity {
-                    identity: entry.identity,
-                    source: entry.source,
-                    expiry: entry.expiry,
-                    reason,
-                },
+        self.node
+            .engine
+            .seed_blackholed_identities(
+                entries,
+                self.host.now(),
+                AttachedInterfaces::new(&[]),
                 &mut |_| {},
-            ) {
-                Ok(BlackholeIdentityOutcome::Added) => report.seeded_count += 1,
-                Ok(BlackholeIdentityOutcome::AlreadyPresent) => report.dropped_count += 1,
-                Err(error) => {
-                    match <S::Blackholes as BlackholeTable>::classify_insert_error(error) {
-                        BlackholeInsertFailure::CapacityExhausted
-                        | BlackholeInsertFailure::ReasonTooLong => report.dropped_count += 1,
-                    }
-                }
-            }
-        }
-        report
+            )
+            .report
     }
 
     /// Boot-restore before [`run`](Self::run): every stored row re-verifies its signature and address binding before landing, and lands with the departed grace on its interface. Refusals and drops are counted, never fatal — a damaged snapshot costs rows, not the boot.
@@ -306,7 +288,7 @@ where
             .map(|(destination, _, _)| destination)
             .collect();
         for destination in destinations {
-            let label = ratchet_label(&destination);
+            let label = self_ratchet_identity_label(&destination);
             let Ok(Some(stored_len)) = vault.stored_blob_len(&label) else {
                 continue;
             };
@@ -375,13 +357,6 @@ pub struct RouteSeedProgress {
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct BlackholeSeedReport {
-    pub seeded_count: u32,
-    pub refused_count: u32,
-    pub dropped_count: u32,
-}
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct DestinationIdentitySeedReport {
     pub seeded_count: u32,
     pub refused_count: u32,
@@ -400,33 +375,6 @@ pub struct RatchetSeedReport {
     pub seeded_count: u32,
     pub refused_count: u32,
     pub dropped_count: u32,
-}
-
-#[allow(clippy::expect_used)]
-pub(super) fn ratchet_label(destination: &DestinationHash) -> IdentityLabel {
-    let mut label = String::with_capacity("ratchets.".len() + destination.as_bytes().len() * 2);
-    label.push_str("ratchets.");
-    for byte in destination.as_bytes() {
-        let _ = core::fmt::Write::write_fmt(&mut label, format_args!("{byte:02x}"));
-    }
-    IdentityLabel::new(&label).expect("a hex destination under a fixed prefix is label-lawful")
-}
-
-impl SelfRatchetsSnapshot {
-    pub fn store_into<V: IdentityVault>(self, vault: &mut V) -> Result<u32, V::Error> {
-        let mut flushed_count = 0u32;
-        for (destination, sealed) in self.blobs {
-            vault.store_blob(&ratchet_label(&destination), &sealed)?;
-            flushed_count = flushed_count.saturating_add(1);
-        }
-        Ok(flushed_count)
-    }
-}
-
-impl SelfRatchetSnapshot {
-    pub fn store_into<V: IdentityVault>(self, vault: &mut V) -> Result<(), V::Error> {
-        vault.store_blob(&ratchet_label(&self.destination), &self.sealed)
-    }
 }
 
 pub struct PreparedFlush {

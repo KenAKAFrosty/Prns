@@ -23,7 +23,6 @@ mod interface_seam;
 mod interface_status;
 mod interface_topology;
 mod journal_delivery;
-mod persistence_snapshots;
 
 pub use super::grant_lane::{
     tokio_grant_lane, HeapFrameSlot, TokioGrantConsumer, TokioGrantProducer,
@@ -33,12 +32,15 @@ pub use egress::Egress;
 pub use host::TokioHost;
 pub use host_protocol::{
     AddInterfaceCommand, HostCommand, HostResourceMetadata, HostResourcePayload,
-    HostResourcePayloadError, PersistedStateSnapshot, ProvideDecompressedHostCommand,
-    RequestAnyHostCommand, ResourceInbound, RespondAnyHostCommand, SelfRatchetSnapshot,
-    SelfRatchetsSnapshot, SendResourceHostCommand, SendResourceSegmentHostCommand, StreamInbound,
+    HostResourcePayloadError, ProvideDecompressedHostCommand, RequestAnyHostCommand,
+    ResourceInbound, RespondAnyHostCommand, SendResourceHostCommand,
+    SendResourceSegmentHostCommand, StreamInbound,
 };
 pub use interface_seam::TokioInterfaceSeam;
 pub use interface_status::TokioInterfaceStatus;
+pub use prns_runtime::runtime::{
+    PersistedStateSnapshot, SelfRatchetSnapshot, SelfRatchetsSnapshot,
+};
 
 use command_dispatch::{CommandDispatch, CommandEffect};
 use crypto_dispatch::{dispatch_open_spans, CryptoCompletionEffect, CryptoDispatch};
