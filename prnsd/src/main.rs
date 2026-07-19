@@ -6,13 +6,10 @@ mod daemon;
 mod i2p;
 mod interface_discovery;
 mod managed_service;
-#[cfg(feature = "otlp")]
-mod metrics;
 mod observability;
 mod persistence;
 mod services;
 mod splash;
-mod startup_progress;
 mod utilities;
 
 use std::process::ExitCode;

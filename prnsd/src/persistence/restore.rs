@@ -8,8 +8,8 @@ use personal_rns::shared_instance::RnsBlackholeFiles;
 use personal_rns::storage::StorageLayout;
 use personal_rns::units::InstantMillis;
 
+use crate::observability::StateRestoreProgress;
 use crate::services::DaemonRequestState;
-use crate::startup_progress::StateRestoreProgress;
 
 pub(crate) struct RestoreInputs<'a> {
     pub(crate) store: &'a FileStore,

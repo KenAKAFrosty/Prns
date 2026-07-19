@@ -26,8 +26,13 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::Layer;
 
 use crate::cli::LogFormat;
-use crate::startup_progress::StateRestoreProgress;
 use personal_rns::config::LoggingPlan;
+
+#[cfg(feature = "otlp")]
+mod metrics;
+mod progress;
+
+pub(crate) use progress::StateRestoreProgress;
 
 #[cfg(feature = "otlp")]
 const EXPORT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -71,15 +76,15 @@ pub struct ObservabilityGuard {
 }
 
 impl ObservabilityGuard {
-    pub fn state_restore_progress(&self) -> Option<StateRestoreProgress> {
+    pub(crate) fn state_restore_progress(&self) -> Option<StateRestoreProgress> {
         self.local_terminal.then(StateRestoreProgress::new)
     }
 
     #[cfg(feature = "otlp")]
-    pub fn metrics_reporter(&self) -> Option<crate::metrics::MetricsReporter> {
+    pub(crate) fn metrics_reporter(&self) -> Option<metrics::MetricsReporter> {
         self.meter_provider
             .as_ref()
-            .map(crate::metrics::MetricsReporter::new)
+            .map(metrics::MetricsReporter::new)
     }
 
     pub async fn shutdown(self) {
