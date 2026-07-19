@@ -13,7 +13,7 @@ use personal_rns::routes;
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
-    ConfigurePreconfiguredDestinationError, Manual, NonRoutingIdentityError,
+    ConfigurePreconfiguredDestinationError, Manual, NodeRunError, NonRoutingIdentityError,
     PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe,
     RequestHandlerRegistration, RequestPathError, SendError,
 };
@@ -97,7 +97,7 @@ impl UtilityNodeSession {
         let Self { node, client } = self;
         tokio::select! {
             result = operation(client) => Ok(result),
-            () = node.run() => Err(UtilityNodeStopped),
+            result = node.run() => Err(UtilityNodeStopped { failure: result.err() }),
         }
     }
 }
@@ -192,7 +192,7 @@ impl UtilityBusSession {
         let Self { node, client } = self;
         tokio::select! {
             result = operation(client) => Ok(result),
-            () = node.run() => Err(UtilityNodeStopped),
+            result = node.run() => Err(UtilityNodeStopped { failure: result.err() }),
         }
     }
 }
@@ -238,15 +238,29 @@ fn utility_node() -> UtilityNode {
 fn ignore_event(_event: PrnsEvent<'_>, _state: &()) {}
 
 #[derive(Debug)]
-pub struct UtilityNodeStopped;
+pub struct UtilityNodeStopped {
+    failure: Option<NodeRunError>,
+}
 
 impl fmt::Display for UtilityNodeStopped {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("the utility node stopped before its operation completed")
+        match self.failure {
+            Some(failure) => write!(
+                formatter,
+                "the utility node stopped before its operation completed: {failure}"
+            ),
+            None => formatter.write_str("the utility node stopped before its operation completed"),
+        }
     }
 }
 
-impl std::error::Error for UtilityNodeStopped {}
+impl std::error::Error for UtilityNodeStopped {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.failure
+            .as_ref()
+            .map(|failure| failure as &(dyn std::error::Error + 'static))
+    }
+}
 
 #[derive(Debug)]
 pub enum UtilityNodeSessionError {

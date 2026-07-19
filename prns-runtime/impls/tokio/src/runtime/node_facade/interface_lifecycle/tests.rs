@@ -4,6 +4,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use tokio::sync::mpsc::{self, UnboundedReceiver};
+use tokio::sync::oneshot;
 
 use crate::engine::Departure;
 use crate::interfaces::ifac::{IfacContext, IfacSize};
@@ -203,4 +204,126 @@ async fn a_self_completing_interface_run_deregisters_it() {
                 );
         }
     );
+}
+
+#[tokio::test]
+async fn panicking_interfaces_are_deregistered_without_stopping_the_driver() {
+    let (msg_tx, msg_rx) = mpsc::unbounded_channel::<DriverMsg>();
+    let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<HostCommand>();
+    let build_id = InterfaceId::from_channel_tag(
+        crate::interfaces::InterfaceKind::LocalClient,
+        b"panicking-build",
+    );
+    let run_id = InterfaceId::from_channel_tag(
+        crate::interfaces::InterfaceKind::LocalClient,
+        b"panicking-run",
+    );
+    let healthy_id = InterfaceId::from_channel_tag(
+        crate::interfaces::InterfaceKind::LocalClient,
+        b"healthy-run",
+    );
+    msg_tx
+        .send(DriverMsg::Add {
+            id: build_id,
+            supervisor: None,
+            build: Box::new(|| std::panic::panic_any("interface build")),
+        })
+        .expect("the driver is listening");
+    msg_tx
+        .send(DriverMsg::Add {
+            id: run_id,
+            supervisor: None,
+            build: Box::new(|| Box::pin(async { std::panic::panic_any("interface run") })),
+        })
+        .expect("the driver is listening");
+    msg_tx
+        .send(DriverMsg::Add {
+            id: healthy_id,
+            supervisor: None,
+            build: Box::new(|| Box::pin(async {})),
+        })
+        .expect("the driver is listening");
+    drop(msg_tx);
+
+    drive_interfaces(
+        std::vec![],
+        msg_rx,
+        cmd_tx,
+        Arc::new(Mutex::new(HashMap::new())),
+    )
+    .await;
+
+    let mut removed = std::vec::Vec::new();
+    while let Ok(command) = cmd_rx.try_recv() {
+        if let HostCommand::RemoveInterface { id, .. } = command {
+            removed.push(id);
+        }
+    }
+    removed.sort_unstable();
+    let mut expected = std::vec![build_id, run_id, healthy_id];
+    expected.sort_unstable();
+    assert_eq!(removed, expected);
+}
+
+#[tokio::test]
+async fn a_panicking_supervisor_stops_its_members() {
+    let (msg_tx, msg_rx) = mpsc::unbounded_channel::<DriverMsg>();
+    let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<HostCommand>();
+    let (panic_tx, panic_rx) = oneshot::channel();
+    let (member_ready_tx, member_ready_rx) = oneshot::channel();
+    let supervisor_id = InterfaceId::from_channel_tag(
+        crate::interfaces::InterfaceKind::AutoWifi,
+        b"panicking-supervisor",
+    );
+    let member_id = InterfaceId::from_channel_tag(
+        crate::interfaces::InterfaceKind::WifiPeer,
+        b"supervised-member",
+    );
+    msg_tx
+        .send(DriverMsg::Add {
+            id: supervisor_id,
+            supervisor: None,
+            build: Box::new(|| {
+                Box::pin(async move {
+                    let _ = panic_rx.await;
+                    std::panic::panic_any("supervisor run");
+                })
+            }),
+        })
+        .expect("the driver is listening");
+    msg_tx
+        .send(DriverMsg::Add {
+            id: member_id,
+            supervisor: Some(supervisor_id),
+            build: Box::new(|| {
+                let _ = member_ready_tx.send(());
+                Box::pin(std::future::pending())
+            }),
+        })
+        .expect("the driver is listening");
+    drop(msg_tx);
+
+    tokio::join!(
+        drive_interfaces(
+            std::vec![],
+            msg_rx,
+            cmd_tx,
+            Arc::new(Mutex::new(HashMap::new())),
+        ),
+        async {
+            let _ = member_ready_rx.await;
+            let _ = panic_tx.send(());
+        },
+    );
+
+    let mut removed = std::vec::Vec::new();
+    while let Ok(command) = cmd_rx.try_recv() {
+        if let HostCommand::RemoveInterface { id, .. } = command {
+            removed.push(id);
+        }
+    }
+    removed.sort_unstable();
+    let mut expected = std::vec![supervisor_id, member_id];
+    expected.sort_unstable();
+    assert_eq!(removed, expected);
 }

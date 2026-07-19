@@ -121,7 +121,7 @@ async fn run(port: u16, target: Vec<u8>) {
         }
     };
     tokio::select! {
-        () = node.run() => unreachable!("the probe's run loop returned"),
+        result = node.run() => unreachable!("the probe's run loop returned: {result:?}"),
         () = driver => {}
     }
 }

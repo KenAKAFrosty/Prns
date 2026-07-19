@@ -103,7 +103,7 @@ async fn a_recipe_node_synthesizes_a_tunnel_when_its_transport_is_a_held_identit
     };
 
     tokio::select! {
-        () = node.run() => unreachable!("the node's run loop returned"),
+        result = node.run() => unreachable!("the node's run loop returned: {result:?}"),
         result = tokio::time::timeout(Duration::from_secs(10), probe) => {
             result.expect("the node synthesizes within the window");
         }

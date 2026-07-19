@@ -155,7 +155,7 @@ async fn run(port: u16, target: Vec<u8>, total_bytes: usize, iterations: usize) 
         println!("RESOURCE_DONE");
     };
     tokio::select! {
-        () = node.run() => unreachable!("the resource node's run loop returned"),
+        result = node.run() => unreachable!("the resource node's run loop returned: {result:?}"),
         () = driver => {}
     }
 }

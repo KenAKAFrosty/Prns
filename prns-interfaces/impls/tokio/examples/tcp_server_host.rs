@@ -114,5 +114,7 @@ async fn main() {
         }
     });
 
-    node.run().await;
+    if let Err(error) = node.run().await {
+        eprintln!("node stopped: {error}");
+    }
 }

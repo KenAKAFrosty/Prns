@@ -157,8 +157,8 @@ mod linux_only {
             }
         });
         tokio::spawn(status_printer("announce", status));
-        node.run().await;
-        eprintln!("WIFI_DIRECT_SMOKE[announce] run loop returned");
+        let result = node.run().await;
+        eprintln!("WIFI_DIRECT_SMOKE[announce] run loop returned: {result:?}");
         std::process::exit(1);
     }
 
@@ -191,8 +191,8 @@ mod linux_only {
         let heard = tokio::select! {
             biased;
             heard = tokio::time::timeout(CROSSING_DEADLINE, heard_rx.recv()) => heard,
-            () = node.run() => {
-                eprintln!("WIFI_DIRECT_SMOKE[expect] run loop returned");
+            result = node.run() => {
+                eprintln!("WIFI_DIRECT_SMOKE[expect] run loop returned: {result:?}");
                 std::process::exit(1);
             }
         };

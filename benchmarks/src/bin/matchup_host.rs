@@ -65,5 +65,7 @@ async fn main() {
         "READY host local=127.0.0.1:{local_port} rpc=127.0.0.1:{}",
         local_port + 1
     );
-    node.run().await;
+    if let Err(error) = node.run().await {
+        eprintln!("node stopped: {error}");
+    }
 }

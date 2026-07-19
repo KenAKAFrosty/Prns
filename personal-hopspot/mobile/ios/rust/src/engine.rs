@@ -223,7 +223,10 @@ fn run_engine(ready_tx: Sender<Ready>) {
             destination,
         });
 
-        node.run().await;
+        match node.run().await {
+            Ok(()) => eprintln!("hopspot engine stopped"),
+            Err(error) => eprintln!("hopspot engine stopped: {error}"),
+        }
     });
 }
 

@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 use std::future::Future;
+use std::panic::AssertUnwindSafe;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use futures_util::stream::{FuturesUnordered, StreamExt};
+use futures_util::FutureExt;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 
@@ -579,35 +581,32 @@ pub(super) async fn drive_interfaces(
                     if let Some(supervisor_id) = supervisor {
                         let _ = supervisor_of.insert(id, supervisor_id);
                     }
-                    let run = build();
                     let (stop_tx, stop_rx) = oneshot::channel();
-                    futures.push(Box::pin(async move {
-                        tokio::select! {
-                            () = run => {}
-                            _ = stop_rx => {}
-                        }
-                        Some(id)
-                    }));
+                    let run = std::panic::catch_unwind(AssertUnwindSafe(build));
+                    let guarded: Pin<Box<dyn Future<Output = Option<InterfaceId>>>> = match run {
+                        Ok(run) => Box::pin(async move {
+                            tokio::select! {
+                                _ = AssertUnwindSafe(run).catch_unwind() => {}
+                                _ = stop_rx => {}
+                            }
+                            Some(id)
+                        }),
+                        Err(_) => Box::pin(async move { Some(id) }),
+                    };
+                    futures.push(guarded);
                     stops.insert(id, stop_tx);
                 }
                 Some(DriverMsg::Stop { id }) => {
                     stop_interface(&mut stops, id);
                     supervisor_of.remove(&id);
                     forget_status(&interfaces, id);
-                    let cascaded: std::vec::Vec<InterfaceId> = supervisor_of
-                        .iter()
-                        .filter(|(_, supervisor_id)| **supervisor_id == id)
-                        .map(|(member, _)| *member)
-                        .collect();
-                    for member in cascaded {
-                        stop_interface(&mut stops, member);
-                        supervisor_of.remove(&member);
-                        forget_status(&interfaces, member);
-                        let _ = commands.send(HostCommand::RemoveInterface {
-                            id: member,
-                            departure: Departure::MayReturn,
-                        });
-                    }
+                    stop_supervised_members(
+                        &mut stops,
+                        &mut supervisor_of,
+                        &interfaces,
+                        &commands,
+                        id,
+                    );
                 }
                 None => open = false,
             },
@@ -621,6 +620,13 @@ pub(super) async fn drive_interfaces(
                             id,
                             departure: Departure::MayReturn,
                         });
+                        stop_supervised_members(
+                            &mut stops,
+                            &mut supervisor_of,
+                            &interfaces,
+                            &commands,
+                            id,
+                        );
                     }
                 }
             }
@@ -669,6 +675,29 @@ fn forget_status(
 fn stop_interface(stops: &mut HashMap<InterfaceId, oneshot::Sender<()>>, id: InterfaceId) {
     if let Some(stop) = stops.remove(&id) {
         let _ = stop.send(());
+    }
+}
+
+fn stop_supervised_members(
+    stops: &mut HashMap<InterfaceId, oneshot::Sender<()>>,
+    supervisor_of: &mut HashMap<InterfaceId, InterfaceId>,
+    interfaces: &Arc<Mutex<HashMap<InterfaceId, RegisteredInterface>>>,
+    commands: &UnboundedSender<HostCommand>,
+    supervisor_id: InterfaceId,
+) {
+    let members: std::vec::Vec<InterfaceId> = supervisor_of
+        .iter()
+        .filter(|(_, supervisor)| **supervisor == supervisor_id)
+        .map(|(member, _)| *member)
+        .collect();
+    for member in members {
+        stop_interface(stops, member);
+        supervisor_of.remove(&member);
+        forget_status(interfaces, member);
+        let _ = commands.send(HostCommand::RemoveInterface {
+            id: member,
+            departure: Departure::MayReturn,
+        });
     }
 }
 

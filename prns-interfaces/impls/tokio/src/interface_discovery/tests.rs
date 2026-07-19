@@ -229,7 +229,7 @@ async fn an_eligible_discovery_stands_up_a_real_backbone_client() {
             .expect("closing discovery ingress stops the service");
     };
     tokio::select! {
-        () = node.run() => panic!("the node stays up for the discovery scenario"),
+        result = node.run() => panic!("the node stays up for the discovery scenario: {result:?}"),
         () = scenario => {}
     }
 }

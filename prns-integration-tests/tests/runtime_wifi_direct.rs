@@ -209,8 +209,8 @@ async fn a_wifi_direct_group_forms_and_carries_an_announce_between_two_nodes() {
         heard = tokio::time::timeout(Duration::from_secs(10), heard_rx.recv()) => heard
             .expect("B hears A's announce over the formed group within 10s")
             .expect("the announce channel stays open"),
-        () = node_a.run() => unreachable!("node A's run loop returned"),
-        () = node_b.run() => unreachable!("node B's run loop returned"),
+        result = node_a.run() => unreachable!("node A's run loop returned: {result:?}"),
+        result = node_b.run() => unreachable!("node B's run loop returned: {result:?}"),
     };
     assert_eq!(
         heard, dest_a,

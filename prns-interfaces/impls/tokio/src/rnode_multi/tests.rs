@@ -494,7 +494,7 @@ async fn a_serial_drop_removes_and_recreates_every_logical_radio_together() {
     let supervisor = tokio::spawn(registered.run());
 
     tokio::select! {
-        () = node.run() => panic!("node stays running"),
+        result = node.run() => panic!("node stays running: {result:?}"),
         () = async {
             wait_for_interface_count(&handle, 2).await;
             assert!(handle.interfaces().iter().all(|snapshot| {

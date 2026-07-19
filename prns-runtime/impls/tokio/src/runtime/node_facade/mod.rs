@@ -35,7 +35,8 @@ pub use interface_lifecycle::{
 };
 use interface_lifecycle::{DriverMsg, RegisteredInterface};
 pub use node_lifecycle::{
-    NonRoutingIdentityError, PrnsNode, RegisterRequestRouteError, SharedInstanceIdentityError,
+    NodeRunError, NonRoutingIdentityError, PrnsNode, RegisterRequestRouteError,
+    SharedInstanceIdentityError,
 };
 pub use persistence::{
     boot_timeline_origin, DestinationIdentitySeedReport, FlushError, FlushMark, FlushReport,

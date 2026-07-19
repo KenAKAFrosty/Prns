@@ -154,7 +154,7 @@ async fn run(port: u16, target: Vec<u8>, phase: Duration, payload_len: usize, wi
         println!("FIREHOSE_DONE");
     };
     tokio::select! {
-        () = node.run() => unreachable!("the firehose's run loop returned"),
+        result = node.run() => unreachable!("the firehose's run loop returned: {result:?}"),
         () = driver => {}
     }
 }
