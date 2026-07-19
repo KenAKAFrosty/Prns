@@ -1,5 +1,8 @@
 use crate::identity::IdentityHash;
-use crate::routing::{BlackholeIdentityOutcome, BlackholedIdentity, UnblackholeIdentityOutcome};
+use crate::routing::{
+    BlackholeIdentityOutcome, BlackholeInsertFailure, BlackholedIdentity,
+    UnblackholeIdentityOutcome,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IdentityBlackholeSourceError {
@@ -14,6 +17,15 @@ pub enum IdentityBlackholeControlError {
     CapacityExhausted,
     ReasonTooLong,
     DurabilityFailed,
+}
+
+impl From<BlackholeInsertFailure> for IdentityBlackholeControlError {
+    fn from(failure: BlackholeInsertFailure) -> Self {
+        match failure {
+            BlackholeInsertFailure::CapacityExhausted => Self::CapacityExhausted,
+            BlackholeInsertFailure::ReasonTooLong => Self::ReasonTooLong,
+        }
+    }
 }
 
 pub trait IdentityBlackholeSource {

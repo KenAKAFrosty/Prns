@@ -14,6 +14,9 @@ mod state;
 mod tunnel;
 mod wake;
 
+pub use blackhole::{
+    BlackholeIdentityEffect, BlackholeSeedEffect, BlackholeSeedReport, UnblackholeIdentityEffect,
+};
 pub use destination_identity::DestinationIdentitySeedOutcome;
 pub(crate) use destination_identity::RememberAnnouncedDestinationIdentityOutcome;
 
