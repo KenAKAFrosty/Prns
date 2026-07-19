@@ -683,7 +683,7 @@ fn print_help() {
 Usage:\n    cargo prnsd [start] [BUILD OPTIONS] [-- PRNSD OPTIONS]\n    cargo prnsd restart [BUILD OPTIONS] [-- PRNSD OPTIONS]\n    cargo prnsd build [BUILD OPTIONS]\n    cargo prnsd <stop|status|logs>\n    cargo prnsd i2p <COMMAND>\n\n\
 Lifecycle:\n    start                 Start if needed, then attach to the daemon log (default)\n    restart               Gracefully stop, rebuild, start, and attach\n    stop                  Show recent logs, then stop while streaming shutdown logs\n    status                Show whether the managed daemon is running\n    logs                  Attach to the running daemon log\n    --detach              Start or reconcile without attaching\n\n\
 Build:\n    build                 Build with --release --locked and OTLP, then print the binary path\n\n\
-One-shot commands:\n    i2p doctor            Check I2P router and SAM 3.1 readiness without starting Prnsd\n\n\
+One-shot commands:\n    i2p doctor            Check I2P router and SAM 3.1 readiness without starting Prnsd\n    i2p setup             Guide installation, SAM enablement, and interface configuration\n\n\
 Profiles:\n    (default)             Build and run with --release\n    --debug               Build and run with Cargo's development profile\n    -r, --release         Build and run with the release profile\n    --profile <PROFILE>   Build and run with a named Cargo profile\n\n\
 Repeated starts reattach without rebuilding or spawning another daemon. Build and daemon\n\
 options are applied when starting a stopped service or with restart. Ctrl-C detaches without\n\

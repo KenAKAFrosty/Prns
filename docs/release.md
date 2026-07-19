@@ -46,6 +46,7 @@ time. Build options such as `--target` or `--profile` can be supplied after
 | `prnsd stop` | Show recent output, request graceful shutdown, and follow the final logs |
 | `prnsd run [OPTIONS]` | Run in the foreground for a terminal or native service manager |
 | `prnsd i2p doctor` | Check I2P router and SAM 3.1 readiness without starting the managed daemon |
+| `prnsd i2p setup` | Print guided platform installation, SAM enablement, and a validated interface stanza |
 
 `prnsd` and `cargo prnsd` share one per-user managed session. Repeated starts
 reattach without starting another process, and Ctrl-C detaches without stopping

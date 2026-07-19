@@ -94,6 +94,31 @@ pub(super) enum I2pDoctorError {
     SessionIdUnavailable(I2pSessionIdError),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum I2pDoctorRemediation {
+    InstallRouter,
+    EnableSam,
+    InspectRouter,
+    SecureSamPath,
+    RestoreHostEntropy,
+}
+
+impl I2pDoctorError {
+    pub(super) const fn remediation(&self) -> I2pDoctorRemediation {
+        match self {
+            Self::RouterUnavailable(_) => I2pDoctorRemediation::InstallRouter,
+            Self::SamDisabled(_) => I2pDoctorRemediation::EnableSam,
+            Self::SamUnavailable(_)
+            | Self::IncompatibleSam(_)
+            | Self::SessionUnavailable(_)
+            | Self::UnexpectedBridgeFailure { .. }
+            | Self::TimedOut { .. } => I2pDoctorRemediation::InspectRouter,
+            Self::UnsafeEndpoint(_) => I2pDoctorRemediation::SecureSamPath,
+            Self::SessionIdUnavailable(_) => I2pDoctorRemediation::RestoreHostEntropy,
+        }
+    }
+}
+
 impl fmt::Display for I2pDoctorError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
