@@ -3,12 +3,13 @@
 ## Reference Target
 
 Wire, transport, and the shared-instance data plane target Reticulum `1.3.5`
-through completion. That reference install is pinned in
-`benchmarks/reference/requirements.txt`. Daemon configuration, management
-destinations, and the local shared-instance control RPC separately target RNS
-`1.3.8`, pinned in `benchmarks/reference/rpc-requirements.txt`. Older
-pickle-shaped control RPC remains a compatibility fallback for legacy clients,
-but it is not the primary RPC parity target.
+semantics through completion. Daemon configuration, management destinations,
+and the local shared-instance control RPC separately target RNS `1.3.8`
+semantics. Both oracle installs run `rns==1.3.9` (security update), pinned in
+`benchmarks/reference/requirements.txt` and
+`benchmarks/reference/rpc-requirements.txt`. Older pickle-shaped control RPC
+remains a compatibility fallback for legacy clients, but it is not the primary
+RPC parity target.
 
 Daemon configuration semantics additionally track the RNS `1.3.8` `internal`
 mode, recursive path-request forwarding, and internal-announcement controls.
