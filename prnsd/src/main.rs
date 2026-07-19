@@ -16,6 +16,7 @@ mod blackhole_exchange;
 mod cli;
 mod construct;
 mod identity;
+mod i2p_doctor;
 mod interface_discovery;
 mod management_announces;
 #[cfg(feature = "otlp")]
@@ -78,6 +79,14 @@ enum CommandError {
     NotRunning,
 }
 
+enum ManagedCommand {
+    Start(cli::LaunchArgs),
+    Restart(cli::LaunchArgs),
+    Stop,
+    Status,
+    Logs,
+}
+
 impl fmt::Display for CommandError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -124,18 +133,26 @@ async fn main() -> ExitCode {
             return ExitCode::from(exit_code.clamp(0, 255) as u8);
         }
     };
-    if let cli::Command::Run(args) = command {
-        let managed = match ManagedProcess::from_environment() {
-            Ok(managed) => managed,
-            Err(error) => {
-                eprintln!("prnsd: {error}");
-                return ExitCode::FAILURE;
-            }
-        };
-        run_daemon(args, managed).await;
-        return ExitCode::SUCCESS;
-    }
-    match run_command(command) {
+    let managed_command = match command {
+        cli::Command::Run(args) => {
+            let managed = match ManagedProcess::from_environment() {
+                Ok(managed) => managed,
+                Err(error) => {
+                    eprintln!("prnsd: {error}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            run_daemon(args, managed).await;
+            return ExitCode::SUCCESS;
+        }
+        cli::Command::I2p(args) => return run_i2p_command(args).await,
+        cli::Command::Start(args) => ManagedCommand::Start(args),
+        cli::Command::Restart(args) => ManagedCommand::Restart(args),
+        cli::Command::Stop => ManagedCommand::Stop,
+        cli::Command::Status => ManagedCommand::Status,
+        cli::Command::Logs => ManagedCommand::Logs,
+    };
+    match run_command(managed_command) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("prnsd: {error}");
@@ -148,17 +165,40 @@ async fn main() -> ExitCode {
     }
 }
 
-fn run_command(command: cli::Command) -> Result<(), CommandError> {
+async fn run_i2p_command(args: cli::I2pArgs) -> ExitCode {
+    match args.command {
+        cli::I2pCommand::Doctor(args) => {
+            let remote_access = if args.allow_remote_sam {
+                i2p_doctor::RemoteSamAccess::ExplicitlyAllowed
+            } else {
+                i2p_doctor::RemoteSamAccess::LoopbackOnly
+            };
+            let request = i2p_doctor::I2pDoctorRequest::new(args.sam_bridge, remote_access);
+            match i2p_doctor::run(request).await {
+                Ok(ready) => {
+                    println!("{ready}");
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("prnsd: {error}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+    }
+}
+
+fn run_command(command: ManagedCommand) -> Result<(), CommandError> {
     let paths = ServicePaths::discover()?;
     match command {
-        cli::Command::Start(args) => start_or_attach(&paths, args),
-        cli::Command::Restart(args) => {
+        ManagedCommand::Start(args) => start_or_attach(&paths, args),
+        ManagedCommand::Restart(args) => {
             if prnsd_control::stop(&paths)? {
                 eprintln!("Stopped prnsd");
             }
             start_new(&paths, args)
         }
-        cli::Command::Stop => match prnsd_control::running(&paths)? {
+        ManagedCommand::Stop => match prnsd_control::running(&paths)? {
             Some(record) => {
                 print_managed_banner(&record);
                 eprintln!(
@@ -174,7 +214,7 @@ fn run_command(command: cli::Command) -> Result<(), CommandError> {
                 Ok(())
             }
         },
-        cli::Command::Status => match prnsd_control::running(&paths)? {
+        ManagedCommand::Status => match prnsd_control::running(&paths)? {
             Some(record) => {
                 let state = match record.state {
                     ServiceState::Starting => "starting",
@@ -190,11 +230,10 @@ fn run_command(command: cli::Command) -> Result<(), CommandError> {
             }
             None => Err(CommandError::NotRunning),
         },
-        cli::Command::Logs => match prnsd_control::running(&paths)? {
+        ManagedCommand::Logs => match prnsd_control::running(&paths)? {
             Some(record) => attach(&paths, &record),
             None => Err(CommandError::NotRunning),
         },
-        cli::Command::Run(_) => Ok(()),
     }
 }
 
