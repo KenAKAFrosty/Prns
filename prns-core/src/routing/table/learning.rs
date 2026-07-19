@@ -1,3 +1,4 @@
+use super::removal::{RemovedRoute, RouteRemovalCause};
 use super::RoutingTable;
 use crate::engine::InstantMillis;
 use crate::interfaces::AttachedInterfaces;
@@ -6,10 +7,7 @@ use crate::routing::announce::stored::{
 };
 use crate::routing::announce::AnnounceArrival;
 use crate::routing::route_expiry::RouteExpiryIndex;
-use crate::routing::routes::{RouteEntry, RouteTable};
-use crate::routing::types::{
-    DropCause, RemovedRoute, RouteRemovalCause, RouteResponsiveness, UpsertRouteOutcome,
-};
+use crate::routing::routes::{RouteEntry, RouteResponsiveness, RouteTable};
 use crate::routing::warmth::RouteWarmth;
 use crate::storage::TablePushError;
 
@@ -17,6 +15,19 @@ use crate::storage::TablePushError;
 enum Eviction {
     Evicted,
     NothingToEvict,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DropCause {
+    RoutingTableFull,
+    PayloadArenaFull,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpsertRouteOutcome {
+    Inserted,
+    Updated,
+    Dropped(DropCause),
 }
 
 impl<R, A, H, D, I> RoutingTable<R, A, H, D, I>

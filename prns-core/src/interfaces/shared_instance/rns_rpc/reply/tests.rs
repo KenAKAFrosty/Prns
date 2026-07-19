@@ -7,7 +7,7 @@ use crate::interfaces::shared_instance::rns_rpc::RpcVerb;
 use crate::interfaces::{
     InterfaceId, InterfaceKind, PacketPhyStats, RssiDbm, SignalQualityTenthsPercent, SnrQuarterDb,
 };
-use crate::routing::types::NextHop;
+use crate::routing::NextHop;
 use crate::routing::{
     BlackholeIdentityOutcome, BlackholedIdentity, DropRouteOutcome, DropRoutesViaOutcome,
     UnblackholeIdentityOutcome,

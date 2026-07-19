@@ -1,10 +1,27 @@
 use super::RoutingTable;
 use crate::identity::IdentityHash;
+use crate::interfaces::InterfaceId;
 use crate::routing::announce::stored::{AnnounceAppData, AnnounceIdHistory, AnnounceRecordTable};
 use crate::routing::route_expiry::RouteExpiryIndex;
-use crate::routing::routes::RouteTable;
-use crate::routing::types::{NextHop, RemovedRoute, RouteRemovalCause};
+use crate::routing::routes::{NextHop, RouteTable};
 use crate::wire::{DestinationHash, TransportId};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+// repr(C): crosses the dual-core channel inside `Journaled`; see the layout note on `EngineCommand`.
+#[repr(C)]
+pub enum RouteRemovalCause {
+    Expired,
+    Evicted,
+    InterfaceGone,
+    Dropped,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RemovedRoute {
+    pub destination: DestinationHash,
+    pub receiving_interface: InterfaceId,
+    pub cause: RouteRemovalCause,
+}
 
 impl<R, A, H, D, I> RoutingTable<R, A, H, D, I>
 where

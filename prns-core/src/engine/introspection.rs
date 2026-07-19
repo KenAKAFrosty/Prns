@@ -1,7 +1,6 @@
 use crate::engine::EngineState;
 use crate::interfaces::{AttachedInterfaces, InterfaceId};
-use crate::routing::routes::RouteEntry;
-use crate::routing::types::NextHop;
+use crate::routing::routes::{NextHop, RouteEntry};
 use crate::routing::warmth::WarmestOf;
 use crate::storage::StorageLayout;
 use crate::units::InstantMillis;
