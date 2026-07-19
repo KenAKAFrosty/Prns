@@ -218,11 +218,7 @@ fn ReadyTargetPanel(
         .map(str::to_string)
         .unwrap_or_else(|| format!("{}.uf2", target.slug));
     let ready_title = artifact.map(flash_ready_title).unwrap_or("Web flashing");
-    let configurable_wifi = !embedded_site
-        && target
-            .interfaces
-            .iter()
-            .any(|interface| *interface == "Wi-Fi Auto");
+    let configurable_wifi = !embedded_site && target.interfaces.contains(&"Wi-Fi Auto");
 
     rsx! {
         section { class: "flash-flasher-panel mt-8",
