@@ -24,12 +24,6 @@ const CRATES: &[CrateMeta] = &[
         blurb_key: "crate-rnsd-blurb",
         body: include_str!("../../content/crates/prnsd.md"),
     },
-    CrateMeta {
-        name: "personal-lxmf",
-        role_key: "crate-lxmf-role",
-        blurb_key: "crate-lxmf-blurb",
-        body: include_str!("../../content/crates/personal-lxmf.md"),
-    },
 ];
 
 #[component]

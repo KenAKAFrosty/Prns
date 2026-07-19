@@ -13,15 +13,19 @@ use build::{build_daemon, cargo_run_arguments, run_daemon_through_cargo};
 use lifecycle::{attach, launch_signature, print_banner, start_built, start_or_attach};
 use prnsd_control::ServicePaths;
 
-const TOOL_MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
+const COMMAND_MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
 
 #[derive(Debug)]
 enum CommandError {
     Arguments(ArgumentError),
     CargoSpawn(std::io::Error),
+    CargoWait(std::io::Error),
+    CargoMessage(serde_json::Error),
+    CargoStdoutUnavailable,
     CargoFailed(Option<i32>),
     DaemonExited(Option<i32>),
-    BinaryMissing(PathBuf),
+    DaemonArtifactMissing,
+    DaemonArtifactConflict { first: PathBuf, second: PathBuf },
     Service(prnsd_control::ServiceError),
     StateDirectory(prnsd_control::StateDirectoryError),
     NotRunning,
@@ -32,14 +36,23 @@ impl fmt::Display for CommandError {
         match self {
             Self::Arguments(error) => error.fmt(formatter),
             Self::CargoSpawn(error) => write!(formatter, "failed to run cargo: {error}"),
+            Self::CargoWait(error) => write!(formatter, "failed to wait for cargo: {error}"),
+            Self::CargoMessage(error) => write!(formatter, "invalid cargo build message: {error}"),
+            Self::CargoStdoutUnavailable => {
+                formatter.write_str("cargo build output was unavailable")
+            }
             Self::CargoFailed(Some(code)) => write!(formatter, "cargo exited with status {code}"),
             Self::CargoFailed(None) => formatter.write_str("cargo exited unsuccessfully"),
             Self::DaemonExited(Some(code)) => write!(formatter, "prnsd exited with status {code}"),
             Self::DaemonExited(None) => formatter.write_str("prnsd exited unsuccessfully"),
-            Self::BinaryMissing(path) => write!(
+            Self::DaemonArtifactMissing => {
+                formatter.write_str("cargo completed without reporting the prnsd executable")
+            }
+            Self::DaemonArtifactConflict { first, second } => write!(
                 formatter,
-                "cargo completed without producing the expected daemon at {}",
-                path.display()
+                "cargo reported conflicting prnsd executables at {} and {}",
+                first.display(),
+                second.display()
             ),
             Self::Service(error) => error.fmt(formatter),
             Self::StateDirectory(error) => error.fmt(formatter),
@@ -140,9 +153,9 @@ fn run(args: &[OsString]) -> Result<(), CommandError> {
 }
 
 fn repo_root() -> PathBuf {
-    PathBuf::from(TOOL_MANIFEST_DIR)
+    PathBuf::from(COMMAND_MANIFEST_DIR)
         .parent()
         .and_then(Path::parent)
-        .expect("tools/prnsd lives under tools/")
+        .expect("prnsd command lives under prnsd/")
         .to_path_buf()
 }

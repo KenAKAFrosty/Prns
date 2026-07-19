@@ -2,6 +2,8 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+source "$ROOT/scripts/lib/cargo-artifacts.sh"
+PRNSD="$(cargo_debug_binary "$ROOT/prnsd/Cargo.toml" prnsd)"
 PYTHON="${RPC_SMOKE_PYTHON:-$ROOT/benchmarks/reference/.rpc-venv/bin/python}"
 SERVER="$ROOT/prns-core/tests/interop/rns_rnstatus_server.py"
 WORK="$(mktemp -d)"
@@ -54,7 +56,7 @@ grep -q "RNSTATUS_SERVER_READY" "$SERVER_LOG" || {
     exit 1
 }
 
-LOCAL_RESULT="$($ROOT/prnsd/target/debug/prnsd status --config "$CONFIG" --json 2>&1)" || {
+LOCAL_RESULT="$("$PRNSD" status --config "$CONFIG" --json 2>&1)" || {
     echo "FAIL: Prnsd could not query stock shared-instance RPC"
     echo "$LOCAL_RESULT"
     exit 1
@@ -67,7 +69,7 @@ echo "$LOCAL_RESULT" | "$PYTHON" -c 'import json, sys; report=json.load(sys.stdi
 
 TRANSPORT_HASH="$($PYTHON "$SERVER" identity-hash "$CONFIG/storage/transport_identity")"
 [ -n "$TRANSPORT_HASH" ] || { echo "FAIL: stock transport identity was unavailable"; exit 1; }
-REMOTE_RESULT="$($ROOT/prnsd/target/debug/prnsd status --config "$CONFIG" -R "$TRANSPORT_HASH" -i "$MANAGEMENT_IDENTITY" -l -t 2>&1)" || {
+REMOTE_RESULT="$("$PRNSD" status --config "$CONFIG" -R "$TRANSPORT_HASH" -i "$MANAGEMENT_IDENTITY" -l -t 2>&1)" || {
     echo "FAIL: Prnsd could not query stock remote management"
     echo "$REMOTE_RESULT"
     exit 1

@@ -2367,6 +2367,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "prns-observability-runner"
+version = "0.0.0"
+dependencies = [
+ "prnsd-control",
+]
+
+[[package]]
 name = "prns-runtime"
 version = "0.2.5"
 dependencies = [
@@ -2425,6 +2432,15 @@ dependencies = [
  "tracing-log",
  "tracing-opentelemetry",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "prnsd-command"
+version = "0.1.0"
+dependencies = [
+ "prnsd-control",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

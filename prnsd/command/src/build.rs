@@ -1,10 +1,85 @@
-use std::env;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+
+use serde::Deserialize;
 
 use crate::arguments::{option_present, validate_profiles, ArgumentError, Invocation};
 use crate::CommandError;
+
+#[derive(Deserialize)]
+#[serde(tag = "reason", rename_all = "kebab-case")]
+enum CargoMessage {
+    CompilerArtifact {
+        target: CargoTarget,
+        executable: Option<PathBuf>,
+    },
+    CompilerMessage {
+        message: CargoDiagnostic,
+    },
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Deserialize)]
+struct CargoTarget {
+    name: String,
+    kind: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct CargoDiagnostic {
+    rendered: Option<String>,
+}
+
+#[derive(Default)]
+struct DaemonArtifact {
+    executable: Option<PathBuf>,
+}
+
+impl DaemonArtifact {
+    fn record(
+        &mut self,
+        target: CargoTarget,
+        executable: Option<PathBuf>,
+    ) -> Result<(), CommandError> {
+        if target.name != "prnsd" || !target.kind.iter().any(|kind| kind == "bin") {
+            return Ok(());
+        }
+        let Some(executable) = executable else {
+            return Ok(());
+        };
+        match &self.executable {
+            None => self.executable = Some(executable),
+            Some(existing) if existing == &executable => {}
+            Some(existing) => {
+                return Err(CommandError::DaemonArtifactConflict {
+                    first: existing.clone(),
+                    second: executable,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn finish(self) -> Result<PathBuf, CommandError> {
+        self.executable.ok_or(CommandError::DaemonArtifactMissing)
+    }
+}
+
+fn process_cargo_message(
+    artifact: &mut DaemonArtifact,
+    message: CargoMessage,
+) -> Result<Option<String>, CommandError> {
+    match message {
+        CargoMessage::CompilerArtifact { target, executable } => {
+            artifact.record(target, executable)?;
+            Ok(None)
+        }
+        CargoMessage::CompilerMessage { message } => Ok(message.rendered),
+        CargoMessage::Other => Ok(None),
+    }
+}
 
 pub(super) fn build_daemon(
     invocation: &Invocation,
@@ -17,27 +92,37 @@ pub(super) fn build_daemon(
     } else {
         cargo_build_arguments(invocation, manifest)?
     };
-    run_cargo(build_args, root)?;
-    let binary = daemon_binary_path(
-        &invocation.build_args,
-        root,
-        manifest,
-        env::var_os("CARGO_TARGET_DIR").as_deref(),
-    );
-    if binary.is_file() {
-        Ok(binary)
-    } else {
-        Err(CommandError::BinaryMissing(binary))
-    }
+    cargo_build_artifact(build_args, root)
 }
 
-fn run_cargo(args: Vec<OsString>, working_dir: &Path) -> Result<(), CommandError> {
-    let status = cargo_status(args, working_dir)?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(CommandError::CargoFailed(status.code()))
+fn cargo_build_artifact(args: Vec<OsString>, working_dir: &Path) -> Result<PathBuf, CommandError> {
+    let mut child = Command::new("cargo")
+        .args(args)
+        .current_dir(working_dir)
+        .stdout(Stdio::piped())
+        .spawn()
+        .map_err(CommandError::CargoSpawn)?;
+    let Some(stdout) = child.stdout.take() else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(CommandError::CargoStdoutUnavailable);
+    };
+    let mut artifact = DaemonArtifact::default();
+    let messages = serde_json::Deserializer::from_reader(stdout).into_iter::<CargoMessage>();
+    let message_result: Result<(), CommandError> = messages
+        .map(|message| message.map_err(CommandError::CargoMessage))
+        .try_for_each(|message| {
+            if let Some(rendered) = process_cargo_message(&mut artifact, message?)? {
+                eprint!("{rendered}");
+            }
+            Ok(())
+        });
+    let status = child.wait().map_err(CommandError::CargoWait)?;
+    if !status.success() {
+        return Err(CommandError::CargoFailed(status.code()));
     }
+    message_result?;
+    artifact.finish()
 }
 
 pub(super) fn run_daemon_through_cargo(
@@ -123,6 +208,8 @@ fn cargo_arguments(
     if command == "build" {
         cargo_args.push(OsString::from("--bin"));
         cargo_args.push(OsString::from("prnsd"));
+        cargo_args.push(OsString::from("--message-format"));
+        cargo_args.push(OsString::from("json-render-diagnostics"));
     }
     if !debug && !release && !profile {
         cargo_args.push(OsString::from("--release"));
@@ -139,61 +226,6 @@ fn cargo_arguments(
         cargo_args.extend(invocation.daemon_args.iter().cloned());
     }
     Ok(cargo_args)
-}
-
-fn daemon_binary_path(
-    build_args: &[OsString],
-    repo_root: &Path,
-    manifest: &Path,
-    cargo_target_dir: Option<&OsStr>,
-) -> PathBuf {
-    let target_dir = option_value(build_args, "--target-dir")
-        .or_else(|| cargo_target_dir.map(OsStr::to_owned))
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            manifest
-                .parent()
-                .expect("prnsd manifest has a parent")
-                .join("target")
-        });
-    let mut path = if target_dir.is_absolute() {
-        target_dir
-    } else {
-        repo_root.join(target_dir)
-    };
-    if let Some(target) = option_value(build_args, "--target") {
-        path.push(target);
-    }
-    path.push(profile_directory(build_args));
-    path.push(if cfg!(windows) { "prnsd.exe" } else { "prnsd" });
-    path
-}
-
-fn profile_directory(build_args: &[OsString]) -> OsString {
-    if build_args.iter().any(|arg| arg == "--debug") {
-        return OsString::from("debug");
-    }
-    match option_value(build_args, "--profile") {
-        Some(profile) if profile == "dev" => OsString::from("debug"),
-        Some(profile) => profile,
-        None => OsString::from("release"),
-    }
-}
-
-fn option_value(args: &[OsString], name: &str) -> Option<OsString> {
-    for (index, arg) in args.iter().enumerate() {
-        if arg == name {
-            return args.get(index + 1).cloned();
-        }
-        if let Some(value) = arg
-            .to_str()
-            .and_then(|arg| arg.strip_prefix(name))
-            .and_then(|arg| arg.strip_prefix('='))
-        {
-            return Some(OsString::from(value));
-        }
-    }
-    None
 }
 
 #[cfg(test)]
@@ -218,6 +250,8 @@ mod tests {
                 "/repo/prnsd/Cargo.toml",
                 "--bin",
                 "prnsd",
+                "--message-format",
+                "json-render-diagnostics",
                 "--release",
             ]))
         );
@@ -233,6 +267,8 @@ mod tests {
                 "/repo/prnsd/Cargo.toml",
                 "--bin",
                 "prnsd",
+                "--message-format",
+                "json-render-diagnostics",
                 "--release",
                 "--locked",
                 "--features",
@@ -251,6 +287,8 @@ mod tests {
                 "prnsd/Cargo.toml",
                 "--bin",
                 "prnsd",
+                "--message-format",
+                "json-render-diagnostics",
             ]))
         );
     }
@@ -265,7 +303,7 @@ mod tests {
         ] {
             let parsed = invocation(&values);
             let built = cargo_build_arguments(&parsed, Path::new("prnsd/Cargo.toml")).unwrap();
-            assert_eq!(built[5..], args(&values));
+            assert_eq!(built[7..], args(&values));
         }
     }
 
@@ -280,6 +318,8 @@ mod tests {
                 "prnsd/Cargo.toml",
                 "--bin",
                 "prnsd",
+                "--message-format",
+                "json-render-diagnostics",
                 "--release",
                 "--features",
                 "otlp",
@@ -300,6 +340,8 @@ mod tests {
                 "prnsd/Cargo.toml",
                 "--bin",
                 "prnsd",
+                "--message-format",
+                "json-render-diagnostics",
                 "--release",
                 "--features",
                 "otlp",
@@ -320,36 +362,67 @@ mod tests {
         );
     }
 
+    fn cargo_message(value: &str) -> CargoMessage {
+        serde_json::from_str(value).unwrap()
+    }
+
     #[test]
-    fn binary_path_tracks_profile_target_and_target_directory() {
-        let manifest = Path::new("/repo/prnsd/Cargo.toml");
-        assert_eq!(
-            daemon_binary_path(&[], Path::new("/repo"), manifest, None),
-            Path::new("/repo/prnsd/target/release/prnsd")
-        );
-        assert_eq!(
-            daemon_binary_path(
-                &args(&[
-                    "--profile=profiling",
-                    "--target",
-                    "aarch64-apple-darwin",
-                    "--target-dir",
-                    "build-output",
-                ]),
-                Path::new("/repo"),
-                manifest,
-                None,
+    fn cargo_artifacts_select_the_daemon_executable() {
+        let mut artifact = DaemonArtifact::default();
+        process_cargo_message(
+            &mut artifact,
+            cargo_message(
+                r#"{"reason":"compiler-artifact","target":{"name":"dependency","kind":["lib"]},"executable":"/target/dependency"}"#,
             ),
-            Path::new("/repo/build-output/aarch64-apple-darwin/profiling/prnsd")
-        );
-        assert_eq!(
-            daemon_binary_path(
-                &args(&["--profile", "dev"]),
-                Path::new("/repo"),
-                manifest,
-                None,
+        )
+        .unwrap();
+        process_cargo_message(
+            &mut artifact,
+            cargo_message(
+                r#"{"reason":"compiler-artifact","target":{"name":"prnsd","kind":["bin"]},"executable":"/custom-target/prnsd"}"#,
             ),
-            Path::new("/repo/prnsd/target/debug/prnsd")
+        )
+        .unwrap();
+        assert_eq!(
+            artifact.finish().unwrap(),
+            Path::new("/custom-target/prnsd")
         );
+    }
+
+    #[test]
+    fn missing_daemon_artifact_is_rejected() {
+        assert!(matches!(
+            DaemonArtifact::default().finish(),
+            Err(CommandError::DaemonArtifactMissing)
+        ));
+    }
+
+    #[test]
+    fn conflicting_daemon_artifacts_are_rejected() {
+        let mut artifact = DaemonArtifact::default();
+        artifact
+            .record(
+                CargoTarget {
+                    name: String::from("prnsd"),
+                    kind: vec![String::from("bin")],
+                },
+                Some(PathBuf::from("/first/prnsd")),
+            )
+            .unwrap();
+        assert!(matches!(
+            artifact.record(
+                CargoTarget {
+                    name: String::from("prnsd"),
+                    kind: vec![String::from("bin")],
+                },
+                Some(PathBuf::from("/second/prnsd")),
+            ),
+            Err(CommandError::DaemonArtifactConflict { .. })
+        ));
+    }
+
+    #[test]
+    fn malformed_cargo_message_is_rejected() {
+        assert!(serde_json::from_str::<CargoMessage>("{").is_err());
     }
 }

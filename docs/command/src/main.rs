@@ -3,7 +3,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-const TOOL_MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
+const COMMAND_MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
 
 fn main() -> ExitCode {
     let args: Vec<OsString> = env::args_os().skip(1).collect();
@@ -51,10 +51,10 @@ fn main() -> ExitCode {
 }
 
 fn repo_root() -> PathBuf {
-    PathBuf::from(TOOL_MANIFEST_DIR)
+    PathBuf::from(COMMAND_MANIFEST_DIR)
         .parent()
         .and_then(Path::parent)
-        .expect("tools/docs lives under tools/")
+        .expect("docs command lives under docs/")
         .to_path_buf()
 }
 

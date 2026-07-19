@@ -98,10 +98,6 @@ start-rust-code = cargo add prnsd   # complete RNS runtime
     cargo add personal-rns      # pure core only
 start-rust-target = prnsd or personal-rns
 
-start-lxmf-headline = 我想在 mesh 上发送消息
-start-lxmf-body = Reticulum 之上的 LXMF — identities、addresses、delivery。Sideband 和 Nomadnet 所处的那一层。
-start-lxmf-code = cargo add personal-lxmf
-start-lxmf-target = personal-lxmf
 
 # 平台（"Runs on"）— hero marquee 标签 + CTA，以及专门页面
 landing-platforms-label = Runs on
@@ -167,8 +163,6 @@ crate-rns-role = 引擎
 crate-rns-blurb = 把 Reticulum 放进任何 Rust 项目。确定性、no_std、无分配器；没有全局状态，没有内置 I/O — 你自带时钟和 wire。
 crate-rnsd-role = Daemon
 crate-rnsd-blurb = 可在 macOS、Linux 和 Windows 上运行的 rnsd drop-in。与 RNS 参考实现使用同样的 wire；可以和你已有的节点并排使用，也可以替代它们。
-crate-lxmf-role = 消息
-crate-lxmf-blurb = Reticulum 之上的 LXMF — Sideband 和 Nomadnet 所处的那一层。Identities、addresses、message delivery。
 crate-ffi-role = 移动端 + Python bindings
 crate-ffi-blurb = 一个 uniffi interface 生成 Kotlin (.aar)、Swift (.xcframework) 和 Python (.whl)。从 Android、iOS 或 Jupyter notebook 使用 Reticulum — 相同形状，相同引擎。
 

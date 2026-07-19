@@ -163,10 +163,10 @@ jobs:
         run: cargo test
         working-directory: prns-config
       - name: clippy — prnsd
-        run: cargo clippy --all-features --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-features --all-targets -- -D warnings
         working-directory: prnsd
       - name: test — prnsd
-        run: cargo test --all-features
+        run: cargo test --workspace --all-features
         working-directory: prnsd
       - name: clippy — prns-wasm (wasm32)
         run: cargo clippy --target wasm32-unknown-unknown --all-targets -- -D warnings
@@ -187,7 +187,7 @@ jobs:
       # The root-excluded workspaces declare the same 1.90 floor; hold them to it too.
       - run: cargo check
         working-directory: prns-config
-      - run: cargo check
+      - run: cargo check --workspace
         working-directory: prnsd
 
   no-std-embedded:

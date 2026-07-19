@@ -110,10 +110,6 @@ start-rust-code = Quickstart
     Bindings
 start-rust-target = Choose a developer path
 
-start-lxmf-headline = I want to send messages over the mesh
-start-lxmf-body = LXMF on top of Reticulum — identities, addresses, delivery. The layer Sideband and Nomadnet sit on.
-start-lxmf-code = cargo add personal-lxmf
-start-lxmf-target = personal-lxmf
 
 # Platforms ("Runs on") - hero marquee label + CTA, and the dedicated page
 landing-platforms-label = Runs on
@@ -179,8 +175,6 @@ crate-rns-role = The engine
 crate-rns-blurb = Drop Reticulum into any Rust project. Deterministic, no_std, alloc-free; no global state, no built-in I/O — bring your own clock and wire.
 crate-rnsd-role = The daemon
 crate-rnsd-blurb = A drop-in for rnsd on macOS, Linux, and Windows. Same wire as the RNS reference; use it alongside or in place of the nodes you already have.
-crate-lxmf-role = Messaging
-crate-lxmf-blurb = LXMF on top of Reticulum — the layer Sideband and Nomadnet sit on. Identities, addresses, message delivery.
 crate-ffi-role = Mobile + Python bindings
 crate-ffi-blurb = One uniffi interface generates Kotlin (.aar), Swift (.xcframework), and Python (.whl). Use Reticulum from Android, iOS, or a Jupyter notebook — same shape, same engine.
 

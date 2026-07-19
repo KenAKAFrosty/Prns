@@ -98,10 +98,6 @@ start-rust-code = cargo add prnsd   # complete RNS runtime
     cargo add personal-rns      # pure core only
 start-rust-target = prnsd or personal-rns
 
-start-lxmf-headline = Quiero enviar mensajes por la mesh
-start-lxmf-body = LXMF sobre Reticulum — identidades, direcciones, entrega. La capa sobre la que se apoyan Sideband y Nomadnet.
-start-lxmf-code = cargo add personal-lxmf
-start-lxmf-target = personal-lxmf
 
 # Plataformas ("Runs on") — etiqueta del marquee del hero + CTA y página dedicada
 landing-platforms-label = Runs on
@@ -167,8 +163,6 @@ crate-rns-role = El motor
 crate-rns-blurb = Mete Reticulum en cualquier proyecto Rust. Determinista, no_std, sin asignador; sin estado global, sin E/S incorporada — tú pones el reloj y el cable.
 crate-rnsd-role = El daemon
 crate-rnsd-blurb = Un drop-in para rnsd en macOS, Linux y Windows. Mismo cable que la referencia de RNS; úsalo junto a o en lugar de los nodos que ya tienes.
-crate-lxmf-role = Mensajería
-crate-lxmf-blurb = LXMF sobre Reticulum — la capa sobre la que se apoyan Sideband y Nomadnet. Identidades, direcciones, entrega de mensajes.
 crate-ffi-role = Bindings móviles y de Python
 crate-ffi-blurb = Una sola interfaz uniffi genera Kotlin (.aar), Swift (.xcframework) y Python (.whl). Usa Reticulum desde Android, iOS o un notebook Jupyter — misma forma, mismo motor.
 

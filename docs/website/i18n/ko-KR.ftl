@@ -98,10 +98,6 @@ start-rust-code = cargo add prnsd   # complete RNS runtime
     cargo add personal-rns      # pure core only
 start-rust-target = prnsd or personal-rns
 
-start-lxmf-headline = 메시 위로 메시지를 보내고 싶어요
-start-lxmf-body = Reticulum 위의 LXMF — identity, address, delivery. Sideband와 Nomadnet이 올라가는 계층입니다.
-start-lxmf-code = cargo add personal-lxmf
-start-lxmf-target = personal-lxmf
 
 # 플랫폼 ("Runs on") — hero marquee label + CTA, and the dedicated page
 landing-platforms-label = Runs on
@@ -167,8 +163,6 @@ crate-rns-role = 엔진
 crate-rns-blurb = 어떤 Rust 프로젝트에도 Reticulum을 넣으세요. 결정적이고 no_std이며 할당자가 없습니다. 전역 상태도, 내장 I/O도 없습니다 — clock과 wire는 직접 가져오면 됩니다.
 crate-rnsd-role = daemon
 crate-rnsd-blurb = macOS, Linux 및 Windows에서 실행되는 rnsd drop-in입니다. RNS 레퍼런스와 같은 wire입니다. 이미 가진 노드 옆에서 또는 대신 사용하세요.
-crate-lxmf-role = 메시징
-crate-lxmf-blurb = Reticulum 위의 LXMF — Sideband와 Nomadnet이 올라가는 계층. identity, address, message delivery.
 crate-ffi-role = 모바일 + Python 바인딩
 crate-ffi-blurb = 하나의 uniffi interface가 Kotlin(.aar), Swift(.xcframework), Python(.whl)을 생성합니다. Android, iOS, Jupyter notebook에서 Reticulum을 사용하세요 — 같은 형태, 같은 엔진입니다.
 

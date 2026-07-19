@@ -1598,10 +1598,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hopspot"
-version = "0.1.0"
-
-[[package]]
 name = "hopspot-flash"
 version = "0.1.0"
 dependencies = [
@@ -2379,13 +2375,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "personal-lxmf"
-version = "0.1.0"
-dependencies = [
- "personal-rns",
-]
-
-[[package]]
 name = "personal-rns"
 version = "0.2.5"
 dependencies = [
@@ -2649,22 +2638,6 @@ dependencies = [
  "rtrb",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "prnsd-command"
-version = "0.1.0"
-dependencies = [
- "prnsd-control",
-]
-
-[[package]]
-name = "prnsd-control"
-version = "0.1.0"
-dependencies = [
- "dirs",
- "tempfile",
- "windows-sys 0.59.0",
 ]
 
 [[package]]

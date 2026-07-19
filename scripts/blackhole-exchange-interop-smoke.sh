@@ -2,6 +2,8 @@
 set -eu
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+source "$ROOT/scripts/lib/cargo-artifacts.sh"
+PRNSD="$(cargo_debug_binary "$ROOT/prnsd/Cargo.toml" prnsd)"
 PYTHON="${RPC_SMOKE_PYTHON:-$ROOT/benchmarks/reference/.rpc-venv/bin/python}"
 CLIENT="$ROOT/prns-core/tests/interop/rns_blackhole_exchange.py"
 WORK="$(mktemp -d)"
@@ -37,7 +39,7 @@ PUBLISHER_SERVER="$WORK/prns-publisher"
 PUBLISHER_CLIENT="$WORK/stock-client"
 PUBLISHER_PORT="$(free_port)"
 PUBLISHER_SOURCE="$($PYTHON "$CLIENT" prepare-prns-publisher "$PUBLISHER_SERVER" "$PUBLISHER_CLIENT" "$PUBLISHER_PORT")"
-"$ROOT/prnsd/target/debug/prnsd" run --log-format json --config "$PUBLISHER_SERVER" &
+"$PRNSD" run --log-format json --config "$PUBLISHER_SERVER" &
 PRNS_PID=$!
 wait_for_port "$PUBLISHER_PORT" || { echo "FAIL: Prnsd publisher listener never became ready"; exit 1; }
 PUBLISHER_RESULT="$($PYTHON "$CLIENT" query "$PUBLISHER_CLIENT" "$PUBLISHER_SOURCE" 2>&1)"
@@ -57,7 +59,7 @@ STOCK_SOURCE="$($PYTHON "$CLIENT" prepare-stock-publisher "$STOCK_SERVER" "$PRNS
 "$PYTHON" "$CLIENT" serve "$STOCK_SERVER" &
 STOCK_PID=$!
 wait_for_port "$STOCK_PORT" || { echo "FAIL: stock RNS publisher listener never became ready"; exit 1; }
-"$ROOT/prnsd/target/debug/prnsd" run --log-format json --config "$PRNS_CLIENT" &
+"$PRNSD" run --log-format json --config "$PRNS_CLIENT" &
 PRNS_PID=$!
 SOURCE_FILE="$PRNS_CLIENT/storage/blackhole/$STOCK_SOURCE"
 for _ in $(seq 1 500); do
