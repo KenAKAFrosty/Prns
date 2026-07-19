@@ -1,9 +1,10 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use personal_rns::i2p::{I2pPeerAddress, I2pPeerAddressError, SamBridgeAddress};
 
+use crate::utilities::rnpath::RnpathArgs;
 use crate::utilities::rnstatus::RnstatusArgs;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
@@ -125,6 +126,8 @@ pub enum Command {
     I2p(I2pArgs),
     #[command(about = "Show Reticulum interface and transport status")]
     Status(RnstatusArgs),
+    #[command(about = "Inspect and manage Reticulum paths")]
+    Path(RnpathArgs),
 }
 
 #[derive(Parser)]
@@ -148,6 +151,7 @@ pub fn parse_from(args: impl IntoIterator<Item = OsString>) -> Result<Command, c
                     | "run"
                     | "i2p"
                     | "status"
+                    | "path"
                     | "help"
                     | "--help"
                     | "-h"
@@ -160,6 +164,14 @@ pub fn parse_from(args: impl IntoIterator<Item = OsString>) -> Result<Command, c
     }
     Cli::try_parse_from(args)
         .map(|cli| cli.command.unwrap_or(Command::Start(LaunchArgs::default())))
+}
+
+pub fn path_help() -> String {
+    let mut command = Cli::command();
+    match command.find_subcommand_mut("path") {
+        Some(path) => format!("{}\n", path.render_long_help()),
+        None => String::from("Usage: prnsd path [OPTIONS] [DESTINATION] [LIST_FILTER]\n"),
+    }
 }
 
 #[cfg(test)]
@@ -330,6 +342,34 @@ mod tests {
             panic!("status must remain a direct utility command");
         };
         assert!(args.version);
+    }
+
+    #[test]
+    fn path_is_a_prefixless_utility_with_stock_flags() {
+        let Command::Path(args) = parse(&[
+            "prnsd",
+            "path",
+            "--config",
+            "/node",
+            "-t",
+            "-m",
+            "3",
+            "-j",
+            "00112233445566778899aabbccddeeff",
+        ]) else {
+            panic!("path must remain a direct utility command");
+        };
+        assert_eq!(args.config, Some(PathBuf::from("/node")));
+        assert!(args.table);
+        assert_eq!(args.maximum_hops, Some(3));
+        assert!(args.json);
+        assert!(args.destination.is_some());
+    }
+
+    #[test]
+    fn path_does_not_expose_a_prefixed_alias() {
+        let error = parse_from(["prnsd", "rnpath"].into_iter().map(OsString::from)).unwrap_err();
+        assert_eq!(error.exit_code(), 2);
     }
 
     #[test]

@@ -4,6 +4,7 @@ use crate::wire::DestinationHash;
 
 use super::super::message_pack::{MessagePackInteger, MessagePackReader};
 use super::super::wire_names::remote_path;
+use super::super::{MessagePackEncoder, RnsManagementEncodeError};
 use super::{finish, RnsRemoteRequestDecodeError, REMOTE_REQUEST_MAXIMUM_DEPTH};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,6 +48,20 @@ pub struct RnsRemotePathTableRequest {
 }
 
 impl RnsRemotePathTableRequest {
+    pub const fn new(destination: Option<DestinationHash>, maximum_hops: Option<i64>) -> Self {
+        Self {
+            destination: match destination {
+                Some(destination) => DestinationSelection::Exact(destination),
+                None => DestinationSelection::All,
+            },
+            hops: match maximum_hops {
+                Some(maximum) if maximum < 0 => HopSelection::NoMatch,
+                Some(maximum) => HopSelection::AtMost(maximum as u64),
+                None => HopSelection::All,
+            },
+        }
+    }
+
     pub fn includes(&self, destination: DestinationHash, hops: u8) -> bool {
         self.destination.includes(destination) && self.hops.includes(hops)
     }
@@ -58,6 +73,15 @@ pub struct RnsRemoteRateTableRequest {
 }
 
 impl RnsRemoteRateTableRequest {
+    pub const fn new(destination: Option<DestinationHash>) -> Self {
+        Self {
+            destination: match destination {
+                Some(destination) => DestinationSelection::Exact(destination),
+                None => DestinationSelection::All,
+            },
+        }
+    }
+
     pub fn includes(&self, destination: DestinationHash) -> bool {
         self.destination.includes(destination)
     }
@@ -67,6 +91,46 @@ impl RnsRemoteRateTableRequest {
 pub enum RnsRemotePathRequest {
     Table(RnsRemotePathTableRequest),
     Rates(RnsRemoteRateTableRequest),
+}
+
+impl RnsRemotePathRequest {
+    pub fn encode_message_pack(self) -> Result<alloc::vec::Vec<u8>, RnsManagementEncodeError> {
+        let mut encoder = MessagePackEncoder::new();
+        match self {
+            Self::Table(request) => {
+                encoder.array(3)?;
+                encoder.string(remote_path::TABLE)?;
+                encode_destination(&mut encoder, request.destination)?;
+                encode_hops(&mut encoder, request.hops);
+            }
+            Self::Rates(request) => {
+                encoder.array(2)?;
+                encoder.string(remote_path::RATES)?;
+                encode_destination(&mut encoder, request.destination)?;
+            }
+        }
+        Ok(encoder.finish())
+    }
+}
+
+fn encode_destination(
+    encoder: &mut MessagePackEncoder,
+    destination: DestinationSelection,
+) -> Result<(), RnsManagementEncodeError> {
+    match destination {
+        DestinationSelection::All => encoder.nil(),
+        DestinationSelection::Exact(destination) => encoder.binary(destination.as_bytes())?,
+        DestinationSelection::NoMatch => encoder.binary(&[])?,
+    }
+    Ok(())
+}
+
+fn encode_hops(encoder: &mut MessagePackEncoder, hops: HopSelection) {
+    match hops {
+        HopSelection::All => encoder.nil(),
+        HopSelection::AtMost(maximum) => encoder.unsigned(maximum),
+        HopSelection::NoMatch => encoder.signed(-1),
+    }
 }
 
 enum Command {

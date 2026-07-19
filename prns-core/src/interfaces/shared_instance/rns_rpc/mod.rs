@@ -26,5 +26,7 @@ pub use request::{
     RpcRequestDecodeError,
 };
 
+pub const RNS_NO_INTERFACE_NAME: &str = wire_names::reply_value::NO_INTERFACE;
+
 #[cfg(test)]
 mod tests;

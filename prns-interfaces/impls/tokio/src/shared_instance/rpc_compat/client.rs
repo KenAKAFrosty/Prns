@@ -2,12 +2,19 @@ use std::fmt;
 use std::time::Duration;
 use std::vec::Vec;
 
+use prns_core::identity::IdentityHash;
 use prns_core::interfaces::rns_management::{
-    RnsInterfaceStatsDecodeError, RnsInterfaceStatsReport,
+    RnsAnnounceRateTable, RnsAnnounceRateTableDecodeError, RnsBlackholeDecodeError,
+    RnsBlackholeTable, RnsInterfaceStatsDecodeError, RnsInterfaceStatsReport, RnsPathTable,
+    RnsPathTableDecodeError,
 };
 use prns_core::interfaces::shared_instance::rns_rpc::{
-    RnsRpcRequest, RnsRpcScalarReply, RnsRpcScalarReplyDecodeError, RpcAuthenticationKey,
+    RnsInteger, RnsNumber, RnsRpcRequest, RnsRpcScalarReply, RnsRpcScalarReplyDecodeError,
+    RpcAuthenticationKey, RpcVerb, RNS_NO_INTERFACE_NAME,
 };
+use prns_core::routing::BlackholedIdentity;
+use prns_core::units::InstantMillis;
+use prns_core::wire::{DestinationHash, TransportId};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 
@@ -86,6 +93,17 @@ pub enum SharedInstanceRpcClientError {
     InterfaceStatsReply(RnsInterfaceStatsDecodeError),
     LinkCountReply(RnsRpcScalarReplyDecodeError),
     InvalidLinkCount(RnsRpcScalarReply),
+    PathTableReply(RnsPathTableDecodeError),
+    RateTableReply(RnsAnnounceRateTableDecodeError),
+    BlackholeTableReply(RnsBlackholeDecodeError),
+    ScalarReply {
+        operation: RpcVerb,
+        source: RnsRpcScalarReplyDecodeError,
+    },
+    UnexpectedScalarReply {
+        operation: RpcVerb,
+        reply: RnsRpcScalarReply,
+    },
 }
 
 impl fmt::Display for SharedInstanceRpcClientError {
@@ -119,6 +137,21 @@ impl fmt::Display for SharedInstanceRpcClientError {
                     "link-count reply must be a nonnegative integer, got {reply:?}"
                 )
             }
+            Self::PathTableReply(error) => write!(formatter, "invalid path-table reply: {error}"),
+            Self::RateTableReply(error) => {
+                write!(formatter, "invalid announce-rate reply: {error}")
+            }
+            Self::BlackholeTableReply(error) => {
+                write!(formatter, "invalid blackhole-table reply: {error}")
+            }
+            Self::ScalarReply { operation, source } => {
+                write!(formatter, "invalid {} reply: {source}", operation.as_str())
+            }
+            Self::UnexpectedScalarReply { operation, reply } => write!(
+                formatter,
+                "{} reply has an unexpected value: {reply:?}",
+                operation.as_str()
+            ),
         }
     }
 }
@@ -129,6 +162,20 @@ pub struct SharedInstanceRpcClient {
     endpoint: SharedInstanceRpcEndpoint,
     rpc_key: RpcAuthenticationKey,
     timeout: Duration,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SharedInstanceBlackholeOutcome {
+    Added,
+    AlreadyPresent,
+    Rejected,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SharedInstanceUnblackholeOutcome {
+    Removed,
+    NotFound,
+    Rejected,
 }
 
 impl SharedInstanceRpcClient {
@@ -159,6 +206,206 @@ impl SharedInstanceRpcClient {
         reply
             .nonnegative_integer()
             .ok_or(SharedInstanceRpcClientError::InvalidLinkCount(reply))
+    }
+
+    pub async fn path_table(
+        &self,
+        maximum_hops: Option<i64>,
+    ) -> Result<RnsPathTable, SharedInstanceRpcClientError> {
+        let reply = self
+            .exchange(RnsRpcRequest::PathTable {
+                max_hops: maximum_hops.map(RnsInteger::from_i64),
+            })
+            .await?;
+        RnsPathTable::decode_message_pack(&reply)
+            .map_err(SharedInstanceRpcClientError::PathTableReply)
+    }
+
+    pub async fn announce_rate_table(
+        &self,
+    ) -> Result<RnsAnnounceRateTable, SharedInstanceRpcClientError> {
+        let reply = self.exchange(RnsRpcRequest::RateTable).await?;
+        RnsAnnounceRateTable::decode_message_pack(&reply)
+            .map_err(SharedInstanceRpcClientError::RateTableReply)
+    }
+
+    pub async fn blackholed_identities(
+        &self,
+        now: InstantMillis,
+    ) -> Result<Vec<BlackholedIdentity<String>>, SharedInstanceRpcClientError> {
+        let reply = self.exchange(RnsRpcRequest::BlackholedIdentities).await?;
+        RnsBlackholeTable::decode_published_table(&reply, now)
+            .map(RnsBlackholeTable::into_entries)
+            .map_err(SharedInstanceRpcClientError::BlackholeTableReply)
+    }
+
+    pub async fn next_hop(
+        &self,
+        destination: DestinationHash,
+    ) -> Result<Option<TransportId>, SharedInstanceRpcClientError> {
+        let reply = self
+            .scalar(
+                RnsRpcRequest::NextHop {
+                    destination_hash: destination,
+                },
+                RpcVerb::GetNextHop,
+            )
+            .await?;
+        match reply {
+            RnsRpcScalarReply::Null => Ok(None),
+            RnsRpcScalarReply::Binary(bytes) => {
+                let bytes: [u8; 16] = bytes.try_into().map_err(|bytes: Vec<u8>| {
+                    SharedInstanceRpcClientError::UnexpectedScalarReply {
+                        operation: RpcVerb::GetNextHop,
+                        reply: RnsRpcScalarReply::Binary(bytes),
+                    }
+                })?;
+                Ok(Some(TransportId::new(bytes)))
+            }
+            reply => Err(SharedInstanceRpcClientError::UnexpectedScalarReply {
+                operation: RpcVerb::GetNextHop,
+                reply,
+            }),
+        }
+    }
+
+    pub async fn next_hop_interface_name(
+        &self,
+        destination: DestinationHash,
+    ) -> Result<Option<String>, SharedInstanceRpcClientError> {
+        let reply = self
+            .scalar(
+                RnsRpcRequest::NextHopInterface {
+                    destination_hash: destination,
+                },
+                RpcVerb::GetNextHopInterfaceName,
+            )
+            .await?;
+        match reply {
+            RnsRpcScalarReply::String(name) if name == RNS_NO_INTERFACE_NAME => Ok(None),
+            RnsRpcScalarReply::String(name) => Ok(Some(name)),
+            reply => Err(SharedInstanceRpcClientError::UnexpectedScalarReply {
+                operation: RpcVerb::GetNextHopInterfaceName,
+                reply,
+            }),
+        }
+    }
+
+    pub async fn drop_path(
+        &self,
+        destination: DestinationHash,
+    ) -> Result<bool, SharedInstanceRpcClientError> {
+        let reply = self
+            .scalar(
+                RnsRpcRequest::DropPath {
+                    destination_hash: destination,
+                },
+                RpcVerb::DropPath,
+            )
+            .await?;
+        match reply {
+            RnsRpcScalarReply::Boolean(dropped) => Ok(dropped),
+            reply => Err(SharedInstanceRpcClientError::UnexpectedScalarReply {
+                operation: RpcVerb::DropPath,
+                reply,
+            }),
+        }
+    }
+
+    pub async fn drop_all_via(
+        &self,
+        transport: TransportId,
+    ) -> Result<u64, SharedInstanceRpcClientError> {
+        let reply = self
+            .scalar(
+                RnsRpcRequest::DropAllVia {
+                    transport_id: transport,
+                },
+                RpcVerb::DropAllVia,
+            )
+            .await?;
+        reply
+            .nonnegative_integer()
+            .ok_or(SharedInstanceRpcClientError::UnexpectedScalarReply {
+                operation: RpcVerb::DropAllVia,
+                reply,
+            })
+    }
+
+    pub async fn drop_announce_queues(&self) -> Result<(), SharedInstanceRpcClientError> {
+        let reply = self
+            .scalar(
+                RnsRpcRequest::DropAnnounceQueues,
+                RpcVerb::DropAnnounceQueues,
+            )
+            .await?;
+        match reply {
+            RnsRpcScalarReply::Null => Ok(()),
+            reply => Err(SharedInstanceRpcClientError::UnexpectedScalarReply {
+                operation: RpcVerb::DropAnnounceQueues,
+                reply,
+            }),
+        }
+    }
+
+    pub async fn blackhole_identity(
+        &self,
+        identity: IdentityHash,
+        until: Option<RnsNumber>,
+        reason: Option<String>,
+    ) -> Result<SharedInstanceBlackholeOutcome, SharedInstanceRpcClientError> {
+        let reply = self
+            .scalar(
+                RnsRpcRequest::BlackholeIdentity {
+                    identity_hash: identity,
+                    until,
+                    reason,
+                },
+                RpcVerb::BlackholeIdentity,
+            )
+            .await?;
+        match reply {
+            RnsRpcScalarReply::Boolean(true) => Ok(SharedInstanceBlackholeOutcome::Added),
+            RnsRpcScalarReply::Null => Ok(SharedInstanceBlackholeOutcome::AlreadyPresent),
+            RnsRpcScalarReply::Boolean(false) => Ok(SharedInstanceBlackholeOutcome::Rejected),
+            reply => Err(SharedInstanceRpcClientError::UnexpectedScalarReply {
+                operation: RpcVerb::BlackholeIdentity,
+                reply,
+            }),
+        }
+    }
+
+    pub async fn unblackhole_identity(
+        &self,
+        identity: IdentityHash,
+    ) -> Result<SharedInstanceUnblackholeOutcome, SharedInstanceRpcClientError> {
+        let reply = self
+            .scalar(
+                RnsRpcRequest::UnblackholeIdentity {
+                    identity_hash: identity,
+                },
+                RpcVerb::UnblackholeIdentity,
+            )
+            .await?;
+        match reply {
+            RnsRpcScalarReply::Boolean(true) => Ok(SharedInstanceUnblackholeOutcome::Removed),
+            RnsRpcScalarReply::Null => Ok(SharedInstanceUnblackholeOutcome::NotFound),
+            RnsRpcScalarReply::Boolean(false) => Ok(SharedInstanceUnblackholeOutcome::Rejected),
+            reply => Err(SharedInstanceRpcClientError::UnexpectedScalarReply {
+                operation: RpcVerb::UnblackholeIdentity,
+                reply,
+            }),
+        }
+    }
+
+    async fn scalar(
+        &self,
+        request: RnsRpcRequest,
+        operation: RpcVerb,
+    ) -> Result<RnsRpcScalarReply, SharedInstanceRpcClientError> {
+        let reply = self.exchange(request).await?;
+        RnsRpcScalarReply::decode_message_pack(&reply)
+            .map_err(|source| SharedInstanceRpcClientError::ScalarReply { operation, source })
     }
 
     pub async fn exchange(

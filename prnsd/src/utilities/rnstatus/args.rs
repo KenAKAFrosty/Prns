@@ -1,45 +1,9 @@
 use std::path::PathBuf;
-use std::time::Duration;
 
 use clap::{Args, ValueEnum};
 use personal_rns::identity::IdentityHash;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PositiveDuration(Duration);
-
-impl PositiveDuration {
-    pub const fn get(self) -> Duration {
-        self.0
-    }
-}
-
-fn parse_positive_duration(value: &str) -> Result<PositiveDuration, String> {
-    let seconds = value
-        .parse::<f64>()
-        .map_err(|_| format!("{value:?} is not a number of seconds"))?;
-    if !seconds.is_finite() || seconds <= 0.0 {
-        return Err(format!(
-            "{value:?} must be a finite number greater than zero"
-        ));
-    }
-    Ok(PositiveDuration(Duration::from_secs_f64(seconds)))
-}
-
-fn parse_identity_hash(value: &str) -> Result<IdentityHash, String> {
-    if value.len() != 32 {
-        return Err(format!(
-            "{value:?} must contain exactly 32 hexadecimal characters (16 bytes)"
-        ));
-    }
-    let mut bytes = [0u8; 16];
-    for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
-        let pair =
-            std::str::from_utf8(pair).map_err(|_| format!("{value:?} is not hexadecimal"))?;
-        bytes[index] =
-            u8::from_str_radix(pair, 16).map_err(|_| format!("{value:?} is not hexadecimal"))?;
-    }
-    Ok(IdentityHash::new(bytes))
-}
+use super::super::arguments::{parse_identity_hash, parse_positive_duration, PositiveDuration};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub enum RnstatusSort {
