@@ -1,17 +1,22 @@
-use super::*;
+use super::RoutingTable;
 use crate::crypto::{Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
 use crate::engine::{test_support::routable_descriptor, InstantMillis};
 use crate::identity::{IdentityEncryptionPublicKey, IdentitySigningPublicKey};
 use crate::interfaces::{AttachedInterfaces, InterfaceDescriptor, InterfaceId, InterfaceMode};
 use crate::routing::announce::defaults::DEFAULT_ROUTE_EXPIRY_MILLIS;
 use crate::routing::announce::stored::{
-    FixedAnnounceIdHistory, FixedArrayAnnounceRecordTable, PackedAppDataArena,
+    AnnounceAppData, AnnounceIdHistory, AnnounceRecordTable, FixedAnnounceIdHistory,
+    FixedArrayAnnounceRecordTable, PackedAppDataArena,
 };
-use crate::routing::routes::FixedArrayRouteTable;
+use crate::routing::announce::{
+    Announce, AnnounceArrival, AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey,
+};
+use crate::routing::routes::{FixedArrayRouteTable, RouteEntry, RouteTable};
 use crate::routing::{
-    DropCause, NextHop, RemovedRoute, RouteRemovalCause, RouteResponsiveness, UpsertRouteOutcome,
+    AnnounceIdRing, DropCause, NextHop, PersistedRouteRow, RemovedRoute, RouteRemovalCause,
+    RouteResponsiveness, SeedRouteOutcome, UpsertRouteOutcome,
 };
-use crate::wire::TransportId;
+use crate::wire::{DestinationHash, TransportId};
 
 type TestRoutingTable<
     const MAX_TRACKED_DESTINATIONS: usize,
@@ -25,9 +30,6 @@ type TestRoutingTable<
 >;
 type Rt = TestRoutingTable<64, 64, 4096>;
 const RT_HISTORY_CAP: usize = 64;
-use crate::routing::announce::{
-    AnnounceArrival, AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey,
-};
 
 fn dest(byte: u8) -> DestinationHash {
     DestinationHash::new([byte; 16])
