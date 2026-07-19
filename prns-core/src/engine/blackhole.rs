@@ -144,12 +144,9 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     fn blackhole_mutation_wake(&self, interfaces: AttachedInterfaces<'_>) -> WakeSchedules {
-        WakeSchedules {
-            expired_routes: self.route_expiry_wake(interfaces),
-            expired_destination_identities: self.destination_identity_expiry_wake(),
-            expired_blackholes: self.blackhole_expiry_wake(),
-            ..WakeSchedules::UNCHANGED
-        }
+        let mut wake_schedules = self.route_removal_wake_schedules(interfaces);
+        wake_schedules.expired_blackholes = self.blackhole_expiry_wake();
+        wake_schedules
     }
 }
 

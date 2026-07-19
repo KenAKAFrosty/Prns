@@ -1,26 +1,251 @@
-use crate::routing::RemovedRoute;
+use core::num::NonZeroUsize;
+
+use crate::interfaces::AttachedInterfaces;
+use crate::routing::{DropRouteOutcome, RemovedRoute};
 use crate::storage::{DirtyInterfaceSet, StorageLayout};
 use crate::wire::{DestinationHash, TransportId};
 
-use super::EngineState;
+use super::{EngineState, WakeSchedules};
+
+#[derive(Debug, PartialEq, Eq)]
+#[must_use]
+pub struct DropRouteEffect(DropRouteEffectState);
+
+#[derive(Debug, PartialEq, Eq)]
+enum DropRouteEffectState {
+    Dropped {
+        removed: RemovedRoute,
+        wake_schedules: WakeSchedules,
+    },
+    NotFound,
+}
+
+impl DropRouteEffect {
+    pub fn outcome(&self) -> DropRouteOutcome {
+        match self.0 {
+            DropRouteEffectState::Dropped { .. } => DropRouteOutcome::Dropped,
+            DropRouteEffectState::NotFound => DropRouteOutcome::NotFound,
+        }
+    }
+
+    pub fn removed_route(&self) -> Option<RemovedRoute> {
+        match self.0 {
+            DropRouteEffectState::Dropped { removed, .. } => Some(removed),
+            DropRouteEffectState::NotFound => None,
+        }
+    }
+
+    pub fn wake_schedules(&self) -> WakeSchedules {
+        match self.0 {
+            DropRouteEffectState::Dropped { wake_schedules, .. } => wake_schedules,
+            DropRouteEffectState::NotFound => WakeSchedules::UNCHANGED,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+#[must_use]
+pub struct DropRoutesViaEffect(DropRoutesViaEffectState);
+
+#[derive(Debug, PartialEq, Eq)]
+enum DropRoutesViaEffectState {
+    Dropped {
+        dropped_routes: NonZeroUsize,
+        wake_schedules: WakeSchedules,
+    },
+    NoRoutes,
+}
+
+impl DropRoutesViaEffect {
+    pub fn dropped_route_count(&self) -> usize {
+        match self.0 {
+            DropRoutesViaEffectState::Dropped { dropped_routes, .. } => dropped_routes.get(),
+            DropRoutesViaEffectState::NoRoutes => 0,
+        }
+    }
+
+    pub fn wake_schedules(&self) -> WakeSchedules {
+        match self.0 {
+            DropRoutesViaEffectState::Dropped { wake_schedules, .. } => wake_schedules,
+            DropRoutesViaEffectState::NoRoutes => WakeSchedules::UNCHANGED,
+        }
+    }
+}
 
 impl<S: StorageLayout> EngineState<S> {
-    pub fn drop_route(&mut self, destination: &DestinationHash) -> Option<RemovedRoute> {
-        let removed = self.routing_table.drop_route(destination)?;
+    pub fn drop_route(
+        &mut self,
+        destination: &DestinationHash,
+        interfaces: AttachedInterfaces<'_>,
+    ) -> DropRouteEffect {
+        let Some(removed) = self.routing_table.drop_route(destination) else {
+            return DropRouteEffect(DropRouteEffectState::NotFound);
+        };
         self.dirty_interfaces.mark(removed.receiving_interface);
-        Some(removed)
+        DropRouteEffect(DropRouteEffectState::Dropped {
+            removed,
+            wake_schedules: self.route_removal_wake_schedules(interfaces),
+        })
     }
 
     pub fn drop_routes_via(
         &mut self,
         transport: TransportId,
+        interfaces: AttachedInterfaces<'_>,
         on_removed: &mut impl FnMut(RemovedRoute),
-    ) -> usize {
+    ) -> DropRoutesViaEffect {
         let dirty = &mut self.dirty_interfaces;
-        self.routing_table
+        let dropped_routes = self
+            .routing_table
             .drop_routes_via(transport, &mut |removed| {
                 dirty.mark(removed.receiving_interface);
                 on_removed(removed);
-            })
+            });
+        let Some(dropped_routes) = NonZeroUsize::new(dropped_routes) else {
+            return DropRoutesViaEffect(DropRoutesViaEffectState::NoRoutes);
+        };
+        DropRoutesViaEffect(DropRoutesViaEffectState::Dropped {
+            dropped_routes,
+            wake_schedules: self.route_removal_wake_schedules(interfaces),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::crypto::{Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
+    use crate::engine::test_support::{routable_descriptor, TestStorageLayout};
+    use crate::engine::WakeSchedule;
+    use crate::identity::{
+        IdentityEncryptionPublicKey, IdentityPublicKeys, IdentitySigningPublicKey,
+    };
+    use crate::interfaces::{InterfaceDescriptor, InterfaceId};
+    use crate::routing::announce::{Announce, AnnounceId, DottedNameHash};
+    use crate::routing::{AnnounceArrival, NextHop, RouteRemovalCause};
+    use crate::units::InstantMillis;
+
+    const SOURCE: InterfaceId = InterfaceId::new([0xEE; 8]);
+
+    fn interfaces() -> [InterfaceDescriptor; 1] {
+        [routable_descriptor(SOURCE)]
+    }
+
+    fn destination(byte: u8) -> DestinationHash {
+        DestinationHash::new([byte; 16])
+    }
+
+    fn add_route(
+        engine: &mut EngineState<TestStorageLayout>,
+        destination: DestinationHash,
+        next_hop: NextHop,
+        learned_at: InstantMillis,
+    ) {
+        let announce = Announce {
+            destination,
+            public_keys: IdentityPublicKeys {
+                encryption: IdentityEncryptionPublicKey::new(X25519PublicKey([0x31; 32])),
+                signing: IdentitySigningPublicKey::new(Ed25519PublicKey([0x41; 32])),
+            },
+            dotted_name_hash: DottedNameHash::new([0x51; 10]),
+            announce_id: AnnounceId::from_wire([destination.as_bytes()[0]; 10]),
+            ratchet: None,
+            signature: Ed25519Signature([0x61; 64]),
+            app_data: b"",
+        };
+        let _ = engine.routing_table.upsert_route(
+            &AnnounceArrival {
+                announce,
+                hops: 1,
+                arrived_at: learned_at,
+                receiving_interface: SOURCE,
+                next_hop,
+                is_path_response: false,
+            },
+            AttachedInterfaces::new(&interfaces()),
+            &mut |_| {},
+        );
+    }
+
+    #[test]
+    fn dropping_one_route_returns_its_removal_and_complete_wake_delta() {
+        let mut engine = EngineState::<TestStorageLayout>::default();
+        let destination = destination(0x21);
+        add_route(
+            &mut engine,
+            destination,
+            NextHop::Direct,
+            InstantMillis(1_000),
+        );
+
+        let effect = engine.drop_route(&destination, AttachedInterfaces::new(&interfaces()));
+
+        assert_eq!(effect.outcome(), DropRouteOutcome::Dropped);
+        assert_eq!(
+            effect.removed_route(),
+            Some(RemovedRoute {
+                destination,
+                receiving_interface: SOURCE,
+                cause: RouteRemovalCause::Dropped,
+            }),
+        );
+        assert_eq!(effect.wake_schedules().expired_routes, WakeSchedule::Idle);
+        assert_eq!(
+            effect.wake_schedules().expired_destination_identities,
+            WakeSchedule::Idle,
+        );
+
+        let missing = engine.drop_route(&destination, AttachedInterfaces::new(&interfaces()));
+        assert_eq!(missing.outcome(), DropRouteOutcome::NotFound);
+        assert_eq!(missing.removed_route(), None);
+        assert_eq!(missing.wake_schedules(), WakeSchedules::UNCHANGED);
+    }
+
+    #[test]
+    fn dropping_routes_via_transport_returns_a_nonzero_count_and_exact_wake_delta() {
+        let mut engine = EngineState::<TestStorageLayout>::default();
+        let dropped_transport = TransportId::new([0xA1; 16]);
+        let surviving_transport = TransportId::new([0xB1; 16]);
+        for (byte, transport, learned_at) in [
+            (0x21, dropped_transport, InstantMillis(1_000)),
+            (0x22, dropped_transport, InstantMillis(2_000)),
+            (0x23, surviving_transport, InstantMillis(3_000)),
+        ] {
+            add_route(
+                &mut engine,
+                destination(byte),
+                NextHop::Via(transport),
+                learned_at,
+            );
+        }
+        let mut removed = std::vec::Vec::new();
+
+        let effect = engine.drop_routes_via(
+            dropped_transport,
+            AttachedInterfaces::new(&interfaces()),
+            &mut |route| removed.push(route),
+        );
+
+        removed.sort_by_key(|route| *route.destination.as_bytes());
+        assert_eq!(effect.dropped_route_count(), 2);
+        assert_eq!(
+            removed
+                .iter()
+                .map(|route| route.destination)
+                .collect::<std::vec::Vec<_>>(),
+            std::vec![destination(0x21), destination(0x22)],
+        );
+        assert_eq!(
+            effect.wake_schedules().expired_routes,
+            engine.route_expiry_wake(AttachedInterfaces::new(&interfaces())),
+        );
+
+        let unchanged = engine.drop_routes_via(
+            dropped_transport,
+            AttachedInterfaces::new(&interfaces()),
+            &mut |_| {},
+        );
+        assert_eq!(unchanged.dropped_route_count(), 0);
+        assert_eq!(unchanged.wake_schedules(), WakeSchedules::UNCHANGED);
     }
 }
