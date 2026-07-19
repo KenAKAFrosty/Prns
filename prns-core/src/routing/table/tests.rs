@@ -2,8 +2,7 @@ use super::*;
 use crate::crypto::{Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
 use crate::engine::test_support::routable_descriptor;
 use crate::identity::{IdentityEncryptionPublicKey, IdentitySigningPublicKey};
-use crate::interfaces::InterfaceDescriptor;
-use crate::interfaces::InterfaceMode;
+use crate::interfaces::{InterfaceDescriptor, InterfaceId, InterfaceMode};
 use crate::routing::announce::defaults::DEFAULT_ROUTE_EXPIRY_MILLIS;
 use crate::routing::announce::stored::{
     FixedAnnounceIdHistory, FixedArrayAnnounceRecordTable, PackedAppDataArena,
