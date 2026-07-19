@@ -19,7 +19,7 @@ use personal_rns::{
     TokioDiscoveryPublisherConstructionError, TokioInterfaceDiscoveryPublisher,
 };
 
-use crate::construct::AttachedConfiguredInterface;
+use crate::daemon::AttachedConfiguredInterface;
 
 mod advertisement;
 

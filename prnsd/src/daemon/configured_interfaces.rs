@@ -9,39 +9,39 @@ use personal_rns::interfaces::{InterfaceId, InterfaceOriginKind};
 use personal_rns::runtime::PrnsNodeHandle;
 
 pub(crate) struct AttachedConfiguredInterface {
-    pub id: InterfaceId,
-    pub plan: PlannedInterface,
+    pub(crate) id: InterfaceId,
+    pub(crate) plan: PlannedInterface,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct StartupInterfaceReport {
-    pub online: u32,
-    pub listening: u32,
-    pub retrying: u32,
-    pub failed: u32,
+pub(crate) struct StartupInterfaceReport {
+    pub(crate) online: u32,
+    pub(crate) listening: u32,
+    pub(crate) retrying: u32,
+    pub(crate) failed: u32,
 }
 
 impl StartupInterfaceReport {
-    pub fn merge(&mut self, other: Self) {
+    pub(crate) fn merge(&mut self, other: Self) {
         self.online = self.online.saturating_add(other.online);
         self.listening = self.listening.saturating_add(other.listening);
         self.retrying = self.retrying.saturating_add(other.retrying);
         self.failed = self.failed.saturating_add(other.failed);
     }
 
-    pub const fn degraded(self) -> bool {
+    pub(crate) const fn degraded(self) -> bool {
         self.retrying != 0 || self.failed != 0
     }
 }
 
 #[derive(Default)]
-pub struct ConstructedInterfaces {
-    pub attached: Vec<AttachedConfiguredInterface>,
-    pub runtime: PlanAttachments,
-    pub startup: StartupInterfaceReport,
+pub(crate) struct ConstructedInterfaces {
+    pub(crate) attached: Vec<AttachedConfiguredInterface>,
+    pub(crate) runtime: PlanAttachments,
+    pub(crate) startup: StartupInterfaceReport,
 }
 
-pub async fn construct_interfaces(
+pub(crate) async fn construct(
     handle: &PrnsNodeHandle,
     plan: &DaemonPlan,
     context: &PlanRuntimeContext,

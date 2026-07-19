@@ -1,22 +1,25 @@
 mod configuration;
+mod configured_interfaces;
+mod identity;
 mod interface_failure;
+mod interface_ownership;
+
+pub(crate) use configured_interfaces::{
+    construct as construct_configured_interfaces, AttachedConfiguredInterface,
+};
 
 pub(crate) use configuration::DEFAULT_CONFIG;
 
 use std::process;
 
 use crate::{
-    blackhole_exchange, cli, construct, identity, interface_discovery, management_announces,
-    observability, persist, probe_responder, remote_management, request_services, splash,
+    blackhole_exchange, cli, interface_discovery, management_announces, observability, persist,
+    probe_responder, remote_management, request_services, splash,
 };
-use personal_rns::config::{
-    ConfiguredInterfaceLifecycle, SharedInstance,
-    SharedInstanceTransport as ConfigSharedInstanceTransport, TransportIdentityPolicy,
-};
+use personal_rns::config::{SharedInstance, TransportIdentityPolicy};
 use personal_rns::engine::{
     EngineProtocolPolicy, LinkMtuDiscovery, LocalHopCountOverride, ProofForm,
 };
-use personal_rns::from_plan::PlanAttachments;
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::vault::FileVault;
 use personal_rns::identity::IdentitySigner;
@@ -25,11 +28,7 @@ use personal_rns::routes;
 use personal_rns::runtime::{
     boot_timeline_origin, Diagnostic, Manual, PrnsEvent, PrnsNode, PrnsNodeRecipe,
 };
-use personal_rns::shared_instance::{
-    join_shared_instance, InstancePorts, JoinError, OnExisting, RnsBlackholeFiles, Role,
-    SharedInstanceCredentials, SharedInstanceIntent,
-    SharedInstanceTransport as RuntimeSharedInstanceTransport,
-};
+use personal_rns::shared_instance::{RnsBlackholeFiles, SharedInstanceCredentials};
 use personal_rns::storage::GrowableHeap;
 use personal_rns::PlanRuntimeContext;
 use prnsd_control::ManagedProcess;
@@ -195,119 +194,28 @@ pub(super) async fn run(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
     }
     let prns_handle = prns.handle();
 
-    let mut owns_tables = false;
-    let mut constructed_interfaces = Vec::new();
-    let mut bootstrap_attachments = PlanAttachments::default();
-    let mut startup = construct::StartupInterfaceReport::default();
-    match &plan.shared_instance {
-        SharedInstance::Enabled {
-            name,
-            transport,
-            instance_port,
-            control_port,
-            forced_bitrate,
-            ..
-        } => {
-            let ports = InstancePorts {
-                bus: *instance_port,
-                control: *control_port,
-            };
-            let runtime_transport = match transport {
-                ConfigSharedInstanceTransport::Tcp => RuntimeSharedInstanceTransport::Tcp,
-                ConfigSharedInstanceTransport::Unix => {
-                    #[cfg(target_os = "linux")]
-                    {
-                        RuntimeSharedInstanceTransport::AbstractUnix {
-                            socket_path: name.clone(),
-                        }
-                    }
-                    #[cfg(not(target_os = "linux"))]
-                    {
-                        tracing::warn!(
-                            event = "shared_instance_unix_fallback",
-                            configured_name = %name,
-                            fallback = "tcp",
-                        );
-                        RuntimeSharedInstanceTransport::Tcp
-                    }
-                }
-            };
-            let shared_policy = personal_rns::interfaces::shared_instance::core::configured_policy(
-                personal_rns::interfaces::ConfiguredInterfacePolicy {
-                    bitrate: *forced_bitrate,
-                    ..Default::default()
-                },
-            );
-            match join_shared_instance(
-                &prns_handle,
-                SharedInstanceIntent {
-                    credentials: shared_instance_credentials.clone(),
-                    transport_identity: visible_identity_hash,
-                    network_identity: network_identity_hash,
-                    blackhole_source: visible_identity_hash,
-                    blackhole_files: blackhole_files.clone(),
-                    ports,
-                    transport: runtime_transport,
-                    policy: shared_policy,
-                    on_existing: OnExisting::JoinAsClient,
-                },
-            )
-            .await
-            {
-                Ok(Role::BecameInstance) => {
-                    tracing::info!(
-                        event = "shared_instance_started",
-                        bus_port = ports.bus,
-                        control_port = ports.control,
-                        instance_name = %name,
-                    );
-                    startup.listening = startup.listening.saturating_add(1);
-                    let constructed =
-                        construct::construct_interfaces(&prns_handle, &plan, &interface_runtime)
-                            .await;
-                    startup.merge(constructed.startup);
-                    bootstrap_attachments = constructed
-                        .runtime
-                        .for_lifecycle(ConfiguredInterfaceLifecycle::BootstrapOnly);
-                    constructed_interfaces = constructed.attached;
-                    owns_tables = true;
-                }
-                Ok(Role::JoinedAsClient { of }) => {
-                    startup.online = startup.online.saturating_add(1);
-                    tracing::info!(event = "shared_instance_joined");
-                    tracing::debug!(event = "shared_instance_joined_detail", instance = %of);
-                }
-                Err(JoinError::InstanceAlreadyRunning { at }) => {
-                    tracing::error!(event = "shared_instance_refused", endpoint = %at);
-                    observability.shutdown().await;
-                    process::exit(1);
-                }
-                Err(JoinError::EndpointUnavailable { endpoint, kind }) => {
-                    tracing::error!(
-                        event = "shared_instance_endpoint_unavailable",
-                        endpoint = endpoint.as_str(),
-                        error_kind = ?kind,
-                    );
-                    observability.shutdown().await;
-                    process::exit(1);
-                }
-            }
+    let interface_ownership = match interface_ownership::establish(
+        &prns_handle,
+        &plan,
+        &interface_runtime,
+        &shared_instance_credentials,
+        visible_identity_hash,
+        network_identity_hash,
+        &blackhole_files,
+    )
+    .await
+    {
+        Ok(ownership) => ownership,
+        Err(error) => {
+            interface_ownership::report_join_error(&error);
+            observability.shutdown().await;
+            process::exit(1);
         }
-        SharedInstance::Disabled => {
-            tracing::info!(event = "standalone_node_started");
-            let constructed =
-                construct::construct_interfaces(&prns_handle, &plan, &interface_runtime).await;
-            startup.merge(constructed.startup);
-            bootstrap_attachments = constructed
-                .runtime
-                .for_lifecycle(ConfiguredInterfaceLifecycle::BootstrapOnly);
-            constructed_interfaces = constructed.attached;
-            owns_tables = true;
-        }
-    }
+    };
+    let startup = interface_ownership.startup();
 
     let mut management_destinations = Vec::new();
-    if owns_tables {
+    if interface_ownership.routing_tables().is_some() {
         if let Some(allowed) = plan.remote_management.allowed() {
             match remote_management::activate(&mut prns, visible_secret.clone(), allowed) {
                 Ok(destination) => {
@@ -378,7 +286,7 @@ pub(super) async fn run(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
     }
 
     let mut persistence = None;
-    if owns_tables {
+    if interface_ownership.routing_tables().is_some() {
         let mut restore_progress = observability.state_restore_progress();
         let vault = FileVault::new(&persist_dir);
         let mut restored_blackholes =
@@ -439,66 +347,73 @@ pub(super) async fn run(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
         ));
     }
 
-    let monitored_interfaces = interface_discovery::MonitoredInterfaces::new(
-        constructed_interfaces.iter().map(|interface| interface.id),
-    );
-    let interface_failure_watch = monitored_interfaces.subscribe();
-    let bootstrap_interfaces = if owns_tables {
-        interface_discovery::BootstrapInterfaces::prepare(
-            &plan,
-            interface_runtime.clone(),
-            bootstrap_attachments,
-            monitored_interfaces,
-        )
-    } else {
-        None
-    };
-    let discovery_task = if owns_tables {
-        match prepared_discovery.take() {
-            Some(discovery) => {
-                let observer = discovery.observer();
-                prns = prns.with_accepted_announce_observer(move |observation| {
-                    observer.observe(observation);
-                });
-                let clock = prns.clock();
-                Some(discovery.spawn(prns_handle.clone(), clock, bootstrap_interfaces))
-            }
-            None => None,
-        }
-    } else {
-        None
-    };
-    let discovery_publication_task = if owns_tables {
-        match prepared_discovery_publisher {
-            Some(publisher) => {
-                let clock = prns.clock();
-                match publisher.spawn(prns_handle.clone(), clock, constructed_interfaces) {
-                    Ok(task) => task,
-                    Err(error) => {
-                        tracing::error!(
-                            event = "interface_discovery_publisher_start_failed",
-                            error = %error,
-                        );
-                        None
-                    }
-                }
-            }
-            None => None,
-        }
-    } else {
-        None
-    };
     let management_announce_task =
         management_announces::spawn(prns_handle.clone(), management_destinations);
-    let blackhole_update_task = if owns_tables {
-        blackhole_exchange::spawn_updater(
-            prns_handle.clone(),
-            prns.clock(),
-            blackhole_files,
-            &plan.blackhole_exchange,
-        )
-    } else {
-        None
+    let (
+        interface_failure_watch,
+        discovery_task,
+        discovery_publication_task,
+        blackhole_update_task,
+    ) = match interface_ownership.into_routing_tables() {
+        Some(interface_ownership::RoutingTableOwnership {
+            configured_interfaces,
+            bootstrap_attachments,
+        }) => {
+            let monitored_interfaces = interface_discovery::MonitoredInterfaces::new(
+                configured_interfaces.iter().map(|interface| interface.id),
+            );
+            let interface_failure_watch = monitored_interfaces.subscribe();
+            let bootstrap_interfaces = interface_discovery::BootstrapInterfaces::prepare(
+                &plan,
+                interface_runtime.clone(),
+                bootstrap_attachments,
+                monitored_interfaces,
+            );
+            let discovery_task = match prepared_discovery.take() {
+                Some(discovery) => {
+                    let observer = discovery.observer();
+                    prns = prns.with_accepted_announce_observer(move |observation| {
+                        observer.observe(observation);
+                    });
+                    let clock = prns.clock();
+                    Some(discovery.spawn(prns_handle.clone(), clock, bootstrap_interfaces))
+                }
+                None => None,
+            };
+            let discovery_publication_task = match prepared_discovery_publisher {
+                Some(publisher) => {
+                    let clock = prns.clock();
+                    match publisher.spawn(prns_handle.clone(), clock, configured_interfaces) {
+                        Ok(task) => task,
+                        Err(error) => {
+                            tracing::error!(
+                                event = "interface_discovery_publisher_start_failed",
+                                error = %error,
+                            );
+                            None
+                        }
+                    }
+                }
+                None => None,
+            };
+            let blackhole_update_task = blackhole_exchange::spawn_updater(
+                prns_handle.clone(),
+                prns.clock(),
+                blackhole_files,
+                &plan.blackhole_exchange,
+            );
+            (
+                interface_failure_watch,
+                discovery_task,
+                discovery_publication_task,
+                blackhole_update_task,
+            )
+        }
+        None => {
+            let monitored_interfaces =
+                interface_discovery::MonitoredInterfaces::new(std::iter::empty());
+            (monitored_interfaces.subscribe(), None, None, None)
+        }
     };
     #[cfg(feature = "otlp")]
     let metrics_task = observability.metrics_reporter().map(|reporter| {
