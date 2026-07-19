@@ -778,6 +778,10 @@ fn interface_kind_name(kind: InterfaceKind) -> &'static str {
         InterfaceKind::WifiDirectPeer => "wifi_direct_peer",
         InterfaceKind::WifiAware => "wifi_aware",
         InterfaceKind::WifiAwarePeer => "wifi_aware_peer",
+        InterfaceKind::I2p => "i2p",
+        InterfaceKind::I2pPeer => "i2p_peer",
+        InterfaceKind::Weave => "weave",
+        InterfaceKind::WeavePeer => "weave_peer",
     }
 }
 
@@ -900,5 +904,13 @@ mod tests {
         for cause in RuntimeRouteRemoval::ALL {
             assert!(!route_removal_name(cause).is_empty());
         }
+    }
+
+    #[test]
+    fn i2p_and_weave_interfaces_have_stable_metric_names() {
+        assert_eq!(interface_kind_name(InterfaceKind::I2p), "i2p");
+        assert_eq!(interface_kind_name(InterfaceKind::I2pPeer), "i2p_peer");
+        assert_eq!(interface_kind_name(InterfaceKind::Weave), "weave");
+        assert_eq!(interface_kind_name(InterfaceKind::WeavePeer), "weave_peer");
     }
 }
