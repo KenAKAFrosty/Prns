@@ -402,6 +402,12 @@ where
                     NodeIntrospectionRequest::Route { destination, reply } => {
                         let _ = reply.send(engine.route_snapshot(destination, topology.view()));
                     }
+                    NodeIntrospectionRequest::DestinationIdentityHash { destination, reply } => {
+                        let identity = engine
+                            .destination_identity(&destination)
+                            .map(|entry| entry.identity);
+                        let _ = reply.send(identity);
+                    }
                 }
                 CommandEffect::UNCHANGED
             }

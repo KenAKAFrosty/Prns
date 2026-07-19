@@ -135,14 +135,18 @@ impl InboundDispatch {
                     source_interface: source,
                     bytes,
                 });
-                if let Some(packet_hash) = packet.packet_hash() {
+                let packet_hash = packet.packet_hash();
+                if let Some(packet_hash) = packet_hash {
                     retain_packet_phy(packet_phy_store, packet_hash, packet_phy);
                 }
                 if let Some(pool) = crypto_pool {
-                    if let Some((address, payload)) = packet.proof() {
+                    if let (Some(proof_packet_hash), Some((address, payload))) =
+                        (packet_hash, packet.proof())
+                    {
                         if let Some(deferred) = engine.settle_receipt_proof_deferred(
                             payload,
                             &DestinationHash::from_address(address),
+                            proof_packet_hash,
                             now,
                         ) {
                             let settlement = match deferred.ingest {

@@ -3,8 +3,8 @@
 use crate::crypto::{ed25519_verify, Ed25519Signature};
 use crate::engine::LinkClosedReason;
 use crate::engine::{
-    CommandId, CommandOutcome, PacketReceiptDelivered, SendToChannel, SendToChannelFailure,
-    SendToChannelRejection, MAX_SEND_TO_CHANNEL_BODY_LEN,
+    CommandId, CommandOutcome, DeliveryEvidence, DeliveryProof, PacketReceiptDelivered,
+    SendToChannel, SendToChannelFailure, SendToChannelRejection, MAX_SEND_TO_CHANNEL_BODY_LEN,
 };
 use crate::engine::{
     Directive, EngineReaction, EngineState, InstantMillis, Journaled, Settlement, WakeSchedules,
@@ -189,6 +189,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         link_id: &LinkId,
         payload: &[u8],
+        proof: DeliveryProof,
         arrived_at: InstantMillis,
     ) -> Option<(CommandId, PacketReceiptDelivered)> {
         if payload.len() != EXPLICIT_PROOF_PAYLOAD_LEN {
@@ -236,6 +237,7 @@ impl<S: StorageLayout> EngineState<S> {
             command_id,
             PacketReceiptDelivered {
                 rtt: RttMillis::measured_between(sent_at, arrived_at),
+                evidence: DeliveryEvidence::Proof(proof),
             },
         ))
     }
@@ -675,6 +677,7 @@ mod tests {
             std::vec![(MessageType(7), b"hello channel".to_vec())]
         );
         let ack = ack.expect("the responder acks the channel packet");
+        let ack_hash = PacketHash::of_wire_packet(&ack).unwrap();
 
         let mut settled = Vec::new();
         feed_packet(
@@ -690,7 +693,8 @@ mod tests {
             [(
                 CommandId(42),
                 Settlement::SendToChannel(Ok(PacketReceiptDelivered {
-                    rtt: RttMillis::new(200)
+                    rtt: RttMillis::new(200),
+                    evidence: DeliveryEvidence::Proof(DeliveryProof::Explicit(ack_hash)),
                 }))
             )],
         );

@@ -4,15 +4,22 @@ use super::*;
 use crate::engine::PacketReceiptDelivered;
 use crate::routing::links::resources::ResourceHash;
 
+fn delivered(ms: u64) -> PacketReceiptDelivered {
+    PacketReceiptDelivered {
+        rtt: RttMillis::new(ms),
+        evidence: crate::engine::DeliveryEvidence::Proof(crate::engine::DeliveryProof::Implicit(
+            crate::routing::dedup::PacketHash::new([0; 32]),
+        )),
+    }
+}
+
 #[test]
 fn settle_fires_the_awaited_completion_and_suppresses_the_event() {
     let mut delivery = JournalDelivery::default();
     let (completion, mut settled) = oneshot::channel();
     delivery.register_completion(CommandId(7), completion);
 
-    let settlement = Settlement::SendSinglePacket(Ok(PacketReceiptDelivered {
-        rtt: RttMillis::new(9),
-    }));
+    let settlement = Settlement::SendSinglePacket(Ok(delivered(9)));
     let forwarded = delivery.route(Journaled::CommandSettled {
         id: CommandId(7),
         settlement: settlement.clone(),
@@ -39,9 +46,7 @@ fn settle_forwards_a_settlement_nobody_awaits() {
     let mut delivery = JournalDelivery::default();
     let forwarded = delivery.route(Journaled::CommandSettled {
         id: CommandId(3),
-        settlement: Settlement::SendSinglePacket(Ok(PacketReceiptDelivered {
-            rtt: RttMillis::new(1),
-        })),
+        settlement: Settlement::SendSinglePacket(Ok(delivered(1))),
     });
     assert!(
         forwarded.is_some(),

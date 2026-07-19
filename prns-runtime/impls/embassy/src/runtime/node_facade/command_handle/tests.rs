@@ -9,6 +9,9 @@ type Pool<const N: usize> = CompletionPool<CriticalSectionRawMutex, N>;
 fn delivered(ms: u64) -> Settlement {
     Settlement::SendSinglePacket(Ok(PacketReceiptDelivered {
         rtt: RttMillis::new(ms),
+        evidence: crate::engine::DeliveryEvidence::Proof(crate::engine::DeliveryProof::Implicit(
+            crate::routing::dedup::PacketHash::new([0; 32]),
+        )),
     }))
 }
 

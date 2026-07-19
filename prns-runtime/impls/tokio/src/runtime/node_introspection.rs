@@ -3,6 +3,7 @@ use std::vec::Vec;
 
 use tokio::sync::oneshot;
 
+use crate::identity::IdentityHash;
 use crate::wire::DestinationHash;
 
 pub use crate::engine::RouteSnapshot;
@@ -32,5 +33,9 @@ pub enum NodeIntrospectionRequest {
     Route {
         destination: DestinationHash,
         reply: oneshot::Sender<Option<RouteSnapshot>>,
+    },
+    DestinationIdentityHash {
+        destination: DestinationHash,
+        reply: oneshot::Sender<Option<IdentityHash>>,
     },
 }

@@ -11,7 +11,7 @@ pub use election::{
     SharedInstanceTransport,
 };
 pub use rpc_compat::{
-    SharedInstanceBlackholeOutcome, SharedInstanceCredentials, SharedInstanceRpcClient,
-    SharedInstanceRpcClientError, SharedInstanceRpcClientPhase, SharedInstanceRpcEndpoint,
-    SharedInstanceUnblackholeOutcome,
+    SharedInstanceBlackholeOutcome, SharedInstanceCredentials, SharedInstancePacketPhyStats,
+    SharedInstanceRpcClient, SharedInstanceRpcClientError, SharedInstanceRpcClientPhase,
+    SharedInstanceRpcEndpoint, SharedInstanceUnblackholeOutcome,
 };

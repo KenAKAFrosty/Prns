@@ -9,7 +9,7 @@ use super::outcome::{
     NON_TRANSPORTED_DATA_MAX_RECEIVED_HOPS,
 };
 use super::upstream_delivery::UpstreamDeliveryOutcome;
-use crate::engine::{EngineState, InstantMillis};
+use crate::engine::{DeliveryProof, EngineState, InstantMillis};
 use crate::interfaces::{AttachedInterfaces, InterfaceCommonPolicy, InterfaceId, InterfaceKind};
 use crate::routing::announce::held::HoldOutcome;
 use crate::routing::announce::AnnounceArrival;
@@ -301,7 +301,7 @@ impl<S: StorageLayout> EngineState<S> {
             }
 
             Ingress::Proof {
-                packet_hash: _,
+                packet_hash,
                 payload,
                 address,
                 context,
@@ -372,16 +372,19 @@ impl<S: StorageLayout> EngineState<S> {
                         fire_on: reverse.received_interface,
                     });
                 }
-                if let Some((id, delivered)) =
-                    self.settle_channel_ack(&link_id, payload, arrived_at)
-                {
+                if let Some((id, delivered)) = self.settle_channel_ack(
+                    &link_id,
+                    payload,
+                    DeliveryProof::Explicit(packet_hash),
+                    arrived_at,
+                ) {
                     self.links.note_inbound(&link_id, arrived_at);
                     return IngestPacketOutcome::Proof(ProofIngest::SendToChannelDelivered {
                         id,
                         delivered,
                     });
                 }
-                let outcome = self.settle_receipt_proof(payload, arrived_at);
+                let outcome = self.settle_receipt_proof(payload, packet_hash, arrived_at);
                 if matches!(outcome, ProofIngest::SendToLinkDelivered { .. }) {
                     self.links.note_inbound(&link_id, arrived_at);
                 }

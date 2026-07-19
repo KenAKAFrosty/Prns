@@ -22,6 +22,15 @@ fn chunk(bytes: &[u8], eof: bool, compressed: bool) -> StreamInbound {
     }
 }
 
+fn delivered() -> PacketReceiptDelivered {
+    PacketReceiptDelivered {
+        rtt: RttMillis::new(0),
+        evidence: crate::engine::DeliveryEvidence::Proof(crate::engine::DeliveryProof::Implicit(
+            crate::routing::dedup::PacketHash::new([0; 32]),
+        )),
+    }
+}
+
 #[tokio::test]
 async fn reader_reassembles_chunks_in_order_and_stops_at_eof() {
     let (sink, inbound) = tokio::sync::mpsc::unbounded_channel();
@@ -133,9 +142,7 @@ async fn writer_frames_each_write_as_a_stream_data_send_and_closes_with_eof() {
         assert_eq!(frame.header.stream_id, stream_id);
         frames.push((frame.header.eof, frame.payload.to_vec()));
         completion
-            .send(Settlement::SendToChannel(Ok(PacketReceiptDelivered {
-                rtt: RttMillis::new(0),
-            })))
+            .send(Settlement::SendToChannel(Ok(delivered())))
             .unwrap();
     }
 
@@ -182,9 +189,7 @@ async fn writer_packs_a_compressible_write_into_one_compressed_message() {
         "the compressed message inflates back to the whole write",
     );
     completion
-        .send(Settlement::SendToChannel(Ok(PacketReceiptDelivered {
-            rtt: RttMillis::new(0),
-        })))
+        .send(Settlement::SendToChannel(Ok(delivered())))
         .unwrap();
     write.await.unwrap();
 }
@@ -232,9 +237,7 @@ async fn a_mixed_stream_round_trips_writer_to_reader() {
         })
         .unwrap();
         completion
-            .send(Settlement::SendToChannel(Ok(PacketReceiptDelivered {
-                rtt: RttMillis::new(0),
-            })))
+            .send(Settlement::SendToChannel(Ok(delivered())))
             .unwrap();
         if eof {
             break;
@@ -285,9 +288,7 @@ async fn writer_retries_a_chunk_past_a_full_send_window() {
     let frame = parse(&send.body).unwrap();
     assert_eq!(frame.payload, b"x");
     completion
-        .send(Settlement::SendToChannel(Ok(PacketReceiptDelivered {
-            rtt: RttMillis::new(0),
-        })))
+        .send(Settlement::SendToChannel(Ok(delivered())))
         .unwrap();
 
     write.await.unwrap();
