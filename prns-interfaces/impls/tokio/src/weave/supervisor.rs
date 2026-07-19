@@ -15,7 +15,7 @@ use prns_core::interfaces::{
 };
 use prns_runtime::runtime::{AttachedInterface, Fleet, InterfaceSupervisor};
 
-use crate::reconnect::ReconnectDelay;
+use crate::reconnect::{ReconnectPolicy, ReconnectSchedule};
 
 use super::member::{OutboundPacket, WeavePeer, DEVICE_OUTBOUND_DEPTH, PEER_INBOUND_DEPTH};
 use super::status::{WeaveInterfaceStatus, WeaveRuntimeIssue};
@@ -29,7 +29,7 @@ struct ManagedPeer {
 
 pub struct WeaveInterface<Open> {
     open: Open,
-    reconnect_delay: ReconnectDelay,
+    reconnect_policy: ReconnectPolicy,
     policy: EffectiveInterfacePolicy,
     channel_tag: Vec<u8>,
     identity: WeaveHostIdentity,
@@ -39,7 +39,7 @@ pub struct WeaveInterface<Open> {
 impl<Open> WeaveInterface<Open> {
     pub fn with_generated_identity(
         open: Open,
-        reconnect_delay: ReconnectDelay,
+        reconnect_policy: ReconnectPolicy,
         policy: EffectiveInterfacePolicy,
         channel_tag: &[u8],
     ) -> Result<Self, getrandom::Error> {
@@ -47,7 +47,7 @@ impl<Open> WeaveInterface<Open> {
         getrandom::getrandom(&mut secret)?;
         Ok(Self::with_identity(
             open,
-            reconnect_delay,
+            reconnect_policy,
             policy,
             channel_tag,
             WeaveHostIdentity::from_signing_secret(secret),
@@ -56,7 +56,7 @@ impl<Open> WeaveInterface<Open> {
 
     pub fn with_identity(
         open: Open,
-        reconnect_delay: ReconnectDelay,
+        reconnect_policy: ReconnectPolicy,
         policy: EffectiveInterfacePolicy,
         channel_tag: &[u8],
         identity: WeaveHostIdentity,
@@ -65,7 +65,7 @@ impl<Open> WeaveInterface<Open> {
         let id = InterfaceId::from_channel_tag(InterfaceKind::Weave, &channel_tag);
         Self {
             open,
-            reconnect_delay,
+            reconnect_policy,
             policy,
             channel_tag,
             identity,
@@ -95,6 +95,7 @@ where
     }
 
     async fn run(mut self, fleet: Fleet) {
+        let mut reconnect = self.reconnect_policy.schedule();
         loop {
             self.status.wait_until_enabled().await;
             self.status.begin_connection_attempt();
@@ -107,12 +108,13 @@ where
                         "Weave interface {:?} could not open: {error}",
                         self.id().as_bytes()
                     );
-                    if !wait_for_retry(&self.status, self.reconnect_delay).await {
+                    if !wait_for_retry(&self.status, &fleet, &mut reconnect).await {
                         continue;
                     }
                     continue;
                 }
             };
+            let mut connected_at = None;
             let result = serve_connection(
                 stream,
                 &fleet,
@@ -120,8 +122,12 @@ where
                 &self.identity,
                 self.policy,
                 &self.channel_tag,
+                &mut connected_at,
             )
             .await;
+            if let Some(connected_at) = connected_at {
+                reconnect.record_connection_lifetime(connected_at.elapsed());
+            }
             self.status.complete_initial_attempt();
             self.status.set_connected(false);
             let issue = match result {
@@ -142,7 +148,7 @@ where
                 Ok(()) => WeaveRuntimeIssue::None,
             };
             self.status.set_issue(issue);
-            let _ = wait_for_retry(&self.status, self.reconnect_delay).await;
+            let _ = wait_for_retry(&self.status, &fleet, &mut reconnect).await;
         }
     }
 }
@@ -156,9 +162,14 @@ impl<Open> prns_core::interfaces::ReportsStatus for WeaveInterface<Open> {
     }
 }
 
-async fn wait_for_retry(status: &WeaveInterfaceStatus, delay: ReconnectDelay) -> bool {
+async fn wait_for_retry(
+    status: &WeaveInterfaceStatus,
+    fleet: &Fleet,
+    reconnect: &mut ReconnectSchedule,
+) -> bool {
+    let delay = reconnect.next_delay(|bytes| fleet.fill_entropy(bytes));
     tokio::select! {
-        () = tokio::time::sleep(delay.duration()) => true,
+        () = tokio::time::sleep(delay) => true,
         () = status.wait_until_disabled() => false,
     }
 }
@@ -170,6 +181,7 @@ async fn serve_connection<Stream>(
     identity: &WeaveHostIdentity,
     policy: EffectiveInterfacePolicy,
     parent_channel_tag: &[u8],
+    connected_at: &mut Option<tokio::time::Instant>,
 ) -> io::Result<()>
 where
     Stream: AsyncRead + AsyncWrite + Unpin,
@@ -247,6 +259,7 @@ where
                             stream.write_all(&framed[..written]).await?;
                         }
                         DeviceEvent::Connected if remote_switch.is_some() => {
+                            *connected_at = Some(tokio::time::Instant::now());
                             status.set_connected(true);
                             status.set_issue(WeaveRuntimeIssue::None);
                             status.complete_initial_attempt();

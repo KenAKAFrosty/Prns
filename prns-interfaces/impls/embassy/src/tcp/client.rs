@@ -9,6 +9,7 @@
 //! reactor lanes draw. The reactor clamps the declared MTU to those lanes regardless, so a link can
 //! never negotiate past the buffers a frame must land in.
 
+use ::core::time::Duration as CoreDuration;
 use embassy_futures::select::{select3, Either3};
 use embassy_net::tcp::TcpSocket;
 use embassy_net::{IpEndpoint, Stack};
@@ -23,13 +24,11 @@ use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, I
 use prns_runtime::reactor::airtime::{frame_airtime_us, AirtimeLedger};
 use prns_runtime::reactor::driver::EmbassyInterfaceStatus;
 use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam, EMBEDDED_MAX_LINK_MTU};
+use prns_runtime::reactor::reconnect::ReconnectPolicy;
 use prns_runtime::reactor::throughput::ThroughputLedger;
 
 /// How long one connect attempt gets (`TCPClientInterface.INITIAL_CONNECT_TIMEOUT`).
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
-/// The default wait between a dropped connection and the next attempt
-/// (`TCPClientInterface.RECONNECT_WAIT`); [`TcpClient::new`] takes the live value.
-pub const RECONNECT_WAIT: Duration = Duration::from_secs(5);
 /// The socket discipline, embassy-net's nearest equivalent to the reference's keepalive: a
 /// connection idle past [`SOCKET_TIMEOUT`] is dropped so the reconnect loop heals it, and
 /// [`KEEP_ALIVE`] probes keep a quiet-but-live link from tripping that timeout.
@@ -38,19 +37,6 @@ pub const KEEP_ALIVE: Duration = Duration::from_secs(5);
 /// How often a dormant or serving driver re-checks its enabled gate, so a "Turn Off"/"Turn On" from
 /// the UI takes effect within a beat rather than waiting on traffic or the reconnect timer.
 pub const ENABLED_POLL: Duration = Duration::from_millis(250);
-
-#[derive(Clone, Copy)]
-struct ReconnectDelay(Duration);
-
-impl ReconnectDelay {
-    const fn new(duration: Duration) -> Self {
-        Self(duration)
-    }
-
-    const fn duration(self) -> Duration {
-        self.0
-    }
-}
 
 /// The initiating end of an RNS TCP pair on embassy. Owns its connection lifecycle: connect to
 /// `target`, serve until the stream drops, wait for the reconnect delay, connect again. The socket's smoltcp
@@ -65,7 +51,7 @@ pub struct TcpClient<'a> {
     target: IpEndpoint,
     tag: &'a [u8],
     bitrate: BitrateBps,
-    reconnect_delay: ReconnectDelay,
+    reconnect_policy: ReconnectPolicy,
     rx_buffer: &'a mut [u8],
     tx_buffer: &'a mut [u8],
     status: &'a EmbassyInterfaceStatus,
@@ -89,7 +75,7 @@ impl<'a> TcpClient<'a> {
         target: IpEndpoint,
         tag: &'a [u8],
         bitrate: BitrateBps,
-        reconnect_delay: Duration,
+        reconnect_policy: ReconnectPolicy,
         rx_buffer: &'a mut [u8],
         tx_buffer: &'a mut [u8],
         status: &'a EmbassyInterfaceStatus,
@@ -100,7 +86,7 @@ impl<'a> TcpClient<'a> {
             target,
             tag,
             bitrate,
-            reconnect_delay: ReconnectDelay::new(reconnect_delay),
+            reconnect_policy,
             rx_buffer,
             tx_buffer,
             status,
@@ -134,7 +120,7 @@ impl Interface for TcpClient<'_> {
             target,
             tag: _,
             bitrate,
-            reconnect_delay,
+            reconnect_policy,
             rx_buffer,
             tx_buffer,
             status,
@@ -145,6 +131,7 @@ impl Interface for TcpClient<'_> {
         let mut airtime = AirtimeLedger::new();
         let mut throughput = ThroughputLedger::new();
         let started = Instant::now();
+        let mut reconnect = reconnect_policy.schedule();
 
         loop {
             if !status.is_enabled() {
@@ -158,6 +145,7 @@ impl Interface for TcpClient<'_> {
             socket.set_timeout(Some(SOCKET_TIMEOUT));
             socket.set_keep_alive(Some(KEEP_ALIVE));
             if let Ok(Ok(())) = with_timeout(CONNECT_TIMEOUT, socket.connect(target)).await {
+                let connected_at = Instant::now();
                 status.set_connection(ConnectionState::Connected);
                 serve(
                     &mut socket,
@@ -172,13 +160,17 @@ impl Interface for TcpClient<'_> {
                     started,
                 )
                 .await;
+                reconnect.record_connection_lifetime(CoreDuration::from_millis(
+                    connected_at.elapsed().as_millis(),
+                ));
             }
             socket.abort();
             // Skip the reconnect wait when the driver was just turned off, so the card shows "Off"
             // at once rather than lingering Disconnected for the reconnect interval.
             if status.is_enabled() {
                 status.set_connection(ConnectionState::Disconnected);
-                Timer::after(reconnect_delay.duration()).await;
+                let reconnect_delay = reconnect.next_delay(|bytes| seam.fill_entropy(bytes));
+                Timer::after(Duration::from_millis(reconnect_delay.as_millis() as u64)).await;
             }
         }
     }

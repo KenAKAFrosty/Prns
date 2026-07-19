@@ -105,7 +105,7 @@ pub(super) async fn chain_node(upstream: &str) {
         RELAY_SECOND_INTERFACE_ID,
         upstream.to_string(),
         tcp_core::TCP_BITRATE_ESTIMATE,
-        Duration::from_millis(100),
+        ReconnectPolicy::STANDARD,
     );
     tokio::spawn(downstream.run(seam_down));
     tokio::spawn(up.run(seam_up));

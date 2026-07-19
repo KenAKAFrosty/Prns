@@ -274,6 +274,7 @@ impl PrnsNodeHandle {
             notify_tx: self.notify_tx.clone(),
             interfaces: self.interfaces.clone(),
             ifac,
+            entropy: self.entropy,
         };
         let build: Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()>>> + Send> =
             Box::new(move || Box::pin(supervisor.run(fleet)));
@@ -451,9 +452,14 @@ pub struct Fleet {
     notify_tx: UnboundedSender<InterfaceId>,
     interfaces: Arc<Mutex<HashMap<InterfaceId, RegisteredInterface>>>,
     ifac: Option<RuntimeIfac>,
+    entropy: crate::reactor::driver::TokioEntropy,
 }
 
 impl Fleet {
+    pub fn fill_entropy(&self, bytes: &mut [u8]) {
+        self.entropy.fill(bytes);
+    }
+
     /// Stand up a fleet member under this supervisor — identical to [`PrnsNodeHandle::add_interface`] except the member is recorded as this supervisor's, so a supervisor teardown takes it with it.
     pub fn add<I>(&self, interface: I) -> AttachedInterface
     where
@@ -500,6 +506,7 @@ impl Fleet {
             notify_tx,
             interfaces: Arc::new(Mutex::new(HashMap::new())),
             ifac: None,
+            entropy: crate::reactor::driver::TokioEntropy,
         };
         let tail = DetachedFleet {
             _commands: commands_rx,

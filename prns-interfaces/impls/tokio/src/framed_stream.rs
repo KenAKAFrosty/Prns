@@ -463,6 +463,10 @@ mod tests {
     }
 
     impl InterfaceSeam for LaneSeam {
+        fn fill_entropy(&mut self, bytes: &mut [u8]) {
+            bytes.fill(0);
+        }
+
         async fn inbound_sink(&mut self) -> &mut dyn FrameSink {
             &mut self.inbound
         }

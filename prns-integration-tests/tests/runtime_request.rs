@@ -14,6 +14,7 @@ use personal_rns::engine::{
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::BitrateBps;
+use personal_rns::reactor::reconnect::ReconnectPolicy;
 use personal_rns::routes;
 use personal_rns::routing::request_handlers::RequestPathHash;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
@@ -122,7 +123,7 @@ async fn a_request_router_answers_a_live_request_over_tcp() {
         }
     });
 
-    let client = TcpClientInterface::new(addr, BITRATE, Duration::from_millis(100));
+    let client = TcpClientInterface::new(addr, BITRATE, ReconnectPolicy::STANDARD);
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_b = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
@@ -276,7 +277,7 @@ async fn request_auto_negotiates_both_rungs_over_tcp() {
 
     // The initiator's event lane carries only the announce it needs to find the responder;
     // `establish_link` and `request` return their own results (the demux suppresses them here).
-    let client = TcpClientInterface::new(addr, BITRATE, Duration::from_millis(100));
+    let client = TcpClientInterface::new(addr, BITRATE, ReconnectPolicy::STANDARD);
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_b = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
@@ -407,7 +408,7 @@ async fn a_split_response_answers_a_small_request_over_tcp() {
         }
     });
 
-    let client = TcpClientInterface::new(addr, BITRATE, Duration::from_millis(100));
+    let client = TcpClientInterface::new(addr, BITRATE, ReconnectPolicy::STANDARD);
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_b = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,

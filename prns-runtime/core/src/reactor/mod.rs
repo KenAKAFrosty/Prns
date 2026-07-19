@@ -13,6 +13,7 @@ pub mod duty_gate;
 pub mod grant;
 pub mod interface_seam;
 pub mod kernel;
+pub mod reconnect;
 pub mod throughput;
 pub mod timers;
 

@@ -12,6 +12,7 @@ pub struct EmbassyInterfaceSeam<'a, M: RawMutex, const NOTIFY: usize, const SLOT
     inbound: EmbassyGrantProducer<'a, M, SLOT>,
     notify: Sender<'a, M, InterfaceId, NOTIFY>,
     outbound: EmbassyGrantConsumer<'a, M, SLOT>,
+    fill_entropy: fn(&mut [u8]),
 }
 
 impl<'a, M: RawMutex, const NOTIFY: usize, const SLOT: usize>
@@ -23,12 +24,14 @@ impl<'a, M: RawMutex, const NOTIFY: usize, const SLOT: usize>
         inbound: EmbassyGrantProducer<'a, M, SLOT>,
         notify: Sender<'a, M, InterfaceId, NOTIFY>,
         outbound: EmbassyGrantConsumer<'a, M, SLOT>,
+        fill_entropy: fn(&mut [u8]),
     ) -> Self {
         Self {
             id,
             inbound,
             notify,
             outbound,
+            fill_entropy,
         }
     }
 }
@@ -36,6 +39,10 @@ impl<'a, M: RawMutex, const NOTIFY: usize, const SLOT: usize>
 impl<M: RawMutex, const NOTIFY: usize, const SLOT: usize> InterfaceSeam
     for EmbassyInterfaceSeam<'_, M, NOTIFY, SLOT>
 {
+    fn fill_entropy(&mut self, bytes: &mut [u8]) {
+        (self.fill_entropy)(bytes);
+    }
+
     async fn inbound_sink(&mut self) -> &mut dyn FrameSink {
         let slot = self.inbound.grant().await;
         slot.target = FrameTarget::Direct(self.id);

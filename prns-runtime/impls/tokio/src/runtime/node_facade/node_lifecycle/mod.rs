@@ -118,6 +118,7 @@ where
             interfaces: Arc::new(Mutex::new(HashMap::new())),
             store: InterfaceStore::new(),
             resource_admission: super::resource_admission::ResourceAdmissionRegistry::default(),
+            entropy: crate::reactor::driver::TokioEntropy,
         };
         let (node, interfaces) = assemble_node(build_recipe(handle.clone()));
         interfaces.attach(&handle);

@@ -11,7 +11,8 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpListener;
 
 use crate::framed_stream;
-use crate::tcp::tokio_socket::{tune, RECONNECT_WAIT};
+use crate::reconnect::ReconnectPolicy;
+use crate::tcp::tokio_socket::tune;
 use prns_core::interfaces::backbone::core;
 use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{
@@ -174,9 +175,12 @@ impl InterfaceSupervisor for BackboneServer {
     }
 
     async fn run(self, fleet: Fleet) {
+        let policy = ReconnectPolicy::STANDARD;
+        let mut schedule = policy.schedule();
         loop {
             match self.listener.accept().await {
                 Ok((stream, peer)) => {
+                    schedule = policy.schedule();
                     tune(&stream);
                     let _ = fleet.add(BackboneServerConnection::with_policy(
                         peer.to_string().into_bytes(),
@@ -184,7 +188,10 @@ impl InterfaceSupervisor for BackboneServer {
                         self.policy,
                     ));
                 }
-                Err(_) => tokio::time::sleep(RECONNECT_WAIT).await,
+                Err(_) => {
+                    let delay = schedule.next_delay(|bytes| fleet.fill_entropy(bytes));
+                    tokio::time::sleep(delay).await;
+                }
             }
         }
     }
@@ -226,6 +233,10 @@ mod tests {
     use prns_core::interfaces::FrameSink;
 
     impl InterfaceSeam for MockSeam {
+        fn fill_entropy(&mut self, bytes: &mut [u8]) {
+            bytes.fill(0);
+        }
+
         async fn inbound_sink(&mut self) -> &mut dyn FrameSink {
             &mut self.sink
         }

@@ -58,6 +58,7 @@ pub struct PrnsNodeHandle {
     interfaces: Arc<Mutex<HashMap<InterfaceId, RegisteredInterface>>>,
     store: InterfaceStore,
     resource_admission: resource_admission::ResourceAdmissionRegistry,
+    entropy: crate::reactor::driver::TokioEntropy,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,7 +81,12 @@ impl PrnsNodeHandle {
             interfaces: Arc::new(Mutex::new(HashMap::new())),
             store: InterfaceStore::new(),
             resource_admission: resource_admission::ResourceAdmissionRegistry::default(),
+            entropy: crate::reactor::driver::TokioEntropy,
         }
+    }
+
+    pub fn fill_entropy(&self, bytes: &mut [u8]) {
+        self.entropy.fill(bytes);
     }
 
     fn mint(&self) -> CommandId {

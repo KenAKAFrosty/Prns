@@ -6,7 +6,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::framed_stream::WireMeters;
 use crate::kiss_deadline::{elapsed_millis, instant_for, wait_for_deadline};
-use crate::reconnect::ReconnectDelay;
+use crate::reconnect::ReconnectPolicy;
 use prns_core::engine::InstantMillis;
 use prns_core::interfaces::kiss::transmission_control::{
     KissTransmissionControl, ReadyCommandFlowControl, StationIdentification, Transmission,
@@ -85,7 +85,7 @@ impl RNodeBuffers {
 pub struct RNodeInterface<Open> {
     id: InterfaceId,
     open: Open,
-    reconnect_delay: ReconnectDelay,
+    reconnect_policy: ReconnectPolicy,
     reset_delay: RNodeResetDelay,
     detect_timeout: RNodeDetectTimeout,
     keepalive: RNodeKeepalive,
@@ -115,13 +115,13 @@ impl<Open> RNodeInterface<Open> {
     #[must_use]
     pub fn new(
         open: Open,
-        reconnect_delay: ReconnectDelay,
+        reconnect_policy: ReconnectPolicy,
         radio: RadioConfig,
         channel_tag: &[u8],
     ) -> Self {
         Self::with_settings(
             open,
-            reconnect_delay,
+            reconnect_policy,
             DEFAULT_RNODE_RESET_DELAY,
             radio,
             channel_tag,
@@ -131,14 +131,14 @@ impl<Open> RNodeInterface<Open> {
     #[must_use]
     pub fn new_with_policy(
         open: Open,
-        reconnect_delay: ReconnectDelay,
+        reconnect_policy: ReconnectPolicy,
         radio: RadioConfig,
         policy: EffectiveInterfacePolicy,
         channel_tag: &[u8],
     ) -> Self {
         Self::with_settings_and_policy(
             open,
-            reconnect_delay,
+            reconnect_policy,
             DEFAULT_RNODE_RESET_DELAY,
             radio,
             policy,
@@ -151,7 +151,7 @@ impl<Open> RNodeInterface<Open> {
     #[must_use]
     pub fn with_settings(
         open: Open,
-        reconnect_delay: ReconnectDelay,
+        reconnect_policy: ReconnectPolicy,
         reset_delay: RNodeResetDelay,
         radio: RadioConfig,
         channel_tag: &[u8],
@@ -159,7 +159,7 @@ impl<Open> RNodeInterface<Open> {
         let bitrate = BitrateBps::guess(u64::from(radio.nominal_bitrate_bps()));
         Self::with_settings_and_policy(
             open,
-            reconnect_delay,
+            reconnect_policy,
             reset_delay,
             radio,
             core::policy_for_bitrate(bitrate),
@@ -170,7 +170,7 @@ impl<Open> RNodeInterface<Open> {
     #[must_use]
     pub fn with_settings_and_policy(
         open: Open,
-        reconnect_delay: ReconnectDelay,
+        reconnect_policy: ReconnectPolicy,
         reset_delay: RNodeResetDelay,
         radio: RadioConfig,
         policy: EffectiveInterfacePolicy,
@@ -178,7 +178,7 @@ impl<Open> RNodeInterface<Open> {
     ) -> Self {
         Self::with_runtime_settings(
             open,
-            reconnect_delay,
+            reconnect_policy,
             RNodeSettings {
                 reset_delay,
                 detect_timeout: DEFAULT_RNODE_DETECT_TIMEOUT,
@@ -195,7 +195,7 @@ impl<Open> RNodeInterface<Open> {
     #[must_use]
     pub fn with_runtime_settings(
         open: Open,
-        reconnect_delay: ReconnectDelay,
+        reconnect_policy: ReconnectPolicy,
         settings: RNodeSettings<'_>,
     ) -> Self {
         let channel_tag = settings.channel_tag.to_vec();
@@ -203,7 +203,7 @@ impl<Open> RNodeInterface<Open> {
         Self {
             id,
             open,
-            reconnect_delay,
+            reconnect_policy,
             reset_delay: settings.reset_delay,
             detect_timeout: settings.detect_timeout,
             keepalive: settings.keepalive,
@@ -507,17 +507,19 @@ where
         // The decoder and buffers are heap-held and reused across reconnects — no megabyte of buffer
         // rides the stack, and a device that never answers allocates these exactly once.
         let mut buffers = RNodeBuffers::new();
+        let mut reconnect = self.reconnect_policy.schedule();
         loop {
             self.status.set_connection(ConnectionState::Reconnecting);
             let mut stream = match (self.open)().await {
                 Ok(stream) => stream,
                 Err(error) => {
+                    let reconnect_delay = reconnect.next_delay(|bytes| seam.fill_entropy(bytes));
                     crate::diagnostic_log::warn!(
                         "RNode interface {:?} could not open: {error}; retrying in {} seconds",
                         self.id.as_bytes(),
-                        self.reconnect_delay.duration().as_secs_f64(),
+                        reconnect_delay.as_secs_f64(),
                     );
-                    tokio::time::sleep(self.reconnect_delay.duration()).await;
+                    tokio::time::sleep(reconnect_delay).await;
                     continue;
                 }
             };
@@ -533,14 +535,16 @@ where
             )
             .await
             {
+                let reconnect_delay = reconnect.next_delay(|bytes| seam.fill_entropy(bytes));
                 crate::diagnostic_log::warn!(
                     "RNode interface {:?} bring-up failed: {error}; retrying in {} seconds",
                     self.id.as_bytes(),
-                    self.reconnect_delay.duration().as_secs_f64(),
+                    reconnect_delay.as_secs_f64(),
                 );
-                tokio::time::sleep(self.reconnect_delay.duration()).await;
+                tokio::time::sleep(reconnect_delay).await;
                 continue;
             }
+            let connected_at = tokio::time::Instant::now();
             self.status.set_connection(ConnectionState::Connected);
             serve_rnode(
                 &mut stream,
@@ -559,12 +563,14 @@ where
             )
             .await;
             self.status.set_connection(ConnectionState::Reconnecting);
+            reconnect.record_connection_lifetime(connected_at.elapsed());
+            let reconnect_delay = reconnect.next_delay(|bytes| seam.fill_entropy(bytes));
             crate::diagnostic_log::warn!(
                 "RNode interface {:?} connection closed; retrying in {} seconds",
                 self.id.as_bytes(),
-                self.reconnect_delay.duration().as_secs_f64(),
+                reconnect_delay.as_secs_f64(),
             );
-            tokio::time::sleep(self.reconnect_delay.duration()).await;
+            tokio::time::sleep(reconnect_delay).await;
         }
     }
 }
@@ -606,6 +612,10 @@ mod tests {
     use prns_core::interfaces::FrameSink;
 
     impl InterfaceSeam for MockSeam {
+        fn fill_entropy(&mut self, bytes: &mut [u8]) {
+            bytes.fill(0);
+        }
+
         async fn inbound_sink(&mut self) -> &mut dyn FrameSink {
             &mut self.sink
         }
@@ -740,7 +750,7 @@ mod tests {
         // settle = ZERO so the test does not wait the real two-second RNode reset delay.
         let interface = RNodeInterface::with_settings(
             open,
-            ReconnectDelay::new(Duration::from_millis(10)),
+            ReconnectPolicy::STANDARD,
             RNodeResetDelay::new(Duration::ZERO),
             radio,
             b"test-rnode",
@@ -856,7 +866,7 @@ mod tests {
         .expect("valid station identification");
         let interface = RNodeInterface::with_runtime_settings(
             open,
-            ReconnectDelay::new(Duration::from_millis(10)),
+            ReconnectPolicy::STANDARD,
             RNodeSettings {
                 reset_delay: RNodeResetDelay::new(Duration::ZERO),
                 detect_timeout: DEFAULT_RNODE_DETECT_TIMEOUT,
@@ -921,7 +931,7 @@ mod tests {
         let radio = sample_radio();
         let interface = RNodeInterface::with_settings(
             open,
-            ReconnectDelay::new(Duration::from_millis(10)),
+            ReconnectPolicy::STANDARD,
             RNodeResetDelay::new(Duration::ZERO),
             radio,
             b"test-rnode",
@@ -978,7 +988,7 @@ mod tests {
         };
         let interface = RNodeInterface::with_settings(
             open,
-            ReconnectDelay::new(Duration::from_secs(1)),
+            ReconnectPolicy::STANDARD,
             RNodeResetDelay::new(Duration::ZERO),
             sample_radio(),
             b"failing-rnode",

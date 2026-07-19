@@ -14,6 +14,8 @@ pub trait InterfaceSeam {
         InterfaceOriginKind::Configured
     }
 
+    fn fill_entropy(&mut self, bytes: &mut [u8]);
+
     /// The storage the frame being received accumulates in — the seam's granted inbound slot, so a streaming deframer's writes land once, already across the seam. Parks until a slot is free (backpressure: an interface that cannot grant stops reading its medium). Repeated calls before [`commit_inbound`](Self::commit_inbound) return the same storage with its accumulation intact, so one frame may arrive across many reads.
     async fn inbound_sink(&mut self) -> &mut dyn FrameSink;
 

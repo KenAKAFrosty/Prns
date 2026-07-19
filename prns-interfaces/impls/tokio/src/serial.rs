@@ -4,7 +4,7 @@ use std::io;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::framed_stream;
-use crate::reconnect::ReconnectDelay;
+use crate::reconnect::ReconnectPolicy;
 use prns_core::interfaces::serial::core;
 use prns_core::interfaces::{
     ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind,
@@ -21,7 +21,7 @@ use prns_runtime::reactor::throughput::ThroughputLedger;
 pub struct SerialInterface<Open> {
     id: InterfaceId,
     open: Open,
-    reconnect_delay: ReconnectDelay,
+    reconnect_policy: ReconnectPolicy,
     policy: EffectiveInterfacePolicy,
     channel_tag: std::vec::Vec<u8>,
     status: TokioInterfaceStatus,
@@ -33,10 +33,10 @@ impl<Open> SerialInterface<Open> {
     /// us). Two distinct serial channels must pass distinct bytes; the same device across a
     /// reopen should pass the same, so its routes survive the reconnect.
     #[must_use]
-    pub fn new(open: Open, reconnect_delay: ReconnectDelay, channel_tag: &[u8]) -> Self {
+    pub fn new(open: Open, reconnect_policy: ReconnectPolicy, channel_tag: &[u8]) -> Self {
         Self::with_policy(
             open,
-            reconnect_delay,
+            reconnect_policy,
             core::policy_for_bitrate(core::SERIAL_BITRATE_BPS),
             channel_tag,
         )
@@ -45,7 +45,7 @@ impl<Open> SerialInterface<Open> {
     #[must_use]
     pub fn with_policy(
         open: Open,
-        reconnect_delay: ReconnectDelay,
+        reconnect_policy: ReconnectPolicy,
         policy: EffectiveInterfacePolicy,
         channel_tag: &[u8],
     ) -> Self {
@@ -54,7 +54,7 @@ impl<Open> SerialInterface<Open> {
         Self {
             id,
             open,
-            reconnect_delay,
+            reconnect_policy,
             policy,
             channel_tag,
             status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
@@ -105,8 +105,10 @@ where
                 { core::FRAMED_LEN },
             >,
         > = None;
+        let mut reconnect = self.reconnect_policy.schedule();
         loop {
             if let Ok(stream) = (self.open)().await {
+                let connected_at = tokio::time::Instant::now();
                 self.status.set_connection(ConnectionState::Connected);
                 framed_stream::serve::<
                     framed_stream::HdlcFraming,
@@ -128,8 +130,10 @@ where
                 )
                 .await;
                 self.status.set_connection(ConnectionState::Disconnected);
+                reconnect.record_connection_lifetime(connected_at.elapsed());
             }
-            tokio::time::sleep(self.reconnect_delay.duration()).await;
+            let reconnect_delay = reconnect.next_delay(|bytes| seam.fill_entropy(bytes));
+            tokio::time::sleep(reconnect_delay).await;
         }
     }
 }
@@ -168,6 +172,10 @@ mod tests {
     use prns_core::interfaces::FrameSink;
 
     impl InterfaceSeam for MockSeam {
+        fn fill_entropy(&mut self, bytes: &mut [u8]) {
+            bytes.fill(0);
+        }
+
         async fn inbound_sink(&mut self) -> &mut dyn FrameSink {
             &mut self.sink
         }
@@ -203,11 +211,7 @@ mod tests {
             outbound: out_rx,
         };
 
-        let interface = SerialInterface::new(
-            open,
-            ReconnectDelay::new(Duration::from_millis(10)),
-            b"test-serial",
-        );
+        let interface = SerialInterface::new(open, ReconnectPolicy::STANDARD, b"test-serial");
         let status = interface.status();
         tokio::spawn(interface.run(seam));
 

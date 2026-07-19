@@ -3,8 +3,8 @@
 //! [`tcp`](prns_core::interfaces::tcp) client (Backbone is TCP on the wire); only the
 //! interface kind and effective policy are Backbone's own.
 
+use crate::reconnect::ReconnectPolicy;
 use std::string::String;
-use std::time::Duration;
 
 use crate::framed_stream;
 use crate::tcp::tokio_socket::{connect, tune_for_tunnel, TcpConnectionSettings};
@@ -35,13 +35,13 @@ pub struct BackboneClientInterface {
 
 impl BackboneClientInterface {
     #[must_use]
-    pub fn new(target: String, bitrate: BitrateBps, reconnect_delay: Duration) -> Self {
+    pub fn new(target: String, bitrate: BitrateBps, reconnect_policy: ReconnectPolicy) -> Self {
         let id = InterfaceId::from_channel_tag(InterfaceKind::BackboneClient, target.as_bytes());
         Self::with_id_and_policy(
             id,
             target,
             core::policy_for_bitrate(bitrate),
-            reconnect_delay,
+            reconnect_policy,
         )
     }
 
@@ -49,10 +49,10 @@ impl BackboneClientInterface {
     pub fn with_policy(
         target: String,
         policy: EffectiveInterfacePolicy,
-        reconnect_delay: Duration,
+        reconnect_policy: ReconnectPolicy,
     ) -> Self {
         let id = InterfaceId::from_channel_tag(InterfaceKind::BackboneClient, target.as_bytes());
-        Self::with_id_and_policy(id, target, policy, reconnect_delay)
+        Self::with_id_and_policy(id, target, policy, reconnect_policy)
     }
 
     #[must_use]
@@ -73,13 +73,13 @@ impl BackboneClientInterface {
         id: InterfaceId,
         target: String,
         bitrate: BitrateBps,
-        reconnect_delay: Duration,
+        reconnect_policy: ReconnectPolicy,
     ) -> Self {
         Self::with_id_and_policy(
             id,
             target,
             core::policy_for_bitrate(bitrate),
-            reconnect_delay,
+            reconnect_policy,
         )
     }
 
@@ -88,14 +88,14 @@ impl BackboneClientInterface {
         id: InterfaceId,
         target: String,
         policy: EffectiveInterfacePolicy,
-        reconnect_delay: Duration,
+        reconnect_policy: ReconnectPolicy,
     ) -> Self {
         Self::with_id_policy_and_connection_settings(
             id,
             target,
             policy,
             TcpConnectionSettings {
-                reconnect_wait: reconnect_delay,
+                reconnect_policy,
                 ..TcpConnectionSettings::STOCK
             },
         )
@@ -158,6 +158,7 @@ impl Interface for BackboneClientInterface {
             >,
         > = None;
         let mut reconnect_attempts = 0u32;
+        let mut reconnect = self.connection.reconnect_policy.schedule();
         loop {
             #[cfg(feature = "tracing")]
             let connected = tracing::Instrument::instrument(
@@ -174,6 +175,7 @@ impl Interface for BackboneClientInterface {
             #[cfg(not(feature = "tracing"))]
             let connected = connect(self.target.as_str(), self.connection).await;
             if let Ok(stream) = connected {
+                let connected_at = tokio::time::Instant::now();
                 tune_for_tunnel(&stream, self.connection.tunnel);
                 crate::diagnostic_log::debug!(
                     "backbone-client [{interface_origin}]: connected {}",
@@ -206,6 +208,7 @@ impl Interface for BackboneClientInterface {
                 );
                 self.status.set_connection(ConnectionState::Disconnected);
                 reconnect_attempts = 0;
+                reconnect.record_connection_lifetime(connected_at.elapsed());
             } else {
                 crate::diagnostic_log::debug!(
                     "backbone-client [{interface_origin}]: connect failed {}, retrying",
@@ -213,7 +216,6 @@ impl Interface for BackboneClientInterface {
                 );
                 self.status.set_connection(ConnectionState::Disconnected);
             }
-            tokio::time::sleep(self.connection.reconnect_wait).await;
             if self
                 .connection
                 .reconnect_limit
@@ -221,7 +223,9 @@ impl Interface for BackboneClientInterface {
             {
                 return;
             }
+            let reconnect_delay = reconnect.next_delay(|bytes| seam.fill_entropy(bytes));
             reconnect_attempts = reconnect_attempts.saturating_add(1);
+            tokio::time::sleep(reconnect_delay).await;
         }
     }
 }
@@ -244,6 +248,7 @@ mod tests {
     use super::*;
     use prns_core::interfaces::rns_serial_framing::{self, RnsSerialDecoder, ESC, FLAG};
     use prns_runtime::reactor::driver::{tokio_grant_lane, TokioGrantConsumer};
+    use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::{TcpListener, TcpStream};
     use tokio::sync::mpsc::{self, UnboundedSender};
@@ -259,6 +264,10 @@ mod tests {
     use prns_core::interfaces::FrameSink;
 
     impl InterfaceSeam for MockSeam {
+        fn fill_entropy(&mut self, bytes: &mut [u8]) {
+            bytes.fill(0);
+        }
+
         async fn inbound_sink(&mut self) -> &mut dyn FrameSink {
             &mut self.sink
         }
@@ -305,7 +314,7 @@ mod tests {
         let iface = BackboneClientInterface::new(
             "hub.example.com:4965".to_string(),
             core::BACKBONE_CLIENT_BITRATE_ESTIMATE,
-            Duration::from_secs(5),
+            ReconnectPolicy::STANDARD,
         );
         assert_eq!(iface.id().kind(), Some(InterfaceKind::BackboneClient));
     }
@@ -328,7 +337,7 @@ mod tests {
         let interface = BackboneClientInterface::new(
             addr.to_string(),
             core::BACKBONE_CLIENT_BITRATE_ESTIMATE,
-            Duration::from_millis(10),
+            ReconnectPolicy::STANDARD,
         );
         tokio::spawn(interface.run(seam));
 

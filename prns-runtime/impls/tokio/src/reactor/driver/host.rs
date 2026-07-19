@@ -22,6 +22,16 @@ pub struct TokioHost {
     logical_start: InstantMillis,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct TokioEntropy;
+
+impl TokioEntropy {
+    #[allow(clippy::expect_used)]
+    pub(crate) fn fill(self, bytes: &mut [u8]) {
+        getrandom::getrandom(bytes).expect("OS CSPRNG must provide reactor entropy");
+    }
+}
+
 impl TokioHost {
     #[must_use]
     pub fn new() -> Self {
@@ -62,7 +72,7 @@ impl Host for TokioHost {
 
     #[allow(clippy::expect_used)]
     fn fill_entropy(&mut self, bytes: &mut [u8]) {
-        getrandom::getrandom(bytes).expect("OS CSPRNG must provide reactor entropy");
+        TokioEntropy.fill(bytes);
     }
 }
 

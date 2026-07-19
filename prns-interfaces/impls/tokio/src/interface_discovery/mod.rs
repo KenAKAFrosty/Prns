@@ -26,6 +26,7 @@ use prns_runtime::runtime::{AttachedInterface, InterfaceAttachmentMetadata, Prns
 use tokio::sync::mpsc::{self, error::TrySendError, Receiver, Sender};
 
 use crate::backbone::client::BackboneClientInterface;
+use crate::reconnect::ReconnectPolicy;
 use crate::tcp::client::TcpClientInterface;
 
 mod publication;
@@ -39,7 +40,7 @@ pub use publication::{
 
 const OBSERVATION_QUEUE_DEPTH: usize = 64;
 const MONITOR_INTERVAL: Duration = Duration::from_secs(5);
-const RECONNECT_INTERVAL: Duration = Duration::from_secs(5);
+const RECONNECT_POLICY: ReconnectPolicy = ReconnectPolicy::STANDARD;
 const AUTOCONNECT_BITRATE: BitrateBps = BitrateBps::guess(5_000_000);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -377,7 +378,7 @@ fn attach_discovered(
     match plan.connection_kind() {
         DiscoveredConnectionKind::BackboneClient => {
             let interface =
-                BackboneClientInterface::new(target, AUTOCONNECT_BITRATE, RECONNECT_INTERVAL);
+                BackboneClientInterface::new(target, AUTOCONNECT_BITRATE, RECONNECT_POLICY);
             let status = interface.status();
             let attached = attach_with_access(handle, interface, plan)?;
             Ok(AttachedDiscoveredInterface {
@@ -386,8 +387,7 @@ fn attach_discovered(
             })
         }
         DiscoveredConnectionKind::TcpClient => {
-            let interface =
-                TcpClientInterface::new(target, AUTOCONNECT_BITRATE, RECONNECT_INTERVAL);
+            let interface = TcpClientInterface::new(target, AUTOCONNECT_BITRATE, RECONNECT_POLICY);
             let status = interface.status();
             let attached = attach_with_access(handle, interface, plan)?;
             Ok(AttachedDiscoveredInterface {
