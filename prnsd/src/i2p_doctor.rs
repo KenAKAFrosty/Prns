@@ -50,7 +50,10 @@ impl fmt::Display for I2pDoctorReady {
             "I2P doctor: SAM 3.1 session creation succeeded at {}",
             self.address
         )?;
-        writeln!(formatter, "  The I2P router and SAM bridge are ready for Prnsd.")?;
+        writeln!(
+            formatter,
+            "  The I2P router and SAM bridge are ready for Prnsd."
+        )?;
         formatter.write_str(
             "  Peer reachability was not tested; a newly started router may still be warming up.",
         )?;
@@ -327,7 +330,9 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(ready.address, address);
-        assert!(ready.to_string().contains("Peer reachability was not tested"));
+        assert!(ready
+            .to_string()
+            .contains("Peer reachability was not tested"));
         server.await.unwrap();
     }
 
@@ -375,11 +380,8 @@ mod tests {
         });
 
         assert!(matches!(
-            classify_bridge_error(
-                address.clone(),
-                SamBridgeError::Control(session_rejection)
-            )
-            .await,
+            classify_bridge_error(address.clone(), SamBridgeError::Control(session_rejection))
+                .await,
             I2pDoctorError::SessionUnavailable(_)
         ));
         assert!(matches!(

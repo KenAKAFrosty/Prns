@@ -9,8 +9,7 @@ use crate::i2p_doctor::{
     self, I2pDoctorError, I2pDoctorReady, I2pDoctorRemediation, I2pDoctorRequest, RemoteSamAccess,
 };
 use platform::{
-    BrowserOpenError, GuidancePage, SetupHost, LOCAL_SAM_CONFIGURATION_URL,
-    OFFICIAL_SAM_GUIDE_URL,
+    BrowserOpenError, GuidancePage, SetupHost, LOCAL_SAM_CONFIGURATION_URL, OFFICIAL_SAM_GUIDE_URL,
 };
 use stanza::I2pInterfaceStanza;
 
@@ -247,8 +246,7 @@ mod tests {
             readiness: SetupReadiness::NeedsAction(I2pDoctorError::UnsafeEndpoint(
                 SamBridgeAddress::new("router.internal:7656").unwrap(),
             )),
-            stanza: I2pInterfaceStanza::new(Vec::new(), SetupReachability::OutboundOnly)
-                .unwrap(),
+            stanza: I2pInterfaceStanza::new(Vec::new(), SetupReachability::OutboundOnly).unwrap(),
             browser: BrowserLaunch::NotApplicable,
         };
 
