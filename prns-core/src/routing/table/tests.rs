@@ -1,14 +1,14 @@
 use super::*;
 use crate::crypto::{Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
-use crate::engine::test_support::routable_descriptor;
+use crate::engine::{test_support::routable_descriptor, InstantMillis};
 use crate::identity::{IdentityEncryptionPublicKey, IdentitySigningPublicKey};
-use crate::interfaces::{InterfaceDescriptor, InterfaceId, InterfaceMode};
+use crate::interfaces::{AttachedInterfaces, InterfaceDescriptor, InterfaceId, InterfaceMode};
 use crate::routing::announce::defaults::DEFAULT_ROUTE_EXPIRY_MILLIS;
 use crate::routing::announce::stored::{
     FixedAnnounceIdHistory, FixedArrayAnnounceRecordTable, PackedAppDataArena,
 };
 use crate::routing::routes::FixedArrayRouteTable;
-use crate::routing::{DropCause, NextHop, UpsertRouteOutcome};
+use crate::routing::{DropCause, NextHop, RouteResponsiveness, UpsertRouteOutcome};
 
 type TestRoutingTable<
     const MAX_TRACKED_DESTINATIONS: usize,
