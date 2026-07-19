@@ -13,10 +13,8 @@ use personal_rns::interfaces::{InterfaceId, INTERFACE_ID_LEN};
 use personal_rns::units::{HopCount, InstantMillis};
 use personal_rns::wire::TransportId;
 
-use super::{
-    discovery_archive_record, load_discovery_archive, start_archive_worker, PreparedDiscovery,
-    TokioDiscoveryEvent,
-};
+use super::archive::{archive_record, load, start};
+use super::{PreparedDiscovery, TokioDiscoveryEvent};
 
 struct TestDirectory(PathBuf);
 
@@ -110,13 +108,11 @@ fn archive_capture_selects_only_catalog_updates_that_changed_history() {
         .observe(discovered(InstantMillis(2_000)))
         .expect("the growable catalog accepts the fixture");
     let record = catalog.get(id).expect("the fixture was inserted");
-    assert!(
-        discovery_archive_record(&TokioDiscoveryEvent::CatalogUpdated {
-            update: added,
-            record,
-        })
-        .is_some()
-    );
+    assert!(archive_record(&TokioDiscoveryEvent::CatalogUpdated {
+        update: added,
+        record,
+    })
+    .is_some());
 
     let refreshed = catalog
         .observe(discovered(InstantMillis(3_000)))
@@ -129,25 +125,21 @@ fn archive_capture_selects_only_catalog_updates_that_changed_history() {
         }
     ));
     let record = catalog.get(id).expect("the fixture remains available");
-    assert!(
-        discovery_archive_record(&TokioDiscoveryEvent::CatalogUpdated {
-            update: refreshed,
-            record,
-        })
-        .is_some()
-    );
+    assert!(archive_record(&TokioDiscoveryEvent::CatalogUpdated {
+        update: refreshed,
+        record,
+    })
+    .is_some());
 
-    assert!(
-        discovery_archive_record(&TokioDiscoveryEvent::CatalogUpdated {
-            update: DiscoveryCatalogUpdate::IgnoredOutOfOrder {
-                id,
-                received_at: InstantMillis(2_999),
-                last_heard: InstantMillis(3_000),
-            },
-            record,
-        })
-        .is_none()
-    );
+    assert!(archive_record(&TokioDiscoveryEvent::CatalogUpdated {
+        update: DiscoveryCatalogUpdate::IgnoredOutOfOrder {
+            id,
+            received_at: InstantMillis(2_999),
+            last_heard: InstantMillis(3_000),
+        },
+        record,
+    })
+    .is_none());
 }
 
 #[tokio::test]
@@ -155,7 +147,7 @@ async fn archive_loading_initializes_the_well_known_file_off_loop() {
     let directory = TestDirectory::new();
     let path = directory.0.join(DISCOVERED_INTERFACES_FILE);
 
-    let loaded = load_discovery_archive(path.clone())
+    let loaded = load(path.clone())
         .await
         .expect("the missing archive initializes");
 
@@ -173,7 +165,7 @@ async fn archive_worker_drains_queued_records_before_finishing() {
         .archive
         .persist()
         .expect("the empty archive is writable");
-    let (sink, worker) = start_archive_worker(loaded.archive);
+    let (sink, worker) = start(loaded.archive);
     let mut catalog = DiscoveryCatalog::new();
     let update = catalog
         .observe(discovered(InstantMillis(2_000)))
