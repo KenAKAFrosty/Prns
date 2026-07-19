@@ -1,22 +1,17 @@
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Sender};
 
 use personal_rns::config::{DaemonPlan, PlannedMedium};
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::interface_discovery::{
-    DiscoveryArchive, DiscoveryArchiveError, DiscoveryArchiveRecord, DiscoveryCatalogRefresh,
-    DiscoveryCatalogUpdate, LoadedDiscoveryArchive, DISCOVERED_INTERFACES_FILE,
-};
-use personal_rns::interfaces::InterfaceOriginKind;
+use personal_rns::interface_discovery::DISCOVERED_INTERFACES_FILE;
 use personal_rns::reactor::tokio::TokioHost;
 use personal_rns::routing::announce::AnnounceObservation;
 use personal_rns::runtime::PrnsNodeHandle;
-use personal_rns::{
-    DiscoveryIngressOutcome, TokioDiscoveryEvent, TokioDiscoveryIngress, TokioInterfaceDiscovery,
-};
+use personal_rns::{TokioDiscoveryEvent, TokioDiscoveryIngress, TokioInterfaceDiscovery};
 use tokio::sync::oneshot;
 
+mod archive;
 mod bootstrap;
+mod events;
 
 pub(crate) mod publication;
 
@@ -104,17 +99,17 @@ impl PreparedDiscovery {
         shutdown: oneshot::Receiver<()>,
         capacities: tokio::sync::watch::Sender<Option<bootstrap::AutoConnectCapacity>>,
     ) {
-        let (archive_sink, archive_worker) = match load_discovery_archive(self.archive_path).await {
+        let (archive_sink, archive_worker) = match archive::load(self.archive_path).await {
             Some(loaded) => {
                 self.service.seed_catalog(loaded.catalog);
-                let (sink, worker) = start_archive_worker(loaded.archive);
+                let (sink, worker) = archive::start(loaded.archive);
                 (Some(sink), Some(worker))
             }
             None => (None, None),
         };
         tokio::select! {
             () = self.service.run(handle, clock, move |event| {
-                trace_discovery_event(&event);
+                events::trace(&event);
                 if let TokioDiscoveryEvent::AutoConnectCapacity { online, maximum } = &event {
                     capacities.send_replace(Some(bootstrap::AutoConnectCapacity {
                         online: *online,
@@ -153,275 +148,13 @@ impl RunningDiscovery {
     }
 }
 
-async fn load_discovery_archive(path: PathBuf) -> Option<LoadedDiscoveryArchive> {
-    let requested_path = path.clone();
-    let loaded = tokio::task::spawn_blocking(move || {
-        let loaded = DiscoveryArchive::load(path)?;
-        let persist_error = loaded.archive.persist().err();
-        Ok::<_, DiscoveryArchiveError>((loaded, persist_error))
-    })
-    .await;
-    match loaded {
-        Ok(Ok((loaded, persist_error))) => {
-            tracing::info!(
-                event = "interface_discovery_archive_loaded",
-                path = %loaded.archive.path().display(),
-                interfaces = loaded.archive.len(),
-                file_state = ?loaded.file_state,
-            );
-            if let Some(error) = persist_error {
-                tracing::warn!(
-                    event = "interface_discovery_archive_write_failed",
-                    path = %loaded.archive.path().display(),
-                    error = %error,
-                );
-            }
-            Some(loaded)
-        }
-        Ok(Err(error)) => {
-            tracing::warn!(event = "interface_discovery_archive_unavailable", error = %error);
-            None
-        }
-        Err(error) => {
-            tracing::warn!(
-                event = "interface_discovery_archive_load_worker_failed",
-                path = %requested_path.display(),
-                error = %error,
-            );
-            None
-        }
-    }
-}
-
 pub struct DiscoveryObserver {
     ingress: TokioDiscoveryIngress,
 }
 
 impl DiscoveryObserver {
     pub fn observe(&self, observation: AnnounceObservation<'_>) {
-        match self.ingress.observe(observation) {
-            DiscoveryIngressOutcome::Disabled
-            | DiscoveryIngressOutcome::NotDiscovery
-            | DiscoveryIngressOutcome::Queued => {}
-            DiscoveryIngressOutcome::QueueFull => {
-                tracing::warn!(event = "interface_discovery_ingress_full");
-            }
-            DiscoveryIngressOutcome::Closed => {
-                tracing::debug!(event = "interface_discovery_ingress_closed");
-            }
-        }
-    }
-}
-
-struct DiscoveryArchiveSink {
-    path: PathBuf,
-    records: Sender<DiscoveryArchiveRecord>,
-}
-
-impl DiscoveryArchiveSink {
-    fn record(&self, event: &TokioDiscoveryEvent<'_>) {
-        let Some(record) = discovery_archive_record(event) else {
-            return;
-        };
-        if self.records.send(record).is_err() {
-            tracing::warn!(
-                event = "interface_discovery_archive_writer_unavailable",
-                path = %self.path.display(),
-            );
-        }
-    }
-}
-
-struct DiscoveryArchiveWorker {
-    path: PathBuf,
-    task: tokio::task::JoinHandle<()>,
-}
-
-impl DiscoveryArchiveWorker {
-    async fn finish(self) {
-        if let Err(error) = self.task.await {
-            tracing::warn!(
-                event = "interface_discovery_archive_worker_failed",
-                path = %self.path.display(),
-                error = %error,
-            );
-        }
-    }
-}
-
-fn start_archive_worker(
-    mut archive: DiscoveryArchive,
-) -> (DiscoveryArchiveSink, DiscoveryArchiveWorker) {
-    let path = archive.path().to_path_buf();
-    let (records, receiver) = mpsc::channel();
-    let task = tokio::task::spawn_blocking(move || {
-        for record in receiver {
-            if let Err(error) = archive.record(record) {
-                tracing::warn!(
-                    event = "interface_discovery_archive_write_failed",
-                    path = %archive.path().display(),
-                    error = %error,
-                );
-            }
-        }
-    });
-    (
-        DiscoveryArchiveSink {
-            path: path.clone(),
-            records,
-        },
-        DiscoveryArchiveWorker { path, task },
-    )
-}
-
-fn discovery_archive_record(event: &TokioDiscoveryEvent<'_>) -> Option<DiscoveryArchiveRecord> {
-    let TokioDiscoveryEvent::CatalogUpdated { update, record } = event else {
-        return None;
-    };
-    match update {
-        DiscoveryCatalogUpdate::Added { .. } | DiscoveryCatalogUpdate::Refreshed { .. } => {}
-        DiscoveryCatalogUpdate::IgnoredOutOfOrder { .. } => return None,
-    }
-    Some(DiscoveryArchiveRecord::from(*record))
-}
-
-fn trace_discovery_event(event: &TokioDiscoveryEvent<'_>) {
-    match event {
-        TokioDiscoveryEvent::IntakeNotApplicable(reason) => {
-            tracing::trace!(event = "interface_discovery_not_applicable", reason = ?reason);
-        }
-        TokioDiscoveryEvent::IntakeRejected(rejection) => {
-            tracing::debug!(
-                event = "interface_discovery_rejected",
-                reason = ?rejection.kind(),
-                detail = ?rejection,
-            );
-        }
-        TokioDiscoveryEvent::CatalogStoreRejected(error) => {
-            tracing::warn!(
-                event = "interface_discovery_catalog_store_rejected",
-                error = %error,
-            );
-        }
-        TokioDiscoveryEvent::CatalogUpdated { update, record } => {
-            let interface = record.interface();
-            match *update {
-                DiscoveryCatalogUpdate::Added { .. } => {
-                    tracing::info!(
-                        event = "interface_discovered",
-                        interface_origin = InterfaceOriginKind::Discovered.as_str(),
-                        discovery_id = ?interface.id.as_bytes(),
-                        interface_name = %interface.name,
-                        interface_type = interface.advertisement.interface_type.rns_name(),
-                        announced_by = ?interface.provenance.announced_by.as_bytes(),
-                        received_on = ?interface.provenance.received_on.as_bytes(),
-                        hops = interface.provenance.hops.0,
-                        stamp_value = interface.stamp_value.get(),
-                    );
-                }
-                DiscoveryCatalogUpdate::Refreshed { refresh, .. } => {
-                    let advertisement_changed = match refresh {
-                        DiscoveryCatalogRefresh::AdvertisementUnchanged => false,
-                        DiscoveryCatalogRefresh::AdvertisementChanged => true,
-                    };
-                    tracing::debug!(
-                        event = "interface_discovery_refreshed",
-                        interface_origin = InterfaceOriginKind::Discovered.as_str(),
-                        discovery_id = ?interface.id.as_bytes(),
-                        interface_name = %interface.name,
-                        advertisement_changed,
-                        observations = record.observation_count().get(),
-                    );
-                }
-                DiscoveryCatalogUpdate::IgnoredOutOfOrder {
-                    received_at,
-                    last_heard,
-                    ..
-                } => {
-                    tracing::debug!(
-                        event = "interface_discovery_out_of_order",
-                        interface_origin = InterfaceOriginKind::Discovered.as_str(),
-                        discovery_id = ?interface.id.as_bytes(),
-                        received_at = received_at.0,
-                        last_heard = last_heard.0,
-                    );
-                }
-            }
-        }
-        TokioDiscoveryEvent::CatalogExpired(record) => {
-            tracing::info!(
-                event = "interface_discovery_expired",
-                interface_origin = InterfaceOriginKind::Discovered.as_str(),
-                discovery_id = ?record.id().as_bytes(),
-                interface_name = %record.interface().name,
-            );
-        }
-        TokioDiscoveryEvent::ConnectionAttached { plan, interface } => {
-            tracing::info!(
-                event = "interface_discovery_connected",
-                interface_origin = InterfaceOriginKind::Discovered.as_str(),
-                interface = ?interface.as_bytes(),
-                discovery_id = ?plan.discovery_id().as_bytes(),
-                interface_name = %plan.name(),
-                interface_type = plan.advertised_type().rns_name(),
-                host = plan.endpoint().host(),
-                port = plan.endpoint().port(),
-                announced_by = ?plan.provenance().announced_by.as_bytes(),
-            );
-        }
-        TokioDiscoveryEvent::ConnectionAttachFailed { plan, failure } => {
-            tracing::warn!(
-                event = "interface_discovery_connect_failed",
-                interface_origin = InterfaceOriginKind::Discovered.as_str(),
-                discovery_id = ?plan.discovery_id().as_bytes(),
-                interface_name = %plan.name(),
-                host = plan.endpoint().host(),
-                port = plan.endpoint().port(),
-                failure = ?failure,
-            );
-        }
-        TokioDiscoveryEvent::ConnectionDisconnected {
-            discovery,
-            interface,
-            since,
-        } => {
-            tracing::debug!(
-                event = "interface_discovery_disconnected",
-                interface_origin = InterfaceOriginKind::Discovered.as_str(),
-                discovery_id = ?discovery.as_bytes(),
-                interface = ?interface.as_bytes(),
-                since = since.0,
-            );
-        }
-        TokioDiscoveryEvent::ConnectionReconnected {
-            discovery,
-            interface,
-        } => {
-            tracing::info!(
-                event = "interface_discovery_reconnected",
-                interface_origin = InterfaceOriginKind::Discovered.as_str(),
-                discovery_id = ?discovery.as_bytes(),
-                interface = ?interface.as_bytes(),
-            );
-        }
-        TokioDiscoveryEvent::ConnectionDetached {
-            discovery,
-            interface,
-        } => {
-            tracing::info!(
-                event = "interface_discovery_detached",
-                interface_origin = InterfaceOriginKind::Discovered.as_str(),
-                discovery_id = ?discovery.as_bytes(),
-                interface = ?interface.as_bytes(),
-            );
-        }
-        TokioDiscoveryEvent::AutoConnectCapacity { online, maximum } => {
-            tracing::trace!(
-                event = "interface_discovery_auto_connect_capacity",
-                online,
-                maximum,
-            );
-        }
+        events::trace_ingress(self.ingress.observe(observation));
     }
 }
 
