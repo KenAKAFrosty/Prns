@@ -78,12 +78,8 @@ where
         else {
             return Eviction::NothingToEvict;
         };
-        on_removed(RemovedRoute {
-            destination: self.routes.destinations()[i],
-            receiving_interface: self.routes.receiving_interfaces()[i],
-            cause: RouteRemovalCause::Evicted,
-        });
-        self.remove_route(i);
+        on_removed(self.route_removal_at(i, RouteRemovalCause::Evicted));
+        self.remove_route_at(i);
         Eviction::Evicted
     }
 

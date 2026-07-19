@@ -2,6 +2,7 @@ mod learning;
 mod lifetime;
 mod lookup;
 mod model;
+mod removal;
 mod updates;
 
 pub use model::RoutingTable;
@@ -12,13 +13,9 @@ use super::announce::stored::{
 use super::announce::Announce;
 use super::route_expiry::RouteExpiryIndex;
 use super::routes::{RouteEntry, RouteTable};
-use super::types::{
-    AnnounceIdRing, NextHop, PersistedRouteRow, RemovedRoute, RouteRemovalCause, SeedRouteOutcome,
-    StoredAnnounce,
-};
-use crate::identity::IdentityHash;
+use super::types::{AnnounceIdRing, PersistedRouteRow, SeedRouteOutcome, StoredAnnounce};
 use crate::storage::TablePushError;
-use crate::wire::{DestinationHash, TransportId};
+use crate::wire::DestinationHash;
 
 impl<R, A, H, D, I> RoutingTable<R, A, H, D, I>
 where
@@ -28,77 +25,6 @@ where
     D: AnnounceAppData,
     I: RouteExpiryIndex,
 {
-    pub fn remove_route(&mut self, i: usize) {
-        let last = self.routes.len() - 1;
-        let freed = self.announce_records.app_data_handles()[i];
-        if let Some(handle) = freed {
-            self.announce_app_data.free(handle);
-        }
-        self.routes.swap_remove(i, last);
-        self.announce_records.swap_remove(i, last);
-        self.announce_id_history.swap_remove(i, last);
-        self.route_expiries.swap_remove(i, last);
-    }
-
-    pub fn drop_route(&mut self, destination: &DestinationHash) -> Option<RemovedRoute> {
-        let i = self.index_of(destination)?;
-        let removed = RemovedRoute {
-            destination: self.routes.destinations()[i],
-            receiving_interface: self.routes.receiving_interfaces()[i],
-            cause: RouteRemovalCause::Dropped,
-        };
-        self.remove_route(i);
-        Some(removed)
-    }
-
-    pub fn drop_routes_via(
-        &mut self,
-        transport: TransportId,
-        on_removed: &mut impl FnMut(RemovedRoute),
-    ) -> usize {
-        let mut dropped = 0;
-        let mut i = 0;
-        while i < self.routes.len() {
-            if self.routes.next_hops()[i] != NextHop::Via(transport) {
-                i += 1;
-                continue;
-            }
-            let removed = RemovedRoute {
-                destination: self.routes.destinations()[i],
-                receiving_interface: self.routes.receiving_interfaces()[i],
-                cause: RouteRemovalCause::Dropped,
-            };
-            self.remove_route(i);
-            on_removed(removed);
-            dropped += 1;
-        }
-        dropped
-    }
-
-    pub fn drop_routes_for_identity(
-        &mut self,
-        identity: &IdentityHash,
-        on_removed: &mut impl FnMut(RemovedRoute),
-    ) -> usize {
-        let mut dropped = 0;
-        let mut i = 0;
-        while i < self.routes.len() {
-            if self.announce_records.public_keys()[i].identity_hash() != *identity {
-                i += 1;
-                continue;
-            }
-            let removed = RemovedRoute {
-                destination: self.routes.destinations()[i],
-                receiving_interface: self.routes.receiving_interfaces()[i],
-                cause: RouteRemovalCause::Dropped,
-            };
-            self.remove_route(i);
-            on_removed(removed);
-            dropped += 1;
-        }
-        dropped
-    }
-
     pub fn app_data_for(&self, destination: &DestinationHash) -> Option<&[u8]> {
         Some(self.stored_announce_for(destination)?.announce.app_data)
     }
