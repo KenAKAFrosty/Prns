@@ -2408,7 +2408,9 @@ dependencies = [
 name = "prnsd"
 version = "0.2.5"
 dependencies = [
+ "base64",
  "clap",
+ "data-encoding",
  "log",
  "opentelemetry",
  "opentelemetry-otlp",
