@@ -1,8 +1,3 @@
-//! The interface-lookup crossover: the bare linear view vs. the heap reactor's
-//! indexed roster, `descriptor_for` for a present id (hit) and an absent id (miss),
-//! across fleet sizes. A busy TCP server holds an interface per client and ingress
-//! runs this lookup per packet, so the flat regime is the one that matters at scale.
-
 use std::hint::black_box;
 use std::time::Duration;
 
@@ -21,8 +16,11 @@ fn iface_n(n: u32) -> InterfaceId {
 }
 
 fn bench_size(group: &mut BenchmarkGroup<'_, WallTime>, n: u32, lookup: InterfaceId) {
-    let descriptors: Vec<InterfaceDescriptor> =
-        (0..n).map(|i| pipe_core::descriptor(iface_n(i))).collect();
+    let descriptors: Vec<InterfaceDescriptor> = (0..n)
+        .map(|i| {
+            pipe_core::descriptor(iface_n(i), pipe_core::configured_policy(Default::default()))
+        })
+        .collect();
     let indexed = IndexedAttachedInterfaces::from(descriptors.clone());
 
     group.bench_with_input(BenchmarkId::new("linear", n), &n, |b, _| {

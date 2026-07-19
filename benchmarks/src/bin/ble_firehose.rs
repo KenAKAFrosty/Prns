@@ -72,7 +72,7 @@ async fn run(port: u16, target: Vec<u8>, phase: Duration, payload_len: usize, wi
         transport_identity: None,
         pre_configured_destinations: [single],
         app_state: (),
-        storage: NodeStorage::default(),
+        storage: NodeStorage,
         routes: routes![],
         on_event: move |event, _state: &()| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event {

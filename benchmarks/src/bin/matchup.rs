@@ -594,8 +594,8 @@ fn main() {
 
     println!();
     println!(
-        "{:<34} {:<11} {:<11} {:<6} {}",
-        "scenario", "host", "client", "", "detail"
+        "{:<34} {:<11} {:<11} {:<6} detail",
+        "scenario", "host", "client", ""
     );
     for (scenario, host, client, status, detail) in &rows {
         println!("{scenario:<34} {host:<11} {client:<11} {status:<6} {detail}");

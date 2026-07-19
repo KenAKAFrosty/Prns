@@ -39,14 +39,13 @@ fn verify_inputs() -> (Ed25519PublicKey, [u8; 32], Ed25519Signature) {
 #[bench::authentic(setup = verify_inputs)]
 fn ed25519_verify_300b(input: (Ed25519PublicKey, [u8; 32], Ed25519Signature)) {
     let (verifier, message, signature) = input;
-    black_box(
-        ed25519_verify(
-            black_box(&verifier),
-            black_box(&message),
-            black_box(&signature),
-        )
-        .expect("authentic"),
-    );
+    ed25519_verify(
+        black_box(&verifier),
+        black_box(&message),
+        black_box(&signature),
+    )
+    .expect("authentic");
+    black_box(());
 }
 
 #[library_benchmark]
