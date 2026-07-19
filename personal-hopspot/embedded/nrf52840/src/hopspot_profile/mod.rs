@@ -1,7 +1,7 @@
 mod bluetooth;
 mod display;
+mod firmware;
 mod input;
 mod node;
-mod runtime;
 
-pub(super) use runtime::run;
+pub(super) use firmware::run;
