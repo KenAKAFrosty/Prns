@@ -8,7 +8,10 @@ use crate::routing::announce::stored::{
     FixedAnnounceIdHistory, FixedArrayAnnounceRecordTable, PackedAppDataArena,
 };
 use crate::routing::routes::FixedArrayRouteTable;
-use crate::routing::{DropCause, NextHop, RouteResponsiveness, UpsertRouteOutcome};
+use crate::routing::{
+    DropCause, NextHop, RemovedRoute, RouteRemovalCause, RouteResponsiveness, UpsertRouteOutcome,
+};
+use crate::wire::TransportId;
 
 type TestRoutingTable<
     const MAX_TRACKED_DESTINATIONS: usize,
@@ -862,7 +865,7 @@ fn remove_route_drops_a_destination_and_keeps_the_rest_aligned() {
     assert_eq!(table.route_count(), 3);
 
     let slot = table.index_of(&dest(1)).unwrap();
-    table.remove_route(slot);
+    table.remove_route_at(slot);
 
     assert_eq!(table.route_count(), 2);
     assert_eq!(table.hop_count_to(&dest(1)), None);
@@ -1198,7 +1201,7 @@ fn roaring_route_expiries_match_linear_route_semantics_across_mutations() {
 
     for table in [&mut indexed, &mut linear] {
         table.note_relayed_with_warmth(&dest(1), InstantMillis(20_000_000), interfaces, &());
-        table.remove_route(17);
+        table.remove_route_at(17);
     }
     assert_eq!(
         indexed.soonest_route_expiry_indexed_with_warmth(interfaces, &()),
@@ -1505,7 +1508,7 @@ fn remove_route_of_the_only_route_empties_the_table() {
     );
     assert_eq!(table.route_count(), 1);
 
-    table.remove_route(0);
+    table.remove_route_at(0);
 
     assert_eq!(table.route_count(), 0);
     assert_eq!(table.hop_count_to(&dest(1)), None);

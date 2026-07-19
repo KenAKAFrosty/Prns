@@ -82,12 +82,8 @@ where
         } else {
             RouteRemovalCause::InterfaceGone
         };
-        on_removed(RemovedRoute {
-            destination: self.routes.destinations()[row],
-            receiving_interface,
-            cause,
-        });
-        self.remove_route(row);
+        on_removed(self.route_removal_at(row, cause));
+        self.remove_route_at(row);
     }
 
     /// Boundary-inclusive: a deadline must be actionable at its own instant or a reactor waking exactly at `expires` busy-spins. The reference culls on a 5s float-time poll, so the boundary is unobservable to parity.
