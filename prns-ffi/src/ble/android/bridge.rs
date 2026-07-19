@@ -7,36 +7,19 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::Notify;
 
 use prns_core::interfaces::bluetooth_auto::core::{
-    encode_stream_frame, fragments_of, AndroidHost, BleAddress, BleIdentity, Control, Dialect,
-    Endpoint, Fragment, L2capPlan, LinkCapabilities, Psm, Reassembler, StreamDeframer, BLE_HW_MTU,
-    CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN, STREAM_FRAME_PREFIX_LEN,
-};
-use prns_core::interfaces::bluetooth_auto::limits;
-use prns_core::interfaces::bluetooth_auto::seam::{
-    BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin,
+    AndroidHost, BleAddress, BleIdentity, Control, Dialect, Endpoint, LinkCapabilities, BLE_HW_MTU,
+    CONTROL_MAX_LEN,
 };
 
-const L2CAP_SDU_LEN: usize = STREAM_FRAME_PREFIX_LEN + BLE_HW_MTU;
-const GATT_REASSEMBLY_CAP: usize = 600;
-const GATT_FRAGMENT_PAYLOAD: usize = 180;
-pub const RADIO_ENABLED: u32 = 0x01;
-pub const RADIO_ADVERTISING: u32 = 0x02;
-pub const RADIO_SCANNING: u32 = 0x04;
+use super::{RADIO_ADVERTISING, RADIO_ENABLED, RADIO_SCANNING};
 
-#[derive(Debug)]
-pub enum AndroidBleError {
-    Closed,
-    ControlTooLarge,
-    FrameTooLarge,
-}
-
-struct LinkSignal {
-    is_up: AtomicBool,
+pub(super) struct LinkSignal {
+    pub(super) is_up: AtomicBool,
     notify: Notify,
 }
 
 #[derive(Default)]
-struct WorkSignal {
+pub(super) struct WorkSignal {
     generation: Mutex<u64>,
     ready: Condvar,
 }
@@ -46,7 +29,7 @@ impl WorkSignal {
         self.generation.lock().map(|value| *value).unwrap_or(0)
     }
 
-    fn wake(&self) {
+    pub(super) fn wake(&self) {
         if let Ok(mut generation) = self.generation.lock() {
             *generation = generation.wrapping_add(1);
             self.ready.notify_all();
@@ -76,7 +59,7 @@ impl WorkSignal {
     }
 }
 
-struct Endpoints {
+pub(super) struct Endpoints {
     control_in_tx: UnboundedSender<Vec<u8>>,
     l2cap_in_tx: UnboundedSender<Vec<u8>>,
     data_in_tx: UnboundedSender<Vec<u8>>,
@@ -86,24 +69,24 @@ struct Endpoints {
     l2cap_up: Arc<LinkSignal>,
 }
 
-struct PendingLink {
-    conn_id: u32,
-    address: BleAddress,
-    rssi: Option<i8>,
-    dialed: bool,
-    dialect: Dialect,
-    control_in: UnboundedReceiver<Vec<u8>>,
-    l2cap_in: UnboundedReceiver<Vec<u8>>,
-    data_in: UnboundedReceiver<Vec<u8>>,
-    control_out: Arc<Mutex<VecDeque<u8>>>,
-    l2cap_out: Arc<Mutex<VecDeque<u8>>>,
-    data_out: Arc<Mutex<VecDeque<Vec<u8>>>>,
-    l2cap_up: Arc<LinkSignal>,
-    l2cap_opens: Arc<Mutex<VecDeque<(u32, u16)>>>,
-    work: Arc<WorkSignal>,
+pub(super) struct PendingLink {
+    pub(super) conn_id: u32,
+    pub(super) address: BleAddress,
+    pub(super) rssi: Option<i8>,
+    pub(super) dialed: bool,
+    pub(super) dialect: Dialect,
+    pub(super) control_in: UnboundedReceiver<Vec<u8>>,
+    pub(super) l2cap_in: UnboundedReceiver<Vec<u8>>,
+    pub(super) data_in: UnboundedReceiver<Vec<u8>>,
+    pub(super) control_out: Arc<Mutex<VecDeque<u8>>>,
+    pub(super) l2cap_out: Arc<Mutex<VecDeque<u8>>>,
+    pub(super) data_out: Arc<Mutex<VecDeque<Vec<u8>>>>,
+    pub(super) l2cap_up: Arc<LinkSignal>,
+    pub(super) l2cap_opens: Arc<Mutex<VecDeque<(u32, u16)>>>,
+    pub(super) work: Arc<WorkSignal>,
 }
 
-enum Event {
+pub(super) enum Event {
     Sighting {
         address: BleAddress,
         rssi: Option<i8>,
@@ -136,21 +119,21 @@ impl RadioState {
     }
 }
 
-struct Shared {
+pub(super) struct Shared {
     radio: Mutex<RadioState>,
     local_identity: Mutex<Option<[u8; 16]>>,
-    psm: Mutex<Option<u16>>,
+    pub(super) psm: Mutex<Option<u16>>,
     psm_ready: Notify,
-    links: Mutex<HashMap<u32, Endpoints>>,
-    events: Mutex<VecDeque<Event>>,
-    events_ready: Notify,
-    dial_requests: Mutex<VecDeque<[u8; 6]>>,
-    l2cap_opens: Arc<Mutex<VecDeque<(u32, u16)>>>,
+    pub(super) links: Mutex<HashMap<u32, Endpoints>>,
+    pub(super) events: Mutex<VecDeque<Event>>,
+    pub(super) events_ready: Notify,
+    pub(super) dial_requests: Mutex<VecDeque<[u8; 6]>>,
+    pub(super) l2cap_opens: Arc<Mutex<VecDeque<(u32, u16)>>>,
     work: Arc<WorkSignal>,
 }
 
 pub struct AndroidBleBridge {
-    shared: Arc<Shared>,
+    pub(super) shared: Arc<Shared>,
 }
 
 impl Clone for AndroidBleBridge {
@@ -551,9 +534,9 @@ fn columba_greeting(dialed: bool, peer_identity: [u8; 16], rssi: Option<i8>) -> 
         }
     };
     let mut buf = [0u8; CONTROL_MAX_LEN];
-    let len = msg
-        .encode(&mut buf)
-        .expect("Columba greeting fits the native control envelope");
+    let Some(len) = msg.encode(&mut buf) else {
+        return Vec::new();
+    };
     buf[..len].to_vec()
 }
 
@@ -570,308 +553,4 @@ fn drain(queue: &Mutex<VecDeque<u8>>, out: &mut [u8]) -> usize {
         written += 1;
     }
     written
-}
-
-pub struct AndroidBleBackend {
-    bridge: AndroidBleBridge,
-}
-
-impl AndroidBleBackend {
-    #[must_use]
-    pub fn new(bridge: AndroidBleBridge) -> Self {
-        Self { bridge }
-    }
-}
-
-impl BleBackend for AndroidBleBackend {
-    const MAX_PEERS: usize = limits::ANDROID_MAX_PEERS;
-    type Error = AndroidBleError;
-    type Link = AndroidBleLink;
-
-    async fn set_radio_enabled(&mut self, enabled: bool) -> Result<(), AndroidBleError> {
-        self.bridge.set_radio_enabled(enabled);
-        Ok(())
-    }
-
-    async fn local_capabilities(
-        &mut self,
-        mut configured: LinkCapabilities,
-    ) -> Result<LinkCapabilities, AndroidBleError> {
-        let psm = self.bridge.await_psm().await;
-        configured.l2cap = Psm::new(psm);
-        Ok(configured)
-    }
-
-    async fn set_advertising(&mut self, enabled: bool) -> Result<(), AndroidBleError> {
-        self.bridge.set_advertising(enabled);
-        Ok(())
-    }
-
-    async fn set_scanning(&mut self, enabled: bool) -> Result<(), AndroidBleError> {
-        self.bridge.set_scanning(enabled);
-        Ok(())
-    }
-
-    async fn next_event(&mut self) -> BleEvent<AndroidBleLink> {
-        loop {
-            let event = self
-                .bridge
-                .shared
-                .events
-                .lock()
-                .ok()
-                .and_then(|mut events| events.pop_front());
-            match event {
-                Some(Event::Sighting { address, rssi }) => {
-                    return BleEvent::Sighting { address, rssi };
-                }
-                Some(Event::DialFailed { address }) => {
-                    return BleEvent::DialFailed { address };
-                }
-                Some(Event::Link(pending)) => {
-                    let dialed = pending.dialed;
-                    let peer_rssi = pending.rssi;
-                    let link = AndroidBleLink {
-                        conn_id: pending.conn_id,
-                        address: pending.address,
-                        dialect: pending.dialect,
-                        control_in: pending.control_in,
-                        l2cap_in: Some(pending.l2cap_in),
-                        data_in: Some(pending.data_in),
-                        control_out: pending.control_out,
-                        l2cap_out: pending.l2cap_out,
-                        data_out: pending.data_out,
-                        l2cap_up: pending.l2cap_up,
-                        l2cap_opens: pending.l2cap_opens,
-                        work: pending.work,
-                    };
-                    if dialed {
-                        return BleEvent::LinkReady {
-                            link,
-                            origin: Origin::Dialed,
-                            peer_rssi,
-                        };
-                    }
-                    return BleEvent::Inbound(link);
-                }
-                None => self.bridge.shared.events_ready.notified().await,
-            }
-        }
-    }
-
-    async fn dial(&mut self, address: BleAddress) {
-        self.bridge.push_dial(*address.octets());
-    }
-}
-
-pub struct AndroidBleLink {
-    conn_id: u32,
-    address: BleAddress,
-    dialect: Dialect,
-    control_in: UnboundedReceiver<Vec<u8>>,
-    l2cap_in: Option<UnboundedReceiver<Vec<u8>>>,
-    data_in: Option<UnboundedReceiver<Vec<u8>>>,
-    control_out: Arc<Mutex<VecDeque<u8>>>,
-    l2cap_out: Arc<Mutex<VecDeque<u8>>>,
-    data_out: Arc<Mutex<VecDeque<Vec<u8>>>>,
-    l2cap_up: Arc<LinkSignal>,
-    l2cap_opens: Arc<Mutex<VecDeque<(u32, u16)>>>,
-    work: Arc<WorkSignal>,
-}
-
-impl BleLink for AndroidBleLink {
-    type Error = AndroidBleError;
-    type Source = AndroidBleSource;
-    type Sink = AndroidBleSink;
-
-    fn dialect(&self) -> Dialect {
-        self.dialect
-    }
-
-    fn address(&self) -> BleAddress {
-        self.address
-    }
-
-    async fn control_send(&mut self, msg: &Control) -> Result<(), AndroidBleError> {
-        if self.dialect == Dialect::Columba {
-            if let Control::Hello { identity, .. } = msg {
-                if let Ok(mut out) = self.data_out.lock() {
-                    out.push_back(identity.as_bytes().to_vec());
-                }
-                self.work.wake();
-            }
-            return Ok(());
-        }
-        let mut buf = [0u8; CONTROL_MAX_LEN];
-        let len = msg
-            .encode(&mut buf)
-            .ok_or(AndroidBleError::ControlTooLarge)?;
-        if let Ok(mut out) = self.control_out.lock() {
-            out.extend(buf[..len].iter().copied());
-        }
-        self.work.wake();
-        Ok(())
-    }
-
-    async fn control_recv(&mut self) -> Result<Control, AndroidBleError> {
-        loop {
-            let bytes = self
-                .control_in
-                .recv()
-                .await
-                .ok_or(AndroidBleError::Closed)?;
-            if let Some(control) = Control::decode(&bytes) {
-                return Ok(control);
-            }
-        }
-    }
-
-    async fn upgrade(&mut self, plan: &L2capPlan) -> Result<(), AndroidBleError> {
-        if self.dialect == Dialect::Columba {
-            return Ok(());
-        }
-        if let L2capPlan::Open { psm } = plan {
-            if let Ok(mut opens) = self.l2cap_opens.lock() {
-                opens.push_back((self.conn_id, psm.get()));
-            }
-            self.work.wake();
-        }
-        Ok(())
-    }
-
-    fn into_data(self) -> (AndroidBleSource, AndroidBleSink) {
-        let (merged_tx, merged_rx) = unbounded_channel::<Vec<u8>>();
-
-        if let Some(mut data_in) = self.data_in {
-            let frames = merged_tx.clone();
-            tokio::spawn(async move {
-                let mut reassembler = Reassembler::<GATT_REASSEMBLY_CAP>::new();
-                while let Some(message) = data_in.recv().await {
-                    if let Some(fragment) = Fragment::decode(&message) {
-                        if let Some(frame) = reassembler.absorb(&fragment) {
-                            if frames.send(frame.to_vec()).is_err() {
-                                break;
-                            }
-                        }
-                    }
-                }
-            });
-        }
-
-        if let Some(mut l2cap_in) = self.l2cap_in {
-            let frames = merged_tx.clone();
-            tokio::spawn(async move {
-                let mut deframer = StreamDeframer::<{ 2 * L2CAP_SDU_LEN }>::new();
-                let mut frame = std::vec![0u8; 2 * L2CAP_SDU_LEN];
-                while let Some(chunk) = l2cap_in.recv().await {
-                    if !deframer.absorb(&chunk) {
-                        break;
-                    }
-                    while let Some(len) = deframer.next_frame(&mut frame) {
-                        if frames.send(frame[..len].to_vec()).is_err() {
-                            return;
-                        }
-                    }
-                }
-            });
-        }
-
-        drop(merged_tx);
-        (
-            AndroidBleSource { inbound: merged_rx },
-            AndroidBleSink {
-                l2cap_out: self.l2cap_out,
-                gatt_out: self.data_out,
-                l2cap_up: self.l2cap_up,
-                work: self.work,
-            },
-        )
-    }
-}
-
-pub struct AndroidBleSource {
-    inbound: UnboundedReceiver<Vec<u8>>,
-}
-
-impl BleSource for AndroidBleSource {
-    type Error = AndroidBleError;
-
-    async fn recv_frame(&mut self, out: &mut [u8]) -> Result<usize, AndroidBleError> {
-        let frame = self.inbound.recv().await.ok_or(AndroidBleError::Closed)?;
-        let n = frame.len().min(out.len());
-        out[..n].copy_from_slice(&frame[..n]);
-        Ok(n)
-    }
-}
-
-pub struct AndroidBleSink {
-    l2cap_out: Arc<Mutex<VecDeque<u8>>>,
-    gatt_out: Arc<Mutex<VecDeque<Vec<u8>>>>,
-    l2cap_up: Arc<LinkSignal>,
-    work: Arc<WorkSignal>,
-}
-
-impl BleSink for AndroidBleSink {
-    type Error = AndroidBleError;
-
-    async fn send_frame(&mut self, frame: &[u8]) -> Result<(), AndroidBleError> {
-        if self.l2cap_up.is_up.load(Ordering::Acquire) {
-            let mut framed = [0u8; L2CAP_SDU_LEN];
-            let len =
-                encode_stream_frame(frame, &mut framed).ok_or(AndroidBleError::FrameTooLarge)?;
-            if let Ok(mut out) = self.l2cap_out.lock() {
-                out.extend(framed[..len].iter().copied());
-            }
-        } else {
-            let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
-            for fragment in fragments_of(frame, GATT_FRAGMENT_PAYLOAD) {
-                let len = fragment
-                    .encode(&mut buf)
-                    .ok_or(AndroidBleError::FrameTooLarge)?;
-                if let Ok(mut out) = self.gatt_out.lock() {
-                    out.push_back(buf[..len].to_vec());
-                }
-            }
-        }
-        self.work.wake();
-        Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn disabled_radio_exposes_no_android_ble_work() {
-        let bridge = AndroidBleBridge::new();
-
-        bridge.set_radio_enabled(true);
-        bridge.set_advertising(true);
-        bridge.set_scanning(true);
-        bridge.set_psm(0x0080);
-        assert_eq!(
-            bridge.radio_state(),
-            RADIO_ENABLED | RADIO_ADVERTISING | RADIO_SCANNING
-        );
-
-        bridge.set_radio_enabled(false);
-
-        assert_eq!(bridge.radio_state(), 0);
-        assert!(bridge.shared.psm.lock().unwrap().is_none());
-        assert!(bridge.shared.links.lock().unwrap().is_empty());
-        assert!(bridge.shared.events.lock().unwrap().is_empty());
-        assert!(bridge.shared.dial_requests.lock().unwrap().is_empty());
-        assert!(bridge.shared.l2cap_opens.lock().unwrap().is_empty());
-    }
-
-    #[test]
-    fn advertising_or_scanning_without_enabled_stays_invisible() {
-        let bridge = AndroidBleBridge::new();
-
-        bridge.set_advertising(true);
-        bridge.set_scanning(true);
-
-        assert_eq!(bridge.radio_state(), 0);
-    }
 }
