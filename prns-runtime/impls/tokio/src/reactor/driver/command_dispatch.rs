@@ -270,6 +270,7 @@ where
                     link_id,
                     path_hash,
                     data,
+                    response_timeout,
                     completion,
                 } = request;
                 journal.register_request(id, completion);
@@ -283,6 +284,7 @@ where
                                     link_id,
                                     path_hash,
                                     data: send_data,
+                                    response_timeout,
                                 }),
                             },
                             topology.interfaces.view(),
@@ -307,7 +309,10 @@ where
                                         compressed_candidate: None,
                                         metadata: ResourceMetadata::None,
                                     },
-                                    correlation: ResourceCorrelation::Request(request_id),
+                                    correlation: ResourceCorrelation::Request {
+                                        id: request_id,
+                                        response_timeout,
+                                    },
                                 },
                                 now,
                                 &mut |entropy| host.fill_entropy(entropy),

@@ -7,14 +7,16 @@ use crate::engine::Journaled;
 use crate::engine::{CommandId, SetResourceStrategy, Settlement};
 use crate::engine::{Directive, EngineReaction, EngineState, InstantMillis};
 use crate::engine::{EngineCommand, IssuedCommand};
+use crate::identity::IdentityHash;
 use crate::interfaces::AttachedInterfaces;
 use crate::interfaces::{InboundPacket, InterfaceId};
 use crate::routing::links::request::RequestId;
 use crate::routing::links::resources::{ResourceBody, ResourceMetadata, ResourceSend};
 use crate::routing::links::resources::{ResourceFailureCause, ResourceHash, ResourceStrategy};
-use crate::routing::links::table::InitiatedLink;
 use crate::routing::links::table::LinkActivation;
+use crate::routing::links::table::{InitiatedLink, RespondingLink};
 use crate::routing::links::{LinkId, LinkKey};
+use crate::routing::upstream_app_destinations::ProofStrategy;
 use crate::storage::StorageLayout;
 use crate::wire::{DestinationHash, BROADCAST_MTU};
 
@@ -26,6 +28,7 @@ pub(crate) fn bytes_from_hex(s: &str) -> std::vec::Vec<u8> {
 }
 
 pub(crate) const LINK_ID: &str = "000102030405060708090a0b0c0d0e0f";
+pub(crate) const RESPONDER_DESTINATION: DestinationHash = DestinationHash::new([0x77; 16]);
 pub(crate) const INITIATOR_SCALAR: &str =
     "3333333333333333333333333333333333333333333333333333333333333333";
 pub(crate) const RESPONDER_PUBLIC: &str =
@@ -66,13 +69,41 @@ pub(crate) fn engine_with_active_link() -> EngineState<TestStorageLayout> {
     active_engine::<TestStorageLayout>()
 }
 
+pub(crate) fn engine_with_responding_link() -> EngineState<TestStorageLayout> {
+    let mut engine = EngineState::<TestStorageLayout>::default();
+    engine
+        .links
+        .track_responding(RespondingLink {
+            link_id: link_id(),
+            key: link_key(),
+            requested_at: InstantMillis(500),
+            timeout_at: InstantMillis(5_000),
+            mtu: BROADCAST_MTU,
+            initiator_signing: Ed25519PublicKey([0x99; 32]),
+            destination: RESPONDER_DESTINATION,
+            identity: IdentityHash::new([0x77; 16]),
+            proof_strategy: ProofStrategy::ProveNone,
+        })
+        .unwrap();
+    engine
+        .links
+        .activate_responding(
+            &link_id(),
+            crate::units::RttMillis::new(250),
+            lane(),
+            InstantMillis(1_000),
+        )
+        .unwrap();
+    engine
+}
+
 pub(crate) fn active_engine<S: StorageLayout>() -> EngineState<S> {
     let mut engine = EngineState::<S>::default();
     engine
         .links
         .track_initiated(InitiatedLink {
             link_id: link_id(),
-            destination: DestinationHash::new([0x77; 16]),
+            destination: RESPONDER_DESTINATION,
             initiator_secret: X25519SecretKey::new([0x33; 32]),
             link_signing: Ed25519SecretKey::new([0x33; 32]),
             requested_at: InstantMillis(500),

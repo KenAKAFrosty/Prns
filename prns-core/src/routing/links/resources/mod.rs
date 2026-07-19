@@ -310,7 +310,10 @@ pub struct ResourcePartRequest<'a> {
 pub enum ResourceCorrelation {
     #[default]
     Unsolicited,
-    Request(RequestId),
+    Request {
+        id: RequestId,
+        response_timeout: crate::engine::RequestResponseTimeout,
+    },
     Response(RequestId),
 }
 
@@ -319,13 +322,13 @@ impl ResourceCorrelation {
     pub fn request_id(self) -> Option<RequestId> {
         match self {
             Self::Unsolicited => None,
-            Self::Request(id) | Self::Response(id) => Some(id),
+            Self::Request { id, .. } | Self::Response(id) => Some(id),
         }
     }
 
     #[must_use]
     pub const fn is_request(self) -> bool {
-        matches!(self, Self::Request(_))
+        matches!(self, Self::Request { .. })
     }
 
     #[must_use]

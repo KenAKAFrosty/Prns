@@ -21,7 +21,7 @@ use crate::routing::links::resources::{
     ResourceCompression, ResourceCorrelation, ResourceFailureCause, ResourceHash, ResourceProof,
     DECOMPRESSION_GRACE_MS, OPEN_VERDICT_GRACE_MS,
 };
-use crate::routing::links::table::LinkPhase;
+use crate::routing::links::table::{LinkPhase, LinkRole};
 use crate::routing::links::LinkId;
 use crate::storage::StorageLayout;
 use crate::units::RttMillis;
@@ -45,6 +45,8 @@ impl<S: StorageLayout> EngineState<S> {
             mtu,
             attached_interface,
             rtt,
+            role,
+            remote_identity,
             ..
         }) = self.links.phase_for(link_id)
         else {
@@ -53,6 +55,11 @@ impl<S: StorageLayout> EngineState<S> {
         let mtu = *mtu;
         let fire_on = *attached_interface;
         let link_rtt = *rtt;
+        let requester = *remote_identity;
+        let responder_destination = match role {
+            LinkRole::Responder { destination, .. } => Some(*destination),
+            LinkRole::Initiator { .. } => None,
+        };
 
         if let (_, OpenProgress::Chewing { .. }) =
             self.incoming_resources.transfer_and_streamed_open(index)
@@ -145,6 +152,13 @@ impl<S: StorageLayout> EngineState<S> {
                             sink,
                         );
                     } else {
+                        let request_permitted = request_is_permitted(
+                            &self.request_handlers,
+                            state.correlation,
+                            responder_destination,
+                            requester,
+                            verified.data,
+                        );
                         deliver_single_segment(
                             &mut self.receipts,
                             AssembledSingleSegment {
@@ -152,6 +166,8 @@ impl<S: StorageLayout> EngineState<S> {
                                 hash,
                                 correlation: state.correlation,
                                 link_rtt,
+                                requester,
+                                request_permitted,
                                 metadata: verified.metadata,
                                 data: verified.data,
                             },
@@ -203,7 +219,7 @@ impl<S: StorageLayout> EngineState<S> {
             Some(AssemblyProgress::Complete { total_size }) => {
                 let settled = match correlation {
                     ResourceCorrelation::Response(id) => self.receipts.settle_by_request_id(id),
-                    ResourceCorrelation::Request(_) | ResourceCorrelation::Unsolicited => None,
+                    ResourceCorrelation::Request { .. } | ResourceCorrelation::Unsolicited => None,
                 };
                 match settled {
                     Some(proven) => sink(EngineReaction::Journaled(Journaled::CommandSettled {
@@ -317,6 +333,8 @@ impl<S: StorageLayout> EngineState<S> {
             mtu,
             attached_interface,
             rtt,
+            role,
+            remote_identity,
             ..
         }) = self.links.phase_for(&link_id)
         else {
@@ -331,6 +349,11 @@ impl<S: StorageLayout> EngineState<S> {
             return wake_schedule_changes;
         };
         let (mtu, fire_on, link_rtt) = (*mtu, *attached_interface, *rtt);
+        let requester = *remote_identity;
+        let responder_destination = match role {
+            LinkRole::Responder { destination, .. } => Some(*destination),
+            LinkRole::Initiator { .. } => None,
+        };
         let Ok(proof) = verify_and_prove(plaintext, &state.salt_nonce, &hash) else {
             self.fail_retired_incoming_resource(
                 &link_id,
@@ -397,6 +420,13 @@ impl<S: StorageLayout> EngineState<S> {
                 sink,
             );
         } else {
+            let request_permitted = request_is_permitted(
+                &self.request_handlers,
+                state.correlation,
+                responder_destination,
+                requester,
+                data,
+            );
             deliver_single_segment(
                 &mut self.receipts,
                 AssembledSingleSegment {
@@ -404,6 +434,8 @@ impl<S: StorageLayout> EngineState<S> {
                     hash: &hash,
                     correlation: state.correlation,
                     link_rtt,
+                    requester,
+                    request_permitted,
                     metadata,
                     data,
                 },
@@ -466,6 +498,8 @@ struct AssembledSingleSegment<'a> {
     hash: &'a ResourceHash,
     correlation: ResourceCorrelation,
     link_rtt: RttMillis,
+    requester: Option<crate::identity::IdentityHash>,
+    request_permitted: bool,
     metadata: Option<&'a [u8]>,
     data: &'a [u8],
 }
@@ -482,6 +516,8 @@ fn deliver_single_segment<C: ReceiptTable>(
         hash,
         correlation,
         link_rtt,
+        requester,
+        request_permitted,
         metadata,
         data,
     } = segment;
@@ -511,11 +547,15 @@ fn deliver_single_segment<C: ReceiptTable>(
                 }));
             }
         }
-        ResourceCorrelation::Request(_) => {
-            if let Ok(parsed) = parse_request_plaintext(data) {
+        ResourceCorrelation::Request { .. } => {
+            if request_permitted {
+                let Ok(parsed) = parse_request_plaintext(data) else {
+                    return;
+                };
                 sink(EngineReaction::Journaled(Journaled::RequestReceived {
                     link_id: *link_id,
                     request_id: RequestId::of_request_data(data),
+                    requester,
                     path_hash: parsed.path_hash,
                     requested_at: parsed.requested_at,
                     rtt: link_rtt,
@@ -532,6 +572,25 @@ fn deliver_single_segment<C: ReceiptTable>(
             }));
         }
     }
+}
+
+fn request_is_permitted<C: crate::routing::request_handlers::RequestHandlerTable>(
+    handlers: &crate::routing::request_handlers::RequestHandlers<C>,
+    correlation: ResourceCorrelation,
+    destination: Option<crate::wire::DestinationHash>,
+    requester: Option<crate::identity::IdentityHash>,
+    data: &[u8],
+) -> bool {
+    if !matches!(correlation, ResourceCorrelation::Request { .. }) {
+        return true;
+    }
+    let Some(destination) = destination else {
+        return false;
+    };
+    let Ok(parsed) = parse_request_plaintext(data) else {
+        return false;
+    };
+    handlers.permits(&destination, &parsed.path_hash, requester.as_ref())
 }
 
 struct ConcludedSegment {
@@ -570,7 +629,7 @@ fn deliver_split_segment<C: ReceiptTable>(
         ResourceCorrelation::Response(id) => receipts
             .pending_request_command(id)
             .map(|command_id| (command_id, id)),
-        ResourceCorrelation::Request(_) | ResourceCorrelation::Unsolicited => None,
+        ResourceCorrelation::Request { .. } | ResourceCorrelation::Unsolicited => None,
     };
     match answers {
         Some((command_id, request_id)) => {
@@ -703,6 +762,43 @@ mod seam_tests {
 
     fn case1_plaintext() -> std::vec::Vec<u8> {
         b"reticulum resources ride the link ".repeat(40)
+    }
+
+    #[test]
+    fn resource_requests_reenter_the_registered_route_policy() {
+        use crate::routing::links::request::write_request_plaintext;
+        use crate::routing::request_handlers::{
+            FixedRequestHandlerTable, RequestHandlers, RequestPathHash, RequestPolicy,
+        };
+
+        let destination = crate::wire::DestinationHash::new([0x31; 16]);
+        let path_hash = RequestPathHash::of("command");
+        let mut packed = [0u8; 64];
+        let len =
+            write_request_plaintext(InstantMillis(1_000), &path_hash, b"request", &mut packed)
+                .unwrap();
+        let correlation = ResourceCorrelation::Request {
+            id: RequestId::of_request_data(&packed[..len]),
+            response_timeout: Default::default(),
+        };
+        let mut handlers = RequestHandlers::<FixedRequestHandlerTable<1>>::default();
+        assert!(!request_is_permitted(
+            &handlers,
+            correlation,
+            Some(destination),
+            None,
+            &packed[..len],
+        ));
+        handlers
+            .register(destination, path_hash, RequestPolicy::AllowAll)
+            .unwrap();
+        assert!(request_is_permitted(
+            &handlers,
+            correlation,
+            Some(destination),
+            None,
+            &packed[..len],
+        ));
     }
 
     #[test]
@@ -1069,7 +1165,10 @@ mod seam_tests {
                     compressed_candidate: None,
                     metadata: ResourceMetadata::None,
                 },
-                correlation: ResourceCorrelation::Request(request_id),
+                correlation: ResourceCorrelation::Request {
+                    id: request_id,
+                    response_timeout: Default::default(),
+                },
             },
             InstantMillis(1_500),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
@@ -1202,7 +1301,10 @@ mod seam_tests {
                     compressed_candidate: Some(&candidate),
                     metadata: ResourceMetadata::None,
                 },
-                correlation: ResourceCorrelation::Request(request_id),
+                correlation: ResourceCorrelation::Request {
+                    id: request_id,
+                    response_timeout: Default::default(),
+                },
             },
             InstantMillis(1_500),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
@@ -1213,7 +1315,15 @@ mod seam_tests {
             },
         );
 
-        let mut responder = engine_with_active_link();
+        let mut responder = engine_with_responding_link();
+        responder
+            .request_handlers
+            .register(
+                RESPONDER_DESTINATION,
+                path_hash,
+                crate::routing::request_handlers::RequestPolicy::AllowAll,
+            )
+            .unwrap();
         let pull = feed(&mut responder, &advertisement.unwrap(), 2_000);
         assert!(
             !responder.incoming_resources.is_empty(),

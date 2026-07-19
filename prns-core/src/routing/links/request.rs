@@ -6,8 +6,8 @@
 
 use crate::crypto::sha256;
 use crate::engine::{
-    CommandId, CommandOutcome, Respond, RespondRejection, SendRequest, SendRequestRejection,
-    MAX_RESPOND_DATA_LEN, MAX_SEND_REQUEST_DATA_LEN,
+    CommandId, CommandOutcome, RequestResponseTimeout, Respond, RespondRejection, SendRequest,
+    SendRequestRejection, MAX_RESPOND_DATA_LEN, MAX_SEND_REQUEST_DATA_LEN,
 };
 use crate::engine::{EngineState, InstantMillis};
 use crate::identity::IdentitySigningPublicKey;
@@ -224,6 +224,13 @@ pub(crate) fn request_response_timeout_ms(rtt: RttMillis) -> u64 {
     link_traffic_timeout_ms(rtt).saturating_add(REQUEST_RESPONSE_GRACE_MS)
 }
 
+fn requested_response_timeout_ms(rtt: RttMillis, timeout: RequestResponseTimeout) -> u64 {
+    match timeout {
+        RequestResponseTimeout::LinkDefault => request_response_timeout_ms(rtt),
+        RequestResponseTimeout::Exact(timeout) => timeout.0,
+    }
+}
+
 fn seal_link_frame(
     link_id: &LinkId,
     key: &LinkKey,
@@ -319,7 +326,7 @@ impl<S: StorageLayout> EngineState<S> {
         };
         let fire_on = *attached_interface;
         let peer_signing = *peer_signing;
-        let timeout_ms = request_response_timeout_ms(*rtt);
+        let timeout_ms = requested_response_timeout_ms(*rtt, request.response_timeout);
 
         let mut plaintext = [0u8; WRAPPED_PLAINTEXT_CAP];
         let plain_len =
@@ -367,6 +374,7 @@ impl<S: StorageLayout> EngineState<S> {
         id: CommandId,
         link_id: &LinkId,
         packed_request: &[u8],
+        response_timeout: RequestResponseTimeout,
         now: InstantMillis,
     ) {
         let Some(LinkPhase::Active {
@@ -376,7 +384,7 @@ impl<S: StorageLayout> EngineState<S> {
             return;
         };
         let peer_signing = *peer_signing;
-        let timeout_ms = request_response_timeout_ms(*rtt);
+        let timeout_ms = requested_response_timeout_ms(*rtt, response_timeout);
         let _ = self.receipts.track(OutstandingReceipt {
             packet_hash: PacketHash::new(sha256(packed_request)),
             command_id: id,
@@ -611,6 +619,7 @@ mod tests {
                 link_id,
                 path_hash: RequestPathHash::of("/q"),
                 data: SendRequestData::from_slice(&std::vec![0xAA; data_len]).unwrap(),
+                response_timeout: Default::default(),
             };
             let mut buf = [0u8; 600];
             engine_with_an_active_link_at(link_id, 300).write_commanded_send_request(
@@ -625,6 +634,35 @@ mod tests {
         assert_eq!(
             send(mdu - REQUEST_WIRE_OVERHEAD + 1).map(|_| ()),
             Err(LinkRequestWriteError::PayloadTooLong),
+        );
+    }
+
+    #[test]
+    fn an_explicit_request_response_timeout_owns_the_receipt_deadline() {
+        use crate::engine::SendRequestData;
+        use crate::units::DurationMillis;
+
+        let link_id = LinkId::new([0x42; 16]);
+        let mut engine = engine_with_an_active_link_at(link_id, 300);
+        let request = SendRequest {
+            link_id,
+            path_hash: RequestPathHash::of("/slow"),
+            data: SendRequestData::from_slice(b"work").unwrap(),
+            response_timeout: RequestResponseTimeout::Exact(DurationMillis(45_000)),
+        };
+        let mut buf = [0u8; 600];
+        engine
+            .write_commanded_send_request(
+                CommandId(2),
+                &request,
+                InstantMillis(2_000),
+                &[0u8; 16],
+                &mut buf,
+            )
+            .unwrap();
+        assert_eq!(
+            engine.receipts.earliest_timeout_at(),
+            Some(InstantMillis(47_000))
         );
     }
 

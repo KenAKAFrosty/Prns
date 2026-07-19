@@ -24,9 +24,9 @@ pub use link::{
 };
 pub use path::{PathFound, PathRequestId, RequestPath, RequestPathFailure, PATH_REQUEST_ID_LEN};
 pub use request::{
-    AllowRequester, AllowRequesterFailure, AllowRequesterRejection, Respond, RespondData,
-    RespondFailure, RespondRejection, SendRequest, SendRequestData, SendRequestFailure,
-    SendRequestRejection, MAX_RESPOND_DATA_LEN, MAX_SEND_REQUEST_DATA_LEN,
+    AllowRequester, AllowRequesterFailure, AllowRequesterRejection, RequestResponseTimeout,
+    Respond, RespondData, RespondFailure, RespondRejection, SendRequest, SendRequestData,
+    SendRequestFailure, SendRequestRejection, MAX_RESPOND_DATA_LEN, MAX_SEND_REQUEST_DATA_LEN,
 };
 pub use resource::{
     SendResourceFailure, SendResourceRejection, SetResourceStrategy, SetResourceStrategyFailure,

@@ -1,11 +1,13 @@
 use tokio::sync::mpsc::{self, UnboundedReceiver};
 
+use crate::engine::RequestResponseTimeout;
 use crate::reactor::compression;
 use crate::reactor::driver::HostCommand;
 use crate::routing::links::request::RequestId;
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::runtime::request_router::RespondToken;
+use crate::units::DurationMillis;
 use crate::units::RttMillis;
 
 use super::super::PrnsNodeHandle;
@@ -30,6 +32,10 @@ async fn request_emits_a_request_any_and_returns_the_response_with_its_rtt() {
     assert_eq!(request.link_id, link);
     assert_eq!(request.path_hash, path_hash);
     assert_eq!(request.data.as_slice(), &b"ping"[..]);
+    assert_eq!(
+        request.response_timeout,
+        RequestResponseTimeout::LinkDefault
+    );
     request
         .completion
         .send(Ok((b"pong".to_vec(), RttMillis::new(42))))
@@ -38,6 +44,29 @@ async fn request_emits_a_request_any_and_returns_the_response_with_its_rtt() {
     let (data, rtt) = requesting.await.unwrap().unwrap();
     assert_eq!(data, b"pong");
     assert_eq!(rtt, RttMillis::new(42));
+}
+
+#[tokio::test]
+async fn request_preserves_an_explicit_response_timeout() {
+    let (handle, mut command_rx) = handle();
+    let link = LinkId::new([6; 16]);
+    let path_hash = RequestPathHash::new([0x45; 16]);
+    let timeout = RequestResponseTimeout::Exact(DurationMillis(45_000));
+
+    let requesting = tokio::spawn(async move {
+        handle
+            .request_with_response_timeout(link, path_hash, b"slow", timeout)
+            .await
+    });
+    let HostCommand::RequestAny(request) = command_rx.recv().await.unwrap() else {
+        panic!("request issues a RequestAny host command");
+    };
+    assert_eq!(request.response_timeout, timeout);
+    request
+        .completion
+        .send(Ok((b"done".to_vec(), RttMillis::new(42))))
+        .unwrap();
+    assert_eq!(requesting.await.unwrap().unwrap().0, b"done");
 }
 
 #[tokio::test]

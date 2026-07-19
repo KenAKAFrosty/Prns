@@ -9,8 +9,8 @@ use futures_util::FutureExt;
 use tokio::sync::mpsc::{self, UnboundedReceiver};
 
 use crate::engine::{
-    CommandId, EngineCommand, EstablishLinkFailure, Journaled, PacketReceiptDelivered,
-    SendSinglePacketFailure, SetTransportIdentityError,
+    CommandId, EngineCommand, EstablishLinkFailure, Journaled, LinkEstablished,
+    PacketReceiptDelivered, SendSinglePacketFailure, SetTransportIdentityError,
 };
 use crate::identity::held::HoldIdentityError;
 use crate::identity::{IdentityHash, Zeroizing, IDENTITY_SECRET_KEY_LEN};
@@ -287,6 +287,13 @@ where
         self.handle.establish_link(destination).await
     }
 
+    pub async fn establish_link_with_rtt(
+        &self,
+        destination: DestinationHash,
+    ) -> Result<LinkEstablished, SendError<EstablishLinkFailure>> {
+        self.handle.establish_link_with_rtt(destination).await
+    }
+
     pub fn respond(&self, responder: RespondToken, body: &[u8]) -> Option<RttMillis> {
         self.handle.respond(responder, body)
     }
@@ -394,6 +401,7 @@ where
                 if let PrnsEvent::Message(Message::Request {
                     link_id,
                     request_id,
+                    requester,
                     path_hash,
                     requested_at,
                     rtt,
@@ -403,6 +411,7 @@ where
                     let _ = req_tx.try_send(RunnerRequest {
                         link_id: *link_id,
                         request_id: *request_id,
+                        requester: *requester,
                         path_hash: *path_hash,
                         requested_at: *requested_at,
                         rtt: *rtt,

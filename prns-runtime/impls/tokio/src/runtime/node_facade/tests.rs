@@ -98,6 +98,33 @@ async fn establish_link_resolves_the_link_id_from_the_settlement() {
 }
 
 #[tokio::test]
+async fn establish_link_with_rtt_preserves_the_full_settlement() {
+    use crate::engine::LinkEstablished;
+
+    let (prns, mut command_rx) = handle();
+    let issuer = prns.clone();
+    let establish = tokio::spawn(async move { issuer.establish_link_with_rtt(PEER).await });
+    let established = LinkEstablished {
+        link_id: LinkId::new([0x42; 16]),
+        rtt_ms: 11,
+    };
+
+    match command_rx.recv().await.expect("the command was issued") {
+        HostCommand::AwaitedEngine { completion, .. } => {
+            completion
+                .send(Settlement::EstablishLink(Ok(established)))
+                .expect("the awaiter is still parked");
+        }
+        _ => panic!("establish_link_with_rtt must issue an AwaitedEngine command"),
+    }
+
+    assert_eq!(
+        establish.await.expect("the establish task joins"),
+        Ok(established)
+    );
+}
+
+#[tokio::test]
 async fn establish_link_surfaces_a_typed_failure() {
     let (prns, mut command_rx) = handle();
     let issuer = prns.clone();

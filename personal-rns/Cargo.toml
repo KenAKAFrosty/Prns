@@ -15,6 +15,7 @@ path = "src/lib.rs"
 [features]
 default = ["std", "std-sync-host"]
 alloc = ["prns-core/alloc", "prns-runtime/alloc"]
+rnx = ["alloc", "prns-core/rnx", "prns-runtime/rnx"]
 signed-artifact = ["alloc", "prns-core/signed-artifact"]
 interface-discovery = ["alloc", "prns-core/interface-discovery", "prns-runtime/interface-discovery", "prns-interfaces-tokio?/interface-discovery"]
 interface-discovery-archive = ["std", "interface-discovery", "prns-core/interface-discovery-archive", "prns-runtime/interface-discovery-archive"]

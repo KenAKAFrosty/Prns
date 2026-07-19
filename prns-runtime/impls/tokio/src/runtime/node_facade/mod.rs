@@ -16,9 +16,10 @@ use tokio::sync::oneshot;
 
 use crate::engine::{
     AnnounceNow, AnnounceNowFailure, CloseLink, CommandId, EngineCommand, EstablishLink,
-    EstablishLinkFailure, Identify, IdentifyFailure, IssuedCommand, PacketReceiptDelivered,
-    PathFound, PathRequestId, RequestPath, RequestPathFailure, SendSinglePacket,
-    SendSinglePacketFailure, SendSinglePacketPayload, Settlement, PATH_REQUEST_ID_LEN,
+    EstablishLinkFailure, Identify, IdentifyFailure, IssuedCommand, LinkEstablished,
+    PacketReceiptDelivered, PathFound, PathRequestId, RequestPath, RequestPathFailure,
+    SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload, Settlement,
+    PATH_REQUEST_ID_LEN,
 };
 use crate::identity::IdentityHash;
 use crate::interfaces::InterfaceId;
@@ -151,13 +152,20 @@ impl PrnsNodeHandle {
         &self,
         destination: DestinationHash,
     ) -> Result<LinkId, SendError<EstablishLinkFailure>> {
+        self.establish_link_with_rtt(destination)
+            .await
+            .map(|established| established.link_id)
+    }
+
+    pub async fn establish_link_with_rtt(
+        &self,
+        destination: DestinationHash,
+    ) -> Result<LinkEstablished, SendError<EstablishLinkFailure>> {
         match self
             .settle(EngineCommand::EstablishLink(EstablishLink { destination }))
             .await
         {
-            Some(Settlement::EstablishLink(result)) => result
-                .map(|established| established.link_id)
-                .map_err(SendError::Failed),
+            Some(Settlement::EstablishLink(result)) => result.map_err(SendError::Failed),
             Some(_) | None => Err(SendError::NodeStopped),
         }
     }

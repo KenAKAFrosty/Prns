@@ -7,6 +7,9 @@ pub use prns_runtime::{
     crypto, engine, identity, interfaces, persistence, rncp, routes, routing, storage, units, wire,
 };
 
+#[cfg(feature = "rnx")]
+pub use prns_runtime::rnx;
+
 #[cfg(feature = "signed-artifact")]
 pub use prns_core::message_pack;
 

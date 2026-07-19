@@ -253,6 +253,7 @@ pub struct RequestAnyHostCommand {
     pub link_id: LinkId,
     pub path_hash: RequestPathHash,
     pub data: HostResourcePayload,
+    pub response_timeout: crate::engine::RequestResponseTimeout,
     pub completion: oneshot::Sender<Result<(std::vec::Vec<u8>, RttMillis), SendRequestFailure>>,
 }
 

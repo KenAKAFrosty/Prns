@@ -294,6 +294,7 @@ impl<S: StorageLayout> EngineState<S> {
             IngestPacketOutcome::RequestReceived {
                 link_id,
                 request_id,
+                requester,
                 path_hash,
                 requested_at,
                 rtt,
@@ -302,6 +303,7 @@ impl<S: StorageLayout> EngineState<S> {
                 sink(EngineReaction::Journaled(Journaled::RequestReceived {
                     link_id,
                     request_id,
+                    requester,
                     path_hash,
                     requested_at,
                     rtt,

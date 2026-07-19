@@ -1,5 +1,6 @@
 use tokio::sync::oneshot;
 
+use crate::engine::RequestResponseTimeout;
 use crate::engine::SendRequestFailure;
 use crate::reactor::compression;
 use crate::reactor::driver::{
@@ -37,6 +38,22 @@ impl PrnsNodeHandle {
         path_hash: RequestPathHash,
         data: &[u8],
     ) -> Result<(std::vec::Vec<u8>, RttMillis), SendError<SendRequestFailure>> {
+        self.request_with_response_timeout(
+            link_id,
+            path_hash,
+            data,
+            RequestResponseTimeout::LinkDefault,
+        )
+        .await
+    }
+
+    pub async fn request_with_response_timeout(
+        &self,
+        link_id: LinkId,
+        path_hash: RequestPathHash,
+        data: &[u8],
+        response_timeout: RequestResponseTimeout,
+    ) -> Result<(std::vec::Vec<u8>, RttMillis), SendError<SendRequestFailure>> {
         let id = self.mint();
         let (completion, settled) = oneshot::channel();
         self.commands
@@ -45,6 +62,7 @@ impl PrnsNodeHandle {
                 link_id,
                 path_hash,
                 data: data.to_vec().into(),
+                response_timeout,
                 completion,
             }))
             .map_err(|_| SendError::NodeStopped)?;

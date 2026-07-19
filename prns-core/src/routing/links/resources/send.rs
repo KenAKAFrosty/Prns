@@ -26,8 +26,8 @@ use crate::routing::links::resources::table::{
     OutgoingResourceStatus, TrackLane, TrackOutgoingResourceError, TrackedCommand,
 };
 use crate::routing::links::resources::{
-    resource_sdu, ResourceHash, ResourceMetadata, ResourcePartRequest, ResourceSegment,
-    ResourceSend, HASHMAP_MAX_LEN, MAP_HASH_LEN, MAX_ADVERTISEMENT_RETRIES,
+    resource_sdu, ResourceCorrelation, ResourceHash, ResourceMetadata, ResourcePartRequest,
+    ResourceSegment, ResourceSend, HASHMAP_MAX_LEN, MAP_HASH_LEN, MAX_ADVERTISEMENT_RETRIES,
     PART_REQUEST_MAX_RETRIES, PER_RETRY_DELAY_MS, PROCESSING_GRACE_MS, PROOF_TIMEOUT_FACTOR,
     RESOURCE_HASH_LEN, RESOURCE_NONCE_LEN, SENDER_GRACE_MS,
 };
@@ -286,9 +286,20 @@ impl<S: StorageLayout> EngineState<S> {
                     self.outgoing_resources
                         .set_timeout_at(index, Some(advertised_deadline(now, rtt_ms)));
                 }
-                if correlation.is_request() && segment_index == 1 {
-                    self.book_request_resource_receipt(id, &link_id, data, now);
-                    wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
+                if let ResourceCorrelation::Request {
+                    response_timeout, ..
+                } = correlation
+                {
+                    if segment_index == 1 {
+                        self.book_request_resource_receipt(
+                            id,
+                            &link_id,
+                            data,
+                            response_timeout,
+                            now,
+                        );
+                        wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
+                    }
                 }
             }
             AdvertisementWriteOutcome::DidNotWrite => {

@@ -93,7 +93,10 @@ impl<S: StorageLayout> EngineState<S> {
             advertisement.flags.is_response,
             advertisement.request_id,
         ) {
-            (true, false, Some(id)) => ResourceCorrelation::Request(id),
+            (true, false, Some(id)) => ResourceCorrelation::Request {
+                id,
+                response_timeout: Default::default(),
+            },
             (false, true, Some(id)) => ResourceCorrelation::Response(id),
             _ => ResourceCorrelation::Unsolicited,
         };
@@ -104,7 +107,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
         let bypasses_strategy = match correlation {
             ResourceCorrelation::Response(_) => true,
-            ResourceCorrelation::Request(_) => advertisement.total_segments == 1,
+            ResourceCorrelation::Request { .. } => advertisement.total_segments == 1,
             ResourceCorrelation::Unsolicited => false,
         };
         let policy = if bypasses_strategy {
@@ -439,7 +442,10 @@ mod tests {
                     compressed_candidate: None,
                     metadata: ResourceMetadata::None,
                 },
-                correlation: ResourceCorrelation::Request(request_id),
+                correlation: ResourceCorrelation::Request {
+                    id: request_id,
+                    response_timeout: Default::default(),
+                },
             },
             InstantMillis(1_500),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
@@ -451,7 +457,15 @@ mod tests {
         );
         let advertisement = advertisement.expect("the peer advertises its request resource");
 
-        let mut receiver = engine_with_active_link();
+        let mut receiver = engine_with_responding_link();
+        receiver
+            .request_handlers
+            .register(
+                RESPONDER_DESTINATION,
+                path_hash,
+                crate::routing::request_handlers::RequestPolicy::AllowAll,
+            )
+            .unwrap();
         let pull = feed(&mut receiver, &advertisement, 2_000);
         assert_eq!(
             pull.frames.len(),
@@ -513,7 +527,10 @@ mod tests {
                     compressed_candidate: None,
                     metadata: ResourceMetadata::None,
                 },
-                correlation: ResourceCorrelation::Request(request_id),
+                correlation: ResourceCorrelation::Request {
+                    id: request_id,
+                    response_timeout: Default::default(),
+                },
             },
             InstantMillis(1_500),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),

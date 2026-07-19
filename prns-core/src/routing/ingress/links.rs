@@ -638,6 +638,7 @@ impl<S: StorageLayout> EngineState<S> {
         IngestPacketOutcome::RequestReceived {
             link_id,
             request_id: RequestId::of_packet(&packet_hash),
+            requester: remote_identity,
             path_hash: parsed.path_hash,
             requested_at: parsed.requested_at,
             rtt: request_rtt,
