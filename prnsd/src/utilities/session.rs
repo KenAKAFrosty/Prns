@@ -2,13 +2,20 @@ use std::fmt;
 use std::future::Future;
 use std::time::Duration;
 
-use personal_rns::engine::PathFound;
+use personal_rns::engine::{
+    AnnounceAppData, AnnounceNow, AnnounceTarget, PathFound, RatchetPolicy,
+};
 use personal_rns::identity::vault::IdentitySecretKey;
-use personal_rns::node_introspection::NodeIntrospection;
+use personal_rns::node_introspection::{
+    DestinationIdentityQuery, DestinationIdentitySnapshot, NodeIntrospection,
+};
 use personal_rns::routes;
+use personal_rns::routing::links::resources::ResourceStrategy;
+use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
-    Manual, NonRoutingIdentityError, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe,
-    RequestPathError,
+    ConfigurePreconfiguredDestinationError, Manual, NonRoutingIdentityError,
+    PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe,
+    RequestHandlerRegistration, RequestPathError, SendError,
 };
 use personal_rns::shared_instance::{
     connect_existing_shared_instance, ExistingSharedInstanceUnavailable, SharedInstanceRpcClient,
@@ -36,10 +43,34 @@ pub struct UtilityNodeClient {
     rpc: SharedInstanceRpcClient,
 }
 
+pub struct UtilityBusSession {
+    node: UtilityNode,
+    client: UtilityBusClient,
+}
+
+pub struct UtilityBusClient {
+    handle: PrnsNodeHandle,
+}
+
 impl UtilityNodeSession {
     pub async fn connect(
         configuration: &LoadedConfiguration,
         identity: UtilityNodeIdentity,
+        rpc_timeout: Duration,
+    ) -> Result<Self, UtilityNodeSessionError> {
+        let node = utility_node();
+        let node = match identity {
+            UtilityNodeIdentity::Anonymous => node,
+            UtilityNodeIdentity::Private(identity) => node
+                .with_non_routing_identity(identity)
+                .map_err(UtilityNodeSessionError::IdentityConfiguration)?,
+        };
+        Self::attach(configuration, node, rpc_timeout).await
+    }
+
+    async fn attach(
+        configuration: &LoadedConfiguration,
+        node: UtilityNode,
         rpc_timeout: Duration,
     ) -> Result<Self, UtilityNodeSessionError> {
         let rpc = configuration
@@ -48,21 +79,6 @@ impl UtilityNodeSession {
         let bus = configuration
             .local_bus_client_intent()
             .map_err(UtilityNodeSessionError::Configuration)?;
-        let node: UtilityNode = PrnsNode::new(PrnsNodeRecipe {
-            transport_identity: None,
-            pre_configured_destinations: std::iter::empty(),
-            app_state: (),
-            storage: GrowableHeap,
-            routes: routes![],
-            interfaces: Manual,
-            on_event: ignore_event,
-        });
-        let node = match identity {
-            UtilityNodeIdentity::Anonymous => node,
-            UtilityNodeIdentity::Private(identity) => node
-                .with_non_routing_identity(identity)
-                .map_err(UtilityNodeSessionError::IdentityConfiguration)?,
-        };
         let handle = node.handle();
         connect_existing_shared_instance(&handle, bus)
             .await
@@ -112,6 +128,113 @@ impl UtilityNodeClient {
     }
 }
 
+impl UtilityBusSession {
+    pub async fn connect(
+        configuration: &LoadedConfiguration,
+        identity: UtilityNodeIdentity,
+    ) -> Result<Self, UtilityNodeSessionError> {
+        let node = utility_node();
+        let node = match identity {
+            UtilityNodeIdentity::Anonymous => node,
+            UtilityNodeIdentity::Private(identity) => node
+                .with_non_routing_identity(identity)
+                .map_err(UtilityNodeSessionError::IdentityConfiguration)?,
+        };
+        Self::attach(configuration, node).await
+    }
+
+    pub async fn connect_announcing(
+        configuration: &LoadedConfiguration,
+        identity: IdentitySecretKey,
+        app_name: &str,
+        aspects: &[&str],
+    ) -> Result<(Self, DestinationHash), UtilityNodeSessionError> {
+        let mut node = utility_node();
+        let destination = node
+            .register_preconfigured_destination(PreConfiguredDestination::Single {
+                app_name,
+                aspects,
+                identity,
+                announce_app_data: &[],
+                proof: ProofStrategy::ProveNone,
+                link_requests: LinkRequestPolicy::AcceptNone,
+                ratchet: RatchetPolicy::NoRatchets,
+                resource_strategy: ResourceStrategy::AcceptNone,
+                request_handlers: RequestHandlerRegistration::None,
+            })
+            .map_err(UtilityNodeSessionError::DestinationConfiguration)?;
+        let session = Self::attach(configuration, node).await?;
+        Ok((session, destination))
+    }
+
+    async fn attach(
+        configuration: &LoadedConfiguration,
+        node: UtilityNode,
+    ) -> Result<Self, UtilityNodeSessionError> {
+        let bus = configuration
+            .local_bus_client_intent()
+            .map_err(UtilityNodeSessionError::Configuration)?;
+        let handle = node.handle();
+        connect_existing_shared_instance(&handle, bus)
+            .await
+            .map_err(UtilityNodeSessionError::SharedInstanceUnavailable)?;
+        Ok(Self {
+            node,
+            client: UtilityBusClient { handle },
+        })
+    }
+
+    pub async fn run<T, F, Operation>(self, operation: F) -> Result<T, UtilityNodeStopped>
+    where
+        F: FnOnce(UtilityBusClient) -> Operation,
+        Operation: Future<Output = T>,
+    {
+        let Self { node, client } = self;
+        tokio::select! {
+            result = operation(client) => Ok(result),
+            () = node.run() => Err(UtilityNodeStopped),
+        }
+    }
+}
+
+impl UtilityBusClient {
+    pub fn handle(&self) -> &PrnsNodeHandle {
+        &self.handle
+    }
+
+    pub async fn destination_identity(
+        &self,
+        query: DestinationIdentityQuery,
+    ) -> Option<DestinationIdentitySnapshot> {
+        self.handle.destination_identity(query).await
+    }
+
+    pub async fn announce(
+        &self,
+        destination: DestinationHash,
+    ) -> Result<(), SendError<personal_rns::engine::AnnounceNowFailure>> {
+        self.handle
+            .announce_now(AnnounceNow {
+                destination,
+                target: AnnounceTarget::AllInterfaces,
+                app_data: AnnounceAppData::Registered,
+            })
+            .await
+    }
+}
+
+fn utility_node() -> UtilityNode {
+    PrnsNode::new(PrnsNodeRecipe {
+        transport_identity: None,
+        pre_configured_destinations: std::iter::empty(),
+        app_state: (),
+        storage: GrowableHeap,
+        routes: routes![],
+        interfaces: Manual,
+        on_event: ignore_event,
+    })
+}
+
 fn ignore_event(_event: PrnsEvent<'_>, _state: &()) {}
 
 #[derive(Debug)]
@@ -130,6 +253,7 @@ pub enum UtilityNodeSessionError {
     Configuration(UtilityConfigurationError),
     IdentityConfiguration(NonRoutingIdentityError),
     SharedInstanceUnavailable(ExistingSharedInstanceUnavailable),
+    DestinationConfiguration(ConfigurePreconfiguredDestinationError),
 }
 
 impl fmt::Display for UtilityNodeSessionError {
@@ -146,6 +270,12 @@ impl fmt::Display for UtilityNodeSessionError {
                 formatter,
                 "{source}; start prnsd or a stock RNS shared instance first"
             ),
+            Self::DestinationConfiguration(source) => {
+                write!(
+                    formatter,
+                    "could not configure announce destination: {source:?}"
+                )
+            }
         }
     }
 }

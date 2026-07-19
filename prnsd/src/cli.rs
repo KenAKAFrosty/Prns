@@ -133,7 +133,7 @@ pub enum Command {
     #[command(about = "Probe a Reticulum destination")]
     Probe(RnprobeArgs),
     #[command(about = "Manage Reticulum identities and local cryptographic files")]
-    Id(RnidArgs),
+    Id(Box<RnidArgs>),
 }
 
 #[derive(Parser)]
@@ -459,6 +459,44 @@ mod tests {
     fn id_does_not_expose_a_prefixed_alias() {
         let error = parse_from(["prnsd", "rnid"].into_iter().map(OsString::from)).unwrap_err();
         assert_eq!(error.exit_code(), 2);
+    }
+
+    #[test]
+    fn id_parses_signed_artifact_and_network_flags() {
+        let Command::Id(args) = parse(&[
+            "prnsd",
+            "id",
+            "-i",
+            "00112233445566778899aabbccddeeff",
+            "-S",
+            "hello",
+            "-E",
+            "metadata",
+            "--meta-spec",
+            "metadata.spec",
+            "-w",
+            "message",
+            "-R",
+            "-t",
+            "2.5",
+            "--meta",
+        ]) else {
+            panic!("id must own signed-artifact and network flags");
+        };
+        assert_eq!(args.sign_message.as_deref(), Some("hello"));
+        assert_eq!(args.embed_meta, Some(PathBuf::from("metadata")));
+        assert_eq!(args.meta_spec, Some(PathBuf::from("metadata.spec")));
+        assert!(args.request);
+        assert_eq!(
+            args.timeout.duration(),
+            std::time::Duration::from_secs_f64(2.5)
+        );
+        assert!(args.meta);
+
+        let Command::Id(args) = parse(&["prnsd", "id", "-i", "identity.rid", "-a"]) else {
+            panic!("id must own announcements");
+        };
+        assert_eq!(args.announce.as_deref(), Some("rns.id"));
     }
 
     #[test]

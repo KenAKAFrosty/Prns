@@ -177,7 +177,10 @@ impl LocalIdentity {
     }
 
     pub fn write_export(&self, args: &RnidArgs) -> Result<(), LocalIdentityError> {
-        if args.crypto_operation().is_some() {
+        if args.crypto_operation().is_some()
+            || args.sign_message.is_some()
+            || args.announce.is_some()
+        {
             return Ok(());
         }
         let Some(path) = &args.write else {

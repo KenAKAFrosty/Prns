@@ -296,7 +296,8 @@ fn encode_get(
     operation: &str,
 ) -> Result<(), RnsManagementEncodeError> {
     encoder.map(1)?;
-    encoder.string_field(selector::GET, operation)
+    encoder.string_field(selector::GET, operation)?;
+    Ok(())
 }
 
 fn encode_get_with_binary(
@@ -308,7 +309,8 @@ fn encode_get_with_binary(
     encoder.map(2)?;
     encoder.string_field(selector::GET, operation)?;
     encoder.field(argument_name)?;
-    encoder.binary(value)
+    encoder.binary(value)?;
+    Ok(())
 }
 
 fn encode_drop_with_binary(
@@ -319,7 +321,8 @@ fn encode_drop_with_binary(
     encoder.map(2)?;
     encoder.string_field(selector::DROP, operation)?;
     encoder.field(argument::DESTINATION_HASH)?;
-    encoder.binary(value)
+    encoder.binary(value)?;
+    Ok(())
 }
 
 fn encode_optional_integer(encoder: &mut MessagePackEncoder, value: &Option<RnsInteger>) {

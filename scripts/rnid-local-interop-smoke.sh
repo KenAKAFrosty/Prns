@@ -12,6 +12,13 @@ STOCK_SIGNATURE="$STOCK_MESSAGE.rsg"
 CANDIDATE_MESSAGE="$WORK/candidate-message"
 PLAINTEXT="$WORK/plaintext"
 STOCK_ENCRYPTED="$WORK/stock.rfe"
+ARTIFACT_MESSAGE="$WORK/stock-artifact-message"
+STOCK_RSG="$ARTIFACT_MESSAGE.rsg"
+PRNS_ARTIFACT_MESSAGE="$WORK/prns-artifact-message"
+STOCK_RSM="$WORK/stock.rsm"
+PRNS_RSM="$WORK/prns.rsm"
+METADATA="$WORK/metadata"
+METADATA_SPEC="$WORK/metadata.spec"
 BIN="$ROOT/prnsd/target/debug/prnsd"
 
 cleanup() {
@@ -22,6 +29,8 @@ trap cleanup EXIT
 [ -x "$PYTHON" ] || { echo "FAIL: reference venv python not found at $PYTHON"; exit 1; }
 
 HASH="$($PYTHON "$ORACLE" prepare "$PRIVATE" "$PUBLIC" "$STOCK_MESSAGE" "$STOCK_SIGNATURE" "$PLAINTEXT" "$STOCK_ENCRYPTED")"
+$PYTHON "$ORACLE" prepare-artifacts "$PRIVATE" "$ARTIFACT_MESSAGE" "$STOCK_RSG" "$STOCK_RSM"
+cp "$ARTIFACT_MESSAGE" "$PRNS_ARTIFACT_MESSAGE"
 cp "$STOCK_MESSAGE" "$CANDIDATE_MESSAGE"
 ( cd "$ROOT/prnsd" && cargo build --quiet --locked )
 
@@ -39,6 +48,27 @@ cmp "$PUBLIC" "$WORK/exported.pub"
 $BIN id -i "$PRIVATE" -s "$CANDIDATE_MESSAGE" --raw > "$WORK/sign.out"
 $PYTHON "$ORACLE" verify "$PRIVATE" "$CANDIDATE_MESSAGE" "$CANDIDATE_MESSAGE.rsg"
 $BIN id -m "$PUBLIC" -V "$STOCK_MESSAGE" > "$WORK/validate.out"
+
+$BIN id -i "$PRIVATE" -s "$PRNS_ARTIFACT_MESSAGE" > "$WORK/artifact-sign.out"
+$PYTHON "$ORACLE" verify-rsg "$PRIVATE" "$PRNS_ARTIFACT_MESSAGE" "$PRNS_ARTIFACT_MESSAGE.rsg"
+$BIN id -V "$ARTIFACT_MESSAGE" > "$WORK/artifact-validate.out"
+for ENCODING in base32 base64 base256 hex; do
+    case "$ENCODING" in
+        base32) FLAG=-B ;;
+        base64) FLAG=-b ;;
+        base256) FLAG=-U ;;
+        hex) FLAG=-F ;;
+    esac
+    $BIN id -i "$PRIVATE" -s "$PRNS_ARTIFACT_MESSAGE" "$FLAG" > "$WORK/artifact-$ENCODING.out"
+    $PYTHON "$ORACLE" verify-encoded-rsg "$PRIVATE" "$PRNS_ARTIFACT_MESSAGE" "$WORK/artifact-$ENCODING.out" "$ENCODING"
+done
+
+printf 'name = Prns\nversion = 3\ntags = one, two\nstable = yes\n' > "$METADATA"
+printf 'name = string()\nversion = integer()\ntags = string_list()\nstable = boolean()\n' > "$METADATA_SPEC"
+$BIN id -i "$PRIVATE" -S canonical-message-oracle -E "$METADATA" --meta-spec "$METADATA_SPEC" -w "$WORK/prns" > "$WORK/message-sign.out"
+$PYTHON "$ORACLE" verify-rsm "$PRIVATE" "$PRNS_RSM"
+$BIN id -V "$STOCK_RSM" --meta > "$WORK/message-validate.out"
+grep -q "canonical-message-oracle" "$WORK/message-validate.out" || { echo "FAIL: Prnsd did not emit the stock embedded message"; exit 1; }
 
 $BIN id -m "$PUBLIC" -e "$PLAINTEXT" > "$WORK/encrypt.out"
 $PYTHON "$ORACLE" decrypt "$PRIVATE" "$PLAINTEXT.rfe" "$PLAINTEXT"
@@ -82,4 +112,4 @@ $PYTHON "$ORACLE" verify "$PRIVATE" "$CANDIDATE_MESSAGE" "$WORK/stdin.rsg"
 $BIN id -g "$WORK/generated.rid" > "$WORK/generate.out"
 [ "$(wc -c < "$WORK/generated.rid" | tr -d ' ')" -eq 64 ] || { echo "FAIL: generated identity has the wrong length"; exit 1; }
 
-echo "PASS: Prnsd id matches stock RNS 1.3.8 local identity, raw signature, encryption, and encoding behavior"
+echo "PASS: Prnsd id matches stock RNS 1.3.8 identity, RSG/RSM, encryption, and encoding behavior"

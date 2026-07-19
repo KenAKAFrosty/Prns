@@ -136,6 +136,7 @@ impl<'a> MessagePackReader<'a> {
         }
     }
 
+    #[cfg(feature = "shared-instance-rpc")]
     pub(crate) fn skip_value(
         &mut self,
         marker: Marker,
@@ -166,7 +167,7 @@ impl<'a> MessagePackReader<'a> {
                 self.skip(length)?;
             }
             Marker::FixArray(length) => {
-                self.skip_sequence(usize::from(length), depth, maximum_depth)?;
+                self.skip_sequence(usize::from(length), depth, maximum_depth)?
             }
             Marker::Array16 => {
                 let length = usize::from(self.u16()?);
@@ -177,7 +178,7 @@ impl<'a> MessagePackReader<'a> {
                 self.skip_sequence(length, depth, maximum_depth)?;
             }
             Marker::FixMap(length) => {
-                self.skip_sequence(usize::from(length) * 2, depth, maximum_depth)?;
+                self.skip_sequence(usize::from(length) * 2, depth, maximum_depth)?
             }
             Marker::Map16 => {
                 let length = usize::from(self.u16()?)
@@ -221,6 +222,7 @@ impl<'a> MessagePackReader<'a> {
         Ok(())
     }
 
+    #[cfg(feature = "shared-instance-rpc")]
     fn skip_sequence(
         &mut self,
         length: usize,
@@ -247,6 +249,7 @@ impl<'a> MessagePackReader<'a> {
         Ok(value)
     }
 
+    #[cfg(feature = "shared-instance-rpc")]
     fn skip(&mut self, length: usize) -> Result<(), MessagePackDecodeError> {
         self.bytes(length).map(|_| ())
     }

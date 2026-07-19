@@ -5,8 +5,8 @@ use tokio::sync::oneshot;
 
 use crate::interfaces::PacketPhyStats;
 use crate::node_introspection::{
-    AnnounceRateSnapshot, InterfaceInventoryEntry, NodeIntrospection, NodeIntrospectionRequest,
-    RouteSnapshot,
+    AnnounceRateSnapshot, DestinationIdentityQuery, DestinationIdentitySnapshot,
+    InterfaceInventoryEntry, NodeIntrospection, NodeIntrospectionRequest, RouteSnapshot,
 };
 use crate::reactor::driver::HostCommand;
 use crate::routing::dedup::PacketHash;
@@ -61,6 +61,15 @@ impl PrnsNodeHandle {
         })
         .await
         .flatten()
+    }
+
+    pub async fn destination_identity(
+        &self,
+        query: DestinationIdentityQuery,
+    ) -> Option<DestinationIdentitySnapshot> {
+        self.introspect(|reply| NodeIntrospectionRequest::DestinationIdentity { query, reply })
+            .await
+            .flatten()
     }
 }
 

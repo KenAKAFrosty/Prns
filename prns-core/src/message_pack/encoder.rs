@@ -3,7 +3,7 @@ use core::convert::Infallible;
 
 use rmp::encode::{self, ByteBuf, ValueWriteError};
 
-use super::super::RnsManagementEncodeError;
+use super::MessagePackEncodeError;
 
 pub(crate) struct MessagePackEncoder {
     bytes: ByteBuf,
@@ -40,48 +40,51 @@ impl MessagePackEncoder {
         infallible_value(encode::write_f64(&mut self.bytes, value));
     }
 
-    pub(crate) fn string(&mut self, value: &str) -> Result<(), RnsManagementEncodeError> {
-        u32::try_from(value.len()).map_err(|_| RnsManagementEncodeError)?;
+    pub(crate) fn string(&mut self, value: &str) -> Result<(), MessagePackEncodeError> {
+        u32::try_from(value.len()).map_err(|_| MessagePackEncodeError)?;
         infallible_value(encode::write_str(&mut self.bytes, value));
         Ok(())
     }
 
-    pub(crate) fn binary(&mut self, value: &[u8]) -> Result<(), RnsManagementEncodeError> {
-        u32::try_from(value.len()).map_err(|_| RnsManagementEncodeError)?;
+    pub(crate) fn binary(&mut self, value: &[u8]) -> Result<(), MessagePackEncodeError> {
+        u32::try_from(value.len()).map_err(|_| MessagePackEncodeError)?;
         infallible_value(encode::write_bin(&mut self.bytes, value));
         Ok(())
     }
 
-    pub(crate) fn array(&mut self, length: usize) -> Result<(), RnsManagementEncodeError> {
-        let length = u32::try_from(length).map_err(|_| RnsManagementEncodeError)?;
+    pub(crate) fn array(&mut self, length: usize) -> Result<(), MessagePackEncodeError> {
+        let length = u32::try_from(length).map_err(|_| MessagePackEncodeError)?;
         infallible_value(encode::write_array_len(&mut self.bytes, length));
         Ok(())
     }
 
-    pub(crate) fn map(&mut self, length: usize) -> Result<(), RnsManagementEncodeError> {
-        let length = u32::try_from(length).map_err(|_| RnsManagementEncodeError)?;
+    pub(crate) fn map(&mut self, length: usize) -> Result<(), MessagePackEncodeError> {
+        let length = u32::try_from(length).map_err(|_| MessagePackEncodeError)?;
         infallible_value(encode::write_map_len(&mut self.bytes, length));
         Ok(())
     }
 
-    pub(crate) fn field(&mut self, name: &str) -> Result<(), RnsManagementEncodeError> {
+    #[cfg(feature = "shared-instance-rpc")]
+    pub(crate) fn field(&mut self, name: &str) -> Result<(), MessagePackEncodeError> {
         self.string(name)
     }
 
+    #[cfg(feature = "shared-instance-rpc")]
     pub(crate) fn string_field(
         &mut self,
         name: &str,
         value: &str,
-    ) -> Result<(), RnsManagementEncodeError> {
+    ) -> Result<(), MessagePackEncodeError> {
         self.field(name)?;
         self.string(value)
     }
 
+    #[cfg(feature = "shared-instance-rpc")]
     pub(crate) fn unsigned_field(
         &mut self,
         name: &str,
         value: u64,
-    ) -> Result<(), RnsManagementEncodeError> {
+    ) -> Result<(), MessagePackEncodeError> {
         self.field(name)?;
         self.unsigned(value);
         Ok(())

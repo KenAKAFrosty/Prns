@@ -108,6 +108,32 @@ async fn destination_identity_hash_resolves_its_reactor_snapshot() {
 }
 
 #[tokio::test]
+async fn destination_identity_query_resolves_public_material() {
+    let (handle, mut command_rx) = handle();
+    let identity = crate::identity::IdentityHash::new([0x42; 16]);
+    let public = crate::identity::PublicIdentityMaterial::from_bytes([0x31; 64]);
+    let expected = crate::node_introspection::DestinationIdentitySnapshot {
+        destination: PEER,
+        identity,
+        public,
+    };
+    let query = crate::node_introspection::DestinationIdentityQuery::Identity(identity);
+    let reading = tokio::spawn(async move { handle.destination_identity(query).await });
+
+    let HostCommand::NodeIntrospection(NodeIntrospectionRequest::DestinationIdentity {
+        query: received,
+        reply,
+    }) = command_rx.recv().await.unwrap()
+    else {
+        panic!("expected destination identity material introspection request");
+    };
+    assert_eq!(received, query);
+    reply.send(Some(expected)).unwrap();
+
+    assert_eq!(reading.await.unwrap(), Some(expected));
+}
+
+#[tokio::test]
 async fn routing_controls_resolve_their_typed_reactor_replies() {
     let (handle, mut command_rx) = handle();
 
