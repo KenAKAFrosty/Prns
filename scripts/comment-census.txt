@@ -9,5 +9,5 @@ prnsd 3
 prns-ffi 40
 prns-wasm 2
 personal-hopspot 568
-benchmarks 532
+benchmarks 440
 fuzz 0
