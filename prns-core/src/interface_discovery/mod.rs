@@ -34,9 +34,9 @@ pub use coordinator::{
 };
 #[cfg(feature = "interface-discovery-archive")]
 pub use impls::{
-    ArchiveFileOperation, ArchiveRecordError, DiscoveryArchive, DiscoveryArchiveError,
-    DiscoveryArchiveFileState, DiscoveryArchiveRecord, HexDecodeError, LoadedDiscoveryArchive,
-    DISCOVERED_INTERFACES_FILE,
+    discovered_interface_configuration, ArchiveFileOperation, ArchiveRecordError, DiscoveryArchive,
+    DiscoveryArchiveError, DiscoveryArchiveFileState, DiscoveryArchiveRecord, HexDecodeError,
+    LoadedDiscoveryArchive, DISCOVERED_INTERFACES_FILE,
 };
 pub use intake::{
     ingest_discovery_announce, DiscoveredInterface, DiscoveredInterfaceId,

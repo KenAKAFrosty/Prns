@@ -6,6 +6,7 @@ use tokio::net::TcpListener;
 #[cfg(target_os = "linux")]
 use tokio::net::UnixListener;
 
+use prns_core::interfaces::rns_management::RnsTransportStatus;
 use prns_core::interfaces::shared_instance::rns_rpc::RpcRequest;
 use prns_runtime::node_introspection::NodeIntrospection;
 use prns_runtime::runtime::rns_rpc;
@@ -28,6 +29,9 @@ pub struct SharedInstanceRpcCompat<Q, B = Q> {
     query: Q,
     blackholes: B,
     telemetry: RpcTelemetry,
+    started_at: std::time::Instant,
+    transport_identity: prns_core::identity::IdentityHash,
+    network_identity: Option<prns_core::identity::IdentityHash>,
 }
 
 pub struct SharedInstanceRpcListener<Q, B = Q> {
@@ -35,12 +39,16 @@ pub struct SharedInstanceRpcListener<Q, B = Q> {
     service: RpcService<Q, B>,
 }
 
-struct RpcService<Q, B> {
-    credentials: SharedInstanceCredentials,
-    blackhole_source: prns_core::identity::IdentityHash,
-    query: Q,
-    blackholes: B,
-    telemetry: RpcTelemetry,
+#[derive(Clone)]
+pub(super) struct RpcService<Q, B> {
+    pub(super) credentials: SharedInstanceCredentials,
+    pub(super) blackhole_source: prns_core::identity::IdentityHash,
+    pub(super) query: Q,
+    pub(super) blackholes: B,
+    pub(super) telemetry: RpcTelemetry,
+    pub(super) started_at: std::time::Instant,
+    pub(super) transport_identity: prns_core::identity::IdentityHash,
+    pub(super) network_identity: Option<prns_core::identity::IdentityHash>,
 }
 
 pub(super) enum RpcBind {
@@ -97,6 +105,7 @@ where
     #[must_use]
     pub fn tcp(credentials: SharedInstanceCredentials, port: u16, query: Q) -> Self {
         let blackhole_source = credentials.transport_identity_hash();
+        let transport_identity = credentials.transport_identity_hash();
         Self {
             credentials,
             blackhole_source,
@@ -104,6 +113,9 @@ where
             blackholes: query.clone(),
             query,
             telemetry: RpcTelemetry::default(),
+            started_at: std::time::Instant::now(),
+            transport_identity,
+            network_identity: None,
         }
     }
 
@@ -116,6 +128,7 @@ where
         query: Q,
     ) -> Self {
         let blackhole_source = credentials.transport_identity_hash();
+        let transport_identity = credentials.transport_identity_hash();
         Self {
             credentials,
             blackhole_source,
@@ -123,6 +136,9 @@ where
             blackholes: query.clone(),
             query,
             telemetry: RpcTelemetry::default(),
+            started_at: std::time::Instant::now(),
+            transport_identity,
+            network_identity: None,
         }
     }
 }
@@ -146,6 +162,7 @@ where
         query: Q,
         blackholes: B,
     ) -> Self {
+        let transport_identity = credentials.transport_identity_hash();
         Self {
             credentials,
             blackhole_source,
@@ -153,6 +170,9 @@ where
             query,
             blackholes,
             telemetry: RpcTelemetry::default(),
+            started_at: std::time::Instant::now(),
+            transport_identity,
+            network_identity: None,
         }
     }
 
@@ -165,6 +185,7 @@ where
         query: Q,
         blackholes: B,
     ) -> Self {
+        let transport_identity = credentials.transport_identity_hash();
         Self {
             credentials,
             blackhole_source,
@@ -172,6 +193,9 @@ where
             query,
             blackholes,
             telemetry: RpcTelemetry::default(),
+            started_at: std::time::Instant::now(),
+            transport_identity,
+            network_identity: None,
         }
     }
 
@@ -188,6 +212,24 @@ where
         self
     }
 
+    #[must_use]
+    pub fn with_network_identity(
+        mut self,
+        network_identity: Option<prns_core::identity::IdentityHash>,
+    ) -> Self {
+        self.network_identity = network_identity;
+        self
+    }
+
+    #[must_use]
+    pub fn with_transport_identity(
+        mut self,
+        transport_identity: prns_core::identity::IdentityHash,
+    ) -> Self {
+        self.transport_identity = transport_identity;
+        self
+    }
+
     pub async fn bind(self) -> Result<SharedInstanceRpcListener<Q, B>, SharedInstanceRpcBindError> {
         let Self {
             credentials,
@@ -196,6 +238,9 @@ where
             query,
             blackholes,
             telemetry,
+            started_at,
+            transport_identity,
+            network_identity,
         } = self;
         let listener = match bind {
             RpcBind::Tcp(address) => RpcListener::Tcp(
@@ -217,6 +262,9 @@ where
                 query,
                 blackholes,
                 telemetry,
+                started_at,
+                transport_identity,
+                network_identity,
             },
         })
     }
@@ -269,21 +317,9 @@ where
     where
         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
-        let credentials = self.credentials.clone();
-        let blackhole_source = self.blackhole_source;
-        let query = self.query.clone();
-        let blackholes = self.blackholes.clone();
-        let telemetry = self.telemetry.clone();
+        let service = self.clone();
         tokio::spawn(async move {
-            let _ = serve_connection(
-                stream,
-                credentials,
-                blackhole_source,
-                query,
-                blackholes,
-                telemetry,
-            )
-            .await;
+            let _ = serve_connection(stream, service).await;
         });
     }
 }
@@ -313,17 +349,23 @@ pub(super) fn bind_abstract_rpc(socket_path: &str) -> std::io::Result<UnixListen
 
 pub(super) async fn serve_connection<S, Q, B>(
     mut stream: S,
-    credentials: SharedInstanceCredentials,
-    blackhole_source: prns_core::identity::IdentityHash,
-    query: Q,
-    blackholes: B,
-    telemetry: RpcTelemetry,
+    service: RpcService<Q, B>,
 ) -> std::io::Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin,
     Q: NodeIntrospection + RoutingControl + DestinationIdentityRetentionControl,
     B: IdentityBlackholeSource + IdentityBlackholeControl,
 {
+    let RpcService {
+        credentials,
+        blackhole_source,
+        query,
+        blackholes,
+        telemetry,
+        started_at,
+        transport_identity,
+        network_identity,
+    } = service;
     let _active = telemetry.connection_opened();
     let client_authenticated = match deliver_our_challenge(&mut stream, credentials.rpc_key()).await
     {
@@ -381,6 +423,11 @@ where
         &query,
         &blackholes,
         blackhole_source,
+        Some(RnsTransportStatus::new(
+            transport_identity,
+            network_identity,
+            started_at.elapsed(),
+        )),
     )
     .await
     .map_err(std::io::Error::other)?;

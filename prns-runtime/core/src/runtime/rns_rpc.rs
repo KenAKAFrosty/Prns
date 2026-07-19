@@ -1,6 +1,7 @@
 use alloc::vec::Vec;
 
 use prns_core::identity::IdentityHash;
+use prns_core::interfaces::rns_management::{RnsInterfaceStats, RnsTransportStatus};
 use prns_core::interfaces::shared_instance::rns_rpc::{
     DestinationDataOperation, LegacyRpcReplyPlan, RnsRpcReply, RnsRpcReplyEncodeError,
     RnsRpcRequest, RpcOperationOutcome, RpcRequest, RpcVerb,
@@ -26,13 +27,20 @@ pub async fn reply<B>(
     retention: &impl DestinationIdentityRetentionControl,
     blackholes: &B,
     blackhole_source: IdentityHash,
+    transport_status: Option<RnsTransportStatus>,
 ) -> Result<Vec<u8>, RnsRpcReplyEncodeError>
 where
     B: IdentityBlackholeSource + IdentityBlackholeControl,
 {
     let reply = match request {
         RpcRequest::Pickle(_) => {
-            reply_for_pickle(request.verb(), request.legacy_destination_hash(), query).await
+            reply_for_pickle(
+                request.verb(),
+                request.legacy_destination_hash(),
+                query,
+                transport_status,
+            )
+            .await
         }
         RpcRequest::Msgpack(request) => {
             reply_for_msgpack(
@@ -42,6 +50,7 @@ where
                 retention,
                 blackholes,
                 blackhole_source,
+                transport_status,
             )
             .await
         }
@@ -56,13 +65,14 @@ async fn reply_for_msgpack<B>(
     retention: &impl DestinationIdentityRetentionControl,
     blackholes: &B,
     blackhole_source: IdentityHash,
+    transport_status: Option<RnsTransportStatus>,
 ) -> RnsRpcReply
 where
     B: IdentityBlackholeSource + IdentityBlackholeControl,
 {
     match request {
         RnsRpcRequest::InterfaceStats => {
-            RnsRpcReply::interface_stats(interface_stats(query.interface_inventory()))
+            RnsRpcReply::interface_stats(interface_stats_with_transport(query, transport_status))
         }
 
         RnsRpcRequest::PathTable { max_hops } => {
@@ -173,10 +183,11 @@ async fn reply_for_pickle(
     verb: RpcVerb,
     destination_hash: Option<DestinationHash>,
     query: &impl NodeIntrospection,
+    transport_status: Option<RnsTransportStatus>,
 ) -> RnsRpcReply {
     match LegacyRpcReplyPlan::for_request(verb, destination_hash) {
         LegacyRpcReplyPlan::InterfaceStats => {
-            RnsRpcReply::interface_stats(interface_stats(query.interface_inventory()))
+            RnsRpcReply::interface_stats(interface_stats_with_transport(query, transport_status))
         }
         LegacyRpcReplyPlan::PathTable => RnsRpcReply::path_table(query.routes().await, None),
         LegacyRpcReplyPlan::NextHopInterfaceName(destination_hash) => {
@@ -187,6 +198,17 @@ async fn reply_for_pickle(
         }
         LegacyRpcReplyPlan::LinkCount => RnsRpcReply::integer(i64::from(query.link_count().await)),
         LegacyRpcReplyPlan::Immediate(reply) => reply,
+    }
+}
+
+fn interface_stats_with_transport(
+    query: &impl NodeIntrospection,
+    transport_status: Option<RnsTransportStatus>,
+) -> RnsInterfaceStats {
+    let stats = interface_stats(query.interface_inventory());
+    match transport_status {
+        Some(transport_status) => stats.with_transport(transport_status),
+        None => stats,
     }
 }
 

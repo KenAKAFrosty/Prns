@@ -1,12 +1,22 @@
 use rmp::Marker;
 
 use super::super::message_pack::{MessagePackInteger, MessagePackReader};
+use super::super::{MessagePackEncoder, RnsManagementEncodeError};
 use super::{finish, RnsRemoteRequestDecodeError, REMOTE_REQUEST_MAXIMUM_DEPTH};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RnsRemoteStatusRequest {
     InterfaceStats,
     InterfaceStatsAndLinkCount,
+}
+
+impl RnsRemoteStatusRequest {
+    pub fn encode_message_pack(self) -> Result<alloc::vec::Vec<u8>, RnsManagementEncodeError> {
+        let mut encoder = MessagePackEncoder::new();
+        encoder.array(1)?;
+        encoder.boolean(self == Self::InterfaceStatsAndLinkCount);
+        Ok(encoder.finish())
+    }
 }
 
 pub fn decode_remote_status_request(

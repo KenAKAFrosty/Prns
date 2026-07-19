@@ -2406,6 +2406,7 @@ dependencies = [
  "opentelemetry_sdk",
  "personal-rns",
  "prnsd-control",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-log",

@@ -9,7 +9,7 @@ use prnsd_control::{LaunchSpec, LogLane, ServicePaths, ServiceRecord, ServiceSta
 
 const TOOL_MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
 const DAEMON_VERSION: &str = include_str!("../../../VERSION");
-const I2P_DAEMON_COMMAND: &str = "i2p";
+const ONE_SHOT_DAEMON_COMMANDS: &[&str] = &["i2p", "status"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Action {
@@ -17,7 +17,6 @@ enum Action {
     Restart,
     Build,
     Stop,
-    Status,
     Logs,
     OneShot,
 }
@@ -29,7 +28,6 @@ impl Action {
             "restart" => Some(Self::Restart),
             "build" => Some(Self::Build),
             "stop" => Some(Self::Stop),
-            "status" => Some(Self::Status),
             "logs" => Some(Self::Logs),
             _ => None,
         }
@@ -47,7 +45,6 @@ impl fmt::Display for Action {
             Self::Restart => "restart",
             Self::Build => "build",
             Self::Stop => "stop",
-            Self::Status => "status",
             Self::Logs => "logs",
             Self::OneShot => "one-shot daemon command",
         })
@@ -206,22 +203,6 @@ fn run(args: &[OsString]) -> Result<(), CommandError> {
                 eprintln!("prnsd is already stopped");
                 Ok(())
             }
-        },
-        Action::Status => match prnsd_control::running(&paths)? {
-            Some(record) => {
-                let state = match record.state {
-                    ServiceState::Starting => "starting",
-                    ServiceState::Running => "running",
-                };
-                eprintln!(
-                    "prnsd is {state} (pid {}, version {}, log {})",
-                    record.pid,
-                    record.version,
-                    record.log(&paths).display()
-                );
-                Ok(())
-            }
-            None => Err(CommandError::NotRunning),
         },
         Action::Logs => match prnsd_control::running(&paths)? {
             Some(record) => attach(&paths, &record),
@@ -467,7 +448,9 @@ fn parse_invocation(args: &[OsString]) -> Result<Invocation, ArgumentError> {
 }
 
 fn is_direct_daemon_command(arg: &OsStr) -> bool {
-    arg == I2P_DAEMON_COMMAND
+    ONE_SHOT_DAEMON_COMMANDS
+        .iter()
+        .any(|command| arg == *command)
 }
 
 fn validate_profiles(build_args: &[OsString]) -> Result<(), ArgumentError> {
@@ -680,15 +663,15 @@ fn repo_root() -> PathBuf {
 fn print_help() {
     println!(
         "Build and run the Personal Reticulum daemon.\n\n\
-Usage:\n    cargo prnsd [start] [BUILD OPTIONS] [-- PRNSD OPTIONS]\n    cargo prnsd restart [BUILD OPTIONS] [-- PRNSD OPTIONS]\n    cargo prnsd build [BUILD OPTIONS]\n    cargo prnsd <stop|status|logs>\n    cargo prnsd i2p <COMMAND>\n\n\
-Lifecycle:\n    start                 Start if needed, then attach to the daemon log (default)\n    restart               Gracefully stop, rebuild, start, and attach\n    stop                  Show recent logs, then stop while streaming shutdown logs\n    status                Show whether the managed daemon is running\n    logs                  Attach to the running daemon log\n    --detach              Start or reconcile without attaching\n\n\
+Usage:\n    cargo prnsd [start] [BUILD OPTIONS] [-- PRNSD OPTIONS]\n    cargo prnsd restart [BUILD OPTIONS] [-- PRNSD OPTIONS]\n    cargo prnsd build [BUILD OPTIONS]\n    cargo prnsd <stop|logs>\n    cargo prnsd i2p <COMMAND>\n    cargo prnsd status [OPTIONS]\n\n\
+Lifecycle:\n    start                 Start if needed, then attach to the daemon log (default)\n    restart               Gracefully stop, rebuild, start, and attach\n    stop                  Show recent logs, then stop while streaming shutdown logs\n    logs                  Attach to the running daemon log\n    --detach              Start or reconcile without attaching\n\n\
 Build:\n    build                 Build with --release --locked and OTLP, then print the binary path\n\n\
-One-shot commands:\n    i2p doctor            Check I2P router and SAM 3.1 readiness without starting Prnsd\n    i2p setup             Guide installation, SAM enablement, and interface configuration\n\n\
+One-shot commands:\n    i2p doctor            Check I2P router and SAM 3.1 readiness without starting Prnsd\n    i2p setup             Guide installation, SAM enablement, and interface configuration\n    status                Query the running shared RNS instance without starting Prnsd\n\n\
 Profiles:\n    (default)             Build and run with --release\n    --debug               Build and run with Cargo's development profile\n    -r, --release         Build and run with the release profile\n    --profile <PROFILE>   Build and run with a named Cargo profile\n\n\
 Repeated starts reattach without rebuilding or spawning another daemon. Build and daemon\n\
 options are applied when starting a stopped service or with restart. Ctrl-C detaches without\n\
 stopping the daemon. Runtime log verbosity is controlled separately with RUST_LOG.\n\n\
-Examples:\n    cargo prnsd\n    cargo prnsd --detach\n    cargo prnsd build\n    cargo prnsd restart --debug\n    cargo prnsd restart --features otlp -- --config \"$HOME/.reticulum\"\n    cargo prnsd stop\n    cargo prnsd -- --help"
+Examples:\n    cargo prnsd\n    cargo prnsd --detach\n    cargo prnsd build\n    cargo prnsd restart --debug\n    cargo prnsd restart --features otlp -- --config \"$HOME/.reticulum\"\n    cargo prnsd stop\n    cargo prnsd status\n    cargo prnsd -- --help"
     );
 }
 
@@ -759,7 +742,6 @@ mod tests {
     #[test]
     fn inspection_actions_reject_launch_options() {
         for values in [
-            args(&["status", "--debug"]),
             args(&["stop", "--", "--config", "path"]),
             args(&["logs", "--detach"]),
         ] {
@@ -816,6 +798,15 @@ mod tests {
         assert_eq!(parsed.action, Action::OneShot);
         assert_eq!(parsed.build_args, args(&["--debug"]));
         assert_eq!(parsed.daemon_args, args(&["i2p", "doctor"]));
+    }
+
+    #[test]
+    fn status_is_a_direct_one_shot_daemon_invocation() {
+        let parsed = invocation(&["status", "--json"]);
+        assert_eq!(parsed.action, Action::OneShot);
+        assert!(!parsed.attach);
+        assert!(parsed.build_args.is_empty());
+        assert_eq!(parsed.daemon_args, args(&["status", "--json"]));
     }
 
     #[test]

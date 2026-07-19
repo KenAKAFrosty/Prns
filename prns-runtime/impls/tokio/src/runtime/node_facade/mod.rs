@@ -15,10 +15,11 @@ use tokio::sync::oneshot;
 
 use crate::engine::{
     AnnounceNow, AnnounceNowFailure, CloseLink, CommandId, EngineCommand, EstablishLink,
-    EstablishLinkFailure, IssuedCommand, PacketReceiptDelivered, PathFound, PathRequestId,
-    RequestPath, RequestPathFailure, SendSinglePacket, SendSinglePacketFailure,
-    SendSinglePacketPayload, Settlement, PATH_REQUEST_ID_LEN,
+    EstablishLinkFailure, Identify, IdentifyFailure, IssuedCommand, PacketReceiptDelivered,
+    PathFound, PathRequestId, RequestPath, RequestPathFailure, SendSinglePacket,
+    SendSinglePacketFailure, SendSinglePacketPayload, Settlement, PATH_REQUEST_ID_LEN,
 };
+use crate::identity::IdentityHash;
 use crate::interfaces::InterfaceId;
 use crate::reactor::driver::HostCommand;
 use crate::routing::links::LinkId;
@@ -165,6 +166,20 @@ impl PrnsNodeHandle {
         {
             Some(Settlement::RequestPath(result)) => result.map_err(RequestPathError::Failed),
             Some(_) | None => Err(RequestPathError::NodeStopped),
+        }
+    }
+
+    pub async fn identify(
+        &self,
+        link_id: LinkId,
+        identity: IdentityHash,
+    ) -> Result<(), SendError<IdentifyFailure>> {
+        match self
+            .settle(EngineCommand::Identify(Identify { link_id, identity }))
+            .await
+        {
+            Some(Settlement::Identify(result)) => result.map_err(SendError::Failed),
+            Some(_) | None => Err(SendError::NodeStopped),
         }
     }
 

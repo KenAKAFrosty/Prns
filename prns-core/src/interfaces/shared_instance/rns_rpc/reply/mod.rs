@@ -14,9 +14,11 @@ use super::{RnsInteger, RpcDialect};
 mod legacy;
 mod outcomes;
 mod pickle;
+mod scalar;
 
 pub use legacy::LegacyRpcReplyPlan;
 pub use outcomes::RpcOperationOutcome;
+pub use scalar::{RnsRpcScalarReply, RnsRpcScalarReplyDecodeError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RnsRpcReplyEncodeError;

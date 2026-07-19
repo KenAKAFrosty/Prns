@@ -78,6 +78,8 @@ fn instance(ports: InstancePorts, on_existing: OnExisting) -> SharedInstanceInte
         SharedInstanceCredentials::from_identity_secret(&[0xA1; IDENTITY_SECRET_KEY_LEN]);
     SharedInstanceIntent {
         blackhole_source: credentials.transport_identity_hash(),
+        transport_identity: credentials.transport_identity_hash(),
+        network_identity: None,
         credentials,
         blackhole_files: RnsBlackholeFiles::new(identity_dir.join("storage/blackhole")),
         ports,

@@ -32,7 +32,9 @@ use super::authentication::{deliver_our_challenge, SharedInstanceCredentials};
 use super::framing::{read_auth_frame, read_frame, write_frame, write_frame_header};
 #[cfg(target_os = "linux")]
 use super::server::{bind_abstract_rpc, RpcBind};
-use super::server::{serve_connection, SharedInstanceRpcBindError, SharedInstanceRpcCompat};
+use super::server::{
+    serve_connection, RpcService, SharedInstanceRpcBindError, SharedInstanceRpcCompat,
+};
 use super::storage::{load_or_seed_rns_rpc_key, reticulum_storage_dir, RnsRpcKeyStorageError};
 use super::telemetry::RpcTelemetry;
 
@@ -50,4 +52,21 @@ fn encode_msgpack(value: Value) -> std::io::Result<Vec<u8>> {
     rmpv::encode::write_value(&mut bytes, &value)
         .map_err(|error| std::io::Error::other(error.to_string()))?;
     Ok(bytes)
+}
+
+fn test_rpc_service(
+    rpc_key: [u8; 32],
+    query: StubQuery,
+    telemetry: RpcTelemetry,
+) -> RpcService<StubQuery, StubQuery> {
+    RpcService {
+        credentials: test_credentials(rpc_key),
+        blackhole_source: TEST_TRANSPORT_IDENTITY_HASH,
+        query: query.clone(),
+        blackholes: query,
+        telemetry,
+        started_at: std::time::Instant::now(),
+        transport_identity: TEST_TRANSPORT_IDENTITY_HASH,
+        network_identity: None,
+    }
 }

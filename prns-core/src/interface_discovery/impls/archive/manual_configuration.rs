@@ -4,7 +4,7 @@ use crate::interface_discovery::{
 
 use super::file::encode_hex;
 
-pub(super) fn manual_configuration(interface: &DiscoveredInterface) -> Option<String> {
+pub fn manual_configuration(interface: &DiscoveredInterface) -> Option<String> {
     let name = manual_interface_name(&interface.name, interface.id);
     let transport_identity =
         encode_hex(interface.advertisement.transport.transport_id().as_bytes());

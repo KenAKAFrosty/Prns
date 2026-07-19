@@ -1,9 +1,10 @@
 use tokio::sync::mpsc::{self, UnboundedReceiver};
 
 use crate::engine::{
-    AnnounceNow, AnnounceNowFailure, EngineCommand, EstablishLink, EstablishLinkFailure,
+    AnnounceNow, AnnounceNowFailure, EngineCommand, EstablishLink, EstablishLinkFailure, Identify,
     PacketReceiptDelivered, PathFound, Settlement, MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN,
 };
+use crate::identity::IdentityHash;
 use crate::reactor::driver::HostCommand;
 use crate::routing::links::LinkId;
 use crate::runtime::SendError;
@@ -115,6 +116,30 @@ async fn establish_link_surfaces_a_typed_failure() {
         establish.await.expect("the establish task joins"),
         Err(SendError::Failed(EstablishLinkFailure::Timeout)),
     );
+}
+
+#[tokio::test]
+async fn identify_awaits_the_matching_write_settlement() {
+    let (prns, mut command_rx) = handle();
+    let issuer = prns.clone();
+    let link_id = LinkId::new([0x42; 16]);
+    let identity = IdentityHash::new([0x24; 16]);
+    let identify = tokio::spawn(async move { issuer.identify(link_id, identity).await });
+
+    let HostCommand::AwaitedEngine { issued, completion } =
+        command_rx.recv().await.expect("the command was issued")
+    else {
+        panic!("identify must issue an awaited engine command");
+    };
+    assert_eq!(
+        issued.command,
+        EngineCommand::Identify(Identify { link_id, identity })
+    );
+    completion
+        .send(Settlement::Identify(Ok(())))
+        .expect("the awaiter is still parked");
+
+    assert_eq!(identify.await.expect("the identify task joins"), Ok(()));
 }
 
 #[tokio::test]
