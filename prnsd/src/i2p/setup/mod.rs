@@ -5,7 +5,7 @@ use std::fmt;
 
 use personal_rns::i2p::{DuplicateI2pPeer, I2pPeerAddress, SamBridgeAddress};
 
-use crate::i2p_doctor::{
+use super::doctor::{
     self, I2pDoctorError, I2pDoctorReady, I2pDoctorRemediation, I2pDoctorRequest, RemoteSamAccess,
 };
 use platform::{
@@ -176,7 +176,7 @@ impl I2pSetupReport {
 
 pub(super) async fn run(request: I2pSetupRequest) -> I2pSetupReport {
     let host = SetupHost::detect();
-    let readiness = match i2p_doctor::run(request.doctor).await {
+    let readiness = match doctor::run(request.doctor).await {
         Ok(ready) => SetupReadiness::Ready(ready),
         Err(error) => SetupReadiness::NeedsAction(error),
     };
