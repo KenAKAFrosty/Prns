@@ -13,9 +13,13 @@ cfg_if::cfg_if! {
 }
 
 cfg_if::cfg_if! {
-    if #[cfg(feature = "alloc")] {
+    if #[cfg(feature = "std")] {
         mod heap;
 
-        pub use heap::HeapRouteTable;
+        pub use heap::{HeapRouteTable, LinearHeapRouteTable, RoaringHeapRouteTable};
+    } else if #[cfg(feature = "alloc")] {
+        mod heap;
+
+        pub use heap::{HeapRouteTable, LinearHeapRouteTable};
     }
 }

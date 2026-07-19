@@ -21,11 +21,7 @@ where
     }
 
     pub fn route_count_via(&self, interface: InterfaceId) -> usize {
-        self.routes
-            .receiving_interfaces()
-            .iter()
-            .filter(|&&learned_on| learned_on == interface)
-            .count()
+        self.routes.route_count_via(interface)
     }
 
     pub fn hop_count_to(&self, destination: &DestinationHash) -> Option<u8> {

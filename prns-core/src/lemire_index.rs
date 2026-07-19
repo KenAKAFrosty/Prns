@@ -226,6 +226,7 @@ impl Default for HeapLemireIndex {
 impl HeapLemireIndex {
     const EMPTY: u32 = u32::MAX;
     const MIN_BUCKETS: usize = 8;
+    pub const MAX_ROWS: usize = Self::EMPTY as usize;
 
     fn bucket(&self, key: u64) -> usize {
         ((key as u128 * self.slots.len() as u128) >> u64::BITS) as usize
@@ -282,7 +283,7 @@ impl HeapLemireIndex {
 
     fn place<R: IndexRow>(&mut self, slot: usize, rows: &[R]) {
         debug_assert!(
-            slot < Self::EMPTY as usize,
+            slot < Self::MAX_ROWS,
             "HeapLemireIndex cannot represent this row number as u32"
         );
         let n = self.slots.len();
@@ -352,7 +353,7 @@ impl HeapLemireIndex {
     pub fn repoint<R: IndexRow>(&mut self, target: &R::Key, slot: usize, rows: &[R]) {
         if let Some(pos) = self.position(target, rows) {
             debug_assert!(
-                slot < Self::EMPTY as usize,
+                slot < Self::MAX_ROWS,
                 "HeapLemireIndex cannot represent this row number as u32"
             );
             self.slots[pos] = slot as u32;
@@ -362,7 +363,7 @@ impl HeapLemireIndex {
     pub fn repoint_slot<R: IndexRow>(&mut self, previous: usize, slot: usize, rows: &[R]) {
         if let Some(pos) = self.position_of_slot(previous, rows) {
             debug_assert!(
-                slot < Self::EMPTY as usize,
+                slot < Self::MAX_ROWS,
                 "HeapLemireIndex cannot represent this row number as u32"
             );
             self.slots[pos] = slot as u32;

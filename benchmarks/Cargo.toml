@@ -124,6 +124,11 @@ path = "benches/route_index.rs"
 harness = false
 
 [[bench]]
+name = "route_interface_index"
+path = "benches/route_interface_index.rs"
+harness = false
+
+[[bench]]
 name = "route_expiry"
 path = "benches/route_expiry.rs"
 harness = false
