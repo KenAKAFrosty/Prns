@@ -3,16 +3,18 @@ members = [
     "personal-rns",
     "prns-core",
     "prns-runtime/core",
-    "personal-lxmf",
     "personal-hopspot/core",
-    "tools/docs",
-    "tools/hopspot",
-    "tools/hopspot-flash",
-    "tools/prnsd-control",
-    "tools/prnsd",
+    "docs/command",
+    "personal-hopspot/flasher",
+]
+default-members = [
+    "personal-rns",
+    "prns-core",
+    "prns-runtime/core",
+    "personal-hopspot/core",
 ]
 # Root-excluded workspaces build standalone via their own manifests and carry their own
-# CI jobs (feature-configs), keeping `--workspace` gates the pure engine surface: a
+# CI jobs (feature-configs), keeping the default members the portable engine surface: a
 # member's host features (tokio, CoreBluetooth) would unify into the default build and
 # break the std-only invariant. `prns-ffi` is the sharpest case: the one crate allowed
 # `unsafe` (platform FFI backends), audited with cargo-geiger + Miri.

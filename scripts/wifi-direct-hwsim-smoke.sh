@@ -6,7 +6,8 @@ echo "the system wpa_supplicant routes all D-Bus P2P to one management interface
 echo "requires sudo; loads mac80211_hwsim; the real radio and its connection stay untouched"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-EXAMPLE="$REPO_ROOT/prns-interfaces/impls/tokio/target/debug/examples/wifi_direct_linux"
+source "$REPO_ROOT/scripts/lib/cargo-artifacts.sh"
+EXAMPLE="$(cargo_debug_example "$REPO_ROOT/prns-interfaces/impls/tokio/Cargo.toml" wifi_direct_linux)"
 NS_A=prns-wd-a
 NS_B=prns-wd-b
 BUS_A=/tmp/$NS_A.bus

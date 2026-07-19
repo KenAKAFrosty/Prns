@@ -11,9 +11,7 @@ on:
       - "prns-core/**"
       - "prns-runtime/**"
       - "prnsd/**"
-      - "personal-lxmf/**"
       - "personal-hopspot/**"
-      - "tools/hopspot-flash/**"
       - "scripts/build-flash-artifact.sh"
       - ".github/workflows/site.yml"
   workflow_dispatch:

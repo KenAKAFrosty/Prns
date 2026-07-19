@@ -43,7 +43,7 @@ pub(crate) fn ensure_supported(board: &BoardTarget) -> AppResult<()> {
 
 pub(crate) fn build_t_echo(repo: &Path, out_root: &Path) -> AppResult<BuildOutput> {
     ui::print_section("Building LilyGO T-Echo");
-    let crate_dir = repo.join("personal-hopspot").join("t-echo");
+    let crate_dir = t_echo_crate_dir(repo);
     let mut cargo = Command::new("cargo");
     cargo
         .env_remove("RUSTUP_TOOLCHAIN")
@@ -434,6 +434,26 @@ fn first_word(value: &str) -> Option<String> {
     value.split_whitespace().next().map(str::to_string)
 }
 
+fn t_echo_crate_dir(repo: &Path) -> PathBuf {
+    repo.join("personal-hopspot")
+        .join("embedded")
+        .join("nrf52840")
+}
+
 pub(crate) fn default_artifact_root(repo: &Path) -> PathBuf {
     repo.join("target").join("flash-artifacts")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn t_echo_workspace_manifest_exists() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .unwrap();
+        assert!(t_echo_crate_dir(repo).join("Cargo.toml").is_file());
+    }
 }

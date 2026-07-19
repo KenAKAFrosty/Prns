@@ -11,6 +11,8 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+source "$ROOT/scripts/lib/cargo-artifacts.sh"
+PRNSD="$(cargo_debug_binary "$ROOT/prnsd/Cargo.toml" prnsd)"
 VENV_PY="${SMOKE_PYTHON:-$ROOT/benchmarks/reference/.venv/bin/python}"
 STOCK_DIR="$(mktemp -d)"
 PRNS_DIR="$(mktemp -d)"
@@ -64,7 +66,7 @@ grep -q "STOCK_INSTANCE_UP" "$STOCK_LOG" || { echo "FAIL: the stock RNS instance
 sleep 0.5
 echo "stock instance up; running prnsd against the same bus..."
 
-"$ROOT/prnsd/target/debug/prnsd" --config "$PRNS_DIR" > "$PRNSD_LOG" 2>&1 &
+"$PRNSD" --config "$PRNS_DIR" > "$PRNSD_LOG" 2>&1 &
 PRNSD_PID=$!
 for _ in $(seq 1 60); do grep -q "RNSD_READY" "$PRNSD_LOG" && break; sleep 0.2; done
 sleep 0.3

@@ -2,6 +2,8 @@
 set -eu
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+source "$ROOT/scripts/lib/cargo-artifacts.sh"
+PRNSD="$(cargo_debug_binary "$ROOT/prnsd/Cargo.toml" prnsd)"
 PYTHON="${RPC_SMOKE_PYTHON:-$ROOT/benchmarks/reference/.rpc-venv/bin/python}"
 DEVICE="$ROOT/prns-core/tests/interop/rns_rnode_tcp_device.py"
 WORK="$(mktemp -d)"
@@ -38,7 +40,7 @@ for _ in $(seq 1 100); do
 done
 [ -f "$READY" ] || { echo "FAIL: reference RNode TCP device did not listen"; cat "$RESULT"; exit 1; }
 
-"$ROOT/prnsd/target/debug/prnsd" run --log-format json --config "$CONFIG" >/dev/null 2>&1 &
+"$PRNSD" run --log-format json --config "$CONFIG" >/dev/null 2>&1 &
 PRNS_PID=$!
 
 for _ in $(seq 1 150); do

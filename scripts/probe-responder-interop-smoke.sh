@@ -2,6 +2,8 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+source "$ROOT/scripts/lib/cargo-artifacts.sh"
+PRNSD="$(cargo_debug_binary "$ROOT/prnsd/Cargo.toml" prnsd)"
 PYTHON="${RPC_SMOKE_PYTHON:-$ROOT/benchmarks/reference/.rpc-venv/bin/python}"
 CLIENT="$ROOT/prns-core/tests/interop/rns_probe_client.py"
 WORK="$(mktemp -d)"
@@ -21,7 +23,7 @@ PORT="$($PYTHON -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); p
 $PYTHON "$CLIENT" prepare "$SERVER_CONFIG" "$CLIENT_CONFIG" "$PORT"
 
 ( cd "$ROOT/prnsd" && cargo build --quiet ) || { echo "FAIL: prnsd build"; exit 1; }
-"$ROOT/prnsd/target/debug/prnsd" run --log-format json --config "$SERVER_CONFIG" &
+"$PRNSD" run --log-format json --config "$SERVER_CONFIG" &
 DAEMON_PID=$!
 
 for _ in $(seq 1 100); do

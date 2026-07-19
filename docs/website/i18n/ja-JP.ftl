@@ -98,10 +98,6 @@ start-rust-code = cargo add prnsd   # complete RNS runtime
     cargo add personal-rns      # pure core only
 start-rust-target = prnsd or personal-rns
 
-start-lxmf-headline = メッシュ上でメッセージを送りたい
-start-lxmf-body = Reticulum の上にある LXMF — identity、address、delivery。Sideband と Nomadnet が乗る層です。
-start-lxmf-code = cargo add personal-lxmf
-start-lxmf-target = personal-lxmf
 
 # プラットフォーム ("Runs on") — ヒーローのマーキーラベル + CTA、専用ページ
 landing-platforms-label = Runs on
@@ -167,8 +163,6 @@ crate-rns-role = エンジン
 crate-rns-blurb = どんな Rust プロジェクトにも Reticulum を入れられます。決定的、no_std、アロケータ不要。グローバル状態も組み込み I/O もありません — clock と wire はあなたが用意します。
 crate-rnsd-role = daemon
 crate-rnsd-blurb = macOS、Linux、Windows で動く rnsd のドロップイン。RNS リファレンスと同じ wire です。既存のノードの横で、または代わりに使えます。
-crate-lxmf-role = メッセージング
-crate-lxmf-blurb = Reticulum の上にある LXMF — Sideband と Nomadnet が乗る層。identity、address、message delivery。
 crate-ffi-role = モバイル + Python バインディング
 crate-ffi-blurb = 1 つの uniffi interface から Kotlin (.aar)、Swift (.xcframework)、Python (.whl) を生成します。Android、iOS、Jupyter notebook から Reticulum を使えます — 同じ形、同じエンジンです。
 

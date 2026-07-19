@@ -15,6 +15,8 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+source "$ROOT/scripts/lib/cargo-artifacts.sh"
+HOST="$(cargo_debug_example "$ROOT/prns-interfaces/impls/tokio/Cargo.toml" tcp_server_host)"
 VENV_PY="${SMOKE_PYTHON:-$ROOT/benchmarks/reference/.venv/bin/python}"
 CLIENT="$ROOT/prns-core/tests/interop/rns_tcp_client_peer.py"
 HOST_LOG="$(mktemp)"
@@ -45,7 +47,7 @@ echo "building the tcp_server_host example..."
     || { echo "FAIL: tcp_server_host build"; exit 1; }
 
 # 1) Our node: a TcpServer hosting a ProveAll destination it announces.
-PORT="$PORT" "$ROOT/prns-interfaces/impls/tokio/target/debug/examples/tcp_server_host" > "$HOST_LOG" 2>&1 &
+PORT="$PORT" "$HOST" > "$HOST_LOG" 2>&1 &
 HOST_PID=$!
 for _ in $(seq 1 100); do grep -q "listening on" "$HOST_LOG" && break; sleep 0.1; done
 grep -q "listening on" "$HOST_LOG" || { echo "FAIL: tcp_server_host never bound"; cat "$HOST_LOG"; exit 1; }

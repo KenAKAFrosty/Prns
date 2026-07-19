@@ -15,6 +15,8 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+source "$ROOT/scripts/lib/cargo-artifacts.sh"
+DAEMON="$(cargo_debug_example "$ROOT/prns-interfaces/impls/tokio/Cargo.toml" local_transit_daemon)"
 VENV_PY="${SMOKE_PYTHON:-$ROOT/benchmarks/reference/.venv/bin/python}"
 PEER="$ROOT/prns-core/tests/interop/rns_transit_peer.py"
 CLIENT="$ROOT/prns-core/tests/interop/rns_transit_client.py"
@@ -59,7 +61,7 @@ echo "peer up, dest=$DEST"
 
 # 2) The Prns bridge: holds the local bus, dials the peer over TCP.
 PRNS_LOCAL_PORT="$LOCAL_PORT" PRNS_PEER_ADDR="127.0.0.1:$PEER_TCP_PORT" \
-    "$ROOT/prns-interfaces/impls/tokio/target/debug/examples/local_transit_daemon" > "$DAEMON_LOG" 2>&1 &
+    "$DAEMON" > "$DAEMON_LOG" 2>&1 &
 DAEMON_PID=$!
 for _ in $(seq 1 50); do grep -q "READY" "$DAEMON_LOG" && break; sleep 0.2; done
 grep -q "READY" "$DAEMON_LOG" || { echo "FAIL: bridge never became READY"; cat "$DAEMON_LOG"; exit 1; }

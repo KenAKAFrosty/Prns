@@ -7,6 +7,8 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+source "$ROOT/scripts/lib/cargo-artifacts.sh"
+DAEMON="$(cargo_debug_example "$ROOT/prns-interfaces/impls/tokio/Cargo.toml" local_shared_rpc_instance)"
 VENV_PY="${RPC_SMOKE_PYTHON:-$ROOT/benchmarks/reference/.rpc-venv/bin/python}"
 CLIENT="$ROOT/prns-core/tests/interop/rns_shared_rpc_client.py"
 RPC_KEY="${PRNS_RPC_KEY:-$(printf '5a%.0s' $(seq 1 32))}"
@@ -58,7 +60,7 @@ echo "building the shared-instance RPC daemon example..."
 PRNS_LOCAL_PORT="$LOCAL_PORT" \
 PRNS_RPC_PORT="$RPC_PORT" \
 PRNS_RPC_KEY="$RPC_KEY" \
-"$ROOT/prns-interfaces/impls/tokio/target/debug/examples/local_shared_rpc_instance" > "$DAEMON_LOG" 2>&1 &
+"$DAEMON" > "$DAEMON_LOG" 2>&1 &
 DAEMON_PID=$!
 
 for _ in $(seq 1 50); do grep -q "READY" "$DAEMON_LOG" && break; sleep 0.2; done
