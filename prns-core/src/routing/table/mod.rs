@@ -1,6 +1,7 @@
 mod learning;
 mod lookup;
 mod model;
+mod updates;
 
 pub use model::RoutingTable;
 
@@ -18,7 +19,7 @@ use super::types::{
 use super::warmth::RouteWarmth;
 use crate::engine::InstantMillis;
 use crate::identity::IdentityHash;
-use crate::interfaces::{AttachedInterfaces, InterfaceId};
+use crate::interfaces::AttachedInterfaces;
 use crate::storage::TablePushError;
 use crate::wire::{DestinationHash, TransportId};
 
@@ -78,100 +79,6 @@ where
             ),
             None => warmth.warm_until(receiving_interface).unwrap_or(anchor),
         }
-    }
-
-    pub fn mark_responsiveness(
-        &mut self,
-        destination: &DestinationHash,
-        responsiveness: RouteResponsiveness,
-    ) {
-        let Some(i) = self.index_of(destination) else {
-            return;
-        };
-        self.routes.set_row(
-            i,
-            RouteEntry {
-                hops: self.routes.hops()[i],
-                learned_at: self.routes.learned_at()[i],
-                last_relayed_at: self.routes.last_relayed_at()[i],
-                responsiveness,
-                receiving_interface: self.routes.receiving_interfaces()[i],
-                next_hop: self.routes.next_hops()[i],
-            },
-        );
-    }
-
-    pub fn note_relayed(&mut self, destination: &DestinationHash, now: InstantMillis) {
-        let Some(i) = self.index_of(destination) else {
-            return;
-        };
-        self.routes.set_row(
-            i,
-            RouteEntry {
-                hops: self.routes.hops()[i],
-                learned_at: self.routes.learned_at()[i],
-                last_relayed_at: now,
-                responsiveness: self.routes.responsiveness()[i],
-                receiving_interface: self.routes.receiving_interfaces()[i],
-                next_hop: self.routes.next_hops()[i],
-            },
-        );
-        self.route_expiries.invalidate();
-    }
-
-    pub(crate) fn note_relayed_with_warmth(
-        &mut self,
-        destination: &DestinationHash,
-        now: InstantMillis,
-        interfaces: AttachedInterfaces<'_>,
-        warmth: &dyn RouteWarmth,
-    ) {
-        let Some(i) = self.index_of(destination) else {
-            return;
-        };
-        self.routes.set_row(
-            i,
-            RouteEntry {
-                hops: self.routes.hops()[i],
-                learned_at: self.routes.learned_at()[i],
-                last_relayed_at: now,
-                responsiveness: self.routes.responsiveness()[i],
-                receiving_interface: self.routes.receiving_interfaces()[i],
-                next_hop: self.routes.next_hops()[i],
-            },
-        );
-        let expiry = self.expiry_of_with_warmth(i, interfaces, warmth);
-        self.route_expiries.update(i, expiry);
-    }
-
-    pub fn repoint_routes(
-        &mut self,
-        previous: InterfaceId,
-        current: InterfaceId,
-        now: InstantMillis,
-    ) -> usize {
-        let mut moved = 0;
-        for i in 0..self.routes.len() {
-            if self.routes.receiving_interfaces()[i] != previous {
-                continue;
-            }
-            self.routes.set_row(
-                i,
-                RouteEntry {
-                    hops: self.routes.hops()[i],
-                    learned_at: self.routes.learned_at()[i],
-                    last_relayed_at: now,
-                    responsiveness: self.routes.responsiveness()[i],
-                    receiving_interface: current,
-                    next_hop: self.routes.next_hops()[i],
-                },
-            );
-            moved += 1;
-        }
-        if moved != 0 {
-            self.route_expiries.invalidate();
-        }
-        moved
     }
 
     pub fn remove_route(&mut self, i: usize) {
