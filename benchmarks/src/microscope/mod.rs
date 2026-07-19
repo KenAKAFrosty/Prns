@@ -1,8 +1,5 @@
-#[path = "microscope/cycle.rs"]
 mod cycle;
-#[path = "microscope/forward.rs"]
 mod forward;
-#[path = "microscope/resource.rs"]
 mod resource;
 
 use personal_rns::engine::{

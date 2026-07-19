@@ -5,19 +5,12 @@
     clippy::unit_arg
 )]
 
-#[path = "scenario_node/churn.rs"]
 mod churn;
-#[path = "scenario_node/link_channel.rs"]
 mod link_channel;
-#[path = "scenario_node/relay.rs"]
 mod relay;
-#[path = "scenario_node/request.rs"]
 mod request;
-#[path = "scenario_node/resource.rs"]
 mod resource;
-#[path = "scenario_node/shared_instance.rs"]
 mod shared_instance;
-#[path = "scenario_node/tunnel.rs"]
 mod tunnel;
 
 use std::sync::atomic::{AtomicU64, Ordering};

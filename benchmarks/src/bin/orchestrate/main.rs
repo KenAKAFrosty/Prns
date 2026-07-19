@@ -1,12 +1,7 @@
-#[path = "orchestrate/arguments.rs"]
 mod arguments;
-#[path = "orchestrate/implementation.rs"]
 mod implementation;
-#[path = "orchestrate/process.rs"]
 mod process;
-#[path = "orchestrate/relay.rs"]
 mod relay;
-#[path = "orchestrate/results.rs"]
 mod results;
 
 use std::ffi::OsString;
