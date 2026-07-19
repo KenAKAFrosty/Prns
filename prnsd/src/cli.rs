@@ -583,6 +583,15 @@ mod tests {
     }
 
     #[test]
+    fn x_rejects_non_stock_long_flag_spellings() {
+        for flag in ["--no-auth", "--no-id"] {
+            let error =
+                parse_from(["prnsd", "x", flag].into_iter().map(OsString::from)).unwrap_err();
+            assert_eq!(error.exit_code(), 2);
+        }
+    }
+
+    #[test]
     fn id_parses_signed_artifact_and_network_flags() {
         let Command::Id(args) = parse(&[
             "prnsd",

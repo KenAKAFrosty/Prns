@@ -58,11 +58,14 @@ This will not stop `prnsd`; do that independently if needed.
 | --- | --- |
 | `cargo prnsd` or `cargo prnsd start` | Start if needed, show the Prns header, and attach to the log |
 | `cargo prnsd --detach` | Start if needed and return to the shell without attaching |
-| `cargo prnsd status` | Report whether the managed daemon is running, including its PID and log path |
 | `cargo prnsd logs` | Show the Prns header and attach to the existing daemon log |
 | `cargo prnsd restart [BUILD OPTIONS] [-- PRNSD OPTIONS]` | Build first, then gracefully replace the daemon and attach |
 | `cargo prnsd stop` | Show recent logs, then gracefully stop while streaming the shutdown logs; repeated stops are harmless |
 | `cargo prnsd build [BUILD OPTIONS]` | Produce a locked, OTLP-capable release artifact and print its absolute path |
+
+`cargo prnsd status` is the prefixless RNS network-status utility. It is a one-shot client of the
+running shared instance, not a lifecycle command. The full one-shot suite is documented in
+[`docs/prnsd-utilities.md`](prnsd-utilities.md).
 
 Use `restart` to replace a running daemon with different build options, daemon arguments, or environment. The stop is graceful and performs the daemon's final persistence flush.
 

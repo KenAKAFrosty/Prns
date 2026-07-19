@@ -43,10 +43,10 @@ pub struct RnxArgs {
     #[arg(short = 'a', value_name = "ALLOWED_HASH", value_parser = parse_identity_hash)]
     pub allowed: Vec<IdentityHash>,
 
-    #[arg(short = 'n', long = "noauth", visible_alias = "no-auth")]
+    #[arg(short = 'n', long = "noauth")]
     pub no_auth: bool,
 
-    #[arg(short = 'N', long = "noid", visible_alias = "no-id")]
+    #[arg(short = 'N', long = "noid")]
     pub no_id: bool,
 
     #[arg(short = 'd', long)]
