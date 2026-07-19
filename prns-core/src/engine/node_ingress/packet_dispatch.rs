@@ -374,6 +374,16 @@ impl<S: StorageLayout> EngineState<S> {
             } => {
                 let offer = ResourceOffer {
                     link_id,
+                    remote_identity: self
+                        .links
+                        .phase_for(&link_id)
+                        .and_then(|phase| match phase {
+                            crate::routing::links::table::LinkPhase::Active {
+                                remote_identity,
+                                ..
+                            } => *remote_identity,
+                            _ => None,
+                        }),
                     hash: accepted.hash,
                     uncompressed_data_len: accepted.uncompressed_data_len,
                     sealed_transfer_len: accepted.sealed_transfer_len,

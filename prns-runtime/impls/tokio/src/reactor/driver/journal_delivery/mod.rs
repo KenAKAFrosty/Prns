@@ -244,6 +244,12 @@ impl JournalDelivery {
     }
 
     fn route_resource_or_forward<'a>(&mut self, journaled: Journaled<'a>) -> Option<Journaled<'a>> {
+        if let Journaled::LinkClosed { link_id, .. } = &journaled {
+            if let Some(sink) = self.resource_sinks.remove(link_id) {
+                let _ = sink.send(ResourceInbound::Failed);
+            }
+            return Some(journaled);
+        }
         let link = match &journaled {
             Journaled::ResourceReceived { link_id, .. }
             | Journaled::ResourceSegmentReceived { link_id, .. }

@@ -9,7 +9,7 @@ extern crate alloc;
 #[cfg(feature = "interface-discovery")]
 pub use prns_core::interface_discovery;
 pub use prns_core::{
-    crypto, engine, identity, interfaces, persistence, routing, storage, units, wire,
+    crypto, engine, identity, interfaces, persistence, rncp, routing, storage, units, wire,
 };
 
 pub use runtime::node_introspection;

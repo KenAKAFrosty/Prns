@@ -190,6 +190,7 @@ pub enum ResourceStrategy {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResourceOffer {
     pub link_id: LinkId,
+    pub remote_identity: Option<crate::identity::IdentityHash>,
     pub hash: ResourceHash,
     /// The advertised `d`: on a split transfer this is the WHOLE transfer's uncompressed length, on every segment.
     pub uncompressed_data_len: u64,

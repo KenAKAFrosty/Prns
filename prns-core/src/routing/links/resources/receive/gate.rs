@@ -884,6 +884,7 @@ mod tests {
             offers,
             [ResourceOffer {
                 link_id: link_id(),
+                remote_identity: None,
                 hash: judged_hash,
                 uncompressed_data_len: payload.len() as u64,
                 sealed_transfer_len: judged_sealed_len,

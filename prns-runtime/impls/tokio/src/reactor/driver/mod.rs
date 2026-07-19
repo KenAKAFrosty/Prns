@@ -114,12 +114,39 @@ pub async fn run_with_store<S, H, J>(
     H: Host,
     J: FnMut(Journaled<'_>),
 {
+    run_with_store_and_deciders(
+        engine,
+        host,
+        wiring,
+        on_journaled,
+        store,
+        crypto_pool_config,
+        crate::reactor::decline_all(),
+    )
+    .await
+}
+
+pub async fn run_with_store_and_deciders<S, H, J, P, A>(
+    engine: EngineState<S>,
+    host: H,
+    wiring: ReactorWiring,
+    on_journaled: J,
+    store: InterfaceStore,
+    crypto_pool_config: CryptoPoolConfig,
+    deciders: AppDeciders<P, A>,
+) where
+    S: StorageLayout,
+    H: Host,
+    J: FnMut(Journaled<'_>),
+    P: FnMut(&ProofRequest) -> bool,
+    A: FnMut(&ResourceOffer) -> bool,
+{
     run_inner(
         engine,
         host,
         wiring,
         on_journaled,
-        crate::reactor::decline_all(),
+        deciders,
         Some(store),
         crypto_pool_config,
     )

@@ -30,9 +30,10 @@ pub use node_facade::{
     boot_timeline_origin, AttachIntent, Attachable, AttachedInterface, AttachedSupervisor,
     ByteStreamReader, ByteStreamWriter, DestinationIdentitySeedReport, DetachedFleet, Fleet,
     FlushError, FlushMark, FlushReport, InterfaceAttachmentMetadata, InterfaceSupervisor,
-    NonRoutingIdentityError, PrepareFlushError, PreparedFlush, PrnsNode, PrnsNodeHandle,
-    RatchetSeedReport, RegionFlush, RegisterRequestRouteError, RequestPathError, ResourceReceipt,
-    ResourceReceiveError, ResourceSendError, RouteSeedProgress, RouteSeedReport,
+    NonRoutingIdentityError, PrepareFlushError, PreparedFlush, PreparedResourceReceiver, PrnsNode,
+    PrnsNodeHandle, RatchetSeedReport, RegionFlush, RegisterRequestRouteError, RequestPathError,
+    ResourceAdmissionPeer, ResourceOfferAdmission, ResourceOfferMonitor, ResourceProgress,
+    ResourceReceipt, ResourceReceiveError, ResourceSendError, RouteSeedProgress, RouteSeedReport,
     SegmentCompression, SharedInstanceIdentityError, StreamId, TunnelSeedReport,
     AUTO_COMPRESS_MAX_LEN,
 };

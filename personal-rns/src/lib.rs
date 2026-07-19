@@ -4,7 +4,7 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 
 pub use prns_runtime::{
-    crypto, engine, identity, interfaces, persistence, routes, routing, storage, units, wire,
+    crypto, engine, identity, interfaces, persistence, rncp, routes, routing, storage, units, wire,
 };
 
 #[cfg(feature = "signed-artifact")]

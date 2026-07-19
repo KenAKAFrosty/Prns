@@ -14,7 +14,7 @@ use crate::units::RttMillis;
 
 use super::super::request_router::RespondToken;
 use super::super::SendError;
-use super::resource_transfer::SegmentCompression;
+use super::resource_transfer::{ResourceStreamOptions, SegmentCompression};
 use super::PrnsNodeHandle;
 
 const RESPONSE_PACKET_CEILING: usize = LINK_MDU - RESPONSE_WIRE_OVERHEAD;
@@ -88,9 +88,12 @@ impl PrnsNodeHandle {
                         link_id,
                         total_len,
                         std::io::Cursor::new(data),
-                        None,
-                        SegmentCompression::AUTO,
-                        Some(request_id),
+                        ResourceStreamOptions {
+                            packed_metadata: None,
+                            compression: SegmentCompression::AUTO,
+                            answers_request: Some(request_id),
+                            progress: None,
+                        },
                     )
                     .await;
             });
