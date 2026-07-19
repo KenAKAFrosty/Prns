@@ -31,6 +31,7 @@ pub(super) async fn reply_for_with_control(
         query,
         query,
         TEST_TRANSPORT_IDENTITY_HASH,
+        None,
     )
     .await
     .unwrap_or_default()
@@ -54,6 +55,7 @@ where
         query,
         blackholes,
         TEST_TRANSPORT_IDENTITY_HASH,
+        None,
     )
     .await
     .unwrap_or_default()
@@ -77,6 +79,7 @@ pub(super) async fn reply_for_with_retention(
         retention,
         query,
         TEST_TRANSPORT_IDENTITY_HASH,
+        None,
     )
     .await
     .unwrap_or_default()

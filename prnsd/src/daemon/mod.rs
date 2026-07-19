@@ -31,7 +31,7 @@ use personal_rns::storage::GrowableHeap;
 use personal_rns::PlanRuntimeContext;
 use prnsd_control::ManagedProcess;
 
-const DEFAULT_CONFIG: &str = "[reticulum]\n\
+pub(crate) const DEFAULT_CONFIG: &str = "[reticulum]\n\
     enable_transport = Yes\n\
     share_instance = Yes\n\
     [interfaces]\n\
@@ -269,6 +269,8 @@ pub(super) async fn run(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
                 &prns_handle,
                 SharedInstanceIntent {
                     credentials: shared_instance_credentials.clone(),
+                    transport_identity: visible_identity_hash,
+                    network_identity: network_identity_hash,
                     blackhole_source: visible_identity_hash,
                     blackhole_files: blackhole_files.clone(),
                     ports,

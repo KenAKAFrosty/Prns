@@ -9,6 +9,18 @@ use super::*;
 #[test]
 fn status_request_matches_python_truth_equality() {
     assert_eq!(
+        RnsRemoteStatusRequest::InterfaceStats
+            .encode_message_pack()
+            .unwrap(),
+        [0x91, 0xc2]
+    );
+    assert_eq!(
+        RnsRemoteStatusRequest::InterfaceStatsAndLinkCount
+            .encode_message_pack()
+            .unwrap(),
+        [0x91, 0xc3]
+    );
+    assert_eq!(
         decode_remote_status_request(&[0x91, 0xc3]),
         Ok(RnsRemoteStatusRequest::InterfaceStatsAndLinkCount)
     );

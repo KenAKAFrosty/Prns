@@ -14,15 +14,7 @@ async fn a_modern_sha256_client_completes_the_mutual_auth_and_gets_a_reply() {
             routes: std::vec![],
             interfaces: std::vec![],
         };
-        let _ = serve_connection(
-            server,
-            test_credentials(rpc_key),
-            TEST_TRANSPORT_IDENTITY_HASH,
-            query.clone(),
-            query,
-            server_telemetry,
-        )
-        .await;
+        let _ = serve_connection(server, test_rpc_service(rpc_key, query, server_telemetry)).await;
     });
 
     authenticate_modern_client(&mut client, &rpc_key).await;
@@ -62,15 +54,7 @@ async fn malformed_msgpack_is_a_protocol_failure_before_dispatch() {
             routes: std::vec![],
             interfaces: std::vec![],
         };
-        serve_connection(
-            server,
-            test_credentials(rpc_key),
-            TEST_TRANSPORT_IDENTITY_HASH,
-            query.clone(),
-            query,
-            server_telemetry,
-        )
-        .await
+        serve_connection(server, test_rpc_service(rpc_key, query, server_telemetry)).await
     });
 
     authenticate_modern_client(&mut client, &rpc_key).await;
@@ -104,15 +88,7 @@ async fn a_legacy_md5_client_without_a_digest_prefix_still_authenticates() {
             routes: std::vec![],
             interfaces: std::vec![],
         };
-        let _ = serve_connection(
-            server,
-            test_credentials(rpc_key),
-            TEST_TRANSPORT_IDENTITY_HASH,
-            query.clone(),
-            query,
-            server_telemetry,
-        )
-        .await;
+        let _ = serve_connection(server, test_rpc_service(rpc_key, query, server_telemetry)).await;
     });
 
     let server_challenge = read_frame_dup(&mut client).await;

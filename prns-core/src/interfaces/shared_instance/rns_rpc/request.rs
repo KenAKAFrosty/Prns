@@ -10,14 +10,16 @@ use crate::routing::BlackholeExpiry;
 use crate::units::InstantMillis;
 use crate::wire::{DestinationHash, TransportId};
 
+use crate::interfaces::rns_management::{MessagePackEncoder, RnsManagementEncodeError};
+
 use super::wire_names::{argument, data_operation, drop_operation, get, selector};
 
 const REQUEST_MAX_DEPTH: usize = 8;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RnsInteger(RnsIntegerRepresentation);
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum RnsIntegerRepresentation {
     Negative(i64),
     Nonnegative(u64),
@@ -40,6 +42,19 @@ impl RnsInteger {
         match self.0 {
             RnsIntegerRepresentation::Negative(_) => None,
             RnsIntegerRepresentation::Nonnegative(value) => Some(value),
+        }
+    }
+
+    pub const fn signed_value(&self) -> Option<i64> {
+        match self.0 {
+            RnsIntegerRepresentation::Negative(value) => Some(value),
+            RnsIntegerRepresentation::Nonnegative(value) => {
+                if value <= i64::MAX as u64 {
+                    Some(value as i64)
+                } else {
+                    None
+                }
+            }
         }
     }
 }
@@ -90,6 +105,10 @@ pub enum DestinationDataOperation {
 pub struct PacketHashArgument(Vec<u8>);
 
 impl PacketHashArgument {
+    pub fn new(bytes: Vec<u8>) -> Self {
+        Self(bytes)
+    }
+
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
     }
@@ -152,6 +171,177 @@ pub enum RnsRpcRequest {
     RetainIdentity {
         identity_hash: IdentityHash,
     },
+}
+
+impl RnsRpcRequest {
+    pub fn encode_message_pack(&self) -> Result<Vec<u8>, RnsManagementEncodeError> {
+        let mut encoder = MessagePackEncoder::new();
+        match self {
+            Self::InterfaceStats => encode_get(&mut encoder, get::INTERFACE_STATS)?,
+            Self::PathTable { max_hops } => {
+                encoder.map(2)?;
+                encoder.string_field(selector::GET, get::PATH_TABLE)?;
+                encoder.field(argument::MAX_HOPS)?;
+                encode_optional_integer(&mut encoder, max_hops);
+            }
+            Self::RateTable => encode_get(&mut encoder, get::RATE_TABLE)?,
+            Self::NextHopInterface { destination_hash } => encode_get_with_binary(
+                &mut encoder,
+                get::NEXT_HOP_INTERFACE_NAME,
+                argument::DESTINATION_HASH,
+                destination_hash.as_bytes(),
+            )?,
+            Self::NextHop { destination_hash } => encode_get_with_binary(
+                &mut encoder,
+                get::NEXT_HOP,
+                argument::DESTINATION_HASH,
+                destination_hash.as_bytes(),
+            )?,
+            Self::FirstHopTimeout { destination_hash } => encode_get_with_binary(
+                &mut encoder,
+                get::FIRST_HOP_TIMEOUT,
+                argument::DESTINATION_HASH,
+                destination_hash.as_bytes(),
+            )?,
+            Self::LinkCount => encode_get(&mut encoder, get::LINK_COUNT)?,
+            Self::PacketRssi { packet_hash } => encode_get_with_binary(
+                &mut encoder,
+                get::PACKET_RSSI,
+                argument::PACKET_HASH,
+                packet_hash.as_bytes(),
+            )?,
+            Self::PacketSnr { packet_hash } => encode_get_with_binary(
+                &mut encoder,
+                get::PACKET_SNR,
+                argument::PACKET_HASH,
+                packet_hash.as_bytes(),
+            )?,
+            Self::PacketQuality { packet_hash } => encode_get_with_binary(
+                &mut encoder,
+                get::PACKET_QUALITY,
+                argument::PACKET_HASH,
+                packet_hash.as_bytes(),
+            )?,
+            Self::BlackholedIdentities => encode_get(&mut encoder, get::BLACKHOLED_IDENTITIES)?,
+            Self::IsBlackholed { identity_hash } => encode_get_with_binary(
+                &mut encoder,
+                get::IS_BLACKHOLED,
+                argument::IDENTITY_HASH,
+                identity_hash.as_bytes(),
+            )?,
+            Self::DropPath { destination_hash } => encode_drop_with_binary(
+                &mut encoder,
+                drop_operation::PATH,
+                destination_hash.as_bytes(),
+            )?,
+            Self::DropAllVia { transport_id } => encode_drop_with_binary(
+                &mut encoder,
+                drop_operation::ALL_VIA,
+                transport_id.as_bytes(),
+            )?,
+            Self::DropAnnounceQueues => {
+                encoder.map(1)?;
+                encoder.string_field(selector::DROP, drop_operation::ANNOUNCE_QUEUES)?;
+            }
+            Self::BlackholeIdentity {
+                identity_hash,
+                until,
+                reason,
+            } => {
+                encoder.map(3)?;
+                encoder.field(selector::BLACKHOLE_IDENTITY)?;
+                encoder.binary(identity_hash.as_bytes())?;
+                encoder.field(argument::UNTIL)?;
+                encode_optional_number(&mut encoder, until);
+                encoder.field(argument::REASON)?;
+                match reason {
+                    Some(reason) => encoder.string(reason)?,
+                    None => encoder.nil(),
+                }
+            }
+            Self::UnblackholeIdentity { identity_hash } => {
+                encoder.map(1)?;
+                encoder.field(selector::UNBLACKHOLE_IDENTITY)?;
+                encoder.binary(identity_hash.as_bytes())?;
+            }
+            Self::DestinationData {
+                operation,
+                destination_hash,
+            } => {
+                encoder.map(2)?;
+                encoder.string_field(
+                    selector::DESTINATION_DATA,
+                    match operation {
+                        DestinationDataOperation::Used => data_operation::USED,
+                        DestinationDataOperation::Retain => data_operation::RETAIN,
+                        DestinationDataOperation::Unretain => data_operation::UNRETAIN,
+                    },
+                )?;
+                encoder.field(argument::DESTINATION_HASH)?;
+                encoder.binary(destination_hash.as_bytes())?;
+            }
+            Self::RetainIdentity { identity_hash } => {
+                encoder.map(2)?;
+                encoder.string_field(selector::IDENTITY_DATA, data_operation::RETAIN)?;
+                encoder.field(argument::IDENTITY_HASH)?;
+                encoder.binary(identity_hash.as_bytes())?;
+            }
+        }
+        Ok(encoder.finish())
+    }
+}
+
+fn encode_get(
+    encoder: &mut MessagePackEncoder,
+    operation: &str,
+) -> Result<(), RnsManagementEncodeError> {
+    encoder.map(1)?;
+    encoder.string_field(selector::GET, operation)
+}
+
+fn encode_get_with_binary(
+    encoder: &mut MessagePackEncoder,
+    operation: &str,
+    argument_name: &str,
+    value: &[u8],
+) -> Result<(), RnsManagementEncodeError> {
+    encoder.map(2)?;
+    encoder.string_field(selector::GET, operation)?;
+    encoder.field(argument_name)?;
+    encoder.binary(value)
+}
+
+fn encode_drop_with_binary(
+    encoder: &mut MessagePackEncoder,
+    operation: &str,
+    value: &[u8],
+) -> Result<(), RnsManagementEncodeError> {
+    encoder.map(2)?;
+    encoder.string_field(selector::DROP, operation)?;
+    encoder.field(argument::DESTINATION_HASH)?;
+    encoder.binary(value)
+}
+
+fn encode_optional_integer(encoder: &mut MessagePackEncoder, value: &Option<RnsInteger>) {
+    match value {
+        Some(value) => encode_integer(encoder, value),
+        None => encoder.nil(),
+    }
+}
+
+fn encode_integer(encoder: &mut MessagePackEncoder, value: &RnsInteger) {
+    match value.0 {
+        RnsIntegerRepresentation::Negative(value) => encoder.signed(value),
+        RnsIntegerRepresentation::Nonnegative(value) => encoder.unsigned(value),
+    }
+}
+
+fn encode_optional_number(encoder: &mut MessagePackEncoder, value: &Option<RnsNumber>) {
+    match value {
+        Some(RnsNumber::Integer(value)) => encode_integer(encoder, value),
+        Some(RnsNumber::Float(value)) => encoder.float(*value),
+        None => encoder.nil(),
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -873,7 +1063,9 @@ mod tests {
 
         assert_eq!(cases.len(), 21);
         for bytes in cases {
-            assert!(decode(&bytes).is_ok(), "request rejected: {bytes:02x?}");
+            let decoded = decode(&bytes).unwrap();
+            let encoded = decoded.encode_message_pack().unwrap();
+            assert_eq!(decode(&encoded), Ok(decoded));
         }
     }
 

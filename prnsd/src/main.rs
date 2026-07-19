@@ -19,6 +19,7 @@ mod remote_management;
 mod request_services;
 mod splash;
 mod startup_progress;
+mod utilities;
 
 use std::process::ExitCode;
 
@@ -52,12 +53,18 @@ async fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         cli::Command::I2p(args) => i2p::run(args).await,
+        cli::Command::Status(args) => match utilities::rnstatus::run(args).await {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("prnsd status: {error}");
+                ExitCode::FAILURE
+            }
+        },
         cli::Command::Start(args) => managed_service::run(managed_service::Command::Start(args)),
         cli::Command::Restart(args) => {
             managed_service::run(managed_service::Command::Restart(args))
         }
         cli::Command::Stop => managed_service::run(managed_service::Command::Stop),
-        cli::Command::Status => managed_service::run(managed_service::Command::Status),
         cli::Command::Logs => managed_service::run(managed_service::Command::Logs),
     }
 }

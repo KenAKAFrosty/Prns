@@ -17,6 +17,7 @@ use self::file::replace_archive_file;
 pub use self::file::{
     ArchiveFileOperation, ArchiveRecordError, DiscoveryArchiveError, HexDecodeError,
 };
+pub use self::manual_configuration::manual_configuration as discovered_interface_configuration;
 
 pub const DISCOVERED_INTERFACES_FILE: &str = "discovered_interfaces.json";
 const FORMAT_VERSION: u32 = 1;

@@ -243,6 +243,7 @@ impl LocalServer {
             }
             None => BoundAbstractUnix::Disabled,
         };
+        self.status.set_connection(ConnectionState::Connected);
         Ok(BoundLocalServer {
             channel_tag: self.channel_tag,
             tcp_listener,
@@ -389,6 +390,13 @@ mod tests {
         assert_eq!(vitals.len(), 1);
         assert_eq!(vitals[0].id, server.id());
         assert_eq!(vitals[0].connection, ConnectionState::Disconnected);
+    }
+
+    #[tokio::test]
+    async fn a_bound_listener_reports_online() {
+        let server = LocalServer::with_port(0).bind().await.unwrap();
+        let view = prns_core::interfaces::ReportsStatus::status_view(&server).unwrap();
+        assert_eq!(view()[0].connection, ConnectionState::Connected);
     }
 
     #[test]

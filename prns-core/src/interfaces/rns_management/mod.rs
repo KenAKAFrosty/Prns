@@ -2,7 +2,7 @@ use alloc::format;
 use alloc::string::String;
 
 use crate::engine::RouteSnapshot;
-use crate::interfaces::InterfaceId;
+use crate::interfaces::{InterfaceId, InterfaceKind};
 use crate::routing::NextHop;
 use crate::units::InstantMillis;
 
@@ -12,7 +12,8 @@ mod message_pack;
 mod path_table;
 mod rate_table;
 mod remote_request;
-pub(crate) mod wire_names;
+mod status_report;
+pub mod wire_names;
 
 pub use blackhole_table::{RnsBlackholeDecodeError, RnsBlackholeTable};
 pub use interface_stats::{
@@ -25,6 +26,11 @@ pub use remote_request::{
     decode_remote_path_request, decode_remote_status_request, RnsRemotePathRequest,
     RnsRemotePathTableRequest, RnsRemoteRateTableRequest, RnsRemoteRequestDecodeError,
     RnsRemoteStatusRequest,
+};
+pub use status_report::{
+    RnsInterfaceMode, RnsInterfaceStatsDecodeError, RnsInterfaceStatsReport,
+    RnsInterfaceStatusReport, RnsOptionalField, RnsRemoteInterfaceStatsReport, RnsStatsFieldPath,
+    RnsStatsFieldScope,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,6 +54,8 @@ pub(crate) fn next_hop_bytes(entry: &RouteSnapshot) -> [u8; 16] {
 
 pub(crate) fn interface_name(id: InterfaceId) -> String {
     let mut name = match id.kind() {
+        Some(InterfaceKind::LocalServer) => String::from("Shared Instance["),
+        Some(InterfaceKind::LocalClient) => String::from("LocalInterface["),
         Some(kind) => format!("{kind:?}["),
         None => String::from("Interface["),
     };

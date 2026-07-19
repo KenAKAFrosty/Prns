@@ -21,7 +21,6 @@ pub enum Command {
     Start(cli::LaunchArgs),
     Restart(cli::LaunchArgs),
     Stop,
-    Status,
     Logs,
 }
 
@@ -95,22 +94,6 @@ fn run_inner(command: Command) -> Result<(), CommandError> {
                 eprintln!("prnsd is already stopped");
                 Ok(())
             }
-        },
-        Command::Status => match prnsd_control::running(&paths)? {
-            Some(record) => {
-                let state = match record.state {
-                    ServiceState::Starting => "starting",
-                    ServiceState::Running => "running",
-                };
-                eprintln!(
-                    "prnsd is {state} (pid {}, version {}, log {})",
-                    record.pid,
-                    record.version,
-                    record.log(&paths).display()
-                );
-                Ok(())
-            }
-            None => Err(CommandError::NotRunning),
         },
         Command::Logs => match prnsd_control::running(&paths)? {
             Some(record) => attach(&paths, &record),

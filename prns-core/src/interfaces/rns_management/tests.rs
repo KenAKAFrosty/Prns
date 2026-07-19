@@ -78,6 +78,14 @@ fn interface_stats_preserve_live_counters_and_access_code_fields() {
 }
 
 #[test]
+fn local_interface_fallback_names_match_stock_rnstatus_categories() {
+    let server = InterfaceId::from_channel_tag(InterfaceKind::LocalServer, b"server");
+    let client = InterfaceId::from_channel_tag(InterfaceKind::LocalClient, b"client");
+    assert!(interface_name(server).starts_with("Shared Instance["));
+    assert!(interface_name(client).starts_with("LocalInterface["));
+}
+
+#[test]
 fn path_rate_and_blackhole_tables_keep_stock_shapes() {
     let destination = DestinationHash::new([0x42; 16]);
     let route = RouteSnapshot {

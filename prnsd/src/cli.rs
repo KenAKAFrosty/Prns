@@ -4,6 +4,8 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use personal_rns::i2p::{I2pPeerAddress, I2pPeerAddressError, SamBridgeAddress};
 
+use crate::utilities::rnstatus::RnstatusArgs;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
 pub enum LogFormat {
     #[default]
@@ -117,11 +119,12 @@ pub enum Command {
     Start(LaunchArgs),
     Restart(LaunchArgs),
     Stop,
-    Status,
     Logs,
     Run(DaemonArgs),
     #[command(about = "Inspect I2P connectivity")]
     I2p(I2pArgs),
+    #[command(about = "Show Reticulum interface and transport status")]
+    Status(RnstatusArgs),
 }
 
 #[derive(Parser)]
@@ -141,10 +144,10 @@ pub fn parse_from(args: impl IntoIterator<Item = OsString>) -> Result<Command, c
                 "start"
                     | "restart"
                     | "stop"
-                    | "status"
                     | "logs"
                     | "run"
                     | "i2p"
+                    | "status"
                     | "help"
                     | "--help"
                     | "-h"
@@ -265,6 +268,68 @@ mod tests {
                 }),
             })
         );
+    }
+
+    #[test]
+    fn status_parses_stock_remote_and_display_options() {
+        let Command::Status(args) = parse(&[
+            "prnsd",
+            "status",
+            "--config",
+            "/node",
+            "-R",
+            "00112233445566778899aabbccddeeff",
+            "-i",
+            "/operator",
+            "-w",
+            "7.5",
+            "-l",
+            "-t",
+            "-s",
+            "traffic",
+            "LAN",
+        ]) else {
+            panic!("status must remain a direct utility command");
+        };
+        assert_eq!(args.config, Some(PathBuf::from("/node")));
+        assert_eq!(
+            args.remote,
+            Some(personal_rns::identity::IdentityHash::new([
+                0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd,
+                0xee, 0xff,
+            ]))
+        );
+        assert_eq!(args.management_identity, Some(PathBuf::from("/operator")));
+        assert_eq!(
+            args.remote_timeout.get(),
+            std::time::Duration::from_secs_f64(7.5)
+        );
+        assert!(args.link_stats);
+        assert!(args.totals);
+        assert_eq!(
+            args.sort,
+            Some(crate::utilities::rnstatus::RnstatusSort::Traffic)
+        );
+        assert_eq!(args.filter.as_deref(), Some("LAN"));
+    }
+
+    #[test]
+    fn status_remote_arguments_require_each_other() {
+        for values in [
+            ["prnsd", "status", "-R", "00112233445566778899aabbccddeeff"],
+            ["prnsd", "status", "-i", "/operator"],
+        ] {
+            let error = parse_from(values.into_iter().map(OsString::from)).unwrap_err();
+            assert_eq!(error.exit_code(), 2);
+        }
+    }
+
+    #[test]
+    fn status_owns_its_stock_version_flag() {
+        let Command::Status(args) = parse(&["prnsd", "status", "--version"]) else {
+            panic!("status must remain a direct utility command");
+        };
+        assert!(args.version);
     }
 
     #[test]

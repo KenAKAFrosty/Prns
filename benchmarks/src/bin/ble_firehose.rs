@@ -90,6 +90,8 @@ async fn run(port: u16, target: Vec<u8>, phase: Duration, payload_len: usize, wi
             &commands,
             SharedInstanceIntent {
                 blackhole_source: credentials.transport_identity_hash(),
+                transport_identity: credentials.transport_identity_hash(),
+                network_identity: None,
                 credentials,
                 blackhole_files: RnsBlackholeFiles::new(
                     std::env::temp_dir().join(std::format!("prns-firehose-{port}-blackhole")),

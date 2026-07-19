@@ -70,6 +70,7 @@ prnsd-control = { path = "../tools/prnsd-control" }
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util", "process", "signal", "fs"], optional = true }
 # The daemon's command-line front door (tokio-host only): typed args, --help, --version.
 clap = { version = "4", features = ["derive"], optional = true }
+serde_json = "1"
 log = { version = "0.4", optional = true }
 tracing = { version = "0.1", optional = true }
 tracing-log = { version = "0.2", optional = true }
