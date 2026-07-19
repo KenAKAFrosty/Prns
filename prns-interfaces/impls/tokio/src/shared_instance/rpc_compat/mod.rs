@@ -11,8 +11,8 @@ mod telemetry;
 
 pub use authentication::SharedInstanceCredentials;
 pub use client::{
-    SharedInstanceRpcClient, SharedInstanceRpcClientError, SharedInstanceRpcClientPhase,
-    SharedInstanceRpcEndpoint,
+    SharedInstanceBlackholeOutcome, SharedInstanceRpcClient, SharedInstanceRpcClientError,
+    SharedInstanceRpcClientPhase, SharedInstanceRpcEndpoint, SharedInstanceUnblackholeOutcome,
 };
 pub use server::{SharedInstanceRpcBindError, SharedInstanceRpcCompat, SharedInstanceRpcListener};
 pub use storage::{load_or_seed_rns_rpc_key, reticulum_storage_dir, RnsRpcKeyStorageError};

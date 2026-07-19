@@ -20,8 +20,11 @@ pub use interface_stats::{
     RnsInterfaceAccessCode, RnsInterfaceStats, RnsInterfaceStatsEntry, RnsTransportStatus,
 };
 pub(crate) use message_pack::MessagePackEncoder;
-pub use path_table::RnsPathTable;
-pub use rate_table::{RnsAnnounceRateEntry, RnsAnnounceRateTable};
+pub use path_table::{RnsPathTable, RnsPathTableDecodeError, RnsPathTableEntry, RnsPathTableField};
+pub use rate_table::{
+    RnsAnnounceRateEntry, RnsAnnounceRateField, RnsAnnounceRateTable,
+    RnsAnnounceRateTableDecodeError,
+};
 pub use remote_request::{
     decode_remote_path_request, decode_remote_status_request, RnsRemotePathRequest,
     RnsRemotePathTableRequest, RnsRemoteRateTableRequest, RnsRemoteRequestDecodeError,

@@ -7,6 +7,7 @@ use personal_rns::config::{
     DiscoveryError, SharedInstance, SharedInstanceTransport as ConfigSharedInstanceTransport,
 };
 use personal_rns::identity::vault::{read_identity_file, FileVaultError};
+use personal_rns::identity::{in_memory::InMemoryNodeIdentity, IdentityHash, IdentitySigner};
 use personal_rns::interfaces::shared_instance::rns_rpc::RpcAuthenticationKey;
 use personal_rns::interfaces::{BitrateBps, ConfiguredInterfacePolicy};
 use personal_rns::shared_instance::{
@@ -51,17 +52,7 @@ impl LoadedConfiguration {
         let rpc_key = match shared.rpc_key {
             Some(rpc_key) => RpcAuthenticationKey::new(rpc_key.to_vec()),
             None => {
-                let path = self
-                    .discovered
-                    .dir
-                    .join("storage")
-                    .join("transport_identity");
-                let secret = read_identity_file(&path)
-                    .map_err(|source| UtilityConfigurationError::Identity {
-                        path: path.clone(),
-                        source,
-                    })?
-                    .ok_or(UtilityConfigurationError::IdentityMissing { path })?;
+                let secret = self.transport_identity_secret()?;
                 RpcAuthenticationKey::from_rns_transport_identity_secret(&secret)
             }
         };
@@ -82,6 +73,27 @@ impl LoadedConfiguration {
                 },
             ),
         })
+    }
+
+    pub fn local_transport_identity_hash(&self) -> Result<IdentityHash, UtilityConfigurationError> {
+        self.transport_identity_secret()
+            .map(|secret| InMemoryNodeIdentity::from_secret_key_bytes(&secret).identity_hash())
+    }
+
+    fn transport_identity_secret(
+        &self,
+    ) -> Result<personal_rns::identity::vault::IdentitySecretKey, UtilityConfigurationError> {
+        let path = self
+            .discovered
+            .dir
+            .join("storage")
+            .join("transport_identity");
+        read_identity_file(&path)
+            .map_err(|source| UtilityConfigurationError::Identity {
+                path: path.clone(),
+                source,
+            })?
+            .ok_or(UtilityConfigurationError::IdentityMissing { path })
     }
 
     fn shared_instance(&self) -> Result<SharedInstanceSettings<'_>, UtilityConfigurationError> {
@@ -187,7 +199,7 @@ impl fmt::Display for UtilityConfigurationError {
             }
             Self::InvalidConfig(errors) => errors.fmt(formatter),
             Self::SharedInstanceDisabled => formatter.write_str(
-                "the selected config has share_instance = No; status needs a running shared RNS instance",
+                "the selected config has share_instance = No; utilities need a running shared RNS instance",
             ),
             Self::IdentityMissing { path } => write!(
                 formatter,

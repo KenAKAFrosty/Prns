@@ -63,6 +63,22 @@ fn path_request_decodes_stock_table_and_rate_shapes() {
 }
 
 #[test]
+fn path_request_encoders_match_rns_138_umsgpack() {
+    let destination = DestinationHash::new([0x44; 16]);
+    assert_eq!(
+        RnsRemotePathRequest::Table(RnsRemotePathTableRequest::new(Some(destination), Some(3)))
+            .encode_message_pack(),
+        Ok(bytes_from_hex(
+            "93a57461626c65c4104444444444444444444444444444444403"
+        ))
+    );
+    assert_eq!(
+        RnsRemotePathRequest::Rates(RnsRemoteRateTableRequest::new(None)).encode_message_pack(),
+        Ok(bytes_from_hex("92a57261746573c0"))
+    );
+}
+
+#[test]
 fn malformed_or_trailing_values_fail_without_building_a_value_tree() {
     assert_eq!(
         decode_remote_path_request(&[0x91, 0xa5, b't', b'a']),

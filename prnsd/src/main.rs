@@ -50,6 +50,14 @@ async fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        cli::Command::Path(args) => match utilities::rnpath::run(args).await {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                let exit_code = error.exit_code();
+                eprintln!("prnsd path: {error}");
+                ExitCode::from(exit_code)
+            }
+        },
         cli::Command::Start(args) => managed_service::run(managed_service::Command::Start(args)),
         cli::Command::Restart(args) => {
             managed_service::run(managed_service::Command::Restart(args))

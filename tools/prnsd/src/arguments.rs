@@ -1,7 +1,7 @@
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 
-const ONE_SHOT_DAEMON_COMMANDS: &[&str] = &["i2p", "status"];
+const ONE_SHOT_DAEMON_COMMANDS: &[&str] = &["i2p", "status", "path"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Action {
@@ -334,6 +334,15 @@ mod tests {
         assert!(!parsed.attach);
         assert!(parsed.build_args.is_empty());
         assert_eq!(parsed.daemon_args, args(&["status", "--json"]));
+    }
+
+    #[test]
+    fn path_is_a_direct_one_shot_daemon_invocation() {
+        let parsed = invocation(&["path", "--table", "--json"]);
+        assert_eq!(parsed.action, Action::OneShot);
+        assert!(!parsed.attach);
+        assert!(parsed.build_args.is_empty());
+        assert_eq!(parsed.daemon_args, args(&["path", "--table", "--json"]));
     }
 
     #[test]
