@@ -1269,6 +1269,7 @@ dependencies = [
 name = "personal-reticulum-suite-benchmarks"
 version = "0.0.0"
 dependencies = [
+ "allocator-api2",
  "criterion",
  "dhat",
  "getrandom 0.2.17",

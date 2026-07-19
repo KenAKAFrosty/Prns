@@ -12,7 +12,7 @@ edition = "2021"
 # Builds scenario_node on the fixed embedded layout (Esp32S3) instead of the default
 # unbounded GrowableHeap — lets the suite measure the on-device storage profile on-host.
 [features]
-fixed-storage = ["personal-rns/external-alloc"]
+fixed-storage = ["personal-rns/external-alloc", "dep:allocator-api2"]
 parallel-resource-hash = ["personal-rns/parallel-resource-hash"]
 dhat-heap = ["dep:dhat"]
 
@@ -23,6 +23,7 @@ bench = false
 
 [dependencies]
 personal-rns = { path = "../personal-rns", features = ["tokio-host", "tcp", "udp", "shared-instance"] }
+allocator-api2 = { version = "0.3", optional = true }
 dhat = { version = "0.3", optional = true }
 # The result substrate is JSON rows (the cross-implementation schema); the energy drivers
 # emit them and `render_results` reads them back to render RESULTS.md.
