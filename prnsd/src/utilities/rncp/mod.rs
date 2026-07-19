@@ -512,7 +512,7 @@ where
     connect_existing_shared_instance(&handle, bus)
         .await
         .map_err(RncpError::SharedInstance)?;
-    println!("rncp listening on {}", pretty_hash(destination.as_bytes()));
+    println!("cp listening on {}", pretty_hash(destination.as_bytes()));
     let announce_interval = args.announce;
     let serving = serve_links(handle.clone(), receiver, args, save);
     let announcing = announce_loop(handle, destination, announce_interval);

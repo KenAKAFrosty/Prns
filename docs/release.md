@@ -41,12 +41,15 @@ time. Build options such as `--target` or `--profile` can be supplied after
 | `prnsd` or `prnsd start` | Start if needed, show the visual header, and attach to the log |
 | `prnsd --detach` | Start if needed, wait for readiness, and return to the shell |
 | `prnsd restart [OPTIONS]` | Gracefully replace the managed daemon |
-| `prnsd status` | Report `starting` or `running`; return status 3 when stopped |
 | `prnsd logs` | Show recent output and follow the running daemon; return status 3 when stopped |
 | `prnsd stop` | Show recent output, request graceful shutdown, and follow the final logs |
 | `prnsd run [OPTIONS]` | Run in the foreground for a terminal or native service manager |
 | `prnsd i2p doctor` | Check I2P router and SAM 3.1 readiness without starting the managed daemon |
 | `prnsd i2p setup` | Print guided platform installation, SAM enablement, and a validated interface stanza |
+
+`prnsd status` is the prefixless RNS network-status utility, not a managed-process status command.
+It and the other RNS 1.3.8-compatible one-shot utilities are documented in
+[`docs/prnsd-utilities.md`](prnsd-utilities.md).
 
 `prnsd` and `cargo prnsd` share one per-user managed session. Repeated starts
 reattach without starting another process, and Ctrl-C detaches without stopping
