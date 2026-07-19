@@ -43,6 +43,7 @@ corroborated evidence.
 - Prefer self-documenting APIs. Avoid callsites like `foo(false)` or `bar(None)`
   when an enum, named method, newtype, or clearer parameter shape would make
   intent obvious.
+- Avoid loose string literals and magic numbers. Use simple CONSTs to give them semantic meaning and a clear usage graph
 - Do not hide semantically required configuration behind permissive defaults or
   sentinel values. If a field is required for correctness, policy, or safety,
   make callers provide it explicitly instead of seeding placeholders like `0`,
