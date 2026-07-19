@@ -109,6 +109,7 @@ An explicit `bitrate` overrides the medium estimate and recomputes optimized MTU
 500 Mbps estimate. Auto Wi-Fi and local shared-instance transports use 1 Gbps. Serial derives its
 estimate from baud, KISS and AX.25 KISS use 1200 bps, Pipe uses 1 Mbps, and RNode derives LoRa bitrate
 from its radio configuration. Every RNodeMulti radio derives its own bitrate and effective policy.
+Weave uses stock's 250 kbps estimate and fixed 1024-byte hardware MTU.
 
 ## Existing interface backends
 
@@ -126,6 +127,7 @@ from its radio configuration. Every RNodeMulti radio derives its own bitrate and
 | `RNodeMultiInterface` | One serial device with nested, independently routed radio interfaces; per-radio LoRa settings, READY flow control, airtime limits, policy, and coordinated reconnect. |
 | `PipeInterface` | Parsed subprocess command and typed respawn delay. |
 | `I2PInterface` | Validated `.i2p` names or base64 destinations in `peers`, optional inbound reachability through `connectable`, and common policy and IFAC access. |
+| `WeaveInterface` | A 3,000,000-baud 8N1 serial WDCL connection with authenticated device discovery, one inherited-policy member per device endpoint, peer timeout, and multipath deduplication. |
 
 Enabled interface types without a backend fail with “not available in this build.” RNodeMulti
 remains a local serial-device interface.
@@ -188,6 +190,21 @@ interface is available. When the configured `autoconnect_discovered_interfaces` 
 Prnsd retires all bootstrap-only interfaces. It restores them after every auto-connected interface
 is gone. As in RNS, this lifecycle is inactive when discovery auto-connect is disabled.
 
+Weave uses a serial device path in `port`, not a numeric network port:
+
+```ini
+[interfaces]
+  [[Weave]]
+    type = WeaveInterface
+    enabled = Yes
+    port = /dev/ttyACM0
+```
+
+Prnsd authenticates WDCL discovery with an ephemeral Ed25519 identity, creates one routed member
+for each endpoint reported by the attached Weave device, and supervises reconnects. Members inherit
+the parent interface's common policy and IFAC access. Without an attached device, the default
+`panic_on_interface_error = No` behavior keeps the daemon visibly degraded and retrying.
+
 ## Explicit follow-ons
 
 Recognized settings that belong to planned follow-on work emit `unsupported_setting` warnings at
@@ -200,8 +217,8 @@ client-only `target_port`, `i2p_tunneled`, `connect_timeout`, or `max_reconnect_
 do not use listener-only `listen_ip`, `listen_port`, `listen_on`, or `device`.
 Discovery publication details similarly warn when `discoverable` is absent or set to `No`.
 
-Weave and other unavailable backends are not partial plans: enabling one is a configuration error
-until that backend exists.
+Unavailable backends are not partial plans: enabling one is a configuration error until that
+backend exists.
 
 ## Minimal router
 

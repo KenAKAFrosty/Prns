@@ -82,7 +82,8 @@ fn classify(outcome: &PlanOutcome<'_>) -> StartupInterfaceReport {
             | PlannedMedium::RnodeMulti { .. }
             | PlannedMedium::BackboneClient { .. }
             | PlannedMedium::Pipe { .. }
-            | PlannedMedium::I2p { .. } => report.retrying = 1,
+            | PlannedMedium::I2p { .. }
+            | PlannedMedium::Weave { .. } => report.retrying = 1,
         },
         PlanOutcome::Failed { .. } => report.failed = 1,
     }
@@ -173,6 +174,7 @@ fn medium_name(medium: &PlannedMedium) -> &'static str {
         PlannedMedium::BackboneClient { .. } => "backbone_client",
         PlannedMedium::Pipe { .. } => "pipe",
         PlannedMedium::I2p { .. } => "i2p",
+        PlannedMedium::Weave { .. } => "weave",
     }
 }
 
@@ -264,5 +266,25 @@ mod tests {
             }
         );
         assert!(report.degraded());
+    }
+
+    #[test]
+    fn weave_supervisor_registration_is_retrying_until_a_device_connects() {
+        let plan = parse_and_plan(
+            "[interfaces]\n[[Mesh]]\ntype = WeaveInterface\nenabled = Yes\nport = /dev/ttyACM0\n",
+        )
+        .expect("valid Weave configuration")
+        .value;
+
+        assert_eq!(
+            classify(&PlanOutcome::Up {
+                interface: &plan.interfaces[0],
+                id: InterfaceId::new([0; 8]),
+            }),
+            StartupInterfaceReport {
+                retrying: 1,
+                ..StartupInterfaceReport::default()
+            }
+        );
     }
 }

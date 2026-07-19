@@ -7,6 +7,7 @@ use prns_core::interfaces::pipe::core as pipe_core;
 use prns_core::interfaces::serial::core as serial_core;
 use prns_core::interfaces::tcp::core as tcp_core;
 use prns_core::interfaces::udp::core as udp_core;
+use prns_core::interfaces::weave::core as weave_core;
 use prns_core::interfaces::wifi_auto::core as wifi_core;
 use prns_core::interfaces::{
     AnnounceBandwidthCap, AnnounceRateLimit, BitrateBps, ConfiguredInterfacePolicy,
@@ -167,6 +168,7 @@ fn interface_defaults(medium: &PlannedMedium) -> Result<InterfaceDefaults, PlanE
         | PlannedMedium::BackboneClient { .. } => Ok(tcp_core::DEFAULTS),
         PlannedMedium::Udp { .. } => Ok(udp_core::DEFAULTS),
         PlannedMedium::I2p { .. } => Ok(i2p_core::DEFAULTS),
+        PlannedMedium::Weave { .. } => Ok(weave_core::DEFAULTS),
         PlannedMedium::Serial { line, .. } => {
             let bitrate =
                 BitrateBps::new(u64::from(line.baud())).ok_or(PlanErrorKind::InvalidSetting {

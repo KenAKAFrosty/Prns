@@ -18,6 +18,7 @@ use prns_config::{
 };
 use prns_core::identity::IdentityHash;
 use prns_core::interfaces::ifac::IfacContext;
+use prns_core::interfaces::weave::core as weave_core;
 use prns_core::interfaces::{InterfaceId, InterfaceOriginKind};
 use prns_runtime::interfaces::kiss::core::TncConfig;
 use prns_runtime::interfaces::rnode::core::{RadioConfig, RadioConfigInput};
@@ -53,6 +54,7 @@ use crate::tcp::tokio_socket::{
     AddressFamilyPreference, ReconnectLimit, TcpConnectionSettings, TcpTunnelMode,
 };
 use crate::udp::UdpInterface;
+use crate::weave::WeaveInterface;
 use crate::wifi::{AutoWifi, AutoWifiDevicePolicy, AutoWifiSettings};
 use prns_core::interfaces::kiss::transmission_control::{
     ReadyCommandFlowControl, ReadyTimeout, StationIdInterval, StationIdWireFormat,
@@ -66,6 +68,7 @@ const KISS_FLOW_CONTROL_TIMEOUT: ReadyTimeout = ReadyTimeout::new(Duration::from
 /// configure, validate), so a dropped or absent device is retried on a slower cadence than a bare
 /// serial port.
 const RNODE_RECONNECT_DELAY: ReconnectDelay = ReconnectDelay::new(Duration::from_secs(5));
+const WEAVE_RECONNECT_DELAY: ReconnectDelay = ReconnectDelay::new(Duration::from_secs(5));
 
 /// What became of one planned item, handed to the caller's reporter as it happens.
 pub enum PlanOutcome<'a> {
@@ -628,6 +631,30 @@ async fn stand_up(
             let attached = attach_with_access(handle, access, i2p);
             report_attached(handle, interface, attached.id(), attachments, report);
         }
+        PlannedMedium::Weave { device } => {
+            let open_path = device.clone();
+            let weave = WeaveInterface::with_generated_identity(
+                move || {
+                    let open_path = open_path.clone();
+                    async move { open_host_serial(&open_path, weave_core::WEAVE_SERIAL_BAUD) }
+                },
+                WEAVE_RECONNECT_DELAY,
+                interface.policy,
+                device.as_bytes(),
+            );
+            match weave {
+                Ok(weave) => {
+                    let attached = attach_with_access(handle, access, weave);
+                    report_attached(handle, interface, attached.id(), attachments, report);
+                }
+                Err(error) => report(PlanOutcome::Failed {
+                    interface,
+                    visible_error_message: format!(
+                        "could not generate the Weave discovery identity: {error}"
+                    ),
+                }),
+            }
+        }
     }
 }
 
@@ -930,6 +957,7 @@ fn planned_medium_name(medium: &PlannedMedium) -> &'static str {
         PlannedMedium::BackboneClient { .. } => "backbone_client",
         PlannedMedium::Pipe { .. } => "pipe",
         PlannedMedium::I2p { .. } => "i2p",
+        PlannedMedium::Weave { .. } => "weave",
     }
 }
 

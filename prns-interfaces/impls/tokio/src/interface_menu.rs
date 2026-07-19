@@ -35,6 +35,8 @@ pub use crate::udp::UdpInterface;
 pub use crate::usb::UsbAutoHost;
 #[cfg(feature = "usb-host")]
 pub use crate::usb_host::AutoUsb;
+#[cfg(feature = "weave")]
+pub use crate::weave::WeaveInterface;
 #[cfg(feature = "websocket")]
 pub use crate::websocket::client::WebSocketClientInterface;
 #[cfg(feature = "websocket")]

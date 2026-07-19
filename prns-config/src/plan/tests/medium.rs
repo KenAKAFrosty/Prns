@@ -409,12 +409,25 @@ fn a_missing_required_field_is_invalid_before_planning() {
 }
 
 #[test]
-fn an_unconstructible_kind_fails_before_planning() {
+fn a_weave_interface_plans_its_serial_device() {
+    let plan = plan_of(
+        "[interfaces]\n[[Mesh]]\ntype = WeaveInterface\nenabled = Yes\nport = /dev/ttyACM0\n",
+    );
+    assert_eq!(
+        named(&plan, "Mesh").medium,
+        PlannedMedium::Weave {
+            device: "/dev/ttyACM0".to_string(),
+        }
+    );
+}
+
+#[test]
+fn a_weave_interface_requires_a_serial_device() {
     let errors =
-        parse("[interfaces]\n[[Mesh]]\ntype = WeaveInterface\nenabled = Yes\nport = 4242\n")
-            .unwrap_err();
+        parse("[interfaces]\n[[Mesh]]\ntype = WeaveInterface\nenabled = Yes\n").unwrap_err();
     assert!(errors.diagnostics().iter().any(|diagnostic| {
-        diagnostic.code() == crate::ConfigDiagnosticCode::UnsupportedInterface
+        diagnostic.code() == crate::ConfigDiagnosticCode::MissingRequiredKey
+            && diagnostic.path().ends_with(" > port")
     }));
 }
 

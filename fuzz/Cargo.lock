@@ -434,7 +434,7 @@ dependencies = [
 
 [[package]]
 name = "prns-core"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "aes",
  "cbc",
@@ -455,7 +455,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "cfg-if",
  "heapless",
