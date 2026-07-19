@@ -227,10 +227,6 @@ fn run_engine(ready_tx: Sender<Ready>) {
     });
 }
 
-/// Advertise the TCP rendezvous over Bonjour and feed every resolved peer into the WiFi/LAN
-/// supervisor's mDNS channel, so peers that cannot run raw multicast (iOS) are still discovered and
-/// dialed. Standard Bonjour rides the system mDNSResponder, so this is free-team (Local Network
-/// permission + the `NSBonjourServices` declaration), never the multicast entitlement.
 #[cfg(target_os = "ios")]
 fn spawn_mdns(port: u16, sightings: tokio::sync::mpsc::UnboundedSender<SocketAddr>) {
     use prns_ffi::mdns::macos::MacosMdnsBackend;
