@@ -13,9 +13,22 @@ mod snapshot;
 
 const SNAPSHOT_INTERVAL: Duration = Duration::from_secs(5);
 
-pub(crate) struct MetricsReporter {
+pub(super) struct MetricsReporter {
     instruments: Instruments,
     previous: Option<RuntimeMetricsSnapshot>,
+}
+
+pub(crate) struct RunningMetricsReporter {
+    task: tokio::task::JoinHandle<()>,
+    runtime_up: Gauge<u64>,
+}
+
+impl RunningMetricsReporter {
+    pub(crate) async fn shutdown(self) {
+        self.task.abort();
+        let _ = self.task.await;
+        self.runtime_up.record(0, &[]);
+    }
 }
 
 impl MetricsReporter {
@@ -26,7 +39,7 @@ impl MetricsReporter {
         }
     }
 
-    pub(crate) async fn run(mut self, handle: PrnsNodeHandle, started: Instant) {
+    async fn run(mut self, handle: PrnsNodeHandle, started: Instant) {
         let mut interval = tokio::time::interval(SNAPSHOT_INTERVAL);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
@@ -47,7 +60,15 @@ impl MetricsReporter {
         }
     }
 
-    pub(crate) fn runtime_up_handle(&self) -> Gauge<u64> {
+    fn runtime_up_handle(&self) -> Gauge<u64> {
         self.instruments.runtime_up.clone()
+    }
+
+    pub(super) fn spawn(self, handle: PrnsNodeHandle, started: Instant) -> RunningMetricsReporter {
+        let runtime_up = self.runtime_up_handle();
+        RunningMetricsReporter {
+            task: tokio::spawn(self.run(handle, started)),
+            runtime_up,
+        }
     }
 }

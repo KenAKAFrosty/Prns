@@ -1,3 +1,4 @@
+mod background;
 mod configuration;
 mod configured_interfaces;
 mod identity;
@@ -129,7 +130,7 @@ pub(super) async fn run(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
     let store = FileStore::new(&persist_dir);
     let timeline_origin = boot_timeline_origin(&store);
     let (rotated_tx, rotated_rx) = tokio::sync::mpsc::unbounded_channel();
-    let mut prepared_discovery = interface_discovery::PreparedDiscovery::from_plan(
+    let prepared_discovery = interface_discovery::PreparedDiscovery::from_plan(
         &plan,
         network_identity.clone(),
         &config_dir,
@@ -250,81 +251,18 @@ pub(super) async fn run(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
         ));
     }
 
-    let management_announce_task =
-        services::spawn_management_announcements(prns_handle.clone(), management_destinations);
-    let (
-        interface_failure_watch,
-        discovery_task,
-        discovery_publication_task,
-        blackhole_update_task,
-    ) = match interface_ownership.into_routing_tables() {
-        Some(interface_ownership::RoutingTableOwnership {
-            configured_interfaces,
-            bootstrap_attachments,
-        }) => {
-            let monitored_interfaces = interface_discovery::MonitoredInterfaces::new(
-                configured_interfaces.iter().map(|interface| interface.id),
-            );
-            let interface_failure_watch = monitored_interfaces.subscribe();
-            let bootstrap_interfaces = interface_discovery::BootstrapInterfaces::prepare(
-                &plan,
-                interface_runtime.clone(),
-                bootstrap_attachments,
-                monitored_interfaces,
-            );
-            let discovery_task = match prepared_discovery.take() {
-                Some(discovery) => {
-                    let observer = discovery.observer();
-                    prns = prns.with_accepted_announce_observer(move |observation| {
-                        observer.observe(observation);
-                    });
-                    let clock = prns.clock();
-                    Some(discovery.spawn(prns_handle.clone(), clock, bootstrap_interfaces))
-                }
-                None => None,
-            };
-            let discovery_publication_task = match prepared_discovery_publisher {
-                Some(publisher) => {
-                    let clock = prns.clock();
-                    match publisher.spawn(prns_handle.clone(), clock, configured_interfaces) {
-                        Ok(task) => task,
-                        Err(error) => {
-                            tracing::error!(
-                                event = "interface_discovery_publisher_start_failed",
-                                error = %error,
-                            );
-                            None
-                        }
-                    }
-                }
-                None => None,
-            };
-            let blackhole_update_task = services::spawn_blackhole_updater(
-                prns_handle.clone(),
-                prns.clock(),
-                blackhole_files,
-                &plan.blackhole_exchange,
-            );
-            (
-                interface_failure_watch,
-                discovery_task,
-                discovery_publication_task,
-                blackhole_update_task,
-            )
-        }
-        None => {
-            let monitored_interfaces =
-                interface_discovery::MonitoredInterfaces::new(std::iter::empty());
-            (monitored_interfaces.subscribe(), None, None, None)
-        }
-    };
-    #[cfg(feature = "otlp")]
-    let metrics_task = observability.metrics_reporter().map(|reporter| {
-        let runtime_up = reporter.runtime_up_handle();
-        (
-            tokio::spawn(reporter.run(prns_handle.clone(), started)),
-            runtime_up,
-        )
+    let (prns, background_tasks) = background::start(background::BackgroundInputs {
+        node: prns,
+        handle: &prns_handle,
+        plan: &plan,
+        interface_runtime: &interface_runtime,
+        ownership: interface_ownership,
+        prepared_discovery,
+        prepared_discovery_publisher,
+        blackhole_files,
+        management_destinations,
+        observability: &observability,
+        started,
     });
 
     tracing::info!(
@@ -352,7 +290,7 @@ pub(super) async fn run(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
         () = persistence::run_until_shutdown(persistence, managed.as_ref()) => {}
         failed = interface_failure::wait(
             &prns_handle,
-            interface_failure_watch,
+            background_tasks.interface_failure_watch(),
             plan.panic_on_interface_error,
         ) => {
             interface_failure = Some(failed);
@@ -362,26 +300,7 @@ pub(super) async fn run(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
             );
         }
     }
-    if let Some(discovery) = discovery_task {
-        discovery.shutdown().await;
-    }
-    if let Some(publisher) = discovery_publication_task {
-        if let Err(error) = publisher.shutdown().await {
-            tracing::warn!(event = "interface_discovery_publisher_task_failed", error = %error);
-        }
-    }
-    if let Some(task) = management_announce_task {
-        task.shutdown().await;
-    }
-    if let Some(task) = blackhole_update_task {
-        task.shutdown().await;
-    }
-    #[cfg(feature = "otlp")]
-    if let Some((task, runtime_up)) = metrics_task {
-        task.abort();
-        let _ = task.await;
-        runtime_up.record(0, &[]);
-    }
+    background_tasks.shutdown().await;
     observability.shutdown().await;
     if let Some(managed) = managed {
         managed.hold_runtime_lock_until_process_exit();
