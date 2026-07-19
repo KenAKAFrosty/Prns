@@ -18,7 +18,7 @@ use personal_rns::runtime::{
 use personal_rns::storage::StorageLayout;
 use personal_rns::wire::DestinationHash;
 
-use crate::request_services::DaemonRequestState;
+use super::request_state::DaemonRequestState;
 
 pub const STATUS_PATH: &str = "/status";
 pub const PATH_PATH: &str = "/path";
