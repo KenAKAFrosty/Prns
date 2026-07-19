@@ -1,12 +1,17 @@
 #![forbid(unsafe_code)]
 
+mod error;
+mod logs;
 mod paths;
+mod process;
 mod record;
-mod service;
+mod state;
 
+pub use error::ServiceError;
+pub use logs::{follow, print_recent_log, stop_and_follow};
 pub use paths::{ServicePaths, StateDirectoryError};
-pub use record::{LogLane, ServiceRecord, ServiceState};
-pub use service::{
-    follow, launch_signature, print_recent_log, running, start, stop, stop_and_follow,
-    wait_until_ready, LaunchSpec, ManagedProcess, ServiceError, StartOutcome,
+pub use process::{
+    launch_signature, running, start, stop, wait_until_ready, LaunchSpec, ManagedProcess,
+    StartOutcome,
 };
+pub use record::{LogLane, ServiceRecord, ServiceState};

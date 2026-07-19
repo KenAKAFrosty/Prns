@@ -1,7 +1,6 @@
 use std::ffi::{OsStr, OsString};
-use std::fmt;
-use std::fs::{self, File, OpenOptions, TryLockError};
-use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::fs::{self, File, TryLockError};
+use std::io::{self};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
@@ -12,81 +11,24 @@ use std::os::unix::process::CommandExt;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
+use crate::logs::{open_log, rotate_log};
 use crate::record::{LogLane, ServiceRecord, ServiceState};
-use crate::ServicePaths;
+use crate::state::{
+    cleanup_stale, open_lock, prepare_state_dir, read_generation, read_record, ready_generation,
+    remove_generation_if_matching, runtime_is_locked, write_generation, write_record,
+};
+use crate::{ServiceError, ServicePaths};
 
-const ATTACH_BACKLOG_BYTES: u64 = 64 * 1024;
-const POLL_INTERVAL: Duration = Duration::from_millis(100);
-const LIVENESS_INTERVAL: Duration = Duration::from_secs(1);
+pub(crate) const POLL_INTERVAL: Duration = Duration::from_millis(100);
 const RECORD_WAIT_TIMEOUT: Duration = Duration::from_secs(1);
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(30);
 const START_TIMEOUT: Duration = Duration::from_secs(30);
-const STOP_TIMEOUT: Duration = Duration::from_secs(30);
+pub(crate) const STOP_TIMEOUT: Duration = Duration::from_secs(30);
 const MANAGED_STATE_DIR: &str = "PRNSD_INTERNAL_STATE_DIR";
 const MANAGED_GENERATION: &str = "PRNSD_INTERNAL_GENERATION";
 const MANAGED_SIGNATURE: &str = "PRNSD_INTERNAL_SIGNATURE";
 const MANAGED_LOG_LANE: &str = "PRNSD_INTERNAL_LOG_LANE";
 const MANAGED_VERSION: &str = "PRNSD_INTERNAL_VERSION";
-
-#[derive(Debug)]
-pub enum ServiceError {
-    Io {
-        operation: &'static str,
-        source: io::Error,
-    },
-    ControlBusy,
-    InvalidRecord,
-    IncompleteRecord,
-    InvalidManagedEnvironment,
-    ManagedInstanceAlreadyRunning,
-    ProcessExited {
-        log: PathBuf,
-    },
-    StartupTimedOut {
-        pid: u32,
-        log: PathBuf,
-    },
-    StopTimedOut {
-        pid: u32,
-    },
-}
-
-impl fmt::Display for ServiceError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Io { operation, source } => write!(formatter, "{operation}: {source}"),
-            Self::ControlBusy => {
-                formatter.write_str("another prnsd lifecycle command is still in progress")
-            }
-            Self::InvalidRecord => formatter.write_str("the prnsd session record is invalid"),
-            Self::IncompleteRecord => {
-                formatter.write_str("prnsd is running without a complete session record")
-            }
-            Self::InvalidManagedEnvironment => {
-                formatter.write_str("the internal prnsd managed environment is invalid")
-            }
-            Self::ManagedInstanceAlreadyRunning => {
-                formatter.write_str("another managed prnsd instance already owns the session")
-            }
-            Self::ProcessExited { log } => write!(
-                formatter,
-                "prnsd exited during startup; inspect {}",
-                log.display()
-            ),
-            Self::StartupTimedOut { pid, log } => write!(
-                formatter,
-                "prnsd process {pid} is still starting after 30 seconds; inspect {}",
-                log.display()
-            ),
-            Self::StopTimedOut { pid } => write!(
-                formatter,
-                "prnsd process {pid} did not stop within 30 seconds"
-            ),
-        }
-    }
-}
-
-impl std::error::Error for ServiceError {}
 
 pub struct LaunchSpec<'a> {
     pub binary: &'a Path,
@@ -104,12 +46,12 @@ pub enum StartOutcome {
     AlreadyRunning(ServiceRecord),
 }
 
-struct ControlLock {
+pub(crate) struct ControlLock {
     file: File,
 }
 
 impl ControlLock {
-    fn acquire(paths: &ServicePaths) -> Result<Self, ServiceError> {
+    pub(crate) fn acquire(paths: &ServicePaths) -> Result<Self, ServiceError> {
         prepare_state_dir(paths)?;
         let file = open_lock(&paths.control_lock, "could not open prnsd control lock")?;
         let started = Instant::now();
@@ -378,77 +320,6 @@ pub fn wait_until_ready(
     }
 }
 
-pub fn stop_and_follow(paths: &ServicePaths, record: &ServiceRecord) -> Result<(), ServiceError> {
-    let _control = ControlLock::acquire(paths)?;
-    let Some(current) = running(paths)? else {
-        return Ok(());
-    };
-    if current.generation != record.generation {
-        return Err(ServiceError::InvalidRecord);
-    }
-    let mut file = File::open(record.log(paths)).map_err(|source| ServiceError::Io {
-        operation: "could not open the prnsd log for shutdown attachment",
-        source,
-    })?;
-    seek_to_backlog(&mut file)?;
-    request_stop(paths, record)?;
-    let started = Instant::now();
-    let mut output = io::stdout().lock();
-    loop {
-        copy_available(&mut file, &mut output)?;
-        if !runtime_is_locked(paths)? {
-            copy_available(&mut file, &mut output)?;
-            cleanup_stale(paths)?;
-            return Ok(());
-        }
-        if started.elapsed() >= STOP_TIMEOUT {
-            return Err(ServiceError::StopTimedOut { pid: record.pid });
-        }
-        follow_truncation(&mut file)?;
-        thread::sleep(POLL_INTERVAL);
-    }
-}
-
-pub fn follow(paths: &ServicePaths, record: &ServiceRecord) -> Result<(), ServiceError> {
-    let mut file = File::open(record.log(paths)).map_err(|source| ServiceError::Io {
-        operation: "could not open the prnsd log for attachment",
-        source,
-    })?;
-    seek_to_backlog(&mut file)?;
-    let mut output = io::stdout().lock();
-    let mut last_liveness = Instant::now();
-    loop {
-        if copy_available(&mut file, &mut output)? {
-            continue;
-        }
-        if last_liveness.elapsed() >= LIVENESS_INTERVAL {
-            if !runtime_is_locked(paths)? {
-                copy_available(&mut file, &mut output)?;
-                return Ok(());
-            }
-            last_liveness = Instant::now();
-        }
-        follow_truncation(&mut file)?;
-        thread::sleep(POLL_INTERVAL);
-    }
-}
-
-pub fn print_recent_log(path: &Path) -> Result<(), ServiceError> {
-    if !path.exists() {
-        return Ok(());
-    }
-    let mut file = File::open(path).map_err(|source| ServiceError::Io {
-        operation: "could not open the prnsd log",
-        source,
-    })?;
-    seek_to_backlog(&mut file)?;
-    io::copy(&mut file, &mut io::stdout().lock()).map_err(|source| ServiceError::Io {
-        operation: "could not print the prnsd log",
-        source,
-    })?;
-    Ok(())
-}
-
 pub fn launch_signature(
     values: impl IntoIterator<Item = OsString>,
     environment: impl IntoIterator<Item = (OsString, OsString)>,
@@ -497,7 +368,10 @@ fn generation() -> u128 {
     elapsed ^ (u128::from(std::process::id()) << 64)
 }
 
-fn request_stop(paths: &ServicePaths, record: &ServiceRecord) -> Result<(), ServiceError> {
+pub(crate) fn request_stop(
+    paths: &ServicePaths,
+    record: &ServiceRecord,
+) -> Result<(), ServiceError> {
     write_generation(
         &paths.stop,
         record.generation,
@@ -517,121 +391,6 @@ fn wait_for_stop(paths: &ServicePaths, record: &ServiceRecord) -> Result<(), Ser
         }
         thread::sleep(POLL_INTERVAL);
     }
-}
-
-fn runtime_is_locked(paths: &ServicePaths) -> Result<bool, ServiceError> {
-    let file = open_lock(&paths.runtime_lock, "could not open prnsd runtime lock")?;
-    match file.try_lock() {
-        Ok(()) => {
-            file.unlock().map_err(|source| ServiceError::Io {
-                operation: "could not unlock the prnsd runtime probe",
-                source,
-            })?;
-            Ok(false)
-        }
-        Err(TryLockError::WouldBlock) => Ok(true),
-        Err(TryLockError::Error(source)) => Err(ServiceError::Io {
-            operation: "could not inspect the prnsd runtime lock",
-            source,
-        }),
-    }
-}
-
-fn ready_generation(paths: &ServicePaths) -> Result<Option<u128>, ServiceError> {
-    read_generation(&paths.ready, "could not read prnsd readiness marker")
-}
-
-fn read_generation(path: &Path, operation: &'static str) -> Result<Option<u128>, ServiceError> {
-    match fs::read_to_string(path) {
-        Ok(text) => text
-            .trim()
-            .parse()
-            .map(Some)
-            .map_err(|_| ServiceError::InvalidRecord),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(source) => Err(ServiceError::Io { operation, source }),
-    }
-}
-
-fn write_generation(
-    path: &Path,
-    generation: u128,
-    operation: &'static str,
-) -> Result<(), ServiceError> {
-    atomic_write(path, format!("{generation}\n").as_bytes(), operation)
-}
-
-fn read_record(paths: &ServicePaths) -> Result<Option<ServiceRecord>, ServiceError> {
-    match fs::read_to_string(&paths.record) {
-        Ok(text) => ServiceRecord::decode(&text)
-            .map(Some)
-            .map_err(|_| ServiceError::InvalidRecord),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(source) => Err(ServiceError::Io {
-            operation: "could not read the prnsd session record",
-            source,
-        }),
-    }
-}
-
-fn write_record(paths: &ServicePaths, record: &ServiceRecord) -> Result<(), ServiceError> {
-    atomic_write(
-        &paths.record,
-        record.encode().as_bytes(),
-        "could not write the prnsd session record",
-    )
-}
-
-fn atomic_write(path: &Path, bytes: &[u8], operation: &'static str) -> Result<(), ServiceError> {
-    let parent = path.parent().ok_or_else(|| ServiceError::Io {
-        operation,
-        source: io::Error::new(io::ErrorKind::InvalidInput, "state path has no parent"),
-    })?;
-    let mut temporary = tempfile::NamedTempFile::new_in(parent)
-        .map_err(|source| ServiceError::Io { operation, source })?;
-    temporary
-        .write_all(bytes)
-        .and_then(|()| temporary.as_file().sync_all())
-        .map_err(|source| ServiceError::Io { operation, source })?;
-    temporary
-        .persist(path)
-        .map(|_| ())
-        .map_err(|error| ServiceError::Io {
-            operation,
-            source: error.error,
-        })
-}
-
-fn cleanup_stale(paths: &ServicePaths) -> Result<(), ServiceError> {
-    remove_if_present(&paths.record, "could not remove stale prnsd session record")?;
-    remove_if_present(
-        &paths.ready,
-        "could not remove stale prnsd readiness marker",
-    )?;
-    remove_if_present(&paths.stop, "could not remove stale prnsd stop request")
-}
-
-fn remove_generation_if_matching(path: &Path, generation: u128) {
-    if fs::read_to_string(path)
-        .ok()
-        .and_then(|text| text.trim().parse().ok())
-        == Some(generation)
-    {
-        let _ = fs::remove_file(path);
-    }
-}
-
-fn rotate_log(path: &Path, previous: &Path, operation: &'static str) -> Result<(), ServiceError> {
-    remove_if_present(previous, operation)?;
-    match fs::rename(path, previous) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(source) => Err(ServiceError::Io { operation, source }),
-    }
-}
-
-fn open_log(path: &Path) -> Result<File, ServiceError> {
-    open_secure(path, true, true, "could not open the prnsd log")
 }
 
 fn stage_binary(source: &Path, destination: &Path) -> Result<PathBuf, ServiceError> {
@@ -666,134 +425,6 @@ fn stage_binary(source: &Path, destination: &Path) -> Result<PathBuf, ServiceErr
     Ok(destination.to_path_buf())
 }
 
-fn open_lock(path: &Path, operation: &'static str) -> Result<File, ServiceError> {
-    open_secure(path, false, true, operation)
-}
-
-fn open_secure(
-    path: &Path,
-    truncate: bool,
-    create: bool,
-    operation: &'static str,
-) -> Result<File, ServiceError> {
-    let mut options = OpenOptions::new();
-    options
-        .read(true)
-        .write(true)
-        .truncate(truncate)
-        .create(create);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    options
-        .open(path)
-        .map_err(|source| ServiceError::Io { operation, source })
-}
-
-fn prepare_state_dir(paths: &ServicePaths) -> Result<(), ServiceError> {
-    fs::create_dir_all(&paths.state_dir).map_err(|source| ServiceError::Io {
-        operation: "could not create the prnsd state directory",
-        source,
-    })?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&paths.state_dir, fs::Permissions::from_mode(0o700)).map_err(
-            |source| ServiceError::Io {
-                operation: "could not protect the prnsd state directory",
-                source,
-            },
-        )?;
-    }
-    Ok(())
-}
-
-fn remove_if_present(path: &Path, operation: &'static str) -> Result<(), ServiceError> {
-    match fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(source) => Err(ServiceError::Io { operation, source }),
-    }
-}
-
-fn copy_available(file: &mut File, output: &mut impl Write) -> Result<bool, ServiceError> {
-    let mut copied = false;
-    let mut buffer = [0_u8; 8 * 1024];
-    loop {
-        let read = file.read(&mut buffer).map_err(|source| ServiceError::Io {
-            operation: "could not read the prnsd log",
-            source,
-        })?;
-        if read == 0 {
-            break;
-        }
-        output
-            .write_all(&buffer[..read])
-            .map_err(|source| ServiceError::Io {
-                operation: "could not write attached prnsd output",
-                source,
-            })?;
-        copied = true;
-    }
-    if copied {
-        output.flush().map_err(|source| ServiceError::Io {
-            operation: "could not flush attached prnsd output",
-            source,
-        })?;
-    }
-    Ok(copied)
-}
-
-fn follow_truncation(file: &mut File) -> Result<(), ServiceError> {
-    let position = file.stream_position().map_err(|source| ServiceError::Io {
-        operation: "could not inspect the prnsd log position",
-        source,
-    })?;
-    let length = file
-        .metadata()
-        .map_err(|source| ServiceError::Io {
-            operation: "could not inspect the prnsd log",
-            source,
-        })?
-        .len();
-    if length < position {
-        file.seek(SeekFrom::Start(0))
-            .map_err(|source| ServiceError::Io {
-                operation: "could not follow the rotated prnsd log",
-                source,
-            })?;
-    }
-    Ok(())
-}
-
-fn seek_to_backlog(file: &mut File) -> Result<(), ServiceError> {
-    let length = file
-        .metadata()
-        .map_err(|source| ServiceError::Io {
-            operation: "could not inspect the prnsd log",
-            source,
-        })?
-        .len();
-    let offset = length.saturating_sub(ATTACH_BACKLOG_BYTES);
-    file.seek(SeekFrom::Start(offset))
-        .map_err(|source| ServiceError::Io {
-            operation: "could not seek in the prnsd log",
-            source,
-        })?;
-    if offset > 0 {
-        let mut byte = [0_u8; 1];
-        while file.read(&mut byte).map_err(|source| ServiceError::Io {
-            operation: "could not align attached prnsd output",
-            source,
-        })? == 1
-            && byte[0] != b'\n'
-        {}
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -804,19 +435,6 @@ mod tests {
             std::env::temp_dir().join(format!("prnsd-control-{name}-{}", std::process::id())),
         )
     }
-
-    #[test]
-    fn runtime_lock_is_the_liveness_source() {
-        let paths = test_paths("liveness");
-        prepare_state_dir(&paths).unwrap();
-        assert!(!runtime_is_locked(&paths).unwrap());
-        let lock = open_lock(&paths.runtime_lock, "test lock").unwrap();
-        lock.try_lock().unwrap();
-        assert!(runtime_is_locked(&paths).unwrap());
-        lock.unlock().unwrap();
-        fs::remove_dir_all(paths.state_dir).unwrap();
-    }
-
     #[test]
     fn readiness_marker_distinguishes_starting_from_running() {
         let paths = test_paths("readiness");
@@ -858,52 +476,6 @@ mod tests {
         assert!(!paths.record.exists());
         assert!(!paths.ready.exists());
         assert!(!paths.stop.exists());
-        fs::remove_dir_all(paths.state_dir).unwrap();
-    }
-
-    #[test]
-    fn stop_requests_are_generation_scoped() {
-        let paths = test_paths("generation");
-        prepare_state_dir(&paths).unwrap();
-        write_generation(&paths.stop, 41, "test stop").unwrap();
-        assert_eq!(read_generation(&paths.stop, "test stop").unwrap(), Some(41));
-        remove_generation_if_matching(&paths.stop, 42);
-        assert!(paths.stop.exists());
-        remove_generation_if_matching(&paths.stop, 41);
-        assert!(!paths.stop.exists());
-        fs::remove_dir_all(paths.state_dir).unwrap();
-    }
-
-    #[test]
-    fn attachment_reads_appended_bytes_once() {
-        let paths = test_paths("follow");
-        prepare_state_dir(&paths).unwrap();
-        fs::write(&paths.human_log, b"old\n").unwrap();
-        let mut file = File::open(&paths.human_log).unwrap();
-        file.seek(SeekFrom::End(0)).unwrap();
-        OpenOptions::new()
-            .append(true)
-            .open(&paths.human_log)
-            .unwrap()
-            .write_all(b"new\n")
-            .unwrap();
-        let mut output = Vec::new();
-        assert!(copy_available(&mut file, &mut output).unwrap());
-        assert_eq!(output, b"new\n");
-        assert!(!copy_available(&mut file, &mut output).unwrap());
-        fs::remove_dir_all(paths.state_dir).unwrap();
-    }
-
-    #[test]
-    fn rotation_keeps_one_predecessor() {
-        let paths = test_paths("rotation");
-        prepare_state_dir(&paths).unwrap();
-        fs::write(&paths.human_log, b"first\n").unwrap();
-        rotate_log(&paths.human_log, &paths.human_previous_log, "test rotation").unwrap();
-        assert_eq!(fs::read(&paths.human_previous_log).unwrap(), b"first\n");
-        fs::write(&paths.human_log, b"second\n").unwrap();
-        rotate_log(&paths.human_log, &paths.human_previous_log, "test rotation").unwrap();
-        assert_eq!(fs::read(&paths.human_previous_log).unwrap(), b"second\n");
         fs::remove_dir_all(paths.state_dir).unwrap();
     }
 
@@ -977,7 +549,7 @@ mod tests {
                 thread::spawn(move || {
                     let args = [
                         OsString::from("--exact"),
-                        OsString::from("service::tests::managed_helper_process"),
+                        OsString::from("process::tests::managed_helper_process"),
                         OsString::from("--nocapture"),
                     ];
                     barrier.wait();
