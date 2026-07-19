@@ -107,7 +107,8 @@ pub(super) fn plan_access(
         | PlannedMedium::Udp { .. }
         | PlannedMedium::Backbone { .. }
         | PlannedMedium::BackboneClient { .. }
-        | PlannedMedium::I2p { .. } => IfacSize::WIDE,
+        | PlannedMedium::I2p { .. }
+        | PlannedMedium::Weave { .. } => IfacSize::WIDE,
         PlannedMedium::Serial { .. }
         | PlannedMedium::Kiss { .. }
         | PlannedMedium::Ax25Kiss { .. }

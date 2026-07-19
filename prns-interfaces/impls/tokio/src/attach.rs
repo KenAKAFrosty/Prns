@@ -50,6 +50,7 @@ macro_rules! attaches_as_wire {
     feature = "shared-instance",
     feature = "backbone",
     feature = "i2p",
+    feature = "weave",
     feature = "wifi-direct",
     feature = "ble"
 ))]
@@ -115,6 +116,8 @@ attaches_as_fleet!(impl[] crate::shared_instance::server::LocalServer);
 attaches_as_fleet!(impl[] crate::backbone::server::BackboneServer);
 #[cfg(feature = "i2p")]
 attaches_as_fleet!(impl[B] crate::i2p::I2pInterface<B>);
+#[cfg(feature = "weave")]
+attaches_as_fleet!(impl[Open] crate::weave::WeaveInterface<Open>);
 #[cfg(feature = "wifi-direct")]
 attaches_as_fleet!(impl[B] crate::wifi_direct::tokio::WifiDirectAuto<B>);
 #[cfg(feature = "ble")]

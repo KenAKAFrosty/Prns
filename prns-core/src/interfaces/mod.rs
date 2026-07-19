@@ -34,6 +34,7 @@ pub mod shared_instance;
 pub mod tcp;
 pub mod udp;
 pub mod usb_auto;
+pub mod weave;
 pub mod websocket;
 pub mod wifi_auto;
 pub mod wifi_aware;

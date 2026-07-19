@@ -562,6 +562,9 @@ fn application_contract_baseline(type_name: &'static str) -> BTreeMap<&'static s
             settings.insert(interface_key::TARGET_HOST, "peer.example");
             settings.insert(interface_key::TARGET_PORT, "4242");
         }
+        "WeaveInterface" => {
+            settings.insert(interface_key::PORT, "/dev/ttyACM0");
+        }
         _ => panic!("unsupported contract interface {type_name}"),
     }
     settings

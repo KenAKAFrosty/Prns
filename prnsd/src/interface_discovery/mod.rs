@@ -62,7 +62,8 @@ impl PreparedDiscovery {
                 | PlannedMedium::RnodeMulti { .. }
                 | PlannedMedium::Backbone { .. }
                 | PlannedMedium::Pipe { .. }
-                | PlannedMedium::I2p { .. } => {}
+                | PlannedMedium::I2p { .. }
+                | PlannedMedium::Weave { .. } => {}
             }
         }
         Some(Self {

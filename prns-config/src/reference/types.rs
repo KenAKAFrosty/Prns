@@ -187,7 +187,7 @@ pub enum ReferenceParams {
         max_reconnect_tries: Option<u32>,
     },
     Weave {
-        port: Option<u16>,
+        port: Option<String>,
     },
     Unknown,
 }

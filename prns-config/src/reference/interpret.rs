@@ -491,7 +491,7 @@ fn interpret_params(
             )?,
         },
         "WeaveInterface" => ReferenceParams::Weave {
-            port: opt(rest, interface_key::PORT, interface, coerce_u16)?,
+            port: opt(rest, interface_key::PORT, interface, coerce_string)?,
         },
         _ => ReferenceParams::Unknown,
     })

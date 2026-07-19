@@ -914,7 +914,7 @@ fn validate_medium_requirements(
         "UDPInterface" => {
             validate_udp_requirements(&context, errors);
         }
-        "SerialInterface" | "KISSInterface" => {
+        "SerialInterface" | "KISSInterface" | "WeaveInterface" => {
             require_setting(
                 &context,
                 RequiredSetting {

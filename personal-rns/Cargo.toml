@@ -1,6 +1,6 @@
 [package]
 name = "personal-rns"
-version = "0.2.4"
+version = "0.2.5"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -50,6 +50,7 @@ pipe = ["prns-interfaces-tokio?/pipe", "prns-interfaces-tokio?/pipe-host"]
 backbone = ["prns-interfaces-tokio?/backbone"]
 websocket = ["prns-interfaces-tokio?/websocket"]
 i2p = ["prns-interfaces-tokio?/i2p"]
+weave = ["prns-interfaces-tokio?/weave"]
 shared-instance = ["prns-runtime/rns-management", "prns-runtime-tokio?/rns-management", "prns-interfaces-tokio?/shared-instance"]
 lora = ["prns-interfaces-embassy?/lora"]
 ble-trouble = ["ble", "prns-interfaces-embassy?/ble-trouble"]

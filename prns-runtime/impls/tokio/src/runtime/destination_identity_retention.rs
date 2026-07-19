@@ -35,42 +35,27 @@ pub(crate) fn apply_destination_identity_retention_command<S: StorageLayout>(
     command: DestinationIdentityRetentionHostCommand,
     now: InstantMillis,
 ) -> WakeSchedules {
-    let changed = match command {
+    match command {
         DestinationIdentityRetentionHostCommand::MarkUsed { destination, reply } => {
-            let outcome = engine.mark_destination_used(&destination, now);
-            let changed = matches!(
-                outcome,
-                MarkDestinationUsedOutcome::Recorded | MarkDestinationUsedOutcome::Refreshed
-            );
-            let _ = reply.send(outcome);
-            changed
+            let effect = engine.mark_destination_used(&destination, now);
+            let _ = reply.send(effect.outcome());
+            effect.wake_schedules()
         }
         DestinationIdentityRetentionHostCommand::RetainDestination { destination, reply } => {
-            let outcome = engine.retain_destination(&destination);
-            let changed = outcome == RetainDestinationOutcome::Retained;
-            let _ = reply.send(outcome);
-            changed
+            let effect = engine.retain_destination(&destination);
+            let _ = reply.send(effect.outcome());
+            effect.wake_schedules()
         }
         DestinationIdentityRetentionHostCommand::ReleaseDestination { destination, reply } => {
-            let outcome = engine.release_destination(&destination, now);
-            let changed = outcome != ReleaseDestinationOutcome::NotFound;
-            let _ = reply.send(outcome);
-            changed
+            let effect = engine.release_destination(&destination, now);
+            let _ = reply.send(effect.outcome());
+            effect.wake_schedules()
         }
         DestinationIdentityRetentionHostCommand::RetainIdentity { identity, reply } => {
-            let outcome = engine.retain_identity(&identity);
-            let changed = outcome.newly_retained_destination_count != 0;
-            let _ = reply.send(outcome);
-            changed
+            let effect = engine.retain_identity(&identity);
+            let _ = reply.send(effect.outcome());
+            effect.wake_schedules()
         }
-    };
-    if changed {
-        WakeSchedules {
-            expired_destination_identities: engine.destination_identity_expiry_wake(),
-            ..WakeSchedules::UNCHANGED
-        }
-    } else {
-        WakeSchedules::UNCHANGED
     }
 }
 

@@ -230,6 +230,7 @@ pub(super) const SUPPORTED_INTERFACES: &[&str] = &[
     "BackboneInterface",
     "BackboneClientInterface",
     "I2PInterface",
+    "WeaveInterface",
 ];
 
 pub(super) fn interface_key_rule(type_name: &str, key: &str) -> Option<KeyRule> {
@@ -318,6 +319,7 @@ fn medium_interface_key_rule(type_name: &str, key: &str) -> Option<KeyRule> {
         "PipeInterface" => pipe_interface_key_rule(key),
         "BackboneInterface" | "BackboneClientInterface" => backbone_interface_key_rule(key),
         "I2PInterface" => i2p_interface_key_rule(key),
+        "WeaveInterface" => weave_interface_key_rule(key),
         _ => None,
     }
 }
@@ -491,6 +493,13 @@ fn i2p_interface_key_rule(key: &str) -> Option<KeyRule> {
     }
 }
 
+fn weave_interface_key_rule(key: &str) -> Option<KeyRule> {
+    match key {
+        interface_key::PORT => Some(Applied(ValueKind::String)),
+        _ => None,
+    }
+}
+
 pub(super) fn known_interface_keys(type_name: &str) -> Vec<&'static str> {
     let mut known = interface_key::COMMON.to_vec();
     let medium = match type_name {
@@ -506,6 +515,7 @@ pub(super) fn known_interface_keys(type_name: &str) -> Vec<&'static str> {
         "PipeInterface" => interface_key::PIPE,
         "BackboneInterface" | "BackboneClientInterface" => interface_key::BACKBONE,
         "I2PInterface" => interface_key::I2P,
+        "WeaveInterface" => interface_key::WEAVE,
         _ => &[],
     };
     known.extend_from_slice(medium);

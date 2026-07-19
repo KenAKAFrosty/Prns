@@ -72,7 +72,24 @@ fn bridge_addresses_reject_ambiguous_empty_values() {
         SamBridgeAddress::new("[::1]:7656").unwrap_err(),
         SamBridgeAddressError::InvalidHost
     );
-    assert_eq!(SamBridgeAddress::default().as_str(), "127.0.0.1:7656");
+    assert_eq!(SamBridgeAddress::default().to_string(), "127.0.0.1:7656");
+}
+
+#[test]
+fn bridge_addresses_expose_structural_connection_and_scope() {
+    let default = SamBridgeAddress::default();
+    assert_eq!(default.host(), "127.0.0.1");
+    assert_eq!(default.port(), 7656);
+    assert_eq!(default.scope(), SamBridgeScope::Loopback);
+
+    let loopback_alias: SamBridgeAddress = "localhost:7656".parse().unwrap();
+    assert_eq!(loopback_alias.scope(), SamBridgeScope::Loopback);
+
+    let alternate_loopback: SamBridgeAddress = "127.42.0.9:7656".parse().unwrap();
+    assert_eq!(alternate_loopback.scope(), SamBridgeScope::Loopback);
+
+    let network: SamBridgeAddress = "i2p-router.internal:7656".parse().unwrap();
+    assert_eq!(network.scope(), SamBridgeScope::NonLoopback);
 }
 
 #[test]

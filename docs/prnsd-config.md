@@ -63,6 +63,40 @@ minimum). Imported lists are persisted under `storage/blackhole/<source identity
 configured order after the local list, and included in this daemon's own published aggregate.
 Shared-instance clients neither publish nor import.
 
+## I2P readiness check
+
+From a source checkout, run `cargo prnsd i2p doctor` before enabling peers on an `I2PInterface`.
+An installed executable provides the same check as `prnsd i2p doctor`. The doctor connects to the
+default SAM bridge at `127.0.0.1:7656`, negotiates SAM 3.1, creates a one-time transient session,
+and immediately releases it. It does not persist or print the generated destination credentials. A
+successful result proves that the router and SAM session path are available; it does not claim that
+the I2P network has finished warming up or that a particular peer is reachable.
+
+Connection failures at the default endpoint distinguish a missing local Java I2P router from a
+router whose local console is available but whose SAM bridge is not accepting connections. Protocol
+and session failures separately identify an incompatible SAM service or a router that is not yet
+ready to create sessions.
+
+Use `cargo prnsd i2p doctor --sam-bridge HOST:PORT` from the checkout, or the equivalent installed
+command, for a custom endpoint. Prnsd refuses non-loopback SAM addresses by default because SAM is
+plaintext and carries I2P destination credentials. Prefer a loopback endpoint or a secure tunnel to
+loopback. `--allow-remote-sam` explicitly acknowledges the risk for a trusted private path; it does
+not add encryption or authentication.
+
+Run `cargo prnsd i2p setup` for a non-mutating guided setup. It detects the native operating system,
+architecture, and Debian-family Linux where applicable; reruns the doctor; prints the appropriate
+official Java I2P installation or SAM-enablement guidance; and emits a validated `I2PInterface`
+stanza to place beneath `[interfaces]`. Add repeatable `--peer NAME_OR_DESTINATION` values and
+`--connectable` to shape that stanza. An outbound-only stanza without peers is valid but remains
+idle. `--open` explicitly opens only the applicable official download page or the local Java I2P
+SAM configuration page.
+
+The setup command does not download or execute installers, add package repositories, elevate
+privileges, install services, edit configuration, or change router and firewall settings. It keeps
+the official artifact, signature, and platform instructions visible for operator review. A
+connectable interface creates persistent I2P destination credentials when Prnsd runs; protect and
+back up the Prns storage containing them.
+
 ## Common interface behavior
 
 Every enabled interface applies `mode`, `outgoing`, `bitrate`, announce cap and rate controls, IFAC
@@ -75,6 +109,7 @@ An explicit `bitrate` overrides the medium estimate and recomputes optimized MTU
 500 Mbps estimate. Auto Wi-Fi and local shared-instance transports use 1 Gbps. Serial derives its
 estimate from baud, KISS and AX.25 KISS use 1200 bps, Pipe uses 1 Mbps, and RNode derives LoRa bitrate
 from its radio configuration. Every RNodeMulti radio derives its own bitrate and effective policy.
+Weave uses stock's 250 kbps estimate and fixed 1024-byte hardware MTU.
 
 ## Existing interface backends
 
@@ -92,6 +127,7 @@ from its radio configuration. Every RNodeMulti radio derives its own bitrate and
 | `RNodeMultiInterface` | One serial device with nested, independently routed radio interfaces; per-radio LoRa settings, READY flow control, airtime limits, policy, and coordinated reconnect. |
 | `PipeInterface` | Parsed subprocess command and typed respawn delay. |
 | `I2PInterface` | Validated `.i2p` names or base64 destinations in `peers`, optional inbound reachability through `connectable`, and common policy and IFAC access. |
+| `WeaveInterface` | A 3,000,000-baud 8N1 serial WDCL connection with authenticated device discovery, one inherited-policy member per device endpoint, peer timeout, and multipath deduplication. |
 
 Enabled interface types without a backend fail with “not available in this build.” RNodeMulti
 remains a local serial-device interface.
@@ -154,6 +190,21 @@ interface is available. When the configured `autoconnect_discovered_interfaces` 
 Prnsd retires all bootstrap-only interfaces. It restores them after every auto-connected interface
 is gone. As in RNS, this lifecycle is inactive when discovery auto-connect is disabled.
 
+Weave uses a serial device path in `port`, not a numeric network port:
+
+```ini
+[interfaces]
+  [[Weave]]
+    type = WeaveInterface
+    enabled = Yes
+    port = /dev/ttyACM0
+```
+
+Prnsd authenticates WDCL discovery with an ephemeral Ed25519 identity, creates one routed member
+for each endpoint reported by the attached Weave device, and supervises reconnects. Members inherit
+the parent interface's common policy and IFAC access. Without an attached device, the default
+`panic_on_interface_error = No` behavior keeps the daemon visibly degraded and retrying.
+
 ## Explicit follow-ons
 
 Recognized settings that belong to planned follow-on work emit `unsupported_setting` warnings at
@@ -166,8 +217,8 @@ client-only `target_port`, `i2p_tunneled`, `connect_timeout`, or `max_reconnect_
 do not use listener-only `listen_ip`, `listen_port`, `listen_on`, or `device`.
 Discovery publication details similarly warn when `discoverable` is absent or set to `No`.
 
-Weave and other unavailable backends are not partial plans: enabling one is a configuration error
-until that backend exists.
+Unavailable backends are not partial plans: enabling one is a configuration error until that
+backend exists.
 
 ## Minimal router
 
