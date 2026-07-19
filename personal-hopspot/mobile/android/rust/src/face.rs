@@ -49,8 +49,6 @@ impl HopspotFace {
         self.notice_started = Some(Instant::now());
     }
 
-    /// Set the battery state the OS reports (level + charging), pushed from the Android side via
-    /// `nativeSetBattery`. Rendered on the next frame.
     pub fn set_battery(&mut self, battery: BatteryState) {
         self.battery = battery;
     }
@@ -111,8 +109,6 @@ impl HopspotFace {
         self.render_cards(&cards, &snapshots, out_rgba);
     }
 
-    /// The unified snapshot per interface each frame: the USB host and the WiFi supervisor at the
-    /// root with their fleets folded in, the same shape every other face renders.
     fn build_cards(&self) -> HVec<Card, MAX_CARDS> {
         let snapshots = interface_snapshots();
         self.build_cards_from_snapshots(&snapshots)

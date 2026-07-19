@@ -19,8 +19,6 @@ const HOST_PAGES: &[(&str, &str)] = &[
     ),
 ];
 
-/// Performance index: the methodology, then the per-host results table linking out to
-/// each host's own page. Linked from the "Performance" standards card on the landing page.
 #[component]
 pub fn BenchmarksPage() -> Element {
     rsx! {
@@ -72,7 +70,6 @@ pub fn BenchmarksPage() -> Element {
     }
 }
 
-/// One host's results. `host` is the route segment (a target triple).
 #[component]
 pub fn BenchmarksHostPage(host: String) -> Element {
     let body = HOST_PAGES
@@ -96,7 +93,6 @@ pub fn BenchmarksHostPage(host: String) -> Element {
     }
 }
 
-/// Repoint the index's per-host `RESULTS-<host>.md` links (GitHub-relative) at the site routes.
 fn index_markup() -> String {
     let mut out = String::with_capacity(INDEX_MD.len());
     let mut rest = INDEX_MD;

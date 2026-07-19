@@ -13,8 +13,6 @@ const ESP_WEB_TOOLS_SCRIPT: &str =
     "https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module";
 const HOPSPOT_CONFIG_OFFSET: u32 = 0xD000;
 
-/// Hopspot flashing entrypoint. This is intentionally separate from
-/// `/platforms`: platform support is broad, flashing is board-specific.
 #[component]
 pub fn FlashPage() -> Element {
     rsx! {

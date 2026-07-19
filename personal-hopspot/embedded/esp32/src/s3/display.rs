@@ -33,8 +33,6 @@ fn classify_card(
     }
 }
 
-/// The user button worker (core 0): turn raw active-low edges on GPIO0 into the same
-/// [`InputEvent`](screen::InputEvent)s the desktop face produces.
 #[embassy_executor::task]
 pub(super) async fn button_task(mut button: Input<'static>) -> ! {
     loop {
@@ -57,7 +55,6 @@ pub(super) async fn button_task(mut button: Input<'static>) -> ! {
     }
 }
 
-/// Build the unified snapshot set once per frame, so cards and detail rows cannot drift apart.
 pub(super) fn build_snapshots(
     usb: &EmbassyInterfaceStatus,
     wifi: Option<&AutoWifiStatus<MEMBERS>>,
@@ -118,8 +115,6 @@ pub(super) fn build_snapshots(
     snapshots
 }
 
-/// Build the card set in display order: LoRa, WiFi/LAN, BLE, other radio/uplink cards, then USB.
-/// Supervisor members are still sampled for aggregate counts, but never before their top-level cards.
 pub(super) fn build_cards(
     snapshots: &[InterfaceSnapshot],
     usb_id: InterfaceId,

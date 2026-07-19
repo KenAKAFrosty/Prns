@@ -1,9 +1,3 @@
-//! The board layer under the generic trouble-host BLE backend
-//! ([`personal_rns::ble_trouble`]): binds esp-radio's HCI [`BleConnector`] as the transport,
-//! owns the `static`s the host stack/GATT server/hub park in (statics cannot be generic), and
-//! wraps the C6's slot workers in executor tasks. Everything radio-protocol-shaped lives in
-//! the extracted module; this file is transport wiring and memory placement.
-
 #[cfg(target_arch = "xtensa")]
 use core::array;
 
@@ -87,10 +81,6 @@ async fn serve_slot_task(
     .await
 }
 
-/// Stand the native-Bluetooth interface up on the board's BLE controller: trouble's dual-role
-/// host (peripheral GATT server + central), parked in a `static` so connections are `'static`,
-/// joining the HCI host (carrying the scan handler), the acceptor, the dialer, [`SLOTS`] slot
-/// workers, and the supervisor on the main executor. A settled peer joins `fleet`. Never returns.
 pub async fn run(
     connector: BleConnector<'static>,
     mac: [u8; 6],

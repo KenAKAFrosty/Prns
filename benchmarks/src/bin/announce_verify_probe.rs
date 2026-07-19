@@ -1,15 +1,3 @@
-//! Internal throughput probe for the host crypto pool's announce-verify path.
-//!
-//! Announce verify is self-originated work: no initiator/responder, no roundtrip,
-//! just "here is a pile of announces, chew through the Ed25519 verify". So this is
-//! a unit-test-shaped stress harness, not a network scenario. One node, one
-//! in-process interface that floods a single known-good announce packet straight
-//! into the reactor (no TCP, no framing, no handshake), and we count how many the
-//! reactor verifies in the wall-time. The first announce learns the route; every
-//! re-announce is a known-destination announce that flows through the deferred
-//! (pool) verify and is then ignored as a replay - so the work measured is the
-//! verify. Run it with the pool on (default) and off (`PRNS_CRYPTO_POOL=0`) to
-//! read the before/after.
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};

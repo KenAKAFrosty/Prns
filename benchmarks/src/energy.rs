@@ -1,24 +1,5 @@
-//! The energy prong of the three-pronged bench (conformance, performance, energy): package
-//! power bracketing a scenario run, behind one seam with a backend per platform. The method
-//! is the same shape on every host — a quiet-box idle baseline sampled immediately before the
-//! run, the run's raw energy bracketed around the contestants' lifetime, and the filed net
-//! figure subtracting baseline-rate × wall-time — only the counter underneath differs:
-//!
-//! - **Linux** reads RAPL package-domain joules directly (`/sys/class/powercap/intel-rapl:0`),
-//!   a free-running µJ counter we delta across the bracket.
-//! - **macOS** integrates `powermetrics` CPU-power samples over the bracket (the same sampler
-//!   `energy/measure.sh` uses for `announce-energy`): a streaming root process averages
-//!   `CPU Power: N mW`, and energy is that average × wall-time.
-//!
-//! Either counter is privileged: RAPL is root-locked on post-Platypus kernels, and
-//! `powermetrics` needs `sudo`. When the platform's counter isn't readable, [`PowerMeter::detect`]
-//! returns `None`, [`unavailable_hint`] tells the operator how to open it, and the orchestrator
-//! simply files no energy rows — every other axis still lands.
-
 use std::time::Duration;
 
-// `EnergyBracket` is `PowerMeter::start`'s return type — reachable through that signature,
-// so it needs no name of its own at this level (the orchestrator holds it by inference).
 #[cfg(target_os = "linux")]
 pub use linux::{unavailable_hint, PowerMeter};
 #[cfg(target_os = "macos")]
@@ -45,7 +26,6 @@ mod linux {
         max_range_uj: u64,
     }
 
-    /// An open bracket: the counter reading and wall-clock instant the run began.
     pub struct EnergyBracket<'m> {
         meter: &'m PowerMeter,
         start_uj: u64,
@@ -53,8 +33,6 @@ mod linux {
     }
 
     impl PowerMeter {
-        /// The package-0 domain, if this process can read it. `None` means the kernel has
-        /// the counters root-locked.
         pub fn detect() -> Option<Self> {
             let base = PathBuf::from("/sys/class/powercap/intel-rapl:0");
             let energy_path = base.join("energy_uj");
@@ -77,7 +55,6 @@ mod linux {
                 .unwrap_or(0)
         }
 
-        /// Joules accumulated since `start_uj`, wrap-corrected against the domain's range.
         fn delta_joules(&self, start_uj: u64) -> f64 {
             let now = self.read_uj();
             let delta_uj = if now >= start_uj {
@@ -97,7 +74,6 @@ mod linux {
             self.delta_joules(start_uj) / at.elapsed().as_secs_f64().max(f64::EPSILON)
         }
 
-        /// Open a bracket around the run; [`EnergyBracket::finish`] closes it.
         pub fn start(&self) -> EnergyBracket<'_> {
             EnergyBracket {
                 meter: self,
@@ -108,7 +84,6 @@ mod linux {
     }
 
     impl EnergyBracket<'_> {
-        /// `(raw joules over the bracket, wall seconds)`.
         pub fn finish(self) -> (f64, f64) {
             (
                 self.meter.delta_joules(self.start_uj),
@@ -136,13 +111,10 @@ mod macos {
          `sudo` to include the energy axis (powermetrics, the same sampler as energy/measure.sh)"
     }
 
-    /// The macOS power counter is `powermetrics`; metering it is a privilege gate, not a path.
     pub struct PowerMeter {
         _private: (),
     }
 
-    /// An open bracket: a streaming `powermetrics` child whose `CPU Power` samples a reader
-    /// thread folds into a running `(sum_mw, count)`, plus the instant the run began.
     pub struct EnergyBracket {
         sampler: Option<Child>,
         reader: Option<JoinHandle<()>>,
@@ -157,7 +129,6 @@ mod macos {
             (unsafe { libc::geteuid() } == 0).then_some(Self { _private: () })
         }
 
-        /// The quiet box's draw, sampled over `window` via a bounded `powermetrics` run.
         pub fn idle_watts(&self, window: Duration) -> f64 {
             let samples = (window.as_millis() as u64 / SAMPLE_MS).max(1);
             let output = Command::new("powermetrics")
@@ -183,8 +154,6 @@ mod macos {
             }
         }
 
-        /// Open a bracket: spawn a streaming `powermetrics` and a reader thread that folds its
-        /// `CPU Power` samples as they arrive (draining the pipe so the sampler never blocks).
         pub fn start(&self) -> EnergyBracket {
             let acc = Arc::new(Mutex::new((0.0f64, 0u64)));
             let mut child = Command::new("powermetrics")
@@ -243,7 +212,6 @@ mod macos {
         tokens.get(mw_index.checked_sub(1)?)?.parse().ok()
     }
 
-    /// Mean of `count` milliwatt samples, in watts; `0.0` when nothing was sampled.
     fn watts(sum_mw: f64, count: u64) -> f64 {
         if count > 0 {
             (sum_mw / count as f64) / 1_000.0

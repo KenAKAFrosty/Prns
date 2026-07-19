@@ -41,9 +41,7 @@ use crate::mdns::AndroidMdnsBridge;
 use crate::wifi_aware::{AndroidWifiAwareBackend, AndroidWifiAwareBridge};
 use crate::wifi_direct::AndroidWifiDirectBridge;
 
-/// Stable id for the USB-auto host over the JNI bridge (opaque to the engine).
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 8]);
-/// The single conduit name the host's scan reports while a USB device is attached.
 const ANDROID_PORT: &str = "android-usb";
 const LOCAL_RNS_PORT: u16 = 37428;
 const RPC_PORT: u16 = LOCAL_RNS_PORT + 1;
@@ -52,9 +50,6 @@ const ANNOUNCE_APP_NAME: &str = "lxmf";
 const ANNOUNCE_ASPECTS: &[&str] = &["delivery"];
 const ANNOUNCE_APP_DATA: &[u8] = b"personal-hopspot";
 
-/// What the engine thread hands back once the node is assembled: the USB interface's status, the
-/// WiFi supervisor's aggregate status (whose `members()` yield the per-peer cards), and the USB
-/// bridge the JNI layer feeds. The node owns the runtime and drives it forever.
 struct Engine {
     started_at: Instant,
     usb_status: TokioInterfaceStatus,
@@ -172,7 +167,6 @@ pub(crate) fn wake_interfaces() {
     }
 }
 
-/// Fire an immediate `lxmf.delivery` announce on every interface (the global "Announce" item).
 pub(crate) fn announce() {
     let engine = engine();
     log::info!("hopspot: manual announce -> lxmf.delivery on every interface");
@@ -203,14 +197,10 @@ pub(crate) fn mdns_bridge() -> AndroidMdnsBridge {
     engine().mdns.clone()
 }
 
-/// Trigger the engine to spawn (idempotent), without taking a handle. The face calls this at
-/// startup so the node is running before the first frame asks for its status.
 pub(crate) fn ensure_started() {
     let _ = engine();
 }
 
-/// The card icon and label for an interface id: the fixed USB host, the WiFi supervisor's
-/// aggregate, or one of its peers — the peer carries a short hex tag of its medium-derived id.
 pub(crate) fn classify(id: InterfaceId, wifi_id: InterfaceId) -> Option<(CardKind, CardLabel)> {
     if id == USB_INTERFACE_ID {
         Some((CardKind::Usb, card_label("USB")))
@@ -354,8 +344,6 @@ fn run_engine(
         });
         let handle = node.handle();
 
-        // USB over the JNI bridge: report the one conduit present while a device is attached, and
-        // open a fresh stream over it on each (re)connection.
         let scan = {
             let bridge = bridge.clone();
             move || {

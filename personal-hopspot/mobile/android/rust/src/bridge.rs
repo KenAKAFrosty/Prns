@@ -1,9 +1,3 @@
-//! The Android USB conduit, async side. The JNI layer is sync: it pushes bytes the phone read
-//! off the USB device (`push_inbound`), drains the bytes the engine wants written out
-//! (`pull_outbound`), and reports attach/detach (`set_connected`). A [`BridgeStream`] bridges
-//! to the async reactor: `AsyncRead`/`AsyncWrite` over an inbound mpsc (a read parks until the
-//! JNI pushes, no busy-poll) and a shared outbound queue the `UsbAutoHost` serves like any stream.
-
 use std::collections::VecDeque;
 use std::io;
 use std::pin::Pin;
@@ -15,8 +9,6 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::Notify;
 
-/// The handle the JNI layer holds (cheap-clone): it feeds inbound bytes, drains outbound, and
-/// flags attach/detach. The engine's clone opens a [`BridgeStream`] over it for the USB-auto host.
 pub struct AndroidUsbBridge {
     inbound: Arc<Mutex<Option<UnboundedSender<Vec<u8>>>>>,
     pending_inbound: Arc<Mutex<VecDeque<Vec<u8>>>>,
@@ -51,7 +43,6 @@ impl AndroidUsbBridge {
         }
     }
 
-    /// Report the USB device attaching or detaching, and poke the host to rescan immediately.
     pub fn set_connected(&self, connected: bool) {
         self.connected.store(connected, Ordering::Release);
         self.rescan.notify_one();
@@ -95,15 +86,11 @@ impl AndroidUsbBridge {
         self.connected.load(Ordering::Acquire)
     }
 
-    /// The host's rescan signal — poked by [`set_connected`](Self::set_connected) so a plug shows
-    /// the instant the OS reports it.
     #[must_use]
     pub fn rescan(&self) -> Arc<Notify> {
         Arc::clone(&self.rescan)
     }
 
-    /// Open a fresh stream for one connection: a new inbound channel (its sender replaces any
-    /// prior one, so `push_inbound` reaches this stream) over the shared outbound queue.
     #[must_use]
     pub fn open_stream(&self) -> BridgeStream {
         let (tx, rx) = unbounded_channel::<Vec<u8>>();
@@ -130,8 +117,6 @@ impl Default for AndroidUsbBridge {
     }
 }
 
-/// One connection's async byte stream: inbound parks on the mpsc until the JNI pushes; outbound
-/// is appended to the shared queue the JNI drains.
 pub struct BridgeStream {
     rx: UnboundedReceiver<Vec<u8>>,
     leftover: Vec<u8>,
@@ -151,8 +136,6 @@ impl AsyncRead for BridgeStream {
                     self.leftover = chunk;
                     self.pos = 0;
                 }
-                // The sender dropped (the bridge opened a newer stream): end this one so the host
-                // prunes it.
                 Poll::Ready(None) => return Poll::Ready(Ok(())),
                 Poll::Pending => return Poll::Pending,
             }

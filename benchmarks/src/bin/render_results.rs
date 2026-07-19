@@ -1,15 +1,3 @@
-//! Render the benchmark tables from the result substrate (`results/<host>/<scenario>/
-//! <pairing>.jsonl`) joined with the implementation registry (`implementations/<slug>.json`).
-//! Each host gets its own `RESULTS-<host>.md`; `RESULTS.md` is the index. The website renders
-//! the same files, so the tables can't drift between GitHub and the site. The page is a
-//! cross-implementation interop matrix: every initiator→responder pairing that ran a scenario
-//! on this host, with conformance, delivered throughput, goodput, settlement latency, and the
-//! energy per delivered message (bracketed on the live run, so efficiency is the realistic
-//! firehose's own figure, not a synthetic one).
-//!
-//! `--check` re-renders every file and diffs against what's committed: the drift gate.
-//! Generated, never hand-edited. Run: `cargo run --release --bin render_results [--check]`
-
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -61,7 +49,6 @@ fn bench_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf()
 }
 
-/// The index (`RESULTS.md`) plus one `RESULTS-<host>.md` per host.
 fn render_all() -> Vec<(PathBuf, String)> {
     let impls = load_implementations();
     let mut by_host: BTreeMap<String, Vec<ResultRow>> = BTreeMap::new();
@@ -86,7 +73,6 @@ fn render_all() -> Vec<(PathBuf, String)> {
     files
 }
 
-/// The CPU model for the index's at-a-glance column, or `—` if no descriptor is recorded.
 fn machine_label(host: &str) -> String {
     load_host(host)
         .and_then(|d| d.cpu_model)
@@ -135,9 +121,6 @@ fn render_host(host: &str, rows: &[ResultRow], impls: &[ImplementationDescriptor
     out
 }
 
-/// The machine the host's figures were measured on, from `results/<host>/host.json`. A
-/// scaffolded-but-undescribed host (no descriptor) skips the section; a descriptor with
-/// unfilled fields renders them as *pending*.
 fn render_machine(out: &mut String, host: &str) {
     let Some(d) = load_host(host) else {
         return;
@@ -176,7 +159,6 @@ fn gib(bytes: u64) -> String {
     format!("{:.1} GiB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
 }
 
-/// One initiator→responder pairing's figures for an interop scenario, aggregated from its rows.
 struct Pairing {
     initiator: String,
     responder: String,
@@ -190,8 +172,6 @@ struct Pairing {
     rtt_p50: Option<f64>,
     rtt_p99: Option<f64>,
     mj_per_delivered: Option<f64>,
-    /// The combined energy apportioned to each role by its CPU-time share (initiator = sender,
-    /// responder = receiver/prover). Both `None` until an energy run files them.
     init_mj_per_delivered: Option<f64>,
     resp_mj_per_delivered: Option<f64>,
     init_rss_bytes: Option<f64>,
@@ -216,7 +196,6 @@ fn conformance_rank(p: &Pairing) -> u8 {
     }
 }
 
-/// Split a pairing label ("Prns → RNS 1.3.5") into its initiator and responder.
 fn split_pairing(label: &str) -> (String, String) {
     match label.split_once(" \u{2192} ") {
         Some((i, r)) => (i.trim().to_string(), r.trim().to_string()),
@@ -224,7 +203,6 @@ fn split_pairing(label: &str) -> (String, String) {
     }
 }
 
-/// Aggregate the rows of one interop scenario into a pairing per initiator→responder.
 fn pairings(rows: &[&ResultRow]) -> Vec<Pairing> {
     #[derive(Default)]
     struct Acc {
@@ -413,7 +391,6 @@ fn render_interop(
     render_legend(out, &pairings, impls);
 }
 
-/// An implementation's display name, tagged `(ref)` when it is the parity reference.
 fn label_with_role(name: &str, impls: &[ImplementationDescriptor]) -> String {
     let is_reference = impls
         .iter()
@@ -426,9 +403,6 @@ fn label_with_role(name: &str, impls: &[ImplementationDescriptor]) -> String {
     }
 }
 
-/// `delivered / sent` with a pass/fail icon. Rows pass when every sent message is accounted
-/// for by delivery, timeout, or a scenario-declared race bucket; timed-out and raced counts are
-/// still called out so the reader sees where the accounting landed.
 fn interop_conformance_cell(p: &Pairing) -> String {
     match (p.sent, p.delivered) {
         (Some(sent), Some(delivered)) => {
@@ -524,8 +498,6 @@ fn commas(v: f64) -> String {
     }
 }
 
-/// Each implementation that appears in the matrix: its language, Ed25519 backend, and where it
-/// came from — enough to reproduce or audit any pairing.
 fn render_legend(out: &mut String, pairings: &[Pairing], impls: &[ImplementationDescriptor]) {
     let mut names: Vec<String> = pairings
         .iter()
@@ -557,7 +529,6 @@ fn render_legend(out: &mut String, pairings: &[Pairing], impls: &[Implementation
     out.push('\n');
 }
 
-/// True if any figure for this host has actually been measured (vs. all-`pending`).
 fn measured(rows: &[ResultRow]) -> bool {
     rows.iter().any(|r| r.value.is_some())
 }

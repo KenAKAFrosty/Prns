@@ -8,6 +8,9 @@ prns-config 25
 prnsd 3
 prns-ffi 40
 prns-wasm 2
-personal-hopspot 562
-benchmarks 238
+personal-hopspot 484
+benchmarks 85
 fuzz 0
+tools 4
+docs/website 27
+personal-lxmf 0

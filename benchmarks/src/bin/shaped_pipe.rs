@@ -1,23 +1,3 @@
-//! A constrained wire between two scenario nodes: `shaped_pipe <manifest.json> pipe
-//! <target-addr>`. Binds an ephemeral port (its READY line carries the address, like any
-//! responder), connects each inbound session to the target, and forwards bytes under the
-//! manifest's `wire_shape`: a serializing rate limit — the transmitter occupies the channel
-//! for `bytes×8/rate_bps`, which is what LoRa airtime is — plus a fixed one-way latency
-//! (preamble + propagation). Backpressure is the read loop itself: while a chunk serializes,
-//! nothing more is read, so TCP flow control pushes back to the sender exactly like a radio's
-//! small buffer would. Every forwarded byte is counted, and when a session closes the totals
-//! go out on a `WIRE a_to_b_bytes=… b_to_a_bytes=…` line — payload divided by wire bytes is
-//! the protocol's overhead ratio, measured where it can't lie. Forwarding happens in
-//! 64-byte slices with individual release times: a real wire delivers a clump's leading
-//! frame after only its own airtime, so chunk-atomic delivery would invent a convoy
-//! penalty the physics doesn't charge — slices grow with the rate (about four milliseconds of
-//! airtime, 64 B to 64 KiB) since sub-millisecond sleeps collapse into scheduler granularity
-//! on high-rate pipes and silently meter the benchmark below the configured wire rate. The
-//! release schedule is absolute — each slice's
-//! due time advances by exact airtime, the clock only re-clamps to now when the source
-//! went idle, and backpressure is the bounded queue — so timer rounding delays a write
-//! without ever stealing channel throughput.
-
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;

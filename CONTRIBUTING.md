@@ -72,6 +72,11 @@ corroborated evidence.
 - Represent modules consistently. Use `foo.rs` for a leaf module and
   `foo/mod.rs` when `foo` owns child modules or separately housed tests.
   Directories should represent real namespaces, not storage conveniences.
+- Comments explain durable local invariants or constraints, not code narration,
+  subsystem tours, editorial history, or implementation restatement.
+- Comment prose uses natural paragraphs and punctuation, allowing the viewer to
+  wrap lines; em dashes are reserved for cases where they are genuinely the
+  clearest grammar.
 - Prefer adding a new module over growing an already-large module.
 - Avoid introducing small helper functions that are only used once unless they
   clearly improve readability.

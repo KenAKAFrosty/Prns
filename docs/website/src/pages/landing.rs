@@ -90,8 +90,6 @@ pub fn Landing() -> Element {
                 }
             }
 
-            // The whole strip links to the dedicated, scannable platforms page.
-            // A marquee is lovely but useless for "does it run on MY thing?".
             Link {
                 to: Route::PlatformsPage {},
                 class: "group mt-8 flex items-center gap-4",
@@ -151,8 +149,6 @@ pub fn Landing() -> Element {
                     headline: t!("standards-correctness-headline"),
                     body: t!("standards-correctness-body"),
                 }
-                // Performance is the one card that goes deeper: it links to the
-                // benchmarks page where the actual numbers live.
                 Link {
                     to: Route::BenchmarksPage {},
                     class: "card-seal reveal spotlight group relative block rounded-card border border-line/60 bg-layer/40 p-5 shadow-card hover:border-accent/40 hover:-translate-y-px transition-all",
@@ -399,8 +395,6 @@ impl UseGlyph {
     }
 }
 
-// Route glyphs: a board/chip for flashing hardware, a server stack for the
-// daemon, code brackets for building. One tint each, set by the card's --route.
 #[component]
 fn UseCaseGlyph(kind: UseGlyph) -> Element {
     rsx! {
@@ -457,8 +451,6 @@ enum Medium {
     Ip,
 }
 
-// Each interface medium gets a glyph in the brand mark's stroke language (mint,
-// round caps, fill none) so a card announces its medium before the label is read.
 #[component]
 fn MediumGlyph(kind: Medium) -> Element {
     let glyph_class = match kind {
@@ -510,8 +502,6 @@ fn MediumGlyph(kind: Medium) -> Element {
     }
 }
 
-// The brand mark (reticle ring + announce arcs) drawn in one tint, behind the
-// pull quote as a faint watermark. Geometry kept in sync with `PrnsMark`.
 #[component]
 fn ReticleWatermark() -> Element {
     rsx! {

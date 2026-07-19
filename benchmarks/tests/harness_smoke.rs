@@ -1,7 +1,3 @@
-//! The harness pipe, end to end in miniature: spawn both participation binaries the way
-//! the orchestrator does, run half a second of firehose over real localhost TCP, and
-//! demand a clean settlement — the regression net under the scenario harness itself.
-
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 
