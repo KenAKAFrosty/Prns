@@ -47,8 +47,6 @@ impl HopspotFace {
         self.notice_started = Some(Instant::now());
     }
 
-    /// Set the battery state the OS reports (level + charging), pushed from the Swift side via
-    /// `hopspot_set_battery`. Rendered on the next frame.
     pub fn set_battery(&mut self, battery: BatteryState) {
         self.battery = battery;
     }
