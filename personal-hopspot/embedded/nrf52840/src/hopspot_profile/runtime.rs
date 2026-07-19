@@ -1,8 +1,75 @@
-use super::display::{build_cards, build_snapshots};
-use super::*;
+use embassy_executor::Spawner;
+use embassy_futures::join::{join3, join5};
+use embassy_futures::select::{select3, Either3};
+use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
+use embassy_nrf::interrupt::{self, InterruptExt, Priority};
+use embassy_nrf::saadc::{self, ChannelConfig, Config as SaadcConfig, Gain, Reference, Saadc};
+use embassy_nrf::spim::{self, Spim};
+use embassy_nrf::usb::vbus_detect::SoftwareVbusDetect;
+use embassy_nrf::usb::Driver;
+use embassy_nrf::{bind_interrupts, config, peripherals, usb};
+use embassy_sync::zerocopy_channel;
+use embassy_time::{Delay, Duration, Timer};
+use embassy_usb::{Builder, Config as UsbConfig};
+use static_cell::{ConstStaticCell, StaticCell};
+
+use embedded_graphics::prelude::*;
+use embedded_hal_bus::spi::ExclusiveDevice;
+use epd_waveshare::color::Color as EpdColor;
+use epd_waveshare::epd1in54_v2::Display1in54;
+
+use nrf_softdevice::ble::l2cap;
+use nrf_softdevice::Softdevice;
+
+use personal_hopspot_core as hopspot;
+use personal_rns::ble::{BluetoothAuto, BluetoothAutoStatus};
+use personal_rns::engine::{
+    AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
+};
+use personal_rns::identity::in_memory::InMemoryNodeIdentity;
+use personal_rns::identity::IdentitySigner;
+use personal_rns::interfaces::bluetooth_auto::core::{
+    BleIdentity, Endpoint, LinkCapabilities, Nrf52Host, BLE_HW_MTU,
+};
+use personal_rns::interfaces::lora::core::{channel_tag, DEFAULT_915_PROFILE};
+use personal_rns::interfaces::radios::sx126x::{BoardConfig, Sx126x, TcxoVoltage};
+use personal_rns::interfaces::usb_auto::core::{WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID};
+use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus};
+use personal_rns::lora::LoRaInterface;
+use personal_rns::reactor::embassy::{
+    embassy_grant_lane, EmbassyGrantConsumer, EmbassyGrantProducer, EmbassyHost,
+    EmbassyInterfaceSeam, EmbassyInterfaceStatus, PooledEgress,
+};
+use personal_rns::reactor::interface_seam::{Interface, EMBEDDED_MAX_WIRE_FRAME_LEN};
+use personal_rns::runtime::{
+    Fleet, FleetWire, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle,
+    PrnsNodeRecipe, ReactorPlumbing, RequestHandlerRegistration,
+};
+use personal_rns::storage::StorageLayout;
+use personal_rns::usb::UsbAutoDevice;
+use personal_rns::usb_device::{WebUsbAutoClass, WebUsbAutoState, WEBUSB_AUTO_PACKET_SIZE};
+
+use super::bluetooth::{
+    acceptor, diag, scanner, serve_slot, softdevice_config, softdevice_task, usb_vbus_present,
+    L2capPacket, NrfBleBackend, Server, BLE_SHARED, FLEET_ID, HUB, MEMBERS, OUTBOUND_WAKE, POOL,
+};
+use super::display::{build_cards, build_snapshots, frame_hash, EinkScreen};
+use super::input;
+use super::node::*;
+
+const FULL_REFRESH_INTERVAL: u32 = 20;
+const STATS_POLL: Duration = Duration::from_millis(1000);
+const NOTICE_MS: u64 = 900;
+
+bind_interrupts!(struct Irqs {
+    USBD => usb::InterruptHandler<peripherals::USBD>;
+    SPI2 => spim::InterruptHandler<peripherals::SPI2>;
+    TWISPI0 => spim::InterruptHandler<peripherals::TWISPI0>;
+    SAADC => saadc::InterruptHandler;
+});
 
 #[allow(clippy::too_many_lines)]
-pub async fn run(spawner: Spawner) -> ! {
+pub(crate) async fn run(spawner: Spawner) -> ! {
     let mut nrf_config = config::Config::default();
     nrf_config.gpiote_interrupt_priority = Priority::P2;
     nrf_config.time_interrupt_priority = Priority::P2;
@@ -120,7 +187,7 @@ pub async fn run(spawner: Spawner) -> ! {
 
     // Self-identity: the same fixture keypair the LoRa-only build uses, so the board keeps one
     // destination across builds.
-    let secret_key = crate::techo_secret_key();
+    let secret_key = techo_secret_key();
     let transport_secret = secret_key.clone();
     let self_destination = {
         let signer = InMemoryNodeIdentity::from_secret_key_bytes(&secret_key);
@@ -129,38 +196,36 @@ pub async fn run(spawner: Spawner) -> ! {
         personal_rns::routing::announce::derive_destination_hash(&signer.identity_hash(), &name)
     };
     let seed = self_destination.as_bytes();
-    crate::ENTROPY_STATE.store(
+    ENTROPY_STATE.store(
         u32::from_le_bytes([seed[0], seed[1], seed[2], seed[3]]) | 1,
         core::sync::atomic::Ordering::Relaxed,
     );
 
     // The reactor's slot pool: LoRa on slot 0, the BLE fleet's one shared lane on slot 1. The fleet
     // slot's egress producer carries the outbound wake so a committed frame rouses the supervisor.
-    static IN_BUF: [ConstStaticCell<crate::LaneBuf>; crate::IFACES] =
-        [const { ConstStaticCell::new([crate::EMPTY_SLOT; crate::LANE_DEPTH]) }; crate::IFACES];
-    static IN_CH: [StaticCell<crate::LaneChannel>; crate::IFACES] =
-        [const { StaticCell::new() }; crate::IFACES];
-    static OUT_BUF: [ConstStaticCell<crate::LaneBuf>; crate::IFACES] =
-        [const { ConstStaticCell::new([crate::EMPTY_SLOT; crate::LANE_DEPTH]) }; crate::IFACES];
-    static OUT_CH: [StaticCell<crate::LaneChannel>; crate::IFACES] =
-        [const { StaticCell::new() }; crate::IFACES];
+    static IN_BUF: [ConstStaticCell<LaneBuf>; IFACES] =
+        [const { ConstStaticCell::new([EMPTY_SLOT; LANE_DEPTH]) }; IFACES];
+    static IN_CH: [StaticCell<LaneChannel>; IFACES] = [const { StaticCell::new() }; IFACES];
+    static OUT_BUF: [ConstStaticCell<LaneBuf>; IFACES] =
+        [const { ConstStaticCell::new([EMPTY_SLOT; LANE_DEPTH]) }; IFACES];
+    static OUT_CH: [StaticCell<LaneChannel>; IFACES] = [const { StaticCell::new() }; IFACES];
 
-    let mut inbound: crate::ReactorInbound = heapless::Vec::new();
-    let mut egress_lanes: crate::ReactorEgressLanes = heapless::Vec::new();
+    let mut inbound: ReactorInbound = heapless::Vec::new();
+    let mut egress_lanes: ReactorEgressLanes = heapless::Vec::new();
     let mut iface_halves: [Option<(
         EmbassyGrantProducer<'static, Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN>,
         EmbassyGrantConsumer<'static, Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN>,
-    )>; crate::IFACES] = [const { None }; crate::IFACES];
-    for slot in 0..crate::IFACES {
+    )>; IFACES] = [const { None }; IFACES];
+    for slot in 0..IFACES {
         let in_ch = IN_CH[slot].init(zerocopy_channel::Channel::new(IN_BUF[slot].take()));
         let (in_producer, in_consumer) = embassy_grant_lane(in_ch);
         let out_ch = OUT_CH[slot].init(zerocopy_channel::Channel::new(OUT_BUF[slot].take()));
         let (mut out_producer, out_consumer) = embassy_grant_lane(out_ch);
-        if slot == crate::BLE_FLEET_SLOT {
+        if slot == BLE_FLEET_SLOT {
             out_producer.set_outbound_wake(&OUTBOUND_WAKE);
         }
-        let _ = inbound.push((crate::FREE_SLOT, in_consumer));
-        let _ = egress_lanes.push((crate::FREE_SLOT, out_producer));
+        let _ = inbound.push((FREE_SLOT, in_consumer));
+        let _ = egress_lanes.push((FREE_SLOT, out_producer));
         iface_halves[slot] = Some((in_producer, out_consumer));
     }
 
@@ -173,23 +238,23 @@ pub async fn run(spawner: Spawner) -> ! {
     let lora = LoRaInterface::new(
         radio,
         lora_profile,
-        &crate::LORA_CONTROL,
+        &LORA_CONTROL,
         lora_status,
-        crate::LIFECYCLE.dyn_sender(),
+        LIFECYCLE.dyn_sender(),
     );
 
-    let handle = PrnsNodeHandle::new(crate::COMMANDS.sender(), &crate::COMPLETION);
+    let handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
     let plumbing = ReactorPlumbing::new(
         inbound,
         PooledEgress::new(egress_lanes),
-        crate::NOTIFY.receiver(),
-        crate::COMMANDS.receiver(),
-        crate::LIFECYCLE.receiver(),
+        NOTIFY.receiver(),
+        COMMANDS.receiver(),
+        LIFECYCLE.receiver(),
         handle,
     );
-    let host = EmbassyHost::new(crate::seeded_entropy as fn(&mut [u8]));
-    static NODE: StaticCell<crate::Node> = StaticCell::new();
-    let node: &'static mut crate::Node = NODE.init_with(|| {
+    let host = EmbassyHost::new(seeded_entropy as fn(&mut [u8]));
+    static NODE: StaticCell<Node> = StaticCell::new();
+    let node: &'static mut Node = NODE.init_with(|| {
         PrnsNode::new(
             PrnsNodeRecipe {
                 transport_identity: Some(transport_secret),
@@ -199,7 +264,7 @@ pub async fn run(spawner: Spawner) -> ! {
                     app_name: "lxmf",
                     aspects: &["delivery"],
                     identity: secret_key,
-                    announce_app_data: crate::ANNOUNCE_APP_DATA,
+                    announce_app_data: ANNOUNCE_APP_DATA,
                     proof: personal_rns::routing::ProofStrategy::ProveAll,
                     link_requests: personal_rns::routing::LinkRequestPolicy::AcceptAll,
                     ratchet: RatchetPolicy::Ratcheted,
@@ -209,41 +274,34 @@ pub async fn run(spawner: Spawner) -> ! {
                 storage: crate::storage::TechoStorage,
                 routes: personal_rns::routes![],
                 interfaces: personal_rns::runtime::Manual,
-                on_event: crate::ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
+                on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
             },
             plumbing,
             host,
             heapless::Vec::new(),
         )
     });
-    node.activate(crate::LORA_SLOT, lora.descriptor());
-    node.activate_fleet(crate::BLE_FLEET_SLOT, crate::BLE_FLEET_ID);
-    let (lora_in_producer, lora_out_consumer) = iface_halves[crate::LORA_SLOT]
-        .take()
-        .expect("lora slot half");
+    node.activate(LORA_SLOT, lora.descriptor());
+    node.activate_fleet(BLE_FLEET_SLOT, FLEET_ID);
+    let (lora_in_producer, lora_out_consumer) =
+        iface_halves[LORA_SLOT].take().expect("lora slot half");
     let lora_seam = EmbassyInterfaceSeam::new(
         lora_id,
         lora_in_producer,
-        crate::NOTIFY.sender(),
+        NOTIFY.sender(),
         lora_out_consumer,
     );
 
-    let (ble_in_producer, ble_out_consumer) = iface_halves[crate::BLE_FLEET_SLOT]
-        .take()
-        .expect("ble fleet half");
-    let fleet: Fleet<
-        Mtx,
-        EMBEDDED_MAX_WIRE_FRAME_LEN,
-        { crate::NOTIFY_CAP },
-        { crate::LIFECYCLE_CAP },
-    > = Fleet::new(
+    let (ble_in_producer, ble_out_consumer) =
+        iface_halves[BLE_FLEET_SLOT].take().expect("ble fleet half");
+    let fleet: Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP> = Fleet::new(
         FleetWire {
             inbound: ble_in_producer,
             outbound: ble_out_consumer,
-            notify: crate::NOTIFY.sender(),
+            notify: NOTIFY.sender(),
             outbound_wake: &OUTBOUND_WAKE,
         },
-        crate::LIFECYCLE.sender(),
+        LIFECYCLE.sender(),
     );
 
     // The browser-facing USB-auto Reticulum interface is vendor-specific bulk, not CDC ACM. CDC is
@@ -252,17 +310,16 @@ pub async fn run(spawner: Spawner) -> ! {
     let (usb_tx, usb_rx) = class.split();
     static USB_STATUS: StaticCell<EmbassyInterfaceStatus> = StaticCell::new();
     let usb_status: &'static EmbassyInterfaceStatus = USB_STATUS.init(EmbassyInterfaceStatus::new(
-        crate::USB_INTERFACE_ID,
+        USB_INTERFACE_ID,
         ConnectionState::Initializing,
     ));
-    let usb_dev = UsbAutoDevice::new(crate::USB_INTERFACE_ID, usb_rx, usb_tx, usb_status, || true);
-    node.activate(crate::USB_SLOT, usb_dev.descriptor());
-    let (usb_in_producer, usb_out_consumer) =
-        iface_halves[crate::USB_SLOT].take().expect("usb slot half");
+    let usb_dev = UsbAutoDevice::new(USB_INTERFACE_ID, usb_rx, usb_tx, usb_status, || true);
+    node.activate(USB_SLOT, usb_dev.descriptor());
+    let (usb_in_producer, usb_out_consumer) = iface_halves[USB_SLOT].take().expect("usb slot half");
     let usb_seam = EmbassyInterfaceSeam::new(
-        crate::USB_INTERFACE_ID,
+        USB_INTERFACE_ID,
         usb_in_producer,
-        crate::NOTIFY.sender(),
+        NOTIFY.sender(),
         usb_out_consumer,
     );
 
@@ -299,7 +356,7 @@ pub async fn run(spawner: Spawner) -> ! {
         }
     };
 
-    let ui_handle = PrnsNodeHandle::new(crate::COMMANDS.sender(), &crate::COMPLETION);
+    let ui_handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
     let render = async move {
         let mut saadc = saadc;
         let mut epd = match eink {
@@ -312,7 +369,7 @@ pub async fn run(spawner: Spawner) -> ! {
         let mut since_full = 0u32;
         let mut displayed_hash = 0u64;
         let mut have_displayed = false;
-        let mut activity = hopspot::CardActivityTracker::<{ crate::BLE_MEMBERS + 4 }>::new();
+        let mut activity = hopspot::CardActivityTracker::<{ MEMBERS + 4 }>::new();
         let mut notice_until_ms: Option<u64> = None;
         let mut battery_gauge = hopspot::BatteryGauge::lipo();
         loop {
@@ -341,7 +398,7 @@ pub async fn run(spawner: Spawner) -> ! {
                 &snapshots,
             );
             hopspot::draw_with_state_footer_details_at(
-                &mut crate::EinkScreen { panel: &mut panel },
+                &mut EinkScreen { panel: &mut panel },
                 &cards,
                 battery,
                 &ui_state,
@@ -349,9 +406,9 @@ pub async fn run(spawner: Spawner) -> ! {
                 &interface_menu_details,
                 now_ms,
             );
-            let hash = crate::frame_hash(panel.buffer());
+            let hash = frame_hash(panel.buffer());
             if !have_displayed || hash != displayed_hash {
-                if !have_displayed || since_full >= crate::FULL_REFRESH_INTERVAL {
+                if !have_displayed || since_full >= FULL_REFRESH_INTERVAL {
                     let _ = epd.full_update(panel.buffer());
                     since_full = 0;
                 } else {
@@ -363,9 +420,9 @@ pub async fn run(spawner: Spawner) -> ! {
             }
 
             match select3(
-                crate::BUTTON_EVENTS.receive(),
-                crate::INTERFACE_STORE.changed(),
-                Timer::after(crate::STATS_POLL),
+                input::EVENTS.receive(),
+                INTERFACE_STORE.changed(),
+                Timer::after(STATS_POLL),
             )
             .await
             {
@@ -378,7 +435,7 @@ pub async fn run(spawner: Spawner) -> ! {
                         hopspot::UiAction::Sleep => {
                             ui_state.show_notice(hopspot::UiNotice::Sleeping);
                             notice_until_ms =
-                                Some(embassy_time::Instant::now().as_millis() + crate::NOTICE_MS);
+                                Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
                             lora_status.set_enabled(false);
                             usb_status.set_enabled(false);
                             let status = BluetoothAutoStatus::new(&BLE_SHARED);
@@ -387,7 +444,7 @@ pub async fn run(spawner: Spawner) -> ! {
                         hopspot::UiAction::Wake => {
                             ui_state.show_notice(hopspot::UiNotice::Awake);
                             notice_until_ms =
-                                Some(embassy_time::Instant::now().as_millis() + crate::NOTICE_MS);
+                                Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
                             lora_status.set_enabled(true);
                             usb_status.set_enabled(true);
                             let status = BluetoothAutoStatus::new(&BLE_SHARED);
@@ -396,7 +453,7 @@ pub async fn run(spawner: Spawner) -> ! {
                         hopspot::UiAction::Announce => {
                             ui_state.show_notice(hopspot::UiNotice::Announcing);
                             notice_until_ms =
-                                Some(embassy_time::Instant::now().as_millis() + crate::NOTICE_MS);
+                                Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
                             let _ = ui_handle.issue(EngineCommand::AnnounceNow(AnnounceNow {
                                 destination: self_destination,
                                 target: AnnounceTarget::AllInterfaces,
@@ -414,9 +471,8 @@ pub async fn run(spawner: Spawner) -> ! {
                                     } else {
                                         hopspot::UiNotice::TurningOn
                                     });
-                                    notice_until_ms = Some(
-                                        embassy_time::Instant::now().as_millis() + crate::NOTICE_MS,
-                                    );
+                                    notice_until_ms =
+                                        Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
                                     lora_status.set_enabled(!lora_status.is_enabled());
                                 } else if card.id == usb_status.id() {
                                     ui_state.show_notice(if usb_status.is_enabled() {
@@ -424,20 +480,18 @@ pub async fn run(spawner: Spawner) -> ! {
                                     } else {
                                         hopspot::UiNotice::TurningOn
                                     });
-                                    notice_until_ms = Some(
-                                        embassy_time::Instant::now().as_millis() + crate::NOTICE_MS,
-                                    );
+                                    notice_until_ms =
+                                        Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
                                     usb_status.set_enabled(!usb_status.is_enabled());
-                                } else if card.id == crate::BLE_FLEET_ID {
+                                } else if card.id == FLEET_ID {
                                     let status = BluetoothAutoStatus::new(&BLE_SHARED);
                                     ui_state.show_notice(if status.is_enabled() {
                                         hopspot::UiNotice::TurningOff
                                     } else {
                                         hopspot::UiNotice::TurningOn
                                     });
-                                    notice_until_ms = Some(
-                                        embassy_time::Instant::now().as_millis() + crate::NOTICE_MS,
-                                    );
+                                    notice_until_ms =
+                                        Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
                                     status.set_enabled(!status.is_enabled());
                                 }
                             }
@@ -448,9 +502,9 @@ pub async fn run(spawner: Spawner) -> ! {
                         hopspot::UiAction::SetLoRaProfile(profile) => {
                             ui_state.show_notice(hopspot::UiNotice::Saved);
                             notice_until_ms =
-                                Some(embassy_time::Instant::now().as_millis() + crate::NOTICE_MS);
+                                Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
                             working_lora_profile = profile;
-                            crate::LORA_CONTROL.signal(profile);
+                            LORA_CONTROL.signal(profile);
                         }
                         hopspot::UiAction::OpenDocs => {}
                         hopspot::UiAction::SwapRadioMode => {}
@@ -469,15 +523,15 @@ pub async fn run(spawner: Spawner) -> ! {
         usb_fut,
         usb_dev.run(usb_seam),
         heartbeat,
-        crate::drive_button(button),
-        crate::drive_frontlight(frontlight),
+        input::drive_button(button),
+        input::drive_frontlight(frontlight),
     );
     let ble_plane = join3(acceptor(sd, &HUB), scanner(sd, &HUB), supervisor.run(fleet));
     let mesh = join3(
-        node.run_reactor_with_interface_store(&crate::INTERFACE_STORE),
+        node.run_reactor_with_interface_store(&INTERFACE_STORE),
         lora.run(lora_seam),
         render,
     );
     join3(io, ble_plane, mesh).await;
-    loop {}
+    core::future::pending().await
 }
