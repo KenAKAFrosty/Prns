@@ -9,7 +9,7 @@ use crate::routing::announce::stored::{
     FixedAnnounceIdHistory, FixedArrayAnnounceRecordTable, PackedAppDataArena,
 };
 use crate::routing::routes::FixedArrayRouteTable;
-use crate::routing::NextHop;
+use crate::routing::{DropCause, NextHop, UpsertRouteOutcome};
 
 type TestRoutingTable<
     const MAX_TRACKED_DESTINATIONS: usize,
@@ -23,7 +23,9 @@ type TestRoutingTable<
 >;
 type Rt = TestRoutingTable<64, 64, 4096>;
 const RT_HISTORY_CAP: usize = 64;
-use crate::routing::announce::{AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey};
+use crate::routing::announce::{
+    AnnounceArrival, AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey,
+};
 
 fn dest(byte: u8) -> DestinationHash {
     DestinationHash::new([byte; 16])
