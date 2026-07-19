@@ -65,7 +65,6 @@ use personal_rns::runtime::{
 use personal_rns::storage::{StorageCapacity, StorageLayout};
 
 #[cfg(feature = "hopspot-t-echo")]
-#[path = "ble/mod.rs"]
 mod hopspot_profile;
 mod ssd1681;
 mod storage;
