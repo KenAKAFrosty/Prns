@@ -134,6 +134,7 @@ pub enum IngestPacketOutcome<'p> {
         identity: IdentityHash,
     },
     RequestReceived {
+        destination: DestinationHash,
         link_id: LinkId,
         request_id: RequestId,
         requester: Option<IdentityHash>,

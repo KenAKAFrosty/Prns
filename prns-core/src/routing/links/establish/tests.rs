@@ -2116,6 +2116,7 @@ fn a_request_passes_the_allow_gate_only_after_the_peer_identifies() {
             },
             sink: &mut |reaction| {
                 if let EngineReaction::Journaled(Journaled::RequestReceived {
+                    destination,
                     link_id: heard_link,
                     request_id,
                     requester,
@@ -2124,6 +2125,7 @@ fn a_request_passes_the_allow_gate_only_after_the_peer_identifies() {
                     ..
                 }) = reaction
                 {
+                    assert_eq!(destination, personal_node_destination());
                     assert_eq!(heard_link, link_id);
                     assert_eq!(requester, Some(asker));
                     assert_eq!(path_hash, RequestPathHash::of("/status"));

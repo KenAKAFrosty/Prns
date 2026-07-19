@@ -6,17 +6,17 @@ use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::vault::IdentitySecretKey;
 use personal_rns::identity::{IdentityHash, IdentitySigner};
 use personal_rns::rnx::{
-    decode_execution_request, encode_execution_result, APP_NAME, COMMAND_PATH, EXECUTE_ASPECT,
-    MAX_EXECUTION_REQUEST_BYTES,
+    ExecutionRequestRef, APP_NAME, COMMAND_PATH, EXECUTE_ASPECT, MAX_EXECUTION_REQUEST_BYTES,
 };
 use personal_rns::routing::announce::derive_single_destination_hash;
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
-use personal_rns::runtime::request_router::{
-    Decline, RequestContext, RequestRoute, RoutePolicy, RouteSet,
+use personal_rns::runtime::request_router::RouteSet;
+use personal_rns::runtime::rnx::{
+    HeapRnxOutput, RnxAuthorization, RnxCommandHandler, RnxCompletion, RnxOutput,
 };
 use personal_rns::runtime::{
-    Diagnostic, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle,
+    Diagnostic, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle, ProcessCommands,
     RequestHandlerRegistration, ResourceAdmissionPeer, ResourceOfferAdmission,
 };
 use personal_rns::shared_instance::connect_existing_shared_instance;
@@ -26,7 +26,6 @@ use tokio::sync::Semaphore;
 
 use crate::utilities::configuration::LoadedConfiguration;
 
-use super::execution;
 use super::identity::{home_directory, load_identity, pretty_hash};
 use super::{RnxArgs, RnxError};
 
@@ -34,44 +33,60 @@ const MAX_CONCURRENT_COMMANDS: usize = 8;
 
 struct ListenerState {
     handle: PrnsNodeHandle,
+    destination: DestinationHash,
     allowed: Arc<[IdentityHash]>,
     no_auth: bool,
     execution_slots: Semaphore,
 }
 
-struct AuthenticatedCommand;
-struct PublicCommand;
+struct RnxEndpoint;
+struct PublicRnxEndpoint;
 
-impl RequestRoute<ListenerState> for AuthenticatedCommand {
-    const PATH: &'static str = COMMAND_PATH;
-    const POLICY: RoutePolicy = RoutePolicy::AllowList(&[]);
+impl RnxCommandHandler<ListenerState> for RnxEndpoint {
+    const AUTHORIZATION: RnxAuthorization = RnxAuthorization::AllowList(&[]);
+    type Output = HeapRnxOutput;
 
-    async fn handle(context: RequestContext<'_, ListenerState>) -> Result<(), Decline> {
-        handle_command(context).await
+    fn destination(state: &ListenerState) -> DestinationHash {
+        state.destination
+    }
+
+    async fn execute(
+        state: &ListenerState,
+        request: ExecutionRequestRef<'_>,
+        output: &mut RnxOutput<'_>,
+    ) -> RnxCompletion {
+        execute_process(state, request, output).await
     }
 }
 
-impl RequestRoute<ListenerState> for PublicCommand {
-    const PATH: &'static str = COMMAND_PATH;
-    const POLICY: RoutePolicy = RoutePolicy::AllowAll;
+impl RnxCommandHandler<ListenerState> for PublicRnxEndpoint {
+    const AUTHORIZATION: RnxAuthorization = RnxAuthorization::Public;
+    type Output = HeapRnxOutput;
 
-    async fn handle(context: RequestContext<'_, ListenerState>) -> Result<(), Decline> {
-        handle_command(context).await
+    fn destination(state: &ListenerState) -> DestinationHash {
+        state.destination
+    }
+
+    async fn execute(
+        state: &ListenerState,
+        request: ExecutionRequestRef<'_>,
+        output: &mut RnxOutput<'_>,
+    ) -> RnxCompletion {
+        execute_process(state, request, output).await
     }
 }
 
-async fn handle_command(mut context: RequestContext<'_, ListenerState>) -> Result<(), Decline> {
-    let request = decode_execution_request(context.data).map_err(|_| Decline::Ignore)?;
-    let permit = context
-        .state
-        .execution_slots
-        .acquire()
-        .await
-        .map_err(|_| Decline::Ignore)?;
-    let result = execution::execute(request).await;
+async fn execute_process(
+    state: &ListenerState,
+    request: ExecutionRequestRef<'_>,
+    output: &mut RnxOutput<'_>,
+) -> RnxCompletion {
+    let Ok(permit) = state.execution_slots.acquire().await else {
+        return ProcessCommands::not_executed_now();
+    };
+    let result = ProcessCommands::execute(request, output).await;
     drop(permit);
-    let response = encode_execution_result(&result).map_err(|_| Decline::Ignore)?;
-    context.respond(&response)
+    result
 }
 
 pub(super) async fn run(mut args: RnxArgs) -> Result<(), RnxError> {
@@ -92,12 +107,12 @@ pub(super) async fn run(mut args: RnxArgs) -> Result<(), RnxError> {
     }
     if args.no_auth {
         listen_with_routes(args, configuration, secret, destination, || {
-            personal_rns::routes![PublicCommand]
+            personal_rns::routes![PublicRnxEndpoint]
         })
         .await
     } else {
         listen_with_routes(args, configuration, secret, destination, || {
-            personal_rns::routes![AuthenticatedCommand]
+            personal_rns::routes![RnxEndpoint]
         })
         .await
     }
@@ -131,6 +146,7 @@ where
         }],
         app_state: ListenerState {
             handle,
+            destination,
             allowed,
             no_auth,
             execution_slots: Semaphore::new(MAX_CONCURRENT_COMMANDS),
