@@ -1,15 +1,4 @@
-//! The daemon's persistence policy over the runtime's flush/seed mechanism: seed at boot, flush
-//! on a tight interval, flush once more on shutdown.
-//! RNS 1.3.5 persists every 12 hours (`Reticulum.PERSIST_INTERVAL`) because each of its persists
-//! is an unconditional full rewrite; our interval flush skips regions whose sealed bytes did not
-//! change, so a quiet tick costs 22 bytes of timebase and the interval affords 5 minutes — the
-//! crash-loss window shrinks accordingly.
-//! A shared-instance client neither seeds nor flushes (the reference's
-//! `is_connected_to_shared_instance` gate): the instance owns the tables, so main only starts
-//! this module's loops after winning the instance role or running standalone.
-
 use core::time::Duration;
-use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use personal_rns::identity::vault::FileVault;
@@ -21,22 +10,13 @@ use personal_rns::runtime::{
 use personal_rns::wire::DestinationHash;
 use prnsd_control::ManagedProcess;
 
-pub const PERSIST_INTERVAL: Duration = Duration::from_secs(5 * 60);
-
-/// The snapshot directory: a `prns` subdir of the RNS storage dir, because a config dir shared
-/// with stock RNS keeps its own msgpack `storage/tunnels`, and our sealed region of the same
-/// name must never clobber it.
-pub fn store_dir(storage_dir: &Path) -> PathBuf {
-    storage_dir.join("prns")
-}
-
 struct PersistenceStorage {
     store: FileStore,
     vault: FileVault,
     mark: FlushMark,
 }
 
-pub struct Persistence {
+pub(crate) struct PersistenceWorker {
     handle: PrnsNodeHandle,
     storage: Arc<Mutex<PersistenceStorage>>,
     rotated: tokio::sync::mpsc::UnboundedReceiver<DestinationHash>,
@@ -49,8 +29,8 @@ enum FlushOutcome {
     Failed,
 }
 
-impl Persistence {
-    pub fn new(
+impl PersistenceWorker {
+    pub(super) fn new(
         handle: PrnsNodeHandle,
         store: FileStore,
         vault: FileVault,
@@ -69,7 +49,7 @@ impl Persistence {
         }
     }
 
-    pub async fn run(mut self, managed: Option<&ManagedProcess>) {
+    async fn run(mut self, managed: Option<&ManagedProcess>) {
         let mut ticker = tokio::time::interval(self.interval);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         ticker.tick().await;
@@ -197,8 +177,8 @@ impl Persistence {
     }
 }
 
-pub async fn run_until_shutdown(
-    persistence: Option<Persistence>,
+pub(super) async fn run_until_shutdown(
+    persistence: Option<PersistenceWorker>,
     managed: Option<&ManagedProcess>,
 ) {
     match persistence {
