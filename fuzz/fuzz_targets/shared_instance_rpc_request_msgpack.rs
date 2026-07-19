@@ -1,11 +1,8 @@
 #![no_main]
 
-#[allow(dead_code)]
-#[path = "../../prns-interfaces/impls/tokio/src/shared_instance/rpc_compat/request.rs"]
-mod request;
-
 use libfuzzer_sys::fuzz_target;
+use prns_core::interfaces::shared_instance::rns_rpc::RpcRequest;
 
 fuzz_target!(|data: &[u8]| {
-    let _ = request::decode(data);
+    let _ = RpcRequest::decode(data);
 });
