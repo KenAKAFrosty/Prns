@@ -3,7 +3,7 @@ use alloc::string::String;
 
 use crate::engine::RouteSnapshot;
 use crate::interfaces::InterfaceId;
-use crate::routing::types::NextHop;
+use crate::routing::NextHop;
 use crate::units::InstantMillis;
 
 mod blackhole_table;

@@ -14,7 +14,6 @@ pub mod route_expiry;
 pub mod routes;
 pub mod table;
 pub mod tunnel;
-pub mod types;
 pub mod upstream_app_destinations;
 pub mod warmth;
 
@@ -33,11 +32,10 @@ pub use blackhole::{
 };
 pub use control::{ClearAnnounceQueuesOutcome, DropRouteOutcome, DropRoutesViaOutcome};
 pub use route_expiry::{LinearRouteExpiryIndex, RouteExpiryIndex, ROUTE_EXPIRY_QUANTUM_MS};
-pub use table::RoutingTable;
-pub use types::{
-    AnnounceIdRing, DropCause, ExistingRoute, ForwardingRoute, NextHop, PersistedRouteRow,
-    RemovedRoute, RouteRemovalCause, RouteResponsiveness, SeedRouteOutcome, StoredAnnounce,
-    UpsertRouteOutcome,
+pub use routes::{NextHop, RouteResponsiveness};
+pub use table::{
+    AnnounceIdRing, DropCause, ExistingRoute, ForwardingRoute, PersistedRouteRow, RemovedRoute,
+    RouteRemovalCause, RoutingTable, SeedRouteOutcome, StoredAnnounce, UpsertRouteOutcome,
 };
 pub use upstream_app_destinations::{
     LinkRequestPolicy, ProofStrategy, RegisterDestinationError, UpstreamAppDestination,

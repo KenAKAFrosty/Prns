@@ -3,8 +3,7 @@ use crate::engine::InstantMillis;
 use crate::interfaces::{AttachedInterfaces, InterfaceId};
 use crate::routing::announce::stored::{AnnounceAppData, AnnounceIdHistory, AnnounceRecordTable};
 use crate::routing::route_expiry::RouteExpiryIndex;
-use crate::routing::routes::{RouteEntry, RouteTable};
-use crate::routing::types::RouteResponsiveness;
+use crate::routing::routes::{RouteEntry, RouteResponsiveness, RouteTable};
 use crate::routing::warmth::RouteWarmth;
 use crate::wire::DestinationHash;
 

@@ -11,7 +11,7 @@ use prns_core::interfaces::{
     ConnectionState, InterfaceId, PacketPhyStats, RssiDbm, SignalQualityTenthsPercent, SnrQuarterDb,
 };
 use prns_core::routing::dedup::{PacketHash, PACKET_HASH_LEN};
-use prns_core::routing::types::NextHop;
+use prns_core::routing::NextHop;
 use prns_core::routing::{
     BlackholeExpiry, BlackholeIdentityOutcome, BlackholedIdentity, UnblackholeIdentityOutcome,
 };

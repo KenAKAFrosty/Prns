@@ -71,7 +71,7 @@ pub fn encode_rate_table_response(
 mod tests {
     use super::*;
     use prns_core::interfaces::{InterfaceId, InterfaceKind};
-    use prns_core::routing::types::NextHop;
+    use prns_core::routing::NextHop;
     use prns_core::units::InstantMillis;
     use prns_core::wire::DestinationHash;
 

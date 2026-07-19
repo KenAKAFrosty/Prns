@@ -1,11 +1,11 @@
+use super::removal::{RemovedRoute, RouteRemovalCause};
 use super::RoutingTable;
 use crate::engine::InstantMillis;
 use crate::interfaces::AttachedInterfaces;
 use crate::routing::announce::defaults::route_expiry_millis;
 use crate::routing::announce::stored::{AnnounceAppData, AnnounceIdHistory, AnnounceRecordTable};
 use crate::routing::route_expiry::RouteExpiryIndex;
-use crate::routing::routes::RouteTable;
-use crate::routing::types::{RemovedRoute, RouteRemovalCause, RouteResponsiveness};
+use crate::routing::routes::{RouteResponsiveness, RouteTable};
 use crate::routing::warmth::RouteWarmth;
 
 impl<R, A, H, D, I> RoutingTable<R, A, H, D, I>

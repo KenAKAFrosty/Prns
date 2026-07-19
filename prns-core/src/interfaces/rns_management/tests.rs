@@ -5,7 +5,7 @@ use crate::interfaces::ifac::IfacSize;
 use crate::interfaces::{
     ConnectionState, InterfaceId, InterfaceKind, InterfaceSnapshot, Membership, TransferRates,
 };
-use crate::routing::types::NextHop;
+use crate::routing::NextHop;
 use crate::routing::{BlackholeExpiry, BlackholedIdentity};
 use crate::units::InstantMillis;
 use crate::wire::DestinationHash;
