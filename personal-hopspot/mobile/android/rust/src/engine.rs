@@ -425,6 +425,9 @@ fn run_engine(
             rpc_key,
         });
 
-        node.run().await;
+        match node.run().await {
+            Ok(()) => log::error!("hopspot engine stopped"),
+            Err(error) => log::error!("hopspot engine stopped: {error}"),
+        }
     });
 }

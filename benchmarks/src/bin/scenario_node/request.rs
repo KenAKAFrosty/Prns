@@ -99,7 +99,7 @@ pub(super) async fn run_request_endpoint(
             event_rx,
         );
         tokio::select! {
-            () = node.run() => unreachable!("the responder's run loop returned"),
+            result = node.run() => unreachable!("the responder's run loop returned: {result:?}"),
             () = firehose => {}
         }
     } else if role == "initiator" {
@@ -129,7 +129,7 @@ pub(super) async fn run_request_endpoint(
             tokio::time::sleep(Duration::from_millis(200)).await;
         };
         tokio::select! {
-            () = node.run() => unreachable!("the initiator's run loop returned"),
+            result = node.run() => unreachable!("the initiator's run loop returned: {result:?}"),
             () = firehose => {}
         }
     } else {

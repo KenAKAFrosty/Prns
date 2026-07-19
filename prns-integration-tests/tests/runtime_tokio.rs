@@ -137,8 +137,8 @@ async fn two_nodes_stand_up_and_one_hears_the_others_announce() {
         heard = tokio::time::timeout(Duration::from_secs(5), heard_rx.recv()) => heard
             .expect("B hears A's announce within 5s")
             .expect("the announce channel stays open"),
-        () = node_a.run() => unreachable!("node A's run loop returned"),
-        () = node_b.run() => unreachable!("node B's run loop returned"),
+        result = node_a.run() => unreachable!("node A's run loop returned: {result:?}"),
+        result = node_b.run() => unreachable!("node B's run loop returned: {result:?}"),
     };
     assert_eq!(
         heard, dest_a,
@@ -246,8 +246,8 @@ async fn an_interface_added_through_the_handle_carries_traffic_until_torn_down()
                 "no announce reaches B after the interface is torn down"
             );
         } => {}
-        () = node_a.run() => unreachable!("node A's run loop returned"),
-        () = node_b.run() => unreachable!("node B's run loop returned"),
+        result = node_a.run() => unreachable!("node A's run loop returned: {result:?}"),
+        result = node_b.run() => unreachable!("node B's run loop returned: {result:?}"),
     }
 }
 
@@ -330,8 +330,8 @@ async fn a_supervisor_spawns_a_member_and_tearing_the_supervisor_down_cascades_t
                 "tearing the supervisor down cascades to its member, so no announce reaches B"
             );
         } => {}
-        () = node_a.run() => unreachable!("node A's run loop returned"),
-        () = node_b.run() => unreachable!("node B's run loop returned"),
+        result = node_a.run() => unreachable!("node A's run loop returned: {result:?}"),
+        result = node_b.run() => unreachable!("node B's run loop returned: {result:?}"),
     }
 }
 
@@ -460,9 +460,9 @@ async fn the_server_stands_up_a_distinct_member_per_client_and_hears_each_on_its
                 "client B arrived on a spawned TcpServerPeer member, not the supervisor itself",
             );
         } => {}
-        () = node_s.run() => unreachable!("the server node's run loop returned"),
-        () = node_a.run() => unreachable!("client A's run loop returned"),
-        () = node_b.run() => unreachable!("client B's run loop returned"),
+        result = node_s.run() => unreachable!("the server node's run loop returned: {result:?}"),
+        result = node_a.run() => unreachable!("client A's run loop returned: {result:?}"),
+        result = node_b.run() => unreachable!("client B's run loop returned: {result:?}"),
     }
 }
 
@@ -556,8 +556,8 @@ async fn a_recipe_accept_destination_receives_a_resource() {
             .await
             .expect("the resource transfer settles within 5s")
         } => result,
-        () = node_a.run() => unreachable!("node A's run loop returned"),
-        () = node_b.run() => unreachable!("node B's run loop returned"),
+        result = node_a.run() => unreachable!("node A's run loop returned: {result:?}"),
+        result = node_b.run() => unreachable!("node B's run loop returned: {result:?}"),
     };
 
     assert!(

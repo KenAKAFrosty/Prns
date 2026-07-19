@@ -27,9 +27,10 @@ use personal_rns::runtime::request_router::{
     Decline, RequestContext, RequestRoute, RoutePolicy, RouteSet,
 };
 use personal_rns::runtime::{
-    load_or_create_identity_secret, IdentitySecretFileError, PreConfiguredDestination, PrnsEvent,
-    PrnsNode, PrnsNodeHandle, RequestHandlerRegistration, ResourceAdmissionPeer,
-    ResourceOfferAdmission, ResourceReceiveError, ResourceSendError, SegmentCompression, SendError,
+    load_or_create_identity_secret, IdentitySecretFileError, NodeRunError,
+    PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle, RequestHandlerRegistration,
+    ResourceAdmissionPeer, ResourceOfferAdmission, ResourceReceiveError, ResourceSendError,
+    SegmentCompression, SendError,
 };
 use personal_rns::shared_instance::{
     connect_existing_shared_instance, ExistingSharedInstanceUnavailable,
@@ -516,7 +517,10 @@ where
     let serving = serve_links(handle.clone(), receiver, args, save);
     let announcing = announce_loop(handle, destination, announce_interval);
     tokio::select! {
-        () = node.run() => Err(RncpError::ListenerStopped),
+        result = node.run() => match result {
+            Ok(()) => Err(RncpError::ListenerStopped),
+            Err(error) => Err(RncpError::ListenerPanicked(error)),
+        },
         result = serving => result,
         result = announcing => result,
     }
@@ -884,6 +888,7 @@ pub enum RncpError {
     SharedInstance(ExistingSharedInstanceUnavailable),
     NodeStopped(UtilityNodeStopped),
     ListenerStopped,
+    ListenerPanicked(NodeRunError),
     Path(UtilityPathError),
     Link(SendError<EstablishLinkFailure>),
     Identify(SendError<IdentifyFailure>),
@@ -919,6 +924,7 @@ impl fmt::Display for RncpError {
             Self::SharedInstance(source) => source.fmt(formatter),
             Self::NodeStopped(source) => source.fmt(formatter),
             Self::ListenerStopped => formatter.write_str("RNCP listener stopped"),
+            Self::ListenerPanicked(source) => write!(formatter, "RNCP listener stopped: {source}"),
             Self::Path(source) => source.fmt(formatter),
             Self::Link(source) => write!(formatter, "link establishment failed: {source:?}"),
             Self::Identify(source) => write!(formatter, "link identification failed: {source:?}"),

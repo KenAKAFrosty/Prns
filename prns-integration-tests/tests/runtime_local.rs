@@ -130,8 +130,8 @@ async fn an_app_dials_the_shared_instance_and_is_heard_at_a_discounted_hop() {
                 "the free local transit is discounted: a 0-hop announce stays 0 across the shared instance"
             );
         } => {}
-        () = daemon.run() => unreachable!("the daemon's run loop returned"),
-        () = app.run() => unreachable!("the app's run loop returned"),
+        result = daemon.run() => unreachable!("the daemon's run loop returned: {result:?}"),
+        result = app.run() => unreachable!("the app's run loop returned: {result:?}"),
     }
 }
 
@@ -258,8 +258,8 @@ async fn a_leaf_shared_instance_carries_announces_across_its_local_boundary() {
             }).await;
             assert!(heard_network.is_ok(), "the network peer hears the local destination");
         } => {}
-        () = daemon.run() => unreachable!("the daemon's run loop returned"),
-        () = network_node.run() => unreachable!("the network node's run loop returned"),
-        () = local_node.run() => unreachable!("the local node's run loop returned"),
+        result = daemon.run() => unreachable!("the daemon's run loop returned: {result:?}"),
+        result = network_node.run() => unreachable!("the network node's run loop returned: {result:?}"),
+        result = local_node.run() => unreachable!("the local node's run loop returned: {result:?}"),
     }
 }

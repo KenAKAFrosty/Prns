@@ -152,8 +152,8 @@ async fn a_rebooted_node_reaches_a_peer_from_its_seeded_snapshot_alone() {
         tokio::select! {
             biased;
             high_water = hear_then_flush => high_water,
-            () = node_a.run() => unreachable!("node A's run loop returned"),
-            () = node_b.run() => unreachable!("node B's run loop returned"),
+            result = node_a.run() => unreachable!("node A's run loop returned: {result:?}"),
+            result = node_b.run() => unreachable!("node B's run loop returned: {result:?}"),
         }
     };
 
@@ -243,8 +243,8 @@ async fn a_rebooted_node_reaches_a_peer_from_its_seeded_snapshot_alone() {
         receipt = tokio::time::timeout(Duration::from_secs(10), proven) => {
             receipt.expect("the seeded route carries a proven single within 10s")
         }
-        () = node_a.run() => unreachable!("node A's run loop returned"),
-        () = node_b.run() => unreachable!("node B's run loop returned"),
+        result = node_a.run() => unreachable!("node A's run loop returned: {result:?}"),
+        result = node_b.run() => unreachable!("node B's run loop returned: {result:?}"),
     };
     let _ = receipt;
 }
@@ -360,8 +360,8 @@ async fn a_reconnecting_peer_reclaims_a_rebooted_relays_routes_through_its_tunne
         tokio::select! {
             biased;
             () = hear_then_flush => {}
-            () = relay.run() => unreachable!("the relay's run loop returned"),
-            () = node_c.run() => unreachable!("node C's run loop returned"),
+            result = relay.run() => unreachable!("the relay's run loop returned: {result:?}"),
+            result = node_c.run() => unreachable!("node C's run loop returned: {result:?}"),
         }
     }
 
@@ -427,8 +427,8 @@ async fn a_reconnecting_peer_reclaims_a_rebooted_relays_routes_through_its_tunne
         receipt = tokio::time::timeout(Duration::from_secs(10), proven) => {
             receipt.expect("the reclaimed route carries a proven single within 10s")
         }
-        () = relay.run() => unreachable!("the relay's run loop returned"),
-        () = node_c.run() => unreachable!("node C's run loop returned"),
+        result = relay.run() => unreachable!("the relay's run loop returned: {result:?}"),
+        result = node_c.run() => unreachable!("node C's run loop returned: {result:?}"),
     };
     let _ = receipt;
 }
@@ -569,8 +569,8 @@ async fn a_quiet_flush_skips_unchanged_regions_and_a_change_rewrites() {
     tokio::select! {
         biased;
         () = choreography => {}
-        () = node_a.run() => unreachable!("node A's run loop returned"),
-        () = node_b.run() => unreachable!("node B's run loop returned"),
+        result = node_a.run() => unreachable!("node A's run loop returned: {result:?}"),
+        result = node_b.run() => unreachable!("node B's run loop returned: {result:?}"),
     }
 }
 
@@ -683,8 +683,8 @@ async fn a_rebooted_destination_decrypts_singles_sealed_to_its_pre_reboot_ratche
         tokio::select! {
             biased;
             () = hear_then_flush => {}
-            () = node_r.run() => unreachable!("node R's run loop returned"),
-            () = node_p.run() => unreachable!("node P's run loop returned"),
+            result = node_r.run() => unreachable!("node R's run loop returned: {result:?}"),
+            result = node_p.run() => unreachable!("node P's run loop returned: {result:?}"),
         }
     }
 
@@ -744,8 +744,8 @@ async fn a_rebooted_destination_decrypts_singles_sealed_to_its_pre_reboot_ratche
         receipt = tokio::time::timeout(Duration::from_secs(10), proven) => {
             receipt.expect("the ratchet-sealed single proves within 10s")
         }
-        () = node_r.run() => unreachable!("node R's run loop returned"),
-        () = node_p.run() => unreachable!("node P's run loop returned"),
+        result = node_r.run() => unreachable!("node R's run loop returned: {result:?}"),
+        result = node_p.run() => unreachable!("node P's run loop returned: {result:?}"),
     };
     let _ = receipt;
 }

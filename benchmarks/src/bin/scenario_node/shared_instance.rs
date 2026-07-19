@@ -132,7 +132,7 @@ pub(super) async fn run_request_bus_client(
             println!("RESULT served={served} response_bytes={}", served * 4);
         };
         tokio::select! {
-            () = node.run() => unreachable!("the responder's run loop returned"),
+            result = node.run() => unreachable!("the responder's run loop returned: {result:?}"),
             () = report => {}
         }
     } else {
@@ -180,7 +180,7 @@ pub(super) async fn run_request_bus_client(
             );
         };
         tokio::select! {
-            () = node.run() => unreachable!("the initiator's run loop returned"),
+            result = node.run() => unreachable!("the initiator's run loop returned: {result:?}"),
             () = firehose => {}
         }
     }
@@ -240,7 +240,7 @@ pub(super) async fn run_churn_bus_client(
             println!("RESULT received={}", links.load(Ordering::Relaxed));
         };
         tokio::select! {
-            () = node.run() => unreachable!("the responder's run loop returned"),
+            result = node.run() => unreachable!("the responder's run loop returned: {result:?}"),
             () = report => {}
         }
     } else {
@@ -284,7 +284,7 @@ pub(super) async fn run_churn_bus_client(
             );
         };
         tokio::select! {
-            () = node.run() => unreachable!("the initiator's run loop returned"),
+            result = node.run() => unreachable!("the initiator's run loop returned: {result:?}"),
             () = firehose => {}
         }
     }
@@ -392,7 +392,7 @@ pub(super) async fn run_resource_bus_client(
             );
         };
         tokio::select! {
-            () = node.run() => unreachable!("the initiator's run loop returned"),
+            result = node.run() => unreachable!("the initiator's run loop returned: {result:?}"),
             () = firehose => {}
         }
     }
@@ -448,7 +448,7 @@ async fn run_resource_responder(
         );
     };
     tokio::select! {
-        () = node.run() => unreachable!("the responder's run loop returned"),
+        result = node.run() => unreachable!("the responder's run loop returned: {result:?}"),
         () = report => {}
     }
 }
@@ -587,7 +587,7 @@ pub(super) async fn run_resource_fanout_bus_client(
         );
     };
     tokio::select! {
-        () = node.run() => unreachable!("the initiator's run loop returned"),
+        result = node.run() => unreachable!("the initiator's run loop returned: {result:?}"),
         () = firehose => {}
     }
 }

@@ -1,7 +1,11 @@
 use std::collections::HashMap;
+use std::fmt;
+use std::future::Future;
+use std::panic::AssertUnwindSafe;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 
+use futures_util::FutureExt;
 use tokio::sync::mpsc::{self, UnboundedReceiver};
 
 use crate::engine::{
@@ -84,6 +88,41 @@ pub type SharedInstanceIdentityError = NonRoutingIdentityError;
 pub enum RegisterRequestRouteError {
     Registration(TablePushError),
     Seed(RequestHandlerError),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeRunError {
+    ReactorPanicked,
+    RequestRouterPanicked,
+    InterfaceDriverPanicked,
+}
+
+impl fmt::Display for NodeRunError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ReactorPanicked => formatter.write_str("the node reactor panicked"),
+            Self::RequestRouterPanicked => formatter.write_str("the request router panicked"),
+            Self::InterfaceDriverPanicked => formatter.write_str("the interface driver panicked"),
+        }
+    }
+}
+
+impl std::error::Error for NodeRunError {}
+
+async fn run_node_tasks(
+    reactor: impl Future<Output = ()>,
+    request_router: impl Future<Output = ()>,
+    interface_driver: impl Future<Output = ()>,
+) -> Result<(), NodeRunError> {
+    let reactor = AssertUnwindSafe(reactor).catch_unwind();
+    let request_router = AssertUnwindSafe(request_router).catch_unwind();
+    let interface_driver = AssertUnwindSafe(interface_driver).catch_unwind();
+    tokio::pin!(reactor, request_router, interface_driver);
+    tokio::select! {
+        result = &mut reactor => result.map_err(|_| NodeRunError::ReactorPanicked),
+        result = &mut request_router => result.map_err(|_| NodeRunError::RequestRouterPanicked),
+        result = &mut interface_driver => result.map_err(|_| NodeRunError::InterfaceDriverPanicked),
+    }
 }
 
 impl<St, R, F, S: StorageLayout> PrnsNode<St, R, F, S>
@@ -257,7 +296,7 @@ where
     }
 
     /// Drive the node until it stops (in practice forever). The reactor and the request runner run joined: every inbound request forks to the runner, while that event, and every other, reaches the recipe's `on_event` with shared `&state`, zero-copy.
-    pub async fn run(self) {
+    pub async fn run(self) -> Result<(), NodeRunError> {
         let PrnsNode {
             handle,
             host,
@@ -381,16 +420,17 @@ where
         );
         let driver_commands = handle.commands.clone();
         let driver_interfaces = handle.interfaces.clone();
-        tokio::join!(
+        run_node_tasks(
             reactor,
             run_router::<St, R>(&state, req_rx, handle),
             drive_interfaces(
                 std::vec::Vec::new(),
                 iface_build_rx,
                 driver_commands,
-                driver_interfaces
+                driver_interfaces,
             ),
-        );
+        )
+        .await
     }
 }
 

@@ -162,7 +162,7 @@ async fn a_link_establishes_and_carries_data_across_two_nodes_over_udp() {
         outcome = tokio::time::timeout(Duration::from_secs(10), conversation) => {
             outcome.expect("the link establishes and the request round-trips within 10s");
         }
-        () = node_a.run() => panic!("the responder's run loop ended unexpectedly"),
-        () = node_b.run() => panic!("the initiator's run loop ended unexpectedly"),
+        result = node_a.run() => panic!("the responder's run loop ended unexpectedly: {result:?}"),
+        result = node_b.run() => panic!("the initiator's run loop ended unexpectedly: {result:?}"),
     }
 }

@@ -91,7 +91,7 @@ async fn main() {
 
     let start = Instant::now();
     tokio::select! {
-        () = node.run() => {}
+        _ = node.run() => {}
         () = tokio::time::sleep(duration + Duration::from_millis(250)) => {}
     }
     let elapsed = start.elapsed().as_secs_f64().max(f64::EPSILON);

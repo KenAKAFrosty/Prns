@@ -311,7 +311,10 @@ fn run_node(
             destination,
         });
 
-        node.run().await;
+        match node.run().await {
+            Ok(()) => tracing::error!(event = "node_stopped"),
+            Err(error) => tracing::error!(event = "node_panic_shutdown", error = ?error),
+        }
     });
 }
 

@@ -254,7 +254,7 @@ mod tests {
             assert!(monitor.borrow().is_empty());
         };
         tokio::select! {
-            () = node.run() => panic!("test node stopped unexpectedly"),
+            result = node.run() => panic!("test node stopped unexpectedly: {result:?}"),
             () = exercise => {}
         }
     }

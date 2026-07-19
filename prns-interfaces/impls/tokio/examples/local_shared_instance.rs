@@ -66,5 +66,7 @@ async fn main() {
     let handle = node.handle();
     handle.supervise(LocalServer::with_port(port));
     println!("READY shared-instance on 127.0.0.1:{port}");
-    node.run().await;
+    if let Err(error) = node.run().await {
+        eprintln!("node stopped: {error}");
+    }
 }

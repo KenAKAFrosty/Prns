@@ -66,7 +66,7 @@ pub(super) async fn run_churn_endpoint(
         let firehose =
             respond_churn_runtime(destination, announce_every, duration, &commands, event_rx);
         tokio::select! {
-            () = node.run() => unreachable!("the responder's run loop returned"),
+            result = node.run() => unreachable!("the responder's run loop returned: {result:?}"),
             () = firehose => {}
         }
     } else if role == "initiator" {
@@ -78,7 +78,7 @@ pub(super) async fn run_churn_endpoint(
             tokio::time::sleep(Duration::from_millis(200)).await;
         };
         tokio::select! {
-            () = node.run() => unreachable!("the initiator's run loop returned"),
+            result = node.run() => unreachable!("the initiator's run loop returned: {result:?}"),
             () = firehose => {}
         }
     } else {

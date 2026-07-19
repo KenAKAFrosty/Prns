@@ -287,8 +287,8 @@ async fn a_client_rides_the_instances_bus() {
         heard = tokio::time::timeout(Duration::from_secs(10), heard_rx.recv()) => heard
             .expect("A hears B's announce across the bus within 10s")
             .expect("the announce channel stays open"),
-        () = node_a.run() => unreachable!("A's run loop returned"),
-        () = node_b.run() => unreachable!("B's run loop returned"),
+        result = node_a.run() => unreachable!("A's run loop returned: {result:?}"),
+        result = node_b.run() => unreachable!("B's run loop returned: {result:?}"),
     };
 
     assert_eq!(

@@ -125,5 +125,7 @@ async fn main() {
     tokio::spawn(rpc.run());
 
     println!("READY bridge local=127.0.0.1:{local_port} rpc=127.0.0.1:{rpc_port} peer={peer_addr}");
-    node.run().await;
+    if let Err(error) = node.run().await {
+        eprintln!("node stopped: {error}");
+    }
 }

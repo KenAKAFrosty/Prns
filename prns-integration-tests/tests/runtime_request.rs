@@ -214,8 +214,8 @@ async fn a_request_router_answers_a_live_request_over_tcp() {
             let answer = answer.expect("the request round-trips within 10s");
             assert_eq!(answer.as_slice(), b"ping-pong", "the router computed and returned the answer");
         }
-        () = node_a.run() => panic!("the responder's run loop ended unexpectedly"),
-        () = node_b.run() => panic!("the initiator's run loop ended unexpectedly"),
+        result = node_a.run() => panic!("the responder's run loop ended unexpectedly: {result:?}"),
+        result = node_b.run() => panic!("the initiator's run loop ended unexpectedly: {result:?}"),
     }
 }
 
@@ -348,8 +348,8 @@ async fn request_auto_negotiates_both_rungs_over_tcp() {
         outcome = tokio::time::timeout(Duration::from_secs(10), conversation) => {
             outcome.expect("both requests round-trip within 10s");
         }
-        () = node_a.run() => panic!("the responder's run loop ended unexpectedly"),
-        () = node_b.run() => panic!("the initiator's run loop ended unexpectedly"),
+        result = node_a.run() => panic!("the responder's run loop ended unexpectedly: {result:?}"),
+        result = node_b.run() => panic!("the initiator's run loop ended unexpectedly: {result:?}"),
     }
 }
 
@@ -465,7 +465,7 @@ async fn a_split_response_answers_a_small_request_over_tcp() {
         outcome = tokio::time::timeout(Duration::from_secs(30), conversation) => {
             outcome.expect("the split response round-trips within 30s");
         }
-        () = node_a.run() => panic!("the responder's run loop ended unexpectedly"),
-        () = node_b.run() => panic!("the initiator's run loop ended unexpectedly"),
+        result = node_a.run() => panic!("the responder's run loop ended unexpectedly: {result:?}"),
+        result = node_b.run() => panic!("the initiator's run loop ended unexpectedly: {result:?}"),
     }
 }

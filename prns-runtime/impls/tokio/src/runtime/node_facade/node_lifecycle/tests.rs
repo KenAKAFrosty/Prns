@@ -12,7 +12,38 @@ use crate::runtime::{
 use crate::wire::DestinationHash;
 
 use super::super::super::request_router::{Decline, RequestContext, RequestRoute, RoutePolicy};
-use super::{notify_accepted_announce, AcceptedAnnounceObserver, PrnsNode};
+use super::{
+    notify_accepted_announce, run_node_tasks, AcceptedAnnounceObserver, NodeRunError, PrnsNode,
+};
+
+#[tokio::test]
+async fn node_task_panics_report_their_boundary() {
+    assert_eq!(
+        run_node_tasks(
+            async { std::panic::panic_any("reactor") },
+            std::future::pending(),
+            std::future::pending(),
+        )
+        .await,
+        Err(NodeRunError::ReactorPanicked)
+    );
+    assert_eq!(
+        run_node_tasks(
+            std::future::pending(),
+            async { std::panic::panic_any("router") },
+            std::future::pending(),
+        )
+        .await,
+        Err(NodeRunError::RequestRouterPanicked)
+    );
+    assert_eq!(
+        run_node_tasks(std::future::pending(), std::future::pending(), async {
+            std::panic::panic_any("driver")
+        },)
+        .await,
+        Err(NodeRunError::InterfaceDriverPanicked)
+    );
+}
 
 #[test]
 fn accepted_announce_observers_receive_the_complete_observation() {

@@ -285,8 +285,15 @@ pub(super) async fn run(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
         }
     }
     let mut interface_failure = None;
+    let mut node_failure = false;
     tokio::select! {
-        () = prns.run() => {}
+        result = prns.run() => {
+            node_failure = true;
+            match result {
+                Ok(()) => tracing::error!(event = "node_stopped"),
+                Err(error) => tracing::error!(event = "node_panic_shutdown", error = ?error),
+            }
+        }
         () = persistence::run_until_shutdown(persistence, managed.as_ref()) => {}
         failed = interface_failure::wait(
             &prns_handle,
@@ -305,7 +312,7 @@ pub(super) async fn run(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
     if let Some(managed) = managed {
         managed.hold_runtime_lock_until_process_exit();
     }
-    if interface_failure.is_some() {
+    if interface_failure.is_some() || node_failure {
         process::exit(1);
     }
 }
