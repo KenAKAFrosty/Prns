@@ -149,7 +149,8 @@ where
                 settlement,
                 valid,
             } => {
-                if valid && engine.settle_resolved(id).is_some() {
+                let settled = valid && engine.settle_resolved(id).is_some();
+                if settled {
                     route_reaction(
                         EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }),
                         &mut topology.egress,
@@ -160,7 +161,14 @@ where
                         &mut journaled_sink!(),
                     );
                 }
-                CryptoCompletionEffect::NoWakeChange
+                if settled {
+                    CryptoCompletionEffect::WakeSchedules(WakeSchedules {
+                        receipt_timeouts: engine.receipt_timeouts_wake(),
+                        ..WakeSchedules::UNCHANGED
+                    })
+                } else {
+                    CryptoCompletionEffect::NoWakeChange
+                }
             }
             CryptoResult::Sealed {
                 owed,
