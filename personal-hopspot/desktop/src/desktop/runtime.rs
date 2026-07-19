@@ -2,7 +2,6 @@ use core::fmt::Write as _;
 use std::io;
 use std::sync::mpsc::{self, Sender};
 use std::sync::Arc;
-use std::time::Duration;
 
 use personal_rns::ble::tokio::BluetoothAutoStatus;
 use personal_rns::engine::RatchetPolicy;
@@ -13,6 +12,7 @@ use personal_rns::interfaces::tcp::core as tcp_core;
 use personal_rns::interfaces::wifi_auto::core as wifi_core;
 use personal_rns::interfaces::{InterfaceId, InterfaceKind};
 use personal_rns::prelude::*;
+use personal_rns::reactor::reconnect::ReconnectPolicy;
 use personal_rns::reactor::tokio::TokioInterfaceStatus;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::shared_instance::rpc_compat::{
@@ -251,7 +251,7 @@ fn run_node(
                 let tcp = TcpClientInterface::new(
                     target.clone(),
                     tcp_core::TCP_BITRATE_ESTIMATE,
-                    Duration::from_secs(5),
+                    ReconnectPolicy::STANDARD,
                 );
                 let status = tcp.status();
                 let id = tcp.id();

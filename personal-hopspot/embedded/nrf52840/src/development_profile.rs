@@ -443,7 +443,13 @@ pub(super) async fn run(_spawner: Spawner) -> ! {
         HVec::new(),
     ));
     node.activate(0, lora.descriptor());
-    let lora_seam = EmbassyInterfaceSeam::new(lora_id, in_producer, NOTIFY.sender(), out_consumer);
+    let lora_seam = EmbassyInterfaceSeam::new(
+        lora_id,
+        in_producer,
+        NOTIFY.sender(),
+        out_consumer,
+        seeded_entropy,
+    );
     let ui_handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
 
     let button = Input::new(p.P1_10, Pull::Up);

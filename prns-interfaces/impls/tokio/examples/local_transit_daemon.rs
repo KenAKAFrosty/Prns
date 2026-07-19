@@ -9,7 +9,6 @@
 //! RNS node's TCP server we dial. Demo/test code, so it `expect`s and `println!`s.
 #![allow(clippy::expect_used)]
 
-use core::time::Duration;
 use std::string::String;
 
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
@@ -18,6 +17,7 @@ use personal_rns::interfaces::BitrateBps;
 use personal_rns::routes;
 use personal_rns::runtime::{Diagnostic, Manual, PrnsEvent, PrnsNode, PrnsNodeRecipe};
 use personal_rns::storage::GrowableHeap;
+use prns_interfaces_tokio::reconnect::ReconnectPolicy;
 use prns_interfaces_tokio::shared_instance::rpc_compat::{
     SharedInstanceCredentials, SharedInstanceRpcCompat,
 };
@@ -109,7 +109,7 @@ async fn main() {
     });
     let handle = node.handle();
     handle.supervise(LocalServer::with_port(local_port));
-    let tcp = TcpClientInterface::new(peer_addr.clone(), BITRATE, Duration::from_millis(250));
+    let tcp = TcpClientInterface::new(peer_addr.clone(), BITRATE, ReconnectPolicy::STANDARD);
     let _peer = match ifac {
         Some(ifac) => handle.add_interface_with_ifac_name(tcp, ifac, ifac_network_name),
         None => handle.add_interface(tcp),

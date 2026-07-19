@@ -289,7 +289,10 @@ mod tests {
                 &status,
                 || true,
             );
-            let seam = EmbassyInterfaceSeam::new(device_id(), in_tx, notify.sender(), out_rx);
+            let seam =
+                EmbassyInterfaceSeam::new(device_id(), in_tx, notify.sender(), out_rx, |bytes| {
+                    bytes.fill(0)
+                });
             let device_run = device.run(seam);
 
             let driver = async {

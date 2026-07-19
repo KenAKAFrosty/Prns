@@ -16,6 +16,7 @@ use personal_rns::identity::vault::FileVault;
 use personal_rns::identity::{MarkDestinationUsedOutcome, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::{BitrateBps, InterfaceId};
 use personal_rns::persistence::{read_tunnels_snapshot, FileStore, PersistedStore, SnapshotRegion};
+use personal_rns::reactor::reconnect::ReconnectPolicy;
 use personal_rns::routes;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
@@ -98,7 +99,7 @@ async fn a_rebooted_node_reaches_a_peer_from_its_seeded_snapshot_alone() {
         let _server_sup = commands_a.supervise(server);
 
         let client =
-            TcpClientInterface::new_with_id(pinned, addr, BITRATE, Duration::from_millis(100));
+            TcpClientInterface::new_with_id(pinned, addr, BITRATE, ReconnectPolicy::STANDARD);
         let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
         let node_b = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: None,
@@ -174,7 +175,7 @@ async fn a_rebooted_node_reaches_a_peer_from_its_seeded_snapshot_alone() {
     let commands_a = node_a.handle();
     let _server_sup = commands_a.supervise(server);
 
-    let client = TcpClientInterface::new_with_id(pinned, addr, BITRATE, Duration::from_millis(100));
+    let client = TcpClientInterface::new_with_id(pinned, addr, BITRATE, ReconnectPolicy::STANDARD);
     let mut node_b = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [single(secret(0xB2))],
@@ -290,7 +291,7 @@ async fn a_reconnecting_peer_reclaims_a_rebooted_relays_routes_through_its_tunne
         let _server_sup = commands_relay.supervise(server);
 
         let client =
-            TcpClientInterface::new_with_id(pinned, addr, BITRATE, Duration::from_millis(100));
+            TcpClientInterface::new_with_id(pinned, addr, BITRATE, ReconnectPolicy::STANDARD);
         let node_c = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: Some(secret(0x77)),
             pre_configured_destinations: [single(secret(0xC5))],
@@ -394,7 +395,7 @@ async fn a_reconnecting_peer_reclaims_a_rebooted_relays_routes_through_its_tunne
     let commands_relay = relay.handle();
     let _server_sup = commands_relay.supervise(server);
 
-    let client = TcpClientInterface::new_with_id(pinned, addr, BITRATE, Duration::from_millis(100));
+    let client = TcpClientInterface::new_with_id(pinned, addr, BITRATE, ReconnectPolicy::STANDARD);
     let node_c = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: Some(secret(0x77)),
         pre_configured_destinations: [single(secret(0xC5))],
@@ -460,7 +461,7 @@ async fn a_quiet_flush_skips_unchanged_regions_and_a_change_rewrites() {
     let commands_a = node_a.handle();
     let _server_sup = commands_a.supervise(server);
 
-    let client = TcpClientInterface::new(addr, BITRATE, Duration::from_millis(100));
+    let client = TcpClientInterface::new(addr, BITRATE, ReconnectPolicy::STANDARD);
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_b = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
@@ -621,7 +622,7 @@ async fn a_rebooted_destination_decrypts_singles_sealed_to_its_pre_reboot_ratche
         let _server_sup = commands_r.supervise(server);
 
         let client =
-            TcpClientInterface::new_with_id(pinned, addr, BITRATE, Duration::from_millis(100));
+            TcpClientInterface::new_with_id(pinned, addr, BITRATE, ReconnectPolicy::STANDARD);
         let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
         let node_p = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: None,
@@ -711,7 +712,7 @@ async fn a_rebooted_destination_decrypts_singles_sealed_to_its_pre_reboot_ratche
     let commands_r = node_r.handle();
     let _server_sup = commands_r.supervise(server);
 
-    let client = TcpClientInterface::new_with_id(pinned, addr, BITRATE, Duration::from_millis(100));
+    let client = TcpClientInterface::new_with_id(pinned, addr, BITRATE, ReconnectPolicy::STANDARD);
     let mut node_p = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [single(secret(0xB2))],

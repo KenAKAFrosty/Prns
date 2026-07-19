@@ -290,6 +290,7 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
         lora_in_producer,
         NOTIFY.sender(),
         lora_out_consumer,
+        seeded_entropy,
     );
 
     let (ble_in_producer, ble_out_consumer) =
@@ -321,6 +322,7 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
         usb_in_producer,
         NOTIFY.sender(),
         usb_out_consumer,
+        seeded_entropy,
     );
 
     // The bridged backend the supervisor drives. Advertising is the supervisor's to enable — it calls

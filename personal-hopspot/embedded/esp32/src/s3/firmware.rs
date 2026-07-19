@@ -200,7 +200,13 @@ pub(super) async fn run_core<B: Esp32S3Board>(
 
     let usb_seam = {
         let (in_producer, out_consumer) = iface_halves[USB_SLOT].take().expect("usb slot half");
-        EmbassyInterfaceSeam::new(usb_id, in_producer, NOTIFY.sender(), out_consumer)
+        EmbassyInterfaceSeam::new(
+            usb_id,
+            in_producer,
+            NOTIFY.sender(),
+            out_consumer,
+            seeded_entropy,
+        )
     };
     spawner.spawn(
         usb_device_task(usb_rx, usb_tx, usb_seam, usb_id, usb_status).expect("usb task fits"),
@@ -215,6 +221,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             lora_in_producer,
             NOTIFY.sender(),
             lora_out_consumer,
+            seeded_entropy,
         )
     };
 
@@ -222,14 +229,25 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let espnow = espnow.map(|interface| {
         let (in_producer, out_consumer) =
             iface_halves[ESPNOW_SLOT].take().expect("espnow slot half");
-        let seam =
-            EmbassyInterfaceSeam::new(interface.id(), in_producer, NOTIFY.sender(), out_consumer);
+        let seam = EmbassyInterfaceSeam::new(
+            interface.id(),
+            in_producer,
+            NOTIFY.sender(),
+            out_consumer,
+            seeded_entropy,
+        );
         (interface, seam)
     });
 
     let tcp = tcp_built.map(|(tcp, _, _)| {
         let (in_producer, out_consumer) = iface_halves[TCP_SLOT].take().expect("tcp slot half");
-        let seam = EmbassyInterfaceSeam::new(tcp.id(), in_producer, NOTIFY.sender(), out_consumer);
+        let seam = EmbassyInterfaceSeam::new(
+            tcp.id(),
+            in_producer,
+            NOTIFY.sender(),
+            out_consumer,
+            seeded_entropy,
+        );
         (tcp, seam)
     });
 

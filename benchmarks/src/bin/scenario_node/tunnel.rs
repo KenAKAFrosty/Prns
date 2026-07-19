@@ -39,7 +39,7 @@ pub(super) async fn run_tunnel_probe(manifest: &Manifest, addr: &str, duration: 
         TCP_INTERFACE_ID,
         addr.to_string(),
         tcp_core::TCP_BITRATE_ESTIMATE,
-        Duration::from_millis(100),
+        ReconnectPolicy::STANDARD,
     );
     tokio::spawn(interface.run(seam));
     tokio::spawn(run(

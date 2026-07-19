@@ -6,6 +6,7 @@ use personal_rns::engine::{
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::BitrateBps;
 use personal_rns::interfaces::InterfaceKind;
+use personal_rns::reactor::reconnect::ReconnectPolicy;
 use personal_rns::routes;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
@@ -90,7 +91,7 @@ async fn an_app_dials_the_shared_instance_and_is_heard_at_a_discounted_hop() {
     let _attached = app_commands.add_interface(TcpClientInterface::new(
         std::format!("127.0.0.1:{port}"),
         BITRATE,
-        Duration::from_millis(100),
+        ReconnectPolicy::STANDARD,
     ));
 
     tokio::spawn(async move {
@@ -169,7 +170,7 @@ async fn a_leaf_shared_instance_carries_announces_across_its_local_boundary() {
         .destination_hash()
         .expect("the network destination is valid");
     let (network_heard_tx, mut network_heard_rx) = tokio::sync::mpsc::unbounded_channel();
-    let network_client = TcpClientInterface::new(network_addr, BITRATE, Duration::from_millis(100));
+    let network_client = TcpClientInterface::new(network_addr, BITRATE, ReconnectPolicy::STANDARD);
     let network_node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [network_single],
@@ -195,7 +196,7 @@ async fn a_leaf_shared_instance_carries_announces_across_its_local_boundary() {
     let local_client = TcpClientInterface::new(
         std::format!("127.0.0.1:{local_port}"),
         BITRATE,
-        Duration::from_millis(100),
+        ReconnectPolicy::STANDARD,
     );
     let local_node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,

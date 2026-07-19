@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use tokio_tungstenite::connect_async_with_config;
 
-use crate::reconnect::ReconnectDelay;
+use crate::reconnect::ReconnectPolicy;
 use crate::websocket::tokio_wire;
 use prns_core::interfaces::websocket::core;
 use prns_core::interfaces::BitrateBps;
@@ -24,19 +24,19 @@ pub struct WebSocketClientInterface {
     id: InterfaceId,
     target: String,
     policy: EffectiveInterfacePolicy,
-    reconnect_delay: ReconnectDelay,
+    reconnect_policy: ReconnectPolicy,
     status: TokioInterfaceStatus,
 }
 
 impl WebSocketClientInterface {
     #[must_use]
-    pub fn new(target: String, bitrate: BitrateBps, reconnect_delay: Duration) -> Self {
+    pub fn new(target: String, bitrate: BitrateBps, reconnect_policy: ReconnectPolicy) -> Self {
         let id = InterfaceId::from_channel_tag(InterfaceKind::WebSocketClient, target.as_bytes());
         Self::with_id_and_policy(
             id,
             target,
             core::policy_for_bitrate(bitrate),
-            reconnect_delay,
+            reconnect_policy,
         )
     }
 
@@ -44,10 +44,10 @@ impl WebSocketClientInterface {
     pub fn with_policy(
         target: String,
         policy: EffectiveInterfacePolicy,
-        reconnect_delay: Duration,
+        reconnect_policy: ReconnectPolicy,
     ) -> Self {
         let id = InterfaceId::from_channel_tag(InterfaceKind::WebSocketClient, target.as_bytes());
-        Self::with_id_and_policy(id, target, policy, reconnect_delay)
+        Self::with_id_and_policy(id, target, policy, reconnect_policy)
     }
 
     /// Build with a caller-chosen id instead of one derived from the dial target. Ordinary nodes
@@ -57,13 +57,13 @@ impl WebSocketClientInterface {
         id: InterfaceId,
         target: String,
         bitrate: BitrateBps,
-        reconnect_delay: Duration,
+        reconnect_policy: ReconnectPolicy,
     ) -> Self {
         Self::with_id_and_policy(
             id,
             target,
             core::policy_for_bitrate(bitrate),
-            reconnect_delay,
+            reconnect_policy,
         )
     }
 
@@ -72,13 +72,13 @@ impl WebSocketClientInterface {
         id: InterfaceId,
         target: String,
         policy: EffectiveInterfacePolicy,
-        reconnect_delay: Duration,
+        reconnect_policy: ReconnectPolicy,
     ) -> Self {
         Self {
             id,
             target,
             policy,
-            reconnect_delay: ReconnectDelay::new(reconnect_delay),
+            reconnect_policy,
             status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
         }
     }
@@ -111,6 +111,7 @@ impl Interface for WebSocketClientInterface {
         let mut airtime = AirtimeLedger::new();
         let mut throughput = ThroughputLedger::new();
         let started = tokio::time::Instant::now();
+        let mut reconnect = self.reconnect_policy.schedule();
         loop {
             let connect = tokio::time::timeout(
                 WEBSOCKET_HANDSHAKE_TIMEOUT,
@@ -132,6 +133,7 @@ impl Interface for WebSocketClientInterface {
             let connected = connect.await;
             match connected {
                 Ok(Ok((socket, _response))) => {
+                    let connected_at = tokio::time::Instant::now();
                     crate::diagnostic_log::debug!(
                         "websocket-client [{interface_origin}]: connected {}",
                         self.target
@@ -153,6 +155,7 @@ impl Interface for WebSocketClientInterface {
                         self.target
                     );
                     self.status.set_connection(ConnectionState::Disconnected);
+                    reconnect.record_connection_lifetime(connected_at.elapsed());
                 }
                 Ok(Err(_)) | Err(_) => {
                     crate::diagnostic_log::debug!(
@@ -161,7 +164,8 @@ impl Interface for WebSocketClientInterface {
                     );
                 }
             }
-            tokio::time::sleep(self.reconnect_delay.duration()).await;
+            let reconnect_delay = reconnect.next_delay(|bytes| seam.fill_entropy(bytes));
+            tokio::time::sleep(reconnect_delay).await;
         }
     }
 }
@@ -199,6 +203,10 @@ mod tests {
     use prns_core::interfaces::FrameSink;
 
     impl InterfaceSeam for MockSeam {
+        fn fill_entropy(&mut self, bytes: &mut [u8]) {
+            bytes.fill(0);
+        }
+
         async fn inbound_sink(&mut self) -> &mut dyn FrameSink {
             &mut self.sink
         }
@@ -247,7 +255,7 @@ mod tests {
         let interface = WebSocketClientInterface::new(
             std::format!("ws://{addr}/prns"),
             core::WEBSOCKET_BITRATE_ESTIMATE,
-            Duration::from_millis(10),
+            ReconnectPolicy::STANDARD,
         );
         tokio::spawn(interface.run(seam));
 

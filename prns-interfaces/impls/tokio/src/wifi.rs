@@ -9,6 +9,7 @@ use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::sync::mpsc::{self, Receiver, Sender, UnboundedReceiver};
 
+use crate::reconnect::ReconnectPolicy;
 use crate::tcp::client::TcpClientInterface;
 use crate::tcp::server::TcpServerConnection;
 use crate::tcp::tokio_socket::tune;
@@ -27,11 +28,7 @@ use prns_runtime::runtime::{AttachedInterface, Fleet, InterfaceSupervisor};
 
 const BEACON_INTERVAL: Duration = Duration::from_millis(1600);
 const UNICAST_REPEER_EVERY: u32 = 3;
-/// How long a local rendezvous link waits before redialing after a failed or dropped connection.
-/// This is intentionally shorter than the reference TCP client's general reconnect wait: gateway,
-/// loopback, and mDNS dials are the WiFi-auto lifeline on SoftAP and phone networks where multicast
-/// is absent, so a dropped peer should not leave the aggregate card Dormant for a long retry window.
-const RENDEZVOUS_REDIAL: Duration = Duration::from_secs(3);
+const RENDEZVOUS_RECONNECT: ReconnectPolicy = ReconnectPolicy::STANDARD;
 /// Beacon cycles between attempts to reclaim the rendezvous port when another local node holds it.
 /// Three cycles of [`BEACON_INTERVAL`] (~5s) — brisk enough to take over promptly once the holder
 /// exits and frees the port, without calling bind() every beacon.
@@ -799,7 +796,7 @@ impl Supervisor {
         }
         crate::diagnostic_log::debug!("wifi-auto: dialing mDNS rendezvous {target}");
         let client =
-            TcpClientInterface::with_policy(target.to_string(), self.policy, RENDEZVOUS_REDIAL);
+            TcpClientInterface::with_policy(target.to_string(), self.policy, RENDEZVOUS_RECONNECT);
         let status = client.status();
         let attached = self.fleet.add(client);
         self.mdns_dials
@@ -884,7 +881,7 @@ impl Supervisor {
             crate::diagnostic_log::debug!(
                 "wifi-auto: dialing gateway rendezvous {target} on ifindex {index}"
             );
-            let client = TcpClientInterface::with_policy(target, self.policy, RENDEZVOUS_REDIAL);
+            let client = TcpClientInterface::with_policy(target, self.policy, RENDEZVOUS_RECONNECT);
             let status = client.status();
             let attached = self.fleet.add(client);
             self.gateways.insert(
@@ -1093,7 +1090,7 @@ fn bounce_to_local_core(
     Some(fleet.add(TcpClientInterface::with_policy(
         target,
         policy,
-        RENDEZVOUS_REDIAL,
+        RENDEZVOUS_RECONNECT,
     )))
 }
 
@@ -1686,6 +1683,10 @@ mod tests {
     use prns_core::interfaces::FrameSink;
 
     impl InterfaceSeam for MockSeam {
+        fn fill_entropy(&mut self, bytes: &mut [u8]) {
+            bytes.fill(0);
+        }
+
         async fn inbound_sink(&mut self) -> &mut dyn FrameSink {
             &mut self.sink
         }

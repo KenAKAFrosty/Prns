@@ -26,7 +26,7 @@ pub(super) fn build_tcp(
         target,
         tag,
         TCP_BITRATE_BPS,
-        Duration::from_secs(5),
+        ReconnectPolicy::STANDARD,
         rx_buffer,
         tx_buffer,
         status,

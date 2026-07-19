@@ -29,6 +29,7 @@ use personal_rns::interfaces::{
     BitrateBps, InterfaceDescriptor, InterfaceId, InterfaceKind, ReportsStatus,
 };
 use personal_rns::reactor::interface_seam::{Interface, InterfaceSeam, MAX_WIRE_FRAME_LEN};
+use personal_rns::reactor::reconnect::ReconnectPolicy;
 use personal_rns::reactor::tokio::{
     run, tokio_grant_lane, AddInterfaceCommand, Egress, HostCommand, ReactorWiring, TokioHost,
     TokioInterfaceSeam,
@@ -542,7 +543,7 @@ where
             TCP_INTERFACE_ID,
             addr.to_string(),
             tcp_core::TCP_BITRATE_ESTIMATE,
-            Duration::from_millis(100),
+            ReconnectPolicy::STANDARD,
         );
         let node = PrnsNode::new(PrnsNodeRecipe {
             transport_identity,
@@ -649,7 +650,7 @@ where
             TCP_INTERFACE_ID,
             addr.to_string(),
             tcp_core::TCP_BITRATE_ESTIMATE,
-            Duration::from_millis(100),
+            ReconnectPolicy::STANDARD,
         );
         PrnsNode::new(PrnsNodeRecipe {
             transport_identity: None,

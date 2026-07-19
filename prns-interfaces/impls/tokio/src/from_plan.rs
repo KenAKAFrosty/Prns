@@ -36,7 +36,7 @@ use crate::i2p::{
 };
 use crate::kiss::{KissInterface, KissSettings, DEFAULT_TNC_CONFIGURE_DELAY};
 use crate::pipe::{PipeInterface, PipeRespawnDelay};
-use crate::reconnect::ReconnectDelay;
+use crate::reconnect::ReconnectPolicy;
 use crate::rnode::{RNodeInterface, RNodeSettings};
 use crate::rnode_host::{RNodeHostOpener, RNODE_BAUD};
 use crate::rnode_multi::{
@@ -61,15 +61,8 @@ use prns_core::interfaces::kiss::transmission_control::{
     StationIdentification,
 };
 
-const TCP_RECONNECT_DELAY: Duration = Duration::from_secs(5);
-const SERIAL_RECONNECT_DELAY: ReconnectDelay = ReconnectDelay::new(Duration::from_millis(500));
+const RECONNECT_POLICY: ReconnectPolicy = ReconnectPolicy::STANDARD;
 const KISS_FLOW_CONTROL_TIMEOUT: ReadyTimeout = ReadyTimeout::new(Duration::from_secs(5));
-/// RNS `RNodeInterface.RECONNECT_WAIT`: an RNode's bring-up handshake is expensive (settle, detect,
-/// configure, validate), so a dropped or absent device is retried on a slower cadence than a bare
-/// serial port.
-const RNODE_RECONNECT_DELAY: ReconnectDelay = ReconnectDelay::new(Duration::from_secs(5));
-const WEAVE_RECONNECT_DELAY: ReconnectDelay = ReconnectDelay::new(Duration::from_secs(5));
-
 /// What became of one planned item, handed to the caller's reporter as it happens.
 pub enum PlanOutcome<'a> {
     Up {
@@ -397,7 +390,7 @@ async fn stand_up(
                     let open_path = open_path.clone();
                     async move { open_host_serial_with_settings(&open_path, line) }
                 },
-                SERIAL_RECONNECT_DELAY,
+                RECONNECT_POLICY,
                 interface.policy,
                 device.as_bytes(),
             );
@@ -438,7 +431,7 @@ async fn stand_up(
                     let open_path = open_path.clone();
                     async move { open_host_serial_with_settings(&open_path, line) }
                 },
-                SERIAL_RECONNECT_DELAY,
+                RECONNECT_POLICY,
                 KissSettings {
                     configure_delay: DEFAULT_TNC_CONFIGURE_DELAY,
                     tnc,
@@ -475,7 +468,7 @@ async fn stand_up(
                     let open_path = open_path.clone();
                     async move { open_host_serial_with_settings(&open_path, line) }
                 },
-                SERIAL_RECONNECT_DELAY,
+                RECONNECT_POLICY,
                 Ax25KissSettings {
                     configure_delay: DEFAULT_TNC_CONFIGURE_DELAY,
                     tnc,
@@ -541,7 +534,7 @@ async fn stand_up(
                             let opener = opener.clone();
                             async move { opener.open().await }
                         },
-                        RNODE_RECONNECT_DELAY,
+                        RECONNECT_POLICY,
                         RNodeSettings {
                             reset_delay: crate::rnode::DEFAULT_RNODE_RESET_DELAY,
                             detect_timeout,
@@ -638,7 +631,7 @@ async fn stand_up(
                     let open_path = open_path.clone();
                     async move { open_host_serial(&open_path, weave_core::WEAVE_SERIAL_BAUD) }
                 },
-                WEAVE_RECONNECT_DELAY,
+                RECONNECT_POLICY,
                 interface.policy,
                 device.as_bytes(),
             );
@@ -748,7 +741,7 @@ fn stand_up_rnode_multi<'a>(
             async move { open_host_serial(&open_path, RNODE_BAUD) }
         },
         RNodeMultiSettings {
-            reconnect_delay: RNODE_RECONNECT_DELAY,
+            reconnect_policy: RECONNECT_POLICY,
             reset_delay: crate::rnode::DEFAULT_RNODE_RESET_DELAY,
             configure_delay: DEFAULT_RNODE_MULTI_CONFIGURE_DELAY,
             station_identification,
@@ -886,7 +879,7 @@ fn runtime_station_identification(
 fn tcp_connection_settings(plan: &TcpDialPlan) -> TcpConnectionSettings {
     TcpConnectionSettings {
         connect_timeout: Duration::from_secs(plan.connect_timeout.get()),
-        reconnect_wait: TCP_RECONNECT_DELAY,
+        reconnect_policy: RECONNECT_POLICY,
         reconnect_limit: match plan.reconnect_limit {
             PlannedReconnectLimit::Unlimited => ReconnectLimit::Unlimited,
             PlannedReconnectLimit::Attempts(attempts) => ReconnectLimit::Attempts(attempts),

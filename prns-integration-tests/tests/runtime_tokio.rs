@@ -13,6 +13,7 @@ use personal_rns::engine::{
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::BitrateBps;
 use personal_rns::interfaces::{InterfaceId, InterfaceKind};
+use personal_rns::reactor::reconnect::ReconnectPolicy;
 use personal_rns::routes;
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
@@ -48,7 +49,7 @@ impl InterfaceSupervisor for DialOnce {
         let _member = fleet.add(TcpClientInterface::new(
             self.addr,
             BITRATE,
-            Duration::from_millis(100),
+            ReconnectPolicy::STANDARD,
         ));
         core::future::pending::<()>().await;
     }
@@ -93,7 +94,7 @@ async fn two_nodes_stand_up_and_one_hears_the_others_announce() {
     let commands_a = node_a.handle();
     let _server_sup = commands_a.supervise(server);
 
-    let client = TcpClientInterface::new(addr, BITRATE, Duration::from_millis(100));
+    let client = TcpClientInterface::new(addr, BITRATE, ReconnectPolicy::STANDARD);
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_b = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
@@ -188,7 +189,7 @@ async fn an_interface_added_through_the_handle_carries_traffic_until_torn_down()
     let attached = commands_b.add_interface(TcpClientInterface::new(
         addr,
         BITRATE,
-        Duration::from_millis(100),
+        ReconnectPolicy::STANDARD,
     ));
 
     assert!(
@@ -376,7 +377,7 @@ async fn the_server_stands_up_a_distinct_member_per_client_and_hears_each_on_its
     let commands_s = node_s.handle();
     let _server_sup = commands_s.supervise(server);
 
-    let client_a = TcpClientInterface::new(addr.clone(), BITRATE, Duration::from_millis(100));
+    let client_a = TcpClientInterface::new(addr.clone(), BITRATE, ReconnectPolicy::STANDARD);
     let node_a = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [single_a],
@@ -390,7 +391,7 @@ async fn the_server_stands_up_a_distinct_member_per_client_and_hears_each_on_its
     });
     let commands_a = node_a.handle();
 
-    let client_b = TcpClientInterface::new(addr, BITRATE, Duration::from_millis(100));
+    let client_b = TcpClientInterface::new(addr, BITRATE, ReconnectPolicy::STANDARD);
     let node_b = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [single_b],
@@ -500,7 +501,7 @@ async fn a_recipe_accept_destination_receives_a_resource() {
     let _server_sup = commands_a.supervise(server);
 
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
-    let client = TcpClientInterface::new(addr, BITRATE, Duration::from_millis(100));
+    let client = TcpClientInterface::new(addr, BITRATE, ReconnectPolicy::STANDARD);
     let node_b = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [single(secret(0xF2))],

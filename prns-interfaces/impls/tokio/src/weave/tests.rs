@@ -7,7 +7,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 
 use super::status::WeaveInterfaceStatus;
 use super::supervisor::WeaveInterface;
-use crate::reconnect::ReconnectDelay;
+use crate::reconnect::ReconnectPolicy;
 use prns_core::interfaces::rns_serial_framing::{self, RnsSerialDecoder};
 use prns_core::interfaces::weave::{core, wdcl};
 use prns_core::interfaces::{ConnectionState, InterfaceId, InterfaceStatus};
@@ -74,7 +74,7 @@ async fn fake_device_completes_handshake_and_populates_endpoint_members() {
     };
     let interface = WeaveInterface::with_identity(
         open,
-        ReconnectDelay::new(Duration::from_millis(10)),
+        ReconnectPolicy::STANDARD,
         core::configured_policy(Default::default()),
         b"fake-weave",
         host_identity,

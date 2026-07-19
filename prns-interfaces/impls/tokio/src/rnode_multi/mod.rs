@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::future::Future;
 use std::io;
+use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncWrite};
 
@@ -12,7 +13,7 @@ use prns_core::interfaces::rnode::{core, multi};
 use prns_core::interfaces::{EffectiveInterfacePolicy, InterfaceId, InterfaceKind};
 use prns_runtime::runtime::PrnsNodeHandle;
 
-use crate::reconnect::ReconnectDelay;
+use crate::reconnect::ReconnectPolicy;
 use crate::rnode::RNodeResetDelay;
 
 mod bring_up;
@@ -136,7 +137,7 @@ pub struct RNodeMultiInterface<Open> {
     name: String,
     device: String,
     open: Open,
-    reconnect_delay: ReconnectDelay,
+    reconnect_policy: ReconnectPolicy,
     reset_delay: RNodeResetDelay,
     configure_delay: RNodeMultiConfigureDelay,
     station_identification: Option<StationIdentification>,
@@ -144,7 +145,7 @@ pub struct RNodeMultiInterface<Open> {
 }
 
 pub struct RNodeMultiSettings {
-    pub reconnect_delay: ReconnectDelay,
+    pub reconnect_policy: ReconnectPolicy,
     pub reset_delay: RNodeResetDelay,
     pub configure_delay: RNodeMultiConfigureDelay,
     pub station_identification: Option<StationIdentification>,
@@ -169,7 +170,7 @@ impl<Open> RNodeMultiInterface<Open> {
             name: name.into(),
             device: device.into(),
             open,
-            reconnect_delay: settings.reconnect_delay,
+            reconnect_policy: settings.reconnect_policy,
             reset_delay: settings.reset_delay,
             configure_delay: settings.configure_delay,
             station_identification: settings.station_identification,
@@ -206,21 +207,27 @@ where
         let mut decoder = Box::new(core::CommandDecoder::new());
         let mut read = vec![0u8; core::READ_BUF_LEN].into_boxed_slice();
         let mut cycle = self.cycle;
+        let mut reconnect = self.interface.reconnect_policy.schedule();
         loop {
+            let mut connected_at = None;
             let result = self
                 .interface
-                .run_connection(&mut cycle, &mut decoder, &mut read)
+                .run_connection(&mut cycle, &mut decoder, &mut read, &mut connected_at)
                 .await;
             drop(cycle);
+            if let Some(connected_at) = connected_at {
+                reconnect.record_connection_lifetime(connected_at.elapsed());
+            }
+            let reconnect_delay = reconnect.next_delay(|bytes| self.handle.fill_entropy(bytes));
             if let Err(error) = result {
                 report_connection_failure(
                     &self.interface.name,
                     &self.interface.device,
-                    self.interface.reconnect_delay,
+                    reconnect_delay,
                     &error,
                 );
             }
-            tokio::time::sleep(self.interface.reconnect_delay.duration()).await;
+            tokio::time::sleep(reconnect_delay).await;
             cycle = RuntimeCycle::attach(
                 &self.handle,
                 self.interface.members.iter(),
@@ -236,6 +243,7 @@ impl<Open> RNodeMultiInterface<Open> {
         cycle: &mut RuntimeCycle,
         decoder: &mut core::CommandDecoder,
         read: &mut [u8],
+        connected_at: &mut Option<tokio::time::Instant>,
     ) -> io::Result<()>
     where
         Open: FnMut() -> Fut,
@@ -255,6 +263,7 @@ impl<Open> RNodeMultiInterface<Open> {
         )
         .await?;
         cycle.mark_connected(platform);
+        *connected_at = Some(tokio::time::Instant::now());
         cycle.serve(&mut stream, decoder, read).await
     }
 }
@@ -262,7 +271,7 @@ impl<Open> RNodeMultiInterface<Open> {
 fn report_connection_failure(
     name: &str,
     device: &str,
-    reconnect_delay: ReconnectDelay,
+    reconnect_delay: Duration,
     error: &io::Error,
 ) {
     #[cfg(feature = "tracing")]
@@ -271,13 +280,13 @@ fn report_connection_failure(
         event = "rnode_multi_connection_failed",
         interface_name = name,
         device,
-        retry_after_ms = reconnect_delay.duration().as_millis() as u64,
+        retry_after_ms = reconnect_delay.as_millis() as u64,
         error = %error,
     );
     #[cfg(not(feature = "tracing"))]
     crate::diagnostic_log::error!(
         "RNodeMulti interface [{name}] on {device}: {error}; retrying in {:?}",
-        reconnect_delay.duration()
+        reconnect_delay
     );
 }
 

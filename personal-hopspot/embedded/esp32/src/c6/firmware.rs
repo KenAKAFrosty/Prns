@@ -52,7 +52,13 @@ pub(crate) async fn run(spawner: Spawner) {
         let (out_producer, out_consumer) = embassy_grant_lane(out_ch);
         let _ = inbound.push((FREE_SLOT, in_consumer));
         let _ = egress_lanes.push((FREE_SLOT, out_producer));
-        EmbassyInterfaceSeam::new(USB_INTERFACE_ID, in_producer, NOTIFY.sender(), out_consumer)
+        EmbassyInterfaceSeam::new(
+            USB_INTERFACE_ID,
+            in_producer,
+            NOTIFY.sender(),
+            out_consumer,
+            seeded_entropy,
+        )
     };
     spawner.spawn(usb_device_task(usb_rx, usb_tx, usb_seam).expect("usb device task fits"));
 
@@ -88,7 +94,13 @@ pub(crate) async fn run(spawner: Spawner) {
         let (out_producer, out_consumer) = embassy_grant_lane(out_ch);
         let _ = inbound.push((FREE_SLOT, in_consumer));
         let _ = egress_lanes.push((FREE_SLOT, out_producer));
-        EmbassyInterfaceSeam::new(espnow.id(), in_producer, NOTIFY.sender(), out_consumer)
+        EmbassyInterfaceSeam::new(
+            espnow.id(),
+            in_producer,
+            NOTIFY.sender(),
+            out_consumer,
+            seeded_entropy,
+        )
     };
 
     #[cfg(feature = "ble-bringup-c6")]

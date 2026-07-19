@@ -1,6 +1,7 @@
 use std::string::String;
 
 use crate::framed_stream;
+use crate::reconnect::ReconnectPolicy;
 use crate::tcp::tokio_socket::{connect, tune_for_tunnel, TcpConnectionSettings};
 use prns_core::interfaces::tcp::core;
 use prns_core::interfaces::tcp::core::TcpWireFraming;
@@ -12,6 +13,7 @@ use prns_runtime::reactor::airtime::AirtimeLedger;
 use prns_runtime::reactor::driver::TokioInterfaceStatus;
 use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
 use prns_runtime::reactor::throughput::ThroughputLedger;
+#[cfg(test)]
 use std::time::Duration;
 
 /// The initiating end of an RNS TCP pair (`TCPClientInterface` parity): owns the
@@ -33,13 +35,13 @@ pub struct TcpClientInterface {
 
 impl TcpClientInterface {
     #[must_use]
-    pub fn new(target: String, bitrate: BitrateBps, reconnect_delay: Duration) -> Self {
+    pub fn new(target: String, bitrate: BitrateBps, reconnect_policy: ReconnectPolicy) -> Self {
         let id = InterfaceId::from_channel_tag(InterfaceKind::TcpClient, target.as_bytes());
         Self::with_id_policy_and_framing(
             id,
             target,
             core::policy_for_bitrate(bitrate),
-            reconnect_delay,
+            reconnect_policy,
             TcpWireFraming::Hdlc,
         )
     }
@@ -48,22 +50,22 @@ impl TcpClientInterface {
     pub fn with_policy(
         target: String,
         policy: EffectiveInterfacePolicy,
-        reconnect_delay: Duration,
+        reconnect_policy: ReconnectPolicy,
     ) -> Self {
         let id = InterfaceId::from_channel_tag(InterfaceKind::TcpClient, target.as_bytes());
-        Self::with_id_policy_and_framing(id, target, policy, reconnect_delay, TcpWireFraming::Hdlc)
+        Self::with_id_policy_and_framing(id, target, policy, reconnect_policy, TcpWireFraming::Hdlc)
     }
 
     #[must_use]
     pub fn with_policy_and_framing(
         target: String,
         policy: EffectiveInterfacePolicy,
-        reconnect_delay: Duration,
+        reconnect_policy: ReconnectPolicy,
         framing: TcpWireFraming,
     ) -> Self {
         let channel_tag = channel_tag(&target, framing);
         let id = InterfaceId::from_channel_tag(InterfaceKind::TcpClient, &channel_tag);
-        Self::with_id_policy_and_framing(id, target, policy, reconnect_delay, framing)
+        Self::with_id_policy_and_framing(id, target, policy, reconnect_policy, framing)
     }
 
     #[must_use]
@@ -84,7 +86,7 @@ impl TcpClientInterface {
     pub fn with_framing(
         target: String,
         bitrate: BitrateBps,
-        reconnect_delay: Duration,
+        reconnect_policy: ReconnectPolicy,
         framing: TcpWireFraming,
     ) -> Self {
         let channel_tag = channel_tag(&target, framing);
@@ -93,7 +95,7 @@ impl TcpClientInterface {
             id,
             target,
             core::policy_for_bitrate(bitrate),
-            reconnect_delay,
+            reconnect_policy,
             framing,
         )
     }
@@ -106,13 +108,13 @@ impl TcpClientInterface {
         id: InterfaceId,
         target: String,
         bitrate: BitrateBps,
-        reconnect_delay: Duration,
+        reconnect_policy: ReconnectPolicy,
     ) -> Self {
         Self::with_id_policy_and_framing(
             id,
             target,
             core::policy_for_bitrate(bitrate),
-            reconnect_delay,
+            reconnect_policy,
             TcpWireFraming::Hdlc,
         )
     }
@@ -122,14 +124,14 @@ impl TcpClientInterface {
         id: InterfaceId,
         target: String,
         bitrate: BitrateBps,
-        reconnect_delay: Duration,
+        reconnect_policy: ReconnectPolicy,
         framing: TcpWireFraming,
     ) -> Self {
         Self::with_id_policy_and_framing(
             id,
             target,
             core::policy_for_bitrate(bitrate),
-            reconnect_delay,
+            reconnect_policy,
             framing,
         )
     }
@@ -139,9 +141,9 @@ impl TcpClientInterface {
         id: InterfaceId,
         target: String,
         policy: EffectiveInterfacePolicy,
-        reconnect_delay: Duration,
+        reconnect_policy: ReconnectPolicy,
     ) -> Self {
-        Self::with_id_policy_and_framing(id, target, policy, reconnect_delay, TcpWireFraming::Hdlc)
+        Self::with_id_policy_and_framing(id, target, policy, reconnect_policy, TcpWireFraming::Hdlc)
     }
 
     #[must_use]
@@ -149,7 +151,7 @@ impl TcpClientInterface {
         id: InterfaceId,
         target: String,
         policy: EffectiveInterfacePolicy,
-        reconnect_delay: Duration,
+        reconnect_policy: ReconnectPolicy,
         framing: TcpWireFraming,
     ) -> Self {
         Self::with_id_policy_framing_and_connection_settings(
@@ -158,7 +160,7 @@ impl TcpClientInterface {
             policy,
             framing,
             TcpConnectionSettings {
-                reconnect_wait: reconnect_delay,
+                reconnect_policy,
                 ..TcpConnectionSettings::STOCK
             },
         )
@@ -232,6 +234,7 @@ impl Interface for TcpClientInterface {
             >,
         > = None;
         let mut reconnect_attempts = 0u32;
+        let mut reconnect = self.connection.reconnect_policy.schedule();
         loop {
             #[cfg(feature = "tracing")]
             let connected = tracing::Instrument::instrument(
@@ -248,6 +251,7 @@ impl Interface for TcpClientInterface {
             #[cfg(not(feature = "tracing"))]
             let connected = connect(self.target.as_str(), self.connection).await;
             if let Ok(stream) = connected {
+                let connected_at = tokio::time::Instant::now();
                 tune_for_tunnel(&stream, self.connection.tunnel);
                 crate::diagnostic_log::debug!(
                     "tcp-client [{interface_origin}]: connected {}",
@@ -302,6 +306,7 @@ impl Interface for TcpClientInterface {
                 );
                 self.status.set_connection(ConnectionState::Disconnected);
                 reconnect_attempts = 0;
+                reconnect.record_connection_lifetime(connected_at.elapsed());
             } else {
                 crate::diagnostic_log::debug!(
                     "tcp-client [{interface_origin}]: connect failed {}, retrying",
@@ -309,7 +314,6 @@ impl Interface for TcpClientInterface {
                 );
                 self.status.set_connection(ConnectionState::Disconnected);
             }
-            tokio::time::sleep(self.connection.reconnect_wait).await;
             if self
                 .connection
                 .reconnect_limit
@@ -317,7 +321,9 @@ impl Interface for TcpClientInterface {
             {
                 return;
             }
+            let reconnect_delay = reconnect.next_delay(|bytes| seam.fill_entropy(bytes));
             reconnect_attempts = reconnect_attempts.saturating_add(1);
+            tokio::time::sleep(reconnect_delay).await;
         }
     }
 }
@@ -364,6 +370,10 @@ mod tests {
     use prns_core::interfaces::FrameSink;
 
     impl InterfaceSeam for MockSeam {
+        fn fill_entropy(&mut self, bytes: &mut [u8]) {
+            bytes.fill(0);
+        }
+
         async fn inbound_sink(&mut self) -> &mut dyn FrameSink {
             &mut self.sink
         }
@@ -439,7 +449,7 @@ mod tests {
         let interface = TcpClientInterface::new(
             addr.to_string(),
             core::TCP_BITRATE_ESTIMATE,
-            Duration::from_millis(10),
+            ReconnectPolicy::STANDARD,
         );
         tokio::spawn(interface.run(seam));
 
@@ -501,7 +511,7 @@ mod tests {
         let interface = TcpClientInterface::with_framing(
             addr.to_string(),
             core::TCP_BITRATE_ESTIMATE,
-            Duration::from_millis(10),
+            ReconnectPolicy::STANDARD,
             TcpWireFraming::Kiss,
         );
         tokio::spawn(interface.run(seam));
@@ -542,13 +552,13 @@ mod tests {
         let hdlc = TcpClientInterface::with_framing(
             "peer.example:4242".to_string(),
             core::TCP_BITRATE_ESTIMATE,
-            Duration::from_secs(5),
+            ReconnectPolicy::STANDARD,
             TcpWireFraming::Hdlc,
         );
         let kiss = TcpClientInterface::with_framing(
             "peer.example:4242".to_string(),
             core::TCP_BITRATE_ESTIMATE,
-            Duration::from_secs(5),
+            ReconnectPolicy::STANDARD,
             TcpWireFraming::Kiss,
         );
         assert_ne!(hdlc.id(), kiss.id());

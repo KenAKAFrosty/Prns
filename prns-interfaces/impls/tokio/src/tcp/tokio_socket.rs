@@ -1,9 +1,9 @@
 //! The reference's TCP socket discipline and connection timings under tokio, shared by the
 //! [`client`](super::client) and [`server`](super::server) bodies: Nagle off so a Reticulum frame
 //! hits the wire when it is written, the keepalive probe schedule that declares a silent peer dead,
-//! and the connect/reconnect waits (`TCPClientInterface.INITIAL_CONNECT_TIMEOUT` /
-//! `RECONNECT_WAIT`). Both ends apply the same discipline, so it lives here once.
+//! and the connect wait (`TCPClientInterface.INITIAL_CONNECT_TIMEOUT`).
 
+use crate::reconnect::ReconnectPolicy;
 #[cfg(feature = "tcp")]
 use std::io;
 #[cfg(feature = "tcp")]
@@ -16,10 +16,6 @@ use tokio::net::TcpStream;
 /// How long one connect attempt gets (`TCPClientInterface.INITIAL_CONNECT_TIMEOUT`).
 #[cfg(feature = "tcp")]
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
-/// How long a failed or dropped connection waits before the next attempt
-/// (`TCPClientInterface.RECONNECT_WAIT`).
-#[cfg(feature = "tcp")]
-pub const RECONNECT_WAIT: Duration = Duration::from_secs(5);
 /// The reference's keepalive discipline: probe after 5s idle, every 2s, and a peer that
 /// misses 12 probes — or leaves writes unacknowledged for 24s — is declared dead, so the
 /// stream drops and the reconnect loop takes over.
@@ -72,7 +68,7 @@ impl ReconnectLimit {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TcpConnectionSettings {
     pub connect_timeout: Duration,
-    pub reconnect_wait: Duration,
+    pub reconnect_policy: ReconnectPolicy,
     pub reconnect_limit: ReconnectLimit,
     pub address_family: AddressFamilyPreference,
     pub tunnel: TcpTunnelMode,
@@ -82,7 +78,7 @@ pub struct TcpConnectionSettings {
 impl TcpConnectionSettings {
     pub const STOCK: Self = Self {
         connect_timeout: CONNECT_TIMEOUT,
-        reconnect_wait: RECONNECT_WAIT,
+        reconnect_policy: ReconnectPolicy::STANDARD,
         reconnect_limit: ReconnectLimit::Unlimited,
         address_family: AddressFamilyPreference::System,
         tunnel: TcpTunnelMode::Direct,

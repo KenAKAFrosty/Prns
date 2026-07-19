@@ -3,7 +3,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::interfaces::{FrameSink, InterfaceId, InterfaceOriginKind, PacketPhyStats};
 use crate::reactor::interface_seam::InterfaceSeam;
 
-use super::{HostCommand, TokioGrantConsumer, TokioGrantProducer};
+use super::{HostCommand, TokioEntropy, TokioGrantConsumer, TokioGrantProducer};
 
 /// The tokio side of one interface's seam: `next_inbound` frames funnel into the reactor's one inbound stream (tagged with this interface's id), and `next_outbound` parks on this interface's own outbound queue until the reactor enqueues a frame for it.
 pub struct TokioInterfaceSeam {
@@ -13,6 +13,7 @@ pub struct TokioInterfaceSeam {
     notify: UnboundedSender<InterfaceId>,
     outbound: TokioGrantConsumer,
     commands: Option<UnboundedSender<HostCommand>>,
+    entropy: TokioEntropy,
 }
 
 impl TokioInterfaceSeam {
@@ -30,6 +31,7 @@ impl TokioInterfaceSeam {
             notify,
             outbound,
             commands: None,
+            entropy: TokioEntropy,
         }
     }
 
@@ -47,6 +49,10 @@ impl TokioInterfaceSeam {
 }
 
 impl InterfaceSeam for TokioInterfaceSeam {
+    fn fill_entropy(&mut self, bytes: &mut [u8]) {
+        self.entropy.fill(bytes);
+    }
+
     fn interface_origin(&self) -> InterfaceOriginKind {
         self.origin
     }

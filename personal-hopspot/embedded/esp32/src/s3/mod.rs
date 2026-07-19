@@ -94,6 +94,7 @@ use personal_rns::reactor::embassy::{
 };
 use personal_rns::reactor::grant::FrameSlot;
 use personal_rns::reactor::interface_seam::{Interface, EMBEDDED_MAX_WIRE_FRAME_LEN};
+use personal_rns::reactor::reconnect::ReconnectPolicy;
 use personal_rns::runtime::{
     CompletionPool, EmbassyInterfaceStore, Fleet, FleetWire, PreConfiguredDestination, PrnsEvent,
     PrnsNode, PrnsNodeHandle, PrnsNodeRecipe, ReactorPlumbing, RequestHandlerRegistration,

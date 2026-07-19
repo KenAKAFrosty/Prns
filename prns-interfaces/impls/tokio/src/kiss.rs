@@ -6,7 +6,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::framed_stream::WireMeters;
 use crate::kiss_deadline::{elapsed_millis, wait_for_deadline};
-use crate::reconnect::ReconnectDelay;
+use crate::reconnect::ReconnectPolicy;
 use prns_core::engine::InstantMillis;
 use prns_core::interfaces::kiss::core::{self, TncConfig};
 use prns_core::interfaces::kiss::transmission_control::{
@@ -50,7 +50,7 @@ pub const DEFAULT_TNC_CONFIGURE_DELAY: TncConfigureDelay =
 pub struct KissInterface<Open> {
     id: InterfaceId,
     open: Open,
-    reconnect_delay: ReconnectDelay,
+    reconnect_policy: ReconnectPolicy,
     configure_delay: TncConfigureDelay,
     tnc: TncConfig,
     flow_control: ReadyCommandFlowControl,
@@ -74,10 +74,10 @@ impl<Open> KissInterface<Open> {
     /// serial device this is (the port name or a stable device id), exactly as for the serial
     /// interface — the same device across a reopen should pass the same bytes so its routes survive.
     #[must_use]
-    pub fn new(open: Open, reconnect_delay: ReconnectDelay, channel_tag: &[u8]) -> Self {
+    pub fn new(open: Open, reconnect_policy: ReconnectPolicy, channel_tag: &[u8]) -> Self {
         Self::with_settings(
             open,
-            reconnect_delay,
+            reconnect_policy,
             DEFAULT_TNC_CONFIGURE_DELAY,
             TncConfig::default(),
             channel_tag,
@@ -89,14 +89,14 @@ impl<Open> KissInterface<Open> {
     #[must_use]
     pub fn with_settings(
         open: Open,
-        reconnect_delay: ReconnectDelay,
+        reconnect_policy: ReconnectPolicy,
         configure_delay: TncConfigureDelay,
         tnc: TncConfig,
         channel_tag: &[u8],
     ) -> Self {
         Self::with_settings_and_policy(
             open,
-            reconnect_delay,
+            reconnect_policy,
             configure_delay,
             tnc,
             core::configured_policy(Default::default()),
@@ -107,7 +107,7 @@ impl<Open> KissInterface<Open> {
     #[must_use]
     pub fn with_settings_and_policy(
         open: Open,
-        reconnect_delay: ReconnectDelay,
+        reconnect_policy: ReconnectPolicy,
         configure_delay: TncConfigureDelay,
         tnc: TncConfig,
         policy: EffectiveInterfacePolicy,
@@ -115,7 +115,7 @@ impl<Open> KissInterface<Open> {
     ) -> Self {
         Self::with_runtime_settings(
             open,
-            reconnect_delay,
+            reconnect_policy,
             KissSettings {
                 configure_delay,
                 tnc,
@@ -130,7 +130,7 @@ impl<Open> KissInterface<Open> {
     #[must_use]
     pub fn with_runtime_settings(
         open: Open,
-        reconnect_delay: ReconnectDelay,
+        reconnect_policy: ReconnectPolicy,
         settings: KissSettings<'_>,
     ) -> Self {
         let channel_tag = settings.channel_tag.to_vec();
@@ -138,7 +138,7 @@ impl<Open> KissInterface<Open> {
         Self {
             id,
             open,
-            reconnect_delay,
+            reconnect_policy,
             configure_delay: settings.configure_delay,
             tnc: settings.tnc,
             flow_control: settings.flow_control,
@@ -402,6 +402,7 @@ where
                 { core::FRAMED_LEN },
             >,
         > = None;
+        let mut reconnect = self.reconnect_policy.schedule();
         loop {
             if let Ok(mut stream) = (self.open)().await {
                 if !self.configure_delay.duration().is_zero() {
@@ -410,6 +411,7 @@ where
                 // A TNC that drops while being configured is just a dropped connection: skip serving
                 // and fall through to the reconnect wait, exactly as a mid-serve drop would.
                 if configure_tnc(&mut stream, &self.tnc).await.is_ok() {
+                    let connected_at = tokio::time::Instant::now();
                     self.status.set_connection(ConnectionState::Connected);
                     serve_controlled_kiss(
                         &mut stream,
@@ -426,9 +428,11 @@ where
                     )
                     .await;
                     self.status.set_connection(ConnectionState::Disconnected);
+                    reconnect.record_connection_lifetime(connected_at.elapsed());
                 }
             }
-            tokio::time::sleep(self.reconnect_delay.duration()).await;
+            let reconnect_delay = reconnect.next_delay(|bytes| seam.fill_entropy(bytes));
+            tokio::time::sleep(reconnect_delay).await;
         }
     }
 }
@@ -469,6 +473,10 @@ mod tests {
     use prns_core::interfaces::FrameSink;
 
     impl InterfaceSeam for MockSeam {
+        fn fill_entropy(&mut self, bytes: &mut [u8]) {
+            bytes.fill(0);
+        }
+
         async fn inbound_sink(&mut self) -> &mut dyn FrameSink {
             &mut self.sink
         }
@@ -522,7 +530,7 @@ mod tests {
         // settle = ZERO so the test does not wait the real two-second TNC boot delay.
         let interface = KissInterface::with_settings(
             open,
-            ReconnectDelay::new(Duration::from_millis(10)),
+            ReconnectPolicy::STANDARD,
             TncConfigureDelay::new(Duration::ZERO),
             TncConfig::default(),
             b"test-kiss",
@@ -645,7 +653,7 @@ mod tests {
         };
         let interface = KissInterface::with_runtime_settings(
             open,
-            ReconnectDelay::new(Duration::from_millis(10)),
+            ReconnectPolicy::STANDARD,
             KissSettings {
                 configure_delay: TncConfigureDelay::new(Duration::ZERO),
                 tnc: TncConfig::default(),
@@ -714,7 +722,7 @@ mod tests {
         .expect("valid station identification");
         let interface = KissInterface::with_runtime_settings(
             open,
-            ReconnectDelay::new(Duration::from_millis(10)),
+            ReconnectPolicy::STANDARD,
             KissSettings {
                 configure_delay: TncConfigureDelay::new(Duration::ZERO),
                 tnc: TncConfig::default(),

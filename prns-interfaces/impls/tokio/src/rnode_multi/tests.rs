@@ -468,7 +468,7 @@ async fn a_serial_drop_removes_and_recreates_every_logical_radio_together() {
             async move { opened.ok_or_else(|| io::Error::from(io::ErrorKind::NotConnected)) }
         },
         RNodeMultiSettings {
-            reconnect_delay: ReconnectDelay::new(Duration::from_millis(10)),
+            reconnect_policy: ReconnectPolicy::STANDARD,
             reset_delay: RNodeResetDelay::new(Duration::ZERO),
             configure_delay: RNodeMultiConfigureDelay::new(Duration::ZERO),
             station_identification: None,

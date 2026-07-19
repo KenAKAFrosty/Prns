@@ -22,7 +22,10 @@ fn packet_phy_crosses_the_embassy_ingress_seam_with_its_frame() {
         snr: Some(crate::interfaces::SnrQuarterDb::new(-9)),
         quality: crate::interfaces::SignalQualityTenthsPercent::new(875),
     };
-    let mut seam = EmbassyInterfaceSeam::new(interface, inbound, notify.sender(), outbound);
+    let mut seam =
+        EmbassyInterfaceSeam::new(interface, inbound, notify.sender(), outbound, |bytes| {
+            bytes.fill(0)
+        });
 
     block_on(seam.next_inbound_with_phy(b"observed", packet_phy));
 
