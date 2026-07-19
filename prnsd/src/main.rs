@@ -17,6 +17,7 @@ mod cli;
 mod construct;
 mod identity;
 mod i2p_doctor;
+mod i2p_setup;
 mod interface_discovery;
 mod management_announces;
 #[cfg(feature = "otlp")]
@@ -168,12 +169,9 @@ async fn main() -> ExitCode {
 async fn run_i2p_command(args: cli::I2pArgs) -> ExitCode {
     match args.command {
         cli::I2pCommand::Doctor(args) => {
-            let remote_access = if args.allow_remote_sam {
-                i2p_doctor::RemoteSamAccess::ExplicitlyAllowed
-            } else {
-                i2p_doctor::RemoteSamAccess::LoopbackOnly
-            };
-            let request = i2p_doctor::I2pDoctorRequest::new(args.sam_bridge, remote_access);
+            let remote_access = remote_sam_access(&args.sam);
+            let request =
+                i2p_doctor::I2pDoctorRequest::new(args.sam.sam_bridge, remote_access);
             match i2p_doctor::run(request).await {
                 Ok(ready) => {
                     println!("{ready}");
@@ -185,6 +183,47 @@ async fn run_i2p_command(args: cli::I2pArgs) -> ExitCode {
                 }
             }
         }
+        cli::I2pCommand::Setup(args) => {
+            let remote_access = remote_sam_access(&args.sam);
+            let reachability = if args.connectable {
+                i2p_setup::SetupReachability::Connectable
+            } else {
+                i2p_setup::SetupReachability::OutboundOnly
+            };
+            let browser = if args.open_guidance {
+                i2p_setup::BrowserPreference::OpenApplicablePage
+            } else {
+                i2p_setup::BrowserPreference::PrintOnly
+            };
+            let request = match i2p_setup::I2pSetupRequest::new(
+                args.sam.sam_bridge,
+                remote_access,
+                args.peer,
+                reachability,
+                browser,
+            ) {
+                Ok(request) => request,
+                Err(error) => {
+                    eprintln!("prnsd: {error}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            let report = i2p_setup::run(request).await;
+            println!("{report}");
+            if report.is_ready() {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            }
+        }
+    }
+}
+
+fn remote_sam_access(args: &cli::I2pSamArgs) -> i2p_doctor::RemoteSamAccess {
+    if args.allow_remote_sam {
+        i2p_doctor::RemoteSamAccess::ExplicitlyAllowed
+    } else {
+        i2p_doctor::RemoteSamAccess::LoopbackOnly
     }
 }
 

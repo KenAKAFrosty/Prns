@@ -83,6 +83,20 @@ plaintext and carries I2P destination credentials. Prefer a loopback endpoint or
 loopback. `--allow-remote-sam` explicitly acknowledges the risk for a trusted private path; it does
 not add encryption or authentication.
 
+Run `cargo prnsd i2p setup` for a non-mutating guided setup. It detects the native operating system,
+architecture, and Debian-family Linux where applicable; reruns the doctor; prints the appropriate
+official Java I2P installation or SAM-enablement guidance; and emits a validated `I2PInterface`
+stanza to place beneath `[interfaces]`. Add repeatable `--peer NAME_OR_DESTINATION` values and
+`--connectable` to shape that stanza. An outbound-only stanza without peers is valid but remains
+idle. `--open` explicitly opens only the applicable official download page or the local Java I2P
+SAM configuration page.
+
+The setup command does not download or execute installers, add package repositories, elevate
+privileges, install services, edit configuration, or change router and firewall settings. It keeps
+the official artifact, signature, and platform instructions visible for operator review. A
+connectable interface creates persistent I2P destination credentials when Prnsd runs; protect and
+back up the Prns storage containing them.
+
 ## Common interface behavior
 
 Every enabled interface applies `mode`, `outgoing`, `bitrate`, announce cap and rate controls, IFAC

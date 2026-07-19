@@ -2,7 +2,7 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use personal_rns::i2p::SamBridgeAddress;
+use personal_rns::i2p::{I2pPeerAddress, I2pPeerAddressError, SamBridgeAddress};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
 pub enum LogFormat {
@@ -58,10 +58,12 @@ pub struct I2pArgs {
 pub enum I2pCommand {
     #[command(about = "Check I2P router and SAM 3.1 readiness")]
     Doctor(I2pDoctorArgs),
+    #[command(about = "Guide I2P installation, SAM enablement, and Prns configuration")]
+    Setup(I2pSetupArgs),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Args)]
-pub struct I2pDoctorArgs {
+pub struct I2pSamArgs {
     #[arg(
         long,
         value_name = "HOST:PORT",
@@ -75,6 +77,39 @@ pub struct I2pDoctorArgs {
         help = "Allow plaintext SAM over an explicitly trusted non-loopback path"
     )]
     pub allow_remote_sam: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Args)]
+pub struct I2pDoctorArgs {
+    #[command(flatten)]
+    pub sam: I2pSamArgs,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Args)]
+pub struct I2pSetupArgs {
+    #[command(flatten)]
+    pub sam: I2pSamArgs,
+
+    #[arg(
+        long,
+        value_name = "NAME_OR_DESTINATION",
+        value_parser = parse_i2p_peer,
+        help = "Add an outbound I2P peer to the emitted interface stanza"
+    )]
+    pub peer: Vec<I2pPeerAddress>,
+
+    #[arg(long, help = "Make the emitted I2P interface accept inbound peers")]
+    pub connectable: bool,
+
+    #[arg(
+        long = "open",
+        help = "Open the applicable official download or local SAM configuration page"
+    )]
+    pub open_guidance: bool,
+}
+
+fn parse_i2p_peer(value: &str) -> Result<I2pPeerAddress, I2pPeerAddressError> {
+    I2pPeerAddress::new(value)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Subcommand)]
@@ -175,8 +210,10 @@ mod tests {
             parse(&["prnsd", "i2p", "doctor"]),
             Command::I2p(I2pArgs {
                 command: I2pCommand::Doctor(I2pDoctorArgs {
-                    sam_bridge: SamBridgeAddress::default(),
-                    allow_remote_sam: false,
+                    sam: I2pSamArgs {
+                        sam_bridge: SamBridgeAddress::default(),
+                        allow_remote_sam: false,
+                    },
                 }),
             })
         );
@@ -195,8 +232,36 @@ mod tests {
             ]),
             Command::I2p(I2pArgs {
                 command: I2pCommand::Doctor(I2pDoctorArgs {
-                    sam_bridge: SamBridgeAddress::new("router.internal:7656").unwrap(),
-                    allow_remote_sam: true,
+                    sam: I2pSamArgs {
+                        sam_bridge: SamBridgeAddress::new("router.internal:7656").unwrap(),
+                        allow_remote_sam: true,
+                    },
+                }),
+            })
+        );
+    }
+
+    #[test]
+    fn i2p_setup_parses_typed_stanza_and_browser_choices() {
+        assert_eq!(
+            parse(&[
+                "prnsd",
+                "i2p",
+                "setup",
+                "--peer",
+                "example.i2p",
+                "--connectable",
+                "--open",
+            ]),
+            Command::I2p(I2pArgs {
+                command: I2pCommand::Setup(I2pSetupArgs {
+                    sam: I2pSamArgs {
+                        sam_bridge: SamBridgeAddress::default(),
+                        allow_remote_sam: false,
+                    },
+                    peer: vec![I2pPeerAddress::new("example.i2p").unwrap()],
+                    connectable: true,
+                    open_guidance: true,
                 }),
             })
         );
