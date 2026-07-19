@@ -1,10 +1,3 @@
-//! Multi-segment bulk-resource microscope: one logical resource of many MiB
-//! carried as `MAX_EFFICIENT_SIZE` segments over a single established link, engine
-//! direct — no TCP, no tokio, no Python. The counterpart to `resource_profile`,
-//! which measures one segment; this measures whether the per-byte rate holds as a
-//! transfer grows past the single-segment ceiling and the window/rate the engine
-//! inherits across transfers carries the bulk stream segment to segment.
-
 use std::time::{Duration, Instant};
 
 use benchmarks::microscope::{ResourceCycle, ResourceTransferProfile};

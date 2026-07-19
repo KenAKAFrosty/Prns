@@ -4,9 +4,6 @@ use super::captive_portal::station_wifi_mode;
 use super::captive_portal::{build_ap_netif, dhcp_server_task, dns_server_task, http_server_task};
 use super::*;
 
-/// Stand the TCP client up from [`HOPSPOT_TCP_TARGET`] over the WiFi `stack` (unset or
-/// unparseable leaves it down), leasing the socket's smoltcp buffers from `static`s. Returns the
-/// interface, its status handle (the render's card), and its id (the classifier's name).
 pub(super) fn build_tcp(
     stack: Stack<'static>,
 ) -> Option<(
@@ -38,9 +35,6 @@ pub(super) fn build_tcp(
 }
 
 #[cfg(feature = "radio-wifi")]
-/// Bring the WiFi radio up for station mode or explicit SoftAP mode. With no SSID the station
-/// stays idle (keepalive, no scanning) so ESP-NOW can keep using the shared radio. Returns the
-/// supervisor, the station stack (for the opportunistic TCP uplink), and the ESP-NOW interface.
 pub(super) fn build_wifi(
     spawner: &Spawner,
     wifi: esp_hal::peripherals::WIFI<'static>,
@@ -308,14 +302,11 @@ pub(super) fn espnow_channel_policy(station_configured: bool) -> ChannelPolicy {
 }
 
 #[cfg(feature = "radio-wifi")]
-/// Drive the embassy-net stack forever (the link/neighbor/socket machinery), on core 0.
 #[embassy_executor::task(pool_size = 2)]
 pub(super) async fn net_task(mut runner: Runner<'static, WifiStaDevice<'static>>) -> ! {
     runner.run().await
 }
 
-/// Join the configured network in station mode and hold the association up, reconnecting on drop.
-///
 #[cfg(feature = "radio-wifi")]
 /// A mesh (e.g. eero) hands the same SSID out on many BSSIDs across its nodes and bands and bridges
 /// multicast between them unreliably, so a station left to roam can land on a node that never

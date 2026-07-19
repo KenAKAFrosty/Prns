@@ -1,7 +1,5 @@
 use super::*;
 
-/// Build the unified snapshot set for the e-ink: the LoRa wire, the USB-auto wire, the BLE
-/// aggregate, and one entry per settled peer, matching the Heltec/T-Beam and host faces.
 pub(super) fn build_snapshots(
     lora: &EmbassyInterfaceStatus,
     usb: &EmbassyInterfaceStatus,

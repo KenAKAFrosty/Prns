@@ -1,17 +1,8 @@
-//! Platform catalog — the single source of truth for "what Reticulum runs on".
-//!
-//! Shared by the landing-page marquee and the dedicated `/platforms` page.
-//! Editing this data keeps the public support story in one place.
-
 #[derive(Clone, Copy, PartialEq)]
 pub enum Tier {
-    /// Packaged runtime/platform surface that is ready to use.
     Shipping,
-    /// Board firmware we can offer as a named flash target.
     Flashable,
-    /// Real target in active bring-up, but not a polished public install path.
     BringUp,
-    /// Roadmap / "next" target.
     Roadmap,
 }
 
@@ -51,7 +42,6 @@ pub enum Group {
 }
 
 impl Group {
-    /// Section heading on the platforms page.
     pub fn label(self) -> &'static str {
         match self {
             Group::Desktop => "Desktop",
@@ -69,8 +59,7 @@ pub struct Platform {
     pub name: &'static str,
     pub group: Group,
     pub tier: Tier,
-    /// Simple Icons slug → bundled SVG at /assets/logos/<slug>.svg, tinted to
-    /// the chip's text color via CSS mask. None = text-only chip (no clean logo).
+    /// A Simple Icons slug maps to bundled `/assets/logos/<slug>.svg`; CSS masks tint it to the chip's text color. `None` selects a text-only chip when no clean logo exists.
     pub icon: Option<&'static str>,
 }
 
@@ -113,7 +102,6 @@ impl BoardTarget {
     }
 }
 
-/// Section order on the platforms page.
 pub const GROUPS: &[Group] = &[
     Group::Desktop,
     Group::Mobile,

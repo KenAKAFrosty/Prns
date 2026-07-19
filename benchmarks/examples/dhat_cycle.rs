@@ -1,8 +1,3 @@
-//! Heap-allocation microscope: the `Cycle` endpoint roundtrip under dhat. The
-//! default run prints allocations-per-roundtrip (testing mode); the `heap` arg
-//! dumps `dhat-heap.json` for the call-site viewer. Owns its own global
-//! allocator, so only this example binary is instrumented.
-
 use std::env;
 
 use benchmarks::microscope::Cycle;

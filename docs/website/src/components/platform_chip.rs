@@ -1,16 +1,5 @@
 use dioxus::prelude::*;
 
-/// One platform "card": an optional logo (a bundled Simple Icon, tinted to the
-/// chip's text color via a CSS mask so it matches the palette and brightens on
-/// hover) followed by the name. Shared by the landing marquee and the
-/// /platforms page so the two never drift.
-///
-/// - `icon`: Simple Icons slug -> /assets/logos/<slug>.svg, an explicit
-///   asset filename such as dioxus.png, or None for text-only.
-/// - `badge`: optional support-state tag, such as "flashable" or "bring-up".
-/// - `muted`: dimmer/dashed styling for not-yet-flashable targets.
-/// - `decorative`: aria-hidden (used for the marquee's duplicated second copy,
-///   so screen readers read the platform list only once).
 #[component]
 pub fn PlatformChip(
     name: String,

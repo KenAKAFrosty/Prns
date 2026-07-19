@@ -1,7 +1,3 @@
-//! Engine-direct resource microscope: no TCP, no tokio, no Python. It runs a
-//! fixed number of resource transfers over one already-established link and
-//! prints where the engine time goes.
-
 use std::time::{Duration, Instant};
 
 use benchmarks::microscope::{ResourceCycle, ResourceTransferProfile, RESOURCE_PAYLOAD_LEN};

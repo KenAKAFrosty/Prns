@@ -5,8 +5,6 @@ use crate::components::PlatformChip;
 use crate::platforms::{Group, GROUPS, PLATFORMS};
 use crate::routes::Route;
 
-/// The dedicated "what it runs on" page: the marquee's data, but scannable and
-/// explicit about which targets are runtime platforms, active bring-up, and roadmap.
 #[component]
 pub fn PlatformsPage() -> Element {
     rsx! {

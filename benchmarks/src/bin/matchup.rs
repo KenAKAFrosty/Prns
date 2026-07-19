@@ -1,17 +1,3 @@
-//! The Matchup runner: the shared-instance conformance grid. A `Matchup` names who sends, who
-//! receives, which scenario, and the topology they meet in. The runner stands up the host, attaches
-//! the two app clients over its bus, drives the scenario through the existing `READY`/`RESULT` line
-//! protocol, and reports the conformance verdict. Our impl stays outside the measured boundary: the
-//! daemons do the work, the runner is only the uniform load-and-measure harness.
-//!
-//! Loopback is the conformance topology: one host, two clients dialing in, traffic looped through the
-//! host's engine. An impl that can't currently field a role (Prns as host or client both ride the
-//! `local` feature, mid-reconstruction) yields a typed `Unavailable` reason and the cell is skipped
-//! aloud, never silently dropped.
-//!
-//! usage: matchup [--scenario NAME] [--host IMPL] [--sender IMPL] [--receiver IMPL] [--duration-ms N]
-//! where IMPL is `reference` or `prns`.
-
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};

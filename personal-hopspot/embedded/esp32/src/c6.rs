@@ -1,7 +1,3 @@
-//! The Seeed XIAO ESP32-C6 Hopspot board: single-core, no-PSRAM, headless. The engine is constructed
-//! and run on the one RISC-V core (no second-core hand-off like the S3), with its columns inline in
-//! internal SRAM. The Hopspot build is intentionally narrow: USB-auto, ESP-NOW, and BLE.
-
 use esp_backtrace as _;
 use esp_bootloader_esp_idf::esp_app_desc;
 use esp_hal::clock::CpuClock;
@@ -501,8 +497,6 @@ pub async fn run(spawner: Spawner) {
     }
     #[cfg(all(feature = "ble-bringup-c6", not(feature = "espnow-c6")))]
     {
-        // Single-core: the reactor and BLE supervisor run on the one executor — where the dual-core
-        // S3 hands the reactor to core 1 and runs BLE on core 0.
         spawner.spawn(
             ble_task(spawner, p.BT, mac_octets, ble_fleet, &BLE_SHARED).expect("ble task fits"),
         );

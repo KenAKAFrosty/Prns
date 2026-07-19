@@ -1,10 +1,6 @@
 use super::display::{build_cards, build_snapshots};
 use super::*;
 
-/// Stand the T-Echo up as a real engine node carrying both LoRa and BLE: the SX1262 on slot 0,
-/// the [`BluetoothAuto`] supervisor's one shared fleet lane on slot 1. The SoftDevice owns
-/// CLOCK/POWER and feeds USB vbus over its SoC events (hence [`SoftwareVbusDetect`]); the SX1262
-/// and e-ink SPI are not SD-reserved, so they coexist with the BLE radio. Never returns.
 #[allow(clippy::too_many_lines)]
 pub async fn run(spawner: Spawner) -> ! {
     let mut nrf_config = config::Config::default();
@@ -81,7 +77,6 @@ pub async fn run(spawner: Spawner) -> ! {
         spawner.spawn(serve_slot(idx, sd, l2cap, server, &HUB).expect("serve slot fits"));
     }
 
-    // SX1262 LoRa radio on TWISPI0 (the T-Echo's radio bus).
     let mut radio_spim_config = spim::Config::default();
     radio_spim_config.frequency = spim::Frequency::M4;
     let radio_bus = Spim::new(
@@ -111,7 +106,6 @@ pub async fn run(spawner: Spawner) -> ! {
         },
     );
 
-    // The 1.54" e-ink on SPI2.
     let mut eink_spim_config = spim::Config::default();
     eink_spim_config.frequency = spim::Frequency::M4;
     let eink_bus = Spim::new(p.SPI2, Irqs, p.P0_31, p.P1_06, p.P0_29, eink_spim_config);

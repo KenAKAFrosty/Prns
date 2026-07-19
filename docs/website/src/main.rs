@@ -1,8 +1,3 @@
-//! reticulum.rs — the public docs site for the Personal Reticulum Suite.
-//!
-//! Dioxus 0.7 SSG + dioxus-i18n. Each route pre-renders to HTML at build time;
-//! the client hydrates for interactivity (language switcher, in-page nav).
-
 use dioxus::prelude::*;
 use dioxus_i18n::prelude::*;
 use unic_langid::langid;

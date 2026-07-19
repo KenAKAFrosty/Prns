@@ -1,10 +1,3 @@
-//! Heap-allocation microscope: the relay forwarding path under dhat. The
-//! initiator seal that mints each fresh SINGLE is kept *outside* the measured
-//! window — only `Forward::forward` (the relay ingesting and re-emitting the
-//! packet) is bracketed — so the per-forward figure is the transport hot path
-//! alone. The `heap` arg dumps `dhat-heap.json` (seal + forward, separable by
-//! call site in the viewer). Owns its own global allocator.
-
 use std::env;
 
 use benchmarks::microscope::Forward;

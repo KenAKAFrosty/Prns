@@ -1,7 +1,4 @@
 #!/usr/bin/env bash
-# Operator lane for the expensive validation surface. Normal CI runs the cheap
-# guards; this script is the one-command path for proof, fuzz, interop, and
-# mutation sanity when hardening a release or architecture change.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
