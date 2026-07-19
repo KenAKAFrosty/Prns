@@ -234,7 +234,7 @@ mod tests {
         let mut face = HopspotFace::detached();
         let cards = stub_cards();
         let mut out = fresh_buffer();
-        face.render_cards(&cards, &mut out);
+        face.render_cards(&cards, &[], &mut out);
         assert!(out.chunks_exact(4).any(|px| px != DARK_RGBA));
     }
 
@@ -242,7 +242,7 @@ mod tests {
     fn an_empty_card_set_renders_the_starting_splash() {
         let mut face = HopspotFace::detached();
         let mut out = fresh_buffer();
-        face.render_cards(&[], &mut out);
+        face.render_cards(&[], &[], &mut out);
         assert!(out.chunks_exact(4).any(|px| px != DARK_RGBA));
     }
 
@@ -253,11 +253,11 @@ mod tests {
         let mut before = fresh_buffer();
         let mut after = fresh_buffer();
 
-        face.render_cards(&cards, &mut before);
+        face.render_cards(&cards, &[], &mut before);
         let _ = face
             .state
             .handle_input(InputEvent::ShortPress, cards.len(), None);
-        face.render_cards(&cards, &mut after);
+        face.render_cards(&cards, &[], &mut after);
 
         assert_ne!(before, after);
     }
@@ -269,11 +269,11 @@ mod tests {
         let mut before = fresh_buffer();
         let mut after = fresh_buffer();
 
-        face.render_cards(&cards, &mut before);
+        face.render_cards(&cards, &[], &mut before);
         let _ = face
             .state
             .handle_input(InputEvent::LongPress, cards.len(), None);
-        face.render_cards(&cards, &mut after);
+        face.render_cards(&cards, &[], &mut after);
 
         assert_ne!(before, after);
     }
