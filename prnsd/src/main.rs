@@ -3,10 +3,8 @@
 
 mod blackhole_exchange;
 mod cli;
-mod construct;
 mod daemon;
 mod i2p;
-mod identity;
 mod interface_discovery;
 mod managed_service;
 mod management_announces;

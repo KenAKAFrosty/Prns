@@ -6,7 +6,7 @@ use personal_rns::interfaces::InterfaceId;
 use personal_rns::runtime::PrnsNodeHandle;
 use tokio::sync::watch;
 
-use crate::construct;
+use crate::daemon::construct_configured_interfaces;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AutoConnectCapacity {
@@ -103,7 +103,7 @@ impl BootstrapInterfaces {
     }
 
     async fn restore(&mut self, handle: &PrnsNodeHandle) {
-        let constructed = construct::construct_interfaces(handle, &self.plan, &self.context).await;
+        let constructed = construct_configured_interfaces(handle, &self.plan, &self.context).await;
         let interfaces = constructed
             .runtime
             .interfaces()
