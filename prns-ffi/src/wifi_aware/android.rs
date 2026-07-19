@@ -64,10 +64,6 @@ struct Shared {
     events_ready: Notify,
 }
 
-/// The Rust half of the Android Wi-Fi Aware bridge: the Kotlin `WifiAwareLink` pushes fabric events
-/// in (discoveries, inbound requests, settled and lost data paths) and drains the desired discovery
-/// state plus the per-peer request/abandon queues the policy produced. It owns the node's rendezvous
-/// token so the value published on the air and the value the keeper duel ranks are the same one.
 pub struct AndroidWifiAwareBridge {
     shared: Arc<Shared>,
 }

@@ -163,11 +163,6 @@ impl BrowserDelegate {
     }
 }
 
-/// Advertises our TCP rendezvous as a `_reticulum._tcp` Bonjour service AND browses for peers,
-/// surfacing each resolved peer's rendezvous endpoint through [`next_sighting`](Self::next_sighting).
-/// Standard Bonjour rides the system mDNSResponder, so this is free-team (Local Network permission +
-/// the `NSBonjourServices` declaration), never the multicast entitlement. Lives on its own thread
-/// running a `CFRunLoop`, since `NSNetService` is run-loop affine.
 pub struct MacosMdnsBackend {
     sightings: tokio_mpsc::UnboundedReceiver<SocketAddr>,
 }
