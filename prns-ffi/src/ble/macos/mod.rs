@@ -135,6 +135,7 @@ unsafe impl Send for SendCentralDelegate {}
 
 struct SendPeripheralDelegate(Retained<PeripheralDelegate>);
 unsafe impl Send for SendPeripheralDelegate {}
+
 enum Event {
     Powered,
     Published {
@@ -147,6 +148,7 @@ enum Event {
     },
     Inbound(GattLink),
 }
+
 #[derive(Debug)]
 pub enum MacosBleError {
     PowerOnTimeout,
