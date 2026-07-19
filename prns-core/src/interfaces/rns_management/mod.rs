@@ -39,6 +39,12 @@ pub use status_report::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RnsManagementEncodeError;
 
+impl From<crate::message_pack::MessagePackEncodeError> for RnsManagementEncodeError {
+    fn from(_: crate::message_pack::MessagePackEncodeError) -> Self {
+        Self
+    }
+}
+
 impl core::fmt::Display for RnsManagementEncodeError {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter.write_str("RNS management value exceeds MessagePack limits")

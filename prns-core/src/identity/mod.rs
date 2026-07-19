@@ -3,6 +3,8 @@
 pub mod destination_identity;
 pub mod held;
 mod material;
+#[cfg(feature = "signed-artifact")]
+mod signed_artifact;
 pub mod vault;
 
 pub use destination_identity::{
@@ -10,6 +12,11 @@ pub use destination_identity::{
     RetainDestinationOutcome, RetainIdentityOutcome,
 };
 pub use material::{IdentityMaterialLengthError, PrivateIdentityMaterial, PublicIdentityMaterial};
+#[cfg(feature = "signed-artifact")]
+pub use signed_artifact::{
+    create_signed_artifact, validate_signed_artifact, SignedArtifactError, ValidatedSignedArtifact,
+    SIGNED_ARTIFACT_SIGNATURE_LEN,
+};
 
 use crate::crypto::ratchets::RatchetId;
 use crate::crypto::{
@@ -86,6 +93,10 @@ pub struct IdentityPublicKeys {
 impl IdentityPublicKeys {
     pub fn identity_hash(&self) -> IdentityHash {
         derive_identity_hash(&self.encryption, &self.signing)
+    }
+
+    pub fn public_key_bytes(&self) -> [u8; IDENTITY_PUBLIC_KEY_LEN] {
+        concat_public_keys(&self.encryption, &self.signing)
     }
 }
 

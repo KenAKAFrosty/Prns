@@ -3,7 +3,7 @@ use std::vec::Vec;
 
 use tokio::sync::oneshot;
 
-use crate::identity::IdentityHash;
+use crate::identity::{IdentityHash, PublicIdentityMaterial};
 use crate::wire::DestinationHash;
 
 pub use crate::engine::RouteSnapshot;
@@ -19,6 +19,19 @@ pub use prns_runtime::runtime::node_introspection::{
 };
 pub type InterfaceIfacSnapshot = CoreInterfaceIfacSnapshot;
 pub type InterfaceInventoryEntry = CoreInterfaceInventoryEntry;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DestinationIdentityQuery {
+    Destination(DestinationHash),
+    Identity(IdentityHash),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DestinationIdentitySnapshot {
+    pub destination: DestinationHash,
+    pub identity: IdentityHash,
+    pub public: PublicIdentityMaterial,
+}
 
 pub enum NodeIntrospectionRequest {
     LinkCount {
@@ -37,5 +50,9 @@ pub enum NodeIntrospectionRequest {
     DestinationIdentityHash {
         destination: DestinationHash,
         reply: oneshot::Sender<Option<IdentityHash>>,
+    },
+    DestinationIdentity {
+        query: DestinationIdentityQuery,
+        reply: oneshot::Sender<Option<DestinationIdentitySnapshot>>,
     },
 }

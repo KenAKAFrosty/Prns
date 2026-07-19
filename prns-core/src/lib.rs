@@ -11,6 +11,8 @@ pub mod engine;
 pub mod identity;
 pub mod interfaces;
 pub mod lemire_index;
+#[cfg(any(feature = "shared-instance-rpc", feature = "signed-artifact"))]
+pub mod message_pack;
 pub mod persistence;
 pub mod routing;
 pub mod storage;

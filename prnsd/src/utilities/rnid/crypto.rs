@@ -9,6 +9,7 @@ use personal_rns::identity::{
 use personal_rns::runtime::{fill_os_entropy, OsEntropyError};
 
 use super::args::{CryptoOperation, RnidArgs};
+use super::artifact::{self, ArtifactError};
 use super::identity::{LocalIdentity, LocalIdentityError};
 use super::io::{
     expand_user_path, read_file, read_stdin, IdentityIoError, OutputSensitivity, OutputSink,
@@ -30,41 +31,71 @@ pub enum LocalCryptoError {
     InvalidEncryptedFile(PathBuf),
     InvalidSignatureFile { path: PathBuf, length: usize },
     InvalidSignature { target: PathBuf, signature: PathBuf },
+    Artifact(ArtifactError),
 }
 
 pub fn execute(
     args: &RnidArgs,
-    identity: &LocalIdentity,
+    identity: Option<&LocalIdentity>,
     operation: CryptoOperation<'_>,
 ) -> Result<(), LocalCryptoError> {
     match operation {
-        CryptoOperation::Encrypt(paths) => encrypt(args, identity, paths),
-        CryptoOperation::Decrypt(paths) => decrypt(args, identity, paths),
+        CryptoOperation::Encrypt(paths) => encrypt(args, require_identity(identity)?, paths),
+        CryptoOperation::Decrypt(paths) => decrypt(args, require_identity(identity)?, paths),
         CryptoOperation::Sign(paths) => sign(args, identity, paths),
-        CryptoOperation::Validate(paths) => validate(identity, paths),
+        CryptoOperation::Validate(paths) => validate(args, identity, paths),
     }
 }
 
 fn sign(
     args: &RnidArgs,
-    identity: &LocalIdentity,
+    identity: Option<&LocalIdentity>,
     paths: &[PathBuf],
 ) -> Result<(), LocalCryptoError> {
+    let identity = require_identity(identity)?;
     let identity = identity.private().map_err(LocalCryptoError::Identity)?;
     if args.stdin {
         let message = read_stdin().map_err(LocalCryptoError::Io)?;
-        let signature = identity.sign(&message);
+        let signature = if args.raw {
+            identity.sign(&message).0.to_vec()
+        } else {
+            personal_rns::identity::create_signed_artifact(identity, &message, false, &[])
+                .map_err(ArtifactError::Artifact)
+                .map_err(LocalCryptoError::Artifact)?
+        };
+        if let Some(encoding) = args.explicit_encoding().filter(|_| !args.raw) {
+            println!("\n{}\n", artifact::encoded_artifact(&signature, encoding));
+            return Ok(());
+        }
         let (mut output, output_path) = open_output(args, None)?;
-        write_output(&mut output, &output_path, &signature.0)?;
+        write_output(&mut output, &output_path, &signature)?;
         output.finish().map_err(LocalCryptoError::Io)?;
         return Ok(());
     }
     for path in paths {
         let message = read_file(path).map_err(LocalCryptoError::Io)?;
-        let signature = identity.sign(&message);
+        let signature = if args.raw {
+            identity.sign(&message).0.to_vec()
+        } else {
+            personal_rns::identity::create_signed_artifact(identity, &message, false, &[])
+                .map_err(ArtifactError::Artifact)
+                .map_err(LocalCryptoError::Artifact)?
+        };
+        if let Some(encoding) = args.explicit_encoding().filter(|_| !args.raw) {
+            println!("\n{}\n", artifact::encoded_artifact(&signature, encoding));
+            print_completion(
+                args,
+                format_args!(
+                    "Signed file {} with {}",
+                    path.display(),
+                    super::identity::pretty_hash(identity.identity_hash())
+                ),
+            );
+            continue;
+        }
         let default = append_suffix(path, ".rsg");
         let (mut output, output_path) = open_output(args, Some(&default))?;
-        write_output(&mut output, &output_path, &signature.0)?;
+        write_output(&mut output, &output_path, &signature)?;
         output.finish().map_err(LocalCryptoError::Io)?;
         print_completion(
             args,
@@ -79,32 +110,84 @@ fn sign(
     Ok(())
 }
 
-fn validate(identity: &LocalIdentity, paths: &[PathBuf]) -> Result<(), LocalCryptoError> {
-    let identity = identity.public().map_err(LocalCryptoError::Identity)?;
+fn validate(
+    args: &RnidArgs,
+    identity: Option<&LocalIdentity>,
+    paths: &[PathBuf],
+) -> Result<(), LocalCryptoError> {
     for path in paths {
-        let (target_path, signature_path) = signature_pair(path)?;
-        let message = read_file(&target_path).map_err(LocalCryptoError::Io)?;
+        let embedded = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("rsm"));
+        let (target_path, signature_path) = if embedded {
+            (None, path.clone())
+        } else {
+            let (target, signature) = signature_pair(path)?;
+            (Some(target), signature)
+        };
         let signature = read_file(&signature_path).map_err(LocalCryptoError::Io)?;
-        let signature_bytes: [u8; Ed25519Signature::LEN] = signature
-            .as_slice()
-            .try_into()
-            .map_err(|_| LocalCryptoError::InvalidSignatureFile {
-                path: signature_path.clone(),
-                length: signature.len(),
-            })?;
-        identity
-            .verify(&message, &Ed25519Signature(signature_bytes))
-            .map_err(|_| LocalCryptoError::InvalidSignature {
-                target: target_path.clone(),
-                signature: signature_path.clone(),
-            })?;
-        println!(
-            "Signature is valid, the file {} was signed by {}",
-            target_path.display(),
-            super::identity::pretty_hash(identity.identity_hash())
-        );
+        if signature.len() == Ed25519Signature::LEN {
+            let target_path =
+                target_path.ok_or_else(|| LocalCryptoError::InvalidSignatureFile {
+                    path: signature_path.clone(),
+                    length: signature.len(),
+                })?;
+            let identity = require_identity(identity)?
+                .public()
+                .map_err(LocalCryptoError::Identity)?;
+            let message = read_file(&target_path).map_err(LocalCryptoError::Io)?;
+            let signature_bytes: [u8; Ed25519Signature::LEN] = signature
+                .as_slice()
+                .try_into()
+                .map_err(|_| LocalCryptoError::InvalidSignatureFile {
+                    path: signature_path.clone(),
+                    length: signature.len(),
+                })?;
+            identity
+                .verify(&message, &Ed25519Signature(signature_bytes))
+                .map_err(|_| LocalCryptoError::InvalidSignature {
+                    target: target_path.clone(),
+                    signature: signature_path.clone(),
+                })?;
+            println!(
+                "Signature is valid, the file {} was signed by {}",
+                target_path.display(),
+                super::identity::pretty_hash(identity.identity_hash())
+            );
+            continue;
+        }
+        let message = target_path
+            .as_deref()
+            .map(read_file)
+            .transpose()
+            .map_err(LocalCryptoError::Io)?;
+        let validated = artifact::validate(&signature, message.as_deref(), identity)
+            .map_err(LocalCryptoError::Artifact)?;
+        if let Some(message) = validated.embedded_message {
+            if args.meta {
+                println!("RSM Metadata\n============\n");
+                artifact::print_metadata(&validated.metadata);
+                println!("\nValidation\n==========");
+            }
+            println!(
+                "\nSignature is valid, the message was signed by {}:\n",
+                super::identity::pretty_hash(validated.signer.identity_hash())
+            );
+            println!("{}", String::from_utf8_lossy(&message));
+        } else if let Some(target_path) = target_path {
+            println!(
+                "Signature is valid, the file {} was signed by {}",
+                target_path.display(),
+                super::identity::pretty_hash(validated.signer.identity_hash())
+            );
+        }
     }
     Ok(())
+}
+
+fn require_identity(identity: Option<&LocalIdentity>) -> Result<&LocalIdentity, LocalCryptoError> {
+    identity.ok_or(LocalCryptoError::Identity(LocalIdentityError::Missing))
 }
 
 fn encrypt(
@@ -281,7 +364,7 @@ fn read_chunk(input: &mut impl Read, buffer: &mut [u8]) -> io::Result<usize> {
     Ok(filled)
 }
 
-fn open_output(
+pub(super) fn open_output(
     args: &RnidArgs,
     default: Option<&Path>,
 ) -> Result<(OutputSink, PathBuf), LocalCryptoError> {
@@ -303,7 +386,7 @@ fn open_output(
     Ok((output, path))
 }
 
-fn write_output(
+pub(super) fn write_output(
     output: &mut OutputSink,
     output_path: &Path,
     bytes: &[u8],
@@ -347,7 +430,7 @@ fn decrypted_path(path: &Path) -> Result<PathBuf, LocalCryptoError> {
     }
 }
 
-fn append_suffix(path: &Path, suffix: &str) -> PathBuf {
+pub(super) fn append_suffix(path: &Path, suffix: &str) -> PathBuf {
     let mut output = path.as_os_str().to_owned();
     output.push(suffix);
     output.into()
@@ -385,6 +468,7 @@ impl std::fmt::Display for LocalCryptoError {
                 signature.display(),
                 target.display()
             ),
+            Self::Artifact(source) => source.fmt(formatter),
         }
     }
 }

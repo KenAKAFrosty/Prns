@@ -7,6 +7,9 @@ pub use prns_runtime::{
     crypto, engine, identity, interfaces, persistence, routes, routing, storage, units, wire,
 };
 
+#[cfg(feature = "signed-artifact")]
+pub use prns_core::message_pack;
+
 #[cfg(feature = "interface-discovery")]
 pub use prns_runtime::interface_discovery;
 #[cfg(feature = "tokio-host")]

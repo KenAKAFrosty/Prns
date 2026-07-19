@@ -38,6 +38,12 @@ impl From<RnsManagementEncodeError> for RnsRpcReplyEncodeError {
     }
 }
 
+impl From<crate::message_pack::MessagePackEncodeError> for RnsRpcReplyEncodeError {
+    fn from(_: crate::message_pack::MessagePackEncodeError) -> Self {
+        Self
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct RnsRpcReply(RnsRpcReplyKind);
 

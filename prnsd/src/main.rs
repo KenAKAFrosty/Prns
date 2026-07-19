@@ -66,7 +66,7 @@ async fn main() -> ExitCode {
                 ExitCode::from(exit_code)
             }
         },
-        cli::Command::Id(args) => match utilities::rnid::run(args) {
+        cli::Command::Id(args) => match utilities::rnid::run(*args).await {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => {
                 let exit_code = error.exit_code();

@@ -2416,6 +2416,7 @@ dependencies = [
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "personal-rns",
+ "prns-config",
  "prnsd-control",
  "serde_json",
  "time",

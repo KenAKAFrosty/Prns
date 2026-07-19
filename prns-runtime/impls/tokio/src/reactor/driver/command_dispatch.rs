@@ -408,6 +408,28 @@ where
                             .map(|entry| entry.identity);
                         let _ = reply.send(identity);
                     }
+                    NodeIntrospectionRequest::DestinationIdentity { query, reply } => {
+                        use crate::node_introspection::{
+                            DestinationIdentityQuery, DestinationIdentitySnapshot,
+                        };
+
+                        let entry = match query {
+                            DestinationIdentityQuery::Destination(destination) => {
+                                engine.destination_identity(&destination)
+                            }
+                            DestinationIdentityQuery::Identity(identity) => engine
+                                .destination_identities()
+                                .find(|entry| entry.identity == identity),
+                        };
+                        let snapshot = entry.map(|entry| DestinationIdentitySnapshot {
+                            destination: entry.destination,
+                            identity: entry.identity,
+                            public: crate::identity::PublicIdentityMaterial::from_bytes(
+                                entry.public_keys.public_key_bytes(),
+                            ),
+                        });
+                        let _ = reply.send(snapshot);
+                    }
                 }
                 CommandEffect::UNCHANGED
             }

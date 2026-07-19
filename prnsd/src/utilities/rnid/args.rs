@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use clap::{ArgGroup, Args};
 
@@ -9,7 +10,7 @@ use clap::{ArgGroup, Args};
         .multiple(false)
 ), group(
     ArgGroup::new("crypto_operation")
-        .args(["encrypt", "decrypt", "validate", "sign"])
+        .args(["encrypt", "decrypt", "validate", "sign", "sign_message"])
         .multiple(false)
 ), group(
     ArgGroup::new("encoding")
@@ -47,6 +48,9 @@ pub struct RnidArgs {
     #[arg(short = 'H', long = "hash", value_name = "ASPECTS")]
     pub hash: Option<String>,
 
+    #[arg(short = 'a', long, value_name = "ASPECTS", num_args = 0..=1, default_missing_value = "rns.id")]
+    pub announce: Option<String>,
+
     #[arg(short = 'd', long, value_name = "FILE", num_args = 0..)]
     pub decrypt: Option<Vec<PathBuf>>,
 
@@ -59,11 +63,23 @@ pub struct RnidArgs {
     #[arg(short = 's', long, value_name = "PATH", num_args = 0..)]
     pub sign: Option<Vec<PathBuf>>,
 
+    #[arg(short = 'S', long = "sign-message", value_name = "TEXT", num_args = 0..=1, default_missing_value = "")]
+    pub sign_message: Option<String>,
+
+    #[arg(short = 'E', long = "embed-meta", value_name = "PATH")]
+    pub embed_meta: Option<PathBuf>,
+
+    #[arg(long = "meta-spec", value_name = "PATH")]
+    pub meta_spec: Option<PathBuf>,
+
     #[arg(long)]
     pub raw: bool,
 
     #[arg(short = 'w', long, value_name = "PATH")]
     pub write: Option<PathBuf>,
+
+    #[arg(short = 'r', long, value_name = "PATH")]
+    pub read: Option<PathBuf>,
 
     #[arg(short = 'f', long)]
     pub force: bool,
@@ -80,6 +96,15 @@ pub struct RnidArgs {
     #[arg(short = 'P', long = "print-private")]
     pub print_private: bool,
 
+    #[arg(short = 'R', long)]
+    pub request: bool,
+
+    #[arg(short = 'N', long = "no-cache")]
+    pub no_cache: bool,
+
+    #[arg(short = 't', value_name = "SECONDS", default_value = "15")]
+    pub timeout: IdentityRequestTimeout,
+
     #[arg(short = 'B', long)]
     pub base32: bool,
 
@@ -91,6 +116,9 @@ pub struct RnidArgs {
 
     #[arg(short = 'F', long = "hex")]
     pub hex: bool,
+
+    #[arg(long)]
+    pub meta: bool,
 
     #[arg(long)]
     pub version: bool,
@@ -123,7 +151,6 @@ pub enum CryptoOperation<'a> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RnidArgumentError {
-    RawRequired,
     RawWithoutSign,
     MissingInput,
     StdinWithPaths,
@@ -137,8 +164,47 @@ pub enum RnidArgumentError {
     BinaryStdoutWithTextOutput,
     EncodingWithoutTextOutput,
     PrivatePrintWithoutIdentityPrint,
-    ConfigWithoutNetworkOperation,
+    MetadataWithoutMessage,
+    MetadataSpecWithoutMetadata,
+    ReadWithoutMessage,
+    ConflictingMessageInput,
+    MissingMessage,
+    MessageOutputRequired,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IdentityRequestTimeout(Duration);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IdentityRequestTimeoutError;
+
+impl IdentityRequestTimeout {
+    pub const fn duration(self) -> Duration {
+        self.0
+    }
+}
+
+impl std::str::FromStr for IdentityRequestTimeout {
+    type Err = IdentityRequestTimeoutError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let seconds = value
+            .parse::<f64>()
+            .map_err(|_| IdentityRequestTimeoutError)?;
+        if !seconds.is_finite() || seconds <= 0.0 {
+            return Err(IdentityRequestTimeoutError);
+        }
+        Ok(Self(Duration::from_secs_f64(seconds)))
+    }
+}
+
+impl std::fmt::Display for IdentityRequestTimeoutError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("identity request timeout must be a positive finite number")
+    }
+}
+
+impl std::error::Error for IdentityRequestTimeoutError {}
 
 impl RnidArgs {
     pub const fn encoding(&self) -> IdentityEncoding {
@@ -189,16 +255,10 @@ impl RnidArgs {
 
     pub fn validate_local(&self) -> Result<(), RnidArgumentError> {
         let operation = self.crypto_operation();
-        if self.config.is_some() {
-            return Err(RnidArgumentError::ConfigWithoutNetworkOperation);
-        }
         if self.raw && !matches!(operation, Some(CryptoOperation::Sign(_))) {
             return Err(RnidArgumentError::RawWithoutSign);
         }
-        if matches!(operation, Some(CryptoOperation::Sign(_))) && !self.raw {
-            return Err(RnidArgumentError::RawRequired);
-        }
-        if self.stdin {
+        if self.stdin && self.sign_message.is_none() {
             match operation {
                 Some(CryptoOperation::Validate(_)) => {
                     return Err(RnidArgumentError::StdinValidationUnsupported);
@@ -216,7 +276,7 @@ impl RnidArgs {
         } else if operation.is_some_and(|operation| operation.paths().is_empty()) {
             return Err(RnidArgumentError::MissingInput);
         }
-        if self.stdout && operation.is_none() {
+        if self.stdout && operation.is_none() && self.sign_message.is_none() {
             return Err(RnidArgumentError::StdoutWithoutCryptoOperation);
         }
         if self.stdout && matches!(operation, Some(CryptoOperation::Validate(_))) {
@@ -225,7 +285,7 @@ impl RnidArgs {
         if self.stdout && operation.is_some_and(|operation| operation.paths().len() > 1) {
             return Err(RnidArgumentError::StdoutWithMultipleInputs);
         }
-        if self.stdin && self.write.is_none() && !self.stdout {
+        if self.stdin && self.write.is_none() && !self.stdout && self.sign_message.is_none() {
             return Err(RnidArgumentError::StdinWithoutOutput);
         }
         if self.write.is_some() && operation.is_some_and(|operation| operation.paths().len() > 1) {
@@ -235,17 +295,50 @@ impl RnidArgs {
         if self.write.is_some() && operation.is_some() && identity_write {
             return Err(RnidArgumentError::WriteOutputConflict);
         }
-        let text_output =
-            self.print_identity || self.export_public || self.export_private || self.hash.is_some();
+        let text_output = self.print_identity
+            || self.export_public
+            || self.export_private
+            || self.hash.is_some()
+            || self.announce.is_some();
         if self.stdout && text_output {
             return Err(RnidArgumentError::BinaryStdoutWithTextOutput);
         }
-        let encoded_output = self.print_identity || self.export_public || self.export_private;
+        let encoded_output = self.print_identity
+            || self.export_public
+            || self.export_private
+            || matches!(operation, Some(CryptoOperation::Sign(_)))
+            || self.sign_message.is_some();
         if self.explicit_encoding().is_some() && !encoded_output {
             return Err(RnidArgumentError::EncodingWithoutTextOutput);
         }
         if self.print_private && !self.print_identity {
             return Err(RnidArgumentError::PrivatePrintWithoutIdentityPrint);
+        }
+        if self.embed_meta.is_some() && self.sign_message.is_none() {
+            return Err(RnidArgumentError::MetadataWithoutMessage);
+        }
+        if self.meta_spec.is_some() && self.embed_meta.is_none() {
+            return Err(RnidArgumentError::MetadataSpecWithoutMetadata);
+        }
+        if self.read.is_some() && self.sign_message.is_none() {
+            return Err(RnidArgumentError::ReadWithoutMessage);
+        }
+        if self.sign_message.is_some() {
+            let direct = self
+                .sign_message
+                .as_ref()
+                .is_some_and(|message| !message.is_empty());
+            let inputs =
+                usize::from(direct) + usize::from(self.read.is_some()) + usize::from(self.stdin);
+            if inputs > 1 {
+                return Err(RnidArgumentError::ConflictingMessageInput);
+            }
+            if inputs == 0 {
+                return Err(RnidArgumentError::MissingMessage);
+            }
+            if self.explicit_encoding().is_none() && self.write.is_none() && !self.stdout {
+                return Err(RnidArgumentError::MessageOutputRequired);
+            }
         }
         Ok(())
     }
@@ -265,7 +358,6 @@ impl<'a> CryptoOperation<'a> {
 impl std::fmt::Display for RnidArgumentError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(match self {
-            Self::RawRequired => "RSG signing is reserved for the artifact candidate; use --raw",
             Self::RawWithoutSign => "--raw is only valid with --sign",
             Self::MissingInput => "the selected operation requires a file or --stdin",
             Self::StdinWithPaths => "--stdin cannot be combined with file inputs",
@@ -289,8 +381,15 @@ impl std::fmt::Display for RnidArgumentError {
                 "identity encodings require an identity print or export operation"
             }
             Self::PrivatePrintWithoutIdentityPrint => "--print-private requires --print-identity",
-            Self::ConfigWithoutNetworkOperation => {
-                "--config is reserved for the network identity candidate"
+            Self::MetadataWithoutMessage => "--embed-meta requires --sign-message",
+            Self::MetadataSpecWithoutMetadata => "--meta-spec requires --embed-meta",
+            Self::ReadWithoutMessage => "--read requires --sign-message",
+            Self::ConflictingMessageInput => {
+                "provide signed-message text, --read, or --stdin, not more than one"
+            }
+            Self::MissingMessage => "--sign-message requires text, --read, or --stdin",
+            Self::MessageOutputRequired => {
+                "binary signed-message output requires --write or --stdout"
             }
         })
     }
@@ -314,21 +413,30 @@ mod tests {
             verbose: 0,
             quiet: 0,
             hash: None,
+            announce: None,
             decrypt: None,
             encrypt: None,
             validate: None,
             sign: None,
+            sign_message: None,
+            embed_meta: None,
+            meta_spec: None,
             raw: false,
             write: None,
+            read: None,
             force: false,
             stdin: false,
             stdout: false,
             print_identity: false,
             print_private: false,
+            request: false,
+            no_cache: false,
+            timeout: IdentityRequestTimeout(Duration::from_secs(15)),
             base32: false,
             base64: false,
             base256: false,
             hex: false,
+            meta: false,
             version: false,
         }
     }
@@ -347,10 +455,10 @@ mod tests {
     }
 
     #[test]
-    fn artifact_and_ambiguous_output_shapes_are_rejected() {
+    fn artifact_and_ambiguous_output_shapes_are_checked() {
         let mut args = empty_args();
         args.sign = Some(vec![PathBuf::from("message")]);
-        assert_eq!(args.validate_local(), Err(RnidArgumentError::RawRequired));
+        assert_eq!(args.validate_local(), Ok(()));
 
         args.raw = true;
         args.stdout = true;
