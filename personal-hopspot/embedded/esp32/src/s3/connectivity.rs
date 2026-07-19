@@ -331,16 +331,25 @@ async fn wifi_connect_task(
                 let _ = controller.disconnect_async().await;
             }
             WIFI_STATION_JOINED.store(false, Ordering::Relaxed);
-            Timer::after(Duration::from_millis(250)).await;
+            status.wait_until_radio_enabled().await;
         }
         if controller.is_connected() {
             WIFI_STATION_JOINED.store(true, Ordering::Relaxed);
-            Timer::after(Duration::from_secs(2)).await;
+            let _ = embassy_futures::select::select(
+                Timer::after(Duration::from_secs(2)),
+                status.wait_until_radio_disabled(),
+            )
+            .await;
             continue;
         }
         WIFI_STATION_JOINED.store(false, Ordering::Relaxed);
         let mut station = base.clone();
-        if let Ok(networks) = controller.scan_async(&ScanConfig::default()).await {
+        let scan = embassy_futures::select::select(
+            controller.scan_async(&ScanConfig::default()),
+            status.wait_until_radio_disabled(),
+        )
+        .await;
+        if let embassy_futures::select::Either::First(Ok(networks)) = scan {
             let mut best: Option<([u8; 6], u8, i8)> = None;
             for ap in &networks {
                 if ap.ssid.as_str() == config.ssid.as_str()
@@ -366,18 +375,37 @@ async fn wifi_connect_task(
             .set_config(&station_wifi_mode(station, ap_enabled))
             .is_err()
         {
-            Timer::after(Duration::from_secs(2)).await;
+            let _ = embassy_futures::select::select(
+                Timer::after(Duration::from_secs(2)),
+                status.wait_until_radio_disabled(),
+            )
+            .await;
             continue;
         }
         if !status.is_enabled() {
             continue;
         }
-        if controller.connect_async().await.is_ok() {
-            WIFI_STATION_JOINED.store(true, Ordering::Relaxed);
-            let _ = controller.set_power_saving(PowerSaveMode::Minimum);
-        } else {
-            WIFI_STATION_JOINED.store(false, Ordering::Relaxed);
-            Timer::after(Duration::from_secs(2)).await;
+        let connected = embassy_futures::select::select(
+            controller.connect_async(),
+            status.wait_until_radio_disabled(),
+        )
+        .await;
+        match connected {
+            embassy_futures::select::Either::First(Ok(_)) => {
+                WIFI_STATION_JOINED.store(true, Ordering::Relaxed);
+                let _ = controller.set_power_saving(PowerSaveMode::Minimum);
+            }
+            embassy_futures::select::Either::First(Err(_)) => {
+                WIFI_STATION_JOINED.store(false, Ordering::Relaxed);
+                let _ = embassy_futures::select::select(
+                    Timer::after(Duration::from_secs(2)),
+                    status.wait_until_radio_disabled(),
+                )
+                .await;
+            }
+            embassy_futures::select::Either::Second(()) => {
+                WIFI_STATION_JOINED.store(false, Ordering::Relaxed);
+            }
         }
     }
 }

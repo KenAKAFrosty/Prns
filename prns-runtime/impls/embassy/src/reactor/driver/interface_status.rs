@@ -1,3 +1,5 @@
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::signal::Signal;
 use portable_atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
 use crate::interfaces::{
@@ -13,6 +15,7 @@ pub struct EmbassyInterfaceStatus {
     airtime: AtomicU32,
     transfer_rates: AtomicU64,
     enabled: AtomicBool,
+    enabled_changed: Signal<CriticalSectionRawMutex, bool>,
 }
 
 const AIRTIME_UNPUBLISHED: u32 = u32::MAX;
@@ -29,6 +32,7 @@ impl EmbassyInterfaceStatus {
             airtime: AtomicU32::new(AIRTIME_UNPUBLISHED),
             transfer_rates: AtomicU64::new(RATES_UNPUBLISHED),
             enabled: AtomicBool::new(true),
+            enabled_changed: Signal::new(),
         }
     }
 
@@ -43,12 +47,33 @@ impl EmbassyInterfaceStatus {
 
     /// Disabling retains the interface slot and routes for immediate resume.
     pub fn set_enabled(&self, enabled: bool) {
-        self.enabled.store(enabled, Ordering::Relaxed);
+        if self.enabled.swap(enabled, Ordering::Relaxed) != enabled {
+            self.enabled_changed.signal(enabled);
+        }
     }
 
     #[must_use]
     pub fn is_enabled(&self) -> bool {
         self.enabled.load(Ordering::Relaxed)
+    }
+
+    pub async fn wait_until_enabled(&self) {
+        self.wait_for_enabled_state(true).await;
+    }
+
+    pub async fn wait_until_disabled(&self) {
+        self.wait_for_enabled_state(false).await;
+    }
+
+    async fn wait_for_enabled_state(&self, enabled: bool) {
+        loop {
+            if self.is_enabled() == enabled {
+                return;
+            }
+            if self.enabled_changed.wait().await == enabled {
+                return;
+            }
+        }
     }
 
     pub fn add_rx(&self, bytes: u64) {
@@ -111,5 +136,28 @@ impl InterfaceStatus for EmbassyInterfaceStatus {
             rx_bps: (packed >> 32) as u32,
             tx_bps: packed as u32,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use embassy_futures::{block_on, join::join};
+
+    #[test]
+    fn enabled_state_changes_wake_waiters() {
+        let status =
+            EmbassyInterfaceStatus::new(InterfaceId::new([0x5A; 8]), ConnectionState::Initializing);
+
+        block_on(async {
+            join(status.wait_until_disabled(), async {
+                status.set_enabled(false);
+            })
+            .await;
+            join(status.wait_until_enabled(), async {
+                status.set_enabled(true);
+            })
+            .await;
+        });
     }
 }

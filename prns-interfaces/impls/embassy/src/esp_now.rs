@@ -7,7 +7,7 @@
 use alloc::boxed::Box;
 
 use embassy_futures::select::{select3, Either3};
-use embassy_time::{Duration, Instant, Timer};
+use embassy_time::Instant;
 use heapless::Vec as HeaplessVec;
 
 use prns_core::engine::InstantMillis;
@@ -18,10 +18,6 @@ use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, I
 use prns_runtime::reactor::driver::EmbassyInterfaceStatus;
 use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
 use prns_runtime::reactor::throughput::ThroughputLedger;
-
-/// How often the worker re-checks its enable gate, so a "Power" toggle takes effect within a beat
-/// rather than waiting on traffic.
-const ENABLED_POLL: Duration = Duration::from_millis(250);
 
 /// One ESP-NOW radio spoken as a broadcast Reticulum interface. Owns the radio for its whole life;
 /// `policy` decides whether it parks on a fixed channel or follows the WiFi station; `status` carries
@@ -91,16 +87,14 @@ impl<R: EspNowRadio> Interface for EspNowInterface<'_, R> {
         loop {
             if !status.is_enabled() {
                 status.set_connection(ConnectionState::Disabled);
-                while !status.is_enabled() {
-                    Timer::after(ENABLED_POLL).await;
-                }
+                status.wait_until_enabled().await;
                 status.set_connection(ConnectionState::Connected);
             }
 
             match select3(
                 radio.receive(&mut rx_buf[..]),
                 seam.next_outbound(),
-                Timer::after(ENABLED_POLL),
+                status.wait_until_disabled(),
             )
             .await
             {

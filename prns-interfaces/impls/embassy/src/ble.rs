@@ -8,9 +8,10 @@
 use ::core::cell::Cell;
 
 use embassy_futures::select::{select3, select4, select_array, Either3, Either4};
-use embassy_sync::blocking_mutex::raw::RawMutex;
+use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex};
 use embassy_sync::blocking_mutex::CriticalSectionMutex;
-use embassy_time::{with_timeout, Duration, Instant, Timer};
+use embassy_sync::signal::Signal;
+use embassy_time::{with_timeout, Duration, Instant};
 use portable_atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
 use prns_core::engine::FanTarget;
@@ -112,6 +113,7 @@ impl InterfaceStatus for BluetoothMemberStatus {
 pub struct BluetoothAutoShared<const MEMBERS: usize> {
     id: InterfaceId,
     enabled: AtomicBool,
+    enabled_changed: Signal<CriticalSectionRawMutex, bool>,
     up: AtomicBool,
     peers: AtomicU32,
     members: [BluetoothMemberStatus; MEMBERS],
@@ -126,6 +128,7 @@ impl<const MEMBERS: usize> BluetoothAutoShared<MEMBERS> {
         Self {
             id,
             enabled: AtomicBool::new(true),
+            enabled_changed: Signal::new(),
             up: AtomicBool::new(false),
             peers: AtomicU32::new(0),
             members: [const { BluetoothMemberStatus::new() }; MEMBERS],
@@ -155,13 +158,34 @@ impl<const MEMBERS: usize> BluetoothAutoStatus<MEMBERS> {
 
     /// Turn the Bluetooth auto-interface off or back on from the application.
     pub fn set_enabled(&self, enabled: bool) {
-        self.shared.enabled.store(enabled, Ordering::Relaxed);
+        if self.shared.enabled.swap(enabled, Ordering::Relaxed) != enabled {
+            self.shared.enabled_changed.signal(enabled);
+        }
     }
 
     /// Whether the supervisor should advertise, scan, and carry peers.
     #[must_use]
     pub fn is_enabled(&self) -> bool {
         self.shared.enabled.load(Ordering::Relaxed)
+    }
+
+    async fn wait_until_enabled(&self) {
+        self.wait_for_enabled_state(true).await;
+    }
+
+    async fn wait_until_disabled(&self) {
+        self.wait_for_enabled_state(false).await;
+    }
+
+    async fn wait_for_enabled_state(&self, enabled: bool) {
+        loop {
+            if self.is_enabled() == enabled {
+                return;
+            }
+            if self.shared.enabled_changed.wait().await == enabled {
+                return;
+            }
+        }
     }
 
     fn member(&self, slot: usize) -> &'static BluetoothMemberStatus {
@@ -311,9 +335,7 @@ impl<B: BleBackend, const MEMBERS: usize> BluetoothAuto<B, MEMBERS> {
             if !status.is_enabled() {
                 disable_members(&status, &mut fleet, &mut backend, &mut members).await;
                 pending.clear();
-                while !status.is_enabled() {
-                    Timer::after(Duration::from_millis(100)).await;
-                }
+                status.wait_until_enabled().await;
                 manager = ConnectionManager::<MEMBERS, DIAL_TRACK>::new(local);
                 manager.start(&mut |action| {
                     let _ = pending.push(action);
@@ -332,7 +354,7 @@ impl<B: BleBackend, const MEMBERS: usize> BluetoothAuto<B, MEMBERS> {
                 backend.next_event(),
                 fleet.outbound_ready(),
                 recv_any(&mut members, &mut inbufs),
-                Timer::after(Duration::from_millis(100)),
+                status.wait_until_disabled(),
             )
             .await;
             let now_ms = Instant::now().as_millis();

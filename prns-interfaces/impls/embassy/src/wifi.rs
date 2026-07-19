@@ -8,12 +8,13 @@
 use ::core::cell::Cell;
 use ::core::net::Ipv6Addr;
 
-use embassy_futures::select::{select, select4, Either, Either4};
+use embassy_futures::select::{select, select3, select4, Either, Either3, Either4};
 use embassy_net::udp::{RecvError, UdpMetadata, UdpSocket};
 use embassy_net::{IpAddress, Stack};
-use embassy_sync::blocking_mutex::raw::RawMutex;
+use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex};
 use embassy_sync::blocking_mutex::CriticalSectionMutex;
-use embassy_time::{with_timeout, Duration, Ticker, Timer};
+use embassy_sync::signal::Signal;
+use embassy_time::{with_timeout, Duration, Ticker};
 use portable_atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
 use prns_core::engine::FanTarget;
@@ -103,6 +104,8 @@ impl InterfaceStatus for WifiMemberStatus {
 pub struct AutoWifiShared<const MEMBERS: usize> {
     id: InterfaceId,
     enabled: AtomicBool,
+    enabled_changed: Signal<CriticalSectionRawMutex, bool>,
+    radio_enabled_changed: Signal<CriticalSectionRawMutex, bool>,
     peers: AtomicU32,
     members: [WifiMemberStatus; MEMBERS],
 }
@@ -116,6 +119,8 @@ impl<const MEMBERS: usize> AutoWifiShared<MEMBERS> {
         Self {
             id,
             enabled: AtomicBool::new(true),
+            enabled_changed: Signal::new(),
+            radio_enabled_changed: Signal::new(),
             peers: AtomicU32::new(0),
             members: [const { WifiMemberStatus::new() }; MEMBERS],
         }
@@ -140,13 +145,51 @@ impl<const MEMBERS: usize> AutoWifiStatus<MEMBERS> {
 
     /// Turn WiFi-auto discovery and member forwarding off or back on from the application.
     pub fn set_enabled(&self, enabled: bool) {
-        self.shared.enabled.store(enabled, Ordering::Relaxed);
+        if self.shared.enabled.swap(enabled, Ordering::Relaxed) != enabled {
+            self.shared.enabled_changed.signal(enabled);
+            self.shared.radio_enabled_changed.signal(enabled);
+        }
     }
 
     /// Whether WiFi-auto should be discovering and carrying peers.
     #[must_use]
     pub fn is_enabled(&self) -> bool {
         self.shared.enabled.load(Ordering::Relaxed)
+    }
+
+    pub async fn wait_until_enabled(&self) {
+        self.wait_for_enabled_state(true, &self.shared.enabled_changed)
+            .await;
+    }
+
+    pub async fn wait_until_disabled(&self) {
+        self.wait_for_enabled_state(false, &self.shared.enabled_changed)
+            .await;
+    }
+
+    pub async fn wait_until_radio_enabled(&self) {
+        self.wait_for_enabled_state(true, &self.shared.radio_enabled_changed)
+            .await;
+    }
+
+    pub async fn wait_until_radio_disabled(&self) {
+        self.wait_for_enabled_state(false, &self.shared.radio_enabled_changed)
+            .await;
+    }
+
+    async fn wait_for_enabled_state(
+        &self,
+        enabled: bool,
+        changed: &Signal<CriticalSectionRawMutex, bool>,
+    ) {
+        loop {
+            if self.is_enabled() == enabled {
+                return;
+            }
+            if changed.wait().await == enabled {
+                return;
+            }
+        }
     }
 
     fn member(&self, slot: usize) -> &'static WifiMemberStatus {
@@ -366,7 +409,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
         let mut sec_discovery_buf = [0u8; 64];
 
         loop {
-            while !self.status.is_enabled() {
+            if !self.status.is_enabled() {
                 clear_members(
                     &mut peers,
                     &ids,
@@ -375,7 +418,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                     &fleet,
                 )
                 .await;
-                Timer::after(BEACON_INTERVAL).await;
+                self.status.wait_until_enabled().await;
             }
             match select(
                 select4(
@@ -384,9 +427,10 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                     beacon.next(),
                     fleet.next_outbound::<{ core::HARDWARE_MTU }>(),
                 ),
-                select(
+                select3(
                     recv_or_pending(&self.secondary_discovery, &mut sec_discovery_buf),
                     recv_or_pending(&self.secondary_data, &mut sec_data_buf[..]),
+                    self.status.wait_until_disabled(),
                 ),
             )
             .await
@@ -515,7 +559,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                         }
                     }
                 }
-                Either::Second(Either::First(received)) => {
+                Either::Second(Either3::First(received)) => {
                     if let Ok((len, meta)) = received {
                         if let IpAddress::Ipv6(src) = meta.endpoint.addr {
                             ingest_beacon(
@@ -535,7 +579,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                         }
                     }
                 }
-                Either::Second(Either::Second(received)) => {
+                Either::Second(Either3::Second(received)) => {
                     if let Ok((len, meta)) = received {
                         if let IpAddress::Ipv6(src) = meta.endpoint.addr {
                             route_inbound(
@@ -549,6 +593,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                         }
                     }
                 }
+                Either::Second(Either3::Third(())) => {}
             }
         }
     }
@@ -698,4 +743,32 @@ async fn retire_stale<
         status.member(slot).retire();
     }
     status.republish_peer_count();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use embassy_futures::{block_on, join::join3};
+
+    static SHARED: AutoWifiShared<1> = AutoWifiShared::new(InterfaceId::new([0x5B; 8]));
+
+    #[test]
+    fn enabled_state_changes_wake_all_waiters() {
+        let status = AutoWifiStatus::new(&SHARED);
+
+        block_on(async {
+            join3(
+                status.wait_until_disabled(),
+                status.wait_until_radio_disabled(),
+                async { status.set_enabled(false) },
+            )
+            .await;
+            join3(
+                status.wait_until_enabled(),
+                status.wait_until_radio_enabled(),
+                async { status.set_enabled(true) },
+            )
+            .await;
+        });
+    }
 }

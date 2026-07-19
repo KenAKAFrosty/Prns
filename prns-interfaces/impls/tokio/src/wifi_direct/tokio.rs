@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use std::vec::Vec;
 
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
-use tokio::sync::{mpsc, Notify};
+use tokio::sync::{mpsc, watch};
 
 use crate::tcp::tokio_socket::{tune, CONNECT_TIMEOUT};
 use crate::wifi_direct::member::WifiDirectMember;
@@ -74,8 +74,7 @@ pub struct WifiDirectStatus {
 
 struct WifiDirectShared {
     id: InterfaceId,
-    enabled: AtomicBool,
-    enabled_changed: Notify,
+    enabled: watch::Sender<bool>,
     up: AtomicBool,
     failed: AtomicBool,
     failure_reason: Mutex<Option<&'static str>>,
@@ -86,11 +85,11 @@ struct WifiDirectShared {
 
 impl WifiDirectStatus {
     fn new(id: InterfaceId) -> Self {
+        let (enabled, _) = watch::channel(true);
         Self {
             shared: Arc::new(WifiDirectShared {
                 id,
-                enabled: AtomicBool::new(true),
-                enabled_changed: Notify::new(),
+                enabled,
                 up: AtomicBool::new(false),
                 failed: AtomicBool::new(false),
                 failure_reason: Mutex::new(None),
@@ -119,26 +118,29 @@ impl WifiDirectStatus {
     }
 
     pub fn set_enabled(&self, enabled: bool) {
-        self.shared.enabled.store(enabled, Ordering::Relaxed);
-        self.shared.enabled_changed.notify_one();
+        self.shared.enabled.send_if_modified(|current| {
+            let changed = *current != enabled;
+            *current = enabled;
+            changed
+        });
     }
 
     #[must_use]
     pub fn is_enabled(&self) -> bool {
-        self.shared.enabled.load(Ordering::Relaxed)
+        *self.shared.enabled.borrow()
     }
 
     async fn wait_until_enabled(&self) {
-        loop {
-            if self.is_enabled() {
-                return;
-            }
-            let changed = self.shared.enabled_changed.notified();
-            if self.is_enabled() {
-                return;
-            }
-            changed.await;
-        }
+        self.wait_for_enabled_state(true).await;
+    }
+
+    async fn wait_until_disabled(&self) {
+        self.wait_for_enabled_state(false).await;
+    }
+
+    async fn wait_for_enabled_state(&self, enabled: bool) {
+        let mut changed = self.shared.enabled.subscribe();
+        let _ = changed.wait_for(|current| *current == enabled).await;
     }
 
     #[must_use]
@@ -284,6 +286,7 @@ enum Step<G> {
     Plane(PlaneEvent),
     Closed(InterfaceId),
     Tick,
+    Disabled,
 }
 
 impl<B: WifiDirectBackend> InterfaceSupervisor for WifiDirectAuto<B> {
@@ -352,10 +355,12 @@ impl<B: WifiDirectBackend> InterfaceSupervisor for WifiDirectAuto<B> {
                 plane_event = plane_step(&mut plane) => Step::Plane(plane_event),
                 Some(id) = closed_rx.recv() => Step::Closed(id),
                 () = wait_formation_deadline(policy.formation_deadline_ms(), started) => Step::Tick,
+                () = status.wait_until_disabled() => Step::Disabled,
             };
             let now_ms = started.elapsed().as_millis() as u64;
             let mut emit = |action| pending.push(action);
             match step {
+                Step::Disabled => {}
                 Step::Tick => policy.handle(ManagerInput::Tick { now_ms }, &mut emit),
                 Step::Event(event) => match event {
                     WifiDirectEvent::Sighting {

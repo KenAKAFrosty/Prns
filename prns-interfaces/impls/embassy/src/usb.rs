@@ -2,7 +2,7 @@
 //!
 //! Two behaviours the bare seam doesn't carry, both lifted from the live-proven legacy `serve`: the device answers a host's `Hello` with a `HelloAck` (only then is a host actively reading), and it **holds the engine's outbound until a host has linked** — writing announces into a void with no reader times out mid-frame (`WRITE_TIMEOUT`), and that half-frame would desync the host's decoder the moment it connects. Before a host links, outbound frames are drained and dropped (there is no peer to hear them), not streamed into nothing.
 
-use embassy_futures::select::{select3, Either3};
+use embassy_futures::select::{select4, Either4};
 use embassy_time::{with_timeout, Duration, Timer};
 use embedded_io_async::{Read, Write};
 
@@ -85,14 +85,22 @@ where
         let mut absent_probes = 0u8;
 
         loop {
-            match select3(
+            if !status.is_enabled() {
+                linked = false;
+                status.set_connection(ConnectionState::Disabled);
+                status.wait_until_enabled().await;
+                absent_probes = 0;
+                status.set_connection(ConnectionState::Disconnected);
+            }
+            match select4(
                 rx.read(&mut read_buf),
                 seam.next_outbound(),
                 Timer::after(PRESENCE_PROBE_INTERVAL),
+                status.wait_until_disabled(),
             )
             .await
             {
-                Either3::First(result) => {
+                Either4::First(result) => {
                     absent_probes = 0;
                     let n = result.unwrap_or(0);
                     if n > 0 {
@@ -129,23 +137,19 @@ where
                         }
                     }
                 }
-                Either3::Second(out) => {
+                Either4::Second(out) => {
                     if linked && status.is_enabled() {
                         let data = Message::Data(out);
                         write_message(&mut tx, &data, &mut frame_buf, status).await;
                     }
                 }
-                Either3::Third(()) => {
-                    if !status.is_enabled() {
-                        linked = false;
-                        status.set_connection(ConnectionState::Disabled);
-                    } else if let Some(connection) =
-                        presence_verdict(presence(), &mut absent_probes)
-                    {
+                Either4::Third(()) => {
+                    if let Some(connection) = presence_verdict(presence(), &mut absent_probes) {
                         linked = false;
                         status.set_connection(connection);
                     }
                 }
+                Either4::Fourth(()) => {}
             }
         }
     }
