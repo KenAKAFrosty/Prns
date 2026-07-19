@@ -4,6 +4,7 @@ mod interface_lifecycle;
 mod node_lifecycle;
 mod persistence;
 mod request_response;
+mod resource_admission;
 mod resource_transfer;
 
 use std::collections::HashMap;
@@ -41,9 +42,10 @@ pub use persistence::{
     PrepareFlushError, PreparedFlush, RatchetSeedReport, RegionFlush, RouteSeedProgress,
     RouteSeedReport, TunnelSeedReport,
 };
+pub use resource_admission::{ResourceAdmissionPeer, ResourceOfferAdmission, ResourceOfferMonitor};
 pub use resource_transfer::{
-    ResourceReceipt, ResourceReceiveError, ResourceSendError, SegmentCompression,
-    AUTO_COMPRESS_MAX_LEN,
+    PreparedResourceReceiver, ResourceProgress, ResourceReceipt, ResourceReceiveError,
+    ResourceSendError, SegmentCompression, AUTO_COMPRESS_MAX_LEN,
 };
 
 /// A cloneable, `Send` handle to a running node: the proactive surface. Every [`CommandId`] is minted from one counter, so a fire-and-forget [`issue`](Self::issue) can never collide with an awaited [`send_single_packet`](Self::send_single_packet) or a runner's respond.
@@ -55,6 +57,7 @@ pub struct PrnsNodeHandle {
     iface_build: UnboundedSender<DriverMsg>,
     interfaces: Arc<Mutex<HashMap<InterfaceId, RegisteredInterface>>>,
     store: InterfaceStore,
+    resource_admission: resource_admission::ResourceAdmissionRegistry,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,6 +79,7 @@ impl PrnsNodeHandle {
             iface_build,
             interfaces: Arc::new(Mutex::new(HashMap::new())),
             store: InterfaceStore::new(),
+            resource_admission: resource_admission::ResourceAdmissionRegistry::default(),
         }
     }
 

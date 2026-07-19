@@ -12,7 +12,7 @@ use crate::reactor::driver::{
 };
 use crate::routing::links::request::RequestId;
 use crate::routing::links::resources::{
-    ResourceHash, ResourceStrategy, MAX_EFFICIENT_SIZE, METADATA_PREFIX_LEN,
+    sealed_transfer_len, ResourceHash, ResourceStrategy, MAX_EFFICIENT_SIZE, METADATA_PREFIX_LEN,
 };
 use crate::routing::links::LinkId;
 use crate::wire::DestinationHash;
@@ -60,6 +60,19 @@ pub struct ResourceReceipt {
     pub metadata: Option<std::vec::Vec<u8>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResourceProgress {
+    pub transferred: u64,
+    pub total: u64,
+    pub physical_transferred: u64,
+    pub segment_index: u64,
+    pub total_segments: u64,
+}
+
+pub struct PreparedResourceReceiver {
+    inbound: mpsc::UnboundedReceiver<ResourceInbound>,
+}
+
 #[derive(Debug)]
 pub enum ResourceReceiveError {
     Sink(std::io::Error),
@@ -68,6 +81,20 @@ pub enum ResourceReceiveError {
 }
 
 const ENGINE_SEGMENT_LANES: usize = 2;
+
+struct PendingSegment {
+    settled: oneshot::Receiver<Settlement>,
+    logical_len: u64,
+    physical_len: u64,
+    segment_index: u64,
+}
+
+pub(super) struct ResourceStreamOptions {
+    pub(super) packed_metadata: Option<Arc<[u8]>>,
+    pub(super) compression: SegmentCompression,
+    pub(super) answers_request: Option<RequestId>,
+    pub(super) progress: Option<mpsc::UnboundedSender<ResourceProgress>>,
+}
 
 async fn settle_sent_segment(
     settled: oneshot::Receiver<Settlement>,
@@ -91,9 +118,12 @@ impl PrnsNodeHandle {
             link_id,
             total_len,
             source,
-            None,
-            SegmentCompression::AUTO,
-            None,
+            ResourceStreamOptions {
+                packed_metadata: None,
+                compression: SegmentCompression::AUTO,
+                answers_request: None,
+                progress: None,
+            },
         )
         .await
     }
@@ -106,8 +136,18 @@ impl PrnsNodeHandle {
         source: impl AsyncRead + Unpin,
         compression: SegmentCompression,
     ) -> Result<(), ResourceSendError> {
-        self.send_resource_streaming(link_id, total_len, source, None, compression, None)
-            .await
+        self.send_resource_streaming(
+            link_id,
+            total_len,
+            source,
+            ResourceStreamOptions {
+                packed_metadata: None,
+                compression,
+                answers_request: None,
+                progress: None,
+            },
+        )
+        .await
     }
 
     /// `packed_metadata` is msgpack the peer's app unpacks, opaque all the way down. The block rides ahead of the data in segment one's stream and inside the advertised total, so segment one carries that much less data and a payload near the segment boundary may split one segment sooner.
@@ -122,9 +162,35 @@ impl PrnsNodeHandle {
             link_id,
             total_len,
             source,
-            Some(packed_metadata.into()),
-            SegmentCompression::AUTO,
-            None,
+            ResourceStreamOptions {
+                packed_metadata: Some(packed_metadata.into()),
+                compression: SegmentCompression::AUTO,
+                answers_request: None,
+                progress: None,
+            },
+        )
+        .await
+    }
+
+    pub async fn send_resource_with_options(
+        &self,
+        link_id: LinkId,
+        total_len: u64,
+        source: impl AsyncRead + Unpin,
+        packed_metadata: &[u8],
+        compression: SegmentCompression,
+        progress: mpsc::UnboundedSender<ResourceProgress>,
+    ) -> Result<(), ResourceSendError> {
+        self.send_resource_streaming(
+            link_id,
+            total_len,
+            source,
+            ResourceStreamOptions {
+                packed_metadata: Some(packed_metadata.into()),
+                compression,
+                answers_request: None,
+                progress: Some(progress),
+            },
         )
         .await
     }
@@ -144,10 +210,14 @@ impl PrnsNodeHandle {
         link_id: LinkId,
         total_len: u64,
         mut source: impl AsyncRead + Unpin,
-        packed_metadata: Option<Arc<[u8]>>,
-        compression: SegmentCompression,
-        answers_request: Option<RequestId>,
+        options: ResourceStreamOptions,
     ) -> Result<(), ResourceSendError> {
+        let ResourceStreamOptions {
+            packed_metadata,
+            compression,
+            answers_request,
+            progress,
+        } = options;
         let segment_size = MAX_EFFICIENT_SIZE as u64;
         let block_len = match packed_metadata.as_ref() {
             None => 0,
@@ -161,8 +231,9 @@ impl PrnsNodeHandle {
             .ok_or(ResourceSendError::UnrepresentableLength)?;
         let total_segments = stream_total_len.div_ceil(segment_size).max(1);
         let mut remaining = total_len;
-        let mut in_flight: VecDeque<oneshot::Receiver<Settlement>> =
-            VecDeque::with_capacity(ENGINE_SEGMENT_LANES);
+        let mut in_flight: VecDeque<PendingSegment> = VecDeque::with_capacity(ENGINE_SEGMENT_LANES);
+        let mut transferred = 0u64;
+        let mut physical_transferred = 0u64;
         for segment_index in 1..=total_segments {
             let capacity = if segment_index == 1 {
                 segment_size.saturating_sub(block_len)
@@ -222,10 +293,27 @@ impl PrnsNodeHandle {
                 },
             };
             if in_flight.len() == ENGINE_SEGMENT_LANES {
-                if let Some(settled) = in_flight.pop_front() {
-                    settle_sent_segment(settled).await?;
+                if let Some(pending) = in_flight.pop_front() {
+                    settle_sent_segment(pending.settled).await?;
+                    transferred = transferred.saturating_add(pending.logical_len);
+                    physical_transferred =
+                        physical_transferred.saturating_add(pending.physical_len);
+                    if let Some(progress) = &progress {
+                        let _ = progress.send(ResourceProgress {
+                            transferred,
+                            total: stream_total_len,
+                            physical_transferred,
+                            segment_index: pending.segment_index,
+                            total_segments,
+                        });
+                    }
                 }
             }
+            let physical_len = sealed_transfer_len(
+                compressed_candidate
+                    .as_ref()
+                    .map_or(segment_payload_len as usize, HostResourcePayload::len),
+            ) as u64;
             let id = self.mint();
             let (completion, settled) = oneshot::channel();
             self.commands
@@ -244,12 +332,47 @@ impl PrnsNodeHandle {
                     },
                 ))
                 .map_err(|_| ResourceSendError::NodeStopped)?;
-            in_flight.push_back(settled);
+            in_flight.push_back(PendingSegment {
+                settled,
+                logical_len: segment_payload_len,
+                physical_len,
+                segment_index,
+            });
         }
-        for settled in in_flight {
-            settle_sent_segment(settled).await?;
+        for pending in in_flight {
+            settle_sent_segment(pending.settled).await?;
+            transferred = transferred.saturating_add(pending.logical_len);
+            physical_transferred = physical_transferred.saturating_add(pending.physical_len);
+            if let Some(progress) = &progress {
+                let _ = progress.send(ResourceProgress {
+                    transferred,
+                    total: stream_total_len,
+                    physical_transferred,
+                    segment_index: pending.segment_index,
+                    total_segments,
+                });
+            }
         }
         Ok(())
+    }
+
+    pub async fn prepare_resource_receiver(
+        &self,
+        link_id: LinkId,
+    ) -> Result<PreparedResourceReceiver, ResourceReceiveError> {
+        let (chunks, inbound) = mpsc::unbounded_channel();
+        let (ready, registered) = oneshot::channel();
+        self.commands
+            .send(HostCommand::RegisterResourceSink {
+                link_id,
+                sink: chunks,
+                ready,
+            })
+            .map_err(|_| ResourceReceiveError::NodeStopped)?;
+        registered
+            .await
+            .map_err(|_| ResourceReceiveError::NodeStopped)?;
+        Ok(PreparedResourceReceiver { inbound })
     }
 
     /// Registers the sink before yielding, so a segment arriving the instant after cannot reach the app event stream instead.
@@ -266,23 +389,61 @@ impl PrnsNodeHandle {
     pub async fn receive_resource(
         &self,
         link_id: LinkId,
-        mut sink: impl AsyncWrite + Unpin,
+        sink: impl AsyncWrite + Unpin,
     ) -> Result<ResourceReceipt, ResourceReceiveError> {
-        let (chunks, mut inbound) = mpsc::unbounded_channel();
-        let (ready, registered) = oneshot::channel();
-        self.commands
-            .send(HostCommand::RegisterResourceSink {
-                link_id,
-                sink: chunks,
+        self.prepare_resource_receiver(link_id)
+            .await?
+            .receive(sink)
+            .await
+    }
+
+    pub async fn set_link_resource_strategy(
+        &self,
+        link_id: LinkId,
+        strategy: ResourceStrategy,
+    ) -> Result<(), crate::runtime::SendError<crate::engine::SetResourceStrategyFailure>> {
+        match self
+            .settle(crate::engine::EngineCommand::SetResourceStrategy(
+                crate::engine::SetResourceStrategy { link_id, strategy },
+            ))
+            .await
+        {
+            Some(Settlement::SetResourceStrategy(result)) => {
+                result.map_err(crate::runtime::SendError::Failed)
+            }
+            Some(_) | None => Err(crate::runtime::SendError::NodeStopped),
+        }
+    }
+
+    pub async fn set_resource_strategy(
+        &self,
+        destination: DestinationHash,
+        strategy: ResourceStrategy,
+    ) -> bool {
+        let (ready, applied) = oneshot::channel();
+        if self
+            .commands
+            .send(HostCommand::SetResourceStrategy {
+                destination,
+                strategy,
                 ready,
             })
-            .map_err(|_| ResourceReceiveError::NodeStopped)?;
-        registered
-            .await
-            .map_err(|_| ResourceReceiveError::NodeStopped)?;
+            .is_err()
+        {
+            return false;
+        }
+        applied.await.unwrap_or(false)
+    }
+}
+
+impl PreparedResourceReceiver {
+    pub async fn receive(
+        mut self,
+        mut sink: impl AsyncWrite + Unpin,
+    ) -> Result<ResourceReceipt, ResourceReceiveError> {
         let mut metadata = None;
         loop {
-            match inbound.recv().await {
+            match self.inbound.recv().await {
                 Some(ResourceInbound::Metadata(packed)) => metadata = Some(packed),
                 Some(ResourceInbound::Chunk(bytes)) => {
                     sink.write_all(&bytes)
@@ -304,27 +465,6 @@ impl PrnsNodeHandle {
                 None => return Err(ResourceReceiveError::NodeStopped),
             }
         }
-    }
-
-    /// The recipe's `resource_strategy` sets this at construction; this is the runtime counterpart, for a destination re-tuned while the node runs.
-    pub async fn set_resource_strategy(
-        &self,
-        destination: DestinationHash,
-        strategy: ResourceStrategy,
-    ) -> bool {
-        let (ready, applied) = oneshot::channel();
-        if self
-            .commands
-            .send(HostCommand::SetResourceStrategy {
-                destination,
-                strategy,
-                ready,
-            })
-            .is_err()
-        {
-            return false;
-        }
-        applied.await.unwrap_or(false)
     }
 }
 

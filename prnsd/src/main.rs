@@ -74,6 +74,13 @@ async fn main() -> ExitCode {
                 ExitCode::from(exit_code)
             }
         },
+        cli::Command::Cp(args) => match utilities::rncp::run(*args).await {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("prnsd cp: {error}");
+                ExitCode::FAILURE
+            }
+        },
         cli::Command::Start(args) => managed_service::run(managed_service::Command::Start(args)),
         cli::Command::Restart(args) => {
             managed_service::run(managed_service::Command::Restart(args))

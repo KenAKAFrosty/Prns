@@ -117,6 +117,7 @@ where
             iface_build: iface_build_tx,
             interfaces: Arc::new(Mutex::new(HashMap::new())),
             store: InterfaceStore::new(),
+            resource_admission: super::resource_admission::ResourceAdmissionRegistry::default(),
         };
         let (node, interfaces) = assemble_node(build_recipe(handle.clone()));
         interfaces.attach(&handle);
@@ -281,7 +282,9 @@ where
             inflate_workers.saturating_mul(INFLATE_QUEUE_PER_WORKER),
         ));
         let inflate_execution = Arc::new(tokio::sync::Semaphore::new(inflate_workers));
-        let reactor = reactor_driver::run_with_store(
+        let admission_decider = handle.resource_admission.clone();
+        let admission_cleanup = handle.resource_admission.clone();
+        let reactor = reactor_driver::run_with_store_and_deciders(
             engine,
             host,
             reactor_driver::ReactorWiring {
@@ -293,6 +296,9 @@ where
                 egress,
             },
             |journaled| {
+                if let Journaled::LinkClosed { link_id, .. } = &journaled {
+                    admission_cleanup.remove(*link_id);
+                }
                 if let Journaled::ResourceNeedsDecompression {
                     link_id,
                     hash,
@@ -367,6 +373,10 @@ where
             },
             store,
             crypto_pool,
+            crate::reactor::AppDeciders {
+                should_prove: |_| false,
+                should_accept_resource: move |offer| admission_decider.permits(offer),
+            },
         );
         let driver_commands = handle.commands.clone();
         let driver_interfaces = handle.interfaces.clone();

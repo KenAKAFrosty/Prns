@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use personal_rns::i2p::{I2pPeerAddress, I2pPeerAddressError, SamBridgeAddress};
 
+use crate::utilities::rncp::RncpArgs;
 use crate::utilities::rnid::RnidArgs;
 use crate::utilities::rnpath::RnpathArgs;
 use crate::utilities::rnprobe::RnprobeArgs;
@@ -134,6 +135,8 @@ pub enum Command {
     Probe(RnprobeArgs),
     #[command(about = "Manage Reticulum identities and local cryptographic files")]
     Id(Box<RnidArgs>),
+    #[command(about = "Transfer files over Reticulum")]
+    Cp(Box<RncpArgs>),
 }
 
 #[derive(Parser)]
@@ -160,6 +163,7 @@ pub fn parse_from(args: impl IntoIterator<Item = OsString>) -> Result<Command, c
                     | "path"
                     | "probe"
                     | "id"
+                    | "cp"
                     | "help"
                     | "--help"
                     | "-h"
@@ -195,6 +199,14 @@ pub fn id_help() -> String {
     match command.find_subcommand_mut("id") {
         Some(id) => format!("{}\n", id.render_long_help()),
         None => String::from("Usage: prnsd id [OPTIONS]\n"),
+    }
+}
+
+pub fn cp_help() -> String {
+    let mut command = Cli::command();
+    match command.find_subcommand_mut("cp") {
+        Some(cp) => format!("{}\n", cp.render_long_help()),
+        None => String::from("Usage: prnsd cp [OPTIONS] [FILE] [DESTINATION]\n"),
     }
 }
 
@@ -458,6 +470,50 @@ mod tests {
     #[test]
     fn id_does_not_expose_a_prefixed_alias() {
         let error = parse_from(["prnsd", "rnid"].into_iter().map(OsString::from)).unwrap_err();
+        assert_eq!(error.exit_code(), 2);
+    }
+
+    #[test]
+    fn cp_is_a_prefixless_utility_with_stock_flags() {
+        let Command::Cp(args) = parse(&[
+            "prnsd",
+            "cp",
+            "-f",
+            "-P",
+            "-s",
+            "/downloads",
+            "report.bin",
+            "00112233445566778899aabbccddeeff",
+        ]) else {
+            panic!("cp must remain a direct utility command");
+        };
+        assert!(args.fetch);
+        assert!(args.phy_rates);
+        assert_eq!(args.save, Some(PathBuf::from("/downloads")));
+        assert_eq!(args.file.as_deref(), Some("report.bin"));
+        assert!(args.destination.is_some());
+
+        let Command::Cp(args) = parse(&[
+            "prnsd",
+            "cp",
+            "-l",
+            "-F",
+            "-a",
+            "00112233445566778899aabbccddeeff",
+            "-j",
+            "/srv/files",
+        ]) else {
+            panic!("cp listen flags must remain stock-compatible");
+        };
+        assert!(args.listen);
+        assert!(args.allow_fetch);
+        assert_eq!(args.allowed.len(), 1);
+        assert_eq!(args.jail, Some(PathBuf::from("/srv/files")));
+    }
+
+    #[test]
+    fn cp_does_not_expose_a_prefixed_alias() {
+        let error = parse_from(["prnsd", "rncp"].into_iter().map(OsString::from)).unwrap_err();
         assert_eq!(error.exit_code(), 2);
     }
 
