@@ -19,6 +19,7 @@ default = []
 interface-discovery = ["prns-runtime/interface-discovery"]
 interface-discovery-archive = ["interface-discovery", "prns-runtime/interface-discovery-archive"]
 runtime-metrics = ["prns-core/runtime-metrics", "prns-runtime/runtime-metrics"]
+rns-management = ["prns-runtime/rns-management"]
 parallel-persistence = ["prns-core/parallel-persistence"]
 tracing = ["dep:tracing"]
 

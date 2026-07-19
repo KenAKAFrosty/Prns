@@ -1,6 +1,6 @@
 use super::*;
 
-#[tokio::test]
+#[futures_test::test]
 async fn rns_138_management_verbs_get_typed_conservative_replies() {
     let query = StubQuery {
         links: 0,
@@ -68,7 +68,7 @@ async fn rns_138_management_verbs_get_typed_conservative_replies() {
     );
 }
 
-#[tokio::test]
+#[futures_test::test]
 async fn rns_138_destination_data_projects_every_typed_retention_outcome() {
     let query = StubQuery {
         links: 0,
@@ -87,7 +87,7 @@ async fn rns_138_destination_data_projects_every_typed_retention_outcome() {
             ),
         ])
     };
-    let (calls, mut recorded) = tokio::sync::mpsc::unbounded_channel();
+    let (calls, recorded) = std::sync::mpsc::channel();
     let mut retention = StubRetention {
         calls,
         mark_used: Ok(MarkDestinationUsedOutcome::NotFound),
@@ -116,7 +116,7 @@ async fn rns_138_destination_data_projects_every_typed_retention_outcome() {
             expected_reply,
         );
         assert_eq!(
-            recorded.recv().await,
+            recorded.recv().ok(),
             Some(RetentionCapabilityCall::MarkUsed(destination)),
         );
     }
@@ -134,7 +134,7 @@ async fn rns_138_destination_data_projects_every_typed_retention_outcome() {
             expected_reply,
         );
         assert_eq!(
-            recorded.recv().await,
+            recorded.recv().ok(),
             Some(RetentionCapabilityCall::RetainDestination(destination)),
         );
     }
@@ -156,13 +156,13 @@ async fn rns_138_destination_data_projects_every_typed_retention_outcome() {
             expected_reply,
         );
         assert_eq!(
-            recorded.recv().await,
+            recorded.recv().ok(),
             Some(RetentionCapabilityCall::ReleaseDestination(destination)),
         );
     }
 }
 
-#[tokio::test]
+#[futures_test::test]
 async fn rns_138_identity_retention_is_true_for_any_matching_destination() {
     let query = StubQuery {
         links: 0,
@@ -176,7 +176,7 @@ async fn rns_138_identity_retention_is_true_for_any_matching_destination() {
         ("identity_data", Value::from("retain")),
         ("identity_hash", Value::Binary(identity.as_bytes().to_vec())),
     ]);
-    let (calls, mut recorded) = tokio::sync::mpsc::unbounded_channel();
+    let (calls, recorded) = std::sync::mpsc::channel();
     let mut retention = StubRetention {
         calls,
         mark_used: Ok(MarkDestinationUsedOutcome::NotFound),
@@ -219,13 +219,13 @@ async fn rns_138_identity_retention_is_true_for_any_matching_destination() {
             expected_reply,
         );
         assert_eq!(
-            recorded.recv().await,
+            recorded.recv().ok(),
             Some(RetentionCapabilityCall::RetainIdentity(identity)),
         );
     }
 }
 
-#[tokio::test]
+#[futures_test::test]
 async fn rns_138_blackhole_reads_delegate_and_project_the_live_table() {
     let query = StubQuery {
         links: 0,
@@ -242,7 +242,7 @@ async fn rns_138_blackhole_reads_delegate_and_project_the_live_table() {
         expiry: BlackholeExpiry::At(prns_core::units::InstantMillis(123_500)),
         reason: Some(String::from("operator")),
     }];
-    let (calls, mut recorded) = tokio::sync::mpsc::unbounded_channel();
+    let (calls, recorded) = std::sync::mpsc::channel();
     let blackholes = StubBlackholes {
         calls,
         entries: Ok(entries),
@@ -267,10 +267,7 @@ async fn rns_138_blackhole_reads_delegate_and_project_the_live_table() {
             ]),
         )])
     );
-    assert_eq!(
-        recorded.recv().await,
-        Some(BlackholeCapabilityCall::ReadAll)
-    );
+    assert_eq!(recorded.recv().ok(), Some(BlackholeCapabilityCall::ReadAll));
 
     let checking = msgpack_request(vec![
         ("get", Value::from("is_blackholed")),
@@ -281,12 +278,12 @@ async fn rns_138_blackhole_reads_delegate_and_project_the_live_table() {
         b"\xc3"
     );
     assert_eq!(
-        recorded.recv().await,
+        recorded.recv().ok(),
         Some(BlackholeCapabilityCall::IsBlackholed(identity))
     );
 }
 
-#[tokio::test]
+#[futures_test::test]
 async fn rns_138_blackhole_writes_delegate_source_and_project_tri_state_replies() {
     let query = StubQuery {
         links: 0,
@@ -304,7 +301,7 @@ async fn rns_138_blackhole_writes_delegate_source_and_project_tri_state_replies(
         ("until", Value::F64(123.4567)),
         ("reason", Value::from("operator")),
     ]);
-    let (calls, mut recorded) = tokio::sync::mpsc::unbounded_channel();
+    let (calls, recorded) = std::sync::mpsc::channel();
     let mut blackholes = StubBlackholes {
         calls,
         entries: Ok(vec![]),
@@ -318,7 +315,7 @@ async fn rns_138_blackhole_writes_delegate_source_and_project_tri_state_replies(
         b"\xc3"
     );
     assert_eq!(
-        recorded.recv().await,
+        recorded.recv().ok(),
         Some(BlackholeCapabilityCall::Blackhole(BlackholedIdentity {
             identity,
             source: TEST_TRANSPORT_IDENTITY_HASH,
@@ -333,7 +330,7 @@ async fn rns_138_blackhole_writes_delegate_source_and_project_tri_state_replies(
         b"\xc0"
     );
     assert!(matches!(
-        recorded.recv().await,
+        recorded.recv().ok(),
         Some(BlackholeCapabilityCall::Blackhole(_))
     ));
 
@@ -343,7 +340,7 @@ async fn rns_138_blackhole_writes_delegate_source_and_project_tri_state_replies(
         b"\xc2"
     );
     assert!(matches!(
-        recorded.recv().await,
+        recorded.recv().ok(),
         Some(BlackholeCapabilityCall::Blackhole(_))
     ));
 
@@ -356,7 +353,7 @@ async fn rns_138_blackhole_writes_delegate_source_and_project_tri_state_replies(
         b"\xc3"
     );
     assert_eq!(
-        recorded.recv().await,
+        recorded.recv().ok(),
         Some(BlackholeCapabilityCall::Unblackhole(identity))
     );
 
@@ -366,7 +363,7 @@ async fn rns_138_blackhole_writes_delegate_source_and_project_tri_state_replies(
         b"\xc0"
     );
     assert_eq!(
-        recorded.recv().await,
+        recorded.recv().ok(),
         Some(BlackholeCapabilityCall::Unblackhole(identity))
     );
 
@@ -376,12 +373,12 @@ async fn rns_138_blackhole_writes_delegate_source_and_project_tri_state_replies(
         b"\xc2"
     );
     assert_eq!(
-        recorded.recv().await,
+        recorded.recv().ok(),
         Some(BlackholeCapabilityCall::Unblackhole(identity))
     );
 }
 
-#[tokio::test]
+#[futures_test::test]
 async fn rns_138_drop_verbs_delegate_typed_arguments_and_project_reference_replies() {
     let query = StubQuery {
         links: 0,
@@ -390,7 +387,7 @@ async fn rns_138_drop_verbs_delegate_typed_arguments_and_project_reference_repli
         routes: std::vec![],
         interfaces: std::vec![],
     };
-    let (calls_tx, mut calls_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (calls_tx, calls_rx) = std::sync::mpsc::channel();
     let control = StubRoutingControl {
         calls: calls_tx,
         drop_route: Ok(DropRouteOutcome::Dropped),
@@ -414,7 +411,7 @@ async fn rns_138_drop_verbs_delegate_typed_arguments_and_project_reference_repli
         b"\xc3"
     );
     assert_eq!(
-        calls_rx.recv().await,
+        calls_rx.recv().ok(),
         Some(RoutingControlCall::DropRoute(destination))
     );
 
@@ -430,7 +427,7 @@ async fn rns_138_drop_verbs_delegate_typed_arguments_and_project_reference_repli
         b"\x03"
     );
     assert_eq!(
-        calls_rx.recv().await,
+        calls_rx.recv().ok(),
         Some(RoutingControlCall::DropRoutesVia(transport))
     );
 
@@ -439,7 +436,7 @@ async fn rns_138_drop_verbs_delegate_typed_arguments_and_project_reference_repli
         b"\xc0"
     );
     assert_eq!(
-        calls_rx.recv().await,
+        calls_rx.recv().ok(),
         Some(RoutingControlCall::ClearAnnounceQueues)
     );
 }

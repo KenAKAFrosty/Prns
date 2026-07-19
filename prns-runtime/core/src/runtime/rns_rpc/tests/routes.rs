@@ -1,6 +1,6 @@
 use super::*;
 
-#[tokio::test]
+#[futures_test::test]
 async fn a_msgpack_path_table_renders_each_route_as_a_dict() {
     let query = StubQuery {
         links: 0,
@@ -37,7 +37,7 @@ async fn a_msgpack_path_table_renders_each_route_as_a_dict() {
     );
 }
 
-#[tokio::test]
+#[futures_test::test]
 async fn a_msgpack_path_table_honors_signed_and_unbounded_max_hops() {
     let route = |hops| RouteSnapshot {
         destination: prns_core::wire::DestinationHash::new([hops; 16]),
@@ -80,7 +80,7 @@ async fn a_msgpack_path_table_honors_signed_and_unbounded_max_hops() {
     );
 }
 
-#[tokio::test]
+#[futures_test::test]
 async fn interface_stats_renders_each_held_interface_with_its_live_counters() {
     let query = StubQuery {
         links: 0,
@@ -106,7 +106,7 @@ async fn interface_stats_renders_each_held_interface_with_its_live_counters() {
                     transported_links: 0,
                     membership: prns_core::interfaces::Membership::Independent,
                 },
-                ifac: Some(prns_runtime::node_introspection::InterfaceIfacSnapshot {
+                ifac: Some(InterfaceIfacSnapshot {
                     signature: [0x5a; 64],
                     size: prns_core::interfaces::ifac::IfacSize::WIDE,
                     network_name: Some("private-net".into()),
@@ -214,7 +214,7 @@ fn one_via_route() -> StubQuery {
     }
 }
 
-#[tokio::test]
+#[futures_test::test]
 async fn next_hop_answers_the_via_hash_or_nil_for_an_unknown_destination() {
     let query = one_via_route();
 
@@ -230,7 +230,7 @@ async fn next_hop_answers_the_via_hash_or_nil_for_an_unknown_destination() {
     assert_eq!(unknown, b"\xc0", "an unknown destination has no next hop");
 }
 
-#[tokio::test]
+#[futures_test::test]
 async fn a_directly_reachable_next_hop_is_the_destination_itself() {
     let query = StubQuery {
         links: 0,
@@ -255,7 +255,7 @@ async fn a_directly_reachable_next_hop_is_the_destination_itself() {
     );
 }
 
-#[tokio::test]
+#[futures_test::test]
 async fn next_hop_if_name_is_the_interface_name_or_the_string_none() {
     let query = one_via_route();
 
@@ -268,7 +268,7 @@ async fn next_hop_if_name_is_the_interface_name_or_the_string_none() {
     assert_eq!(unknown, b"\xa4None", "an unknown route's name is str(None)");
 }
 
-#[tokio::test]
+#[futures_test::test]
 async fn a_legacy_pickle_client_gets_next_hop_in_pickle() {
     let query = one_via_route();
     let mut request = std::vec![0x80, 0x02];

@@ -13,7 +13,7 @@ use crate::routing::dedup::PacketHash;
 use crate::routing::BlackholedIdentity;
 use crate::wire::{DestinationHash, TransportId};
 
-use super::super::identity_blackhole::{settle_control, settle_source};
+use super::super::identity_blackhole_commands::{settle_control, settle_source};
 use super::super::settle_destination_identity_retention;
 #[cfg(feature = "runtime-metrics")]
 use super::super::RuntimeMetricsSnapshot;

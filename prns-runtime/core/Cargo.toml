@@ -20,6 +20,7 @@ interface-discovery-archive = ["std", "interface-discovery", "prns-core/interfac
 external-alloc = ["alloc", "prns-core/external-alloc"]
 std = ["alloc", "prns-core/std"]
 runtime-metrics = ["alloc", "prns-core/runtime-metrics"]
+rns-management = ["alloc", "prns-core/shared-instance-rpc"]
 
 [dependencies]
 prns-core = { path = "../../prns-core", default-features = false }
@@ -30,6 +31,8 @@ heapless = { version = "0.8", default-features = false }
 [dev-dependencies]
 prns-core = { path = "../../prns-core", default-features = false, features = ["test-support"] }
 futures-executor = "0.3"
+futures-test = "0.3"
+rmpv = "1.3"
 
 [lints]
 workspace = true

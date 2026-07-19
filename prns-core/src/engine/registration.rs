@@ -816,15 +816,18 @@ mod tests {
         let verified = pending.verify().unwrap();
 
         assert_eq!(
-            state.blackhole_identity(
-                crate::routing::BlackholedIdentity {
-                    identity,
-                    source: IdentityHash::new([0xC4; 16]),
-                    expiry: crate::routing::BlackholeExpiry::Indefinite,
-                    reason: None,
-                },
-                &mut |_| {},
-            ),
+            state
+                .blackhole_identity(
+                    crate::routing::BlackholedIdentity {
+                        identity,
+                        source: IdentityHash::new([0xC4; 16]),
+                        expiry: crate::routing::BlackholeExpiry::Indefinite,
+                        reason: None,
+                    },
+                    crate::interfaces::AttachedInterfaces::new(&[]),
+                    &mut |_| {},
+                )
+                .outcome,
             Ok(crate::routing::BlackholeIdentityOutcome::Added),
         );
         assert_eq!(
@@ -843,15 +846,18 @@ mod tests {
         let mut state = EngineState::<TestStorageLayout>::default();
 
         assert_eq!(
-            state.blackhole_identity(
-                crate::routing::BlackholedIdentity {
-                    identity,
-                    source: IdentityHash::new([0xC3; 16]),
-                    expiry: crate::routing::BlackholeExpiry::Indefinite,
-                    reason: None,
-                },
-                &mut |_| {},
-            ),
+            state
+                .blackhole_identity(
+                    crate::routing::BlackholedIdentity {
+                        identity,
+                        source: IdentityHash::new([0xC3; 16]),
+                        expiry: crate::routing::BlackholeExpiry::Indefinite,
+                        reason: None,
+                    },
+                    crate::interfaces::AttachedInterfaces::new(&[]),
+                    &mut |_| {},
+                )
+                .outcome,
             Ok(crate::routing::BlackholeIdentityOutcome::Added),
         );
         assert_eq!(
