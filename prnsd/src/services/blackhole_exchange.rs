@@ -25,7 +25,7 @@ use personal_rns::shared_instance::blackhole_compat::{RnsBlackholeFileError, Rns
 use personal_rns::storage::StorageLayout;
 use personal_rns::wire::DestinationHash;
 
-use crate::request_services::DaemonRequestState;
+use super::request_state::DaemonRequestState;
 
 pub const LIST_PATH: &str = "/list";
 const INITIAL_WAIT: Duration = Duration::from_secs(20);

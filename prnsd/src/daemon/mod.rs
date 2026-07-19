@@ -12,10 +12,7 @@ pub(crate) use configuration::DEFAULT_CONFIG;
 
 use std::process;
 
-use crate::{
-    blackhole_exchange, cli, interface_discovery, management_announces, observability, persist,
-    probe_responder, remote_management, request_services, splash,
-};
+use crate::{cli, interface_discovery, observability, persist, services, splash};
 use personal_rns::config::{SharedInstance, TransportIdentityPolicy};
 use personal_rns::engine::{
     EngineProtocolPolicy, LinkMtuDiscovery, LocalHopCountOverride, ProofForm,
@@ -145,26 +142,22 @@ pub(super) async fn run(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
         )
         .unzip();
     let remote_management_transport =
-        routing_enabled.then_some(request_services::TransportStatusIdentity {
+        routing_enabled.then_some(services::TransportStatusIdentity {
             transport: visible_identity_hash,
             network: network_identity_hash,
         });
     let mut prns = PrnsNode::new_with_handle(move |handle| PrnsNodeRecipe {
         transport_identity: transport_secret,
         pre_configured_destinations: std::iter::empty(),
-        app_state: request_services::DaemonRequestState::new(
-            handle,
-            remote_management_transport,
-            started,
-        ),
+        app_state: services::DaemonRequestState::new(handle, remote_management_transport, started),
         storage: GrowableHeap,
         routes: routes![
-            remote_management::StatusRoute,
-            remote_management::PathRoute,
-            blackhole_exchange::ListRoute
+            services::StatusRoute,
+            services::PathRoute,
+            services::ListRoute
         ],
         interfaces: Manual,
-        on_event: move |event, _state: &request_services::DaemonRequestState| {
+        on_event: move |event, _state: &services::DaemonRequestState| {
             if let PrnsEvent::Diagnostic(Diagnostic::SelfRatchetRotated { destination }) = event {
                 let _ = rotated_tx.send(destination);
             }
@@ -214,67 +207,16 @@ pub(super) async fn run(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
     };
     let startup = interface_ownership.startup();
 
-    let mut management_destinations = Vec::new();
-    if interface_ownership.routing_tables().is_some() {
-        if let Some(allowed) = plan.remote_management.allowed() {
-            match remote_management::activate(&mut prns, visible_secret.clone(), allowed) {
-                Ok(destination) => {
-                    management_destinations.push(destination);
-                    tracing::info!(
-                        event = "remote_management_enabled",
-                        destination = ?destination.as_bytes(),
-                        allowed_identities = allowed.len(),
-                    );
-                }
-                Err(error) => {
-                    tracing::error!(
-                        event = "remote_management_start_failed",
-                        error = ?error,
-                    );
-                    observability.shutdown().await;
-                    process::exit(1);
-                }
+    let management_destinations = match interface_ownership.routing_tables() {
+        Some(_) => match services::activate(&mut prns, &plan, &visible_secret) {
+            Ok(destinations) => destinations,
+            Err(_) => {
+                observability.shutdown().await;
+                process::exit(1);
             }
-        }
-        if plan.probe_responder.is_enabled() {
-            match probe_responder::activate(&mut prns, visible_secret.clone()) {
-                Ok(destination) => {
-                    management_destinations.push(destination);
-                    tracing::info!(
-                        event = "probe_responder_enabled",
-                        destination = ?destination.as_bytes(),
-                    );
-                }
-                Err(error) => {
-                    tracing::error!(
-                        event = "probe_responder_start_failed",
-                        error = ?error,
-                    );
-                    observability.shutdown().await;
-                    process::exit(1);
-                }
-            }
-        }
-        if plan.blackhole_exchange.publication().is_enabled() {
-            match blackhole_exchange::activate(&mut prns, visible_secret.clone()) {
-                Ok(destination) => {
-                    management_destinations.push(destination);
-                    tracing::info!(
-                        event = "blackhole_publisher_enabled",
-                        destination = ?destination.as_bytes(),
-                    );
-                }
-                Err(error) => {
-                    tracing::error!(
-                        event = "blackhole_publisher_start_failed",
-                        error = ?error,
-                    );
-                    observability.shutdown().await;
-                    process::exit(1);
-                }
-            }
-        }
-    }
+        },
+        None => services::ManagementDestinations::none(),
+    };
 
     if plan.panic_on_interface_error && startup.failed != 0 {
         tracing::error!(
@@ -348,7 +290,7 @@ pub(super) async fn run(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
     }
 
     let management_announce_task =
-        management_announces::spawn(prns_handle.clone(), management_destinations);
+        services::spawn_management_announcements(prns_handle.clone(), management_destinations);
     let (
         interface_failure_watch,
         discovery_task,
@@ -396,7 +338,7 @@ pub(super) async fn run(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
                 }
                 None => None,
             };
-            let blackhole_update_task = blackhole_exchange::spawn_updater(
+            let blackhole_update_task = services::spawn_blackhole_updater(
                 prns_handle.clone(),
                 prns.clock(),
                 blackhole_files,

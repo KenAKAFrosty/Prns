@@ -1,20 +1,16 @@
 //! The Personal Reticulum daemon: a configurable shared-instance node built on [`personal_rns::runtime::PrnsNode`].
 #![forbid(unsafe_code)]
 
-mod blackhole_exchange;
 mod cli;
 mod daemon;
 mod i2p;
 mod interface_discovery;
 mod managed_service;
-mod management_announces;
 #[cfg(feature = "otlp")]
 mod metrics;
 mod observability;
 mod persist;
-mod probe_responder;
-mod remote_management;
-mod request_services;
+mod services;
 mod splash;
 mod startup_progress;
 mod utilities;
