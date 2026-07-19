@@ -184,7 +184,10 @@ where
         std::future::pending::<Result<(), RnxError>>().await
     };
     tokio::select! {
-        () = node.run() => Err(RnxError::ListenerStopped),
+        result = node.run() => match result {
+            Ok(()) => Err(RnxError::ListenerStopped),
+            Err(error) => Err(RnxError::ListenerPanicked(error)),
+        },
         result = serving => result,
     }
 }

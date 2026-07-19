@@ -8,7 +8,7 @@ use personal_rns::engine::{
 use personal_rns::rnx::RnxCodecError;
 use personal_rns::routing::announce::ExpandNameError;
 use personal_rns::routing::request_handlers::RequestHandlerError;
-use personal_rns::runtime::{IdentitySecretFileError, SendError};
+use personal_rns::runtime::{IdentitySecretFileError, NodeRunError, SendError};
 use personal_rns::shared_instance::ExistingSharedInstanceUnavailable;
 use personal_rns::wire::DestinationHash;
 
@@ -47,6 +47,7 @@ pub enum RnxError {
     RequestAcl(RequestHandlerError),
     Announce(SendError<AnnounceNowFailure>),
     ListenerStopped,
+    ListenerPanicked(NodeRunError),
     Stdin(std::io::Error),
     Stdout(std::io::Error),
     Stderr(std::io::Error),
@@ -105,6 +106,7 @@ impl fmt::Display for RnxError {
             }
             Self::Announce(source) => write!(formatter, "x announce failed: {source:?}"),
             Self::ListenerStopped => formatter.write_str("x listener stopped"),
+            Self::ListenerPanicked(source) => write!(formatter, "x listener stopped: {source}"),
             Self::Stdin(source) => write!(formatter, "could not read stdin: {source}"),
             Self::Stdout(source) => write!(formatter, "could not write stdout: {source}"),
             Self::Stderr(source) => write!(formatter, "could not write stderr: {source}"),
@@ -138,6 +140,7 @@ impl RnxError {
             | Self::RequestAcl(_)
             | Self::Announce(_)
             | Self::ListenerStopped
+            | Self::ListenerPanicked(_)
             | Self::Stdin(_)
             | Self::Stdout(_)
             | Self::Stderr(_) => 1,
