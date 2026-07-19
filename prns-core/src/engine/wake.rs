@@ -214,6 +214,17 @@ impl<S: StorageLayout> EngineState<S> {
         )
     }
 
+    pub(crate) fn route_removal_wake_schedules(
+        &self,
+        interfaces: AttachedInterfaces<'_>,
+    ) -> WakeSchedules {
+        WakeSchedules {
+            expired_routes: self.route_expiry_wake(interfaces),
+            expired_destination_identities: self.destination_identity_expiry_wake(),
+            ..WakeSchedules::UNCHANGED
+        }
+    }
+
     /// Recomputes every schedule from live engine state.
     /// The reactor never calls this on the hot path; each engine mutation returns a `WakeSchedules` delta that the reactor merges into a cached copy instead.
     /// This full re-derive is the ground truth for those deltas: debug builds assert the merged cache matches it after every merge, so a mutation that moves a deadline without reporting it in its delta surfaces as a loud divergence instead of a silently missed wake.

@@ -57,6 +57,9 @@ compile_error!("the `websocket` family is tokio-only: enable `tokio-host`");
 #[cfg(all(feature = "i2p", not(feature = "tokio-host")))]
 compile_error!("the `i2p` family is tokio-only: enable `tokio-host`");
 
+#[cfg(all(feature = "weave", not(feature = "tokio-host")))]
+compile_error!("the `weave` family is tokio-only: enable `tokio-host`");
+
 #[cfg(all(feature = "shared-instance", not(feature = "tokio-host")))]
 compile_error!("the `shared-instance` family is tokio-only: enable `tokio-host`");
 

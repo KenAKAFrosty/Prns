@@ -315,4 +315,5 @@ pub(crate) mod interface {
         LISTEN_ON,
     ];
     pub const I2P: &[&str] = &[PEERS, CONNECTABLE];
+    pub const WEAVE: &[&str] = &[PORT];
 }

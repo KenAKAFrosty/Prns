@@ -247,6 +247,32 @@ fn lower_rate_media_own_their_effective_estimates() {
 }
 
 #[test]
+fn weave_keeps_its_fixed_hardware_mtu_and_inherits_common_policy() {
+    let plan = plan_of(
+        "[interfaces]\n[[Mesh]]\ntype = WeaveInterface\nenabled = Yes\nport = /dev/ttyACM0\n\
+         bitrate = 500000\noutgoing = No\nnetwork_name = private-weave\n",
+    );
+    let interface = named(&plan, "Mesh");
+
+    assert_eq!(interface.policy.bitrate.get(), 500_000);
+    assert_eq!(
+        interface.policy.mtu.resolve(interface.policy.bitrate),
+        Some(1_024)
+    );
+    assert_eq!(
+        interface.policy.capabilities.egress,
+        EgressCapability::Disabled
+    );
+    assert!(matches!(
+        interface.access,
+        InterfaceAccessPlan::Ifac {
+            size: IfacSize::WIDE,
+            ..
+        }
+    ));
+}
+
+#[test]
 fn common_and_medium_settings_are_applied() {
     let plan = plan_of(
         "[interfaces]\n\

@@ -97,6 +97,9 @@ pub mod websocket;
 #[cfg(feature = "i2p")]
 pub mod i2p;
 
+#[cfg(feature = "weave")]
+pub mod weave;
+
 #[cfg(feature = "ax25")]
 pub mod ax25;
 

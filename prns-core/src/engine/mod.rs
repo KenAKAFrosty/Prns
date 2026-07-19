@@ -18,8 +18,12 @@ mod wake;
 pub use blackhole::{
     BlackholeIdentityEffect, BlackholeSeedEffect, BlackholeSeedReport, UnblackholeIdentityEffect,
 };
-pub use destination_identity::DestinationIdentitySeedOutcome;
 pub(crate) use destination_identity::RememberAnnouncedDestinationIdentityOutcome;
+pub use destination_identity::{
+    DestinationIdentityRetentionEffect, DestinationIdentitySeedOutcome, MarkDestinationUsedEffect,
+    ReleaseDestinationEffect, RetainDestinationEffect, RetainIdentityEffect,
+};
+pub use management::{DropRouteEffect, DropRoutesViaEffect};
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "runtime-metrics")] {

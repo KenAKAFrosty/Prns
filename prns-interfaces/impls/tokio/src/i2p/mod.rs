@@ -9,7 +9,8 @@ pub mod sam;
 pub use sam::I2pBase32Address;
 
 pub use bridge::{
-    SamBridgeAddress, SamBridgeAddressError, SamBridgeError, TokioSamBridge, TokioSamSession,
+    SamBridgeAddress, SamBridgeAddressError, SamBridgeError, SamBridgeScope, TokioSamBridge,
+    TokioSamSession,
 };
 pub use destination::{
     load_destination, persist_destination, I2pDestinationKeyPath, I2pDestinationKeyPathError,

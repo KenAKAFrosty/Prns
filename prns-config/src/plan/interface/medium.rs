@@ -439,6 +439,9 @@ pub enum PlannedMedium {
         peers: I2pPeersPlan,
         reachability: I2pReachabilityPlan,
     },
+    Weave {
+        device: String,
+    },
 }
 
 pub(super) fn rnode_defaults(
@@ -773,6 +776,11 @@ pub(super) fn plan_medium(interface: &ReferenceInterface) -> Result<PlannedMediu
             } else {
                 I2pReachabilityPlan::OutboundOnly
             },
+        }),
+        ReferenceParams::Weave { port } => Ok(PlannedMedium::Weave {
+            device: port.clone().ok_or(PlanErrorKind::MissingRequiredField {
+                key: interface_key::PORT,
+            })?,
         }),
         _ => Err(PlanErrorKind::UnsupportedKind),
     }
