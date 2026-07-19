@@ -86,24 +86,9 @@ where
         current: InterfaceId,
         now: InstantMillis,
     ) -> usize {
-        let mut moved = 0;
-        for i in 0..self.routes.len() {
-            if self.routes.receiving_interfaces()[i] != previous {
-                continue;
-            }
-            self.routes.set_row(
-                i,
-                RouteEntry {
-                    hops: self.routes.hops()[i],
-                    learned_at: self.routes.learned_at()[i],
-                    last_relayed_at: now,
-                    responsiveness: self.routes.responsiveness()[i],
-                    receiving_interface: current,
-                    next_hop: self.routes.next_hops()[i],
-                },
-            );
-            moved += 1;
-        }
+        let moved = self
+            .routes
+            .repoint_receiving_interface(previous, current, now);
         if moved != 0 {
             self.route_expiries.invalidate();
         }

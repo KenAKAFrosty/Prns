@@ -1,20 +1,16 @@
-//! Heap-backed, growable routing table: the same SoA shape as [`FixedArrayRouteTable`](super::FixedArrayRouteTable) with no ceiling, so the engine's drop-when-full check never trips and `push` cannot fail.
-//!
-//! At relay scale the destination lookup is the hot op, so this backend carries a [`HeapLemireIndex`] over the destination column.
-//! The fixed backend keeps the default linear scan, which wins at small N.
-
 use alloc::vec::Vec;
 
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
 use crate::lemire_index::HeapLemireIndex;
+use crate::routing::routes::interface_index::{LinearRouteInterfaceIndex, RouteInterfaceIndex};
 use crate::routing::routes::{RouteEntry, RouteTable};
 use crate::routing::{NextHop, RouteResponsiveness};
 use crate::storage::TablePushError;
 use crate::wire::DestinationHash;
 
 #[derive(Debug, Default)]
-pub struct HeapRouteTable {
+pub struct HeapRouteTableWithInterfaceIndex<I> {
     destination: Vec<DestinationHash>,
     hops: Vec<u8>,
     learned_at: Vec<InstantMillis>,
@@ -23,11 +19,27 @@ pub struct HeapRouteTable {
     receiving_interface: Vec<InterfaceId>,
     next_hop: Vec<NextHop>,
     index: HeapLemireIndex,
+    interface_index: I,
 }
 
-impl RouteTable for HeapRouteTable {
+pub type LinearHeapRouteTable = HeapRouteTableWithInterfaceIndex<LinearRouteInterfaceIndex>;
+
+#[cfg(feature = "std")]
+pub type RoaringHeapRouteTable = HeapRouteTableWithInterfaceIndex<
+    crate::routing::routes::interface_index::RoaringRouteInterfaceIndex,
+>;
+
+cfg_if::cfg_if! {
+    if #[cfg(feature = "std")] {
+        pub type HeapRouteTable = RoaringHeapRouteTable;
+    } else {
+        pub type HeapRouteTable = LinearHeapRouteTable;
+    }
+}
+
+impl<I: RouteInterfaceIndex> RouteTable for HeapRouteTableWithInterfaceIndex<I> {
     fn capacity(&self) -> usize {
-        usize::MAX
+        HeapLemireIndex::MAX_ROWS
     }
     fn len(&self) -> usize {
         self.destination.len()
@@ -35,6 +47,26 @@ impl RouteTable for HeapRouteTable {
 
     fn index_of(&self, destination: &DestinationHash) -> Option<usize> {
         self.index.get(destination, &self.destination)
+    }
+
+    fn route_count_via(&self, interface: InterfaceId) -> usize {
+        self.interface_index
+            .route_count_via(interface, &self.receiving_interface)
+    }
+
+    fn repoint_receiving_interface(
+        &mut self,
+        previous: InterfaceId,
+        current: InterfaceId,
+        now: InstantMillis,
+    ) -> usize {
+        self.interface_index.repoint_receiving_interface(
+            previous,
+            current,
+            now,
+            &mut self.receiving_interface,
+            &mut self.last_relayed_at,
+        )
     }
 
     fn destinations(&self) -> &[DestinationHash] {
@@ -60,6 +92,8 @@ impl RouteTable for HeapRouteTable {
     }
 
     fn set_row(&mut self, i: usize, row: RouteEntry) {
+        self.interface_index
+            .update(i, self.receiving_interface[i], row.receiving_interface);
         self.hops[i] = row.hops;
         self.learned_at[i] = row.learned_at;
         self.last_relayed_at[i] = row.last_relayed_at;
@@ -73,6 +107,9 @@ impl RouteTable for HeapRouteTable {
         destination: DestinationHash,
         row: RouteEntry,
     ) -> Result<usize, TablePushError> {
+        if self.destination.len() >= self.capacity() {
+            return Err(TablePushError::TableFull);
+        }
         let i = self.destination.len();
         self.destination.push(destination);
         self.hops.push(row.hops);
@@ -82,11 +119,14 @@ impl RouteTable for HeapRouteTable {
         self.receiving_interface.push(row.receiving_interface);
         self.next_hop.push(row.next_hop);
         self.index.insert(i, &self.destination);
+        self.interface_index.insert(i, row.receiving_interface);
         Ok(i)
     }
 
     fn swap_remove(&mut self, i: usize, last: usize) {
         debug_assert_eq!(last, self.destination.len() - 1);
+        self.interface_index
+            .swap_remove(i, last, &self.receiving_interface);
         let removed = self.destination[i];
         self.index.remove(&removed, &self.destination);
         if i != last {
@@ -135,7 +175,7 @@ mod tests {
     #[test]
     fn grows_past_any_fixed_ceiling_and_exposes_only_pushed_rows() {
         let mut table = HeapRouteTable::default();
-        assert_eq!(table.capacity(), usize::MAX);
+        assert_eq!(table.capacity(), HeapLemireIndex::MAX_ROWS);
         assert!(table.is_empty());
 
         for n in 0..1_000u32 {
@@ -234,5 +274,87 @@ mod tests {
             live.len() > 50,
             "the run must grow enough to force reindexing"
         );
+    }
+
+    #[cfg(feature = "std")]
+    fn assert_route_tables_match(linear: &LinearHeapRouteTable, roaring: &RoaringHeapRouteTable) {
+        assert_eq!(linear.destinations(), roaring.destinations());
+        assert_eq!(linear.hops(), roaring.hops());
+        assert_eq!(linear.learned_at(), roaring.learned_at());
+        assert_eq!(linear.last_relayed_at(), roaring.last_relayed_at());
+        assert_eq!(linear.responsiveness(), roaring.responsiveness());
+        assert_eq!(
+            linear.receiving_interfaces(),
+            roaring.receiving_interfaces()
+        );
+        assert_eq!(linear.next_hops(), roaring.next_hops());
+        for interface in 0..=u8::MAX {
+            let interface = iface(interface);
+            assert_eq!(
+                linear.route_count_via(interface),
+                roaring.route_count_via(interface)
+            );
+        }
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn roaring_interface_membership_matches_linear_scans_through_route_churn() {
+        let mut linear = LinearHeapRouteTable::default();
+        let mut roaring = RoaringHeapRouteTable::default();
+        let mut rng = 0xA076_1D64_78BD_642Fu64;
+        let mut next_id = 0u32;
+
+        for step in 0..4_000u64 {
+            rng = rng
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            match if linear.len() < 4 {
+                0
+            } else {
+                (rng >> 61) as u8
+            } {
+                0..=2 => {
+                    let interface = iface((rng >> 17) as u8);
+                    let route = row(1, step, interface);
+                    let slot = linear.len();
+                    assert_eq!(linear.push(dest_n(next_id), route), Ok(slot));
+                    assert_eq!(roaring.push(dest_n(next_id), route), Ok(slot));
+                    next_id += 1;
+                }
+                3..=4 => {
+                    let slot = ((rng >> 23) as usize) % linear.len();
+                    let route = RouteEntry {
+                        hops: linear.hops()[slot],
+                        learned_at: linear.learned_at()[slot],
+                        last_relayed_at: InstantMillis(step),
+                        responsiveness: linear.responsiveness()[slot],
+                        receiving_interface: iface((rng >> 37) as u8),
+                        next_hop: linear.next_hops()[slot],
+                    };
+                    linear.set_row(slot, route);
+                    roaring.set_row(slot, route);
+                }
+                5..=6 => {
+                    let slot = ((rng >> 29) as usize) % linear.len();
+                    let last = linear.len() - 1;
+                    linear.swap_remove(slot, last);
+                    roaring.swap_remove(slot, last);
+                }
+                _ => {
+                    let previous = iface((rng >> 11) as u8);
+                    let current = if rng & 1 == 0 {
+                        previous
+                    } else {
+                        iface(((rng >> 11) as u8).wrapping_add(1))
+                    };
+                    assert_eq!(
+                        linear.repoint_receiving_interface(previous, current, InstantMillis(step)),
+                        roaring.repoint_receiving_interface(previous, current, InstantMillis(step))
+                    );
+                }
+            }
+            assert_route_tables_match(&linear, &roaring);
+        }
     }
 }

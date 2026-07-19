@@ -33,6 +33,40 @@ pub trait RouteTable {
             .position(|candidate| candidate == destination)
     }
 
+    fn route_count_via(&self, interface: InterfaceId) -> usize {
+        self.receiving_interfaces()
+            .iter()
+            .filter(|&&candidate| candidate == interface)
+            .count()
+    }
+
+    fn repoint_receiving_interface(
+        &mut self,
+        previous: InterfaceId,
+        current: InterfaceId,
+        now: InstantMillis,
+    ) -> usize {
+        let mut moved = 0;
+        for row in 0..self.len() {
+            if self.receiving_interfaces()[row] != previous {
+                continue;
+            }
+            self.set_row(
+                row,
+                RouteEntry {
+                    hops: self.hops()[row],
+                    learned_at: self.learned_at()[row],
+                    last_relayed_at: now,
+                    responsiveness: self.responsiveness()[row],
+                    receiving_interface: current,
+                    next_hop: self.next_hops()[row],
+                },
+            );
+            moved += 1;
+        }
+        moved
+    }
+
     fn destinations(&self) -> &[DestinationHash];
     fn hops(&self) -> &[u8];
     fn learned_at(&self) -> &[InstantMillis];

@@ -94,6 +94,7 @@ impl StorageLayout for GrowableHeap {
 mod tests {
     use super::*;
     use crate::identity::destination_identity::DestinationIdentityTable;
+    use crate::lemire_index::HeapLemireIndex;
     use crate::routing::announce::stored::AnnounceRecordTable;
     use crate::routing::blackhole::{BlackholeTable, HeapBlackholeTable};
     use crate::routing::dedup::PacketHashHistory;
@@ -102,7 +103,7 @@ mod tests {
     use crate::routing::upstream_app_destinations::UpstreamAppDestinationTable;
 
     #[test]
-    fn bundles_unbounded_heap_backends() {
+    fn bundles_dynamic_heap_backends() {
         let routes = <GrowableHeap as StorageLayout>::Routes::default();
         let announces = <GrowableHeap as StorageLayout>::Announces::default();
         let destination_identities =
@@ -114,7 +115,7 @@ mod tests {
             <GrowableHeap as StorageLayout>::UpstreamAppDestinations::default();
         let packet_hashes = <GrowableHeap as StorageLayout>::PacketHashes::default();
         let blackholes: HeapBlackholeTable = <GrowableHeap as StorageLayout>::Blackholes::default();
-        assert_eq!(routes.capacity(), usize::MAX);
+        assert_eq!(routes.capacity(), HeapLemireIndex::MAX_ROWS);
         assert_eq!(announces.capacity(), usize::MAX);
         assert_eq!(destination_identities.capacity(), usize::MAX);
         assert_eq!(upstream_app_destinations.capacity(), usize::MAX);
