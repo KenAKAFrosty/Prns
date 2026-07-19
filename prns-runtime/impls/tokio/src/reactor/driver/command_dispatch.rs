@@ -14,7 +14,7 @@ use crate::runtime::node_introspection::NodeIntrospectionRequest;
 use crate::runtime::RuntimeMetricsSnapshot;
 use crate::runtime::{
     apply_destination_identity_retention_command, apply_identity_blackhole_command,
-    ClearAnnounceQueuesOutcome, DropRoutesViaOutcome,
+    ClearAnnounceQueuesOutcome,
 };
 use crate::storage::StorageLayout;
 use prns_runtime::runtime::persistence_snapshots;
@@ -354,9 +354,7 @@ where
                         cause: removed.cause,
                     });
                 });
-                let _ = reply.send(DropRoutesViaOutcome {
-                    dropped_routes: u32::try_from(effect.dropped_route_count()).unwrap_or(u32::MAX),
-                });
+                let _ = reply.send(effect.outcome());
                 CommandEffect::Delta(effect.wake_schedules())
             }
             HostCommand::ClearAnnounceQueues { reply } => {

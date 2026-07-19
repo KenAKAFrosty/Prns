@@ -1,13 +1,11 @@
+use crate::engine::{DropRouteOutcome, DropRoutesViaOutcome};
 use crate::identity::{
     MarkDestinationUsedOutcome, ReleaseDestinationOutcome, RetainDestinationOutcome,
     RetainIdentityOutcome,
 };
 use crate::interfaces::PacketPhyStats;
 use crate::routing::delivery::send_single::DEFAULT_PER_HOP_TIMEOUT_SECONDS;
-use crate::routing::{
-    BlackholeIdentityOutcome, BlackholedIdentity, DropRouteOutcome, DropRoutesViaOutcome,
-    UnblackholeIdentityOutcome,
-};
+use crate::routing::{BlackholeIdentityOutcome, BlackholedIdentity, UnblackholeIdentityOutcome};
 
 use super::RnsRpcReply;
 

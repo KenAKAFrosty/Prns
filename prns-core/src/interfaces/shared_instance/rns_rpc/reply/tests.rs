@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::{DropRouteOutcome, DropRoutesViaOutcome};
 use crate::identity::{
     MarkDestinationUsedOutcome, ReleaseDestinationOutcome, RetainDestinationOutcome,
     RetainIdentityOutcome,
@@ -8,10 +9,7 @@ use crate::interfaces::{
     InterfaceId, InterfaceKind, PacketPhyStats, RssiDbm, SignalQualityTenthsPercent, SnrQuarterDb,
 };
 use crate::routing::NextHop;
-use crate::routing::{
-    BlackholeIdentityOutcome, BlackholedIdentity, DropRouteOutcome, DropRoutesViaOutcome,
-    UnblackholeIdentityOutcome,
-};
+use crate::routing::{BlackholeIdentityOutcome, BlackholedIdentity, UnblackholeIdentityOutcome};
 use crate::units::InstantMillis;
 use crate::wire::DestinationHash;
 
