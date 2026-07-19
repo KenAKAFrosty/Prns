@@ -43,10 +43,12 @@ pub enum InterfaceKind {
     WifiAwarePeer = 29,
     I2p = 30,
     I2pPeer = 31,
+    Weave = 32,
+    WeavePeer = 33,
 }
 
 impl InterfaceKind {
-    pub const ALL: [Self; 32] = [
+    pub const ALL: [Self; 34] = [
         Self::Loopback,
         Self::TcpClient,
         Self::TcpServer,
@@ -79,6 +81,8 @@ impl InterfaceKind {
         Self::WifiAwarePeer,
         Self::I2p,
         Self::I2pPeer,
+        Self::Weave,
+        Self::WeavePeer,
     ];
 
     /// Recover the kind from an id's first byte. `None` for an unknown discriminant — the byte is
@@ -119,6 +123,8 @@ impl InterfaceKind {
             29 => Some(Self::WifiAwarePeer),
             30 => Some(Self::I2p),
             31 => Some(Self::I2pPeer),
+            32 => Some(Self::Weave),
+            33 => Some(Self::WeavePeer),
             _ => None,
         }
     }
@@ -139,6 +145,7 @@ impl InterfaceKind {
             Self::WifiDirect => Some(Self::WifiDirectPeer),
             Self::WifiAware => Some(Self::WifiAwarePeer),
             Self::I2p => Some(Self::I2pPeer),
+            Self::Weave => Some(Self::WeavePeer),
             _ => None,
         }
     }
@@ -160,6 +167,7 @@ impl InterfaceKind {
             Self::WifiDirectPeer => Some(Self::WifiDirect),
             Self::WifiAwarePeer => Some(Self::WifiAware),
             Self::I2pPeer => Some(Self::I2p),
+            Self::WeavePeer => Some(Self::Weave),
             _ => None,
         }
     }
@@ -327,6 +335,20 @@ mod tests {
         assert_eq!(
             InterfaceKind::I2pPeer.supervisor_kind(),
             Some(InterfaceKind::I2p)
+        );
+    }
+
+    #[test]
+    fn weave_supervises_weave_peers() {
+        assert_eq!(InterfaceKind::from_u8(32), Some(InterfaceKind::Weave));
+        assert_eq!(InterfaceKind::from_u8(33), Some(InterfaceKind::WeavePeer));
+        assert_eq!(
+            InterfaceKind::Weave.member_kind(),
+            Some(InterfaceKind::WeavePeer)
+        );
+        assert_eq!(
+            InterfaceKind::WeavePeer.supervisor_kind(),
+            Some(InterfaceKind::Weave)
         );
     }
 }

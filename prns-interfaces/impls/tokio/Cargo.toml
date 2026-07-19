@@ -1,6 +1,6 @@
 [package]
 name = "prns-interfaces-tokio"
-version = "0.2.4"
+version = "0.2.5"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/KenAKAFrosty/Prns"
@@ -99,6 +99,7 @@ pipe = ["dep:tokio"]
 backbone = ["tcp"]
 websocket = ["dep:tokio", "tokio/net", "dep:tokio-tungstenite", "dep:futures-util"]
 i2p = ["dep:tokio", "tokio/net", "dep:socket2", "dep:getrandom", "prns-core/i2p"]
+weave = ["serial-host", "dep:getrandom"]
 shared-instance = ["dep:tokio", "tokio/net", "dep:getrandom", "prns-core/shared-instance-rpc", "prns-runtime/rns-management"]
 wifi = ["tcp", "dep:if-addrs", "dep:netdev"]
 wifi-direct = ["tcp", "tokio/process", "dep:zbus", "dep:futures-util", "dep:if-addrs"]
@@ -109,7 +110,7 @@ ble-host = ["ble", "dep:tokio", "tokio/rt", "dep:prns-ffi"]
 pipe-host = ["pipe", "dep:tokio", "tokio/process"]
 auto = []
 interface-discovery = ["tcp", "backbone", "dep:getrandom", "prns-core/interface-discovery", "prns-runtime/interface-discovery"]
-from-plan = ["tcp", "udp", "serial", "serial-host", "kiss", "ax25", "rnode-ble", "pipe", "pipe-host", "backbone", "wifi", "i2p", "dep:prns-config", "dep:tokio", "tokio/rt"]
+from-plan = ["tcp", "udp", "serial", "serial-host", "kiss", "ax25", "rnode-ble", "pipe", "pipe-host", "backbone", "wifi", "i2p", "weave", "dep:prns-config", "dep:tokio", "tokio/rt"]
 ble = ["dep:tokio", "dep:futures-util", "dep:bluer", "dep:prns-ffi"]
 
 [lints.clippy]

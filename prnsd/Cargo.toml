@@ -1,6 +1,6 @@
 [package]
 name = "prnsd"
-version = "0.2.4"
+version = "0.2.5"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/KenAKAFrosty/Prns"
@@ -32,6 +32,7 @@ tokio-host = [
     "personal-rns/pipe",
     "personal-rns/backbone",
     "personal-rns/i2p",
+    "personal-rns/weave",
     "personal-rns/wifi",
     "personal-rns/shared-instance",
     "personal-rns/config",
