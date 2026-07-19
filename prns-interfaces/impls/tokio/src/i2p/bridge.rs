@@ -1,5 +1,7 @@
 use std::fmt;
 use std::io;
+use std::net::Ipv4Addr;
+use std::str::FromStr;
 
 use tokio::io::BufReader;
 use tokio::net::TcpStream;
@@ -14,10 +16,14 @@ use super::transport::{
 };
 use crate::tcp::tokio_socket::tune_i2p;
 
-const DEFAULT_SAM_BRIDGE_ADDRESS: &str = "127.0.0.1:7656";
+const DEFAULT_SAM_BRIDGE_HOST: &str = "127.0.0.1";
+const DEFAULT_SAM_BRIDGE_PORT: u16 = 7656;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SamBridgeAddress(String);
+pub struct SamBridgeAddress {
+    host: String,
+    port: u16,
+}
 
 impl SamBridgeAddress {
     pub fn new(value: impl Into<String>) -> Result<Self, SamBridgeAddressError> {
@@ -40,24 +46,61 @@ impl SamBridgeAddress {
         if port == 0 {
             return Err(SamBridgeAddressError::PortZero);
         }
-        Ok(Self(value))
+        Ok(Self {
+            host: String::from(host),
+            port,
+        })
     }
 
-    pub fn as_str(&self) -> &str {
-        &self.0
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
+    pub const fn port(&self) -> u16 {
+        self.port
+    }
+
+    pub fn scope(&self) -> SamBridgeScope {
+        if self.host.eq_ignore_ascii_case("localhost")
+            || self
+                .host
+                .parse::<Ipv4Addr>()
+                .is_ok_and(|address| address.is_loopback())
+        {
+            SamBridgeScope::Loopback
+        } else {
+            SamBridgeScope::NonLoopback
+        }
     }
 }
 
 impl Default for SamBridgeAddress {
     fn default() -> Self {
-        Self(String::from(DEFAULT_SAM_BRIDGE_ADDRESS))
+        Self {
+            host: String::from(DEFAULT_SAM_BRIDGE_HOST),
+            port: DEFAULT_SAM_BRIDGE_PORT,
+        }
     }
 }
 
 impl fmt::Display for SamBridgeAddress {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
+        write!(formatter, "{}:{}", self.host, self.port)
     }
+}
+
+impl FromStr for SamBridgeAddress {
+    type Err = SamBridgeAddressError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Self::new(value)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SamBridgeScope {
+    Loopback,
+    NonLoopback,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -210,7 +253,7 @@ impl TokioSamBridge {
     }
 
     async fn open(&self) -> Result<TcpStream, SamBridgeError> {
-        TcpStream::connect(self.address.as_str())
+        TcpStream::connect((self.address.host(), self.address.port()))
             .await
             .map_err(|source| SamBridgeError::Connect {
                 address: self.address.clone(),

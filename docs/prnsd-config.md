@@ -63,6 +63,26 @@ minimum). Imported lists are persisted under `storage/blackhole/<source identity
 configured order after the local list, and included in this daemon's own published aggregate.
 Shared-instance clients neither publish nor import.
 
+## I2P readiness check
+
+From a source checkout, run `cargo prnsd i2p doctor` before enabling peers on an `I2PInterface`.
+An installed executable provides the same check as `prnsd i2p doctor`. The doctor connects to the
+default SAM bridge at `127.0.0.1:7656`, negotiates SAM 3.1, creates a one-time transient session,
+and immediately releases it. It does not persist or print the generated destination credentials. A
+successful result proves that the router and SAM session path are available; it does not claim that
+the I2P network has finished warming up or that a particular peer is reachable.
+
+Connection failures at the default endpoint distinguish a missing local Java I2P router from a
+router whose local console is available but whose SAM bridge is not accepting connections. Protocol
+and session failures separately identify an incompatible SAM service or a router that is not yet
+ready to create sessions.
+
+Use `cargo prnsd i2p doctor --sam-bridge HOST:PORT` from the checkout, or the equivalent installed
+command, for a custom endpoint. Prnsd refuses non-loopback SAM addresses by default because SAM is
+plaintext and carries I2P destination credentials. Prefer a loopback endpoint or a secure tunnel to
+loopback. `--allow-remote-sam` explicitly acknowledges the risk for a trusted private path; it does
+not add encryption or authentication.
+
 ## Common interface behavior
 
 Every enabled interface applies `mode`, `outgoing`, `bitrate`, announce cap and rate controls, IFAC

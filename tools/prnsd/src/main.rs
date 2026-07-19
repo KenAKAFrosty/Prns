@@ -9,6 +9,7 @@ use prnsd_control::{LaunchSpec, LogLane, ServicePaths, ServiceRecord, ServiceSta
 
 const TOOL_MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
 const DAEMON_VERSION: &str = include_str!("../../../VERSION");
+const I2P_DAEMON_COMMAND: &str = "i2p";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Action {
@@ -18,6 +19,7 @@ enum Action {
     Stop,
     Status,
     Logs,
+    OneShot,
 }
 
 impl Action {
@@ -47,6 +49,7 @@ impl fmt::Display for Action {
             Self::Stop => "stop",
             Self::Status => "status",
             Self::Logs => "logs",
+            Self::OneShot => "one-shot daemon command",
         })
     }
 }
@@ -70,7 +73,7 @@ impl fmt::Display for ArgumentError {
             ),
             Self::OneShotLifecycle(action) => write!(
                 formatter,
-                "daemon --help and --version are one-shot commands and cannot be used with {action}"
+                "one-shot daemon commands cannot be combined with {action}"
             ),
         }
     }
@@ -81,6 +84,7 @@ enum CommandError {
     Arguments(ArgumentError),
     CargoSpawn(std::io::Error),
     CargoFailed(Option<i32>),
+    DaemonExited(Option<i32>),
     BinaryMissing(PathBuf),
     Service(prnsd_control::ServiceError),
     StateDirectory(prnsd_control::StateDirectoryError),
@@ -94,6 +98,8 @@ impl fmt::Display for CommandError {
             Self::CargoSpawn(error) => write!(formatter, "failed to run cargo: {error}"),
             Self::CargoFailed(Some(code)) => write!(formatter, "cargo exited with status {code}"),
             Self::CargoFailed(None) => formatter.write_str("cargo exited unsuccessfully"),
+            Self::DaemonExited(Some(code)) => write!(formatter, "prnsd exited with status {code}"),
+            Self::DaemonExited(None) => formatter.write_str("prnsd exited unsuccessfully"),
             Self::BinaryMissing(path) => write!(
                 formatter,
                 "cargo completed without producing the expected daemon at {}",
@@ -130,7 +136,6 @@ struct Invocation {
     attach: bool,
     build_args: Vec<OsString>,
     daemon_args: Vec<OsString>,
-    one_shot: bool,
 }
 
 impl Invocation {
@@ -147,6 +152,9 @@ fn main() -> ExitCode {
     }
     match run(&args) {
         Ok(()) => ExitCode::SUCCESS,
+        Err(CommandError::DaemonExited(code)) => {
+            ExitCode::from(code.unwrap_or(1).clamp(1, 255) as u8)
+        }
         Err(error) => {
             eprintln!("prnsd: {error}");
             match error {
@@ -163,8 +171,8 @@ fn run(args: &[OsString]) -> Result<(), CommandError> {
     let invocation = parse_invocation(args)?;
     let root = repo_root();
     let manifest = root.join("prnsd/Cargo.toml");
-    if invocation.one_shot {
-        return run_cargo(cargo_run_arguments(&invocation, &manifest)?, &root);
+    if invocation.action == Action::OneShot {
+        return run_daemon_through_cargo(cargo_run_arguments(&invocation, &manifest)?, &root);
     }
 
     let paths = ServicePaths::discover()?;
@@ -219,6 +227,9 @@ fn run(args: &[OsString]) -> Result<(), CommandError> {
             Some(record) => attach(&paths, &record),
             None => Err(CommandError::NotRunning),
         },
+        Action::OneShot => {
+            run_daemon_through_cargo(cargo_run_arguments(&invocation, &manifest)?, &root)
+        }
     }
 }
 
@@ -366,11 +377,7 @@ fn build_daemon(
 }
 
 fn run_cargo(args: Vec<OsString>, working_dir: &Path) -> Result<(), CommandError> {
-    let status = Command::new("cargo")
-        .args(args)
-        .current_dir(working_dir)
-        .status()
-        .map_err(CommandError::CargoSpawn)?;
+    let status = cargo_status(args, working_dir)?;
     if status.success() {
         Ok(())
     } else {
@@ -378,7 +385,39 @@ fn run_cargo(args: Vec<OsString>, working_dir: &Path) -> Result<(), CommandError
     }
 }
 
+fn run_daemon_through_cargo(args: Vec<OsString>, working_dir: &Path) -> Result<(), CommandError> {
+    let status = cargo_status(args, working_dir)?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(CommandError::DaemonExited(status.code()))
+    }
+}
+
+fn cargo_status(
+    args: Vec<OsString>,
+    working_dir: &Path,
+) -> Result<std::process::ExitStatus, CommandError> {
+    let status = Command::new("cargo")
+        .args(args)
+        .current_dir(working_dir)
+        .status()
+        .map_err(CommandError::CargoSpawn)?;
+    Ok(status)
+}
+
 fn parse_invocation(args: &[OsString]) -> Result<Invocation, ArgumentError> {
+    if args
+        .first()
+        .is_some_and(|arg| is_direct_daemon_command(arg))
+    {
+        return Ok(Invocation {
+            action: Action::OneShot,
+            attach: false,
+            build_args: Vec::new(),
+            daemon_args: args.to_vec(),
+        });
+    }
     let separator = separator_index(args);
     let mut build_args = args[..separator].to_vec();
     let daemon_args = if separator < args.len() {
@@ -411,18 +450,24 @@ fn parse_invocation(args: &[OsString]) -> Result<Invocation, ArgumentError> {
         return Err(ArgumentError::LifecycleOptions(action));
     }
     let one_shot = daemon_args
-        .iter()
-        .any(|arg| arg == "--help" || arg == "-h" || arg == "--version" || arg == "-V");
+        .first()
+        .is_some_and(|arg| is_direct_daemon_command(arg))
+        || daemon_args
+            .iter()
+            .any(|arg| arg == "--help" || arg == "-h" || arg == "--version" || arg == "-V");
     if one_shot && action != Action::Start {
         return Err(ArgumentError::OneShotLifecycle(action));
     }
     Ok(Invocation {
-        action,
-        attach,
+        action: if one_shot { Action::OneShot } else { action },
+        attach: if one_shot { false } else { attach },
         build_args,
         daemon_args,
-        one_shot,
     })
+}
+
+fn is_direct_daemon_command(arg: &OsStr) -> bool {
+    arg == I2P_DAEMON_COMMAND
 }
 
 fn validate_profiles(build_args: &[OsString]) -> Result<(), ArgumentError> {
@@ -610,9 +655,12 @@ fn managed_daemon_arguments(daemon_args: &[OsString]) -> Vec<OsString> {
 }
 
 fn help_requested(args: &[OsString]) -> bool {
-    args[..separator_index(args)]
-        .iter()
-        .any(|arg| arg == "--help" || arg == "-h")
+    !args
+        .first()
+        .is_some_and(|arg| is_direct_daemon_command(arg))
+        && args[..separator_index(args)]
+            .iter()
+            .any(|arg| arg == "--help" || arg == "-h")
 }
 
 fn separator_index(args: &[OsString]) -> usize {
@@ -632,9 +680,10 @@ fn repo_root() -> PathBuf {
 fn print_help() {
     println!(
         "Build and run the Personal Reticulum daemon.\n\n\
-Usage:\n    cargo prnsd [start] [BUILD OPTIONS] [-- PRNSD OPTIONS]\n    cargo prnsd restart [BUILD OPTIONS] [-- PRNSD OPTIONS]\n    cargo prnsd build [BUILD OPTIONS]\n    cargo prnsd <stop|status|logs>\n\n\
+Usage:\n    cargo prnsd [start] [BUILD OPTIONS] [-- PRNSD OPTIONS]\n    cargo prnsd restart [BUILD OPTIONS] [-- PRNSD OPTIONS]\n    cargo prnsd build [BUILD OPTIONS]\n    cargo prnsd <stop|status|logs>\n    cargo prnsd i2p <COMMAND>\n\n\
 Lifecycle:\n    start                 Start if needed, then attach to the daemon log (default)\n    restart               Gracefully stop, rebuild, start, and attach\n    stop                  Show recent logs, then stop while streaming shutdown logs\n    status                Show whether the managed daemon is running\n    logs                  Attach to the running daemon log\n    --detach              Start or reconcile without attaching\n\n\
 Build:\n    build                 Build with --release --locked and OTLP, then print the binary path\n\n\
+One-shot commands:\n    i2p doctor            Check I2P router and SAM 3.1 readiness without starting Prnsd\n\n\
 Profiles:\n    (default)             Build and run with --release\n    --debug               Build and run with Cargo's development profile\n    -r, --release         Build and run with the release profile\n    --profile <PROFILE>   Build and run with a named Cargo profile\n\n\
 Repeated starts reattach without rebuilding or spawning another daemon. Build and daemon\n\
 options are applied when starting a stopped service or with restart. Ctrl-C detaches without\n\
@@ -664,7 +713,6 @@ mod tests {
                 attach: true,
                 build_args: Vec::new(),
                 daemon_args: Vec::new(),
-                one_shot: false,
             }
         );
     }
@@ -687,7 +735,6 @@ mod tests {
                 attach: false,
                 build_args: args(&["--features", "otlp"]),
                 daemon_args: args(&["--config", "path"]),
-                one_shot: false,
             }
         );
     }
@@ -701,7 +748,6 @@ mod tests {
                 attach: true,
                 build_args: args(&["--offline"]),
                 daemon_args: Vec::new(),
-                one_shot: false,
             }
         );
         assert!(matches!(
@@ -728,13 +774,48 @@ mod tests {
     fn daemon_help_and_version_remain_one_shot() {
         for flag in ["--help", "-h", "--version", "-V"] {
             let parsed = invocation(&["--", flag]);
-            assert!(parsed.one_shot);
+            assert_eq!(parsed.action, Action::OneShot);
+            assert!(!parsed.attach);
             assert_eq!(parsed.daemon_args, args(&[flag]));
         }
         assert_eq!(
             parse_invocation(&args(&["restart", "--", "--version"])),
             Err(ArgumentError::OneShotLifecycle(Action::Restart))
         );
+    }
+
+    #[test]
+    fn i2p_commands_are_direct_one_shot_daemon_invocations() {
+        let parsed = invocation(&["i2p", "doctor", "--sam-bridge", "127.0.0.1:7656"]);
+        assert_eq!(parsed.action, Action::OneShot);
+        assert!(!parsed.attach);
+        assert!(parsed.build_args.is_empty());
+        assert_eq!(
+            parsed.daemon_args,
+            args(&["i2p", "doctor", "--sam-bridge", "127.0.0.1:7656",])
+        );
+        assert_eq!(
+            cargo_run_arguments(&parsed, Path::new("prnsd/Cargo.toml")),
+            Ok(args(&[
+                "run",
+                "--manifest-path",
+                "prnsd/Cargo.toml",
+                "--release",
+                "--",
+                "i2p",
+                "doctor",
+                "--sam-bridge",
+                "127.0.0.1:7656",
+            ]))
+        );
+    }
+
+    #[test]
+    fn explicit_separator_can_select_an_i2p_one_shot_with_build_options() {
+        let parsed = invocation(&["--debug", "--", "i2p", "doctor"]);
+        assert_eq!(parsed.action, Action::OneShot);
+        assert_eq!(parsed.build_args, args(&["--debug"]));
+        assert_eq!(parsed.daemon_args, args(&["i2p", "doctor"]));
     }
 
     #[test]
@@ -944,5 +1025,6 @@ mod tests {
         assert!(help_requested(&args(&["--help"])));
         assert!(help_requested(&args(&["restart", "-h"])));
         assert!(!help_requested(&args(&["--", "--help"])));
+        assert!(!help_requested(&args(&["i2p", "--help"])));
     }
 }
