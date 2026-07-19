@@ -7,6 +7,8 @@ mod resource;
 mod send_group;
 mod send_single;
 
+use crate::routing::dedup::PacketHash;
+
 pub use announce::{
     AnnounceAppData, AnnounceNow, AnnounceNowFailure, AnnounceNowRejection, AnnounceTarget,
 };
@@ -208,6 +210,27 @@ pub struct InterfaceCounts {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PacketReceiptDelivered {
     pub rtt: RttMillis,
+    pub evidence: DeliveryEvidence,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeliveryEvidence {
+    Proof(DeliveryProof),
+    Response,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeliveryProof {
+    Explicit(PacketHash),
+    Implicit(PacketHash),
+}
+
+impl DeliveryProof {
+    pub const fn packet_hash(self) -> PacketHash {
+        match self {
+            Self::Explicit(packet_hash) | Self::Implicit(packet_hash) => packet_hash,
+        }
+    }
 }
 
 /// A command's `*Rejection` enum names the reasons ingest refuses it at the door; its `*Failure` enum is everything the awaiting caller can see, wrapping those same door refusals as `Rejected(*Rejection)` beside the ways an accepted command can still fail later, where a broken lower layer surfaces as a `*Error` payload.

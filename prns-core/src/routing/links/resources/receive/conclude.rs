@@ -2,8 +2,8 @@
 
 use crate::engine::Journaled;
 use crate::engine::{CommandId, SendRequestFailure};
+use crate::engine::{DeliveryEvidence, PacketReceiptDelivered, Settlement};
 use crate::engine::{Directive, EngineReaction, EngineState, InstantMillis};
-use crate::engine::{PacketReceiptDelivered, Settlement};
 use crate::routing::delivery::receipts::{ReceiptTable, Receipts};
 use crate::routing::links::data::link_raw_frame_ceiling;
 use crate::routing::links::data::write_link_raw_packet;
@@ -210,6 +210,7 @@ impl<S: StorageLayout> EngineState<S> {
                         id: proven.command_id,
                         settlement: Settlement::SendRequest(Ok(PacketReceiptDelivered {
                             rtt: RttMillis::measured_between(proven.sent_at, now),
+                            evidence: DeliveryEvidence::Response,
                         })),
                     })),
                     None => sink(EngineReaction::Journaled(Journaled::ResourceAssembled {
@@ -498,6 +499,7 @@ fn deliver_single_segment<C: ReceiptTable>(
                     id: proven.command_id,
                     settlement: Settlement::SendRequest(Ok(PacketReceiptDelivered {
                         rtt: RttMillis::measured_between(proven.sent_at, now),
+                        evidence: DeliveryEvidence::Response,
                     })),
                 }));
             } else {

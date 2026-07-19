@@ -29,6 +29,15 @@ impl PositiveDuration {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NonnegativeDuration(Duration);
+
+impl NonnegativeDuration {
+    pub const fn get(self) -> Duration {
+        self.0
+    }
+}
+
 pub fn parse_positive_duration(value: &str) -> Result<PositiveDuration, String> {
     let seconds = value
         .parse::<f64>()
@@ -39,6 +48,18 @@ pub fn parse_positive_duration(value: &str) -> Result<PositiveDuration, String> 
         ));
     }
     Ok(PositiveDuration(Duration::from_secs_f64(seconds)))
+}
+
+pub fn parse_nonnegative_duration(value: &str) -> Result<NonnegativeDuration, String> {
+    let seconds = value
+        .parse::<f64>()
+        .map_err(|_| format!("{value:?} is not a number of seconds"))?;
+    if !seconds.is_finite() || seconds < 0.0 {
+        return Err(format!(
+            "{value:?} must be a finite number greater than or equal to zero"
+        ));
+    }
+    Ok(NonnegativeDuration(Duration::from_secs_f64(seconds)))
 }
 
 pub fn parse_identity_hash(value: &str) -> Result<IdentityHash, String> {

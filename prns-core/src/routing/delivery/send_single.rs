@@ -958,12 +958,13 @@ mod tests {
 
     #[test]
     fn a_python_minted_proof_settles_the_tracked_send_with_its_rtt() {
-        use crate::engine::{PacketReceiptDelivered, ProofIngest};
+        use crate::engine::{DeliveryEvidence, DeliveryProof, PacketReceiptDelivered, ProofIngest};
 
         let (mut state, wire) = unratcheted_neighbor_with_a_tracked_send(b"proof-parity", 1_000);
         assert_eq!(wire, bytes_from_hex(RNS_1_3_5_SEALED_FOR_PROOF));
 
         let mut proof = bytes_from_hex(RNS_1_3_5_IMPLICIT_PROOF);
+        let proof_packet_hash = PacketHash::of_wire_packet(&proof).unwrap();
         assert_eq!(
             state.ingest_packet_with(
                 InboundPacket {
@@ -980,6 +981,7 @@ mod tests {
                 id: CommandId(7),
                 delivered: PacketReceiptDelivered {
                     rtt: crate::units::RttMillis::new(250),
+                    evidence: DeliveryEvidence::Proof(DeliveryProof::Implicit(proof_packet_hash)),
                 },
             }),
         );
@@ -1006,7 +1008,7 @@ mod tests {
     #[test]
     fn an_explicit_proof_settles_the_send_too() {
         use crate::crypto::{ed25519_sign, Ed25519SecretKey};
-        use crate::engine::{PacketReceiptDelivered, ProofIngest};
+        use crate::engine::{DeliveryEvidence, DeliveryProof, PacketReceiptDelivered, ProofIngest};
         use crate::routing::proof::EXPLICIT_PROOF_PAYLOAD_LEN;
 
         let (mut state, wire) = unratcheted_neighbor_with_a_tracked_send(b"explicitly", 2_000);
@@ -1017,6 +1019,7 @@ mod tests {
         payload[..32].copy_from_slice(proven.as_bytes());
         payload[32..].copy_from_slice(&signature.0);
         let mut packet = proof_packet(&payload, &proven);
+        let proof_packet_hash = PacketHash::of_wire_packet(&packet).unwrap();
 
         assert_eq!(
             state.ingest_packet_with(
@@ -1034,6 +1037,7 @@ mod tests {
                 id: CommandId(7),
                 delivered: PacketReceiptDelivered {
                     rtt: crate::units::RttMillis::new(500),
+                    evidence: DeliveryEvidence::Proof(DeliveryProof::Explicit(proof_packet_hash)),
                 },
             }),
         );

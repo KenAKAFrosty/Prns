@@ -162,10 +162,7 @@ where
                     );
                 }
                 if settled {
-                    CryptoCompletionEffect::WakeSchedules(WakeSchedules {
-                        receipt_timeouts: engine.receipt_timeouts_wake(),
-                        ..WakeSchedules::UNCHANGED
-                    })
+                    settled_receipt_effect(engine)
                 } else {
                     CryptoCompletionEffect::NoWakeChange
                 }
@@ -331,6 +328,13 @@ where
     }
 }
 
+fn settled_receipt_effect<S: StorageLayout>(engine: &EngineState<S>) -> CryptoCompletionEffect {
+    CryptoCompletionEffect::WakeSchedules(WakeSchedules {
+        receipt_timeouts: engine.receipt_timeouts_wake(),
+        ..WakeSchedules::UNCHANGED
+    })
+}
+
 pub(super) fn dispatch_open_spans<S: StorageLayout>(
     engine: &mut EngineState<S>,
     crypto_pool: Option<&CryptoPool>,
@@ -357,5 +361,22 @@ pub(super) fn dispatch_open_spans<S: StorageLayout>(
             state,
             bytes,
         })));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::WakeSchedule;
+    use crate::storage::GrowableHeap;
+
+    #[test]
+    fn verified_receipt_settlement_recomputes_its_timeout_wake() {
+        let engine = EngineState::<GrowableHeap>::default();
+        let CryptoCompletionEffect::WakeSchedules(delta) = settled_receipt_effect(&engine) else {
+            panic!("verified receipt settlement must publish a wake delta");
+        };
+        assert_eq!(delta.receipt_timeouts, WakeSchedule::Idle);
+        assert_eq!(delta.scheduled_announces, WakeSchedule::Unchanged);
     }
 }

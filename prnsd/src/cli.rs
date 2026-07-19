@@ -5,6 +5,7 @@ use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use personal_rns::i2p::{I2pPeerAddress, I2pPeerAddressError, SamBridgeAddress};
 
 use crate::utilities::rnpath::RnpathArgs;
+use crate::utilities::rnprobe::RnprobeArgs;
 use crate::utilities::rnstatus::RnstatusArgs;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
@@ -128,6 +129,8 @@ pub enum Command {
     Status(RnstatusArgs),
     #[command(about = "Inspect and manage Reticulum paths")]
     Path(RnpathArgs),
+    #[command(about = "Probe a Reticulum destination")]
+    Probe(RnprobeArgs),
 }
 
 #[derive(Parser)]
@@ -152,6 +155,7 @@ pub fn parse_from(args: impl IntoIterator<Item = OsString>) -> Result<Command, c
                     | "i2p"
                     | "status"
                     | "path"
+                    | "probe"
                     | "help"
                     | "--help"
                     | "-h"
@@ -171,6 +175,14 @@ pub fn path_help() -> String {
     match command.find_subcommand_mut("path") {
         Some(path) => format!("{}\n", path.render_long_help()),
         None => String::from("Usage: prnsd path [OPTIONS] [DESTINATION] [LIST_FILTER]\n"),
+    }
+}
+
+pub fn probe_help() -> String {
+    let mut command = Cli::command();
+    match command.find_subcommand_mut("probe") {
+        Some(probe) => format!("{}\n", probe.render_long_help()),
+        None => String::from("Usage: prnsd probe [OPTIONS] [FULL_NAME] [DESTINATION_HASH]\n"),
     }
 }
 
@@ -369,6 +381,46 @@ mod tests {
     #[test]
     fn path_does_not_expose_a_prefixed_alias() {
         let error = parse_from(["prnsd", "rnpath"].into_iter().map(OsString::from)).unwrap_err();
+        assert_eq!(error.exit_code(), 2);
+    }
+
+    #[test]
+    fn probe_is_a_prefixless_utility_with_stock_flags() {
+        let Command::Probe(args) = parse(&[
+            "prnsd",
+            "probe",
+            "--config",
+            "/node",
+            "-s",
+            "24",
+            "-n",
+            "2",
+            "-t",
+            "5",
+            "-w",
+            "0.1",
+            "-v",
+            "rnstransport.probe",
+            "00112233445566778899aabbccddeeff",
+        ]) else {
+            panic!("probe must remain a direct utility command");
+        };
+        assert_eq!(args.config, Some(PathBuf::from("/node")));
+        assert_eq!(args.size, 24);
+        assert_eq!(args.probes, 2);
+        assert_eq!(
+            args.timeout.unwrap().get(),
+            std::time::Duration::from_secs(5)
+        );
+        assert_eq!(args.wait.get(), std::time::Duration::from_millis(100));
+        assert_eq!(args.full_name.as_deref(), Some("rnstransport.probe"));
+        assert!(args.destination.is_some());
+        assert_eq!(args.verbose, 1);
+    }
+
+    #[test]
+    fn probe_does_not_expose_a_prefixed_alias() {
+        let error = parse_from(["prnsd", "rnprobe"].into_iter().map(OsString::from)).unwrap_err();
         assert_eq!(error.exit_code(), 2);
     }
 

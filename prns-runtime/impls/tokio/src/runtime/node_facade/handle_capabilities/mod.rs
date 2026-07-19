@@ -50,6 +50,18 @@ impl PrnsNodeHandle {
             .ok()?;
         response.await.ok()
     }
+
+    pub async fn destination_identity_hash(
+        &self,
+        destination: DestinationHash,
+    ) -> Option<crate::identity::IdentityHash> {
+        self.introspect(|reply| NodeIntrospectionRequest::DestinationIdentityHash {
+            destination,
+            reply,
+        })
+        .await
+        .flatten()
+    }
 }
 
 async fn settle_routing_control<T, F>(

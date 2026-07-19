@@ -1,5 +1,8 @@
 use crate::crypto::{ed25519_sign, Ed25519Signature};
-use crate::engine::{CommandId, EngineState, InstantMillis, PacketReceiptDelivered, ProofForm};
+use crate::engine::{
+    CommandId, DeliveryEvidence, DeliveryProof, EngineState, InstantMillis, PacketReceiptDelivered,
+    ProofForm,
+};
 use crate::identity::IdentitySigner;
 use crate::routing::dedup::{PacketHash, PACKET_HASH_LEN};
 use crate::routing::delivery::receipts::{ProvenReceipt, ReceiptKind};
@@ -81,26 +84,33 @@ impl<S: StorageLayout> EngineState<S> {
     pub fn settle_receipt_proof(
         &mut self,
         payload: &[u8],
+        proof_packet_hash: PacketHash,
         arrived_at: InstantMillis,
     ) -> ProofIngest {
-        let proven = match payload.len() {
+        let (proven, proof) = match payload.len() {
             EXPLICIT_PROOF_PAYLOAD_LEN => {
                 let (named_hash, signature) = payload.split_at(PACKET_HASH_LEN);
                 let (Ok(named_hash), Ok(signature)) = (named_hash.try_into(), signature.try_into())
                 else {
                     return ProofIngest::Ignored;
                 };
-                self.receipts.settle_by_explicit_proof(
-                    &PacketHash::new(named_hash),
-                    &Ed25519Signature(signature),
+                (
+                    self.receipts.settle_by_explicit_proof(
+                        &PacketHash::new(named_hash),
+                        &Ed25519Signature(signature),
+                    ),
+                    DeliveryProof::Explicit(proof_packet_hash),
                 )
             }
             IMPLICIT_PROOF_PAYLOAD_LEN => {
                 let Ok(signature) = payload.try_into() else {
                     return ProofIngest::Ignored;
                 };
-                self.receipts
-                    .settle_by_implicit_proof(&Ed25519Signature(signature))
+                (
+                    self.receipts
+                        .settle_by_implicit_proof(&Ed25519Signature(signature)),
+                    DeliveryProof::Implicit(proof_packet_hash),
+                )
             }
             _ => return ProofIngest::Ignored,
         };
@@ -108,6 +118,7 @@ impl<S: StorageLayout> EngineState<S> {
             Some(receipt) => {
                 let delivered = PacketReceiptDelivered {
                     rtt: RttMillis::measured_between(receipt.sent_at, arrived_at),
+                    evidence: DeliveryEvidence::Proof(proof),
                 };
                 match receipt.kind {
                     ReceiptKind::SendSinglePacket => ProofIngest::SendSinglePacketDelivered {
@@ -129,9 +140,10 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         payload: &[u8],
         proof_destination: &DestinationHash,
+        proof_packet_hash: PacketHash,
         arrived_at: InstantMillis,
     ) -> Option<DeferredProof> {
-        let (resolved, signature) = match payload.len() {
+        let (resolved, signature, proof) = match payload.len() {
             EXPLICIT_PROOF_PAYLOAD_LEN => {
                 let (named_hash, signature) = payload.split_at(PACKET_HASH_LEN);
                 let (Ok(named_hash), Ok(signature)) = (named_hash.try_into(), signature.try_into())
@@ -143,6 +155,7 @@ impl<S: StorageLayout> EngineState<S> {
                     self.receipts
                         .resolve_explicit_for_deferred_verify(&PacketHash::new(named_hash)),
                     signature,
+                    DeliveryProof::Explicit(proof_packet_hash),
                 )
             }
             IMPLICIT_PROOF_PAYLOAD_LEN => {
@@ -154,6 +167,7 @@ impl<S: StorageLayout> EngineState<S> {
                     self.receipts
                         .resolve_proof_by_destination(proof_destination),
                     signature,
+                    DeliveryProof::Implicit(proof_packet_hash),
                 )
             }
             _ => return None,
@@ -161,6 +175,7 @@ impl<S: StorageLayout> EngineState<S> {
         let resolved = resolved?;
         let delivered = PacketReceiptDelivered {
             rtt: RttMillis::measured_between(resolved.proven.sent_at, arrived_at),
+            evidence: DeliveryEvidence::Proof(proof),
         };
         let ingest = match resolved.proven.kind {
             ReceiptKind::SendSinglePacket => ProofIngest::SendSinglePacketDelivered {

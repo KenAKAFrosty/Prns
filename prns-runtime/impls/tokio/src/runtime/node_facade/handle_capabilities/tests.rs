@@ -89,6 +89,25 @@ async fn announce_rate_introspection_resolves_its_reactor_snapshot() {
 }
 
 #[tokio::test]
+async fn destination_identity_hash_resolves_its_reactor_snapshot() {
+    let (handle, mut command_rx) = handle();
+    let identity = crate::identity::IdentityHash::new([0x42; 16]);
+    let reading = tokio::spawn(async move { handle.destination_identity_hash(PEER).await });
+
+    let HostCommand::NodeIntrospection(NodeIntrospectionRequest::DestinationIdentityHash {
+        destination,
+        reply,
+    }) = command_rx.recv().await.unwrap()
+    else {
+        panic!("expected destination identity introspection request");
+    };
+    assert_eq!(destination, PEER);
+    reply.send(Some(identity)).unwrap();
+
+    assert_eq!(reading.await.unwrap(), Some(identity));
+}
+
+#[tokio::test]
 async fn routing_controls_resolve_their_typed_reactor_replies() {
     let (handle, mut command_rx) = handle();
 

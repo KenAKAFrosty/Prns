@@ -8,6 +8,7 @@ use crate::engine::{
 };
 use crate::engine::{EstablishLinkFailure, WakeSchedules};
 use crate::interfaces::{InboundPacket, InterfaceDescriptor};
+use crate::routing::dedup::PacketHash;
 use crate::routing::links::handshake::parse_link_request;
 use crate::routing::links::maintenance::{KEEPALIVE_ECHO, KEEPALIVE_REQUEST};
 use crate::routing::links::table::LinkPhase;
@@ -1183,6 +1184,7 @@ fn a_prove_all_responder_proves_link_data_the_reference_way() {
         .expect("the proof validates against the announced identity the initiator already holds");
 
     let proof_frame = answers[0].clone();
+    let proof_packet_hash = PacketHash::of_wire_packet(&proof_frame).unwrap();
     let (echoes, journaled, _) = reactions_of(&mut initiator, &proof_frame, 2_200, 0xF1);
     assert!(echoes.is_empty(), "a proof is an ending, not a beginning");
     assert_eq!(
@@ -1190,7 +1192,10 @@ fn a_prove_all_responder_proves_link_data_the_reference_way() {
         std::vec![(
             CommandId(9),
             Settlement::SendToLink(Ok(PacketReceiptDelivered {
-                rtt: RttMillis::new(200)
+                rtt: RttMillis::new(200),
+                evidence: crate::engine::DeliveryEvidence::Proof(
+                    crate::engine::DeliveryProof::Explicit(proof_packet_hash),
+                ),
             })),
         )],
         "the receipt settles the send with the proof's round trip",
@@ -1773,6 +1778,7 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
     );
     assert_eq!(switched_proof.len(), 1);
     assert_eq!(switched_proof[0].0, iface_to_a);
+    let proof_packet_hash = PacketHash::of_wire_packet(&switched_proof[0].1).unwrap();
     let (_, _, settled, _) = ingest_via(
         &mut initiator,
         &switched_proof[0].1,
@@ -1787,6 +1793,9 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
             CommandId(9),
             Settlement::SendToLink(Ok(crate::engine::PacketReceiptDelivered {
                 rtt: RttMillis::new(400),
+                evidence: crate::engine::DeliveryEvidence::Proof(
+                    crate::engine::DeliveryProof::Explicit(proof_packet_hash),
+                ),
             })),
         )],
         "the proof crossed two hops and settled the send",
@@ -2179,7 +2188,8 @@ fn a_request_passes_the_allow_gate_only_after_the_peer_identifies() {
         std::vec![(
             CommandId(22),
             Settlement::SendRequest(Ok(PacketReceiptDelivered {
-                rtt: RttMillis::new(300)
+                rtt: RttMillis::new(300),
+                evidence: crate::engine::DeliveryEvidence::Response,
             })),
         )],
         "the response settles the request with the measured round trip",

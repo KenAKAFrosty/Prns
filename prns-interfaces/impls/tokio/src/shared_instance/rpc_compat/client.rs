@@ -9,9 +9,10 @@ use prns_core::interfaces::rns_management::{
     RnsPathTableDecodeError,
 };
 use prns_core::interfaces::shared_instance::rns_rpc::{
-    RnsInteger, RnsNumber, RnsRpcRequest, RnsRpcScalarReply, RnsRpcScalarReplyDecodeError,
-    RpcAuthenticationKey, RpcVerb, RNS_NO_INTERFACE_NAME,
+    PacketHashArgument, RnsInteger, RnsNumber, RnsRpcRequest, RnsRpcScalarReply,
+    RnsRpcScalarReplyDecodeError, RpcAuthenticationKey, RpcVerb, RNS_NO_INTERFACE_NAME,
 };
+use prns_core::routing::dedup::PacketHash;
 use prns_core::routing::BlackholedIdentity;
 use prns_core::units::InstantMillis;
 use prns_core::wire::{DestinationHash, TransportId};
@@ -164,6 +165,13 @@ pub struct SharedInstanceRpcClient {
     timeout: Duration,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SharedInstancePacketPhyStats {
+    pub rssi_dbm: Option<f64>,
+    pub snr_db: Option<f64>,
+    pub quality_percent: Option<f64>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SharedInstanceBlackholeOutcome {
     Added,
@@ -291,6 +299,63 @@ impl SharedInstanceRpcClient {
         }
     }
 
+    pub async fn first_hop_timeout(
+        &self,
+        destination: DestinationHash,
+    ) -> Result<Duration, SharedInstanceRpcClientError> {
+        let seconds = self
+            .numeric(
+                RnsRpcRequest::FirstHopTimeout {
+                    destination_hash: destination,
+                },
+                RpcVerb::GetFirstHopTimeout,
+            )
+            .await?
+            .ok_or_else(|| SharedInstanceRpcClientError::UnexpectedScalarReply {
+                operation: RpcVerb::GetFirstHopTimeout,
+                reply: RnsRpcScalarReply::Null,
+            })?;
+        if seconds < 0.0 || !seconds.is_finite() {
+            return Err(SharedInstanceRpcClientError::UnexpectedScalarReply {
+                operation: RpcVerb::GetFirstHopTimeout,
+                reply: RnsRpcScalarReply::Float(seconds),
+            });
+        }
+        Ok(Duration::from_secs_f64(seconds))
+    }
+
+    pub async fn packet_phy(
+        &self,
+        packet_hash: PacketHash,
+    ) -> Result<SharedInstancePacketPhyStats, SharedInstanceRpcClientError> {
+        Ok(SharedInstancePacketPhyStats {
+            rssi_dbm: self
+                .numeric(
+                    RnsRpcRequest::PacketRssi {
+                        packet_hash: packet_hash_argument(packet_hash),
+                    },
+                    RpcVerb::GetPacketRssi,
+                )
+                .await?,
+            snr_db: self
+                .numeric(
+                    RnsRpcRequest::PacketSnr {
+                        packet_hash: packet_hash_argument(packet_hash),
+                    },
+                    RpcVerb::GetPacketSnr,
+                )
+                .await?,
+            quality_percent: self
+                .numeric(
+                    RnsRpcRequest::PacketQuality {
+                        packet_hash: packet_hash_argument(packet_hash),
+                    },
+                    RpcVerb::GetPacketQuality,
+                )
+                .await?,
+        })
+    }
+
     pub async fn drop_path(
         &self,
         destination: DestinationHash,
@@ -408,6 +473,26 @@ impl SharedInstanceRpcClient {
             .map_err(|source| SharedInstanceRpcClientError::ScalarReply { operation, source })
     }
 
+    async fn numeric(
+        &self,
+        request: RnsRpcRequest,
+        operation: RpcVerb,
+    ) -> Result<Option<f64>, SharedInstanceRpcClientError> {
+        let reply = self.scalar(request, operation).await?;
+        match reply {
+            RnsRpcScalarReply::Null => Ok(None),
+            RnsRpcScalarReply::Integer(value) => value
+                .signed_value()
+                .map(|value| Some(value as f64))
+                .ok_or_else(|| SharedInstanceRpcClientError::UnexpectedScalarReply {
+                    operation,
+                    reply: RnsRpcScalarReply::Integer(value),
+                }),
+            RnsRpcScalarReply::Float(value) if value.is_finite() => Ok(Some(value)),
+            reply => Err(SharedInstanceRpcClientError::UnexpectedScalarReply { operation, reply }),
+        }
+    }
+
     pub async fn exchange(
         &self,
         request: RnsRpcRequest,
@@ -488,6 +573,10 @@ impl SharedInstanceRpcClient {
             kind: error.kind(),
         }
     }
+}
+
+fn packet_hash_argument(packet_hash: PacketHash) -> PacketHashArgument {
+    PacketHashArgument::new(packet_hash.as_bytes().to_vec())
 }
 
 #[cfg(target_os = "linux")]

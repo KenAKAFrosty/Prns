@@ -14,6 +14,15 @@ use super::PrnsNodeHandle;
 
 const PEER: DestinationHash = DestinationHash::new([0xAB; 16]);
 
+fn delivered(ms: u64) -> PacketReceiptDelivered {
+    PacketReceiptDelivered {
+        rtt: crate::units::RttMillis::new(ms),
+        evidence: crate::engine::DeliveryEvidence::Proof(crate::engine::DeliveryProof::Implicit(
+            crate::routing::dedup::PacketHash::new([0; 32]),
+        )),
+    }
+}
+
 fn handle() -> (PrnsNodeHandle, UnboundedReceiver<HostCommand>) {
     let (commands, command_rx) = mpsc::unbounded_channel();
     (PrnsNodeHandle::over(commands), command_rx)
@@ -49,20 +58,13 @@ async fn an_awaited_send_issues_the_completion_carrying_command() {
         HostCommand::AwaitedEngine { issued, completion } => {
             assert!(matches!(issued.command, EngineCommand::SendSinglePacket(_)));
             completion
-                .send(Settlement::SendSinglePacket(Ok(PacketReceiptDelivered {
-                    rtt: crate::units::RttMillis::new(7),
-                })))
+                .send(Settlement::SendSinglePacket(Ok(delivered(7))))
                 .expect("the awaiter is still parked");
         }
         _ => panic!("send_single must issue an AwaitedEngine command"),
     }
 
-    assert_eq!(
-        send.await.expect("the send task joins"),
-        Ok(PacketReceiptDelivered {
-            rtt: crate::units::RttMillis::new(7),
-        }),
-    );
+    assert_eq!(send.await.expect("the send task joins"), Ok(delivered(7)),);
 }
 
 #[tokio::test]

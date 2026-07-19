@@ -58,6 +58,14 @@ async fn main() -> ExitCode {
                 ExitCode::from(exit_code)
             }
         },
+        cli::Command::Probe(args) => match utilities::rnprobe::run(args).await {
+            Ok(outcome) => ExitCode::from(outcome.exit_code()),
+            Err(error) => {
+                let exit_code = error.exit_code();
+                eprintln!("prnsd probe: {error}");
+                ExitCode::from(exit_code)
+            }
+        },
         cli::Command::Start(args) => managed_service::run(managed_service::Command::Start(args)),
         cli::Command::Restart(args) => {
             managed_service::run(managed_service::Command::Restart(args))

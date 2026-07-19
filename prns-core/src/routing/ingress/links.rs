@@ -2,7 +2,9 @@ use super::classification::DataPacket;
 use super::forward::PacketToForward;
 use super::outcome::{DeferredCrypto, IgnoreReason, IngestPacketOutcome, LinkRttOwed};
 use crate::crypto::X25519PublicKey;
-use crate::engine::{EngineState, InstantMillis, LinkClosedReason, PacketReceiptDelivered};
+use crate::engine::{
+    DeliveryEvidence, EngineState, InstantMillis, LinkClosedReason, PacketReceiptDelivered,
+};
 use crate::interfaces::{AttachedInterfaces, InterfaceId, InterfaceKind};
 use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome};
 use crate::routing::delivery::send_single::DEFAULT_PER_HOP_TIMEOUT_MS;
@@ -671,6 +673,7 @@ impl<S: StorageLayout> EngineState<S> {
             id: proven.command_id,
             delivered: PacketReceiptDelivered {
                 rtt: RttMillis::measured_between(proven.sent_at, arrived_at),
+                evidence: DeliveryEvidence::Response,
             },
             link_id,
             request_id,
