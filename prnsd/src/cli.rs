@@ -9,6 +9,7 @@ use crate::utilities::rnid::RnidArgs;
 use crate::utilities::rnpath::RnpathArgs;
 use crate::utilities::rnprobe::RnprobeArgs;
 use crate::utilities::rnstatus::RnstatusArgs;
+use crate::utilities::rnx::RnxArgs;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
 pub enum LogFormat {
@@ -137,6 +138,8 @@ pub enum Command {
     Id(Box<RnidArgs>),
     #[command(about = "Transfer files over Reticulum")]
     Cp(Box<RncpArgs>),
+    #[command(about = "Execute commands over Reticulum")]
+    X(Box<RnxArgs>),
 }
 
 #[derive(Parser)]
@@ -164,6 +167,7 @@ pub fn parse_from(args: impl IntoIterator<Item = OsString>) -> Result<Command, c
                     | "probe"
                     | "id"
                     | "cp"
+                    | "x"
                     | "help"
                     | "--help"
                     | "-h"
@@ -207,6 +211,14 @@ pub fn cp_help() -> String {
     match command.find_subcommand_mut("cp") {
         Some(cp) => format!("{}\n", cp.render_long_help()),
         None => String::from("Usage: prnsd cp [OPTIONS] [FILE] [DESTINATION]\n"),
+    }
+}
+
+pub fn x_help() -> String {
+    let mut command = Cli::command();
+    match command.find_subcommand_mut("x") {
+        Some(x) => format!("{}\n", x.render_long_help()),
+        None => String::from("Usage: prnsd x [OPTIONS] [DESTINATION] [COMMAND]\n"),
     }
 }
 
@@ -514,6 +526,59 @@ mod tests {
     #[test]
     fn cp_does_not_expose_a_prefixed_alias() {
         let error = parse_from(["prnsd", "rncp"].into_iter().map(OsString::from)).unwrap_err();
+        assert_eq!(error.exit_code(), 2);
+    }
+
+    #[test]
+    fn x_is_a_prefixless_utility_with_stock_flags() {
+        let Command::X(args) = parse(&[
+            "prnsd",
+            "x",
+            "-x",
+            "-m",
+            "-w",
+            "2.5",
+            "-W",
+            "4",
+            "--stdin",
+            "input",
+            "--stdout",
+            "128",
+            "00112233445566778899aabbccddeeff",
+            "printf hello",
+        ]) else {
+            panic!("x must remain a direct utility command");
+        };
+        assert!(args.interactive);
+        assert!(args.mirror);
+        assert_eq!(args.timeout.get(), std::time::Duration::from_secs_f64(2.5));
+        assert_eq!(
+            args.result_timeout.unwrap().get(),
+            std::time::Duration::from_secs(4)
+        );
+        assert_eq!(args.stdin.as_deref(), Some("input"));
+        assert_eq!(args.stdout, Some(128));
+        assert!(args.destination.is_some());
+        assert_eq!(args.command.as_deref(), Some("printf hello"));
+
+        let Command::X(args) = parse(&[
+            "prnsd",
+            "x",
+            "-l",
+            "-b",
+            "-a",
+            "00112233445566778899aabbccddeeff",
+        ]) else {
+            panic!("x listen flags must remain stock-compatible");
+        };
+        assert!(args.listen);
+        assert!(args.no_announce);
+        assert_eq!(args.allowed.len(), 1);
+    }
+
+    #[test]
+    fn x_does_not_expose_a_prefixed_alias() {
+        let error = parse_from(["prnsd", "rnx"].into_iter().map(OsString::from)).unwrap_err();
         assert_eq!(error.exit_code(), 2);
     }
 

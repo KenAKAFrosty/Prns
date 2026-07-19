@@ -6,4 +6,5 @@ pub(crate) mod rnid;
 pub(crate) mod rnpath;
 pub(crate) mod rnprobe;
 pub(crate) mod rnstatus;
+pub(crate) mod rnx;
 mod session;

@@ -5,6 +5,7 @@ use futures_util::FutureExt;
 use tokio::sync::mpsc;
 
 use crate::engine::InstantMillis;
+use crate::identity::IdentityHash;
 use crate::routing::links::request::RequestId;
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
@@ -19,6 +20,7 @@ const MAX_IN_FLIGHT: usize = 256;
 pub(super) struct RunnerRequest {
     pub link_id: LinkId,
     pub request_id: RequestId,
+    pub requester: Option<IdentityHash>,
     pub path_hash: RequestPathHash,
     pub requested_at: InstantMillis,
     pub rtt: RttMillis,
@@ -67,7 +69,7 @@ async fn dispatch<St, R: RouteSet<St>>(
     let inbound = InboundRequest::new(
         request.link_id,
         request.request_id,
-        None,
+        request.requester,
         request.requested_at,
         request.rtt,
         &request.data,

@@ -2012,6 +2012,7 @@ fn a_request_passes_the_allow_gate_only_after_the_peer_identifies() {
         link_id,
         path_hash: RequestPathHash::of("/status"),
         data: SendRequestData::from_slice(&[0xC4, 0x03, b'a', b's', b'k']).unwrap(),
+        response_timeout: Default::default(),
     };
 
     let (sent, settled) = command(
@@ -2117,12 +2118,14 @@ fn a_request_passes_the_allow_gate_only_after_the_peer_identifies() {
                 if let EngineReaction::Journaled(Journaled::RequestReceived {
                     link_id: heard_link,
                     request_id,
+                    requester,
                     path_hash,
                     data,
                     ..
                 }) = reaction
                 {
                     assert_eq!(heard_link, link_id);
+                    assert_eq!(requester, Some(asker));
                     assert_eq!(path_hash, RequestPathHash::of("/status"));
                     received.push((request_id, data.to_vec()));
                 }

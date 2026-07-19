@@ -11,10 +11,16 @@ pub mod engine;
 pub mod identity;
 pub mod interfaces;
 pub mod lemire_index;
-#[cfg(any(feature = "shared-instance-rpc", feature = "signed-artifact"))]
+#[cfg(any(
+    feature = "rnx",
+    feature = "shared-instance-rpc",
+    feature = "signed-artifact"
+))]
 pub mod message_pack;
 pub mod persistence;
 pub mod rncp;
+#[cfg(feature = "rnx")]
+pub mod rnx;
 pub mod routing;
 pub mod storage;
 pub mod units;

@@ -197,6 +197,7 @@ async fn a_request_router_answers_a_live_request_over_tcp() {
                 link_id,
                 path_hash: RequestPathHash::of(QUERY_PATH),
                 data: SendRequestData::from_slice(b"ping").expect("request fits a single packet"),
+                response_timeout: Default::default(),
             }))
             .expect("the initiator node is running");
         loop {

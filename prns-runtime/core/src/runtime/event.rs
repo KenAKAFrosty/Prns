@@ -35,6 +35,7 @@ pub enum Message<'a> {
     Request {
         link_id: LinkId,
         request_id: RequestId,
+        requester: Option<IdentityHash>,
         path_hash: RequestPathHash,
         requested_at: InstantMillis,
         rtt: RttMillis,
@@ -145,6 +146,7 @@ impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
             Journaled::RequestReceived {
                 link_id,
                 request_id,
+                requester,
                 path_hash,
                 requested_at,
                 rtt,
@@ -152,6 +154,7 @@ impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
             } => PrnsEvent::Message(Message::Request {
                 link_id,
                 request_id,
+                requester,
                 path_hash,
                 requested_at,
                 rtt,

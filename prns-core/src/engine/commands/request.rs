@@ -5,6 +5,7 @@ use crate::routing::links::data::link_mdu;
 use crate::routing::links::request::{RequestId, REQUEST_WIRE_OVERHEAD, RESPONSE_WIRE_OVERHEAD};
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
+use crate::units::DurationMillis;
 use crate::wire::DestinationHash;
 
 use super::{EngineCommand, PacketReceiptDelivered, Settleable, Settlement};
@@ -14,12 +15,20 @@ pub const MAX_SEND_REQUEST_DATA_LEN: usize =
 
 pub type SendRequestData = HeaplessVec<u8, MAX_SEND_REQUEST_DATA_LEN>;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RequestResponseTimeout {
+    #[default]
+    LinkDefault,
+    Exact(DurationMillis),
+}
+
 /// RNS 1.3.5 `Link.request(path, data)`, sub-MDU form; empty `data` = the reference's None.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SendRequest {
     pub link_id: LinkId,
     pub path_hash: RequestPathHash,
     pub data: SendRequestData,
+    pub response_timeout: RequestResponseTimeout,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -255,6 +255,7 @@ async fn initiate_request_runtime(
                 link_id,
                 path_hash,
                 data: SendRequestData::from_slice(&framed).expect("request fits"),
+                response_timeout: Default::default(),
             }))
             .is_some()
         {

@@ -30,6 +30,7 @@ fn emit_message(message: &Message<'_>) {
         Message::Request {
             link_id,
             request_id,
+            requester: _,
             path_hash,
             rtt,
             data,
