@@ -17,13 +17,13 @@ use crate::runtime::{
     ClearAnnounceQueuesOutcome, DropRouteOutcome, DropRoutesViaOutcome,
 };
 use crate::storage::StorageLayout;
+use prns_runtime::runtime::persistence_snapshots;
 
 use super::crypto_pool::{CryptoJob, CryptoPool};
 use super::egress::{clear_announce_queues, route_reaction, WireScratch};
 use super::host_protocol::{HostCommand, HostResourcePayload, RequestAnyHostCommand};
 use super::interface_topology::InterfaceTopology;
 use super::journal_delivery::JournalDispatch;
-use super::persistence_snapshots;
 
 pub(super) enum CommandEffect {
     Delta(WakeSchedules),
@@ -461,17 +461,18 @@ where
                 CommandEffect::UNCHANGED
             }
             HostCommand::SnapshotPersistedState { reply } => {
-                if let Some(snapshot) = persistence_snapshots::persisted_state(engine, now) {
+                if let Some(snapshot) = persistence_snapshots::snapshot_persisted_state(engine, now)
+                {
                     let _ = reply.send(snapshot);
                 }
                 CommandEffect::UNCHANGED
             }
             HostCommand::SnapshotSelfRatchets { reply } => {
-                let _ = reply.send(persistence_snapshots::self_ratchets(engine));
+                let _ = reply.send(persistence_snapshots::snapshot_self_ratchets(engine));
                 CommandEffect::UNCHANGED
             }
             HostCommand::SnapshotSelfRatchet { destination, reply } => {
-                let snapshot = persistence_snapshots::self_ratchet(engine, destination);
+                let snapshot = persistence_snapshots::snapshot_self_ratchet(engine, destination);
                 let _ = reply.send(snapshot);
                 CommandEffect::UNCHANGED
             }

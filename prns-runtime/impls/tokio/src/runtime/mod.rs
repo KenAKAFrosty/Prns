@@ -12,10 +12,7 @@ mod tracing_events;
 
 pub use prns_runtime::runtime::*;
 
-pub use crate::reactor::driver::{
-    CryptoPoolConfig, PersistedStateSnapshot, PoolWorkers, SelfRatchetSnapshot,
-    SelfRatchetsSnapshot,
-};
+pub use crate::reactor::driver::{CryptoPoolConfig, PoolWorkers};
 pub(crate) use destination_identity_retention::{
     apply_destination_identity_retention_command, settle_destination_identity_retention,
     DestinationIdentityRetentionHostCommand,

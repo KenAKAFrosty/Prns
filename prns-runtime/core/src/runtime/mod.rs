@@ -13,6 +13,16 @@ pub mod rns_remote_management;
 #[cfg(feature = "rns-management")]
 pub mod rns_rpc;
 
+cfg_if::cfg_if! {
+    if #[cfg(feature = "alloc")] {
+        pub mod persistence_snapshots;
+
+        pub use persistence_snapshots::{
+            PersistedStateSnapshot, SelfRatchetSnapshot, SelfRatchetsSnapshot,
+        };
+    }
+}
+
 pub use command::{
     ClearAnnounceQueuesOutcome, DestinationIdentityRetentionControl,
     DestinationIdentityRetentionControlError, DropRouteOutcome, DropRoutesViaOutcome, PrnsNodeApi,

@@ -2,7 +2,7 @@ use tokio::sync::oneshot;
 
 use crate::crypto::ratchets::SeedSelfRatchetsOutcome;
 use crate::engine::{DestinationIdentitySeedOutcome, InstantMillis};
-use crate::identity::vault::{IdentityLabel, IdentityVault};
+use crate::identity::vault::IdentityVault;
 use crate::identity::Zeroizing;
 use crate::persistence::{
     read_destination_identities_snapshot, read_routing_table_snapshot, read_self_ratchets_snapshot,
@@ -18,6 +18,7 @@ use crate::routing::tunnel::SeedTunnelOutcome;
 use crate::routing::{BlackholeIdentityOutcome, BlackholeInsertFailure, BlackholedIdentity};
 use crate::storage::StorageLayout;
 use crate::wire::DestinationHash;
+use prns_runtime::runtime::persistence_snapshots::self_ratchet_identity_label;
 
 use super::super::request_router::RouteSet;
 use super::super::PrnsEvent;
@@ -306,7 +307,7 @@ where
             .map(|(destination, _, _)| destination)
             .collect();
         for destination in destinations {
-            let label = ratchet_label(&destination);
+            let label = self_ratchet_identity_label(&destination);
             let Ok(Some(stored_len)) = vault.stored_blob_len(&label) else {
                 continue;
             };
@@ -400,33 +401,6 @@ pub struct RatchetSeedReport {
     pub seeded_count: u32,
     pub refused_count: u32,
     pub dropped_count: u32,
-}
-
-#[allow(clippy::expect_used)]
-pub(super) fn ratchet_label(destination: &DestinationHash) -> IdentityLabel {
-    let mut label = String::with_capacity("ratchets.".len() + destination.as_bytes().len() * 2);
-    label.push_str("ratchets.");
-    for byte in destination.as_bytes() {
-        let _ = core::fmt::Write::write_fmt(&mut label, format_args!("{byte:02x}"));
-    }
-    IdentityLabel::new(&label).expect("a hex destination under a fixed prefix is label-lawful")
-}
-
-impl SelfRatchetsSnapshot {
-    pub fn store_into<V: IdentityVault>(self, vault: &mut V) -> Result<u32, V::Error> {
-        let mut flushed_count = 0u32;
-        for (destination, sealed) in self.blobs {
-            vault.store_blob(&ratchet_label(&destination), &sealed)?;
-            flushed_count = flushed_count.saturating_add(1);
-        }
-        Ok(flushed_count)
-    }
-}
-
-impl SelfRatchetSnapshot {
-    pub fn store_into<V: IdentityVault>(self, vault: &mut V) -> Result<(), V::Error> {
-        vault.store_blob(&ratchet_label(&self.destination), &self.sealed)
-    }
 }
 
 pub struct PreparedFlush {

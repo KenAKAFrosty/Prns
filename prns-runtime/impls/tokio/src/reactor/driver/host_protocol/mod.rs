@@ -3,10 +3,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot;
 
-use crate::engine::{
-    CommandId, Departure, InstantMillis, IssuedCommand, SendRequestFailure, Settlement,
-};
-use crate::identity::Zeroizing;
+use crate::engine::{CommandId, Departure, IssuedCommand, SendRequestFailure, Settlement};
 use crate::interfaces::{ConnectionView, InterfaceDescriptor, InterfaceId};
 use crate::reactor::grant_lane::{TokioGrantConsumer, TokioGrantProducer};
 use crate::routing::links::channel::byte_stream::StreamId;
@@ -23,6 +20,7 @@ use crate::runtime::{
 };
 use crate::units::RttMillis;
 use crate::wire::{DestinationHash, TransportId};
+use prns_runtime::runtime::{PersistedStateSnapshot, SelfRatchetSnapshot, SelfRatchetsSnapshot};
 
 #[allow(clippy::large_enum_variant)]
 pub enum HostCommand {
@@ -93,24 +91,6 @@ pub enum HostCommand {
     SnapshotMetrics {
         reply: oneshot::Sender<RuntimeMetricsSnapshot>,
     },
-}
-
-/// One sealed self-ratchet blob per tracked destination, zeroized on drop.
-pub struct SelfRatchetsSnapshot {
-    pub blobs: std::vec::Vec<(DestinationHash, Zeroizing<std::vec::Vec<u8>>)>,
-}
-
-pub struct SelfRatchetSnapshot {
-    pub destination: DestinationHash,
-    pub sealed: Zeroizing<std::vec::Vec<u8>>,
-}
-
-/// The sealed region images of one snapshot pass and the engine instant they were taken at — the timebase high-water a flush of these images should record.
-pub struct PersistedStateSnapshot {
-    pub routing_table: std::vec::Vec<u8>,
-    pub tunnels: std::vec::Vec<u8>,
-    pub destination_identities: std::vec::Vec<u8>,
-    pub taken_at: InstantMillis,
 }
 
 pub struct StreamInbound {
