@@ -1,6 +1,4 @@
-#[cfg(feature = "alloc")]
 use alloc::string::String;
-#[cfg(feature = "alloc")]
 use alloc::vec::Vec;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -12,7 +10,6 @@ pub struct ExecutionRequestRef<'a> {
     pub stdin: Option<&'a [u8]>,
 }
 
-#[cfg(feature = "alloc")]
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExecutionRequest {
     pub command: String,
@@ -22,7 +19,6 @@ pub struct ExecutionRequest {
     pub stdin: Option<Vec<u8>>,
 }
 
-#[cfg(feature = "alloc")]
 impl From<ExecutionRequestRef<'_>> for ExecutionRequest {
     fn from(request: ExecutionRequestRef<'_>) -> Self {
         Self {
@@ -58,7 +54,6 @@ pub enum ExecutionResultRef<'a> {
     Executed(ExecutedCommandRef<'a>),
 }
 
-#[cfg(feature = "alloc")]
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExecutedCommand {
     pub return_code: Option<i32>,
@@ -70,14 +65,12 @@ pub struct ExecutedCommand {
     pub conclusion: ExecutionConclusion,
 }
 
-#[cfg(feature = "alloc")]
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExecutionResult {
     NotExecuted { started_at: f64 },
     Executed(ExecutedCommand),
 }
 
-#[cfg(feature = "alloc")]
 impl ExecutionResult {
     #[must_use]
     pub fn as_ref(&self) -> ExecutionResultRef<'_> {

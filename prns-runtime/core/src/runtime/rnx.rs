@@ -56,7 +56,6 @@ impl<const N: usize> RnxOutputBuffer for heapless::Vec<u8, N> {
     }
 }
 
-#[cfg(feature = "alloc")]
 impl RnxOutputBuffer for alloc::vec::Vec<u8> {
     fn put(&mut self, bytes: &[u8]) -> usize {
         self.extend_from_slice(bytes);
@@ -92,14 +91,12 @@ impl<const STDOUT: usize, const STDERR: usize> RnxOutputStorage for FixedRnxOutp
     }
 }
 
-#[cfg(feature = "alloc")]
 #[derive(Default)]
 pub struct HeapRnxOutput {
     stdout: alloc::vec::Vec<u8>,
     stderr: alloc::vec::Vec<u8>,
 }
 
-#[cfg(feature = "alloc")]
 impl RnxOutputStorage for HeapRnxOutput {
     fn buffers(&mut self) -> (&mut dyn RnxOutputBuffer, &mut dyn RnxOutputBuffer) {
         (&mut self.stdout, &mut self.stderr)

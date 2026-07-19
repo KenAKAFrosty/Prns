@@ -17,7 +17,7 @@ path = "src/lib.rs"
 [features]
 default = []
 alloc = ["prns-runtime/alloc"]
-rnx = ["prns-runtime/rnx"]
+rnx = ["alloc", "prns-runtime/rnx"]
 external-alloc = ["alloc", "prns-runtime/external-alloc"]
 std = ["alloc", "prns-runtime/std"]
 log = ["dep:log"]
