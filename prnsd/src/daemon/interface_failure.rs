@@ -8,7 +8,7 @@ use tokio::sync::watch;
 
 pub(super) async fn wait(
     handle: &PrnsNodeHandle,
-    expected: watch::Receiver<BTreeSet<InterfaceId>>,
+    expected: &watch::Receiver<BTreeSet<InterfaceId>>,
     enabled: bool,
 ) -> InterfaceId {
     if !enabled {

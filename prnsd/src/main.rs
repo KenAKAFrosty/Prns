@@ -1,4 +1,3 @@
-//! The Personal Reticulum daemon: a configurable shared-instance node built on [`personal_rns::runtime::PrnsNode`].
 #![forbid(unsafe_code)]
 
 mod cli;

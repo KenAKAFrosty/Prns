@@ -11,7 +11,9 @@ mod probe_responder;
 mod remote_management;
 mod request_state;
 
-pub(crate) use blackhole_exchange::{spawn_updater as spawn_blackhole_updater, ListRoute};
+pub(crate) use blackhole_exchange::{
+    spawn_updater as spawn_blackhole_updater, BlackholeUpdateTask, ListRoute,
+};
 pub(crate) use management_announcements::ManagementAnnounceTask;
 pub(crate) use remote_management::{PathRoute, StatusRoute};
 pub(crate) use request_state::{DaemonRequestState, TransportStatusIdentity};

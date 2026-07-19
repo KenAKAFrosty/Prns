@@ -32,6 +32,8 @@ use personal_rns::config::LoggingPlan;
 mod metrics;
 mod progress;
 
+#[cfg(feature = "otlp")]
+pub(crate) use metrics::RunningMetricsReporter;
 pub(crate) use progress::StateRestoreProgress;
 
 #[cfg(feature = "otlp")]
@@ -81,10 +83,20 @@ impl ObservabilityGuard {
     }
 
     #[cfg(feature = "otlp")]
-    pub(crate) fn metrics_reporter(&self) -> Option<metrics::MetricsReporter> {
+    fn metrics_reporter(&self) -> Option<metrics::MetricsReporter> {
         self.meter_provider
             .as_ref()
             .map(metrics::MetricsReporter::new)
+    }
+
+    #[cfg(feature = "otlp")]
+    pub(crate) fn spawn_metrics_reporter(
+        &self,
+        handle: personal_rns::runtime::PrnsNodeHandle,
+        started: std::time::Instant,
+    ) -> Option<RunningMetricsReporter> {
+        self.metrics_reporter()
+            .map(|reporter| reporter.spawn(handle, started))
     }
 
     pub async fn shutdown(self) {
