@@ -376,14 +376,19 @@ where
                 });
                 CommandEffect::UNCHANGED
             }
-            HostCommand::IdentityBlackhole(command) => CommandEffect::Delta(
-                apply_identity_blackhole_command(engine, command, &mut |removed| {
-                    journal.route(Journaled::RouteRemoved {
-                        destination: removed.destination,
-                        cause: removed.cause,
-                    });
-                }),
-            ),
+            HostCommand::IdentityBlackhole(command) => {
+                CommandEffect::Delta(apply_identity_blackhole_command(
+                    engine,
+                    command,
+                    topology.view(),
+                    &mut |removed| {
+                        journal.route(Journaled::RouteRemoved {
+                            destination: removed.destination,
+                            cause: removed.cause,
+                        });
+                    },
+                ))
+            }
             HostCommand::DestinationIdentityRetention(command) => CommandEffect::Delta(
                 apply_destination_identity_retention_command(engine, command, now),
             ),

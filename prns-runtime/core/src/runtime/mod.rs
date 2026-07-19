@@ -23,6 +23,7 @@ cfg_if::cfg_if! {
     }
 }
 
+pub use crate::engine::BlackholeSeedReport;
 pub use command::{
     ClearAnnounceQueuesOutcome, DestinationIdentityRetentionControl,
     DestinationIdentityRetentionControlError, DropRouteOutcome, DropRoutesViaOutcome, PrnsNodeApi,

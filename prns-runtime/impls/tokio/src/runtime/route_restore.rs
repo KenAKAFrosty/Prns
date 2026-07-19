@@ -291,7 +291,7 @@ mod tests {
     use super::*;
     use crate::identity::in_memory::InMemoryNodeIdentity;
     use crate::identity::IdentityHash;
-    use crate::interfaces::InterfaceId;
+    use crate::interfaces::{AttachedInterfaces, InterfaceId};
     use crate::persistence::{
         read_routing_table_snapshot, routing_table_snapshot_len, write_routing_table_snapshot,
     };
@@ -360,8 +360,10 @@ mod tests {
                     expiry: BlackholeExpiry::Indefinite,
                     reason: None::<&str>,
                 },
+                AttachedInterfaces::new(&[]),
                 &mut |_| {},
             )
+            .outcome
             .unwrap();
     }
 
