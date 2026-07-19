@@ -1,4 +1,7 @@
+mod configuration;
 mod interface_failure;
+
+pub(crate) use configuration::DEFAULT_CONFIG;
 
 use std::process;
 
@@ -7,7 +10,7 @@ use crate::{
     observability, persist, probe_responder, remote_management, request_services, splash,
 };
 use personal_rns::config::{
-    discover, parse_and_plan_named, ConfiguredInterfaceLifecycle, SharedInstance,
+    ConfiguredInterfaceLifecycle, SharedInstance,
     SharedInstanceTransport as ConfigSharedInstanceTransport, TransportIdentityPolicy,
 };
 use personal_rns::engine::{
@@ -31,44 +34,14 @@ use personal_rns::storage::GrowableHeap;
 use personal_rns::PlanRuntimeContext;
 use prnsd_control::ManagedProcess;
 
-pub(crate) const DEFAULT_CONFIG: &str = "[reticulum]\n\
-    enable_transport = Yes\n\
-    share_instance = Yes\n\
-    [interfaces]\n\
-      [[Default Interface]]\n\
-        type = AutoInterface\n\
-        interface_enabled = Yes\n";
-
 pub(super) async fn run(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
     let started = std::time::Instant::now();
-    let discovered_config = match discover(cli.config.as_deref()) {
-        Ok(config) => config,
-        Err(error) => {
-            eprintln!("prnsd: config discovery failed: {error}");
-            process::exit(1);
-        }
-    };
-    let (config_text, config_source) = match &discovered_config.config {
-        Some(path) => match std::fs::read_to_string(path) {
-            Ok(text) => (text, path.display().to_string()),
-            Err(error) => {
-                eprintln!("prnsd: could not read config {}: {error}", path.display());
-                process::exit(1);
-            }
-        },
-        None => (DEFAULT_CONFIG.to_string(), "<built-in config>".to_string()),
-    };
-
-    let report = match parse_and_plan_named(&config_source, &config_text) {
-        Ok(report) => report,
-        Err(errors) => {
-            for diagnostic in errors.diagnostics() {
-                eprintln!("{diagnostic}");
-            }
-            process::exit(1);
-        }
-    };
-    let plan = report.value;
+    let configuration::LoadedConfiguration {
+        directory: config_dir,
+        path: config_path,
+        plan,
+        warnings: config_warnings,
+    } = configuration::load_or_exit(cli.config.as_deref());
     let observability = match observability::init(cli.log_format, plan.logging) {
         Ok(observability) => observability,
         Err(error) => {
@@ -83,15 +56,15 @@ pub(super) async fn run(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
         event = "daemon_starting",
         version = env!("CARGO_PKG_VERSION"),
     );
-    if let Some(path) = &discovered_config.config {
+    if let Some(path) = &config_path {
         tracing::info!(event = "config_loaded", path = %path.display());
     } else {
         tracing::info!(
             event = "config_defaulted",
-            directory = %discovered_config.dir.display(),
+            directory = %config_dir.display(),
         );
     }
-    for diagnostic in report.warnings {
+    for diagnostic in config_warnings {
         tracing::warn!(
             event = "config_warning",
             code = diagnostic.code().as_str(),
@@ -111,7 +84,7 @@ pub(super) async fn run(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
             }
         };
 
-    let storage_dir = discovered_config.dir.join("storage");
+    let storage_dir = config_dir.join("storage");
     let persistent_secret = identity::load_or_seed_transport_identity(&storage_dir);
     let mut shared_instance_credentials =
         SharedInstanceCredentials::from_identity_secret(&persistent_secret);
@@ -163,7 +136,7 @@ pub(super) async fn run(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
     let mut prepared_discovery = interface_discovery::PreparedDiscovery::from_plan(
         &plan,
         network_identity.clone(),
-        &discovered_config.dir,
+        &config_dir,
     );
     let (discovery_destination, prepared_discovery_publisher) =
         interface_discovery::publication::prepare(
