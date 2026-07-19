@@ -2,12 +2,14 @@
 
 pub mod destination_identity;
 pub mod held;
+mod material;
 pub mod vault;
 
 pub use destination_identity::{
     DestinationIdentityRetentionState, MarkDestinationUsedOutcome, ReleaseDestinationOutcome,
     RetainDestinationOutcome, RetainIdentityOutcome,
 };
+pub use material::{IdentityMaterialLengthError, PrivateIdentityMaterial, PublicIdentityMaterial};
 
 use crate::crypto::ratchets::RatchetId;
 use crate::crypto::{

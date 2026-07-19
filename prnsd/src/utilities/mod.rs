@@ -1,6 +1,7 @@
 mod arguments;
 mod configuration;
 mod remote_management;
+pub(crate) mod rnid;
 pub(crate) mod rnpath;
 pub(crate) mod rnprobe;
 pub(crate) mod rnstatus;

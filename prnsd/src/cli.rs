@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use personal_rns::i2p::{I2pPeerAddress, I2pPeerAddressError, SamBridgeAddress};
 
+use crate::utilities::rnid::RnidArgs;
 use crate::utilities::rnpath::RnpathArgs;
 use crate::utilities::rnprobe::RnprobeArgs;
 use crate::utilities::rnstatus::RnstatusArgs;
@@ -131,6 +132,8 @@ pub enum Command {
     Path(RnpathArgs),
     #[command(about = "Probe a Reticulum destination")]
     Probe(RnprobeArgs),
+    #[command(about = "Manage Reticulum identities and local cryptographic files")]
+    Id(RnidArgs),
 }
 
 #[derive(Parser)]
@@ -156,6 +159,7 @@ pub fn parse_from(args: impl IntoIterator<Item = OsString>) -> Result<Command, c
                     | "status"
                     | "path"
                     | "probe"
+                    | "id"
                     | "help"
                     | "--help"
                     | "-h"
@@ -183,6 +187,14 @@ pub fn probe_help() -> String {
     match command.find_subcommand_mut("probe") {
         Some(probe) => format!("{}\n", probe.render_long_help()),
         None => String::from("Usage: prnsd probe [OPTIONS] [FULL_NAME] [DESTINATION_HASH]\n"),
+    }
+}
+
+pub fn id_help() -> String {
+    let mut command = Cli::command();
+    match command.find_subcommand_mut("id") {
+        Some(id) => format!("{}\n", id.render_long_help()),
+        None => String::from("Usage: prnsd id [OPTIONS]\n"),
     }
 }
 
@@ -421,6 +433,31 @@ mod tests {
     #[test]
     fn probe_does_not_expose_a_prefixed_alias() {
         let error = parse_from(["prnsd", "rnprobe"].into_iter().map(OsString::from)).unwrap_err();
+        assert_eq!(error.exit_code(), 2);
+    }
+
+    #[test]
+    fn id_is_a_prefixless_offline_utility_with_stock_flags() {
+        let Command::Id(args) = parse(&[
+            "prnsd",
+            "id",
+            "-M",
+            "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+            "-p",
+            "-P",
+            "-B",
+        ]) else {
+            panic!("id must remain a direct utility command");
+        };
+        assert!(args.import_private.is_some());
+        assert!(args.print_identity);
+        assert!(args.print_private);
+        assert!(args.base32);
+    }
+
+    #[test]
+    fn id_does_not_expose_a_prefixed_alias() {
+        let error = parse_from(["prnsd", "rnid"].into_iter().map(OsString::from)).unwrap_err();
         assert_eq!(error.exit_code(), 2);
     }
 

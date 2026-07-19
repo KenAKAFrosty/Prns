@@ -1,7 +1,7 @@
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 
-const ONE_SHOT_DAEMON_COMMANDS: &[&str] = &["i2p", "status", "path", "probe"];
+const ONE_SHOT_DAEMON_COMMANDS: &[&str] = &["i2p", "status", "path", "probe", "id"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Action {
@@ -189,10 +189,10 @@ fn separator_index(args: &[OsString]) -> usize {
 pub(super) fn print_help() {
     println!(
         "Build and run the Personal Reticulum daemon.\n\n\
-Usage:\n    cargo prnsd [start] [BUILD OPTIONS] [-- PRNSD OPTIONS]\n    cargo prnsd restart [BUILD OPTIONS] [-- PRNSD OPTIONS]\n    cargo prnsd build [BUILD OPTIONS]\n    cargo prnsd <stop|logs>\n    cargo prnsd i2p <COMMAND>\n    cargo prnsd status [OPTIONS]\n    cargo prnsd path [OPTIONS]\n    cargo prnsd probe [OPTIONS] FULL_NAME DESTINATION_HASH\n\n\
+Usage:\n    cargo prnsd [start] [BUILD OPTIONS] [-- PRNSD OPTIONS]\n    cargo prnsd restart [BUILD OPTIONS] [-- PRNSD OPTIONS]\n    cargo prnsd build [BUILD OPTIONS]\n    cargo prnsd <stop|logs>\n    cargo prnsd i2p <COMMAND>\n    cargo prnsd status [OPTIONS]\n    cargo prnsd path [OPTIONS]\n    cargo prnsd probe [OPTIONS] FULL_NAME DESTINATION_HASH\n    cargo prnsd id [OPTIONS]\n\n\
 Lifecycle:\n    start                 Start if needed, then attach to the daemon log (default)\n    restart               Gracefully stop, rebuild, start, and attach\n    stop                  Show recent logs, then stop while streaming shutdown logs\n    logs                  Attach to the running daemon log\n    --detach              Start or reconcile without attaching\n\n\
 Build:\n    build                 Build with --release --locked and OTLP, then print the binary path\n\n\
-One-shot commands:\n    i2p doctor            Check I2P router and SAM 3.1 readiness without starting Prnsd\n    i2p setup             Guide installation, SAM enablement, and interface configuration\n    status                Query the running shared RNS instance without starting Prnsd\n    path                  Inspect paths through the running shared RNS instance\n    probe                 Probe through the running shared RNS instance\n\n\
+One-shot commands:\n    i2p doctor            Check I2P router and SAM 3.1 readiness without starting Prnsd\n    i2p setup             Guide installation, SAM enablement, and interface configuration\n    status                Query the running shared RNS instance without starting Prnsd\n    path                  Inspect paths through the running shared RNS instance\n    probe                 Probe through the running shared RNS instance\n    id                    Manage identities and local cryptographic files\n\n\
 Profiles:\n    (default)             Build and run with --release\n    --debug               Build and run with Cargo's development profile\n    -r, --release         Build and run with the release profile\n    --profile <PROFILE>   Build and run with a named Cargo profile\n\n\
 Repeated starts reattach without rebuilding or spawning another daemon. Build and daemon\n\
 options are applied when starting a stopped service or with restart. Ctrl-C detaches without\n\
@@ -363,6 +363,15 @@ mod tests {
                 "00112233445566778899aabbccddeeff",
             ])
         );
+    }
+
+    #[test]
+    fn id_is_a_direct_one_shot_daemon_invocation() {
+        let parsed = invocation(&["id", "--version"]);
+        assert_eq!(parsed.action, Action::OneShot);
+        assert!(!parsed.attach);
+        assert!(parsed.build_args.is_empty());
+        assert_eq!(parsed.daemon_args, args(&["id", "--version"]));
     }
 
     #[test]

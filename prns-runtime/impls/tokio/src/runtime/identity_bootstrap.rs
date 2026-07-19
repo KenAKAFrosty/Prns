@@ -14,9 +14,18 @@ use prns_core::interfaces::bluetooth_auto::core::BleIdentity;
     reason = "a host without a functioning CSPRNG cannot mint identities; failing loud beats weak keys"
 )]
 pub fn generate_identity_secret() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
+    try_generate_identity_secret().expect("OS CSPRNG must provide identity key material")
+}
+
+pub fn try_generate_identity_secret(
+) -> Result<Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>, OsEntropyError> {
     let mut key = Zeroizing::new([0u8; IDENTITY_SECRET_KEY_LEN]);
-    getrandom::getrandom(&mut *key).expect("OS CSPRNG must provide identity key material");
-    key
+    fill_os_entropy(&mut *key)?;
+    Ok(key)
+}
+
+pub fn fill_os_entropy(bytes: &mut [u8]) -> Result<(), OsEntropyError> {
+    getrandom::getrandom(bytes).map_err(OsEntropyError)
 }
 
 #[must_use]
@@ -80,6 +89,17 @@ pub enum IdentitySecretFileError {
         len: u64,
     },
 }
+
+#[derive(Debug)]
+pub struct OsEntropyError(getrandom::Error);
+
+impl core::fmt::Display for OsEntropyError {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(formatter, "OS CSPRNG failed: {}", self.0)
+    }
+}
+
+impl std::error::Error for OsEntropyError {}
 
 impl core::fmt::Display for IdentitySecretFileError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {

@@ -20,8 +20,9 @@ pub use prns_runtime::storage::{Esp32C6, Esp32S3};
 
 #[cfg(feature = "tokio-host")]
 pub use prns_runtime_tokio::runtime::{
-    ephemeral_ble_identity, generate_identity_secret, load_or_create_identity_secret,
-    IdentitySecretFileError,
+    ephemeral_ble_identity, fill_os_entropy, generate_identity_secret,
+    load_or_create_identity_secret, try_generate_identity_secret, IdentitySecretFileError,
+    OsEntropyError,
 };
 
 #[cfg(feature = "tokio-host")]
