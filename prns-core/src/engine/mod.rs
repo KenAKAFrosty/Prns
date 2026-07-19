@@ -23,7 +23,9 @@ pub use destination_identity::{
     DestinationIdentityRetentionEffect, DestinationIdentitySeedOutcome, MarkDestinationUsedEffect,
     ReleaseDestinationEffect, RetainDestinationEffect, RetainIdentityEffect,
 };
-pub use management::{DropRouteEffect, DropRoutesViaEffect};
+pub use management::{
+    DropRouteEffect, DropRouteOutcome, DropRoutesViaEffect, DropRoutesViaOutcome,
+};
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "runtime-metrics")] {

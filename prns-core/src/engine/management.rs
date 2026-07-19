@@ -1,11 +1,22 @@
 use core::num::NonZeroUsize;
 
 use crate::interfaces::AttachedInterfaces;
-use crate::routing::{DropRouteOutcome, RemovedRoute};
+use crate::routing::RemovedRoute;
 use crate::storage::{DirtyInterfaceSet, StorageLayout};
 use crate::wire::{DestinationHash, TransportId};
 
 use super::{EngineState, WakeSchedules};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DropRouteOutcome {
+    Dropped,
+    NotFound,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DropRoutesViaOutcome {
+    pub dropped_routes: u32,
+}
 
 #[derive(Debug, PartialEq, Eq)]
 #[must_use]
@@ -57,6 +68,12 @@ enum DropRoutesViaEffectState {
 }
 
 impl DropRoutesViaEffect {
+    pub fn outcome(&self) -> DropRoutesViaOutcome {
+        DropRoutesViaOutcome {
+            dropped_routes: u32::try_from(self.dropped_route_count()).unwrap_or(u32::MAX),
+        }
+    }
+
     pub fn dropped_route_count(&self) -> usize {
         match self.0 {
             DropRoutesViaEffectState::Dropped { dropped_routes, .. } => dropped_routes.get(),
@@ -228,6 +245,7 @@ mod tests {
 
         removed.sort_by_key(|route| *route.destination.as_bytes());
         assert_eq!(effect.dropped_route_count(), 2);
+        assert_eq!(effect.outcome(), DropRoutesViaOutcome { dropped_routes: 2 });
         assert_eq!(
             removed
                 .iter()
@@ -246,6 +264,26 @@ mod tests {
             &mut |_| {},
         );
         assert_eq!(unchanged.dropped_route_count(), 0);
+        assert_eq!(
+            unchanged.outcome(),
+            DropRoutesViaOutcome { dropped_routes: 0 },
+        );
         assert_eq!(unchanged.wake_schedules(), WakeSchedules::UNCHANGED);
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn route_drop_outcome_saturates_counts_beyond_its_public_width() {
+        let effect = DropRoutesViaEffect(DropRoutesViaEffectState::Dropped {
+            dropped_routes: NonZeroUsize::new(usize::try_from(u32::MAX).unwrap() + 1).unwrap(),
+            wake_schedules: WakeSchedules::UNCHANGED,
+        });
+
+        assert_eq!(
+            effect.outcome(),
+            DropRoutesViaOutcome {
+                dropped_routes: u32::MAX,
+            },
+        );
     }
 }

@@ -1,18 +1,21 @@
-//! Platform-neutral command-surface types, shared by every command handle: a `send_single_packet` resolves to the same `Result` whether Tokio's oneshot or Embassy's completion pool carried the settlement.
-
 use crate::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, PacketReceiptDelivered,
     SendSinglePacketFailure,
 };
+pub use crate::engine::{DropRouteOutcome, DropRoutesViaOutcome};
 use crate::identity::{
     IdentityHash, MarkDestinationUsedOutcome, ReleaseDestinationOutcome, RetainDestinationOutcome,
     RetainIdentityOutcome,
 };
 use crate::routing::links::LinkId;
-pub use crate::routing::{ClearAnnounceQueuesOutcome, DropRouteOutcome, DropRoutesViaOutcome};
 use crate::wire::{DestinationHash, TransportId};
 
 use super::request_router::RespondToken;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClearAnnounceQueuesOutcome {
+    pub dropped_announces: u32,
+}
 
 /// Why an awaited send never reached `Delivered`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

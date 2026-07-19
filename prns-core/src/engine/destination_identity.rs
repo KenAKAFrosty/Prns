@@ -267,13 +267,13 @@ mod tests {
         bytes_from_hex, test_fill_entropy, transporting_interfaces, transporting_node,
         RNS_1_3_5_ANNOUNCE,
     };
+    use crate::engine::DropRouteOutcome;
     use crate::engine::{AnnounceIngest, IngestPacketOutcome, WakeSchedule};
     use crate::identity::destination_identity::{
         DestinationIdentityRetentionState, UNUSED_DESTINATION_LINGER_MILLIS,
         USED_DESTINATION_LINGER_MILLIS,
     };
     use crate::interfaces::{AttachedInterfaces, InboundPacket, InterfaceId};
-    use crate::routing::DropRouteOutcome;
 
     const DESTINATION: DestinationHash = DestinationHash::new([
         0x16, 0xf8, 0xa6, 0xd3, 0xf7, 0xd7, 0xc5, 0xb6, 0xf1, 0x06, 0xd2, 0x93, 0x80, 0x4d, 0x73,
