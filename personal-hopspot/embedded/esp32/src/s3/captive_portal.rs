@@ -1,0 +1,629 @@
+#[cfg(feature = "radio-wifi")]
+use super::connectivity::net_task;
+use super::*;
+
+/// A random per-boot SoftAP SSID suffix, cached so every `set_config` within a boot reuses the same
+/// name (regenerating per call would flap the SSID). 0 = unset. Random rather than MAC-derived so the
+/// AP name leaks no device identity; it re-rolls on reboot, which is acceptable (preferred, even).
+#[cfg(feature = "softap")]
+static AP_SSID_SUFFIX: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(feature = "softap")]
+pub(super) fn ap_ssid_suffix() -> u16 {
+    let mut suffix = AP_SSID_SUFFIX.load(Ordering::Relaxed);
+    if suffix == 0 {
+        let mut r = [0u8; 2];
+        Rng::new().read(&mut r);
+        suffix = u64::from(u16::from_le_bytes(r)) | 1;
+        AP_SSID_SUFFIX.store(suffix, Ordering::Relaxed);
+    }
+    suffix as u16
+}
+
+#[cfg(feature = "softap")]
+pub(super) fn ap_ssid() -> String {
+    alloc::format!("Hopspot-{:04X}", ap_ssid_suffix())
+}
+
+#[cfg(feature = "softap")]
+pub(super) fn ap_config() -> AccessPointConfig {
+    AccessPointConfig::default()
+        .with_ssid(ap_ssid())
+        .with_max_connections(4)
+}
+
+/// The WiFi mode to request for a station config: APSTA (station + the SoftAP "Hopspot") when the
+/// `softap` feature is on, plain station otherwise. Used at every `set_config` so the AP rides
+/// alongside the station and survives reconnects — a bare `Station` set_config would drop the AP.
+#[cfg(feature = "radio-wifi")]
+#[cfg_attr(not(feature = "softap"), allow(unused_variables))]
+pub(super) fn station_wifi_mode(station: StationConfig, ap_enabled: bool) -> WifiConfig {
+    #[cfg(feature = "softap")]
+    if ap_enabled {
+        return WifiConfig::AccessPointStation(station, ap_config());
+    }
+    WifiConfig::Station(station)
+}
+
+/// Stand a second embassy-net Stack on the AP netif and drive it, so the SoftAP is a real interface
+/// (APSTA). Sized like the station's; the AP takes the station MAC + 1 for its link-local (matching
+/// the SoftAP's own BSSID) so the two netifs are distinct.
+#[cfg(feature = "softap")]
+pub(super) fn build_ap_netif(
+    spawner: &Spawner,
+    ap_iface: WifiStaDevice<'static>,
+    mac: [u8; 6],
+) -> Stack<'static> {
+    let mut ap_mac = mac;
+    ap_mac[5] = ap_mac[5].wrapping_add(1);
+    let ap_link_local = wifi_core::link_local_from_mac(MacAddress::new(ap_mac));
+    // The SoftAP is the gateway, not a DHCP client: a static IPv4 (192.168.4.1/24) lets it serve DHCP +
+    // host the TCP rendezvous, plus the static v6 link-local for WiFi-auto's UDP. (The IPv4 multicast
+    // path is moot anyway — the SoftAP can't pass multicast; see the rendezvous DHCP server below.)
+    let mut ap_net_config = NetConfig::ipv4_static(StaticConfigV4 {
+        address: Ipv4Cidr::new(Ipv4Address::new(192, 168, 4, 1), 24),
+        gateway: None,
+        dns_servers: Default::default(),
+    });
+    ap_net_config.ipv6 = ConfigV6::Static(StaticConfigV6 {
+        address: Ipv6Cidr::new(ap_link_local, 64),
+        gateway: None,
+        dns_servers: Default::default(),
+    });
+    let ap_resources = mk_static!(StackResources<10>, StackResources::new());
+    let ap_seed = {
+        let mut b = [0u8; 8];
+        Rng::new().read(&mut b);
+        u64::from_le_bytes(b)
+    };
+    let (ap_stack, ap_runner) = embassy_net::new(ap_iface, ap_net_config, ap_resources, ap_seed);
+    spawner.spawn(net_task(ap_runner).expect("ap net task fits"));
+    ap_stack
+}
+
+/// A minimal DHCPv4 server for the SoftAP. A device joining "Hopspot" DISCOVERs/REQUESTs and we lease it
+/// 192.168.4.2 with the SoftAP (192.168.4.1) as its router + DNS. The lease is incidental; the *gateway*
+/// is the point: once the joiner's default route is the Heltec, its WiFi-auto client auto-dials the TCP
+/// rendezvous on the gateway (port 42699), sidestepping the SoftAP's broken multicast entirely. One
+/// static lease is enough to start; the wire format is hand-rolled (embassy-net ships only a client).
+#[cfg(feature = "softap")]
+#[embassy_executor::task]
+pub(super) async fn dhcp_server_task(stack: Stack<'static>) -> ! {
+    let rx_meta: &'static mut [PacketMetadata] = alloc::vec![PacketMetadata::EMPTY; 4].leak();
+    let rx_buf: &'static mut [u8] = alloc::vec![0u8; 1024].leak();
+    let tx_meta: &'static mut [PacketMetadata] = alloc::vec![PacketMetadata::EMPTY; 4].leak();
+    let tx_buf: &'static mut [u8] = alloc::vec![0u8; 1024].leak();
+    let mut sock = UdpSocket::new(stack, rx_meta, rx_buf, tx_meta, tx_buf);
+    if sock.bind(67u16).is_err() {
+        loop {
+            Timer::after(Duration::from_secs(3600)).await;
+        }
+    }
+    let req: &'static mut [u8] = alloc::vec![0u8; 600].leak();
+    let reply: &'static mut [u8] = alloc::vec![0u8; 512].leak();
+    loop {
+        let Ok((len, _meta)) = sock.recv_from(&mut req[..]).await else {
+            continue;
+        };
+        // BOOTREQUEST (op=1) with the DHCP magic cookie + a parseable message-type option.
+        if len < 240 || req[0] != 1 || req[236..240] != [0x63, 0x82, 0x53, 0x63] {
+            continue;
+        }
+        let reply_type = match dhcp_message_type(&req[240..len]) {
+            Some(1) => 2, // DISCOVER -> OFFER
+            Some(3) => 5, // REQUEST  -> ACK
+            _ => continue,
+        };
+        let n = build_dhcp_reply(&req[..len], &mut reply[..], reply_type);
+        let m = &req[28..34];
+        log::info!(
+            "dhcp: {} 192.168.4.2 -> {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+            if reply_type == 2 { "OFFER" } else { "ACK" },
+            m[0],
+            m[1],
+            m[2],
+            m[3],
+            m[4],
+            m[5]
+        );
+        // The client has no IP yet, so broadcast the reply (build_dhcp_reply sets the broadcast flag).
+        // 255.255.255.255 is the DHCP standard; if smoltcp refuses the limited broadcast, 192.168.4.255
+        // (the directed subnet broadcast) is the fallback.
+        let _ = sock
+            .send_to(
+                &reply[..n],
+                (IpAddress::Ipv4(Ipv4Address::new(255, 255, 255, 255)), 68u16),
+            )
+            .await;
+    }
+}
+
+/// Scan DHCP options (TLV) for option 53 (message type); returns its value (1=DISCOVER, 3=REQUEST, ...).
+#[cfg(feature = "softap")]
+fn dhcp_message_type(mut opts: &[u8]) -> Option<u8> {
+    while let Some(&code) = opts.first() {
+        if code == 255 {
+            return None; // end
+        }
+        if code == 0 {
+            opts = &opts[1..]; // pad
+            continue;
+        }
+        let len = *opts.get(1)? as usize;
+        let val = opts.get(2..2 + len)?;
+        if code == 53 {
+            return val.first().copied();
+        }
+        opts = &opts[2 + len..];
+    }
+    None
+}
+
+/// Build a BOOTREPLY (OFFER/ACK) leasing 192.168.4.2 with the SoftAP (192.168.4.1) as server, router,
+/// and DNS; returns the reply length. `msg_type` is 2 (OFFER) or 5 (ACK).
+#[cfg(feature = "softap")]
+fn build_dhcp_reply(req: &[u8], out: &mut [u8], msg_type: u8) -> usize {
+    out.fill(0);
+    out[0] = 2; // op = BOOTREPLY
+    out[1] = 1; // htype = ethernet
+    out[2] = 6; // hlen
+    out[4..8].copy_from_slice(&req[4..8]); // xid
+    out[10] = 0x80; // flags: broadcast (client has no IP yet)
+    out[16..20].copy_from_slice(&[192, 168, 4, 2]); // yiaddr (the lease)
+    out[20..24].copy_from_slice(&AP_IPV4); // siaddr (server)
+    out[28..44].copy_from_slice(&req[28..44]); // chaddr
+    out[236..240].copy_from_slice(&[0x63, 0x82, 0x53, 0x63]); // magic cookie
+    let mut pos = 240;
+    if !write_dhcp_option(out, &mut pos, 53, &[msg_type]) {
+        return finish_dhcp_options(out, pos);
+    }
+    if !write_dhcp_option(out, &mut pos, 54, &AP_IPV4) {
+        return finish_dhcp_options(out, pos);
+    }
+    if !write_dhcp_option(out, &mut pos, 51, &[0, 0, 0x0E, 0x10]) {
+        return finish_dhcp_options(out, pos);
+    }
+    if !write_dhcp_option(out, &mut pos, 1, &[255, 255, 255, 0]) {
+        return finish_dhcp_options(out, pos);
+    }
+    if !write_dhcp_option(out, &mut pos, 3, &AP_IPV4) {
+        return finish_dhcp_options(out, pos);
+    }
+    if !write_dhcp_option(out, &mut pos, 6, &AP_IPV4) {
+        return finish_dhcp_options(out, pos);
+    }
+    if !write_dhcp_option(out, &mut pos, 114, CAPTIVE_PORTAL_API_URL.as_bytes()) {
+        return finish_dhcp_options(out, pos);
+    }
+    finish_dhcp_options(out, pos)
+}
+
+#[cfg(feature = "softap")]
+fn write_dhcp_option(out: &mut [u8], pos: &mut usize, code: u8, value: &[u8]) -> bool {
+    if *pos + 2 + value.len() + 1 > out.len() || value.len() > u8::MAX as usize {
+        return false;
+    }
+    out[*pos] = code;
+    out[*pos + 1] = value.len() as u8;
+    out[*pos + 2..*pos + 2 + value.len()].copy_from_slice(value);
+    *pos += 2 + value.len();
+    true
+}
+
+#[cfg(feature = "softap")]
+fn finish_dhcp_options(out: &mut [u8], pos: usize) -> usize {
+    let pos = pos.min(out.len().saturating_sub(1));
+    out[pos] = 255; // end
+    pos + 1
+}
+
+/// Captive DNS for the SoftAP: every A/ANY query resolves to 192.168.4.1, which makes
+/// OS connectivity checks and typed hostnames land on the Hopspot HTTP server.
+#[cfg(feature = "softap")]
+#[embassy_executor::task]
+pub(super) async fn dns_server_task(stack: Stack<'static>) -> ! {
+    let rx_meta: &'static mut [PacketMetadata] = alloc::vec![PacketMetadata::EMPTY; 4].leak();
+    let rx_buf: &'static mut [u8] = alloc::vec![0u8; 512].leak();
+    let tx_meta: &'static mut [PacketMetadata] = alloc::vec![PacketMetadata::EMPTY; 4].leak();
+    let tx_buf: &'static mut [u8] = alloc::vec![0u8; 512].leak();
+    let mut sock = UdpSocket::new(stack, rx_meta, rx_buf, tx_meta, tx_buf);
+    if sock.bind(53u16).is_err() {
+        loop {
+            Timer::after(Duration::from_secs(3600)).await;
+        }
+    }
+    let req: &'static mut [u8] = alloc::vec![0u8; 512].leak();
+    let reply: &'static mut [u8] = alloc::vec![0u8; 512].leak();
+    loop {
+        let Ok((len, meta)) = sock.recv_from(&mut req[..]).await else {
+            continue;
+        };
+        let Some(reply_len) = build_dns_reply(&req[..len], &mut reply[..]) else {
+            continue;
+        };
+        let _ = sock.send_to(&reply[..reply_len], meta.endpoint).await;
+    }
+}
+
+#[cfg(feature = "softap")]
+fn build_dns_reply(req: &[u8], out: &mut [u8]) -> Option<usize> {
+    if req.len() < 12 || req[2] & 0x80 != 0 {
+        return None;
+    }
+    let qdcount = u16::from_be_bytes([req[4], req[5]]);
+    if qdcount == 0 {
+        return None;
+    }
+    let (question_end, qtype) = dns_question_end(req)?;
+    let answer_a = qtype == 1 || qtype == 255; // A or ANY.
+    let reply_len = question_end + if answer_a { 16 } else { 0 };
+    if reply_len > out.len() {
+        return None;
+    }
+
+    out[..question_end].copy_from_slice(&req[..question_end]);
+    out[2] = 0x81; // response + recursion desired
+    out[3] = 0x80; // recursion available, no error
+    out[4..6].copy_from_slice(&1u16.to_be_bytes());
+    out[6..8].copy_from_slice(&(answer_a as u16).to_be_bytes());
+    out[8..10].copy_from_slice(&0u16.to_be_bytes());
+    out[10..12].copy_from_slice(&0u16.to_be_bytes());
+
+    if answer_a {
+        let mut pos = question_end;
+        out[pos..pos + 2].copy_from_slice(&[0xC0, 0x0C]); // pointer to query name
+        pos += 2;
+        out[pos..pos + 2].copy_from_slice(&1u16.to_be_bytes()); // A
+        pos += 2;
+        out[pos..pos + 2].copy_from_slice(&1u16.to_be_bytes()); // IN
+        pos += 2;
+        out[pos..pos + 4].copy_from_slice(&30u32.to_be_bytes()); // short TTL
+        pos += 4;
+        out[pos..pos + 2].copy_from_slice(&4u16.to_be_bytes());
+        pos += 2;
+        out[pos..pos + 4].copy_from_slice(&AP_IPV4);
+    }
+
+    Some(reply_len)
+}
+
+#[cfg(feature = "softap")]
+fn dns_question_end(req: &[u8]) -> Option<(usize, u16)> {
+    let mut pos = 12;
+    loop {
+        let len = *req.get(pos)?;
+        if len & 0xC0 != 0 {
+            return None;
+        }
+        pos += 1;
+        if len == 0 {
+            break;
+        }
+        pos = pos.checked_add(len as usize)?;
+        if pos > req.len() {
+            return None;
+        }
+    }
+    if pos + 4 > req.len() {
+        return None;
+    }
+    let qtype = u16::from_be_bytes([req[pos], req[pos + 1]]);
+    Some((pos + 4, qtype))
+}
+
+#[cfg(feature = "softap")]
+#[embassy_executor::task(pool_size = 4)]
+pub(super) async fn http_server_task(stack: Stack<'static>) -> ! {
+    let rx_buffer: &'static mut [u8] = alloc::vec![0u8; 4096].leak();
+    let tx_buffer: &'static mut [u8] = alloc::vec![0u8; 16384].leak();
+    let request_buffer: &'static mut [u8] = alloc::vec![0u8; 4096].leak();
+    let mut socket = TcpSocket::new(stack, rx_buffer, tx_buffer);
+    socket.set_timeout(Some(Duration::from_secs(15)));
+
+    loop {
+        if socket.accept(80u16).await.is_err() {
+            Timer::after(Duration::from_millis(250)).await;
+            continue;
+        }
+        let peer = socket.remote_endpoint();
+        let _ = serve_site_connection(&mut socket, request_buffer).await;
+        socket.close();
+        let _ = with_timeout(Duration::from_secs(2), socket.flush()).await;
+        socket.abort();
+        if let Some(peer) = peer {
+            log::debug!("http: served {peer:?}");
+        }
+        Timer::after(Duration::from_millis(50)).await;
+    }
+}
+
+#[cfg(feature = "softap")]
+async fn serve_site_connection(
+    socket: &mut TcpSocket<'static>,
+    request_buffer: &mut [u8],
+) -> Result<(), ()> {
+    let len = read_http_request(socket, request_buffer).await?;
+    let request = core::str::from_utf8(&request_buffer[..len]).map_err(|_| ())?;
+    let Some(line) = request.lines().next() else {
+        return Err(());
+    };
+    let mut parts = line.split_ascii_whitespace();
+    let method = parts.next().unwrap_or("");
+    let raw_path = parts.next().unwrap_or("/");
+    let is_head = method == "HEAD";
+    if method != "GET" && !is_head {
+        return send_site_response(
+            socket,
+            "405 Method Not Allowed",
+            "text/plain; charset=utf-8",
+            b"method not allowed\n",
+            is_head,
+            None,
+            false,
+            "no-store",
+            None,
+        )
+        .await;
+    }
+
+    let path = normalize_http_path(raw_path);
+    if path == "/captive-portal/api" {
+        return send_captive_portal_api(socket, is_head).await;
+    }
+    if is_captive_probe_path(path) {
+        return send_captive_portal_redirect(socket, is_head).await;
+    }
+    let Some(asset) = find_site_asset(path) else {
+        return send_site_response(
+            socket,
+            "404 Not Found",
+            "text/plain; charset=utf-8",
+            b"not found\n",
+            is_head,
+            None,
+            false,
+            "no-store",
+            None,
+        )
+        .await;
+    };
+    let accepts_gzip = request_accepts_gzip(request);
+    let (body, content_encoding) = match (accepts_gzip, asset.gzip_bytes) {
+        (true, Some(gzip_bytes)) => (gzip_bytes, Some("gzip")),
+        _ => (asset.bytes, None),
+    };
+    send_site_response(
+        socket,
+        "200 OK",
+        asset.content_type,
+        body,
+        is_head,
+        content_encoding,
+        asset.gzip_bytes.is_some(),
+        site_cache_control(asset.path),
+        site_content_disposition(asset.path).as_deref(),
+    )
+    .await
+}
+
+#[cfg(feature = "softap")]
+async fn read_http_request(
+    socket: &mut TcpSocket<'static>,
+    request_buffer: &mut [u8],
+) -> Result<usize, ()> {
+    let mut len = 0;
+    loop {
+        if len == request_buffer.len() {
+            return Ok(len);
+        }
+        let timeout = if len == 0 {
+            Duration::from_secs(5)
+        } else {
+            Duration::from_millis(750)
+        };
+        match with_timeout(timeout, socket.read(&mut request_buffer[len..])).await {
+            Ok(Ok(0)) if len > 0 => return Ok(len),
+            Ok(Ok(0)) => return Err(()),
+            Ok(Ok(read)) => {
+                len += read;
+                if http_headers_complete(&request_buffer[..len]) {
+                    return Ok(len);
+                }
+            }
+            _ if len > 0 => return Ok(len),
+            _ => return Err(()),
+        }
+    }
+}
+
+#[cfg(feature = "softap")]
+fn http_headers_complete(bytes: &[u8]) -> bool {
+    bytes.windows(4).any(|window| window == b"\r\n\r\n")
+        || bytes.windows(2).any(|window| window == b"\n\n")
+}
+
+#[cfg(feature = "softap")]
+fn normalize_http_path(raw_path: &str) -> &str {
+    let path = raw_path.split_once('?').map_or(raw_path, |(path, _)| path);
+    let path = path.strip_prefix("/.").unwrap_or(path);
+    if path.is_empty() || path == "/" {
+        "/index.html"
+    } else {
+        path
+    }
+}
+
+#[cfg(feature = "softap")]
+fn is_captive_probe_path(path: &str) -> bool {
+    matches!(
+        path,
+        "/canonical.html"
+            | "/connecttest.txt"
+            | "/fwlink"
+            | "/generate_204"
+            | "/gen_204"
+            | "/hotspot-detect.html"
+            | "/kindle-wifi/wifistub.html"
+            | "/library/test/success.html"
+            | "/ncsi.txt"
+            | "/redirect"
+            | "/success.txt"
+    )
+}
+
+#[cfg(feature = "softap")]
+fn find_site_asset(path: &str) -> Option<&'static hopspot_site::SiteAsset> {
+    hopspot_site::SITE_ASSETS
+        .iter()
+        .find(|asset| asset.path == path)
+        .or_else(|| {
+            let leaf = path.rsplit('/').next().unwrap_or(path);
+            if leaf.contains('.') {
+                None
+            } else {
+                hopspot_site::SITE_ASSETS
+                    .iter()
+                    .find(|asset| asset.path == "/index.html")
+            }
+        })
+}
+
+#[cfg(feature = "softap")]
+fn request_accepts_gzip(request: &str) -> bool {
+    request.lines().any(|line| {
+        let Some((name, value)) = line.split_once(':') else {
+            return false;
+        };
+        name.trim().eq_ignore_ascii_case("accept-encoding")
+            && value.split(',').any(|encoding| {
+                let encoding = encoding
+                    .split_once(';')
+                    .map_or(encoding, |(encoding, _)| encoding)
+                    .trim();
+                encoding.eq_ignore_ascii_case("gzip")
+            })
+    })
+}
+
+#[cfg(feature = "softap")]
+fn site_cache_control(path: &str) -> &'static str {
+    if path == "/index.html" || path == "/source.zip" || path == "/source.zip.sha256" {
+        "no-cache"
+    } else if path.contains("-dxh") {
+        "public, max-age=31536000, immutable"
+    } else {
+        "public, max-age=3600"
+    }
+}
+
+#[cfg(feature = "softap")]
+fn site_content_disposition(path: &str) -> Option<alloc::string::String> {
+    match path {
+        "/source.zip" => Some(alloc::format!(
+            "attachment; filename=\"{}\"",
+            source_zip_download_name()
+        )),
+        "/source.zip.sha256" => Some(alloc::format!(
+            "attachment; filename=\"{}.sha256\"",
+            source_zip_download_name()
+        )),
+        _ => None,
+    }
+}
+
+#[cfg(feature = "softap")]
+fn source_zip_download_name() -> alloc::string::String {
+    let commit = option_env!("HOPSPOT_BUILD_COMMIT_SHORT").unwrap_or("unknown");
+    let commit = commit.trim();
+    if commit.is_empty() || commit == "unknown" {
+        alloc::string::String::from("prns-source.zip")
+    } else {
+        alloc::format!("prns-source-{commit}.zip")
+    }
+}
+
+#[cfg(feature = "softap")]
+async fn send_captive_portal_api(
+    socket: &mut TcpSocket<'static>,
+    head_only: bool,
+) -> Result<(), ()> {
+    let body = b"{\"captive\":true,\"user-portal-url\":\"http://192.168.4.1/\",\"venue-info-url\":\"http://192.168.4.1/\"}\n";
+    send_site_response(
+        socket,
+        "200 OK",
+        "application/captive+json",
+        body,
+        head_only,
+        None,
+        false,
+        "no-store",
+        None,
+    )
+    .await
+}
+
+#[cfg(feature = "softap")]
+async fn send_captive_portal_redirect(
+    socket: &mut TcpSocket<'static>,
+    head_only: bool,
+) -> Result<(), ()> {
+    let body = b"<!doctype html><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Hopspot</title><p><a href=\"http://192.168.4.1/\">Open Hopspot</a></p>\n";
+    let header = alloc::format!(
+        "HTTP/1.1 302 Found\r\nLocation: {CAPTIVE_PORTAL_URL}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    tcp_write_all(socket, header.as_bytes()).await?;
+    if !head_only {
+        tcp_write_all(socket, body).await?;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "softap")]
+async fn send_site_response(
+    socket: &mut TcpSocket<'static>,
+    status: &str,
+    content_type: &str,
+    body: &[u8],
+    head_only: bool,
+    content_encoding: Option<&str>,
+    vary_accept_encoding: bool,
+    cache_control: &str,
+    content_disposition: Option<&str>,
+) -> Result<(), ()> {
+    let mut header = alloc::format!(
+        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: {cache_control}\r\n",
+        body.len()
+    );
+    if let Some(encoding) = content_encoding {
+        header.push_str("Content-Encoding: ");
+        header.push_str(encoding);
+        header.push_str("\r\n");
+    }
+    if vary_accept_encoding {
+        header.push_str("Vary: Accept-Encoding\r\n");
+    }
+    if let Some(disposition) = content_disposition {
+        header.push_str("Content-Disposition: ");
+        header.push_str(disposition);
+        header.push_str("\r\n");
+    }
+    header.push_str("Connection: close\r\n\r\n");
+    tcp_write_all(socket, header.as_bytes()).await?;
+    if !head_only {
+        tcp_write_all(socket, body).await?;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "softap")]
+async fn tcp_write_all(socket: &mut TcpSocket<'static>, mut bytes: &[u8]) -> Result<(), ()> {
+    while !bytes.is_empty() {
+        let written = socket.write(bytes).await.map_err(|_| ())?;
+        if written == 0 {
+            return Err(());
+        }
+        bytes = &bytes[written..];
+    }
+    Ok(())
+}
