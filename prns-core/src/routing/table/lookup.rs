@@ -2,9 +2,10 @@ use super::RoutingTable;
 use crate::engine::InstantMillis;
 use crate::interfaces::{AttachedInterfaces, InterfaceId};
 use crate::routing::announce::stored::{AnnounceAppData, AnnounceIdHistory, AnnounceRecordTable};
+use crate::routing::announce::Announce;
 use crate::routing::route_expiry::RouteExpiryIndex;
 use crate::routing::routes::{RouteEntry, RouteTable};
-use crate::routing::types::{ExistingRoute, ForwardingRoute, RouteResponsiveness};
+use crate::routing::types::{ExistingRoute, ForwardingRoute, RouteResponsiveness, StoredAnnounce};
 use crate::routing::warmth::RouteWarmth;
 use crate::wire::DestinationHash;
 
@@ -16,6 +17,30 @@ where
     D: AnnounceAppData,
     I: RouteExpiryIndex,
 {
+    pub fn app_data_for(&self, destination: &DestinationHash) -> Option<&[u8]> {
+        Some(self.stored_announce_for(destination)?.announce.app_data)
+    }
+
+    pub fn stored_announce_for(&self, destination: &DestinationHash) -> Option<StoredAnnounce<'_>> {
+        let i = self.index_of(destination)?;
+        let handle = self.announce_records.app_data_handles()[i]?;
+        let app_data = self.announce_app_data.get(handle);
+        Some(StoredAnnounce {
+            hops: self.routes.hops()[i],
+            receiving_interface: self.routes.receiving_interfaces()[i],
+            next_hop: self.routes.next_hops()[i],
+            announce: Announce {
+                destination: self.routes.destinations()[i],
+                public_keys: self.announce_records.public_keys()[i],
+                dotted_name_hash: self.announce_records.dotted_name_hashes()[i],
+                announce_id: self.announce_records.announce_ids()[i],
+                ratchet: self.announce_records.ratchets()[i],
+                signature: self.announce_records.signatures()[i],
+                app_data,
+            },
+        })
+    }
+
     pub fn route_count(&self) -> usize {
         self.routes.len()
     }
