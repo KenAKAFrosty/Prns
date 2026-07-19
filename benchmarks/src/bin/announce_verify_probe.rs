@@ -93,7 +93,7 @@ async fn main() {
         transport_identity: None,
         pre_configured_destinations: [] as [PreConfiguredDestination; 0],
         app_state: (),
-        storage: GrowableHeap::default(),
+        storage: GrowableHeap,
         routes: routes![],
         on_event: |_event: PrnsEvent<'_>, _state: &()| {},
         interfaces: |node: &PrnsNodeHandle| {

@@ -1,12 +1,3 @@
-//! The Prns side of a shared-instance Matchup: a transport node that holds the local bus and
-//! nothing else, so two app clients that each connect over the loopback shared-instance port meet
-//! through our engine. Transport is enabled because the host's whole job here is to forward a
-//! sender client's traffic to the receiver client's interface (the local-client to local-client
-//! path), not just propagate announces. The `ref-client` Matchup cells stand stock `RNS.Reticulum`
-//! apps on each end of this; the `us-client` cells will stand Prns apps once the outbound connector
-//! lands. Ports come from the environment so the runner can pick free ones.
-//!
-//! Test/harness code, so it `expect`s and `println!`s rather than threading errors.
 #![allow(clippy::expect_used)]
 
 use std::string::String;
@@ -65,7 +56,11 @@ async fn main() {
 
     let handle = node.handle();
     handle.supervise(LocalServer::with_port(local_port));
-    tokio::spawn(SharedInstanceRpcCompat::tcp(credentials, local_port + 1, handle.clone()).run());
+    let rpc = SharedInstanceRpcCompat::tcp(credentials, local_port + 1, handle.clone())
+        .bind()
+        .await
+        .expect("the shared-instance RPC listener binds");
+    tokio::spawn(rpc.run());
     println!(
         "READY host local=127.0.0.1:{local_port} rpc=127.0.0.1:{}",
         local_port + 1
