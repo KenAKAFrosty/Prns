@@ -36,16 +36,18 @@ ci = ci_path.read_text()
 requirements = requirements_path.read_text().strip()
 rpc_requirements = rpc_requirements_path.read_text().strip()
 
-if requirements != "rns==1.3.5":
-    note_error(f"{requirements_path.relative_to(root)} pins {requirements!r}, expected 'rns==1.3.5'")
-if rpc_requirements != "rns==1.3.8":
-    note_error(f"{rpc_requirements_path.relative_to(root)} pins {rpc_requirements!r}, expected 'rns==1.3.8'")
+if requirements != "rns==1.3.9":
+    note_error(f"{requirements_path.relative_to(root)} pins {requirements!r}, expected 'rns==1.3.9'")
+if rpc_requirements != "rns==1.3.9":
+    note_error(f"{rpc_requirements_path.relative_to(root)} pins {rpc_requirements!r}, expected 'rns==1.3.9'")
 
 reference_section = docs.split("## Property Tests", 1)[0]
 if "Reticulum `1.3.5`" not in reference_section:
     note_error("docs/validation.md Reference Target must name Reticulum `1.3.5`")
 if "RNS `1.3.8`" not in reference_section:
     note_error("docs/validation.md Reference Target must name RNS `1.3.8`")
+if "rns==1.3.9" not in reference_section:
+    note_error("docs/validation.md Reference Target must name the running oracle pin rns==1.3.9")
 if "1.3.1" in reference_section:
     note_error("docs/validation.md Reference Target still mentions stale 1.3.1")
 stale_rns_pin = "rns==" + "1.3.1"
