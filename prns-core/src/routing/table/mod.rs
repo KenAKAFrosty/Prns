@@ -1,14 +1,18 @@
+mod lookup;
+mod model;
+
+pub use model::RoutingTable;
+
 use super::announce::defaults::route_expiry_millis;
 use super::announce::stored::{
     AnnounceAppData, AnnounceIdHistory, AnnounceRecord, AnnounceRecordTable,
 };
 use super::announce::{Announce, AnnounceArrival};
-use super::route_expiry::{LinearRouteExpiryIndex, RouteExpiryIndex};
+use super::route_expiry::RouteExpiryIndex;
 use super::routes::{RouteEntry, RouteTable};
 use super::types::{
-    AnnounceIdRing, DropCause, ExistingRoute, ForwardingRoute, NextHop, PersistedRouteRow,
-    RemovedRoute, RouteRemovalCause, RouteResponsiveness, SeedRouteOutcome, StoredAnnounce,
-    UpsertRouteOutcome,
+    AnnounceIdRing, DropCause, NextHop, PersistedRouteRow, RemovedRoute, RouteRemovalCause,
+    RouteResponsiveness, SeedRouteOutcome, StoredAnnounce, UpsertRouteOutcome,
 };
 use super::warmth::RouteWarmth;
 use crate::engine::InstantMillis;
@@ -23,25 +27,6 @@ enum Eviction {
     NothingToEvict,
 }
 
-/// RNS 1.3.5's `path_table`
-///
-/// NOTE: `PartialEq` compares backend representation byte-for-byte because the determinism tests rely on that. Do not use `==` and expect to compare the same set of routes.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct RoutingTable<R, A, H, D, I = LinearRouteExpiryIndex>
-where
-    R: RouteTable,
-    A: AnnounceRecordTable,
-    H: AnnounceIdHistory,
-    D: AnnounceAppData,
-    I: RouteExpiryIndex,
-{
-    routes: R,
-    route_expiries: I,
-    announce_records: A,
-    announce_id_history: H,
-    announce_app_data: D,
-}
-
 impl<R, A, H, D, I> RoutingTable<R, A, H, D, I>
 where
     R: RouteTable,
@@ -50,99 +35,6 @@ where
     D: AnnounceAppData,
     I: RouteExpiryIndex,
 {
-    pub fn route_count(&self) -> usize {
-        self.routes.len()
-    }
-
-    pub fn route_count_via(&self, interface: InterfaceId) -> usize {
-        self.routes
-            .receiving_interfaces()
-            .iter()
-            .filter(|&&learned_on| learned_on == interface)
-            .count()
-    }
-
-    pub fn hop_count_to(&self, destination: &DestinationHash) -> Option<u8> {
-        self.index_of(destination).map(|i| self.routes.hops()[i])
-    }
-
-    pub fn has_route(&self, destination: &DestinationHash) -> bool {
-        self.index_of(destination).is_some()
-    }
-
-    pub fn responsiveness_of(&self, destination: &DestinationHash) -> Option<RouteResponsiveness> {
-        self.index_of(destination)
-            .map(|i| self.routes.responsiveness()[i])
-    }
-
-    pub fn path_rows(&self) -> impl Iterator<Item = (DestinationHash, RouteEntry)> + '_ {
-        let routes = &self.routes;
-        (0..routes.len()).map(move |i| (routes.destinations()[i], self.path_row_at(i)))
-    }
-
-    pub(crate) fn path_rows_with_expiry<'a>(
-        &'a self,
-        interfaces: AttachedInterfaces<'a>,
-        warmth: &'a dyn RouteWarmth,
-    ) -> impl Iterator<Item = (DestinationHash, RouteEntry, InstantMillis)> + 'a {
-        let routes = &self.routes;
-        (0..routes.len()).map(move |i| {
-            (
-                routes.destinations()[i],
-                self.path_row_at(i),
-                self.expiry_of_with_warmth(i, interfaces, warmth),
-            )
-        })
-    }
-
-    /// RNS's `Transport.next_hop`.
-    pub fn path_row(&self, destination: &DestinationHash) -> Option<RouteEntry> {
-        let i = self.index_of(destination)?;
-        Some(self.path_row_at(i))
-    }
-
-    pub(crate) fn path_row_with_expiry(
-        &self,
-        destination: &DestinationHash,
-        interfaces: AttachedInterfaces<'_>,
-        warmth: &dyn RouteWarmth,
-    ) -> Option<(RouteEntry, InstantMillis)> {
-        let i = self.index_of(destination)?;
-        Some((
-            self.path_row_at(i),
-            self.expiry_of_with_warmth(i, interfaces, warmth),
-        ))
-    }
-
-    fn path_row_at(&self, i: usize) -> RouteEntry {
-        RouteEntry {
-            hops: self.routes.hops()[i],
-            learned_at: self.routes.learned_at()[i],
-            responsiveness: self.routes.responsiveness()[i],
-            receiving_interface: self.routes.receiving_interfaces()[i],
-            next_hop: self.routes.next_hops()[i],
-            last_relayed_at: self.routes.last_relayed_at()[i],
-        }
-    }
-
-    fn index_of(&self, destination: &DestinationHash) -> Option<usize> {
-        self.routes.index_of(destination)
-    }
-
-    pub fn existing_route_for(
-        &self,
-        destination: &DestinationHash,
-        interfaces: AttachedInterfaces<'_>,
-    ) -> Option<ExistingRoute<'_>> {
-        let i = self.index_of(destination)?;
-        Some(ExistingRoute {
-            hops: crate::units::HopCount(self.routes.hops()[i]),
-            expires_at: self.gate_expiry_of(i, interfaces),
-            announce_id_history: self.announce_id_history.history(i),
-            responsiveness: self.routes.responsiveness()[i],
-        })
-    }
-
     /// Intentional deviation from the reference's learn-fixed `IDX_PT_EXPIRES` gate clock: once a link activation or a returned proof marks the route `Responsive`, the gate keeps our slid clock instead, refusing to trade a route that demonstrably works for one with longer hops.
     fn gate_expiry_of(&self, i: usize, interfaces: AttachedInterfaces<'_>) -> InstantMillis {
         match self.routes.responsiveness()[i] {
@@ -191,15 +83,6 @@ where
             ),
             None => warmth.warm_until(receiving_interface).unwrap_or(anchor),
         }
-    }
-
-    pub fn forwarding_route_for(&self, destination: &DestinationHash) -> Option<ForwardingRoute> {
-        let i = self.index_of(destination)?;
-        Some(ForwardingRoute {
-            hops: crate::units::HopCount(self.routes.hops()[i]),
-            receiving_interface: self.routes.receiving_interfaces()[i],
-            next_hop: self.routes.next_hops()[i],
-        })
     }
 
     pub fn mark_responsiveness(
@@ -693,7 +576,6 @@ where
         })
     }
 
-    /// Every row in the shape the persistence codec carries, serializable from the live table or from a cloned copy of it.
     pub fn persisted_rows(&self) -> impl Iterator<Item = PersistedRouteRow<'_>> + '_ {
         (0..self.routes.len()).map(move |i| PersistedRouteRow {
             destination: self.routes.destinations()[i],
