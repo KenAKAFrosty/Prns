@@ -197,6 +197,28 @@ where
                         .await;
                     None
                 }
+                () = self.status.wait_until_disabled(), if self.status.is_enabled() => {
+                    self.reconcile(
+                        &mut ports,
+                        &mut opening,
+                        &mut failed_opens,
+                        &mut pending_opens,
+                        last_confirmed_at,
+                    )
+                        .await;
+                    None
+                }
+                () = self.status.wait_until_enabled(), if !self.status.is_enabled() => {
+                    self.reconcile(
+                        &mut ports,
+                        &mut opening,
+                        &mut failed_opens,
+                        &mut pending_opens,
+                        last_confirmed_at,
+                    )
+                        .await;
+                    None
+                }
                 Some(event) = events_rx.recv() => {
                     match event {
                         PortEvent::Confirmed { id } => {

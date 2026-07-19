@@ -10,7 +10,7 @@
 //! never negotiate past the buffers a frame must land in.
 
 use ::core::time::Duration as CoreDuration;
-use embassy_futures::select::{select3, Either3};
+use embassy_futures::select::{select, select3, Either, Either3};
 use embassy_net::tcp::TcpSocket;
 use embassy_net::{IpEndpoint, Stack};
 use embassy_time::{with_timeout, Duration, Instant, Timer};
@@ -34,10 +34,6 @@ pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// [`KEEP_ALIVE`] probes keep a quiet-but-live link from tripping that timeout.
 pub const SOCKET_TIMEOUT: Duration = Duration::from_secs(24);
 pub const KEEP_ALIVE: Duration = Duration::from_secs(5);
-/// How often a dormant or serving driver re-checks its enabled gate, so a "Turn Off"/"Turn On" from
-/// the UI takes effect within a beat rather than waiting on traffic or the reconnect timer.
-pub const ENABLED_POLL: Duration = Duration::from_millis(250);
-
 /// The initiating end of an RNS TCP pair on embassy. Owns its connection lifecycle: connect to
 /// `target`, serve until the stream drops, wait for the reconnect delay, connect again. The socket's smoltcp
 /// buffers (`rx_buffer`/`tx_buffer`) and the status handle are borrowed from the board's `static`s;
@@ -136,15 +132,18 @@ impl Interface for TcpClient<'_> {
         loop {
             if !status.is_enabled() {
                 status.set_connection(ConnectionState::Disabled);
-                while !status.is_enabled() {
-                    Timer::after(ENABLED_POLL).await;
-                }
+                status.wait_until_enabled().await;
                 continue;
             }
             let mut socket = TcpSocket::new(stack, &mut *rx_buffer, &mut *tx_buffer);
             socket.set_timeout(Some(SOCKET_TIMEOUT));
             socket.set_keep_alive(Some(KEEP_ALIVE));
-            if let Ok(Ok(())) = with_timeout(CONNECT_TIMEOUT, socket.connect(target)).await {
+            let connected = select(
+                with_timeout(CONNECT_TIMEOUT, socket.connect(target)),
+                status.wait_until_disabled(),
+            )
+            .await;
+            if let Either::First(Ok(Ok(()))) = connected {
                 let connected_at = Instant::now();
                 status.set_connection(ConnectionState::Connected);
                 serve(
@@ -170,7 +169,11 @@ impl Interface for TcpClient<'_> {
             if status.is_enabled() {
                 status.set_connection(ConnectionState::Disconnected);
                 let reconnect_delay = reconnect.next_delay(|bytes| seam.fill_entropy(bytes));
-                Timer::after(Duration::from_millis(reconnect_delay.as_millis() as u64)).await;
+                let _ = select(
+                    Timer::after(Duration::from_millis(reconnect_delay.as_millis() as u64)),
+                    status.wait_until_disabled(),
+                )
+                .await;
             }
         }
     }
@@ -200,15 +203,11 @@ async fn serve<Seam: InterfaceSeam>(
         match select3(
             reader.read(read_buf),
             seam.next_outbound(),
-            Timer::after(ENABLED_POLL),
+            status.wait_until_disabled(),
         )
         .await
         {
-            Either3::Third(()) => {
-                if !status.is_enabled() {
-                    return;
-                }
-            }
+            Either3::Third(()) => return,
             Either3::First(read) => {
                 let read = match read {
                     Ok(0) | Err(_) => return,

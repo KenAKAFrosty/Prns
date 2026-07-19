@@ -13,7 +13,6 @@ pub const USBMUX_AUTO_PORT: u16 = 42_700;
 
 const READ_CHUNK_BYTES: usize = core::READ_CHUNK_BYTES;
 const WRITE_TIMEOUT: Duration = Duration::from_millis(200);
-const STATUS_POLL: Duration = Duration::from_millis(250);
 
 pub struct UsbMuxAutoDevice {
     id: InterfaceId,
@@ -55,7 +54,7 @@ impl Interface for UsbMuxAutoDevice {
             Err(error) => {
                 eprintln!("usbmux-auto: bind :{} failed: {error}", self.port);
                 self.status.set_connection(ConnectionState::Failed);
-                drain_disabled(&mut seam).await;
+                drain_disabled(&self.status, &mut seam).await;
                 return;
             }
         };
@@ -69,14 +68,14 @@ impl Interface for UsbMuxAutoDevice {
         loop {
             if !self.status.is_enabled() {
                 self.status.set_connection(ConnectionState::Disabled);
-                drain_disabled(&mut seam).await;
+                drain_disabled(&self.status, &mut seam).await;
                 continue;
             }
 
             self.status.set_connection(ConnectionState::Disconnected);
             let accepted = tokio::select! {
                 result = listener.accept() => result,
-                _ = tokio::time::sleep(STATUS_POLL) => continue,
+                () = self.status.wait_until_disabled() => continue,
                 out = seam.next_outbound() => {
                     let _ = out;
                     continue;
@@ -88,7 +87,10 @@ impl Interface for UsbMuxAutoDevice {
                 Err(error) => {
                     eprintln!("usbmux-auto: accept failed: {error}");
                     self.status.set_connection(ConnectionState::Reconnecting);
-                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    tokio::select! {
+                        () = tokio::time::sleep(Duration::from_secs(1)) => {}
+                        () = self.status.wait_until_disabled() => {}
+                    }
                     continue;
                 }
             };
@@ -113,9 +115,9 @@ impl personal_rns::interfaces::ReportsStatus for UsbMuxAutoDevice {
     }
 }
 
-async fn drain_disabled<Seam: InterfaceSeam>(seam: &mut Seam) {
+async fn drain_disabled<Seam: InterfaceSeam>(status: &TokioInterfaceStatus, seam: &mut Seam) {
     tokio::select! {
-        _ = tokio::time::sleep(STATUS_POLL) => {}
+        () = status.wait_until_enabled() => {}
         out = seam.next_outbound() => {
             let _ = out;
         }
@@ -181,11 +183,9 @@ async fn serve_stream<Seam: InterfaceSeam>(
                     }
                 }
             }
-            _ = tokio::time::sleep(STATUS_POLL) => {
-                if !status.is_enabled() {
-                    status.set_connection(ConnectionState::Disabled);
-                    return;
-                }
+            () = status.wait_until_disabled() => {
+                status.set_connection(ConnectionState::Disabled);
+                return;
             }
         }
     }

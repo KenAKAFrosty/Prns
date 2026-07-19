@@ -4,7 +4,7 @@
 //! (esp-hal) or an nRF board and compile-checks on the host. A reconfigure that changes the
 //! channel identity emits a `Retag` so the reactor re-keys the interface in place.
 
-use embassy_futures::select::{select, select4, Either, Either4};
+use embassy_futures::select::{select, select3, select4, Either, Either3, Either4};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::DynamicSender;
 use embassy_sync::signal::Signal;
@@ -32,9 +32,7 @@ use prns_runtime::reactor::duty_gate::{DutyGate, DutyVerdict, FixedDutyQueue};
 use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
 use prns_runtime::reactor::throughput::ThroughputLedger;
 
-/// How often a serving radio re-checks its enabled gate, so a "Power" toggle from the UI takes
-/// effect within a beat rather than waiting on traffic.
-pub const ENABLED_POLL: Duration = Duration::from_millis(250);
+const IDLE_TICK: Duration = Duration::from_millis(250);
 /// How many held packets the duty gate buffers before dropping the oldest. The region's airtime
 /// budget caps the queue sooner on a slow link, so this only bounds the buffer's memory.
 const DUTY_QUEUE_FRAMES: usize = 4;
@@ -433,9 +431,7 @@ where
             if !status.is_enabled() {
                 status.set_connection(ConnectionState::Disabled);
                 reassembler = LoRaReassembler::new();
-                while !status.is_enabled() {
-                    Timer::after(ENABLED_POLL).await;
-                }
+                status.wait_until_enabled().await;
                 status.set_connection(ConnectionState::Connected);
                 pending_len = None;
                 if let Err(e) = radio.arm_rx().await {
@@ -453,13 +449,14 @@ where
                 // back off again; the window elapsing frame-free, confirmed by a final carrier sense
                 // for a preamble still mid-flight, means the channel is ours.
                 let now = InstantMillis(started.elapsed().as_millis());
-                match select(
+                match select3(
                     radio.read_frame(&mut rx_buf),
                     Timer::after(Duration::from_millis(csma_remaining_ms)),
+                    status.wait_until_disabled(),
                 )
                 .await
                 {
-                    Either::First(Ok(received)) => {
+                    Either3::First(Ok(received)) => {
                         deliver_rx(
                             ObservedAirFrame {
                                 bytes: &rx_buf[..received.len],
@@ -476,14 +473,14 @@ where
                         csma_remaining_ms = csma_budget_ms(&mut csma_rng, now);
                         csma_restarts = 0;
                     }
-                    Either::First(Err(e)) => {
+                    Either3::First(Err(e)) => {
                         crate::diagnostic_log::debug!("RNS_LORA rx error: {e:?}");
                         if is_radio_fault(&e) {
                             reinit_radio(&mut radio, &profile).await;
                         }
                         csma_remaining_ms = csma_budget_ms(&mut csma_rng, now);
                     }
-                    Either::Second(()) => {
+                    Either3::Second(()) => {
                         // Backoff elapsed frame-free. A final carrier sense catches a frame whose
                         // preamble is mid-flight (no RxDone yet) so we don't transmit over it; the
                         // restart count is bounded so a wedged-busy channel can't starve us forever.
@@ -526,6 +523,7 @@ where
                             csma_restarts = 0;
                         }
                     }
+                    Either3::Third(()) => continue,
                 }
             } else {
                 // IDLE: listen, accept an outbound (airtime-gated), reconfigure, drain the duty queue.
@@ -533,7 +531,7 @@ where
                     radio.read_frame(&mut rx_buf),
                     seam.next_outbound(),
                     control.wait(),
-                    Timer::after(ENABLED_POLL),
+                    select(Timer::after(IDLE_TICK), status.wait_until_disabled()),
                 )
                 .await
                 {
@@ -618,7 +616,7 @@ where
                             );
                         }
                     },
-                    Either4::Fourth(()) => {
+                    Either4::Fourth(Either::First(())) => {
                         // Idle tick: release one airtime-cleared held packet into the contender.
                         if let Some(duty) = duty_cycle {
                             let now = InstantMillis(started.elapsed().as_millis());
@@ -636,6 +634,7 @@ where
                             }
                         }
                     }
+                    Either4::Fourth(Either::Second(())) => {}
                 }
             }
         }

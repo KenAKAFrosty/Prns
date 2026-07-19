@@ -1,5 +1,6 @@
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
+use tokio::sync::watch;
 
 use crate::interfaces::{
     AirtimeUtilization, ConnectionState, InterfaceId, InterfaceStatus, TransferRates,
@@ -18,7 +19,7 @@ struct StatusCell {
     tx: AtomicU64,
     airtime: AtomicU32,
     transfer_rates: AtomicU64,
-    enabled: AtomicBool,
+    enabled: watch::Sender<bool>,
 }
 
 const AIRTIME_UNPUBLISHED: u32 = u32::MAX;
@@ -41,6 +42,7 @@ fn unpack_airtime(packed: u32) -> Option<AirtimeUtilization> {
 impl TokioInterfaceStatus {
     #[must_use]
     pub fn new(id: InterfaceId, connection: ConnectionState) -> Self {
+        let (enabled, _) = watch::channel(true);
         Self {
             inner: Arc::new(StatusCell {
                 id,
@@ -49,20 +51,36 @@ impl TokioInterfaceStatus {
                 tx: AtomicU64::new(0),
                 airtime: AtomicU32::new(AIRTIME_UNPUBLISHED),
                 transfer_rates: AtomicU64::new(RATES_UNPUBLISHED),
-                enabled: AtomicBool::new(true),
+                enabled,
             }),
         }
     }
 
     /// Turn this interface off or back on from the application. The driver reads [`is_enabled`](Self::is_enabled) and tears its wires down — releasing any resource it holds, e.g. an open serial port — while off, standing them back up on resume.
     pub fn set_enabled(&self, enabled: bool) {
-        self.inner.enabled.store(enabled, Ordering::Relaxed);
+        self.inner.enabled.send_if_modified(|current| {
+            let changed = *current != enabled;
+            *current = enabled;
+            changed
+        });
     }
 
-    /// Whether the interface is enabled (the default). The driver polls this to leave or re-enter its dormant state.
     #[must_use]
     pub fn is_enabled(&self) -> bool {
-        self.inner.enabled.load(Ordering::Relaxed)
+        *self.inner.enabled.borrow()
+    }
+
+    pub async fn wait_until_enabled(&self) {
+        self.wait_for_enabled_state(true).await;
+    }
+
+    pub async fn wait_until_disabled(&self) {
+        self.wait_for_enabled_state(false).await;
+    }
+
+    async fn wait_for_enabled_state(&self, enabled: bool) {
+        let mut changed = self.inner.enabled.subscribe();
+        let _ = changed.wait_for(|current| *current == enabled).await;
     }
 
     pub fn set_connection(&self, connection: ConnectionState) {
@@ -147,6 +165,23 @@ mod tests {
                 short_per_mille: 137,
                 long_per_mille: 4,
             }),
+        );
+    }
+
+    #[tokio::test]
+    async fn enabled_state_changes_wake_waiters() {
+        let status =
+            TokioInterfaceStatus::new(InterfaceId::new([0x5A; 8]), ConnectionState::Initializing);
+
+        tokio::join!(
+            status.wait_until_disabled(),
+            status.wait_until_disabled(),
+            async { status.set_enabled(false) },
+        );
+        tokio::join!(
+            status.wait_until_enabled(),
+            status.wait_until_enabled(),
+            async { status.set_enabled(true) },
         );
     }
 }

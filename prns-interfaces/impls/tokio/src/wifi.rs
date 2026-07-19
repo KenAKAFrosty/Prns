@@ -1,13 +1,14 @@
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::sync::mpsc::{self, Receiver, Sender, UnboundedReceiver};
+use tokio::sync::watch;
 
 use crate::reconnect::ReconnectPolicy;
 use crate::tcp::client::TcpClientInterface;
@@ -401,7 +402,7 @@ pub struct AutoWifiStatus {
 
 struct AutoWifiShared {
     id: InterfaceId,
-    enabled: AtomicBool,
+    enabled: watch::Sender<bool>,
     peers: AtomicU32,
     rx: AtomicU64,
     tx: AtomicU64,
@@ -410,10 +411,11 @@ struct AutoWifiShared {
 
 impl AutoWifiStatus {
     fn new(id: InterfaceId) -> Self {
+        let (enabled, _) = watch::channel(true);
         Self {
             shared: Arc::new(AutoWifiShared {
                 id,
-                enabled: AtomicBool::new(true),
+                enabled,
                 peers: AtomicU32::new(0),
                 rx: AtomicU64::new(0),
                 tx: AtomicU64::new(0),
@@ -424,13 +426,30 @@ impl AutoWifiStatus {
 
     /// Turn WiFi-auto discovery and its current members off or back on from the application.
     pub fn set_enabled(&self, enabled: bool) {
-        self.shared.enabled.store(enabled, Ordering::Relaxed);
+        self.shared.enabled.send_if_modified(|current| {
+            let changed = *current != enabled;
+            *current = enabled;
+            changed
+        });
     }
 
     /// Whether WiFi-auto should be discovering and carrying peers.
     #[must_use]
     pub fn is_enabled(&self) -> bool {
-        self.shared.enabled.load(Ordering::Relaxed)
+        *self.shared.enabled.borrow()
+    }
+
+    async fn wait_until_enabled(&self) {
+        self.wait_for_enabled_state(true).await;
+    }
+
+    async fn wait_until_disabled(&self) {
+        self.wait_for_enabled_state(false).await;
+    }
+
+    async fn wait_for_enabled_state(&self, enabled: bool) {
+        let mut changed = self.shared.enabled.subscribe();
+        let _ = changed.wait_for(|current| *current == enabled).await;
     }
 
     fn publish(&self, peers: u32, rx: u64, tx: u64, members: std::vec::Vec<TokioInterfaceStatus>) {
@@ -555,9 +574,9 @@ impl InterfaceSupervisor for AutoWifi {
         let mut loopback = bounce_to_local_core(&rendezvous, &sup.fleet, sup.policy);
 
         loop {
-            while !sup.status.is_enabled() {
+            if !sup.status.is_enabled() {
                 sup.disable_members();
-                tokio::time::sleep(BEACON_INTERVAL).await;
+                sup.status.wait_until_enabled().await;
             }
             let mut reclaim_port = false;
             tokio::select! {
@@ -600,6 +619,7 @@ impl InterfaceSupervisor for AutoWifi {
                         None => mdns = None,
                     }
                 }
+                () = sup.status.wait_until_disabled() => {}
                 _ = beacon.tick() => {
                     beacon_cycle = beacon_cycle.wrapping_add(1);
                     let repeer = beacon_cycle.is_multiple_of(UNICAST_REPEER_EVERY);

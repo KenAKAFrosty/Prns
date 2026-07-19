@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use std::vec::Vec;
 
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{mpsc, Notify};
+use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 
 use crate::tcp::tokio_socket::{tune, CONNECT_TIMEOUT};
@@ -66,8 +66,7 @@ pub struct WifiAwareStatus {
 
 struct WifiAwareShared {
     id: InterfaceId,
-    enabled: AtomicBool,
-    enabled_changed: Notify,
+    enabled: watch::Sender<bool>,
     up: AtomicBool,
     failed: AtomicBool,
     failure_reason: Mutex<Option<&'static str>>,
@@ -78,11 +77,11 @@ struct WifiAwareShared {
 
 impl WifiAwareStatus {
     fn new(id: InterfaceId) -> Self {
+        let (enabled, _) = watch::channel(true);
         Self {
             shared: Arc::new(WifiAwareShared {
                 id,
-                enabled: AtomicBool::new(true),
-                enabled_changed: Notify::new(),
+                enabled,
                 up: AtomicBool::new(false),
                 failed: AtomicBool::new(false),
                 failure_reason: Mutex::new(None),
@@ -111,26 +110,29 @@ impl WifiAwareStatus {
     }
 
     pub fn set_enabled(&self, enabled: bool) {
-        self.shared.enabled.store(enabled, Ordering::Relaxed);
-        self.shared.enabled_changed.notify_one();
+        self.shared.enabled.send_if_modified(|current| {
+            let changed = *current != enabled;
+            *current = enabled;
+            changed
+        });
     }
 
     #[must_use]
     pub fn is_enabled(&self) -> bool {
-        self.shared.enabled.load(Ordering::Relaxed)
+        *self.shared.enabled.borrow()
     }
 
     async fn wait_until_enabled(&self) {
-        loop {
-            if self.is_enabled() {
-                return;
-            }
-            let changed = self.shared.enabled_changed.notified();
-            if self.is_enabled() {
-                return;
-            }
-            changed.await;
-        }
+        self.wait_for_enabled_state(true).await;
+    }
+
+    async fn wait_until_disabled(&self) {
+        self.wait_for_enabled_state(false).await;
+    }
+
+    async fn wait_for_enabled_state(&self, enabled: bool) {
+        let mut changed = self.shared.enabled.subscribe();
+        let _ = changed.wait_for(|current| *current == enabled).await;
     }
 
     #[must_use]
@@ -304,6 +306,7 @@ enum Step {
     Opened(Opened),
     Closed(InterfaceId),
     Tick,
+    Disabled,
 }
 
 impl<B: WifiAwareBackend> InterfaceSupervisor for WifiAwareAuto<B> {
@@ -350,10 +353,12 @@ impl<B: WifiAwareBackend> InterfaceSupervisor for WifiAwareAuto<B> {
                 Some(opened) = opened_rx.recv() => Step::Opened(opened),
                 Some(id) = closed_rx.recv() => Step::Closed(id),
                 () = wait_deadline(policy.next_deadline_ms(), started) => Step::Tick,
+                () = status.wait_until_disabled() => Step::Disabled,
             };
             let now_ms = started.elapsed().as_millis() as u64;
             let mut emit = |action| pending.push(action);
             match step {
+                Step::Disabled => {}
                 Step::Tick => policy.handle(ManagerInput::Tick { now_ms }, &mut emit),
                 Step::Event(event) => match event {
                     WifiAwareEvent::PeerDiscovered { peer } => {

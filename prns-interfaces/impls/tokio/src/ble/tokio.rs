@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use futures_util::stream::FuturesUnordered;
 use futures_util::StreamExt;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 use prns_core::interfaces::bluetooth_auto::core::{
     self, BleAddress, BleIdentity, CloseReason, Established, Handshake, HandshakeRole,
@@ -189,7 +189,7 @@ enum Step<L: BleLink> {
     Event(BleEvent<L>),
     Handshake(HandshakeDone<L>),
     Closed(BleIdentity, BleAddress),
-    PollStatus,
+    Disabled,
 }
 
 pub struct BluetoothAuto<B, const MAX_PEERS: usize> {
@@ -248,7 +248,7 @@ pub struct BluetoothAutoStatus {
 
 struct BluetoothAutoShared {
     id: InterfaceId,
-    enabled: AtomicBool,
+    enabled: watch::Sender<bool>,
     up: AtomicBool,
     failed: AtomicBool,
     failure_reason: Mutex<Option<&'static str>>,
@@ -258,10 +258,11 @@ struct BluetoothAutoShared {
 
 impl BluetoothAutoStatus {
     pub(crate) fn new() -> Self {
+        let (enabled, _) = watch::channel(true);
         Self {
             shared: Arc::new(BluetoothAutoShared {
                 id: InterfaceId::from_channel_tag(InterfaceKind::BluetoothAuto, core::GROUP_ID),
-                enabled: AtomicBool::new(true),
+                enabled,
                 up: AtomicBool::new(false),
                 failed: AtomicBool::new(false),
                 failure_reason: Mutex::new(None),
@@ -284,13 +285,30 @@ impl BluetoothAutoStatus {
 
     /// Turn the Bluetooth auto-interface off or back on from the application.
     pub fn set_enabled(&self, enabled: bool) {
-        self.shared.enabled.store(enabled, Ordering::Relaxed);
+        self.shared.enabled.send_if_modified(|current| {
+            let changed = *current != enabled;
+            *current = enabled;
+            changed
+        });
     }
 
     /// Whether the supervisor should advertise, scan, and carry peers.
     #[must_use]
     pub fn is_enabled(&self) -> bool {
-        self.shared.enabled.load(Ordering::Relaxed)
+        *self.shared.enabled.borrow()
+    }
+
+    async fn wait_until_enabled(&self) {
+        self.wait_for_enabled_state(true).await;
+    }
+
+    async fn wait_until_disabled(&self) {
+        self.wait_for_enabled_state(false).await;
+    }
+
+    async fn wait_for_enabled_state(&self, enabled: bool) {
+        let mut changed = self.shared.enabled.subscribe();
+        let _ = changed.wait_for(|current| *current == enabled).await;
     }
 
     fn set_members(&self, members: std::vec::Vec<TokioInterfaceStatus>) {
@@ -407,7 +425,6 @@ where
         let mut handshakes: HandshakeQueue<B::Link> = FuturesUnordered::new();
         let (closed_tx, mut closed_rx) = mpsc::unbounded_channel::<(BleIdentity, BleAddress)>();
         let mut pending: std::vec::Vec<ManagerAction> = std::vec::Vec::new();
-        let mut status_poll = tokio::time::interval(Duration::from_millis(100));
         status.mark_up();
         manager.start(&mut |action| pending.push(action));
         apply_radio(&mut pending, &mut members, &mut backend).await;
@@ -423,9 +440,7 @@ where
                 pending.clear();
                 status.set_members(std::vec::Vec::new());
                 let _ = backend.set_radio_enabled(false).await;
-                while !status.is_enabled() {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                }
+                status.wait_until_enabled().await;
                 prepare_radio(&mut backend, &mut local, configured_capabilities).await;
                 manager = ConnectionManager::<MAX_PEERS, DIAL_TRACK>::new(local);
                 manager.start(&mut |action| pending.push(action));
@@ -436,10 +451,10 @@ where
                 event = backend.next_event() => Step::Event(event),
                 Some(done) = handshakes.next(), if !handshakes.is_empty() => Step::Handshake(done),
                 Some((identity, address)) = closed_rx.recv() => Step::Closed(identity, address),
-                _ = status_poll.tick() => Step::PollStatus,
+                () = status.wait_until_disabled() => Step::Disabled,
             };
             match step {
-                Step::PollStatus => {}
+                Step::Disabled => {}
                 Step::Event(BleEvent::Sighting { address, .. }) => {
                     let now_ms = started.elapsed().as_millis() as u64;
                     let now = Instant::now();
