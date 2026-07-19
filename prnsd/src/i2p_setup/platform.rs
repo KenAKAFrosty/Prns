@@ -12,8 +12,7 @@ pub(super) const OFFICIAL_WINDOWS_GUIDE_URL: &str =
 pub(super) const OFFICIAL_DEBIAN_GUIDE_URL: &str =
     "https://i2p.net/en/docs/guides/installing-i2p-on-debian-and-ubuntu/";
 pub(super) const OFFICIAL_SAM_GUIDE_URL: &str = "https://i2p.net/en/docs/api/samv3/";
-pub(super) const LOCAL_SAM_CONFIGURATION_URL: &str =
-    "http://127.0.0.1:7657/configclients";
+pub(super) const LOCAL_SAM_CONFIGURATION_URL: &str = "http://127.0.0.1:7657/configclients";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum HostArchitecture {
@@ -239,8 +238,7 @@ fn linux_family(source: &str) -> LinuxFamily {
     let id = os_release_value(source, OS_RELEASE_ID);
     let id_like = os_release_value(source, OS_RELEASE_ID_LIKE);
     if id.is_some_and(is_debian_family_name)
-        || id_like
-            .is_some_and(|families| families.split_whitespace().any(is_debian_family_name))
+        || id_like.is_some_and(|families| families.split_whitespace().any(is_debian_family_name))
     {
         LinuxFamily::Debian
     } else {
@@ -275,11 +273,8 @@ mod tests {
 
     #[test]
     fn platform_guidance_tracks_current_official_install_paths() {
-        let apple = SetupHost::new(
-            HostOperatingSystem::MacOs,
-            HostArchitecture::AppleSilicon,
-        )
-        .installation_guidance();
+        let apple = SetupHost::new(HostOperatingSystem::MacOs, HostArchitecture::AppleSilicon)
+            .installation_guidance();
         assert!(apple.summary.contains("Apple Silicon Easy Installer"));
         assert_eq!(apple.page.url(), OFFICIAL_DOWNLOADS_URL);
 

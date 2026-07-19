@@ -15,9 +15,9 @@
 mod blackhole_exchange;
 mod cli;
 mod construct;
-mod identity;
 mod i2p_doctor;
 mod i2p_setup;
+mod identity;
 mod interface_discovery;
 mod management_announces;
 #[cfg(feature = "otlp")]
@@ -170,8 +170,7 @@ async fn run_i2p_command(args: cli::I2pArgs) -> ExitCode {
     match args.command {
         cli::I2pCommand::Doctor(args) => {
             let remote_access = remote_sam_access(&args.sam);
-            let request =
-                i2p_doctor::I2pDoctorRequest::new(args.sam.sam_bridge, remote_access);
+            let request = i2p_doctor::I2pDoctorRequest::new(args.sam.sam_bridge, remote_access);
             match i2p_doctor::run(request).await {
                 Ok(ready) => {
                     println!("{ready}");
