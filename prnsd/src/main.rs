@@ -1,24 +1,13 @@
 //! The Personal Reticulum daemon: a configurable shared-instance node built on [`PrnsNode`].
-//!
-//! It reads a stock RNS config the way a stock RNS user expects (`<dir>/config`, discovered along
-//! RNS's own search order) and projects it onto a [`personal_rns::config::DaemonPlan`]. Then it elects its role on the
-//! host's shared instance: with none running it becomes the instance — standing up the plan's
-//! interfaces and serving the bus and control RPC for local apps (Sideband, NomadNet, MeshChat),
-//! keyed on the node's own persistent identity; with one already running it defers, joining as a
-//! client over that instance's bus and standing up none of its own, the honorable parity behavior a
-//! stock RNS app follows. It forwards others' traffic when the config enables the transport role.
-
-// 100% safe Rust, compiler-enforced (rationale in personal-rns/src/lib.rs). The daemon is async
-// glue around the engine; syscalls go through tokio/std, so no `unsafe`.
 #![forbid(unsafe_code)]
 
 mod blackhole_exchange;
 mod cli;
 mod construct;
-mod i2p_doctor;
-mod i2p_setup;
+mod i2p;
 mod identity;
 mod interface_discovery;
+mod managed_service;
 mod management_announces;
 #[cfg(feature = "otlp")]
 mod metrics;
@@ -30,7 +19,6 @@ mod request_services;
 mod splash;
 mod startup_progress;
 
-use std::fmt;
 use std::process::{self, ExitCode};
 
 use personal_rns::config::{
@@ -56,12 +44,7 @@ use personal_rns::shared_instance::{
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::PlanRuntimeContext;
-use prnsd_control::{
-    LaunchSpec, LogLane, ManagedProcess, ServiceError, ServicePaths, ServiceRecord, ServiceState,
-    StartOutcome, StateDirectoryError,
-};
-
-const DAEMON_SUBTITLE: &str = concat!("Personal Reticulum daemon · v", env!("CARGO_PKG_VERSION"));
+use prnsd_control::ManagedProcess;
 
 const DEFAULT_CONFIG: &str = "[reticulum]\n\
     enable_transport = Yes\n\
@@ -71,59 +54,11 @@ const DEFAULT_CONFIG: &str = "[reticulum]\n\
         type = AutoInterface\n\
         interface_enabled = Yes\n";
 
-#[derive(Debug)]
-enum CommandError {
-    StateDirectory(StateDirectoryError),
-    CurrentExecutable(std::io::Error),
-    CurrentDirectory(std::io::Error),
-    Service(ServiceError),
-    NotRunning,
-}
-
-enum ManagedCommand {
-    Start(cli::LaunchArgs),
-    Restart(cli::LaunchArgs),
-    Stop,
-    Status,
-    Logs,
-}
-
-impl fmt::Display for CommandError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::StateDirectory(error) => error.fmt(formatter),
-            Self::CurrentExecutable(error) => {
-                write!(formatter, "Could not locate the prnsd executable: {error}")
-            }
-            Self::CurrentDirectory(error) => {
-                write!(
-                    formatter,
-                    "Could not determine the current directory: {error}"
-                )
-            }
-            Self::Service(error) => error.fmt(formatter),
-            Self::NotRunning => formatter.write_str("prnsd is not running"),
-        }
-    }
-}
-
-impl From<StateDirectoryError> for CommandError {
-    fn from(error: StateDirectoryError) -> Self {
-        Self::StateDirectory(error)
-    }
-}
-
-impl From<ServiceError> for CommandError {
-    fn from(error: ServiceError) -> Self {
-        Self::Service(error)
-    }
-}
-
 #[tokio::main]
 async fn main() -> ExitCode {
     let args: Vec<_> = std::env::args_os().collect();
     if args.len() == 2 && args.get(1).is_some_and(|arg| arg == "--print-banner") {
-        splash::print(DAEMON_SUBTITLE);
+        splash::print_daemon();
         return ExitCode::SUCCESS;
     }
     let command = match cli::parse_from(args) {
@@ -134,7 +69,7 @@ async fn main() -> ExitCode {
             return ExitCode::from(exit_code.clamp(0, 255) as u8);
         }
     };
-    let managed_command = match command {
+    match command {
         cli::Command::Run(args) => {
             let managed = match ManagedProcess::from_environment() {
                 Ok(managed) => managed,
@@ -144,229 +79,19 @@ async fn main() -> ExitCode {
                 }
             };
             run_daemon(args, managed).await;
-            return ExitCode::SUCCESS;
+            ExitCode::SUCCESS
         }
-        cli::Command::I2p(args) => return run_i2p_command(args).await,
-        cli::Command::Start(args) => ManagedCommand::Start(args),
-        cli::Command::Restart(args) => ManagedCommand::Restart(args),
-        cli::Command::Stop => ManagedCommand::Stop,
-        cli::Command::Status => ManagedCommand::Status,
-        cli::Command::Logs => ManagedCommand::Logs,
-    };
-    match run_command(managed_command) {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(error) => {
-            eprintln!("prnsd: {error}");
-            if matches!(error, CommandError::NotRunning) {
-                ExitCode::from(3)
-            } else {
-                ExitCode::FAILURE
-            }
+        cli::Command::I2p(args) => i2p::run(args).await,
+        cli::Command::Start(args) => {
+            managed_service::run(managed_service::Command::Start(args))
         }
+        cli::Command::Restart(args) => {
+            managed_service::run(managed_service::Command::Restart(args))
+        }
+        cli::Command::Stop => managed_service::run(managed_service::Command::Stop),
+        cli::Command::Status => managed_service::run(managed_service::Command::Status),
+        cli::Command::Logs => managed_service::run(managed_service::Command::Logs),
     }
-}
-
-async fn run_i2p_command(args: cli::I2pArgs) -> ExitCode {
-    match args.command {
-        cli::I2pCommand::Doctor(args) => {
-            let remote_access = remote_sam_access(&args.sam);
-            let request = i2p_doctor::I2pDoctorRequest::new(args.sam.sam_bridge, remote_access);
-            match i2p_doctor::run(request).await {
-                Ok(ready) => {
-                    println!("{ready}");
-                    ExitCode::SUCCESS
-                }
-                Err(error) => {
-                    eprintln!("prnsd: {error}");
-                    ExitCode::FAILURE
-                }
-            }
-        }
-        cli::I2pCommand::Setup(args) => {
-            let remote_access = remote_sam_access(&args.sam);
-            let reachability = if args.connectable {
-                i2p_setup::SetupReachability::Connectable
-            } else {
-                i2p_setup::SetupReachability::OutboundOnly
-            };
-            let browser = if args.open_guidance {
-                i2p_setup::BrowserPreference::OpenApplicablePage
-            } else {
-                i2p_setup::BrowserPreference::PrintOnly
-            };
-            let request = match i2p_setup::I2pSetupRequest::new(
-                args.sam.sam_bridge,
-                remote_access,
-                args.peer,
-                reachability,
-                browser,
-            ) {
-                Ok(request) => request,
-                Err(error) => {
-                    eprintln!("prnsd: {error}");
-                    return ExitCode::FAILURE;
-                }
-            };
-            let report = i2p_setup::run(request).await;
-            println!("{report}");
-            if report.is_ready() {
-                ExitCode::SUCCESS
-            } else {
-                ExitCode::FAILURE
-            }
-        }
-    }
-}
-
-fn remote_sam_access(args: &cli::I2pSamArgs) -> i2p_doctor::RemoteSamAccess {
-    if args.allow_remote_sam {
-        i2p_doctor::RemoteSamAccess::ExplicitlyAllowed
-    } else {
-        i2p_doctor::RemoteSamAccess::LoopbackOnly
-    }
-}
-
-fn run_command(command: ManagedCommand) -> Result<(), CommandError> {
-    let paths = ServicePaths::discover()?;
-    match command {
-        ManagedCommand::Start(args) => start_or_attach(&paths, args),
-        ManagedCommand::Restart(args) => {
-            if prnsd_control::stop(&paths)? {
-                eprintln!("Stopped prnsd");
-            }
-            start_new(&paths, args)
-        }
-        ManagedCommand::Stop => match prnsd_control::running(&paths)? {
-            Some(record) => {
-                print_managed_banner(&record);
-                eprintln!(
-                    "Stopping prnsd (pid {}); showing recent and shutdown logs\n",
-                    record.pid
-                );
-                prnsd_control::stop_and_follow(&paths, &record)?;
-                eprintln!("\nStopped prnsd");
-                Ok(())
-            }
-            None => {
-                eprintln!("prnsd is already stopped");
-                Ok(())
-            }
-        },
-        ManagedCommand::Status => match prnsd_control::running(&paths)? {
-            Some(record) => {
-                let state = match record.state {
-                    ServiceState::Starting => "starting",
-                    ServiceState::Running => "running",
-                };
-                eprintln!(
-                    "prnsd is {state} (pid {}, version {}, log {})",
-                    record.pid,
-                    record.version,
-                    record.log(&paths).display()
-                );
-                Ok(())
-            }
-            None => Err(CommandError::NotRunning),
-        },
-        ManagedCommand::Logs => match prnsd_control::running(&paths)? {
-            Some(record) => attach(&paths, &record),
-            None => Err(CommandError::NotRunning),
-        },
-    }
-}
-
-fn start_or_attach(paths: &ServicePaths, args: cli::LaunchArgs) -> Result<(), CommandError> {
-    if let Some(record) = prnsd_control::running(paths)? {
-        eprintln!("prnsd is already running (pid {})", record.pid);
-        let signature = daemon_signature(&args.daemon);
-        if explicit_launch_configuration(&args.daemon) && record.signature != signature {
-            eprintln!("Existing launch options were retained; use prnsd restart to replace them");
-        }
-        if args.detach {
-            if record.state == ServiceState::Starting {
-                prnsd_control::wait_until_ready(paths, record)?;
-            }
-            return Ok(());
-        }
-        return attach(paths, &record);
-    }
-    start_new(paths, args)
-}
-
-fn start_new(paths: &ServicePaths, args: cli::LaunchArgs) -> Result<(), CommandError> {
-    let binary = std::env::current_exe().map_err(CommandError::CurrentExecutable)?;
-    let working_dir = std::env::current_dir().map_err(CommandError::CurrentDirectory)?;
-    let daemon_args = args.daemon.command_line();
-    #[cfg(windows)]
-    let managed_binary = paths.state_dir.join("prnsd-managed.exe");
-    let log_lane = match args.daemon.log_format {
-        cli::LogFormat::Human => LogLane::Human,
-        cli::LogFormat::Json => LogLane::Json,
-    };
-    eprintln!("Starting prnsd...");
-    let outcome = prnsd_control::start(
-        paths,
-        LaunchSpec {
-            binary: &binary,
-            #[cfg(windows)]
-            managed_binary: Some(&managed_binary),
-            #[cfg(not(windows))]
-            managed_binary: None,
-            args: &daemon_args,
-            working_dir: &working_dir,
-            log_lane,
-            signature: daemon_signature(&args.daemon),
-            version: env!("CARGO_PKG_VERSION"),
-        },
-    );
-    let record = match outcome {
-        Ok(StartOutcome::Started(record)) => {
-            eprintln!(
-                "Started prnsd (pid {}, log {})",
-                record.pid,
-                record.log(paths).display()
-            );
-            record
-        }
-        Ok(StartOutcome::AlreadyRunning(record)) => {
-            eprintln!("prnsd is already running (pid {})", record.pid);
-            record
-        }
-        Err(ServiceError::ProcessExited { log }) => {
-            let _ = prnsd_control::print_recent_log(&log);
-            return Err(ServiceError::ProcessExited { log }.into());
-        }
-        Err(ServiceError::StartupTimedOut { pid, log }) => {
-            let _ = prnsd_control::print_recent_log(&log);
-            return Err(ServiceError::StartupTimedOut { pid, log }.into());
-        }
-        Err(error) => return Err(error.into()),
-    };
-    if args.detach {
-        return Ok(());
-    }
-    attach(paths, &record)
-}
-
-fn attach(paths: &ServicePaths, record: &ServiceRecord) -> Result<(), CommandError> {
-    print_managed_banner(record);
-    eprintln!("Attached to prnsd; Ctrl-C detaches without stopping the daemon\n");
-    prnsd_control::follow(paths, record).map_err(CommandError::from)
-}
-
-fn print_managed_banner(record: &ServiceRecord) {
-    splash::print(&format!("Personal Reticulum daemon · v{}", record.version));
-}
-
-fn daemon_signature(args: &cli::DaemonArgs) -> u64 {
-    prnsd_control::launch_signature(args.command_line(), std::env::vars_os())
-}
-
-fn explicit_launch_configuration(args: &cli::DaemonArgs) -> bool {
-    args.has_explicit_options()
-        || std::env::vars_os().any(|(name, _)| {
-            name == "RUST_LOG" || name.to_str().is_some_and(|name| name.starts_with("OTEL_"))
-        })
 }
 
 async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
@@ -407,7 +132,7 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
         }
     };
     if cli.log_format == cli::LogFormat::Human && managed.is_none() {
-        splash::print(DAEMON_SUBTITLE);
+        splash::print_daemon();
     }
     tracing::info!(
         event = "daemon_starting",

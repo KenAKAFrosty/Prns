@@ -15,6 +15,7 @@ const CAP_TOP: f32 = 4.0;
 const X_TOP: f32 = 13.5;
 const BASELINE: f32 = 24.0;
 const NAME: &str = "Prns";
+const DAEMON_SUBTITLE: &str = concat!("Personal Reticulum daemon · v", env!("CARGO_PKG_VERSION"));
 const RESET: &str = "\x1b[0m";
 
 struct Glyph {
@@ -251,4 +252,8 @@ pub fn print(subtitle: &str) {
     eprintln!();
     eprintln!("  {}{subtitle}{RESET}", foreground(SOFT));
     eprintln!();
+}
+
+pub fn print_daemon() {
+    print(DAEMON_SUBTITLE);
 }

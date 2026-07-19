@@ -5,7 +5,7 @@ prns-interfaces/impls/tokio 714
 prns-interfaces/impls/embassy 416
 prns-integration-tests 106
 prns-config 25
-prnsd 36
+prnsd 26
 prns-ffi 226
 prns-wasm 2
 personal-hopspot 600
