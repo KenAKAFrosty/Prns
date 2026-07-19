@@ -49,6 +49,7 @@ pub enum SpreadingFactor {
 }
 
 impl SpreadingFactor {
+    #[cfg(feature = "alloc")]
     pub(crate) const fn from_number(value: u8) -> Option<Self> {
         match value {
             5 => Some(Self::Sf5),

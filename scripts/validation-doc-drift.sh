@@ -10,7 +10,11 @@ python3 - "${repo_root}" <<'PY'
 from pathlib import Path
 import re
 import sys
-import tomllib
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
 
 root = Path(sys.argv[1])
 errors = []
