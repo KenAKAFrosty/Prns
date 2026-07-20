@@ -27,6 +27,8 @@ use prns_runtime::runtime::{AttachIntent, Attachable, PrnsNodeHandle};
 use crate::ax25::{Ax25KissInterface, Ax25KissSettings};
 use crate::backbone::client::BackboneClientInterface;
 use crate::backbone::server::BackboneServer;
+#[cfg(feature = "ble-host")]
+use crate::ble_host::AutoBle;
 use crate::host_network::{
     resolve_tcp_listener, resolve_udp_endpoint, tcp_target, udp_ephemeral_bind,
 };
@@ -54,7 +56,11 @@ use crate::tcp::tokio_socket::{
     AddressFamilyPreference, ReconnectLimit, TcpConnectionSettings, TcpTunnelMode,
 };
 use crate::udp::UdpInterface;
+#[cfg(feature = "usb-host")]
+use crate::usb_host::AutoUsb;
 use crate::weave::WeaveInterface;
+#[cfg(feature = "websocket")]
+use crate::websocket::{client::WebSocketClientInterface, server::WebSocketServer};
 use crate::wifi::{AutoWifi, AutoWifiDevicePolicy, AutoWifiSettings};
 use prns_core::interfaces::kiss::transmission_control::{
     ReadyCommandFlowControl, ReadyTimeout, StationIdInterval, StationIdWireFormat,
@@ -298,6 +304,68 @@ async fn stand_up(
             let wifi = AutoWifi::with_policy_and_settings(interface.policy, settings);
             let attached = attach_with_access(handle, access, wifi);
             report_attached(handle, interface, attached.id(), attachments, report);
+        }
+        PlannedMedium::PrnsUsbAuto => {
+            #[cfg(feature = "usb-host")]
+            {
+                let attached = attach_with_access(
+                    handle,
+                    access,
+                    AutoUsb::default().with_policy(interface.policy),
+                );
+                report_attached(handle, interface, attached.id(), attachments, report);
+            }
+            #[cfg(not(feature = "usb-host"))]
+            report_missing_feature(interface, "usb-host", report);
+        }
+        PlannedMedium::PrnsBluetoothAuto => {
+            #[cfg(feature = "ble-host")]
+            {
+                let attached =
+                    attach_with_access(handle, access, AutoBle::with_policy(interface.policy));
+                report_attached(handle, interface, attached.id(), attachments, report);
+            }
+            #[cfg(not(feature = "ble-host"))]
+            report_missing_feature(interface, "ble-host", report);
+        }
+        PlannedMedium::PrnsWebSocketClient { target } => {
+            #[cfg(not(feature = "websocket"))]
+            let _ = target;
+            #[cfg(feature = "websocket")]
+            {
+                let websocket = WebSocketClientInterface::with_policy(
+                    target.as_str().to_string(),
+                    interface.policy,
+                    RECONNECT_POLICY,
+                );
+                let attached = attach_with_access(handle, access, websocket);
+                report_attached(handle, interface, attached.id(), attachments, report);
+            }
+            #[cfg(not(feature = "websocket"))]
+            report_missing_feature(interface, "websocket", report);
+        }
+        PlannedMedium::PrnsWebSocketServer { listener } => {
+            #[cfg(not(feature = "websocket"))]
+            let _ = listener;
+            #[cfg(feature = "websocket")]
+            {
+                let opened = match resolve_tcp_listener(listener).await {
+                    Ok(bind) => WebSocketServer::bind_with_policy(bind, interface.policy).await,
+                    Err(error) => Err(error),
+                };
+                match opened {
+                    Ok(server) => {
+                        let attached = attach_with_access(handle, access, server);
+                        report_attached(handle, interface, attached.id(), attachments, report);
+                    }
+                    Err(error) => report(PlanOutcome::Failed {
+                        interface,
+                        visible_error_message: error.to_string(),
+                    }),
+                }
+            }
+            #[cfg(not(feature = "websocket"))]
+            report_missing_feature(interface, "websocket", report);
         }
         PlannedMedium::TcpClient {
             connection,
@@ -910,6 +978,24 @@ fn report_up<'a>(
     report(PlanOutcome::Up { interface, id });
 }
 
+#[cfg(any(
+    not(feature = "usb-host"),
+    not(feature = "ble-host"),
+    not(feature = "websocket")
+))]
+fn report_missing_feature<'a>(
+    interface: &'a PlannedInterface,
+    feature: &str,
+    report: &mut impl FnMut(PlanOutcome<'a>),
+) {
+    report(PlanOutcome::Failed {
+        interface,
+        visible_error_message: format!(
+            "this build does not include the {feature} interface family"
+        ),
+    });
+}
+
 fn report_attached<'a>(
     handle: &PrnsNodeHandle,
     interface: &'a PlannedInterface,
@@ -951,6 +1037,10 @@ fn planned_medium_name(medium: &PlannedMedium) -> &'static str {
         PlannedMedium::Pipe { .. } => "pipe",
         PlannedMedium::I2p { .. } => "i2p",
         PlannedMedium::Weave { .. } => "weave",
+        PlannedMedium::PrnsUsbAuto => "prns_usb_auto",
+        PlannedMedium::PrnsBluetoothAuto => "prns_bluetooth_auto",
+        PlannedMedium::PrnsWebSocketClient { .. } => "prns_websocket_client",
+        PlannedMedium::PrnsWebSocketServer { .. } => "prns_websocket_server",
     }
 }
 

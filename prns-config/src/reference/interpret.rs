@@ -7,13 +7,14 @@ use prns_core::interface_discovery::StampCost;
 
 use crate::configobj::{ConfigError, Section, Value};
 
+use super::interface_type::InterfaceType;
 use super::keys::{
     common as common_key, global as global_key, interface as interface_key, section as section_key,
 };
 use super::types::{
     RNodeRadio, RNodeSubinterface, ReferenceBlackholeExchange, ReferenceConfig,
-    ReferenceDiscoveryConfig, ReferenceInterface, ReferenceInterfaceDiscovery, ReferenceMode,
-    ReferenceParams, ReferenceRemoteManagement, ReferenceValue,
+    ReferenceConfigParams, ReferenceDiscoveryConfig, ReferenceInterface,
+    ReferenceInterfaceDiscovery, ReferenceMode, ReferenceRemoteManagement, ReferenceValue,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -125,12 +126,16 @@ fn interpret_interface(
         return Ok(None);
     }
 
-    let type_name = rest
+    let configured_type_name = rest
         .remove(interface_key::TYPE)
         .and_then(|value| value.as_scalar().map(str::to_string))
         .ok_or_else(|| ReferenceError::MissingType {
             interface: name.to_string(),
         })?;
+    let type_name = InterfaceType::parse(&configured_type_name)
+        .map(InterfaceType::canonical_name)
+        .unwrap_or(configured_type_name.as_str())
+        .to_string();
 
     let mode = take_mode(&mut rest, name)?;
     let outgoing = opt(&mut rest, interface_key::OUTGOING, name, coerce_bool)?;
@@ -346,9 +351,9 @@ fn interpret_params(
     rest: &mut BTreeMap<String, Value>,
     section: &Section,
     interface: &str,
-) -> Result<ReferenceParams, ReferenceError> {
+) -> Result<ReferenceConfigParams, ReferenceError> {
     Ok(match type_name {
-        "AutoInterface" => ReferenceParams::Auto {
+        "AutoInterface" => ReferenceConfigParams::Auto {
             group_id: opt(rest, interface_key::GROUP_ID, interface, coerce_string)?,
             discovery_scope: opt(
                 rest,
@@ -367,7 +372,7 @@ fn interpret_params(
                 coerce_string,
             )?,
         },
-        "TCPClientInterface" => ReferenceParams::TcpClient {
+        "TCPClientInterface" => ReferenceConfigParams::TcpClient {
             target_host: opt(rest, interface_key::TARGET_HOST, interface, coerce_string)?,
             target_port: opt(rest, interface_key::TARGET_PORT, interface, coerce_u16)?,
             kiss_framing: opt(rest, interface_key::KISS_FRAMING, interface, coerce_bool)?,
@@ -381,7 +386,7 @@ fn interpret_params(
             )?,
             fixed_mtu: opt(rest, interface_key::FIXED_MTU, interface, coerce_usize)?,
         },
-        "TCPServerInterface" => ReferenceParams::TcpServer {
+        "TCPServerInterface" => ReferenceConfigParams::TcpServer {
             listen_ip: opt(rest, interface_key::LISTEN_IP, interface, coerce_string)?,
             listen_port: opt(rest, interface_key::LISTEN_PORT, interface, coerce_u16)?,
             device: opt(rest, interface_key::DEVICE, interface, coerce_string)?,
@@ -391,7 +396,7 @@ fn interpret_params(
             kiss_framing: opt(rest, interface_key::KISS_FRAMING, interface, coerce_bool)?,
             fixed_mtu: opt(rest, interface_key::FIXED_MTU, interface, coerce_usize)?,
         },
-        "UDPInterface" => ReferenceParams::Udp {
+        "UDPInterface" => ReferenceConfigParams::Udp {
             listen_ip: opt(rest, interface_key::LISTEN_IP, interface, coerce_string)?,
             listen_port: opt(rest, interface_key::LISTEN_PORT, interface, coerce_u16)?,
             forward_ip: opt(rest, interface_key::FORWARD_IP, interface, coerce_string)?,
@@ -399,14 +404,14 @@ fn interpret_params(
             device: opt(rest, interface_key::DEVICE, interface, coerce_string)?,
             port: opt(rest, interface_key::PORT, interface, coerce_u16)?,
         },
-        "SerialInterface" => ReferenceParams::Serial {
+        "SerialInterface" => ReferenceConfigParams::Serial {
             port: opt(rest, interface_key::PORT, interface, coerce_string)?,
             speed: opt(rest, interface_key::SPEED, interface, coerce_u32)?,
             databits: opt(rest, interface_key::DATABITS, interface, coerce_u8)?,
             parity: opt(rest, interface_key::PARITY, interface, coerce_string)?,
             stopbits: opt(rest, interface_key::STOPBITS, interface, coerce_u8)?,
         },
-        "RNodeInterface" => ReferenceParams::Rnode {
+        "RNodeInterface" => ReferenceConfigParams::Rnode {
             port: opt(rest, interface_key::PORT, interface, coerce_string)?,
             radio: take_radio(rest, interface)?,
             flow_control: opt(rest, interface_key::FLOW_CONTROL, interface, coerce_bool)?,
@@ -425,13 +430,13 @@ fn interpret_params(
                 coerce_f64,
             )?,
         },
-        "RNodeMultiInterface" => ReferenceParams::RnodeMulti {
+        "RNodeMultiInterface" => ReferenceConfigParams::RnodeMulti {
             port: opt(rest, interface_key::PORT, interface, coerce_string)?,
             id_callsign: opt(rest, interface_key::ID_CALLSIGN, interface, coerce_string)?,
             id_interval: opt(rest, interface_key::ID_INTERVAL, interface, coerce_u64)?,
             subinterfaces: interpret_subinterfaces(section)?,
         },
-        "KISSInterface" => ReferenceParams::Kiss {
+        "KISSInterface" => ReferenceConfigParams::Kiss {
             port: opt(rest, interface_key::PORT, interface, coerce_string)?,
             speed: opt(rest, interface_key::SPEED, interface, coerce_u32)?,
             databits: opt(rest, interface_key::DATABITS, interface, coerce_u8)?,
@@ -445,7 +450,7 @@ fn interpret_params(
             id_callsign: opt(rest, interface_key::ID_CALLSIGN, interface, coerce_string)?,
             id_interval: opt(rest, interface_key::ID_INTERVAL, interface, coerce_u64)?,
         },
-        "AX25KISSInterface" => ReferenceParams::Ax25Kiss {
+        "AX25KISSInterface" => ReferenceConfigParams::Ax25Kiss {
             port: opt(rest, interface_key::PORT, interface, coerce_string)?,
             speed: opt(rest, interface_key::SPEED, interface, coerce_u32)?,
             databits: opt(rest, interface_key::DATABITS, interface, coerce_u8)?,
@@ -459,15 +464,15 @@ fn interpret_params(
             callsign: opt(rest, interface_key::CALLSIGN, interface, coerce_string)?,
             ssid: opt(rest, interface_key::SSID, interface, coerce_u8)?,
         },
-        "PipeInterface" => ReferenceParams::Pipe {
+        "PipeInterface" => ReferenceConfigParams::Pipe {
             command: opt(rest, interface_key::COMMAND, interface, coerce_string)?,
             respawn_delay: opt(rest, interface_key::RESPAWN_DELAY, interface, coerce_f64)?,
         },
-        "I2PInterface" => ReferenceParams::I2p {
+        "I2PInterface" => ReferenceConfigParams::I2p {
             peers: opt(rest, interface_key::PEERS, interface, coerce_list)?,
             connectable: opt(rest, interface_key::CONNECTABLE, interface, coerce_bool)?,
         },
-        "BackboneInterface" | "BackboneClientInterface" => ReferenceParams::Backbone {
+        "BackboneInterface" | "BackboneClientInterface" => ReferenceConfigParams::Backbone {
             listen_ip: take_alias_string(
                 rest,
                 &[interface_key::LISTEN_IP, interface_key::LISTEN_ON],
@@ -490,10 +495,22 @@ fn interpret_params(
                 coerce_u32,
             )?,
         },
-        "WeaveInterface" => ReferenceParams::Weave {
+        "WeaveInterface" => ReferenceConfigParams::Weave {
             port: opt(rest, interface_key::PORT, interface, coerce_string)?,
         },
-        _ => ReferenceParams::Unknown,
+        "PrnsUsbAuto" => ReferenceConfigParams::PrnsUsbAuto,
+        "PrnsBluetoothAuto" => ReferenceConfigParams::PrnsBluetoothAuto,
+        "PrnsWebSocketClient" => ReferenceConfigParams::PrnsWebSocketClient {
+            target: opt(rest, interface_key::TARGET, interface, coerce_string)?,
+        },
+        "PrnsWebSocketServer" => ReferenceConfigParams::PrnsWebSocketServer {
+            listen_ip: opt(rest, interface_key::LISTEN_IP, interface, coerce_string)?,
+            listen_port: opt(rest, interface_key::LISTEN_PORT, interface, coerce_u16)?,
+            device: opt(rest, interface_key::DEVICE, interface, coerce_string)?,
+            port: opt(rest, interface_key::PORT, interface, coerce_u16)?,
+            prefer_ipv6: opt(rest, interface_key::PREFER_IPV6, interface, coerce_bool)?,
+        },
+        _ => ReferenceConfigParams::Unknown,
     })
 }
 

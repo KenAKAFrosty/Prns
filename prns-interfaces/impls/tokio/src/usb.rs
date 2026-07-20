@@ -25,7 +25,10 @@ use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
 use prns_core::interfaces::usb_auto::core::{self, Capabilities, HostInbound, Message, NodeTag};
-use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
+use prns_core::interfaces::{
+    ConfiguredInterfacePolicy, ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor,
+    InterfaceId, InterfaceKind,
+};
 use prns_runtime::reactor::driver::{
     tokio_grant_lane, TokioGrantConsumer, TokioGrantProducer, TokioInterfaceStatus,
 };
@@ -86,6 +89,7 @@ pub struct UsbAutoHost<Scan, Open> {
     node_tag: NodeTag,
     scan: Scan,
     open: Open,
+    policy: EffectiveInterfacePolicy,
     status: TokioInterfaceStatus,
     rescan: Arc<Notify>,
 }
@@ -93,11 +97,29 @@ pub struct UsbAutoHost<Scan, Open> {
 impl<Scan, Open> UsbAutoHost<Scan, Open> {
     #[must_use]
     pub fn new(id: InterfaceId, scan: Scan, open: Open, rescan: Arc<Notify>) -> Self {
+        Self::with_policy(
+            id,
+            scan,
+            open,
+            rescan,
+            core::HOST_DEFAULTS.configured(ConfiguredInterfacePolicy::default()),
+        )
+    }
+
+    #[must_use]
+    pub fn with_policy(
+        id: InterfaceId,
+        scan: Scan,
+        open: Open,
+        rescan: Arc<Notify>,
+        policy: EffectiveInterfacePolicy,
+    ) -> Self {
         Self {
             id,
             node_tag: core::node_tag_for(id),
             scan,
             open,
+            policy,
             status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
             rescan,
         }
@@ -143,7 +165,7 @@ where
     const KIND: InterfaceKind = InterfaceKind::UsbAutoHost;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::host_descriptor(self.id)
+        self.policy.descriptor(self.id)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -649,5 +671,26 @@ mod tests {
 
         host.refresh_connection(&[], true, None);
         assert_eq!(status.connection(), ConnectionState::Reconnecting);
+    }
+
+    #[test]
+    fn configured_policy_reaches_the_usb_auto_descriptor() {
+        let policy = core::HOST_DEFAULTS.configured(ConfiguredInterfacePolicy {
+            mode: Some(prns_core::interfaces::InterfaceMode::Gateway),
+            bitrate: Some(prns_core::interfaces::BitrateBps::guess(7_654_321)),
+            ..ConfiguredInterfacePolicy::default()
+        });
+        let open = |_name: String| async {
+            Err::<tokio::io::DuplexStream, io::Error>(io::ErrorKind::NotConnected.into())
+        };
+        let host = UsbAutoHost::with_policy(
+            host_id(),
+            Vec::<String>::new,
+            open,
+            Arc::new(Notify::new()),
+            policy,
+        );
+
+        assert_eq!(host.descriptor(), policy.descriptor(host_id()));
     }
 }

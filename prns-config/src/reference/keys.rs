@@ -104,6 +104,7 @@ pub(crate) mod interface {
     pub const MULTICAST_ADDRESS_TYPE: &str = "multicast_address_type";
     pub const TARGET_HOST: &str = "target_host";
     pub const TARGET_PORT: &str = "target_port";
+    pub const TARGET: &str = "target";
     pub const KISS_FRAMING: &str = "kiss_framing";
     pub const I2P_TUNNELED: &str = "i2p_tunneled";
     pub const CONNECT_TIMEOUT: &str = "connect_timeout";
@@ -316,4 +317,6 @@ pub(crate) mod interface {
     ];
     pub const I2P: &[&str] = &[PEERS, CONNECTABLE];
     pub const WEAVE: &[&str] = &[PORT];
+    pub const PRNS_WEBSOCKET_CLIENT: &[&str] = &[TARGET];
+    pub const PRNS_WEBSOCKET_SERVER: &[&str] = &[LISTEN_IP, LISTEN_PORT, DEVICE, PORT, PREFER_IPV6];
 }

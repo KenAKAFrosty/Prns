@@ -18,6 +18,7 @@ pub use medium::{
     PipeRespawnDelay, PlannedMedium, ReadyCommandFlowControl, ReconnectLimit, SerialDataBits,
     SerialLinePlan, SerialParity, SerialStopBits, StationIdentificationPlan, TcpDialPlan,
     TcpListenHost, TcpListenPlan, TcpTunnelMode, UdpEndpointHost, UdpEndpointPlan, UdpFlowPlan,
+    WebSocketTargetPlan,
 };
 pub(super) use policy::{
     effective_policy, global_announce_rate, global_common_policy, MemberEgressPolicy,
@@ -108,13 +109,17 @@ pub(super) fn plan_access(
         | PlannedMedium::Backbone { .. }
         | PlannedMedium::BackboneClient { .. }
         | PlannedMedium::I2p { .. }
-        | PlannedMedium::Weave { .. } => IfacSize::WIDE,
+        | PlannedMedium::Weave { .. }
+        | PlannedMedium::PrnsUsbAuto
+        | PlannedMedium::PrnsWebSocketClient { .. }
+        | PlannedMedium::PrnsWebSocketServer { .. } => IfacSize::WIDE,
         PlannedMedium::Serial { .. }
         | PlannedMedium::Kiss { .. }
         | PlannedMedium::Ax25Kiss { .. }
         | PlannedMedium::Pipe { .. }
         | PlannedMedium::Rnode { .. }
-        | PlannedMedium::RnodeMulti { .. } => IfacSize::NARROW,
+        | PlannedMedium::RnodeMulti { .. }
+        | PlannedMedium::PrnsBluetoothAuto => IfacSize::NARROW,
     };
     let size = match interface.ifac_size_bits {
         Some(bits) if bits >= 8 => {

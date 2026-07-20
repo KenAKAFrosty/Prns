@@ -18,7 +18,7 @@ pub use interface::{
     PipeRespawnDelay, PlannedInterface, PlannedMedium, ReadyCommandFlowControl, ReconnectLimit,
     SerialDataBits, SerialLinePlan, SerialParity, SerialStopBits, StationIdentificationPlan,
     TcpDialPlan, TcpListenHost, TcpListenPlan, TcpTunnelMode, UdpEndpointHost, UdpEndpointPlan,
-    UdpFlowPlan,
+    UdpFlowPlan, WebSocketTargetPlan,
 };
 pub use node::{
     parse_and_plan, parse_and_plan_named, BlackholeExchangePlan, BlackholePublicationPlan,

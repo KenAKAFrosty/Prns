@@ -16,7 +16,7 @@ use crate::plan::rnode::RNodeTransportPlan;
 use crate::plan::RNodeMultiMemberPlan;
 use crate::reference::i2p::{validate_peer, validate_peers};
 use crate::reference::keys::interface as interface_key;
-use crate::reference::{ReferenceInterface, ReferenceParams};
+use crate::reference::{ReferenceConfigParams, ReferenceInterface};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AddressFamilyPreference {
@@ -192,6 +192,28 @@ impl PipeRespawnDelay {
 pub struct PipeCommandPlan {
     pub(in crate::plan) source: String,
     pub(in crate::plan) argv: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebSocketTargetPlan(String);
+
+impl WebSocketTargetPlan {
+    fn from_configured(target: String) -> Result<Self, PlanErrorKind> {
+        let target = target.trim();
+        if !target.starts_with("ws://")
+            || target.len() == "ws://".len()
+            || target.chars().any(char::is_whitespace)
+        {
+            return Err(PlanErrorKind::InvalidSetting {
+                key: interface_key::TARGET,
+            });
+        }
+        Ok(Self(target.to_string()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 impl PipeCommandPlan {
@@ -442,6 +464,14 @@ pub enum PlannedMedium {
     Weave {
         device: String,
     },
+    PrnsUsbAuto,
+    PrnsBluetoothAuto,
+    PrnsWebSocketClient {
+        target: WebSocketTargetPlan,
+    },
+    PrnsWebSocketServer {
+        listener: TcpListenPlan,
+    },
 }
 
 pub(super) fn rnode_defaults(
@@ -458,7 +488,7 @@ pub(super) fn rnode_defaults(
 
 pub(super) fn plan_medium(interface: &ReferenceInterface) -> Result<PlannedMedium, PlanErrorKind> {
     match &interface.params {
-        ReferenceParams::Auto {
+        ReferenceConfigParams::Auto {
             group_id,
             discovery_scope,
             discovery_port,
@@ -475,7 +505,7 @@ pub(super) fn plan_medium(interface: &ReferenceInterface) -> Result<PlannedMediu
             ignored_devices,
             multicast_address_type,
         )?)),
-        ReferenceParams::TcpClient {
+        ReferenceConfigParams::TcpClient {
             target_host,
             target_port,
             kiss_framing,
@@ -508,7 +538,7 @@ pub(super) fn plan_medium(interface: &ReferenceInterface) -> Result<PlannedMediu
                 },
             })
         }
-        ReferenceParams::TcpServer {
+        ReferenceConfigParams::TcpServer {
             listen_ip,
             listen_port,
             device,
@@ -537,7 +567,7 @@ pub(super) fn plan_medium(interface: &ReferenceInterface) -> Result<PlannedMediu
                 },
             })
         }
-        ReferenceParams::Udp {
+        ReferenceConfigParams::Udp {
             listen_ip,
             listen_port,
             forward_ip,
@@ -569,7 +599,7 @@ pub(super) fn plan_medium(interface: &ReferenceInterface) -> Result<PlannedMediu
             };
             Ok(PlannedMedium::Udp { flow })
         }
-        ReferenceParams::Serial {
+        ReferenceConfigParams::Serial {
             port,
             speed,
             databits,
@@ -584,7 +614,7 @@ pub(super) fn plan_medium(interface: &ReferenceInterface) -> Result<PlannedMediu
                 line: serial_line(*speed, *databits, parity.as_deref(), *stopbits)?,
             })
         }
-        ReferenceParams::Kiss {
+        ReferenceConfigParams::Kiss {
             port,
             speed,
             databits,
@@ -614,7 +644,7 @@ pub(super) fn plan_medium(interface: &ReferenceInterface) -> Result<PlannedMediu
                 station_id: station_identification(id_callsign.as_deref(), *id_interval, None)?,
             })
         }
-        ReferenceParams::Ax25Kiss {
+        ReferenceConfigParams::Ax25Kiss {
             port,
             speed,
             databits,
@@ -653,7 +683,7 @@ pub(super) fn plan_medium(interface: &ReferenceInterface) -> Result<PlannedMediu
                 ssid,
             })
         }
-        ReferenceParams::Rnode {
+        ReferenceConfigParams::Rnode {
             port,
             radio,
             flow_control,
@@ -705,7 +735,7 @@ pub(super) fn plan_medium(interface: &ReferenceInterface) -> Result<PlannedMediu
                 )?,
             })
         }
-        ReferenceParams::Pipe {
+        ReferenceConfigParams::Pipe {
             command,
             respawn_delay,
         } => {
@@ -719,7 +749,7 @@ pub(super) fn plan_medium(interface: &ReferenceInterface) -> Result<PlannedMediu
                 respawn_delay: pipe_respawn_delay(*respawn_delay)?,
             })
         }
-        ReferenceParams::Backbone {
+        ReferenceConfigParams::Backbone {
             listen_ip,
             listen_port,
             target_host,
@@ -769,7 +799,7 @@ pub(super) fn plan_medium(interface: &ReferenceInterface) -> Result<PlannedMediu
                 })
             }
         }
-        ReferenceParams::I2p { peers, connectable } => Ok(PlannedMedium::I2p {
+        ReferenceConfigParams::I2p { peers, connectable } => Ok(PlannedMedium::I2p {
             peers: I2pPeersPlan::new(peers.clone().unwrap_or_default())?,
             reachability: if *connectable == Some(true) {
                 I2pReachabilityPlan::Connectable
@@ -777,11 +807,42 @@ pub(super) fn plan_medium(interface: &ReferenceInterface) -> Result<PlannedMediu
                 I2pReachabilityPlan::OutboundOnly
             },
         }),
-        ReferenceParams::Weave { port } => Ok(PlannedMedium::Weave {
+        ReferenceConfigParams::Weave { port } => Ok(PlannedMedium::Weave {
             device: port.clone().ok_or(PlanErrorKind::MissingRequiredField {
                 key: interface_key::PORT,
             })?,
         }),
+        ReferenceConfigParams::PrnsUsbAuto => Ok(PlannedMedium::PrnsUsbAuto),
+        ReferenceConfigParams::PrnsBluetoothAuto => Ok(PlannedMedium::PrnsBluetoothAuto),
+        ReferenceConfigParams::PrnsWebSocketClient { target } => {
+            let target = target.clone().ok_or(PlanErrorKind::MissingRequiredField {
+                key: interface_key::TARGET,
+            })?;
+            Ok(PlannedMedium::PrnsWebSocketClient {
+                target: WebSocketTargetPlan::from_configured(target)?,
+            })
+        }
+        ReferenceConfigParams::PrnsWebSocketServer {
+            listen_ip,
+            listen_port,
+            device,
+            port,
+            prefer_ipv6,
+        } => {
+            let port = port
+                .or(*listen_port)
+                .ok_or(PlanErrorKind::MissingRequiredField {
+                    key: interface_key::LISTEN_PORT,
+                })?;
+            Ok(PlannedMedium::PrnsWebSocketServer {
+                listener: TcpListenPlan {
+                    host: tcp_listen_host(listen_ip, device),
+                    port,
+                    address_family: preferred_ip_family(*prefer_ipv6),
+                    tunnel: TcpTunnelMode::Direct,
+                },
+            })
+        }
         _ => Err(PlanErrorKind::UnsupportedKind),
     }
 }

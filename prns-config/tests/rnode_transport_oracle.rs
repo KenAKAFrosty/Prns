@@ -21,7 +21,7 @@ fn oracle(ports: &[&str]) -> serde_json::Value {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("spawn RNS 1.3.8 RNode transport oracle");
+        .expect("spawn RNS 1.3.9 RNode transport oracle");
     child
         .stdin
         .take()
@@ -97,11 +97,11 @@ fn planned_shape(port: &str) -> serde_json::Value {
 }
 
 #[test]
-fn transport_selection_matches_rns_1_3_8() {
+fn transport_selection_matches_rns_1_3_9() {
     let python = venv_python();
     if !python.exists() {
         eprintln!(
-            "skipping RNode transport oracle: RNS 1.3.8 venv not found at {}",
+            "skipping RNode transport oracle: RNS 1.3.9 venv not found at {}",
             python.display()
         );
         return;
@@ -115,7 +115,7 @@ fn transport_selection_matches_rns_1_3_8() {
         "ble://AA:BB:CC:DD:EE:FF",
     ];
     let reference = oracle(&ports);
-    assert_eq!(reference["version"], "1.3.8");
+    assert_eq!(reference["version"], "1.3.9");
     let reference_results = reference["results"]
         .as_array()
         .expect("oracle results are an array");

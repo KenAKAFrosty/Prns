@@ -1,13 +1,16 @@
 use std::collections::BTreeMap;
 
 use prns_core::interfaces::ax25_kiss::core as ax25_core;
+use prns_core::interfaces::bluetooth_auto::core as bluetooth_core;
 use prns_core::interfaces::i2p::core as i2p_core;
 use prns_core::interfaces::kiss::core as kiss_core;
 use prns_core::interfaces::pipe::core as pipe_core;
 use prns_core::interfaces::serial::core as serial_core;
 use prns_core::interfaces::tcp::core as tcp_core;
 use prns_core::interfaces::udp::core as udp_core;
+use prns_core::interfaces::usb_auto::core as usb_auto_core;
 use prns_core::interfaces::weave::core as weave_core;
+use prns_core::interfaces::websocket::core as websocket_core;
 use prns_core::interfaces::wifi_auto::core as wifi_core;
 use prns_core::interfaces::{
     AnnounceBandwidthCap, AnnounceRateLimit, BitrateBps, ConfiguredInterfacePolicy,
@@ -26,7 +29,7 @@ use crate::reference::keys::{
     common as common_key, global as global_key, interface as interface_key,
 };
 use crate::reference::{
-    ReferenceConfig, ReferenceInterface, ReferenceMode, ReferenceParams, ReferenceValue,
+    ReferenceConfig, ReferenceConfigParams, ReferenceInterface, ReferenceMode, ReferenceValue,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,7 +101,7 @@ pub(in crate::plan) fn effective_policy(
     let common = interface_common_policy(interface, global_common)?;
     Ok(defaults.configured(ConfiguredInterfacePolicy {
         capabilities,
-        mode: Some(planned_mode(interface, discovery)),
+        mode: Some(planned_mode(interface, medium, discovery)),
         bitrate,
         mtu,
         announce_rate_limit,
@@ -169,6 +172,13 @@ fn interface_defaults(medium: &PlannedMedium) -> Result<InterfaceDefaults, PlanE
         PlannedMedium::Udp { .. } => Ok(udp_core::DEFAULTS),
         PlannedMedium::I2p { .. } => Ok(i2p_core::DEFAULTS),
         PlannedMedium::Weave { .. } => Ok(weave_core::DEFAULTS),
+        PlannedMedium::PrnsUsbAuto => Ok(usb_auto_core::HOST_DEFAULTS),
+        PlannedMedium::PrnsBluetoothAuto => Ok(bluetooth_core::defaults_for_bitrate(
+            bluetooth_core::BLE_BITRATE_GUESS_BPS,
+        )),
+        PlannedMedium::PrnsWebSocketClient { .. } | PlannedMedium::PrnsWebSocketServer { .. } => {
+            Ok(websocket_core::DEFAULTS)
+        }
         PlannedMedium::Serial { line, .. } => {
             let bitrate =
                 BitrateBps::new(u64::from(line.baud())).ok_or(PlanErrorKind::InvalidSetting {
@@ -198,8 +208,8 @@ fn interface_defaults(medium: &PlannedMedium) -> Result<InterfaceDefaults, PlanE
 
 fn configured_mtu(interface: &ReferenceInterface) -> Result<Option<MtuPolicy>, PlanErrorKind> {
     let fixed_mtu = match &interface.params {
-        ReferenceParams::TcpClient { fixed_mtu, .. }
-        | ReferenceParams::TcpServer { fixed_mtu, .. } => *fixed_mtu,
+        ReferenceConfigParams::TcpClient { fixed_mtu, .. }
+        | ReferenceConfigParams::TcpServer { fixed_mtu, .. } => *fixed_mtu,
         _ => None,
     };
     fixed_mtu
@@ -220,9 +230,15 @@ fn configured_mtu(interface: &ReferenceInterface) -> Result<Option<MtuPolicy>, P
 
 fn planned_mode(
     interface: &ReferenceInterface,
+    medium: &PlannedMedium,
     discovery: &InterfaceDiscoveryPlan,
 ) -> InterfaceMode {
-    let configured = interface.mode.map(map_mode).unwrap_or(InterfaceMode::Full);
+    let configured = interface.mode.map(map_mode).unwrap_or(match medium {
+        PlannedMedium::PrnsUsbAuto
+        | PlannedMedium::PrnsWebSocketClient { .. }
+        | PlannedMedium::PrnsWebSocketServer { .. } => InterfaceMode::PointToPoint,
+        _ => InterfaceMode::Full,
+    });
     if matches!(discovery, InterfaceDiscoveryPlan::Disabled)
         || matches!(
             configured,
@@ -233,7 +249,7 @@ fn planned_mode(
     }
     if matches!(
         interface.params,
-        ReferenceParams::Rnode { .. } | ReferenceParams::RnodeMulti { .. }
+        ReferenceConfigParams::Rnode { .. } | ReferenceConfigParams::RnodeMulti { .. }
     ) {
         InterfaceMode::AccessPoint
     } else {
