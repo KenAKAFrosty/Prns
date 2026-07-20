@@ -253,7 +253,7 @@ impl InterfaceOptions {
         push(&mut values, "listen_on", text(self.listen_on))?;
         if let Some(setting) = values
             .iter()
-            .find(|setting| !kind.accepts_setting(setting.key().as_str()))
+            .find(|setting| !kind.supports_editing_setting(setting.key()))
         {
             return Err(InterfacesError::InapplicableSetting {
                 key: setting.key().as_str(),

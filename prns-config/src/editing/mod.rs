@@ -19,6 +19,7 @@ pub use store::{ConfigFile, ConfigFileError, ConfigFileOperation, ConfigWriteRec
 #[cfg(test)]
 mod tests;
 pub use catalog::{
-    ConfiguredInterfaceSetting, InterfaceSettingCategory, InterfaceSettingInputError,
-    InterfaceSettingInputKind, InterfaceSettingSpec,
+    ConfiguredInterfaceSetting, InterfaceSettingCategory, InterfaceSettingCondition,
+    InterfaceSettingInputError, InterfaceSettingInputKind, InterfaceSettingSpec,
+    InterfaceSettingTier,
 };

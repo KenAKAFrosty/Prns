@@ -3,10 +3,10 @@ use std::io::IsTerminal;
 
 use prns_config::editing::{
     ConfigEdit, ConfigFile, ConfiguredInterface, InterfaceDefinition, InterfaceName,
-    InterfaceSetting, InterfaceSettingChange, InterfaceSettingKey, InterfaceSettingSpec,
-    InterfaceSettingValue, RNodeMultiRadioDefinition,
+    InterfaceSetting, InterfaceSettingChange, InterfaceSettingCondition, InterfaceSettingKey,
+    InterfaceSettingSpec, InterfaceSettingTier, InterfaceSettingValue, RNodeMultiRadioDefinition,
 };
-use prns_config::InterfaceKind;
+use prns_config::{parse_and_plan_named, InterfaceKind, PlannedInterface};
 
 use super::error::InterfacesError;
 use super::presentation::Presentation;
@@ -21,7 +21,16 @@ pub(super) fn edit_interface(
         println!("This interface type is unknown to Prns. Its settings remain untouched.");
         return Ok(None);
     };
-    let mut draft = SettingDraft::from_interface(kind, interface, show_secrets);
+    let planned = parse_and_plan_named(file.path().display().to_string(), file.document().source())
+        .ok()
+        .and_then(|report| {
+            report
+                .value
+                .interfaces
+                .into_iter()
+                .find(|planned| planned.name == interface.name().as_str())
+        });
+    let mut draft = SettingDraft::from_interface(kind, interface, planned, show_secrets);
     loop {
         if !draft.run()? {
             return Ok(None);
@@ -105,9 +114,11 @@ struct SettingDraft {
     kind: InterfaceKind,
     current: BTreeMap<InterfaceSettingKey, String>,
     staged: BTreeMap<InterfaceSettingKey, Option<InterfaceSetting>>,
+    planned: Option<PlannedInterface>,
     radios: Vec<RNodeMultiRadioDefinition>,
     radios_changed: bool,
     show_secrets: bool,
+    show_advanced: bool,
 }
 
 impl SettingDraft {
@@ -124,15 +135,18 @@ impl SettingDraft {
                 .into_iter()
                 .map(|setting| (setting.key(), Some(setting)))
                 .collect(),
+            planned: None,
             radios,
             radios_changed: false,
             show_secrets,
+            show_advanced: false,
         }
     }
 
     fn from_interface(
         kind: InterfaceKind,
         interface: &ConfiguredInterface,
+        planned: Option<PlannedInterface>,
         show_secrets: bool,
     ) -> Self {
         let current = interface
@@ -144,9 +158,11 @@ impl SettingDraft {
             kind,
             current,
             staged: BTreeMap::new(),
+            planned,
             radios: interface.rnode_multi_radios().to_vec(),
             radios_changed: false,
             show_secrets,
+            show_advanced: false,
         }
     }
 
@@ -155,13 +171,22 @@ impl SettingDraft {
             let specs = self.ordered_specs();
             self.print(&specs);
             let selection = prompt(if self.kind == InterfaceKind::RnodeMulti {
-                "Setting number, [M] Radio members, [F] Finish, [B] Back"
+                if self.show_advanced {
+                    "Setting number, [A] Everyday settings, [M] Radio members, [F] Finish, [B] Back"
+                } else {
+                    "Setting number, [A] All settings, [M] Radio members, [F] Finish, [B] Back"
+                }
+            } else if self.show_advanced {
+                "Setting number, [A] Everyday settings, [F] Finish, [B] Back"
             } else {
-                "Setting number, [F] Finish, [B] Back"
+                "Setting number, [A] All settings, [F] Finish, [B] Back"
             })?;
             match selection.trim().to_ascii_lowercase().as_str() {
                 "f" | "finish" => return Ok(true),
                 "b" | "back" | "" => return Ok(false),
+                "a" | "all" | "advanced" | "common" | "everyday" => {
+                    self.show_advanced = !self.show_advanced;
+                }
                 "m" | "members" | "radios" if self.kind == InterfaceKind::RnodeMulti => {
                     if edit_radios(&mut self.radios)? {
                         self.radios_changed = true;
@@ -192,11 +217,22 @@ impl SettingDraft {
     }
 
     fn ordered_specs(&self) -> Vec<InterfaceSettingSpec> {
-        let mut specs = self.kind.setting_specs();
+        let mut specs = self
+            .kind
+            .setting_specs()
+            .into_iter()
+            .filter(|spec| spec.is_supported(self.kind) || self.has_value(spec.key()))
+            .filter(|spec| {
+                self.show_advanced
+                    || spec.tier() == InterfaceSettingTier::Standard
+                    || self.has_value(spec.key())
+            })
+            .collect::<Vec<_>>();
         specs.sort_by_key(|spec| {
             (
                 spec.category(),
                 !self.has_value(spec.key()),
+                spec.tier() == InterfaceSettingTier::Advanced,
                 spec.key().as_str(),
             )
         });
@@ -209,8 +245,18 @@ impl SettingDraft {
         println!();
         println!(
             "{}",
-            presentation.muted("Configured values appear before unset values in each category.")
+            presentation.muted(
+                "Configured values come from this stanza; defaults come from the interface; effective values include inherited node policy."
+            )
         );
+        if !self.show_advanced {
+            println!(
+                "{}",
+                presentation.muted(
+                    "Showing everyday settings plus anything already configured. Choose All settings for advanced controls."
+                )
+            );
+        }
         let mut category = None;
         for (index, spec) in specs.iter().enumerate() {
             if category != Some(spec.category()) {
@@ -221,6 +267,21 @@ impl SettingDraft {
             let value = self.display_value(*spec);
             println!("    {:>2}. {:<34} {}", index + 1, spec.label(), value);
         }
+        let hidden = self
+            .kind
+            .setting_specs()
+            .into_iter()
+            .filter(|spec| spec.is_supported(self.kind))
+            .filter(|spec| spec.tier() == InterfaceSettingTier::Advanced)
+            .filter(|spec| !self.has_value(spec.key()))
+            .count();
+        if !self.show_advanced && hidden != 0 {
+            println!();
+            println!(
+                "  {}",
+                presentation.muted(format!("{hidden} advanced settings hidden"))
+            );
+        }
         if self.kind == InterfaceKind::RnodeMulti {
             println!();
             println!("  Radio members: {}", self.radios.len());
@@ -229,13 +290,52 @@ impl SettingDraft {
     }
 
     fn edit_setting(&mut self, spec: InterfaceSettingSpec) -> Result<(), InterfacesError> {
+        let presentation =
+            Presentation::new(crate::terminal::enabled(std::io::stdout().is_terminal()));
         println!();
-        println!("{} ({})", spec.label(), spec.key().as_str());
+        println!(
+            "{}",
+            presentation.heading(format!("{} ({})", spec.label(), spec.key().as_str()))
+        );
+        println!("{}", spec.description());
+        println!();
+        println!("Current: {}", self.display_value(spec));
+        if let Some(default) = self.default_description(spec) {
+            println!("Default: {default}");
+        }
+        if let Some(required) = spec.required_hint(self.kind) {
+            println!("Required: {required}");
+        }
+        if let Some(condition) = spec.condition(self.kind) {
+            let state = if self.condition_satisfied(condition) {
+                "active"
+            } else {
+                "inactive"
+            };
+            println!("Condition: {condition} · {state}");
+        }
+        if let Some(reason) = spec.unsupported_reason(self.kind) {
+            println!("{}", presentation.warning(format!("Not used: {reason}.")));
+            if !self.has_value(spec.key()) {
+                return Ok(());
+            }
+            println!("Enter '-' to remove the preserved value, or leave blank to keep it.");
+            let value = prompt("Value")?;
+            if value == "-" {
+                self.staged.insert(spec.key(), None);
+            } else if !value.is_empty() {
+                println!(
+                    "{}",
+                    presentation.error("This setting cannot be changed here.")
+                );
+            }
+            return Ok(());
+        }
         println!("Accepted: {}", spec.accepted(self.kind));
         if self.has_value(spec.key()) {
-            println!("Enter a new value, '-' to remove it, or leave blank to keep it.");
+            println!("Enter a new value, '-' to restore the default, or leave blank to keep it.");
         } else {
-            println!("Enter a value or leave blank to keep it unset.");
+            println!("Enter a value or leave blank to keep the effective default.");
         }
         let value = prompt("Value")?;
         if value.is_empty() {
@@ -260,18 +360,137 @@ impl SettingDraft {
     }
 
     fn display_value(&self, spec: InterfaceSettingSpec) -> String {
-        if spec.is_secret() && !self.show_secrets && self.has_value(spec.key()) {
-            return "<redacted>".to_string();
-        }
+        let reset = matches!(self.staged.get(&spec.key()), Some(None));
         match self.staged.get(&spec.key()) {
-            Some(Some(setting)) => display_setting(setting.value()),
-            Some(None) => "—".to_string(),
-            None => self
-                .current
-                .get(&spec.key())
-                .cloned()
-                .unwrap_or_else(|| "—".to_string()),
+            Some(Some(setting)) => {
+                let value = if spec.is_secret() && !self.show_secrets {
+                    "<redacted>".to_string()
+                } else {
+                    spec.format_value(display_setting(setting.value()))
+                };
+                return self.explicit_display(spec, value, "staged");
+            }
+            Some(None) => {}
+            None => {
+                if let Some(value) = self.current.get(&spec.key()) {
+                    let value = if spec.is_secret() && !self.show_secrets {
+                        "<redacted>".to_string()
+                    } else {
+                        spec.format_value(value)
+                    };
+                    return self.explicit_display(spec, value, "configured");
+                }
+            }
         }
+        if let Some(reason) = spec.unsupported_reason(self.kind) {
+            return format!("not used · {reason}");
+        }
+        if let Some(condition) = spec.condition(self.kind) {
+            if !self.condition_satisfied(condition) {
+                return format!("inactive · {condition}");
+            }
+        }
+        if let Some(value) = (!reset)
+            .then_some(self.planned.as_ref())
+            .flatten()
+            .and_then(|planned| spec.effective_value(planned))
+        {
+            let source = if spec.inherits_when_unset() {
+                "effective"
+            } else {
+                "default"
+            };
+            return format!("{} · {source}", spec.format_value(value));
+        }
+        if let Some(default) = self.default_description(spec) {
+            return format!("{default} · default");
+        }
+        if let Some(required) = spec.required_hint(self.kind) {
+            return format!("required · {required}");
+        }
+        "unset · optional".to_string()
+    }
+
+    fn explicit_display(&self, spec: InterfaceSettingSpec, value: String, source: &str) -> String {
+        if let Some(reason) = spec.unsupported_reason(self.kind) {
+            return format!("{value} · {source}, not used ({reason})");
+        }
+        if let Some(condition) = spec.condition(self.kind) {
+            if !self.condition_satisfied(condition) {
+                return format!("{value} · {source}, inactive");
+            }
+        }
+        format!("{value} · {source}")
+    }
+
+    fn default_description(&self, spec: InterfaceSettingSpec) -> Option<String> {
+        if matches!(spec.key().as_str(), "network_name" | "pass_phrase") {
+            return Some(
+                if self.condition_satisfied(InterfaceSettingCondition::IfacEnabled) {
+                    "not set; IFAC remains active through the other credential".to_string()
+                } else {
+                    "not set; interface access is open".to_string()
+                },
+            );
+        }
+        spec.default_hint(self.kind).map(str::to_string)
+    }
+
+    fn condition_satisfied(&self, condition: InterfaceSettingCondition) -> bool {
+        match condition {
+            InterfaceSettingCondition::IfacEnabled => {
+                self.has_named_value("network_name") || self.has_named_value("pass_phrase")
+            }
+            InterfaceSettingCondition::Discoverable => self.boolean_value("discoverable", false),
+            InterfaceSettingCondition::DiscoverableKiss => {
+                self.boolean_value("discoverable", false)
+                    && self.boolean_value("kiss_framing", false)
+            }
+            InterfaceSettingCondition::AnnounceRateLimit => {
+                self.has_named_value("announce_rate_target")
+                    || self
+                        .planned
+                        .as_ref()
+                        .is_some_and(|planned| planned.policy.announce_rate_limit.is_some())
+            }
+            InterfaceSettingCondition::IngressControl => {
+                self.boolean_value("ingress_control", true)
+            }
+            InterfaceSettingCondition::EgressControl => self.boolean_value("egress_control", false),
+            InterfaceSettingCondition::KissFraming => self.boolean_value("kiss_framing", false),
+        }
+    }
+
+    fn has_named_value(&self, name: &str) -> bool {
+        InterfaceSettingKey::parse(name).is_some_and(|key| self.has_value(key))
+    }
+
+    fn boolean_value(&self, name: &str, default: bool) -> bool {
+        let Some(key) = InterfaceSettingKey::parse(name) else {
+            return default;
+        };
+        let explicit = match self.staged.get(&key) {
+            Some(Some(setting)) => Some(display_setting(setting.value())),
+            Some(None) => None,
+            None => self.current.get(&key).cloned(),
+        };
+        if let Some(value) = explicit {
+            return matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "yes" | "true" | "on" | "1"
+            );
+        }
+        self.planned
+            .as_ref()
+            .and_then(|planned| {
+                self.kind
+                    .setting_specs()
+                    .into_iter()
+                    .find(|spec| spec.key() == key)
+                    .and_then(|spec| spec.effective_value(planned))
+            })
+            .map(|value| value.eq_ignore_ascii_case("yes"))
+            .unwrap_or(default)
     }
 
     fn changes(&self) -> Vec<InterfaceSettingChange> {
@@ -414,8 +633,10 @@ fn display_setting(value: &InterfaceSettingValue) -> String {
 
 #[cfg(test)]
 mod tests {
-    use prns_config::editing::{InterfaceSetting, InterfaceSettingKey, InterfaceSettingValue};
-    use prns_config::InterfaceKind;
+    use prns_config::editing::{
+        InterfaceSetting, InterfaceSettingKey, InterfaceSettingTier, InterfaceSettingValue,
+    };
+    use prns_config::{parse_and_plan, InterfaceKind};
 
     use super::SettingDraft;
 
@@ -436,7 +657,7 @@ mod tests {
             .ordered_specs()
             .into_iter()
             .filter(|spec| {
-                spec.category() == prns_config::editing::InterfaceSettingCategory::Network
+                spec.category() == prns_config::editing::InterfaceSettingCategory::Access
             })
             .collect::<Vec<_>>();
 
@@ -462,6 +683,60 @@ mod tests {
             .find(|spec| spec.key() == key)
             .unwrap_or_else(|| panic!("missing passphrase specification"));
 
-        assert_eq!(draft.display_value(spec), "<redacted>");
+        assert_eq!(draft.display_value(spec), "<redacted> · staged");
+    }
+
+    #[test]
+    fn auto_editor_shows_planned_defaults_and_hides_inert_discovery_settings() {
+        let source = "[interfaces]\n[[WiFi]]\ntype = AutoInterface\nenabled = Yes\n";
+        let report = parse_and_plan(source).unwrap_or_else(|error| panic!("{error}"));
+        let mut draft = SettingDraft::new(InterfaceKind::Auto, false, Vec::new(), Vec::new());
+        draft.planned = report.value.interfaces.into_iter().next();
+        let specs = draft.ordered_specs();
+        let data_port = specs
+            .iter()
+            .find(|spec| spec.key().as_str() == "data_port")
+            .copied()
+            .unwrap_or_else(|| panic!("missing data port"));
+
+        assert_eq!(draft.display_value(data_port), "42671 · default");
+        assert!(!specs
+            .iter()
+            .any(|spec| spec.key().as_str() == "discoverable"));
+        assert!(specs
+            .iter()
+            .all(|spec| spec.tier() == InterfaceSettingTier::Standard));
+    }
+
+    #[test]
+    fn conditional_and_advanced_settings_are_distinguished() {
+        let mut draft = SettingDraft::new(InterfaceKind::Auto, false, Vec::new(), Vec::new());
+        let ifac = InterfaceKind::Auto
+            .setting_specs()
+            .into_iter()
+            .find(|spec| spec.key().as_str() == "ifac_size")
+            .unwrap_or_else(|| panic!("missing IFAC size"));
+        assert!(draft.display_value(ifac).starts_with("inactive"));
+        assert!(!draft
+            .ordered_specs()
+            .iter()
+            .any(|spec| spec.key().as_str() == "bitrate"));
+
+        let network_name = InterfaceSettingKey::parse("network_name")
+            .unwrap_or_else(|| panic!("missing network name"));
+        draft.staged.insert(
+            network_name,
+            Some(InterfaceSetting::new(
+                network_name,
+                InterfaceSettingValue::Text("mesh".to_string()),
+            )),
+        );
+        draft.show_advanced = true;
+
+        assert!(draft.display_value(ifac).contains("default"));
+        assert!(draft
+            .ordered_specs()
+            .iter()
+            .any(|spec| spec.key().as_str() == "bitrate"));
     }
 }

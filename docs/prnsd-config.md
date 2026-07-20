@@ -34,11 +34,24 @@ the normal config discovery rules and may appear anywhere inside the `interfaces
 
 The guided screen presents configuration validity, managed-daemon state, friendly interface names,
 canonical type names, and enabled state before offering an action. Selecting an interface opens a
-typed settings editor containing every setting applicable to that interface kind, grouped by
-connection, network, discovery, policy, radio, and advanced concerns. Configured values appear
-before unset values in each group. Multiple setting changes are validated and previewed as one
-candidate. RNodeMulti members have their own nested add, edit, and remove workflow. Unknown
-third-party interface types remain opaque and are never interpreted or rewritten.
+typed settings editor containing every runtime-supported setting applicable to that interface
+kind. Its initial view contains everyday settings plus any configured overrides; `All settings`
+reveals announcement limits, traffic control, and other advanced values without removing them from
+reach. Settings are grouped by connectivity, network access, interface behavior, discovery
+publication, announcement limits, radio, and traffic control. Configured values appear first in
+each group.
+
+Each value is labelled as configured, default, effective, inactive, or required. Defaults and
+effective inherited policy are read from the same planned interface used at startup instead of
+being inferred from the presence of a config line. Selecting a setting shows what it controls, its
+current and default values, accepted units or choices, and any prerequisite that currently leaves
+it inactive. Broad stock keys that parse for every interface but have no runtime effect on the
+selected kind are not offered as new settings. Existing inert values remain visible as preserved,
+unused configuration and can be removed without disturbing unrelated bytes.
+
+Multiple setting changes are validated and previewed as one candidate. RNodeMulti members have
+their own nested add, edit, and remove workflow. Unknown third-party interface types remain opaque
+and are never interpreted or rewritten.
 
 Interactive output uses the Prns terminal palette for headings, success, warnings, errors, and
 prompts. Styling is disabled when output is redirected or `NO_COLOR` is present; nonzero
