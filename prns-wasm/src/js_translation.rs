@@ -1,7 +1,7 @@
 use js_sys::{Object, Reflect, Uint8Array};
 use personal_rns::engine::{FanTarget, Journaled, RouteRemovalCause};
 use personal_rns::interfaces::bluetooth_auto::core as bluetooth_core;
-use personal_rns::interfaces::usb_auto::core as usb_auto_core;
+use personal_rns::interfaces::usb_auto;
 use personal_rns::interfaces::InterfaceKind;
 use wasm_bindgen::prelude::*;
 
@@ -211,15 +211,15 @@ pub(crate) fn outbound_to_js(frame: &OutboundFrame) -> JsValue {
     object.into()
 }
 
-pub(crate) fn usb_auto_message_to_js(message: usb_auto_core::Message<'_>) -> JsValue {
+pub(crate) fn usb_auto_message_to_js(message: usb_auto::Message<'_>) -> JsValue {
     let object = Object::new();
     match message {
-        usb_auto_core::Message::Hello(_) => set_str(&object, "type", "hello"),
-        usb_auto_core::Message::HelloAck { tag, .. } => {
+        usb_auto::Message::Hello(_) => set_str(&object, "type", "hello"),
+        usb_auto::Message::HelloAck { tag, .. } => {
             set_str(&object, "type", "helloAck");
             set_bytes(&object, "tag", &tag.0);
         }
-        usb_auto_core::Message::Data(packet) => {
+        usb_auto::Message::Data(packet) => {
             set_str(&object, "type", "data");
             set_bytes(&object, "bytes", packet);
         }

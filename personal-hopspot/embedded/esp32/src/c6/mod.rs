@@ -21,7 +21,7 @@ use static_cell::StaticCell;
 use personal_rns::engine::{InstantMillis, IssuedCommand, RatchetPolicy};
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::interfaces::usb_auto::core::device_descriptor;
+use personal_rns::interfaces::usb_auto::device_descriptor;
 use personal_rns::interfaces::{ConnectionState, InterfaceId};
 use personal_rns::reactor::embassy::timebase::EmbassyTimebase;
 use personal_rns::reactor::embassy::{
@@ -33,7 +33,7 @@ use personal_rns::runtime::{
     CompletionPool, EmbassyInterfaceStore, PreConfiguredDestination, PrnsEvent, PrnsNode,
     PrnsNodeHandle, PrnsNodeRecipe, ReactorPlumbing, RequestHandlerRegistration,
 };
-use personal_rns::usb::UsbAutoDevice;
+use personal_rns::usb_auto::UsbAutoDevice;
 
 use crate::storage::{C6Storage, EngineStorageType};
 

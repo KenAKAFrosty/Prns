@@ -1,7 +1,7 @@
 use crate::interfaces::{
     AnnounceBandwidthCap, BitrateBps, ConfiguredInterfacePolicy, EffectiveInterfacePolicy,
-    EgressCapability, IngressCapability, InterfaceCapabilities, InterfaceDefaults, InterfaceMode,
-    MtuPolicy, TransportCapability,
+    EgressCapability, IngressCapability, InterfaceCapabilities, InterfaceDefaults,
+    InterfaceDescriptor, InterfaceId, InterfaceMode, MtuPolicy, TransportCapability,
 };
 
 pub const RNODE_HW_MTU: usize = 508;
@@ -34,4 +34,8 @@ pub fn defaults_for_bitrate(bitrate: BitrateBps) -> InterfaceDefaults {
 #[must_use]
 pub fn policy_for_bitrate(bitrate: BitrateBps) -> EffectiveInterfacePolicy {
     defaults_for_bitrate(bitrate).configured(ConfiguredInterfacePolicy::default())
+}
+
+pub fn descriptor(id: InterfaceId, policy: EffectiveInterfacePolicy) -> InterfaceDescriptor {
+    policy.descriptor(id)
 }

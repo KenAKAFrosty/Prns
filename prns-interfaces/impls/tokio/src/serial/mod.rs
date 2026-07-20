@@ -1,11 +1,18 @@
+mod host;
+
+pub use host::{
+    open_host_serial, open_host_serial_with_settings, HostSerial, HostSerialDataBits,
+    HostSerialLineSettings, HostSerialParity, HostSerialStopBits,
+};
+
 use std::future::Future;
 use std::io;
 
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use crate::framed_stream;
+use crate::byte_stream::framing;
 use crate::reconnect::ReconnectPolicy;
-use prns_core::interfaces::serial::core;
+use prns_core::interfaces::serial as contract;
 use prns_core::interfaces::{
     ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind,
 };
@@ -37,7 +44,7 @@ impl<Open> SerialInterface<Open> {
         Self::with_policy(
             open,
             reconnect_policy,
-            core::policy_for_bitrate(core::SERIAL_BITRATE_BPS),
+            contract::policy_for_bitrate(contract::SERIAL_BITRATE_BPS),
             channel_tag,
         )
     }
@@ -82,11 +89,11 @@ where
     Fut: Future<Output = io::Result<S>>,
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    const HW_MTU: usize = prns_core::interfaces::serial::core::SERIAL_HW_MTU;
+    const HW_MTU: usize = prns_core::interfaces::serial::SERIAL_HW_MTU;
     const KIND: InterfaceKind = InterfaceKind::Serial;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::descriptor(self.id, self.policy)
+        contract::descriptor(self.id, self.policy)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -99,10 +106,10 @@ where
         let mut throughput = ThroughputLedger::new();
         let started = tokio::time::Instant::now();
         let mut buffers: Option<
-            framed_stream::FramedBuffers<
-                framed_stream::HdlcFraming,
-                { core::READ_BUF_LEN },
-                { core::FRAMED_LEN },
+            framing::FramedBuffers<
+                framing::HdlcFraming,
+                { contract::READ_BUF_LEN },
+                { contract::FRAMED_LEN },
             >,
         > = None;
         let mut reconnect = self.reconnect_policy.schedule();
@@ -110,17 +117,17 @@ where
             if let Ok(stream) = (self.open)().await {
                 let connected_at = tokio::time::Instant::now();
                 self.status.set_connection(ConnectionState::Connected);
-                framed_stream::serve::<
-                    framed_stream::HdlcFraming,
-                    { core::READ_BUF_LEN },
-                    { core::FRAMED_LEN },
+                framing::serve::<
+                    framing::HdlcFraming,
+                    { contract::READ_BUF_LEN },
+                    { contract::FRAMED_LEN },
                     _,
                     _,
                 >(
                     stream,
-                    buffers.get_or_insert_with(framed_stream::FramedBuffers::new),
+                    buffers.get_or_insert_with(framing::FramedBuffers::new),
                     &mut seam,
-                    &mut framed_stream::WireMeters {
+                    &mut framing::WireMeters {
                         status: &self.status,
                         airtime: &mut airtime,
                         throughput: &mut throughput,
@@ -204,7 +211,7 @@ mod tests {
         };
 
         let (in_tx, mut in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
-        let (mut out_tx, out_rx) = tokio_grant_lane(core::SERIAL_FRAME_LEN, 2);
+        let (mut out_tx, out_rx) = tokio_grant_lane(contract::SERIAL_FRAME_LEN, 2);
         let seam = MockSeam {
             inbound: in_tx,
             sink: std::vec::Vec::new(),
@@ -243,7 +250,7 @@ mod tests {
             .fill(&out_payload);
         out_tx.commit();
 
-        let mut decoder = core::Decoder::new();
+        let mut decoder = contract::Decoder::new();
         let mut buf = [0u8; 64];
         let decoded = tokio::time::timeout(Duration::from_secs(2), async {
             loop {

@@ -79,7 +79,7 @@ use personal_rns::interfaces::esp_now::core::{
 };
 use personal_rns::interfaces::lora::core::{channel_tag, DEFAULT_915_PROFILE};
 use personal_rns::interfaces::radios::sx126x::Sx126x;
-use personal_rns::interfaces::usb_auto::core::device_descriptor;
+use personal_rns::interfaces::usb_auto::device_descriptor;
 use personal_rns::interfaces::wifi_auto::core as wifi_core;
 use personal_rns::interfaces::BitrateBps;
 use personal_rns::interfaces::{
@@ -101,7 +101,7 @@ use personal_rns::runtime::{
 };
 use personal_rns::storage::StorageLayout;
 use personal_rns::tcp::TcpClient;
-use personal_rns::usb::UsbAutoDevice;
+use personal_rns::usb_auto::UsbAutoDevice;
 use personal_rns::wifi::{AutoWifi, AutoWifiShared, AutoWifiStatus};
 
 use crate::storage::EngineStorageType;

@@ -3,20 +3,18 @@ use std::io;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
 
-use prns_core::interfaces::kiss::transmission_control::{
-    KissTransmissionControl, StationIdentification, Transmission,
-};
+use prns_core::interfaces::kiss::{KissTransmissionControl, StationIdentification, Transmission};
 use prns_core::interfaces::rnode::multi::live::{
     HardwareError, LiveCommand, LiveError, LiveProtocol,
 };
-use prns_core::interfaces::rnode::{core, multi};
+use prns_core::interfaces::rnode::{multi, protocol};
 use prns_core::interfaces::ConnectionState;
 use prns_runtime::reactor::airtime::AirtimeLedger;
 use prns_runtime::reactor::driver::TokioInterfaceStatus;
 use prns_runtime::reactor::throughput::ThroughputLedger;
 use prns_runtime::runtime::{AttachedInterface, PrnsNodeHandle};
 
-use crate::kiss_deadline::{elapsed_millis, wait_for_deadline};
+use crate::byte_stream::deadline::{elapsed_millis, wait_for_deadline};
 
 use super::member::{InboundFrame, LiveMember, MemberMeters, OutboundFrame, RNodeMultiMember};
 use super::{RNodeMultiAccess, RNodeMultiMemberSettings};
@@ -107,7 +105,7 @@ impl RuntimeCycle {
     pub(super) async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
         &mut self,
         stream: &mut S,
-        decoder: &mut core::CommandDecoder,
+        decoder: &mut protocol::CommandDecoder,
         read: &mut [u8],
     ) -> io::Result<()> {
         self.wire.serve(stream, decoder, read).await
@@ -146,7 +144,7 @@ impl WireCycle {
     async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
         &mut self,
         stream: &mut S,
-        decoder: &mut core::CommandDecoder,
+        decoder: &mut protocol::CommandDecoder,
         read: &mut [u8],
     ) -> io::Result<()> {
         decoder.reset();
@@ -191,7 +189,7 @@ impl WireCycle {
     pub(super) async fn apply_read<S: AsyncWrite + Unpin>(
         &mut self,
         bytes: &[u8],
-        decoder: &mut core::CommandDecoder,
+        decoder: &mut protocol::CommandDecoder,
         stream: &mut S,
     ) -> io::Result<()> {
         let mut offset = 0;

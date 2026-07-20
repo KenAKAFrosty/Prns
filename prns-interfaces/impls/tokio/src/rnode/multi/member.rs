@@ -1,8 +1,8 @@
 use tokio::sync::mpsc;
 
 use prns_core::engine::InstantMillis;
-use prns_core::interfaces::kiss::transmission_control::KissTransmissionControl;
-use prns_core::interfaces::rnode::{core, multi};
+use prns_core::interfaces::kiss::KissTransmissionControl;
+use prns_core::interfaces::rnode::{multi, policy};
 use prns_core::interfaces::{
     ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind,
     PacketPhyStats,
@@ -33,11 +33,11 @@ pub(super) struct RNodeMultiMember {
 }
 
 impl Interface for RNodeMultiMember {
-    const HW_MTU: usize = core::RNODE_HW_MTU;
+    const HW_MTU: usize = policy::RNODE_HW_MTU;
     const KIND: InterfaceKind = InterfaceKind::Rnode;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::descriptor(self.id, self.policy)
+        policy::descriptor(self.id, self.policy)
     }
 
     fn channel_tag(&self) -> &[u8] {

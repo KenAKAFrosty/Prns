@@ -4,7 +4,7 @@ use std::time::Duration;
 use criterion::measurement::WallTime;
 use criterion::{criterion_group, criterion_main, BenchmarkGroup, BenchmarkId, Criterion};
 
-use personal_rns::interfaces::pipe::core as pipe_core;
+use personal_rns::interfaces::pipe;
 use personal_rns::interfaces::{
     AttachedInterfaces, IndexedAttachedInterfaces, InterfaceDescriptor, InterfaceId,
 };
@@ -17,9 +17,7 @@ fn iface_n(n: u32) -> InterfaceId {
 
 fn bench_size(group: &mut BenchmarkGroup<'_, WallTime>, n: u32, lookup: InterfaceId) {
     let descriptors: Vec<InterfaceDescriptor> = (0..n)
-        .map(|i| {
-            pipe_core::descriptor(iface_n(i), pipe_core::configured_policy(Default::default()))
-        })
+        .map(|i| pipe::descriptor(iface_n(i), pipe::configured_policy(Default::default())))
         .collect();
     let indexed = IndexedAttachedInterfaces::from(descriptors.clone());
 

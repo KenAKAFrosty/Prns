@@ -1,11 +1,11 @@
 use std::str::FromStr;
 
 use crate::configobj::{Section, SourceLocations, Value};
-use prns_core::interfaces::rnode::core::TXPOWER_DBM_MAX;
 use prns_core::interfaces::rnode::multi::{
     HIGH_FREQUENCY_MAX_HZ, HIGH_FREQUENCY_MIN_HZ, LOW_FREQUENCY_MAX_HZ, LOW_FREQUENCY_MIN_HZ,
     MAX_SUBINTERFACES, TX_POWER_MIN_DBM,
 };
+use prns_core::interfaces::rnode::protocol::TXPOWER_DBM_MAX;
 
 use super::diagnostics::{ErrorCode, ErrorDiagnostic, WarningCode, WarningDiagnostic};
 use super::interpret::cleaned_number;

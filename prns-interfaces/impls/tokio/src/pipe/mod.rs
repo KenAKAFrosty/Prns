@@ -1,11 +1,15 @@
+mod host;
+
+pub use host::{spawn, PipeStream};
+
 use std::future::Future;
 use std::io;
 use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use crate::framed_stream::{self, HdlcFraming};
-use prns_core::interfaces::pipe::core;
+use crate::byte_stream::framing::{self, HdlcFraming};
+use prns_core::interfaces::pipe as contract;
 use prns_core::interfaces::{
     ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind,
 };
@@ -52,7 +56,7 @@ impl<Open> PipeInterface<Open> {
         Self::with_policy(
             open,
             respawn_delay,
-            core::configured_policy(Default::default()),
+            contract::configured_policy(Default::default()),
             channel_tag,
         )
     }
@@ -96,11 +100,11 @@ where
     Fut: Future<Output = io::Result<S>>,
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    const HW_MTU: usize = core::PIPE_HW_MTU;
+    const HW_MTU: usize = contract::PIPE_HW_MTU;
     const KIND: InterfaceKind = InterfaceKind::Pipe;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::descriptor(self.id, self.policy)
+        contract::descriptor(self.id, self.policy)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -113,22 +117,26 @@ where
         let mut throughput = ThroughputLedger::new();
         let started = tokio::time::Instant::now();
         let mut buffers: Option<
-            framed_stream::FramedBuffers<HdlcFraming, { core::READ_BUF_LEN }, { core::FRAMED_LEN }>,
+            framing::FramedBuffers<
+                HdlcFraming,
+                { contract::READ_BUF_LEN },
+                { contract::FRAMED_LEN },
+            >,
         > = None;
         loop {
             if let Ok(stream) = (self.open)().await {
                 self.status.set_connection(ConnectionState::Connected);
-                framed_stream::serve::<
+                framing::serve::<
                     HdlcFraming,
-                    { core::READ_BUF_LEN },
-                    { core::FRAMED_LEN },
+                    { contract::READ_BUF_LEN },
+                    { contract::FRAMED_LEN },
                     _,
                     _,
                 >(
                     stream,
-                    buffers.get_or_insert_with(framed_stream::FramedBuffers::new),
+                    buffers.get_or_insert_with(framing::FramedBuffers::new),
                     &mut seam,
-                    &mut framed_stream::WireMeters {
+                    &mut framing::WireMeters {
                         status: &self.status,
                         airtime: &mut airtime,
                         throughput: &mut throughput,
@@ -207,7 +215,7 @@ mod tests {
         };
 
         let (in_tx, mut in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
-        let (mut out_tx, out_rx) = tokio_grant_lane(core::PIPE_FRAME_LEN, 2);
+        let (mut out_tx, out_rx) = tokio_grant_lane(contract::PIPE_FRAME_LEN, 2);
         let seam = MockSeam {
             inbound: in_tx,
             sink: std::vec::Vec::new(),
@@ -244,7 +252,7 @@ mod tests {
             .fill(&out_payload);
         out_tx.commit();
 
-        let mut decoder = core::Decoder::new();
+        let mut decoder = contract::Decoder::new();
         let mut buf = [0u8; 64];
         let decoded = tokio::time::timeout(Duration::from_secs(2), async {
             loop {

@@ -11,7 +11,9 @@ use prns_runtime::reactor::driver::TokioInterfaceStatus;
 use prns_runtime::reactor::interface_seam::InterfaceSeam;
 use prns_runtime::reactor::throughput::ThroughputLedger;
 
-use crate::framed_stream::{serve_with_hdlc_idle_watchdog, FramedBuffers, HdlcFraming, WireMeters};
+use crate::byte_stream::framing::{
+    serve_with_hdlc_idle_watchdog, FramedBuffers, HdlcFraming, WireMeters,
+};
 
 struct PendingSeam {
     inbound: Vec<u8>,

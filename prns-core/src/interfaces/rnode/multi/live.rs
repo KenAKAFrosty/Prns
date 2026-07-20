@@ -5,7 +5,7 @@ use super::{
     ConfiguredRadio, DevicePlatform, PacketPhyState, RadioConfig, VPort, CMD_SELECT_INTERFACE,
     MAX_SUBINTERFACES,
 };
-use crate::interfaces::rnode::core;
+use crate::interfaces::rnode::protocol;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HardwareError {
@@ -70,24 +70,26 @@ impl LiveProtocol {
                 }
                 LiveCommand::Consumed
             }
-            core::CMD_DATA if payload.is_empty() => LiveCommand::Consumed,
-            core::CMD_DATA => LiveCommand::Data {
+            protocol::CMD_DATA if payload.is_empty() => LiveCommand::Consumed,
+            protocol::CMD_DATA => LiveCommand::Data {
                 vport: self.selected,
                 payload,
                 phy: self.packet_phy[self.selected.index()].take_for_data(),
             },
             kiss_framing::CMD_READY => LiveCommand::AllRadiosReady,
-            core::CMD_PLATFORM => {
+            protocol::CMD_PLATFORM => {
                 self.platform = payload
                     .first()
                     .copied()
                     .map(DevicePlatform::from_device_report);
                 LiveCommand::Consumed
             }
-            core::CMD_ERROR => LiveCommand::Failed(LiveError::Hardware(hardware_error(payload))),
-            core::CMD_RESET
+            protocol::CMD_ERROR => {
+                LiveCommand::Failed(LiveError::Hardware(hardware_error(payload)))
+            }
+            protocol::CMD_RESET
                 if self.platform == Some(DevicePlatform::Esp32)
-                    && payload.first() == Some(&core::RESET_RESP) =>
+                    && payload.first() == Some(&protocol::RESET_RESP) =>
             {
                 LiveCommand::Failed(LiveError::Esp32Reset)
             }
@@ -103,9 +105,9 @@ impl LiveProtocol {
 
 fn hardware_error(payload: &[u8]) -> HardwareError {
     match payload.first().copied() {
-        Some(core::ERROR_INIT_RADIO) => HardwareError::RadioInitialization,
-        Some(core::ERROR_TX_FAILED) => HardwareError::Transmit,
-        Some(core::ERROR_EEPROM_LOCKED) => HardwareError::EepromLocked,
+        Some(protocol::ERROR_INIT_RADIO) => HardwareError::RadioInitialization,
+        Some(protocol::ERROR_TX_FAILED) => HardwareError::Transmit,
+        Some(protocol::ERROR_EEPROM_LOCKED) => HardwareError::EepromLocked,
         other => HardwareError::Unknown(other),
     }
 }
@@ -136,9 +138,9 @@ mod tests {
     fn selected_radio_owns_its_packet_telemetry() {
         let mut protocol = LiveProtocol::new([configured(0), configured(1)], None);
         let _ = protocol.apply(CMD_SELECT_INTERFACE, &[1]);
-        let _ = protocol.apply(core::CMD_STAT_RSSI, &[100]);
+        let _ = protocol.apply(protocol::CMD_STAT_RSSI, &[100]);
         assert_eq!(
-            protocol.apply(core::CMD_DATA, b"packet"),
+            protocol.apply(protocol::CMD_DATA, b"packet"),
             LiveCommand::Data {
                 vport: VPort::new(1).unwrap(),
                 payload: b"packet",
@@ -154,11 +156,11 @@ mod tests {
     fn hardware_failures_and_esp32_resets_are_typed() {
         let mut protocol = LiveProtocol::new([configured(0)], Some(DevicePlatform::Esp32));
         assert_eq!(
-            protocol.apply(core::CMD_ERROR, &[core::ERROR_TX_FAILED]),
+            protocol.apply(protocol::CMD_ERROR, &[protocol::ERROR_TX_FAILED]),
             LiveCommand::Failed(LiveError::Hardware(HardwareError::Transmit))
         );
         assert_eq!(
-            protocol.apply(core::CMD_RESET, &[core::RESET_RESP]),
+            protocol.apply(protocol::CMD_RESET, &[protocol::RESET_RESP]),
             LiveCommand::Failed(LiveError::Esp32Reset)
         );
     }

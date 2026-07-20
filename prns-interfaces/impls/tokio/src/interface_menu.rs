@@ -1,7 +1,7 @@
 #[cfg(any(feature = "wifi", feature = "usb", feature = "ble"))]
 pub use crate::auto::Auto;
 #[cfg(feature = "ax25")]
-pub use crate::ax25::Ax25KissInterface;
+pub use crate::ax25_kiss::Ax25KissInterface;
 #[cfg(feature = "backbone")]
 pub use crate::backbone::BackboneClientInterface;
 #[cfg(feature = "backbone")]
@@ -29,9 +29,9 @@ pub use crate::tcp::TcpServer;
 #[cfg(feature = "udp")]
 pub use crate::udp::UdpInterface;
 #[cfg(feature = "usb")]
-pub use crate::usb::UsbAutoHost;
+pub use crate::usb_auto::AutoUsb;
 #[cfg(feature = "usb")]
-pub use crate::usb_host::AutoUsb;
+pub use crate::usb_auto::UsbAutoHost;
 #[cfg(feature = "weave")]
 pub use crate::weave::WeaveInterface;
 #[cfg(feature = "websocket")]

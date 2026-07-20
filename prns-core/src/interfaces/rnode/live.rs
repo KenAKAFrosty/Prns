@@ -4,7 +4,7 @@ use crate::interfaces::kiss_framing;
 use crate::interfaces::PacketPhyStats;
 use crate::units::{DurationMillis, InstantMillis};
 
-use super::core::{self, PacketPhyState, RadioConfig};
+use super::protocol::{self, PacketPhyState, RadioConfig};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct KeepaliveInterval(Duration);
@@ -73,7 +73,7 @@ impl KeepaliveSchedule {
     pub fn due(self, now: InstantMillis) -> Option<KeepaliveTransmission> {
         self.deadline
             .is_some_and(|deadline| now >= deadline)
-            .then(|| KeepaliveTransmission(core::detect_request_frame()))
+            .then(|| KeepaliveTransmission(protocol::detect_request_frame()))
     }
 
     pub fn wrote(&mut self, now: InstantMillis) {
@@ -106,8 +106,8 @@ impl LiveProtocol {
         radio: &RadioConfig,
     ) -> LiveCommand<'a> {
         match command {
-            core::CMD_DATA if payload.is_empty() => LiveCommand::Consumed,
-            core::CMD_DATA => LiveCommand::Data {
+            protocol::CMD_DATA if payload.is_empty() => LiveCommand::Consumed,
+            protocol::CMD_DATA => LiveCommand::Data {
                 payload,
                 phy: self.packet_phy.take_for_data(),
             },
@@ -127,7 +127,7 @@ fn deadline_after(now: InstantMillis, duration: Duration) -> InstantMillis {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interfaces::rnode::core::{RadioConfigInput, CMD_STAT_RSSI};
+    use crate::interfaces::rnode::protocol::{RadioConfigInput, CMD_STAT_RSSI};
     use crate::interfaces::RssiDbm;
 
     fn radio() -> RadioConfig {
@@ -151,7 +151,7 @@ mod tests {
             LiveCommand::Consumed
         );
         assert_eq!(
-            protocol.apply(core::CMD_DATA, b"first", &radio()),
+            protocol.apply(protocol::CMD_DATA, b"first", &radio()),
             LiveCommand::Data {
                 payload: b"first",
                 phy: PacketPhyStats {
@@ -161,7 +161,7 @@ mod tests {
             }
         );
         assert_eq!(
-            protocol.apply(core::CMD_DATA, b"second", &radio()),
+            protocol.apply(protocol::CMD_DATA, b"second", &radio()),
             LiveCommand::Data {
                 payload: b"second",
                 phy: PacketPhyStats::default()
@@ -178,7 +178,7 @@ mod tests {
             schedule
                 .due(InstantMillis(3_600))
                 .map(|transmission| *transmission.wire_bytes()),
-            Some([0xc0, core::CMD_DETECT, core::DETECT_REQ, 0xc0])
+            Some([0xc0, protocol::CMD_DETECT, protocol::DETECT_REQ, 0xc0])
         );
         schedule.wrote(InstantMillis(4_000));
         assert_eq!(schedule.deadline(), Some(InstantMillis(7_500)));

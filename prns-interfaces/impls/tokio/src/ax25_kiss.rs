@@ -3,17 +3,15 @@ use std::io;
 
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use crate::framed_stream::WireMeters;
+use crate::byte_stream::framing::WireMeters;
 use crate::kiss::{
     configure_tnc, serve_controlled_kiss, ControlledKissBuffers, TncConfigureDelay,
     DEFAULT_TNC_CONFIGURE_DELAY,
 };
 use crate::reconnect::ReconnectPolicy;
-use prns_core::interfaces::ax25_kiss::core::{self, Ax25AddressError, AX25_HEADER_SIZE};
-use prns_core::interfaces::kiss::core::TncConfig;
-use prns_core::interfaces::kiss::transmission_control::{
-    KissTransmissionControl, ReadyCommandFlowControl,
-};
+use prns_core::interfaces::ax25_kiss::{self as contract, Ax25AddressError, AX25_HEADER_SIZE};
+use prns_core::interfaces::kiss::TncConfig;
+use prns_core::interfaces::kiss::{KissTransmissionControl, ReadyCommandFlowControl};
 use prns_core::interfaces::{
     ConnectionState, EffectiveInterfacePolicy, FrameSink, InterfaceDescriptor, InterfaceId,
     InterfaceKind,
@@ -148,7 +146,7 @@ impl<Open> Ax25KissInterface<Open> {
                 flow_control: ReadyCommandFlowControl::Disabled,
                 callsign,
                 ssid,
-                policy: core::configured_policy(Default::default()),
+                policy: contract::configured_policy(Default::default()),
                 channel_tag,
             },
         )
@@ -159,7 +157,7 @@ impl<Open> Ax25KissInterface<Open> {
         reconnect_policy: ReconnectPolicy,
         settings: Ax25KissSettings<'_>,
     ) -> Result<Self, Ax25AddressError> {
-        let header = core::build_header(settings.callsign, settings.ssid)?;
+        let header = contract::build_header(settings.callsign, settings.ssid)?;
         let channel_tag = settings.channel_tag.to_vec();
         let id = InterfaceId::from_channel_tag(InterfaceKind::Ax25Kiss, &channel_tag);
         Ok(Self {
@@ -196,11 +194,11 @@ where
     Fut: Future<Output = io::Result<S>>,
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    const HW_MTU: usize = core::AX25_HW_MTU;
+    const HW_MTU: usize = contract::AX25_HW_MTU;
     const KIND: InterfaceKind = InterfaceKind::Ax25Kiss;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::descriptor(self.id, self.policy)
+        contract::descriptor(self.id, self.policy)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -217,14 +215,14 @@ where
         let mut seam = Ax25Seam {
             inner: seam,
             header: self.header,
-            inbound: std::vec::Vec::with_capacity(core::AX25_FRAME_LEN),
-            outbound: std::vec::Vec::with_capacity(core::AX25_FRAME_LEN),
+            inbound: std::vec::Vec::with_capacity(contract::AX25_FRAME_LEN),
+            outbound: std::vec::Vec::with_capacity(contract::AX25_FRAME_LEN),
         };
         let mut buffers: Option<
             ControlledKissBuffers<
-                { core::AX25_FRAME_LEN },
-                { core::READ_BUF_LEN },
-                { core::FRAMED_LEN },
+                { contract::AX25_FRAME_LEN },
+                { contract::READ_BUF_LEN },
+                { contract::FRAMED_LEN },
             >,
         > = None;
         let mut reconnect = self.reconnect_policy.schedule();
@@ -276,7 +274,7 @@ impl<Open> prns_core::interfaces::ReportsStatus for Ax25KissInterface<Open> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prns_core::interfaces::kiss::transmission_control::ReadyTimeout;
+    use prns_core::interfaces::kiss::ReadyTimeout;
     use prns_core::interfaces::kiss_framing::{self, FEND, FESC};
     use prns_core::interfaces::InterfaceStatus;
     use prns_runtime::reactor::driver::{tokio_grant_lane, TokioGrantConsumer};
@@ -323,7 +321,7 @@ mod tests {
     }
 
     async fn read_kiss(wire: &mut tokio::io::DuplexStream) -> Vec<u8> {
-        let mut decoder = core::Decoder::new();
+        let mut decoder = contract::Decoder::new();
         let mut buf = [0u8; 128];
         loop {
             let read = wire.read(&mut buf).await.expect("reads from the wire");
@@ -341,7 +339,7 @@ mod tests {
     async fn wraps_outbound_in_ax25_and_strips_the_header_inbound_over_a_real_stream() {
         let callsign = "N0CALL";
         let ssid = 3;
-        let header = core::build_header(callsign, ssid).unwrap();
+        let header = contract::build_header(callsign, ssid).unwrap();
 
         let (interface_wire, mut test_wire) = tokio::io::duplex(2048);
         let mut wire = Some(interface_wire);
@@ -351,7 +349,7 @@ mod tests {
         };
 
         let (in_tx, mut in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
-        let (mut out_tx, out_rx) = tokio_grant_lane(core::AX25_FRAME_LEN, 2);
+        let (mut out_tx, out_rx) = tokio_grant_lane(contract::AX25_FRAME_LEN, 2);
         let seam = MockSeam {
             inbound: in_tx,
             sink: std::vec::Vec::new(),
@@ -424,7 +422,7 @@ mod tests {
             .fill(&out_payload);
         out_tx.commit();
 
-        let mut decoder = core::Decoder::new();
+        let mut decoder = contract::Decoder::new();
         let mut buf = [0u8; 128];
         let body = tokio::time::timeout(Duration::from_secs(2), async {
             loop {
@@ -473,7 +471,7 @@ mod tests {
     async fn ready_flow_control_gates_ax25_frames() {
         let callsign = "N0CALL";
         let ssid = 3;
-        let header = core::build_header(callsign, ssid).expect("valid address");
+        let header = contract::build_header(callsign, ssid).expect("valid address");
         let (interface_wire, mut test_wire) = tokio::io::duplex(2048);
         let mut wire = Some(interface_wire);
         let open = move || {
@@ -481,7 +479,7 @@ mod tests {
             async move { taken.ok_or_else(|| io::Error::from(io::ErrorKind::NotConnected)) }
         };
         let (in_tx, _in_rx) = mpsc::unbounded_channel::<Vec<u8>>();
-        let (mut out_tx, out_rx) = tokio_grant_lane(core::AX25_FRAME_LEN, 3);
+        let (mut out_tx, out_rx) = tokio_grant_lane(contract::AX25_FRAME_LEN, 3);
         let seam = MockSeam {
             inbound: in_tx,
             sink: Vec::new(),
@@ -498,7 +496,7 @@ mod tests {
                 )),
                 callsign,
                 ssid,
-                policy: core::configured_policy(Default::default()),
+                policy: contract::configured_policy(Default::default()),
                 channel_tag: b"flow-ax25",
             },
         )

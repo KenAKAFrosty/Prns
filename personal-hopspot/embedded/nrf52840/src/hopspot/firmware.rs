@@ -33,7 +33,7 @@ use personal_rns::interfaces::bluetooth_auto::core::{
 };
 use personal_rns::interfaces::lora::core::{channel_tag, DEFAULT_915_PROFILE};
 use personal_rns::interfaces::radios::sx126x::{BoardConfig, Sx126x, TcxoVoltage};
-use personal_rns::interfaces::usb_auto::core::{WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID};
+use personal_rns::interfaces::usb_auto::{WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID};
 use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus};
 use personal_rns::lora::LoRaInterface;
 use personal_rns::reactor::embassy::{
@@ -46,8 +46,8 @@ use personal_rns::runtime::{
     PrnsNodeRecipe, ReactorPlumbing, RequestHandlerRegistration,
 };
 use personal_rns::storage::StorageLayout;
-use personal_rns::usb::UsbAutoDevice;
-use personal_rns::usb_device::{WebUsbAutoClass, WebUsbAutoState, WEBUSB_AUTO_PACKET_SIZE};
+use personal_rns::usb_auto::UsbAutoDevice;
+use personal_rns::usb_auto::{WebUsbAutoClass, WebUsbAutoState, WEBUSB_AUTO_PACKET_SIZE};
 
 use super::bluetooth::{
     acceptor, scanner, serve_slot, softdevice_config, softdevice_task, usb_vbus_present,

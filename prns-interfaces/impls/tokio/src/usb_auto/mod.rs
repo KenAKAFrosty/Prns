@@ -8,6 +8,10 @@
 //! the hub's port-notify funnel (the reactor's own id-funnel pattern, one level down).
 //! Outbound fans OUT: the run loop write-grants each borrowed frame into every confirmed port's lane.
 
+mod host;
+
+pub use host::{AutoUsb, DEFAULT_USB_AUTO_ID, DEFAULT_USB_BAUD};
+
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::io;
@@ -24,7 +28,9 @@ use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
-use prns_core::interfaces::usb_auto::core::{self, Capabilities, HostInbound, Message, NodeTag};
+use prns_core::interfaces::usb_auto::{
+    self as contract, Capabilities, HostInbound, Message, NodeTag,
+};
 use prns_core::interfaces::{
     ConfiguredInterfacePolicy, ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor,
     InterfaceId, InterfaceKind,
@@ -102,7 +108,7 @@ impl<Scan, Open> UsbAutoHost<Scan, Open> {
             scan,
             open,
             rescan,
-            core::HOST_DEFAULTS.configured(ConfiguredInterfacePolicy::default()),
+            contract::HOST_DEFAULTS.configured(ConfiguredInterfacePolicy::default()),
         )
     }
 
@@ -116,7 +122,7 @@ impl<Scan, Open> UsbAutoHost<Scan, Open> {
     ) -> Self {
         Self {
             id,
-            node_tag: core::node_tag_for(id),
+            node_tag: contract::node_tag_for(id),
             scan,
             open,
             policy,
@@ -161,7 +167,7 @@ where
     Fut: Future<Output = io::Result<S>> + Send + 'static,
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    const HW_MTU: usize = prns_core::interfaces::usb_auto::core::HOST_USB_HW_MTU;
+    const HW_MTU: usize = prns_core::interfaces::usb_auto::HOST_USB_HW_MTU;
     const KIND: InterfaceKind = InterfaceKind::UsbAutoHost;
 
     fn descriptor(&self) -> InterfaceDescriptor {
@@ -267,9 +273,9 @@ where
                             let key = next_port_key;
                             next_port_key += 1;
                             let (in_tx, in_rx) =
-                                tokio_grant_lane(core::MAX_FRAMED_BYTES, PORT_LANE_DEPTH);
+                                tokio_grant_lane(contract::MAX_FRAMED_BYTES, PORT_LANE_DEPTH);
                             let (out_tx, out_rx) =
-                                tokio_grant_lane(core::MAX_FRAMED_BYTES, PORT_LANE_DEPTH);
+                                tokio_grant_lane(contract::MAX_FRAMED_BYTES, PORT_LANE_DEPTH);
                             let task = tokio::spawn(serve_port(
                                 name.clone(),
                                 stream,
@@ -419,9 +425,9 @@ async fn serve_port<S>(
 ) where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    let mut decoder = core::Decoder::new();
-    let mut read_buf = [0u8; core::READ_CHUNK_BYTES];
-    let mut frame_buf = [0u8; core::MAX_FRAMED_BYTES];
+    let mut decoder = contract::Decoder::new();
+    let mut read_buf = [0u8; contract::READ_CHUNK_BYTES];
+    let mut frame_buf = [0u8; contract::MAX_FRAMED_BYTES];
     let mut confirmed = false;
     let mut probe = tokio::time::interval(PROBE_INTERVAL);
 
@@ -450,7 +456,7 @@ async fn serve_port<S>(
                     if frame.is_empty() {
                         continue;
                     }
-                    match core::host_react(core::decode_message(frame)) {
+                    match contract::host_react(contract::decode_message(frame)) {
                         HostInbound::AnswerHandshake => {
                             let ack = Message::HelloAck {
                                 tag: context.node_tag,
@@ -504,7 +510,7 @@ fn confirm(confirmed: &mut bool, id: &str, events: &UnboundedSender<PortEvent>) 
 async fn write_message<S>(
     stream: &mut S,
     message: &Message<'_>,
-    frame_buf: &mut [u8; core::MAX_FRAMED_BYTES],
+    frame_buf: &mut [u8; contract::MAX_FRAMED_BYTES],
     status: &TokioInterfaceStatus,
 ) -> io::Result<()>
 where
@@ -548,7 +554,7 @@ mod tests {
     /// Read the device end until a decoded frame satisfies `pick`, returning what it picks.
     async fn read_until<R, T>(
         wire: &mut R,
-        decoder: &mut core::Decoder,
+        decoder: &mut contract::Decoder,
         mut pick: impl FnMut(Message<'_>) -> Option<T>,
     ) -> T
     where
@@ -567,7 +573,7 @@ mod tests {
                 if frame.is_empty() {
                     continue;
                 }
-                if let Ok(message) = core::decode_message(frame) {
+                if let Ok(message) = contract::decode_message(frame) {
                     if let Some(picked) = pick(message) {
                         return picked;
                     }
@@ -590,20 +596,20 @@ mod tests {
         let status = host.status();
 
         let (notify_tx, mut notify_rx) = unbounded_channel::<InterfaceId>();
-        let (in_tx, mut in_rx) = tokio_grant_lane(core::MAX_FRAMED_BYTES, 8);
-        let (mut out_tx, out_rx) = tokio_grant_lane(core::MAX_FRAMED_BYTES, 8);
+        let (in_tx, mut in_rx) = tokio_grant_lane(contract::MAX_FRAMED_BYTES, 8);
+        let (mut out_tx, out_rx) = tokio_grant_lane(contract::MAX_FRAMED_BYTES, 8);
         let seam = TokioInterfaceSeam::new(host_id(), in_tx, notify_tx, out_rx);
         tokio::spawn(host.run(seam));
 
         // The host probes the newly discovered port with a Hello; the device answers HelloAck and
         // the host confirms the link (its status turns Connected).
-        let mut decoder = core::Decoder::new();
+        let mut decoder = contract::Decoder::new();
         read_until(&mut device, &mut decoder, |message| {
             matches!(message, Message::Hello(_)).then_some(())
         })
         .await;
 
-        let mut frame = [0u8; core::MAX_FRAMED_BYTES];
+        let mut frame = [0u8; contract::MAX_FRAMED_BYTES];
         let ack = Message::HelloAck {
             tag: NodeTag([0xAB; 8]),
             capabilities: Capabilities::none(),
@@ -677,7 +683,7 @@ mod tests {
 
     #[test]
     fn configured_policy_reaches_the_usb_auto_descriptor() {
-        let policy = core::HOST_DEFAULTS.configured(ConfiguredInterfacePolicy {
+        let policy = contract::HOST_DEFAULTS.configured(ConfiguredInterfacePolicy {
             mode: Some(prns_core::interfaces::InterfaceMode::Gateway),
             bitrate: Some(prns_core::interfaces::BitrateBps::guess(7_654_321)),
             ..ConfiguredInterfacePolicy::default()

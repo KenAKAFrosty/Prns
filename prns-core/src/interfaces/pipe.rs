@@ -1,10 +1,3 @@
-//! The host-agnostic core of the pipe interface: the sizing the read and write loops are built
-//! around and the descriptor the engine sees. RNS `PipeInterface` packetizes with the same HDLC
-//! octet-stuffing the serial and TCP interfaces use, so the framing lives once in
-//! [`rns_serial_framing`] and the serve loop in
-//! `prns-interfaces-tokio`'s `framed_stream`; each host's impl supplies only the byte
-//! stream — here, the stdin/stdout of a spawned subprocess.
-
 use crate::interfaces::rns_serial_framing::{self, RnsSerialDecoder};
 use crate::interfaces::{
     AnnounceBandwidthCap, BitrateBps, ConfiguredInterfacePolicy, EffectiveInterfacePolicy,

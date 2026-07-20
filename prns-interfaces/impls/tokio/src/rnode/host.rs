@@ -3,11 +3,11 @@ use std::io;
 use prns_config::RNodeTransportPlan;
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use crate::rnode::{
+use super::{
     RNodeDetectTimeout, RNodeKeepalive, BLE_RNODE_DETECT_TIMEOUT, DEFAULT_RNODE_DETECT_TIMEOUT,
     TCP_RNODE_DETECT_TIMEOUT, TCP_RNODE_KEEPALIVE,
 };
-use crate::serial_host::open_host_serial;
+use crate::serial::open_host_serial;
 use crate::tcp::{connect, tune, TcpConnectionSettings};
 
 pub(crate) const RNODE_BAUD: u32 = 115_200;
@@ -55,7 +55,7 @@ impl RNodeHostOpener {
                 Ok(Box::new(stream))
             }
             RNodeTransportPlan::Ble(target) => {
-                let stream = crate::rnode_ble::open(target).await?;
+                let stream = super::ble::open(target).await?;
                 Ok(Box::new(stream))
             }
         }

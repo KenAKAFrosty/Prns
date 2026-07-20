@@ -1,10 +1,3 @@
-//! Embassy-usb device-class plumbing for USB Auto over claimable vendor bulk endpoints.
-//!
-//! The actual USB Auto protocol and reactor-facing device loop live in [`crate::usb`]. This class
-//! only creates a WebUSB/WinUSB-friendly endpoint pair and exposes it as embedded-io-async 0.6
-//! `Read`/`Write` halves so board firmware can feed the shared device loop without presenting CDC ACM
-//! endpoints that desktop OS serial drivers claim before browsers can.
-
 use core::mem::MaybeUninit;
 
 use ::embassy_usb::driver::{

@@ -6,7 +6,7 @@ use tokio::net::TcpListener;
 #[cfg(target_os = "linux")]
 use tokio::net::UnixListener;
 
-use crate::framed_stream;
+use crate::byte_stream::framing;
 use prns_core::interfaces::shared_instance::core;
 use prns_core::interfaces::{
     ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind,
@@ -89,22 +89,16 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for LocalClientInterface<S> {
         let mut airtime = AirtimeLedger::new();
         let mut throughput = ThroughputLedger::new();
         let started = tokio::time::Instant::now();
-        let mut buffers = framed_stream::FramedBuffers::<
-            framed_stream::HdlcFraming,
+        let mut buffers = framing::FramedBuffers::<
+            framing::HdlcFraming,
             { core::READ_BUF_LEN },
             { core::FRAMED_LEN },
         >::new();
-        framed_stream::serve::<
-            framed_stream::HdlcFraming,
-            { core::READ_BUF_LEN },
-            { core::FRAMED_LEN },
-            _,
-            _,
-        >(
+        framing::serve::<framing::HdlcFraming, { core::READ_BUF_LEN }, { core::FRAMED_LEN }, _, _>(
             stream,
             &mut buffers,
             &mut seam,
-            &mut framed_stream::WireMeters {
+            &mut framing::WireMeters {
                 status: &self.status,
                 airtime: &mut airtime,
                 throughput: &mut throughput,

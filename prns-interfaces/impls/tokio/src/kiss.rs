@@ -4,12 +4,12 @@ use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-use crate::framed_stream::WireMeters;
-use crate::kiss_deadline::{elapsed_millis, wait_for_deadline};
+use crate::byte_stream::deadline::{elapsed_millis, wait_for_deadline};
+use crate::byte_stream::framing::WireMeters;
 use crate::reconnect::ReconnectPolicy;
 use prns_core::engine::InstantMillis;
-use prns_core::interfaces::kiss::core::{self, TncConfig};
-use prns_core::interfaces::kiss::transmission_control::{
+use prns_core::interfaces::kiss::{self as contract, TncConfig};
+use prns_core::interfaces::kiss::{
     KissTransmissionControl, ReadyCommandFlowControl, StationIdentification, Transmission,
 };
 use prns_core::interfaces::kiss_framing;
@@ -99,7 +99,7 @@ impl<Open> KissInterface<Open> {
             reconnect_policy,
             configure_delay,
             tnc,
-            core::configured_policy(Default::default()),
+            contract::configured_policy(Default::default()),
             channel_tag,
         )
     }
@@ -377,11 +377,11 @@ where
     Fut: Future<Output = io::Result<S>>,
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    const HW_MTU: usize = core::KISS_HW_MTU;
+    const HW_MTU: usize = contract::KISS_HW_MTU;
     const KIND: InterfaceKind = InterfaceKind::Kiss;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::descriptor(self.id, self.policy)
+        contract::descriptor(self.id, self.policy)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -397,9 +397,9 @@ where
             KissTransmissionControl::new(self.flow_control, self.station_identification);
         let mut buffers: Option<
             ControlledKissBuffers<
-                { core::KISS_FRAME_LEN },
-                { core::READ_BUF_LEN },
-                { core::FRAMED_LEN },
+                { contract::KISS_FRAME_LEN },
+                { contract::READ_BUF_LEN },
+                { contract::FRAMED_LEN },
             >,
         > = None;
         let mut reconnect = self.reconnect_policy.schedule();
@@ -453,9 +453,7 @@ impl<Open> prns_core::interfaces::ReportsStatus for KissInterface<Open> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prns_core::interfaces::kiss::transmission_control::{
-        ReadyTimeout, StationIdInterval, StationIdWireFormat,
-    };
+    use prns_core::interfaces::kiss::{ReadyTimeout, StationIdInterval, StationIdWireFormat};
     use prns_core::interfaces::kiss_framing::{self, FEND, FESC};
     use prns_core::interfaces::InterfaceStatus;
     use prns_runtime::reactor::driver::{tokio_grant_lane, TokioGrantConsumer};
@@ -494,7 +492,7 @@ mod tests {
     }
 
     async fn read_kiss_payload(wire: &mut tokio::io::DuplexStream) -> Vec<u8> {
-        let mut decoder = core::Decoder::new();
+        let mut decoder = contract::Decoder::new();
         let mut buf = [0u8; 64];
         loop {
             let read = wire.read(&mut buf).await.expect("reads from the wire");
@@ -520,7 +518,7 @@ mod tests {
         };
 
         let (in_tx, mut in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
-        let (mut out_tx, out_rx) = tokio_grant_lane(core::KISS_FRAME_LEN, 2);
+        let (mut out_tx, out_rx) = tokio_grant_lane(contract::KISS_FRAME_LEN, 2);
         let seam = MockSeam {
             inbound: in_tx,
             sink: std::vec::Vec::new(),
@@ -597,7 +595,7 @@ mod tests {
             .fill(&out_payload);
         out_tx.commit();
 
-        let mut decoder = core::Decoder::new();
+        let mut decoder = contract::Decoder::new();
         let mut buf = [0u8; 64];
         let decoded = tokio::time::timeout(Duration::from_secs(2), async {
             loop {
@@ -645,7 +643,7 @@ mod tests {
             async move { taken.ok_or_else(|| io::Error::from(io::ErrorKind::NotConnected)) }
         };
         let (in_tx, _in_rx) = mpsc::unbounded_channel::<Vec<u8>>();
-        let (mut out_tx, out_rx) = tokio_grant_lane(core::KISS_FRAME_LEN, 4);
+        let (mut out_tx, out_rx) = tokio_grant_lane(contract::KISS_FRAME_LEN, 4);
         let seam = MockSeam {
             inbound: in_tx,
             sink: Vec::new(),
@@ -661,7 +659,7 @@ mod tests {
                     Duration::from_millis(50),
                 )),
                 station_identification: None,
-                policy: core::configured_policy(Default::default()),
+                policy: contract::configured_policy(Default::default()),
                 channel_tag: b"flow-kiss",
             },
         );
@@ -708,7 +706,7 @@ mod tests {
             async move { taken.ok_or_else(|| io::Error::from(io::ErrorKind::NotConnected)) }
         };
         let (in_tx, _in_rx) = mpsc::unbounded_channel::<Vec<u8>>();
-        let (mut out_tx, out_rx) = tokio_grant_lane(core::KISS_FRAME_LEN, 2);
+        let (mut out_tx, out_rx) = tokio_grant_lane(contract::KISS_FRAME_LEN, 2);
         let seam = MockSeam {
             inbound: in_tx,
             sink: Vec::new(),
@@ -728,7 +726,7 @@ mod tests {
                 tnc: TncConfig::default(),
                 flow_control: ReadyCommandFlowControl::Disabled,
                 station_identification: Some(station_identification),
-                policy: core::configured_policy(Default::default()),
+                policy: contract::configured_policy(Default::default()),
                 channel_tag: b"station-kiss",
             },
         );

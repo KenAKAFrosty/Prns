@@ -1,7 +1,3 @@
-//! The host-agnostic core of the KISS interface: sizing, the TNC config the link writes at
-//! startup, and the descriptor. The framing brain lives once in
-//! [`kiss_framing`], the serve loop in `prns-interfaces-tokio`.
-
 use crate::interfaces::kiss_framing::{self, KissDecoder};
 use crate::interfaces::{
     AnnounceBandwidthCap, BitrateBps, ConfiguredInterfacePolicy, EffectiveInterfacePolicy,

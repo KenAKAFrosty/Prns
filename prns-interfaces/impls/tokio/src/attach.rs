@@ -96,13 +96,13 @@ attaches_as_wire!(impl[Open] crate::serial::SerialInterface<Open>);
 #[cfg(feature = "kiss")]
 attaches_as_wire!(impl[Open] crate::kiss::KissInterface<Open>);
 #[cfg(feature = "ax25")]
-attaches_as_wire!(impl[Open] crate::ax25::Ax25KissInterface<Open>);
+attaches_as_wire!(impl[Open] crate::ax25_kiss::Ax25KissInterface<Open>);
 #[cfg(feature = "pipe")]
 attaches_as_wire!(impl[Open] crate::pipe::PipeInterface<Open>);
 #[cfg(feature = "rnode")]
 attaches_as_wire!(impl[Open] crate::rnode::RNodeInterface<Open>);
 #[cfg(feature = "usb")]
-attaches_as_wire!(impl[Scan, Open] crate::usb::UsbAutoHost<Scan, Open>);
+attaches_as_wire!(impl[Scan, Open] crate::usb_auto::UsbAutoHost<Scan, Open>);
 
 #[cfg(feature = "wifi")]
 attaches_as_fleet!(impl[] crate::wifi::AutoWifi);

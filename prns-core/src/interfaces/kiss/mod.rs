@@ -1,7 +1,14 @@
-//! The KISS TNC interface (RNS `KISSInterface`): Reticulum packets framed as KISS over a serial
-//! TNC. The host-agnostic [`core`] holds the sizing, the startup TNC config, and the descriptor;
-//! the per-host driver lives in `prns-interfaces-tokio`.
-
-pub mod core;
+mod protocol;
 #[cfg(feature = "alloc")]
-pub mod transmission_control;
+mod transmission;
+
+pub use protocol::{
+    configured_policy, descriptor, Decoder, TncConfig, DEFAULTS, DEFAULT_PERSISTENCE,
+    DEFAULT_PREAMBLE_MS, DEFAULT_SLOTTIME_MS, DEFAULT_TXTAIL_MS, FRAMED_LEN, KISS_BITRATE_BPS,
+    KISS_FRAME_LEN, KISS_HW_MTU, READ_BUF_LEN,
+};
+#[cfg(feature = "alloc")]
+pub use transmission::{
+    EmptyStationIdentification, KissTransmissionControl, ReadyCommandFlowControl, ReadyTimeout,
+    StationIdInterval, StationIdWireFormat, StationIdentification, Transmission,
+};

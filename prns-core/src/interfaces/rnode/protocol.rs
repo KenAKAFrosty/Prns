@@ -1,24 +1,10 @@
-//! The host-agnostic core of the RNode interface: the radio configuration the host writes,
-//! the command codec for the RNode KISS dialect, the bring-up read-back model, and the
-//! descriptor. RNode is a LoRa radio driven over a USB-serial KISS link: a host configures a
-//! separate modem and pumps packets through it as `CMD_DATA` frames, unlike the embedded
-//! [`lora`](crate::interfaces::lora) sibling, which *is* the modem. RNode uses the *whole*
-//! command byte (radio-config echoes, telemetry, detect/version), so this rides the
-//! command-aware [`KissCommandDecoder`], not the data-only KISS path. Reference: RNS
-//! `RNodeInterface.py` <https://github.com/markqvist/Reticulum/blob/1.3.5/RNS/Interfaces/RNodeInterface.py>
-
 use alloc::vec::Vec;
 
 use super::FirmwareVersion;
 use crate::interfaces::kiss_framing::{self, KissCommandDecoder, FEND};
 use crate::interfaces::lora::core::SpreadingFactor;
-pub use crate::interfaces::rnode::policy::{
-    defaults_for_bitrate, nominal_bitrate_bps, policy_for_bitrate, RNODE_HW_MTU,
-};
-use crate::interfaces::{
-    EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, PacketPhyStats, RssiDbm,
-    SnrQuarterDb,
-};
+use crate::interfaces::rnode::policy::{nominal_bitrate_bps, RNODE_HW_MTU};
+use crate::interfaces::{PacketPhyStats, RssiDbm, SnrQuarterDb};
 
 /// RNS `RNodeInterface.HW_MTU` — the device's on-air payload ceiling and the read loop's data-frame
 /// bound (`len(data_buffer) < self.HW_MTU`).
@@ -450,15 +436,11 @@ fn be_u32(payload: &[u8]) -> Option<u32> {
     }
 }
 
-/// The engine's view of an RNode link: a full-duplex LoRa radio that can repeat traffic out
-/// its own interface, carrying its computed on-air bitrate and the 508-byte hardware MTU.
-pub fn descriptor(id: InterfaceId, policy: EffectiveInterfacePolicy) -> InterfaceDescriptor {
-    policy.descriptor(id)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::interfaces::rnode::policy::{descriptor, policy_for_bitrate};
+    use crate::interfaces::InterfaceId;
     use crate::interfaces::SignalQualityTenthsPercent;
 
     const TEST_FRAME_CAP: usize = RNODE_FRAME_LEN;

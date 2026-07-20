@@ -2,12 +2,19 @@
 //!
 //! Two behaviours the bare seam doesn't carry, both lifted from the live-proven legacy `serve`: the device answers a host's `Hello` with a `HelloAck` (only then is a host actively reading), and it **holds the engine's outbound until a host has linked** — writing announces into a void with no reader times out mid-frame (`WRITE_TIMEOUT`), and that half-frame would desync the host's decoder the moment it connects. Before a host links, outbound frames are drained and dropped (there is no peer to hear them), not streamed into nothing.
 
+mod device;
+
+pub use device::{
+    WebUsbAutoClass, WebUsbAutoError, WebUsbAutoRx, WebUsbAutoState, WebUsbAutoTx,
+    WEBUSB_AUTO_PACKET_SIZE,
+};
+
 use embassy_futures::select::{select4, Either4};
 use embassy_time::{with_timeout, Duration, Timer};
 use embedded_io_async::{Read, Write};
 
-use prns_core::interfaces::usb_auto::core::{
-    self, Capabilities, InboundReaction, Message, NodeTag,
+use prns_core::interfaces::usb_auto::{
+    self as contract, Capabilities, InboundReaction, Message, NodeTag,
 };
 use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
 use prns_runtime::reactor::driver::EmbassyInterfaceStatus;
@@ -45,7 +52,7 @@ impl<'a, R, W, P> UsbAutoDevice<'a, R, W, P> {
             id,
             rx,
             tx,
-            node_tag: core::node_tag_for(id),
+            node_tag: contract::node_tag_for(id),
             status,
             presence,
         }
@@ -58,11 +65,11 @@ where
     W: Write,
     P: FnMut() -> bool,
 {
-    const HW_MTU: usize = prns_core::interfaces::usb_auto::core::DEVICE_USB_HW_MTU;
+    const HW_MTU: usize = prns_core::interfaces::usb_auto::DEVICE_USB_HW_MTU;
     const KIND: InterfaceKind = InterfaceKind::UsbAutoDevice;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::device_descriptor(self.id)
+        contract::device_descriptor(self.id)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -78,9 +85,9 @@ where
             status,
             mut presence,
         } = self;
-        let mut decoder = core::Decoder::new();
-        let mut read_buf = [0u8; core::READ_CHUNK_BYTES];
-        let mut frame_buf = [0u8; core::MAX_FRAMED_BYTES];
+        let mut decoder = contract::Decoder::new();
+        let mut read_buf = [0u8; contract::READ_CHUNK_BYTES];
+        let mut frame_buf = [0u8; contract::MAX_FRAMED_BYTES];
         let mut linked = false;
         let mut absent_probes = 0u8;
 
@@ -116,7 +123,7 @@ where
                         if frame.is_empty() {
                             continue;
                         }
-                        match core::react_to(core::decode_message(frame)) {
+                        match contract::react_to(contract::decode_message(frame)) {
                             InboundReaction::AnswerHandshake => {
                                 if !linked {
                                     linked = true;
@@ -167,7 +174,7 @@ fn presence_verdict(present: bool, absent_probes: &mut u8) -> Option<ConnectionS
 async fn write_message<W: Write>(
     tx: &mut W,
     message: &Message<'_>,
-    frame_buf: &mut [u8; core::MAX_FRAMED_BYTES],
+    frame_buf: &mut [u8; contract::MAX_FRAMED_BYTES],
     status: &EmbassyInterfaceStatus,
 ) {
     let Ok(n) = message.write_framed(frame_buf) else {
@@ -203,8 +210,7 @@ mod tests {
 
     /// The slot this device's lanes are sized by: its own declared hardware MTU
     /// plus the access tag — not the engine-wide ceiling.
-    const DEVICE_SLOT: usize =
-        prns_core::interfaces::usb_auto::core::DEVICE_USB_HW_MTU + IFAC_MAX_SIZE;
+    const DEVICE_SLOT: usize = prns_core::interfaces::usb_auto::DEVICE_USB_HW_MTU + IFAC_MAX_SIZE;
 
     /// An in-memory async byte stream over a shared queue: `read` parks (yields) until bytes are
     /// available, `write` appends. One queue is the host->device wire, another the device->host
@@ -249,7 +255,7 @@ mod tests {
     /// Read the device->host wire until a decoded frame satisfies `pick`.
     async fn read_until<T>(
         wire: &RefCell<VecDeque<u8>>,
-        decoder: &mut core::Decoder,
+        decoder: &mut contract::Decoder,
         mut pick: impl FnMut(Message<'_>) -> Option<T>,
     ) -> T {
         loop {
@@ -261,7 +267,7 @@ mod tests {
             };
             if let Ok(Some(frame)) = decoder.feed(byte) {
                 if !frame.is_empty() {
-                    if let Ok(message) = core::decode_message(frame) {
+                    if let Ok(message) = contract::decode_message(frame) {
                         if let Some(picked) = pick(message) {
                             return picked;
                         }
@@ -300,8 +306,8 @@ mod tests {
             let device_run = device.run(seam);
 
             let driver = async {
-                let mut frame = [0u8; core::MAX_FRAMED_BYTES];
-                let mut decoder = core::Decoder::new();
+                let mut frame = [0u8; contract::MAX_FRAMED_BYTES];
+                let mut decoder = contract::Decoder::new();
 
                 // The host probes with a Hello; the device answers HelloAck and turns Connected.
                 let hello = Message::Hello(Capabilities::host());

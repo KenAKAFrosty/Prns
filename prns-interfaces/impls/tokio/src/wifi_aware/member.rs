@@ -3,7 +3,7 @@ use std::vec::Vec;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 
-use crate::framed_stream;
+use crate::byte_stream::framing;
 use prns_core::interfaces::tcp;
 use prns_core::interfaces::wifi_aware::core;
 use prns_core::interfaces::{
@@ -73,22 +73,16 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for WifiAwareMember<S> {
         let mut airtime = AirtimeLedger::new();
         let mut throughput = ThroughputLedger::new();
         let started = tokio::time::Instant::now();
-        let mut buffers = framed_stream::FramedBuffers::<
-            framed_stream::HdlcFraming,
+        let mut buffers = framing::FramedBuffers::<
+            framing::HdlcFraming,
             { tcp::READ_BUF_LEN },
             { tcp::FRAMED_LEN },
         >::new();
-        framed_stream::serve::<
-            framed_stream::HdlcFraming,
-            { tcp::READ_BUF_LEN },
-            { tcp::FRAMED_LEN },
-            _,
-            _,
-        >(
+        framing::serve::<framing::HdlcFraming, { tcp::READ_BUF_LEN }, { tcp::FRAMED_LEN }, _, _>(
             stream,
             &mut buffers,
             &mut seam,
-            &mut framed_stream::WireMeters {
+            &mut framing::WireMeters {
                 status: &self.status,
                 airtime: &mut airtime,
                 throughput: &mut throughput,

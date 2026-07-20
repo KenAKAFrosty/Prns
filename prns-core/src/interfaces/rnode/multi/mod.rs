@@ -4,7 +4,7 @@ use crate::interfaces::kiss_framing::{FEND, FESC, TFEND, TFESC};
 use crate::interfaces::lora::core::SpreadingFactor;
 use crate::interfaces::{PacketPhyStats, RssiDbm, SnrQuarterDb};
 
-use super::{core, FirmwareVersion};
+use super::{policy, protocol, FirmwareVersion};
 
 pub mod bring_up;
 pub mod live;
@@ -173,27 +173,28 @@ impl RadioConfig {
     pub fn new(input: RadioConfigInput) -> Result<Self, RadioConfigError> {
         let frequency = RadioFrequency::new(input.frequency_hz)
             .ok_or(RadioConfigError::Frequency(input.frequency_hz))?;
-        if !(core::BANDWIDTH_HZ_MIN..=core::BANDWIDTH_HZ_MAX).contains(&input.bandwidth_hz) {
+        if !(protocol::BANDWIDTH_HZ_MIN..=protocol::BANDWIDTH_HZ_MAX).contains(&input.bandwidth_hz)
+        {
             return Err(RadioConfigError::Bandwidth(input.bandwidth_hz));
         }
-        if !(TX_POWER_MIN_DBM..=core::TXPOWER_DBM_MAX).contains(&input.tx_power_dbm) {
+        if !(TX_POWER_MIN_DBM..=protocol::TXPOWER_DBM_MAX).contains(&input.tx_power_dbm) {
             return Err(RadioConfigError::TxPower(input.tx_power_dbm));
         }
-        if !(core::SPREADING_FACTOR_MIN..=core::SPREADING_FACTOR_MAX)
+        if !(protocol::SPREADING_FACTOR_MIN..=protocol::SPREADING_FACTOR_MAX)
             .contains(&input.spreading_factor)
         {
             return Err(RadioConfigError::SpreadingFactor(input.spreading_factor));
         }
-        if !(core::CODING_RATE_MIN..=core::CODING_RATE_MAX).contains(&input.coding_rate) {
+        if !(protocol::CODING_RATE_MIN..=protocol::CODING_RATE_MAX).contains(&input.coding_rate) {
             return Err(RadioConfigError::CodingRate(input.coding_rate));
         }
         if let Some(value) = input.airtime_limit_short_centi_percent {
-            if value > core::AIRTIME_LIMIT_CENTI_PERCENT_MAX {
+            if value > protocol::AIRTIME_LIMIT_CENTI_PERCENT_MAX {
                 return Err(RadioConfigError::ShortAirtimeLimit(value));
             }
         }
         if let Some(value) = input.airtime_limit_long_centi_percent {
-            if value > core::AIRTIME_LIMIT_CENTI_PERCENT_MAX {
+            if value > protocol::AIRTIME_LIMIT_CENTI_PERCENT_MAX {
                 return Err(RadioConfigError::LongAirtimeLimit(value));
             }
         }
@@ -245,7 +246,7 @@ impl RadioConfig {
 
     #[must_use]
     pub const fn nominal_bitrate_bps(self) -> u32 {
-        core::nominal_bitrate_bps(self.spreading_factor, self.coding_rate, self.bandwidth_hz)
+        policy::nominal_bitrate_bps(self.spreading_factor, self.coding_rate, self.bandwidth_hz)
     }
 
     #[must_use]
@@ -254,34 +255,49 @@ impl RadioConfig {
         append_selected_command(
             &mut output,
             vport,
-            core::CMD_FREQUENCY,
+            protocol::CMD_FREQUENCY,
             &self.frequency.hz().to_be_bytes(),
         );
         append_selected_command(
             &mut output,
             vport,
-            core::CMD_BANDWIDTH,
+            protocol::CMD_BANDWIDTH,
             &self.bandwidth_hz.to_be_bytes(),
         );
         append_selected_command(
             &mut output,
             vport,
-            core::CMD_TXPOWER,
+            protocol::CMD_TXPOWER,
             &[self.tx_power_dbm as u8],
         );
-        append_selected_command(&mut output, vport, core::CMD_SF, &[self.spreading_factor]);
-        append_selected_command(&mut output, vport, core::CMD_CR, &[self.coding_rate]);
+        append_selected_command(
+            &mut output,
+            vport,
+            protocol::CMD_SF,
+            &[self.spreading_factor],
+        );
+        append_selected_command(&mut output, vport, protocol::CMD_CR, &[self.coding_rate]);
         if let Some(value) = self.airtime_limit_short_centi_percent {
-            append_selected_command(&mut output, vport, core::CMD_ST_ALOCK, &value.to_be_bytes());
+            append_selected_command(
+                &mut output,
+                vport,
+                protocol::CMD_ST_ALOCK,
+                &value.to_be_bytes(),
+            );
         }
         if let Some(value) = self.airtime_limit_long_centi_percent {
-            append_selected_command(&mut output, vport, core::CMD_LT_ALOCK, &value.to_be_bytes());
+            append_selected_command(
+                &mut output,
+                vport,
+                protocol::CMD_LT_ALOCK,
+                &value.to_be_bytes(),
+            );
         }
         append_selected_command(
             &mut output,
             vport,
-            core::CMD_RADIO_STATE,
-            &[core::RADIO_STATE_ON],
+            protocol::CMD_RADIO_STATE,
+            &[protocol::RADIO_STATE_ON],
         );
         output
     }
@@ -293,12 +309,12 @@ pub enum DataFrameError {
 }
 
 pub fn data_frame(vport: VPort, payload: &[u8]) -> Result<Vec<u8>, DataFrameError> {
-    if payload.len() > core::RNODE_FRAME_LEN {
+    if payload.len() > protocol::RNODE_FRAME_LEN {
         return Err(DataFrameError::PayloadTooLarge(payload.len()));
     }
     let mut output = Vec::new();
     append_command(&mut output, CMD_SELECT_INTERFACE, &[vport.get()]);
-    append_command(&mut output, core::CMD_DATA, payload);
+    append_command(&mut output, protocol::CMD_DATA, payload);
     Ok(output)
 }
 
@@ -306,16 +322,16 @@ pub fn data_frame(vport: VPort, payload: &[u8]) -> Result<Vec<u8>, DataFrameErro
 pub const fn detect_frames() -> [u8; 16] {
     [
         FEND,
-        core::CMD_DETECT,
-        core::DETECT_REQ,
+        protocol::CMD_DETECT,
+        protocol::DETECT_REQ,
         FEND,
-        core::CMD_FW_VERSION,
+        protocol::CMD_FW_VERSION,
         0,
         FEND,
-        core::CMD_PLATFORM,
+        protocol::CMD_PLATFORM,
         0,
         FEND,
-        core::CMD_MCU,
+        protocol::CMD_MCU,
         0,
         FEND,
         CMD_INTERFACES,
@@ -384,14 +400,14 @@ pub struct RadioReport {
 impl RadioReport {
     fn apply(&mut self, command: u8, payload: &[u8]) {
         match command {
-            core::CMD_FREQUENCY => self.frequency_hz = be_u32(payload),
-            core::CMD_BANDWIDTH => self.bandwidth_hz = be_u32(payload),
-            core::CMD_TXPOWER => {
+            protocol::CMD_FREQUENCY => self.frequency_hz = be_u32(payload),
+            protocol::CMD_BANDWIDTH => self.bandwidth_hz = be_u32(payload),
+            protocol::CMD_TXPOWER => {
                 self.tx_power_dbm = payload.first().map(|value| i8::from_be_bytes([*value]));
             }
-            core::CMD_SF => self.spreading_factor = payload.first().copied(),
-            core::CMD_CR => self.coding_rate = payload.first().copied(),
-            core::CMD_RADIO_STATE => self.radio_state = payload.first().copied(),
+            protocol::CMD_SF => self.spreading_factor = payload.first().copied(),
+            protocol::CMD_CR => self.coding_rate = payload.first().copied(),
+            protocol::CMD_RADIO_STATE => self.radio_state = payload.first().copied(),
             _ => {}
         }
     }
@@ -415,7 +431,7 @@ impl RadioReport {
         self.bandwidth_hz == Some(config.bandwidth_hz())
             && self.tx_power_dbm == Some(config.tx_power_dbm())
             && self.spreading_factor == Some(config.spreading_factor())
-            && self.radio_state == Some(core::RADIO_STATE_ON)
+            && self.radio_state == Some(protocol::RADIO_STATE_ON)
     }
 }
 
@@ -447,14 +463,14 @@ impl Default for DeviceReport {
 impl DeviceReport {
     pub fn apply(&mut self, command: u8, payload: &[u8]) {
         match command {
-            core::CMD_DETECT => {
-                self.detected = payload.first() == Some(&core::DETECT_RESP);
+            protocol::CMD_DETECT => {
+                self.detected = payload.first() == Some(&protocol::DETECT_RESP);
             }
-            core::CMD_FW_VERSION if payload.len() >= 2 => {
+            protocol::CMD_FW_VERSION if payload.len() >= 2 => {
                 self.firmware_major = Some(payload[0]);
                 self.firmware_minor = Some(payload[1]);
             }
-            core::CMD_PLATFORM => {
+            protocol::CMD_PLATFORM => {
                 self.platform = payload
                     .first()
                     .copied()
@@ -525,10 +541,10 @@ impl PacketPhyState {
             return;
         };
         match command {
-            core::CMD_STAT_RSSI => {
+            protocol::CMD_STAT_RSSI => {
                 self.pending.rssi = Some(RssiDbm::new(i16::from(byte) - 157));
             }
-            core::CMD_STAT_SNR => {
+            protocol::CMD_STAT_SNR => {
                 let snr = SnrQuarterDb::new(i16::from(i8::from_be_bytes([byte])));
                 self.pending.snr = Some(snr);
                 self.pending.quality = SpreadingFactor::from_number(radio.spreading_factor())
@@ -573,7 +589,8 @@ mod tests {
     }
 
     fn decode(bytes: &[u8]) -> std::vec::Vec<(u8, std::vec::Vec<u8>)> {
-        let mut decoder: KissCommandDecoder<{ core::RNODE_FRAME_LEN }> = KissCommandDecoder::new();
+        let mut decoder: KissCommandDecoder<{ protocol::RNODE_FRAME_LEN }> =
+            KissCommandDecoder::new();
         let mut frames = std::vec::Vec::new();
         for &byte in bytes {
             if let Ok(Some((command, payload))) = decoder.feed(byte) {
@@ -605,11 +622,11 @@ mod tests {
     #[test]
     fn reported_platforms_preserve_the_reference_reset_distinction() {
         let mut report = DeviceReport::default();
-        report.apply(core::CMD_PLATFORM, &[0x80]);
+        report.apply(protocol::CMD_PLATFORM, &[0x80]);
         assert_eq!(report.platform(), Some(DevicePlatform::Esp32));
-        report.apply(core::CMD_PLATFORM, &[0x70]);
+        report.apply(protocol::CMD_PLATFORM, &[0x70]);
         assert_eq!(report.platform(), Some(DevicePlatform::Nrf52));
-        report.apply(core::CMD_PLATFORM, &[0xff]);
+        report.apply(protocol::CMD_PLATFORM, &[0xff]);
         assert_eq!(report.platform(), Some(DevicePlatform::Other(0xff)));
     }
 
@@ -665,9 +682,9 @@ mod tests {
     #[test]
     fn firmware_version_is_exposed_for_actionable_runtime_errors() {
         let mut report = DeviceReport::default();
-        report.apply(core::CMD_FW_VERSION, &[1, 73]);
+        report.apply(protocol::CMD_FW_VERSION, &[1, 73]);
         assert_eq!(report.firmware_ok(), Some(false));
-        report.apply(core::CMD_FW_VERSION, &[1, 74]);
+        report.apply(protocol::CMD_FW_VERSION, &[1, 74]);
         assert_eq!(report.firmware_ok(), Some(true));
         assert_eq!(
             report.firmware_version(),
@@ -690,25 +707,25 @@ mod tests {
             commands,
             [
                 CMD_SELECT_INTERFACE,
-                core::CMD_FREQUENCY,
+                protocol::CMD_FREQUENCY,
                 CMD_SELECT_INTERFACE,
-                core::CMD_BANDWIDTH,
+                protocol::CMD_BANDWIDTH,
                 CMD_SELECT_INTERFACE,
-                core::CMD_TXPOWER,
+                protocol::CMD_TXPOWER,
                 CMD_SELECT_INTERFACE,
-                core::CMD_SF,
+                protocol::CMD_SF,
                 CMD_SELECT_INTERFACE,
-                core::CMD_CR,
+                protocol::CMD_CR,
                 CMD_SELECT_INTERFACE,
-                core::CMD_ST_ALOCK,
+                protocol::CMD_ST_ALOCK,
                 CMD_SELECT_INTERFACE,
-                core::CMD_LT_ALOCK,
+                protocol::CMD_LT_ALOCK,
                 CMD_SELECT_INTERFACE,
-                core::CMD_RADIO_STATE,
+                protocol::CMD_RADIO_STATE,
             ]
         );
         assert_eq!(frames[4], (CMD_SELECT_INTERFACE, std::vec![3]));
-        assert_eq!(frames[5], (core::CMD_TXPOWER, std::vec![0xfc]));
+        assert_eq!(frames[5], (protocol::CMD_TXPOWER, std::vec![0xfc]));
     }
 
     #[test]
@@ -750,11 +767,14 @@ mod tests {
         let radio = sample_radio();
         let mut report = DeviceReport::default();
         report.apply(CMD_SELECT_INTERFACE, &[vport.get()]);
-        report.apply(core::CMD_FREQUENCY, &radio.frequency().hz().to_be_bytes());
-        report.apply(core::CMD_BANDWIDTH, &radio.bandwidth_hz().to_be_bytes());
-        report.apply(core::CMD_TXPOWER, &[radio.tx_power_dbm() as u8]);
-        report.apply(core::CMD_SF, &[radio.spreading_factor()]);
-        report.apply(core::CMD_RADIO_STATE, &[core::RADIO_STATE_ON]);
+        report.apply(
+            protocol::CMD_FREQUENCY,
+            &radio.frequency().hz().to_be_bytes(),
+        );
+        report.apply(protocol::CMD_BANDWIDTH, &radio.bandwidth_hz().to_be_bytes());
+        report.apply(protocol::CMD_TXPOWER, &[radio.tx_power_dbm() as u8]);
+        report.apply(protocol::CMD_SF, &[radio.spreading_factor()]);
+        report.apply(protocol::CMD_RADIO_STATE, &[protocol::RADIO_STATE_ON]);
         assert_eq!(report.selected(), vport);
         assert!(report.radio(vport).all_validated_params_present());
         assert!(report.radio(vport).validates(radio));
@@ -765,12 +785,15 @@ mod tests {
     fn coding_rate_is_reported_but_not_part_of_reference_readback_validation() {
         let radio = sample_radio();
         let mut report = DeviceReport::default();
-        report.apply(core::CMD_FREQUENCY, &radio.frequency().hz().to_be_bytes());
-        report.apply(core::CMD_BANDWIDTH, &radio.bandwidth_hz().to_be_bytes());
-        report.apply(core::CMD_TXPOWER, &[radio.tx_power_dbm() as u8]);
-        report.apply(core::CMD_SF, &[radio.spreading_factor()]);
-        report.apply(core::CMD_CR, &[radio.coding_rate().saturating_add(1)]);
-        report.apply(core::CMD_RADIO_STATE, &[core::RADIO_STATE_ON]);
+        report.apply(
+            protocol::CMD_FREQUENCY,
+            &radio.frequency().hz().to_be_bytes(),
+        );
+        report.apply(protocol::CMD_BANDWIDTH, &radio.bandwidth_hz().to_be_bytes());
+        report.apply(protocol::CMD_TXPOWER, &[radio.tx_power_dbm() as u8]);
+        report.apply(protocol::CMD_SF, &[radio.spreading_factor()]);
+        report.apply(protocol::CMD_CR, &[radio.coding_rate().saturating_add(1)]);
+        report.apply(protocol::CMD_RADIO_STATE, &[protocol::RADIO_STATE_ON]);
         assert!(report.radio(VPort::ZERO).validates(radio));
     }
 
@@ -778,11 +801,11 @@ mod tests {
     fn firmware_check_matches_the_reference_comparison() {
         let mut report = DeviceReport::default();
         assert_eq!(report.firmware_ok(), None);
-        report.apply(core::CMD_FW_VERSION, &[1, 73]);
+        report.apply(protocol::CMD_FW_VERSION, &[1, 73]);
         assert_eq!(report.firmware_ok(), Some(false));
-        report.apply(core::CMD_FW_VERSION, &[1, 74]);
+        report.apply(protocol::CMD_FW_VERSION, &[1, 74]);
         assert_eq!(report.firmware_ok(), Some(true));
-        report.apply(core::CMD_FW_VERSION, &[2, 0]);
+        report.apply(protocol::CMD_FW_VERSION, &[2, 0]);
         assert_eq!(report.firmware_ok(), Some(false));
     }
 }

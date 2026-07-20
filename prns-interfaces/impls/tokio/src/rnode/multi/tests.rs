@@ -4,11 +4,12 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
 
-use prns_core::interfaces::kiss::transmission_control::{
+use prns_core::interfaces::kiss::{
     KissTransmissionControl, ReadyCommandFlowControl, StationIdInterval, StationIdWireFormat,
 };
 use prns_core::interfaces::kiss_framing;
 use prns_core::interfaces::rnode::multi::{RadioConfigInput, VPort};
+use prns_core::interfaces::rnode::policy;
 use prns_core::interfaces::{BitrateBps, ConnectionState, InterfaceStatus};
 use prns_runtime::reactor::airtime::AirtimeLedger;
 use prns_runtime::reactor::driver::TokioInterfaceStatus;
@@ -39,14 +40,14 @@ fn member(vport: u8) -> RNodeMultiMemberSettings {
         VPort::new(vport).expect("valid vport"),
         radio,
         ReadyCommandFlowControl::Disabled,
-        core::policy_for_bitrate(BitrateBps::guess(u64::from(radio.nominal_bitrate_bps()))),
+        policy::policy_for_bitrate(BitrateBps::guess(u64::from(radio.nominal_bitrate_bps()))),
         RNodeMultiAccess::Open,
         b"test-device",
     )
 }
 
 async fn read_commands<R: AsyncRead + Unpin>(wire: &mut R, wanted: usize) -> Vec<(u8, Vec<u8>)> {
-    let mut decoder = core::CommandDecoder::new();
+    let mut decoder = protocol::CommandDecoder::new();
     let mut read = [0u8; 512];
     let mut commands = Vec::new();
     while commands.len() < wanted {
@@ -88,25 +89,25 @@ async fn answer_radio<RW: AsyncRead + AsyncWrite + Unpin>(
     write_command(wire, multi::CMD_SELECT_INTERFACE, &[member.vport.get()]).await;
     write_command(
         wire,
-        core::CMD_FREQUENCY,
+        protocol::CMD_FREQUENCY,
         &member.radio.frequency().hz().to_be_bytes(),
     )
     .await;
     write_command(
         wire,
-        core::CMD_BANDWIDTH,
+        protocol::CMD_BANDWIDTH,
         &member.radio.bandwidth_hz().to_be_bytes(),
     )
     .await;
     write_command(
         wire,
-        core::CMD_TXPOWER,
+        protocol::CMD_TXPOWER,
         &[member.radio.tx_power_dbm() as u8],
     )
     .await;
-    write_command(wire, core::CMD_SF, &[member.radio.spreading_factor()]).await;
-    write_command(wire, core::CMD_CR, &[member.radio.coding_rate()]).await;
-    write_command(wire, core::CMD_RADIO_STATE, &[core::RADIO_STATE_ON]).await;
+    write_command(wire, protocol::CMD_SF, &[member.radio.spreading_factor()]).await;
+    write_command(wire, protocol::CMD_CR, &[member.radio.coding_rate()]).await;
+    write_command(wire, protocol::CMD_RADIO_STATE, &[protocol::RADIO_STATE_ON]).await;
 }
 
 async fn answer_bring_up<RW: AsyncRead + AsyncWrite + Unpin>(
@@ -114,11 +115,14 @@ async fn answer_bring_up<RW: AsyncRead + AsyncWrite + Unpin>(
     members: &[RNodeMultiMemberSettings],
 ) {
     let detect = read_commands(wire, 5).await;
-    assert_eq!(detect[0], (core::CMD_DETECT, vec![core::DETECT_REQ]));
+    assert_eq!(
+        detect[0],
+        (protocol::CMD_DETECT, vec![protocol::DETECT_REQ])
+    );
     assert_eq!(detect[4].0, multi::CMD_INTERFACES);
-    write_command(wire, core::CMD_DETECT, &[core::DETECT_RESP]).await;
-    write_command(wire, core::CMD_FW_VERSION, &[1, 80]).await;
-    write_command(wire, core::CMD_PLATFORM, &[0x80]).await;
+    write_command(wire, protocol::CMD_DETECT, &[protocol::DETECT_RESP]).await;
+    write_command(wire, protocol::CMD_FW_VERSION, &[1, 80]).await;
+    write_command(wire, protocol::CMD_PLATFORM, &[0x80]).await;
     write_command(wire, multi::CMD_INTERFACES, &[0, 0x10, 1, 0x20]).await;
     for member in members {
         answer_radio(wire, member).await;
@@ -200,8 +204,8 @@ async fn bring_up_detects_inventory_and_validates_each_selected_radio() {
     let expected = members.clone();
     let (mut host, mut device) = tokio::io::duplex(16_384);
     let task = tokio::spawn(async move {
-        let mut decoder = core::CommandDecoder::new();
-        let mut read = [0u8; core::READ_BUF_LEN];
+        let mut decoder = protocol::CommandDecoder::new();
+        let mut read = [0u8; protocol::READ_BUF_LEN];
         bring_up(
             &mut host,
             &members,
@@ -226,8 +230,8 @@ async fn bring_up_names_the_missing_vport_and_reported_inventory() {
     let members = vec![member(0), member(1)];
     let (mut host, mut device) = tokio::io::duplex(4096);
     let task = tokio::spawn(async move {
-        let mut decoder = core::CommandDecoder::new();
-        let mut read = [0u8; core::READ_BUF_LEN];
+        let mut decoder = protocol::CommandDecoder::new();
+        let mut read = [0u8; protocol::READ_BUF_LEN];
         bring_up(
             &mut host,
             &members,
@@ -239,8 +243,8 @@ async fn bring_up_names_the_missing_vport_and_reported_inventory() {
     });
 
     let _ = read_commands(&mut device, 5).await;
-    write_command(&mut device, core::CMD_DETECT, &[core::DETECT_RESP]).await;
-    write_command(&mut device, core::CMD_FW_VERSION, &[1, 80]).await;
+    write_command(&mut device, protocol::CMD_DETECT, &[protocol::DETECT_RESP]).await;
+    write_command(&mut device, protocol::CMD_FW_VERSION, &[1, 80]).await;
     write_command(&mut device, multi::CMD_INTERFACES, &[0, 0x10]).await;
     let error = task
         .await
@@ -257,7 +261,7 @@ async fn selected_vport_demultiplexes_inbound_packets_and_metrics() {
     let settings = vec![member(0), member(1)];
     let (mut wire, mut inbound) = wire_cycle(&settings, None);
     let (mut host, _device) = tokio::io::duplex(1024);
-    let mut decoder = core::CommandDecoder::new();
+    let mut decoder = protocol::CommandDecoder::new();
 
     let low_frame = multi::data_frame(VPort::ZERO, b"low").expect("low frame");
     wire.apply_read(&low_frame, &mut decoder, &mut host)
@@ -284,22 +288,22 @@ async fn selected_vport_demultiplexes_inbound_packets_and_metrics() {
 async fn hardware_error_frames_end_the_live_wire_cycle_with_actionable_failures() {
     let cases = [
         (
-            core::ERROR_INIT_RADIO,
+            protocol::ERROR_INIT_RADIO,
             "RNodeMulti radio initialisation failure",
         ),
         (
-            core::ERROR_TX_FAILED,
+            protocol::ERROR_TX_FAILED,
             "RNodeMulti hardware transmit failure",
         ),
-        (core::ERROR_EEPROM_LOCKED, "RNodeMulti EEPROM is locked"),
+        (protocol::ERROR_EEPROM_LOCKED, "RNodeMulti EEPROM is locked"),
         (0xff, "RNodeMulti unknown hardware failure"),
     ];
     for (code, expected) in cases {
         let (mut wire, _) = wire_cycle(&[member(0)], None);
         let (mut host, _device) = tokio::io::duplex(1024);
-        let mut decoder = core::CommandDecoder::new();
+        let mut decoder = protocol::CommandDecoder::new();
         let mut frame = [0u8; 16];
-        let frame_len = kiss_framing::encode_with_command(core::CMD_ERROR, &[code], &mut frame)
+        let frame_len = kiss_framing::encode_with_command(protocol::CMD_ERROR, &[code], &mut frame)
             .expect("error frame fits");
         let error = wire
             .apply_read(&frame[..frame_len], &mut decoder, &mut host)
@@ -313,15 +317,16 @@ async fn hardware_error_frames_end_the_live_wire_cycle_with_actionable_failures(
 async fn only_an_online_esp32_reset_ends_the_live_wire_cycle() {
     let (mut wire, _) = wire_cycle(&[member(0)], None);
     let (mut host, _device) = tokio::io::duplex(1024);
-    let mut decoder = core::CommandDecoder::new();
+    let mut decoder = protocol::CommandDecoder::new();
     let mut frame = [0u8; 16];
-    let platform_len = kiss_framing::encode_with_command(core::CMD_PLATFORM, &[0x80], &mut frame)
-        .expect("platform frame fits");
+    let platform_len =
+        kiss_framing::encode_with_command(protocol::CMD_PLATFORM, &[0x80], &mut frame)
+            .expect("platform frame fits");
     wire.apply_read(&frame[..platform_len], &mut decoder, &mut host)
         .await
         .expect("late platform report applies");
     let frame_len =
-        kiss_framing::encode_with_command(core::CMD_RESET, &[core::RESET_RESP], &mut frame)
+        kiss_framing::encode_with_command(protocol::CMD_RESET, &[protocol::RESET_RESP], &mut frame)
             .expect("reset frame fits");
     let error = wire
         .apply_read(&frame[..frame_len], &mut decoder, &mut host)
@@ -331,14 +336,15 @@ async fn only_an_online_esp32_reset_ends_the_live_wire_cycle() {
     assert_eq!(error.to_string(), "RNodeMulti ESP32 reset while online");
 
     let (mut wire, _) = wire_cycle(&[member(0)], None);
-    let mut decoder = core::CommandDecoder::new();
-    let platform_len = kiss_framing::encode_with_command(core::CMD_PLATFORM, &[0x70], &mut frame)
-        .expect("platform frame fits");
+    let mut decoder = protocol::CommandDecoder::new();
+    let platform_len =
+        kiss_framing::encode_with_command(protocol::CMD_PLATFORM, &[0x70], &mut frame)
+            .expect("platform frame fits");
     wire.apply_read(&frame[..platform_len], &mut decoder, &mut host)
         .await
         .expect("late platform report applies");
     let frame_len =
-        kiss_framing::encode_with_command(core::CMD_RESET, &[core::RESET_RESP], &mut frame)
+        kiss_framing::encode_with_command(protocol::CMD_RESET, &[protocol::RESET_RESP], &mut frame)
             .expect("reset frame fits");
     wire.apply_read(&frame[..frame_len], &mut decoder, &mut host)
         .await
@@ -366,7 +372,7 @@ async fn ready_releases_each_radios_own_queue_without_blocking_the_other_radio()
         read_commands(&mut device, 2).await,
         vec![
             (multi::CMD_SELECT_INTERFACE, vec![0]),
-            (core::CMD_DATA, b"low-one".to_vec())
+            (protocol::CMD_DATA, b"low-one".to_vec())
         ]
     );
 
@@ -392,7 +398,7 @@ async fn ready_releases_each_radios_own_queue_without_blocking_the_other_radio()
         read_commands(&mut device, 2).await,
         vec![
             (multi::CMD_SELECT_INTERFACE, vec![1]),
-            (core::CMD_DATA, b"high".to_vec())
+            (protocol::CMD_DATA, b"high".to_vec())
         ]
     );
 
@@ -403,7 +409,7 @@ async fn ready_releases_each_radios_own_queue_without_blocking_the_other_radio()
         read_commands(&mut device, 2).await,
         vec![
             (multi::CMD_SELECT_INTERFACE, vec![0]),
-            (core::CMD_DATA, b"low-two".to_vec())
+            (protocol::CMD_DATA, b"low-two".to_vec())
         ]
     );
 }
@@ -438,9 +444,9 @@ async fn station_identification_armed_by_one_radio_broadcasts_on_every_radio() {
         read_commands(&mut device, 4).await,
         vec![
             (multi::CMD_SELECT_INTERFACE, vec![0]),
-            (core::CMD_DATA, b"N0CALL".to_vec()),
+            (protocol::CMD_DATA, b"N0CALL".to_vec()),
             (multi::CMD_SELECT_INTERFACE, vec![1]),
-            (core::CMD_DATA, b"N0CALL".to_vec()),
+            (protocol::CMD_DATA, b"N0CALL".to_vec()),
         ]
     );
 }

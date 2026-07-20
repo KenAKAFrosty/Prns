@@ -52,10 +52,7 @@ pub mod interface_discovery;
     feature = "backbone",
     feature = "i2p"
 ))]
-mod framed_stream;
-
-#[cfg(any(feature = "kiss", feature = "ax25", feature = "rnode"))]
-mod kiss_deadline;
+mod byte_stream;
 
 #[cfg(any(feature = "tcp", feature = "i2p"))]
 pub mod tcp;
@@ -66,27 +63,14 @@ pub mod udp;
 #[cfg(feature = "serial")]
 pub mod serial;
 
-#[cfg(feature = "serial")]
-pub mod serial_host;
-
 #[cfg(feature = "kiss")]
 pub mod kiss;
 
 #[cfg(feature = "rnode")]
 pub mod rnode;
-#[cfg(feature = "rnode")]
-mod rnode_ble;
-#[cfg(feature = "config")]
-mod rnode_host;
-
-#[cfg(feature = "rnode")]
-pub mod rnode_multi;
 
 #[cfg(feature = "pipe")]
 pub mod pipe;
-
-#[cfg(feature = "pipe")]
-pub mod pipe_host;
 
 #[cfg(feature = "config")]
 mod host_network;
@@ -101,7 +85,7 @@ pub mod i2p;
 pub mod weave;
 
 #[cfg(feature = "ax25")]
-pub mod ax25;
+pub mod ax25_kiss;
 
 #[cfg(feature = "backbone")]
 pub mod backbone;
@@ -116,10 +100,7 @@ pub mod wifi_direct;
 pub mod wifi_aware;
 
 #[cfg(feature = "usb")]
-pub mod usb;
-
-#[cfg(feature = "usb")]
-pub mod usb_host;
+pub mod usb_auto;
 
 #[cfg(feature = "shared-instance")]
 pub mod shared_instance;

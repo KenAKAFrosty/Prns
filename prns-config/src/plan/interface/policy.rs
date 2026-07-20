@@ -1,12 +1,12 @@
 use std::collections::BTreeMap;
 
-use prns_core::interfaces::ax25_kiss::core as ax25_core;
+use prns_core::interfaces::ax25_kiss;
 use prns_core::interfaces::bluetooth_auto::core as bluetooth_core;
 use prns_core::interfaces::i2p::core as i2p_core;
-use prns_core::interfaces::kiss::core as kiss_core;
-use prns_core::interfaces::pipe::core as pipe_core;
-use prns_core::interfaces::serial::core as serial_core;
-use prns_core::interfaces::usb_auto::core as usb_auto_core;
+use prns_core::interfaces::kiss;
+use prns_core::interfaces::pipe;
+use prns_core::interfaces::serial;
+use prns_core::interfaces::usb_auto;
 use prns_core::interfaces::weave::core as weave_core;
 use prns_core::interfaces::wifi_auto::core as wifi_core;
 use prns_core::interfaces::{
@@ -169,7 +169,7 @@ fn interface_defaults(medium: &PlannedMedium) -> Result<InterfaceDefaults, PlanE
         PlannedMedium::Udp { .. } => Ok(udp::DEFAULTS),
         PlannedMedium::I2p { .. } => Ok(i2p_core::DEFAULTS),
         PlannedMedium::Weave { .. } => Ok(weave_core::DEFAULTS),
-        PlannedMedium::PrnsUsbAuto => Ok(usb_auto_core::HOST_DEFAULTS),
+        PlannedMedium::PrnsUsbAuto => Ok(usb_auto::HOST_DEFAULTS),
         PlannedMedium::PrnsBluetoothAuto => Ok(bluetooth_core::defaults_for_bitrate(
             bluetooth_core::BLE_BITRATE_GUESS_BPS,
         )),
@@ -181,11 +181,11 @@ fn interface_defaults(medium: &PlannedMedium) -> Result<InterfaceDefaults, PlanE
                 BitrateBps::new(u64::from(line.baud())).ok_or(PlanErrorKind::InvalidSetting {
                     key: interface_key::SPEED,
                 })?;
-            Ok(serial_core::defaults_for_bitrate(bitrate))
+            Ok(serial::defaults_for_bitrate(bitrate))
         }
-        PlannedMedium::Kiss { .. } => Ok(kiss_core::DEFAULTS),
-        PlannedMedium::Ax25Kiss { .. } => Ok(ax25_core::DEFAULTS),
-        PlannedMedium::Pipe { .. } => Ok(pipe_core::DEFAULTS),
+        PlannedMedium::Kiss { .. } => Ok(kiss::DEFAULTS),
+        PlannedMedium::Ax25Kiss { .. } => Ok(ax25_kiss::DEFAULTS),
+        PlannedMedium::Pipe { .. } => Ok(pipe::DEFAULTS),
         PlannedMedium::Rnode {
             bandwidth_hz,
             spreading_factor,

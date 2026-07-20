@@ -9,7 +9,7 @@ use prns_runtime::reactor::airtime::AirtimeLedger;
 use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
 use prns_runtime::reactor::throughput::ThroughputLedger;
 
-use crate::framed_stream;
+use crate::byte_stream::framing;
 
 use super::super::sam::{I2pPublicDestination, SamSessionDestination};
 use super::super::{
@@ -85,8 +85,8 @@ where
         let mut airtime = AirtimeLedger::new();
         let mut throughput = ThroughputLedger::new();
         let started = tokio::time::Instant::now();
-        let mut buffers = framed_stream::FramedBuffers::<
-            framed_stream::HdlcFraming,
+        let mut buffers = framing::FramedBuffers::<
+            framing::HdlcFraming,
             { core::READ_BUF_LEN },
             { core::FRAMED_LEN },
         >::new();
@@ -172,11 +172,11 @@ where
             self.status.clear_issue();
             self.status.set_connection(ConnectionState::Connected);
             seam.request_tunnel_synthesis().await;
-            framed_stream::serve_with_hdlc_idle_watchdog(
+            framing::serve_with_hdlc_idle_watchdog(
                 stream,
                 &mut buffers,
                 &mut seam,
-                &mut framed_stream::WireMeters {
+                &mut framing::WireMeters {
                     status: self.status.wire(),
                     airtime: &mut airtime,
                     throughput: &mut throughput,
@@ -264,16 +264,16 @@ where
         let mut airtime = AirtimeLedger::new();
         let mut throughput = ThroughputLedger::new();
         let started = tokio::time::Instant::now();
-        let mut buffers = framed_stream::FramedBuffers::<
-            framed_stream::HdlcFraming,
+        let mut buffers = framing::FramedBuffers::<
+            framing::HdlcFraming,
             { core::READ_BUF_LEN },
             { core::FRAMED_LEN },
         >::new();
-        framed_stream::serve_with_hdlc_idle_watchdog(
+        framing::serve_with_hdlc_idle_watchdog(
             stream,
             &mut buffers,
             &mut seam,
-            &mut framed_stream::WireMeters {
+            &mut framing::WireMeters {
                 status: self.status.wire(),
                 airtime: &mut airtime,
                 throughput: &mut throughput,
