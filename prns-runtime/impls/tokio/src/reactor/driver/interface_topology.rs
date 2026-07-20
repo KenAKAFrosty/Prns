@@ -1,7 +1,7 @@
 use prns_core::interfaces::{AttachedInterfaces, IndexedAttachedInterfaces};
 
 use crate::engine::{Departure, EngineState, InstantMillis};
-use crate::interfaces::ifac::InterfaceIfac;
+use crate::interfaces::InterfaceIfac;
 use crate::interfaces::{InterfaceDescriptor, InterfaceId};
 use crate::reactor::interface_seam::{frame_cap_for, BROADCAST_WIRE_FRAME_LEN};
 use crate::reactor::Host;

@@ -7,7 +7,7 @@ use crate::engine::{
     ClassifiedInboundPacket, Departure, EngineState, IngestIo, IssuedCommand, Journaled,
     ProofRequest,
 };
-use crate::interfaces::ifac::InterfaceIfac;
+use crate::interfaces::InterfaceIfac;
 use crate::interfaces::{AttachedInterfaces, InboundPacket, InterfaceDescriptor, InterfaceId};
 use crate::reactor::grant::{AnyGrantConsumer, FrameTarget};
 use crate::reactor::interface_seam::{EMBEDDED_MAX_LINK_MTU, EMBEDDED_MAX_WIRE_FRAME_LEN};

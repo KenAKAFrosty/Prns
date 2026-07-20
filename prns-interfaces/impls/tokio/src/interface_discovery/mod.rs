@@ -14,8 +14,8 @@ use prns_core::interface_discovery::{
     DiscoveryIngressFilter, DiscoveryNotApplicable, DiscoveryRecord, DiscoveryRejection,
     InterfaceDiscoveryPolicy,
 };
-use prns_core::interfaces::ifac::{IfacContext, IfacSize};
 use prns_core::interfaces::{BitrateBps, InterfaceId, InterfaceStatus, ReportsStatus};
+use prns_core::interfaces::{IfacContext, IfacSize};
 use prns_core::routing::announce::AnnounceObservation;
 use prns_core::units::{HopCount, InstantMillis};
 use prns_core::wire::DestinationHash;

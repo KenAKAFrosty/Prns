@@ -8,7 +8,7 @@ use crate::interfaces::{
 pub const I2P_BITRATE_ESTIMATE: BitrateBps = BitrateBps::guess(256_000);
 pub const I2P_HW_MTU: usize = 1_064;
 pub const READ_BUF_LEN: usize = 4_096;
-pub const FRAME_LEN: usize = I2P_HW_MTU + crate::interfaces::ifac::IFAC_MAX_SIZE;
+pub const FRAME_LEN: usize = I2P_HW_MTU + crate::interfaces::IFAC_MAX_SIZE;
 pub const FRAMED_LEN: usize = rns_serial_framing::max_encoded_len(FRAME_LEN);
 
 pub const DEFAULTS: InterfaceDefaults = InterfaceDefaults {

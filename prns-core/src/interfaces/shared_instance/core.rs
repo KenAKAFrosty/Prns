@@ -5,7 +5,7 @@
 //! out our real interfaces as if they were ours.
 
 use crate::interfaces::rns_serial_framing;
-use crate::interfaces::wire_limits::MAX_WIRE_FRAME_LEN;
+use crate::interfaces::MAX_WIRE_FRAME_LEN;
 use crate::interfaces::{
     AnnounceBandwidthCap, BitrateBps, ConfiguredInterfacePolicy, EffectiveInterfacePolicy,
     EgressCapability, IngressCapability, InterfaceCapabilities, InterfaceDefaults,

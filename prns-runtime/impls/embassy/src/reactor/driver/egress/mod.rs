@@ -2,7 +2,7 @@ use embassy_sync::blocking_mutex::raw::RawMutex;
 use heapless::Vec as HeaplessVec;
 
 use crate::engine::{EngineReaction, FanTarget, InstantMillis, Journaled};
-use crate::interfaces::ifac::InterfaceIfac;
+use crate::interfaces::InterfaceIfac;
 use crate::interfaces::{InterfaceDescriptor, InterfaceId, InterfaceKind};
 use crate::reactor::announce_pacer::{AnnouncePacer, FixedPacerQueue};
 use crate::reactor::grant::AnyGrantProducer;

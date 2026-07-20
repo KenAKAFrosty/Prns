@@ -5,7 +5,11 @@
 //! separate: the runtime joins it with these vitals to mint an [`InterfaceSnapshot`] that a
 //! face renders. Each host impls the handle behind this trait; the app reads only the trait.
 
-use crate::interfaces::{ConnectionState, InterfaceId};
+mod connection;
+
+pub use connection::ConnectionState;
+
+use crate::interfaces::InterfaceId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AirtimeUtilization {

@@ -7,11 +7,11 @@ use tokio::sync::mpsc::{self, UnboundedReceiver};
 use tokio::sync::oneshot;
 
 use crate::engine::Departure;
-use crate::interfaces::ifac::{IfacContext, IfacSize};
 use crate::interfaces::{
     ConnectionView, InterfaceId, InterfaceKind, InterfaceOriginKind, InterfaceSnapshot,
     InterfaceStatus, InterfaceVitals, Membership, ReportsStatus, StatusView,
 };
+use crate::interfaces::{IfacContext, IfacSize};
 use crate::node_introspection::{InterfaceIfacSnapshot, InterfaceInventoryEntry};
 use crate::reactor::driver::{HostCommand, TokioInterfaceStatus};
 use crate::reactor::interface_seam::Interface;

@@ -13,7 +13,7 @@ use crate::engine::test_support::{
     bytes_from_hex, pin_transport_id, TestStorageLayout, RNS_1_3_5_ANNOUNCE, TEST_TRANSPORT_ID,
 };
 use crate::engine::{EngineState, IssuedCommand, Journaled};
-use crate::interfaces::ifac::InterfaceIfac;
+use crate::interfaces::InterfaceIfac;
 use crate::interfaces::{InterfaceDescriptor, InterfaceId};
 use crate::reactor::grant::GrantProducer;
 use crate::reactor::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
@@ -28,7 +28,7 @@ use super::{run_pooled, InterfaceLifecycle, PooledWiring};
 
 #[test]
 fn a_pooled_ifac_slot_added_at_runtime_opens_inbound_then_frees_on_remove() {
-    use crate::interfaces::ifac::{IfacContext, IfacSize};
+    use crate::interfaces::{IfacContext, IfacSize};
 
     let source = InterfaceId::new([0xA1; 8]);
     let network = IfacContext::derive(Some("testnet"), Some("s3cret"), IfacSize::NARROW).unwrap();

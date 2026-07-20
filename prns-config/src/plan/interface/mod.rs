@@ -27,7 +27,7 @@ pub(super) use policy::{
 #[cfg(test)]
 pub(super) use medium::RNS_DEFAULT_SERIAL_BAUD;
 
-use prns_core::interfaces::ifac::IfacSize;
+use prns_core::interfaces::IfacSize;
 use prns_core::interfaces::{AnnounceRateLimit, EffectiveInterfacePolicy, InterfaceCommonPolicy};
 
 use self::discovery::plan_interface_discovery as discovery_plan;

@@ -1,10 +1,21 @@
+mod capabilities;
+mod common;
+mod mode;
+
+pub use capabilities::{
+    Capabilities, EgressCapability, IngressCapability, InterfaceCapabilities,
+    InterfaceCapabilitiesError, TransportCapability,
+};
+pub use common::{
+    AirtimeDutyCycle, AnnounceBandwidthCap, AnnounceRateLimit, FrequencyMilliHertz,
+    IngressControlPolicy, InterfaceCommonPolicy, InterfaceForwardingPolicy,
+    PathRequestEgressControl,
+};
+pub use mode::InterfaceMode;
+
 use core::num::NonZeroUsize;
 
-use crate::interfaces::{
-    hardware_mtu_for_bitrate, AirtimeDutyCycle, AnnounceBandwidthCap, AnnounceRateLimit,
-    BitrateBps, InterfaceCapabilities, InterfaceCommonPolicy, InterfaceDescriptor, InterfaceId,
-    InterfaceMode,
-};
+use crate::interfaces::{hardware_mtu_for_bitrate, BitrateBps, InterfaceDescriptor, InterfaceId};
 
 pub const TRAVERSED_NETWORK_BITRATE_ESTIMATE: BitrateBps = BitrateBps::guess(500_000_000);
 pub const LOCAL_INTERFACE_BITRATE_ESTIMATE: BitrateBps = BitrateBps::guess(1_000_000_000);

@@ -184,8 +184,8 @@ async fn write_message<W: Write>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prns_core::interfaces::ifac::IFAC_MAX_SIZE;
     use prns_core::interfaces::InterfaceStatus;
+    use prns_core::interfaces::IFAC_MAX_SIZE;
     use prns_runtime::reactor::driver::{leaked_grant_lane, EmbassyInterfaceSeam};
     use prns_runtime::reactor::grant::{GrantConsumer, GrantProducer};
 

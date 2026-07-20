@@ -7,7 +7,7 @@ use crate::identity::destination_identity::{
     NoDestinationIdentityAppData, NoDestinationIdentityTable,
 };
 use crate::identity::held::FixedHeldIdentityTable;
-use crate::interfaces::wire_limits::EMBEDDED_MAX_LINK_MTU;
+use crate::interfaces::EMBEDDED_MAX_LINK_MTU;
 use crate::routing::announce::defaults::MAX_ANNOUNCE_IDS_PER_DESTINATION;
 use crate::routing::announce::destination_announce_limit::{
     destination_announce_limit_index_buckets, FixedHeapDestinationAnnounceLimitTable,

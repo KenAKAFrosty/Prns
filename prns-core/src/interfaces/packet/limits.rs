@@ -1,5 +1,5 @@
 use super::ifac::IFAC_MAX_SIZE;
-use super::InterfaceDescriptor;
+use crate::interfaces::InterfaceDescriptor;
 
 pub const MAX_WIRE_FRAME_LEN: usize = crate::routing::links::MAX_LINK_MTU + IFAC_MAX_SIZE;
 

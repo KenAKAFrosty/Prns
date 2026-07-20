@@ -10,7 +10,7 @@ use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 
 use crate::engine::Departure;
-use crate::interfaces::ifac::IfacContext;
+use crate::interfaces::IfacContext;
 use crate::interfaces::{
     ConnectionView, InterfaceId, InterfaceKind, InterfaceOriginKind, InterfaceSnapshot, Membership,
     ReportsStatus, StatusView,

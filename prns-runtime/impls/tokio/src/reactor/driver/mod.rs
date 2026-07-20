@@ -2,7 +2,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::time::Instant;
 
 use crate::engine::{EngineState, InstantMillis, Journaled, NextWake, ProofRequest, WakeReason};
-use crate::interfaces::ifac::InterfaceIfac;
+use crate::interfaces::InterfaceIfac;
 use crate::interfaces::{InterfaceDescriptor, InterfaceId};
 use crate::reactor::kernel::{fire_due_reason, merge_wake_schedules_delta};
 use crate::reactor::AppDeciders;

@@ -5,7 +5,7 @@
 
 use heapless::Vec as HeaplessVec;
 
-use crate::interfaces::ifac::IFAC_MAX_SIZE;
+use crate::interfaces::IFAC_MAX_SIZE;
 use crate::interfaces::{
     AnnounceBandwidthCap, BitrateBps, ConfiguredInterfacePolicy, EgressCapability,
     IngressCapability, InterfaceCapabilities, InterfaceDefaults, InterfaceDescriptor, InterfaceId,

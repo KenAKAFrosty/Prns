@@ -24,7 +24,7 @@ use crate::interfaces::{
 /// bound (`len(data_buffer) < self.HW_MTU`).
 pub const READ_BUF_LEN: usize = 256;
 /// The deframer's payload ceiling: the hardware MTU plus the access tag a frame may carry.
-pub const RNODE_FRAME_LEN: usize = RNODE_HW_MTU + crate::interfaces::ifac::IFAC_MAX_SIZE;
+pub const RNODE_FRAME_LEN: usize = RNODE_HW_MTU + crate::interfaces::IFAC_MAX_SIZE;
 /// The outbound scratch ceiling: a full frame, KISS-escaped worst case.
 pub const FRAMED_LEN: usize = kiss_framing::max_encoded_len(RNODE_FRAME_LEN);
 pub type CommandDecoder = KissCommandDecoder<RNODE_FRAME_LEN>;

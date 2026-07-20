@@ -116,7 +116,7 @@ pub struct AddInterfaceCommand {
     pub inbound: TokioGrantConsumer,
     pub egress: TokioGrantProducer,
     pub connection: Option<ConnectionView>,
-    pub ifac: Option<crate::interfaces::ifac::IfacContext>,
+    pub ifac: Option<crate::interfaces::IfacContext>,
 }
 
 #[derive(Debug)]

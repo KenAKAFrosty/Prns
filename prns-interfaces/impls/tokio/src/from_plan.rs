@@ -17,12 +17,12 @@ use prns_config::{
 };
 use prns_core::identity::IdentityHash;
 use prns_core::interfaces::ax25_kiss::core::Ax25AddressError;
-use prns_core::interfaces::ifac::IfacContext;
 use prns_core::interfaces::kiss::transmission_control::{
     EmptyStationIdentification, ReadyCommandFlowControl, ReadyTimeout, StationIdInterval,
     StationIdWireFormat, StationIdentification,
 };
 use prns_core::interfaces::weave::core as weave_core;
+use prns_core::interfaces::IfacContext;
 use prns_core::interfaces::{InterfaceId, InterfaceOriginKind};
 use prns_runtime::interfaces::kiss::core::TncConfig;
 use prns_runtime::interfaces::rnode::core::{RadioConfig, RadioConfigError, RadioConfigInput};

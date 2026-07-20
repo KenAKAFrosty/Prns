@@ -12,7 +12,7 @@ use crate::engine::test_support::{
     bytes_from_hex, pin_transport_id, TestStorageLayout, RNS_1_3_5_ANNOUNCE, TEST_TRANSPORT_ID,
 };
 use crate::engine::{EngineState, IssuedCommand, Journaled};
-use crate::interfaces::ifac::InterfaceIfac;
+use crate::interfaces::InterfaceIfac;
 use crate::interfaces::{AttachedInterfaces, InterfaceDescriptor, InterfaceId};
 use crate::reactor::grant::{AnyGrantConsumer, AnyGrantProducer, GrantConsumer, GrantProducer};
 use crate::reactor::interface_seam::{Interface, InterfaceSeam, EMBEDDED_MAX_WIRE_FRAME_LEN};
@@ -64,7 +64,7 @@ impl<M: RawMutex, const SLOT: usize> Interface for EmbassyLoopbackInterface<'_, 
 
 #[test]
 fn an_ifac_frame_crosses_the_seam_and_leaves_masked_through_the_peer() {
-    use crate::interfaces::ifac::{IfacContext, IfacSize};
+    use crate::interfaces::{IfacContext, IfacSize};
 
     let source = InterfaceId::new([0xA1; 8]);
     let peer = InterfaceId::new([0xB2; 8]);
