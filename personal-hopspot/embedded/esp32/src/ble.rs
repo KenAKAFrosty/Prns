@@ -1,6 +1,8 @@
 #[cfg(target_arch = "xtensa")]
 use core::array;
 
+use alloc::boxed::Box;
+
 #[cfg(target_arch = "riscv32")]
 use embassy_executor::Spawner;
 use embassy_futures::join::join;
@@ -137,16 +139,11 @@ pub async fn run(
         ..
     } = stack.build();
 
-    static CONTROL_STORE: StaticCell<[u8; GATT_VALUE_CAP]> = StaticCell::new();
-    static DATA_STORE: StaticCell<[u8; GATT_VALUE_CAP]> = StaticCell::new();
-    static COLUMBA_RX_STORE: StaticCell<[u8; GATT_VALUE_CAP]> = StaticCell::new();
-    static COLUMBA_TX_STORE: StaticCell<[u8; GATT_VALUE_CAP]> = StaticCell::new();
-    static COLUMBA_IDENTITY_STORE: StaticCell<[u8; GATT_VALUE_CAP]> = StaticCell::new();
-    let control_store = CONTROL_STORE.init([0; GATT_VALUE_CAP]);
-    let data_store = DATA_STORE.init([0; GATT_VALUE_CAP]);
-    let columba_rx_store = COLUMBA_RX_STORE.init([0; GATT_VALUE_CAP]);
-    let columba_tx_store = COLUMBA_TX_STORE.init([0; GATT_VALUE_CAP]);
-    let columba_identity_store = COLUMBA_IDENTITY_STORE.init([0; GATT_VALUE_CAP]);
+    let control_store = Box::leak(Box::new([0; GATT_VALUE_CAP]));
+    let data_store = Box::leak(Box::new([0; GATT_VALUE_CAP]));
+    let columba_rx_store = Box::leak(Box::new([0; GATT_VALUE_CAP]));
+    let columba_tx_store = Box::leak(Box::new([0; GATT_VALUE_CAP]));
+    let columba_identity_store = Box::leak(Box::new([0; GATT_VALUE_CAP]));
     let Some((table, control, data, columba_rx, columba_tx)) =
         ble_trouble::reticulum_attribute_table(
             control_store,
