@@ -8,8 +8,8 @@ pub use prns_config as config;
 use prns_config::{
     AddressFamilyPreference as PlannedAddressFamilyPreference, AutoInterfacePlan,
     ConfiguredInterfaceLifecycle, DaemonPlan, I2pPeersPlan,
-    I2pReachabilityPlan as PlannedI2pReachability, InterfaceAccessPlan, PlannedInterface,
-    InterfaceKind as PlannedInterfaceKind, PlannedMedium, RNodeMultiMemberPlan,
+    I2pReachabilityPlan as PlannedI2pReachability, InterfaceAccessPlan,
+    InterfaceKind as PlannedInterfaceKind, PlannedInterface, PlannedMedium, RNodeMultiMemberPlan,
     ReadyCommandFlowControl as PlannedReadyCommandFlowControl,
     ReconnectLimit as PlannedReconnectLimit, SerialDataBits, SerialLinePlan, SerialParity,
     SerialStopBits, StationIdentificationPlan, TcpDialPlan, TcpTunnelMode as PlannedTcpTunnelMode,
@@ -472,11 +472,7 @@ async fn stand_up(
                 report_attached(handle, interface, attached.id(), attachments, report);
             }
             #[cfg(not(feature = "websocket"))]
-            report_missing_feature(
-                interface,
-                PlannedInterfaceKind::PrnsWebSocketClient,
-                report,
-            );
+            report_missing_feature(interface, PlannedInterfaceKind::PrnsWebSocketClient, report);
         }
         PlannedMedium::PrnsWebSocketServer { listener } => {
             #[cfg(not(feature = "websocket"))]
@@ -499,11 +495,7 @@ async fn stand_up(
                 }
             }
             #[cfg(not(feature = "websocket"))]
-            report_missing_feature(
-                interface,
-                PlannedInterfaceKind::PrnsWebSocketServer,
-                report,
-            );
+            report_missing_feature(interface, PlannedInterfaceKind::PrnsWebSocketServer, report);
         }
         PlannedMedium::TcpClient {
             connection,
