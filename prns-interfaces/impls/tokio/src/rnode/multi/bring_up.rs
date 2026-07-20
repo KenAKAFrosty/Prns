@@ -2,13 +2,13 @@ use std::io;
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-use prns_core::interfaces::rnode::core;
 use prns_core::interfaces::rnode::multi::bring_up::{
     BringUp, BringUpAction, BringUpError, ConfiguredRadio,
 };
 use prns_core::interfaces::rnode::multi::DevicePlatform;
+use prns_core::interfaces::rnode::protocol;
 
-use crate::kiss_deadline::{elapsed_millis, instant_for};
+use crate::byte_stream::deadline::{elapsed_millis, instant_for};
 
 use super::{RNodeMultiConfigureDelay, RNodeMultiMemberSettings};
 
@@ -16,7 +16,7 @@ pub(super) async fn bring_up<S: AsyncRead + AsyncWrite + Unpin>(
     stream: &mut S,
     members: &[RNodeMultiMemberSettings],
     configure_delay: RNodeMultiConfigureDelay,
-    decoder: &mut core::CommandDecoder,
+    decoder: &mut protocol::CommandDecoder,
     read: &mut [u8],
 ) -> io::Result<Option<DevicePlatform>> {
     decoder.reset();

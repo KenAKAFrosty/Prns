@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 
 use crate::units::{DurationMillis, InstantMillis};
 
-use super::core::{self, DeviceReport, RadioConfig};
+use super::protocol::{self, DeviceReport, RadioConfig};
 use super::FirmwareVersion;
 
 const VALIDATION_TIMEOUT: Duration = Duration::from_secs(2);
@@ -82,7 +82,7 @@ impl BringUp {
                 self.phase = Phase::AwaitingDetect {
                     deadline: deadline_after(now, self.detect_timeout.duration()),
                 };
-                BringUpAction::WriteDetect(core::detect_frames())
+                BringUpAction::WriteDetect(protocol::detect_frames())
             }
             Phase::AwaitingDetect { deadline } | Phase::AwaitingValidation { deadline } => {
                 BringUpAction::ReadUntil(deadline)
@@ -149,7 +149,7 @@ fn deadline_after(now: InstantMillis, duration: Duration) -> InstantMillis {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interfaces::rnode::core::{RadioConfigInput, DETECT_RESP, RADIO_STATE_ON};
+    use crate::interfaces::rnode::protocol::{RadioConfigInput, DETECT_RESP, RADIO_STATE_ON};
 
     fn radio() -> RadioConfig {
         RadioConfig::new(RadioConfigInput {
@@ -175,8 +175,8 @@ mod tests {
             bring_up.next_action(InstantMillis(100)),
             BringUpAction::ReadUntil(InstantMillis(2_100))
         );
-        bring_up.apply_command(core::CMD_FW_VERSION, &[1, 51]);
-        bring_up.apply_command(core::CMD_DETECT, &[DETECT_RESP]);
+        bring_up.apply_command(protocol::CMD_FW_VERSION, &[1, 51]);
+        bring_up.apply_command(protocol::CMD_DETECT, &[DETECT_RESP]);
         assert!(matches!(
             bring_up.next_action(InstantMillis(200)),
             BringUpAction::WriteRadioConfiguration {
@@ -187,11 +187,11 @@ mod tests {
                 ..
             }
         ));
-        bring_up.apply_command(core::CMD_FREQUENCY, &868_000_000u32.to_be_bytes());
-        bring_up.apply_command(core::CMD_BANDWIDTH, &125_000u32.to_be_bytes());
-        bring_up.apply_command(core::CMD_TXPOWER, &[7]);
-        bring_up.apply_command(core::CMD_SF, &[8]);
-        bring_up.apply_command(core::CMD_RADIO_STATE, &[RADIO_STATE_ON]);
+        bring_up.apply_command(protocol::CMD_FREQUENCY, &868_000_000u32.to_be_bytes());
+        bring_up.apply_command(protocol::CMD_BANDWIDTH, &125_000u32.to_be_bytes());
+        bring_up.apply_command(protocol::CMD_TXPOWER, &[7]);
+        bring_up.apply_command(protocol::CMD_SF, &[8]);
+        bring_up.apply_command(protocol::CMD_RADIO_STATE, &[RADIO_STATE_ON]);
         assert_eq!(
             bring_up.next_action(InstantMillis(300)),
             BringUpAction::Complete

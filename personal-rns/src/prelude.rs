@@ -61,11 +61,16 @@ pub use prns_interfaces_tokio::wifi_direct;
 #[cfg(all(feature = "wifi-aware", feature = "tokio-host"))]
 pub use prns_interfaces_tokio::wifi_aware;
 
+#[cfg(feature = "usb")]
+pub mod usb_auto {
+    #[cfg(feature = "embassy-host")]
+    pub use prns_interfaces_embassy::usb_auto::*;
+    #[cfg(feature = "tokio-host")]
+    pub use prns_interfaces_tokio::usb_auto::*;
+}
+
 #[cfg(all(feature = "usb", feature = "tokio-host"))]
-pub use prns_interfaces_tokio::{
-    usb,
-    usb_host::{self, AutoUsb},
-};
+pub use usb_auto::AutoUsb;
 
 #[cfg(all(
     feature = "tokio-host",
@@ -91,12 +96,6 @@ pub use prns_interfaces_tokio::from_plan::{
     PlanOutcome, PlanRuntimeContext,
 };
 
-#[cfg(all(feature = "pipe", feature = "tokio-host"))]
-pub use prns_interfaces_tokio::pipe_host;
-
-#[cfg(all(feature = "usb", feature = "embassy-host", not(feature = "tokio-host")))]
-pub use prns_interfaces_embassy::usb;
-
 #[cfg(all(feature = "ble", feature = "tokio-host"))]
 pub use prns_interfaces_tokio::ble;
 
@@ -115,14 +114,11 @@ pub use prns_interfaces_tokio::udp;
 #[cfg(all(feature = "serial", feature = "tokio-host"))]
 pub use prns_interfaces_tokio::serial;
 
-#[cfg(all(feature = "serial", feature = "tokio-host"))]
-pub use prns_interfaces_tokio::serial_host;
-
 #[cfg(all(feature = "kiss", feature = "tokio-host"))]
 pub use prns_interfaces_tokio::kiss;
 
 #[cfg(all(feature = "ax25", feature = "tokio-host"))]
-pub use prns_interfaces_tokio::ax25;
+pub use prns_interfaces_tokio::ax25_kiss;
 
 #[cfg(all(feature = "rnode", feature = "tokio-host"))]
 pub use prns_interfaces_tokio::rnode;
@@ -153,6 +149,3 @@ pub use prns_interfaces_embassy::lora;
 
 #[cfg(all(feature = "esp-now", feature = "embassy-host"))]
 pub use prns_interfaces_embassy::esp_now;
-
-#[cfg(all(feature = "usb", feature = "embassy-host"))]
-pub use prns_interfaces_embassy::usb_device;

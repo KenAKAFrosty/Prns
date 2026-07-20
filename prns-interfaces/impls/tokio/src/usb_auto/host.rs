@@ -8,8 +8,8 @@ use prns_runtime::interfaces::{ConfiguredInterfacePolicy, EffectiveInterfacePoli
 use prns_runtime::runtime::{Attachable, AttachedInterface, PrnsNodeHandle};
 use tokio::sync::Notify;
 
-use crate::serial_host::open_host_serial;
-use crate::usb::UsbAutoHost;
+use super::UsbAutoHost;
+use crate::serial::open_host_serial;
 
 pub const DEFAULT_USB_AUTO_ID: InterfaceId = InterfaceId::new([0xD0; 8]);
 pub const DEFAULT_USB_BAUD: u32 = 115_200;
@@ -28,7 +28,7 @@ impl Default for AutoUsb {
     fn default() -> Self {
         Self {
             baud: DEFAULT_USB_BAUD,
-            policy: prns_runtime::interfaces::usb_auto::core::HOST_DEFAULTS
+            policy: prns_runtime::interfaces::usb_auto::HOST_DEFAULTS
                 .configured(ConfiguredInterfacePolicy::default()),
             rescan: Arc::new(Notify::new()),
         }

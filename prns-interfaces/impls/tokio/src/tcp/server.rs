@@ -6,7 +6,7 @@ use std::vec::Vec;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpListener;
 
-use crate::framed_stream;
+use crate::byte_stream::framing;
 use crate::reconnect::ReconnectPolicy;
 use crate::tcp::{tune_for_tunnel, TcpTunnelMode};
 use prns_core::interfaces::tcp::{self, TcpWireFraming};
@@ -102,7 +102,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for TcpServerConnection<S> {
         let mut airtime = AirtimeLedger::new();
         let mut throughput = ThroughputLedger::new();
         let started = tokio::time::Instant::now();
-        let mut meters = framed_stream::WireMeters {
+        let mut meters = framing::WireMeters {
             status: &self.status,
             airtime: &mut airtime,
             throughput: &mut throughput,
@@ -111,13 +111,13 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for TcpServerConnection<S> {
         };
         match self.framing {
             TcpWireFraming::Hdlc => {
-                let mut buffers = framed_stream::FramedBuffers::<
-                    framed_stream::HdlcFraming,
+                let mut buffers = framing::FramedBuffers::<
+                    framing::HdlcFraming,
                     { tcp::READ_BUF_LEN },
                     { tcp::FRAMED_LEN },
                 >::new();
-                framed_stream::serve::<
-                    framed_stream::HdlcFraming,
+                framing::serve::<
+                    framing::HdlcFraming,
                     { tcp::READ_BUF_LEN },
                     { tcp::FRAMED_LEN },
                     _,
@@ -126,13 +126,13 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for TcpServerConnection<S> {
                 .await;
             }
             TcpWireFraming::Kiss => {
-                let mut buffers = framed_stream::FramedBuffers::<
-                    framed_stream::KissFraming,
+                let mut buffers = framing::FramedBuffers::<
+                    framing::KissFraming,
                     { tcp::READ_BUF_LEN },
                     { tcp::KISS_FRAMED_LEN },
                 >::new();
-                framed_stream::serve::<
-                    framed_stream::KissFraming,
+                framing::serve::<
+                    framing::KissFraming,
                     { tcp::READ_BUF_LEN },
                     { tcp::KISS_FRAMED_LEN },
                     _,

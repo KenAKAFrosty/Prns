@@ -5,10 +5,8 @@ use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use prns_core::interfaces::kiss::transmission_control::{
-    ReadyCommandFlowControl, StationIdentification,
-};
-use prns_core::interfaces::rnode::{core, multi};
+use prns_core::interfaces::kiss::{ReadyCommandFlowControl, StationIdentification};
+use prns_core::interfaces::rnode::{multi, protocol};
 use prns_core::interfaces::IfacContext;
 use prns_core::interfaces::{EffectiveInterfacePolicy, InterfaceId, InterfaceKind};
 use prns_runtime::runtime::PrnsNodeHandle;
@@ -204,8 +202,8 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     pub async fn run(mut self) {
-        let mut decoder = Box::new(core::CommandDecoder::new());
-        let mut read = vec![0u8; core::READ_BUF_LEN].into_boxed_slice();
+        let mut decoder = Box::new(protocol::CommandDecoder::new());
+        let mut read = vec![0u8; protocol::READ_BUF_LEN].into_boxed_slice();
         let mut cycle = self.cycle;
         let mut reconnect = self.interface.reconnect_policy.schedule();
         loop {
@@ -241,7 +239,7 @@ impl<Open> RNodeMultiInterface<Open> {
     async fn run_connection<Fut, S>(
         &mut self,
         cycle: &mut RuntimeCycle,
-        decoder: &mut core::CommandDecoder,
+        decoder: &mut protocol::CommandDecoder,
         read: &mut [u8],
         connected_at: &mut Option<tokio::time::Instant>,
     ) -> io::Result<()>

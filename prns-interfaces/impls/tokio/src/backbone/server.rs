@@ -10,7 +10,7 @@ use std::vec::Vec;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpListener;
 
-use crate::framed_stream;
+use crate::byte_stream::framing;
 use crate::reconnect::ReconnectPolicy;
 use crate::tcp::tune;
 use prns_core::interfaces::backbone;
@@ -92,13 +92,13 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for BackboneServerConnection<S
         let mut airtime = AirtimeLedger::new();
         let mut throughput = ThroughputLedger::new();
         let started = tokio::time::Instant::now();
-        let mut buffers = framed_stream::FramedBuffers::<
-            framed_stream::HdlcFraming,
+        let mut buffers = framing::FramedBuffers::<
+            framing::HdlcFraming,
             { backbone::READ_BUF_LEN },
             { backbone::FRAMED_LEN },
         >::new();
-        framed_stream::serve::<
-            framed_stream::HdlcFraming,
+        framing::serve::<
+            framing::HdlcFraming,
             { backbone::READ_BUF_LEN },
             { backbone::FRAMED_LEN },
             _,
@@ -107,7 +107,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for BackboneServerConnection<S
             stream,
             &mut buffers,
             &mut seam,
-            &mut framed_stream::WireMeters {
+            &mut framing::WireMeters {
                 status: &self.status,
                 airtime: &mut airtime,
                 throughput: &mut throughput,

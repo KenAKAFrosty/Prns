@@ -1,7 +1,7 @@
 use std::io;
 use std::time::Duration;
 
-use personal_rns::interfaces::usb_auto::core::{self, Capabilities, Message, NodeTag};
+use personal_rns::interfaces::usb_auto::{self as contract, Capabilities, Message, NodeTag};
 use personal_rns::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
 use personal_rns::reactor::interface_seam::{Interface, InterfaceSeam};
 use personal_rns::reactor::tokio::TokioInterfaceStatus;
@@ -11,7 +11,7 @@ use tokio::net::{TcpListener, TcpStream};
 
 pub const USBMUX_AUTO_PORT: u16 = 42_700;
 
-const READ_CHUNK_BYTES: usize = core::READ_CHUNK_BYTES;
+const READ_CHUNK_BYTES: usize = contract::READ_CHUNK_BYTES;
 const WRITE_TIMEOUT: Duration = Duration::from_millis(200);
 
 pub struct UsbMuxAutoDevice {
@@ -25,7 +25,7 @@ impl UsbMuxAutoDevice {
     pub fn new(id: InterfaceId, port: u16) -> Self {
         Self {
             id,
-            node_tag: core::node_tag_for(id),
+            node_tag: contract::node_tag_for(id),
             status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
             port,
         }
@@ -37,11 +37,11 @@ impl UsbMuxAutoDevice {
 }
 
 impl Interface for UsbMuxAutoDevice {
-    const HW_MTU: usize = personal_rns::interfaces::usb_auto::core::DEVICE_USB_HW_MTU;
+    const HW_MTU: usize = personal_rns::interfaces::usb_auto::DEVICE_USB_HW_MTU;
     const KIND: InterfaceKind = InterfaceKind::UsbAutoDevice;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::device_descriptor(self.id)
+        contract::device_descriptor(self.id)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -130,9 +130,9 @@ async fn serve_stream<Seam: InterfaceSeam>(
     status: &TokioInterfaceStatus,
     seam: &mut Seam,
 ) {
-    let mut decoder = core::Decoder::new();
+    let mut decoder = contract::Decoder::new();
     let mut read_buf = [0u8; READ_CHUNK_BYTES];
-    let mut frame_buf = [0u8; core::MAX_FRAMED_BYTES];
+    let mut frame_buf = [0u8; contract::MAX_FRAMED_BYTES];
     let mut linked = false;
 
     loop {
@@ -154,7 +154,7 @@ async fn serve_stream<Seam: InterfaceSeam>(
                     if frame.is_empty() {
                         continue;
                     }
-                    match core::decode_message(frame) {
+                    match contract::decode_message(frame) {
                         Ok(Message::Hello(_)) => {
                             let ack = Message::HelloAck {
                                 tag: node_tag,
@@ -194,7 +194,7 @@ async fn serve_stream<Seam: InterfaceSeam>(
 async fn write_message(
     stream: &mut TcpStream,
     message: &Message<'_>,
-    frame_buf: &mut [u8; core::MAX_FRAMED_BYTES],
+    frame_buf: &mut [u8; contract::MAX_FRAMED_BYTES],
     status: &TokioInterfaceStatus,
 ) -> io::Result<()> {
     let n = message

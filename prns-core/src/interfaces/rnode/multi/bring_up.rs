@@ -1,5 +1,5 @@
+use ::core::time::Duration;
 use alloc::vec::Vec;
-use core::time::Duration;
 
 use crate::units::{DurationMillis, InstantMillis};
 
@@ -254,8 +254,8 @@ fn deadline_after(now: InstantMillis, duration: Duration) -> InstantMillis {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interfaces::rnode::core;
     use crate::interfaces::rnode::multi::RadioConfigInput;
+    use crate::interfaces::rnode::protocol;
 
     fn configured(vport: u8) -> ConfiguredRadio {
         ConfiguredRadio {
@@ -282,8 +282,12 @@ mod tests {
             bring_up.next_action(InstantMillis(0)),
             BringUpAction::WriteDetect(_)
         ));
-        bring_up.apply_command(core::CMD_DETECT, &[core::DETECT_RESP], InstantMillis(10));
-        bring_up.apply_command(core::CMD_FW_VERSION, &[1, 74], InstantMillis(10));
+        bring_up.apply_command(
+            protocol::CMD_DETECT,
+            &[protocol::DETECT_RESP],
+            InstantMillis(10),
+        );
+        bring_up.apply_command(protocol::CMD_FW_VERSION, &[1, 74], InstantMillis(10));
         bring_up.apply_command(super::super::CMD_INTERFACES, &[0, 0x10], InstantMillis(10));
         assert!(matches!(
             bring_up.next_action(InstantMillis(10)),
@@ -294,20 +298,20 @@ mod tests {
         ));
         bring_up.apply_command(super::super::CMD_SELECT_INTERFACE, &[0], InstantMillis(20));
         bring_up.apply_command(
-            core::CMD_FREQUENCY,
+            protocol::CMD_FREQUENCY,
             &868_000_000u32.to_be_bytes(),
             InstantMillis(20),
         );
         bring_up.apply_command(
-            core::CMD_BANDWIDTH,
+            protocol::CMD_BANDWIDTH,
             &125_000u32.to_be_bytes(),
             InstantMillis(20),
         );
-        bring_up.apply_command(core::CMD_TXPOWER, &[7], InstantMillis(20));
-        bring_up.apply_command(core::CMD_SF, &[8], InstantMillis(20));
+        bring_up.apply_command(protocol::CMD_TXPOWER, &[7], InstantMillis(20));
+        bring_up.apply_command(protocol::CMD_SF, &[8], InstantMillis(20));
         bring_up.apply_command(
-            core::CMD_RADIO_STATE,
-            &[core::RADIO_STATE_ON],
+            protocol::CMD_RADIO_STATE,
+            &[protocol::RADIO_STATE_ON],
             InstantMillis(20),
         );
         assert_eq!(
@@ -323,8 +327,12 @@ mod tests {
             ConfigureDelay::new(Duration::ZERO),
         );
         let _ = bring_up.next_action(InstantMillis(0));
-        bring_up.apply_command(core::CMD_DETECT, &[core::DETECT_RESP], InstantMillis(1));
-        bring_up.apply_command(core::CMD_FW_VERSION, &[1, 74], InstantMillis(1));
+        bring_up.apply_command(
+            protocol::CMD_DETECT,
+            &[protocol::DETECT_RESP],
+            InstantMillis(1),
+        );
+        bring_up.apply_command(protocol::CMD_FW_VERSION, &[1, 74], InstantMillis(1));
         bring_up.apply_command(super::super::CMD_INTERFACES, &[0, 0x10], InstantMillis(1));
         assert_eq!(
             bring_up.next_action(InstantMillis(1)),

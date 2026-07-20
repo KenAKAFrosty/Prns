@@ -12,7 +12,7 @@ use nusb::descriptors::TransferType;
 use nusb::io::{EndpointRead, EndpointWrite};
 use nusb::transfer::{Bulk, ControlIn, ControlOut, ControlType, Direction, In, Out, Recipient};
 use nusb::{DeviceInfo, MaybeFuture};
-use personal_rns::interfaces::usb_auto::core::{
+use personal_rns::interfaces::usb_auto::{
     ANDROID_ACCESSORY_DESCRIPTION, ANDROID_ACCESSORY_MANUFACTURER, ANDROID_ACCESSORY_MODEL,
     ANDROID_ACCESSORY_SERIAL, ANDROID_ACCESSORY_URI, ANDROID_ACCESSORY_VERSION, WEBUSB_PRODUCT_ID,
     WEBUSB_VENDOR_ID,

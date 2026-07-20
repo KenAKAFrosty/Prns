@@ -1,6 +1,6 @@
 use std::string::String;
 
-use crate::framed_stream;
+use crate::byte_stream::framing;
 use crate::reconnect::ReconnectPolicy;
 use crate::tcp::{connect, tune_for_tunnel, TcpConnectionSettings};
 use prns_core::interfaces::tcp::{self, TcpWireFraming};
@@ -219,15 +219,15 @@ impl Interface for TcpClientInterface {
         let mut throughput = ThroughputLedger::new();
         let started = tokio::time::Instant::now();
         let mut buffers: Option<
-            framed_stream::FramedBuffers<
-                framed_stream::HdlcFraming,
+            framing::FramedBuffers<
+                framing::HdlcFraming,
                 { tcp::READ_BUF_LEN },
                 { tcp::FRAMED_LEN },
             >,
         > = None;
         let mut kiss_buffers: Option<
-            framed_stream::FramedBuffers<
-                framed_stream::KissFraming,
+            framing::FramedBuffers<
+                framing::KissFraming,
                 { tcp::READ_BUF_LEN },
                 { tcp::KISS_FRAMED_LEN },
             >,
@@ -260,7 +260,7 @@ impl Interface for TcpClientInterface {
                 if self.framing == TcpWireFraming::Hdlc {
                     seam.request_tunnel_synthesis().await;
                 }
-                let mut meters = framed_stream::WireMeters {
+                let mut meters = framing::WireMeters {
                     status: &self.status,
                     airtime: &mut airtime,
                     throughput: &mut throughput,
@@ -269,30 +269,30 @@ impl Interface for TcpClientInterface {
                 };
                 match self.framing {
                     TcpWireFraming::Hdlc => {
-                        framed_stream::serve::<
-                            framed_stream::HdlcFraming,
+                        framing::serve::<
+                            framing::HdlcFraming,
                             { tcp::READ_BUF_LEN },
                             { tcp::FRAMED_LEN },
                             _,
                             _,
                         >(
                             stream,
-                            buffers.get_or_insert_with(framed_stream::FramedBuffers::new),
+                            buffers.get_or_insert_with(framing::FramedBuffers::new),
                             &mut seam,
                             &mut meters,
                         )
                         .await;
                     }
                     TcpWireFraming::Kiss => {
-                        framed_stream::serve::<
-                            framed_stream::KissFraming,
+                        framing::serve::<
+                            framing::KissFraming,
                             { tcp::READ_BUF_LEN },
                             { tcp::KISS_FRAMED_LEN },
                             _,
                             _,
                         >(
                             stream,
-                            kiss_buffers.get_or_insert_with(framed_stream::FramedBuffers::new),
+                            kiss_buffers.get_or_insert_with(framing::FramedBuffers::new),
                             &mut seam,
                             &mut meters,
                         )

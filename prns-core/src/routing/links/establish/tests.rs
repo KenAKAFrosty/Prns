@@ -2919,7 +2919,7 @@ fn a_fat_interface_negotiates_up_to_the_engine_ceiling_and_no_further() {
 
 #[test]
 fn the_real_usb_descriptors_negotiate_their_declared_ceilings() {
-    use crate::interfaces::usb_auto::core::{
+    use crate::interfaces::usb_auto::{
         device_descriptor, host_descriptor, DEVICE_USB_HW_MTU, HOST_USB_HW_MTU,
     };
     use crate::routing::links::MAX_LINK_MTU;

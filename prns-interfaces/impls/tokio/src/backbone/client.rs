@@ -6,7 +6,7 @@
 use crate::reconnect::ReconnectPolicy;
 use std::string::String;
 
-use crate::framed_stream;
+use crate::byte_stream::framing;
 use crate::tcp::{connect, tune_for_tunnel, TcpConnectionSettings};
 use prns_core::interfaces::backbone;
 use prns_core::interfaces::BitrateBps;
@@ -151,8 +151,8 @@ impl Interface for BackboneClientInterface {
         let mut throughput = ThroughputLedger::new();
         let started = tokio::time::Instant::now();
         let mut buffers: Option<
-            framed_stream::FramedBuffers<
-                framed_stream::HdlcFraming,
+            framing::FramedBuffers<
+                framing::HdlcFraming,
                 { backbone::READ_BUF_LEN },
                 { backbone::FRAMED_LEN },
             >,
@@ -183,17 +183,17 @@ impl Interface for BackboneClientInterface {
                 );
                 self.status.set_connection(ConnectionState::Connected);
                 seam.request_tunnel_synthesis().await;
-                framed_stream::serve::<
-                    framed_stream::HdlcFraming,
+                framing::serve::<
+                    framing::HdlcFraming,
                     { backbone::READ_BUF_LEN },
                     { backbone::FRAMED_LEN },
                     _,
                     _,
                 >(
                     stream,
-                    buffers.get_or_insert_with(framed_stream::FramedBuffers::new),
+                    buffers.get_or_insert_with(framing::FramedBuffers::new),
                     &mut seam,
-                    &mut framed_stream::WireMeters {
+                    &mut framing::WireMeters {
                         status: &self.status,
                         airtime: &mut airtime,
                         throughput: &mut throughput,

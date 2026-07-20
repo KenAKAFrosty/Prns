@@ -1,8 +1,3 @@
-//! The host-agnostic core of the AX.25-KISS interface: sizing, the AX.25 UI header the link
-//! wraps every packet in, and the descriptor. The KISS framing lives once in
-//! [`kiss_framing`], the serve loop in `prns-interfaces-tokio`;
-//! decode is config-independent (strip [`AX25_HEADER_SIZE`] bytes), so the interface does it inline.
-
 use crate::interfaces::kiss_framing::{self, KissDecoder};
 use crate::interfaces::{
     AnnounceBandwidthCap, BitrateBps, ConfiguredInterfacePolicy, EffectiveInterfacePolicy,

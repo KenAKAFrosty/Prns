@@ -15,7 +15,7 @@ impl AttachIntent for Auto {
         #[cfg(feature = "wifi")]
         handle.attach(crate::wifi::AutoWifi::default());
         #[cfg(feature = "usb")]
-        handle.attach(crate::usb_host::AutoUsb::default());
+        handle.attach(crate::usb_auto::AutoUsb::default());
         #[cfg(feature = "ble")]
         handle.attach(crate::ble_host::AutoBle);
     }

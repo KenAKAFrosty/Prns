@@ -47,7 +47,4 @@ pub mod ble;
 pub mod ble_trouble;
 
 #[cfg(feature = "usb")]
-pub mod usb;
-
-#[cfg(feature = "usb")]
-pub mod usb_device;
+pub mod usb_auto;

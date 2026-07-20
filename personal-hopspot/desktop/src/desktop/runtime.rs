@@ -22,7 +22,7 @@ use personal_rns::shared_instance::rpc_compat::{
 use personal_rns::shared_instance::server::LocalServer;
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::TcpClientInterface;
-use personal_rns::usb::UsbAutoHost;
+use personal_rns::usb_auto::UsbAutoHost;
 use personal_rns::wifi::{AutoWifi, AutoWifiStatus};
 use personal_rns::wire::DestinationHash;
 use tokio::sync::Notify;

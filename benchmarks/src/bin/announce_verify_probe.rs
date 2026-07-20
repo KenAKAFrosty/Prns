@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use personal_rns::interfaces::pipe::core as pipe_core;
+use personal_rns::interfaces::pipe;
 use personal_rns::interfaces::{InterfaceDescriptor, InterfaceId, InterfaceKind, ReportsStatus};
 use personal_rns::reactor::interface_seam::{Interface, InterfaceSeam};
 use personal_rns::routes;
@@ -36,11 +36,11 @@ struct AnnounceFlood {
 }
 
 impl Interface for AnnounceFlood {
-    const HW_MTU: usize = pipe_core::PIPE_HW_MTU;
+    const HW_MTU: usize = pipe::PIPE_HW_MTU;
     const KIND: InterfaceKind = InterfaceKind::Pipe;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        pipe_core::descriptor(self.id, pipe_core::configured_policy(Default::default()))
+        pipe::descriptor(self.id, pipe::configured_policy(Default::default()))
     }
 
     fn channel_tag(&self) -> &[u8] {

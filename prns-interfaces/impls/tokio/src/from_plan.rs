@@ -16,19 +16,19 @@ use prns_config::{
     UdpFlowPlan,
 };
 use prns_core::identity::IdentityHash;
-use prns_core::interfaces::ax25_kiss::core::Ax25AddressError;
-use prns_core::interfaces::kiss::transmission_control::{
+use prns_core::interfaces::ax25_kiss::Ax25AddressError;
+use prns_core::interfaces::kiss::{
     EmptyStationIdentification, ReadyCommandFlowControl, ReadyTimeout, StationIdInterval,
     StationIdWireFormat, StationIdentification,
 };
 use prns_core::interfaces::weave::core as weave_core;
 use prns_core::interfaces::IfacContext;
 use prns_core::interfaces::{InterfaceId, InterfaceOriginKind};
-use prns_runtime::interfaces::kiss::core::TncConfig;
-use prns_runtime::interfaces::rnode::core::{RadioConfig, RadioConfigError, RadioConfigInput};
+use prns_runtime::interfaces::kiss::TncConfig;
+use prns_runtime::interfaces::rnode::protocol::{RadioConfig, RadioConfigError, RadioConfigInput};
 use prns_runtime::runtime::{AttachIntent, Attachable, PrnsNodeHandle};
 
-use crate::ax25::{Ax25KissInterface, Ax25KissSettings};
+use crate::ax25_kiss::{Ax25KissInterface, Ax25KissSettings};
 use crate::backbone::{BackboneClientInterface, BackboneServer};
 #[cfg(feature = "ble")]
 use crate::ble_host::AutoBle;
@@ -43,14 +43,14 @@ use crate::i2p::{
 use crate::kiss::{KissInterface, KissSettings, DEFAULT_TNC_CONFIGURE_DELAY};
 use crate::pipe::{PipeInterface, PipeRespawnDelay};
 use crate::reconnect::ReconnectPolicy;
-use crate::rnode::{RNodeInterface, RNodeSettings};
-use crate::rnode_host::{RNodeHostOpener, RNODE_BAUD};
-use crate::rnode_multi::{
+use crate::rnode::host::{RNodeHostOpener, RNODE_BAUD};
+use crate::rnode::multi::{
     RNodeMultiAccess, RNodeMultiInterface, RNodeMultiMemberSettings, RNodeMultiMembers,
     RNodeMultiMembersError, RNodeMultiSettings, DEFAULT_RNODE_MULTI_CONFIGURE_DELAY,
 };
+use crate::rnode::{RNodeInterface, RNodeSettings};
 use crate::serial::SerialInterface;
-use crate::serial_host::{
+use crate::serial::{
     open_host_serial, open_host_serial_with_settings, HostSerialDataBits, HostSerialLineSettings,
     HostSerialParity, HostSerialStopBits,
 };
@@ -60,7 +60,7 @@ use crate::tcp::{
 };
 use crate::udp::UdpInterface;
 #[cfg(feature = "usb")]
-use crate::usb_host::AutoUsb;
+use crate::usb_auto::AutoUsb;
 use crate::weave::WeaveInterface;
 #[cfg(feature = "websocket")]
 use crate::websocket::{WebSocketClientInterface, WebSocketServer};
@@ -786,7 +786,7 @@ async fn stand_up(
             let pipe = PipeInterface::with_policy(
                 move || {
                     let argv = argv.clone();
-                    async move { crate::pipe_host::spawn(&argv).await }
+                    async move { crate::pipe::spawn(&argv).await }
                 },
                 respawn_delay,
                 interface.policy,

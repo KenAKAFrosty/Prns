@@ -1,21 +1,27 @@
+mod ble;
+#[cfg(feature = "config")]
+pub(crate) mod host;
+pub mod multi;
+
 use std::future::Future;
 use std::io;
 use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-use crate::framed_stream::WireMeters;
-use crate::kiss_deadline::{elapsed_millis, instant_for, wait_for_deadline};
+use crate::byte_stream::deadline::{elapsed_millis, instant_for, wait_for_deadline};
+use crate::byte_stream::framing::WireMeters;
 use crate::reconnect::ReconnectPolicy;
 use prns_core::engine::InstantMillis;
-use prns_core::interfaces::kiss::transmission_control::{
+use prns_core::interfaces::kiss::{
     KissTransmissionControl, ReadyCommandFlowControl, StationIdentification, Transmission,
 };
 use prns_core::interfaces::rnode::bring_up::{
     BringUp as BringUpProtocol, BringUpAction, BringUpError,
 };
-use prns_core::interfaces::rnode::core::{self, RadioConfig};
 use prns_core::interfaces::rnode::live::{KeepaliveSchedule, LiveCommand, LiveProtocol};
+use prns_core::interfaces::rnode::policy;
+use prns_core::interfaces::rnode::protocol::{self, RadioConfig};
 use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{
     ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind,
@@ -62,7 +68,7 @@ pub const BLE_RNODE_DETECT_TIMEOUT: RNodeDetectTimeout =
 pub const TCP_RNODE_KEEPALIVE: RNodeKeepalive = prns_core::interfaces::rnode::live::TCP_KEEPALIVE;
 
 struct RNodeBuffers {
-    decoder: Box<core::CommandDecoder>,
+    decoder: Box<protocol::CommandDecoder>,
     read: Box<[u8]>,
     frame: Box<[u8]>,
 }
@@ -70,9 +76,9 @@ struct RNodeBuffers {
 impl RNodeBuffers {
     fn new() -> Self {
         Self {
-            decoder: Box::new(core::CommandDecoder::new()),
-            read: vec![0u8; core::READ_BUF_LEN].into_boxed_slice(),
-            frame: vec![0u8; core::FRAMED_LEN].into_boxed_slice(),
+            decoder: Box::new(protocol::CommandDecoder::new()),
+            read: vec![0u8; protocol::READ_BUF_LEN].into_boxed_slice(),
+            frame: vec![0u8; protocol::FRAMED_LEN].into_boxed_slice(),
         }
     }
 }
@@ -162,7 +168,7 @@ impl<Open> RNodeInterface<Open> {
             reconnect_policy,
             reset_delay,
             radio,
-            core::policy_for_bitrate(bitrate),
+            policy::policy_for_bitrate(bitrate),
             channel_tag,
         )
     }
@@ -237,7 +243,7 @@ impl<Open> RNodeInterface<Open> {
 async fn bring_up<S: AsyncRead + AsyncWrite + Unpin>(
     stream: &mut S,
     radio: &RadioConfig,
-    decoder: &mut core::CommandDecoder,
+    decoder: &mut protocol::CommandDecoder,
     read_buf: &mut [u8],
     detect_timeout: RNodeDetectTimeout,
 ) -> io::Result<()> {
@@ -256,8 +262,8 @@ async fn bring_up<S: AsyncRead + AsyncWrite + Unpin>(
                         "RNODE_FIRMWARE_OUTDATED reported={}.{} required={}.{} (continuing anyway)",
                         firmware.major,
                         firmware.minor,
-                        core::REQUIRED_FW_VER_MAJ,
-                        core::REQUIRED_FW_VER_MIN,
+                        protocol::REQUIRED_FW_VER_MAJ,
+                        protocol::REQUIRED_FW_VER_MIN,
                     );
                 }
                 stream.write_all(&bytes).await?;
@@ -301,7 +307,7 @@ fn bring_up_error(error: BringUpError) -> io::Error {
 
 /// Serve one configured connection until the stream drops: deliver `CMD_DATA` bodies to the
 /// seam (consuming telemetry and other commands) and frame the seam's outbound as `CMD_DATA`.
-/// Distinct from the generic [`framed_stream::serve`](crate::framed_stream) because the read
+/// Distinct from the generic [`framing::serve`](crate::byte_stream::framing) because the read
 /// side dispatches by command rather than treating every frame as data.
 async fn serve_rnode<S, Seam>(
     stream: &mut S,
@@ -453,7 +459,7 @@ async fn write_rnode_transmission<S: AsyncWrite + Unpin>(
     transmission: Transmission,
     meters: &mut WireMeters<'_>,
 ) -> bool {
-    let Ok(framed) = core::encode_data_frame(transmission.payload(), frame_buf) else {
+    let Ok(framed) = protocol::encode_data_frame(transmission.payload(), frame_buf) else {
         return true;
     };
     if stream.write_all(&frame_buf[..framed]).await.is_err() {
@@ -487,11 +493,11 @@ where
     Fut: Future<Output = io::Result<S>>,
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    const HW_MTU: usize = core::RNODE_HW_MTU;
+    const HW_MTU: usize = policy::RNODE_HW_MTU;
     const KIND: InterfaceKind = InterfaceKind::Rnode;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::descriptor(self.id, self.policy)
+        policy::descriptor(self.id, self.policy)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -591,9 +597,7 @@ impl<Open> prns_core::interfaces::ReportsStatus for RNodeInterface<Open> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prns_core::interfaces::kiss::transmission_control::{
-        StationIdInterval, StationIdWireFormat,
-    };
+    use prns_core::interfaces::kiss::{StationIdInterval, StationIdWireFormat};
     use prns_core::interfaces::kiss_framing::{self, FEND};
     use prns_core::interfaces::{
         InterfaceStatus, PacketPhyStats, RssiDbm, SignalQualityTenthsPercent, SnrQuarterDb,
@@ -639,7 +643,7 @@ mod tests {
     }
 
     fn sample_radio() -> RadioConfig {
-        RadioConfig::new(core::RadioConfigInput {
+        RadioConfig::new(protocol::RadioConfigInput {
             frequency_hz: 868_000_000,
             bandwidth_hz: 125_000,
             txpower_dbm: 7,
@@ -657,7 +661,7 @@ mod tests {
         wire: &mut R,
         wanted: usize,
     ) -> std::vec::Vec<(u8, std::vec::Vec<u8>)> {
-        let mut decoder: core::CommandDecoder = core::CommandDecoder::new();
+        let mut decoder: protocol::CommandDecoder = protocol::CommandDecoder::new();
         let mut buf = [0u8; 256];
         let mut frames = std::vec::Vec::new();
         while frames.len() < wanted {
@@ -693,9 +697,12 @@ mod tests {
     ) {
         // The host writes the four detect frames first; consume them, then answer detect + firmware.
         let detect = read_commands(wire, 4).await;
-        assert_eq!(detect[0], (core::CMD_DETECT, std::vec![core::DETECT_REQ]));
-        write_command(wire, core::CMD_DETECT, &[core::DETECT_RESP]).await;
-        write_command(wire, core::CMD_FW_VERSION, &[1, 80]).await;
+        assert_eq!(
+            detect[0],
+            (protocol::CMD_DETECT, std::vec![protocol::DETECT_REQ])
+        );
+        write_command(wire, protocol::CMD_DETECT, &[protocol::DETECT_RESP]).await;
+        write_command(wire, protocol::CMD_FW_VERSION, &[1, 80]).await;
 
         // Then the host writes the radio configuration; consume the six config frames and echo each
         // back as the device would report it, ending with the radio powered on.
@@ -703,30 +710,33 @@ mod tests {
         assert_eq!(
             config[0],
             (
-                core::CMD_FREQUENCY,
+                protocol::CMD_FREQUENCY,
                 radio.frequency_hz().to_be_bytes().to_vec()
             )
         );
         assert_eq!(
             config[5],
-            (core::CMD_RADIO_STATE, std::vec![core::RADIO_STATE_ON])
+            (
+                protocol::CMD_RADIO_STATE,
+                std::vec![protocol::RADIO_STATE_ON]
+            )
         );
         write_command(
             wire,
-            core::CMD_FREQUENCY,
+            protocol::CMD_FREQUENCY,
             &radio.frequency_hz().to_be_bytes(),
         )
         .await;
         write_command(
             wire,
-            core::CMD_BANDWIDTH,
+            protocol::CMD_BANDWIDTH,
             &radio.bandwidth_hz().to_be_bytes(),
         )
         .await;
-        write_command(wire, core::CMD_TXPOWER, &[radio.txpower_dbm()]).await;
-        write_command(wire, core::CMD_SF, &[radio.spreading_factor()]).await;
-        write_command(wire, core::CMD_CR, &[radio.coding_rate()]).await;
-        write_command(wire, core::CMD_RADIO_STATE, &[core::RADIO_STATE_ON]).await;
+        write_command(wire, protocol::CMD_TXPOWER, &[radio.txpower_dbm()]).await;
+        write_command(wire, protocol::CMD_SF, &[radio.spreading_factor()]).await;
+        write_command(wire, protocol::CMD_CR, &[radio.coding_rate()]).await;
+        write_command(wire, protocol::CMD_RADIO_STATE, &[protocol::RADIO_STATE_ON]).await;
     }
 
     #[tokio::test]
@@ -739,7 +749,7 @@ mod tests {
         };
 
         let (in_tx, mut in_rx) = mpsc::unbounded_channel::<(std::vec::Vec<u8>, PacketPhyStats)>();
-        let (mut out_tx, out_rx) = tokio_grant_lane(core::RNODE_FRAME_LEN, 2);
+        let (mut out_tx, out_rx) = tokio_grant_lane(protocol::RNODE_FRAME_LEN, 2);
         let seam = MockSeam {
             inbound: in_tx,
             sink: std::vec::Vec::new(),
@@ -773,9 +783,9 @@ mod tests {
         // Inbound: a CMD_DATA frame (FEND/FESC in the payload exercise the escaping) crosses the wire
         // and lands deframed at the seam; the firmware/telemetry commands around it are consumed.
         let payload = [0x01u8, 0x02, FEND, kiss_framing::FESC, 0x03];
-        write_command(&mut device, core::CMD_STAT_RSSI, &[74]).await;
-        write_command(&mut device, core::CMD_STAT_SNR, &[0xf7]).await;
-        write_command(&mut device, core::CMD_DATA, &payload).await;
+        write_command(&mut device, protocol::CMD_STAT_RSSI, &[74]).await;
+        write_command(&mut device, protocol::CMD_STAT_SNR, &[0xf7]).await;
+        write_command(&mut device, protocol::CMD_DATA, &payload).await;
         let (received, packet_phy) = tokio::time::timeout(Duration::from_secs(2), in_rx.recv())
             .await
             .expect("the interface deframes within the window")
@@ -793,7 +803,7 @@ mod tests {
             }
         );
 
-        write_command(&mut device, core::CMD_DATA, b"next").await;
+        write_command(&mut device, protocol::CMD_DATA, b"next").await;
         let (_, packet_phy) = tokio::time::timeout(Duration::from_secs(2), in_rx.recv())
             .await
             .expect("the next frame arrives within the window")
@@ -812,7 +822,7 @@ mod tests {
             .expect("the interface frames outbound within the window");
         assert_eq!(
             framed[0],
-            (core::CMD_DATA, out_payload.to_vec()),
+            (protocol::CMD_DATA, out_payload.to_vec()),
             "the interface frames outbound packets as CMD_DATA"
         );
 
@@ -851,7 +861,7 @@ mod tests {
             async move { taken.ok_or_else(|| io::Error::from(io::ErrorKind::NotConnected)) }
         };
         let (in_tx, _in_rx) = mpsc::unbounded_channel::<(Vec<u8>, PacketPhyStats)>();
-        let (mut out_tx, out_rx) = tokio_grant_lane(core::RNODE_FRAME_LEN, 4);
+        let (mut out_tx, out_rx) = tokio_grant_lane(protocol::RNODE_FRAME_LEN, 4);
         let seam = MockSeam {
             inbound: in_tx,
             sink: Vec::new(),
@@ -874,7 +884,7 @@ mod tests {
                 radio,
                 flow_control: ReadyCommandFlowControl::WaitForReady,
                 station_identification: Some(station_identification),
-                policy: core::policy_for_bitrate(BitrateBps::guess(u64::from(
+                policy: policy::policy_for_bitrate(BitrateBps::guess(u64::from(
                     radio.nominal_bitrate_bps(),
                 ))),
                 channel_tag: b"controlled-rnode",
@@ -889,7 +899,7 @@ mod tests {
         out_tx.commit();
         assert_eq!(
             read_commands(&mut device, 1).await[0],
-            (core::CMD_DATA, b"first".to_vec())
+            (protocol::CMD_DATA, b"first".to_vec())
         );
 
         out_tx.try_grant().expect("second slot").fill(b"second");
@@ -902,13 +912,13 @@ mod tests {
         write_command(&mut device, kiss_framing::CMD_READY, &[1]).await;
         assert_eq!(
             read_commands(&mut device, 1).await[0],
-            (core::CMD_DATA, b"second".to_vec())
+            (protocol::CMD_DATA, b"second".to_vec())
         );
         write_command(&mut device, kiss_framing::CMD_READY, &[1]).await;
         let station = tokio::time::timeout(Duration::from_secs(1), read_commands(&mut device, 1))
             .await
             .expect("station identification arrives");
-        assert_eq!(station[0], (core::CMD_DATA, b"N0CALL".to_vec()));
+        assert_eq!(station[0], (protocol::CMD_DATA, b"N0CALL".to_vec()));
     }
 
     #[tokio::test]
@@ -921,7 +931,7 @@ mod tests {
         };
 
         let (in_tx, _in_rx) = mpsc::unbounded_channel::<(std::vec::Vec<u8>, PacketPhyStats)>();
-        let (_out_tx, out_rx) = tokio_grant_lane(core::RNODE_FRAME_LEN, 2);
+        let (_out_tx, out_rx) = tokio_grant_lane(protocol::RNODE_FRAME_LEN, 2);
         let seam = MockSeam {
             inbound: in_tx,
             sink: std::vec::Vec::new(),
@@ -941,25 +951,35 @@ mod tests {
 
         // Answer detect, but echo a spreading factor that does not match the configuration.
         let _detect = read_commands(&mut device, 4).await;
-        write_command(&mut device, core::CMD_DETECT, &[core::DETECT_RESP]).await;
-        write_command(&mut device, core::CMD_FW_VERSION, &[1, 80]).await;
+        write_command(&mut device, protocol::CMD_DETECT, &[protocol::DETECT_RESP]).await;
+        write_command(&mut device, protocol::CMD_FW_VERSION, &[1, 80]).await;
         let _config = read_commands(&mut device, 6).await;
         write_command(
             &mut device,
-            core::CMD_FREQUENCY,
+            protocol::CMD_FREQUENCY,
             &radio.frequency_hz().to_be_bytes(),
         )
         .await;
         write_command(
             &mut device,
-            core::CMD_BANDWIDTH,
+            protocol::CMD_BANDWIDTH,
             &radio.bandwidth_hz().to_be_bytes(),
         )
         .await;
-        write_command(&mut device, core::CMD_TXPOWER, &[radio.txpower_dbm()]).await;
-        write_command(&mut device, core::CMD_SF, &[radio.spreading_factor() + 1]).await;
-        write_command(&mut device, core::CMD_CR, &[radio.coding_rate()]).await;
-        write_command(&mut device, core::CMD_RADIO_STATE, &[core::RADIO_STATE_ON]).await;
+        write_command(&mut device, protocol::CMD_TXPOWER, &[radio.txpower_dbm()]).await;
+        write_command(
+            &mut device,
+            protocol::CMD_SF,
+            &[radio.spreading_factor() + 1],
+        )
+        .await;
+        write_command(&mut device, protocol::CMD_CR, &[radio.coding_rate()]).await;
+        write_command(
+            &mut device,
+            protocol::CMD_RADIO_STATE,
+            &[protocol::RADIO_STATE_ON],
+        )
+        .await;
 
         // The interface must never report Connected on a mismatched bring-up; give it room to try and
         // confirm it stayed out of the online state.
@@ -980,7 +1000,7 @@ mod tests {
             ))
         };
         let (in_tx, _in_rx) = mpsc::unbounded_channel::<(Vec<u8>, PacketPhyStats)>();
-        let (_out_tx, out_rx) = tokio_grant_lane(core::RNODE_FRAME_LEN, 1);
+        let (_out_tx, out_rx) = tokio_grant_lane(protocol::RNODE_FRAME_LEN, 1);
         let seam = MockSeam {
             inbound: in_tx,
             sink: Vec::new(),
