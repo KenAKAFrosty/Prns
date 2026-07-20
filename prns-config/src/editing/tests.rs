@@ -212,6 +212,89 @@ fn safe_repair_disables_only_the_duplicate_singleton() {
 }
 
 #[test]
+fn persisted_rns_runtime_metadata_is_one_safe_cleanup() {
+    let source = "[interfaces]\n  [[Default Interface]]\n    type = AutoInterface\n    interface_enabled = Yes\n    name = Default Interface\n    selected_interface_mode = 1\n    configured_bitrate = None\n";
+    let report = ConfigRepairReport::analyze_named("/tmp/rns/config", source)
+        .unwrap_or_else(|error| panic!("{error}"));
+
+    assert_eq!(
+        report
+            .diagnostics()
+            .iter()
+            .filter(|diagnostic| {
+                diagnostic.code() == ConfigDiagnosticCode::PersistedRuntimeMetadata
+            })
+            .count(),
+        3
+    );
+    assert!(report
+        .diagnostics()
+        .iter()
+        .all(|diagnostic| diagnostic.source() == "/tmp/rns/config"));
+    let edit = report
+        .safe_edit()
+        .unwrap_or_else(|| panic!("missing safe metadata cleanup"));
+    let document = ConfigDocument::parse(source).unwrap_or_else(|error| panic!("{error}"));
+    let edited = document
+        .edit_named("/tmp/rns/config", &edit)
+        .unwrap_or_else(|error| panic!("{error}"));
+
+    assert!(!edited.candidate().contains("    name ="));
+    assert!(!edited.candidate().contains("selected_interface_mode"));
+    assert!(!edited.candidate().contains("configured_bitrate"));
+    assert!(edited.candidate().contains("type = AutoInterface"));
+    assert!(
+        crate::parse_and_plan_named("/tmp/rns/config", edited.candidate())
+            .unwrap_or_else(|error| panic!("{error}"))
+            .warnings
+            .is_empty()
+    );
+}
+
+#[test]
+fn arbitrary_unknown_interface_values_remain_guided_only() {
+    let source = "[interfaces]\n  [[WiFi]]\n    type = AutoInterface\n    interface_enabled = Yes\n    vendor_extension = retained\n";
+    let report = ConfigRepairReport::analyze(source).unwrap_or_else(|error| panic!("{error}"));
+
+    assert!(report
+        .diagnostics()
+        .iter()
+        .any(|diagnostic| diagnostic.code() == ConfigDiagnosticCode::UnknownKey));
+    assert!(report.safe_edit().is_none());
+}
+
+#[test]
+fn setting_catalog_parses_typed_values_and_canonicalizes_aliases() {
+    let mode = InterfaceKind::Auto
+        .setting_specs()
+        .into_iter()
+        .find(|spec| spec.key().as_str() == "interface_mode")
+        .unwrap_or_else(|| panic!("missing interface mode setting"));
+    let parsed = mode
+        .parse(InterfaceKind::Auto, "gateway")
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(
+        parsed.value(),
+        &InterfaceSettingValue::Text("gateway".to_string())
+    );
+
+    let source = "[interfaces]\n  [[WiFi]]\n    type = AutoInterface\n    interface_enabled = Yes\n    mode = full\n";
+    let document = ConfigDocument::parse(source).unwrap_or_else(|error| panic!("{error}"));
+    let edited = document
+        .edit(&ConfigEdit::ChangeSettings {
+            name: name("WiFi"),
+            changes: vec![InterfaceSettingChange::Set(parsed)],
+        })
+        .unwrap_or_else(|error| panic!("{error}"));
+
+    assert!(edited.candidate().contains("interface_mode = gateway"));
+    assert!(!edited
+        .candidate()
+        .lines()
+        .any(|line| line.trim_start().starts_with("mode =")));
+}
+
+#[test]
 fn replacing_rnode_multi_radios_preserves_parent_settings_and_siblings() {
     let source = "[interfaces]\n  [[Multi]]\n    type = RNodeMultiInterface\n    interface_enabled = Yes\n    port = /dev/ttyACM0 # retained\n    [[[Old]]]\n      interface_enabled = Yes\n      vport = 0\n      frequency = 868000000\n      bandwidth = 125000\n      txpower = 7\n      spreadingfactor = 8\n      codingrate = 5\n  [[USB]]\n    type = PrnsUsbAuto\n    interface_enabled = Yes\n";
     let document = ConfigDocument::parse(source).unwrap_or_else(|error| panic!("{error}"));

@@ -46,7 +46,7 @@ time. Build options such as `--target` or `--profile` can be supplied after
 | `prnsd run [OPTIONS]` | Run in the foreground for a terminal or native service manager |
 | `prnsd i2p doctor` | Check I2P router and SAM 3.1 readiness without starting the managed daemon |
 | `prnsd i2p setup` | Print guided platform installation, SAM enablement, and a validated interface stanza |
-| `prnsd interfaces [COMMAND]` | Inspect, safely edit, repair, and explicitly live-apply interface configuration |
+| `prnsd interfaces [COMMAND]` | Guided typed interface editing, grouped validation and repair, and explicit live apply |
 
 `prnsd status` is the prefixless RNS network-status utility, not a managed-process status command.
 It and the other RNS 1.3.8-compatible one-shot utilities are documented in

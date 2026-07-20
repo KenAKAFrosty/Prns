@@ -10,6 +10,7 @@ mod observability;
 mod persistence;
 mod services;
 mod splash;
+mod terminal;
 mod utilities;
 
 use std::process::ExitCode;

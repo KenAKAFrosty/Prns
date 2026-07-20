@@ -284,3 +284,74 @@ fn apply_without_a_managed_daemon_uses_exit_status_three() {
     assert_eq!(output.status.code(), Some(3));
     assert!(String::from_utf8_lossy(&output.stderr).contains("no managed daemon is running"));
 }
+
+#[test]
+fn validate_is_canonical_and_check_remains_compatible() {
+    let directory = TestDirectory::new("validate-alias");
+    fs::write(
+        directory.path().join("config"),
+        "[interfaces]\n[[WiFi]]\ntype = AutoInterface\ninterface_enabled = Yes\n",
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+
+    let validate = run(&directory, &["validate"]);
+    let check = run(&directory, &["check"]);
+
+    assert!(validate.status.success());
+    assert!(check.status.success());
+    assert_eq!(validate.stdout, check.stdout);
+    assert_eq!(validate.stderr, check.stderr);
+
+    let help = Command::new(env!("CARGO_BIN_EXE_prnsd"))
+        .args(["interfaces", "--help"])
+        .output()
+        .unwrap_or_else(|error| panic!("{error}"));
+    let rendered = String::from_utf8_lossy(&help.stdout);
+    assert!(rendered.contains("validate"));
+    assert!(rendered.contains("check"));
+}
+
+#[test]
+fn safe_repair_removes_persisted_rns_runtime_metadata() {
+    let directory = TestDirectory::new("runtime-metadata");
+    let source = "[interfaces]\n[[Default Interface]]\ntype = AutoInterface\ninterface_enabled = Yes\nname = Default Interface\nselected_interface_mode = 1\nconfigured_bitrate = None\n";
+    fs::write(directory.path().join("config"), source).unwrap_or_else(|error| panic!("{error}"));
+
+    let output = run(&directory, &["repair", "--safe"]);
+    let repaired = fs::read_to_string(directory.path().join("config"))
+        .unwrap_or_else(|error| panic!("{error}"));
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!repaired.contains("name ="));
+    assert!(!repaired.contains("selected_interface_mode"));
+    assert!(!repaired.contains("configured_bitrate"));
+    assert!(repaired.contains("type = AutoInterface"));
+}
+
+#[test]
+fn scripted_setting_edits_replace_stock_aliases_canonically() {
+    let directory = TestDirectory::new("canonical-alias");
+    fs::write(
+        directory.path().join("config"),
+        "[interfaces]\n[[WiFi]]\ntype = AutoInterface\ninterface_enabled = Yes\nmode = full\n",
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+
+    let output = run(&directory, &["edit", "WiFi", "--mode", "gateway"]);
+    let edited = fs::read_to_string(directory.path().join("config"))
+        .unwrap_or_else(|error| panic!("{error}"));
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(edited.contains("interface_mode = gateway"));
+    assert!(!edited
+        .lines()
+        .any(|line| line.trim_start().starts_with("mode =")));
+}

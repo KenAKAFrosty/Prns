@@ -52,6 +52,48 @@ impl fmt::Display for InterfaceNameError {
 
 impl std::error::Error for InterfaceNameError {}
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct InterfaceConfigKey(String);
+
+impl InterfaceConfigKey {
+    pub fn new(value: impl Into<String>) -> Result<Self, InterfaceConfigKeyError> {
+        let value = value.into();
+        if value.trim().is_empty() {
+            return Err(InterfaceConfigKeyError::Empty);
+        }
+        if value
+            .chars()
+            .any(|character| matches!(character, '=' | '[' | ']' | '\r' | '\n'))
+        {
+            return Err(InterfaceConfigKeyError::ConfigObjDelimiter);
+        }
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InterfaceConfigKeyError {
+    Empty,
+    ConfigObjDelimiter,
+}
+
+impl fmt::Display for InterfaceConfigKeyError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Empty => "interface configuration key cannot be empty",
+            Self::ConfigObjDelimiter => {
+                "interface configuration key cannot contain ConfigObj delimiters"
+            }
+        })
+    }
+}
+
+impl std::error::Error for InterfaceConfigKeyError {}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct InterfaceSettingKey(&'static str);
 
@@ -73,6 +115,26 @@ impl InterfaceSettingKey {
             self.0,
             interface_key::PASS_PHRASE | interface_key::PASSPHRASE
         )
+    }
+
+    pub fn canonical(self) -> Self {
+        match self.0 {
+            interface_key::ENABLED => Self(interface_key::INTERFACE_ENABLED),
+            interface_key::MODE => Self(interface_key::INTERFACE_MODE),
+            interface_key::NETWORKNAME => Self(interface_key::NETWORK_NAME),
+            interface_key::PASSPHRASE => Self(interface_key::PASS_PHRASE),
+            _ => self,
+        }
+    }
+
+    pub fn aliases(self) -> &'static [&'static str] {
+        match self.canonical().0 {
+            interface_key::INTERFACE_ENABLED => interface_key::ENABLED_ALIASES,
+            interface_key::INTERFACE_MODE => interface_key::MODE_ALIASES,
+            interface_key::NETWORK_NAME => interface_key::NETWORK_NAME_ALIASES,
+            interface_key::PASS_PHRASE => interface_key::PASSPHRASE_ALIASES,
+            _ => &[],
+        }
     }
 }
 
@@ -132,6 +194,24 @@ impl InterfaceDefinition {
         settings: Vec<InterfaceSetting>,
         rnode_multi_radios: Vec<RNodeMultiRadioDefinition>,
     ) -> Result<Self, InterfaceDefinitionError> {
+        Self::new_named_with_rnode_multi_radios(
+            "<interface definition>",
+            name,
+            kind,
+            enabled,
+            settings,
+            rnode_multi_radios,
+        )
+    }
+
+    pub fn new_named_with_rnode_multi_radios(
+        source_name: impl Into<String>,
+        name: InterfaceName,
+        kind: InterfaceKind,
+        enabled: bool,
+        settings: Vec<InterfaceSetting>,
+        rnode_multi_radios: Vec<RNodeMultiRadioDefinition>,
+    ) -> Result<Self, InterfaceDefinitionError> {
         let mut keys = BTreeSet::new();
         for setting in &settings {
             if !keys.insert(setting.key) {
@@ -156,8 +236,7 @@ impl InterfaceDefinition {
         };
         let validation = candidate.render_with_enabled(true, "\n");
         let document = format!("[interfaces]\n{validation}");
-        parse_and_plan_named("<interface definition>", &document)
-            .map_err(InterfaceDefinitionError::Invalid)?;
+        parse_and_plan_named(source_name, &document).map_err(InterfaceDefinitionError::Invalid)?;
         Ok(candidate)
     }
 
@@ -243,6 +322,26 @@ impl RNodeMultiRadioDefinition {
 
     pub const fn vport(&self) -> u8 {
         self.vport.get()
+    }
+
+    pub const fn frequency(&self) -> u64 {
+        self.radio.frequency().hz() as u64
+    }
+
+    pub const fn bandwidth(&self) -> u32 {
+        self.radio.bandwidth_hz()
+    }
+
+    pub const fn txpower(&self) -> i16 {
+        self.radio.tx_power_dbm() as i16
+    }
+
+    pub const fn spreading_factor(&self) -> u8 {
+        self.radio.spreading_factor()
+    }
+
+    pub const fn coding_rate(&self) -> u8 {
+        self.radio.coding_rate()
     }
 
     pub(crate) fn render(&self, newline: &str) -> String {
@@ -353,7 +452,7 @@ fn render_text(value: &str) -> String {
     format!("\"\"\"{value}\"\"\"")
 }
 
-const ALL_SETTING_KEYS: &[&str] = &[
+pub(super) const ALL_SETTING_KEYS: &[&str] = &[
     interface_key::INTERFACE_ENABLED,
     interface_key::ENABLED,
     interface_key::INTERFACE_MODE,

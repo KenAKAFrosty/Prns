@@ -5,9 +5,10 @@ use crate::configobj::{ConfigDocument, ConfigError, Value};
 use crate::reference::keys::{interface as interface_key, section as section_key};
 use crate::{parse_and_plan_named, ConfigDiagnostic, ConfigErrors, InterfaceKind, SecretDisplay};
 
+use super::catalog::ConfiguredInterfaceSetting;
 use super::interface::{
-    render_bool, render_value, InterfaceDefinition, InterfaceName, InterfaceSetting,
-    InterfaceSettingKey, RNodeMultiRadioDefinition,
+    render_bool, render_value, InterfaceConfigKey, InterfaceDefinition, InterfaceName,
+    InterfaceSetting, InterfaceSettingKey, RNodeMultiRadioDefinition,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16,6 +17,8 @@ pub struct ConfiguredInterface {
     configured_type: Option<String>,
     kind: Option<InterfaceKind>,
     enabled: Option<bool>,
+    settings: Vec<ConfiguredInterfaceSetting>,
+    rnode_multi_radios: Vec<RNodeMultiRadioDefinition>,
 }
 
 impl ConfiguredInterface {
@@ -33,6 +36,14 @@ impl ConfiguredInterface {
 
     pub const fn enabled(&self) -> Option<bool> {
         self.enabled
+    }
+
+    pub fn settings(&self) -> &[ConfiguredInterfaceSetting] {
+        &self.settings
+    }
+
+    pub fn rnode_multi_radios(&self) -> &[RNodeMultiRadioDefinition] {
+        &self.rnode_multi_radios
     }
 }
 
@@ -70,6 +81,10 @@ pub enum ConfigEdit {
         radios: Vec<RNodeMultiRadioDefinition>,
     },
     Remove(InterfaceName),
+    RemoveInterfaceValue {
+        name: InterfaceName,
+        key: InterfaceConfigKey,
+    },
     Batch(Vec<ConfigEdit>),
 }
 
@@ -111,20 +126,38 @@ impl ConfigDocument {
                     .map(str::to_string);
                 let kind = configured_type.as_deref().and_then(InterfaceKind::parse);
                 let enabled = interface_enabled(self, &path);
+                let settings = kind
+                    .map(|kind| configured_settings(self, name.as_str(), kind))
+                    .unwrap_or_default();
+                let rnode_multi_radios = if kind == Some(InterfaceKind::RnodeMulti) {
+                    configured_radios(self, name.as_str())
+                } else {
+                    Vec::new()
+                };
                 Some(ConfiguredInterface {
                     name,
                     configured_type,
                     kind,
                     enabled,
+                    settings,
+                    rnode_multi_radios,
                 })
             })
             .collect()
     }
 
     pub fn edit(&self, edit: &ConfigEdit) -> Result<EditedConfig, ConfigEditError> {
+        self.edit_named("<edited config>", edit)
+    }
+
+    pub fn edit_named(
+        &self,
+        source_name: impl Into<String>,
+        edit: &ConfigEdit,
+    ) -> Result<EditedConfig, ConfigEditError> {
         let candidate = mutate(self.source(), edit)?;
-        let report = parse_and_plan_named("<edited config>", &candidate)
-            .map_err(ConfigEditError::Invalid)?;
+        let report =
+            parse_and_plan_named(source_name, &candidate).map_err(ConfigEditError::Invalid)?;
         Ok(EditedConfig {
             original: self.source().to_string(),
             candidate,
@@ -190,6 +223,9 @@ fn mutate_one(document: ConfigDocument, edit: &ConfigEdit) -> Result<String, Con
             replace_rnode_multi_radios(&document, name, radios)
         }
         ConfigEdit::Remove(name) => remove_interface(&document, name),
+        ConfigEdit::RemoveInterfaceValue { name, key } => {
+            remove_interface_value(&document, name, key)
+        }
         ConfigEdit::Batch(edits) => {
             let mut candidate = document.source().to_string();
             for edit in edits {
@@ -349,13 +385,12 @@ fn change_settings(
     let mut candidate = document.source().to_string();
     for change in changes {
         let parsed = ConfigDocument::parse(&candidate).map_err(ConfigEditError::Syntax)?;
-        let key = match change {
-            InterfaceSettingChange::Set(setting) => setting.key(),
-            InterfaceSettingChange::Remove(key) => *key,
-        };
-        let path = [section_key::INTERFACES, name.as_str(), key.as_str()];
         match change {
             InterfaceSettingChange::Set(setting) => {
+                let key = setting.key().canonical();
+                candidate = remove_aliases(&parsed, name, key, false);
+                let parsed = ConfigDocument::parse(&candidate).map_err(ConfigEditError::Syntax)?;
+                let path = [section_key::INTERFACES, name.as_str(), key.as_str()];
                 let value = render_value(setting.value());
                 candidate = match parsed.key_range(&path) {
                     Some(range) => {
@@ -378,14 +413,125 @@ fn change_settings(
                     }
                 };
             }
-            InterfaceSettingChange::Remove(_) => {
-                if let Some(range) = parsed.key_range(&path) {
-                    candidate = replace_range(parsed.source(), range, "");
-                }
+            InterfaceSettingChange::Remove(key) => {
+                candidate = remove_aliases(&parsed, name, key.canonical(), true);
             }
         }
     }
     Ok(candidate)
+}
+
+fn remove_aliases(
+    document: &ConfigDocument,
+    name: &InterfaceName,
+    key: InterfaceSettingKey,
+    include_canonical: bool,
+) -> String {
+    let aliases = key.aliases();
+    let keys = if aliases.is_empty() {
+        vec![key.as_str()]
+    } else {
+        aliases.to_vec()
+    };
+    let replacements = keys
+        .into_iter()
+        .filter(|candidate| include_canonical || *candidate != key.as_str())
+        .filter_map(|candidate| {
+            document
+                .key_range(&[section_key::INTERFACES, name.as_str(), candidate])
+                .map(|range| (range, String::new()))
+        })
+        .collect();
+    apply_replacements(document.source(), replacements)
+}
+
+fn remove_interface_value(
+    document: &ConfigDocument,
+    name: &InterfaceName,
+    key: &InterfaceConfigKey,
+) -> Result<String, ConfigEditError> {
+    interface_range(document, name)?;
+    let path = [section_key::INTERFACES, name.as_str(), key.as_str()];
+    Ok(match document.key_range(&path) {
+        Some(range) => replace_range(document.source(), range, ""),
+        None => document.source().to_string(),
+    })
+}
+
+fn configured_settings(
+    document: &ConfigDocument,
+    name: &str,
+    kind: InterfaceKind,
+) -> Vec<ConfiguredInterfaceSetting> {
+    let Some(section) = document
+        .root()
+        .section(section_key::INTERFACES)
+        .and_then(|interfaces| interfaces.section(name))
+    else {
+        return Vec::new();
+    };
+    kind.setting_specs()
+        .into_iter()
+        .filter_map(|spec| {
+            let key = spec.key();
+            let aliases = key.aliases();
+            let keys = if aliases.is_empty() {
+                vec![key.as_str()]
+            } else {
+                aliases.to_vec()
+            };
+            keys.into_iter().find_map(|source_key| {
+                let value = section.get(source_key)?;
+                let value = match value {
+                    Value::Scalar(value) => value.clone(),
+                    Value::List(values) => values.join(", "),
+                };
+                Some(ConfiguredInterfaceSetting::new(
+                    spec,
+                    source_key.to_string(),
+                    value,
+                ))
+            })
+        })
+        .collect()
+}
+
+fn configured_radios(document: &ConfigDocument, name: &str) -> Vec<RNodeMultiRadioDefinition> {
+    let Some(section) = document
+        .root()
+        .section(section_key::INTERFACES)
+        .and_then(|interfaces| interfaces.section(name))
+    else {
+        return Vec::new();
+    };
+    section
+        .sections
+        .iter()
+        .filter_map(|(name, radio)| {
+            let scalar = |key: &str| radio.get(key).and_then(Value::as_scalar);
+            let enabled = scalar(interface_key::INTERFACE_ENABLED)
+                .or_else(|| scalar(interface_key::ENABLED))
+                .and_then(|value| match value.trim().to_ascii_lowercase().as_str() {
+                    "yes" | "true" | "on" | "1" => Some(true),
+                    "no" | "false" | "off" | "0" => Some(false),
+                    _ => None,
+                })
+                .unwrap_or(true);
+            if !enabled {
+                return None;
+            }
+            RNodeMultiRadioDefinition::new(
+                InterfaceName::new(name.clone()).ok()?,
+                scalar(interface_key::VPORT)?.parse().ok()?,
+                scalar(interface_key::FREQUENCY)?.parse().ok()?,
+                scalar(interface_key::BANDWIDTH)?.parse().ok()?,
+                scalar(interface_key::TXPOWER)?.parse().ok()?,
+                scalar(interface_key::SPREADINGFACTOR)?.parse().ok()?,
+                scalar(interface_key::CODINGRATE)?.parse().ok()?,
+            )
+            .ok()
+        })
+        .collect()
 }
 
 fn remove_interface(

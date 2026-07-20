@@ -1,20 +1,26 @@
 pub(crate) mod arguments;
 mod error;
+mod guided;
 mod options;
+mod presentation;
 
 pub use arguments::InterfacesArgs;
 
+use std::collections::BTreeMap;
 use std::io::{self, IsTerminal, Write};
 use std::path::Path;
 use std::process::ExitCode;
 
 use prns_config::editing::{
-    ConfigEdit, ConfigFile, ConfigRepairReport, InterfaceDefinition, InterfaceName,
-    InterfaceSetting, InterfaceSettingChange, InterfaceSettingKey, InterfaceSettingValue,
-    SecretDisplay,
+    ConfigEdit, ConfigFile, ConfigRepairReport, InterfaceConfigKey, InterfaceDefinition,
+    InterfaceName, InterfaceSetting, InterfaceSettingChange, InterfaceSettingKey,
+    InterfaceSettingValue, SecretDisplay,
 };
 use prns_config::{discover, parse_and_plan_named, ConfigFix, InterfaceKind};
-use prnsd_control::{config_digest, request_reload, ReloadResult, ServicePaths};
+use prnsd_control::{
+    config_digest, request_reload, running as managed_running, ReloadResult, ServicePaths,
+    ServiceState,
+};
 
 use crate::daemon::DEFAULT_CONFIG;
 
@@ -23,6 +29,7 @@ use arguments::{
     RepairArgs,
 };
 use error::{InterfacesError, InterfacesIoOperation, InterfacesUsageError};
+use presentation::{friendly_kind, ApplyStatus, Presentation, RuntimeStatus, ValidationState};
 
 pub fn run(args: InterfacesArgs) -> ExitCode {
     match execute(args) {
@@ -41,18 +48,22 @@ fn execute(args: InterfacesArgs) -> Result<u8, InterfacesError> {
     };
     match command {
         InterfacesCommand::List => list(args.config.as_deref()),
-        InterfacesCommand::Check => check(args.config.as_deref(), args.show_secrets),
+        InterfacesCommand::Validate(options) => {
+            validate(args.config.as_deref(), args.show_secrets, options.details)
+        }
         InterfacesCommand::Add(add) => add_interface(
             args.config.as_deref(),
             args.show_secrets,
             add,
             MutationMode::Scripted,
+            None,
         ),
         InterfacesCommand::Edit(edit) => edit_interface(
             args.config.as_deref(),
             args.show_secrets,
             edit,
             MutationMode::Scripted,
+            None,
         ),
         InterfacesCommand::Enable(name) => set_enabled(
             args.config.as_deref(),
@@ -60,6 +71,7 @@ fn execute(args: InterfacesArgs) -> Result<u8, InterfacesError> {
             name,
             true,
             MutationMode::Scripted,
+            None,
         ),
         InterfacesCommand::Disable(name) => set_enabled(
             args.config.as_deref(),
@@ -67,18 +79,21 @@ fn execute(args: InterfacesArgs) -> Result<u8, InterfacesError> {
             name,
             false,
             MutationMode::Scripted,
+            None,
         ),
         InterfacesCommand::Remove(remove) => remove_interface(
             args.config.as_deref(),
             args.show_secrets,
             remove,
             MutationMode::Scripted,
+            None,
         ),
         InterfacesCommand::Repair(repair_args) => repair(
             args.config.as_deref(),
             args.show_secrets,
             repair_args,
             MutationMode::Scripted,
+            None,
         ),
         InterfacesCommand::Apply => apply(args.config.as_deref()),
     }
@@ -111,28 +126,43 @@ fn list(config: Option<&Path>) -> Result<u8, InterfacesError> {
     Ok(0)
 }
 
-fn check(config: Option<&Path>, show_secrets: bool) -> Result<u8, InterfacesError> {
+fn validate(
+    config: Option<&Path>,
+    show_secrets: bool,
+    details: bool,
+) -> Result<u8, InterfacesError> {
     let file = load(config)?;
-    match parse_and_plan_named(file.path().display().to_string(), file.document().source()) {
-        Ok(report) => {
-            for warning in report.warnings {
-                eprintln!("{warning}");
+    let result = parse_and_plan_named(file.path().display().to_string(), file.document().source());
+    let terminal_output = io::stdout().is_terminal();
+    let display = if show_secrets {
+        SecretDisplay::Revealed
+    } else {
+        SecretDisplay::Redacted
+    };
+    if !terminal_output {
+        match result {
+            Ok(report) => {
+                for warning in report.warnings {
+                    eprintln!("{}", warning.display_with(display));
+                }
+                println!("{} is semantically valid.", file.path().display());
+                return Ok(0);
             }
-            println!("{} is semantically valid.", file.path().display());
-            Ok(0)
-        }
-        Err(errors) => {
-            for diagnostic in errors.diagnostics() {
-                let display = if show_secrets {
-                    SecretDisplay::Revealed
-                } else {
-                    SecretDisplay::Redacted
-                };
-                eprintln!("{}", diagnostic.display_with(display));
+            Err(errors) => {
+                for diagnostic in errors.diagnostics() {
+                    eprintln!("{}", diagnostic.display_with(display));
+                }
+                return Ok(1);
             }
-            Ok(1)
         }
     }
+    let state = ValidationState::from_result(result);
+    let presentation = Presentation::new(crate::terminal::enabled(terminal_output));
+    print!(
+        "{}",
+        presentation.validation(file.path(), &state, details, display)
+    );
+    Ok(if state.is_valid() { 0 } else { 1 })
 }
 
 fn add_interface(
@@ -140,6 +170,7 @@ fn add_interface(
     show_secrets: bool,
     args: AddArgs,
     mode: MutationMode,
+    session: Option<&mut ApplySession>,
 ) -> Result<u8, InterfacesError> {
     let terminal = io::stdin().is_terminal();
     let prompted = args.kind.is_none() || args.name.is_none();
@@ -154,7 +185,23 @@ fn add_interface(
         return Err(InterfacesError::InapplicableSetting { key: "radio", kind });
     }
     let settings = args.options.settings(kind)?;
-    let definition = InterfaceDefinition::new_with_rnode_multi_radios(
+    if terminal && prompted {
+        if let Some(definition) = guided::add_interface(kind, name, show_secrets, settings, radios)?
+        {
+            return mutate(
+                config,
+                show_secrets,
+                ConfigEdit::Add(definition),
+                args.mutation,
+                true,
+                session,
+            );
+        }
+        return Ok(0);
+    }
+    let source_name = load(config)?.path().display().to_string();
+    let definition = InterfaceDefinition::new_named_with_rnode_multi_radios(
+        source_name,
         name,
         kind,
         !args.disabled,
@@ -168,6 +215,7 @@ fn add_interface(
         ConfigEdit::Add(definition),
         args.mutation,
         mode == MutationMode::Guided || prompted,
+        session,
     )
 }
 
@@ -176,6 +224,7 @@ fn edit_interface(
     show_secrets: bool,
     args: EditArgs,
     mode: MutationMode,
+    session: Option<&mut ApplySession>,
 ) -> Result<u8, InterfacesError> {
     let terminal = io::stdin().is_terminal();
     let prompted = args.name.is_none();
@@ -196,6 +245,12 @@ fn edit_interface(
     }
     let settings = args.options.settings(kind)?;
     if settings.is_empty() && radios.is_empty() && args.rename.is_none() {
+        if terminal {
+            if let Some(edit) = guided::edit_interface(&file, &configured, show_secrets)? {
+                return mutate_loaded(file, show_secrets, edit, args.mutation, true, session);
+            }
+            return Ok(0);
+        }
         return Err(InterfacesError::Usage(
             InterfacesUsageError::EditNeedsChange,
         ));
@@ -233,6 +288,7 @@ fn edit_interface(
         ConfigEdit::Batch(edits),
         args.mutation,
         mode == MutationMode::Guided || prompted,
+        session,
     )
 }
 
@@ -242,6 +298,7 @@ fn set_enabled(
     args: NameArgs,
     enabled: bool,
     mode: MutationMode,
+    session: Option<&mut ApplySession>,
 ) -> Result<u8, InterfacesError> {
     let terminal = io::stdin().is_terminal();
     let prompted = args.name.is_none();
@@ -252,6 +309,7 @@ fn set_enabled(
         ConfigEdit::SetEnabled { name, enabled },
         args.mutation,
         mode == MutationMode::Guided || prompted,
+        session,
     )
 }
 
@@ -260,6 +318,7 @@ fn remove_interface(
     show_secrets: bool,
     args: RemoveArgs,
     mode: MutationMode,
+    session: Option<&mut ApplySession>,
 ) -> Result<u8, InterfacesError> {
     let terminal = io::stdin().is_terminal();
     let prompted = args.name.is_none() || !args.yes;
@@ -281,6 +340,7 @@ fn remove_interface(
         ConfigEdit::Remove(name),
         args.mutation,
         mode == MutationMode::Guided || prompted,
+        session,
     )
 }
 
@@ -289,23 +349,49 @@ fn repair(
     show_secrets: bool,
     args: RepairArgs,
     mode: MutationMode,
+    session: Option<&mut ApplySession>,
 ) -> Result<u8, InterfacesError> {
     let file = load(config)?;
-    let report = ConfigRepairReport::analyze(file.document().source())
-        .map_err(InterfacesError::ConfigRepair)?;
+    let report = ConfigRepairReport::analyze_named(
+        file.path().display().to_string(),
+        file.document().source(),
+    )
+    .map_err(InterfacesError::ConfigRepair)?;
     if report.diagnostics().is_empty() {
-        println!("No semantic repairs are needed.");
+        let presentation = Presentation::new(crate::terminal::enabled(io::stdout().is_terminal()));
+        println!(
+            "{}",
+            presentation.success("No semantic repairs are needed.")
+        );
         return Ok(0);
     }
-    for diagnostic in report.diagnostics() {
-        let display = if show_secrets {
-            SecretDisplay::Revealed
-        } else {
-            SecretDisplay::Redacted
-        };
-        eprintln!("{}", diagnostic.display_with(display));
-    }
     let interactive = io::stdin().is_terminal();
+    let display = if show_secrets {
+        SecretDisplay::Revealed
+    } else {
+        SecretDisplay::Redacted
+    };
+    if interactive {
+        let presentation = Presentation::new(crate::terminal::enabled(io::stdout().is_terminal()));
+        print!(
+            "{}",
+            presentation.repair_summary(file.path(), report.diagnostics(), false, display)
+        );
+        let action = prompt("[Enter] Continue  [D] Details  [B] Back")?;
+        match action.trim().to_ascii_lowercase().as_str() {
+            "d" | "details" => print!(
+                "{}",
+                presentation.repair_summary(file.path(), report.diagnostics(), true, display)
+            ),
+            "b" | "back" => return Ok(0),
+            "" => {}
+            _ => return Err(InterfacesError::Usage(InterfacesUsageError::RepairChoice)),
+        }
+    } else {
+        for diagnostic in report.diagnostics() {
+            eprintln!("{}", diagnostic.display_with(display));
+        }
+    }
     let edit = if args.safe {
         report.safe_edit()
     } else if interactive {
@@ -316,7 +402,8 @@ fn repair(
         ));
     };
     let Some(edit) = edit else {
-        return Err(InterfacesError::NoCompleteRepair);
+        println!("No repairs selected.");
+        return Ok(0);
     };
     mutate_loaded(
         file,
@@ -324,12 +411,88 @@ fn repair(
         edit,
         args.mutation,
         mode == MutationMode::Guided || !args.safe,
+        session,
     )
 }
 
 fn guided_repairs(report: &ConfigRepairReport) -> Result<Option<ConfigEdit>, InterfacesError> {
     let mut edits = Vec::new();
+    let metadata = report
+        .diagnostics()
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic.code() == prns_config::ConfigDiagnosticCode::PersistedRuntimeMetadata
+        })
+        .collect::<Vec<_>>();
+    if !metadata.is_empty() {
+        println!(
+            "{} runtime-only RNS {} can be safely removed:",
+            metadata.len(),
+            if metadata.len() == 1 {
+                "field"
+            } else {
+                "fields"
+            }
+        );
+        for diagnostic in &metadata {
+            println!(
+                "  • {}",
+                diagnostic
+                    .path()
+                    .rsplit(" > ")
+                    .next()
+                    .unwrap_or(diagnostic.path())
+            );
+        }
+        if confirm("Remove these runtime-only fields?", true)? {
+            for diagnostic in metadata {
+                let (name, key) = interface_target(diagnostic.path())?;
+                edits.push(ConfigEdit::RemoveInterfaceValue {
+                    name,
+                    key: InterfaceConfigKey::new(key)
+                        .map_err(InterfacesError::InterfaceConfigKey)?,
+                });
+            }
+        }
+        println!();
+    }
+    let mut unknown_by_interface = BTreeMap::<InterfaceName, Vec<&str>>::new();
+    for diagnostic in report.diagnostics().iter().filter(|diagnostic| {
+        diagnostic.code() == prns_config::ConfigDiagnosticCode::UnknownKey
+            && diagnostic.path().contains("[[")
+    }) {
+        let (name, key) = interface_target(diagnostic.path())?;
+        unknown_by_interface.entry(name).or_default().push(key);
+    }
+    for (name, keys) in unknown_by_interface {
+        println!(
+            "{name} contains {} unknown {}:",
+            keys.len(),
+            if keys.len() == 1 { "field" } else { "fields" }
+        );
+        for key in &keys {
+            println!("  • {key}");
+        }
+        println!("Prns ignores these fields, but another tool may own them.");
+        if confirm("Remove these unknown fields?", false)? {
+            for key in keys {
+                edits.push(ConfigEdit::RemoveInterfaceValue {
+                    name: name.clone(),
+                    key: InterfaceConfigKey::new(key)
+                        .map_err(InterfacesError::InterfaceConfigKey)?,
+                });
+            }
+        }
+        println!();
+    }
     for diagnostic in report.diagnostics() {
+        if matches!(
+            diagnostic.code(),
+            prns_config::ConfigDiagnosticCode::PersistedRuntimeMetadata
+                | prns_config::ConfigDiagnosticCode::UnknownKey
+        ) {
+            continue;
+        }
         let fixes = diagnostic.fixes();
         if fixes.is_empty() {
             continue;
@@ -422,13 +585,9 @@ fn guided_repairs(report: &ConfigRepairReport) -> Result<Option<ConfigEdit>, Int
                 });
                 if let Some(path) = path {
                     let (name, key) = interface_target(path)?;
-                    let key = InterfaceSettingKey::parse(key).ok_or_else(|| {
-                        InterfacesError::UnsupportedRepairSetting(key.to_string())
-                    })?;
-                    edits.push(ConfigEdit::ChangeSettings {
-                        name,
-                        changes: vec![InterfaceSettingChange::Remove(key)],
-                    });
+                    let key = InterfaceConfigKey::new(key)
+                        .map_err(InterfacesError::InterfaceConfigKey)?;
+                    edits.push(ConfigEdit::RemoveInterfaceValue { name, key });
                 }
             }
             "skip" => {}
@@ -500,8 +659,16 @@ fn mutate(
     edit: ConfigEdit,
     mutation: MutationArgs,
     interactive: bool,
+    session: Option<&mut ApplySession>,
 ) -> Result<u8, InterfacesError> {
-    mutate_loaded(load(config)?, show_secrets, edit, mutation, interactive)
+    mutate_loaded(
+        load(config)?,
+        show_secrets,
+        edit,
+        mutation,
+        interactive,
+        session,
+    )
 }
 
 fn mutate_loaded(
@@ -510,10 +677,11 @@ fn mutate_loaded(
     edit: ConfigEdit,
     mutation: MutationArgs,
     interactive: bool,
+    mut session: Option<&mut ApplySession>,
 ) -> Result<u8, InterfacesError> {
     let edited = file
         .document()
-        .edit(&edit)
+        .edit_named(file.path().display().to_string(), &edit)
         .map_err(InterfacesError::ConfigEdit)?;
     let display = if show_secrets {
         SecretDisplay::Revealed
@@ -530,6 +698,10 @@ fn mutate_loaded(
         return Ok(0);
     }
     let receipt = file.write(&edited).map_err(InterfacesError::ConfigFile)?;
+    let digest = config_digest(edited.candidate().as_bytes());
+    if let Some(session) = session.as_mut() {
+        session.saved(digest);
+    }
     println!("Saved {}.", receipt.path().display());
     if let Some(backup) = receipt.backup() {
         println!("Previous configuration: {}", backup.display());
@@ -542,7 +714,13 @@ fn mutate_loaded(
         false
     };
     if should_apply {
-        apply_path(receipt.path())
+        let result = apply_path(receipt.path());
+        if result.is_ok() {
+            if let Some(session) = session.as_mut() {
+                session.applied(digest);
+            }
+        }
+        result
     } else {
         Ok(0)
     }
@@ -589,41 +767,56 @@ fn guided(config: Option<&Path>, show_secrets: bool) -> Result<u8, InterfacesErr
             InterfacesUsageError::MissingSubcommand,
         ));
     }
+    let presentation = Presentation::new(crate::terminal::enabled(io::stdout().is_terminal()));
+    let mut session = ApplySession::default();
     loop {
         let file = load(config)?;
-        println!("Interfaces in {}:", file.path().display());
-        for (index, interface) in file.document().interfaces().iter().enumerate() {
-            println!(
-                "  {}. {} ({})",
-                index + 1,
-                interface.name(),
-                interface.configured_type().unwrap_or("missing type")
-            );
-        }
-        println!("  a. Add   c. Check   r. Repair   p. Apply   q. Quit");
+        let digest = config_digest(file.document().source().as_bytes());
+        let validation = ValidationState::from_result(parse_and_plan_named(
+            file.path().display().to_string(),
+            file.document().source(),
+        ));
+        let interfaces = file.document().interfaces();
+        print!(
+            "{}",
+            presentation.main_screen(
+                file.path(),
+                &interfaces,
+                &validation,
+                managed_runtime_status(),
+                session.status(digest),
+            )
+        );
         let selection = prompt("Selection")?;
         match selection.trim().to_ascii_lowercase().as_str() {
             "a" | "add" => {
                 let kind = prompt_kind()?;
-                let name = prompt("Interface name")?;
-                add_interface(
-                    config,
-                    show_secrets,
-                    AddArgs {
-                        kind: Some(kind),
-                        name: Some(name),
-                        disabled: false,
-                        options: InterfaceOptions::default(),
-                        mutation: MutationArgs {
+                let name = InterfaceName::new(prompt("Interface name")?)
+                    .map_err(InterfacesError::InterfaceName)?;
+                if let Some(definition) =
+                    guided::add_interface(kind, name, show_secrets, Vec::new(), Vec::new())?
+                {
+                    mutate(
+                        config,
+                        show_secrets,
+                        ConfigEdit::Add(definition),
+                        MutationArgs {
                             dry_run: false,
                             apply: false,
                         },
-                    },
-                    MutationMode::Guided,
-                )?;
+                        true,
+                        Some(&mut session),
+                    )?;
+                }
             }
-            "c" | "check" => {
-                check(config, show_secrets)?;
+            "v" | "validate" | "c" | "check" => {
+                let code = validate(config, show_secrets, false)?;
+                if code != 0 {
+                    println!(
+                        "{}",
+                        presentation.warning("Use Repair to correct the configuration.")
+                    );
+                }
             }
             "r" | "repair" => {
                 repair(
@@ -637,13 +830,15 @@ fn guided(config: Option<&Path>, show_secrets: bool) -> Result<u8, InterfacesErr
                         },
                     },
                     MutationMode::Guided,
+                    Some(&mut session),
                 )?;
             }
             "p" | "apply" => {
                 apply(config)?;
+                session.applied(digest);
             }
             "q" | "quit" | "" => return Ok(0),
-            value => guided_interface(config, show_secrets, &file, value)?,
+            value => guided_interface(config, show_secrets, &file, value, &mut session)?,
         }
     }
 }
@@ -653,6 +848,7 @@ fn guided_interface(
     show_secrets: bool,
     file: &ConfigFile,
     value: &str,
+    session: &mut ApplySession,
 ) -> Result<(), InterfacesError> {
     let index = value
         .parse::<usize>()
@@ -663,43 +859,77 @@ fn guided_interface(
         .ok_or(InterfacesError::Usage(
             InterfacesUsageError::MissingSelection,
         ))?;
-    let action = prompt("Action [enable/disable/remove]")?;
+    let presentation = Presentation::new(crate::terminal::enabled(io::stdout().is_terminal()));
+    print!("{}", presentation.interface_header(selected));
+    println!("[S] Settings  [N] Rename  [E] Enable  [D] Disable");
+    println!("[R] Remove    [B] Back");
+    let action = prompt("Action")?;
     let name = selected.name().as_str().to_string();
     let mutation = MutationArgs {
         dry_run: false,
         apply: false,
     };
     match action.trim().to_ascii_lowercase().as_str() {
-        "enable" => set_enabled(
-            config,
-            show_secrets,
-            NameArgs {
-                name: Some(name),
+        "s" | "settings" | "edit" => {
+            if let Some(edit) = guided::edit_interface(file, selected, show_secrets)? {
+                mutate(config, show_secrets, edit, mutation, true, Some(session))?;
+            }
+        }
+        "n" | "rename" => {
+            let replacement = InterfaceName::new(prompt("New interface name")?)
+                .map_err(InterfacesError::InterfaceName)?;
+            mutate(
+                config,
+                show_secrets,
+                ConfigEdit::Rename {
+                    current: selected.name().clone(),
+                    replacement,
+                },
                 mutation,
-            },
-            true,
-            MutationMode::Guided,
-        )?,
-        "disable" => set_enabled(
-            config,
-            show_secrets,
-            NameArgs {
-                name: Some(name),
-                mutation,
-            },
-            false,
-            MutationMode::Guided,
-        )?,
-        "remove" => remove_interface(
-            config,
-            show_secrets,
-            RemoveArgs {
-                name: Some(name),
-                yes: false,
-                mutation,
-            },
-            MutationMode::Guided,
-        )?,
+                true,
+                Some(session),
+            )?;
+        }
+        "e" | "enable" => {
+            set_enabled(
+                config,
+                show_secrets,
+                NameArgs {
+                    name: Some(name.clone()),
+                    mutation,
+                },
+                true,
+                MutationMode::Guided,
+                Some(session),
+            )?;
+        }
+        "d" | "disable" => {
+            set_enabled(
+                config,
+                show_secrets,
+                NameArgs {
+                    name: Some(name.clone()),
+                    mutation,
+                },
+                false,
+                MutationMode::Guided,
+                Some(session),
+            )?;
+        }
+        "r" | "remove" => {
+            remove_interface(
+                config,
+                show_secrets,
+                RemoveArgs {
+                    name: Some(name),
+                    yes: false,
+                    mutation,
+                },
+                MutationMode::Guided,
+                Some(session),
+            )?;
+        }
+        "b" | "back" | "" => {}
         _ => {
             return Err(InterfacesError::Usage(
                 InterfacesUsageError::UnknownGuidedAction,
@@ -731,9 +961,17 @@ fn required_name(
 }
 
 fn prompt_kind() -> Result<InterfaceKind, InterfacesError> {
-    println!("Interface types:");
+    println!();
+    println!("Interface types");
     for (index, canonical) in InterfaceKind::CANONICAL_NAMES.iter().enumerate() {
-        println!("  {}. {canonical}", index + 1);
+        if let Some(kind) = InterfaceKind::parse(canonical) {
+            println!(
+                "  {:>2}. {:<24} {}",
+                index + 1,
+                friendly_kind(kind),
+                canonical
+            );
+        }
     }
     let value = prompt("Type")?;
     if let Ok(index) = value.parse::<usize>() {
@@ -750,7 +988,8 @@ fn prompt_kind() -> Result<InterfaceKind, InterfacesError> {
 }
 
 fn prompt(label: &str) -> Result<String, InterfacesError> {
-    print!("{label}: ");
+    let presentation = Presentation::new(crate::terminal::enabled(io::stdout().is_terminal()));
+    print!("{}: ", presentation.prompt(label));
     io::stdout().flush().map_err(|source| InterfacesError::Io {
         operation: InterfacesIoOperation::WritePrompt,
         path: None,
@@ -765,6 +1004,18 @@ fn prompt(label: &str) -> Result<String, InterfacesError> {
             source,
         })?;
     Ok(value.trim().to_string())
+}
+
+fn managed_runtime_status() -> RuntimeStatus {
+    let Ok(paths) = ServicePaths::discover() else {
+        return RuntimeStatus::Unavailable;
+    };
+    match managed_running(&paths) {
+        Ok(Some(record)) if record.state == ServiceState::Running => RuntimeStatus::Running,
+        Ok(Some(_)) => RuntimeStatus::Starting,
+        Ok(None) => RuntimeStatus::Stopped,
+        Err(_) => RuntimeStatus::Unavailable,
+    }
 }
 
 fn confirm(label: &str, default: bool) -> Result<bool, InterfacesError> {
@@ -784,4 +1035,52 @@ fn confirm(label: &str, default: bool) -> Result<bool, InterfacesError> {
 enum MutationMode {
     Scripted,
     Guided,
+}
+
+#[derive(Default)]
+struct ApplySession {
+    saved_digest: Option<[u8; 32]>,
+    applied_digest: Option<[u8; 32]>,
+}
+
+impl ApplySession {
+    fn saved(&mut self, digest: [u8; 32]) {
+        self.saved_digest = Some(digest);
+    }
+
+    fn applied(&mut self, digest: [u8; 32]) {
+        self.saved_digest = Some(digest);
+        self.applied_digest = Some(digest);
+    }
+
+    fn status(&self, digest: [u8; 32]) -> ApplyStatus {
+        if self.applied_digest == Some(digest) {
+            ApplyStatus::Current
+        } else if self.saved_digest == Some(digest) {
+            ApplyStatus::Pending
+        } else {
+            ApplyStatus::Unknown
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ApplySession, ApplyStatus};
+
+    #[test]
+    fn apply_session_tracks_saved_applied_and_externally_changed_digests() {
+        let first = prnsd_control::config_digest(b"first");
+        let second = prnsd_control::config_digest(b"second");
+        let mut session = ApplySession::default();
+
+        assert_eq!(session.status(first), ApplyStatus::Unknown);
+        session.saved(first);
+        assert_eq!(session.status(first), ApplyStatus::Pending);
+        session.applied(first);
+        assert_eq!(session.status(first), ApplyStatus::Current);
+        assert_eq!(session.status(second), ApplyStatus::Unknown);
+        session.saved(second);
+        assert_eq!(session.status(second), ApplyStatus::Pending);
+    }
 }

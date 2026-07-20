@@ -26,10 +26,26 @@ safe to retain an unavailable or incomplete stanza with `enabled = No`.
 ## Safe interface editor
 
 `prnsd interfaces` opens a numbered, line-oriented editor when attached to a terminal. The same
-surface is available non-interactively through `list`, `check`, `add`, `edit`, `enable`, `disable`,
-`remove`, `repair`, and `apply` subcommands. From a checkout, `cargo prnsd interfaces ...` routes
+surface is available non-interactively through `list`, `validate`, `add`, `edit`, `enable`,
+`disable`, `remove`, `repair`, and `apply` subcommands. `check` remains a visible alias for
+`validate`. From a checkout, `cargo prnsd interfaces ...` routes
 directly to the same one-shot command without starting the managed daemon. `--config DIR` follows
 the normal config discovery rules and may appear anywhere inside the `interfaces` command.
+
+The guided screen presents configuration validity, managed-daemon state, friendly interface names,
+canonical type names, and enabled state before offering an action. Selecting an interface opens a
+typed settings editor containing every setting applicable to that interface kind, grouped by
+connection, network, discovery, policy, radio, and advanced concerns. Configured values appear
+before unset values in each group. Multiple setting changes are validated and previewed as one
+candidate. RNodeMulti members have their own nested add, edit, and remove workflow. Unknown
+third-party interface types remain opaque and are never interpreted or rewritten.
+
+Interactive output uses the Prns terminal palette for headings, success, warnings, errors, and
+prompts. Styling is disabled when output is redirected or `NO_COLOR` is present; nonzero
+`CLICOLOR_FORCE` enables it explicitly. The editor remains line-oriented and never clears the
+terminal. `validate --details` shows exact source locations and diagnostic codes; the default TTY
+view groups concise diagnostics by interface. Non-TTY validation retains detailed plain output for
+automation.
 
 Add and edit accept explicit, typed options for the selected interface kind. Inapplicable options
 are rejected before an edit exists, and every complete candidate is passed through the same
@@ -56,6 +72,12 @@ invalid enabled interface so the rest of the daemon can start. Guided repair can
 for ambiguous values and interface types. Malformed ConfigObj syntax is reported with its exact
 line and remains untouched. Managed startup never prompts or rewrites configuration; on failure it
 prints the matching repair command.
+
+RNS injects `name`, `selected_interface_mode`, and `configured_bitrate` into its in-memory
+interface dictionaries. NomadNet can persist those runtime-only fields when writing an interface
+back to disk. Prns reports them as cleanup items rather than generic unknown settings; guided
+repair groups them into one explained action, and `repair --safe` removes them. Other unknown keys
+remain conservative guided repairs and are preserved by default.
 
 `prnsd interfaces apply` sends only the managed generation, a request identifier, and the expected
 SHA-256 digest through the private control directory. The daemon re-reads its active config path,
