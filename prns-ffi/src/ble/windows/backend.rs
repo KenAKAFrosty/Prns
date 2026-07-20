@@ -5,10 +5,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use prns_core::interfaces::bluetooth_auto::core::{
-    BleAddress, BLE_SERVICE_UUID, NATIVE_CONTROL_UUID, NATIVE_DATA_UUID,
+    BleAddress, BleIdentity, BLE_SERVICE_UUID, COLUMBA_IDENTITY_UUID, COLUMBA_RX_UUID,
+    COLUMBA_TX_UUID, NATIVE_CONTROL_UUID, NATIVE_DATA_UUID,
 };
 use prns_core::interfaces::bluetooth_auto::limits;
-use prns_core::interfaces::bluetooth_auto::seam::{BleBackend, BleEvent, Origin};
+use prns_core::interfaces::bluetooth_auto::seam::{AdvertisingMode, BleBackend, BleEvent, Origin};
 use tokio::sync::{mpsc as tokio_mpsc, oneshot};
 use tokio::task::JoinSet;
 use windows::Devices::Bluetooth::GenericAttributeProfile::{
@@ -20,7 +21,7 @@ use windows::Win32::System::Com::CoIncrementMTAUsage;
 
 use super::central::connect_blocking;
 use super::data_plane::WinGattLink;
-use super::peripheral::{publish_characteristic, wire_inbound};
+use super::peripheral::{publish_characteristic, publish_static_characteristic, wire_inbound};
 use super::watcher::{build_watcher, spawn_watcher_heartbeat};
 use super::{guid_of, Event, Radio, WindowsBleError};
 
@@ -37,7 +38,7 @@ pub struct WindowsBleBackend {
 }
 
 impl WindowsBleBackend {
-    pub async fn new() -> Result<Self, WindowsBleError> {
+    pub async fn new(identity: BleIdentity) -> Result<Self, WindowsBleError> {
         let (events_tx, events_rx) = tokio_mpsc::unbounded_channel::<Event>();
         let (keepalive, shutdown_rx) = sync_mpsc::channel::<()>();
         let (ready_tx, ready_rx) = oneshot::channel::<Result<Radio, WindowsBleError>>();
@@ -45,7 +46,7 @@ impl WindowsBleBackend {
         std::thread::Builder::new()
             .name("prns-ble-winrt".into())
             .spawn(move || {
-                let _ = ready_tx.send(winrt_setup(events_tx));
+                let _ = ready_tx.send(winrt_setup(events_tx, identity));
                 let _ = shutdown_rx.recv();
             })
             .map_err(|_| WindowsBleError::Closed)?;
@@ -68,7 +69,10 @@ impl WindowsBleBackend {
     }
 }
 
-fn winrt_setup(events_tx: tokio_mpsc::UnboundedSender<Event>) -> Result<Radio, WindowsBleError> {
+fn winrt_setup(
+    events_tx: tokio_mpsc::UnboundedSender<Event>,
+    identity: BleIdentity,
+) -> Result<Radio, WindowsBleError> {
     // SAFETY: a plain COM call with no preconditions; the returned cookie only matters if we wanted
     // to later decrement MTA usage, which a lifelong radio thread never does.
     unsafe {
@@ -89,7 +93,22 @@ fn winrt_setup(events_tx: tokio_mpsc::UnboundedSender<Event>) -> Result<Radio, W
         | GattCharacteristicProperties::Notify;
     let control = publish_characteristic(&service, guid_of(NATIVE_CONTROL_UUID), properties)?;
     let data = publish_characteristic(&service, guid_of(NATIVE_DATA_UUID), properties)?;
-    wire_inbound(&control, &data, events_tx.clone())?;
+    let columba_rx = publish_characteristic(
+        &service,
+        guid_of(COLUMBA_RX_UUID),
+        GattCharacteristicProperties::Write | GattCharacteristicProperties::WriteWithoutResponse,
+    )?;
+    let columba_tx = publish_characteristic(
+        &service,
+        guid_of(COLUMBA_TX_UUID),
+        GattCharacteristicProperties::Read | GattCharacteristicProperties::Notify,
+    )?;
+    let columba_identity = publish_static_characteristic(
+        &service,
+        guid_of(COLUMBA_IDENTITY_UUID),
+        identity.as_bytes(),
+    )?;
+    wire_inbound(&control, &data, &columba_rx, &columba_tx, events_tx.clone())?;
 
     let adverts = Arc::new(AtomicU64::new(0));
     let watcher = build_watcher(events_tx, adverts.clone())?;
@@ -102,6 +121,9 @@ fn winrt_setup(events_tx: tokio_mpsc::UnboundedSender<Event>) -> Result<Radio, W
         provider,
         control,
         data,
+        columba_rx,
+        columba_tx,
+        columba_identity,
         watcher,
         adverts,
     })
@@ -149,8 +171,8 @@ impl BleBackend for WindowsBleBackend {
     type Error = WindowsBleError;
     type Link = WinGattLink;
 
-    async fn set_advertising(&mut self, enabled: bool) -> Result<(), WindowsBleError> {
-        if enabled {
+    async fn set_advertising(&mut self, mode: AdvertisingMode) -> Result<(), WindowsBleError> {
+        if mode.is_on() {
             // Connectable + discoverable: WinRT folds the service's 128-bit UUID into the
             // advertisement automatically when discoverable, so we do not hand-roll the AD bytes.
             let parameters = GattServiceProviderAdvertisingParameters::new()?;

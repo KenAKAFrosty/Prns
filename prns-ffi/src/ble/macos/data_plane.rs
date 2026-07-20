@@ -32,7 +32,7 @@ pub(super) struct Outbound {
 pub(super) struct StreamPump {
     input: Retained<NSInputStream>,
     output: Retained<NSOutputStream>,
-    inbound_tx: RefCell<Option<tokio_mpsc::UnboundedSender<Box<[u8]>>>>,
+    inbound_tx: RefCell<Option<tokio_mpsc::Sender<Box<[u8]>>>>,
     outbound: Arc<Mutex<Outbound>>,
     _channel: Retained<CBL2CAPChannel>,
 }
@@ -115,8 +115,17 @@ unsafe extern "C-unwind" fn read_cb(
                     .read_maxLength(NonNull::new_unchecked(buf.as_mut_ptr()), READ_CHUNK)
             };
             if read > 0 {
-                if let Some(tx) = pump.inbound_tx.borrow().as_ref() {
-                    let _ = tx.send(Box::from(&buf[..read as usize]));
+                let accepted = pump
+                    .inbound_tx
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|tx| tx.try_send(Box::from(&buf[..read as usize])).is_ok());
+                if !accepted {
+                    pump.inbound_tx.borrow_mut().take();
+                    if let Ok(mut out) = pump.outbound.lock() {
+                        out.closed = true;
+                    }
+                    break;
                 }
             } else {
                 break;
@@ -157,7 +166,7 @@ pub(super) fn wire_l2cap(
 ) -> Option<DataPlane> {
     let input = unsafe { channel.inputStream() }?;
     let output = unsafe { channel.outputStream() }?;
-    let (inbound_tx, inbound_rx) = tokio_mpsc::unbounded_channel::<Box<[u8]>>();
+    let (inbound_tx, inbound_rx) = tokio_mpsc::channel::<Box<[u8]>>(16);
     let outbound = Arc::new(Mutex::new(Outbound {
         pending: VecDeque::new(),
         closed: false,
@@ -200,7 +209,7 @@ pub(super) fn wire_l2cap(
 }
 
 pub(super) struct DataPlane {
-    pub(super) inbound_rx: tokio_mpsc::UnboundedReceiver<Box<[u8]>>,
+    pub(super) inbound_rx: tokio_mpsc::Receiver<Box<[u8]>>,
     pub(super) outbound: Arc<Mutex<Outbound>>,
     pub(super) queue: DispatchRetained<DispatchQueue>,
     pub(super) pump_ptr: PumpPtr,

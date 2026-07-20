@@ -458,21 +458,21 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                             ui_state.show_notice(screen::UiNotice::Sleeping);
                             notice_until_ms = Some(now_ms + NOTICE_MS);
                             oled_sleep_at_ms = Some(now_ms + OLED_SLEEP_DELAY_MS);
-                            usb_status.set_enabled(false);
-                            lora_status.set_enabled(false);
+                            usb_status.disable();
+                            lora_status.disable();
                             if let Some(status) = wifi_status.as_ref() {
-                                status.set_enabled(false);
+                                status.disable();
                             }
                             if let Some(status) = espnow_card_status {
-                                status.set_enabled(false);
+                                status.disable();
                             }
                             if let Some(tcp) = tcp_status {
-                                tcp.set_enabled(false);
+                                tcp.disable();
                             }
                             #[cfg(feature = "ble")]
                             {
                                 let status = BluetoothAutoStatus::new(&BLE_SHARED);
-                                status.set_enabled(false);
+                                status.disable();
                             }
                         }
                         screen::UiAction::Wake => {
@@ -484,21 +484,21 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                             }
                             ui_state.show_notice(screen::UiNotice::Awake);
                             notice_until_ms = Some(now_ms + NOTICE_MS);
-                            usb_status.set_enabled(true);
-                            lora_status.set_enabled(true);
+                            usb_status.enable();
+                            lora_status.enable();
                             if let Some(status) = wifi_status.as_ref() {
-                                status.set_enabled(true);
+                                status.enable();
                             }
                             if let Some(status) = espnow_card_status {
-                                status.set_enabled(true);
+                                status.enable();
                             }
                             if let Some(tcp) = tcp_status {
-                                tcp.set_enabled(true);
+                                tcp.enable();
                             }
                             #[cfg(feature = "ble")]
                             {
                                 let status = BluetoothAutoStatus::new(&BLE_SHARED);
-                                status.set_enabled(true);
+                                status.enable();
                             }
                         }
                         screen::UiAction::Announce => {
@@ -528,19 +528,19 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                 };
                                 if card.id == usb_status.id() {
                                     show_toggle_notice(usb_status.is_enabled());
-                                    usb_status.set_enabled(!usb_status.is_enabled());
+                                    usb_status.toggle_enabled();
                                     handled = true;
                                 }
                                 if !handled && card.id == lora_status.id() {
                                     show_toggle_notice(lora_status.is_enabled());
-                                    lora_status.set_enabled(!lora_status.is_enabled());
+                                    lora_status.toggle_enabled();
                                     handled = true;
                                 }
                                 if !handled {
                                     if let Some(status) = wifi_status.as_ref() {
                                         if card.id == status.id() {
                                             show_toggle_notice(status.is_enabled());
-                                            status.set_enabled(!status.is_enabled());
+                                            status.toggle_enabled();
                                             handled = true;
                                         }
                                     }
@@ -548,7 +548,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                 if !handled && Some(card.id) == espnow_card_id {
                                     if let Some(status) = espnow_card_status {
                                         show_toggle_notice(status.is_enabled());
-                                        status.set_enabled(!status.is_enabled());
+                                        status.toggle_enabled();
                                         handled = true;
                                     }
                                 }
@@ -556,7 +556,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                     if let (Some(tcp), Some(tcp_id)) = (tcp_status, tcp_id) {
                                         if card.id == tcp_id {
                                             show_toggle_notice(tcp.is_enabled());
-                                            tcp.set_enabled(!tcp.is_enabled());
+                                            tcp.toggle_enabled();
                                             #[cfg(feature = "ble")]
                                             {
                                                 handled = true;
@@ -568,7 +568,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                 if !handled && card.id == BLE_FLEET_ID {
                                     let status = BluetoothAutoStatus::new(&BLE_SHARED);
                                     show_toggle_notice(status.is_enabled());
-                                    status.set_enabled(!status.is_enabled());
+                                    status.toggle_enabled();
                                 }
                             }
                         }

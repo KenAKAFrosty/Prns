@@ -25,7 +25,8 @@ async fn main() {
 
     let node_byte: u8 = 0x33;
 
-    let backend = match MacosBleBackend::new().await {
+    let identity = BleIdentity::new([node_byte; 16]);
+    let backend = match MacosBleBackend::new(identity).await {
         Ok(backend) => backend,
         Err(error) => {
             eprintln!("bluetooth did not power on: {error:?}");
@@ -34,7 +35,6 @@ async fn main() {
         }
     };
     let psm = backend.psm();
-    let identity = BleIdentity::new([node_byte; 16]);
     let endpoint = Endpoint::CoreBluetooth(AppleHost::MacOs);
     let capabilities = LinkCapabilities {
         l2cap: Some(psm),

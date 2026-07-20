@@ -38,6 +38,7 @@ pub enum WindowsBleError {
     ControlTooLarge,
     FrameTooLarge,
     WriteFailed,
+    MissingColumbaIdentity,
     Winrt(windows::core::Error),
 }
 
@@ -51,6 +52,9 @@ struct Radio {
     provider: GattServiceProvider,
     control: GattLocalCharacteristic,
     data: GattLocalCharacteristic,
+    columba_rx: GattLocalCharacteristic,
+    columba_tx: GattLocalCharacteristic,
+    columba_identity: GattLocalCharacteristic,
     watcher: BluetoothLEAdvertisementWatcher,
     adverts: Arc<AtomicU64>,
 }

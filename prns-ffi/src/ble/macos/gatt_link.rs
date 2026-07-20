@@ -6,8 +6,8 @@ use objc2_foundation::NSData;
 use tokio::sync::{mpsc as tokio_mpsc, oneshot};
 
 use prns_core::interfaces::bluetooth_auto::core::{
-    encode_stream_frame, fragments_of, BleAddress, Control, Dialect, Fragment, L2capPlan,
-    Reassembler, StreamDeframer, BLE_HW_MTU, CONTROL_MAX_LEN,
+    encode_stream_frame, fragments_of, BleAddress, BleIdentity, Control, Fragment, L2capPlan,
+    PeerProtocol, Reassembler, StreamDeframer, BLE_HW_MTU, CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN,
 };
 use prns_core::interfaces::bluetooth_auto::seam::{BleLink, BleSink, BleSource};
 
@@ -18,14 +18,14 @@ use super::{
 };
 
 const GATT_REASSEMBLY_CAP: usize = BLE_HW_MTU;
-const GATT_FRAGMENT_PAYLOAD: usize = 180;
-const GATT_FRAGMENT_BUF: usize = 256;
+const L2CAP_OUTBOUND_CAP: usize = 8 * L2CAP_SDU_LEN;
 pub(super) enum ControlPlane {
     Listener {
         manager: SendPeripheralManager,
         characteristic: SendCharacteristic,
         data_characteristic: SendCharacteristic,
         delegate: SendPeripheralDelegate,
+        gatt_mtu: usize,
     },
     Central {
         peripheral: SendPeripheral,
@@ -39,17 +39,24 @@ enum GattWriter {
     Central {
         peripheral: SendPeripheral,
         characteristic: SendCharacteristicRef,
+        fragment_mtu: usize,
     },
     Listener {
         manager: SendPeripheralManager,
         characteristic: SendCharacteristic,
+        fragment_mtu: usize,
     },
 }
 
 impl GattWriter {
     fn send(&self, frame: &[u8]) -> Result<(), MacosBleError> {
-        let mut buf = [0u8; GATT_FRAGMENT_BUF];
-        for fragment in fragments_of(frame, GATT_FRAGMENT_PAYLOAD) {
+        let fragment_mtu = match self {
+            Self::Central { fragment_mtu, .. } | Self::Listener { fragment_mtu, .. } => {
+                *fragment_mtu
+            }
+        };
+        let mut buf = [0u8; FRAGMENT_HEADER_LEN + BLE_HW_MTU];
+        for fragment in fragments_of(frame, fragment_mtu) {
             let len = fragment
                 .encode(&mut buf)
                 .ok_or(MacosBleError::FrameTooLarge)?;
@@ -58,6 +65,7 @@ impl GattWriter {
                 GattWriter::Central {
                     peripheral,
                     characteristic,
+                    ..
                 } => unsafe {
                     peripheral.0.writeValue_forCharacteristic_type(
                         &data,
@@ -68,6 +76,7 @@ impl GattWriter {
                 GattWriter::Listener {
                     manager,
                     characteristic,
+                    ..
                 } => {
                     let sent = unsafe {
                         manager
@@ -91,10 +100,12 @@ impl GattWriter {
 }
 
 pub struct GattLink {
+    pub(super) peer_protocol: PeerProtocol,
+    pub(super) peer_identity: Option<BleIdentity>,
     pub(super) control: ControlPlane,
-    pub(super) control_rx: tokio_mpsc::UnboundedReceiver<Control>,
+    pub(super) control_rx: tokio_mpsc::Receiver<Control>,
     pub(super) address: BleAddress,
-    pub(super) data_inbound_rx: Option<tokio_mpsc::UnboundedReceiver<Box<[u8]>>>,
+    pub(super) data_inbound_rx: Option<tokio_mpsc::Receiver<Box<[u8]>>>,
     pub(super) l2cap_pending: Option<oneshot::Receiver<DataPlane>>,
 }
 
@@ -103,12 +114,37 @@ impl BleLink for GattLink {
     type Source = GattSource;
     type Sink = GattSink;
 
-    fn dialect(&self) -> Dialect {
-        Dialect::Native
+    fn peer_protocol(&self) -> PeerProtocol {
+        self.peer_protocol
     }
 
     fn address(&self) -> BleAddress {
         self.address
+    }
+
+    async fn receive_columba_peer_identity(&mut self) -> Result<BleIdentity, MacosBleError> {
+        self.peer_identity
+            .ok_or(MacosBleError::MissingColumbaIdentity)
+    }
+
+    async fn send_columba_identity(&mut self, identity: BleIdentity) -> Result<(), MacosBleError> {
+        let ControlPlane::Central {
+            peripheral,
+            characteristic,
+            ..
+        } = &self.control
+        else {
+            return Ok(());
+        };
+        let data = NSData::with_bytes(identity.as_bytes());
+        unsafe {
+            peripheral.0.writeValue_forCharacteristic_type(
+                &data,
+                &characteristic.0,
+                CBCharacteristicWriteType::WithResponse,
+            )
+        };
+        Ok(())
     }
 
     async fn control_send(&mut self, msg: &Control) -> Result<(), MacosBleError> {
@@ -188,6 +224,9 @@ impl BleLink for GattLink {
     }
 
     async fn upgrade(&mut self, plan: &L2capPlan) -> Result<(), MacosBleError> {
+        if self.peer_protocol == PeerProtocol::Columba {
+            return Ok(());
+        }
         match plan {
             L2capPlan::Accept => {
                 let (tx, rx) = oneshot::channel::<DataPlane>();
@@ -216,7 +255,7 @@ impl BleLink for GattLink {
     }
 
     fn into_data(self) -> (GattSource, GattSink) {
-        let (merged_tx, merged_rx) = tokio_mpsc::unbounded_channel::<Box<[u8]>>();
+        let (merged_tx, merged_rx) = tokio_mpsc::channel::<Box<[u8]>>(16);
 
         if let Some(mut inbound_rx) = self.data_inbound_rx {
             let frames = merged_tx.clone();
@@ -227,7 +266,7 @@ impl BleLink for GattLink {
                         continue;
                     };
                     if let Some(frame) = reassembler.absorb(&fragment) {
-                        if frames.send(Box::from(frame)).is_err() {
+                        if frames.send(Box::from(frame)).await.is_err() {
                             break;
                         }
                     }
@@ -264,7 +303,7 @@ impl BleLink for GattLink {
                         break;
                     }
                     while let Some(len) = deframer.next_frame(&mut frame) {
-                        if frames.send(Box::from(&frame[..len])).is_err() {
+                        if frames.send(Box::from(&frame[..len])).await.is_err() {
                             return;
                         }
                     }
@@ -294,6 +333,12 @@ fn gatt_writer(control: &ControlPlane) -> Option<GattWriter> {
         } => Some(GattWriter::Central {
             peripheral: SendPeripheral(peripheral.0.clone()),
             characteristic: SendCharacteristicRef(data_characteristic.0.clone()),
+            fragment_mtu: unsafe {
+                peripheral
+                    .0
+                    .maximumWriteValueLengthForType(CBCharacteristicWriteType::WithoutResponse)
+            }
+            .clamp(FRAGMENT_HEADER_LEN + 1, BLE_HW_MTU),
         }),
         ControlPlane::Central {
             data_characteristic: None,
@@ -302,16 +347,18 @@ fn gatt_writer(control: &ControlPlane) -> Option<GattWriter> {
         ControlPlane::Listener {
             manager,
             data_characteristic,
+            gatt_mtu,
             ..
         } => Some(GattWriter::Listener {
             manager: SendPeripheralManager(manager.0.clone()),
             characteristic: SendCharacteristic(data_characteristic.0.clone()),
+            fragment_mtu: *gatt_mtu,
         }),
     }
 }
 
 pub struct GattSource {
-    inbound: tokio_mpsc::UnboundedReceiver<Box<[u8]>>,
+    inbound: tokio_mpsc::Receiver<Box<[u8]>>,
 }
 
 impl BleSource for GattSource {
@@ -342,6 +389,9 @@ impl L2capWriteHalf {
             };
             if out.closed {
                 return Err(MacosBleError::Closed);
+            }
+            if out.pending.len().saturating_add(len) > L2CAP_OUTBOUND_CAP {
+                return Err(MacosBleError::QueueFull);
             }
             out.pending.extend(framed[..len].iter().copied());
         }

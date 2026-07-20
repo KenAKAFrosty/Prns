@@ -1,29 +1,16 @@
-//! The shared Bluetooth connection-manager brain: the runtime-agnostic policy half of the
-//! supervisor. Both the tokio and embassy supervisors feed it events and execute the actions
-//! it emits, so the cross-platform policy (dial-on-sighting, the keeper duel resolving a
-//! double-connection, capacity gating, dial/suppress backoff) lives in ONE place. Pure logic
-//! over [`core`](super::core)'s primitives: no alloc, no await, fixed state sized by `MAX_PEERS`.
-
 use super::core::{
-    arrangement, is_keeper, l2cap_plan, BleAddress, BleIdentity, Established, HandshakeRole,
-    L2capPlan, Local,
+    is_keeper, l2cap_arrangement, l2cap_plan, needs_redial, BleAddress, BleIdentity,
+    EstablishedPeer, EstablishedTransport, HandshakeRole, L2capPlan, LocalPeer,
 };
-use super::seam::Origin;
+use super::seam::{AdvertisingMode, Origin, ScanningMode};
 
-/// A peer suppressed after losing a keeper duel (or bouncing off a full radio) is left alone this
-/// long before a fresh sighting re-dials it.
 pub const SUPPRESS_TTL_MS: u64 = 8_000;
-/// A dial in flight is given this long before a fresh sighting of the same address re-dials it.
 pub const DIAL_RETRY_TTL_MS: u64 = 16_000;
-/// A backend-level dial failure means the peer was visible, but this connect/discover attempt lost
-/// the radio race. Retry quickly while sightings continue instead of treating the peer as gone.
 pub const DIAL_FAILED_RETRY_TTL_MS: u64 = 5_000;
 pub const DIAL_PAUSE_MS: u64 = 15_000;
 pub const KEEPER_DUEL_WINDOW_MS: u64 = 5_000;
 pub const HANDSHAKE_SLACK: usize = 4;
 
-/// The handshake role for a link of this origin: a dialed link opens with `Hello` (Dialer), an
-/// accepted one waits and replies `Welcome` (Listener). The brain owns the rule; the driver runs the I/O.
 #[must_use]
 pub fn role_for(origin: Origin) -> HandshakeRole {
     match origin {
@@ -32,9 +19,6 @@ pub fn role_for(origin: Origin) -> HandshakeRole {
     }
 }
 
-/// An event fed to the manager; the driver translates radio/handshake outcomes into these and
-/// the manager never touches the radio. `now_ms` is a monotonic millisecond clock the driver
-/// supplies (tokio: elapsed since start; embassy: `Instant` since boot), keeping the brain float-free.
 #[derive(Debug, Clone, Copy)]
 pub enum ManagerInput {
     Sighting {
@@ -44,7 +28,7 @@ pub enum ManagerInput {
     Settled {
         address: BleAddress,
         origin: Origin,
-        established: Established,
+        established: EstablishedPeer,
         now_ms: u64,
     },
     HandshakeFailed {
@@ -61,43 +45,23 @@ pub enum ManagerInput {
     },
 }
 
-/// A named two-state, not a bare bool, so the seam can't be handed an ambiguous flag.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AdvertisingMode {
-    On,
-    Off,
-}
-
-/// Whether the radio should scan (look for peers to dial).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ScanningMode {
-    On,
-    Off,
-}
-
-/// An action the driver executes against the radio/fleet. The manager emits these through a
-/// sink callback; the driver applies the async ones after the synchronous `handle` returns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ManagerAction {
     Dial(BleAddress),
-    /// Stand the settled peer up as a fleet member in `slot` over the negotiated `lane`.
     Admit {
         identity: BleIdentity,
         slot: usize,
         address: BleAddress,
         lane: L2capPlan,
     },
-    /// Tear down the member currently in `slot` (it lost a keeper duel to a fresh link).
     Evict {
         identity: BleIdentity,
         slot: usize,
     },
-    /// Drop the just-settled link without admitting it (duplicate loser, or no capacity).
     Reject {
         address: BleAddress,
         dialed: bool,
     },
-    /// Tell the backend a link to this address is gone, so it can release its connection state.
     NotifyClosed(BleAddress),
     SetAdvertising(AdvertisingMode),
     SetScanning(ScanningMode),
@@ -139,11 +103,8 @@ impl Backoff {
     }
 }
 
-/// The connection-manager brain. `MAX_PEERS` is the settled-member ceiling (the radio's concurrent
-/// connection budget); `DIAL_TRACK` sizes the dial/suppress backoff table (addresses we are mid-dial
-/// or cooling off — distinct from settled peers, so a few more than `MAX_PEERS`).
 pub struct ConnectionManager<const MAX_PEERS: usize, const DIAL_TRACK: usize> {
-    local: Local,
+    local: LocalPeer,
     settled: [Option<SettledSlot>; MAX_PEERS],
     backoff: [Option<Backoff>; DIAL_TRACK],
     advertising: bool,
@@ -153,9 +114,8 @@ pub struct ConnectionManager<const MAX_PEERS: usize, const DIAL_TRACK: usize> {
 }
 
 impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionManager<MAX_PEERS, DIAL_TRACK> {
-    /// `local` is this node's identity/endpoint/capabilities the keeper duel hashes.
     #[must_use]
-    pub const fn new(local: Local) -> Self {
+    pub const fn new(local: LocalPeer) -> Self {
         Self {
             local,
             settled: [None; MAX_PEERS],
@@ -172,7 +132,6 @@ impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionManager<MAX_PEER
         self.settled.iter().filter(|slot| slot.is_some()).count()
     }
 
-    /// Bring the radio up (advertise + scan with every slot free); the driver calls this once before its event loop.
     pub fn start<F: FnMut(ManagerAction)>(&mut self, emit: &mut F) {
         self.reconcile(emit);
     }
@@ -188,8 +147,6 @@ impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionManager<MAX_PEER
         true
     }
 
-    /// Feed one event; the manager updates its state and emits any radio/fleet actions through
-    /// `emit`. Synchronous and allocation-free — the driver applies the emitted actions itself.
     pub fn handle<F: FnMut(ManagerAction)>(&mut self, input: ManagerInput, emit: &mut F) {
         match input {
             ManagerInput::Sighting { address, now_ms } => self.on_sighting(address, now_ms, emit),
@@ -227,7 +184,7 @@ impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionManager<MAX_PEER
         &mut self,
         address: BleAddress,
         origin: Origin,
-        established: Established,
+        established: EstablishedPeer,
         now_ms: u64,
         emit: &mut F,
     ) {
@@ -238,7 +195,27 @@ impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionManager<MAX_PEER
         }
         let identity = established.identity;
         let role = role_for(origin);
-        let plan = arrangement(self.local.endpoint, established.endpoint);
+        let (plan, can_upgrade) = match established.transport {
+            EstablishedTransport::Native {
+                endpoint,
+                capabilities,
+            } => (
+                l2cap_arrangement(self.local.endpoint, endpoint),
+                self.local.capabilities.l2cap.is_some() && capabilities.l2cap.is_some(),
+            ),
+            EstablishedTransport::ColumbaGatt => (super::core::L2capArrangement::GattOnly, false),
+        };
+        if can_upgrade
+            && needs_redial(plan, role, self.local.endpoint)
+            && self.find_settled_by_identity(identity).is_none()
+            && self.settled_count() < MAX_PEERS
+        {
+            emit(ManagerAction::Reject {
+                address,
+                dialed: false,
+            });
+            return;
+        }
         let keeper = is_keeper(
             plan,
             role,
@@ -283,16 +260,16 @@ impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionManager<MAX_PEER
         // physical connections (neither side accepts) until the duel evicts down to the keeper, by
         // which point the setup window has usually lapsed. Gating on `keeper` means both ends only ever
         // attempt L2CAP on the same surviving connection; a non-keeper link rides the GATT floor.
-        let lane = if keeper {
-            l2cap_plan(
+        let lane = match (keeper, established.transport) {
+            (true, EstablishedTransport::Native { capabilities, .. }) => l2cap_plan(
                 plan,
                 role,
                 self.local.endpoint,
                 &self.local.capabilities,
-                &established.capabilities,
-            )
-        } else {
-            L2capPlan::None
+                &capabilities,
+            ),
+            (_, EstablishedTransport::ColumbaGatt)
+            | (false, EstablishedTransport::Native { .. }) => L2capPlan::None,
         };
         self.settled[slot] = Some(SettledSlot {
             identity,
@@ -451,19 +428,21 @@ mod tests {
         Endpoint::Nrf52(Nrf52Host::Nrf52)
     }
 
-    fn local(identity: u8) -> Local {
-        Local {
+    fn local(identity: u8) -> LocalPeer {
+        LocalPeer {
             identity: BleIdentity::new([identity; 16]),
             endpoint: endpoint(),
             capabilities: CAPS,
         }
     }
 
-    fn established(identity: u8) -> Established {
-        Established {
+    fn established(identity: u8) -> EstablishedPeer {
+        EstablishedPeer {
             identity: BleIdentity::new([identity; 16]),
-            endpoint: endpoint(),
-            capabilities: CAPS,
+            transport: EstablishedTransport::Native {
+                endpoint: endpoint(),
+                capabilities: CAPS,
+            },
             peer_rssi: None,
         }
     }
@@ -672,9 +651,59 @@ mod tests {
     }
 
     #[test]
+    fn a_designated_l2cap_opener_rejects_an_inbound_native_link_for_redial() {
+        use crate::interfaces::bluetooth_auto::core::{AndroidHost, AppleHost, Psm};
+
+        let capabilities = LinkCapabilities {
+            l2cap: Psm::new(0x0080),
+            link_mtu: 500,
+        };
+
+        let mut manager = ConnectionManager::<2, 8>::new(LocalPeer {
+            identity: BleIdentity::new([1; 16]),
+            endpoint: Endpoint::Android(AndroidHost::Android),
+            capabilities,
+        });
+        manager.start(&mut |_| {});
+
+        let actions = collect(
+            &mut manager,
+            ManagerInput::Settled {
+                address: addr(2),
+                origin: Origin::Accepted,
+                established: EstablishedPeer {
+                    identity: BleIdentity::new([2; 16]),
+                    transport: EstablishedTransport::Native {
+                        endpoint: Endpoint::CoreBluetooth(AppleHost::MacOs),
+                        capabilities,
+                    },
+                    peer_rssi: None,
+                },
+                now_ms: 5,
+            },
+        );
+
+        assert_eq!(
+            actions,
+            std::vec![ManagerAction::Reject {
+                address: addr(2),
+                dialed: false,
+            }]
+        );
+        assert_eq!(manager.settled_count(), 0);
+
+        let redial = collect(
+            &mut manager,
+            ManagerInput::Sighting {
+                address: addr(2),
+                now_ms: 6,
+            },
+        );
+        assert_eq!(redial, std::vec![ManagerAction::Dial(addr(2))]);
+    }
+
+    #[test]
     fn duplicate_link_keeper_evicts_incumbent() {
-        // ours = [1;16] < theirs = [2;16], GattOnly arrangement (two nrf endpoints) → we_should_be
-        // _central == ours < theirs == true. So a Dialed link is the keeper, an Accepted one is not.
         let mut manager = ConnectionManager::<2, 8>::new(local(1));
         manager.start(&mut |_| {});
 
@@ -717,8 +746,6 @@ mod tests {
 
     #[test]
     fn duplicate_link_loser_is_rejected() {
-        // ours = [9;16] > theirs = [2;16] → we_should_be_central == false. Now the Accepted link is
-        // the keeper, so a later Dialed duplicate loses and is rejected (incumbent stays).
         let mut manager = ConnectionManager::<2, 8>::new(local(9));
         manager.start(&mut |_| {});
         collect(
@@ -752,15 +779,11 @@ mod tests {
     #[test]
     fn only_the_keeper_connection_opens_the_l2cap_fast_lane() {
         use crate::interfaces::bluetooth_auto::core::{Esp32Host, Psm};
-        // Two ESP32s (EitherOpens) that both advertise an L2CAP PSM. ours = [1;16] < theirs = [2;16],
-        // so the keeper is the link where we are central (the Dialed one). The non-keeper (Accepted)
-        // admit must ride the GATT floor (lane None) — opening L2CAP on a soon-to-be-evicted link is
-        // exactly the dual-dial race that left both ends creating on mismatched connections.
         let l2cap_caps = LinkCapabilities {
             l2cap: Psm::new(0x0080),
             link_mtu: 247,
         };
-        let me = Local {
+        let me = LocalPeer {
             identity: BleIdentity::new([1; 16]),
             endpoint: Endpoint::Esp32(Esp32Host::Esp32),
             capabilities: l2cap_caps,
@@ -768,10 +791,12 @@ mod tests {
         let mut manager = ConnectionManager::<2, 8>::new(me);
         manager.start(&mut |_| {});
 
-        let peer = Established {
+        let peer = EstablishedPeer {
             identity: BleIdentity::new([2; 16]),
-            endpoint: Endpoint::Esp32(Esp32Host::Esp32),
-            capabilities: l2cap_caps,
+            transport: EstablishedTransport::Native {
+                endpoint: Endpoint::Esp32(Esp32Host::Esp32),
+                capabilities: l2cap_caps,
+            },
             peer_rssi: None,
         };
 

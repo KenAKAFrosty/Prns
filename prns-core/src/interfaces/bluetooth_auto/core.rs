@@ -38,12 +38,29 @@ pub const NATIVE_DATA_UUID: BleUuid = BleUuid::Bit128(ble_reticulum_uuid(0xe8));
 const AD_FLAGS: u8 = 0x01;
 const AD_INCOMPLETE_SERVICE_UUID128: u8 = 0x06;
 const AD_SERVICE_UUID128: u8 = 0x07;
+const AD_MANUFACTURER_SPECIFIC: u8 = 0xff;
 const FLAGS_LE_GENERAL_DISCOVERABLE: u8 = 0x06;
+const EXPERIMENTAL_ROLE_COMPANY_ID: [u8; 2] = [0xff, 0xff];
+const EXPERIMENTAL_ROLE_VERSION: u8 = 0x03;
+const EXPERIMENTAL_ROLE_PERIPHERAL_ONLY: u8 = 0x01;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BleUuid {
     Bit16(u16),
     Bit128([u8; 16]),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BleRoleCapabilities {
+    DualRole,
+    PeripheralOnly,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColumbaConnectionRole {
+    Dial,
+    Accept,
+    Unavailable,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -73,7 +90,7 @@ impl Psm {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BleAddress([u8; 6]);
 
 impl BleAddress {
@@ -106,12 +123,28 @@ impl BleIdentity {
     }
 }
 
-pub fn encode_advertisement(out: &mut [u8]) -> Option<usize> {
+pub fn encode_advertisement(
+    out: &mut [u8],
+    role_capabilities: BleRoleCapabilities,
+) -> Option<usize> {
     let mut writer = AdWriter::new(out);
     writer.put(AD_FLAGS, &[FLAGS_LE_GENERAL_DISCOVERABLE])?;
     let mut little_endian = BLE_SERVICE_UUID_BYTES;
     little_endian.reverse();
     writer.put(AD_SERVICE_UUID128, &little_endian)?;
+    let flags = match role_capabilities {
+        BleRoleCapabilities::DualRole => 0,
+        BleRoleCapabilities::PeripheralOnly => EXPERIMENTAL_ROLE_PERIPHERAL_ONLY,
+    };
+    writer.put(
+        AD_MANUFACTURER_SPECIFIC,
+        &[
+            EXPERIMENTAL_ROLE_COMPANY_ID[0],
+            EXPERIMENTAL_ROLE_COMPANY_ID[1],
+            EXPERIMENTAL_ROLE_VERSION,
+            flags,
+        ],
+    )?;
     Some(writer.len())
 }
 
@@ -122,6 +155,58 @@ pub fn contains_service(adv: &[u8]) -> bool {
         (ad_type == AD_SERVICE_UUID128 || ad_type == AD_INCOMPLETE_SERVICE_UUID128)
             && body == little_endian
     })
+}
+
+pub fn columba_role_capabilities(adv: &[u8]) -> Option<BleRoleCapabilities> {
+    AdReader::new(adv).find_map(|(ad_type, body)| {
+        if ad_type != AD_MANUFACTURER_SPECIFIC {
+            return None;
+        }
+        let company_id: [u8; 2] = body.get(..2)?.try_into().ok()?;
+        columba_role_capabilities_from_manufacturer(u16::from_le_bytes(company_id), body.get(2..)?)
+    })
+}
+
+pub fn columba_role_capabilities_from_manufacturer(
+    company_id: u16,
+    data: &[u8],
+) -> Option<BleRoleCapabilities> {
+    if company_id != u16::from_le_bytes(EXPERIMENTAL_ROLE_COMPANY_ID)
+        || *data.first()? < EXPERIMENTAL_ROLE_VERSION
+    {
+        return None;
+    }
+    if data.get(1)? & EXPERIMENTAL_ROLE_PERIPHERAL_ONLY == 0 {
+        Some(BleRoleCapabilities::DualRole)
+    } else {
+        Some(BleRoleCapabilities::PeripheralOnly)
+    }
+}
+
+pub fn columba_connection_role(
+    local_address: BleAddress,
+    local_capabilities: BleRoleCapabilities,
+    peer_address: BleAddress,
+    peer_capabilities: BleRoleCapabilities,
+) -> ColumbaConnectionRole {
+    match (local_capabilities, peer_capabilities) {
+        (BleRoleCapabilities::DualRole, BleRoleCapabilities::PeripheralOnly) => {
+            ColumbaConnectionRole::Dial
+        }
+        (BleRoleCapabilities::PeripheralOnly, BleRoleCapabilities::DualRole) => {
+            ColumbaConnectionRole::Accept
+        }
+        (BleRoleCapabilities::PeripheralOnly, BleRoleCapabilities::PeripheralOnly) => {
+            ColumbaConnectionRole::Unavailable
+        }
+        (BleRoleCapabilities::DualRole, BleRoleCapabilities::DualRole) => {
+            match local_address.cmp(&peer_address) {
+                core::cmp::Ordering::Less => ColumbaConnectionRole::Dial,
+                core::cmp::Ordering::Greater => ColumbaConnectionRole::Accept,
+                core::cmp::Ordering::Equal => ColumbaConnectionRole::Unavailable,
+            }
+        }
+    }
 }
 
 struct AdWriter<'a> {
@@ -177,7 +262,7 @@ impl<'a> Iterator for AdReader<'a> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Dialect {
+pub enum PeerProtocol {
     Native,
     Columba,
 }
@@ -355,65 +440,66 @@ impl LinkCapabilities {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Arrangement {
+pub enum L2capArrangement {
     GattOnly,
     EitherOpens,
     Opens(Endpoint),
 }
 
-pub fn arrangement(local: Endpoint, peer: Endpoint) -> Arrangement {
+pub fn l2cap_arrangement(local: Endpoint, peer: Endpoint) -> L2capArrangement {
     known_arrangement(local, peer)
         .or_else(|| known_arrangement(peer, local))
-        .unwrap_or(Arrangement::GattOnly)
+        .unwrap_or(L2capArrangement::GattOnly)
 }
 
-fn known_arrangement(a: Endpoint, b: Endpoint) -> Option<Arrangement> {
+fn known_arrangement(a: Endpoint, b: Endpoint) -> Option<L2capArrangement> {
     use AppleHost::{Ios, IpadOs, MacOs};
     use Endpoint::{Android, BlueZ, CoreBluetooth, Esp32, Nrf52};
     match (a, b) {
-        (CoreBluetooth(MacOs), BlueZ(host)) => Some(Arrangement::Opens(BlueZ(host))),
-        (CoreBluetooth(MacOs), Android(host)) => Some(Arrangement::Opens(Android(host))),
-        (CoreBluetooth(Ios | IpadOs), Android(_)) => Some(Arrangement::Opens(a)),
-        (BlueZ(_), Android(_)) => Some(Arrangement::EitherOpens),
-        (BlueZ(_), Nrf52(_)) => Some(Arrangement::EitherOpens),
-        (Android(_), Nrf52(_)) => Some(Arrangement::EitherOpens),
-        (Esp32(_), Esp32(_)) => Some(Arrangement::EitherOpens),
-        (Esp32(_), Nrf52(_)) => Some(Arrangement::EitherOpens),
-        (BlueZ(_), Esp32(_)) => Some(Arrangement::EitherOpens),
-        (Android(_), Esp32(_)) => Some(Arrangement::EitherOpens),
+        (CoreBluetooth(MacOs), BlueZ(host)) => Some(L2capArrangement::Opens(BlueZ(host))),
+        (CoreBluetooth(MacOs), Android(host)) => Some(L2capArrangement::Opens(Android(host))),
+        (CoreBluetooth(Ios | IpadOs), Android(_)) => Some(L2capArrangement::Opens(a)),
+        (BlueZ(_), Android(_)) => Some(L2capArrangement::EitherOpens),
+        (BlueZ(_), Nrf52(_)) => Some(L2capArrangement::EitherOpens),
+        (Android(_), Nrf52(_)) => Some(L2capArrangement::EitherOpens),
+        (Esp32(_), Esp32(_)) => Some(L2capArrangement::EitherOpens),
+        (Esp32(_), Nrf52(_)) => Some(L2capArrangement::EitherOpens),
+        (BlueZ(_), Esp32(_)) => Some(L2capArrangement::EitherOpens),
+        (Android(_), Esp32(_)) => Some(L2capArrangement::EitherOpens),
         _ => None,
     }
 }
 
 pub fn we_should_be_central(
-    arrangement: Arrangement,
+    l2cap_arrangement: L2capArrangement,
     ours: BleIdentity,
     our_endpoint: Endpoint,
     theirs: BleIdentity,
 ) -> bool {
-    match arrangement {
-        Arrangement::Opens(opener) => opener == our_endpoint,
-        Arrangement::GattOnly | Arrangement::EitherOpens => ours < theirs,
+    match l2cap_arrangement {
+        L2capArrangement::Opens(opener) => opener == our_endpoint,
+        L2capArrangement::GattOnly | L2capArrangement::EitherOpens => ours < theirs,
     }
 }
 
 pub fn is_keeper(
-    arrangement: Arrangement,
+    l2cap_arrangement: L2capArrangement,
     our_role: HandshakeRole,
     ours: BleIdentity,
     our_endpoint: Endpoint,
     theirs: BleIdentity,
 ) -> bool {
     matches!(our_role, HandshakeRole::Dialer)
-        == we_should_be_central(arrangement, ours, our_endpoint, theirs)
+        == we_should_be_central(l2cap_arrangement, ours, our_endpoint, theirs)
 }
 
 pub fn needs_redial(
-    arrangement: Arrangement,
+    l2cap_arrangement: L2capArrangement,
     our_role: HandshakeRole,
     our_endpoint: Endpoint,
 ) -> bool {
-    let we_open = matches!(arrangement, Arrangement::Opens(opener) if opener == our_endpoint);
+    let we_open =
+        matches!(l2cap_arrangement, L2capArrangement::Opens(opener) if opener == our_endpoint);
     we_open && matches!(our_role, HandshakeRole::Listener)
 }
 
@@ -425,17 +511,17 @@ pub enum L2capPlan {
 }
 
 pub fn l2cap_plan(
-    arrangement: Arrangement,
+    l2cap_arrangement: L2capArrangement,
     our_role: HandshakeRole,
     our_endpoint: Endpoint,
     our_capabilities: &LinkCapabilities,
     peer_capabilities: &LinkCapabilities,
 ) -> L2capPlan {
     let we_are_central = matches!(our_role, HandshakeRole::Dialer);
-    let we_open = match arrangement {
-        Arrangement::GattOnly => return L2capPlan::None,
-        Arrangement::EitherOpens => we_are_central,
-        Arrangement::Opens(opener) => opener == our_endpoint,
+    let we_open = match l2cap_arrangement {
+        L2capArrangement::GattOnly => return L2capPlan::None,
+        L2capArrangement::EitherOpens => we_are_central,
+        L2capArrangement::Opens(opener) => opener == our_endpoint,
     };
     if we_open {
         if !we_are_central {
@@ -607,43 +693,51 @@ fn decode_greeting(body: &[u8]) -> Option<(BleIdentity, Endpoint, LinkCapabiliti
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Local {
+pub struct LocalPeer {
     pub identity: BleIdentity,
     pub endpoint: Endpoint,
     pub capabilities: LinkCapabilities,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Established {
+pub struct EstablishedPeer {
     pub identity: BleIdentity,
-    pub endpoint: Endpoint,
-    pub capabilities: LinkCapabilities,
+    pub transport: EstablishedTransport,
     pub peer_rssi: Option<i8>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Outcome {
+pub enum EstablishedTransport {
+    Native {
+        endpoint: Endpoint,
+        capabilities: LinkCapabilities,
+    },
+    ColumbaGatt,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HandshakeOutcome {
     Pending,
-    Settled(Established),
+    Settled(EstablishedPeer),
     Aborted(CloseReason),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Reaction {
+pub struct HandshakeReaction {
     pub reply: Option<Control>,
-    pub outcome: Outcome,
+    pub outcome: HandshakeOutcome,
 }
 
 pub struct Handshake {
     role: HandshakeRole,
-    local: Local,
+    local: LocalPeer,
     measured_rssi: Option<i8>,
 }
 
 impl Handshake {
     pub fn begin(
         role: HandshakeRole,
-        local: Local,
+        local: LocalPeer,
         measured_rssi: Option<i8>,
     ) -> (Self, Option<Control>) {
         let opening = match role {
@@ -665,7 +759,7 @@ impl Handshake {
         )
     }
 
-    pub fn absorb(&mut self, msg: Control) -> Reaction {
+    pub fn absorb(&mut self, msg: Control) -> HandshakeReaction {
         match (self.role, msg) {
             (
                 HandshakeRole::Listener,
@@ -679,17 +773,19 @@ impl Handshake {
                 if identity == self.local.identity {
                     return self.we_close(CloseReason::SelfConnection);
                 }
-                Reaction {
+                HandshakeReaction {
                     reply: Some(Control::Welcome {
                         identity: self.local.identity,
                         endpoint: self.local.endpoint,
                         capabilities: self.local.capabilities,
                         peer_rssi: self.measured_rssi,
                     }),
-                    outcome: Outcome::Settled(Established {
+                    outcome: HandshakeOutcome::Settled(EstablishedPeer {
                         identity,
-                        endpoint,
-                        capabilities,
+                        transport: EstablishedTransport::Native {
+                            endpoint,
+                            capabilities,
+                        },
                         peer_rssi,
                     }),
                 }
@@ -706,28 +802,30 @@ impl Handshake {
                 if identity == self.local.identity {
                     return self.we_close(CloseReason::SelfConnection);
                 }
-                Reaction {
+                HandshakeReaction {
                     reply: None,
-                    outcome: Outcome::Settled(Established {
+                    outcome: HandshakeOutcome::Settled(EstablishedPeer {
                         identity,
-                        endpoint,
-                        capabilities,
+                        transport: EstablishedTransport::Native {
+                            endpoint,
+                            capabilities,
+                        },
                         peer_rssi,
                     }),
                 }
             }
-            (_, Control::Close { reason }) => Reaction {
+            (_, Control::Close { reason }) => HandshakeReaction {
                 reply: None,
-                outcome: Outcome::Aborted(reason),
+                outcome: HandshakeOutcome::Aborted(reason),
             },
             _ => self.we_close(CloseReason::Incompatible),
         }
     }
 
-    fn we_close(&self, reason: CloseReason) -> Reaction {
-        Reaction {
+    fn we_close(&self, reason: CloseReason) -> HandshakeReaction {
+        HandshakeReaction {
             reply: Some(Control::Close { reason }),
-            outcome: Outcome::Aborted(reason),
+            outcome: HandshakeOutcome::Aborted(reason),
         }
     }
 }
@@ -794,9 +892,7 @@ pub fn fragments_of(payload: &[u8], mtu: usize) -> impl Iterator<Item = Fragment
     let cap = mtu.saturating_sub(FRAGMENT_HEADER_LEN).max(1);
     let total = payload.len().div_ceil(cap).max(1);
     payload.chunks(cap).enumerate().map(move |(index, chunk)| {
-        let kind = if total == 1 {
-            FragmentKind::End
-        } else if index == 0 {
+        let kind = if index == 0 {
             FragmentKind::Start
         } else if index + 1 == total {
             FragmentKind::End
@@ -845,7 +941,7 @@ impl<const N: usize> Reassembler<N> {
             return None;
         }
         self.next_seq += 1;
-        if matches!(fragment.kind, FragmentKind::End) && self.next_seq == self.total {
+        if self.next_seq == self.total {
             self.active = false;
             return Some(&self.buf[..]);
         }
@@ -980,53 +1076,176 @@ mod tests {
     #[test]
     fn an_advertisement_carries_the_shared_reticulum_ble_service() {
         let mut buf = [0u8; MAX_ADVERTISEMENT_LEN];
-        let len = encode_advertisement(&mut buf).unwrap();
+        let len = encode_advertisement(&mut buf, BleRoleCapabilities::DualRole).unwrap();
         assert!(len <= MAX_ADVERTISEMENT_LEN);
         assert!(contains_service(&buf[..len]));
+        assert_eq!(
+            columba_role_capabilities(&buf[..len]),
+            Some(BleRoleCapabilities::DualRole)
+        );
         assert!(!contains_service(&[]));
         assert!(!contains_service(&[0x02, 0x01, 0x06]));
     }
 
     #[test]
+    fn a_peripheral_only_advertisement_exposes_its_columba_role_constraint() {
+        let mut buf = [0u8; MAX_ADVERTISEMENT_LEN];
+        let len = encode_advertisement(&mut buf, BleRoleCapabilities::PeripheralOnly).unwrap();
+
+        assert_eq!(
+            columba_role_capabilities(&buf[..len]),
+            Some(BleRoleCapabilities::PeripheralOnly)
+        );
+    }
+
+    #[test]
+    fn an_unrelated_manufacturer_field_does_not_hide_columba_capabilities() {
+        let advertisement = [
+            4,
+            AD_MANUFACTURER_SPECIFIC,
+            0x34,
+            0x12,
+            0,
+            5,
+            AD_MANUFACTURER_SPECIFIC,
+            0xff,
+            0xff,
+            EXPERIMENTAL_ROLE_VERSION,
+            EXPERIMENTAL_ROLE_PERIPHERAL_ONLY,
+        ];
+
+        assert_eq!(
+            columba_role_capabilities(&advertisement),
+            Some(BleRoleCapabilities::PeripheralOnly)
+        );
+    }
+
+    #[test]
+    fn lower_dual_role_address_dials_and_higher_address_accepts() {
+        let lower = BleAddress::new([0, 1, 2, 3, 4, 5]);
+        let higher = BleAddress::new([0, 1, 2, 3, 4, 6]);
+
+        assert_eq!(
+            columba_connection_role(
+                lower,
+                BleRoleCapabilities::DualRole,
+                higher,
+                BleRoleCapabilities::DualRole,
+            ),
+            ColumbaConnectionRole::Dial
+        );
+        assert_eq!(
+            columba_connection_role(
+                higher,
+                BleRoleCapabilities::DualRole,
+                lower,
+                BleRoleCapabilities::DualRole,
+            ),
+            ColumbaConnectionRole::Accept
+        );
+    }
+
+    #[test]
+    fn dual_role_peer_dials_a_peripheral_only_peer() {
+        assert_eq!(
+            columba_connection_role(
+                BleAddress::new([1; 6]),
+                BleRoleCapabilities::DualRole,
+                BleAddress::new([0; 6]),
+                BleRoleCapabilities::PeripheralOnly,
+            ),
+            ColumbaConnectionRole::Dial
+        );
+        assert_eq!(
+            columba_connection_role(
+                BleAddress::new([0; 6]),
+                BleRoleCapabilities::PeripheralOnly,
+                BleAddress::new([1; 6]),
+                BleRoleCapabilities::DualRole,
+            ),
+            ColumbaConnectionRole::Accept
+        );
+    }
+
+    #[test]
     fn mac_and_linux_open_when_linux_opens() {
-        assert_eq!(arrangement(mac(), linux()), Arrangement::Opens(linux()));
-        assert_eq!(arrangement(linux(), mac()), Arrangement::Opens(linux()));
+        assert_eq!(
+            l2cap_arrangement(mac(), linux()),
+            L2capArrangement::Opens(linux())
+        );
+        assert_eq!(
+            l2cap_arrangement(linux(), mac()),
+            L2capArrangement::Opens(linux())
+        );
     }
 
     #[test]
     fn mac_and_android_only_open_when_android_opens() {
-        assert_eq!(arrangement(mac(), android()), Arrangement::Opens(android()));
-        assert_eq!(arrangement(android(), mac()), Arrangement::Opens(android()));
+        assert_eq!(
+            l2cap_arrangement(mac(), android()),
+            L2capArrangement::Opens(android())
+        );
+        assert_eq!(
+            l2cap_arrangement(android(), mac()),
+            L2capArrangement::Opens(android())
+        );
     }
 
     #[test]
     fn apple_mobile_and_linux_stay_on_the_gatt_floor() {
-        assert_eq!(arrangement(ios(), linux()), Arrangement::GattOnly);
-        assert_eq!(arrangement(linux(), ios()), Arrangement::GattOnly);
-        assert_eq!(arrangement(ipad(), linux()), Arrangement::GattOnly);
-        assert_eq!(arrangement(linux(), ipad()), Arrangement::GattOnly);
+        assert_eq!(
+            l2cap_arrangement(ios(), linux()),
+            L2capArrangement::GattOnly
+        );
+        assert_eq!(
+            l2cap_arrangement(linux(), ios()),
+            L2capArrangement::GattOnly
+        );
+        assert_eq!(
+            l2cap_arrangement(ipad(), linux()),
+            L2capArrangement::GattOnly
+        );
+        assert_eq!(
+            l2cap_arrangement(linux(), ipad()),
+            L2capArrangement::GattOnly
+        );
     }
 
     #[test]
     fn apple_mobile_and_android_only_open_when_apple_mobile_opens() {
-        assert_eq!(arrangement(ios(), android()), Arrangement::Opens(ios()));
-        assert_eq!(arrangement(android(), ios()), Arrangement::Opens(ios()));
-        assert_eq!(arrangement(ipad(), android()), Arrangement::Opens(ipad()));
-        assert_eq!(arrangement(android(), ipad()), Arrangement::Opens(ipad()));
+        assert_eq!(
+            l2cap_arrangement(ios(), android()),
+            L2capArrangement::Opens(ios())
+        );
+        assert_eq!(
+            l2cap_arrangement(android(), ios()),
+            L2capArrangement::Opens(ios())
+        );
+        assert_eq!(
+            l2cap_arrangement(ipad(), android()),
+            L2capArrangement::Opens(ipad())
+        );
+        assert_eq!(
+            l2cap_arrangement(android(), ipad()),
+            L2capArrangement::Opens(ipad())
+        );
     }
 
     #[test]
     fn two_apple_devices_stay_on_the_gatt_floor() {
-        assert_eq!(arrangement(ios(), mac()), Arrangement::GattOnly);
-        assert_eq!(arrangement(mac(), ios()), Arrangement::GattOnly);
-        assert_eq!(arrangement(ios(), ios()), Arrangement::GattOnly);
+        assert_eq!(l2cap_arrangement(ios(), mac()), L2capArrangement::GattOnly);
+        assert_eq!(l2cap_arrangement(mac(), ios()), L2capArrangement::GattOnly);
+        assert_eq!(l2cap_arrangement(ios(), ios()), L2capArrangement::GattOnly);
     }
 
     #[test]
     fn bluez_and_android_either_open_the_fast_lane() {
-        let arr = arrangement(linux(), android());
-        assert_eq!(arr, Arrangement::EitherOpens);
-        assert_eq!(arrangement(android(), linux()), Arrangement::EitherOpens);
+        let arr = l2cap_arrangement(linux(), android());
+        assert_eq!(arr, L2capArrangement::EitherOpens);
+        assert_eq!(
+            l2cap_arrangement(android(), linux()),
+            L2capArrangement::EitherOpens
+        );
 
         assert_eq!(
             l2cap_plan(
@@ -1054,12 +1273,24 @@ mod tests {
 
     #[test]
     fn the_nrf_either_opens_the_fast_lane_with_bluez_and_android() {
-        assert_eq!(arrangement(linux(), nrf()), Arrangement::EitherOpens);
-        assert_eq!(arrangement(nrf(), linux()), Arrangement::EitherOpens);
-        assert_eq!(arrangement(android(), nrf()), Arrangement::EitherOpens);
-        assert_eq!(arrangement(nrf(), android()), Arrangement::EitherOpens);
+        assert_eq!(
+            l2cap_arrangement(linux(), nrf()),
+            L2capArrangement::EitherOpens
+        );
+        assert_eq!(
+            l2cap_arrangement(nrf(), linux()),
+            L2capArrangement::EitherOpens
+        );
+        assert_eq!(
+            l2cap_arrangement(android(), nrf()),
+            L2capArrangement::EitherOpens
+        );
+        assert_eq!(
+            l2cap_arrangement(nrf(), android()),
+            L2capArrangement::EitherOpens
+        );
 
-        let arr = arrangement(nrf(), linux());
+        let arr = l2cap_arrangement(nrf(), linux());
         assert_eq!(
             l2cap_plan(
                 arr,
@@ -1086,15 +1317,36 @@ mod tests {
 
     #[test]
     fn the_esp32_either_opens_the_fast_lane_with_its_peers() {
-        assert_eq!(arrangement(esp32(), esp32()), Arrangement::EitherOpens);
-        assert_eq!(arrangement(esp32(), nrf()), Arrangement::EitherOpens);
-        assert_eq!(arrangement(nrf(), esp32()), Arrangement::EitherOpens);
-        assert_eq!(arrangement(linux(), esp32()), Arrangement::EitherOpens);
-        assert_eq!(arrangement(esp32(), linux()), Arrangement::EitherOpens);
-        assert_eq!(arrangement(android(), esp32()), Arrangement::EitherOpens);
-        assert_eq!(arrangement(esp32(), android()), Arrangement::EitherOpens);
+        assert_eq!(
+            l2cap_arrangement(esp32(), esp32()),
+            L2capArrangement::EitherOpens
+        );
+        assert_eq!(
+            l2cap_arrangement(esp32(), nrf()),
+            L2capArrangement::EitherOpens
+        );
+        assert_eq!(
+            l2cap_arrangement(nrf(), esp32()),
+            L2capArrangement::EitherOpens
+        );
+        assert_eq!(
+            l2cap_arrangement(linux(), esp32()),
+            L2capArrangement::EitherOpens
+        );
+        assert_eq!(
+            l2cap_arrangement(esp32(), linux()),
+            L2capArrangement::EitherOpens
+        );
+        assert_eq!(
+            l2cap_arrangement(android(), esp32()),
+            L2capArrangement::EitherOpens
+        );
+        assert_eq!(
+            l2cap_arrangement(esp32(), android()),
+            L2capArrangement::EitherOpens
+        );
 
-        let arr = arrangement(esp32(), esp32());
+        let arr = l2cap_arrangement(esp32(), esp32());
         assert_eq!(
             l2cap_plan(
                 arr,
@@ -1122,19 +1374,25 @@ mod tests {
     #[test]
     fn the_esp32_stays_on_the_gatt_floor_with_windows_and_apple() {
         assert_eq!(
-            arrangement(esp32(), Endpoint::WinRt(WinRtHost::Windows)),
-            Arrangement::GattOnly
+            l2cap_arrangement(esp32(), Endpoint::WinRt(WinRtHost::Windows)),
+            L2capArrangement::GattOnly
         );
-        assert_eq!(arrangement(esp32(), mac()), Arrangement::GattOnly);
+        assert_eq!(
+            l2cap_arrangement(esp32(), mac()),
+            L2capArrangement::GattOnly
+        );
     }
 
     #[test]
     fn an_untested_pair_falls_to_the_gatt_floor() {
-        assert_eq!(arrangement(mac(), mac()), Arrangement::GattOnly);
-        assert_eq!(arrangement(android(), android()), Arrangement::GattOnly);
+        assert_eq!(l2cap_arrangement(mac(), mac()), L2capArrangement::GattOnly);
         assert_eq!(
-            arrangement(mac(), Endpoint::WinRt(WinRtHost::Windows)),
-            Arrangement::GattOnly
+            l2cap_arrangement(android(), android()),
+            L2capArrangement::GattOnly
+        );
+        assert_eq!(
+            l2cap_arrangement(mac(), Endpoint::WinRt(WinRtHost::Windows)),
+            L2capArrangement::GattOnly
         );
     }
 
@@ -1150,7 +1408,7 @@ mod tests {
         ];
         for &a in &endpoints {
             for &b in &endpoints {
-                assert_eq!(arrangement(a, b), arrangement(b, a));
+                assert_eq!(l2cap_arrangement(a, b), l2cap_arrangement(b, a));
             }
         }
     }
@@ -1167,7 +1425,7 @@ mod tests {
         ];
         for &a in &endpoints {
             for &b in &endpoints {
-                if let Arrangement::Opens(opener) = arrangement(a, b) {
+                if let L2capArrangement::Opens(opener) = l2cap_arrangement(a, b) {
                     assert!(opener == a || opener == b);
                 }
             }
@@ -1176,7 +1434,7 @@ mod tests {
 
     #[test]
     fn both_ends_keep_the_same_connection_for_an_opens_pair() {
-        let arr = arrangement(mac(), android());
+        let arr = l2cap_arrangement(mac(), android());
         let mac_id = identity(1);
         let android_id = identity(2);
 
@@ -1196,7 +1454,7 @@ mod tests {
 
     #[test]
     fn both_ends_keep_the_same_connection_for_an_either_opens_pair() {
-        let arr = Arrangement::EitherOpens;
+        let arr = L2capArrangement::EitherOpens;
         let low = identity(1);
         let high = identity(9);
 
@@ -1213,7 +1471,7 @@ mod tests {
 
     #[test]
     fn only_the_designated_opener_stuck_as_peripheral_redials() {
-        let opens_android = arrangement(mac(), android());
+        let opens_android = l2cap_arrangement(mac(), android());
         assert!(needs_redial(
             opens_android,
             HandshakeRole::Listener,
@@ -1227,14 +1485,14 @@ mod tests {
         assert!(!needs_redial(opens_android, HandshakeRole::Listener, mac()));
         assert!(!needs_redial(opens_android, HandshakeRole::Dialer, mac()));
 
-        let either = arrangement(mac(), linux());
+        let either = l2cap_arrangement(mac(), linux());
         assert!(!needs_redial(either, HandshakeRole::Listener, mac()));
         assert!(!needs_redial(either, HandshakeRole::Dialer, mac()));
     }
 
     #[test]
     fn either_opens_central_opens_and_peripheral_accepts() {
-        let arr = Arrangement::EitherOpens;
+        let arr = L2capArrangement::EitherOpens;
         let mine = caps(Some(0x00c0));
         let theirs = caps(Some(0x0083));
         assert_eq!(
@@ -1251,7 +1509,7 @@ mod tests {
 
     #[test]
     fn opens_lets_only_the_named_side_open_and_only_as_central() {
-        let arr = arrangement(mac(), android());
+        let arr = l2cap_arrangement(mac(), android());
         let android_caps = caps(Some(0x0080));
         let mac_caps = caps(Some(0x00c0));
 
@@ -1300,7 +1558,7 @@ mod tests {
 
         assert_eq!(
             l2cap_plan(
-                arrangement(ios(), linux()),
+                l2cap_arrangement(ios(), linux()),
                 HandshakeRole::Dialer,
                 ios(),
                 &apple_caps,
@@ -1310,7 +1568,7 @@ mod tests {
         );
         assert_eq!(
             l2cap_plan(
-                arrangement(linux(), ios()),
+                l2cap_arrangement(linux(), ios()),
                 HandshakeRole::Listener,
                 linux(),
                 &linux_caps,
@@ -1320,7 +1578,7 @@ mod tests {
         );
         assert_eq!(
             l2cap_plan(
-                arrangement(ipad(), linux()),
+                l2cap_arrangement(ipad(), linux()),
                 HandshakeRole::Dialer,
                 ipad(),
                 &apple_caps,
@@ -1337,7 +1595,7 @@ mod tests {
 
         assert_eq!(
             l2cap_plan(
-                arrangement(ios(), android()),
+                l2cap_arrangement(ios(), android()),
                 HandshakeRole::Dialer,
                 ios(),
                 &ios_caps,
@@ -1349,7 +1607,7 @@ mod tests {
 
     #[test]
     fn the_acceptor_stands_down_when_the_peer_has_no_listener() {
-        let arr = arrangement(mac(), android());
+        let arr = l2cap_arrangement(mac(), android());
         assert_eq!(
             l2cap_plan(
                 arr,
@@ -1366,7 +1624,7 @@ mod tests {
     fn gatt_only_never_plans_l2cap() {
         assert_eq!(
             l2cap_plan(
-                Arrangement::GattOnly,
+                L2capArrangement::GattOnly,
                 HandshakeRole::Dialer,
                 mac(),
                 &caps(Some(0x00c0)),
@@ -1378,7 +1636,7 @@ mod tests {
 
     #[test]
     fn an_opener_whose_peer_has_no_listener_cannot_open() {
-        let arr = Arrangement::EitherOpens;
+        let arr = L2capArrangement::EitherOpens;
         assert_eq!(
             l2cap_plan(
                 arr,
@@ -1393,12 +1651,12 @@ mod tests {
 
     #[test]
     fn a_dialer_and_listener_settle_exchanging_endpoints_and_caps() {
-        let dialer_local = Local {
+        let dialer_local = LocalPeer {
             identity: identity(1),
             endpoint: mac(),
             capabilities: caps(Some(0x00c0)),
         };
-        let listener_local = Local {
+        let listener_local = LocalPeer {
             identity: identity(2),
             endpoint: android(),
             capabilities: caps(Some(0x0080)),
@@ -1412,15 +1670,31 @@ mod tests {
         let listener_reaction = listener.absorb(opening.unwrap());
         let dialer_reaction = dialer.absorb(listener_reaction.reply.unwrap());
 
-        if let (Outcome::Settled(at_listener), Outcome::Settled(at_dialer)) =
+        if let (HandshakeOutcome::Settled(at_listener), HandshakeOutcome::Settled(at_dialer)) =
             (listener_reaction.outcome, dialer_reaction.outcome)
         {
-            assert_eq!(at_listener.identity, identity(1));
-            assert_eq!(at_listener.endpoint, mac());
-            assert_eq!(at_listener.peer_rssi, Some(-40));
-            assert_eq!(at_dialer.identity, identity(2));
-            assert_eq!(at_dialer.endpoint, android());
-            assert_eq!(at_dialer.peer_rssi, Some(-55));
+            assert_eq!(
+                at_listener,
+                EstablishedPeer {
+                    identity: identity(1),
+                    transport: EstablishedTransport::Native {
+                        endpoint: mac(),
+                        capabilities: caps(Some(0x00c0)),
+                    },
+                    peer_rssi: Some(-40),
+                }
+            );
+            assert_eq!(
+                at_dialer,
+                EstablishedPeer {
+                    identity: identity(2),
+                    transport: EstablishedTransport::Native {
+                        endpoint: android(),
+                        capabilities: caps(Some(0x0080)),
+                    },
+                    peer_rssi: Some(-55),
+                }
+            );
         } else {
             panic!("expected both sides to settle");
         }
@@ -1428,7 +1702,7 @@ mod tests {
 
     #[test]
     fn a_self_connection_aborts_and_closes() {
-        let local = Local {
+        let local = LocalPeer {
             identity: identity(5),
             endpoint: mac(),
             capabilities: caps(Some(0x0090)),
@@ -1442,7 +1716,7 @@ mod tests {
         });
         assert_eq!(
             reaction.outcome,
-            Outcome::Aborted(CloseReason::SelfConnection)
+            HandshakeOutcome::Aborted(CloseReason::SelfConnection)
         );
         assert_eq!(
             reaction.reply,
@@ -1469,11 +1743,11 @@ mod tests {
     }
 
     #[test]
-    fn a_small_payload_is_a_single_end_fragment() {
+    fn a_small_payload_is_a_single_start_fragment() {
         let payload = [1u8, 2, 3];
         let mut fragments = fragments_of(&payload, 64);
         let only = fragments.next().unwrap();
-        assert_eq!(only.kind, FragmentKind::End);
+        assert_eq!(only.kind, FragmentKind::Start);
         assert_eq!(only.total, 1);
         assert!(fragments.next().is_none());
     }

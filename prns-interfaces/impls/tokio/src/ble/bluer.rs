@@ -9,7 +9,7 @@ use bluer::adv::{Advertisement, AdvertisementHandle};
 use bluer::gatt::local::{
     characteristic_control, service_control, Application, ApplicationHandle, Characteristic,
     CharacteristicControl, CharacteristicControlEvent, CharacteristicControlHandle,
-    CharacteristicNotify, CharacteristicNotifyMethod, CharacteristicWrite,
+    CharacteristicNotify, CharacteristicNotifyMethod, CharacteristicRead, CharacteristicWrite,
     CharacteristicWriteMethod, Service,
 };
 use bluer::gatt::remote::Characteristic as RemoteCharacteristic;
@@ -27,16 +27,17 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::oneshot;
 
 use prns_core::interfaces::bluetooth_auto::core::{
-    encode_stream_frame, fragments_of, BleAddress, BleUuid, Control, Dialect, Fragment, L2capPlan,
-    Psm, Reassembler, StreamDeframer, BLE_HW_MTU, BLE_SERVICE_UUID, CONTROL_MAX_LEN,
+    columba_connection_role, columba_role_capabilities_from_manufacturer, encode_stream_frame,
+    fragments_of, BleAddress, BleIdentity, BleRoleCapabilities, BleUuid, ColumbaConnectionRole,
+    Control, Fragment, L2capPlan, PeerProtocol, Psm, Reassembler, StreamDeframer, BLE_HW_MTU,
+    BLE_SERVICE_UUID, COLUMBA_IDENTITY_UUID, COLUMBA_RX_UUID, COLUMBA_TX_UUID, CONTROL_MAX_LEN,
     FRAGMENT_HEADER_LEN, NATIVE_CONTROL_UUID, NATIVE_DATA_UUID, STREAM_FRAME_PREFIX_LEN,
 };
 use prns_core::interfaces::bluetooth_auto::limits;
 use prns_core::interfaces::bluetooth_auto::seam::{
-    BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin,
+    AdvertisingMode, BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin, RadioMode,
+    ScanningMode,
 };
-
-const ADVERTISED_NAME: &str = "Prns";
 
 const L2CAP_SDU_LEN: usize = STREAM_FRAME_PREFIX_LEN + BLE_HW_MTU;
 
@@ -127,6 +128,8 @@ pub enum BluerError {
     Bluez(bluer::Error),
     Io(std::io::Error),
     NoControlCharacteristic,
+    NoColumbaIdentity,
+    MalformedColumbaIdentity,
     ControlPduTooLarge,
     MalformedControl,
     NotUpgraded,
@@ -180,6 +183,62 @@ fn native_characteristic(
             ..Default::default()
         }),
         control_handle,
+        ..Default::default()
+    }
+}
+
+fn columba_rx_characteristic(
+    uuid: Uuid,
+    control_handle: CharacteristicControlHandle,
+) -> Characteristic {
+    Characteristic {
+        uuid,
+        write: Some(CharacteristicWrite {
+            write: true,
+            write_without_response: true,
+            method: CharacteristicWriteMethod::Io,
+            ..Default::default()
+        }),
+        control_handle,
+        ..Default::default()
+    }
+}
+
+fn columba_tx_characteristic(
+    uuid: Uuid,
+    control_handle: CharacteristicControlHandle,
+) -> Characteristic {
+    Characteristic {
+        uuid,
+        read: Some(CharacteristicRead {
+            read: true,
+            fun: Box::new(|_| Box::pin(async { Ok(Vec::new()) })),
+            ..Default::default()
+        }),
+        notify: Some(CharacteristicNotify {
+            notify: true,
+            method: CharacteristicNotifyMethod::Io,
+            ..Default::default()
+        }),
+        control_handle,
+        ..Default::default()
+    }
+}
+
+fn columba_identity_characteristic(identity: BleIdentity) -> Characteristic {
+    Characteristic {
+        uuid: uuid_of(COLUMBA_IDENTITY_UUID),
+        read: Some(CharacteristicRead {
+            read: true,
+            fun: Box::new(move |request| {
+                let identity = identity;
+                Box::pin(async move {
+                    let start = usize::from(request.offset).min(identity.as_bytes().len());
+                    Ok(identity.as_bytes()[start..].to_vec())
+                })
+            }),
+            ..Default::default()
+        }),
         ..Default::default()
     }
 }
@@ -254,8 +313,15 @@ type ConnectFuture = Pin<Box<dyn Future<Output = (Address, Result<BluerLink, Blu
 
 enum Observed {
     Candidate(Address),
-    Greeting { address: Address, half: Half },
-    DataHalf { address: Address, half: Half },
+    Greeting {
+        protocol: PeerProtocol,
+        address: Address,
+        half: Half,
+    },
+    DataHalf {
+        address: Address,
+        half: Half,
+    },
     Connected(Address, Result<BluerLink, BluerError>),
     Resweep,
     Idle,
@@ -312,6 +378,7 @@ pub struct BluerBackend {
     address: Address,
     address_type: AddressType,
     psm: Psm,
+    identity: BleIdentity,
     radio_power: RadioPower,
     connecting: HashSet<Address>,
     connects: FuturesUnordered<ConnectFuture>,
@@ -322,6 +389,9 @@ pub struct BluerBackend {
     discovery_health: DiscoveryHealth,
     control: Option<Pin<Box<CharacteristicControl>>>,
     data_control: Option<Pin<Box<CharacteristicControl>>>,
+    columba_rx_control: Option<Pin<Box<CharacteristicControl>>>,
+    columba_tx_control: Option<Pin<Box<CharacteristicControl>>>,
+    pending_columba: HashMap<Address, PendingHalves>,
     pending_data: HashMap<Address, PendingData>,
     awaiting_data_reader: HashMap<Address, oneshot::Sender<CharacteristicReader>>,
     listener: Option<Arc<SeqPacketListener>>,
@@ -333,7 +403,7 @@ pub struct BluerBackend {
 }
 
 impl BluerBackend {
-    pub async fn open(psm: Psm) -> Result<Self, BluerError> {
+    pub async fn open(psm: Psm, identity: BleIdentity) -> Result<Self, BluerError> {
         let session = Session::new().await?;
         let adapter = session.default_adapter().await?;
         adapter.set_powered(true).await?;
@@ -357,6 +427,7 @@ impl BluerBackend {
             address,
             address_type,
             psm,
+            identity,
             radio_power: RadioPower::Off,
             connecting: HashSet::new(),
             connects: FuturesUnordered::new(),
@@ -367,6 +438,9 @@ impl BluerBackend {
             discovery_health: DiscoveryHealth::default(),
             control: None,
             data_control: None,
+            columba_rx_control: None,
+            columba_tx_control: None,
+            pending_columba: HashMap::new(),
             pending_data: HashMap::new(),
             awaiting_data_reader: HashMap::new(),
             listener: None,
@@ -388,6 +462,28 @@ impl BluerBackend {
         }
     }
 
+    async fn should_dial(&self, address: Address) -> bool {
+        let Ok(device) = self.adapter.device(address) else {
+            return true;
+        };
+        let peer_capabilities = device
+            .manufacturer_data()
+            .await
+            .ok()
+            .flatten()
+            .and_then(|data| {
+                data.iter().find_map(|(company_id, value)| {
+                    columba_role_capabilities_from_manufacturer(*company_id, value)
+                })
+            });
+        columba_connection_role(
+            BleAddress::new(self.address.0),
+            BleRoleCapabilities::DualRole,
+            BleAddress::new(address.0),
+            peer_capabilities.unwrap_or(BleRoleCapabilities::DualRole),
+        ) == ColumbaConnectionRole::Dial
+    }
+
     async fn resweep_sighting(&mut self) -> Option<Address> {
         let mut addresses = self.adapter.device_addresses().await.ok()?;
         addresses.retain(|address| *address != self.address && !self.connecting.contains(address));
@@ -399,7 +495,7 @@ impl BluerBackend {
         for offset in 0..count {
             let index = (self.resweep_next + offset) % count;
             let address = addresses[index];
-            if self.advertises_our_service(address).await {
+            if self.advertises_our_service(address).await && self.should_dial(address).await {
                 self.resweep_next = index + 1;
                 return Some(address);
             }
@@ -417,8 +513,8 @@ impl BluerBackend {
         Advertisement {
             advertisement_type: bluer::adv::Type::Peripheral,
             service_uuids: [uuid_of(BLE_SERVICE_UUID)].into_iter().collect(),
+            manufacturer_data: [(0xffff, vec![0x03, 0x00])].into_iter().collect(),
             discoverable: Some(true),
-            local_name: Some(ADVERTISED_NAME.to_string()),
             ..Default::default()
         }
     }
@@ -454,7 +550,7 @@ impl BluerBackend {
             _handle: advertisement,
         };
         crate::diagnostic_log::debug!(
-            "bluetooth: advertising as {ADVERTISED_NAME}, control PSM {:#x}, listener {}",
+            "bluetooth: advertising Reticulum BLE, control PSM {:#x}, listener {}",
             self.psm.get(),
             if self.listener.is_some() {
                 "bound"
@@ -471,6 +567,8 @@ impl BluerBackend {
         }
         let (control, control_handle) = characteristic_control();
         let (data, data_handle) = characteristic_control();
+        let (columba_rx, columba_rx_handle) = characteristic_control();
+        let (columba_tx, columba_tx_handle) = characteristic_control();
         let (_service_control, service_handle) = service_control();
         let application = Application {
             services: vec![Service {
@@ -479,6 +577,9 @@ impl BluerBackend {
                 characteristics: vec![
                     native_characteristic(uuid_of(NATIVE_CONTROL_UUID), control_handle),
                     native_characteristic(uuid_of(NATIVE_DATA_UUID), data_handle),
+                    columba_rx_characteristic(uuid_of(COLUMBA_RX_UUID), columba_rx_handle),
+                    columba_tx_characteristic(uuid_of(COLUMBA_TX_UUID), columba_tx_handle),
+                    columba_identity_characteristic(self.identity),
                 ],
                 control_handle: service_handle,
                 ..Default::default()
@@ -499,6 +600,8 @@ impl BluerBackend {
 
         self.control = Some(Box::pin(control));
         self.data_control = Some(Box::pin(data));
+        self.columba_rx_control = Some(Box::pin(columba_rx));
+        self.columba_tx_control = Some(Box::pin(columba_tx));
         self.listener = listener;
         if let Some(listener) = self.listener.clone() {
             self._accept_task = Some(tokio::spawn(accept_loop(
@@ -514,7 +617,10 @@ impl BluerBackend {
         self._application = None;
         self.control = None;
         self.data_control = None;
+        self.columba_rx_control = None;
+        self.columba_tx_control = None;
         self.pending.clear();
+        self.pending_columba.clear();
         self.pending_data.clear();
         self.awaiting_data_reader.clear();
         if let Some(task) = self._accept_task.take() {
@@ -581,9 +687,18 @@ impl BluerBackend {
         }
     }
 
-    fn admit_greeting(&mut self, address: Address, half: Half) -> Option<AcceptedLink> {
+    fn admit_greeting(
+        &mut self,
+        protocol: PeerProtocol,
+        address: Address,
+        half: Half,
+    ) -> Option<AcceptedLink> {
+        let pending = match protocol {
+            PeerProtocol::Native => &mut self.pending,
+            PeerProtocol::Columba => &mut self.pending_columba,
+        };
         let ready = {
-            let entry = self.pending.entry(address).or_default();
+            let entry = pending.entry(address).or_default();
             match half {
                 Half::Reader(reader) => entry.reader = Some(reader),
                 Half::Writer(writer) => entry.writer = Some(writer),
@@ -596,13 +711,16 @@ impl BluerBackend {
         let Some(PendingHalves {
             reader: Some(reader),
             writer: Some(writer),
-        }) = self.pending.remove(&address)
+        }) = pending.remove(&address)
         else {
             return None;
         };
-        let data = self.take_server_data(address);
-        let l2cap = self.register_l2cap(address);
+        let (data, l2cap) = match protocol {
+            PeerProtocol::Native => (self.take_server_data(address), self.register_l2cap(address)),
+            PeerProtocol::Columba => (ServerData::SingleChar, None),
+        };
         Some(AcceptedLink {
+            peer_protocol: protocol,
             reader,
             writer,
             address,
@@ -720,42 +838,67 @@ async fn connect_link(adapter: Adapter, target: Address) -> Result<BluerLink, Bl
             return Err(error.into());
         }
     };
-    let control = match find_characteristic(&device, uuid_of(NATIVE_CONTROL_UUID)).await {
-        Ok(Some(control)) => control,
-        Ok(None) => {
-            crate::diagnostic_log::warn!("bluetooth: no native control characteristic on {target}");
-            return Err(BluerError::NoControlCharacteristic);
-        }
-        Err(error) => {
-            crate::diagnostic_log::warn!(
-                "bluetooth: failed to inspect {target} services: {error:?}"
-            );
-            return Err(error);
-        }
-    };
-    let data = find_characteristic(&device, uuid_of(NATIVE_DATA_UUID))
-        .await
-        .ok()
-        .flatten();
-    let notify = control.notify().await?;
-    let data_notify = match &data {
-        Some(data) => match data.notify().await {
-            Ok(stream) => Some(Box::pin(stream) as Pin<Box<dyn Stream<Item = Vec<u8>> + Send>>),
-            Err(error) => {
-                crate::diagnostic_log::warn!(
-                    "bluetooth: {target} data characteristic notify failed: {error}"
-                );
-                None
-            }
-        },
-        None => None,
+    let native_control = find_characteristic(&device, uuid_of(NATIVE_CONTROL_UUID)).await?;
+    let (peer_protocol, control, notify, data, data_notify, peer_identity) = if let Some(control) =
+        native_control
+    {
+        let data = find_characteristic(&device, uuid_of(NATIVE_DATA_UUID))
+            .await
+            .ok()
+            .flatten();
+        let notify = control.notify().await?;
+        let data_notify = match &data {
+            Some(data) => match data.notify().await {
+                Ok(stream) => Some(Box::pin(stream) as Pin<Box<dyn Stream<Item = Vec<u8>> + Send>>),
+                Err(error) => {
+                    crate::diagnostic_log::warn!(
+                        "bluetooth: {target} data characteristic notify failed: {error}"
+                    );
+                    None
+                }
+            },
+            None => None,
+        };
+        (
+            PeerProtocol::Native,
+            control,
+            Box::pin(notify) as Pin<Box<dyn Stream<Item = Vec<u8>> + Send>>,
+            data,
+            data_notify,
+            None,
+        )
+    } else {
+        let rx = find_characteristic(&device, uuid_of(COLUMBA_RX_UUID))
+            .await?
+            .ok_or(BluerError::NoControlCharacteristic)?;
+        let tx = find_characteristic(&device, uuid_of(COLUMBA_TX_UUID))
+            .await?
+            .ok_or(BluerError::NoControlCharacteristic)?;
+        let identity = find_characteristic(&device, uuid_of(COLUMBA_IDENTITY_UUID))
+            .await?
+            .ok_or(BluerError::NoColumbaIdentity)?;
+        let identity = identity.read().await?;
+        let identity: [u8; 16] = identity
+            .try_into()
+            .map_err(|_| BluerError::MalformedColumbaIdentity)?;
+        let notify = tx.notify().await?;
+        (
+            PeerProtocol::Columba,
+            rx,
+            Box::pin(notify) as Pin<Box<dyn Stream<Item = Vec<u8>> + Send>>,
+            None,
+            None,
+            Some(BleIdentity::new(identity)),
+        )
     };
     crate::diagnostic_log::debug!(
-        "bluetooth: {target} connected over LE, control characteristic ready; handshaking"
+        "bluetooth: {target} connected over LE with {peer_protocol:?}; handshaking"
     );
     Ok(BluerLink::Dialed(Box::new(DialedLink {
+        peer_protocol,
+        peer_identity,
         control,
-        notify: Box::pin(notify),
+        notify,
         data,
         data_notify,
         peer_address: target,
@@ -774,7 +917,8 @@ impl BleBackend for BluerBackend {
         self.blocked
     }
 
-    async fn set_radio_enabled(&mut self, enabled: bool) -> Result<(), BluerError> {
+    async fn set_radio_mode(&mut self, mode: RadioMode) -> Result<(), BluerError> {
+        let enabled = mode.is_on();
         let power = RadioPower::from_enabled(enabled);
         if self.radio_power == power {
             return if enabled {
@@ -795,7 +939,8 @@ impl BleBackend for BluerBackend {
         self.reconcile_advertisement().await
     }
 
-    async fn set_advertising(&mut self, enabled: bool) -> Result<(), BluerError> {
+    async fn set_advertising(&mut self, mode: AdvertisingMode) -> Result<(), BluerError> {
+        let enabled = mode.is_on();
         if !enabled {
             self.advertisement.stop();
             crate::diagnostic_log::debug!("bluetooth: advertising off");
@@ -805,7 +950,8 @@ impl BleBackend for BluerBackend {
         self.reconcile_advertisement().await
     }
 
-    async fn set_scanning(&mut self, enabled: bool) -> Result<(), BluerError> {
+    async fn set_scanning(&mut self, mode: ScanningMode) -> Result<(), BluerError> {
+        let enabled = mode.is_on();
         self.scan_enabled = enabled;
         if !enabled || !self.radio_power.is_on() {
             self.discovery = None;
@@ -835,6 +981,8 @@ impl BleBackend for BluerBackend {
                 let discovery = self.discovery.as_mut();
                 let control = self.control.as_mut();
                 let data_control = self.data_control.as_mut();
+                let columba_rx_control = self.columba_rx_control.as_mut();
+                let columba_tx_control = self.columba_tx_control.as_mut();
                 let connects = &mut self.connects;
                 tokio::select! {
                     event = next_or_pending(discovery) => match event {
@@ -846,6 +994,7 @@ impl BleBackend for BluerBackend {
                             let address = request.device_address();
                             match request.accept() {
                                 Ok(reader) => Observed::Greeting {
+                                    protocol: PeerProtocol::Native,
                                     address,
                                     half: Half::Reader(reader),
                                 },
@@ -853,10 +1002,33 @@ impl BleBackend for BluerBackend {
                             }
                         }
                         Some(CharacteristicControlEvent::Notify(writer)) => Observed::Greeting {
+                            protocol: PeerProtocol::Native,
                             address: writer.device_address(),
                             half: Half::Writer(writer),
                         },
                         None => Observed::Idle,
+                    },
+                    event = next_or_pending(columba_rx_control) => match event {
+                        Some(CharacteristicControlEvent::Write(request)) => {
+                            let address = request.device_address();
+                            match request.accept() {
+                                Ok(reader) => Observed::Greeting {
+                                    protocol: PeerProtocol::Columba,
+                                    address,
+                                    half: Half::Reader(reader),
+                                },
+                                Err(_) => Observed::Idle,
+                            }
+                        }
+                        _ => Observed::Idle,
+                    },
+                    event = next_or_pending(columba_tx_control) => match event {
+                        Some(CharacteristicControlEvent::Notify(writer)) => Observed::Greeting {
+                            protocol: PeerProtocol::Columba,
+                            address: writer.device_address(),
+                            half: Half::Writer(writer),
+                        },
+                        _ => Observed::Idle,
                     },
                     event = next_or_pending(data_control) => match event {
                         Some(CharacteristicControlEvent::Write(request)) => {
@@ -883,7 +1055,11 @@ impl BleBackend for BluerBackend {
                 Observed::Candidate(address) => {
                     let mine = address == self.address;
                     let dialing = self.connecting.contains(&address);
-                    if !mine && !dialing && self.advertises_our_service(address).await {
+                    if !mine
+                        && !dialing
+                        && self.advertises_our_service(address).await
+                        && self.should_dial(address).await
+                    {
                         let rssi = self.peer_rssi(address).await;
                         crate::diagnostic_log::debug!("bluetooth: sighted Prns peer {address}");
                         return BleEvent::Sighting {
@@ -892,8 +1068,12 @@ impl BleBackend for BluerBackend {
                         };
                     }
                 }
-                Observed::Greeting { address, half } => {
-                    if let Some(link) = self.admit_greeting(address, half) {
+                Observed::Greeting {
+                    protocol,
+                    address,
+                    half,
+                } => {
+                    if let Some(link) = self.admit_greeting(protocol, address, half) {
                         let peer_rssi = self.peer_rssi(address).await;
                         crate::diagnostic_log::debug!("bluetooth: inbound link from {address}");
                         return BleEvent::LinkReady {
@@ -920,10 +1100,6 @@ impl BleBackend for BluerBackend {
                         Err(error) => {
                             crate::diagnostic_log::warn!(
                                 "bluetooth: dial to {target} failed: {error:?}"
-                            );
-                            println!(
-                                "HOPSPOT_BLE_DIAL_ERROR address={:02x?} error={error:?}",
-                                target.0
                             );
                             return BleEvent::DialFailed {
                                 address: BleAddress::new(target.0),
@@ -969,6 +1145,7 @@ impl BleBackend for BluerBackend {
         let target = Address::new(*address.octets());
         self.connecting.remove(&target);
         self.pending.remove(&target);
+        self.pending_columba.remove(&target);
         self.pending_data.remove(&target);
         self.awaiting_data_reader.remove(&target);
         if let Ok(mut router) = self.l2cap_router.lock() {
@@ -1008,10 +1185,10 @@ impl BleLink for BluerLink {
     type Source = BluerSource;
     type Sink = BluerSink;
 
-    fn dialect(&self) -> Dialect {
+    fn peer_protocol(&self) -> PeerProtocol {
         match self {
-            BluerLink::Dialed(link) => link.dialect(),
-            BluerLink::Accepted(link) => link.dialect(),
+            BluerLink::Dialed(link) => link.peer_protocol(),
+            BluerLink::Accepted(link) => link.peer_protocol(),
         }
     }
 
@@ -1036,6 +1213,20 @@ impl BleLink for BluerLink {
         }
     }
 
+    async fn receive_columba_peer_identity(&mut self) -> Result<BleIdentity, BluerError> {
+        match self {
+            BluerLink::Dialed(link) => link.receive_columba_peer_identity().await,
+            BluerLink::Accepted(link) => link.receive_columba_peer_identity().await,
+        }
+    }
+
+    async fn send_columba_identity(&mut self, identity: BleIdentity) -> Result<(), BluerError> {
+        match self {
+            BluerLink::Dialed(link) => link.send_columba_identity(identity).await,
+            BluerLink::Accepted(link) => link.send_columba_identity(identity).await,
+        }
+    }
+
     async fn upgrade(&mut self, plan: &L2capPlan) -> Result<(), BluerError> {
         match self {
             BluerLink::Dialed(link) => link.upgrade(plan).await,
@@ -1052,6 +1243,8 @@ impl BleLink for BluerLink {
 }
 
 pub struct DialedLink {
+    peer_protocol: PeerProtocol,
+    peer_identity: Option<BleIdentity>,
     control: RemoteCharacteristic,
     notify: Pin<Box<dyn Stream<Item = Vec<u8>> + Send>>,
     data: Option<RemoteCharacteristic>,
@@ -1067,8 +1260,8 @@ impl BleLink for DialedLink {
     type Source = BluerSource;
     type Sink = BluerSink;
 
-    fn dialect(&self) -> Dialect {
-        Dialect::Native
+    fn peer_protocol(&self) -> PeerProtocol {
+        self.peer_protocol
     }
 
     fn address(&self) -> BleAddress {
@@ -1111,7 +1304,19 @@ impl BleLink for DialedLink {
         }
     }
 
+    async fn receive_columba_peer_identity(&mut self) -> Result<BleIdentity, BluerError> {
+        self.peer_identity.ok_or(BluerError::NoColumbaIdentity)
+    }
+
+    async fn send_columba_identity(&mut self, identity: BleIdentity) -> Result<(), BluerError> {
+        self.control.write(identity.as_bytes()).await?;
+        Ok(())
+    }
+
     async fn upgrade(&mut self, plan: &L2capPlan) -> Result<(), BluerError> {
+        if self.peer_protocol == PeerProtocol::Columba {
+            return Ok(());
+        }
         match plan {
             L2capPlan::Open { psm } => {
                 crate::diagnostic_log::debug!(
@@ -1200,6 +1405,7 @@ impl BleLink for DialedLink {
 }
 
 pub struct AcceptedLink {
+    peer_protocol: PeerProtocol,
     reader: CharacteristicReader,
     writer: CharacteristicWriter,
     address: Address,
@@ -1213,8 +1419,8 @@ impl BleLink for AcceptedLink {
     type Source = BluerSource;
     type Sink = BluerSink;
 
-    fn dialect(&self) -> Dialect {
-        Dialect::Native
+    fn peer_protocol(&self) -> PeerProtocol {
+        self.peer_protocol
     }
 
     fn address(&self) -> BleAddress {
@@ -1251,7 +1457,22 @@ impl BleLink for AcceptedLink {
         }
     }
 
+    async fn receive_columba_peer_identity(&mut self) -> Result<BleIdentity, BluerError> {
+        let mut identity = [0u8; 16];
+        self.reader.read_exact(&mut identity).await?;
+        Ok(BleIdentity::new(identity))
+    }
+
+    async fn send_columba_identity(&mut self, identity: BleIdentity) -> Result<(), BluerError> {
+        self.writer.write_all(identity.as_bytes()).await?;
+        self.writer.flush().await?;
+        Ok(())
+    }
+
     async fn upgrade(&mut self, plan: &L2capPlan) -> Result<(), BluerError> {
+        if self.peer_protocol == PeerProtocol::Columba {
+            return Ok(());
+        }
         match plan {
             L2capPlan::Accept => {
                 let Some(inbound) = self.l2cap.take() else {
@@ -1525,8 +1746,6 @@ mod tests {
         let mut rx_a = router.register(a);
         let mut rx_b = router.register(b);
 
-        // B's socket arrives first; with a shared FIFO accept it would land on A's waiter
-        // (registered first). Address-keyed routing must hand it to B.
         assert!(router.deliver(b, 0xB).is_ok());
         assert_eq!(rx_b.try_recv(), Ok(0xB));
         assert_eq!(rx_a.try_recv(), Err(oneshot::error::TryRecvError::Empty));

@@ -10,22 +10,21 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex as BridgeMutex;
 use esp_radio::ble::controller::BleConnector;
 use personal_rns::ble::{BluetoothAuto, BluetoothAutoShared};
 use personal_rns::interfaces::bluetooth_auto::core::{
-    encode_advertisement, BleIdentity, Endpoint, Esp32Host, LinkCapabilities, Psm, BLE_HW_MTU,
-    MAX_ADVERTISEMENT_LEN,
+    encode_advertisement, BleIdentity, BleRoleCapabilities, Endpoint, Esp32Host, LinkCapabilities,
+    Psm, BLE_HW_MTU, MAX_ADVERTISEMENT_LEN,
 };
 use personal_rns::reactor::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
 use personal_rns::runtime::Fleet;
 #[cfg(target_arch = "riscv32")]
 use prns_interfaces_embassy::ble_trouble::GattCharacteristic;
 use prns_interfaces_embassy::ble_trouble::{
-    self, acceptor, dialer, host_runner, serve_slot, BleHub, GattServer, TroubleController,
-    TroubleStack, CONNECTIONS, GATT_VALUE_CAP, L2CAP_CHANNELS, L2CAP_PSM, SLOTS,
+    self, acceptor, dialer, host_runner, serve_slot, BleHub, GattServer,
+    ReticulumGattCharacteristics, ReticulumGattUuids, TroubleController, TroubleStack, CONNECTIONS,
+    GATT_VALUE_CAP, L2CAP_CHANNELS, L2CAP_PSM, SLOTS,
 };
 use static_cell::StaticCell;
 use trouble_host::prelude::*;
 
-// This board layer is shared by the S3 and C6; each board module fixes the fleet sizing constants
-// that `BleFleet` and `BluetoothAutoShared` are generic over, so the import follows the target.
 #[cfg(target_arch = "riscv32")]
 use crate::c6::{BLE_CONTROLLER_CONNECTIONS, BLE_MEMBERS, LIFECYCLE_CAP, NOTIFY_CAP};
 #[cfg(target_arch = "xtensa")]
@@ -51,9 +50,6 @@ const _: () = assert!(
     "C6 serve_slot_task pool_size must equal ble_trouble::SLOTS"
 );
 
-/// C6 can track more logical BLE peers than it should serve as simultaneous GATT links, so only the
-/// physical controller slots get parked workers. Each worker lives in the executor task pool instead
-/// of being embedded in one huge `join_array` future, keeping the BLE parent task small.
 #[cfg(target_arch = "riscv32")]
 #[embassy_executor::task(pool_size = 8)]
 async fn serve_slot_task(
@@ -61,24 +57,55 @@ async fn serve_slot_task(
     hub: &'static BleHub,
     stack: &'static HostStack,
     server: &'static GattServer,
-    control: GattCharacteristic,
-    data: GattCharacteristic,
-    service_uuid: Uuid,
-    control_uuid: Uuid,
-    data_uuid: Uuid,
+    gatt: ReticulumGattOwned,
 ) {
+    let ReticulumGattOwned {
+        control,
+        data,
+        columba_rx,
+        columba_tx,
+        service_uuid,
+        control_uuid,
+        data_uuid,
+        columba_rx_uuid,
+        columba_tx_uuid,
+        columba_identity_uuid,
+    } = gatt;
     serve_slot(
         idx,
         hub,
         stack,
         server,
-        &control,
-        &data,
-        &service_uuid,
-        &control_uuid,
-        &data_uuid,
+        ReticulumGattCharacteristics {
+            control: &control,
+            data: &data,
+            columba_rx: &columba_rx,
+            columba_tx: &columba_tx,
+        },
+        ReticulumGattUuids {
+            service: &service_uuid,
+            control: &control_uuid,
+            data: &data_uuid,
+            columba_rx: &columba_rx_uuid,
+            columba_tx: &columba_tx_uuid,
+            columba_identity: &columba_identity_uuid,
+        },
     )
     .await
+}
+
+#[cfg(target_arch = "riscv32")]
+struct ReticulumGattOwned {
+    control: GattCharacteristic,
+    data: GattCharacteristic,
+    columba_rx: GattCharacteristic,
+    columba_tx: GattCharacteristic,
+    service_uuid: Uuid,
+    control_uuid: Uuid,
+    data_uuid: Uuid,
+    columba_rx_uuid: Uuid,
+    columba_tx_uuid: Uuid,
+    columba_identity_uuid: Uuid,
 }
 
 pub async fn run(
@@ -95,6 +122,7 @@ pub async fn run(
 
     let mut address = mac;
     address[5] |= 0b1100_0000;
+    let ble_identity = BleIdentity::from_radio_address(&address);
     // The host stack is parked in a `static` so its `Connection`s are `'static` and can ride the hub's
     // assign channels from the acceptor/dialer to a slot worker (trouble-host's own objects are
     // otherwise lifetime-bound to the stack).
@@ -111,10 +139,23 @@ pub async fn run(
 
     static CONTROL_STORE: StaticCell<[u8; GATT_VALUE_CAP]> = StaticCell::new();
     static DATA_STORE: StaticCell<[u8; GATT_VALUE_CAP]> = StaticCell::new();
+    static COLUMBA_RX_STORE: StaticCell<[u8; GATT_VALUE_CAP]> = StaticCell::new();
+    static COLUMBA_TX_STORE: StaticCell<[u8; GATT_VALUE_CAP]> = StaticCell::new();
+    static COLUMBA_IDENTITY_STORE: StaticCell<[u8; GATT_VALUE_CAP]> = StaticCell::new();
     let control_store = CONTROL_STORE.init([0; GATT_VALUE_CAP]);
     let data_store = DATA_STORE.init([0; GATT_VALUE_CAP]);
-    let Some((table, control, data)) =
-        ble_trouble::reticulum_attribute_table(control_store, data_store)
+    let columba_rx_store = COLUMBA_RX_STORE.init([0; GATT_VALUE_CAP]);
+    let columba_tx_store = COLUMBA_TX_STORE.init([0; GATT_VALUE_CAP]);
+    let columba_identity_store = COLUMBA_IDENTITY_STORE.init([0; GATT_VALUE_CAP]);
+    let Some((table, control, data, columba_rx, columba_tx)) =
+        ble_trouble::reticulum_attribute_table(
+            control_store,
+            data_store,
+            columba_rx_store,
+            columba_tx_store,
+            columba_identity_store,
+            ble_identity,
+        )
     else {
         return;
     };
@@ -122,19 +163,23 @@ pub async fn run(
     let server: &'static GattServer = SERVER.init(AttributeServer::new(table));
 
     let mut adv_data = [0u8; MAX_ADVERTISEMENT_LEN];
-    let adv_len = encode_advertisement(&mut adv_data).expect("advertisement fits");
+    let adv_len = encode_advertisement(&mut adv_data, BleRoleCapabilities::DualRole)
+        .expect("advertisement fits");
 
     let service_uuid = ble_trouble::service_uuid();
     let control_uuid = ble_trouble::control_uuid();
     let data_uuid = ble_trouble::data_uuid();
+    let columba_rx_uuid = ble_trouble::columba_rx_uuid();
+    let columba_tx_uuid = ble_trouble::columba_tx_uuid();
+    let columba_identity_uuid = ble_trouble::columba_identity_uuid();
 
     static HUB: StaticCell<BleHub> = StaticCell::new();
     let hub: &'static BleHub = HUB.init(BleHub::new());
-    hub.prime();
+    hub.prime(address);
 
     let supervisor = BluetoothAuto::new(
         hub.backend(),
-        BleIdentity::from_radio_address(&address),
+        ble_identity,
         Endpoint::Esp32(Esp32Host::Esp32),
         LinkCapabilities {
             l2cap: Psm::new(L2CAP_PSM),
@@ -151,11 +196,18 @@ pub async fn run(
                 hub,
                 stack,
                 server,
-                control.clone(),
-                data.clone(),
-                service_uuid.clone(),
-                control_uuid.clone(),
-                data_uuid.clone(),
+                ReticulumGattOwned {
+                    control: control.clone(),
+                    data: data.clone(),
+                    columba_rx: columba_rx.clone(),
+                    columba_tx: columba_tx.clone(),
+                    service_uuid: service_uuid.clone(),
+                    control_uuid: control_uuid.clone(),
+                    data_uuid: data_uuid.clone(),
+                    columba_rx_uuid: columba_rx_uuid.clone(),
+                    columba_tx_uuid: columba_tx_uuid.clone(),
+                    columba_identity_uuid: columba_identity_uuid.clone(),
+                },
             )
             .expect("ble slot task fits"),
         );
@@ -170,11 +222,20 @@ pub async fn run(
             hub,
             stack,
             server,
-            &control,
-            &data,
-            &service_uuid,
-            &control_uuid,
-            &data_uuid,
+            ReticulumGattCharacteristics {
+                control: &control,
+                data: &data,
+                columba_rx: &columba_rx,
+                columba_tx: &columba_tx,
+            },
+            ReticulumGattUuids {
+                service: &service_uuid,
+                control: &control_uuid,
+                data: &data_uuid,
+                columba_rx: &columba_rx_uuid,
+                columba_tx: &columba_tx_uuid,
+                columba_identity: &columba_identity_uuid,
+            },
         )
     }));
     let radio = join(

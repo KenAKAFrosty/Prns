@@ -1,8 +1,8 @@
 use std::sync::{Arc, Mutex};
 
 use prns_core::interfaces::bluetooth_auto::core::{
-    fragments_of, BleAddress, Control, Dialect, Fragment, L2capPlan, Reassembler, BLE_HW_MTU,
-    CONTROL_MAX_LEN,
+    fragments_of, BleAddress, BleIdentity, Control, Fragment, L2capPlan, PeerProtocol, Reassembler,
+    BLE_HW_MTU, CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN,
 };
 use prns_core::interfaces::bluetooth_auto::seam::{BleLink, BleSink, BleSource};
 use tokio::sync::{mpsc as tokio_mpsc, watch};
@@ -21,18 +21,18 @@ use super::WindowsBleError;
 
 pub(super) const GATT_FRAGMENT_PAYLOAD: usize = 180;
 const GATT_REASSEMBLY_CAP: usize = BLE_HW_MTU;
-const GATT_FRAGMENT_OVERHEAD: usize = 8;
+const ATT_WRITE_OVERHEAD: usize = 3;
 
-fn central_fragment_payload(session: &GattSession) -> usize {
+fn central_fragment_mtu(session: &GattSession) -> usize {
     match session.MaxPduSize() {
         Ok(pdu) => {
-            let payload = (pdu as usize)
-                .saturating_sub(GATT_FRAGMENT_OVERHEAD)
-                .clamp(GATT_FRAGMENT_PAYLOAD, BLE_HW_MTU);
+            let fragment_mtu = (pdu as usize)
+                .saturating_sub(ATT_WRITE_OVERHEAD)
+                .clamp(FRAGMENT_HEADER_LEN + 1, BLE_HW_MTU);
             crate::diagnostic_log::debug!(
-                "bluetooth: negotiated MaxPduSize={pdu}, data fragment payload={payload}"
+                "bluetooth: negotiated MaxPduSize={pdu}, GATT fragment size={fragment_mtu}"
             );
-            payload
+            fragment_mtu
         }
         Err(_) => GATT_FRAGMENT_PAYLOAD,
     }
@@ -78,9 +78,11 @@ pub(super) enum LinkPlane {
 }
 
 pub struct WinGattLink {
+    pub(super) peer_protocol: PeerProtocol,
+    pub(super) peer_identity: Option<BleIdentity>,
     pub(super) address: BleAddress,
-    pub(super) control_rx: tokio_mpsc::UnboundedReceiver<Control>,
-    pub(super) data_rx: Option<tokio_mpsc::UnboundedReceiver<Box<[u8]>>>,
+    pub(super) control_rx: tokio_mpsc::Receiver<Control>,
+    pub(super) data_rx: Option<tokio_mpsc::Receiver<Box<[u8]>>>,
     pub(super) closed: watch::Receiver<bool>,
     pub(super) plane: LinkPlane,
 }
@@ -90,12 +92,32 @@ impl BleLink for WinGattLink {
     type Source = WinGattSource;
     type Sink = WinGattSink;
 
-    fn dialect(&self) -> Dialect {
-        Dialect::Native
+    fn peer_protocol(&self) -> PeerProtocol {
+        self.peer_protocol
     }
 
     fn address(&self) -> BleAddress {
         self.address
+    }
+
+    async fn receive_columba_peer_identity(&mut self) -> Result<BleIdentity, WindowsBleError> {
+        self.peer_identity
+            .ok_or(WindowsBleError::MissingColumbaIdentity)
+    }
+
+    async fn send_columba_identity(
+        &mut self,
+        identity: BleIdentity,
+    ) -> Result<(), WindowsBleError> {
+        let LinkPlane::Central { control_char, .. } = &self.plane else {
+            return Ok(());
+        };
+        gatt_write(
+            control_char.clone(),
+            identity.as_bytes().to_vec(),
+            GattWriteOption::WriteWithResponse,
+        )
+        .await
     }
 
     async fn control_send(&mut self, msg: &Control) -> Result<(), WindowsBleError> {
@@ -147,7 +169,7 @@ impl BleLink for WinGattLink {
     }
 
     fn into_data(self) -> (WinGattSource, WinGattSink) {
-        let (merged_tx, merged_rx) = tokio_mpsc::unbounded_channel::<Box<[u8]>>();
+        let (merged_tx, merged_rx) = tokio_mpsc::channel::<Box<[u8]>>(16);
         if let Some(mut inbound_rx) = self.data_rx {
             tokio::spawn(async move {
                 let mut reassembler = Reassembler::<GATT_REASSEMBLY_CAP>::new();
@@ -164,14 +186,14 @@ impl BleLink for WinGattLink {
                             "bluetooth: reassembled data frame {} bytes",
                             frame.len()
                         );
-                        if merged_tx.send(Box::from(frame)).is_err() {
+                        if merged_tx.send(Box::from(frame)).await.is_err() {
                             break;
                         }
                     }
                 }
             });
         }
-        let (keepalive, sink_plane, fragment_payload) = match self.plane {
+        let (keepalive, sink_plane, fragment_mtu) = match self.plane {
             LinkPlane::Central {
                 data_char,
                 device,
@@ -181,7 +203,7 @@ impl BleLink for WinGattLink {
                 ..
             } => {
                 let sink_session = session.clone();
-                let fragment_payload = central_fragment_payload(&session);
+                let fragment_mtu = central_fragment_mtu(&session);
                 (
                     SourceKeepalive::Central {
                         _device: device,
@@ -193,7 +215,7 @@ impl BleLink for WinGattLink {
                         data_char,
                         _session: sink_session,
                     },
-                    fragment_payload,
+                    fragment_mtu,
                 )
             }
             LinkPlane::Peripheral {
@@ -218,7 +240,7 @@ impl BleLink for WinGattLink {
             WinGattSink {
                 plane: sink_plane,
                 address: self.address,
-                fragment_payload,
+                fragment_mtu,
             },
         )
     }
@@ -246,7 +268,7 @@ enum SinkPlane {
 }
 
 pub struct WinGattSource {
-    inbound: tokio_mpsc::UnboundedReceiver<Box<[u8]>>,
+    inbound: tokio_mpsc::Receiver<Box<[u8]>>,
     closed: watch::Receiver<bool>,
     _keepalive: SourceKeepalive,
 }
@@ -273,15 +295,15 @@ impl BleSource for WinGattSource {
 pub struct WinGattSink {
     plane: SinkPlane,
     address: BleAddress,
-    fragment_payload: usize,
+    fragment_mtu: usize,
 }
 
 impl BleSink for WinGattSink {
     type Error = WindowsBleError;
 
     async fn send_frame(&mut self, frame: &[u8]) -> Result<(), WindowsBleError> {
-        for fragment in fragments_of(frame, self.fragment_payload) {
-            let mut buf = vec![0u8; self.fragment_payload + FRAGMENT_SCRATCH];
+        for fragment in fragments_of(frame, self.fragment_mtu) {
+            let mut buf = vec![0u8; self.fragment_mtu + FRAGMENT_SCRATCH];
             let len = fragment
                 .encode(&mut buf)
                 .ok_or(WindowsBleError::FrameTooLarge)?;

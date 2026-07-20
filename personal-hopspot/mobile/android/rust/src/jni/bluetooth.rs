@@ -173,21 +173,21 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleControlIn
     conn_id: jint,
     buffer: JByteBuffer,
     len: jint,
-) {
+) -> jboolean {
     let Ok(address) = env.get_direct_buffer_address(&buffer) else {
-        return;
+        return 0;
     };
     let Ok(capacity) = env.get_direct_buffer_capacity(&buffer) else {
-        return;
+        return 0;
     };
     let n = (len.max(0) as usize).min(capacity);
     if address.is_null() || n == 0 {
-        return;
+        return 0;
     }
     // SAFETY: `address` points at the JVM-owned direct buffer, pinned for this call; `n` is
     // clamped to the buffer's reported capacity and we only read from it.
     let bytes = unsafe { core::slice::from_raw_parts(address, n) };
-    ble_bridge().control_in(conn_id as u32, bytes);
+    ble_bridge().control_in(conn_id as u32, bytes).into()
 }
 
 #[no_mangle]
@@ -219,21 +219,21 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleL2capIn(
     conn_id: jint,
     buffer: JByteBuffer,
     len: jint,
-) {
+) -> jboolean {
     let Ok(address) = env.get_direct_buffer_address(&buffer) else {
-        return;
+        return 0;
     };
     let Ok(capacity) = env.get_direct_buffer_capacity(&buffer) else {
-        return;
+        return 0;
     };
     let n = (len.max(0) as usize).min(capacity);
     if address.is_null() || n == 0 {
-        return;
+        return 0;
     }
     // SAFETY: `address` points at the JVM-owned direct buffer, pinned for this call; `n` is
     // clamped to the buffer's reported capacity and we only read from it.
     let bytes = unsafe { core::slice::from_raw_parts(address, n) };
-    ble_bridge().l2cap_in(conn_id as u32, bytes);
+    ble_bridge().l2cap_in(conn_id as u32, bytes).into()
 }
 
 #[no_mangle]
@@ -265,21 +265,21 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleDataIn(
     conn_id: jint,
     buffer: JByteBuffer,
     len: jint,
-) {
+) -> jboolean {
     let Ok(address) = env.get_direct_buffer_address(&buffer) else {
-        return;
+        return 0;
     };
     let Ok(capacity) = env.get_direct_buffer_capacity(&buffer) else {
-        return;
+        return 0;
     };
     let n = (len.max(0) as usize).min(capacity);
     if address.is_null() || n == 0 {
-        return;
+        return 0;
     }
     // SAFETY: `address` points at the JVM-owned direct buffer, pinned for this call; `n` is
     // clamped to the buffer's reported capacity and we only read from it.
     let bytes = unsafe { core::slice::from_raw_parts(address, n) };
-    ble_bridge().data_in(conn_id as u32, bytes);
+    ble_bridge().data_in(conn_id as u32, bytes).into()
 }
 
 #[no_mangle]

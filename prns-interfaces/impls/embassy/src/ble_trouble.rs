@@ -1,19 +1,3 @@
-//! The trouble-host native-Bluetooth backend: a pure-Rust GATT + L2CAP driver over any
-//! [`bt_hci`] HCI transport, bridged to the engine's [`BleBackend`] seam and driven by the
-//! embassy [`BluetoothAuto`](crate::ble::BluetoothAuto) supervisor. Dual-role *and*
-//! multi-peer: the board both advertises a GATT server (a central dials us → `Inbound`) and
-//! scans + dials as a central (`LinkReady{Dialed}`), carrying up to [`SLOTS`] concurrent links.
-//!
-//! Concurrency model (mirrors the nRF T-Echo): the host `Stack` is parked in a board-side
-//! `static` so its `Connection`s are `'static` and can move through channels. One *acceptor*
-//! owns the peripheral, one *dialer* owns the central; each reserves a free slot in the
-//! [`BleHub`] pool and hands its `Connection` to that slot's worker, [`SLOTS`] of which serve
-//! concurrently. Link death is a per-slot level-triggered [`Signal`] that releases the slot.
-//!
-//! The board layer owns what this module cannot: the concrete HCI transport, the `static`s
-//! (statics cannot be generic), and the executor task wrappers; everything
-//! radio-protocol-shaped lives here, generic over the transport `T`.
-
 use core::cell::Cell;
 
 use bt_hci::transport::Transport;
@@ -29,43 +13,36 @@ use heapless_09::Vec as GattVec;
 use trouble_host::prelude::*;
 
 use prns_core::interfaces::bluetooth_auto::core::{
-    contains_service, encode_stream_frame, fragments_of, BleAddress, Control, Dialect, Fragment,
-    L2capPlan, Reassembler, BLE_HW_MTU, BLE_SERVICE_UUID_BYTES, CONTROL_MAX_LEN,
-    FRAGMENT_HEADER_LEN, STREAM_FRAME_PREFIX_LEN,
+    columba_connection_role, columba_role_capabilities, contains_service, encode_stream_frame,
+    fragments_of, BleAddress, BleIdentity, BleRoleCapabilities, ColumbaConnectionRole, Control,
+    Fragment, L2capPlan, PeerProtocol, Reassembler, BLE_HW_MTU, BLE_SERVICE_UUID_BYTES,
+    CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN, STREAM_FRAME_PREFIX_LEN,
 };
 #[cfg(not(target_arch = "riscv32"))]
 use prns_core::interfaces::bluetooth_auto::limits;
 use prns_core::interfaces::bluetooth_auto::seam::{
-    BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin,
+    AdvertisingMode, BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin, ScanningMode,
 };
 
-/// The physical connection-slot pool: one worker per simultaneous controller/GATT link. This is
-/// intentionally separate from the supervisor's settled-member ceiling. C6 can remember
-/// more peer identities than it should keep active GATT workers for at once.
 #[cfg(target_arch = "riscv32")]
 pub const SLOTS: usize = 8;
 #[cfg(not(target_arch = "riscv32"))]
 pub const SLOTS: usize = limits::ESP32_S3_MAX_PEERS;
 pub const HCI_COMMAND_SLOTS: usize = 20;
 pub const CONNECTIONS: usize = SLOTS;
-/// One dynamic L2CAP CoC channel per concurrent peer — the fast data lane an upgraded link runs on.
-/// GATT/ATT never draws from this pool (trouble-host keeps the ATT bearer, its reassembly, and the
-/// GATT queues in per-`Connection` storage sized by `CONNECTIONS`, on the fixed ATT CID), so the
-/// channel count is exactly the peer count, not `2 * SLOTS`.
 pub const L2CAP_CHANNELS: usize = SLOTS;
 const ATTRIBUTE_TABLE: usize = 32;
 const CCCD_TABLE: usize = 4;
 pub const GATT_VALUE_CAP: usize = 244;
-/// The central side discovers exactly our one Reticulum service; a tiny known-services table fits it.
 const MAX_SERVICES: usize = 2;
 
 const CONTROL_UUID_LAST: u8 = 0xe7;
 const DATA_UUID_LAST: u8 = 0xe8;
+const COLUMBA_TX_UUID_LAST: u8 = 0xe4;
+const COLUMBA_RX_UUID_LAST: u8 = 0xe5;
+const COLUMBA_IDENTITY_UUID_LAST: u8 = 0xe6;
 const SERVICE_UUID_LAST: u8 = 0xe3;
 
-/// The GATT data lane's fragmentation, byte-identical to the Android/nRF backends so they interoperate:
-/// reassemble inbound writes up to [`GATT_REASSEMBLY_CAP`], fragment outbound frames to
-/// [`GATT_FRAGMENT_PAYLOAD`]-byte chunks under the 5-byte fragment header.
 const GATT_REASSEMBLY_CAP: usize = 600;
 #[cfg(target_arch = "riscv32")]
 const GATT_FRAGMENT_PAYLOAD: usize = 120;
@@ -78,13 +55,10 @@ const GATT_FRAGMENT_PAYLOAD: usize = 180;
 const NOTIFY_PACING: Duration = Duration::from_millis(30);
 #[cfg(not(target_arch = "riscv32"))]
 const NOTIFY_PACING: Duration = Duration::from_millis(15);
-/// A single notify/write that never resolves must not wedge a slot's serve loop, so each is bounded.
 const NOTIFY_TIMEOUT: Duration = Duration::from_secs(2);
 /// A dial scans for its whitelisted peer before connecting; `connect` with a zero scan timeout scans
 /// forever, so bound it — on timeout the connect errors, the slot frees, and the brain backs off.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(6);
-/// A dialed peer that connects but stalls the GATT bring-up (MTU exchange / discovery / subscribe) must
-/// not hold its slot forever, so the whole bring-up is bounded.
 const GATT_SETUP_TIMEOUT: Duration = Duration::from_secs(6);
 /// Scan aggressively while connecting (≈80% duty) so a dial latches a peer that advertises sparsely —
 /// the dual-role boards spend most of each cycle scanning/serving and advertise only in short windows,
@@ -148,8 +122,6 @@ const L2CAP_CREDITS: u16 = 1;
 const L2CAP_CREDITS: u16 = 2;
 const L2CAP_HANDSHAKE_WINDOW: Duration = Duration::from_secs(5);
 const L2CAP_SETUP_RETRY: Duration = Duration::from_millis(150);
-/// Request the 2 Mbps PHY once a dialed link settles (the central drives it); the controller/peer may
-/// decline and stay on 1M, which is safe. Bounded so a controller that never answers cannot wedge setup.
 const PHY_UPDATE_TIMEOUT: Duration = Duration::from_secs(2);
 #[cfg(target_arch = "riscv32")]
 const CONN_PARAM_UPDATE_TIMEOUT: Duration = Duration::from_secs(2);
@@ -159,15 +131,9 @@ const SEEN_CAP: usize = SLOTS * 2;
 const FRAME_CAP: usize = BLE_HW_MTU;
 
 type FrameBytes = heapless::Vec<u8, FRAME_CAP>;
-/// The one bound this backend asks of a board's HCI transport: `bt_hci`'s blanket
-/// `ExternalController` impls turn any such transport into a full controller, provided its
-/// error type can absorb HCI decode errors.
 pub trait TroubleTransport: Transport<Error: From<FromHciBytesError>> {}
 impl<T: Transport<Error: From<FromHciBytesError>>> TroubleTransport for T {}
-/// Any [`bt_hci`] transport becomes the one controller shape this backend drives: the blanket
-/// `ExternalController` impls give it every HCI command capability from the single `Transport` bound.
 pub type TroubleController<T> = ExternalController<T, HCI_COMMAND_SLOTS>;
-/// The host stack over a board's transport, parked in a board-side `static` so connections are `'static`.
 pub type TroubleStack<T> = Stack<'static, TroubleController<T>, DefaultPacketPool>;
 pub type GattServer = AttributeServer<
     'static,
@@ -178,7 +144,6 @@ pub type GattServer = AttributeServer<
     CONNECTIONS,
 >;
 pub type GattCharacteristic = Characteristic<GattVec<u8, GATT_VALUE_CAP>>;
-/// The one attribute table shape [`reticulum_attribute_table`] builds and [`GattServer`] serves.
 pub type ReticulumAttributeTable = AttributeTable<'static, NoopRawMutex, ATTRIBUTE_TABLE>;
 
 fn reticulum_uuid(last: u8) -> Uuid {
@@ -197,6 +162,18 @@ pub fn control_uuid() -> Uuid {
 
 pub fn data_uuid() -> Uuid {
     reticulum_uuid(DATA_UUID_LAST)
+}
+
+pub fn columba_tx_uuid() -> Uuid {
+    reticulum_uuid(COLUMBA_TX_UUID_LAST)
+}
+
+pub fn columba_rx_uuid() -> Uuid {
+    reticulum_uuid(COLUMBA_RX_UUID_LAST)
+}
+
+pub fn columba_identity_uuid() -> Uuid {
+    reticulum_uuid(COLUMBA_IDENTITY_UUID_LAST)
 }
 
 fn advertisement_parameters() -> AdvertisementParameters {
@@ -231,12 +208,9 @@ fn preferred_conn_params() -> RequestedConnParams {
     }
 }
 
-/// The seam's error: the link is gone (the peer disconnected, or the bridge frame would not fit).
 #[derive(Debug)]
 pub struct Closed;
 
-/// A peer the scanner saw advertising our service: the full `(AddrKind, BdAddr)` (so the dialer
-/// whitelists it exactly) and the report RSSI.
 #[derive(Clone, Copy)]
 struct SeenPeer {
     kind: AddrKind,
@@ -244,36 +218,28 @@ struct SeenPeer {
     rssi: i8,
 }
 
-/// The full radio address the central must whitelist to dial a peer, carried from a sighting through
-/// the brain's `Dial` back to the dialer.
 #[derive(Clone, Copy)]
 struct DialTarget {
     kind: AddrKind,
     addr: BdAddr,
 }
 
-/// The work handed to a free slot's worker: a connection the acceptor accepted (we are its GATT
-/// server) or one the dialer opened (we are its GATT client). Both are `'static` because the host
-/// `Stack` is parked in a `static`, so they ride a channel to the worker.
 enum SlotJob {
     Accept(Connection<'static, DefaultPacketPool>),
     Dial(Connection<'static, DefaultPacketPool>),
 }
 
-/// One slot's `'static` bridge between its worker (the trouble-host GATT side) and the supervisor's
-/// [`EmbeddedBleLink`]. Role-agnostic: a peripheral serve loop or a central serve loop pumps the same
-/// four lanes; `link_dead` tears the supervisor's halves down when the connection drops; `peer_addr`
-/// is the connected address so the brain keys this peer correctly.
 struct SlotChannels {
     control_in: Channel<BridgeMutex, Control, CTRL_DEPTH>,
     control_out: Channel<BridgeMutex, Control, CTRL_DEPTH>,
     data_in: Channel<BridgeMutex, FrameBytes, DATA_DEPTH>,
     data_out: Channel<BridgeMutex, FrameBytes, DATA_DEPTH>,
+    identity_in: Channel<BridgeMutex, BleIdentity, 1>,
+    identity_out: Channel<BridgeMutex, BleIdentity, 1>,
     link_dead: Signal<BridgeMutex, ()>,
-    /// The supervisor's chosen data transport for this link, fired by `into_data` once the handshake
-    /// settles: the serve loop's data future parks here, then opens/accepts the CoC or stays on GATT.
     data_plane: Signal<BridgeMutex, L2capPlan>,
     peer_addr: BlockingMutex<BridgeMutex, Cell<[u8; 6]>>,
+    peer_protocol: BlockingMutex<BridgeMutex, Cell<PeerProtocol>>,
 }
 
 impl SlotChannels {
@@ -283,9 +249,12 @@ impl SlotChannels {
             control_out: Channel::new(),
             data_in: Channel::new(),
             data_out: Channel::new(),
+            identity_in: Channel::new(),
+            identity_out: Channel::new(),
             link_dead: Signal::new(),
             data_plane: Signal::new(),
             peer_addr: BlockingMutex::new(Cell::new([0u8; 6])),
+            peer_protocol: BlockingMutex::new(Cell::new(PeerProtocol::Native)),
         }
     }
 
@@ -297,6 +266,14 @@ impl SlotChannels {
         self.peer_addr.lock(|cell| cell.get())
     }
 
+    fn set_peer_protocol(&self, peer_protocol: PeerProtocol) {
+        self.peer_protocol.lock(|cell| cell.set(peer_protocol));
+    }
+
+    fn peer_protocol(&self) -> PeerProtocol {
+        self.peer_protocol.lock(|cell| cell.get())
+    }
+
     fn clear_lanes(&self) {
         self.link_dead.reset();
         self.data_plane.reset();
@@ -304,10 +281,11 @@ impl SlotChannels {
         self.control_out.clear();
         self.data_in.clear();
         self.data_out.clear();
+        self.identity_in.clear();
+        self.identity_out.clear();
     }
 }
 
-/// The shared hub the whole BLE plane coordinates through: a pool of role-agnostic `SlotChannels`, the `assign`/`free`/`connected`/`dialed` plumbing that hands each new connection to an idle slot and tells the supervisor which slot lit up (and how), the scanner's sighting funnel + dial requests, and the brain's advertise/scan gates. One board-side `static`, so the slot workers, the acceptor, the dialer, the scan event handler, and the supervisor all reference the same channels.
 pub struct BleHub {
     slots: [SlotChannels; SLOTS],
     assign: [Channel<BridgeMutex, SlotJob, 1>; SLOTS],
@@ -320,6 +298,7 @@ pub struct BleHub {
     radio_token: Channel<BridgeMutex, (), 1>,
     advertise: Signal<BridgeMutex, bool>,
     scan_enabled: Signal<BridgeMutex, bool>,
+    local_address: BlockingMutex<BridgeMutex, Cell<[u8; 6]>>,
 }
 
 impl BleHub {
@@ -336,18 +315,18 @@ impl BleHub {
             radio_token: Channel::new(),
             advertise: Signal::new(),
             scan_enabled: Signal::new(),
+            local_address: BlockingMutex::new(Cell::new([0; 6])),
         }
     }
 
-    /// Seed the pool: every slot starts free, and the single radio token is up for grabs.
-    pub fn prime(&self) {
+    pub fn prime(&self, local_address: [u8; 6]) {
+        self.local_address.lock(|cell| cell.set(local_address));
         for idx in 0..SLOTS {
             let _ = self.free.try_send(idx);
         }
         let _ = self.radio_token.try_send(());
     }
 
-    /// The hub's face to the supervisor: the [`BleBackend`] the board hands to `BluetoothAuto`.
     pub fn backend(&'static self) -> EmbeddedBleBackend {
         EmbeddedBleBackend {
             hub: self,
@@ -367,8 +346,6 @@ impl Default for BleHub {
     }
 }
 
-/// The trouble→seam bridge as a [`BleBackend`]: it surfaces each slot's live link (whichever role won
-/// it) reading/writing that slot's `'static` channels, the scanner's sightings, and dial failures.
 pub struct EmbeddedBleBackend {
     hub: &'static BleHub,
     connected: Receiver<'static, BridgeMutex, usize, SLOTS>,
@@ -408,10 +385,13 @@ impl EmbeddedBleBackend {
     fn link(&self, slot: usize) -> EmbeddedBleLink {
         let s = &self.hub.slots[slot];
         EmbeddedBleLink {
+            peer_protocol: s.peer_protocol(),
             control_in: s.control_in.receiver(),
             control_out: s.control_out.sender(),
             data_in: s.data_in.receiver(),
             data_out: s.data_out.sender(),
+            identity_in: s.identity_in.receiver(),
+            identity_out: s.identity_out.sender(),
             link_dead: &s.link_dead,
             data_plane: &s.data_plane,
             plan: L2capPlan::None,
@@ -425,13 +405,13 @@ impl BleBackend for EmbeddedBleBackend {
     type Error = Closed;
     type Link = EmbeddedBleLink;
 
-    async fn set_advertising(&mut self, enabled: bool) -> Result<(), Closed> {
-        self.hub.advertise.signal(enabled);
+    async fn set_advertising(&mut self, mode: AdvertisingMode) -> Result<(), Closed> {
+        self.hub.advertise.signal(mode.is_on());
         Ok(())
     }
 
-    async fn set_scanning(&mut self, enabled: bool) -> Result<(), Closed> {
-        self.hub.scan_enabled.signal(enabled);
+    async fn set_scanning(&mut self, mode: ScanningMode) -> Result<(), Closed> {
+        self.hub.scan_enabled.signal(mode.is_on());
         Ok(())
     }
 
@@ -470,9 +450,6 @@ impl BleBackend for EmbeddedBleBackend {
     }
 
     async fn on_link_closed(&mut self, address: BleAddress) {
-        // The supervisor rejected/closed this peer (handshake timeout/abort, keeper-duel loss, or a
-        // settled member dropping). Raise the matching slot's link_dead so its serve loop returns and
-        // the slot rejoins the free pool, instead of pumping a dead link.
         for slot in &self.hub.slots {
             if slot.addr() == *address.octets() {
                 slot.link_dead.signal(());
@@ -481,13 +458,14 @@ impl BleBackend for EmbeddedBleBackend {
     }
 }
 
-/// One slot's live link over its bridge channels: the control lane carries the handshake, and
-/// [`into_data`](BleLink::into_data) splits the data lane into source/sink halves.
 pub struct EmbeddedBleLink {
+    peer_protocol: PeerProtocol,
     control_in: Receiver<'static, BridgeMutex, Control, CTRL_DEPTH>,
     control_out: Sender<'static, BridgeMutex, Control, CTRL_DEPTH>,
     data_in: Receiver<'static, BridgeMutex, FrameBytes, DATA_DEPTH>,
     data_out: Sender<'static, BridgeMutex, FrameBytes, DATA_DEPTH>,
+    identity_in: Receiver<'static, BridgeMutex, BleIdentity, 1>,
+    identity_out: Sender<'static, BridgeMutex, BleIdentity, 1>,
     link_dead: &'static Signal<BridgeMutex, ()>,
     data_plane: &'static Signal<BridgeMutex, L2capPlan>,
     plan: L2capPlan,
@@ -499,8 +477,8 @@ impl BleLink for EmbeddedBleLink {
     type Source = EmbeddedBleSource;
     type Sink = EmbeddedBleSink;
 
-    fn dialect(&self) -> Dialect {
-        Dialect::Native
+    fn peer_protocol(&self) -> PeerProtocol {
+        self.peer_protocol
     }
 
     fn address(&self) -> BleAddress {
@@ -521,16 +499,26 @@ impl BleLink for EmbeddedBleLink {
         }
     }
 
+    async fn receive_columba_peer_identity(&mut self) -> Result<BleIdentity, Closed> {
+        match select(self.identity_in.receive(), self.link_dead.wait()).await {
+            Either::First(identity) => Ok(identity),
+            Either::Second(()) => Err(Closed),
+        }
+    }
+
+    async fn send_columba_identity(&mut self, identity: BleIdentity) -> Result<(), Closed> {
+        match select(self.identity_out.send(identity), self.link_dead.wait()).await {
+            Either::First(()) => Ok(()),
+            Either::Second(()) => Err(Closed),
+        }
+    }
+
     async fn upgrade(&mut self, plan: &L2capPlan) -> Result<(), Closed> {
-        // The trouble-host `Connection` lives in the slot worker, not here, so record the plan and let
-        // `into_data` hand it across `data_plane` to the serve loop that owns the connection.
         self.plan = *plan;
         Ok(())
     }
 
     fn into_data(self) -> (EmbeddedBleSource, EmbeddedBleSink) {
-        // Release the worker's data future onto the chosen transport now that the handshake has settled;
-        // the source/sink still ride the same data lanes regardless of GATT-vs-L2CAP underneath.
         self.data_plane.signal(self.plan);
         (
             EmbeddedBleSource {
@@ -583,19 +571,25 @@ impl BleSink for EmbeddedBleSink {
     }
 }
 
-/// trouble-host surfaces scan results through an [`EventHandler`] the runner invokes on every LE
-/// advertising report. This funnel filters reports to ones carrying our service UUID and pushes each as
-/// a [`SeenPeer`] to the hub for the backend to turn into a brain `Sighting`. `&self`/sync, so it holds
-/// a `'static` sender and `try_send`s (drops on a full funnel — the next report re-surfaces the peer).
 struct ScanFunnel {
     sightings: Sender<'static, BridgeMutex, SeenPeer, SIGHTING_DEPTH>,
+    local_address: BleAddress,
 }
 
 impl EventHandler for ScanFunnel {
     fn on_adv_reports(&self, reports: LeAdvReportsIter) {
         for report in reports {
             let Ok(report) = report else { continue };
-            if contains_service(report.data) {
+            let peer_address = BleAddress::new(report.addr.into_inner());
+            let capabilities =
+                columba_role_capabilities(report.data).unwrap_or(BleRoleCapabilities::DualRole);
+            let should_dial = columba_connection_role(
+                self.local_address,
+                BleRoleCapabilities::DualRole,
+                peer_address,
+                capabilities,
+            ) == ColumbaConnectionRole::Dial;
+            if contains_service(report.data) && should_dial {
                 let _ = self.sightings.try_send(SeenPeer {
                     kind: report.addr_kind,
                     addr: report.addr,
@@ -606,14 +600,17 @@ impl EventHandler for ScanFunnel {
     }
 }
 
-/// Build the Reticulum GATT attribute table (GAP + the service's control/data characteristics) into
-/// the board's `'static` value stores. The board parks the returned table in its `AttributeServer`
-/// `static`; the characteristics feed the slot workers. `None` when the GAP config will not fit.
 pub fn reticulum_attribute_table(
     control_store: &'static mut [u8; GATT_VALUE_CAP],
     data_store: &'static mut [u8; GATT_VALUE_CAP],
+    columba_rx_store: &'static mut [u8; GATT_VALUE_CAP],
+    columba_tx_store: &'static mut [u8; GATT_VALUE_CAP],
+    columba_identity_store: &'static mut [u8; GATT_VALUE_CAP],
+    identity: BleIdentity,
 ) -> Option<(
     ReticulumAttributeTable,
+    GattCharacteristic,
+    GattCharacteristic,
     GattCharacteristic,
     GattCharacteristic,
 )> {
@@ -632,7 +629,7 @@ pub fn reticulum_attribute_table(
         CharacteristicProp::WriteWithoutResponse,
         CharacteristicProp::Notify,
     ];
-    let (control, data) = {
+    let (control, data, columba_rx, columba_tx) = {
         let mut service = table.add_service(Service::new(service_uuid()));
         let control = service
             .add_characteristic(
@@ -650,15 +647,41 @@ pub fn reticulum_attribute_table(
                 data_store,
             )
             .build();
+        let columba_rx = service
+            .add_characteristic(
+                columba_rx_uuid(),
+                [
+                    CharacteristicProp::Write,
+                    CharacteristicProp::WriteWithoutResponse,
+                ],
+                GattVec::<u8, GATT_VALUE_CAP>::new(),
+                columba_rx_store,
+            )
+            .build();
+        let columba_tx = service
+            .add_characteristic(
+                columba_tx_uuid(),
+                [CharacteristicProp::Read, CharacteristicProp::Notify],
+                GattVec::<u8, GATT_VALUE_CAP>::new(),
+                columba_tx_store,
+            )
+            .build();
+        let mut identity_value = GattVec::<u8, GATT_VALUE_CAP>::new();
+        identity_value.extend_from_slice(identity.as_bytes()).ok()?;
+        service
+            .add_characteristic(
+                columba_identity_uuid(),
+                [CharacteristicProp::Read],
+                identity_value,
+                columba_identity_store,
+            )
+            .build();
         service.build();
-        (control, data)
+        (control, data, columba_rx, columba_tx)
     };
-    Some((table, control, data))
+    Some((table, control, data, columba_rx, columba_tx))
 }
 
-/// The CoC config every role uses: one SDU = one stream frame, with modest credits/MPS so two live
-/// channels' RX reservation fits the shared packet pool. `mtu`/`mps` are set explicitly rather than left
-/// to the packet-allocator default so a frame at the link ceiling always rides one SDU.
 fn l2cap_config() -> L2capChannelConfig {
     L2capChannelConfig {
         mtu: Some(L2CAP_SDU_LEN as u16),
@@ -668,11 +691,6 @@ fn l2cap_config() -> L2capChannelConfig {
     }
 }
 
-/// Pump a settled L2CAP CoC: each outbound frame is length-prefixed into one SDU (`encode_stream_frame`)
-/// and sent under credit flow; each received SDU is exactly one such frame, decoded straight back. The
-/// SDU buffers are boxed to the heap (PSRAM on the S3, like the GATT client) to keep these per-slot
-/// futures off the shallow core-0 stack. Returns when either direction errors (the channel closed),
-/// tearing the link down.
 async fn l2cap_pump<T: TroubleTransport>(
     stack: &'static TroubleStack<T>,
     channel: L2capChannel<'static, DefaultPacketPool>,
@@ -716,19 +734,38 @@ async fn l2cap_pump<T: TroubleTransport>(
     let _ = select(outbound, inbound).await;
 }
 
-/// Serve one accepted peripheral connection over its slot until it drops. Three concurrent lanes: the
-/// GATT server routes the peer's control/data writes inbound (reassembling fragments); the control lane
-/// fans the supervisor's control out as notifications; and the data lane parks on `data_plane` until the
-/// handshake settles, then either accepts the L2CAP CoC (when the plan calls for it) and pumps that, or
-/// falls back to GATT data notifications. Honors `link_dead` so a supervisor-side close returns even if
-/// the peer stays connected.
+#[derive(Clone, Copy)]
+pub struct ReticulumGattCharacteristics<'a> {
+    pub control: &'a GattCharacteristic,
+    pub data: &'a GattCharacteristic,
+    pub columba_rx: &'a GattCharacteristic,
+    pub columba_tx: &'a GattCharacteristic,
+}
+
+#[derive(Clone, Copy)]
+pub struct ReticulumGattUuids<'a> {
+    pub service: &'a Uuid,
+    pub control: &'a Uuid,
+    pub data: &'a Uuid,
+    pub columba_rx: &'a Uuid,
+    pub columba_tx: &'a Uuid,
+    pub columba_identity: &'a Uuid,
+}
+
 async fn serve_peripheral<T: TroubleTransport>(
+    idx: usize,
+    hub: &'static BleHub,
     stack: &'static TroubleStack<T>,
     slot: &'static SlotChannels,
     connection: &GattConnection<'_, '_, DefaultPacketPool>,
-    control: &Characteristic<GattVec<u8, GATT_VALUE_CAP>>,
-    data: &Characteristic<GattVec<u8, GATT_VALUE_CAP>>,
+    characteristics: ReticulumGattCharacteristics<'_>,
 ) {
+    let ReticulumGattCharacteristics {
+        control,
+        data,
+        columba_rx,
+        columba_tx,
+    } = characteristics;
     #[cfg(target_arch = "riscv32")]
     {
         let _ = with_timeout(
@@ -739,6 +776,40 @@ async fn serve_peripheral<T: TroubleTransport>(
         )
         .await;
     }
+
+    let peer_protocol = loop {
+        match connection.next().await {
+            GattConnectionEvent::Disconnected { .. } => return,
+            GattConnectionEvent::Gatt { event } => {
+                let protocol = match &event {
+                    GattEvent::Write(write) if write.handle() == control.handle => {
+                        Control::decode(write.data()).map(|message| {
+                            let _ = slot.control_in.try_send(message);
+                            PeerProtocol::Native
+                        })
+                    }
+                    GattEvent::Write(write)
+                        if write.handle() == columba_rx.handle && write.data().len() == 16 =>
+                    {
+                        let mut bytes = [0u8; 16];
+                        bytes.copy_from_slice(write.data());
+                        let _ = slot.identity_in.try_send(BleIdentity::new(bytes));
+                        Some(PeerProtocol::Columba)
+                    }
+                    _ => None,
+                };
+                if let Ok(reply) = event.accept() {
+                    reply.send().await;
+                }
+                if let Some(protocol) = protocol {
+                    break protocol;
+                }
+            }
+            _ => {}
+        }
+    };
+    slot.set_peer_protocol(peer_protocol);
+    hub.connected.send(idx).await;
 
     let control_out_rx = slot.control_out.receiver();
     let data_out_rx = slot.data_out.receiver();
@@ -752,11 +823,16 @@ async fn serve_peripheral<T: TroubleTransport>(
                 GattConnectionEvent::Disconnected { .. } => break,
                 GattConnectionEvent::Gatt { event } => {
                     if let GattEvent::Write(write) = &event {
-                        if write.handle() == control.handle {
+                        if peer_protocol == PeerProtocol::Native && write.handle() == control.handle
+                        {
                             if let Some(message) = Control::decode(write.data()) {
                                 let _ = control_in_tx.try_send(message);
                             }
-                        } else if write.handle() == data.handle {
+                        } else if (peer_protocol == PeerProtocol::Native
+                            && write.handle() == data.handle)
+                            || (peer_protocol == PeerProtocol::Columba
+                                && write.handle() == columba_rx.handle)
+                        {
                             if let Some(fragment) = Fragment::decode(write.data()) {
                                 if let Some(frame) = reassembler.absorb(&fragment) {
                                     let mut bytes = FrameBytes::new();
@@ -777,6 +853,9 @@ async fn serve_peripheral<T: TroubleTransport>(
     };
 
     let control_outbound = async move {
+        if peer_protocol == PeerProtocol::Columba {
+            core::future::pending::<()>().await;
+        }
         loop {
             let message = control_out_rx.receive().await;
             let mut buf = [0u8; CONTROL_MAX_LEN];
@@ -794,8 +873,8 @@ async fn serve_peripheral<T: TroubleTransport>(
     let data_lane = alloc::boxed::Box::pin(async move {
         let plan = slot.data_plane.wait().await;
         crate::diagnostic_log::debug!("ble: plan (accepted) = {plan:?}");
-        let channel = match plan {
-            L2capPlan::Accept => match with_timeout(
+        let channel = match (peer_protocol, plan) {
+            (PeerProtocol::Native, L2capPlan::Accept) => match with_timeout(
                 L2CAP_HANDSHAKE_WINDOW,
                 L2capChannel::accept(stack, connection.raw(), &[L2CAP_PSM], &l2cap_config()),
             )
@@ -827,7 +906,13 @@ async fn serve_peripheral<T: TroubleTransport>(
                     };
                     let mut value = GattVec::<u8, GATT_VALUE_CAP>::new();
                     let _ = value.extend_from_slice(&buf[..len]);
-                    match with_timeout(NOTIFY_TIMEOUT, data.notify(connection, &value)).await {
+                    let characteristic = match peer_protocol {
+                        PeerProtocol::Native => data,
+                        PeerProtocol::Columba => columba_tx,
+                    };
+                    match with_timeout(NOTIFY_TIMEOUT, characteristic.notify(connection, &value))
+                        .await
+                    {
                         Ok(Ok(())) => {}
                         _ => break,
                     }
@@ -852,9 +937,7 @@ async fn serve_central<T: TroubleTransport>(
     hub: &'static BleHub,
     stack: &'static TroubleStack<T>,
     connection: Connection<'static, DefaultPacketPool>,
-    service_uuid: &Uuid,
-    control_uuid: &Uuid,
-    data_uuid: &Uuid,
+    uuids: ReticulumGattUuids<'_>,
 ) {
     let slot = &hub.slots[idx];
     let addr = connection.peer_address().into_inner();
@@ -880,19 +963,58 @@ async fn serve_central<T: TroubleTransport>(
 
     let discovered = with_timeout(GATT_SETUP_TIMEOUT, async {
         let discover = async {
-            let services = client.services_by_uuid(service_uuid).await.ok()?;
+            let services = client.services_by_uuid(uuids.service).await.ok()?;
             let service = services.first()?.clone();
-            let control: Characteristic<GattVec<u8, GATT_VALUE_CAP>> = client
-                .characteristic_by_uuid(&service, control_uuid)
+            let native_control: Option<Characteristic<GattVec<u8, GATT_VALUE_CAP>>> = client
+                .characteristic_by_uuid(&service, uuids.control)
                 .await
-                .ok()?;
-            let data: Characteristic<GattVec<u8, GATT_VALUE_CAP>> = client
-                .characteristic_by_uuid(&service, data_uuid)
-                .await
-                .ok()?;
-            let control_listener = client.subscribe(&control, false).await.ok()?;
-            let data_listener = client.subscribe(&data, false).await.ok()?;
-            Some((control, data, control_listener, data_listener))
+                .ok();
+            if let Some(control) = native_control {
+                let data: Characteristic<GattVec<u8, GATT_VALUE_CAP>> = client
+                    .characteristic_by_uuid(&service, uuids.data)
+                    .await
+                    .ok()?;
+                let control_listener = client.subscribe(&control, false).await.ok()?;
+                let data_listener = client.subscribe(&data, false).await.ok()?;
+                Some((
+                    PeerProtocol::Native,
+                    control,
+                    data,
+                    Some(control_listener),
+                    data_listener,
+                    None,
+                ))
+            } else {
+                let rx: Characteristic<GattVec<u8, GATT_VALUE_CAP>> = client
+                    .characteristic_by_uuid(&service, uuids.columba_rx)
+                    .await
+                    .ok()?;
+                let tx: Characteristic<GattVec<u8, GATT_VALUE_CAP>> = client
+                    .characteristic_by_uuid(&service, uuids.columba_tx)
+                    .await
+                    .ok()?;
+                let identity: Characteristic<GattVec<u8, GATT_VALUE_CAP>> = client
+                    .characteristic_by_uuid(&service, uuids.columba_identity)
+                    .await
+                    .ok()?;
+                let mut bytes = [0u8; 16];
+                let read = client
+                    .read_characteristic(&identity, &mut bytes)
+                    .await
+                    .ok()?;
+                if read != bytes.len() {
+                    return None;
+                }
+                let data_listener = client.subscribe(&tx, false).await.ok()?;
+                Some((
+                    PeerProtocol::Columba,
+                    rx.clone(),
+                    rx,
+                    None,
+                    data_listener,
+                    Some(BleIdentity::new(bytes)),
+                ))
+            }
         };
         // Discovery needs the client's rx task running (ATT responses ride it), so race the two.
         match select(discover, client.task()).await {
@@ -901,17 +1023,20 @@ async fn serve_central<T: TroubleTransport>(
         }
     })
     .await;
-    let (control, data, mut control_listener, mut data_listener) = match discovered {
-        Ok(Some(parts)) => parts,
-        _ => {
-            fail();
-            return;
-        }
-    };
+    let (peer_protocol, control, data, control_listener, mut data_listener, peer_identity) =
+        match discovered {
+            Ok(Some(parts)) => parts,
+            _ => {
+                fail();
+                return;
+            }
+        };
 
     slot.set_peer_addr(addr);
-    // We dialed, so we drive the PHY: ask for 2M to roughly double the on-air symbol rate (the throughput
-    // the L2CAP credit lane can actually exploit). A decline leaves us on 1M, which is fine.
+    slot.set_peer_protocol(peer_protocol);
+    if let Some(peer_identity) = peer_identity {
+        let _ = slot.identity_in.try_send(peer_identity);
+    }
     let phy_2m = with_timeout(PHY_UPDATE_TIMEOUT, connection.set_phy(stack, PhyKind::Le2M)).await;
     crate::diagnostic_log::debug!("ble: 2M PHY request ok={}", matches!(phy_2m, Ok(Ok(()))));
     let mut reassembler = alloc::boxed::Box::new(Reassembler::<GATT_REASSEMBLY_CAP>::new());
@@ -923,28 +1048,50 @@ async fn serve_central<T: TroubleTransport>(
     hub.dialed.send(idx).await;
 
     let inbound = async {
-        loop {
-            match select(control_listener.next(), data_listener.next()).await {
-                Either::First(notification) => {
-                    if let Some(message) = Control::decode(notification.as_ref()) {
-                        let _ = control_in_tx.try_send(message);
+        match control_listener {
+            Some(mut control_listener) => loop {
+                match select(control_listener.next(), data_listener.next()).await {
+                    Either::First(notification) => {
+                        if let Some(message) = Control::decode(notification.as_ref()) {
+                            let _ = control_in_tx.try_send(message);
+                        }
                     }
-                }
-                Either::Second(notification) => {
-                    if let Some(fragment) = Fragment::decode(notification.as_ref()) {
-                        if let Some(frame) = reassembler.absorb(&fragment) {
-                            let mut bytes = FrameBytes::new();
-                            if bytes.extend_from_slice(frame).is_ok() {
-                                let _ = data_in_tx.try_send(bytes);
+                    Either::Second(notification) => {
+                        if let Some(fragment) = Fragment::decode(notification.as_ref()) {
+                            if let Some(frame) = reassembler.absorb(&fragment) {
+                                let mut bytes = FrameBytes::new();
+                                if bytes.extend_from_slice(frame).is_ok() {
+                                    let _ = data_in_tx.try_send(bytes);
+                                }
                             }
                         }
                     }
                 }
-            }
+            },
+            None => loop {
+                let notification = data_listener.next().await;
+                if let Some(fragment) = Fragment::decode(notification.as_ref()) {
+                    if let Some(frame) = reassembler.absorb(&fragment) {
+                        let mut bytes = FrameBytes::new();
+                        if bytes.extend_from_slice(frame).is_ok() {
+                            let _ = data_in_tx.try_send(bytes);
+                        }
+                    }
+                }
+            },
         }
     };
 
     let control_outbound = async {
+        if peer_protocol == PeerProtocol::Columba {
+            let identity = slot.identity_out.receive().await;
+            let _ = with_timeout(
+                NOTIFY_TIMEOUT,
+                client.write_characteristic(&control, identity.as_bytes()),
+            )
+            .await;
+            core::future::pending::<()>().await;
+        }
         loop {
             let message = control_out_rx.receive().await;
             let mut buf = [0u8; CONTROL_MAX_LEN];
@@ -963,8 +1110,8 @@ async fn serve_central<T: TroubleTransport>(
     let data_lane = alloc::boxed::Box::pin(async {
         let plan = slot.data_plane.wait().await;
         crate::diagnostic_log::debug!("ble: plan (dialed) = {plan:?}");
-        let channel = match plan {
-            L2capPlan::Open { psm } => {
+        let channel = match (peer_protocol, plan) {
+            (PeerProtocol::Native, L2capPlan::Open { psm }) => {
                 let opened = with_timeout(L2CAP_HANDSHAKE_WINDOW, async {
                     loop {
                         match L2capChannel::create(stack, &connection, psm.get(), &l2cap_config())
@@ -1022,24 +1169,13 @@ async fn serve_central<T: TroubleTransport>(
     .await;
 }
 
-/// One pool slot's worker: park until the acceptor or the dialer hands it a connection, serve it in
-/// whichever role the job names over this slot's channels, then signal `link_dead` and return the slot
-/// to the free list. [`SLOTS`] of these run concurrently — the inline twin of the desktop supervisor's
-/// per-connection tasks (inline because trouble-host's `GattConnection`/`GattClient` are stack-bound).
-#[expect(
-    clippy::too_many_arguments,
-    reason = "embedded serve-loop internals pass the loop's split-borrowed locals; bundling awaits an on-hardware validation pass"
-)]
 pub async fn serve_slot<T: TroubleTransport>(
     idx: usize,
     hub: &'static BleHub,
     stack: &'static TroubleStack<T>,
     server: &GattServer,
-    control: &GattCharacteristic,
-    data: &GattCharacteristic,
-    service_uuid: &Uuid,
-    control_uuid: &Uuid,
-    data_uuid: &Uuid,
+    characteristics: ReticulumGattCharacteristics<'_>,
+    uuids: ReticulumGattUuids<'_>,
 ) {
     let slot = &hub.slots[idx];
     loop {
@@ -1050,8 +1186,7 @@ pub async fn serve_slot<T: TroubleTransport>(
                 slot.set_peer_addr(connection.peer_address().into_inner());
                 match connection.with_attribute_server(server) {
                     Ok(connection) => {
-                        hub.connected.send(idx).await;
-                        serve_peripheral(stack, slot, &connection, control, data).await;
+                        serve_peripheral(idx, hub, stack, slot, &connection, characteristics).await;
                     }
                     Err(error) => {
                         crate::diagnostic_log::warn!("ble attribute server bind failed: {error:?}")
@@ -1059,16 +1194,7 @@ pub async fn serve_slot<T: TroubleTransport>(
                 }
             }
             SlotJob::Dial(connection) => {
-                serve_central(
-                    idx,
-                    hub,
-                    stack,
-                    connection,
-                    service_uuid,
-                    control_uuid,
-                    data_uuid,
-                )
-                .await;
+                serve_central(idx, hub, stack, connection, uuids).await;
             }
         }
         slot.link_dead.signal(());
@@ -1076,10 +1202,6 @@ pub async fn serve_slot<T: TroubleTransport>(
     }
 }
 
-/// Advertise (gated by the brain's `set_advertising`) and hand each accepted central to a free slot —
-/// the one place that drives the single advertising set. Reserves a free slot, advertises into it,
-/// hands the connection to that slot's worker, loops to fill the next. Time-shared with the scanner via
-/// alternating windows; a mid-advertise disable drops the pending advertise and releases the slot.
 pub async fn acceptor<T: TroubleTransport>(
     hub: &'static BleHub,
     peripheral: &mut Peripheral<'static, TroubleController<T>, DefaultPacketPool>,
@@ -1151,9 +1273,6 @@ pub async fn acceptor<T: TroubleTransport>(
     }
 }
 
-/// Scan (gated by the brain's `set_scanning`) so sightings flow to the funnel, and on a brain `Dial`
-/// stop scanning, connect, and hand the dialed connection to a free slot. The `Scanner` owns the
-/// `Central` while scanning; `into_inner` reclaims it to connect — one scan-or-connect at a time.
 pub async fn dialer<T: TroubleTransport>(
     hub: &'static BleHub,
     mut central: Central<'static, TroubleController<T>, DefaultPacketPool>,
@@ -1236,15 +1355,13 @@ pub async fn dialer<T: TroubleTransport>(
     }
 }
 
-/// Drive trouble's HCI host runner forever, funneling every LE advertising report through the hub's
-/// sighting channel. A runner error is logged and retried — the controller may hiccup without the
-/// whole BLE plane tearing down.
 pub async fn host_runner<T: TroubleTransport>(
     hub: &'static BleHub,
     mut runner: Runner<'static, TroubleController<T>, DefaultPacketPool>,
 ) {
     let funnel = ScanFunnel {
         sightings: hub.sightings.sender(),
+        local_address: BleAddress::new(hub.local_address.lock(|cell| cell.get())),
     };
     loop {
         if let Err(error) = runner.run_with_handler(&funnel).await {

@@ -50,7 +50,7 @@ use personal_rns::usb::UsbAutoDevice;
 use personal_rns::usb_device::{WebUsbAutoClass, WebUsbAutoState, WEBUSB_AUTO_PACKET_SIZE};
 
 use super::bluetooth::{
-    acceptor, diag, scanner, serve_slot, softdevice_config, softdevice_task, usb_vbus_present,
+    acceptor, scanner, serve_slot, softdevice_config, softdevice_task, usb_vbus_present,
     L2capPacket, NrfBleBackend, Server, BLE_SHARED, FLEET_ID, HUB, MEMBERS, OUTBOUND_WAKE, POOL,
 };
 use super::display::{build_cards, build_snapshots, frame_hash, EinkScreen};
@@ -126,16 +126,15 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
     // events; bring it up here (before the dalek-heavy engine construction) so its boot matches the
     // validated first-light ordering. Constructing the engine afterward is fine — the SD's own
     // high-priority interrupts keep the radio alive across the synchronous build.
-    diag!("boot: techo hopspot node");
-    diag!("sd: enabling");
     let sd = Softdevice::enable(&softdevice_config());
+    let ble_identity =
+        BleIdentity::from_radio_address(&nrf_softdevice::ble::get_address(sd).bytes());
     static SERVER: StaticCell<Server> = StaticCell::new();
     let server: &'static Server = SERVER.init(Server::new(sd).unwrap());
+    super::bluetooth::set_columba_identity(server, ble_identity);
     static L2CAP: StaticCell<l2cap::L2cap<L2capPacket>> = StaticCell::new();
     let l2cap: &'static l2cap::L2cap<L2capPacket> = L2CAP.init(l2cap::L2cap::init(sd));
     spawner.spawn(softdevice_task(sd, vbus).expect("softdevice task fits"));
-    diag!("sd: enabled");
-
     // The connection-slot pool: one worker per slot, parked until handed a connection. Pre-fill
     // the free list so the acceptor can advertise; seed the single central-radio permit.
     let _ = HUB.central_token.try_send(());
@@ -325,12 +324,10 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
         seeded_entropy,
     );
 
-    // The bridged backend the supervisor drives. Advertising is the supervisor's to enable — it calls
-    // `set_advertising(true)` at startup — so no manual signal here (that would race it).
     let backend = NrfBleBackend::new(&HUB);
     let supervisor = BluetoothAuto::new(
         backend,
-        BleIdentity::from_radio_address(&nrf_softdevice::ble::get_address(sd).bytes()),
+        ble_identity,
         Endpoint::Nrf52(Nrf52Host::Nrf52),
         LinkCapabilities {
             l2cap: None,
@@ -354,7 +351,6 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
             } else {
                 led.set_high();
             }
-            diag!("alive {}", n);
         }
     };
 
@@ -441,7 +437,7 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
                             lora_status.set_enabled(false);
                             usb_status.set_enabled(false);
                             let status = BluetoothAutoStatus::new(&BLE_SHARED);
-                            status.set_enabled(false);
+                            status.disable();
                         }
                         hopspot::UiAction::Wake => {
                             ui_state.show_notice(hopspot::UiNotice::Awake);
@@ -450,7 +446,7 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
                             lora_status.set_enabled(true);
                             usb_status.set_enabled(true);
                             let status = BluetoothAutoStatus::new(&BLE_SHARED);
-                            status.set_enabled(true);
+                            status.enable();
                         }
                         hopspot::UiAction::Announce => {
                             ui_state.show_notice(hopspot::UiNotice::Announcing);
@@ -494,7 +490,7 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
                                     });
                                     notice_until_ms =
                                         Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
-                                    status.set_enabled(!status.is_enabled());
+                                    status.toggle_enabled();
                                 }
                             }
                         }
@@ -520,7 +516,6 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
         }
     };
 
-    diag!("join: entering");
     let io = join5(
         usb_fut,
         usb_dev.run(usb_seam),
