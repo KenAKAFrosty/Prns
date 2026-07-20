@@ -48,14 +48,12 @@ fn execute(args: InterfacesArgs) -> Result<u8, InterfacesError> {
             add,
             MutationMode::Scripted,
         ),
-        InterfacesCommand::Edit(edit) => {
-            edit_interface(
-                args.config.as_deref(),
-                args.show_secrets,
-                edit,
-                MutationMode::Scripted,
-            )
-        }
+        InterfacesCommand::Edit(edit) => edit_interface(
+            args.config.as_deref(),
+            args.show_secrets,
+            edit,
+            MutationMode::Scripted,
+        ),
         InterfacesCommand::Enable(name) => set_enabled(
             args.config.as_deref(),
             args.show_secrets,
@@ -70,22 +68,18 @@ fn execute(args: InterfacesArgs) -> Result<u8, InterfacesError> {
             false,
             MutationMode::Scripted,
         ),
-        InterfacesCommand::Remove(remove) => {
-            remove_interface(
-                args.config.as_deref(),
-                args.show_secrets,
-                remove,
-                MutationMode::Scripted,
-            )
-        }
-        InterfacesCommand::Repair(repair_args) => {
-            repair(
-                args.config.as_deref(),
-                args.show_secrets,
-                repair_args,
-                MutationMode::Scripted,
-            )
-        }
+        InterfacesCommand::Remove(remove) => remove_interface(
+            args.config.as_deref(),
+            args.show_secrets,
+            remove,
+            MutationMode::Scripted,
+        ),
+        InterfacesCommand::Repair(repair_args) => repair(
+            args.config.as_deref(),
+            args.show_secrets,
+            repair_args,
+            MutationMode::Scripted,
+        ),
         InterfacesCommand::Apply => apply(args.config.as_deref()),
     }
 }
@@ -94,7 +88,10 @@ fn list(config: Option<&Path>) -> Result<u8, InterfacesError> {
     let file = load(config)?;
     let interfaces = file.document().interfaces();
     if interfaces.is_empty() {
-        println!("No interface stanzas are configured in {}.", file.path().display());
+        println!(
+            "No interface stanzas are configured in {}.",
+            file.path().display()
+        );
         return Ok(0);
     }
     for (index, interface) in interfaces.iter().enumerate() {
@@ -199,11 +196,14 @@ fn edit_interface(
     }
     let settings = args.options.settings(kind)?;
     if settings.is_empty() && radios.is_empty() && args.rename.is_none() {
-        return Err(InterfacesError::Usage(InterfacesUsageError::EditNeedsChange));
+        return Err(InterfacesError::Usage(
+            InterfacesUsageError::EditNeedsChange,
+        ));
     }
     let mut edits = Vec::new();
     let target = if let Some(replacement) = args.rename {
-        let replacement = InterfaceName::new(replacement).map_err(InterfacesError::InterfaceName)?;
+        let replacement =
+            InterfaceName::new(replacement).map_err(InterfacesError::InterfaceName)?;
         edits.push(ConfigEdit::Rename {
             current: name.clone(),
             replacement: replacement.clone(),
@@ -311,7 +311,9 @@ fn repair(
     } else if interactive {
         guided_repairs(&report)?
     } else {
-        return Err(InterfacesError::Usage(InterfacesUsageError::RepairNeedsSafe));
+        return Err(InterfacesError::Usage(
+            InterfacesUsageError::RepairNeedsSafe,
+        ));
     };
     let Some(edit) = edit else {
         return Err(InterfacesError::NoCompleteRepair);
@@ -401,8 +403,7 @@ fn guided_repairs(report: &ConfigRepairReport) -> Result<Option<ConfigEdit>, Int
             }
             "value" if has_value => {
                 let target = fixes.iter().find_map(|fix| match fix {
-                    ConfigFix::InsertValue { path, .. }
-                    | ConfigFix::ReplaceValue { path, .. } => {
+                    ConfigFix::InsertValue { path, .. } | ConfigFix::ReplaceValue { path, .. } => {
                         Some((path.as_str(), &[][..]))
                     }
                     ConfigFix::ResolveAliases { path, aliases } => {
@@ -559,8 +560,8 @@ fn apply_path(path: &Path) -> Result<u8, InterfacesError> {
         source,
     })?;
     let paths = ServicePaths::discover().map_err(InterfacesError::StateDirectory)?;
-    let Some(result) = request_reload(&paths, config_digest(&bytes))
-        .map_err(InterfacesError::Control)?
+    let Some(result) =
+        request_reload(&paths, config_digest(&bytes)).map_err(InterfacesError::Control)?
     else {
         return Err(InterfacesError::NoManagedDaemon);
     };
@@ -584,7 +585,9 @@ fn apply_path(path: &Path) -> Result<u8, InterfacesError> {
 
 fn guided(config: Option<&Path>, show_secrets: bool) -> Result<u8, InterfacesError> {
     if !io::stdin().is_terminal() {
-        return Err(InterfacesError::Usage(InterfacesUsageError::MissingSubcommand));
+        return Err(InterfacesError::Usage(
+            InterfacesUsageError::MissingSubcommand,
+        ));
     }
     loop {
         let file = load(config)?;
@@ -657,7 +660,9 @@ fn guided_interface(
     let interfaces = file.document().interfaces();
     let selected = interfaces
         .get(index.saturating_sub(1))
-        .ok_or(InterfacesError::Usage(InterfacesUsageError::MissingSelection))?;
+        .ok_or(InterfacesError::Usage(
+            InterfacesUsageError::MissingSelection,
+        ))?;
     let action = prompt("Action [enable/disable/remove]")?;
     let name = selected.name().as_str().to_string();
     let mutation = MutationArgs {
@@ -695,7 +700,11 @@ fn guided_interface(
             },
             MutationMode::Guided,
         )?,
-        _ => return Err(InterfacesError::Usage(InterfacesUsageError::UnknownGuidedAction)),
+        _ => {
+            return Err(InterfacesError::Usage(
+                InterfacesUsageError::UnknownGuidedAction,
+            ))
+        }
     };
     Ok(())
 }
@@ -735,9 +744,8 @@ fn prompt_kind() -> Result<InterfaceKind, InterfacesError> {
             return Ok(kind);
         }
     }
-    InterfaceKind::parse_cli(&value).ok_or({
-        InterfacesError::Usage(InterfacesUsageError::UnknownInterfaceType(value))
-    })
+    InterfaceKind::parse_cli(&value)
+        .ok_or({ InterfacesError::Usage(InterfacesUsageError::UnknownInterfaceType(value)) })
 }
 
 fn prompt(label: &str) -> Result<String, InterfacesError> {
@@ -765,7 +773,9 @@ fn confirm(label: &str, default: bool) -> Result<bool, InterfacesError> {
         "" => Ok(default),
         "y" | "yes" => Ok(true),
         "n" | "no" => Ok(false),
-        _ => Err(InterfacesError::Usage(InterfacesUsageError::ConfirmationValue)),
+        _ => Err(InterfacesError::Usage(
+            InterfacesUsageError::ConfirmationValue,
+        )),
     }
 }
 

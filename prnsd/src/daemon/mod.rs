@@ -11,9 +11,9 @@ pub(crate) use configured_interfaces::{
 
 pub(crate) use configuration::DEFAULT_CONFIG;
 
-use std::process;
 use std::future;
 use std::path::Path;
+use std::process;
 use std::time::Duration;
 
 use crate::{cli, interface_discovery, observability, persistence, services, splash};
@@ -295,7 +295,10 @@ pub(super) async fn run(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
     let mut active_plan = plan.clone();
     let active_config_path = config_path.unwrap_or_else(|| config_dir.join("config"));
     let mut node_run = Box::pin(prns.run());
-    let mut persistence_run = Box::pin(persistence::run_until_shutdown(persistence, managed.as_ref()));
+    let mut persistence_run = Box::pin(persistence::run_until_shutdown(
+        persistence,
+        managed.as_ref(),
+    ));
     loop {
         tokio::select! {
             result = &mut node_run => {
@@ -388,7 +391,10 @@ async fn apply_reload(
         }
     };
     if config_digest(&bytes) != request.digest() {
-        tracing::warn!(event = "interface_apply_rejected", reason = "digest_mismatch");
+        tracing::warn!(
+            event = "interface_apply_rejected",
+            reason = "digest_mismatch"
+        );
         return (ReloadResult::Rejected, None);
     }
     let text = match String::from_utf8(bytes) {
@@ -423,7 +429,7 @@ async fn apply_reload(
     let result = background
         .apply_interfaces(handle, replacement.clone())
         .await;
-    let applied = matches!(result, ReloadResult::Applied | ReloadResult::Unchanged)
-        .then_some(replacement);
+    let applied =
+        matches!(result, ReloadResult::Applied | ReloadResult::Unchanged).then_some(replacement);
     (result, applied)
 }

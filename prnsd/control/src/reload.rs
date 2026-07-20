@@ -214,12 +214,10 @@ pub fn request_reload(
                 return Err(ServiceError::Io {
                     operation: "could not read the prnsd interface apply result",
                     source,
-                })
+                });
             }
         }
-        if running(paths)?
-            .is_none_or(|current| current.generation != request.generation)
-        {
+        if running(paths)?.is_none_or(|current| current.generation != request.generation) {
             let _ = remove_if_present(
                 &request_path,
                 "could not remove the abandoned prnsd interface apply request",

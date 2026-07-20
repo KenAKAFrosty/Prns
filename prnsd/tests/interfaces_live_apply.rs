@@ -120,7 +120,11 @@ fn managed_interface_changes_apply_without_restarting_the_daemon() {
         .env("PRNSD_STATE_DIR", state.path())
         .output()
         .unwrap_or_else(|error| panic!("{error}"));
-    assert!(add.status.success(), "{}", String::from_utf8_lossy(&add.stderr));
+    assert!(
+        add.status.success(),
+        "{}",
+        String::from_utf8_lossy(&add.stderr)
+    );
     assert!(String::from_utf8_lossy(&add.stdout).contains("applied without restarting"));
     assert_eq!(
         running(&paths)
@@ -128,8 +132,8 @@ fn managed_interface_changes_apply_without_restarting_the_daemon() {
             .map(|current| current.pid),
         Some(record.pid)
     );
-    let configured = fs::read_to_string(config.path().join("config"))
-        .unwrap_or_else(|error| panic!("{error}"));
+    let configured =
+        fs::read_to_string(config.path().join("config")).unwrap_or_else(|error| panic!("{error}"));
     assert!(configured.contains("type = UDPInterface"));
     let plan = prns_config::parse_and_plan(&configured)
         .unwrap_or_else(|error| panic!("{error}"))
@@ -163,9 +167,11 @@ fn managed_interface_changes_apply_without_restarting_the_daemon() {
 
     let changed = fs::read_to_string(config.path().join("config"))
         .unwrap_or_else(|error| panic!("{error}"))
-        .replace("share_instance = No", "share_instance = No\nenable_transport = Yes");
-    fs::write(config.path().join("config"), changed)
-        .unwrap_or_else(|error| panic!("{error}"));
+        .replace(
+            "share_instance = No",
+            "share_instance = No\nenable_transport = Yes",
+        );
+    fs::write(config.path().join("config"), changed).unwrap_or_else(|error| panic!("{error}"));
     let restart_required = Command::new(binary)
         .args(["interfaces", "apply", "--config"])
         .arg(config.path())
@@ -182,11 +188,9 @@ fn managed_interface_changes_apply_without_restarting_the_daemon() {
     );
 
     drop(daemon);
-    assert!(
-        running(&paths)
-            .unwrap_or_else(|error| panic!("{error}"))
-            .is_none()
-    );
+    assert!(running(&paths)
+        .unwrap_or_else(|error| panic!("{error}"))
+        .is_none());
 }
 
 #[test]

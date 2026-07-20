@@ -192,16 +192,12 @@ impl fmt::Display for InterfacesUsageError {
         formatter.write_str(match self {
             Self::MissingType => "TYPE is required without a TTY",
             Self::MissingName => "NAME is required without a TTY",
-            Self::EditNeedsChange => {
-                "edit requires --rename or at least one typed setting option"
-            }
+            Self::EditNeedsChange => "edit requires --rename or at least one typed setting option",
             Self::RemoveNeedsConfirmation => "remove requires --yes without a TTY",
             Self::RepairNeedsSafe => "repair requires --safe when standard input is not a TTY",
             Self::RepairChoice => "choose one of the listed repair actions",
             Self::BooleanValue => "enter yes or no for this setting",
-            Self::MissingSubcommand => {
-                "a subcommand is required when standard input is not a TTY"
-            }
+            Self::MissingSubcommand => "a subcommand is required when standard input is not a TTY",
             Self::InvalidSelection => "choose an interface number or a listed command",
             Self::MissingSelection => "the selected interface number does not exist",
             Self::UnknownGuidedAction => "unknown interface action",

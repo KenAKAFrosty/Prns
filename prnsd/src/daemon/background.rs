@@ -76,7 +76,9 @@ impl BackgroundTasks {
         match reconciliation {
             configured_interfaces::ReconcileResult::RolledBack { rollback_failed } => {
                 let restored = self.construct_bootstrap(handle, &previous).await;
-                let services_failed = !self.activate_interface_services(handle, &previous, restored).await;
+                let services_failed = !self
+                    .activate_interface_services(handle, &previous, restored)
+                    .await;
                 return ReloadResult::RolledBack {
                     rollback_failed: rollback_failed || services_failed,
                 };
@@ -98,7 +100,9 @@ impl BackgroundTasks {
                 None => true,
             };
             let restored = self.construct_bootstrap(handle, &previous).await;
-            let services_failed = !self.activate_interface_services(handle, &previous, restored).await;
+            let services_failed = !self
+                .activate_interface_services(handle, &previous, restored)
+                .await;
             return ReloadResult::RolledBack {
                 rollback_failed: rollback_failed || services_failed,
             };
@@ -119,7 +123,9 @@ impl BackgroundTasks {
                 None => true,
             };
             let restored = self.construct_bootstrap(handle, &previous).await;
-            let services_failed = !self.activate_interface_services(handle, &previous, restored).await;
+            let services_failed = !self
+                .activate_interface_services(handle, &previous, restored)
+                .await;
             return ReloadResult::RolledBack {
                 rollback_failed: rollback_failed || services_failed,
             };
@@ -134,9 +140,9 @@ impl BackgroundTasks {
         plan: &DaemonPlan,
     ) -> configured_interfaces::ConstructedInterfaces {
         let mut bootstrap = plan.clone();
-        bootstrap.interfaces.retain(|interface| {
-            interface.lifecycle == ConfiguredInterfaceLifecycle::BootstrapOnly
-        });
+        bootstrap
+            .interfaces
+            .retain(|interface| interface.lifecycle == ConfiguredInterfaceLifecycle::BootstrapOnly);
         configured_interfaces::construct(handle, &bootstrap, &self.interface_runtime).await
     }
 
@@ -180,21 +186,15 @@ impl BackgroundTasks {
             bootstrap_attachments,
             self.monitored_interfaces.clone(),
         );
-        let prepared_discovery = PreparedDiscovery::from_plan(
-            plan,
-            self.network_identity.clone(),
-            &self.config_dir,
-        );
+        let prepared_discovery =
+            PreparedDiscovery::from_plan(plan, self.network_identity.clone(), &self.config_dir);
         match (prepared_discovery, prepared_bootstrap) {
             (Some(discovery), Ok(bootstrap)) => {
                 if let Ok(mut observer) = self.discovery_observer.write() {
                     *observer = Some(discovery.observer());
                 }
-                self.discovery = Some(discovery.spawn(
-                    handle.clone(),
-                    self.clock.clone(),
-                    Some(bootstrap),
-                ));
+                self.discovery =
+                    Some(discovery.spawn(handle.clone(), self.clock.clone(), Some(bootstrap)));
             }
             (Some(discovery), Err(attachments)) => {
                 if let Ok(mut observer) = self.discovery_observer.write() {
@@ -310,92 +310,81 @@ where
         configured_interfaces,
         bootstrap_attachments,
         monitored_interfaces,
-    ) =
-        match ownership.into_routing_tables() {
-            Some(RoutingTableOwnership {
-                configured_units,
-            }) => {
-                let configured_interfaces =
-                    configured_interfaces::attached_from_units(&configured_units);
-                let monitored_interfaces = MonitoredInterfaces::new(
-                    configured_interfaces.iter().map(|interface| interface.id),
-                );
-                let interface_failure_watch = monitored_interfaces.subscribe();
-                let (persistent_units, bootstrap_units) =
-                    configured_interfaces::partition_units(configured_units);
-                let bootstrap_attachments =
-                    configured_interfaces::attachments_from_units(bootstrap_units);
-                let (bootstrap_interfaces, bootstrap_attachments) = match BootstrapInterfaces::prepare(
-                    plan,
-                    interface_runtime.clone(),
-                    bootstrap_attachments,
+    ) = match ownership.into_routing_tables() {
+        Some(RoutingTableOwnership { configured_units }) => {
+            let configured_interfaces =
+                configured_interfaces::attached_from_units(&configured_units);
+            let monitored_interfaces = MonitoredInterfaces::new(
+                configured_interfaces.iter().map(|interface| interface.id),
+            );
+            let interface_failure_watch = monitored_interfaces.subscribe();
+            let (persistent_units, bootstrap_units) =
+                configured_interfaces::partition_units(configured_units);
+            let bootstrap_attachments =
+                configured_interfaces::attachments_from_units(bootstrap_units);
+            let (bootstrap_interfaces, bootstrap_attachments) = match BootstrapInterfaces::prepare(
+                plan,
+                interface_runtime.clone(),
+                bootstrap_attachments,
+                monitored_interfaces.clone(),
+            ) {
+                Ok(bootstrap) => (Some(bootstrap), PlanAttachments::default()),
+                Err(attachments) => (None, attachments),
+            };
+            let discovery = match prepared_discovery {
+                Some(discovery) => {
+                    let observer = discovery.observer();
+                    if let Ok(mut slot) = discovery_observer.write() {
+                        *slot = Some(observer);
+                    }
+                    Some(discovery.spawn(handle.clone(), clock.clone(), bootstrap_interfaces))
+                }
+                None => None,
+            };
+            let discovery_publication = prepared_discovery_publisher.and_then(|publisher| {
+                match publisher.spawn(handle.clone(), clock.clone(), configured_interfaces) {
+                    Ok(task) => task,
+                    Err(error) => {
+                        tracing::error!(
+                            event = "interface_discovery_publisher_start_failed",
+                            error = %error,
+                        );
+                        None
+                    }
+                }
+            });
+            let blackhole_updates = services::spawn_blackhole_updater(
+                handle.clone(),
+                clock.clone(),
+                blackhole_files,
+                &plan.blackhole_exchange,
+            );
+            (
+                interface_failure_watch,
+                discovery,
+                discovery_publication,
+                blackhole_updates,
+                Some(ConfiguredInterfaceManager::new(
+                    persistent_units,
                     monitored_interfaces.clone(),
-                ) {
-                    Ok(bootstrap) => (Some(bootstrap), PlanAttachments::default()),
-                    Err(attachments) => (None, attachments),
-                };
-                let discovery = match prepared_discovery {
-                    Some(discovery) => {
-                        let observer = discovery.observer();
-                        if let Ok(mut slot) = discovery_observer.write() {
-                            *slot = Some(observer);
-                        }
-                        Some(discovery.spawn(
-                            handle.clone(),
-                            clock.clone(),
-                            bootstrap_interfaces,
-                        ))
-                    }
-                    None => None,
-                };
-                let discovery_publication = prepared_discovery_publisher.and_then(|publisher| {
-                    match publisher.spawn(
-                        handle.clone(),
-                        clock.clone(),
-                        configured_interfaces,
-                    ) {
-                        Ok(task) => task,
-                        Err(error) => {
-                            tracing::error!(
-                                event = "interface_discovery_publisher_start_failed",
-                                error = %error,
-                            );
-                            None
-                        }
-                    }
-                });
-                let blackhole_updates = services::spawn_blackhole_updater(
-                    handle.clone(),
-                    clock.clone(),
-                    blackhole_files,
-                    &plan.blackhole_exchange,
-                );
-                (
-                    interface_failure_watch,
-                    discovery,
-                    discovery_publication,
-                    blackhole_updates,
-                    Some(ConfiguredInterfaceManager::new(
-                        persistent_units,
-                        monitored_interfaces.clone(),
-                    )),
-                    bootstrap_attachments,
-                    monitored_interfaces,
-                )
-            }
-            None => {
-                let monitored_interfaces = MonitoredInterfaces::new(std::iter::empty());
-                (
-                    monitored_interfaces.subscribe(),
-                    None,
-                    None,
-                    None,
-                    None,
-                    PlanAttachments::default(),
-                    monitored_interfaces,
-                )
-            }
-        };
+                )),
+                bootstrap_attachments,
+                monitored_interfaces,
+            )
+        }
+        None => {
+            let monitored_interfaces = MonitoredInterfaces::new(std::iter::empty());
+            (
+                monitored_interfaces.subscribe(),
+                None,
+                None,
+                None,
+                None,
+                PlanAttachments::default(),
+                monitored_interfaces,
+            )
+        }
+    };
     #[cfg(feature = "otlp")]
     let metrics = observability.spawn_metrics_reporter(handle.clone(), started);
     #[cfg(not(feature = "otlp"))]
