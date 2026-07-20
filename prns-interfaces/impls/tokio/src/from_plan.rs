@@ -27,7 +27,7 @@ use prns_runtime::runtime::{AttachIntent, Attachable, PrnsNodeHandle};
 use crate::ax25::{Ax25KissInterface, Ax25KissSettings};
 use crate::backbone::client::BackboneClientInterface;
 use crate::backbone::server::BackboneServer;
-#[cfg(feature = "ble-host")]
+#[cfg(feature = "ble")]
 use crate::ble_host::AutoBle;
 use crate::host_network::{
     resolve_tcp_listener, resolve_udp_endpoint, tcp_target, udp_ephemeral_bind,
@@ -319,14 +319,14 @@ async fn stand_up(
             report_missing_feature(interface, "usb-host", report);
         }
         PlannedMedium::PrnsBluetoothAuto => {
-            #[cfg(feature = "ble-host")]
+            #[cfg(feature = "ble")]
             {
                 let attached =
                     attach_with_access(handle, access, AutoBle::with_policy(interface.policy));
                 report_attached(handle, interface, attached.id(), attachments, report);
             }
-            #[cfg(not(feature = "ble-host"))]
-            report_missing_feature(interface, "ble-host", report);
+            #[cfg(not(feature = "ble"))]
+            report_missing_feature(interface, "ble", report);
         }
         PlannedMedium::PrnsWebSocketClient { target } => {
             #[cfg(not(feature = "websocket"))]
@@ -980,7 +980,7 @@ fn report_up<'a>(
 
 #[cfg(any(
     not(feature = "usb-host"),
-    not(feature = "ble-host"),
+    not(feature = "ble"),
     not(feature = "websocket")
 ))]
 fn report_missing_feature<'a>(

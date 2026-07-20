@@ -106,12 +106,11 @@ wifi-direct = ["tcp", "tokio/process", "dep:zbus", "dep:futures-util", "dep:if-a
 wifi-aware = ["tcp"]
 usb = ["dep:tokio", "dep:futures-util"]
 usb-host = ["usb", "serial-host", "dep:serialport"]
-ble-host = ["ble", "dep:tokio", "tokio/rt", "dep:prns-ffi"]
 pipe-host = ["pipe", "dep:tokio", "tokio/process"]
 auto = []
 interface-discovery = ["tcp", "backbone", "dep:getrandom", "prns-core/interface-discovery", "prns-runtime/interface-discovery"]
 from-plan = ["tcp", "udp", "serial", "serial-host", "kiss", "ax25", "rnode-ble", "pipe", "pipe-host", "backbone", "wifi", "i2p", "weave", "dep:prns-config", "dep:tokio", "tokio/rt"]
-ble = ["dep:tokio", "dep:futures-util", "dep:bluer", "dep:prns-ffi"]
+ble = ["dep:tokio", "tokio/rt", "dep:futures-util", "dep:bluer", "dep:prns-ffi"]
 
 [lints.clippy]
 dbg_macro = "deny"
