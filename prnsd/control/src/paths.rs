@@ -59,9 +59,8 @@ impl ServicePaths {
     }
 
     pub fn reload_result(&self, generation: u128, request_id: u128) -> PathBuf {
-        self.state_dir.join(format!(
-            "reload-result-{generation:032x}-{request_id:032x}"
-        ))
+        self.state_dir
+            .join(format!("reload-result-{generation:032x}-{request_id:032x}"))
     }
 }
 

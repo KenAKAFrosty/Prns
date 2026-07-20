@@ -1,6 +1,6 @@
 use personal_rns::config::{
-    ConfiguredInterfaceLifecycle, DaemonPlan, DiscoveryPublicationProblem,
-    InterfaceDiscoveryPlan, PlannedInterface, PlannedMedium,
+    ConfiguredInterfaceLifecycle, DaemonPlan, DiscoveryPublicationProblem, InterfaceDiscoveryPlan,
+    PlannedInterface, PlannedMedium,
 };
 use personal_rns::from_plan::{
     attach_plan_with_context, PlanAttachments, PlanOutcome, PlanRuntimeContext,
@@ -96,10 +96,7 @@ impl ConstructedInterfaces {
 }
 
 impl ConfiguredInterfaceManager {
-    pub(crate) fn new(
-        units: Vec<ActiveInterfaceUnit>,
-        monitored: MonitoredInterfaces,
-    ) -> Self {
+    pub(crate) fn new(units: Vec<ActiveInterfaceUnit>, monitored: MonitoredInterfaces) -> Self {
         Self { units, monitored }
     }
 
@@ -179,7 +176,6 @@ impl ConfiguredInterfaceManager {
         self.units = retained;
         ReconcileResult::RolledBack { rollback_failed }
     }
-
 }
 
 pub(crate) fn attached_from_units(
@@ -201,9 +197,7 @@ pub(super) fn partition_units(
     })
 }
 
-pub(crate) fn attachments_from_units(
-    units: Vec<ActiveInterfaceUnit>,
-) -> PlanAttachments {
+pub(crate) fn attachments_from_units(units: Vec<ActiveInterfaceUnit>) -> PlanAttachments {
     let mut attachments = PlanAttachments::default();
     for unit in units {
         attachments.append(unit.runtime);
@@ -422,8 +416,8 @@ fn medium_name(medium: &PlannedMedium) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify, construct, unit_specs, ConfiguredInterfaceManager, PlanOutcome,
-        ReconcileResult, StartupInterfaceReport,
+        classify, construct, unit_specs, ConfiguredInterfaceManager, PlanOutcome, ReconcileResult,
+        StartupInterfaceReport,
     };
     use personal_rns::config::parse_and_plan;
     use personal_rns::interfaces::InterfaceId;
@@ -436,9 +430,8 @@ mod tests {
         () => {
             PrnsNode::new(PrnsNodeRecipe {
                 transport_identity: None,
-                pre_configured_destinations: std::iter::empty::<
-                    PreConfiguredDestination<'static>,
-                >(),
+                pre_configured_destinations: std::iter::empty::<PreConfiguredDestination<'static>>(
+                ),
                 app_state: (),
                 storage: GrowableHeap,
                 routes: personal_rns::routes![],
@@ -566,16 +559,15 @@ mod tests {
             .await;
             assert_eq!(constructed.startup.failed, 0);
             let monitored = MonitoredInterfaces::new(
-                constructed
-                    .attached()
-                    .iter()
-                    .map(|interface| interface.id),
+                constructed.attached().iter().map(|interface| interface.id),
             );
             let mut manager = ConfiguredInterfaceManager::new(constructed.units, monitored.clone());
             let first_id = manager.attached()[0].id;
 
             let mut added = initial.clone();
-            added.interfaces.extend(listener("Second", second_port).interfaces);
+            added
+                .interfaces
+                .extend(listener("Second", second_port).interfaces);
             assert_eq!(
                 manager
                     .reconcile(
@@ -630,10 +622,7 @@ mod tests {
             )
             .await;
             let monitored = MonitoredInterfaces::new(
-                constructed
-                    .attached()
-                    .iter()
-                    .map(|interface| interface.id),
+                constructed.attached().iter().map(|interface| interface.id),
             );
             let mut manager = ConfiguredInterfaceManager::new(constructed.units, monitored);
             let invalid_runtime = parse_and_plan(

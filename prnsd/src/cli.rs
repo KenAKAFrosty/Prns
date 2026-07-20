@@ -4,13 +4,13 @@ use std::path::PathBuf;
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use personal_rns::i2p::{I2pPeerAddress, I2pPeerAddressError, SamBridgeAddress};
 
+use crate::interfaces::InterfacesArgs;
 use crate::utilities::rncp::RncpArgs;
 use crate::utilities::rnid::RnidArgs;
 use crate::utilities::rnpath::RnpathArgs;
 use crate::utilities::rnprobe::RnprobeArgs;
 use crate::utilities::rnstatus::RnstatusArgs;
 use crate::utilities::rnx::RnxArgs;
-use crate::interfaces::InterfacesArgs;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
 pub enum LogFormat {
@@ -353,7 +353,10 @@ mod tests {
             else {
                 panic!("interfaces add command was not selected");
             };
-            assert_eq!(add.kind, Some(prns_config::InterfaceKind::PrnsBluetoothAuto));
+            assert_eq!(
+                add.kind,
+                Some(prns_config::InterfaceKind::PrnsBluetoothAuto)
+            );
         }
     }
 

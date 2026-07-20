@@ -42,15 +42,18 @@ fn run(directory: &TestDirectory, args: &[&str]) -> std::process::Output {
 fn scripted_add_emits_a_canonical_stanza_and_preserves_the_source() {
     let directory = TestDirectory::new("add");
     let source = "# retained\n[reticulum]\n  share_instance = No\n[interfaces]\n";
-    fs::write(directory.path().join("config"), source)
-        .unwrap_or_else(|error| panic!("{error}"));
+    fs::write(directory.path().join("config"), source).unwrap_or_else(|error| panic!("{error}"));
 
     let output = run(
         &directory,
         &["add", "BLE", "--name", "Nearby", "--network-name", "mesh"],
     );
 
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let candidate = fs::read_to_string(directory.path().join("config"))
         .unwrap_or_else(|error| panic!("{error}"));
     assert!(candidate.starts_with(source));
@@ -67,8 +70,7 @@ fn scripted_add_emits_a_canonical_stanza_and_preserves_the_source() {
 fn dry_runs_redact_secrets_and_leave_the_file_untouched() {
     let directory = TestDirectory::new("redaction");
     let source = "[reticulum]\n  share_instance = No\n[interfaces]\n";
-    fs::write(directory.path().join("config"), source)
-        .unwrap_or_else(|error| panic!("{error}"));
+    fs::write(directory.path().join("config"), source).unwrap_or_else(|error| panic!("{error}"));
 
     let output = run(
         &directory,
@@ -157,7 +159,11 @@ fn rnode_multi_add_requires_and_emits_typed_radio_members() {
     );
     let rendered = String::from_utf8_lossy(&output.stdout);
 
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(rendered.contains("type = RNodeMultiInterface"));
     assert!(rendered.contains("[[[Primary]]]"));
     assert!(rendered.contains("vport = 0"));
@@ -168,8 +174,7 @@ fn rnode_multi_add_requires_and_emits_typed_radio_members() {
 fn removal_requires_confirmation_without_a_terminal() {
     let directory = TestDirectory::new("remove");
     let source = "[reticulum]\n  share_instance = No\n[interfaces]\n[[USB]]\ntype = PrnsUsbAuto\ninterface_enabled = Yes\n";
-    fs::write(directory.path().join("config"), source)
-        .unwrap_or_else(|error| panic!("{error}"));
+    fs::write(directory.path().join("config"), source).unwrap_or_else(|error| panic!("{error}"));
 
     let output = run(&directory, &["remove", "USB"]);
 
@@ -195,7 +200,11 @@ fn scripted_commands_cover_the_complete_editing_lifecycle() {
     assert!(String::from_utf8_lossy(&listed.stdout).contains("WiFi: AutoInterface (enabled)"));
 
     let repaired = run(&directory, &["repair", "--safe"]);
-    assert!(repaired.status.success(), "{}", String::from_utf8_lossy(&repaired.stderr));
+    assert!(
+        repaired.status.success(),
+        "{}",
+        String::from_utf8_lossy(&repaired.stderr)
+    );
     let after_repair = fs::read_to_string(directory.path().join("config"))
         .unwrap_or_else(|error| panic!("{error}"));
     assert!(after_repair.contains("interface_mode = full"));
@@ -210,16 +219,28 @@ fn scripted_commands_cover_the_complete_editing_lifecycle() {
         String::from_utf8_lossy(&disabled.stderr)
     );
     let enabled = run(&directory, &["enable", "WiFi"]);
-    assert!(enabled.status.success(), "{}", String::from_utf8_lossy(&enabled.stderr));
+    assert!(
+        enabled.status.success(),
+        "{}",
+        String::from_utf8_lossy(&enabled.stderr)
+    );
 
     let edited = run(
         &directory,
         &["edit", "WiFi", "--rename", "Mesh", "--group-id", "prns"],
     );
-    assert!(edited.status.success(), "{}", String::from_utf8_lossy(&edited.stderr));
+    assert!(
+        edited.status.success(),
+        "{}",
+        String::from_utf8_lossy(&edited.stderr)
+    );
 
     let checked = run(&directory, &["check"]);
-    assert!(checked.status.success(), "{}", String::from_utf8_lossy(&checked.stderr));
+    assert!(
+        checked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&checked.stderr)
+    );
     let changed = fs::read_to_string(directory.path().join("config"))
         .unwrap_or_else(|error| panic!("{error}"));
     assert!(changed.contains("[[Mesh]]"));
@@ -227,9 +248,17 @@ fn scripted_commands_cover_the_complete_editing_lifecycle() {
     assert!(changed.contains("interface_enabled = Yes"));
 
     let disabled = run(&directory, &["disable", "Mesh"]);
-    assert!(disabled.status.success(), "{}", String::from_utf8_lossy(&disabled.stderr));
+    assert!(
+        disabled.status.success(),
+        "{}",
+        String::from_utf8_lossy(&disabled.stderr)
+    );
     let removed = run(&directory, &["remove", "Mesh", "--yes"]);
-    assert!(removed.status.success(), "{}", String::from_utf8_lossy(&removed.stderr));
+    assert!(
+        removed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&removed.stderr)
+    );
     assert!(!fs::read_to_string(directory.path().join("config"))
         .unwrap_or_else(|error| panic!("{error}"))
         .contains("[[Mesh]]"));

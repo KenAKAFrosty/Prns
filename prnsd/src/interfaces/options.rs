@@ -1,6 +1,4 @@
-use prns_config::editing::{
-    InterfaceSetting, InterfaceSettingKey, InterfaceSettingValue,
-};
+use prns_config::editing::{InterfaceSetting, InterfaceSettingKey, InterfaceSettingValue};
 use prns_config::InterfaceKind;
 
 use super::error::InterfacesError;
@@ -76,11 +74,7 @@ impl InterfaceOptions {
             "ingress_control",
             boolean(self.ingress_control),
         )?;
-        push(
-            &mut values,
-            "egress_control",
-            boolean(self.egress_control),
-        )?;
+        push(&mut values, "egress_control", boolean(self.egress_control))?;
         push(
             &mut values,
             "ic_max_held_announces",
@@ -115,16 +109,8 @@ impl InterfaceOptions {
             "ic_held_release_interval",
             decimal(self.ic_held_release_interval),
         )?;
-        push(
-            &mut values,
-            "bootstrap_only",
-            boolean(self.bootstrap_only),
-        )?;
-        push(
-            &mut values,
-            "recursive_prs",
-            boolean(self.recursive_prs),
-        )?;
+        push(&mut values, "bootstrap_only", boolean(self.bootstrap_only))?;
+        push(&mut values, "recursive_prs", boolean(self.recursive_prs))?;
         push(
             &mut values,
             "announces_from_internal",
@@ -178,11 +164,7 @@ impl InterfaceOptions {
         push(&mut values, "device", text(self.device))?;
         push(&mut values, "port", port(kind, self.port)?)?;
         push(&mut values, "prefer_ipv6", boolean(self.prefer_ipv6))?;
-        push(
-            &mut values,
-            "speed",
-            unsigned(self.speed.map(u64::from)),
-        )?;
+        push(&mut values, "speed", unsigned(self.speed.map(u64::from)))?;
         push(
             &mut values,
             "databits",
@@ -200,11 +182,7 @@ impl InterfaceOptions {
             "preamble",
             unsigned(self.preamble.map(u64::from)),
         )?;
-        push(
-            &mut values,
-            "txtail",
-            unsigned(self.txtail.map(u64::from)),
-        )?;
+        push(&mut values, "txtail", unsigned(self.txtail.map(u64::from)))?;
         push(
             &mut values,
             "persistence",
@@ -218,11 +196,7 @@ impl InterfaceOptions {
         push(&mut values, "id_callsign", text(self.id_callsign))?;
         push(&mut values, "id_interval", unsigned(self.id_interval))?;
         push(&mut values, "callsign", text(self.callsign))?;
-        push(
-            &mut values,
-            "ssid",
-            unsigned(self.ssid.map(u64::from)),
-        )?;
+        push(&mut values, "ssid", unsigned(self.ssid.map(u64::from)))?;
         push(&mut values, "frequency", unsigned(self.frequency))?;
         push(
             &mut values,
@@ -257,11 +231,7 @@ impl InterfaceOptions {
             decimal(self.airtime_limit_long),
         )?;
         push(&mut values, "command", text(self.command))?;
-        push(
-            &mut values,
-            "respawn_delay",
-            decimal(self.respawn_delay),
-        )?;
+        push(&mut values, "respawn_delay", decimal(self.respawn_delay))?;
         push(&mut values, "peers", list(self.peers))?;
         push(&mut values, "connectable", boolean(self.connectable))?;
         push(
@@ -348,8 +318,7 @@ fn push(
     value: Option<InterfaceSettingValue>,
 ) -> Result<(), InterfacesError> {
     if let Some(value) = value {
-        let key = InterfaceSettingKey::parse(key)
-            .ok_or(InterfacesError::UnknownSettingKey(key))?;
+        let key = InterfaceSettingKey::parse(key).ok_or(InterfacesError::UnknownSettingKey(key))?;
         settings.push(InterfaceSetting::new(key, value));
     }
     Ok(())

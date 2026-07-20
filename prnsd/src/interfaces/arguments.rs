@@ -299,8 +299,10 @@ fn parse_rnode_multi_radio(value: &str) -> Result<RNodeMultiRadioDefinition, Str
     let [name, vport, frequency, bandwidth, txpower, spreading_factor, coding_rate] =
         fields.as_slice()
     else {
-        return Err("expected NAME:VPORT:FREQUENCY:BANDWIDTH:TXPOWER:SPREADING_FACTOR:CODING_RATE"
-            .to_string());
+        return Err(
+            "expected NAME:VPORT:FREQUENCY:BANDWIDTH:TXPOWER:SPREADING_FACTOR:CODING_RATE"
+                .to_string(),
+        );
     };
     let name = InterfaceName::new(*name).map_err(|error| error.to_string())?;
     let vport = vport
