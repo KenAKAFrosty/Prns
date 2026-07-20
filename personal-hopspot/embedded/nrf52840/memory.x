@@ -16,7 +16,7 @@
    the USB-auto interface (a third reactor lane + the device's framing buffers) costs ~5.5 KB of
    statics, so this 3-interface build runs MEMBERS=5 (conn_count=7, still inside the 56 KB
    reservation): ~97 KB stack region, ~17 KB headroom — the same proven-good margin the earlier
-   BLE bring-up build had at MEMBERS=6. MEMBERS=6 + USB left only ~92 KB and froze on the
+   BLE-only build had at MEMBERS=6. MEMBERS=6 + USB left only ~92 KB and froze on the
    handshake path.
    Going higher needs cutting the runtime crypto/connect stack, or a larger-RAM part. */
 MEMORY

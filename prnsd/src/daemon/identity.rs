@@ -9,12 +9,6 @@ use personal_rns::runtime::{
 pub fn load_or_seed_transport_identity(
     storage_dir: &Path,
 ) -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
-    if cfg!(feature = "fixture-identity") {
-        let mut key = Zeroizing::new([0u8; IDENTITY_SECRET_KEY_LEN]);
-        key[..32].fill(0x22);
-        key[32..].fill(0x11);
-        return key;
-    }
     match load_or_create_identity_secret(&storage_dir.join("transport_identity")) {
         Ok(key) => key,
         Err(error) => {

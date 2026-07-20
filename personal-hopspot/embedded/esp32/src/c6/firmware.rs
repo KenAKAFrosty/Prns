@@ -1,6 +1,6 @@
 use super::*;
 
-pub(crate) async fn run(spawner: Spawner) {
+pub async fn run(spawner: Spawner) {
     esp_alloc::heap_allocator!(size: HEAP_BYTES);
 
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
@@ -26,9 +26,9 @@ pub(crate) async fn run(spawner: Spawner) {
             .expect("valid name");
         personal_rns::routing::announce::derive_destination_hash(&signer.identity_hash(), &name)
     };
-    #[cfg(feature = "ble-bringup-c6")]
+    #[cfg(feature = "ble")]
     let mut mac_octets = [0u8; 6];
-    #[cfg(feature = "ble-bringup-c6")]
+    #[cfg(feature = "ble")]
     mac_octets.copy_from_slice(&mac.as_bytes()[..6]);
 
     let seed = self_destination.as_bytes();
@@ -62,7 +62,7 @@ pub(crate) async fn run(spawner: Spawner) {
     };
     spawner.spawn(usb_device_task(usb_rx, usb_tx, usb_seam).expect("usb device task fits"));
 
-    #[cfg(feature = "espnow-c6")]
+    #[cfg(feature = "esp-now")]
     let (_espnow_controller, espnow, _espnow_status) = {
         let wifi_config = ControllerConfig::default()
             .with_static_rx_buf_num(4)
@@ -82,7 +82,7 @@ pub(crate) async fn run(spawner: Spawner) {
         (controller, espnow, espnow_status)
     };
 
-    #[cfg(feature = "espnow-c6")]
+    #[cfg(feature = "esp-now")]
     let espnow_seam = {
         static IN_BUF: ConstStaticCell<LaneBuf> = ConstStaticCell::new([EMPTY_SLOT; LANE_DEPTH]);
         static IN_CH: StaticCell<LaneChannel> = StaticCell::new();
@@ -103,7 +103,7 @@ pub(crate) async fn run(spawner: Spawner) {
         )
     };
 
-    #[cfg(feature = "ble-bringup-c6")]
+    #[cfg(feature = "ble")]
     let ble_fleet: C6BleFleet = {
         static IN_BUF: ConstStaticCell<LaneBuf> = ConstStaticCell::new([EMPTY_SLOT; LANE_DEPTH]);
         static IN_CH: StaticCell<LaneChannel> = StaticCell::new();
@@ -165,11 +165,11 @@ pub(crate) async fn run(spawner: Spawner) {
         HVec::new(),
     ));
     node.activate(USB_SLOT, device_descriptor(USB_INTERFACE_ID));
-    #[cfg(feature = "espnow-c6")]
+    #[cfg(feature = "esp-now")]
     node.activate(ESPNOW_SLOT, espnow.descriptor());
-    #[cfg(feature = "ble-bringup-c6")]
+    #[cfg(feature = "ble")]
     node.activate_fleet(BLE_FLEET_SLOT, BLE_FLEET_ID);
-    #[cfg(all(feature = "ble-bringup-c6", feature = "espnow-c6"))]
+    #[cfg(all(feature = "ble", feature = "esp-now"))]
     {
         spawner.spawn(
             ble_task(spawner, p.BT, mac_octets, ble_fleet, &BLE_SHARED).expect("ble task fits"),
@@ -180,7 +180,7 @@ pub(crate) async fn run(spawner: Spawner) {
         )
         .await;
     }
-    #[cfg(all(feature = "espnow-c6", not(feature = "ble-bringup-c6")))]
+    #[cfg(all(feature = "esp-now", not(feature = "ble")))]
     {
         join(
             node.run_reactor_with_interface_store(&INTERFACE_STORE),
@@ -188,7 +188,7 @@ pub(crate) async fn run(spawner: Spawner) {
         )
         .await;
     }
-    #[cfg(all(feature = "ble-bringup-c6", not(feature = "espnow-c6")))]
+    #[cfg(all(feature = "ble", not(feature = "esp-now")))]
     {
         spawner.spawn(
             ble_task(spawner, p.BT, mac_octets, ble_fleet, &BLE_SHARED).expect("ble task fits"),
@@ -196,7 +196,7 @@ pub(crate) async fn run(spawner: Spawner) {
         node.run_reactor_with_interface_store(&INTERFACE_STORE)
             .await;
     }
-    #[cfg(not(any(feature = "ble-bringup-c6", feature = "espnow-c6")))]
+    #[cfg(not(any(feature = "ble", feature = "esp-now")))]
     node.run_reactor_with_interface_store(&INTERFACE_STORE)
         .await;
 }

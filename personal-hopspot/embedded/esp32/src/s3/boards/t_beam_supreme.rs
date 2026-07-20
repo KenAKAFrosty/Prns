@@ -312,7 +312,7 @@ impl Esp32S3Board for TBeamSupremeBoard {
             let _ = display.flush();
         }
 
-        #[cfg(feature = "radio-wifi")]
+        #[cfg(feature = "lora")]
         let lora_radio = {
             let lora_spi = Spi::new(
                 p.SPI2,
@@ -351,16 +351,16 @@ impl Esp32S3Board for TBeamSupremeBoard {
             oled_ok,
             battery,
             usb_device: p.USB_DEVICE,
-            #[cfg(feature = "radio-wifi")]
+            #[cfg(feature = "lora")]
             lora_radio,
-            #[cfg(feature = "radio-wifi")]
+            #[cfg(feature = "wifi")]
             wifi: p.WIFI,
             button: p.GPIO0,
             cpu_ctrl: p.CPU_CTRL,
             sw_int1,
             timebase,
             _rtc: rtc,
-            #[cfg(feature = "ble-bringup")]
+            #[cfg(feature = "ble")]
             bt: p.BT,
         }
     }

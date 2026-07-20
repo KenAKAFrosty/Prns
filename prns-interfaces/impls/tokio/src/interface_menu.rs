@@ -1,7 +1,4 @@
-#[cfg(all(
-    feature = "auto",
-    any(feature = "wifi", feature = "usb-host", feature = "ble")
-))]
+#[cfg(any(feature = "wifi", feature = "usb", feature = "ble"))]
 pub use crate::auto::Auto;
 #[cfg(feature = "ax25")]
 pub use crate::ax25::Ax25KissInterface;
@@ -13,7 +10,7 @@ pub use crate::backbone::server::BackboneServer;
 pub use crate::ble::tokio::BluetoothAuto;
 #[cfg(feature = "ble")]
 pub use crate::ble_host::{AttachedBle, AutoBle};
-#[cfg(feature = "from-plan")]
+#[cfg(feature = "config")]
 pub use crate::from_plan::FromPlan;
 #[cfg(feature = "kiss")]
 pub use crate::kiss::KissInterface;
@@ -33,7 +30,7 @@ pub use crate::tcp::server::TcpServer;
 pub use crate::udp::UdpInterface;
 #[cfg(feature = "usb")]
 pub use crate::usb::UsbAutoHost;
-#[cfg(feature = "usb-host")]
+#[cfg(feature = "usb")]
 pub use crate::usb_host::AutoUsb;
 #[cfg(feature = "weave")]
 pub use crate::weave::WeaveInterface;

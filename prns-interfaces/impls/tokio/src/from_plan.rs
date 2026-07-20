@@ -56,7 +56,7 @@ use crate::tcp::tokio_socket::{
     AddressFamilyPreference, ReconnectLimit, TcpConnectionSettings, TcpTunnelMode,
 };
 use crate::udp::UdpInterface;
-#[cfg(feature = "usb-host")]
+#[cfg(feature = "usb")]
 use crate::usb_host::AutoUsb;
 use crate::weave::WeaveInterface;
 #[cfg(feature = "websocket")]
@@ -306,7 +306,7 @@ async fn stand_up(
             report_attached(handle, interface, attached.id(), attachments, report);
         }
         PlannedMedium::PrnsUsbAuto => {
-            #[cfg(feature = "usb-host")]
+            #[cfg(feature = "usb")]
             {
                 let attached = attach_with_access(
                     handle,
@@ -315,8 +315,8 @@ async fn stand_up(
                 );
                 report_attached(handle, interface, attached.id(), attachments, report);
             }
-            #[cfg(not(feature = "usb-host"))]
-            report_missing_feature(interface, "usb-host", report);
+            #[cfg(not(feature = "usb"))]
+            report_missing_feature(interface, "usb", report);
         }
         PlannedMedium::PrnsBluetoothAuto => {
             #[cfg(feature = "ble")]
@@ -978,11 +978,7 @@ fn report_up<'a>(
     report(PlanOutcome::Up { interface, id });
 }
 
-#[cfg(any(
-    not(feature = "usb-host"),
-    not(feature = "ble"),
-    not(feature = "websocket")
-))]
+#[cfg(any(not(feature = "usb"), not(feature = "ble"), not(feature = "websocket")))]
 fn report_missing_feature<'a>(
     interface: &'a PlannedInterface,
     feature: &str,

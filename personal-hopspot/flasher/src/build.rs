@@ -4,7 +4,6 @@ use std::process::Command;
 
 use crate::boards::{
     BoardBackend, BoardTarget, EspImageSpec, ESP32S3_TARGET, T_ECHO_BASE, T_ECHO_FAMILY,
-    T_ECHO_PROFILE,
 };
 use crate::toolchain::{capture_stdout, configure_esp_toolchain, run_status, rust_host_triple};
 use crate::wifi::{hopspot_config_image_bytes, HOPSPOT_CONFIG_OFFSET};
@@ -14,7 +13,7 @@ pub(crate) struct BuildOutput {
     pub(crate) artifact: PathBuf,
     metadata: PathBuf,
     web_manifest: Option<PathBuf>,
-    profile: &'static str,
+    firmware_package: &'static str,
     sha256: String,
     size: u64,
 }
@@ -49,14 +48,8 @@ pub(crate) fn build_t_echo(repo: &Path, out_root: &Path) -> AppResult<BuildOutpu
         .env_remove("RUSTUP_TOOLCHAIN")
         .arg("build")
         .arg("--release")
-        .arg("--no-default-features")
-        .arg("--features")
-        .arg(T_ECHO_PROFILE)
         .current_dir(&crate_dir);
-    run_status(
-        &mut cargo,
-        "cargo build --release --no-default-features --features hopspot-t-echo",
-    )?;
+    run_status(&mut cargo, "cargo build --release")?;
 
     let host_triple = rust_host_triple()?;
     let sysroot = capture_stdout(Command::new("rustc").arg("--print").arg("sysroot"), "rustc")?;
@@ -113,13 +106,13 @@ pub(crate) fn build_t_echo(repo: &Path, out_root: &Path) -> AppResult<BuildOutpu
     let size = fs::metadata(&uf2)
         .map_err(|err| format!("failed to inspect {}: {err}", uf2.display()))?
         .len();
-    write_metadata(&metadata, &sha256, size, T_ECHO_PROFILE)?;
+    write_metadata(&metadata, &sha256, size, "t-echo")?;
 
     Ok(BuildOutput {
         artifact: uf2,
         metadata,
         web_manifest: None,
-        profile: T_ECHO_PROFILE,
+        firmware_package: "t-echo",
         sha256,
         size,
     })
@@ -186,7 +179,7 @@ fn build_esp_board(
         artifact,
         metadata,
         web_manifest: Some(web_manifest),
-        profile: spec.profile,
+        firmware_package: spec.package,
         sha256,
         size,
     })
@@ -206,7 +199,7 @@ pub(crate) fn build_esp_firmware(
         .join("target")
         .join(spec.target)
         .join("release")
-        .join("personal-hopspot-esp32");
+        .join(spec.binary);
     let partition_table = crate_dir.join(spec.partition_table);
 
     let mut cargo = Command::new("cargo");
@@ -214,31 +207,21 @@ pub(crate) fn build_esp_firmware(
         .env_remove("RUSTUP_TOOLCHAIN")
         .arg("build")
         .arg("--release")
+        .arg("--package")
+        .arg(spec.package)
         .arg("--bin")
-        .arg("personal-hopspot-esp32")
+        .arg(spec.binary)
         .arg("--target")
         .arg(spec.target)
         .arg("-Zbuild-std=core,alloc");
-    if spec.no_default_features {
-        cargo.arg("--no-default-features");
-    }
-    cargo
-        .arg("--features")
-        .arg(spec.profile)
-        .current_dir(&crate_dir);
+    cargo.current_dir(&crate_dir);
     if spec.target == ESP32S3_TARGET {
         let linker = configure_esp_toolchain(&mut cargo)?;
         ui::print_key_value("xtensa gcc", &linker.display().to_string());
     }
     let build_label = format!(
-        "cargo build --release --bin personal-hopspot-esp32 --target {} -Zbuild-std=core,alloc {}--features {}",
-        spec.target,
-        if spec.no_default_features {
-            "--no-default-features "
-        } else {
-            ""
-        },
-        spec.profile
+        "cargo build --release --package {} --bin {} --target {} -Zbuild-std=core,alloc",
+        spec.package, spec.binary, spec.target
     );
     run_status(&mut cargo, &build_label)?;
 
@@ -305,17 +288,17 @@ pub(crate) fn print_build_output(output: &BuildOutput) {
     if let Some(web_manifest) = &output.web_manifest {
         ui::print_key_value("web manifest", &web_manifest.display().to_string());
     }
-    ui::print_key_value("profile", output.profile);
+    ui::print_key_value("firmware", output.firmware_package);
     ui::print_key_value("sha256", &output.sha256);
     ui::print_key_value("size", &format!("{} bytes", output.size));
 }
 
-fn write_metadata(path: &Path, sha256: &str, size: u64, profile: &str) -> AppResult<()> {
+fn write_metadata(path: &Path, sha256: &str, size: u64, firmware_package: &str) -> AppResult<()> {
     let json = format!(
         concat!(
             "{{\n",
             "  \"board_slug\": \"t-echo\",\n",
-            "  \"profile\": \"{profile}\",\n",
+            "  \"firmware_package\": \"{firmware_package}\",\n",
             "  \"format\": \"uf2\",\n",
             "  \"transport\": \"uf2-mass-storage\",\n",
             "  \"artifact\": \"t-echo.uf2\",\n",
@@ -326,7 +309,7 @@ fn write_metadata(path: &Path, sha256: &str, size: u64, profile: &str) -> AppRes
             "  \"source\": \"personal-hopspot/embedded/nrf52840\"\n",
             "}}\n"
         ),
-        profile = profile,
+        firmware_package = firmware_package,
         sha256 = sha256,
         size = size,
         base = T_ECHO_BASE,
@@ -346,7 +329,7 @@ fn write_esp_metadata(
         concat!(
             "{{\n",
             "  \"board_slug\": \"{board_slug}\",\n",
-            "  \"profile\": \"{profile}\",\n",
+            "  \"firmware_package\": \"{firmware_package}\",\n",
             "  \"format\": \"esp-bin\",\n",
             "  \"transport\": \"esp-web-serial\",\n",
             "  \"artifact\": \"{artifact}\",\n",
@@ -361,7 +344,7 @@ fn write_esp_metadata(
             "}}\n"
         ),
         board_slug = board_slug,
-        profile = spec.profile,
+        firmware_package = spec.package,
         artifact = spec.artifact,
         sha256 = sha256,
         size = size,

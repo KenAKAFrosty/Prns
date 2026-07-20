@@ -7,7 +7,7 @@ use esp_hal::efuse::base_mac_address;
 use esp_hal::gpio::{Input, InputConfig, Output, Pull};
 use esp_hal::peripherals::USB_DEVICE;
 use esp_hal::rng::Rng;
-#[cfg(feature = "radio-wifi")]
+#[cfg(feature = "wifi")]
 use esp_hal::rom::spiflash::esp_rom_spiflash_read;
 use esp_hal::spi::master::Spi;
 use esp_hal::system::Stack as CpuStack;
@@ -15,65 +15,65 @@ use esp_hal::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx, UsbSerialJtagTx};
 use esp_hal::Async;
 use esp_println::println;
 
-#[cfg(feature = "radio-wifi")]
+#[cfg(feature = "wifi")]
 use alloc::string::{String, ToString};
 use core::fmt::Write as _;
 
 use embassy_executor::Spawner;
 use embassy_futures::join::join;
 use embassy_futures::select::{select3, Either3};
-#[cfg(feature = "softap")]
+#[cfg(feature = "wifi")]
 use embassy_net::tcp::TcpSocket;
 use embassy_net::udp::{PacketMetadata, UdpSocket};
 use embassy_net::{
     Config as NetConfig, ConfigV6, DhcpConfig, IpEndpoint, Ipv6Cidr, Runner, Stack, StackResources,
     StaticConfigV6,
 };
-#[cfg(feature = "softap")]
+#[cfg(feature = "wifi")]
 use embassy_net::{IpAddress, Ipv4Address, Ipv4Cidr, StaticConfigV4};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
 use embassy_sync::zerocopy_channel;
-#[cfg(feature = "softap")]
+#[cfg(feature = "wifi")]
 use embassy_time::with_timeout;
 use embassy_time::{Delay, Duration, Ticker, Timer};
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_hal_bus::spi::ExclusiveDevice;
 use heapless::Vec as HVec;
-#[cfg(feature = "radio-wifi")]
+#[cfg(feature = "wifi")]
 use portable_atomic::AtomicBool;
 use portable_atomic::{AtomicU64, Ordering};
 use static_cell::{ConstStaticCell, StaticCell};
 
-#[cfg(feature = "softap")]
+#[cfg(feature = "wifi")]
 use esp_radio::wifi::ap::AccessPointConfig;
-#[cfg(feature = "radio-wifi")]
+#[cfg(feature = "wifi")]
 use esp_radio::wifi::scan::ScanConfig;
-#[cfg(feature = "radio-wifi")]
+#[cfg(feature = "wifi")]
 use esp_radio::wifi::sta::StationConfig;
-#[cfg(feature = "radio-wifi")]
+#[cfg(feature = "wifi")]
 use esp_radio::wifi::{
     Config as WifiConfig, ControllerConfig, Interface as WifiStaDevice, PowerSaveMode,
     WifiController,
 };
 
-#[cfg(feature = "radio-wifi")]
+#[cfg(feature = "wifi")]
 use esp_radio::esp_now::{
     EspNow, EspNowManager, EspNowReceiver, EspNowSender, WifiPhyRate, BROADCAST_ADDRESS,
 };
-#[cfg(feature = "ble-bringup")]
+#[cfg(feature = "ble")]
 use personal_rns::ble::{BluetoothAutoShared, BluetoothAutoStatus};
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
-#[cfg(feature = "radio-wifi")]
+#[cfg(feature = "wifi")]
 use personal_rns::esp_now::EspNowInterface;
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::bluetooth_auto::limits;
-#[cfg(feature = "radio-wifi")]
+#[cfg(feature = "wifi")]
 use personal_rns::interfaces::esp_now::core::{
     self as espnow_core, Channel as EspNowChannel, ChannelPolicy,
 };
@@ -110,29 +110,29 @@ use personal_hopspot_core as screen;
 
 esp_app_desc!();
 
-#[cfg(feature = "softap")]
+#[cfg(feature = "wifi")]
 mod hopspot_site {
     include!(concat!(env!("OUT_DIR"), "/hopspot_site.rs"));
 }
 
-#[cfg(feature = "softap")]
+#[cfg(feature = "wifi")]
 const AP_IPV4: [u8; 4] = [192, 168, 4, 1];
-#[cfg(feature = "softap")]
+#[cfg(feature = "wifi")]
 const CAPTIVE_PORTAL_HOST: &str = "192.168.4.1";
 const CAPTIVE_PORTAL_URL: &str = "http://192.168.4.1/";
-#[cfg(feature = "softap")]
+#[cfg(feature = "wifi")]
 const CAPTIVE_PORTAL_API_URL: &str = "http://192.168.4.1/captive-portal/api";
-#[cfg(feature = "radio-wifi")]
+#[cfg(feature = "wifi")]
 const HOPSPOT_CONFIG_OFFSET: u32 = 0xD000;
-#[cfg(feature = "radio-wifi")]
+#[cfg(feature = "wifi")]
 const HOPSPOT_CONFIG_MAGIC: &[u8; 8] = b"HSPCFG1\0";
-#[cfg(feature = "radio-wifi")]
+#[cfg(feature = "wifi")]
 const HOPSPOT_CONFIG_VERSION: u8 = 1;
-#[cfg(feature = "radio-wifi")]
+#[cfg(feature = "wifi")]
 const HOPSPOT_CONFIG_READ_WORDS: usize = 32;
-#[cfg(feature = "radio-wifi")]
+#[cfg(feature = "wifi")]
 const HOPSPOT_CONFIG_SSID_MAX: usize = 32;
-#[cfg(feature = "radio-wifi")]
+#[cfg(feature = "wifi")]
 const HOPSPOT_CONFIG_PASSWORD_MAX: usize = 64;
 
 /// Fallback WiFi network the board joins as a station, read at build time. Normal flashing writes the
@@ -162,15 +162,14 @@ const TCP_SOCKET_BUF: usize = 1_024;
 
 /// One lane per top-level driver: USB (slot 0), the TCP client (slot 1), the WiFi supervisor's one
 /// shared fleet lane (slot 2), and the LoRa SX1262 (slot 3). WiFi members do NOT each take a lane —
-/// they share slot 2. Under `ble-bringup` the BLE fleet takes the next slot; under `radio-wifi` the
+/// they share slot 2. Under `ble` the BLE fleet takes the next slot; under `esp-now` the
 /// ESP-NOW broadcast carrier (which rides the same WiFi radio) takes another.
-const IFACES: usize =
-    4 + cfg!(feature = "ble-bringup") as usize + cfg!(feature = "radio-wifi") as usize;
+const IFACES: usize = 4 + cfg!(feature = "ble") as usize + cfg!(feature = "esp-now") as usize;
 /// The WiFi fleet's member budget: a peer costs a descriptor + status slot, never a lane buffer.
 const MEMBERS: usize = 24;
 /// The engine-interface (descriptor + pacer) pool: the fixed interfaces plus the WiFi members.
 /// Decoupled from the lane count `IFACES` on purpose: a member costs descriptors, not buffers.
-const MAX_IFACES: usize = 3 + MEMBERS + cfg!(feature = "radio-wifi") as usize;
+const MAX_IFACES: usize = 3 + MEMBERS + cfg!(feature = "esp-now") as usize;
 /// The WiFi supervisor's fleet lane (slot 2) key: an `AutoWifi`-kind id, so every `WifiPeer` child
 /// routes to this one lane by the kind byte (`lane_serves`). Also the WiFi card's aggregate id.
 const WIFI_FLEET_ID: InterfaceId =
@@ -181,14 +180,14 @@ const USB_SLOT: usize = 0;
 /// Slot 1: the always-on TCP client wire, so the WiFi members never claim it.
 const TCP_SLOT: usize = 1;
 const LORA_SLOT: usize = 3;
-/// The BLE fleet's pool slot (after LoRa), present only under `ble-bringup`. Distinct from the WiFi
+/// The BLE fleet's pool slot (after LoRa), present only under `ble`. Distinct from the WiFi
 /// slot so both supervisors run at once when WiFi and BLE coexist.
-#[cfg(feature = "ble-bringup")]
+#[cfg(feature = "ble")]
 const BLE_FLEET_SLOT: usize = 4;
 /// The ESP-NOW broadcast carrier's pool slot, after the BLE fleet when it is present. A 1:1 interface
-/// like LoRa (not a fleet); present under `radio-wifi`, which brings up the WiFi radio it shares.
-#[cfg(feature = "radio-wifi")]
-const ESPNOW_SLOT: usize = 4 + cfg!(feature = "ble-bringup") as usize;
+/// like LoRa (not a fleet); present under `esp-now`.
+#[cfg(feature = "esp-now")]
+const ESPNOW_SLOT: usize = 4 + cfg!(feature = "ble") as usize;
 pub const NOTIFY_CAP: usize = 16;
 const COMMANDS_CAP: usize = 8;
 pub const LIFECYCLE_CAP: usize = 8;
@@ -270,30 +269,30 @@ mod configuration;
 mod connectivity;
 mod display;
 
-#[cfg(feature = "softap")]
+#[cfg(feature = "wifi")]
 use captive_portal::ap_ssid;
-#[cfg(feature = "radio-wifi")]
+#[cfg(feature = "wifi")]
 use configuration::{hopspot_wifi_config, HopspotWifiConfig};
 use connectivity::build_tcp;
-#[cfg(feature = "radio-wifi")]
+#[cfg(feature = "wifi")]
 use connectivity::{build_wifi, espnow_channel_policy, EspNowAdapter};
-#[cfg(feature = "radio-wifi")]
+#[cfg(feature = "wifi")]
 use display::build_interface_menu_details;
 use display::{build_cards, build_snapshots, button_task};
 
 /// The WiFi supervisor's shared aggregate + per-peer status (written + read on core 0).
 static WIFI_SHARED: AutoWifiShared<MEMBERS> = AutoWifiShared::new(WIFI_FLEET_ID);
 
-/// Under `ble-bringup` the BLE supervisor reuses the (WiFi-free) fleet slot 2, keyed by its own kind
+/// Under `ble` the BLE supervisor reuses the (WiFi-free) fleet slot 2, keyed by its own kind
 /// so `BluetoothPeer` members route to it. The radio carries `BLE_MEMBERS` concurrent connections (the
 /// pooled `ble.rs` backend sizes its slot pool + trouble-host `CONNECTIONS` to this) — 2 since the
 /// reduced embedded MTU ceiling (1472) freed the internal lane RAM to carry a second peer.
-#[cfg(feature = "ble-bringup")]
+#[cfg(feature = "ble")]
 pub const BLE_MEMBERS: usize = limits::ESP32_S3_MAX_PEERS;
-#[cfg(feature = "ble-bringup")]
+#[cfg(feature = "ble")]
 const BLE_FLEET_ID: InterfaceId =
     InterfaceId::new([InterfaceKind::BluetoothAuto as u8, 0, 0, 0, 0, 0, 0, 0]);
-#[cfg(feature = "ble-bringup")]
+#[cfg(feature = "ble")]
 static BLE_SHARED: BluetoothAutoShared<BLE_MEMBERS> = BluetoothAutoShared::new(BLE_FLEET_ID);
 static LORA_CONTROL: LoRaControl = LoRaControl::new();
 
@@ -315,7 +314,7 @@ static LIFECYCLE: Channel<Mtx, InterfaceLifecycle, LIFECYCLE_CAP> = Channel::new
 static OUTBOUND_WAKE: Signal<Mtx, ()> = Signal::new();
 /// The BLE fleet's own outbound-commit wake (slot 4), so the BLE supervisor is roused only by its own
 /// egress and not spuriously by WiFi commits when the two fleets coexist.
-#[cfg(feature = "ble-bringup")]
+#[cfg(feature = "ble")]
 static BLE_OUTBOUND_WAKE: Signal<Mtx, ()> = Signal::new();
 static COMPLETION: CompletionPool<Mtx, COMPLETIONS_CAP> = CompletionPool::new();
 static BUTTON_EVENTS: Channel<Mtx, screen::InputEvent, 4> = Channel::new();
@@ -334,7 +333,7 @@ const PACKET_PHY_INDEX_BUCKETS: usize =
 /// fixture; the long-term fix is to gate the TRNG on RF-up. A fn (not a closure) so the host type
 /// stays nameable for the cross-core move.
 static ENTROPY_STATE: AtomicU64 = AtomicU64::new(0x9e37_79b9_7f4a_7c15);
-#[cfg(feature = "radio-wifi")]
+#[cfg(feature = "wifi")]
 static WIFI_STATION_JOINED: AtomicBool = AtomicBool::new(false);
 
 fn seeded_entropy(bytes: &mut [u8]) {
@@ -391,9 +390,9 @@ pub struct Bringup<D, B> {
     pub oled_ok: bool,
     pub battery: B,
     pub usb_device: USB_DEVICE<'static>,
-    #[cfg(feature = "radio-wifi")]
+    #[cfg(feature = "lora")]
     pub lora_radio: LoraRadio,
-    #[cfg(feature = "radio-wifi")]
+    #[cfg(feature = "wifi")]
     pub wifi: esp_hal::peripherals::WIFI<'static>,
     pub button: esp_hal::peripherals::GPIO0<'static>,
     pub cpu_ctrl: esp_hal::peripherals::CPU_CTRL<'static>,
@@ -401,7 +400,7 @@ pub struct Bringup<D, B> {
     pub timebase: EmbassyTimebase,
     /// The RTC handle is kept alive for the whole run so its disabled watchdogs stay disabled.
     pub _rtc: esp_hal::rtc_cntl::Rtc<'static>,
-    #[cfg(feature = "ble-bringup")]
+    #[cfg(feature = "ble")]
     pub bt: esp_hal::peripherals::BT<'static>,
 }
 
@@ -485,23 +484,23 @@ macro_rules! boot_common {
 pub(crate) use boot_common;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(not(feature = "softap"), allow(dead_code))]
+#[cfg_attr(not(feature = "wifi"), allow(dead_code))]
 pub enum RadioMode {
     Ble,
     AccessPoint,
 }
 
-#[cfg(feature = "softap")]
+#[cfg(feature = "wifi")]
 const RADIO_MODE_AP: u32 = 0x4150_0001;
-#[cfg(feature = "softap")]
+#[cfg(feature = "wifi")]
 const RADIO_MODE_BLE: u32 = 0x424C_4501;
-#[cfg(feature = "softap")]
+#[cfg(feature = "wifi")]
 #[esp_hal::ram(unstable(rtc_fast, persistent))]
 static mut RADIO_MODE_FLAG: u32 = 0;
 
 fn boot_radio_mode(station_configured: bool) -> RadioMode {
     let _ = station_configured;
-    #[cfg(feature = "softap")]
+    #[cfg(feature = "wifi")]
     {
         let flag = unsafe { core::ptr::addr_of!(RADIO_MODE_FLAG).read() };
         if flag == RADIO_MODE_AP {
@@ -509,13 +508,13 @@ fn boot_radio_mode(station_configured: bool) -> RadioMode {
         }
         RadioMode::Ble
     }
-    #[cfg(not(feature = "softap"))]
+    #[cfg(not(feature = "wifi"))]
     {
         RadioMode::Ble
     }
 }
 
-#[cfg(feature = "softap")]
+#[cfg(feature = "wifi")]
 fn request_radio_mode(mode: RadioMode) -> ! {
     let flag = match mode {
         RadioMode::AccessPoint => RADIO_MODE_AP,
