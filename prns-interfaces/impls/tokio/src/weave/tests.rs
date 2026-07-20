@@ -19,9 +19,9 @@ fn status_distinguishes_initial_start_retry_and_live_device() {
     assert_eq!(status.connection(), ConnectionState::Initializing);
     status.complete_initial_attempt();
     assert_eq!(status.connection(), ConnectionState::Reconnecting);
-    status.set_connected(true);
+    status.mark_connected();
     assert_eq!(status.connection(), ConnectionState::Connected);
-    status.set_enabled(false);
+    status.disable();
     assert_eq!(status.connection(), ConnectionState::Disabled);
 }
 

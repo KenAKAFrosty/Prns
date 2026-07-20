@@ -451,21 +451,21 @@ pub(super) fn run_window(handles: WindowHandles) {
         UiAction::Sleep => {
             ui_state.show_notice(screen::UiNotice::Sleeping);
             *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
-            toggle_usb.set_enabled(false);
-            toggle_wifi.set_enabled(false);
-            toggle_ble.set_enabled(false);
+            toggle_usb.disable();
+            toggle_wifi.disable();
+            toggle_ble.disable();
             if let Some(tcp) = &toggle_tcp {
-                tcp.set_enabled(false);
+                tcp.disable();
             }
         }
         UiAction::Wake => {
             ui_state.show_notice(screen::UiNotice::Awake);
             *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
-            toggle_usb.set_enabled(true);
-            toggle_wifi.set_enabled(true);
-            toggle_ble.set_enabled(true);
+            toggle_usb.enable();
+            toggle_wifi.enable();
+            toggle_ble.enable();
             if let Some(tcp) = &toggle_tcp {
-                tcp.set_enabled(true);
+                tcp.enable();
             }
         }
         UiAction::Announce => {
@@ -492,7 +492,7 @@ pub(super) fn run_window(handles: WindowHandles) {
                     screen::UiNotice::TurningOn
                 });
                 *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
-                toggle_usb.set_enabled(!toggle_usb.is_enabled());
+                toggle_usb.toggle_enabled();
             }
             Some(id) if id == toggle_wifi.id() => {
                 ui_state.show_notice(if toggle_wifi.is_enabled() {
@@ -501,17 +501,16 @@ pub(super) fn run_window(handles: WindowHandles) {
                     screen::UiNotice::TurningOn
                 });
                 *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
-                toggle_wifi.set_enabled(!toggle_wifi.is_enabled());
+                toggle_wifi.toggle_enabled();
             }
             Some(id) if id.kind() == Some(InterfaceKind::BluetoothAuto) => {
-                let next = !toggle_ble.is_enabled();
-                ui_state.show_notice(if next {
-                    screen::UiNotice::TurningOn
-                } else {
+                ui_state.show_notice(if toggle_ble.is_enabled() {
                     screen::UiNotice::TurningOff
+                } else {
+                    screen::UiNotice::TurningOn
                 });
                 *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
-                toggle_ble.set_enabled(next);
+                toggle_ble.toggle_enabled();
             }
             Some(id) if Some(id) == tcp_id => {
                 if let Some(tcp) = &toggle_tcp {
@@ -521,7 +520,7 @@ pub(super) fn run_window(handles: WindowHandles) {
                         screen::UiNotice::TurningOn
                     });
                     *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
-                    tcp.set_enabled(!tcp.is_enabled());
+                    tcp.toggle_enabled();
                 }
             }
             _ => {}

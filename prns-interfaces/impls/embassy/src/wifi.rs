@@ -143,15 +143,27 @@ impl<const MEMBERS: usize> AutoWifiStatus<MEMBERS> {
         Self { shared }
     }
 
-    /// Turn WiFi-auto discovery and member forwarding off or back on from the application.
-    pub fn set_enabled(&self, enabled: bool) {
+    pub fn enable(&self) {
+        self.update_enabled(true);
+    }
+
+    pub fn disable(&self) {
+        self.update_enabled(false);
+    }
+
+    pub fn toggle_enabled(&self) {
+        let enabled = !self.shared.enabled.fetch_xor(true, Ordering::Relaxed);
+        self.shared.enabled_changed.signal(enabled);
+        self.shared.radio_enabled_changed.signal(enabled);
+    }
+
+    fn update_enabled(&self, enabled: bool) {
         if self.shared.enabled.swap(enabled, Ordering::Relaxed) != enabled {
             self.shared.enabled_changed.signal(enabled);
             self.shared.radio_enabled_changed.signal(enabled);
         }
     }
 
-    /// Whether WiFi-auto should be discovering and carrying peers.
     #[must_use]
     pub fn is_enabled(&self) -> bool {
         self.shared.enabled.load(Ordering::Relaxed)
@@ -760,13 +772,13 @@ mod tests {
             join3(
                 status.wait_until_disabled(),
                 status.wait_until_radio_disabled(),
-                async { status.set_enabled(false) },
+                async { status.disable() },
             )
             .await;
             join3(
                 status.wait_until_enabled(),
                 status.wait_until_radio_enabled(),
-                async { status.set_enabled(true) },
+                async { status.enable() },
             )
             .await;
         });

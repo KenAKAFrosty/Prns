@@ -200,7 +200,7 @@ fn run_node(
         let usb_status = usb.status();
         handle.add_interface(usb);
         if std::env::var_os("HOPSPOT_USB_OFF").is_some() {
-            usb_status.set_enabled(false);
+            usb_status.disable();
             tracing::info!(event = "usb_started_disabled");
         }
 
@@ -221,7 +221,7 @@ fn run_node(
         let wifi = AutoWifi::default();
         let wifi_status = wifi.status();
         if std::env::var_os("HOPSPOT_WIFI_OFF").is_some() {
-            wifi_status.set_enabled(false);
+            wifi_status.disable();
             tracing::info!(event = "wifi_started_disabled");
         } else {
             #[cfg(target_os = "macos")]

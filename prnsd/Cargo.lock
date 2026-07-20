@@ -2241,7 +2241,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "personal-rns"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "cfg-if",
  "prns-core",
@@ -2342,7 +2342,7 @@ dependencies = [
 
 [[package]]
 name = "prns-core"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "aes",
  "base64",
@@ -2385,7 +2385,7 @@ dependencies = [
 
 [[package]]
 name = "prns-interfaces-embassy"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "embassy-futures",
  "embassy-net",
@@ -2404,7 +2404,7 @@ dependencies = [
 
 [[package]]
 name = "prns-interfaces-tokio"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "bluer",
  "btleplug",
@@ -2437,7 +2437,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "cfg-if",
  "heapless 0.8.0",
@@ -2446,7 +2446,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime-embassy"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "embassy-futures",
  "embassy-sync 0.8.0",
@@ -2460,7 +2460,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime-tokio"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "bzip2",
  "futures-util",
@@ -2477,7 +2477,7 @@ dependencies = [
 
 [[package]]
 name = "prnsd"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "base64",
  "clap",

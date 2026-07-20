@@ -6,7 +6,6 @@ use crate::interfaces::{
     AirtimeUtilization, ConnectionState, InterfaceId, InterfaceStatus, TransferRates,
 };
 
-/// Lock-free interface state shared between wire and presentation tasks.
 pub struct EmbassyInterfaceStatus {
     id: AtomicU64,
     connection: AtomicU8,
@@ -45,8 +44,20 @@ impl EmbassyInterfaceStatus {
             .store(u64::from_be_bytes(*id.as_bytes()), Ordering::Relaxed);
     }
 
-    /// Disabling retains the interface slot and routes for immediate resume.
-    pub fn set_enabled(&self, enabled: bool) {
+    pub fn enable(&self) {
+        self.update_enabled(true);
+    }
+
+    pub fn disable(&self) {
+        self.update_enabled(false);
+    }
+
+    pub fn toggle_enabled(&self) {
+        let enabled = !self.enabled.fetch_xor(true, Ordering::Relaxed);
+        self.enabled_changed.signal(enabled);
+    }
+
+    fn update_enabled(&self, enabled: bool) {
         if self.enabled.swap(enabled, Ordering::Relaxed) != enabled {
             self.enabled_changed.signal(enabled);
         }
@@ -151,13 +162,18 @@ mod tests {
 
         block_on(async {
             join(status.wait_until_disabled(), async {
-                status.set_enabled(false);
+                status.disable();
             })
             .await;
             join(status.wait_until_enabled(), async {
-                status.set_enabled(true);
+                status.toggle_enabled();
             })
             .await;
         });
+        assert!(status.is_enabled());
+        status.toggle_enabled();
+        assert!(!status.is_enabled());
+        status.enable();
+        assert!(status.is_enabled());
     }
 }

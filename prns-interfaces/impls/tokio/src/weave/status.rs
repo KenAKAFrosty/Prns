@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 
-use tokio::sync::Notify;
+use tokio::sync::watch;
 
 use prns_core::interfaces::weave::wdcl::{EndpointId, SwitchId};
 use prns_core::interfaces::{
@@ -45,8 +45,7 @@ pub struct WeaveInterfaceStatus {
 
 struct SharedStatus {
     id: InterfaceId,
-    enabled: AtomicBool,
-    enabled_changed: Notify,
+    enabled: watch::Sender<bool>,
     initial_attempt_complete: AtomicBool,
     connected: AtomicBool,
     issue: AtomicU8,
@@ -57,11 +56,11 @@ struct SharedStatus {
 
 impl WeaveInterfaceStatus {
     pub(super) fn new(id: InterfaceId) -> Self {
+        let (enabled, _) = watch::channel(true);
         Self {
             shared: Arc::new(SharedStatus {
                 id,
-                enabled: AtomicBool::new(true),
-                enabled_changed: Notify::new(),
+                enabled,
                 initial_attempt_complete: AtomicBool::new(false),
                 connected: AtomicBool::new(false),
                 issue: AtomicU8::new(WeaveRuntimeIssue::None as u8),
@@ -72,13 +71,31 @@ impl WeaveInterfaceStatus {
         }
     }
 
-    pub fn set_enabled(&self, enabled: bool) {
-        self.shared.enabled.store(enabled, Ordering::Relaxed);
-        self.shared.enabled_changed.notify_waiters();
+    pub fn enable(&self) {
+        self.update_enabled(true);
+    }
+
+    pub fn disable(&self) {
+        self.update_enabled(false);
+    }
+
+    pub fn toggle_enabled(&self) {
+        self.shared.enabled.send_if_modified(|current| {
+            *current = !*current;
+            true
+        });
+    }
+
+    fn update_enabled(&self, enabled: bool) {
+        self.shared.enabled.send_if_modified(|current| {
+            let changed = *current != enabled;
+            *current = enabled;
+            changed
+        });
     }
 
     pub fn is_enabled(&self) -> bool {
-        self.shared.enabled.load(Ordering::Relaxed)
+        *self.shared.enabled.borrow()
     }
 
     pub fn initial_attempt_complete(&self) -> bool {
@@ -122,8 +139,12 @@ impl WeaveInterfaceStatus {
             .store(true, Ordering::Relaxed);
     }
 
-    pub(super) fn set_connected(&self, connected: bool) {
-        self.shared.connected.store(connected, Ordering::Relaxed);
+    pub(super) fn mark_connected(&self) {
+        self.shared.connected.store(true, Ordering::Relaxed);
+    }
+
+    pub(super) fn mark_disconnected(&self) {
+        self.shared.connected.store(false, Ordering::Relaxed);
     }
 
     pub(super) fn set_issue(&self, issue: WeaveRuntimeIssue) {
@@ -157,16 +178,8 @@ impl WeaveInterfaceStatus {
     }
 
     async fn wait_for_enabled_state(&self, enabled: bool) {
-        loop {
-            if self.is_enabled() == enabled {
-                return;
-            }
-            let changed = self.shared.enabled_changed.notified();
-            if self.is_enabled() == enabled {
-                return;
-            }
-            changed.await;
-        }
+        let mut changed = self.shared.enabled.subscribe();
+        let _ = changed.wait_for(|current| *current == enabled).await;
     }
 
     fn members(&self) -> Vec<TokioInterfaceStatus> {

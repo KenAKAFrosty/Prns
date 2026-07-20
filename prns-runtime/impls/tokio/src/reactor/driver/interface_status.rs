@@ -6,7 +6,6 @@ use crate::interfaces::{
     AirtimeUtilization, ConnectionState, InterfaceId, InterfaceStatus, TransferRates,
 };
 
-/// A cheap-clone handle to one interface's live state: the interface holds a clone and writes it as the wire moves (connection on connect/disconnect, bytes as they cross); the app holds a clone and reads it lock-free via [`InterfaceStatus`] on its own render cadence.
 #[derive(Clone)]
 pub struct TokioInterfaceStatus {
     inner: Arc<StatusCell>,
@@ -56,8 +55,22 @@ impl TokioInterfaceStatus {
         }
     }
 
-    /// Turn this interface off or back on from the application. The driver reads [`is_enabled`](Self::is_enabled) and tears its wires down — releasing any resource it holds, e.g. an open serial port — while off, standing them back up on resume.
-    pub fn set_enabled(&self, enabled: bool) {
+    pub fn enable(&self) {
+        self.update_enabled(true);
+    }
+
+    pub fn disable(&self) {
+        self.update_enabled(false);
+    }
+
+    pub fn toggle_enabled(&self) {
+        self.inner.enabled.send_if_modified(|current| {
+            *current = !*current;
+            true
+        });
+    }
+
+    fn update_enabled(&self, enabled: bool) {
         self.inner.enabled.send_if_modified(|current| {
             let changed = *current != enabled;
             *current = enabled;
@@ -176,12 +189,17 @@ mod tests {
         tokio::join!(
             status.wait_until_disabled(),
             status.wait_until_disabled(),
-            async { status.set_enabled(false) },
+            async { status.disable() },
         );
         tokio::join!(
             status.wait_until_enabled(),
             status.wait_until_enabled(),
-            async { status.set_enabled(true) },
+            async { status.toggle_enabled() },
         );
+        assert!(status.is_enabled());
+        status.toggle_enabled();
+        assert!(!status.is_enabled());
+        status.enable();
+        assert!(status.is_enabled());
     }
 }
