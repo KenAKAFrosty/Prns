@@ -182,7 +182,7 @@ fn attach(paths: &ServicePaths, record: &ServiceRecord) -> Result<(), CommandErr
 }
 
 fn print_managed_banner(record: &ServiceRecord) {
-    splash::print(&format!("Personal Reticulum daemon · v{}", record.version));
+    splash::print(&format!("Personal RNS Daemon · v{}", record.version));
 }
 
 fn daemon_signature(args: &cli::DaemonArgs) -> u64 {
