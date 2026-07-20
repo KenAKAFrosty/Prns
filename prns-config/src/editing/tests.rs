@@ -4,7 +4,7 @@ use tempfile::tempdir;
 
 use crate::configobj::ConfigDocument;
 use crate::reference::keys::interface as interface_key;
-use crate::{ConfigDiagnosticCode, InterfaceKind};
+use crate::{parse_and_plan, ConfigDiagnosticCode, InterfaceKind};
 
 use super::{
     ConfigEdit, ConfigEditError, ConfigFile, ConfigFileError, ConfigRepairReport,
@@ -292,6 +292,79 @@ fn setting_catalog_parses_typed_values_and_canonicalizes_aliases() {
         .candidate()
         .lines()
         .any(|line| line.trim_start().starts_with("mode =")));
+}
+
+#[test]
+fn auto_setting_catalog_exposes_runtime_relevant_values_and_effective_defaults() {
+    let specs = InterfaceKind::Auto.supported_setting_specs();
+    assert!(specs.iter().any(|spec| spec.key().as_str() == "data_port"));
+    assert!(!specs
+        .iter()
+        .any(|spec| spec.key().as_str() == "discoverable"));
+    assert!(!InterfaceKind::Auto.supports_editing_setting(key("ignore_config_warnings")));
+
+    let report = parse_and_plan(BASE).unwrap_or_else(|error| panic!("{error}"));
+    let planned = report
+        .value
+        .interfaces
+        .first()
+        .unwrap_or_else(|| panic!("missing AutoInterface plan"));
+    let data_port = specs
+        .iter()
+        .find(|spec| spec.key().as_str() == "data_port")
+        .unwrap_or_else(|| panic!("missing data port setting"));
+    let bitrate = specs
+        .iter()
+        .find(|spec| spec.key().as_str() == "bitrate")
+        .unwrap_or_else(|| panic!("missing bitrate setting"));
+
+    assert_eq!(data_port.effective_value(planned).as_deref(), Some("42671"));
+    assert_eq!(
+        bitrate.effective_value(planned).as_deref(),
+        Some("1000000000")
+    );
+    assert_eq!(bitrate.format_value("1000000000"), "1,000,000,000 bps");
+    assert!(data_port.description().contains("packet traffic"));
+}
+
+#[test]
+fn discovery_editing_support_matches_the_runtime_advertisement_matrix() {
+    let discoverable = key("discoverable");
+    let reachable_on = key("reachable_on");
+    let frequency = key("discovery_frequency");
+
+    for kind in [
+        InterfaceKind::TcpClient,
+        InterfaceKind::TcpServer,
+        InterfaceKind::Kiss,
+        InterfaceKind::Rnode,
+        InterfaceKind::RnodeMulti,
+        InterfaceKind::Backbone,
+    ] {
+        assert!(kind.supports_editing_setting(discoverable), "{kind:?}");
+    }
+    for kind in [
+        InterfaceKind::Auto,
+        InterfaceKind::Udp,
+        InterfaceKind::Serial,
+        InterfaceKind::Ax25Kiss,
+        InterfaceKind::Pipe,
+        InterfaceKind::BackboneClient,
+        InterfaceKind::I2p,
+        InterfaceKind::Weave,
+        InterfaceKind::PrnsUsbAuto,
+        InterfaceKind::PrnsBluetoothAuto,
+        InterfaceKind::PrnsWebSocketClient,
+        InterfaceKind::PrnsWebSocketServer,
+    ] {
+        assert!(!kind.supports_editing_setting(discoverable), "{kind:?}");
+    }
+    assert!(InterfaceKind::TcpServer.supports_editing_setting(reachable_on));
+    assert!(InterfaceKind::Backbone.supports_editing_setting(reachable_on));
+    assert!(!InterfaceKind::Rnode.supports_editing_setting(reachable_on));
+    assert!(InterfaceKind::TcpClient.supports_editing_setting(frequency));
+    assert!(InterfaceKind::Kiss.supports_editing_setting(frequency));
+    assert!(!InterfaceKind::Rnode.supports_editing_setting(frequency));
 }
 
 #[test]

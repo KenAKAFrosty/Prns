@@ -182,6 +182,10 @@ impl Presentation {
         terminal::paint(text, MUTED, self.styled)
     }
 
+    pub(super) fn heading(&self, text: impl AsRef<str>) -> String {
+        terminal::bold(text, self.styled)
+    }
+
     fn validation_status(&self, validation: &ValidationState) -> String {
         let errors = validation.error_count();
         let warnings = validation.warning_count();

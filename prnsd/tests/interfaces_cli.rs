@@ -138,6 +138,21 @@ fn typed_options_reject_inapplicable_interface_settings() {
     assert_eq!(output.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&output.stderr).contains("does not apply"));
     assert!(!directory.path().join("config").exists());
+
+    let inert = run(
+        &directory,
+        &[
+            "add",
+            "auto-wifi",
+            "--name",
+            "LAN",
+            "--discoverable",
+            "true",
+            "--dry-run",
+        ],
+    );
+    assert_eq!(inert.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&inert.stderr).contains("does not apply"));
 }
 
 #[test]
