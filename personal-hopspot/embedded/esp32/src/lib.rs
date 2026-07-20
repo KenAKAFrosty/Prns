@@ -1,0 +1,58 @@
+#![no_std]
+#![cfg_attr(target_arch = "xtensa", feature(asm_experimental_arch))]
+
+extern crate alloc;
+
+#[cfg(all(
+    target_arch = "xtensa",
+    not(all(
+        feature = "ble",
+        feature = "esp-now",
+        feature = "lora",
+        feature = "tcp",
+        feature = "usb",
+        feature = "wifi"
+    ))
+))]
+compile_error!(
+    "ESP32-S3 firmware is built through a board package, which selects ble, esp-now, lora, tcp, usb, and wifi"
+);
+
+#[cfg(all(
+    target_arch = "riscv32",
+    not(all(
+        feature = "ble",
+        feature = "esp-now",
+        feature = "usb",
+        not(feature = "lora"),
+        not(feature = "tcp"),
+        not(feature = "wifi")
+    ))
+))]
+compile_error!(
+    "ESP32-C6 firmware is built through its board package, which selects ble, esp-now, and usb"
+);
+
+#[cfg(all(feature = "ble", any(target_arch = "riscv32", target_arch = "xtensa")))]
+pub mod ble;
+#[cfg(all(
+    target_arch = "riscv32",
+    feature = "ble",
+    feature = "esp-now",
+    feature = "usb",
+    not(feature = "lora"),
+    not(feature = "tcp"),
+    not(feature = "wifi")
+))]
+pub mod c6;
+#[cfg(all(
+    target_arch = "xtensa",
+    feature = "ble",
+    feature = "esp-now",
+    feature = "lora",
+    feature = "tcp",
+    feature = "usb",
+    feature = "wifi"
+))]
+pub mod s3;
+mod storage;

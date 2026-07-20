@@ -42,12 +42,6 @@ const ANNOUNCE_ASPECTS: &[&str] = &["delivery"];
 const ANNOUNCE_APP_DATA: &[u8] = b"personal-hopspot";
 
 fn load_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
-    if cfg!(feature = "fixture-identity") {
-        let mut key = Zeroizing::new([0u8; IDENTITY_SECRET_KEY_LEN]);
-        key[..32].fill(0x22);
-        key[32..].fill(0x11);
-        return key;
-    }
     personal_rns::runtime::generate_identity_secret()
 }
 

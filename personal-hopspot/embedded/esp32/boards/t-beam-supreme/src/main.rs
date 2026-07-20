@@ -1,0 +1,10 @@
+#![no_std]
+#![no_main]
+#![feature(asm_experimental_arch)]
+
+use embassy_executor::Spawner;
+
+#[esp_rtos::main]
+async fn main(spawner: Spawner) {
+    personal_hopspot_esp32::s3::boards::t_beam_supreme::run(spawner).await
+}

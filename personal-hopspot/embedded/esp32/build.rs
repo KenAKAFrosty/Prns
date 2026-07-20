@@ -30,7 +30,7 @@ fn main() {
         println!("cargo:rerun-if-changed=memory-esp32s3.x");
     }
 
-    if env::var_os("CARGO_FEATURE_SOFTAP").is_some() {
+    if env::var_os("CARGO_FEATURE_WIFI").is_some() {
         generate_hopspot_site(&out, &build_commit_short);
     }
 }

@@ -151,11 +151,8 @@ pub use prns_runtime::runtime::rns_remote_management;
 #[cfg(all(feature = "lora", feature = "embassy-host"))]
 pub use prns_interfaces_embassy::lora;
 
-#[cfg(all(feature = "ble-trouble", feature = "embassy-host"))]
-pub use prns_interfaces_embassy::ble_trouble;
-
 #[cfg(all(feature = "esp-now", feature = "embassy-host"))]
 pub use prns_interfaces_embassy::esp_now;
 
-#[cfg(all(feature = "usb-device", feature = "embassy-host"))]
+#[cfg(all(feature = "usb", feature = "embassy-host"))]
 pub use prns_interfaces_embassy::usb_device;

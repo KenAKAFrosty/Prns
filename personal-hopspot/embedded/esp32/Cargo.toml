@@ -6,59 +6,26 @@ publish = false
 description = "Personal Hopspot ESP32 firmware: the Heltec V4 and T-Beam Supreme (ESP32-S3) and the headless XIAO (ESP32-C6) faces."
 
 [workspace]
+members = [
+    "boards/heltec-v4",
+    "boards/t-beam-supreme",
+    "boards/xiao-esp32-c6",
+]
 resolver = "2"
 
-[features]
-default = ["radio-wifi"]
-# esp-radio's WiFi controller + the firmware's WiFi station/mesh stack. On by default (the production
-# firmware). `ble-bringup` builds with `--no-default-features` to leave it OFF, keeping the radio
-# BLE-only as a minimal isolated bring-up build (smaller, fewer moving parts while the native-BLE data
-# plane is proven). This is a bring-up convenience, not a coexistence requirement: WiFi+BLE coex is
-# supported, and the data-plane freezes once blamed on coex were a cross-core async-correctness bug.
-radio-wifi = ["esp-radio/wifi", "esp-radio/esp-now"]
-fixture-identity = []
-# Diagnostics: a pre-frame boot line reporting the engine's static SRAM footprint and
-# free heap, with a settle delay so a USB-serial-JTAG monitor catches it past re-enumeration.
-footprint = []
-# Temporary native-BLE bring-up mode: pulls in trouble-host + esp-radio's BLE controller and brings
-# the radio up as Bluetooth in isolation (WiFi off), proving the stack before WiFi+BLE coexistence.
-# Off by default, so the production firmware is unchanged.
-ble-bringup = ["dep:trouble-host", "esp-radio/ble", "personal-rns/ble", "personal-rns/ble-trouble"]
-# WiFi + BLE coexistence: both radios live at once (esp-radio's coex arbiter time-shares the 2.4 GHz
-# front-end) with WiFi and BLE as separate engine fleets. Pulls ble-bringup + radio-wifi together.
-coex = ["ble-bringup", "radio-wifi", "esp-radio/coex"]
-# Brings the AccessPoint role up. With WIFI creds configured this gives APSTA (the always-on "Hopspot"
-# SoftAP alongside the home-network station); with no WIFI_SSID it is the off-grid AP-only measurement
-# build. Part of the `full` production feature below.
-softap = []
-# THE production firmware: every radio + the SoftAP, in one feature. WiFi station + "Hopspot" SoftAP
-# (APSTA), LoRa, and BLE all coexisting via the coex arbiter. This is what the field boards run — build
-# with `cargo heltec-v4-flash` / `cargo tbeam-supreme-flash`. Don't hand-assemble coex/softap/radio-wifi
-# piecemeal; that is how a board ends up missing BLE or its AP. The `-ble` aliases stay for isolated
-# bring-up debugging only.
-full = ["coex", "softap"]
-# Build for the LilyGO T-Beam S3 Supreme instead of the Heltec V4. Same ESP32-S3 + SX1262 silicon,
-# so the radio/WiFi/BLE/reactor stack is identical; this selects the board bring-up module
-# (t_beam_supreme.rs) with the T-Beam pin map + AXP2101 PMU power-up. Orthogonal to the radio-set
-# features (radio-wifi / ble-bringup / coex), which still apply.
-board-tbeam-supreme = []
-# AP-segment isolation test: gates LoRa + ESP-NOW off the engine routing so the only live data path is
-# the WiFi-auto SoftAP. Pair with a bogus SSID (station never associates) + a no-coex build (no BLE) to
-# prove AP-segment multicast in isolation. Not production.
-ap-test = []
-# Native-BLE bring-up for the C6 (riscv32): the mirror of `ble-bringup`, kept separate so it activates
-# the riscv target's OPTIONAL BLE deps (trouble-host + esp-radio's esp32c6 controller) and switches
-# esp-rtos onto the radio scheduler.
-ble-bringup-c6 = ["dep:trouble-host", "esp-radio/ble", "esp-rtos/esp-radio", "personal-rns/ble", "personal-rns/ble-trouble"]
-# ESP-NOW for the C6: uses Espressif's WiFi radio driver internally, but exposes only the ESP-NOW
-# broadcast Reticulum interface. No WiFi-LAN station, DHCP, UDP auto-interface, or SoftAP.
-espnow-c6 = ["esp-radio/wifi", "esp-radio/esp-now", "esp-rtos/esp-radio", "personal-rns/esp-now"]
-# The C6 Hopspot product build: USB-auto + ESP-NOW + BLE on the headless XIAO ESP32-C6.
-hopspot-c6 = ["espnow-c6", "ble-bringup-c6", "esp-radio/coex"]
+[lib]
+path = "src/lib.rs"
 
-[[bin]]
-name = "personal-hopspot-esp32"
-path = "src/main.rs"
+[features]
+# These are interface capabilities, not firmware profiles. Each board package below this workspace
+# selects its complete supported set; the target crate rejects hand-assembled partial board images.
+default = []
+ble = ["dep:trouble-host", "dep:prns-interfaces-embassy", "esp-radio/ble", "esp-radio/coex", "esp-rtos/esp-radio", "personal-rns/ble"]
+wifi = ["esp-radio/wifi", "esp-radio/coex", "esp-rtos/esp-radio", "personal-rns/wifi"]
+esp-now = ["esp-radio/esp-now", "esp-radio/coex", "esp-rtos/esp-radio", "personal-rns/esp-now"]
+lora = ["personal-rns/lora"]
+usb = ["personal-rns/usb"]
+tcp = ["wifi", "personal-rns/tcp"]
 
 [dependencies]
 cfg-if = "1.0"
@@ -67,14 +34,13 @@ embedded-graphics = "0.8"
 heapless = { version = "0.8", default-features = false }
 
 [target.'cfg(target_arch = "xtensa")'.dependencies]
-personal-rns = { path = "../../../personal-rns", default-features = false, features = ["embassy-host", "external-alloc", "tcp", "wifi", "lora", "esp-now", "usb", "log"] }
+personal-rns = { path = "../../../personal-rns", default-features = false, features = ["embassy-host", "external-alloc", "log"] }
+prns-interfaces-embassy = { path = "../../../prns-interfaces/impls/embassy", optional = true, default-features = false, features = ["ble-trouble"] }
 allocator-api2 = { version = "0.3", default-features = false, features = ["alloc"] }
 embedded-hal = "1"
 embedded-hal-bus = { version = "0.3", features = ["async"] }
 esp-radio = { version = "0.18", default-features = false, features = ["esp32s3", "unstable", "esp-alloc"] }
-# The board's share of the trouble-host BLE stack (the protocol body lives in the extracted
-# `personal_rns::ble_trouble` backend): the concrete transport/stack types, the statics, and this
-# board's packet-pool sizing, which cargo feature-unions onto the backend's trouble instance.
+# The board's share of the trouble-host BLE stack: concrete transport types and packet-pool sizing.
 trouble-host = { version = "0.6.0", optional = true, default-features = false, features = ["default-packet-pool-size-8"] }
 embassy-net = { version = "0.9.1", default-features = false, features = ["proto-ipv4", "proto-ipv6", "dhcpv4", "medium-ethernet", "multicast", "tcp", "udp"] }
 static_cell = "2"
@@ -94,10 +60,10 @@ embassy-sync = { version = "0.8", default-features = false }
 embassy-futures = { version = "0.1", default-features = false }
 
 # Seeed XIAO ESP32-C6 (riscv32, single-core, no PSRAM): the esp stack pinned to the esp32c6 chip.
-# Built --no-default-features so the S3's production radio set stays off; the C6 Hopspot alias enables
-# only USB-auto, ESP-NOW, and BLE.
+# Its explicit board package selects only USB Auto, ESP-NOW, and BLE.
 [target.'cfg(target_arch = "riscv32")'.dependencies]
-personal-rns = { path = "../../../personal-rns", default-features = false, features = ["embassy-host", "usb", "log"] }
+personal-rns = { path = "../../../personal-rns", default-features = false, features = ["embassy-host", "log"] }
+prns-interfaces-embassy = { path = "../../../prns-interfaces/impls/embassy", optional = true, default-features = false, features = ["ble-trouble"] }
 esp-hal = { version = "1.1", features = ["esp32c6", "unstable"] }
 esp-rtos = { version = "0.3.0", features = ["esp32c6", "embassy"] }
 esp-alloc = { version = "0.10.0", features = ["internal-heap-stats"] }
@@ -115,7 +81,7 @@ embassy-futures = { version = "0.1", default-features = false }
 embedded-io = { version = "0.7", default-features = false }
 embedded-io-async = { version = "0.7", default-features = false }
 trouble-host = { version = "0.6.0", optional = true, default-features = false, features = ["default-packet-pool-size-32"] }
-esp-radio = { version = "0.18", default-features = false, features = ["esp32c6", "unstable", "esp-alloc"], optional = true }
+esp-radio = { version = "0.18", default-features = false, features = ["esp32c6", "unstable", "esp-alloc"] }
 
 [build-dependencies]
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }

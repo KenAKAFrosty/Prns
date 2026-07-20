@@ -10,21 +10,7 @@ ELF=target/thumbv7em-none-eabihf/release/t-echo
 BIN=/tmp/t-echo.bin
 UF2=/tmp/t-echo.uf2
 
-case "${1:-hopspot-t-echo}" in
-    hopspot-t-echo | full)
-        cargo build --release --no-default-features --features hopspot-t-echo
-        ;;
-    lora-only)
-        cargo build --release --no-default-features --features cs-single-core
-        ;;
-    ble)
-        cargo build --release --no-default-features --features hopspot-t-echo
-        ;;
-    *)
-        echo "usage: $0 [hopspot-t-echo|full|lora-only]" >&2
-        exit 2
-        ;;
-esac
+cargo build --release
 
 rust-objcopy -O binary "$ELF" "$BIN"
 python3 "$HERE/scripts/uf2conv.py" "$BIN" --base "$BASE" --family "$FAMILY" --output "$UF2"

@@ -19,11 +19,11 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let mut display = b.display;
     let oled_ok = b.oled_ok;
     let mut battery_source = b.battery;
-    #[cfg(feature = "radio-wifi")]
+    #[cfg(feature = "wifi")]
     let wifi_config = hopspot_wifi_config();
-    #[cfg(feature = "radio-wifi")]
+    #[cfg(feature = "wifi")]
     let station_configured = wifi_config.has_station();
-    #[cfg(not(feature = "radio-wifi"))]
+    #[cfg(not(feature = "wifi"))]
     let station_configured = false;
     let radio_mode = boot_radio_mode(station_configured);
 
@@ -65,7 +65,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         if slot == WIFI_FLEET_SLOT {
             out_producer.set_outbound_wake(&OUTBOUND_WAKE);
         }
-        #[cfg(feature = "ble-bringup")]
+        #[cfg(feature = "ble")]
         if slot == BLE_FLEET_SLOT {
             out_producer.set_outbound_wake(&BLE_OUTBOUND_WAKE);
         }
@@ -74,7 +74,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         iface_halves[slot] = Some((in_producer, out_consumer));
     }
 
-    #[cfg(feature = "radio-wifi")]
+    #[cfg(feature = "lora")]
     let lora_radio = b.lora_radio;
     let lora_profile = DEFAULT_915_PROFILE;
     let lora_id = InterfaceId::from_channel_tag(InterfaceKind::LoRa, &channel_tag(&lora_profile));
@@ -82,7 +82,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         EmbassyInterfaceStatus,
         EmbassyInterfaceStatus::new(lora_id, ConnectionState::Initializing)
     );
-    #[cfg(feature = "radio-wifi")]
+    #[cfg(feature = "lora")]
     let lora = LoRaInterface::new(
         lora_radio,
         lora_profile,
@@ -93,7 +93,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
 
     // The WiFi stack carries both the WiFi-auto UDP and the TCP client, so it stands up before the
     // node moves to core 1 — activating the TCP slot is a core-0-only act.
-    #[cfg(feature = "radio-wifi")]
+    #[cfg(feature = "wifi")]
     let (wifi, tcp_stack, esp_now) = build_wifi(
         &spawner,
         b.wifi,
@@ -101,17 +101,17 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         &wifi_config,
         radio_mode == RadioMode::AccessPoint,
     );
-    #[cfg(not(feature = "radio-wifi"))]
+    #[cfg(not(feature = "wifi"))]
     let wifi: Option<AutoWifi<'static, MEMBERS>> = None;
-    #[cfg(not(feature = "radio-wifi"))]
+    #[cfg(not(feature = "wifi"))]
     let tcp_stack: Option<Stack<'static>> = None;
 
-    #[cfg(feature = "radio-wifi")]
+    #[cfg(feature = "esp-now")]
     let espnow_status: &'static EmbassyInterfaceStatus = mk_static!(
         EmbassyInterfaceStatus,
         EmbassyInterfaceStatus::new(espnow_core::interface_id(), ConnectionState::Initializing)
     );
-    #[cfg(feature = "radio-wifi")]
+    #[cfg(feature = "esp-now")]
     let espnow = esp_now.map(|radio| {
         EspNowInterface::new(
             EspNowAdapter::new(radio),
@@ -156,9 +156,9 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
     };
 
-    #[cfg(feature = "radio-wifi")]
+    #[cfg(feature = "lora")]
     let lora_cfg = lora.descriptor();
-    #[cfg(feature = "radio-wifi")]
+    #[cfg(feature = "esp-now")]
     let espnow_cfg = espnow.as_ref().map(|e| e.descriptor());
     let tcp_cfg = tcp_built.as_ref().map(|(t, _, _)| t.descriptor());
     let has_wifi = wifi.is_some();
@@ -174,17 +174,17 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         if let Some(cfg) = tcp_cfg {
             node.activate(TCP_SLOT, cfg);
         }
-        #[cfg(all(feature = "radio-wifi", not(feature = "ap-test")))]
+        #[cfg(feature = "lora")]
         node.activate(LORA_SLOT, lora_cfg);
-        #[cfg(all(feature = "radio-wifi", not(feature = "ap-test")))]
+        #[cfg(feature = "esp-now")]
         if let Some(cfg) = espnow_cfg {
             node.activate(ESPNOW_SLOT, cfg);
         }
-        #[cfg(feature = "radio-wifi")]
+        #[cfg(feature = "wifi")]
         if has_wifi {
             node.activate_fleet(WIFI_FLEET_SLOT, WIFI_FLEET_ID);
         }
-        #[cfg(feature = "ble-bringup")]
+        #[cfg(feature = "ble")]
         if radio_mode == RadioMode::Ble {
             node.activate_fleet(BLE_FLEET_SLOT, BLE_FLEET_ID);
         }
@@ -212,7 +212,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         usb_device_task(usb_rx, usb_tx, usb_seam, usb_id, usb_status).expect("usb task fits"),
     );
 
-    #[cfg(feature = "radio-wifi")]
+    #[cfg(feature = "lora")]
     let lora_seam = {
         let (lora_in_producer, lora_out_consumer) =
             iface_halves[LORA_SLOT].take().expect("lora slot half");
@@ -225,7 +225,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         )
     };
 
-    #[cfg(feature = "radio-wifi")]
+    #[cfg(feature = "esp-now")]
     let espnow = espnow.map(|interface| {
         let (in_producer, out_consumer) =
             iface_halves[ESPNOW_SLOT].take().expect("espnow slot half");
@@ -251,7 +251,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         (tcp, seam)
     });
 
-    #[cfg(feature = "radio-wifi")]
+    #[cfg(feature = "wifi")]
     let wifi_fleet: Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP> = {
         let (in_producer, out_consumer) = iface_halves[WIFI_FLEET_SLOT]
             .take()
@@ -269,11 +269,11 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     // The WiFi-auto run loop's two MTU receive buffers live on the heap (the D-cache donation),
     // not on the bounded `#[esp_rtos::main]` stack that run()'s future rides; the alloc-free
     // embassy AutoWifi just borrows them. Leaked: they live for the program's whole life anyway.
-    #[cfg(feature = "radio-wifi")]
+    #[cfg(feature = "wifi")]
     let wifi_data_buf: &'static mut [u8] = alloc::vec![0u8; wifi_core::HARDWARE_MTU].leak();
-    #[cfg(feature = "radio-wifi")]
+    #[cfg(feature = "wifi")]
     let wifi_sec_data_buf: &'static mut [u8] = alloc::vec![0u8; wifi_core::HARDWARE_MTU].leak();
-    #[cfg(feature = "ble-bringup")]
+    #[cfg(feature = "ble")]
     let ble_fleet: Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP> = {
         let (in_producer, out_consumer) =
             iface_halves[BLE_FLEET_SLOT].take().expect("ble fleet half");
@@ -297,11 +297,11 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         status.id()
     });
 
-    #[cfg(feature = "radio-wifi")]
+    #[cfg(feature = "esp-now")]
     let espnow_card_id = espnow.as_ref().map(|(interface, _)| interface.id());
-    #[cfg(feature = "radio-wifi")]
+    #[cfg(feature = "esp-now")]
     let espnow_card_status = espnow_card_id.map(|_| espnow_status);
-    #[cfg(not(feature = "radio-wifi"))]
+    #[cfg(not(feature = "esp-now"))]
     let (espnow_card_id, espnow_card_status): (
         Option<InterfaceId>,
         Option<&'static EmbassyInterfaceStatus>,
@@ -311,16 +311,13 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         let mut ui_state = screen::UiState::new();
         ui_state.set_storage_limits(<EngineStorageType as StorageLayout>::LIMITS);
         ui_state.set_display_power_capable(oled_ok);
-        ui_state.set_radio_state(
-            cfg!(feature = "softap"),
-            radio_mode == RadioMode::AccessPoint,
-        );
+        ui_state.set_radio_state(cfg!(feature = "wifi"), radio_mode == RadioMode::AccessPoint);
         let mut working_lora_profile = DEFAULT_915_PROFILE;
         let mut battery_state = screen::BatteryState::Unknown;
         let mut battery_gauge = screen::BatteryGauge::lipo();
-        #[cfg(feature = "softap")]
+        #[cfg(feature = "wifi")]
         let ap_footer_ssid = (radio_mode == RadioMode::AccessPoint).then(ap_ssid);
-        #[cfg(feature = "softap")]
+        #[cfg(feature = "wifi")]
         let site_footer = ap_footer_ssid.as_deref().map(|ssid| {
             screen::UiFooter::with_lines(
                 "WifiAP",
@@ -329,7 +326,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 Some(CAPTIVE_PORTAL_HOST),
             )
         });
-        #[cfg(not(feature = "softap"))]
+        #[cfg(not(feature = "wifi"))]
         let site_footer = None;
         let has_site_footer = site_footer.is_some();
         let mut ticks_to_battery: u8 = 0;
@@ -365,11 +362,9 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             let activity_secs = (now_ms / 1000).min(u64::from(u32::MAX)) as u32;
             activity.update(&mut cards, activity_secs);
             let card_count = cards.len();
-            #[cfg(all(feature = "radio-wifi", feature = "softap"))]
+            #[cfg(feature = "wifi")]
             let menu_ap_ssid = ap_footer_ssid.as_deref();
-            #[cfg(all(feature = "radio-wifi", not(feature = "softap")))]
-            let menu_ap_ssid = None;
-            #[cfg(feature = "radio-wifi")]
+            #[cfg(feature = "wifi")]
             let interface_menu_details = build_interface_menu_details(
                 ui_state
                     .selected_card(card_count)
@@ -379,7 +374,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 &wifi_config,
                 menu_ap_ssid,
             );
-            #[cfg(not(feature = "radio-wifi"))]
+            #[cfg(not(feature = "wifi"))]
             let interface_menu_details = screen::InterfaceMenuDetailRows::new();
             ui_state.sync_card_count_with_footer(card_count, has_site_footer);
             if notice_until_ms.is_some_and(|until| now_ms >= until) {
@@ -474,7 +469,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                             if let Some(tcp) = tcp_status {
                                 tcp.set_enabled(false);
                             }
-                            #[cfg(feature = "ble-bringup")]
+                            #[cfg(feature = "ble")]
                             {
                                 let status = BluetoothAutoStatus::new(&BLE_SHARED);
                                 status.set_enabled(false);
@@ -500,7 +495,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                             if let Some(tcp) = tcp_status {
                                 tcp.set_enabled(true);
                             }
-                            #[cfg(feature = "ble-bringup")]
+                            #[cfg(feature = "ble")]
                             {
                                 let status = BluetoothAutoStatus::new(&BLE_SHARED);
                                 status.set_enabled(true);
@@ -562,14 +557,14 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                         if card.id == tcp_id {
                                             show_toggle_notice(tcp.is_enabled());
                                             tcp.set_enabled(!tcp.is_enabled());
-                                            #[cfg(feature = "ble-bringup")]
+                                            #[cfg(feature = "ble")]
                                             {
                                                 handled = true;
                                             }
                                         }
                                     }
                                 }
-                                #[cfg(feature = "ble-bringup")]
+                                #[cfg(feature = "ble")]
                                 if !handled && card.id == BLE_FLEET_ID {
                                     let status = BluetoothAutoStatus::new(&BLE_SHARED);
                                     show_toggle_notice(status.is_enabled());
@@ -588,7 +583,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                             LORA_CONTROL.signal(profile);
                         }
                         screen::UiAction::SwapRadioMode => {
-                            #[cfg(feature = "softap")]
+                            #[cfg(feature = "wifi")]
                             {
                                 let next = match radio_mode {
                                     RadioMode::Ble => RadioMode::AccessPoint,
@@ -605,7 +600,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         }
     };
 
-    #[cfg(all(feature = "ble-bringup", not(feature = "radio-wifi")))]
+    #[cfg(all(feature = "ble", not(feature = "wifi")))]
     // Halve the BLE controller task stack (8192 -> 4096; esp-radio's own default hints "4096?") to
     // reclaim ~4 KiB internal SRAM toward the full radio stack + SoftAP fit.
     let ble_connector = esp_radio::ble::controller::BleConnector::new(
@@ -614,7 +609,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     )
     .expect("ble connector");
 
-    #[cfg(all(feature = "ble-bringup", not(feature = "radio-wifi")))]
+    #[cfg(all(feature = "ble", not(feature = "wifi")))]
     {
         let _ = (wifi, tcp, has_wifi);
         join(
@@ -623,23 +618,13 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         )
         .await;
     }
-    #[cfg(all(feature = "radio-wifi", not(feature = "ble-bringup")))]
+    #[cfg(all(feature = "wifi", not(feature = "ble")))]
     {
-        #[cfg(not(feature = "ap-test"))]
         let lora_run = lora.run(lora_seam);
-        #[cfg(feature = "ap-test")]
-        let lora_run = async {
-            let _ = (lora, lora_seam);
-        };
-        #[cfg(not(feature = "ap-test"))]
         let espnow_run = async {
             if let Some((interface, seam)) = espnow {
                 interface.run(seam).await;
             }
-        };
-        #[cfg(feature = "ap-test")]
-        let espnow_run = async {
-            let _ = espnow;
         };
         match (wifi, tcp) {
             (Some(wifi), Some((tcp, tcp_seam))) => {
@@ -670,23 +655,13 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             }
         }
     }
-    #[cfg(all(feature = "ble-bringup", feature = "radio-wifi"))]
+    #[cfg(all(feature = "ble", feature = "wifi"))]
     {
-        #[cfg(not(feature = "ap-test"))]
         let lora_run = lora.run(lora_seam);
-        #[cfg(feature = "ap-test")]
-        let lora_run = async {
-            let _ = (lora, lora_seam);
-        };
-        #[cfg(not(feature = "ap-test"))]
         let espnow_run = async {
             if let Some((interface, seam)) = espnow {
                 interface.run(seam).await;
             }
-        };
-        #[cfg(feature = "ap-test")]
-        let espnow_run = async {
-            let _ = espnow;
         };
         match radio_mode {
             RadioMode::Ble => {

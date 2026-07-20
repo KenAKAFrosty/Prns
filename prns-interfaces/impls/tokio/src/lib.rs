@@ -32,10 +32,10 @@ pub mod reconnect;
 
 pub mod interface_menu;
 
-#[cfg(feature = "auto")]
+#[cfg(any(feature = "wifi", feature = "usb", feature = "ble"))]
 pub mod auto;
 
-#[cfg(feature = "from-plan")]
+#[cfg(feature = "config")]
 pub mod from_plan;
 
 #[cfg(feature = "interface-discovery")]
@@ -66,7 +66,7 @@ pub mod udp;
 #[cfg(feature = "serial")]
 pub mod serial;
 
-#[cfg(feature = "serial-host")]
+#[cfg(feature = "serial")]
 pub mod serial_host;
 
 #[cfg(feature = "kiss")]
@@ -74,9 +74,9 @@ pub mod kiss;
 
 #[cfg(feature = "rnode")]
 pub mod rnode;
-#[cfg(feature = "rnode-ble")]
+#[cfg(feature = "rnode")]
 mod rnode_ble;
-#[cfg(feature = "from-plan")]
+#[cfg(feature = "config")]
 mod rnode_host;
 
 #[cfg(feature = "rnode")]
@@ -85,10 +85,10 @@ pub mod rnode_multi;
 #[cfg(feature = "pipe")]
 pub mod pipe;
 
-#[cfg(feature = "pipe-host")]
+#[cfg(feature = "pipe")]
 pub mod pipe_host;
 
-#[cfg(feature = "from-plan")]
+#[cfg(feature = "config")]
 mod host_network;
 
 #[cfg(feature = "websocket")]
@@ -118,7 +118,7 @@ pub mod wifi_aware;
 #[cfg(feature = "usb")]
 pub mod usb;
 
-#[cfg(feature = "usb-host")]
+#[cfg(feature = "usb")]
 pub mod usb_host;
 
 #[cfg(feature = "shared-instance")]

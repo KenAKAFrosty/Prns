@@ -1,6 +1,6 @@
-#[cfg(feature = "radio-wifi")]
+#[cfg(feature = "wifi")]
 use super::captive_portal::station_wifi_mode;
-#[cfg(feature = "softap")]
+#[cfg(feature = "wifi")]
 use super::captive_portal::{build_ap_netif, dhcp_server_task, dns_server_task, http_server_task};
 use super::*;
 
@@ -34,7 +34,7 @@ pub(super) fn build_tcp(
     Some((tcp, status, id))
 }
 
-#[cfg(feature = "radio-wifi")]
+#[cfg(feature = "wifi")]
 pub(super) fn build_wifi(
     spawner: &Spawner,
     wifi: esp_hal::peripherals::WIFI<'static>,
@@ -133,7 +133,7 @@ pub(super) fn build_wifi(
     // in as the opportunistic secondary. The AP link-local is the station MAC + 1 (build_ap_netif
     // derives it from `mac`), and the supervisor hashes its peering token over that AP link-local, so
     // it takes `ap_mac`.
-    #[cfg(feature = "softap")]
+    #[cfg(feature = "wifi")]
     if ap_enabled {
         let mut ap_mac = mac;
         ap_mac[5] = ap_mac[5].wrapping_add(1);
@@ -193,7 +193,7 @@ pub(super) fn build_wifi(
     }
 }
 
-#[cfg(feature = "radio-wifi")]
+#[cfg(feature = "wifi")]
 /// Hold the WiFi controller alive with no AP association — dropping it would stop the radio — so
 /// ESP-NOW keeps the WiFi MAC up on a fixed channel when no SSID is configured. The radio was started
 /// synchronously by [`build_wifi`] before this task takes the controller.
@@ -208,7 +208,7 @@ async fn wifi_radio_keepalive_task(_controller: WifiController<'static>) -> ! {
 /// side of the boundary, the way the SX1262 driver sits behind `SpiDevice`. Broadcast-only; a
 /// transient `NO_MEM` while the radio is off serving a BLE connection event is retried a few times
 /// before the frame is dropped for the engine to resend.
-#[cfg(feature = "radio-wifi")]
+#[cfg(feature = "wifi")]
 pub(super) struct EspNowAdapter {
     manager: EspNowManager<'static>,
     sender: EspNowSender<'static>,
@@ -216,9 +216,9 @@ pub(super) struct EspNowAdapter {
     rate_applied: bool,
 }
 
-#[cfg(feature = "radio-wifi")]
+#[cfg(feature = "wifi")]
 const ESPNOW_SEND_RETRIES: u8 = 8;
-#[cfg(feature = "radio-wifi")]
+#[cfg(feature = "wifi")]
 const ESPNOW_SEND_RETRY_DELAY: Duration = Duration::from_millis(5);
 /// The pinned ESP-NOW PHY rate: 802.11g 12 Mbps, QPSK rate-1/2 OFDM. HT/HE *broadcast* RX is
 /// hard-pinned to 1M DSSS by the closed WiFi blob (no public override) so MCS rates transmit but
@@ -230,12 +230,12 @@ const ESPNOW_SEND_RETRY_DELAY: Duration = Duration::from_millis(5);
 /// gap programs the rate one slot below its name (`Rate12m` -> C 24M). The discriminant of `Rate6m`
 /// (10) equals C `WIFI_PHY_RATE_12M`, so `Rate6m` is what actually selects g-12M. This one spot
 /// localizes the workaround; TODO: patch esp-radio's enum upstream and return `Rate12m`.
-#[cfg(feature = "radio-wifi")]
+#[cfg(feature = "wifi")]
 const fn espnow_phy_rate() -> WifiPhyRate {
     WifiPhyRate::Rate6m
 }
 
-#[cfg(feature = "radio-wifi")]
+#[cfg(feature = "wifi")]
 impl EspNowAdapter {
     pub(super) fn new(esp_now: EspNow<'static>) -> Self {
         let (manager, sender, receiver) = esp_now.split();
@@ -258,7 +258,7 @@ impl EspNowAdapter {
     }
 }
 
-#[cfg(feature = "radio-wifi")]
+#[cfg(feature = "wifi")]
 impl espnow_core::EspNowRadio for EspNowAdapter {
     fn set_channel(&mut self, channel: EspNowChannel) {
         let _ = self.manager.set_channel(channel.as_u8());
@@ -292,7 +292,7 @@ impl espnow_core::EspNowRadio for EspNowAdapter {
 /// A node pinned to a WiFi access point is channel-locked to it (ESP-NOW must follow the station's
 /// channel, never retune and break the association); a node with no WiFi configured is free to sit on
 /// the default rendezvous channel. The locked/free seam a future scan-and-follow layer extends.
-#[cfg(feature = "radio-wifi")]
+#[cfg(feature = "wifi")]
 pub(super) fn espnow_channel_policy(station_configured: bool) -> ChannelPolicy {
     if station_configured {
         ChannelPolicy::FollowStation
@@ -301,13 +301,13 @@ pub(super) fn espnow_channel_policy(station_configured: bool) -> ChannelPolicy {
     }
 }
 
-#[cfg(feature = "radio-wifi")]
+#[cfg(feature = "wifi")]
 #[embassy_executor::task(pool_size = 2)]
 pub(super) async fn net_task(mut runner: Runner<'static, WifiStaDevice<'static>>) -> ! {
     runner.run().await
 }
 
-#[cfg(feature = "radio-wifi")]
+#[cfg(feature = "wifi")]
 /// A mesh (e.g. eero) hands the same SSID out on many BSSIDs across its nodes and bands and bridges
 /// multicast between them unreliably, so a station left to roam can land on a node that never
 /// receives the discovery group. To avoid that, this scans first and pins to the strongest BSSID

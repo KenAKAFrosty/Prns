@@ -30,7 +30,7 @@ embedded-hal = { version = "1", optional = true, default-features = false }
 embedded-hal-async = { version = "1", optional = true, default-features = false }
 log = { version = "0.4", optional = true, default-features = false }
 
-# Pure-Rust host BLE stack for the `ble-trouble` backend, generic over any bt-hci transport.
+# Pure-Rust host BLE stack behind the Embassy BLE interface, generic over any bt-hci transport.
 # 0.6.0 is the published release whose bt-hci 0.8 agrees with esp-radio 0.18. It depends on
 # embassy-sync 0.7 and heapless 0.9 while the rest of this crate is on 0.8; the aliases below
 # feed trouble its own versions across the boundary, keeping the dual-version island contained
@@ -55,8 +55,7 @@ lora = ["dep:embedded-hal", "dep:embedded-hal-async"]
 esp-now = ["prns-core/alloc", "prns-runtime/alloc"]
 ble = []
 ble-trouble = ["ble", "dep:trouble-host", "dep:bt-hci", "dep:embassy-sync-07", "dep:heapless-09"]
-usb = ["dep:embedded-io-async"]
-usb-device = ["usb", "dep:embassy-usb"]
+usb = ["dep:embedded-io-async", "dep:embassy-usb"]
 
 [lints.clippy]
 dbg_macro = "deny"

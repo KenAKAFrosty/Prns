@@ -20,7 +20,7 @@ prns-config = { path = "../../../prns-config", optional = true }
 shlex = { version = "1", optional = true }
 # The async serial transport behind serial_host's opener; default-features off drops the
 # libudev enumeration dep (the opener works by path; enumeration is serialport's job under
-# usb-host). >= 5.5 (mio-serial 5.0.7) is required on Windows: earlier versions hard-error
+# usb). >= 5.5 (mio-serial 5.0.7) is required on Windows: earlier versions hard-error
 # reading back stop bits when opening an ESP32-native-USB RNode (whose CDC reports 1.5 stop
 # bits); 5.0.7 degrades that readback to a warning, so `open_native_async` opens such
 # devices instead of failing.
@@ -89,27 +89,22 @@ log = ["dep:log", "prns-ffi?/log"]
 tracing = ["dep:tracing"]
 tcp = ["dep:tokio", "tokio/net", "dep:socket2"]
 udp = ["dep:tokio", "tokio/net"]
-serial = ["dep:tokio"]
-serial-host = ["dep:tokio", "dep:tokio-serial"]
+serial = ["dep:tokio", "dep:tokio-serial"]
 kiss = ["dep:tokio"]
 ax25 = ["kiss"]
-rnode = ["dep:tokio"]
-rnode-ble = ["rnode", "dep:prns-config", "dep:btleplug", "dep:uuid", "dep:futures-util", "dep:bluer", "tokio/rt"]
-pipe = ["dep:tokio"]
+rnode = ["dep:tokio", "dep:prns-config", "dep:btleplug", "dep:uuid", "dep:futures-util", "dep:bluer", "tokio/rt"]
+pipe = ["dep:tokio", "tokio/process"]
 backbone = ["tcp"]
 websocket = ["dep:tokio", "tokio/net", "dep:tokio-tungstenite", "dep:futures-util"]
 i2p = ["dep:tokio", "tokio/net", "dep:socket2", "dep:getrandom", "prns-core/i2p"]
-weave = ["serial-host", "dep:getrandom"]
+weave = ["serial", "dep:getrandom"]
 shared-instance = ["dep:tokio", "tokio/net", "dep:getrandom", "prns-core/shared-instance-rpc", "prns-runtime/rns-management"]
 wifi = ["tcp", "dep:if-addrs", "dep:netdev"]
 wifi-direct = ["tcp", "tokio/process", "dep:zbus", "dep:futures-util", "dep:if-addrs"]
 wifi-aware = ["tcp"]
-usb = ["dep:tokio", "dep:futures-util"]
-usb-host = ["usb", "serial-host", "dep:serialport"]
-pipe-host = ["pipe", "dep:tokio", "tokio/process"]
-auto = []
+usb = ["serial", "dep:futures-util", "dep:serialport"]
 interface-discovery = ["tcp", "backbone", "dep:getrandom", "prns-core/interface-discovery", "prns-runtime/interface-discovery"]
-from-plan = ["tcp", "udp", "serial", "serial-host", "kiss", "ax25", "rnode-ble", "pipe", "pipe-host", "backbone", "wifi", "i2p", "weave", "dep:prns-config", "dep:tokio", "tokio/rt"]
+config = ["tcp", "udp", "serial", "kiss", "ax25", "rnode", "pipe", "backbone", "wifi", "i2p", "weave", "dep:prns-config", "dep:tokio", "tokio/rt"]
 ble = ["dep:tokio", "tokio/rt", "dep:futures-util", "dep:bluer", "dep:prns-ffi"]
 
 [lints.clippy]

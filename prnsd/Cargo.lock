@@ -856,6 +856,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "524eb3c489760508f71360112bca70f6e53173e6fe48fc5f0efd0f5ab217751d"
 
 [[package]]
+name = "embassy-net-driver-channel"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a07d2eb9f05a6fc876500949856ea1be40773d866d8cb99384f72d0ae4568c16"
+dependencies = [
+ "embassy-futures",
+ "embassy-net-driver",
+ "embassy-sync 0.8.0",
+]
+
+[[package]]
 name = "embassy-sync"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -906,6 +917,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ee71af1b3a0deaa53eaf2d39252f83504c853646e472400b763060389b9fcc9"
 dependencies = [
  "document-features",
+]
+
+[[package]]
+name = "embassy-usb"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a25746d8b152b72fbf2a217f489a083dbbe243f281f09184a1f2cfbe9bbb245f"
+dependencies = [
+ "bitflags 2.12.1",
+ "embassy-futures",
+ "embassy-net-driver-channel",
+ "embassy-sync 0.8.0",
+ "embassy-time",
+ "embassy-usb-driver",
+ "embedded-io-async 0.7.0",
+ "heapless 0.9.3",
+]
+
+[[package]]
+name = "embassy-usb-driver"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fa675c5f4349b6aa0fcffc4bf9b241f18cd11b97c1f8323273fb9a5449937fbd"
+dependencies = [
+ "embedded-io-async 0.6.1",
+ "embedded-io-async 0.7.0",
 ]
 
 [[package]]
@@ -2353,6 +2390,7 @@ dependencies = [
  "embassy-net",
  "embassy-sync 0.8.0",
  "embassy-time",
+ "embassy-usb",
  "embedded-io-async 0.6.1",
  "embedded-io-async 0.7.0",
  "heapless 0.8.0",

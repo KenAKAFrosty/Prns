@@ -70,7 +70,6 @@ tokio-host = [
     "dep:tokio",
     "dep:clap",
 ]
-fixture-identity = []
 observability = [
     "personal-rns/log",
     "personal-rns/tracing",
@@ -97,7 +96,7 @@ personal-rns = { path = "../personal-rns", default-features = false }
 prns-config = { path = "../prns-config" }
 prnsd-control.workspace = true
 # The async runtime (tokio-host only); the USB-serial transport now rides personal-rns's
-# serial feature (prns-interfaces-tokio's serial-host opener).
+# serial interface support, including its host opener.
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util", "io-std", "process", "signal", "fs"], optional = true }
 # The daemon's command-line front door (tokio-host only): typed args, --help, --version.
 clap = { version = "4", features = ["derive"], optional = true }

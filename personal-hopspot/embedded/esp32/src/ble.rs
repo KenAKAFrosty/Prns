@@ -9,18 +9,18 @@ use embassy_futures::join::join_array;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex as BridgeMutex;
 use esp_radio::ble::controller::BleConnector;
 use personal_rns::ble::{BluetoothAuto, BluetoothAutoShared};
-#[cfg(target_arch = "riscv32")]
-use personal_rns::ble_trouble::GattCharacteristic;
-use personal_rns::ble_trouble::{
-    self, acceptor, dialer, host_runner, serve_slot, BleHub, GattServer, TroubleController,
-    TroubleStack, CONNECTIONS, GATT_VALUE_CAP, L2CAP_CHANNELS, L2CAP_PSM, SLOTS,
-};
 use personal_rns::interfaces::bluetooth_auto::core::{
     encode_advertisement, BleIdentity, Endpoint, Esp32Host, LinkCapabilities, Psm, BLE_HW_MTU,
     MAX_ADVERTISEMENT_LEN,
 };
 use personal_rns::reactor::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
 use personal_rns::runtime::Fleet;
+#[cfg(target_arch = "riscv32")]
+use prns_interfaces_embassy::ble_trouble::GattCharacteristic;
+use prns_interfaces_embassy::ble_trouble::{
+    self, acceptor, dialer, host_runner, serve_slot, BleHub, GattServer, TroubleController,
+    TroubleStack, CONNECTIONS, GATT_VALUE_CAP, L2CAP_CHANNELS, L2CAP_PSM, SLOTS,
+};
 use static_cell::StaticCell;
 use trouble_host::prelude::*;
 

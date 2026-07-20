@@ -11,20 +11,8 @@ description = "LilyGo T-Echo (nRF52840 + SX1262 + 200x200 SSD1681 e-ink) Persona
 name = "t-echo"
 path = "src/main.rs"
 
-[features]
-default = ["hopspot-t-echo"]
-# The production Hopspot image for LilyGO T-Echo. This is the profile the web
-# flasher and local CLI build: LoRa, BLE Auto, and USB Auto above the factory
-# S140 SoftDevice.
-hopspot-t-echo = ["dep:nrf-softdevice", "dep:heapless09", "nrf-softdevice/critical-section-impl", "personal-rns/ble", "personal-rns/usb-device"]
-# Bare-metal critical sections for the developer LoRa-only firmware. Mutually
-# exclusive with the SoftDevice-backed Hopspot profile above.
-cs-single-core = ["cortex-m/critical-section-single-core"]
-# Compatibility alias for older local commands that still request `ble`.
-ble = ["hopspot-t-echo"]
-
 [dependencies]
-personal-rns = { path = "../../../personal-rns", default-features = false, features = ["embassy-host", "lora"] }
+personal-rns = { path = "../../../personal-rns", default-features = false, features = ["embassy-host", "lora", "ble", "usb"] }
 personal-hopspot-core = { path = "../../core", default-features = false }
 
 embedded-graphics = "0.8"
@@ -48,14 +36,14 @@ heapless = "0.8"
 
 embedded-io-async = "0.6"
 
-# Hopspot T-Echo profile. nrf-softdevice does not depend on embassy-nrf, so it rides alongside the
+# T-Echo firmware. nrf-softdevice does not depend on embassy-nrf, so it rides alongside the
 # T-Echo's embassy-nrf 0.10. The S140 v7 binding talks to the SoftDevice over SVCs.
 # evt-max-size-512: our att_mtu is 247, so a single GATT write/notification event reaches ~258 bytes —
 # past the 128-byte default and the 256 tier. Without this the SoftDevice's event read overflows and
 # nrf-softdevice panics ("BLE_EVT_MAX_SIZE is too low") the instant a peer sends a full-MTU payload.
-nrf-softdevice = { git = "https://github.com/embassy-rs/nrf-softdevice", features = ["nrf52840", "s140", "ble-central", "ble-peripheral", "ble-gatt-server", "ble-gatt-client", "ble-l2cap", "ble-l2cap-credit-workaround", "evt-max-size-512"], optional = true }
+nrf-softdevice = { git = "https://github.com/embassy-rs/nrf-softdevice", features = ["nrf52840", "s140", "ble-central", "ble-peripheral", "ble-gatt-server", "ble-gatt-client", "ble-l2cap", "ble-l2cap-credit-workaround", "evt-max-size-512", "critical-section-impl"] }
 # nrf-softdevice's GATT characteristics use heapless 0.9; the rest of the firmware is on 0.8.
-heapless09 = { package = "heapless", version = "0.9", optional = true }
+heapless09 = { package = "heapless", version = "0.9" }
 
 [profile.release]
 codegen-units = 1

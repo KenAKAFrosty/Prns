@@ -66,11 +66,5 @@ compile_error!("the `shared-instance` family is tokio-only: enable `tokio-host`"
 #[cfg(all(feature = "lora", not(feature = "embassy-host")))]
 compile_error!("the `lora` family is embassy-only: enable `embassy-host`");
 
-#[cfg(all(feature = "ble-trouble", not(feature = "embassy-host")))]
-compile_error!("the `ble-trouble` backend is embassy-only: enable `embassy-host`");
-
 #[cfg(all(feature = "esp-now", not(feature = "embassy-host")))]
 compile_error!("the `esp-now` family is embassy-only: enable `embassy-host`");
-
-#[cfg(all(feature = "usb-device", not(feature = "embassy-host")))]
-compile_error!("the `usb-device` family is embassy-only: enable `embassy-host`");
