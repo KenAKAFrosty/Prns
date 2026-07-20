@@ -121,8 +121,10 @@ mod tests {
             &(),
             &handle,
             RunnerRequest {
+                destination: DestinationHash::new([0x33; 16]),
                 link_id,
                 request_id: RequestId([0x55; 16]),
+                requester: None,
                 path_hash: RequestPathHash::new([0x66; 16]),
                 requested_at: InstantMillis(700),
                 rtt: RttMillis::new(80),

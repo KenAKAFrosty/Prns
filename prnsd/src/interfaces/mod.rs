@@ -744,8 +744,9 @@ fn prompt_kind() -> Result<InterfaceKind, InterfacesError> {
             return Ok(kind);
         }
     }
-    InterfaceKind::parse_cli(&value)
-        .ok_or({ InterfacesError::Usage(InterfacesUsageError::UnknownInterfaceType(value)) })
+    InterfaceKind::parse_cli(&value).ok_or(InterfacesError::Usage(
+        InterfacesUsageError::UnknownInterfaceType(value),
+    ))
 }
 
 fn prompt(label: &str) -> Result<String, InterfacesError> {
