@@ -252,7 +252,7 @@ async fn bring_up<S: AsyncRead + AsyncWrite + Unpin>(
                 outdated_firmware,
             } => {
                 if let Some(firmware) = outdated_firmware {
-                    eprintln!(
+                    crate::diagnostic_log::warn!(
                         "RNODE_FIRMWARE_OUTDATED reported={}.{} required={}.{} (continuing anyway)",
                         firmware.major,
                         firmware.minor,

@@ -311,7 +311,7 @@ impl SharedInstanceRpcClient {
                 RpcVerb::GetFirstHopTimeout,
             )
             .await?
-            .ok_or_else(|| SharedInstanceRpcClientError::UnexpectedScalarReply {
+            .ok_or(SharedInstanceRpcClientError::UnexpectedScalarReply {
                 operation: RpcVerb::GetFirstHopTimeout,
                 reply: RnsRpcScalarReply::Null,
             })?;
@@ -484,7 +484,7 @@ impl SharedInstanceRpcClient {
             RnsRpcScalarReply::Integer(value) => value
                 .signed_value()
                 .map(|value| Some(value as f64))
-                .ok_or_else(|| SharedInstanceRpcClientError::UnexpectedScalarReply {
+                .ok_or(SharedInstanceRpcClientError::UnexpectedScalarReply {
                     operation,
                     reply: RnsRpcScalarReply::Integer(value),
                 }),
