@@ -1,27 +1,31 @@
-//! Stand up a [`DaemonPlan`]'s interfaces on a running node — the library side of
-//! "read the interfaces from a stock RNS config". Construction lives here; each outcome
-//! is reported through the caller's callback ([`PlanOutcome`]), so a daemon renders its
-//! own lines.
-
 use core::time::Duration;
 use std::collections::HashSet;
+use std::fmt;
+use std::io;
+use std::sync::Arc;
 
 pub use prns_config as config;
 use prns_config::{
     AddressFamilyPreference as PlannedAddressFamilyPreference, AutoInterfacePlan,
     ConfiguredInterfaceLifecycle, DaemonPlan, I2pPeersPlan,
     I2pReachabilityPlan as PlannedI2pReachability, InterfaceAccessPlan, PlannedInterface,
-    PlannedMedium, RNodeMultiMemberPlan, ReadyCommandFlowControl as PlannedReadyCommandFlowControl,
+    InterfaceKind as PlannedInterfaceKind, PlannedMedium, RNodeMultiMemberPlan,
+    ReadyCommandFlowControl as PlannedReadyCommandFlowControl,
     ReconnectLimit as PlannedReconnectLimit, SerialDataBits, SerialLinePlan, SerialParity,
     SerialStopBits, StationIdentificationPlan, TcpDialPlan, TcpTunnelMode as PlannedTcpTunnelMode,
     UdpFlowPlan,
 };
 use prns_core::identity::IdentityHash;
+use prns_core::interfaces::ax25_kiss::core::Ax25AddressError;
 use prns_core::interfaces::ifac::IfacContext;
+use prns_core::interfaces::kiss::transmission_control::{
+    EmptyStationIdentification, ReadyCommandFlowControl, ReadyTimeout, StationIdInterval,
+    StationIdWireFormat, StationIdentification,
+};
 use prns_core::interfaces::weave::core as weave_core;
 use prns_core::interfaces::{InterfaceId, InterfaceOriginKind};
 use prns_runtime::interfaces::kiss::core::TncConfig;
-use prns_runtime::interfaces::rnode::core::{RadioConfig, RadioConfigInput};
+use prns_runtime::interfaces::rnode::core::{RadioConfig, RadioConfigError, RadioConfigInput};
 use prns_runtime::runtime::{AttachIntent, Attachable, PrnsNodeHandle};
 
 use crate::ax25::{Ax25KissInterface, Ax25KissSettings};
@@ -33,8 +37,9 @@ use crate::host_network::{
     resolve_tcp_listener, resolve_udp_endpoint, tcp_target, udp_ephemeral_bind,
 };
 use crate::i2p::{
-    I2pInterface, I2pInterfaceName, I2pPeerAddress, I2pPeers, I2pReachability, I2pRetryPolicy,
-    I2pRuntimeConfig, RnsI2pStorage, TokioSamBridge,
+    DuplicateI2pPeer, I2pInterface, I2pInterfaceName, I2pInterfaceNameError, I2pPeerAddress,
+    I2pPeerAddressError, I2pPeers, I2pReachability, I2pRetryPolicy, I2pRuntimeConfig,
+    RnsI2pStorage, TokioSamBridge,
 };
 use crate::kiss::{KissInterface, KissSettings, DEFAULT_TNC_CONFIGURE_DELAY};
 use crate::pipe::{PipeInterface, PipeRespawnDelay};
@@ -43,7 +48,7 @@ use crate::rnode::{RNodeInterface, RNodeSettings};
 use crate::rnode_host::{RNodeHostOpener, RNODE_BAUD};
 use crate::rnode_multi::{
     RNodeMultiAccess, RNodeMultiInterface, RNodeMultiMemberSettings, RNodeMultiMembers,
-    RNodeMultiSettings, DEFAULT_RNODE_MULTI_CONFIGURE_DELAY,
+    RNodeMultiMembersError, RNodeMultiSettings, DEFAULT_RNODE_MULTI_CONFIGURE_DELAY,
 };
 use crate::serial::SerialInterface;
 use crate::serial_host::{
@@ -61,15 +66,10 @@ use crate::usb_host::AutoUsb;
 use crate::weave::WeaveInterface;
 #[cfg(feature = "websocket")]
 use crate::websocket::{client::WebSocketClientInterface, server::WebSocketServer};
-use crate::wifi::{AutoWifi, AutoWifiDevicePolicy, AutoWifiSettings};
-use prns_core::interfaces::kiss::transmission_control::{
-    ReadyCommandFlowControl, ReadyTimeout, StationIdInterval, StationIdWireFormat,
-    StationIdentification,
-};
+use crate::wifi::{AutoWifi, AutoWifiDevicePolicy, AutoWifiSettings, AutoWifiSettingsError};
 
 const RECONNECT_POLICY: ReconnectPolicy = ReconnectPolicy::STANDARD;
 const KISS_FLOW_CONTROL_TIMEOUT: ReadyTimeout = ReadyTimeout::new(Duration::from_secs(5));
-/// What became of one planned item, handed to the caller's reporter as it happens.
 pub enum PlanOutcome<'a> {
     Up {
         interface: &'a PlannedInterface,
@@ -77,8 +77,142 @@ pub enum PlanOutcome<'a> {
     },
     Failed {
         interface: &'a PlannedInterface,
-        visible_error_message: String,
+        error: PlanFailure,
     },
+}
+
+#[derive(Debug, Clone)]
+pub enum PlanFailure {
+    MissingIfacCredentials,
+    AutoWifiSettings(AutoWifiSettingsError),
+    Network(Arc<io::Error>),
+    EmptyStationIdentification,
+    Ax25Address(Ax25AddressError),
+    RadioConfig(RadioConfigError),
+    UngroupedRNodeMultiMember,
+    I2pInterfaceName(I2pInterfaceNameError),
+    I2pPeerAddress(I2pPeerAddressError),
+    DuplicateI2pPeer(DuplicateI2pPeer),
+    MissingI2pStorage,
+    RNodeMultiMembers(RNodeMultiMembersError),
+    WeaveIdentity(getrandom::Error),
+    InterfaceNotBuilt(PlannedInterfaceKind),
+}
+
+impl fmt::Display for PlanFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingIfacCredentials => {
+                formatter.write_str("IFAC requires a network name or passphrase")
+            }
+            Self::AutoWifiSettings(error) => error.fmt(formatter),
+            Self::Network(error) => error.fmt(formatter),
+            Self::EmptyStationIdentification => {
+                formatter.write_str("station identification callsign cannot be empty")
+            }
+            Self::Ax25Address(error) => write!(formatter, "invalid AX.25 address: {error:?}"),
+            Self::RadioConfig(error) => write!(formatter, "invalid RNode radio config: {error:?}"),
+            Self::UngroupedRNodeMultiMember => {
+                formatter.write_str("RNodeMulti member was not grouped with its parent device")
+            }
+            Self::I2pInterfaceName(error) => error.fmt(formatter),
+            Self::I2pPeerAddress(error) => error.fmt(formatter),
+            Self::DuplicateI2pPeer(error) => error.fmt(formatter),
+            Self::MissingI2pStorage => formatter.write_str(
+                "connectable I2P requires the daemon's RNS storage directory and transport identity",
+            ),
+            Self::RNodeMultiMembers(error) => error.fmt(formatter),
+            Self::WeaveIdentity(error) => {
+                write!(formatter, "could not generate the Weave discovery identity: {error}")
+            }
+            Self::InterfaceNotBuilt(kind) => write!(
+                formatter,
+                "this build does not include the {} interface family",
+                kind.cli_name()
+            ),
+        }
+    }
+}
+
+impl std::error::Error for PlanFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::AutoWifiSettings(error) => Some(error),
+            Self::Network(error) => Some(error.as_ref()),
+            Self::I2pInterfaceName(error) => Some(error),
+            Self::I2pPeerAddress(error) => Some(error),
+            Self::DuplicateI2pPeer(error) => Some(error),
+            Self::RNodeMultiMembers(error) => Some(error),
+            Self::MissingIfacCredentials
+            | Self::EmptyStationIdentification
+            | Self::Ax25Address(_)
+            | Self::RadioConfig(_)
+            | Self::UngroupedRNodeMultiMember
+            | Self::MissingI2pStorage
+            | Self::WeaveIdentity(_)
+            | Self::InterfaceNotBuilt(_) => None,
+        }
+    }
+}
+
+impl From<AutoWifiSettingsError> for PlanFailure {
+    fn from(error: AutoWifiSettingsError) -> Self {
+        Self::AutoWifiSettings(error)
+    }
+}
+
+impl From<io::Error> for PlanFailure {
+    fn from(error: io::Error) -> Self {
+        Self::Network(Arc::new(error))
+    }
+}
+
+impl From<EmptyStationIdentification> for PlanFailure {
+    fn from(_: EmptyStationIdentification) -> Self {
+        Self::EmptyStationIdentification
+    }
+}
+
+impl From<Ax25AddressError> for PlanFailure {
+    fn from(error: Ax25AddressError) -> Self {
+        Self::Ax25Address(error)
+    }
+}
+
+impl From<RadioConfigError> for PlanFailure {
+    fn from(error: RadioConfigError) -> Self {
+        Self::RadioConfig(error)
+    }
+}
+
+impl From<I2pInterfaceNameError> for PlanFailure {
+    fn from(error: I2pInterfaceNameError) -> Self {
+        Self::I2pInterfaceName(error)
+    }
+}
+
+impl From<I2pPeerAddressError> for PlanFailure {
+    fn from(error: I2pPeerAddressError) -> Self {
+        Self::I2pPeerAddress(error)
+    }
+}
+
+impl From<DuplicateI2pPeer> for PlanFailure {
+    fn from(error: DuplicateI2pPeer) -> Self {
+        Self::DuplicateI2pPeer(error)
+    }
+}
+
+impl From<RNodeMultiMembersError> for PlanFailure {
+    fn from(error: RNodeMultiMembersError) -> Self {
+        Self::RNodeMultiMembers(error)
+    }
+}
+
+impl From<getrandom::Error> for PlanFailure {
+    fn from(error: getrandom::Error) -> Self {
+        Self::WeaveIdentity(error)
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -167,8 +301,6 @@ impl PlanAttachments {
     }
 }
 
-/// The recipe intent for a config-driven node. Construction awaits socket binds, so it rides its
-/// own task off `PrnsNode::new`.
 pub struct FromPlan(pub DaemonPlan);
 
 impl AttachIntent for FromPlan {
@@ -202,10 +334,7 @@ impl AttachIntent for FromPlan {
                         interface.medium
                     );
                 }
-                PlanOutcome::Failed {
-                    interface,
-                    visible_error_message,
-                } => {
+                PlanOutcome::Failed { interface, error } => {
                     #[cfg(feature = "tracing")]
                     {
                         tracing::warn!(
@@ -220,12 +349,12 @@ impl AttachIntent for FromPlan {
                             interface_origin = InterfaceOriginKind::Configured.as_str(),
                             interface_name = ?interface.name,
                             medium = ?interface.medium,
-                            error = %visible_error_message,
+                            error = %error,
                         );
                     }
                     #[cfg(not(feature = "tracing"))]
                     crate::diagnostic_log::warn!(
-                        "interface failed [{}]: {:?} ({visible_error_message})",
+                        "interface failed [{}]: {:?} ({error})",
                         InterfaceOriginKind::Configured.as_str(),
                         interface.name
                     );
@@ -285,11 +414,8 @@ async fn stand_up(
 ) {
     let access = match runtime_access(interface) {
         Ok(access) => access,
-        Err(visible_error_message) => {
-            report(PlanOutcome::Failed {
-                interface,
-                visible_error_message,
-            });
+        Err(error) => {
+            report(PlanOutcome::Failed { interface, error });
             return;
         }
     };
@@ -300,7 +426,7 @@ async fn stand_up(
                 Err(error) => {
                     report(PlanOutcome::Failed {
                         interface,
-                        visible_error_message: error.to_string(),
+                        error: error.into(),
                     });
                     return;
                 }
@@ -320,7 +446,7 @@ async fn stand_up(
                 report_attached(handle, interface, attached.id(), attachments, report);
             }
             #[cfg(not(feature = "usb"))]
-            report_missing_feature(interface, "usb", report);
+            report_missing_feature(interface, PlannedInterfaceKind::PrnsUsbAuto, report);
         }
         PlannedMedium::PrnsBluetoothAuto => {
             #[cfg(feature = "ble")]
@@ -330,7 +456,7 @@ async fn stand_up(
                 report_attached(handle, interface, attached.id(), attachments, report);
             }
             #[cfg(not(feature = "ble"))]
-            report_missing_feature(interface, "ble", report);
+            report_missing_feature(interface, PlannedInterfaceKind::PrnsBluetoothAuto, report);
         }
         PlannedMedium::PrnsWebSocketClient { target } => {
             #[cfg(not(feature = "websocket"))]
@@ -346,7 +472,11 @@ async fn stand_up(
                 report_attached(handle, interface, attached.id(), attachments, report);
             }
             #[cfg(not(feature = "websocket"))]
-            report_missing_feature(interface, "websocket", report);
+            report_missing_feature(
+                interface,
+                PlannedInterfaceKind::PrnsWebSocketClient,
+                report,
+            );
         }
         PlannedMedium::PrnsWebSocketServer { listener } => {
             #[cfg(not(feature = "websocket"))]
@@ -364,12 +494,16 @@ async fn stand_up(
                     }
                     Err(error) => report(PlanOutcome::Failed {
                         interface,
-                        visible_error_message: error.to_string(),
+                        error: error.into(),
                     }),
                 }
             }
             #[cfg(not(feature = "websocket"))]
-            report_missing_feature(interface, "websocket", report);
+            report_missing_feature(
+                interface,
+                PlannedInterfaceKind::PrnsWebSocketServer,
+                report,
+            );
         }
         PlannedMedium::TcpClient {
             connection,
@@ -408,7 +542,7 @@ async fn stand_up(
                 }
                 Err(error) => report(PlanOutcome::Failed {
                     interface,
-                    visible_error_message: error.to_string(),
+                    error: error.into(),
                 }),
             }
         }
@@ -450,7 +584,7 @@ async fn stand_up(
                 }
                 Err(error) => report(PlanOutcome::Failed {
                     interface,
-                    visible_error_message: error.to_string(),
+                    error: error.into(),
                 }),
             }
         }
@@ -490,11 +624,8 @@ async fn stand_up(
             let station_identification =
                 match runtime_station_identification(station_id, StationIdWireFormat::KissPadded) {
                     Ok(station_identification) => station_identification,
-                    Err(message) => {
-                        report(PlanOutcome::Failed {
-                            interface,
-                            visible_error_message: message,
-                        });
+                    Err(error) => {
+                        report(PlanOutcome::Failed { interface, error });
                         return;
                     }
                 };
@@ -558,7 +689,7 @@ async fn stand_up(
                 }
                 Err(error) => report(PlanOutcome::Failed {
                     interface,
-                    visible_error_message: format!("{error:?}"),
+                    error: error.into(),
                 }),
             }
         }
@@ -589,11 +720,8 @@ async fn stand_up(
                         StationIdWireFormat::Exact,
                     ) {
                         Ok(station_identification) => station_identification,
-                        Err(message) => {
-                            report(PlanOutcome::Failed {
-                                interface,
-                                visible_error_message: message,
-                            });
+                        Err(error) => {
+                            report(PlanOutcome::Failed { interface, error });
                             return;
                         }
                     };
@@ -623,14 +751,13 @@ async fn stand_up(
                 }
                 Err(error) => report(PlanOutcome::Failed {
                     interface,
-                    visible_error_message: format!("{error:?}"),
+                    error: error.into(),
                 }),
             }
         }
         PlannedMedium::RnodeMulti { .. } => report(PlanOutcome::Failed {
             interface,
-            visible_error_message: "RNodeMulti member was not grouped with its parent device"
-                .to_string(),
+            error: PlanFailure::UngroupedRNodeMultiMember,
         }),
         PlannedMedium::Backbone { listener } => {
             let opened = match resolve_tcp_listener(listener).await {
@@ -644,7 +771,7 @@ async fn stand_up(
                 }
                 Err(error) => report(PlanOutcome::Failed {
                     interface,
-                    visible_error_message: error.to_string(),
+                    error: error.into(),
                 }),
             }
         }
@@ -684,11 +811,8 @@ async fn stand_up(
         } => {
             let config = match i2p_runtime_config(interface, peers, *reachability, context) {
                 Ok(config) => config,
-                Err(visible_error_message) => {
-                    report(PlanOutcome::Failed {
-                        interface,
-                        visible_error_message,
-                    });
+                Err(error) => {
+                    report(PlanOutcome::Failed { interface, error });
                     return;
                 }
             };
@@ -714,9 +838,7 @@ async fn stand_up(
                 }
                 Err(error) => report(PlanOutcome::Failed {
                     interface,
-                    visible_error_message: format!(
-                        "could not generate the Weave discovery identity: {error}"
-                    ),
+                    error: error.into(),
                 }),
             }
         }
@@ -761,11 +883,11 @@ fn stand_up_rnode_multi<'a>(
             context: Box::new(context),
             network_name,
         },
-        Err(visible_error_message) => {
+        Err(error) => {
             for (interface, _) in interfaces {
                 report(PlanOutcome::Failed {
                     interface,
-                    visible_error_message: visible_error_message.clone(),
+                    error: error.clone(),
                 });
             }
             return;
@@ -775,11 +897,11 @@ fn stand_up_rnode_multi<'a>(
     let station_identification =
         match runtime_station_identification(&station_plan, StationIdWireFormat::Exact) {
             Ok(station_identification) => station_identification,
-            Err(visible_error_message) => {
+            Err(error) => {
                 for (interface, _) in interfaces {
                     report(PlanOutcome::Failed {
                         interface,
-                        visible_error_message: visible_error_message.clone(),
+                        error: error.clone(),
                     });
                 }
                 return;
@@ -792,11 +914,11 @@ fn stand_up_rnode_multi<'a>(
     let members = match RNodeMultiMembers::new(settings) {
         Ok(members) => members,
         Err(error) => {
-            let visible_error_message = error.to_string();
+            let error = PlanFailure::from(error);
             for (interface, _) in interfaces {
                 report(PlanOutcome::Failed {
                     interface,
-                    visible_error_message: visible_error_message.clone(),
+                    error: error.clone(),
                 });
             }
             return;
@@ -847,7 +969,7 @@ fn runtime_rnode_multi_member(
 
 fn runtime_access(
     interface: &PlannedInterface,
-) -> Result<Option<(IfacContext, Option<String>)>, String> {
+) -> Result<Option<(IfacContext, Option<String>)>, PlanFailure> {
     match &interface.access {
         InterfaceAccessPlan::Open => Ok(None),
         InterfaceAccessPlan::Ifac {
@@ -856,7 +978,7 @@ fn runtime_access(
             size,
         } => IfacContext::derive(network_name.as_deref(), passphrase.as_deref(), *size)
             .map(|context| Some((context, network_name.clone())))
-            .ok_or_else(|| "IFAC requires a network name or passphrase".to_string()),
+            .ok_or(PlanFailure::MissingIfacCredentials),
     }
 }
 
@@ -865,21 +987,21 @@ fn i2p_runtime_config(
     planned_peers: &I2pPeersPlan,
     planned_reachability: PlannedI2pReachability,
     context: &PlanRuntimeContext,
-) -> Result<I2pRuntimeConfig, String> {
-    let name = I2pInterfaceName::new(interface.name.clone()).map_err(|error| error.to_string())?;
+) -> Result<I2pRuntimeConfig, PlanFailure> {
+    let name = I2pInterfaceName::new(interface.name.clone()).map_err(PlanFailure::from)?;
     let peers = planned_peers
         .iter()
         .map(|peer| I2pPeerAddress::new(peer.as_str()))
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())?;
-    let peers = I2pPeers::new(peers).map_err(|error| error.to_string())?;
+        .map_err(PlanFailure::from)?;
+    let peers = I2pPeers::new(peers).map_err(PlanFailure::from)?;
     let reachability = match planned_reachability {
         PlannedI2pReachability::OutboundOnly => I2pReachability::OutboundOnly,
         PlannedI2pReachability::Connectable => {
-            let storage = context.i2p_storage.as_ref().ok_or_else(|| {
-                "connectable I2P requires the daemon's RNS storage directory and transport identity"
-                    .to_string()
-            })?;
+            let storage = context
+                .i2p_storage
+                .as_ref()
+                .ok_or(PlanFailure::MissingI2pStorage)?;
             I2pReachability::Connectable {
                 key_path: storage.destination_key_path(&name),
             }
@@ -934,7 +1056,7 @@ fn runtime_rnode_flow_control(planned: PlannedReadyCommandFlowControl) -> ReadyC
 fn runtime_station_identification(
     planned: &Option<StationIdentificationPlan>,
     wire_format: StationIdWireFormat,
-) -> Result<Option<StationIdentification>, String> {
+) -> Result<Option<StationIdentification>, PlanFailure> {
     planned
         .as_ref()
         .map(|planned| {
@@ -943,7 +1065,7 @@ fn runtime_station_identification(
                 StationIdInterval::new(Duration::from_secs(planned.interval_seconds())),
                 wire_format,
             )
-            .map_err(|_| "station identification callsign cannot be empty".to_string())
+            .map_err(PlanFailure::from)
         })
         .transpose()
 }
@@ -985,14 +1107,12 @@ fn report_up<'a>(
 #[cfg(any(not(feature = "usb"), not(feature = "ble"), not(feature = "websocket")))]
 fn report_missing_feature<'a>(
     interface: &'a PlannedInterface,
-    feature: &str,
+    kind: PlannedInterfaceKind,
     report: &mut impl FnMut(PlanOutcome<'a>),
 ) {
     report(PlanOutcome::Failed {
         interface,
-        visible_error_message: format!(
-            "this build does not include the {feature} interface family"
-        ),
+        error: PlanFailure::InterfaceNotBuilt(kind),
     });
 }
 
@@ -1212,7 +1332,7 @@ mod tests {
         )
         .expect_err("connectable I2P needs persistent host context");
 
-        assert!(error.contains("RNS storage directory and transport identity"));
+        assert!(matches!(error, PlanFailure::MissingI2pStorage));
     }
 
     #[test]

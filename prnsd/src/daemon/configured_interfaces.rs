@@ -370,10 +370,7 @@ fn render(outcome: PlanOutcome<'_>) {
                 }
             }
         }
-        PlanOutcome::Failed {
-            interface,
-            visible_error_message,
-        } => {
+        PlanOutcome::Failed { interface, error } => {
             tracing::warn!(
                 event = "interface_start_failed",
                 interface_origin = InterfaceOriginKind::Configured.as_str(),
@@ -384,7 +381,7 @@ fn render(outcome: PlanOutcome<'_>) {
                 interface_origin = InterfaceOriginKind::Configured.as_str(),
                 interface_name = ?interface.name,
                 interface = ?interface.medium,
-                error = %visible_error_message,
+                error = %error,
             );
         }
     }
