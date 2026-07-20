@@ -3,6 +3,7 @@ use crate::diagnostic::{ConfigDiagnostic, ConfigDiagnosticCode};
 #[derive(Clone, Copy)]
 pub(super) enum WarningCode {
     UnknownKey,
+    PersistedRuntimeMetadata,
     UnknownSection,
     RedundantAliases,
     UnsupportedSetting,
@@ -13,6 +14,7 @@ impl From<WarningCode> for ConfigDiagnosticCode {
     fn from(code: WarningCode) -> Self {
         match code {
             WarningCode::UnknownKey => Self::UnknownKey,
+            WarningCode::PersistedRuntimeMetadata => Self::PersistedRuntimeMetadata,
             WarningCode::UnknownSection => Self::UnknownSection,
             WarningCode::RedundantAliases => Self::RedundantAliases,
             WarningCode::UnsupportedSetting => Self::UnsupportedSetting,

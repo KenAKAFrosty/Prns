@@ -3,8 +3,9 @@ use std::io;
 use std::path::PathBuf;
 
 use prns_config::editing::{
-    ConfigEditError, ConfigFileError, ConfigRepairError, InterfaceDefinitionError,
-    InterfaceNameError,
+    ConfigEditError, ConfigFileError, ConfigRepairError, InterfaceConfigKeyError,
+    InterfaceDefinitionError, InterfaceNameError, InterfaceSettingInputError,
+    RNodeMultiRadioDefinitionError,
 };
 use prns_config::{DiscoveryError, InterfaceKind};
 use prnsd_control::{ServiceError, StateDirectoryError};
@@ -14,7 +15,6 @@ pub(super) enum InterfacesError {
     Usage(InterfacesUsageError),
     InterfaceNotFound(String),
     UntypedInterface(String),
-    NoCompleteRepair,
     UnsupportedRepairSetting(String),
     RepairPathNotInterface(String),
     RepairPathMissingName(String),
@@ -42,6 +42,9 @@ pub(super) enum InterfacesError {
     ConfigRepair(ConfigRepairError),
     InterfaceDefinition(InterfaceDefinitionError),
     InterfaceName(InterfaceNameError),
+    InterfaceConfigKey(InterfaceConfigKeyError),
+    InterfaceSettingInput(InterfaceSettingInputError),
+    RNodeMultiRadioDefinition(RNodeMultiRadioDefinitionError),
     StateDirectory(StateDirectoryError),
     Control(ServiceError),
 }
@@ -56,7 +59,6 @@ impl InterfacesError {
             Self::NoManagedDaemon => 3,
             Self::InterfaceNotFound(_)
             | Self::UntypedInterface(_)
-            | Self::NoCompleteRepair
             | Self::UnsupportedRepairSetting(_)
             | Self::RepairPathNotInterface(_)
             | Self::RepairPathMissingName(_)
@@ -71,6 +73,9 @@ impl InterfacesError {
             | Self::ConfigRepair(_)
             | Self::InterfaceDefinition(_)
             | Self::InterfaceName(_)
+            | Self::InterfaceConfigKey(_)
+            | Self::InterfaceSettingInput(_)
+            | Self::RNodeMultiRadioDefinition(_)
             | Self::StateDirectory(_)
             | Self::Control(_) => 1,
         }
@@ -86,8 +91,6 @@ impl fmt::Display for InterfacesError {
                 formatter,
                 "interface {name} has an unknown type and cannot be edited as a typed interface"
             ),
-            Self::NoCompleteRepair => formatter
-                .write_str("no selected repair can produce a complete valid configuration"),
             Self::UnsupportedRepairSetting(key) => {
                 write!(formatter, "repair cannot change unsupported setting key {key}")
             }
@@ -145,6 +148,9 @@ impl fmt::Display for InterfacesError {
             Self::ConfigRepair(error) => error.fmt(formatter),
             Self::InterfaceDefinition(error) => error.fmt(formatter),
             Self::InterfaceName(error) => error.fmt(formatter),
+            Self::InterfaceConfigKey(error) => error.fmt(formatter),
+            Self::InterfaceSettingInput(error) => error.fmt(formatter),
+            Self::RNodeMultiRadioDefinition(error) => error.fmt(formatter),
             Self::StateDirectory(error) => error.fmt(formatter),
             Self::Control(error) => error.fmt(formatter),
         }

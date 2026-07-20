@@ -605,7 +605,7 @@ fn validate_interface(
                     warnings,
                 );
             }
-            None => warnings.push(unknown_key(
+            None => warnings.push(unknown_interface_key(
                 source,
                 line,
                 format!("{interface_path} > {key}"),
@@ -2064,6 +2064,32 @@ pub(super) fn unknown_key(
             |expected| format!("rename {key:?} to {expected:?}"),
         ),
     )
+}
+
+fn unknown_interface_key(
+    source: &str,
+    line: usize,
+    path: String,
+    key: &str,
+    value: &Value,
+    known: &[&str],
+) -> WarningDiagnostic {
+    if matches!(
+        key,
+        "name" | "selected_interface_mode" | "configured_bitrate"
+    ) {
+        return WarningDiagnostic::new(
+            WarningCode::PersistedRuntimeMetadata,
+            source,
+            line,
+            path,
+            Some(value_text(value)),
+            format!("runtime-only RNS field {key:?} is ignored when loaded from disk"),
+            None,
+            format!("remove runtime-only field {key:?}"),
+        );
+    }
+    unknown_key(source, line, path, key, value, known)
 }
 
 fn closest<'a>(actual: &str, known: &'a [&str]) -> Option<&'a str> {

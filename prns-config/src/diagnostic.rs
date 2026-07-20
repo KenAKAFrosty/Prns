@@ -22,6 +22,7 @@ pub enum ConfigDiagnosticCode {
     Syntax,
     MisplacedKey,
     UnknownKey,
+    PersistedRuntimeMetadata,
     UnknownSection,
     MissingRequiredKey,
     InvalidValue,
@@ -90,6 +91,7 @@ impl ConfigDiagnosticCode {
             ConfigDiagnosticCode::Syntax => "syntax",
             ConfigDiagnosticCode::MisplacedKey => "misplaced_key",
             ConfigDiagnosticCode::UnknownKey => "unknown_key",
+            ConfigDiagnosticCode::PersistedRuntimeMetadata => "persisted_runtime_metadata",
             ConfigDiagnosticCode::UnknownSection => "unknown_section",
             ConfigDiagnosticCode::MissingRequiredKey => "missing_required_key",
             ConfigDiagnosticCode::InvalidValue => "invalid_value",
@@ -105,6 +107,7 @@ impl ConfigDiagnosticCode {
     pub const fn severity(self) -> ConfigSeverity {
         match self {
             ConfigDiagnosticCode::UnknownKey
+            | ConfigDiagnosticCode::PersistedRuntimeMetadata
             | ConfigDiagnosticCode::UnknownSection
             | ConfigDiagnosticCode::RedundantAliases
             | ConfigDiagnosticCode::UnsupportedSetting
@@ -254,6 +257,10 @@ fn default_fixes(code: ConfigDiagnosticCode, path: &str, accepted: Option<&str>)
         ConfigDiagnosticCode::UnknownKey => vec![ConfigFix::RemoveValue {
             path: path.to_string(),
             safety: ConfigFixSafety::Guided,
+        }],
+        ConfigDiagnosticCode::PersistedRuntimeMetadata => vec![ConfigFix::RemoveValue {
+            path: path.to_string(),
+            safety: ConfigFixSafety::Safe,
         }],
         ConfigDiagnosticCode::UnsupportedInterface => interface
             .into_iter()

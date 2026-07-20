@@ -1,12 +1,6 @@
-use std::env;
 use std::io::IsTerminal;
 
-type Rgb = (u8, u8, u8);
-
-const ACCENT: Rgb = (0x6e, 0xe7, 0xb7);
-const ACCENT_STRONG: Rgb = (0x34, 0xd3, 0x99);
-const PAPER: Rgb = (0xf4, 0xf6, 0xfa);
-const SOFT: Rgb = (0x6c, 0x74, 0x80);
+use crate::terminal::{self, Rgb, ACCENT, ACCENT_STRONG, MUTED, PAPER, RESET};
 
 const CANVAS_ROWS: usize = 28;
 const MARK_DOTS: usize = 27;
@@ -16,7 +10,6 @@ const X_TOP: f32 = 13.5;
 const BASELINE: f32 = 24.0;
 const NAME: &str = "Prns";
 const DAEMON_SUBTITLE: &str = concat!("Personal Reticulum daemon · v", env!("CARGO_PKG_VERSION"));
-const RESET: &str = "\x1b[0m";
 
 struct Glyph {
     advance: usize,
@@ -187,7 +180,7 @@ fn braille_lines(grid: &[Vec<Option<Rgb>>]) -> Vec<String> {
             }
             match color {
                 Some(cell_color) if bits != 0 => {
-                    line.push_str(&foreground(cell_color));
+                    line.push_str(&terminal::foreground(cell_color));
                     line.push(char::from_u32(0x2800 + bits).expect("braille range"));
                     line.push_str(RESET);
                 }
@@ -199,43 +192,8 @@ fn braille_lines(grid: &[Vec<Option<Rgb>>]) -> Vec<String> {
     lines
 }
 
-fn truecolor_capable() -> bool {
-    env::var("COLORTERM").is_ok_and(|value| value.contains("truecolor") || value.contains("24bit"))
-}
-
-fn nearest_xterm256(color: Rgb) -> u8 {
-    const LEVELS: [u8; 6] = [0, 95, 135, 175, 215, 255];
-    let nearest = |channel: u8| -> u8 {
-        let mut best = 0u8;
-        let mut best_distance = u16::MAX;
-        for (index, level) in LEVELS.iter().enumerate() {
-            let distance = channel.abs_diff(*level) as u16;
-            if distance < best_distance {
-                best_distance = distance;
-                best = index as u8;
-            }
-        }
-        best
-    };
-    16 + 36 * nearest(color.0) + 6 * nearest(color.1) + nearest(color.2)
-}
-
-fn foreground(color: Rgb) -> String {
-    if truecolor_capable() {
-        format!("\x1b[38;2;{};{};{}m", color.0, color.1, color.2)
-    } else {
-        format!("\x1b[38;5;{}m", nearest_xterm256(color))
-    }
-}
-
 fn fancy() -> bool {
-    if env::var_os("NO_COLOR").is_some() {
-        return false;
-    }
-    if env::var_os("CLICOLOR_FORCE").is_some_and(|value| value != "0") {
-        return true;
-    }
-    std::io::stderr().is_terminal()
+    terminal::enabled(std::io::stderr().is_terminal())
 }
 
 pub fn print(subtitle: &str) {
@@ -250,7 +208,7 @@ pub fn print(subtitle: &str) {
         eprintln!("  {line}");
     }
     eprintln!();
-    eprintln!("  {}{subtitle}{RESET}", foreground(SOFT));
+    eprintln!("  {}{subtitle}{RESET}", terminal::foreground(MUTED));
     eprintln!();
 }
 

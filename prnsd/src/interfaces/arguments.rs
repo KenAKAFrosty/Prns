@@ -19,7 +19,8 @@ pub struct InterfacesArgs {
 #[derive(Clone, Debug, PartialEq, Subcommand)]
 pub enum InterfacesCommand {
     List,
-    Check,
+    #[command(name = "validate", visible_alias = "check")]
+    Validate(ValidateArgs),
     Add(AddArgs),
     Edit(EditArgs),
     Enable(NameArgs),
@@ -27,6 +28,12 @@ pub enum InterfacesCommand {
     Remove(RemoveArgs),
     Repair(RepairArgs),
     Apply,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Args)]
+pub struct ValidateArgs {
+    #[arg(long)]
+    pub details: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Args)]

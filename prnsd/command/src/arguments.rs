@@ -244,7 +244,7 @@ pub(super) fn print_help() {
         "    cargo prnsd restart --debug\n",
         "    cargo prnsd restart --features otlp -- --config \"$HOME/.reticulum\"\n",
         "    cargo prnsd stop\n",
-        "    cargo prnsd interfaces check\n",
+        "    cargo prnsd interfaces validate\n",
         "    cargo prnsd status\n",
         "    cargo prnsd -- --help",
     ));
@@ -371,12 +371,12 @@ mod tests {
     #[test]
     fn interfaces_is_a_direct_one_shot_daemon_invocation() {
         assert_eq!(
-            invocation(&["interfaces", "check", "--config", "/node"]),
+            invocation(&["interfaces", "validate", "--config", "/node"]),
             Invocation {
                 action: Action::OneShot,
                 attach: false,
                 build_args: Vec::new(),
-                daemon_args: args(&["interfaces", "check", "--config", "/node"]),
+                daemon_args: args(&["interfaces", "validate", "--config", "/node"]),
             }
         );
     }

@@ -4,7 +4,7 @@ use std::fmt;
 use crate::configobj::{ConfigDocument, ConfigError};
 use crate::{parse_and_plan_named, ConfigDiagnostic, ConfigFix};
 
-use super::{ConfigEdit, InterfaceName, InterfaceSettingChange, InterfaceSettingKey};
+use super::{ConfigEdit, InterfaceConfigKey, InterfaceName};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigRepairReport {
@@ -13,8 +13,15 @@ pub struct ConfigRepairReport {
 
 impl ConfigRepairReport {
     pub fn analyze(source: &str) -> Result<Self, ConfigRepairError> {
+        Self::analyze_named("<config>", source)
+    }
+
+    pub fn analyze_named(
+        source_name: impl Into<String>,
+        source: &str,
+    ) -> Result<Self, ConfigRepairError> {
         ConfigDocument::parse(source).map_err(ConfigRepairError::Syntax)?;
-        let diagnostics = match parse_and_plan_named("<repair config>", source) {
+        let diagnostics = match parse_and_plan_named(source_name, source) {
             Ok(report) => report.warnings,
             Err(errors) => errors.diagnostics().to_vec(),
         };
@@ -41,7 +48,7 @@ impl ConfigRepairReport {
                     }
                 }
                 ConfigFix::RemoveValue { path, .. } => {
-                    if let Some(target) = interface_setting(path) {
+                    if let Some(target) = interface_value(path) {
                         removed.insert(target);
                     }
                 }
@@ -64,16 +71,13 @@ impl ConfigRepairReport {
         edits.extend(
             removed
                 .into_iter()
-                .map(|(name, key)| ConfigEdit::ChangeSettings {
-                    name,
-                    changes: vec![InterfaceSettingChange::Remove(key)],
-                }),
+                .map(|(name, key)| ConfigEdit::RemoveInterfaceValue { name, key }),
         );
         Some(ConfigEdit::Batch(edits))
     }
 }
 
-fn interface_setting(path: &str) -> Option<(InterfaceName, InterfaceSettingKey)> {
+fn interface_value(path: &str) -> Option<(InterfaceName, InterfaceConfigKey)> {
     let start = path.find("[[")? + 2;
     let rest = &path[start..];
     let end = rest.find("]]")?;
@@ -81,7 +85,7 @@ fn interface_setting(path: &str) -> Option<(InterfaceName, InterfaceSettingKey)>
         return None;
     }
     let name = InterfaceName::new(rest[..end].trim()).ok()?;
-    let key = InterfaceSettingKey::parse(path.rsplit(" > ").next()?.trim())?;
+    let key = InterfaceConfigKey::new(path.rsplit(" > ").next()?.trim()).ok()?;
     Some((name, key))
 }
 

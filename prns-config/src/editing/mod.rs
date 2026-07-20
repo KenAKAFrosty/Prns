@@ -1,3 +1,4 @@
+mod catalog;
 mod document;
 mod interface;
 mod repair;
@@ -8,12 +9,16 @@ pub use document::{
     ConfigEdit, ConfigEditError, ConfiguredInterface, EditedConfig, InterfaceSettingChange,
 };
 pub use interface::{
-    InterfaceDefinition, InterfaceDefinitionError, InterfaceName, InterfaceNameError,
-    InterfaceSetting, InterfaceSettingKey, InterfaceSettingValue, RNodeMultiRadioDefinition,
-    RNodeMultiRadioDefinitionError,
+    InterfaceConfigKey, InterfaceConfigKeyError, InterfaceDefinition, InterfaceDefinitionError,
+    InterfaceName, InterfaceNameError, InterfaceSetting, InterfaceSettingKey,
+    InterfaceSettingValue, RNodeMultiRadioDefinition, RNodeMultiRadioDefinitionError,
 };
 pub use repair::{ConfigRepairError, ConfigRepairReport};
 pub use store::{ConfigFile, ConfigFileError, ConfigFileOperation, ConfigWriteReceipt};
 
 #[cfg(test)]
 mod tests;
+pub use catalog::{
+    ConfiguredInterfaceSetting, InterfaceSettingCategory, InterfaceSettingInputError,
+    InterfaceSettingInputKind, InterfaceSettingSpec,
+};
