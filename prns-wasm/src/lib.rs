@@ -14,7 +14,7 @@ pub use bluetooth::{
 };
 pub use parameters::{
     destination_hash_length, identity_secret_key_length, interface_id_length,
-    websocket_bitrate_bps, websocket_hardware_mtu,
+    websocket_bitrate_bps, websocket_frame_cap, websocket_hardware_mtu,
 };
 pub use runtime::PrnsRuntime;
 pub use usb_auto::{

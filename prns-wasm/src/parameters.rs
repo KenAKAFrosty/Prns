@@ -31,6 +31,11 @@ pub fn websocket_hardware_mtu() -> usize {
     websocket_core::WEBSOCKET_HW_MTU_CAP
 }
 
+#[wasm_bindgen(js_name = websocketFrameCap)]
+pub fn websocket_frame_cap() -> usize {
+    websocket_core::FRAME_CAP
+}
+
 pub(crate) fn bitrate_bps_u32(bitrate: BitrateBps) -> u32 {
     u32::try_from(bitrate.get()).unwrap_or(u32::MAX)
 }

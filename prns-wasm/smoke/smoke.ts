@@ -12,6 +12,7 @@ import init, {
   bluetoothServiceUuid,
   identitySecretKeyLength,
   websocketBitrateBps,
+  websocketFrameCap,
   websocketHardwareMtu,
   usbAutoDataFrame,
   usbAutoHostBitrateBps,
@@ -24,7 +25,6 @@ import init, {
 } from "/pkg/prns_wasm.js";
 import {
   Prns,
-  PrnsValidationError,
   appData,
   appName,
   aspect,
@@ -43,7 +43,7 @@ import type {
   PrnsEvent,
   PrnsSnapshot,
   PrnsWasmModule,
-  RuntimeRegisterInterfaceOptions,
+  RuntimeRegisterInterfaceInput,
   UsbAutoSession,
 } from "../ts/index.js";
 
@@ -110,11 +110,12 @@ async function runRuntimeSmoke(): Promise<void> {
     identitySecretKey(entropy(identityLength), identityLength),
   );
 
-  const interfaceOptions: RuntimeRegisterInterfaceOptions = {
+  const interfaceOptions: RuntimeRegisterInterfaceInput = {
     kind: "auto-usb-host",
     channelTag: channelTag(new TextEncoder().encode("browser-smoke:usb")),
     bitrateBps: bitrateBps(usbAutoHostBitrateBps()),
     hardwareMtu: hardwareMtu(usbAutoHostHardwareMtu()),
+    nowMs: nowMillis(),
   };
   const interfaceId = runtime.registerInterface(interfaceOptions);
 
@@ -186,6 +187,7 @@ function wasmModule(): PrnsWasmModule {
     bluetoothDecodeControl,
     bluetoothDataFragments,
     websocketBitrateBps,
+    websocketFrameCap,
     websocketHardwareMtu,
     usbAutoHostBitrateBps,
     usbAutoHostHardwareMtu,
@@ -203,24 +205,29 @@ async function connectUsb(): Promise<void> {
   connectButton.disabled = true;
   usbStatus.textContent = "requesting browser USB device";
   log("requesting USB device");
-  try {
-    session = await prns.interfaces.usbAuto.connect();
-    usbStatus.textContent = describeSession(session);
-    announceButton.disabled = false;
-    closeButton.disabled = false;
-    log(`USB Auto opened: interface=${hex(session.interfaceId)}`);
-  } catch (error) {
+  const connected = await prns.interfaces.usbAuto.connect();
+  if (connected.tag !== "Connected") {
     usbStatus.textContent = "connect failed";
     connectButton.disabled = false;
-    log(describeError(error));
+    log(`${connected.tag}: ${JSON.stringify(connected.data)}`);
+    return;
   }
+  session = connected.data;
+  usbStatus.textContent = describeSession(session);
+  announceButton.disabled = false;
+  closeButton.disabled = false;
+  log(`USB Auto opened: interface=${hex(session.interfaceId)}`);
 }
 
 function sendAnnounce(): void {
   assert(prns, "Prns is ready");
   assert(destination, "destination is registered");
   const command = prns.announce(destination);
-  log(`announce queued: command=${command.toString()}`);
+  log(
+    command.tag === "Queued"
+      ? `announce queued: command=${command.data.toString()}`
+      : `${command.tag}: ${JSON.stringify(command.data)}`,
+  );
 }
 
 async function closeUsb(): Promise<void> {
@@ -239,25 +246,37 @@ function pollRuntime(): void {
   }
   if (session) {
     usbStatus.textContent = describeSession(session);
-    if (session.state === "failed" || session.state === "closed") {
+    if (session.status.tag === "Failed" || session.status.tag === "Closed") {
       connectButton.disabled = false;
       closeButton.disabled = true;
       announceButton.disabled = true;
     }
   }
-  for (const event of prns.drainEvents()) {
-    eventCount += 1;
-    log(`event ${eventCount}: ${describeEvent(event)}`);
+  const drained = prns.drainEvents();
+  if (drained.tag === "Drained") {
+    for (const event of drained.data) {
+      eventCount += 1;
+      log(`event ${eventCount}: ${describeEvent(event)}`);
+    }
+  } else {
+    log(`${drained.tag}: ${JSON.stringify(drained.data)}`);
   }
-  const snapshot = prns.snapshot();
+  const captured = prns.snapshot();
+  if (captured.tag !== "Captured") {
+    snapshotStatus.textContent = captured.tag;
+    return;
+  }
+  const snapshot = captured.data;
   snapshotStatus.textContent = describeSnapshot(snapshot);
   interfacesStatus.textContent =
     snapshot.interfaces.map(describeInterface).join("\n") || "none";
 }
 
 function describeSession(value: UsbAutoSession): string {
-  const base = `${value.state} peer=${value.peerConfirmed ? "confirmed" : "waiting"} interface=${hex(value.interfaceId)}`;
-  return value.failure ? `${base} failure=${value.failure.code}` : base;
+  const base = `${value.status.tag} interface=${hex(value.interfaceId)}`;
+  return value.status.tag === "Failed"
+    ? `${base} failure=${value.status.data.tag}`
+    : base;
 }
 
 function describeSnapshot(snapshot: PrnsSnapshot): string {
@@ -298,9 +317,6 @@ function hex(bytes: Uint8Array): string {
 }
 
 function describeError(error: unknown): string {
-  if (error instanceof PrnsValidationError) {
-    return `${error.name}[${error.code}]: ${error.message}`;
-  }
   if (error instanceof DOMException) {
     return `${error.name}: ${error.message}`;
   }
@@ -315,12 +331,19 @@ try {
   await init(wasmUrl);
   await runRuntimeSmoke();
 
-  prns = await Prns.create({ wasm: wasmModule() });
-  destination = prns.registerSingleDestination({
+  const created = await Prns.create({ wasm: wasmModule() });
+  assert(created.tag === "Ready", `Prns creation failed: ${created.tag}`);
+  prns = created.data;
+  const registered = prns.registerSingleDestination({
     appName: appName("prns"),
     aspects: [aspect("browser"), aspect("playground")],
     appData: appData(),
   });
+  assert(
+    registered.tag === "Registered",
+    `destination registration failed: ${registered.tag}`,
+  );
+  destination = registered.data;
   connectButton.disabled = !("usb" in navigator);
   usbStatus.textContent = connectButton.disabled
     ? "WebUSB unavailable in this browser"

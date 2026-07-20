@@ -8,6 +8,34 @@ Bluetooth talk to nearby devices, while `prns.interfaces.webSocket.connect(url)`
 opens a browser WebSocket client to a local or public Prns WebSocket endpoint.
 Each binary WebSocket message carries one Prns wire frame.
 
+Fallible host operations resolve semantic tagged outcomes. They do not reject
+for expected conditions such as cancellation, unavailable browser APIs,
+duplicate connections, transport failure, or runtime rejection.
+
+```ts
+const created = await Prns.create({ wasm });
+if (created.tag !== "Ready") {
+  handleCreationFailure(created);
+  return;
+}
+
+const connected = await created.data.interfaces.webSocket.connect(url);
+if (connected.tag !== "Connected") {
+  handleConnectionFailure(connected);
+  return;
+}
+
+const session = connected.data;
+if (session.status.tag === "Failed") {
+  handleSessionFailure(session.status.data);
+}
+```
+
+The package exports its zero-dependency `Tag`, `match`, `match_into`, and
+`from` primitives for exhaustive handling and application-defined tagged
+unions. Synchronous branded-value constructors still throw
+`PrnsValidationError` when the caller violates their immediate input contract.
+
 ## Browser Node Playground Smoke
 
 Build the WASM package and TypeScript smoke bundle:

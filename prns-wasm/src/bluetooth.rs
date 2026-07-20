@@ -7,6 +7,8 @@ use wasm_bindgen::prelude::*;
 use crate::js_translation::bluetooth_control_to_js;
 use crate::parameters::bitrate_bps_u32;
 
+const WEB_BLUETOOTH_GATT_COMPATIBILITY_ENDPOINT: bluetooth_core::Endpoint =
+    bluetooth_core::Endpoint::Android(bluetooth_core::AndroidHost::Android);
 const WEB_BLUETOOTH_GATT_FRAGMENT_PAYLOAD: usize = 120;
 const WEB_BLUETOOTH_REASSEMBLY_CAP: usize = 600;
 
@@ -100,13 +102,11 @@ fn write_bluetooth_control(control: bluetooth_core::Control) -> Result<Vec<u8>, 
     Ok(out)
 }
 
-fn web_bluetooth_local(identity: Vec<u8>) -> Result<bluetooth_core::Local, JsValue> {
+fn web_bluetooth_local(identity: Vec<u8>) -> Result<bluetooth_core::LocalPeer, JsValue> {
     let identity = bluetooth_identity_from_vec(identity)?;
-    Ok(bluetooth_core::Local {
+    Ok(bluetooth_core::LocalPeer {
         identity,
-        // Web Bluetooth exposes the central-side GATT floor, not L2CAP CoC. Android is the
-        // already-deployed GATT-only endpoint remote firmware understands today.
-        endpoint: bluetooth_core::Endpoint::Android(bluetooth_core::AndroidHost::Android),
+        endpoint: WEB_BLUETOOTH_GATT_COMPATIBILITY_ENDPOINT,
         capabilities: bluetooth_core::LinkCapabilities {
             l2cap: None,
             link_mtu: bluetooth_core::BLE_HW_MTU as u16,

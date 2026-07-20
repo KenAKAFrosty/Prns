@@ -11,6 +11,7 @@ use personal_rns::interfaces::{
     InterfaceCommonPolicy, InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceMode,
 };
 use personal_rns::routing::upstream_app_destinations::{LinkRequestPolicy, ProofStrategy};
+use personal_rns::routing::warmth::Departure;
 use personal_rns::storage::GrowableHeap;
 use wasm_bindgen::prelude::*;
 
@@ -75,6 +76,7 @@ impl PrnsRuntime {
     pub fn register_interface(&mut self, options: JsValue) -> Result<Vec<u8>, JsValue> {
         let kind = parse_interface_kind(&required_string(&options, "kind")?)?;
         let channel_tag = required_bytes(&options, "channelTag")?;
+        let now_ms = required_u64(&options, "nowMs")?;
         let bitrate = optional_u32(&options, "bitrateBps")?
             .map(u64::from)
             .and_then(BitrateBps::new)
@@ -106,7 +108,23 @@ impl PrnsRuntime {
         } else {
             self.interfaces.push(descriptor);
         }
+        self.engine.interface_attached(id, InstantMillis(now_ms));
         Ok(id.as_bytes().to_vec())
+    }
+
+    #[wasm_bindgen(js_name = removeInterface)]
+    pub fn remove_interface(&mut self, options: JsValue) -> Result<bool, JsValue> {
+        let interface_id = required_bytes(&options, "interfaceId")?;
+        let now_ms = required_u64(&options, "nowMs")?;
+        let id = interface_id_from_vec(interface_id)?;
+        let before = self.interfaces.len();
+        self.interfaces.retain(|interface| interface.id != id);
+        let removed = self.interfaces.len() != before;
+        if removed {
+            self.engine
+                .interface_departed(id, Departure::MayReturn, InstantMillis(now_ms));
+        }
+        Ok(removed)
     }
 
     #[wasm_bindgen(js_name = bluetoothIdentity)]

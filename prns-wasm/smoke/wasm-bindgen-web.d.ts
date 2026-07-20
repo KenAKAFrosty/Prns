@@ -11,6 +11,7 @@ declare module "/pkg/prns_wasm.js" {
   export class PrnsRuntime implements PrnsRuntimeBinding {
     constructor(identitySecretKey: IdentitySecretKey);
     registerInterface: PrnsRuntimeBinding["registerInterface"];
+    removeInterface: PrnsRuntimeBinding["removeInterface"];
     bluetoothIdentity: PrnsRuntimeBinding["bluetoothIdentity"];
     registerSingleDestination: PrnsRuntimeBinding["registerSingleDestination"];
     announce: PrnsRuntimeBinding["announce"];
@@ -42,6 +43,7 @@ declare module "/pkg/prns_wasm.js" {
   export function bluetoothDecodeControl(bytes: Uint8Array): unknown;
   export function bluetoothDataFragments(packet: PacketFrame): Uint8Array[];
   export function websocketBitrateBps(): number;
+  export function websocketFrameCap(): number;
   export function websocketHardwareMtu(): number;
   export function usbAutoHostBitrateBps(): number;
   export function usbAutoHostHardwareMtu(): number;

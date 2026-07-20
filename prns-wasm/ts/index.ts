@@ -1,3 +1,8 @@
+import { Tag, from, match, match_into } from "./casework.js";
+
+export { Tag, from, match, match_into };
+export type { DataFrom, TagFrom } from "./casework.js";
+
 declare const brand: unique symbol;
 
 type Brand<Name extends string> = { readonly [brand]: Name };
@@ -28,16 +33,10 @@ export type CommandId = BrandedBigInt<"CommandId">;
 export type PrnsValidationCode =
   | "empty-bytes"
   | "empty-string"
-  | "disconnected"
   | "invalid-component"
   | "invalid-length"
   | "invalid-number"
   | "missing-host-api"
-  | "operation-cancelled"
-  | "permission-denied"
-  | "transfer-failed"
-  | "unsupported-frame"
-  | "unknown-event"
   | "unknown-interface-kind"
   | "unknown-outbound-target";
 
@@ -50,6 +49,250 @@ export class PrnsValidationError extends Error {
     this.code = code;
   }
 }
+
+export type RuntimeOperation =
+  | "initialize"
+  | "inspect-readiness"
+  | "register-interface"
+  | "remove-interface"
+  | "register-destination"
+  | "announce"
+  | "ingest"
+  | "drain-events"
+  | "drain-outbound"
+  | "snapshot";
+
+export type RuntimeRejected = Tag<
+  "RuntimeRejected",
+  { readonly operation: RuntimeOperation; readonly detail: string }
+>;
+
+export type HostApi =
+  | "Crypto"
+  | "LocalStorage"
+  | "Base64Encoder"
+  | "Base64Decoder"
+  | "WebUSB"
+  | "WebBluetooth"
+  | "WebSocket";
+
+export type HostApiUnavailable<Api extends HostApi = HostApi> = Tag<
+  "HostApiUnavailable",
+  { readonly api: Api }
+>;
+
+type IdentityStoreOperationFailure<Operation extends "Load" | "Save"> = Tag<
+  "IdentityStoreFailed",
+  { readonly operation: Operation; readonly detail: string }
+>;
+
+export type IdentityLoadFailure =
+  | HostApiUnavailable<"LocalStorage" | "Base64Decoder">
+  | IdentityStoreOperationFailure<"Load">
+  | Tag<"StoredIdentityInvalid", { readonly detail: string }>;
+
+export type IdentitySaveFailure =
+  | HostApiUnavailable<"LocalStorage" | "Base64Encoder">
+  | IdentityStoreOperationFailure<"Save">;
+
+export type IdentityStoreFailure =
+  | IdentityLoadFailure
+  | IdentitySaveFailure;
+
+export type IdentityLoadOutcome =
+  | Tag<"Loaded", IdentitySecretKey>
+  | Tag<"Missing">
+  | IdentityLoadFailure;
+
+export type IdentitySaveOutcome = Tag<"Saved"> | IdentitySaveFailure;
+
+export type EntropyFailure =
+  | HostApiUnavailable<"Crypto">
+  | Tag<"EntropySourceFailed", { readonly detail: string }>
+  | Tag<
+      "InsufficientEntropy",
+      { readonly minimum: number; readonly actual: number }
+    >;
+
+export type EntropyOutcome = Tag<"Filled", EntropyBytes> | EntropyFailure;
+
+export type PrnsCreateOutcome =
+  | Tag<"Ready", Prns>
+  | IdentityStoreFailure
+  | EntropyFailure
+  | RuntimeRejected;
+
+export type InterfaceConnectStage =
+  | "DeviceSelection"
+  | "TransportOpen"
+  | "ServiceDiscovery"
+  | "Handshake"
+  | "RuntimeRegistration";
+
+export type PermissionDenied<Name extends InterfaceName = InterfaceName> = Tag<
+  "PermissionDenied",
+  {
+    readonly interface: Name;
+    readonly stage: InterfaceConnectStage;
+    readonly detail: string;
+  }
+>;
+
+export type Cancelled<Name extends InterfaceName = InterfaceName> = Tag<
+  "Cancelled",
+  {
+    readonly interface: Name;
+    readonly stage: InterfaceConnectStage;
+  }
+>;
+
+export type AlreadyActive<Name extends InterfaceName = InterfaceName> = Tag<
+  "AlreadyActive",
+  { readonly interface: Name; readonly target: string }
+>;
+
+export type InvalidTarget<Name extends InterfaceName = InterfaceName> = Tag<
+  "InvalidTarget",
+  {
+    readonly interface: Name;
+    readonly target: string;
+    readonly detail: string;
+  }
+>;
+
+export type UnsupportedDevice<Name extends InterfaceName = InterfaceName> = Tag<
+  "UnsupportedDevice",
+  { readonly interface: Name; readonly capability: string }
+>;
+
+export type ConnectTimedOut<Name extends InterfaceName = InterfaceName> = Tag<
+  "TimedOut",
+  {
+    readonly interface: Name;
+    readonly stage: InterfaceConnectStage;
+    readonly timeoutMs: number;
+  }
+>;
+
+export type ConnectionFailed<Name extends InterfaceName = InterfaceName> = Tag<
+  "ConnectionFailed",
+  {
+    readonly interface: Name;
+    readonly stage: InterfaceConnectStage;
+    readonly detail: string;
+  }
+>;
+
+export type UnsupportedInterface<Name extends InterfaceName = InterfaceName> = Tag<
+  "UnsupportedInterface",
+  { readonly interface: Name; readonly host: "Browser" }
+>;
+
+export type UsbAutoConnectOutcome =
+  | Tag<"Connected", UsbAutoSession>
+  | HostApiUnavailable<"WebUSB">
+  | PermissionDenied<"usb-auto">
+  | Cancelled<"usb-auto">
+  | AlreadyActive<"usb-auto">
+  | UnsupportedDevice<"usb-auto">
+  | ConnectionFailed<"usb-auto">
+  | RuntimeRejected;
+
+export type WebSocketConnectOutcome =
+  | Tag<"Connected", WebSocketSession>
+  | HostApiUnavailable<"WebSocket">
+  | PermissionDenied<"websocket">
+  | Cancelled<"websocket">
+  | AlreadyActive<"websocket">
+  | InvalidTarget<"websocket">
+  | ConnectTimedOut<"websocket">
+  | ConnectionFailed<"websocket">
+  | RuntimeRejected;
+
+export type BluetoothConnectOutcome =
+  | Tag<"Connected", BluetoothSession>
+  | HostApiUnavailable<"WebBluetooth">
+  | PermissionDenied<"bluetooth">
+  | Cancelled<"bluetooth">
+  | UnsupportedDevice<"bluetooth">
+  | ConnectTimedOut<"bluetooth">
+  | ConnectionFailed<"bluetooth">
+  | AlreadyActive<"bluetooth">
+  | RuntimeRejected;
+
+export type BluetoothConnectFailure = Exclude<
+  BluetoothConnectOutcome,
+  Tag<"Connected", unknown>
+>;
+
+export type RNodeConnectOutcome =
+  | UnsupportedInterface<"rnode">
+  | RuntimeRejected;
+
+export type InterfaceCleanupFailure =
+  | Tag<"RuntimeDetachFailed", { readonly detail: string }>
+  | Tag<"TransportCloseFailed", { readonly detail: string }>;
+
+export type InterfaceCleanupFailures = readonly [
+  InterfaceCleanupFailure,
+  ...InterfaceCleanupFailure[],
+];
+
+export type InterfaceSessionFailure =
+  | Tag<"Disconnected", { readonly detail: string }>
+  | Tag<
+      "TransferFailed",
+      { readonly direction: "Inbound" | "Outbound"; readonly detail: string }
+    >
+  | Tag<
+      "ProtocolViolation",
+      {
+        readonly protocol: "UsbAuto" | "Bluetooth" | "WebSocket";
+        readonly detail: string;
+      }
+    >
+  | Tag<"UnsupportedFrame", { readonly format: "Text" | "Unknown" }>
+  | Tag<
+      "FrameTooLarge",
+      { readonly length: number; readonly maximum: number }
+    >
+  | Tag<"OutboundQueueFull", { readonly capacity: number }>
+  | Tag<
+      "CloseFailed",
+      {
+        readonly causes: InterfaceCleanupFailures;
+      }
+    >
+  | Tag<"UnexpectedSessionFailure", { readonly detail: string }>
+  | EntropyFailure
+  | RuntimeRejected;
+
+export type InterfaceSessionStatus =
+  | Tag<"Negotiating">
+  | Tag<"Active">
+  | Tag<"Closed">
+  | Tag<"Failed", InterfaceSessionFailure>;
+
+export type InterfaceCloseOutcome =
+  | Tag<"Closed">
+  | Extract<InterfaceSessionFailure, Tag<"CloseFailed", unknown>>;
+
+export type DestinationRegistrationOutcome =
+  | Tag<"Registered", DestinationHash>
+  | RuntimeRejected;
+
+export type AnnounceOutcome =
+  | Tag<"Queued", CommandId>
+  | EntropyFailure
+  | RuntimeRejected;
+
+export type EventDrainOutcome =
+  | Tag<"Drained", readonly PrnsEvent[]>
+  | RuntimeRejected;
+
+export type SnapshotOutcome =
+  | Tag<"Captured", PrnsSnapshot>
+  | RuntimeRejected;
 
 export type PrnsWasmModule = {
   PrnsRuntime: {
@@ -71,6 +314,7 @@ export type PrnsWasmModule = {
   bluetoothDecodeControl(bytes: Uint8Array): unknown;
   bluetoothDataFragments(packet: PacketFrame): Uint8Array[];
   websocketBitrateBps(): number;
+  websocketFrameCap(): number;
   websocketHardwareMtu(): number;
   usbAutoHostBitrateBps(): number;
   usbAutoHostHardwareMtu(): number;
@@ -83,7 +327,8 @@ export type PrnsWasmModule = {
 };
 
 export type PrnsRuntimeBinding = {
-  registerInterface(options: RuntimeRegisterInterfaceOptions): InterfaceId;
+  registerInterface(options: RuntimeRegisterInterfaceInput): InterfaceId;
+  removeInterface(options: RuntimeRemoveInterfaceInput): boolean;
   bluetoothIdentity(): Uint8Array;
   registerSingleDestination(options: RuntimeRegisterSingleDestinationOptions): DestinationHash;
   announce(options: RuntimeAnnounceOptions): bigint;
@@ -128,6 +373,15 @@ export type RuntimeRegisterInterfaceOptions = {
   channelTag: ChannelTag;
   bitrateBps?: BitrateBps;
   hardwareMtu?: HardwareMtu;
+};
+
+export type RuntimeRegisterInterfaceInput = RuntimeRegisterInterfaceOptions & {
+  nowMs: InstantMillis;
+};
+
+export type RuntimeRemoveInterfaceInput = {
+  interfaceId: InterfaceId;
+  nowMs: InstantMillis;
 };
 
 export type RuntimeRegisterSingleDestinationOptions = {
@@ -216,8 +470,8 @@ export type PrnsSnapshot = {
 };
 
 export type IdentityStore = {
-  load(expectedLength: number): Promise<IdentitySecretKey | null>;
-  save(secretKey: IdentitySecretKey): Promise<void>;
+  load(expectedLength: number): Promise<IdentityLoadOutcome>;
+  save(secretKey: IdentitySecretKey): Promise<IdentitySaveOutcome>;
 };
 
 type HostGlobal = typeof globalThis & {
@@ -226,7 +480,6 @@ type HostGlobal = typeof globalThis & {
   };
   navigator?: {
     bluetooth?: BrowserBluetooth;
-    serial?: BrowserSerial;
     usb?: BrowserUsb;
   };
   localStorage?: {
@@ -354,28 +607,6 @@ type BrowserUsbOutTransferResult = {
   readonly status: "ok" | "stall";
 };
 
-type BrowserSerial = {
-  requestPort(): Promise<BrowserSerialPort>;
-};
-
-type BrowserSerialPort = {
-  readonly readable?: ReadableStream<Uint8Array> | null;
-  readonly writable?: WritableStream<Uint8Array> | null;
-  open(options: BrowserSerialOpenOptions): Promise<void>;
-  close(): Promise<void>;
-  getInfo?(): BrowserSerialPortInfo;
-};
-
-type BrowserSerialOpenOptions = {
-  baudRate: number;
-  bufferSize?: number;
-};
-
-type BrowserSerialPortInfo = {
-  usbVendorId?: number;
-  usbProductId?: number;
-};
-
 type UsbAutoInboundMessage =
   | { type: "hello" }
   | { type: "helloAck"; tag: Uint8Array }
@@ -386,15 +617,92 @@ type BluetoothControl =
   | { type: "welcome"; identity: Uint8Array }
   | { type: "close"; reason: string };
 
-const USB_AUTO_WEB_SERIAL_BAUD_RATE = 115_200;
+type SessionWriteOutcome = Tag<"Written"> | InterfaceSessionFailure;
+type SessionHandleOutcome = Tag<"Handled"> | InterfaceSessionFailure;
+type UsbReadOutcome =
+  | Tag<"Read", Uint8Array | undefined>
+  | InterfaceSessionFailure;
+type WebUsbOpenOutcome =
+  | Tag<"Opened", WebUsbAutoTransport>
+  | PermissionDenied<"usb-auto">
+  | Cancelled<"usb-auto">
+  | UnsupportedDevice<"usb-auto">
+  | ConnectionFailed<"usb-auto">;
+type UsbConfigurationOutcome =
+  | Tag<"Configured", BrowserUsbConfiguration>
+  | UnsupportedDevice<"usb-auto">;
+type InterfaceRegistrationOutcome<Name extends InterfaceName> =
+  | Tag<"Registered", InterfaceId>
+  | AlreadyActive<Name>
+  | RuntimeRejected;
+type HostedInterfaceRegistration<Name extends InterfaceName> =
+  RuntimeRegisterInterfaceOptions & {
+    readonly interfaceName: Name;
+    readonly supervisorKind?: RuntimeInterfaceKind;
+  };
+type InterfaceDetachOutcome = Tag<"Detached"> | RuntimeRejected;
+type RuntimeReadyOutcome = Tag<"Ready"> | RuntimeRejected;
+type RuntimeIngestOutcome = Tag<"Accepted"> | EntropyFailure | RuntimeRejected;
+type OutboundTakeOutcome =
+  | Tag<"Outbound", readonly PrnsOutboundFrame[]>
+  | Extract<InterfaceSessionFailure, Tag<"OutboundQueueFull", unknown>>
+  | RuntimeRejected;
+type BluetoothStartOutcome = Tag<"Started"> | BluetoothConnectFailure;
+type BluetoothHandleOutcome =
+  | SessionHandleOutcome
+  | AlreadyActive<"bluetooth">;
+type IdentityGenerationOutcome =
+  | Tag<"Generated", IdentitySecretKey>
+  | HostApiUnavailable<"Crypto">
+  | Tag<"EntropySourceFailed", { readonly detail: string }>;
+type Available<Host, Api extends HostApi> =
+  | Tag<"Available", Host>
+  | HostApiUnavailable<Api>;
+type UsbStageOutcome<Value> =
+  | Tag<"Completed", Value>
+  | PermissionDenied<"usb-auto">
+  | Cancelled<"usb-auto">
+  | ConnectionFailed<"usb-auto">;
+type BluetoothStageOutcome<Value> =
+  | Tag<"Completed", Value>
+  | PermissionDenied<"bluetooth">
+  | Cancelled<"bluetooth">
+  | ConnectionFailed<"bluetooth">;
+type WebSocketOpenOutcome =
+  | Tag<"Opened", WebSocket>
+  | HostApiUnavailable<"WebSocket">
+  | PermissionDenied<"websocket">
+  | Cancelled<"websocket">
+  | ConnectTimedOut<"websocket">
+  | ConnectionFailed<"websocket">;
+type WebSocketDecodeOutcome =
+  | Tag<"Decoded", Uint8Array>
+  | Extract<InterfaceSessionFailure, Tag<"UnsupportedFrame", unknown>>
+  | Extract<InterfaceSessionFailure, Tag<"FrameTooLarge", unknown>>
+  | Extract<InterfaceSessionFailure, Tag<"TransferFailed", unknown>>;
+type CanonicalWebSocketOutcome =
+  | Tag<"Canonical", string>
+  | InvalidTarget<"websocket">;
+type CharacteristicBytesOutcome =
+  | Tag<"Decoded", Uint8Array>
+  | Extract<InterfaceSessionFailure, Tag<"ProtocolViolation", unknown>>;
+type RuntimeOutboundDrainOutcome =
+  | Tag<"Drained", readonly PrnsOutboundFrame[]>
+  | RuntimeRejected;
+
 const USB_AUTO_PROBE_INTERVAL_MS = 500;
 const USB_AUTO_OUTBOUND_POLL_MS = 25;
 const WEBUSB_MIN_TRANSFER_BYTES = 512;
 const BLUETOOTH_HANDSHAKE_TIMEOUT_MS = 10_000;
 const BLUETOOTH_OUTBOUND_POLL_MS = 25;
+const WEBSOCKET_CONNECT_TIMEOUT_MS = 10_000;
 const WEBSOCKET_OUTBOUND_POLL_MS = 25;
+const WEBSOCKET_BUFFER_POLL_MS = 4;
+const WEBSOCKET_MIN_BUFFER_LIMIT = 1024 * 1024;
+const WEBSOCKET_CONNECTING = 0;
+const WEBSOCKET_OPEN = 1;
+const INTERFACE_OUTBOUND_QUEUE_DEPTH = 64;
 let nextBrowserUsbAutoTag = 0;
-let nextBrowserWebSocketTag = 0;
 const LINUX_WEBUSB_SETUP_HINT =
   "On Linux, run ./scripts/install-prns-webusb-udev.sh from the Prns repo root, " +
   "then unplug/replug the device and restart the browser. If this is Snap Chromium, " +
@@ -407,18 +715,59 @@ export class BrowserLocalStorageIdentityStore implements IdentityStore {
     this.#key = key;
   }
 
-  async load(expectedLength: number): Promise<IdentitySecretKey | null> {
-    const storage = requireLocalStorage();
-    const encoded = storage.getItem(this.#key);
-    return encoded ? identitySecretKey(decodeBase64(encoded), expectedLength) : null;
+  async load(expectedLength: number): Promise<IdentityLoadOutcome> {
+    let encoded: string | null;
+    try {
+      const storage = hostGlobal().localStorage;
+      if (!storage) {
+        return Tag("HostApiUnavailable", { api: "LocalStorage" });
+      }
+      if (!hostGlobal().atob) {
+        return Tag("HostApiUnavailable", { api: "Base64Decoder" });
+      }
+      encoded = storage.getItem(this.#key);
+    } catch (error) {
+      return Tag("IdentityStoreFailed", {
+        operation: "Load",
+        detail: describeHostError(error),
+      });
+    }
+    if (encoded === null) {
+      return Tag("Missing");
+    }
+    try {
+      return Tag(
+        "Loaded",
+        identitySecretKey(decodeBase64(encoded), expectedLength),
+      );
+    } catch (error) {
+      return Tag("StoredIdentityInvalid", {
+        detail: describeHostError(error),
+      });
+    }
   }
 
-  async save(secretKey: IdentitySecretKey): Promise<void> {
-    requireLocalStorage().setItem(this.#key, encodeBase64(secretKey));
+  async save(secretKey: IdentitySecretKey): Promise<IdentitySaveOutcome> {
+    try {
+      const storage = hostGlobal().localStorage;
+      if (!storage) {
+        return Tag("HostApiUnavailable", { api: "LocalStorage" });
+      }
+      if (!hostGlobal().btoa) {
+        return Tag("HostApiUnavailable", { api: "Base64Encoder" });
+      }
+      storage.setItem(this.#key, encodeBase64(secretKey));
+      return Tag("Saved");
+    } catch (error) {
+      return Tag("IdentityStoreFailed", {
+        operation: "Save",
+        detail: describeHostError(error),
+      });
+    }
   }
 }
 
-export type EntropySource = (length: number) => Uint8Array;
+export type EntropySource = (length: number) => EntropyOutcome;
 
 export type PrnsOptions = {
   wasm: PrnsWasmModule;
@@ -427,43 +776,24 @@ export type PrnsOptions = {
   now?: () => InstantMillis;
 };
 
-export type InterfaceConnectState =
-  | "idle"
-  | "requesting"
-  | "opening"
-  | "port-open"
-  | "handshaking"
-  | "peer-confirmed"
-  | "failed"
-  | "closed";
-
-export type InterfaceFailure = {
-  readonly code: PrnsValidationCode;
-  readonly message: string;
-};
-
 export type InterfaceSession = {
   readonly name: InterfaceName;
   readonly interfaceId: InterfaceId;
-  readonly state: InterfaceConnectState;
-  readonly failure: InterfaceFailure | undefined;
-  close(): Promise<void>;
+  readonly status: InterfaceSessionStatus;
+  close(): Promise<InterfaceCloseOutcome>;
 };
 
 export type UsbAutoSession = InterfaceSession & {
   readonly name: "usb-auto";
-  readonly peerConfirmed: boolean;
 };
 
 export type BluetoothSession = InterfaceSession & {
   readonly name: "bluetooth";
-  readonly peerConfirmed: boolean;
 };
 
 export type WebSocketSession = InterfaceSession & {
   readonly name: "websocket";
   readonly url: string;
-  readonly connected: boolean;
 };
 
 export type UsbAutoDeviceFilter = {
@@ -505,33 +835,58 @@ export class UsbAutoInterface {
     this.#host = host;
   }
 
-  async connect(options: UsbAutoConnectOptions = {}): Promise<UsbAutoSession> {
-    this.#host.assertReady();
-    const usb = requireWebUsb();
-    const device = await usbStage("request browser USB device", () =>
-      usb.requestDevice({
-        filters: options.filters ?? this.#host.defaultUsbAutoFilters(),
-      }),
-    );
-    const transport = await WebUsbAutoTransport.open(device);
-
-    let session: BrowserUsbAutoSession | undefined;
+  async connect(
+    options: UsbAutoConnectOptions = {},
+  ): Promise<UsbAutoConnectOutcome> {
+    const ready = this.#host.assertReady();
+    if (ready.tag !== "Ready") {
+      return ready;
+    }
+    const available = requireWebUsb();
+    if (available.tag !== "Available") {
+      return available;
+    }
+    let transport: WebUsbAutoTransport | undefined;
+    let interfaceId: InterfaceId | undefined;
+    let stage: InterfaceConnectStage = "DeviceSelection";
     try {
-      const interfaceId = this.#host.registerInterface({
+      const requested = await usbStage("DeviceSelection", "request device", () =>
+        available.data.requestDevice({
+          filters: options.filters ?? this.#host.defaultUsbAutoFilters(),
+        }),
+      );
+      if (requested.tag !== "Completed") {
+        return requested;
+      }
+      stage = "TransportOpen";
+      const opened = await WebUsbAutoTransport.open(requested.data);
+      if (opened.tag !== "Opened") {
+        return opened;
+      }
+      transport = opened.data;
+      stage = "RuntimeRegistration";
+      const registered = this.#host.registerInterface({
+        interfaceName: "usb-auto",
         kind: "auto-usb-host",
-        channelTag: browserUsbAutoChannelTag(device),
+        channelTag: browserUsbAutoChannelTag(requested.data),
         bitrateBps: this.#host.usbAutoHostBitrateBps(),
         hardwareMtu: this.#host.usbAutoHostHardwareMtu(),
       });
-      session = new BrowserUsbAutoSession(this.#host, transport, interfaceId);
-      session.start();
-      return session;
-    } catch (error) {
-      await session?.close();
-      if (!session) {
+      if (registered.tag !== "Registered") {
         await transport.close();
+        return registered;
       }
-      throw error;
+      interfaceId = registered.data;
+      stage = "Handshake";
+      const session = new BrowserUsbAutoSession(this.#host, transport, interfaceId);
+      session.start();
+      return Tag("Connected", session);
+    } catch (error) {
+      if (interfaceId) {
+        this.#host.deactivateInterface(interfaceId);
+      }
+      await transport?.close();
+      return connectFailure("usb-auto", stage, error);
     }
   }
 }
@@ -544,11 +899,10 @@ class BrowserUsbAutoSession implements UsbAutoSession {
   readonly #transport: WebUsbAutoTransport;
   readonly #decoder: UsbAutoDecoderBinding;
   readonly #nodeTag: Uint8Array;
-  #writeQueue: Promise<void> = Promise.resolve();
+  #writeQueue: Promise<SessionWriteOutcome> = Promise.resolve(Tag("Written"));
   #closed = false;
   #confirmed = false;
-  #state: InterfaceConnectState = "port-open";
-  #failure: InterfaceFailure | undefined;
+  #status: InterfaceSessionStatus = Tag("Negotiating");
 
   constructor(
     host: RuntimeHost,
@@ -562,16 +916,8 @@ class BrowserUsbAutoSession implements UsbAutoSession {
     this.#nodeTag = host.usbAutoNodeTagFor(interfaceId);
   }
 
-  get state(): InterfaceConnectState {
-    return this.#state;
-  }
-
-  get failure(): InterfaceFailure | undefined {
-    return this.#failure;
-  }
-
-  get peerConfirmed(): boolean {
-    return this.#confirmed;
+  get status(): InterfaceSessionStatus {
+    return this.#status;
   }
 
   start(): void {
@@ -580,35 +926,84 @@ class BrowserUsbAutoSession implements UsbAutoSession {
     void this.#outboundLoop();
   }
 
-  async close(): Promise<void> {
+  async close(): Promise<InterfaceCloseOutcome> {
     if (this.#closed) {
-      return;
+      return closedSessionOutcome(this.#status);
     }
     this.#closed = true;
-    if (this.#state !== "failed") {
-      this.#state = "closed";
+    const causes: InterfaceCleanupFailure[] = [];
+    const detached = this.#host.deactivateInterface(this.interfaceId);
+    if (detached.tag !== "Detached") {
+      causes.push(Tag("RuntimeDetachFailed", { detail: detached.data.detail }));
     }
-    await this.#writeQueue.catch(ignoreError);
-    await this.#transport.close();
+    const pendingWrite = await this.#writeQueue;
+    if (pendingWrite.tag !== "Written") {
+      causes.push(
+        Tag("TransportCloseFailed", {
+          detail: describeInterfaceSessionFailure(pendingWrite),
+        }),
+      );
+    }
+    causes.push(...(await this.#transport.close()));
+    if (hasCleanupFailures(causes)) {
+      const failed = closeFailed(causes);
+      this.#status = Tag("Failed", failed);
+      return failed;
+    }
+    this.#status = Tag("Closed");
+    return Tag("Closed");
   }
 
   async #readLoop(): Promise<void> {
     try {
       while (!this.#closed) {
-        const chunk = await this.#transport.read();
+        const read = await this.#transport.read();
+        if (read.tag !== "Read") {
+          await this.#fail(read);
+          return;
+        }
+        const chunk = read.data;
         if (!chunk) {
           break;
         }
         if (chunk.length === 0) {
           continue;
         }
-        for (const raw of this.#decoder.feed(chunk)) {
-          await this.#handleInbound(parseUsbAutoMessage(raw));
+        let messages: unknown[];
+        try {
+          messages = this.#decoder.feed(chunk);
+        } catch (error) {
+          await this.#fail(
+            Tag("ProtocolViolation", {
+              protocol: "UsbAuto",
+              detail: describeHostError(error),
+            }),
+          );
+          return;
+        }
+        for (const raw of messages) {
+          let message: UsbAutoInboundMessage;
+          try {
+            message = parseUsbAutoMessage(raw);
+          } catch (error) {
+            await this.#fail(
+              Tag("ProtocolViolation", {
+                protocol: "UsbAuto",
+                detail: describeHostError(error),
+              }),
+            );
+            return;
+          }
+          const handled = await this.#handleInbound(message);
+          if (handled.tag !== "Handled") {
+            await this.#fail(handled);
+            return;
+          }
         }
       }
     } catch (error) {
       if (!this.#closed) {
-        await this.#fail(error);
+        await this.#fail(unexpectedSessionFailure(error));
       }
     } finally {
       if (!this.#closed) {
@@ -620,13 +1015,16 @@ class BrowserUsbAutoSession implements UsbAutoSession {
   async #probeLoop(): Promise<void> {
     try {
       while (!this.#closed && !this.#confirmed) {
-        this.#state = "handshaking";
-        await this.#writeFrame(this.#host.usbAutoHostHelloFrame());
+        const written = await this.#writeFrame(this.#host.usbAutoHostHelloFrame());
+        if (written.tag !== "Written") {
+          await this.#fail(written);
+          return;
+        }
         await delay(USB_AUTO_PROBE_INTERVAL_MS);
       }
     } catch (error) {
       if (!this.#closed) {
-        await this.#fail(error);
+        await this.#fail(unexpectedSessionFailure(error));
       }
     }
   }
@@ -635,64 +1033,87 @@ class BrowserUsbAutoSession implements UsbAutoSession {
     try {
       while (!this.#closed) {
         if (this.#confirmed) {
-          const frames = this.#host.takeOutboundFor(
-            this.interfaceId,
-            "auto-usb-host",
-          );
-          for (const frame of frames) {
-            await this.#writeFrame(this.#host.usbAutoDataFrame(frame.bytes));
+          const outbound = this.#host.takeOutboundFor(this.interfaceId);
+          if (outbound.tag !== "Outbound") {
+            await this.#fail(outbound);
+            return;
+          }
+          for (const frame of outbound.data) {
+            const written = await this.#writeFrame(
+              this.#host.usbAutoDataFrame(frame.bytes),
+            );
+            if (written.tag !== "Written") {
+              await this.#fail(written);
+              return;
+            }
           }
         }
         await delay(USB_AUTO_OUTBOUND_POLL_MS);
       }
     } catch (error) {
       if (!this.#closed) {
-        await this.#fail(error);
+        await this.#fail(unexpectedSessionFailure(error));
       }
     }
   }
 
-  async #handleInbound(message: UsbAutoInboundMessage): Promise<void> {
+  async #handleInbound(message: UsbAutoInboundMessage): Promise<SessionHandleOutcome> {
     switch (message.type) {
-      case "hello":
-        await this.#writeFrame(this.#host.usbAutoHostHelloAckFrame(this.#nodeTag));
+      case "hello": {
+        const written = await this.#writeFrame(
+          this.#host.usbAutoHostHelloAckFrame(this.#nodeTag),
+        );
+        if (written.tag !== "Written") {
+          return written;
+        }
         this.#confirmPeer();
-        break;
+        return Tag("Handled");
+      }
       case "helloAck":
         this.#confirmPeer();
-        break;
+        return Tag("Handled");
       case "data":
         if (this.#confirmed && message.bytes.length > 0) {
-          this.#host.ingest(this.interfaceId, packetFrame(message.bytes));
+          const ingested = this.#host.ingest(
+            this.interfaceId,
+            packetFrame(message.bytes),
+          );
+          return ingested.tag === "Accepted" ? Tag("Handled") : ingested;
         }
-        break;
+        return Tag("Handled");
     }
   }
 
   #confirmPeer(): void {
     this.#confirmed = true;
-    this.#state = "peer-confirmed";
+    this.#status = Tag("Active");
   }
 
-  async #fail(error: unknown): Promise<void> {
-    this.#failure = interfaceFailure(error);
-    this.#state = "failed";
-    this.#closed = true;
-    await this.#writeQueue.catch(ignoreError);
-    await this.#transport.close();
-  }
-
-  async #writeFrame(frame: Uint8Array): Promise<void> {
+  async #fail(sessionFailure: InterfaceSessionFailure): Promise<void> {
     if (this.#closed) {
       return;
     }
-    const write = this.#writeQueue.then(async () => {
-      if (!this.#closed) {
-        await this.#transport.write(frame);
-      }
-    });
-    this.#writeQueue = write.catch(ignoreError);
-    await write;
+    this.#status = Tag("Failed", sessionFailure);
+    this.#closed = true;
+    this.#host.deactivateInterface(this.interfaceId);
+    await this.#writeQueue;
+    await this.#transport.close();
+  }
+
+  async #writeFrame(frame: Uint8Array): Promise<SessionWriteOutcome> {
+    if (this.#closed) {
+      return Tag("Written");
+    }
+    const write = this.#writeQueue
+      .then(async (previous): Promise<SessionWriteOutcome> => {
+        if (previous.tag !== "Written" || this.#closed) {
+          return previous;
+        }
+        return this.#transport.write(frame);
+      })
+      .catch((error: unknown) => unexpectedSessionFailure(error));
+    this.#writeQueue = write;
+    return write;
   }
 }
 
@@ -715,95 +1136,168 @@ class WebUsbAutoTransport {
     this.#outEndpoint = outEndpoint;
   }
 
-  static async open(device: BrowserUsbDevice): Promise<WebUsbAutoTransport> {
-    await usbStage("open selected USB device", () => device.open());
-    const configuration = device.configuration ?? firstUsbConfiguration(device);
-    if (!device.configuration) {
-      await usbStage(`select USB configuration ${configuration.configurationValue}`, () =>
-        device.selectConfiguration(configuration.configurationValue),
-      );
+  static async open(device: BrowserUsbDevice): Promise<WebUsbOpenOutcome> {
+    const opened = await usbStage("TransportOpen", "open selected device", () =>
+      device.open(),
+    );
+    if (opened.tag !== "Completed") {
+      return opened;
     }
-    const selectedConfiguration = device.configuration ?? configuration;
+    const configured = firstUsbConfiguration(device);
+    if (configured.tag !== "Configured") {
+      await closeUsbDevice(device);
+      return configured;
+    }
+    const configuration = device.configuration ?? configured.data;
+    if (!device.configuration) {
+      const selected = await usbStage(
+        "TransportOpen",
+        `select configuration ${configuration.configurationValue}`,
+        () => device.selectConfiguration(configuration.configurationValue),
+      );
+      if (selected.tag !== "Completed") {
+        await closeUsbDevice(device);
+        return selected;
+      }
+    }
+    const selectedConfiguration = device.configuration ?? configured.data;
     const endpoints = findWebUsbEndpointPair(selectedConfiguration);
     if (!endpoints) {
-      await device.close().catch(ignoreError);
-      throw new PrnsValidationError(
-        "invalid-component",
-        "Selected USB device has no usable IN/OUT endpoint pair",
-      );
+      await closeUsbDevice(device);
+      return Tag("UnsupportedDevice", {
+        interface: "usb-auto",
+        capability: "usable IN/OUT endpoint pair",
+      });
     }
-    await usbStage(`claim USB interface ${endpoints.interfaceNumber}`, () =>
-      device.claimInterface(endpoints.interfaceNumber),
+    const claimed = await usbStage(
+      "TransportOpen",
+      `claim interface ${endpoints.interfaceNumber}`,
+      () => device.claimInterface(endpoints.interfaceNumber),
     );
+    if (claimed.tag !== "Completed") {
+      await closeUsbDevice(device);
+      return claimed;
+    }
     if (
       endpoints.alternate.alternateSetting !== 0 &&
       device.selectAlternateInterface
     ) {
-      await usbStage(
-        `select USB alternate ${endpoints.alternate.alternateSetting} on interface ${endpoints.interfaceNumber}`,
+      const selected = await usbStage(
+        "TransportOpen",
+        `select alternate ${endpoints.alternate.alternateSetting} ` +
+          `on interface ${endpoints.interfaceNumber}`,
         () =>
           device.selectAlternateInterface!(
             endpoints.interfaceNumber,
             endpoints.alternate.alternateSetting,
           ),
       );
+      if (selected.tag !== "Completed") {
+        await closeUsbDevice(device);
+        return selected;
+      }
     }
-    return new WebUsbAutoTransport(
-      device,
-      endpoints.interfaceNumber,
-      endpoints.inEndpoint,
-      endpoints.outEndpoint,
+    return Tag(
+      "Opened",
+      new WebUsbAutoTransport(
+        device,
+        endpoints.interfaceNumber,
+        endpoints.inEndpoint,
+        endpoints.outEndpoint,
+      ),
     );
   }
 
-  async read(): Promise<Uint8Array | undefined> {
+  async read(): Promise<UsbReadOutcome> {
     if (this.#closed) {
-      return undefined;
+      return Tag("Read", undefined);
     }
-    const length = Math.max(this.#inEndpoint.packetSize, WEBUSB_MIN_TRANSFER_BYTES);
-    const result = await this.#device.transferIn(this.#inEndpoint.endpointNumber, length);
-    if (result.status !== "ok") {
-      throw new PrnsValidationError(
-        "transfer-failed",
-        `USB IN transfer failed with status ${result.status}`,
+    try {
+      const length = Math.max(this.#inEndpoint.packetSize, WEBUSB_MIN_TRANSFER_BYTES);
+      const result = await this.#device.transferIn(
+        this.#inEndpoint.endpointNumber,
+        length,
       );
+      if (result.status !== "ok") {
+        return Tag("TransferFailed", {
+          direction: "Inbound",
+          detail: `USB transfer status ${result.status}`,
+        });
+      }
+      const data = result.data;
+      if (!data) {
+        return Tag("Read", new Uint8Array());
+      }
+      return Tag(
+        "Read",
+        new Uint8Array(
+          data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength),
+        ),
+      );
+    } catch (error) {
+      return Tag("TransferFailed", {
+        direction: "Inbound",
+        detail: describeHostError(error),
+      });
     }
-    const data = result.data;
-    if (!data) {
-      return new Uint8Array();
-    }
-    return new Uint8Array(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength));
   }
 
-  async write(bytes: Uint8Array): Promise<void> {
+  async write(bytes: Uint8Array): Promise<SessionWriteOutcome> {
     if (this.#closed || bytes.length === 0) {
-      return;
+      return Tag("Written");
     }
-    const result = await this.#device.transferOut(
-      this.#outEndpoint.endpointNumber,
-      arrayBufferForUsb(bytes),
-    );
-    if (result.status !== "ok" || result.bytesWritten !== bytes.length) {
-      throw new PrnsValidationError(
-        "transfer-failed",
-        `USB OUT transfer wrote ${result.bytesWritten}/${bytes.length} bytes with status ${result.status}`,
+    try {
+      const result = await this.#device.transferOut(
+        this.#outEndpoint.endpointNumber,
+        arrayBufferForUsb(bytes),
       );
+      if (result.status !== "ok" || result.bytesWritten !== bytes.length) {
+        return Tag("TransferFailed", {
+          direction: "Outbound",
+          detail: `wrote ${result.bytesWritten}/${bytes.length} bytes with status ${result.status}`,
+        });
+      }
+      return Tag("Written");
+    } catch (error) {
+      return Tag("TransferFailed", {
+        direction: "Outbound",
+        detail: describeHostError(error),
+      });
     }
   }
 
-  async close(): Promise<void> {
+  async close(): Promise<InterfaceCleanupFailure[]> {
     if (this.#closed) {
-      return;
+      return [];
     }
     this.#closed = true;
-    await this.#device.releaseInterface(this.#interfaceNumber).catch(ignoreError);
-    await this.#device.close().catch(ignoreError);
+    const failures: InterfaceCleanupFailure[] = [];
+    try {
+      await this.#device.releaseInterface(this.#interfaceNumber);
+    } catch (error) {
+      failures.push(
+        Tag("TransportCloseFailed", {
+          detail: `release USB interface: ${describeHostError(error)}`,
+        }),
+      );
+    }
+    try {
+      await this.#device.close();
+    } catch (error) {
+      failures.push(
+        Tag("TransportCloseFailed", {
+          detail: `close USB device: ${describeHostError(error)}`,
+        }),
+      );
+    }
+    return failures;
   }
 }
 
 export class WebSocketInterface {
   readonly name = "websocket" as const;
   readonly #host: RuntimeHost;
+  readonly #activeTags = new Set<string>();
 
   constructor(host: RuntimeHost) {
     this.#host = host;
@@ -812,19 +1306,72 @@ export class WebSocketInterface {
   async connect(
     url: string | URL,
     options: WebSocketConnectOptions = {},
-  ): Promise<WebSocketSession> {
-    this.#host.assertReady();
-    const target = url.toString();
-    const socket = await openBrowserWebSocket(target, options.protocols);
-    const interfaceId = this.#host.registerInterface({
-      kind: "websocket-client",
-      channelTag: options.channelTag ?? browserWebSocketChannelTag(target),
-      bitrateBps: options.bitrateBps ?? this.#host.websocketBitrateBps(),
-      hardwareMtu: options.hardwareMtu ?? this.#host.websocketHardwareMtu(),
-    });
-    const session = new BrowserWebSocketSession(this.#host, socket, interfaceId, target);
-    session.start();
-    return session;
+  ): Promise<WebSocketConnectOutcome> {
+    const ready = this.#host.assertReady();
+    if (ready.tag !== "Ready") {
+      return ready;
+    }
+    const canonical = canonicalWebSocketUrl(url);
+    if (canonical.tag !== "Canonical") {
+      return canonical;
+    }
+    const target = canonical.data;
+    const protocols = normalizedWebSocketProtocols(options.protocols);
+    let tag: ChannelTag;
+    try {
+      tag = options.channelTag ?? browserWebSocketChannelTag(target, protocols);
+    } catch (error) {
+      return connectFailure("websocket", "RuntimeRegistration", error);
+    }
+    const tagKey = byteKey(tag);
+    if (this.#activeTags.has(tagKey)) {
+      return Tag("AlreadyActive", { interface: "websocket", target });
+    }
+    this.#activeTags.add(tagKey);
+
+    let socket: WebSocket | undefined;
+    let interfaceId: InterfaceId | undefined;
+    let stage: InterfaceConnectStage = "TransportOpen";
+    try {
+      const opened = await openBrowserWebSocket(target, protocols);
+      if (opened.tag !== "Opened") {
+        this.#activeTags.delete(tagKey);
+        return opened;
+      }
+      socket = opened.data;
+      stage = "RuntimeRegistration";
+      const registered = this.#host.registerInterface({
+        interfaceName: "websocket",
+        kind: "websocket-client",
+        channelTag: tag,
+        bitrateBps: options.bitrateBps ?? this.#host.websocketBitrateBps(),
+        hardwareMtu: options.hardwareMtu ?? this.#host.websocketHardwareMtu(),
+      });
+      if (registered.tag !== "Registered") {
+        closeBrowserWebSocket(socket);
+        this.#activeTags.delete(tagKey);
+        return registered;
+      }
+      interfaceId = registered.data;
+      stage = "Handshake";
+      const session = new BrowserWebSocketSession(
+        this.#host,
+        socket,
+        interfaceId,
+        target,
+        this.#host.websocketFrameCap(),
+        () => this.#activeTags.delete(tagKey),
+      );
+      session.start();
+      return Tag("Connected", session);
+    } catch (error) {
+      if (interfaceId) {
+        this.#host.deactivateInterface(interfaceId);
+      }
+      closeBrowserWebSocket(socket);
+      this.#activeTags.delete(tagKey);
+      return connectFailure("websocket", stage, error);
+    }
   }
 }
 
@@ -835,81 +1382,113 @@ class BrowserWebSocketSession implements WebSocketSession {
 
   readonly #host: RuntimeHost;
   readonly #socket: WebSocket;
-  #writeQueue: Promise<void> = Promise.resolve();
+  readonly #frameCap: number;
+  readonly #bufferLimit: number;
+  readonly #release: () => void;
+  #readQueue: Promise<void> = Promise.resolve();
+  #writeQueue: Promise<SessionWriteOutcome> = Promise.resolve(Tag("Written"));
   #closed = false;
-  #state: InterfaceConnectState = "peer-confirmed";
-  #failure: InterfaceFailure | undefined;
+  #released = false;
+  #status: InterfaceSessionStatus = Tag("Active");
 
   constructor(
     host: RuntimeHost,
     socket: WebSocket,
     interfaceId: InterfaceId,
     url: string,
+    frameCap: number,
+    release: () => void,
   ) {
     this.#host = host;
     this.#socket = socket;
     this.interfaceId = interfaceId;
     this.url = url;
+    this.#frameCap = frameCap;
+    this.#bufferLimit = Math.max(WEBSOCKET_MIN_BUFFER_LIMIT, frameCap * 2);
+    this.#release = release;
   }
 
-  get state(): InterfaceConnectState {
-    return this.#state;
-  }
-
-  get failure(): InterfaceFailure | undefined {
-    return this.#failure;
-  }
-
-  get connected(): boolean {
-    return !this.#closed && this.#socket.readyState === WebSocket.OPEN;
+  get status(): InterfaceSessionStatus {
+    return this.#status;
   }
 
   start(): void {
     this.#socket.addEventListener("message", (event) => {
-      void this.#handleMessage(event);
+      this.#enqueueMessage(event);
     });
     this.#socket.addEventListener("close", () => {
       this.#handleClose();
     });
     this.#socket.addEventListener("error", () => {
       void this.#fail(
-        new PrnsValidationError(
-          "disconnected",
-          `WebSocket connection failed for ${this.url}`,
-        ),
+        Tag("Disconnected", {
+          detail: `WebSocket connection failed for ${this.url}`,
+        }),
       );
     });
     void this.#outboundLoop();
   }
 
-  async close(): Promise<void> {
+  async close(): Promise<InterfaceCloseOutcome> {
     if (this.#closed) {
-      return;
+      return closedSessionOutcome(this.#status);
     }
     this.#closed = true;
-    if (this.#state !== "failed") {
-      this.#state = "closed";
+    const causes: InterfaceCleanupFailure[] = [];
+    const detached = this.#host.deactivateInterface(this.interfaceId);
+    if (detached.tag !== "Detached") {
+      causes.push(Tag("RuntimeDetachFailed", { detail: detached.data.detail }));
     }
-    await this.#writeQueue.catch(ignoreError);
-    if (
-      this.#socket.readyState === WebSocket.CONNECTING ||
-      this.#socket.readyState === WebSocket.OPEN
-    ) {
-      this.#socket.close();
+    this.#releaseOnce();
+    const socketFailure = closeBrowserWebSocket(this.#socket);
+    if (socketFailure) {
+      causes.push(socketFailure);
     }
+    const pendingWrite = await this.#writeQueue;
+    if (pendingWrite.tag !== "Written") {
+      causes.push(
+        Tag("TransportCloseFailed", {
+          detail: describeInterfaceSessionFailure(pendingWrite),
+        }),
+      );
+    }
+    if (hasCleanupFailures(causes)) {
+      const failed = closeFailed(causes);
+      this.#status = Tag("Failed", failed);
+      return failed;
+    }
+    this.#status = Tag("Closed");
+    return Tag("Closed");
   }
 
-  async #handleMessage(event: MessageEvent): Promise<void> {
-    try {
-      const bytes = await websocketMessageBytes(event.data);
-      if (bytes.length > 0 && !this.#closed) {
-        this.#host.ingest(this.interfaceId, packetFrame(bytes));
-      }
-    } catch (error) {
-      if (!this.#closed) {
-        await this.#fail(error);
-      }
+  #enqueueMessage(event: MessageEvent): void {
+    this.#readQueue = this.#readQueue
+      .then(async () => {
+        const handled = await this.#handleMessage(event);
+        if (handled.tag !== "Handled" && !this.#closed) {
+          await this.#fail(handled);
+        }
+      })
+      .catch(async (error: unknown) => {
+        if (!this.#closed) {
+          await this.#fail(unexpectedSessionFailure(error));
+        }
+      });
+  }
+
+  async #handleMessage(event: MessageEvent): Promise<SessionHandleOutcome> {
+    const decoded = await websocketMessageBytes(event.data, this.#frameCap);
+    if (decoded.tag !== "Decoded") {
+      return decoded;
     }
+    if (decoded.data.length > 0 && !this.#closed) {
+      const ingested = this.#host.ingest(
+        this.interfaceId,
+        packetFrame(decoded.data),
+      );
+      return ingested.tag === "Accepted" ? Tag("Handled") : ingested;
+    }
+    return Tag("Handled");
   }
 
   #handleClose(): void {
@@ -917,61 +1496,91 @@ class BrowserWebSocketSession implements WebSocketSession {
       return;
     }
     this.#closed = true;
-    if (this.#state !== "failed") {
-      this.#state = "closed";
-    }
+    const detached = this.#host.deactivateInterface(this.interfaceId);
+    this.#status =
+      detached.tag === "Detached" ? Tag("Closed") : Tag("Failed", detached);
+    this.#releaseOnce();
   }
 
   async #outboundLoop(): Promise<void> {
     try {
       while (!this.#closed) {
-        const frames = this.#host.takeOutboundFor(
-          this.interfaceId,
-          "websocket-client",
-        );
-        for (const frame of frames) {
-          await this.#writeFrame(frame.bytes);
+        const outbound = this.#host.takeOutboundFor(this.interfaceId);
+        if (outbound.tag !== "Outbound") {
+          await this.#fail(outbound);
+          return;
+        }
+        for (const frame of outbound.data) {
+          const written = await this.#writeFrame(frame.bytes);
+          if (written.tag !== "Written") {
+            await this.#fail(written);
+            return;
+          }
         }
         await delay(WEBSOCKET_OUTBOUND_POLL_MS);
       }
     } catch (error) {
       if (!this.#closed) {
-        await this.#fail(error);
+        await this.#fail(unexpectedSessionFailure(error));
       }
     }
   }
 
-  async #fail(error: unknown): Promise<void> {
-    this.#failure = interfaceFailure(error);
-    this.#state = "failed";
-    this.#closed = true;
-    await this.#writeQueue.catch(ignoreError);
-    if (
-      this.#socket.readyState === WebSocket.CONNECTING ||
-      this.#socket.readyState === WebSocket.OPEN
-    ) {
-      this.#socket.close();
-    }
-  }
-
-  async #writeFrame(frame: Uint8Array): Promise<void> {
-    if (this.#closed || frame.length === 0) {
+  async #fail(sessionFailure: InterfaceSessionFailure): Promise<void> {
+    if (this.#closed) {
       return;
     }
-    const write = this.#writeQueue.then(() => {
-      if (this.#closed) {
-        return;
-      }
-      if (this.#socket.readyState !== WebSocket.OPEN) {
-        throw new PrnsValidationError(
-          "disconnected",
-          `WebSocket is not open for ${this.url}`,
-        );
-      }
-      this.#socket.send(arrayBufferForWebSocket(frame));
-    });
-    this.#writeQueue = write.catch(ignoreError);
-    await write;
+    this.#status = Tag("Failed", sessionFailure);
+    this.#closed = true;
+    this.#host.deactivateInterface(this.interfaceId);
+    this.#releaseOnce();
+    await this.#writeQueue;
+    closeBrowserWebSocket(this.#socket);
+  }
+
+  async #writeFrame(frame: Uint8Array): Promise<SessionWriteOutcome> {
+    if (this.#closed || frame.length === 0) {
+      return Tag("Written");
+    }
+    if (frame.length > this.#frameCap) {
+      return Tag("FrameTooLarge", {
+        length: frame.length,
+        maximum: this.#frameCap,
+      });
+    }
+    const write = this.#writeQueue
+      .then(async (previous): Promise<SessionWriteOutcome> => {
+        if (previous.tag !== "Written" || this.#closed) {
+          return previous;
+        }
+        while (!this.#closed && this.#socket.bufferedAmount > this.#bufferLimit) {
+          await delay(WEBSOCKET_BUFFER_POLL_MS);
+        }
+        if (this.#closed) {
+          return Tag("Written");
+        }
+        if (this.#socket.readyState !== WEBSOCKET_OPEN) {
+          return Tag("Disconnected", {
+            detail: `WebSocket is not open for ${this.url}`,
+          });
+        }
+        try {
+          this.#socket.send(frame);
+          return Tag("Written");
+        } catch (error) {
+          return Tag("Disconnected", { detail: describeHostError(error) });
+        }
+      })
+      .catch((error: unknown) => unexpectedSessionFailure(error));
+    this.#writeQueue = write;
+    return write;
+  }
+
+  #releaseOnce(): void {
+    if (!this.#released) {
+      this.#released = true;
+      this.#release();
+    }
   }
 }
 
@@ -983,12 +1592,15 @@ export class RNodeInterface {
     this.#host = host;
   }
 
-  async connect(): Promise<InterfaceSession> {
-    this.#host.assertReady();
-    throw new PrnsValidationError(
-      "missing-host-api",
-      "RNode browser connection is not wired yet",
-    );
+  async connect(): Promise<RNodeConnectOutcome> {
+    const ready = this.#host.assertReady();
+    if (ready.tag !== "Ready") {
+      return ready;
+    }
+    return Tag("UnsupportedInterface", {
+      interface: "rnode",
+      host: "Browser",
+    });
   }
 }
 
@@ -1000,35 +1612,91 @@ export class BluetoothInterface {
     this.#host = host;
   }
 
-  async connect(): Promise<BluetoothSession> {
-    this.#host.assertReady();
-    const bluetooth = requireWebBluetooth();
-    const serviceUuid = this.#host.bluetoothServiceUuid();
-    const device = await bluetooth.requestDevice({
-      filters: [{ services: [serviceUuid] }],
-      optionalServices: [serviceUuid],
-    });
-    const server = await device.gatt?.connect();
-    if (!server) {
-      throw new PrnsValidationError(
-        "missing-host-api",
-        "Web Bluetooth device did not expose a GATT server",
-      );
+  async connect(): Promise<BluetoothConnectOutcome> {
+    const ready = this.#host.assertReady();
+    if (ready.tag !== "Ready") {
+      return ready;
     }
-    const service = await server.getPrimaryService(serviceUuid);
-    const control = await service.getCharacteristic(this.#host.bluetoothControlUuid());
-    const data = await optionalBluetoothCharacteristic(
-      service,
-      this.#host.bluetoothDataUuid(),
-    );
-    const session = new BrowserBluetoothSession(
-      this.#host,
-      server,
-      control,
-      data ?? control,
-    );
-    await session.start();
-    return session;
+    const available = requireWebBluetooth();
+    if (available.tag !== "Available") {
+      return available;
+    }
+    let server: BrowserBluetoothRemoteGattServer | undefined;
+    let session: BrowserBluetoothSession | undefined;
+    let stage: InterfaceConnectStage = "DeviceSelection";
+    try {
+      const serviceUuid = this.#host.bluetoothServiceUuid();
+      const requested = await bluetoothStage(
+        "DeviceSelection",
+        () =>
+          available.data.requestDevice({
+            filters: [{ services: [serviceUuid] }],
+            optionalServices: [serviceUuid],
+          }),
+      );
+      if (requested.tag !== "Completed") {
+        return requested;
+      }
+      const gatt = requested.data.gatt;
+      if (!gatt) {
+        return Tag("UnsupportedDevice", {
+          interface: "bluetooth",
+          capability: "GATT server",
+        });
+      }
+      stage = "TransportOpen";
+      const connected = await bluetoothStage(
+        "TransportOpen",
+        () => gatt.connect(),
+      );
+      if (connected.tag !== "Completed") {
+        return connected;
+      }
+      const connectedServer = connected.data;
+      server = connectedServer;
+      stage = "ServiceDiscovery";
+      const discovered = await bluetoothStage(
+        "ServiceDiscovery",
+        () => connectedServer.getPrimaryService(serviceUuid),
+      );
+      if (discovered.tag !== "Completed") {
+        disconnectBluetoothServer(connectedServer);
+        return discovered;
+      }
+      const control = await bluetoothStage(
+        "ServiceDiscovery",
+        () =>
+          discovered.data.getCharacteristic(this.#host.bluetoothControlUuid()),
+      );
+      if (control.tag !== "Completed") {
+        disconnectBluetoothServer(connectedServer);
+        return control;
+      }
+      const data = await optionalBluetoothCharacteristic(
+        discovered.data,
+        this.#host.bluetoothDataUuid(),
+      );
+      stage = "Handshake";
+      session = new BrowserBluetoothSession(
+        this.#host,
+        connectedServer,
+        control.data,
+        data ?? control.data,
+      );
+      const started = await session.start();
+      if (started.tag !== "Started") {
+        await session.close();
+        return started;
+      }
+      return Tag("Connected", session);
+    } catch (error) {
+      if (session) {
+        await session.close();
+      } else if (server) {
+        disconnectBluetoothServer(server);
+      }
+      return connectFailure("bluetooth", stage, error);
+    }
   }
 }
 
@@ -1040,11 +1708,11 @@ class BrowserBluetoothSession implements BluetoothSession {
   readonly #data: BrowserBluetoothRemoteGattCharacteristic;
   readonly #reassembler: BluetoothReassemblerBinding;
   #interfaceId?: InterfaceId;
-  #writeQueue: Promise<void> = Promise.resolve();
+  #writeQueue: Promise<SessionWriteOutcome> = Promise.resolve(Tag("Written"));
   #closed = false;
   #confirmed = false;
-  #state: InterfaceConnectState = "opening";
-  #failure: InterfaceFailure | undefined;
+  #status: InterfaceSessionStatus = Tag("Negotiating");
+  #connectFailure?: BluetoothConnectFailure;
 
   constructor(
     host: RuntimeHost,
@@ -1069,96 +1737,244 @@ class BrowserBluetoothSession implements BluetoothSession {
     return this.#interfaceId;
   }
 
-  get state(): InterfaceConnectState {
-    return this.#state;
+  get status(): InterfaceSessionStatus {
+    return this.#status;
   }
 
-  get failure(): InterfaceFailure | undefined {
-    return this.#failure;
-  }
-
-  get peerConfirmed(): boolean {
-    return this.#confirmed;
-  }
-
-  async start(): Promise<void> {
-    this.#state = "handshaking";
-    await this.#control.startNotifications();
+  async start(): Promise<BluetoothStartOutcome> {
+    const controlStarted = await bluetoothStage(
+      "Handshake",
+      () => this.#control.startNotifications(),
+    );
+    if (controlStarted.tag !== "Completed") {
+      return controlStarted;
+    }
     this.#control.addEventListener("characteristicvaluechanged", (event) => {
-      this.#handleControlEvent(event as BrowserBluetoothCharacteristicEvent);
+      try {
+        const handled = this.#handleControlEvent(
+          event as BrowserBluetoothCharacteristicEvent,
+        );
+        if (handled.tag !== "Handled") {
+          this.#handleEventFailure(handled);
+        }
+      } catch (error) {
+        this.#handleEventFailure(unexpectedSessionFailure(error));
+      }
     });
     if (this.#data !== this.#control) {
-      await this.#data.startNotifications();
+      const dataStarted = await bluetoothStage(
+        "Handshake",
+        () => this.#data.startNotifications(),
+      );
+      if (dataStarted.tag !== "Completed") {
+        return dataStarted;
+      }
       this.#data.addEventListener("characteristicvaluechanged", (event) => {
-        this.#handleDataEvent(event as BrowserBluetoothCharacteristicEvent);
+        try {
+          const handled = this.#handleDataEvent(
+            event as BrowserBluetoothCharacteristicEvent,
+          );
+          if (handled.tag !== "Handled") {
+            this.#handleEventFailure(handled);
+          }
+        } catch (error) {
+          this.#handleEventFailure(unexpectedSessionFailure(error));
+        }
       });
     }
-    await this.#writeControl(this.#host.bluetoothDialerHello());
-    await this.#waitForPeer();
+    const written = await this.#writeControl(this.#host.bluetoothDialerHello());
+    if (written.tag !== "Written") {
+      return sessionFailureToConnectFailure("bluetooth", "Handshake", written);
+    }
+    const confirmed = await this.#waitForPeer();
+    if (confirmed.tag !== "Confirmed") {
+      return confirmed;
+    }
     void this.#outboundLoop();
+    return Tag("Started");
   }
 
-  async close(): Promise<void> {
+  async close(): Promise<InterfaceCloseOutcome> {
     if (this.#closed) {
-      return;
+      return closedSessionOutcome(this.#status);
     }
     this.#closed = true;
-    if (this.#state !== "failed") {
-      this.#state = "closed";
+    const causes: InterfaceCleanupFailure[] = [];
+    if (this.#interfaceId) {
+      const detached = this.#host.deactivateInterface(this.#interfaceId);
+      if (detached.tag !== "Detached") {
+        causes.push(Tag("RuntimeDetachFailed", { detail: detached.data.detail }));
+      }
     }
-    await this.#writeQueue.catch(ignoreError);
-    this.#server.disconnect();
+    const pendingWrite = await this.#writeQueue;
+    if (pendingWrite.tag !== "Written") {
+      causes.push(
+        Tag("TransportCloseFailed", {
+          detail: describeInterfaceSessionFailure(pendingWrite),
+        }),
+      );
+    }
+    const disconnected = disconnectBluetoothServer(this.#server);
+    if (disconnected) {
+      causes.push(disconnected);
+    }
+    if (hasCleanupFailures(causes)) {
+      const failed = closeFailed(causes);
+      this.#status = Tag("Failed", failed);
+      return failed;
+    }
+    this.#status = Tag("Closed");
+    return Tag("Closed");
   }
 
-  async #waitForPeer(): Promise<void> {
+  async #waitForPeer(): Promise<Tag<"Confirmed"> | BluetoothConnectFailure> {
     const started = Date.now();
-    while (!this.#confirmed && !this.#closed) {
+    while (!this.#confirmed && !this.#closed && !this.#connectFailure) {
       if (Date.now() - started > BLUETOOTH_HANDSHAKE_TIMEOUT_MS) {
-        await this.close();
-        throw new PrnsValidationError(
-          "invalid-component",
-          "Bluetooth handshake timed out before Welcome",
-        );
+        const timedOut: ConnectTimedOut<"bluetooth"> = Tag("TimedOut", {
+          interface: "bluetooth",
+          stage: "Handshake",
+          timeoutMs: BLUETOOTH_HANDSHAKE_TIMEOUT_MS,
+        });
+        this.#abortConnect(timedOut);
+        return timedOut;
       }
       await delay(25);
     }
+    if (this.#connectFailure) {
+      return this.#connectFailure;
+    }
+    if (!this.#confirmed) {
+      return Tag("ConnectionFailed", {
+        interface: "bluetooth",
+        stage: "Handshake",
+        detail: "Bluetooth link closed before peer confirmation",
+      });
+    }
+    return Tag("Confirmed");
   }
 
-  #handleControlEvent(event: BrowserBluetoothCharacteristicEvent): void {
-    const bytes = characteristicBytes(event);
-    const control = parseBluetoothControl(this.#host.bluetoothDecodeControl(bytes));
-    if (control.type === "welcome") {
-      this.#interfaceId = this.#host.registerInterface({
-        kind: "bluetooth-peer",
-        channelTag: channelTag(control.identity),
-        bitrateBps: this.#host.bluetoothBitrateBps(),
-        hardwareMtu: this.#host.bluetoothHardwareMtu(),
+  #handleControlEvent(
+    event: BrowserBluetoothCharacteristicEvent,
+  ): BluetoothHandleOutcome {
+    const decoded = characteristicBytes(event);
+    if (decoded.tag !== "Decoded") {
+      return decoded;
+    }
+    const bytes = decoded.data;
+    let control: BluetoothControl;
+    try {
+      control = parseBluetoothControl(this.#host.bluetoothDecodeControl(bytes));
+    } catch (error) {
+      return Tag("ProtocolViolation", {
+        protocol: "Bluetooth",
+        detail: describeHostError(error),
       });
+    }
+    if (control.type === "welcome") {
+      if (this.#confirmed) {
+        return Tag("Handled");
+      }
+      let registration: HostedInterfaceRegistration<"bluetooth">;
+      try {
+        registration = {
+          interfaceName: "bluetooth",
+          supervisorKind: "bluetooth-auto",
+          kind: "bluetooth-peer",
+          channelTag: channelTag(control.identity),
+          bitrateBps: this.#host.bluetoothBitrateBps(),
+          hardwareMtu: this.#host.bluetoothHardwareMtu(),
+        };
+      } catch (error) {
+        return Tag("ProtocolViolation", {
+          protocol: "Bluetooth",
+          detail: describeHostError(error),
+        });
+      }
+      const registered = this.#host.registerInterface(registration);
+      if (registered.tag !== "Registered") {
+        return registered;
+      }
+      this.#interfaceId = registered.data;
       this.#confirmed = true;
-      this.#state = "peer-confirmed";
-      return;
+      this.#status = Tag("Active");
+      return Tag("Handled");
     }
     if (control.type === "close") {
       void this.close();
-      return;
+      return Tag("Handled");
     }
     if (this.#data === this.#control) {
-      this.#handleDataBytes(bytes);
+      return this.#handleDataBytes(bytes);
     }
+    return Tag("Handled");
   }
 
-  #handleDataEvent(event: BrowserBluetoothCharacteristicEvent): void {
-    this.#handleDataBytes(characteristicBytes(event));
+  #handleDataEvent(
+    event: BrowserBluetoothCharacteristicEvent,
+  ): SessionHandleOutcome {
+    const decoded = characteristicBytes(event);
+    return decoded.tag === "Decoded"
+      ? this.#handleDataBytes(decoded.data)
+      : decoded;
   }
 
-  #handleDataBytes(bytes: Uint8Array): void {
+  #handleDataBytes(bytes: Uint8Array): SessionHandleOutcome {
     if (!this.#confirmed || !this.#interfaceId) {
+      return Tag("Handled");
+    }
+    let frame: Uint8Array | undefined;
+    try {
+      frame = this.#reassembler.absorb(bytes);
+    } catch (error) {
+      return Tag("ProtocolViolation", {
+        protocol: "Bluetooth",
+        detail: describeHostError(error),
+      });
+    }
+    if (frame && frame.length > 0) {
+      const ingested = this.#host.ingest(this.#interfaceId, packetFrame(frame));
+      return ingested.tag === "Accepted" ? Tag("Handled") : ingested;
+    }
+    return Tag("Handled");
+  }
+
+  #handleEventFailure(
+    failure: InterfaceSessionFailure | AlreadyActive<"bluetooth">,
+  ): void {
+    if (!this.#confirmed) {
+      this.#abortConnect(
+        failure.tag === "AlreadyActive"
+          ? failure
+          : sessionFailureToConnectFailure("bluetooth", "Handshake", failure),
+      );
       return;
     }
-    const frame = this.#reassembler.absorb(bytes);
-    if (frame && frame.length > 0) {
-      this.#host.ingest(this.#interfaceId, packetFrame(frame));
+    const sessionFailure =
+      failure.tag === "AlreadyActive"
+        ? unexpectedSessionFailure(
+            `Bluetooth peer became active more than once for ${failure.data.target}`,
+          )
+        : failure;
+    void this.#fail(sessionFailure);
+  }
+
+  #abortConnect(failure: BluetoothConnectFailure): void {
+    if (this.#closed) {
+      return;
     }
+    this.#connectFailure = failure;
+    this.#status = Tag(
+      "Failed",
+      failure.tag === "RuntimeRejected"
+        ? failure
+        : unexpectedSessionFailure(describeBluetoothConnectFailure(failure)),
+    );
+    this.#closed = true;
+    if (this.#interfaceId) {
+      this.#host.deactivateInterface(this.#interfaceId);
+    }
+    disconnectBluetoothServer(this.#server);
   }
 
   async #outboundLoop(): Promise<void> {
@@ -1166,10 +1982,18 @@ class BrowserBluetoothSession implements BluetoothSession {
       while (!this.#closed) {
         const interfaceId = this.#interfaceId;
         if (this.#confirmed && interfaceId) {
-          const frames = this.#host.takeOutboundFor(interfaceId, "bluetooth-auto");
-          for (const frame of frames) {
+          const outbound = this.#host.takeOutboundFor(interfaceId);
+          if (outbound.tag !== "Outbound") {
+            await this.#fail(outbound);
+            return;
+          }
+          for (const frame of outbound.data) {
             for (const fragment of this.#host.bluetoothDataFragments(frame.bytes)) {
-              await this.#writeData(fragment);
+              const written = await this.#writeData(fragment);
+              if (written.tag !== "Written") {
+                await this.#fail(written);
+                return;
+              }
             }
           }
         }
@@ -1177,38 +2001,49 @@ class BrowserBluetoothSession implements BluetoothSession {
       }
     } catch (error) {
       if (!this.#closed) {
-        await this.#fail(error);
+        await this.#fail(unexpectedSessionFailure(error));
       }
     }
   }
 
-  async #fail(error: unknown): Promise<void> {
-    this.#failure = interfaceFailure(error);
-    this.#state = "failed";
+  async #fail(sessionFailure: InterfaceSessionFailure): Promise<void> {
+    if (this.#closed) {
+      return;
+    }
+    this.#status = Tag("Failed", sessionFailure);
     this.#closed = true;
-    await this.#writeQueue.catch(ignoreError);
-    this.#server.disconnect();
+    if (this.#interfaceId) {
+      this.#host.deactivateInterface(this.#interfaceId);
+    }
+    await this.#writeQueue;
+    disconnectBluetoothServer(this.#server);
   }
 
-  async #writeControl(bytes: Uint8Array): Promise<void> {
-    await this.#write(this.#control, bytes);
+  async #writeControl(bytes: Uint8Array): Promise<SessionWriteOutcome> {
+    return this.#write(this.#control, bytes);
   }
 
-  async #writeData(bytes: Uint8Array): Promise<void> {
-    await this.#write(this.#data, bytes);
+  async #writeData(bytes: Uint8Array): Promise<SessionWriteOutcome> {
+    return this.#write(this.#data, bytes);
   }
 
   async #write(
     characteristic: BrowserBluetoothRemoteGattCharacteristic,
     bytes: Uint8Array,
-  ): Promise<void> {
-    const write = this.#writeQueue.then(async () => {
-      if (!this.#closed) {
-        await writeBluetoothValue(characteristic, bytes);
-      }
-    });
-    this.#writeQueue = write.catch(ignoreError);
-    await write;
+  ): Promise<SessionWriteOutcome> {
+    if (this.#closed || bytes.length === 0) {
+      return Tag("Written");
+    }
+    const write = this.#writeQueue
+      .then(async (previous): Promise<SessionWriteOutcome> => {
+        if (previous.tag !== "Written" || this.#closed) {
+          return previous;
+        }
+        return writeBluetoothValue(characteristic, bytes);
+      })
+      .catch((error: unknown) => unexpectedSessionFailure(error));
+    this.#writeQueue = write;
+    return write;
   }
 }
 
@@ -1232,48 +2067,128 @@ export class Prns {
     );
   }
 
-  static async create(options: PrnsOptions): Promise<Prns> {
-    const identityLength = options.wasm.identitySecretKeyLength();
-    const store = options.identityStore;
-    let identity = store ? await store.load(identityLength) : null;
-    if (!identity) {
-      identity = identitySecretKey(webCryptoBytes(identityLength), identityLength);
-      await store?.save(identity);
+  static async create(options: PrnsOptions): Promise<PrnsCreateOutcome> {
+    let identityLength: number;
+    try {
+      identityLength = positiveInteger(
+        options.wasm.identitySecretKeyLength(),
+        "identity secret key length",
+      );
+    } catch (error) {
+      return runtimeRejected("initialize", error);
     }
-    return new Prns(
-      options.wasm,
-      new options.wasm.PrnsRuntime(identity),
-      options.entropy ?? webCryptoBytes,
-      options.now ?? nowMillis,
-    );
+    const store = options.identityStore;
+    let identity: IdentitySecretKey | undefined;
+    if (store) {
+      let loaded: IdentityLoadOutcome;
+      try {
+        loaded = await store.load(identityLength);
+      } catch (error) {
+        return Tag("IdentityStoreFailed", {
+          operation: "Load",
+          detail: describeHostError(error),
+        });
+      }
+      if (loaded.tag === "Loaded") {
+        try {
+          identity = identitySecretKey(loaded.data, identityLength);
+        } catch (error) {
+          return Tag("StoredIdentityInvalid", {
+            detail: describeHostError(error),
+          });
+        }
+      } else if (loaded.tag !== "Missing") {
+        return loaded;
+      }
+    }
+    if (!identity) {
+      const generated = webCryptoIdentity(identityLength);
+      if (generated.tag !== "Generated") {
+        return generated;
+      }
+      identity = generated.data;
+      if (store) {
+        let saved: IdentitySaveOutcome;
+        try {
+          saved = await store.save(identity);
+        } catch (error) {
+          return Tag("IdentityStoreFailed", {
+            operation: "Save",
+            detail: describeHostError(error),
+          });
+        }
+        if (saved.tag !== "Saved") {
+          return saved;
+        }
+      }
+    }
+    try {
+      return Tag(
+        "Ready",
+        new Prns(
+          options.wasm,
+          new options.wasm.PrnsRuntime(identity),
+          options.entropy ?? webCryptoEntropy,
+          options.now ?? nowMillis,
+        ),
+      );
+    } catch (error) {
+      return runtimeRejected("initialize", error);
+    }
   }
 
   registerSingleDestination(
     options: RegisterSingleDestinationOptions,
-  ): DestinationHash {
-    return destinationHash(this.#runtime.registerSingleDestination(options));
+  ): DestinationRegistrationOutcome {
+    try {
+      return Tag(
+        "Registered",
+        destinationHash(this.#runtime.registerSingleDestination(options)),
+      );
+    } catch (error) {
+      return runtimeRejected("register-destination", error);
+    }
   }
 
-  announce(destination: DestinationHash): CommandId {
-    return commandId(
-      this.#runtime.announce({
-        destination,
-        nowMs: this.#now(),
-        entropy: this.#entropyBytes(),
-      }),
-    );
+  announce(destination: DestinationHash): AnnounceOutcome {
+    const entropy = this.#entropyBytes();
+    if (entropy.tag !== "Filled") {
+      return entropy;
+    }
+    try {
+      return Tag(
+        "Queued",
+        commandId(
+          this.#runtime.announce({
+            destination,
+            nowMs: this.#now(),
+            entropy: entropy.data,
+          }),
+        ),
+      );
+    } catch (error) {
+      return runtimeRejected("announce", error);
+    }
   }
 
-  drainEvents(): PrnsEvent[] {
-    return this.#runtime.drainEvents().map(parseEvent);
+  drainEvents(): EventDrainOutcome {
+    try {
+      return Tag("Drained", this.#runtime.drainEvents().map(parseEvent));
+    } catch (error) {
+      return runtimeRejected("drain-events", error);
+    }
   }
 
-  snapshot(): PrnsSnapshot {
-    return parseSnapshot(this.#runtime.snapshot());
+  snapshot(): SnapshotOutcome {
+    try {
+      return Tag("Captured", parseSnapshot(this.#runtime.snapshot()));
+    } catch (error) {
+      return runtimeRejected("snapshot", error);
+    }
   }
 
-  #entropyBytes(): EntropyBytes {
-    return entropyBytes(this.#entropy(MIN_ENTROPY_BYTES));
+  #entropyBytes(): EntropyOutcome {
+    return fillEntropy(this.#entropy, MIN_ENTROPY_BYTES);
   }
 }
 
@@ -1282,7 +2197,17 @@ class RuntimeHost {
   readonly #runtime: PrnsRuntimeBinding;
   readonly #entropy: EntropySource;
   readonly #now: () => InstantMillis;
-  #pendingOutbound: PrnsOutboundFrame[] = [];
+  #activeInterfaces = new Map<
+    string,
+    {
+      id: InterfaceId;
+      registrationKey: string;
+      supervisorKind: RuntimeInterfaceKind;
+    }
+  >();
+  #activeRegistrationKeys = new Set<string>();
+  #outboundQueues = new Map<string, PrnsOutboundFrame[]>();
+  #overflowedOutbound = new Set<string>();
 
   constructor(
     wasm: PrnsWasmModule,
@@ -1296,43 +2221,136 @@ class RuntimeHost {
     this.#now = now;
   }
 
-  assertReady(): void {
-    this.#runtime.snapshot();
+  assertReady(): RuntimeReadyOutcome {
+    try {
+      this.#runtime.snapshot();
+      return Tag("Ready");
+    } catch (error) {
+      return runtimeRejected("inspect-readiness", error);
+    }
   }
 
-  registerInterface(options: RuntimeRegisterInterfaceOptions): InterfaceId {
-    return interfaceId(this.#runtime.registerInterface(options));
+  registerInterface<Name extends InterfaceName>(
+    registration: HostedInterfaceRegistration<Name>,
+  ): InterfaceRegistrationOutcome<Name> {
+    const {
+      interfaceName,
+      supervisorKind = registration.kind,
+      ...options
+    } = registration;
+    const registrationKey = `${options.kind}:${byteKey(options.channelTag)}`;
+    if (this.#activeRegistrationKeys.has(registrationKey)) {
+      return Tag("AlreadyActive", {
+        interface: interfaceName,
+        target: registrationKey,
+      });
+    }
+    let id: InterfaceId;
+    try {
+      id = interfaceId(
+        this.#runtime.registerInterface({ ...options, nowMs: this.#now() }),
+      );
+    } catch (error) {
+      return runtimeRejected("register-interface", error);
+    }
+    const key = byteKey(id);
+    if (this.#activeInterfaces.has(key)) {
+      return Tag("AlreadyActive", {
+        interface: interfaceName,
+        target: key,
+      });
+    }
+    this.#activeRegistrationKeys.add(registrationKey);
+    this.#activeInterfaces.set(key, { id, registrationKey, supervisorKind });
+    this.#outboundQueues.set(key, []);
+    return Tag("Registered", id);
   }
 
-  ingest(interfaceId: InterfaceId, bytes: PacketFrame): void {
-    this.#runtime.ingest({
-      interfaceId,
-      bytes,
-      nowMs: this.#now(),
-      entropy: this.entropy(),
-    });
+  deactivateInterface(id: InterfaceId): InterfaceDetachOutcome {
+    const key = byteKey(id);
+    const active = this.#activeInterfaces.get(key);
+    if (!active) {
+      return Tag("Detached");
+    }
+    try {
+      const removed = this.#runtime.removeInterface({
+        interfaceId: id,
+        nowMs: this.#now(),
+      });
+      if (!removed) {
+        return runtimeRejected(
+          "remove-interface",
+          `runtime did not contain interface ${key}`,
+        );
+      }
+    } catch (error) {
+      return runtimeRejected("remove-interface", error);
+    }
+    this.#activeInterfaces.delete(key);
+    this.#activeRegistrationKeys.delete(active.registrationKey);
+    this.#outboundQueues.delete(key);
+    this.#overflowedOutbound.delete(key);
+    return Tag("Detached");
   }
 
-  drainOutbound(): PrnsOutboundFrame[] {
-    return this.#runtime.drainOutbound().map(parseOutboundFrame);
+  ingest(interfaceId: InterfaceId, bytes: PacketFrame): RuntimeIngestOutcome {
+    const entropy = this.entropy();
+    if (entropy.tag !== "Filled") {
+      return entropy;
+    }
+    try {
+      this.#runtime.ingest({
+        interfaceId,
+        bytes,
+        nowMs: this.#now(),
+        entropy: entropy.data,
+      });
+      return Tag("Accepted");
+    } catch (error) {
+      return runtimeRejected("ingest", error);
+    }
   }
 
-  takeOutboundFor(
-    interfaceId: InterfaceId,
-    supervisorKind: RuntimeInterfaceKind,
-  ): PrnsOutboundFrame[] {
-    this.#pendingOutbound.push(...this.drainOutbound());
-    const picked: PrnsOutboundFrame[] = [];
-    const pending: PrnsOutboundFrame[] = [];
-    for (const frame of this.#pendingOutbound) {
-      if (outboundTargets(frame.target, interfaceId, supervisorKind)) {
-        picked.push(frame);
-      } else {
-        pending.push(frame);
+  drainOutbound(): RuntimeOutboundDrainOutcome {
+    try {
+      return Tag("Drained", this.#runtime.drainOutbound().map(parseOutboundFrame));
+    } catch (error) {
+      return runtimeRejected("drain-outbound", error);
+    }
+  }
+
+  takeOutboundFor(interfaceId: InterfaceId): OutboundTakeOutcome {
+    const interfaceKey = byteKey(interfaceId);
+    const direct: PrnsOutboundFrame[] = [];
+    const drained = this.drainOutbound();
+    if (drained.tag !== "Drained") {
+      return drained;
+    }
+    for (const frame of drained.data) {
+      for (const [key, active] of this.#activeInterfaces) {
+        if (outboundTargets(frame.target, active.id, active.supervisorKind)) {
+          if (key === interfaceKey) {
+            direct.push(frame);
+            continue;
+          }
+          const queue = this.#outboundQueues.get(key);
+          if (queue && queue.length < INTERFACE_OUTBOUND_QUEUE_DEPTH) {
+            queue.push(frame);
+          } else if (queue) {
+            this.#overflowedOutbound.add(key);
+          }
+        }
       }
     }
-    this.#pendingOutbound = pending;
-    return picked;
+    if (this.#overflowedOutbound.delete(interfaceKey)) {
+      this.#outboundQueues.set(interfaceKey, []);
+      return Tag("OutboundQueueFull", {
+        capacity: INTERFACE_OUTBOUND_QUEUE_DEPTH,
+      });
+    }
+    const queued = this.#outboundQueues.get(interfaceKey) ?? [];
+    this.#outboundQueues.set(interfaceKey, []);
+    return Tag("Outbound", queued.concat(direct));
   }
 
   createUsbAutoDecoder(): UsbAutoDecoderBinding {
@@ -1379,6 +2397,10 @@ class RuntimeHost {
     return bitrateBps(this.#wasm.websocketBitrateBps());
   }
 
+  websocketFrameCap(): number {
+    return positiveInteger(this.#wasm.websocketFrameCap(), "WebSocket frame cap");
+  }
+
   websocketHardwareMtu(): HardwareMtu {
     return hardwareMtu(this.#wasm.websocketHardwareMtu());
   }
@@ -1416,8 +2438,8 @@ class RuntimeHost {
     return this.#wasm.usbAutoDataFrame(packet);
   }
 
-  entropy(): EntropyBytes {
-    return entropyBytes(this.#entropy(MIN_ENTROPY_BYTES));
+  entropy(): EntropyOutcome {
+    return fillEntropy(this.#entropy, MIN_ENTROPY_BYTES);
   }
 }
 
@@ -1508,8 +2530,22 @@ export function commandId(value: bigint): CommandId {
   return value as CommandId;
 }
 
-export function webCryptoEntropy(length: number): EntropyBytes {
-  return entropyBytes(webCryptoBytes(length));
+export function webCryptoEntropy(length: number): EntropyOutcome {
+  try {
+    if (!hostGlobal().crypto) {
+      return Tag("HostApiUnavailable", { api: "Crypto" });
+    }
+    const bytes = webCryptoBytes(length);
+    if (bytes.length < MIN_ENTROPY_BYTES) {
+      return Tag("InsufficientEntropy", {
+        minimum: MIN_ENTROPY_BYTES,
+        actual: bytes.length,
+      });
+    }
+    return Tag("Filled", bytes as EntropyBytes);
+  } catch (error) {
+    return Tag("EntropySourceFailed", { detail: describeHostError(error) });
+  }
 }
 
 function outboundTargets(
@@ -1929,114 +2965,198 @@ function decodeBase64(encoded: string): Uint8Array {
   return out;
 }
 
-function requireWebSerial(): BrowserSerial {
-  const serial = hostGlobal().navigator?.serial;
-  if (!serial) {
-    throw new PrnsValidationError(
-      "missing-host-api",
-      "USB Auto requires the browser Web Serial API",
-    );
+function requireWebUsb(): Available<BrowserUsb, "WebUSB"> {
+  try {
+    const usb = hostGlobal().navigator?.usb;
+    return usb
+      ? Tag("Available", usb)
+      : Tag("HostApiUnavailable", { api: "WebUSB" });
+  } catch {
+    return Tag("HostApiUnavailable", { api: "WebUSB" });
   }
-  return serial;
 }
 
-function requireWebUsb(): BrowserUsb {
-  const usb = hostGlobal().navigator?.usb;
-  if (!usb) {
-    throw new PrnsValidationError(
-      "missing-host-api",
-      "USB Auto requires the browser WebUSB API",
-    );
+function requireWebBluetooth(): Available<BrowserBluetooth, "WebBluetooth"> {
+  try {
+    const bluetooth = hostGlobal().navigator?.bluetooth;
+    return bluetooth
+      ? Tag("Available", bluetooth)
+      : Tag("HostApiUnavailable", { api: "WebBluetooth" });
+  } catch {
+    return Tag("HostApiUnavailable", { api: "WebBluetooth" });
   }
-  return usb;
 }
 
-function requireWebBluetooth(): BrowserBluetooth {
-  const bluetooth = hostGlobal().navigator?.bluetooth;
-  if (!bluetooth) {
-    throw new PrnsValidationError(
-      "missing-host-api",
-      "Bluetooth requires the browser Web Bluetooth API",
-    );
+function requireBrowserWebSocket(): Available<typeof WebSocket, "WebSocket"> {
+  try {
+    const WebSocketCtor = hostGlobal().WebSocket;
+    return WebSocketCtor
+      ? Tag("Available", WebSocketCtor)
+      : Tag("HostApiUnavailable", { api: "WebSocket" });
+  } catch {
+    return Tag("HostApiUnavailable", { api: "WebSocket" });
   }
-  return bluetooth;
 }
 
-function requireBrowserWebSocket(): typeof WebSocket {
-  const WebSocketCtor = hostGlobal().WebSocket;
-  if (!WebSocketCtor) {
-    throw new PrnsValidationError(
-      "missing-host-api",
-      "WebSocket interface requires globalThis.WebSocket",
-    );
-  }
-  return WebSocketCtor;
-}
-
-function openBrowserWebSocket(
+async function openBrowserWebSocket(
   url: string,
   protocols?: string | readonly string[],
-): Promise<WebSocket> {
-  const WebSocketCtor = requireBrowserWebSocket();
+): Promise<WebSocketOpenOutcome> {
+  const available = requireBrowserWebSocket();
+  if (available.tag !== "Available") {
+    return available;
+  }
   const protocolList =
     protocols === undefined || typeof protocols === "string"
       ? protocols
       : [...protocols];
-  const socket =
-    protocolList === undefined
-      ? new WebSocketCtor(url)
-      : new WebSocketCtor(url, protocolList);
-  socket.binaryType = "arraybuffer";
-  return new Promise((resolve, reject) => {
+  let socket: WebSocket;
+  try {
+    const WebSocketCtor = available.data;
+    socket =
+      protocolList === undefined
+        ? new WebSocketCtor(url)
+        : new WebSocketCtor(url, protocolList);
+  } catch (error) {
+    return connectFailure("websocket", "TransportOpen", error);
+  }
+  try {
+    socket.binaryType = "arraybuffer";
+  } catch (error) {
+    closeBrowserWebSocket(socket);
+    return connectFailure("websocket", "TransportOpen", error);
+  }
+  return new Promise((resolve) => {
+    let timeout: number | undefined;
     const cleanup = (): void => {
+      if (timeout !== undefined) {
+        globalThis.clearTimeout(timeout);
+      }
       socket.removeEventListener("open", handleOpen);
       socket.removeEventListener("error", handleError);
+      socket.removeEventListener("close", handleClose);
     };
     const handleOpen = (): void => {
       cleanup();
-      resolve(socket);
+      resolve(Tag("Opened", socket));
     };
     const handleError = (): void => {
       cleanup();
-      reject(
-        new PrnsValidationError(
-          "disconnected",
-          `WebSocket connection failed for ${url}`,
-        ),
+      closeBrowserWebSocket(socket);
+      resolve(
+        Tag("ConnectionFailed", {
+          interface: "websocket",
+          stage: "TransportOpen",
+          detail: `WebSocket connection failed for ${url}`,
+        }),
       );
     };
-    socket.addEventListener("open", handleOpen);
-    socket.addEventListener("error", handleError);
+    const handleClose = (): void => {
+      cleanup();
+      resolve(
+        Tag("ConnectionFailed", {
+          interface: "websocket",
+          stage: "TransportOpen",
+          detail: `WebSocket connection closed before opening for ${url}`,
+        }),
+      );
+    };
+    const handleTimeout = (): void => {
+      cleanup();
+      closeBrowserWebSocket(socket);
+      resolve(
+        Tag("TimedOut", {
+          interface: "websocket",
+          stage: "TransportOpen",
+          timeoutMs: WEBSOCKET_CONNECT_TIMEOUT_MS,
+        }),
+      );
+    };
+    try {
+      timeout = globalThis.setTimeout(handleTimeout, WEBSOCKET_CONNECT_TIMEOUT_MS);
+      socket.addEventListener("open", handleOpen);
+      socket.addEventListener("error", handleError);
+      socket.addEventListener("close", handleClose);
+    } catch (error) {
+      cleanup();
+      closeBrowserWebSocket(socket);
+      resolve(connectFailure("websocket", "TransportOpen", error));
+    }
   });
 }
 
-async function websocketMessageBytes(data: MessageEvent["data"]): Promise<Uint8Array> {
+async function websocketMessageBytes(
+  data: MessageEvent["data"],
+  frameCap: number,
+): Promise<WebSocketDecodeOutcome> {
   if (data instanceof ArrayBuffer) {
-    return new Uint8Array(data);
+    return data.byteLength > frameCap
+      ? frameTooLarge(data.byteLength, frameCap)
+      : Tag("Decoded", new Uint8Array(data));
   }
   if (ArrayBuffer.isView(data)) {
-    return new Uint8Array(
-      data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength),
-    );
+    return data.byteLength > frameCap
+      ? frameTooLarge(data.byteLength, frameCap)
+      : Tag(
+          "Decoded",
+          new Uint8Array(data.buffer, data.byteOffset, data.byteLength),
+        );
   }
   if (typeof Blob !== "undefined" && data instanceof Blob) {
-    return new Uint8Array(await data.arrayBuffer());
+    if (data.size > frameCap) {
+      return frameTooLarge(data.size, frameCap);
+    }
+    try {
+      return Tag("Decoded", new Uint8Array(await data.arrayBuffer()));
+    } catch (error) {
+      return Tag("TransferFailed", {
+        direction: "Inbound",
+        detail: describeHostError(error),
+      });
+    }
   }
-  throw new PrnsValidationError(
-    "unsupported-frame",
-    "Prns WebSocket interfaces only accept binary messages",
-  );
+  return Tag("UnsupportedFrame", {
+    format: typeof data === "string" ? "Text" : "Unknown",
+  });
 }
 
-function firstUsbConfiguration(device: BrowserUsbDevice): BrowserUsbConfiguration {
+function frameTooLarge(
+  length: number,
+  maximum: number,
+): Extract<InterfaceSessionFailure, Tag<"FrameTooLarge", unknown>> {
+  return Tag("FrameTooLarge", { length, maximum });
+}
+
+function closeBrowserWebSocket(
+  socket: WebSocket | undefined,
+): InterfaceCleanupFailure | undefined {
+  try {
+    if (
+      socket &&
+      (socket.readyState === WEBSOCKET_CONNECTING ||
+        socket.readyState === WEBSOCKET_OPEN)
+    ) {
+      socket.close();
+    }
+  } catch (error) {
+    return Tag("TransportCloseFailed", {
+      detail: describeHostError(error),
+    });
+  }
+  return undefined;
+}
+
+function firstUsbConfiguration(
+  device: BrowserUsbDevice,
+): UsbConfigurationOutcome {
   const configuration = device.configurations[0];
   if (!configuration) {
-    throw new PrnsValidationError(
-      "invalid-component",
-      "Selected USB device has no configurations",
-    );
+    return Tag("UnsupportedDevice", {
+      interface: "usb-auto",
+      capability: "USB configuration",
+    });
   }
-  return configuration;
+  return Tag("Configured", configuration);
 }
 
 type WebUsbEndpointPair = {
@@ -2094,70 +3214,128 @@ function findWebUsbEndpointPair(
   return vendorPairs[0] ?? bulkPairs[0] ?? fallbackPair;
 }
 
-async function usbStage<T>(stage: string, action: () => Promise<T>): Promise<T> {
+async function usbStage<T>(
+  stage: InterfaceConnectStage,
+  actionName: string,
+  action: () => Promise<T>,
+): Promise<UsbStageOutcome<T>> {
   try {
-    return await action();
+    return Tag("Completed", await action());
   } catch (error) {
-    const code = usbErrorCode(error);
-    throw new PrnsValidationError(
-      code,
-      `USB ${stage} failed: ${describeUsbError(error, stage)}`,
-    );
+    const name = domExceptionName(error);
+    if (name === "SecurityError" || name === "NotAllowedError") {
+      return Tag("PermissionDenied", {
+        interface: "usb-auto",
+        stage,
+        detail: describeUsbError(error, actionName),
+      });
+    }
+    if (name === "NotFoundError" && stage === "DeviceSelection") {
+      return Tag("Cancelled", { interface: "usb-auto", stage });
+    }
+    return Tag("ConnectionFailed", {
+      interface: "usb-auto",
+      stage,
+      detail: `USB ${actionName} failed: ${describeUsbError(error, actionName)}`,
+    });
   }
 }
 
-function usbErrorCode(error: unknown): PrnsValidationCode {
-  if (error instanceof DOMException) {
-    if (error.name === "SecurityError") {
-      return "permission-denied";
+async function bluetoothStage<T>(
+  stage: InterfaceConnectStage,
+  action: () => Promise<T>,
+): Promise<BluetoothStageOutcome<T>> {
+  try {
+    return Tag("Completed", await action());
+  } catch (error) {
+    const name = domExceptionName(error);
+    if (name === "SecurityError" || name === "NotAllowedError") {
+      return Tag("PermissionDenied", {
+        interface: "bluetooth",
+        stage,
+        detail: describeHostError(error),
+      });
     }
-    if (error.name === "NotFoundError") {
-      return "operation-cancelled";
+    if (name === "NotFoundError" && stage === "DeviceSelection") {
+      return Tag("Cancelled", { interface: "bluetooth", stage });
     }
-    if (
-      error.name === "NetworkError" ||
-      error.name === "NotReadableError" ||
-      error.name === "AbortError"
-    ) {
-      return "disconnected";
-    }
+    return Tag("ConnectionFailed", {
+      interface: "bluetooth",
+      stage,
+      detail: describeHostError(error),
+    });
   }
-  return "invalid-component";
 }
 
 function describeUsbError(error: unknown, stage: string): string {
   const base = describeHostError(error);
-  if (error instanceof DOMException && error.name === "SecurityError") {
+  const name = domExceptionName(error);
+  if (name === "SecurityError" || name === "NotAllowedError") {
     return `${base}. ${LINUX_WEBUSB_SETUP_HINT}`;
   }
-  if (
-    error instanceof DOMException &&
-    error.name === "NotFoundError" &&
-    stage.includes("request")
-  ) {
+  if (name === "NotFoundError" && stage.includes("request")) {
     return `${base}. No USB device was selected.`;
   }
   return base;
 }
 
-function interfaceFailure(error: unknown): InterfaceFailure {
-  if (error instanceof PrnsValidationError) {
-    return { code: error.code, message: error.message };
+async function closeUsbDevice(
+  device: BrowserUsbDevice,
+): Promise<InterfaceCleanupFailure | undefined> {
+  try {
+    await device.close();
+    return undefined;
+  } catch (error) {
+    return Tag("TransportCloseFailed", {
+      detail: `close USB device: ${describeHostError(error)}`,
+    });
   }
-  if (error instanceof DOMException) {
-    return {
-      code: usbErrorCode(error),
-      message: describeHostError(error),
-    };
+}
+
+function disconnectBluetoothServer(
+  server: BrowserBluetoothRemoteGattServer,
+): InterfaceCleanupFailure | undefined {
+  try {
+    server.disconnect();
+    return undefined;
+  } catch (error) {
+    return Tag("TransportCloseFailed", {
+      detail: `disconnect Bluetooth server: ${describeHostError(error)}`,
+    });
   }
-  if (error instanceof Error) {
-    return { code: "invalid-component", message: error.message };
+}
+
+function domExceptionName(error: unknown): string | undefined {
+  return typeof DOMException !== "undefined" && error instanceof DOMException
+    ? error.name
+    : undefined;
+}
+
+function connectFailure<Name extends InterfaceName>(
+  interfaceName: Name,
+  stage: InterfaceConnectStage,
+  error: unknown,
+): ConnectionFailed<Name> | PermissionDenied<Name> | Cancelled<Name> {
+  const name = domExceptionName(error);
+  if (name === "SecurityError" || name === "NotAllowedError") {
+    return Tag("PermissionDenied", {
+      interface: interfaceName,
+      stage,
+      detail: describeHostError(error),
+    });
   }
-  return { code: "invalid-component", message: String(error) };
+  if (name === "NotFoundError" && stage === "DeviceSelection") {
+    return Tag("Cancelled", { interface: interfaceName, stage });
+  }
+  return Tag("ConnectionFailed", {
+    interface: interfaceName,
+    stage,
+    detail: describeHostError(error),
+  });
 }
 
 function describeHostError(error: unknown): string {
-  if (error instanceof DOMException) {
+  if (typeof DOMException !== "undefined" && error instanceof DOMException) {
     return `${error.name}: ${error.message}`;
   }
   if (error instanceof Error) {
@@ -2177,33 +3355,46 @@ async function optionalBluetoothCharacteristic(
   }
 }
 
-function characteristicBytes(event: BrowserBluetoothCharacteristicEvent): Uint8Array {
+function characteristicBytes(
+  event: BrowserBluetoothCharacteristicEvent,
+): CharacteristicBytesOutcome {
   const value = event.target?.value;
   if (!value) {
-    throw new PrnsValidationError(
-      "invalid-component",
-      "Bluetooth characteristic event did not include a value",
-    );
+    return Tag("ProtocolViolation", {
+      protocol: "Bluetooth",
+      detail: "Bluetooth characteristic event did not include a value",
+    });
   }
-  return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  return Tag(
+    "Decoded",
+    new Uint8Array(value.buffer, value.byteOffset, value.byteLength),
+  );
 }
 
 async function writeBluetoothValue(
   characteristic: BrowserBluetoothRemoteGattCharacteristic,
   bytes: Uint8Array,
-): Promise<void> {
+): Promise<SessionWriteOutcome> {
   const value = arrayBufferForBluetooth(bytes);
-  if (characteristic.writeValueWithoutResponse) {
-    await characteristic.writeValueWithoutResponse(value);
-  } else if (characteristic.writeValueWithResponse) {
-    await characteristic.writeValueWithResponse(value);
-  } else if (characteristic.writeValue) {
-    await characteristic.writeValue(value);
-  } else {
-    throw new PrnsValidationError(
-      "missing-host-api",
-      "Bluetooth characteristic does not support writes",
-    );
+  try {
+    if (characteristic.writeValueWithoutResponse) {
+      await characteristic.writeValueWithoutResponse(value);
+    } else if (characteristic.writeValueWithResponse) {
+      await characteristic.writeValueWithResponse(value);
+    } else if (characteristic.writeValue) {
+      await characteristic.writeValue(value);
+    } else {
+      return Tag("TransferFailed", {
+        direction: "Outbound",
+        detail: "Bluetooth characteristic does not support writes",
+      });
+    }
+    return Tag("Written");
+  } catch (error) {
+    return Tag("TransferFailed", {
+      direction: "Outbound",
+      detail: describeHostError(error),
+    });
   }
 }
 
@@ -2214,12 +3405,6 @@ function arrayBufferForBluetooth(bytes: Uint8Array): ArrayBuffer {
 }
 
 function arrayBufferForUsb(bytes: Uint8Array): ArrayBuffer {
-  const out = new ArrayBuffer(bytes.length);
-  new Uint8Array(out).set(bytes);
-  return out;
-}
-
-function arrayBufferForWebSocket(bytes: Uint8Array): ArrayBuffer {
   const out = new ArrayBuffer(bytes.length);
   new Uint8Array(out).set(bytes);
   return out;
@@ -2236,37 +3421,203 @@ function browserUsbAutoChannelTag(device: BrowserUsbDevice): ChannelTag {
   );
 }
 
-function browserWebSocketChannelTag(url: string): ChannelTag {
-  const nonce = nextBrowserWebSocketTag;
-  nextBrowserWebSocketTag = (nextBrowserWebSocketTag + 1) >>> 0;
-  return channelTag(new TextEncoder().encode(`websocket-client:${url}:${nonce}`));
+function canonicalWebSocketUrl(url: string | URL): CanonicalWebSocketOutcome {
+  let target: URL;
+  try {
+    target = new URL(url.toString());
+  } catch (error) {
+    return Tag("InvalidTarget", {
+      interface: "websocket",
+      target: url.toString(),
+      detail: describeHostError(error),
+    });
+  }
+  if (target.protocol !== "ws:" && target.protocol !== "wss:") {
+    return Tag("InvalidTarget", {
+      interface: "websocket",
+      target: target.toString(),
+      detail: "WebSocket URL must use the ws or wss scheme",
+    });
+  }
+  return Tag("Canonical", target.toString());
+}
+
+function runtimeRejected(
+  operation: RuntimeOperation,
+  error: unknown,
+): RuntimeRejected {
+  return Tag("RuntimeRejected", {
+    operation,
+    detail: describeHostError(error),
+  });
+}
+
+function fillEntropy(source: EntropySource, length: number): EntropyOutcome {
+  let outcome: EntropyOutcome;
+  try {
+    outcome = source(length);
+  } catch (error) {
+    return Tag("EntropySourceFailed", { detail: describeHostError(error) });
+  }
+  if (outcome.tag !== "Filled") {
+    return outcome;
+  }
+  if (outcome.data.length < length) {
+    return Tag("InsufficientEntropy", {
+      minimum: length,
+      actual: outcome.data.length,
+    });
+  }
+  return outcome;
+}
+
+function webCryptoIdentity(length: number): IdentityGenerationOutcome {
+  try {
+    if (!hostGlobal().crypto) {
+      return Tag("HostApiUnavailable", { api: "Crypto" });
+    }
+    return Tag(
+      "Generated",
+      identitySecretKey(webCryptoBytes(length), length),
+    );
+  } catch (error) {
+    return Tag("EntropySourceFailed", { detail: describeHostError(error) });
+  }
+}
+
+function unexpectedSessionFailure(error: unknown): Extract<
+  InterfaceSessionFailure,
+  Tag<"UnexpectedSessionFailure", unknown>
+> {
+  return Tag("UnexpectedSessionFailure", { detail: describeHostError(error) });
+}
+
+function closeFailed(
+  causes: InterfaceCleanupFailures,
+): Extract<InterfaceSessionFailure, Tag<"CloseFailed", unknown>> {
+  return Tag("CloseFailed", { causes });
+}
+
+function hasCleanupFailures(
+  causes: readonly InterfaceCleanupFailure[],
+): causes is InterfaceCleanupFailures {
+  return causes.length > 0;
+}
+
+function closedSessionOutcome(
+  status: InterfaceSessionStatus,
+): InterfaceCloseOutcome {
+  return status.tag === "Failed" && status.data.tag === "CloseFailed"
+    ? status.data
+    : Tag("Closed");
+}
+
+function sessionFailureToConnectFailure(
+  interfaceName: "bluetooth",
+  stage: InterfaceConnectStage,
+  failure: InterfaceSessionFailure,
+): BluetoothConnectFailure {
+  if (failure.tag === "RuntimeRejected") {
+    return failure;
+  }
+  return Tag("ConnectionFailed", {
+    interface: interfaceName,
+    stage,
+    detail: describeInterfaceSessionFailure(failure),
+  });
+}
+
+function describeBluetoothConnectFailure(
+  failure: BluetoothConnectFailure,
+): string {
+  return match(failure, {
+    HostApiUnavailable: ({ api }) => `${api} is unavailable`,
+    PermissionDenied: ({ detail }) => detail,
+    Cancelled: ({ stage }) => `Bluetooth ${stage} was cancelled`,
+    UnsupportedDevice: ({ capability }) =>
+      `Bluetooth device does not provide ${capability}`,
+    TimedOut: ({ stage, timeoutMs }) =>
+      `Bluetooth ${stage} timed out after ${timeoutMs}ms`,
+    ConnectionFailed: ({ detail }) => detail,
+    AlreadyActive: ({ target }) => `${target} is already active`,
+    RuntimeRejected: ({ operation, detail }) => `${operation}: ${detail}`,
+  });
+}
+
+function describeInterfaceSessionFailure(
+  failure: InterfaceSessionFailure,
+): string {
+  switch (failure.tag) {
+    case "Disconnected":
+    case "UnexpectedSessionFailure":
+    case "EntropySourceFailed":
+      return failure.data.detail;
+    case "TransferFailed":
+      return `${failure.data.direction} transfer: ${failure.data.detail}`;
+    case "ProtocolViolation":
+      return `${failure.data.protocol}: ${failure.data.detail}`;
+    case "UnsupportedFrame":
+      return `unsupported ${failure.data.format.toLowerCase()} frame`;
+    case "FrameTooLarge":
+      return `frame is ${failure.data.length} bytes; maximum is ${failure.data.maximum}`;
+    case "OutboundQueueFull":
+      return `outbound queue reached ${failure.data.capacity} frames`;
+    case "CloseFailed":
+      return failure.data.causes
+        .map((cause) => cause.data.detail)
+        .join("; ");
+    case "HostApiUnavailable":
+      return `${failure.data.api} is unavailable`;
+    case "InsufficientEntropy":
+      return (
+        `entropy source returned ${failure.data.actual} bytes; ` +
+        `minimum is ${failure.data.minimum}`
+      );
+    case "RuntimeRejected":
+      return `${failure.data.operation}: ${failure.data.detail}`;
+  }
+}
+
+function normalizedWebSocketProtocols(
+  protocols: string | readonly string[] | undefined,
+): string | readonly string[] | undefined {
+  if (protocols === undefined || typeof protocols === "string") {
+    return protocols;
+  }
+  return protocols.length === 0 ? undefined : [...protocols];
+}
+
+function browserWebSocketChannelTag(
+  url: string,
+  protocols: string | readonly string[] | undefined,
+): ChannelTag {
+  const protocolList =
+    protocols === undefined
+      ? []
+      : typeof protocols === "string"
+        ? [protocols]
+        : protocols;
+  return channelTag(
+    new TextEncoder().encode(JSON.stringify(["websocket-client", url, protocolList])),
+  );
+}
+
+function byteKey(bytes: Uint8Array): string {
+  let key = "";
+  for (const byte of bytes) {
+    key += byte.toString(16).padStart(2, "0");
+  }
+  return key;
 }
 
 function formatOptionalHex(value: number | undefined): string {
   return value === undefined ? "unknown" : value.toString(16).padStart(4, "0");
 }
 
-async function closeSerialPortQuietly(port: BrowserSerialPort): Promise<void> {
-  await port.close().catch(ignoreError);
-}
-
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
-}
-
-function ignoreError(_error: unknown): void {}
-
-function requireLocalStorage(): NonNullable<HostGlobal["localStorage"]> {
-  const storage = hostGlobal().localStorage;
-  if (!storage) {
-    throw new PrnsValidationError(
-      "missing-host-api",
-      "BrowserLocalStorageIdentityStore requires globalThis.localStorage",
-    );
-  }
-  return storage;
 }
 
 function hostGlobal(): HostGlobal {
