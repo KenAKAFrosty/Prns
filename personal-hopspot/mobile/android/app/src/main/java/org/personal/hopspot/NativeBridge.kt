@@ -88,15 +88,15 @@ object NativeBridge {
         peerIdentity: ByteBuffer,
     )
 
-    external fun nativeBleControlIn(connId: Int, buffer: ByteBuffer, len: Int)
+    external fun nativeBleControlIn(connId: Int, buffer: ByteBuffer, len: Int): Boolean
 
     external fun nativeBleControlOut(connId: Int, buffer: ByteBuffer): Int
 
-    external fun nativeBleL2capIn(connId: Int, buffer: ByteBuffer, len: Int)
+    external fun nativeBleL2capIn(connId: Int, buffer: ByteBuffer, len: Int): Boolean
 
     external fun nativeBleL2capOut(connId: Int, buffer: ByteBuffer): Int
 
-    external fun nativeBleDataIn(connId: Int, buffer: ByteBuffer, len: Int)
+    external fun nativeBleDataIn(connId: Int, buffer: ByteBuffer, len: Int): Boolean
 
     external fun nativeBleDataOut(connId: Int, buffer: ByteBuffer): Int
 

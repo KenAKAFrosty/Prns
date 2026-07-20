@@ -117,10 +117,6 @@ class PrnsService : Service() {
             Log.i(TAG, "starting WiFi Auto link")
             wifiAutoLink = WifiAutoLink(applicationContext).also { it.start() }
         }
-        // "Wi-Fi/P2P" is our name for the Wi-Fi Aware (NAN) fabric — the peer-to-peer sibling of
-        // Wi-Fi/LAN, and the one peer-to-peer Wi-Fi transport we start by default. Wi-Fi Direct
-        // remains in the codebase as its own experimental interface (WifiDirectLink), but it is too
-        // finicky across platforms (Windows especially) to be a default, so it is not started here.
         if (wifiAwareLink == null) {
             Log.i(TAG, "starting WiFi/P2P (Aware) link")
             wifiAwareLink = WifiAwareLink(applicationContext).also { it.start() }
@@ -135,7 +131,9 @@ class PrnsService : Service() {
             }
         }
         if (bleLink == null) {
-            if (hasBlePermissions()) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                Log.i(TAG, "BLE Auto requires Android 10 or newer")
+            } else if (hasBlePermissions()) {
                 Log.i(TAG, "starting BLE Auto link")
                 bleLink = BleLink(applicationContext).also { it.start() }
             } else {

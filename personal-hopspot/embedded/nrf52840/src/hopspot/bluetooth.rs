@@ -16,13 +16,14 @@ use nrf_softdevice::{raw, SocEvent, Softdevice};
 
 use personal_rns::ble::BluetoothAutoShared;
 use personal_rns::interfaces::bluetooth_auto::core::{
-    contains_service, encode_advertisement, encode_stream_frame, fragments_of, BleAddress, Control,
-    Dialect, Fragment, L2capPlan, Reassembler, BLE_HW_MTU, CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN,
-    STREAM_FRAME_PREFIX_LEN,
+    columba_connection_role, columba_role_capabilities, contains_service, encode_advertisement,
+    encode_stream_frame, fragments_of, BleAddress, BleIdentity, BleRoleCapabilities,
+    ColumbaConnectionRole, Control, Fragment, L2capPlan, PeerProtocol, Reassembler, BLE_HW_MTU,
+    CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN, STREAM_FRAME_PREFIX_LEN,
 };
 use personal_rns::interfaces::bluetooth_auto::limits;
 use personal_rns::interfaces::bluetooth_auto::seam::{
-    BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin,
+    AdvertisingMode, BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin, ScanningMode,
 };
 use personal_rns::interfaces::{InterfaceId, InterfaceKind};
 
@@ -30,15 +31,11 @@ type Mtx = CriticalSectionRawMutex;
 type FrameBytes = heapless09::Vec<u8, BLE_HW_MTU>;
 type GattValue = heapless09::Vec<u8, 244>;
 
-/// One channel-set per concurrent physical connection: the BLE_MEMBERS settleable peers plus a little
-/// headroom for the brief double-connection a keeper duel opens before it evicts the loser. Each is
-/// role-agnostic — a peripheral (accepted) or central (dialed) link claims whichever slot is free.
 pub(super) const MEMBERS: usize = limits::T_ECHO_MAX_PEERS;
 pub(super) const FLEET_ID: InterfaceId =
     InterfaceId::new([InterfaceKind::BluetoothAuto as u8, 0, 0, 0, 0, 0, 0, 0]);
 
 pub(super) const POOL: usize = MEMBERS + 2;
-/// `serve_slot`'s `pool_size` is a literal the task macro needs at parse time; keep it equal to POOL.
 const _: () = assert!(POOL == 7, "serve_slot pool_size must equal POOL");
 
 const CTRL_DEPTH: usize = 4;
@@ -151,21 +148,8 @@ impl Drop for L2capPacket {
     }
 }
 
-// The USB CDC now carries the Reticulum usb-auto wire instead of a diagnostic console, so there is no
-// log sink; `diag!` compiles to nothing. The call sites stay as in-place documentation of the BLE
-// plane's state transitions, ready to re-light if a second CDC (or RTT) console is ever added.
-macro_rules! diag {
-    ($($arg:tt)*) => {{}};
-}
-pub(super) use diag;
-
-/// The reactor's outbound-commit wake for the BLE fleet lane: the egress signals it on every
-/// commit so the supervisor's drain is roused. A same-core wake on this single-core executor,
-/// but the mechanism is identical to the Heltec's cross-core one.
 pub(super) static OUTBOUND_WAKE: Signal<Mtx, ()> = Signal::new();
 
-/// The BLE supervisor's shared aggregate + per-peer status, keyed by the fleet id so each settled peer
-/// becomes a fleet member under it. One member slot per concurrent peer the radio carries.
 pub(super) static BLE_SHARED: BluetoothAutoShared<MEMBERS> = BluetoothAutoShared::new(FLEET_ID);
 
 #[derive(Debug, Clone, Copy)]
@@ -185,28 +169,59 @@ pub(super) async fn softdevice_task(
     .await
 }
 
-#[nrf_softdevice::gatt_service(uuid = "37145b00-442d-4a94-917f-8f42c5da28e3")]
-pub(super) struct ReticulumService {
-    #[characteristic(uuid = "37145b00-442d-4a94-917f-8f42c5da28e7", write, notify)]
-    control: GattValue,
-    #[characteristic(uuid = "37145b00-442d-4a94-917f-8f42c5da28e8", write, notify)]
-    data: GattValue,
+mod reticulum_service {
+    #![allow(clippy::enum_variant_names)]
+
+    use super::GattValue;
+
+    #[nrf_softdevice::gatt_service(uuid = "37145b00-442d-4a94-917f-8f42c5da28e3")]
+    pub(in crate::hopspot_profile) struct ReticulumService {
+        #[characteristic(uuid = "37145b00-442d-4a94-917f-8f42c5da28e4", read, notify)]
+        pub(super) columba_tx: GattValue,
+        #[characteristic(
+            uuid = "37145b00-442d-4a94-917f-8f42c5da28e5",
+            write,
+            write_without_response
+        )]
+        pub(super) columba_rx: GattValue,
+        #[characteristic(uuid = "37145b00-442d-4a94-917f-8f42c5da28e6", read)]
+        pub(super) columba_identity: GattValue,
+        #[characteristic(uuid = "37145b00-442d-4a94-917f-8f42c5da28e7", write, notify)]
+        pub(super) control: GattValue,
+        #[characteristic(uuid = "37145b00-442d-4a94-917f-8f42c5da28e8", write, notify)]
+        pub(super) data: GattValue,
+    }
 }
+
+use reticulum_service::{ReticulumService, ReticulumServiceEvent};
 
 #[nrf_softdevice::gatt_server]
 pub(super) struct Server {
     rns: ReticulumService,
 }
 
-/// The central-side view of a peer's [`ReticulumService`]: `discover` resolves the handles on a
-/// dialed connection, `*_cccd_write` subscribes to notifications (inbound), `*_write` pushes ours
-/// out. The GATT twin of the peripheral `Server`, so a dialed link speaks the same wire.
 #[nrf_softdevice::gatt_client(uuid = "37145b00-442d-4a94-917f-8f42c5da28e3")]
-struct ReticulumClient {
+struct NativeReticulumClient {
     #[characteristic(uuid = "37145b00-442d-4a94-917f-8f42c5da28e7", write, notify)]
     control: GattValue,
     #[characteristic(uuid = "37145b00-442d-4a94-917f-8f42c5da28e8", write, notify)]
     data: GattValue,
+}
+
+#[nrf_softdevice::gatt_client(uuid = "37145b00-442d-4a94-917f-8f42c5da28e3")]
+struct ColumbaReticulumClient {
+    #[characteristic(uuid = "37145b00-442d-4a94-917f-8f42c5da28e4", read, notify)]
+    tx: GattValue,
+    #[characteristic(uuid = "37145b00-442d-4a94-917f-8f42c5da28e5", write)]
+    rx: GattValue,
+    #[characteristic(uuid = "37145b00-442d-4a94-917f-8f42c5da28e6", read)]
+    identity: GattValue,
+}
+
+pub(super) fn set_columba_identity(server: &Server, identity: BleIdentity) {
+    if let Ok(value) = GattValue::from_slice(identity.as_bytes()) {
+        let _ = server.rns.columba_identity_set(&value);
+    }
 }
 
 pub(super) fn softdevice_config() -> nrf_softdevice::Config {
@@ -253,29 +268,29 @@ pub(super) fn usb_vbus_present() -> bool {
         && status & 0x1 != 0
 }
 
-/// A peer the scanner saw advertising our service: the full [`Address`] (type + bytes, so the
-/// dialer whitelists it exactly) and the report RSSI.
 #[derive(Clone, Copy)]
 struct SeenPeer {
     address: Address,
     rssi: i8,
 }
 
-/// The per-link channel set bridging one slot's serve task to the supervisor's [`NrfBleLink`].
-/// Role-agnostic: peripheral and central loops pump the same four lanes; `link_dead` tears down.
 struct LinkChannels {
     control_in: Channel<Mtx, Control, CTRL_DEPTH>,
     control_out: Channel<Mtx, Control, CTRL_DEPTH>,
     data_in: Channel<Mtx, FrameBytes, DATA_DEPTH>,
     data_out: Channel<Mtx, FrameBytes, DATA_DEPTH>,
+    identity_in: Channel<Mtx, BleIdentity, 1>,
+    identity_out: Channel<Mtx, BleIdentity, 1>,
     link_dead: Signal<Mtx, ()>,
     data_plane: Signal<Mtx, L2capPlan>,
+    profile_ready: Signal<Mtx, PeerProtocol>,
     /// The connected peer's address, stashed by the slot worker the moment the connection lands (from
     /// `conn.peer_address()` for an accept, the dialed address for a dial) and read by [`link`](Self::link)
     /// so the supervisor's brain keys this peer correctly — it keys settled-peer lookup and dial/suppress
     /// backoff by address, so a stale all-zero address makes every peer collide on one backoff entry and
     /// hides an already-settled peer from sighting suppression (the redundant self-dial).
     address: BlockingMutex<Mtx, Cell<[u8; 6]>>,
+    peer_protocol: BlockingMutex<Mtx, Cell<Option<PeerProtocol>>>,
 }
 
 impl LinkChannels {
@@ -285,9 +300,13 @@ impl LinkChannels {
             control_out: Channel::new(),
             data_in: Channel::new(),
             data_out: Channel::new(),
+            identity_in: Channel::new(),
+            identity_out: Channel::new(),
             link_dead: Signal::new(),
             data_plane: Signal::new(),
+            profile_ready: Signal::new(),
             address: BlockingMutex::new(Cell::new([0u8; 6])),
+            peer_protocol: BlockingMutex::new(Cell::new(None)),
         }
     }
 
@@ -295,12 +314,38 @@ impl LinkChannels {
         self.address.lock(|address| address.set(bytes));
     }
 
+    fn set_peer_protocol(&self, protocol: PeerProtocol) {
+        self.peer_protocol
+            .lock(|current| current.set(Some(protocol)));
+        self.profile_ready.signal(protocol);
+    }
+
+    fn peer_protocol(&self) -> Option<PeerProtocol> {
+        self.peer_protocol.lock(|current| current.get())
+    }
+
+    fn reset(&self) {
+        self.link_dead.reset();
+        self.data_plane.reset();
+        self.profile_ready.reset();
+        self.peer_protocol.lock(|current| current.set(None));
+        self.control_in.clear();
+        self.control_out.clear();
+        self.data_in.clear();
+        self.data_out.clear();
+        self.identity_in.clear();
+        self.identity_out.clear();
+    }
+
     fn link(&'static self) -> NrfBleLink {
         NrfBleLink {
+            peer_protocol: self.peer_protocol().unwrap_or(PeerProtocol::Native),
             control_in: self.control_in.receiver(),
             control_out: self.control_out.sender(),
             data_in: self.data_in.receiver(),
             data_out: self.data_out.sender(),
+            identity_in: self.identity_in.receiver(),
+            identity_out: self.identity_out.sender(),
             data_plane: &self.data_plane,
             plan: L2capPlan::None,
             fuse: LinkFuse::new(&self.link_dead),
@@ -309,16 +354,11 @@ impl LinkChannels {
     }
 }
 
-/// The work a free slot is handed: accept an inbound connection the acceptor has in hand, or
-/// dial a peer (with its full address, whitelisted exactly), over the same `LinkChannels`.
 enum SlotJob {
     Accept(Connection),
     Dial(Address),
 }
 
-/// The shared hub the whole BLE plane coordinates through: the role-agnostic [`LinkChannels`]
-/// pool, the assign/free/connected/dialed plumbing, the radio-wide advertise/scan gates, and the
-/// scanner's sighting funnel. One `static` so every task references the same channels.
 pub(super) struct BleHub {
     slots: [LinkChannels; POOL],
     assign: [Channel<Mtx, SlotJob, 1>; POOL],
@@ -376,9 +416,6 @@ impl NrfBleBackend {
         }
     }
 
-    /// Remember a scanned peer's full address (type + bytes) so [`dial`](Self::dial) can whitelist it
-    /// exactly — the brain only carries the 6 bytes. Keyed by bytes; the table is a tiny ring, since
-    /// only a handful of distinct peers are ever mid-dial at once.
     fn remember(&mut self, address: Address) {
         if self.seen.iter().any(|seen| seen.bytes() == address.bytes()) {
             return;
@@ -402,15 +439,13 @@ impl BleBackend for NrfBleBackend {
     type Error = Closed;
     type Link = NrfBleLink;
 
-    async fn set_advertising(&mut self, enabled: bool) -> Result<(), Closed> {
-        diag!("backend: set_adv {}", enabled);
-        self.hub.advertise.signal(enabled);
+    async fn set_advertising(&mut self, mode: AdvertisingMode) -> Result<(), Closed> {
+        self.hub.advertise.signal(mode.is_on());
         Ok(())
     }
 
-    async fn set_scanning(&mut self, enabled: bool) -> Result<(), Closed> {
-        diag!("backend: set_scan {}", enabled);
-        self.hub.scan_enabled.signal(enabled);
+    async fn set_scanning(&mut self, mode: ScanningMode) -> Result<(), Closed> {
+        self.hub.scan_enabled.signal(mode.is_on());
         Ok(())
     }
 
@@ -444,15 +479,11 @@ impl BleBackend for NrfBleBackend {
 
     async fn dial(&mut self, address: BleAddress) {
         let Some(addr) = self.resolve(address) else {
-            diag!("dial: unseen {:02x}", address.octets()[0]);
             return;
         };
         let Ok(idx) = self.hub.free.try_receive() else {
-            diag!("dial: pool full");
             return;
         };
-        let _octets = addr.bytes();
-        diag!("dial: slot {} -> {:02x}{:02x}", idx, _octets[0], _octets[1]);
         if self.hub.assign[idx].try_send(SlotJob::Dial(addr)).is_err() {
             let _ = self.hub.free.try_send(idx);
         }
@@ -487,10 +518,13 @@ impl Drop for LinkFuse {
 }
 
 pub(super) struct NrfBleLink {
+    peer_protocol: PeerProtocol,
     control_in: Receiver<'static, Mtx, Control, CTRL_DEPTH>,
     control_out: Sender<'static, Mtx, Control, CTRL_DEPTH>,
     data_in: Receiver<'static, Mtx, FrameBytes, DATA_DEPTH>,
     data_out: Sender<'static, Mtx, FrameBytes, DATA_DEPTH>,
+    identity_in: Receiver<'static, Mtx, BleIdentity, 1>,
+    identity_out: Sender<'static, Mtx, BleIdentity, 1>,
     data_plane: &'static Signal<Mtx, L2capPlan>,
     plan: L2capPlan,
     fuse: LinkFuse,
@@ -502,8 +536,8 @@ impl BleLink for NrfBleLink {
     type Source = NrfBleSource;
     type Sink = NrfBleSink;
 
-    fn dialect(&self) -> Dialect {
-        Dialect::Native
+    fn peer_protocol(&self) -> PeerProtocol {
+        self.peer_protocol
     }
 
     fn address(&self) -> BleAddress {
@@ -520,6 +554,20 @@ impl BleLink for NrfBleLink {
     async fn control_recv(&mut self) -> Result<Control, Closed> {
         match select(self.control_in.receive(), self.fuse.signal().wait()).await {
             Either::First(msg) => Ok(msg),
+            Either::Second(()) => Err(Closed),
+        }
+    }
+
+    async fn receive_columba_peer_identity(&mut self) -> Result<BleIdentity, Closed> {
+        match select(self.identity_in.receive(), self.fuse.signal().wait()).await {
+            Either::First(identity) => Ok(identity),
+            Either::Second(()) => Err(Closed),
+        }
+    }
+
+    async fn send_columba_identity(&mut self, identity: BleIdentity) -> Result<(), Closed> {
+        match select(self.identity_out.send(identity), self.fuse.signal().wait()).await {
+            Either::First(()) => Ok(()),
             Either::Second(()) => Err(Closed),
         }
     }
@@ -584,9 +632,6 @@ impl BleSink for NrfBleSink {
     }
 }
 
-/// When the supervisor drops a link's halves — a keeper-duel loser it rejected, an incumbent it
-/// evicted, or a member whose link already died — signal `link_dead` so the slot's serve loop returns
-/// and its worker drops the physical connection (releasing the SoftDevice slot and the pool entry).
 impl Drop for NrfBleSink {
     fn drop(&mut self) {
         self.link_dead.signal(());
@@ -638,14 +683,13 @@ async fn l2cap_pump(
     let _ = select(outbound, inbound).await;
 }
 
-/// Serve one accepted peripheral connection over its slot's channels until it drops: the GATT
-/// server routes the peer's control/data writes inbound (reassembling data fragments into whole
-/// frames), and the outbound loop fans the supervisor's control/data out as notifications.
 async fn serve_peripheral(
     l2cap: &'static l2cap::L2cap<L2capPacket>,
     server: &Server,
     conn: &Connection,
     slot: &'static LinkChannels,
+    hub: &'static BleHub,
+    idx: usize,
 ) {
     let control_out_rx = slot.control_out.receiver();
     let data_out_rx = slot.data_out.receiver();
@@ -657,9 +701,10 @@ async fn serve_peripheral(
         ServerEvent::Rns(rns) => match rns {
             ReticulumServiceEvent::ControlWrite(value) => {
                 if let Some(ctrl) = Control::decode(&value) {
+                    if slot.peer_protocol().is_none() {
+                        slot.set_peer_protocol(PeerProtocol::Native);
+                    }
                     let _ = control_in_tx.try_send(ctrl);
-                } else {
-                    diag!("gatt: control decode FAILED");
                 }
             }
             ReticulumServiceEvent::ControlCccdWrite { .. } => {}
@@ -674,8 +719,32 @@ async fn serve_peripheral(
                 }
             }
             ReticulumServiceEvent::DataCccdWrite { .. } => {}
+            ReticulumServiceEvent::ColumbaRxWrite(value) => {
+                if slot.peer_protocol().is_none() && value.len() == 16 {
+                    let mut bytes = [0u8; 16];
+                    bytes.copy_from_slice(&value);
+                    let _ = slot.identity_in.try_send(BleIdentity::new(bytes));
+                    slot.set_peer_protocol(PeerProtocol::Columba);
+                } else if slot.peer_protocol() == Some(PeerProtocol::Columba) {
+                    if let Some(fragment) = Fragment::decode(&value) {
+                        if let Some(frame) = reassembler.absorb(&fragment) {
+                            let mut bytes = FrameBytes::new();
+                            if bytes.extend_from_slice(frame).is_ok() {
+                                let _ = data_in_tx.try_send(bytes);
+                            }
+                        }
+                    }
+                }
+            }
+            ReticulumServiceEvent::ColumbaTxCccdWrite { .. } => {}
         },
     });
+
+    let ready = async {
+        let _ = slot.profile_ready.wait().await;
+        hub.connected.send(idx).await;
+        core::future::pending::<()>().await;
+    };
 
     let control_outbound = async {
         loop {
@@ -690,8 +759,10 @@ async fn serve_peripheral(
     };
 
     let data = async {
-        let channel = match slot.data_plane.wait().await {
-            L2capPlan::Accept => with_timeout(
+        let plan = slot.data_plane.wait().await;
+        let protocol = slot.peer_protocol().unwrap_or(PeerProtocol::Native);
+        let channel = match (protocol, plan) {
+            (PeerProtocol::Native, L2capPlan::Accept) => with_timeout(
                 L2CAP_HANDSHAKE_WINDOW,
                 l2cap.listen_with(conn, &l2cap_config(), |psm| psm == L2CAP_PSM),
             )
@@ -709,7 +780,14 @@ async fn serve_peripheral(
                     let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
                     if let Some(n) = fragment.encode(&mut buf) {
                         if let Ok(value) = GattValue::from_slice(&buf[..n]) {
-                            let _ = server.rns.data_notify(conn, &value);
+                            match protocol {
+                                PeerProtocol::Native => {
+                                    let _ = server.rns.data_notify(conn, &value);
+                                }
+                                PeerProtocol::Columba => {
+                                    let _ = server.rns.columba_tx_notify(conn, &value);
+                                }
+                            }
                         }
                     }
                     Timer::after(NOTIFY_PACING).await;
@@ -718,12 +796,15 @@ async fn serve_peripheral(
         }
     };
 
-    let _ = select4(inbound, control_outbound, data, slot.link_dead.wait()).await;
+    let _ = select4(
+        select(inbound, ready),
+        control_outbound,
+        data,
+        slot.link_dead.wait(),
+    )
+    .await;
 }
 
-/// Dial a peer as a central over `slot`: connect (whitelisting the resolved address), discover
-/// its [`ReticulumClient`] characteristics, subscribe, then tell the supervisor the slot lit up
-/// as a *dialed* link and pump it. The central twin of [`serve_peripheral`].
 async fn serve_central(
     sd: &'static Softdevice,
     l2cap: &'static l2cap::L2cap<L2capPacket>,
@@ -732,8 +813,6 @@ async fn serve_central(
     addr: Address,
     slot: &'static LinkChannels,
 ) {
-    // Hold the central-radio permit across connect + discovery (both use the SoftDevice's one
-    // scanner); release it before the per-connection notification run, which uses its own portal.
     hub.central_token.receive().await;
     let whitelist = [&addr];
     let mut config = central::ConnectConfig::default();
@@ -747,25 +826,40 @@ async fn serve_central(
         Err(_) => {
             let _ = hub.central_token.try_send(());
             let _ = hub.dial_failed.try_send(addr.bytes());
-            diag!("dial: connect failed slot {}", idx);
             return;
         }
     };
-    let client: ReticulumClient = match gatt_client::discover(&conn).await {
+    if let Ok(client) = gatt_client::discover::<NativeReticulumClient>(&conn).await {
+        let _ = hub.central_token.try_send(());
+        serve_native_central(l2cap, hub, idx, addr, slot, conn, client).await;
+        return;
+    }
+    let client = match gatt_client::discover::<ColumbaReticulumClient>(&conn).await {
         Ok(client) => client,
         Err(_) => {
             let _ = hub.central_token.try_send(());
             let _ = hub.dial_failed.try_send(addr.bytes());
-            diag!("dial: discover failed slot {}", idx);
             return;
         }
     };
     let _ = hub.central_token.try_send(());
+    serve_columba_central(hub, idx, addr, slot, conn, client).await;
+}
+
+async fn serve_native_central(
+    l2cap: &'static l2cap::L2cap<L2capPacket>,
+    hub: &'static BleHub,
+    idx: usize,
+    addr: Address,
+    slot: &'static LinkChannels,
+    conn: Connection,
+    client: NativeReticulumClient,
+) {
     let _ = client.control_cccd_write(true).await;
     let _ = client.data_cccd_write(true).await;
     slot.set_address(addr.bytes());
+    slot.set_peer_protocol(PeerProtocol::Native);
     hub.dialed.send(idx).await;
-    diag!("link: up slot {} (dialed)", idx);
 
     let control_out_rx = slot.control_out.receiver();
     let data_out_rx = slot.data_out.receiver();
@@ -774,12 +868,12 @@ async fn serve_central(
     let mut reassembler: Reassembler<GATT_REASSEMBLY_CAP> = Reassembler::new();
 
     let inbound = gatt_client::run(&conn, &client, |event| match event {
-        ReticulumClientEvent::ControlNotification(value) => {
+        NativeReticulumClientEvent::ControlNotification(value) => {
             if let Some(ctrl) = Control::decode(&value) {
                 let _ = control_in_tx.try_send(ctrl);
             }
         }
-        ReticulumClientEvent::DataNotification(value) => {
+        NativeReticulumClientEvent::DataNotification(value) => {
             if let Some(fragment) = Fragment::decode(&value) {
                 if let Some(frame) = reassembler.absorb(&fragment) {
                     let mut bytes = FrameBytes::new();
@@ -837,9 +931,84 @@ async fn serve_central(
     let _ = select4(inbound, control_outbound, data, slot.link_dead.wait()).await;
 }
 
-/// One pool slot's worker: park until the acceptor or the dialer hands it a job, serve it in
-/// whichever role the job names (a dialed link surfaces only after connect + discovery settle),
-/// then signal `link_dead` and return the slot to the free list. POOL of these run concurrently.
+async fn serve_columba_central(
+    hub: &'static BleHub,
+    idx: usize,
+    addr: Address,
+    slot: &'static LinkChannels,
+    conn: Connection,
+    client: ColumbaReticulumClient,
+) {
+    let peer_identity = match client.identity_read().await {
+        Ok(value) if value.len() == 16 => {
+            let mut bytes = [0u8; 16];
+            bytes.copy_from_slice(&value);
+            BleIdentity::new(bytes)
+        }
+        _ => {
+            let _ = hub.dial_failed.try_send(addr.bytes());
+            return;
+        }
+    };
+    if client.tx_cccd_write(true).await.is_err() {
+        let _ = hub.dial_failed.try_send(addr.bytes());
+        return;
+    }
+    slot.set_address(addr.bytes());
+    slot.set_peer_protocol(PeerProtocol::Columba);
+    let _ = slot.identity_in.try_send(peer_identity);
+    hub.dialed.send(idx).await;
+
+    let identity = match select(slot.identity_out.receive(), slot.link_dead.wait()).await {
+        Either::First(identity) => identity,
+        Either::Second(()) => return,
+    };
+    let Ok(identity) = GattValue::from_slice(identity.as_bytes()) else {
+        return;
+    };
+    if client.rx_write(&identity).await.is_err() {
+        return;
+    }
+
+    let data_out_rx = slot.data_out.receiver();
+    let data_in_tx = slot.data_in.sender();
+    let mut reassembler: Reassembler<GATT_REASSEMBLY_CAP> = Reassembler::new();
+    let inbound = gatt_client::run(&conn, &client, |event| match event {
+        ColumbaReticulumClientEvent::TxNotification(value) => {
+            if let Some(fragment) = Fragment::decode(&value) {
+                if let Some(frame) = reassembler.absorb(&fragment) {
+                    let mut bytes = FrameBytes::new();
+                    if bytes.extend_from_slice(frame).is_ok() {
+                        let _ = data_in_tx.try_send(bytes);
+                    }
+                }
+            }
+        }
+    });
+    let data = async {
+        let _ = slot.data_plane.wait().await;
+        loop {
+            let frame = data_out_rx.receive().await;
+            for fragment in fragments_of(&frame, GATT_FRAGMENT_PAYLOAD) {
+                let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
+                if let Some(n) = fragment.encode(&mut buf) {
+                    if let Ok(value) = GattValue::from_slice(&buf[..n]) {
+                        let _ = client.rx_write_without_response(&value).await;
+                    }
+                }
+                Timer::after(NOTIFY_PACING).await;
+            }
+        }
+    };
+    let _ = select4(
+        inbound,
+        data,
+        slot.link_dead.wait(),
+        core::future::pending::<()>(),
+    )
+    .await;
+}
+
 #[embassy_executor::task(pool_size = 7)]
 pub(super) async fn serve_slot(
     idx: usize,
@@ -851,27 +1020,19 @@ pub(super) async fn serve_slot(
     let slot = &hub.slots[idx];
     loop {
         let job = hub.assign[idx].receive().await;
-        slot.link_dead.reset();
-        slot.data_plane.reset();
+        slot.reset();
         match job {
             SlotJob::Accept(conn) => {
                 slot.set_address(conn.peer_address().bytes());
-                hub.connected.send(idx).await;
-                diag!("link: up slot {} (accepted)", idx);
-                serve_peripheral(l2cap, server, &conn, slot).await;
+                serve_peripheral(l2cap, server, &conn, slot, hub, idx).await;
             }
             SlotJob::Dial(addr) => serve_central(sd, l2cap, hub, idx, addr, slot).await,
         }
-        diag!("link: down slot {}", idx);
         slot.link_dead.signal(());
         let _ = hub.free.try_send(idx);
     }
 }
 
-/// Advertise and assign each accepted connection to a free slot: the one place that calls
-/// `advertise_connectable`, so the single advertising set is never double-driven. Gated by the
-/// brain's `set_advertising` exactly as the scanner is gated by `set_scanning`; a mid-advertise
-/// `false` (the pool filled) drops the pending advertise and releases the reserved slot.
 pub(super) async fn acceptor(sd: &'static Softdevice, hub: &'static BleHub) -> ! {
     let mut enabled = false;
     loop {
@@ -882,12 +1043,8 @@ pub(super) async fn acceptor(sd: &'static Softdevice, hub: &'static BleHub) -> !
         let idx = hub.free.receive().await;
 
         let mut adv_buf = [0u8; 31];
-        let mut adv_len = encode_advertisement(&mut adv_buf).unwrap_or(0);
-        let name = b"Prns";
-        adv_buf[adv_len] = (1 + name.len()) as u8;
-        adv_buf[adv_len + 1] = 0x09;
-        adv_buf[adv_len + 2..adv_len + 2 + name.len()].copy_from_slice(name);
-        adv_len += 2 + name.len();
+        let adv_len =
+            encode_advertisement(&mut adv_buf, BleRoleCapabilities::DualRole).unwrap_or(0);
         let scan_data = [0x05u8, 0x09, b'P', b'r', b'n', b's'];
         let adv = peripheral::ConnectableAdvertisement::ScannableUndirected {
             adv_data: &adv_buf[..adv_len],
@@ -899,8 +1056,7 @@ pub(super) async fn acceptor(sd: &'static Softdevice, hub: &'static BleHub) -> !
             Either::First(Ok(conn)) => {
                 let _ = hub.assign[idx].try_send(SlotJob::Accept(conn));
             }
-            Either::First(Err(_error)) => {
-                diag!("adv: error {:?}", _error);
+            Either::First(Err(_)) => {
                 let _ = hub.free.try_send(idx);
                 Timer::after(Duration::from_millis(500)).await;
             }
@@ -912,12 +1068,9 @@ pub(super) async fn acceptor(sd: &'static Softdevice, hub: &'static BleHub) -> !
     }
 }
 
-/// Scan for peers advertising our Reticulum service so the supervisor can dial them: the central
-/// half of the dual-role radio. The brain gates it through [`set_scanning`](NrfBleBackend::set_scanning);
-/// a mid-scan `false` drops the in-flight scan future, stopping the radio. Each match is
-/// forwarded as a [`SeenPeer`] (full address + RSSI) and its address remembered for the dial.
 pub(super) async fn scanner(sd: &'static Softdevice, hub: &'static BleHub) -> ! {
     let sightings = hub.sightings.sender();
+    let local_address = BleAddress::new(nrf_softdevice::ble::get_address(sd).bytes());
     let mut enabled = false;
     loop {
         if !enabled {
@@ -940,9 +1093,18 @@ pub(super) async fn scanner(sd: &'static Softdevice, hub: &'static BleHub) -> ! 
             let data = unsafe {
                 core::slice::from_raw_parts(report.data.p_data, report.data.len as usize)
             };
-            if contains_service(data) {
+            let address = Address::from_raw(report.peer_addr);
+            let capabilities =
+                columba_role_capabilities(data).unwrap_or(BleRoleCapabilities::DualRole);
+            let should_dial = columba_connection_role(
+                local_address,
+                BleRoleCapabilities::DualRole,
+                BleAddress::new(address.bytes()),
+                capabilities,
+            ) == ColumbaConnectionRole::Dial;
+            if contains_service(data) && should_dial {
                 Some(SeenPeer {
-                    address: Address::from_raw(report.peer_addr),
+                    address,
                     rssi: report.rssi,
                 })
             } else {
@@ -953,8 +1115,6 @@ pub(super) async fn scanner(sd: &'static Softdevice, hub: &'static BleHub) -> ! 
         let _ = hub.central_token.try_send(());
         match outcome {
             Either::First(Ok(peer)) => {
-                let _octets = peer.address.bytes();
-                diag!("scan: saw {:02x}{:02x}", _octets[0], _octets[1]);
                 let _ = sightings.try_send(peer);
                 Timer::after(SIGHTING_PACING).await;
             }

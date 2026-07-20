@@ -1,10 +1,3 @@
-//! The embassy Bluetooth supervisor: the no_std twin of the tokio [`BluetoothAuto`], driving a
-//! board's native BLE backend through the same wire-exact [`core`] handshake brain. It
-//! advertises, accepts a central, settles the link over the engine's own [`Handshake`], and
-//! stands the peer up through the embassy [`Fleet`], all inline in one `select` loop: no spawn,
-//! no alloc. A single concurrent peer (the embedded radio carries one connection), so the
-//! settled member is held inline; the status keeps a slot array only so the face renders the peer beside the aggregate.
-
 use ::core::cell::Cell;
 
 use embassy_futures::select::{select3, select4, select_array, Either3, Either4};
@@ -16,14 +9,14 @@ use portable_atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
 use prns_core::engine::FanTarget;
 use prns_core::interfaces::bluetooth_auto::core::{
-    self, BleAddress, BleIdentity, Endpoint, Established, Handshake, HandshakeRole, L2capPlan,
-    LinkCapabilities, Local, Outcome,
+    self, BleAddress, BleIdentity, Endpoint, EstablishedPeer, EstablishedTransport, Handshake,
+    HandshakeOutcome, HandshakeRole, L2capPlan, LinkCapabilities, LocalPeer, PeerProtocol,
 };
 use prns_core::interfaces::bluetooth_auto::manager::{
-    role_for, AdvertisingMode, ConnectionManager, ManagerAction, ManagerInput, ScanningMode,
+    role_for, ConnectionManager, ManagerAction, ManagerInput,
 };
 use prns_core::interfaces::bluetooth_auto::seam::{
-    BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin,
+    AdvertisingMode, BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin, ScanningMode,
 };
 use prns_core::interfaces::{
     BitrateBps, ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus,
@@ -31,22 +24,12 @@ use prns_core::interfaces::{
 use prns_runtime::reactor::grant::FrameTarget;
 use prns_runtime::runtime::EmbassyFleet as Fleet;
 
-/// The dial/suppress backoff table size for the embedded brain — a few addresses mid-dial or cooling
-/// off, distinct from settled peers. Tiny, fixed, and independent of the member ceiling.
 const DIAL_TRACK: usize = 6;
 
-/// The most actions one `ManagerInput` can emit (evict + admit + advertising + scanning), with a
-/// little headroom. The driver drains the queue after every `handle`, so it never accumulates more.
 const ACTION_CAP: usize = 6;
 
-/// A central that connects but never finishes the handshake must not wedge the accept loop, so the
-/// settle is bounded — matching the tokio supervisor's window.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// One confirmed peer's live status on the no_std host: a settable id (the slot reused for the next
-/// peer carries each peer's identity-derived id, so the card shows the *peer*), plus connection and
-/// byte counters as lock-free atomics. The id rides a critical-section cell so a render task on
-/// another core sees it coherently; the counters are true `u64`.
 pub struct BluetoothMemberStatus {
     id: CriticalSectionMutex<Cell<InterfaceId>>,
     connection: AtomicU8,
@@ -108,8 +91,6 @@ impl InterfaceStatus for BluetoothMemberStatus {
     }
 }
 
-/// The supervisor's shared live state, parked by the board in a `static` so the render task reads it
-/// lock-free across cores: the aggregate up/peer flags and a fixed `BluetoothMemberStatus` per slot.
 pub struct BluetoothAutoShared<const MEMBERS: usize> {
     id: InterfaceId,
     enabled: AtomicBool,
@@ -120,9 +101,6 @@ pub struct BluetoothAutoShared<const MEMBERS: usize> {
 }
 
 impl<const MEMBERS: usize> BluetoothAutoShared<MEMBERS> {
-    /// The supervisor's shared state, every slot free — `const`, so it lives in a `static`. `id` is
-    /// the aggregate BLE card's id; the board passes the same id it keys the fleet lane with, so the
-    /// card and the supervisor agree.
     #[must_use]
     pub const fn new(id: InterfaceId) -> Self {
         Self {
@@ -136,17 +114,12 @@ impl<const MEMBERS: usize> BluetoothAutoShared<MEMBERS> {
     }
 }
 
-/// The Bluetooth supervisor's aggregate live status: one "BLE" card whose connection is Initializing
-/// (radio not yet up), Disconnected (up, scanning, no peer), or Connected (a peer linked), with the
-/// per-peer members exposed through [`members`](Self::members) for the face to render beside it.
-/// `Copy` — a `&'static` borrow of the board's shared state.
 #[derive(Clone, Copy)]
 pub struct BluetoothAutoStatus<const MEMBERS: usize> {
     shared: &'static BluetoothAutoShared<MEMBERS>,
 }
 
 impl<const MEMBERS: usize> BluetoothAutoStatus<MEMBERS> {
-    /// Wrap the board's shared state. The supervisor and the render task each hold one of these.
     #[must_use]
     pub fn new(shared: &'static BluetoothAutoShared<MEMBERS>) -> Self {
         Self { shared }
@@ -156,14 +129,25 @@ impl<const MEMBERS: usize> BluetoothAutoStatus<MEMBERS> {
         self.shared.up.store(true, Ordering::Relaxed);
     }
 
-    /// Turn the Bluetooth auto-interface off or back on from the application.
-    pub fn set_enabled(&self, enabled: bool) {
+    pub fn enable(&self) {
+        self.update_enabled(true);
+    }
+
+    pub fn disable(&self) {
+        self.update_enabled(false);
+    }
+
+    pub fn toggle_enabled(&self) {
+        let enabled = !self.shared.enabled.fetch_xor(true, Ordering::Relaxed);
+        self.shared.enabled_changed.signal(enabled);
+    }
+
+    fn update_enabled(&self, enabled: bool) {
         if self.shared.enabled.swap(enabled, Ordering::Relaxed) != enabled {
             self.shared.enabled_changed.signal(enabled);
         }
     }
 
-    /// Whether the supervisor should advertise, scan, and carry peers.
     #[must_use]
     pub fn is_enabled(&self) -> bool {
         self.shared.enabled.load(Ordering::Relaxed)
@@ -202,8 +186,6 @@ impl<const MEMBERS: usize> BluetoothAutoStatus<MEMBERS> {
         self.shared.peers.store(count as u32, Ordering::Relaxed);
     }
 
-    /// Each confirmed peer's own live status, for rendering the members as ordinary interface cards.
-    /// Only the occupied slots, so the face gets one card per real peer.
     pub fn members(&self) -> impl Iterator<Item = &'static BluetoothMemberStatus> {
         self.shared
             .members
@@ -246,8 +228,6 @@ impl<const MEMBERS: usize> InterfaceStatus for BluetoothAutoStatus<MEMBERS> {
     }
 }
 
-/// A settled peer the supervisor is carrying: its identity (the brain's key), engine id and status
-/// slot, the address it reports closed under, and the split data halves it pumps.
 struct Active<L: BleLink> {
     identity: BleIdentity,
     id: InterfaceId,
@@ -257,19 +237,14 @@ struct Active<L: BleLink> {
     sink: L::Sink,
 }
 
-/// The native-Bluetooth auto-interface as an embassy supervisor: the board hands it the radio
-/// `backend`, this node's `Local` (identity/endpoint/capabilities the brain hashes and negotiates),
-/// and the shared status. Driven by `node.run(join(.., ble.run(fleet)))`.
 pub struct BluetoothAuto<B, const MEMBERS: usize> {
     backend: B,
-    local: Local,
+    local: LocalPeer,
     status: BluetoothAutoStatus<MEMBERS>,
     bitrate: BitrateBps,
 }
 
 impl<B: BleBackend, const MEMBERS: usize> BluetoothAuto<B, MEMBERS> {
-    /// Build the supervisor over the board's `backend`, reporting into `shared`. The id the board
-    /// keyed `shared` with is the aggregate card's id and the fleet lane's key.
     #[must_use]
     pub fn new(
         backend: B,
@@ -280,7 +255,7 @@ impl<B: BleBackend, const MEMBERS: usize> BluetoothAuto<B, MEMBERS> {
     ) -> Self {
         Self {
             backend,
-            local: Local {
+            local: LocalPeer {
                 identity,
                 endpoint,
                 capabilities,
@@ -290,18 +265,11 @@ impl<B: BleBackend, const MEMBERS: usize> BluetoothAuto<B, MEMBERS> {
         }
     }
 
-    /// A copy of this supervisor's aggregate status handle, for the render task. Call before
-    /// [`run`](Self::run) consumes the supervisor.
     #[must_use]
     pub fn status(&self) -> BluetoothAutoStatus<MEMBERS> {
         self.status
     }
 
-    /// Drive the auto-interface forever: bring the radio up advertising, then race a new inbound
-    /// link (handshook inline to a settled peer that joins the fleet), the engine's outbound frames
-    /// (fanned to the member's sink), and the member's inbound frames (delivered to the fleet). A
-    /// source or sink error retires the peer back off the fleet. `M`/`SLOT`/`NOTIFY`/`LIFECYCLE`
-    /// come from the node's pool.
     pub async fn run<M, const SLOT: usize, const NOTIFY: usize, const LIFECYCLE: usize>(
         self,
         mut fleet: Fleet<M, SLOT, NOTIFY, LIFECYCLE>,
@@ -460,20 +428,29 @@ impl<B: BleBackend, const MEMBERS: usize> BluetoothAuto<B, MEMBERS> {
 async fn settle<L: BleLink>(
     mut link: L,
     role: HandshakeRole,
-    local: Local,
-) -> Option<(Established, L)> {
+    local: LocalPeer,
+) -> Option<(EstablishedPeer, L)> {
     let established = drive_handshake(&mut link, role, local).await?;
     Some((established, link))
 }
 
-/// Drive the engine's [`Handshake`] over the link's control lane to a settled peer, bounded by
-/// [`HANDSHAKE_TIMEOUT`]. The wire-exact twin of the tokio supervisor's `drive_handshake`.
 async fn drive_handshake<L: BleLink>(
     link: &mut L,
     role: HandshakeRole,
-    local: Local,
-) -> Option<Established> {
+    local: LocalPeer,
+) -> Option<EstablishedPeer> {
     with_timeout(HANDSHAKE_TIMEOUT, async {
+        if link.peer_protocol() == PeerProtocol::Columba {
+            let identity = link.receive_columba_peer_identity().await.ok()?;
+            if role == HandshakeRole::Dialer {
+                link.send_columba_identity(local.identity).await.ok()?;
+            }
+            return Some(EstablishedPeer {
+                identity,
+                transport: EstablishedTransport::ColumbaGatt,
+                peer_rssi: None,
+            });
+        }
         let (mut handshake, opening) = Handshake::begin(role, local, None);
         if let Some(msg) = opening {
             link.control_send(&msg).await.ok()?;
@@ -485,9 +462,9 @@ async fn drive_handshake<L: BleLink>(
                 link.control_send(&reply).await.ok()?;
             }
             match reaction.outcome {
-                Outcome::Settled(established) => return Some(established),
-                Outcome::Aborted(_) => return None,
-                Outcome::Pending => {}
+                HandshakeOutcome::Settled(established) => return Some(established),
+                HandshakeOutcome::Aborted(_) => return None,
+                HandshakeOutcome::Pending => {}
             }
         }
     })
@@ -496,8 +473,6 @@ async fn drive_handshake<L: BleLink>(
     .flatten()
 }
 
-/// One settled member's next inbound frame into its own buffer, or a never-resolving wait when the
-/// slot is empty — so a fixed `[_; MEMBERS]` of these always has one entry per slot for `select_array`.
 async fn recv_or_pending<L: BleLink>(
     member: &mut Option<Active<L>>,
     buf: &mut [u8; core::BLE_HW_MTU],
@@ -508,10 +483,6 @@ async fn recv_or_pending<L: BleLink>(
     }
 }
 
-/// Race every settled member's inbound recv, returning the slot index that produced a frame (into its
-/// own `inbufs` slot) and the result. A fixed `[_; MEMBERS]` of `recv_or_pending` futures — empty
-/// slots park forever — built with disjoint borrows via `from_fn` over a zipped iterator, no `unsafe`.
-/// At `MEMBERS = 1` this is a single-future select carrying one buffer: no RAM over the old path.
 #[expect(
     clippy::expect_used,
     reason = "from_fn runs exactly MEMBERS times over a zip of two [_; MEMBERS] arrays, so the iterator cannot run dry; the disjoint-borrow trick has no panic-free spelling without unsafe"
@@ -529,8 +500,6 @@ async fn recv_any<L: BleLink, const MEMBERS: usize>(
     (index, result)
 }
 
-/// Apply one brain action that needs no freshly-settled link in hand. `Admit`/`Reject` are handled in
-/// [`settle_into_fleet`], where the just-handshook source/sink are still in scope.
 async fn apply_one<
     B: BleBackend,
     M: RawMutex + 'static,
@@ -557,18 +526,15 @@ async fn apply_one<
         }
         ManagerAction::NotifyClosed(address) => backend.on_link_closed(address).await,
         ManagerAction::SetAdvertising(mode) => {
-            let _ = backend
-                .set_advertising(matches!(mode, AdvertisingMode::On))
-                .await;
+            let _ = backend.set_advertising(mode).await;
         }
         ManagerAction::SetScanning(mode) => {
-            let _ = backend.set_scanning(matches!(mode, ScanningMode::On)).await;
+            let _ = backend.set_scanning(mode).await;
         }
         ManagerAction::Admit { .. } | ManagerAction::Reject { .. } => {}
     }
 }
 
-/// Drain and apply the queued link-free actions.
 async fn apply_radio<
     B: BleBackend,
     M: RawMutex + 'static,
@@ -602,8 +568,8 @@ async fn disable_members<
     backend: &mut B,
     members: &mut [Option<Active<B::Link>>; MEMBERS],
 ) {
-    let _ = backend.set_advertising(false).await;
-    let _ = backend.set_scanning(false).await;
+    let _ = backend.set_advertising(AdvertisingMode::Off).await;
+    let _ = backend.set_scanning(ScanningMode::Off).await;
     let mut changed = false;
     for (slot, entry) in members.iter_mut().enumerate() {
         if let Some(id) = entry.as_ref().map(|member| member.id) {
@@ -621,8 +587,6 @@ async fn disable_members<
     }
 }
 
-/// Retire the member in `slot` (its link died or a send failed): tear it off the fleet and status,
-/// tell the brain so it frees the slot and re-reconciles the radio, then apply that reconcile.
 async fn close_member<
     B: BleBackend,
     M: RawMutex + 'static,
@@ -742,11 +706,6 @@ async fn deliver_inbound<
     }
 }
 
-/// Handshake a fresh link (dialed or accepted) and let the brain resolve it: `Admit` opens the L2CAP
-/// fast lane (when the arrangement calls for one) and stands the peer up as a fleet member in its slot,
-/// `Reject` drops it, `Evict` retires the incumbent it beat; the radio actions route through
-/// [`apply_one`]. The handshook link is held until `Admit` upgrades and claims it — so a connection
-/// that loses the keeper-duel is dropped without ever opening a (contending) CoC.
 #[expect(
     clippy::too_many_arguments,
     reason = "embedded serve-loop internals pass the loop's split-borrowed locals; bundling awaits an on-hardware validation pass"
@@ -761,7 +720,7 @@ async fn settle_into_fleet<
 >(
     link: B::Link,
     origin: Origin,
-    local: Local,
+    local: LocalPeer,
     bitrate: BitrateBps,
     manager: &mut ConnectionManager<MEMBERS, DIAL_TRACK>,
     pending: &mut heapless::Vec<ManagerAction, ACTION_CAP>,

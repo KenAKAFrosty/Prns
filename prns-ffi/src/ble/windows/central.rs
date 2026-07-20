@@ -1,7 +1,8 @@
 use std::time::Duration;
 
 use prns_core::interfaces::bluetooth_auto::core::{
-    BleAddress, BleUuid, Control, BLE_SERVICE_UUID, NATIVE_CONTROL_UUID, NATIVE_DATA_UUID,
+    BleAddress, BleIdentity, BleUuid, Control, PeerProtocol, BLE_SERVICE_UUID,
+    COLUMBA_IDENTITY_UUID, COLUMBA_RX_UUID, COLUMBA_TX_UUID, NATIVE_CONTROL_UUID, NATIVE_DATA_UUID,
 };
 use tokio::sync::{mpsc as tokio_mpsc, watch};
 use windows::Devices::Bluetooth::GenericAttributeProfile::{
@@ -18,6 +19,18 @@ use super::{address_to_u64, bytes_from, guid_of, ibuffer_from, WindowsBleError};
 
 const DIAL_DISCOVERY_ATTEMPTS: usize = 4;
 const DIAL_DISCOVERY_RETRY_DELAY: Duration = Duration::from_millis(400);
+
+enum DialProfile {
+    Native {
+        control: GattCharacteristic,
+        data: GattCharacteristic,
+    },
+    Columba {
+        rx: GattCharacteristic,
+        tx: GattCharacteristic,
+        identity: BleIdentity,
+    },
+}
 pub(super) async fn gatt_write(
     characteristic: GattCharacteristic,
     bytes: Vec<u8>,
@@ -80,15 +93,12 @@ pub(super) fn connect_blocking(
         },
     ))?;
 
-    let (control_char, data_char) = {
+    let profile = {
         let mut attempt = 1;
         loop {
-            let discovered =
-                discover_characteristic(&device, NATIVE_CONTROL_UUID).and_then(|control| {
-                    Ok((control, discover_characteristic(&device, NATIVE_DATA_UUID)?))
-                });
+            let discovered = discover_profile(&device);
             match discovered {
-                Ok(pair) => break pair,
+                Ok(profile) => break profile,
                 Err(error) if attempt < DIAL_DISCOVERY_ATTEMPTS => {
                     crate::diagnostic_log::debug!(
                         "bluetooth: discovery attempt {attempt}/{DIAL_DISCOVERY_ATTEMPTS} for {:02x?} failed ({error:?}); retrying",
@@ -101,25 +111,56 @@ pub(super) fn connect_blocking(
             }
         }
     };
-    let service = control_char.Service()?;
-
-    let (control_tx, control_rx) = tokio_mpsc::unbounded_channel::<Control>();
-    subscribe(&control_char, "control", move |bytes| {
-        if let Some(control) = Control::decode(&bytes) {
-            let _ = control_tx.send(control);
-        }
-    })?;
-
-    let (data_tx, data_rx) = tokio_mpsc::unbounded_channel::<Box<[u8]>>();
-    subscribe(&data_char, "data", move |bytes| {
-        let _ = data_tx.send(Box::from(bytes.as_slice()));
-    })?;
+    let (control_char, data_char, service, peer_protocol, peer_identity, control_rx, data_rx) =
+        match profile {
+            DialProfile::Native { control, data } => {
+                let service = control.Service()?;
+                let (control_tx, control_rx) = tokio_mpsc::channel::<Control>(8);
+                subscribe(&control, "control", move |bytes| {
+                    if let Some(control) = Control::decode(&bytes) {
+                        let _ = control_tx.try_send(control);
+                    }
+                })?;
+                let (data_tx, data_rx) = tokio_mpsc::channel::<Box<[u8]>>(16);
+                subscribe(&data, "data", move |bytes| {
+                    let _ = data_tx.try_send(Box::from(bytes.as_slice()));
+                })?;
+                (
+                    control,
+                    data,
+                    service,
+                    PeerProtocol::Native,
+                    None,
+                    control_rx,
+                    data_rx,
+                )
+            }
+            DialProfile::Columba { rx, tx, identity } => {
+                let service = rx.Service()?;
+                let (_control_tx, control_rx) = tokio_mpsc::channel::<Control>(8);
+                let (data_tx, data_rx) = tokio_mpsc::channel::<Box<[u8]>>(16);
+                subscribe(&tx, "Columba TX", move |bytes| {
+                    let _ = data_tx.try_send(Box::from(bytes.as_slice()));
+                })?;
+                (
+                    rx.clone(),
+                    rx,
+                    service,
+                    PeerProtocol::Columba,
+                    Some(identity),
+                    control_rx,
+                    data_rx,
+                )
+            }
+        };
 
     crate::diagnostic_log::debug!(
-        "bluetooth: dialled {:02x?} — control + data characteristics subscribed",
-        address.octets()
+        "bluetooth: dialled {:02x?} with {peer_protocol:?}",
+        address.octets(),
     );
     Ok(WinGattLink {
+        peer_protocol,
+        peer_identity,
         address,
         control_rx,
         data_rx: Some(data_rx),
@@ -133,6 +174,27 @@ pub(super) fn connect_blocking(
             connection_request,
         },
     })
+}
+
+fn discover_profile(device: &BluetoothLEDevice) -> Result<DialProfile, WindowsBleError> {
+    if let Ok(control) = discover_characteristic(device, NATIVE_CONTROL_UUID) {
+        let data = discover_characteristic(device, NATIVE_DATA_UUID)?;
+        return Ok(DialProfile::Native { control, data });
+    }
+    let rx = discover_characteristic(device, COLUMBA_RX_UUID)?;
+    let tx = discover_characteristic(device, COLUMBA_TX_UUID)?;
+    let identity = discover_characteristic(device, COLUMBA_IDENTITY_UUID)?;
+    let read = identity
+        .ReadValueWithCacheModeAsync(BluetoothCacheMode::Uncached)?
+        .get()?;
+    if read.Status()? != GattCommunicationStatus::Success {
+        return Err(WindowsBleError::MissingColumbaIdentity);
+    }
+    let bytes = bytes_from(&read.Value()?)?;
+    let identity = <[u8; 16]>::try_from(bytes.as_slice())
+        .map(BleIdentity::new)
+        .map_err(|_| WindowsBleError::MissingColumbaIdentity)?;
+    Ok(DialProfile::Columba { rx, tx, identity })
 }
 
 fn discover_characteristic(

@@ -1,4 +1,40 @@
-use super::core::{BleAddress, Control, Dialect, L2capPlan, LinkCapabilities};
+use super::core::{BleAddress, BleIdentity, Control, L2capPlan, LinkCapabilities, PeerProtocol};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdvertisingMode {
+    On,
+    Off,
+}
+
+impl AdvertisingMode {
+    pub const fn is_on(self) -> bool {
+        matches!(self, Self::On)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScanningMode {
+    On,
+    Off,
+}
+
+impl ScanningMode {
+    pub const fn is_on(self) -> bool {
+        matches!(self, Self::On)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RadioMode {
+    On,
+    Off,
+}
+
+impl RadioMode {
+    pub const fn is_on(self) -> bool {
+        matches!(self, Self::On)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Origin {
@@ -36,21 +72,13 @@ pub trait BleBackend {
         None
     }
 
-    async fn set_advertising(&mut self, enabled: bool) -> Result<(), Self::Error>;
-    /// Scan for peers advertising our service so the supervisor can dial them. The supervisor gates
-    /// this on capacity, exactly like advertising. A backend that scans autonomously (or cannot
-    /// scan) keeps the default no-op.
-    async fn set_scanning(&mut self, _enabled: bool) -> Result<(), Self::Error> {
+    async fn set_advertising(&mut self, mode: AdvertisingMode) -> Result<(), Self::Error>;
+    async fn set_scanning(&mut self, _mode: ScanningMode) -> Result<(), Self::Error> {
         Ok(())
     }
-    /// Bring the platform radio resources up or tear them fully down. Most backends naturally bind
-    /// this to advertising/scanning, but host bridges may need an explicit lifecycle command for
-    /// OS-owned scanners, advertisers, GATT servers, and L2CAP listeners.
-    async fn set_radio_enabled(&mut self, _enabled: bool) -> Result<(), Self::Error> {
+    async fn set_radio_mode(&mut self, _mode: RadioMode) -> Result<(), Self::Error> {
         Ok(())
     }
-    /// Return the capabilities that should be advertised now that the platform radio is up. Backends
-    /// with dynamically assigned resources, such as Android L2CAP PSMs, can refresh them here.
     async fn local_capabilities(
         &mut self,
         configured: LinkCapabilities,
@@ -68,8 +96,16 @@ pub trait BleLink {
     type Source: BleSource<Error = Self::Error>;
     type Sink: BleSink<Error = Self::Error>;
 
-    fn dialect(&self) -> Dialect;
+    fn peer_protocol(&self) -> PeerProtocol;
     fn address(&self) -> BleAddress;
+
+    async fn receive_columba_peer_identity(&mut self) -> Result<BleIdentity, Self::Error> {
+        core::future::pending().await
+    }
+
+    async fn send_columba_identity(&mut self, _identity: BleIdentity) -> Result<(), Self::Error> {
+        Ok(())
+    }
 
     async fn control_send(&mut self, msg: &Control) -> Result<(), Self::Error>;
     async fn control_recv(&mut self) -> Result<Control, Self::Error>;

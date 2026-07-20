@@ -3,15 +3,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::Notify;
 
-use prns_core::interfaces::bluetooth_auto::core::{
-    AndroidHost, BleAddress, BleIdentity, Control, Dialect, Endpoint, LinkCapabilities, BLE_HW_MTU,
-    CONTROL_MAX_LEN,
-};
+use prns_core::interfaces::bluetooth_auto::core::{BleAddress, BleIdentity, PeerProtocol};
+use prns_core::interfaces::bluetooth_auto::seam::{AdvertisingMode, RadioMode, ScanningMode};
 
 use super::{RADIO_ADVERTISING, RADIO_ENABLED, RADIO_SCANNING};
+
+const CONTROL_IN_DEPTH: usize = 8;
+const DATA_IN_DEPTH: usize = 16;
 
 pub(super) struct LinkSignal {
     pub(super) is_up: AtomicBool,
@@ -60,9 +61,9 @@ impl WorkSignal {
 }
 
 pub(super) struct Endpoints {
-    control_in_tx: UnboundedSender<Vec<u8>>,
-    l2cap_in_tx: UnboundedSender<Vec<u8>>,
-    data_in_tx: UnboundedSender<Vec<u8>>,
+    control_in_tx: Sender<Vec<u8>>,
+    l2cap_in_tx: Sender<Vec<u8>>,
+    data_in_tx: Sender<Vec<u8>>,
     control_out: Arc<Mutex<VecDeque<u8>>>,
     l2cap_out: Arc<Mutex<VecDeque<u8>>>,
     data_out: Arc<Mutex<VecDeque<Vec<u8>>>>,
@@ -74,10 +75,11 @@ pub(super) struct PendingLink {
     pub(super) address: BleAddress,
     pub(super) rssi: Option<i8>,
     pub(super) dialed: bool,
-    pub(super) dialect: Dialect,
-    pub(super) control_in: UnboundedReceiver<Vec<u8>>,
-    pub(super) l2cap_in: UnboundedReceiver<Vec<u8>>,
-    pub(super) data_in: UnboundedReceiver<Vec<u8>>,
+    pub(super) peer_protocol: PeerProtocol,
+    pub(super) peer_identity: Option<BleIdentity>,
+    pub(super) control_in: Receiver<Vec<u8>>,
+    pub(super) l2cap_in: Receiver<Vec<u8>>,
+    pub(super) data_in: Receiver<Vec<u8>>,
     pub(super) control_out: Arc<Mutex<VecDeque<u8>>>,
     pub(super) l2cap_out: Arc<Mutex<VecDeque<u8>>>,
     pub(super) data_out: Arc<Mutex<VecDeque<Vec<u8>>>>,
@@ -186,7 +188,8 @@ impl AndroidBleBridge {
         16
     }
 
-    pub fn set_radio_enabled(&self, enabled: bool) {
+    pub fn set_radio_mode(&self, mode: RadioMode) {
+        let enabled = mode.is_on();
         if let Ok(mut radio) = self.shared.radio.lock() {
             radio.enabled = enabled;
             if !enabled {
@@ -200,16 +203,16 @@ impl AndroidBleBridge {
         self.shared.work.wake();
     }
 
-    pub fn set_advertising(&self, enabled: bool) {
+    pub fn set_advertising(&self, mode: AdvertisingMode) {
         if let Ok(mut radio) = self.shared.radio.lock() {
-            radio.advertising = enabled;
+            radio.advertising = mode.is_on();
         }
         self.shared.work.wake();
     }
 
-    pub fn set_scanning(&self, enabled: bool) {
+    pub fn set_scanning(&self, mode: ScanningMode) {
         if let Ok(mut radio) = self.shared.radio.lock() {
-            radio.scanning = enabled;
+            radio.scanning = mode.is_on();
         }
         self.shared.work.wake();
     }
@@ -291,7 +294,7 @@ impl AndroidBleBridge {
     }
 
     pub fn link_up(&self, conn_id: u32, address: [u8; 6], rssi: Option<i8>, dialed: bool) {
-        self.link_up_with_dialect(conn_id, address, rssi, dialed, Dialect::Native, None);
+        self.link_up_with_protocol(conn_id, address, rssi, dialed, PeerProtocol::Native, None);
     }
 
     pub fn columba_link_up(
@@ -302,28 +305,28 @@ impl AndroidBleBridge {
         dialed: bool,
         peer_identity: [u8; 16],
     ) {
-        self.link_up_with_dialect(
+        self.link_up_with_protocol(
             conn_id,
             address,
             rssi,
             dialed,
-            Dialect::Columba,
+            PeerProtocol::Columba,
             Some(peer_identity),
         );
     }
 
-    fn link_up_with_dialect(
+    fn link_up_with_protocol(
         &self,
         conn_id: u32,
         address: [u8; 6],
         rssi: Option<i8>,
         dialed: bool,
-        dialect: Dialect,
+        peer_protocol: PeerProtocol,
         peer_identity: Option<[u8; 16]>,
     ) {
-        let (control_tx, control_rx) = unbounded_channel::<Vec<u8>>();
-        let (l2cap_tx, l2cap_rx) = unbounded_channel::<Vec<u8>>();
-        let (data_tx, data_rx) = unbounded_channel::<Vec<u8>>();
+        let (control_tx, control_rx) = channel::<Vec<u8>>(CONTROL_IN_DEPTH);
+        let (l2cap_tx, l2cap_rx) = channel::<Vec<u8>>(DATA_IN_DEPTH);
+        let (data_tx, data_rx) = channel::<Vec<u8>>(DATA_IN_DEPTH);
         let control_out = Arc::new(Mutex::new(VecDeque::new()));
         let l2cap_out = Arc::new(Mutex::new(VecDeque::new()));
         let data_out = Arc::new(Mutex::new(VecDeque::new()));
@@ -331,9 +334,7 @@ impl AndroidBleBridge {
             is_up: AtomicBool::new(false),
             notify: Notify::new(),
         });
-        if let Some(identity) = peer_identity {
-            let _ = control_tx.send(columba_greeting(dialed, identity, rssi));
-        }
+        let peer_identity = peer_identity.map(BleIdentity::new);
         if let Ok(mut links) = self.shared.links.lock() {
             links.insert(
                 conn_id,
@@ -354,7 +355,8 @@ impl AndroidBleBridge {
                 address: BleAddress::new(address),
                 rssi,
                 dialed,
-                dialect,
+                peer_protocol,
+                peer_identity,
                 control_in: control_rx,
                 l2cap_in: l2cap_rx,
                 data_in: data_rx,
@@ -369,12 +371,17 @@ impl AndroidBleBridge {
         self.shared.events_ready.notify_one();
     }
 
-    pub fn control_in(&self, conn_id: u32, bytes: &[u8]) {
+    pub fn control_in(&self, conn_id: u32, bytes: &[u8]) -> bool {
         if let Ok(links) = self.shared.links.lock() {
             if let Some(ep) = links.get(&conn_id) {
-                let _ = ep.control_in_tx.send(bytes.to_vec());
+                return ep
+                    .control_in_tx
+                    .try_reserve()
+                    .map(|permit| permit.send(bytes.to_vec()))
+                    .is_ok();
             }
         }
+        false
     }
 
     pub fn control_out(&self, conn_id: u32, out: &mut [u8]) -> usize {
@@ -384,12 +391,17 @@ impl AndroidBleBridge {
         }
     }
 
-    pub fn l2cap_in(&self, conn_id: u32, bytes: &[u8]) {
+    pub fn l2cap_in(&self, conn_id: u32, bytes: &[u8]) -> bool {
         if let Ok(links) = self.shared.links.lock() {
             if let Some(ep) = links.get(&conn_id) {
-                let _ = ep.l2cap_in_tx.send(bytes.to_vec());
+                return ep
+                    .l2cap_in_tx
+                    .try_reserve()
+                    .map(|permit| permit.send(bytes.to_vec()))
+                    .is_ok();
             }
         }
+        false
     }
 
     pub fn l2cap_out(&self, conn_id: u32, out: &mut [u8]) -> usize {
@@ -399,12 +411,17 @@ impl AndroidBleBridge {
         }
     }
 
-    pub fn data_in(&self, conn_id: u32, bytes: &[u8]) {
+    pub fn data_in(&self, conn_id: u32, bytes: &[u8]) -> bool {
         if let Ok(links) = self.shared.links.lock() {
             if let Some(ep) = links.get(&conn_id) {
-                let _ = ep.data_in_tx.send(bytes.to_vec());
+                return ep
+                    .data_in_tx
+                    .try_reserve()
+                    .map(|permit| permit.send(bytes.to_vec()))
+                    .is_ok();
             }
         }
+        false
     }
 
     pub fn data_out(&self, conn_id: u32, out: &mut [u8]) -> usize {
@@ -510,34 +527,6 @@ impl Default for AndroidBleBridge {
     fn default() -> Self {
         Self::new()
     }
-}
-
-fn columba_greeting(dialed: bool, peer_identity: [u8; 16], rssi: Option<i8>) -> Vec<u8> {
-    let capabilities = LinkCapabilities {
-        l2cap: None,
-        link_mtu: BLE_HW_MTU as u16,
-    };
-    let peer = BleIdentity::new(peer_identity);
-    let msg = if dialed {
-        Control::Welcome {
-            identity: peer,
-            endpoint: Endpoint::Android(AndroidHost::Android),
-            capabilities,
-            peer_rssi: rssi,
-        }
-    } else {
-        Control::Hello {
-            identity: peer,
-            endpoint: Endpoint::Android(AndroidHost::Android),
-            capabilities,
-            peer_rssi: rssi,
-        }
-    };
-    let mut buf = [0u8; CONTROL_MAX_LEN];
-    let Some(len) = msg.encode(&mut buf) else {
-        return Vec::new();
-    };
-    buf[..len].to_vec()
 }
 
 fn drain(queue: &Mutex<VecDeque<u8>>, out: &mut [u8]) -> usize {

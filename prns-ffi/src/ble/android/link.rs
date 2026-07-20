@@ -2,11 +2,11 @@ use std::collections::VecDeque;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
+use tokio::sync::mpsc::{channel, Receiver};
 
 use prns_core::interfaces::bluetooth_auto::core::{
-    encode_stream_frame, fragments_of, BleAddress, Control, Dialect, Fragment, L2capPlan,
-    Reassembler, StreamDeframer, BLE_HW_MTU, CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN,
+    encode_stream_frame, fragments_of, BleAddress, BleIdentity, Control, Fragment, L2capPlan,
+    PeerProtocol, Reassembler, StreamDeframer, BLE_HW_MTU, CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN,
     STREAM_FRAME_PREFIX_LEN,
 };
 use prns_core::interfaces::bluetooth_auto::seam::{BleLink, BleSink, BleSource};
@@ -17,14 +17,18 @@ use super::AndroidBleError;
 const L2CAP_SDU_LEN: usize = STREAM_FRAME_PREFIX_LEN + BLE_HW_MTU;
 const GATT_REASSEMBLY_CAP: usize = 600;
 const GATT_FRAGMENT_PAYLOAD: usize = 180;
+const MERGED_IN_DEPTH: usize = 16;
+const OUTBOUND_BYTE_CAP: usize = 8 * BLE_HW_MTU;
+const OUTBOUND_FRAME_DEPTH: usize = 16;
 
 pub struct AndroidBleLink {
     pub(super) conn_id: u32,
     pub(super) address: BleAddress,
-    pub(super) dialect: Dialect,
-    pub(super) control_in: UnboundedReceiver<Vec<u8>>,
-    pub(super) l2cap_in: Option<UnboundedReceiver<Vec<u8>>>,
-    pub(super) data_in: Option<UnboundedReceiver<Vec<u8>>>,
+    pub(super) peer_protocol: PeerProtocol,
+    pub(super) peer_identity: Option<BleIdentity>,
+    pub(super) control_in: Receiver<Vec<u8>>,
+    pub(super) l2cap_in: Option<Receiver<Vec<u8>>>,
+    pub(super) data_in: Option<Receiver<Vec<u8>>>,
     pub(super) control_out: Arc<Mutex<VecDeque<u8>>>,
     pub(super) l2cap_out: Arc<Mutex<VecDeque<u8>>>,
     pub(super) data_out: Arc<Mutex<VecDeque<Vec<u8>>>>,
@@ -38,8 +42,26 @@ impl BleLink for AndroidBleLink {
     type Source = AndroidBleSource;
     type Sink = AndroidBleSink;
 
-    fn dialect(&self) -> Dialect {
-        self.dialect
+    fn peer_protocol(&self) -> PeerProtocol {
+        self.peer_protocol
+    }
+
+    async fn receive_columba_peer_identity(&mut self) -> Result<BleIdentity, AndroidBleError> {
+        self.peer_identity.ok_or(AndroidBleError::Closed)
+    }
+
+    async fn send_columba_identity(
+        &mut self,
+        identity: BleIdentity,
+    ) -> Result<(), AndroidBleError> {
+        let mut out = self.data_out.lock().map_err(|_| AndroidBleError::Closed)?;
+        if out.len() >= OUTBOUND_FRAME_DEPTH {
+            return Err(AndroidBleError::QueueFull);
+        }
+        out.push_back(identity.as_bytes().to_vec());
+        drop(out);
+        self.work.wake();
+        Ok(())
     }
 
     fn address(&self) -> BleAddress {
@@ -47,22 +69,19 @@ impl BleLink for AndroidBleLink {
     }
 
     async fn control_send(&mut self, msg: &Control) -> Result<(), AndroidBleError> {
-        if self.dialect == Dialect::Columba {
-            if let Control::Hello { identity, .. } = msg {
-                if let Ok(mut out) = self.data_out.lock() {
-                    out.push_back(identity.as_bytes().to_vec());
-                }
-                self.work.wake();
-            }
-            return Ok(());
-        }
         let mut buf = [0u8; CONTROL_MAX_LEN];
         let len = msg
             .encode(&mut buf)
             .ok_or(AndroidBleError::ControlTooLarge)?;
-        if let Ok(mut out) = self.control_out.lock() {
-            out.extend(buf[..len].iter().copied());
+        let mut out = self
+            .control_out
+            .lock()
+            .map_err(|_| AndroidBleError::Closed)?;
+        if out.len().saturating_add(len) > OUTBOUND_BYTE_CAP {
+            return Err(AndroidBleError::QueueFull);
         }
+        out.extend(buf[..len].iter().copied());
+        drop(out);
         self.work.wake();
         Ok(())
     }
@@ -81,7 +100,7 @@ impl BleLink for AndroidBleLink {
     }
 
     async fn upgrade(&mut self, plan: &L2capPlan) -> Result<(), AndroidBleError> {
-        if self.dialect == Dialect::Columba {
+        if self.peer_protocol == PeerProtocol::Columba {
             return Ok(());
         }
         if let L2capPlan::Open { psm } = plan {
@@ -94,7 +113,7 @@ impl BleLink for AndroidBleLink {
     }
 
     fn into_data(self) -> (AndroidBleSource, AndroidBleSink) {
-        let (merged_tx, merged_rx) = unbounded_channel::<Vec<u8>>();
+        let (merged_tx, merged_rx) = channel::<Vec<u8>>(MERGED_IN_DEPTH);
 
         if let Some(mut data_in) = self.data_in {
             let frames = merged_tx.clone();
@@ -103,7 +122,7 @@ impl BleLink for AndroidBleLink {
                 while let Some(message) = data_in.recv().await {
                     if let Some(fragment) = Fragment::decode(&message) {
                         if let Some(frame) = reassembler.absorb(&fragment) {
-                            if frames.send(frame.to_vec()).is_err() {
+                            if frames.send(frame.to_vec()).await.is_err() {
                                 break;
                             }
                         }
@@ -122,7 +141,7 @@ impl BleLink for AndroidBleLink {
                         break;
                     }
                     while let Some(len) = deframer.next_frame(&mut frame) {
-                        if frames.send(frame[..len].to_vec()).is_err() {
+                        if frames.send(frame[..len].to_vec()).await.is_err() {
                             return;
                         }
                     }
@@ -144,7 +163,7 @@ impl BleLink for AndroidBleLink {
 }
 
 pub struct AndroidBleSource {
-    inbound: UnboundedReceiver<Vec<u8>>,
+    inbound: Receiver<Vec<u8>>,
 }
 
 impl BleSource for AndroidBleSource {
@@ -173,18 +192,23 @@ impl BleSink for AndroidBleSink {
             let mut framed = [0u8; L2CAP_SDU_LEN];
             let len =
                 encode_stream_frame(frame, &mut framed).ok_or(AndroidBleError::FrameTooLarge)?;
-            if let Ok(mut out) = self.l2cap_out.lock() {
-                out.extend(framed[..len].iter().copied());
+            let mut out = self.l2cap_out.lock().map_err(|_| AndroidBleError::Closed)?;
+            if out.len().saturating_add(len) > OUTBOUND_BYTE_CAP {
+                return Err(AndroidBleError::QueueFull);
             }
+            out.extend(framed[..len].iter().copied());
         } else {
+            let fragment_count = frame.len().div_ceil(GATT_FRAGMENT_PAYLOAD);
+            let mut out = self.gatt_out.lock().map_err(|_| AndroidBleError::Closed)?;
+            if out.len().saturating_add(fragment_count) > OUTBOUND_FRAME_DEPTH {
+                return Err(AndroidBleError::QueueFull);
+            }
             let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
             for fragment in fragments_of(frame, GATT_FRAGMENT_PAYLOAD) {
                 let len = fragment
                     .encode(&mut buf)
                     .ok_or(AndroidBleError::FrameTooLarge)?;
-                if let Ok(mut out) = self.gatt_out.lock() {
-                    out.push_back(buf[..len].to_vec());
-                }
+                out.push_back(buf[..len].to_vec());
             }
         }
         self.work.wake();

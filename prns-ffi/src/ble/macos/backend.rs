@@ -12,9 +12,11 @@ use objc2_foundation::{NSDictionary, NSString};
 use tokio::sync::{mpsc as tokio_mpsc, oneshot};
 use tokio::task::JoinSet;
 
-use prns_core::interfaces::bluetooth_auto::core::{BleAddress, Control, Psm};
+use prns_core::interfaces::bluetooth_auto::core::{BleAddress, BleIdentity, Control, Psm};
 use prns_core::interfaces::bluetooth_auto::limits;
-use prns_core::interfaces::bluetooth_auto::seam::{BleBackend, BleEvent, Origin};
+use prns_core::interfaces::bluetooth_auto::seam::{
+    AdvertisingMode, BleBackend, BleEvent, Origin, ScanningMode,
+};
 
 use super::central::{CentralDelegate, DialChars, DialCommand, DialSession};
 use super::gatt_link::{ControlPlane, GattLink};
@@ -55,7 +57,7 @@ pub struct MacosBleBackend {
 }
 
 impl MacosBleBackend {
-    pub async fn new() -> Result<Self, MacosBleError> {
+    pub async fn new(identity: BleIdentity) -> Result<Self, MacosBleError> {
         let (events_tx, mut events_rx) = tokio_mpsc::unbounded_channel::<Event>();
         let (keepalive, shutdown_rx) = sync_mpsc::channel::<()>();
         let (handles_tx, handles_rx) = oneshot::channel::<Handles>();
@@ -84,7 +86,7 @@ impl MacosBleBackend {
                 )
             };
 
-            let peripheral_delegate = PeripheralDelegate::new(events_tx, queue.clone());
+            let peripheral_delegate = PeripheralDelegate::new(events_tx, queue.clone(), identity);
             let peripheral_proto = ProtocolObject::from_ref(&*peripheral_delegate);
             #[cfg(target_os = "ios")]
             let peripheral_options = Some(peripheral_manager_options());
@@ -181,12 +183,13 @@ impl BleBackend for MacosBleBackend {
     type Error = MacosBleError;
     type Link = GattLink;
 
-    async fn set_advertising(&mut self, enabled: bool) -> Result<(), MacosBleError> {
-        self.peripheral_delegate.0.set_advertising(enabled);
+    async fn set_advertising(&mut self, mode: AdvertisingMode) -> Result<(), MacosBleError> {
+        self.peripheral_delegate.0.set_advertising(mode);
         Ok(())
     }
 
-    async fn set_scanning(&mut self, enabled: bool) -> Result<(), MacosBleError> {
+    async fn set_scanning(&mut self, mode: ScanningMode) -> Result<(), MacosBleError> {
+        let enabled = mode.is_on();
         let central = SendCentralManager(self.central.0.clone());
         self.queue.exec_async(move || {
             let central = central;
@@ -256,9 +259,9 @@ impl BleBackend for MacosBleBackend {
             );
             return;
         };
-        let (control_tx, control_rx) = tokio_mpsc::unbounded_channel::<Control>();
+        let (control_tx, control_rx) = tokio_mpsc::channel::<Control>(8);
         let (result_tx, result_rx) = oneshot::channel::<DialChars>();
-        let (data_inbound_tx, data_inbound_rx) = tokio_mpsc::unbounded_channel::<Box<[u8]>>();
+        let (data_inbound_tx, data_inbound_rx) = tokio_mpsc::channel::<Box<[u8]>>(16);
         let command = DialCommand {
             central: self.central.0.clone(),
             delegate: self.central_delegate.0.clone(),
@@ -269,6 +272,11 @@ impl BleBackend for MacosBleBackend {
                 result_tx: Some(result_tx),
                 data_tx: data_inbound_tx,
                 data_char: None,
+                peer_protocol: None,
+                columba_write: None,
+                columba_notify: None,
+                peer_identity: None,
+                columba_notify_ready: false,
             },
         };
         crate::diagnostic_log::debug!("bluetooth: dialing {token:02x?} over LE (central role)");
@@ -300,6 +308,8 @@ impl BleBackend for MacosBleBackend {
             };
             Some((
                 GattLink {
+                    peer_protocol: chars.peer_protocol,
+                    peer_identity: chars.peer_identity,
                     control: ControlPlane::Central {
                         peripheral: send_peripheral,
                         characteristic: chars.control,

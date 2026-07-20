@@ -18,4 +18,5 @@ pub enum AndroidBleError {
     Closed,
     ControlTooLarge,
     FrameTooLarge,
+    QueueFull,
 }

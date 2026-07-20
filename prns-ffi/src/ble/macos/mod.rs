@@ -23,7 +23,8 @@ use objc2_core_bluetooth::{
 use objc2_foundation::{NSArray, NSData, NSDictionary, NSNumber, NSString, NSUUID};
 
 use prns_core::interfaces::bluetooth_auto::core::{
-    BleAddress, BleUuid, BLE_SERVICE_UUID, NATIVE_CONTROL_UUID, NATIVE_DATA_UUID,
+    BleAddress, BleUuid, BLE_SERVICE_UUID, COLUMBA_IDENTITY_UUID, COLUMBA_RX_UUID, COLUMBA_TX_UUID,
+    NATIVE_CONTROL_UUID, NATIVE_DATA_UUID,
 };
 
 use central::CentralDelegate;
@@ -55,6 +56,18 @@ fn control_uuid() -> Retained<CBUUID> {
 
 fn data_uuid() -> Retained<CBUUID> {
     cbuuid(NATIVE_DATA_UUID)
+}
+
+fn columba_rx_uuid() -> Retained<CBUUID> {
+    cbuuid(COLUMBA_RX_UUID)
+}
+
+fn columba_tx_uuid() -> Retained<CBUUID> {
+    cbuuid(COLUMBA_TX_UUID)
+}
+
+fn columba_identity_uuid() -> Retained<CBUUID> {
+    cbuuid(COLUMBA_IDENTITY_UUID)
 }
 
 fn cbuuid_eq(a: &CBUUID, b: &CBUUID) -> bool {
@@ -157,5 +170,7 @@ pub enum MacosBleError {
     NotifyFailed,
     PublishFailed,
     FrameTooLarge,
+    QueueFull,
     DialFailed,
+    MissingColumbaIdentity,
 }

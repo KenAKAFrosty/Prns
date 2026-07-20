@@ -148,7 +148,7 @@ async fn run_platform_bluetooth(
     };
     use prns_runtime::interfaces::bluetooth_auto::seam::BleBackend;
 
-    match MacosBleBackend::new().await {
+    match MacosBleBackend::new(ble_identity).await {
         Ok(backend) => {
             let psm = backend.psm();
             let bluetooth = BluetoothAuto::<_, { MacosBleBackend::MAX_PEERS }>::with_status(
@@ -193,7 +193,7 @@ async fn run_platform_bluetooth(
     use prns_runtime::interfaces::bluetooth_auto::limits;
     use prns_runtime::interfaces::bluetooth_auto::seam::BleBackend;
 
-    match MacosBleBackend::new().await {
+    match MacosBleBackend::new(ble_identity).await {
         Ok(backend) => {
             let psm = backend.psm();
             let bluetooth = BluetoothAuto::<_, { limits::IOS_MAX_PEERS }>::with_status(
@@ -237,7 +237,7 @@ async fn run_platform_bluetooth(
     };
     use prns_runtime::interfaces::bluetooth_auto::seam::BleBackend;
 
-    match WindowsBleBackend::new().await {
+    match WindowsBleBackend::new(ble_identity).await {
         Ok(backend) => {
             let bluetooth = BluetoothAuto::<_, { WindowsBleBackend::MAX_PEERS }>::with_status(
                 backend,
@@ -286,7 +286,7 @@ async fn run_platform_bluetooth(
         );
         return std::future::pending().await;
     };
-    match BluerBackend::open(psm).await {
+    match BluerBackend::open(psm, ble_identity).await {
         Ok(backend) => {
             let bluetooth = BluetoothAuto::<_, { BluerBackend::MAX_PEERS }>::with_status(
                 backend,

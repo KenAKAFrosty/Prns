@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use prns_core::interfaces::bluetooth_auto::core::{BleAddress, Control};
+use prns_core::interfaces::bluetooth_auto::core::{BleAddress, BleIdentity, Control, PeerProtocol};
 use tokio::sync::{mpsc as tokio_mpsc, watch};
 use windows::core::{IInspectable, GUID};
 use windows::Devices::Bluetooth::BluetoothError;
@@ -16,8 +16,8 @@ use super::data_plane::{ClientSlot, LinkPlane, WinGattLink};
 use super::{bytes_from, ibuffer_from, Event, WindowsBleError};
 
 struct InboundPeer {
-    control_tx: tokio_mpsc::UnboundedSender<Control>,
-    data_tx: tokio_mpsc::UnboundedSender<Box<[u8]>>,
+    control_tx: tokio_mpsc::Sender<Control>,
+    data_tx: tokio_mpsc::Sender<Box<[u8]>>,
     closed_tx: watch::Sender<bool>,
     control_client: ClientSlot,
     data_client: ClientSlot,
@@ -57,6 +57,8 @@ pub(super) async fn notify_local(
 pub(super) fn wire_inbound(
     control: &GattLocalCharacteristic,
     data: &GattLocalCharacteristic,
+    columba_rx: &GattLocalCharacteristic,
+    columba_tx: &GattLocalCharacteristic,
     events_tx: tokio_mpsc::UnboundedSender<Event>,
 ) -> Result<(), WindowsBleError> {
     let registry: InboundRegistry = Arc::new(Mutex::new(HashMap::new()));
@@ -64,13 +66,14 @@ pub(super) fn wire_inbound(
     let control_writes = registry.clone();
     let control_for_link = control.clone();
     let data_for_link = data.clone();
+    let native_events = events_tx.clone();
     control.WriteRequested(&TypedEventHandler::new(
         move |_sender: &Option<GattLocalCharacteristic>,
               args: &Option<GattWriteRequestedEventArgs>| {
             handle_control_write(
                 args.as_ref(),
                 &control_writes,
-                &events_tx,
+                &native_events,
                 &control_for_link,
                 &data_for_link,
             );
@@ -107,6 +110,32 @@ pub(super) fn wire_inbound(
         },
     ))?;
 
+    let columba_registry: InboundRegistry = Arc::new(Mutex::new(HashMap::new()));
+    let columba_writes = columba_registry.clone();
+    let columba_for_link = columba_tx.clone();
+    columba_rx.WriteRequested(&TypedEventHandler::new(
+        move |_sender: &Option<GattLocalCharacteristic>,
+              args: &Option<GattWriteRequestedEventArgs>| {
+            handle_columba_write(
+                args.as_ref(),
+                &columba_writes,
+                &events_tx,
+                &columba_for_link,
+            );
+            Ok(())
+        },
+    ))?;
+
+    let columba_subs = columba_registry;
+    columba_tx.SubscribedClientsChanged(&TypedEventHandler::new(
+        move |sender: &Option<GattLocalCharacteristic>, _args: &Option<IInspectable>| {
+            if let Some(characteristic) = sender.as_ref() {
+                sync_subscribed_clients(characteristic, &columba_subs, ClientKind::Control);
+            }
+            Ok(())
+        },
+    ))?;
+
     Ok(())
 }
 
@@ -138,7 +167,7 @@ fn process_control_write(
         let control_tx =
             ensure_inbound_peer(registry, events_tx, control_char, data_char, &device_id)?;
         if let Some(control) = Control::decode(&bytes) {
-            let _ = control_tx.send(control);
+            let _ = control_tx.try_send(control);
         }
         if request.Option()? == GattWriteOption::WriteWithResponse {
             request.Respond()?;
@@ -155,13 +184,13 @@ fn ensure_inbound_peer(
     control_char: &GattLocalCharacteristic,
     data_char: &GattLocalCharacteristic,
     device_id: &str,
-) -> Result<tokio_mpsc::UnboundedSender<Control>, WindowsBleError> {
+) -> Result<tokio_mpsc::Sender<Control>, WindowsBleError> {
     let mut map = registry.lock().map_err(|_| WindowsBleError::Closed)?;
     if let Some(peer) = map.get(device_id) {
         return Ok(peer.control_tx.clone());
     }
-    let (control_tx, control_rx) = tokio_mpsc::unbounded_channel::<Control>();
-    let (data_tx, data_rx) = tokio_mpsc::unbounded_channel::<Box<[u8]>>();
+    let (control_tx, control_rx) = tokio_mpsc::channel::<Control>(8);
+    let (data_tx, data_rx) = tokio_mpsc::channel::<Box<[u8]>>(16);
     let (closed_tx, closed_rx) = watch::channel(false);
     let control_client: ClientSlot = Arc::new(Mutex::new(None));
     let data_client: ClientSlot = Arc::new(Mutex::new(None));
@@ -169,6 +198,8 @@ fn ensure_inbound_peer(
     set_slot_from_subscribers(data_char, device_id, &data_client);
     let address = BleAddress::new(address_standin(device_id));
     let link = WinGattLink {
+        peer_protocol: PeerProtocol::Native,
+        peer_identity: None,
         address,
         control_rx,
         data_rx: Some(data_rx),
@@ -198,6 +229,99 @@ fn ensure_inbound_peer(
     Ok(control_tx)
 }
 
+fn handle_columba_write(
+    args: Option<&GattWriteRequestedEventArgs>,
+    registry: &InboundRegistry,
+    events_tx: &tokio_mpsc::UnboundedSender<Event>,
+    tx_char: &GattLocalCharacteristic,
+) {
+    let Some(args) = args else { return };
+    if let Err(error) = process_columba_write(args, registry, events_tx, tx_char) {
+        crate::diagnostic_log::warn!("bluetooth: inbound Columba write failed ({error:?})");
+    }
+}
+
+fn process_columba_write(
+    args: &GattWriteRequestedEventArgs,
+    registry: &InboundRegistry,
+    events_tx: &tokio_mpsc::UnboundedSender<Event>,
+    tx_char: &GattLocalCharacteristic,
+) -> Result<(), WindowsBleError> {
+    let deferral = args.GetDeferral()?;
+    let outcome = (|| -> Result<(), WindowsBleError> {
+        let device_id = args.Session()?.DeviceId()?.Id()?.to_string();
+        let request = args.GetRequestAsync()?.get()?;
+        let bytes = bytes_from(&request.Value()?)?;
+        let existing = registry
+            .lock()
+            .map_err(|_| WindowsBleError::Closed)?
+            .get(&device_id)
+            .map(|peer| peer.data_tx.clone());
+        if let Some(data_tx) = existing {
+            let _ = data_tx.try_send(bytes.into_boxed_slice());
+        } else if let Ok(identity) = <[u8; 16]>::try_from(bytes.as_slice()) {
+            ensure_columba_peer(
+                registry,
+                events_tx,
+                tx_char,
+                &device_id,
+                BleIdentity::new(identity),
+            )?;
+        }
+        if request.Option()? == GattWriteOption::WriteWithResponse {
+            request.Respond()?;
+        }
+        Ok(())
+    })();
+    deferral.Complete()?;
+    outcome
+}
+
+fn ensure_columba_peer(
+    registry: &InboundRegistry,
+    events_tx: &tokio_mpsc::UnboundedSender<Event>,
+    tx_char: &GattLocalCharacteristic,
+    device_id: &str,
+    peer_identity: BleIdentity,
+) -> Result<(), WindowsBleError> {
+    let mut map = registry.lock().map_err(|_| WindowsBleError::Closed)?;
+    if map.contains_key(device_id) {
+        return Ok(());
+    }
+    let (control_tx, control_rx) = tokio_mpsc::channel::<Control>(8);
+    let (data_tx, data_rx) = tokio_mpsc::channel::<Box<[u8]>>(16);
+    let (closed_tx, closed_rx) = watch::channel(false);
+    let client: ClientSlot = Arc::new(Mutex::new(None));
+    set_slot_from_subscribers(tx_char, device_id, &client);
+    let address = BleAddress::new(address_standin(device_id));
+    let link = WinGattLink {
+        peer_protocol: PeerProtocol::Columba,
+        peer_identity: Some(peer_identity),
+        address,
+        control_rx,
+        data_rx: Some(data_rx),
+        closed: closed_rx,
+        plane: LinkPlane::Peripheral {
+            control_char: tx_char.clone(),
+            data_char: tx_char.clone(),
+            control_client: client.clone(),
+            data_client: client.clone(),
+        },
+    };
+    map.insert(
+        device_id.to_string(),
+        InboundPeer {
+            control_tx,
+            data_tx,
+            closed_tx,
+            control_client: client.clone(),
+            data_client: client,
+        },
+    );
+    let _ = events_tx.send(Event::Inbound(link));
+    Ok(())
+}
+
 fn handle_data_write(args: Option<&GattWriteRequestedEventArgs>, registry: &InboundRegistry) {
     let Some(args) = args else { return };
     if let Err(error) = process_data_write(args, registry) {
@@ -216,7 +340,7 @@ fn process_data_write(
         let bytes = bytes_from(&request.Value()?)?;
         if let Ok(map) = registry.lock() {
             if let Some(peer) = map.get(&device_id) {
-                let _ = peer.data_tx.send(bytes.into_boxed_slice());
+                let _ = peer.data_tx.try_send(bytes.into_boxed_slice());
             }
         }
         if request.Option()? == GattWriteOption::WriteWithResponse {
@@ -314,6 +438,24 @@ pub(super) fn publish_characteristic(
     parameters.SetCharacteristicProperties(properties)?;
     parameters.SetReadProtectionLevel(GattProtectionLevel::Plain)?;
     parameters.SetWriteProtectionLevel(GattProtectionLevel::Plain)?;
+    let result = service
+        .CreateCharacteristicAsync(uuid, &parameters)?
+        .get()?;
+    if result.Error()? != BluetoothError::Success {
+        return Err(WindowsBleError::ServicePublishFailed);
+    }
+    Ok(result.Characteristic()?)
+}
+
+pub(super) fn publish_static_characteristic(
+    service: &GattLocalService,
+    uuid: GUID,
+    value: &[u8],
+) -> Result<GattLocalCharacteristic, WindowsBleError> {
+    let parameters = GattLocalCharacteristicParameters::new()?;
+    parameters.SetCharacteristicProperties(GattCharacteristicProperties::Read)?;
+    parameters.SetReadProtectionLevel(GattProtectionLevel::Plain)?;
+    parameters.SetStaticValue(&ibuffer_from(value)?)?;
     let result = service
         .CreateCharacteristicAsync(uuid, &parameters)?
         .get()?;

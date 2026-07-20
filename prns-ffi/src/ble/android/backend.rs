@@ -1,6 +1,8 @@
 use prns_core::interfaces::bluetooth_auto::core::{BleAddress, LinkCapabilities, Psm};
 use prns_core::interfaces::bluetooth_auto::limits;
-use prns_core::interfaces::bluetooth_auto::seam::{BleBackend, BleEvent, Origin};
+use prns_core::interfaces::bluetooth_auto::seam::{
+    AdvertisingMode, BleBackend, BleEvent, Origin, RadioMode, ScanningMode,
+};
 
 use super::bridge::{AndroidBleBridge, Event};
 use super::link::AndroidBleLink;
@@ -22,8 +24,8 @@ impl BleBackend for AndroidBleBackend {
     type Error = AndroidBleError;
     type Link = AndroidBleLink;
 
-    async fn set_radio_enabled(&mut self, enabled: bool) -> Result<(), AndroidBleError> {
-        self.bridge.set_radio_enabled(enabled);
+    async fn set_radio_mode(&mut self, mode: RadioMode) -> Result<(), AndroidBleError> {
+        self.bridge.set_radio_mode(mode);
         Ok(())
     }
 
@@ -36,13 +38,13 @@ impl BleBackend for AndroidBleBackend {
         Ok(configured)
     }
 
-    async fn set_advertising(&mut self, enabled: bool) -> Result<(), AndroidBleError> {
-        self.bridge.set_advertising(enabled);
+    async fn set_advertising(&mut self, mode: AdvertisingMode) -> Result<(), AndroidBleError> {
+        self.bridge.set_advertising(mode);
         Ok(())
     }
 
-    async fn set_scanning(&mut self, enabled: bool) -> Result<(), AndroidBleError> {
-        self.bridge.set_scanning(enabled);
+    async fn set_scanning(&mut self, mode: ScanningMode) -> Result<(), AndroidBleError> {
+        self.bridge.set_scanning(mode);
         Ok(())
     }
 
@@ -68,7 +70,8 @@ impl BleBackend for AndroidBleBackend {
                     let link = AndroidBleLink {
                         conn_id: pending.conn_id,
                         address: pending.address,
-                        dialect: pending.dialect,
+                        peer_protocol: pending.peer_protocol,
+                        peer_identity: pending.peer_identity,
                         control_in: pending.control_in,
                         l2cap_in: Some(pending.l2cap_in),
                         data_in: Some(pending.data_in),

@@ -10,22 +10,19 @@ use futures_util::StreamExt;
 use tokio::sync::{mpsc, watch};
 
 use prns_core::interfaces::bluetooth_auto::core::{
-    self, BleAddress, BleIdentity, CloseReason, Established, Handshake, HandshakeRole,
-    LinkCapabilities, Local, Outcome,
+    self, BleAddress, BleIdentity, CloseReason, EstablishedPeer, EstablishedTransport, Handshake,
+    HandshakeOutcome, HandshakeRole, LinkCapabilities, LocalPeer, PeerProtocol,
 };
 use prns_core::interfaces::bluetooth_auto::core::{Endpoint, L2capPlan};
 use prns_core::interfaces::bluetooth_auto::manager::{
-    role_for, AdvertisingMode, ConnectionManager, ManagerAction, ManagerInput, ScanningMode,
+    role_for, ConnectionManager, ManagerAction, ManagerInput,
 };
 use prns_core::interfaces::bluetooth_auto::seam::{
-    BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin,
+    AdvertisingMode, BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin, RadioMode,
+    ScanningMode,
 };
 
-/// The dial/suppress backoff table size for the host brain — a handful more than any host radio's
-/// `MAX_PEERS`, since it tracks addresses mid-dial or cooling off, not settled peers.
 const DIAL_TRACK: usize = 16;
-/// Briefly keep the aggregate BLE card in `Degraded` after the last settled peer drops, so a normal
-/// reconnect window does not look like BLE has gone dormant.
 const RECENT_MEMBER_GRACE: Duration = Duration::from_secs(3);
 use prns_core::interfaces::{
     ConfiguredInterfacePolicy, ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor,
@@ -177,8 +174,6 @@ impl<Src: BleSource, Snk: BleSink> prns_core::interfaces::ReportsStatus
     }
 }
 
-/// The driver's physical half of a settled peer — the brain owns the logical slot (keeper/address);
-/// this is the fleet attachment + status the driver tears down on evict/close.
 struct TokioMember {
     attached: AttachedInterface,
     status: TokioInterfaceStatus,
@@ -188,7 +183,7 @@ struct TokioMember {
 struct HandshakeDone<L: BleLink> {
     address: BleAddress,
     origin: Origin,
-    outcome: Result<(Established, L), HandshakeFailure>,
+    outcome: Result<(EstablishedPeer, L), HandshakeFailure>,
 }
 
 type HandshakeQueue<L> = FuturesUnordered<Pin<Box<dyn Future<Output = HandshakeDone<L>>>>>;
@@ -196,6 +191,8 @@ type HandshakeQueue<L> = FuturesUnordered<Pin<Box<dyn Future<Output = HandshakeD
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum HandshakeFailure {
     Timeout,
+    MissingColumbaIdentity,
+    ColumbaIdentitySend,
     InitialSend,
     Recv,
     ReplySend,
@@ -211,7 +208,7 @@ enum Step<L: BleLink> {
 
 pub struct BluetoothAuto<B, const MAX_PEERS: usize> {
     backend: B,
-    local: Local,
+    local: LocalPeer,
     policy: EffectiveInterfacePolicy,
     status: BluetoothAutoStatus,
 }
@@ -247,7 +244,7 @@ impl<B: BleBackend, const MAX_PEERS: usize> BluetoothAuto<B, MAX_PEERS> {
     ) -> Self {
         Self {
             backend,
-            local: Local {
+            local: LocalPeer {
                 identity,
                 endpoint,
                 capabilities,
@@ -264,9 +261,6 @@ impl<B: BleBackend, const MAX_PEERS: usize> BluetoothAuto<B, MAX_PEERS> {
     }
 }
 
-/// The Bluetooth supervisor's aggregate live status, rendered as one "BLE" card: Dormant while the
-/// radio is up and scanning with no peer linked, Live once a peer settles. The per-peer
-/// [`BluetoothPeer`] members carry their own traffic on their own cards beside it.
 #[derive(Clone)]
 pub struct BluetoothAutoStatus {
     shared: Arc<BluetoothAutoShared>,
@@ -309,7 +303,6 @@ impl BluetoothAutoStatus {
         }
     }
 
-    /// Turn the Bluetooth auto-interface off or back on from the application.
     pub fn set_enabled(&self, enabled: bool) {
         self.shared.enabled.send_if_modified(|current| {
             let changed = *current != enabled;
@@ -318,7 +311,6 @@ impl BluetoothAutoStatus {
         });
     }
 
-    /// Whether the supervisor should advertise, scan, and carry peers.
     #[must_use]
     pub fn is_enabled(&self) -> bool {
         *self.shared.enabled.borrow()
@@ -448,7 +440,6 @@ where
         let started = Instant::now();
         let mut manager = ConnectionManager::<MAX_PEERS, DIAL_TRACK>::new(local);
         let mut members: HashMap<BleIdentity, TokioMember> = HashMap::new();
-        let mut sighting_log: HashMap<BleAddress, Instant> = HashMap::new();
         let mut handshakes: HandshakeQueue<B::Link> = FuturesUnordered::new();
         let (closed_tx, mut closed_rx) = mpsc::unbounded_channel::<(BleIdentity, BleAddress)>();
         let mut pending: std::vec::Vec<ManagerAction> = std::vec::Vec::new();
@@ -457,8 +448,8 @@ where
         apply_radio(&mut pending, &mut members, &mut backend).await;
         loop {
             if !status.is_enabled() {
-                let _ = backend.set_advertising(false).await;
-                let _ = backend.set_scanning(false).await;
+                let _ = backend.set_advertising(AdvertisingMode::Off).await;
+                let _ = backend.set_scanning(ScanningMode::Off).await;
                 for (_, member) in members.drain() {
                     member.attached.teardown();
                     backend.on_link_closed(member.address).await;
@@ -466,7 +457,7 @@ where
                 handshakes = FuturesUnordered::new();
                 pending.clear();
                 status.set_members(std::vec::Vec::new());
-                let _ = backend.set_radio_enabled(false).await;
+                let _ = backend.set_radio_mode(RadioMode::Off).await;
                 status.wait_until_enabled().await;
                 prepare_radio(&mut backend, &mut local, configured_capabilities).await;
                 manager = ConnectionManager::<MAX_PEERS, DIAL_TRACK>::new(local);
@@ -484,14 +475,6 @@ where
                 Step::Disabled => {}
                 Step::Event(BleEvent::Sighting { address, .. }) => {
                     let now_ms = started.elapsed().as_millis() as u64;
-                    let now = Instant::now();
-                    if sighting_log
-                        .get(&address)
-                        .is_none_or(|last| now.duration_since(*last) >= Duration::from_secs(5))
-                    {
-                        println!("HOPSPOT_BLE_SIGHTING address={:02x?}", address.octets());
-                        sighting_log.insert(address, now);
-                    }
                     manager.handle(ManagerInput::Sighting { address, now_ms }, &mut |action| {
                         pending.push(action);
                     });
@@ -535,7 +518,6 @@ where
                 }
                 Step::Event(BleEvent::DialFailed { address }) => {
                     let now_ms = started.elapsed().as_millis() as u64;
-                    println!("HOPSPOT_BLE_DIAL_FAILED address={:02x?}", address.octets());
                     manager.handle(
                         ManagerInput::DialFailed { address, now_ms },
                         &mut |action| {
@@ -552,12 +534,6 @@ where
                     let now_ms = started.elapsed().as_millis() as u64;
                     match outcome {
                         Ok((established, link)) => {
-                            println!(
-                                "HOPSPOT_BLE_SETTLED address={:02x?} origin={origin:?} endpoint={:?} identity={:02x?}",
-                                address.octets(),
-                                established.endpoint,
-                                established.identity.as_bytes(),
-                            );
                             manager.handle(
                                 ManagerInput::Settled {
                                     address,
@@ -578,11 +554,7 @@ where
                             )
                             .await;
                         }
-                        Err(reason) => {
-                            println!(
-                                "HOPSPOT_BLE_HANDSHAKE_FAILED address={:02x?} origin={origin:?} reason={reason:?}",
-                                address.octets(),
-                            );
+                        Err(_reason) => {
                             manager.handle(
                                 ManagerInput::HandshakeFailed { address, origin },
                                 &mut |action| pending.push(action),
@@ -592,11 +564,6 @@ where
                     }
                 }
                 Step::Closed(identity, address) => {
-                    println!(
-                        "HOPSPOT_BLE_CLOSED address={:02x?} identity={:02x?}",
-                        address.octets(),
-                        identity.as_bytes(),
-                    );
                     if members
                         .get(&identity)
                         .is_some_and(|member| member.address == address)
@@ -636,17 +603,15 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
 async fn prepare_radio<B: BleBackend>(
     backend: &mut B,
-    local: &mut Local,
+    local: &mut LocalPeer,
     configured_capabilities: LinkCapabilities,
 ) {
-    let _ = backend.set_radio_enabled(true).await;
+    let _ = backend.set_radio_mode(RadioMode::On).await;
     if let Ok(capabilities) = backend.local_capabilities(configured_capabilities).await {
         local.capabilities = capabilities;
     }
 }
 
-/// Apply the radio/fleet actions that need no link in hand — every action except `Admit`/`Reject`,
-/// which are handled where the freshly-settled link is still in scope (see [`apply_settle`]).
 async fn apply_one<B: BleBackend>(
     action: ManagerAction,
     members: &mut HashMap<BleIdentity, TokioMember>,
@@ -661,18 +626,15 @@ async fn apply_one<B: BleBackend>(
         }
         ManagerAction::NotifyClosed(address) => backend.on_link_closed(address).await,
         ManagerAction::SetAdvertising(mode) => {
-            let _ = backend
-                .set_advertising(matches!(mode, AdvertisingMode::On))
-                .await;
+            let _ = backend.set_advertising(mode).await;
         }
         ManagerAction::SetScanning(mode) => {
-            let _ = backend.set_scanning(matches!(mode, ScanningMode::On)).await;
+            let _ = backend.set_scanning(mode).await;
         }
         ManagerAction::Admit { .. } | ManagerAction::Reject { .. } => {}
     }
 }
 
-/// Drain and apply the queued link-free actions.
 async fn apply_radio<B: BleBackend>(
     pending: &mut std::vec::Vec<ManagerAction>,
     members: &mut HashMap<BleIdentity, TokioMember>,
@@ -684,9 +646,6 @@ async fn apply_radio<B: BleBackend>(
     }
 }
 
-/// Apply the actions from a freshly-settled link: `Admit` stands it up as a fleet member over the
-/// negotiated lane, `Reject` drops it (notifying the backend if we dialed); everything else routes
-/// through [`apply_one`].
 async fn apply_settle<B>(
     pending: &mut std::vec::Vec<ManagerAction>,
     link: B::Link,
@@ -740,7 +699,7 @@ async fn apply_settle<B>(
 async fn run_handshake_task<L: BleLink>(
     mut link: L,
     role: HandshakeRole,
-    local: Local,
+    local: LocalPeer,
     address: BleAddress,
     origin: Origin,
     measured_rssi: Option<i8>,
@@ -758,10 +717,26 @@ async fn run_handshake_task<L: BleLink>(
 async fn drive_handshake<L: BleLink>(
     link: &mut L,
     role: HandshakeRole,
-    local: Local,
+    local: LocalPeer,
     measured_rssi: Option<i8>,
-) -> Result<Established, HandshakeFailure> {
+) -> Result<EstablishedPeer, HandshakeFailure> {
     match tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+        if link.peer_protocol() == PeerProtocol::Columba {
+            let identity = link
+                .receive_columba_peer_identity()
+                .await
+                .map_err(|_| HandshakeFailure::MissingColumbaIdentity)?;
+            if role == HandshakeRole::Dialer {
+                link.send_columba_identity(local.identity)
+                    .await
+                    .map_err(|_| HandshakeFailure::ColumbaIdentitySend)?;
+            }
+            return Ok(EstablishedPeer {
+                identity,
+                transport: EstablishedTransport::ColumbaGatt,
+                peer_rssi: measured_rssi,
+            });
+        }
         let (mut handshake, opening) = Handshake::begin(role, local, measured_rssi);
         if let Some(msg) = opening {
             link.control_send(&msg)
@@ -780,9 +755,9 @@ async fn drive_handshake<L: BleLink>(
                     .map_err(|_| HandshakeFailure::ReplySend)?;
             }
             match reaction.outcome {
-                Outcome::Settled(established) => return Ok(established),
-                Outcome::Aborted(reason) => return Err(HandshakeFailure::Aborted(reason)),
-                Outcome::Pending => {}
+                HandshakeOutcome::Settled(established) => return Ok(established),
+                HandshakeOutcome::Aborted(reason) => return Err(HandshakeFailure::Aborted(reason)),
+                HandshakeOutcome::Pending => {}
             }
         }
     })
@@ -808,8 +783,8 @@ mod tests {
 
     use super::*;
     use prns_core::interfaces::bluetooth_auto::core::{
-        arrangement, is_keeper, l2cap_plan, AndroidHost, AppleHost, BleAddress, BlueZHost, Control,
-        Dialect, Psm,
+        is_keeper, l2cap_arrangement, l2cap_plan, AndroidHost, AppleHost, BleAddress, BlueZHost,
+        Control, PeerProtocol, Psm,
     };
     use prns_runtime::reactor::driver::{tokio_grant_lane, TokioGrantConsumer};
 
@@ -817,6 +792,17 @@ mod tests {
 
     fn mac() -> Endpoint {
         Endpoint::CoreBluetooth(AppleHost::MacOs)
+    }
+
+    fn native_transport(established: EstablishedPeer) -> (Endpoint, LinkCapabilities) {
+        let EstablishedTransport::Native {
+            endpoint,
+            capabilities,
+        } = established.transport
+        else {
+            unreachable!("native loopback settles as native")
+        };
+        (endpoint, capabilities)
     }
 
     fn linux() -> Endpoint {
@@ -900,13 +886,59 @@ mod tests {
         data_tx: mpsc::Sender<std::vec::Vec<u8>>,
     }
 
+    struct ColumbaLink {
+        address: BleAddress,
+        peer_identity: Option<BleIdentity>,
+        sent_identity: Option<BleIdentity>,
+    }
+
+    impl BleLink for ColumbaLink {
+        type Error = Closed;
+        type Source = LoopbackSource;
+        type Sink = LoopbackSink;
+
+        fn peer_protocol(&self) -> PeerProtocol {
+            PeerProtocol::Columba
+        }
+
+        fn address(&self) -> BleAddress {
+            self.address
+        }
+
+        async fn receive_columba_peer_identity(&mut self) -> Result<BleIdentity, Closed> {
+            self.peer_identity.ok_or(Closed)
+        }
+
+        async fn send_columba_identity(&mut self, identity: BleIdentity) -> Result<(), Closed> {
+            self.sent_identity = Some(identity);
+            Ok(())
+        }
+
+        async fn control_send(&mut self, _msg: &Control) -> Result<(), Closed> {
+            Err(Closed)
+        }
+
+        async fn control_recv(&mut self) -> Result<Control, Closed> {
+            Err(Closed)
+        }
+
+        async fn upgrade(&mut self, _plan: &L2capPlan) -> Result<(), Closed> {
+            Ok(())
+        }
+
+        fn into_data(self) -> (LoopbackSource, LoopbackSink) {
+            let (data_tx, data_rx) = mpsc::channel(1);
+            (LoopbackSource { data_rx }, LoopbackSink { data_tx })
+        }
+    }
+
     impl BleLink for LoopbackLink {
         type Error = Closed;
         type Source = LoopbackSource;
         type Sink = LoopbackSink;
 
-        fn dialect(&self) -> Dialect {
-            Dialect::Native
+        fn peer_protocol(&self) -> PeerProtocol {
+            PeerProtocol::Native
         }
 
         fn address(&self) -> BleAddress {
@@ -946,6 +978,58 @@ mod tests {
             out[..len].copy_from_slice(&frame[..len]);
             Ok(len)
         }
+    }
+
+    #[tokio::test]
+    async fn a_columba_dialer_sends_its_identity_and_settles_without_native_metadata() {
+        let local = LocalPeer {
+            identity: BleIdentity::new([1; 16]),
+            endpoint: linux(),
+            capabilities: caps(0x0080),
+        };
+        let peer_identity = BleIdentity::new([2; 16]);
+        let mut link = ColumbaLink {
+            address: BleAddress::new([3; 6]),
+            peer_identity: Some(peer_identity),
+            sent_identity: None,
+        };
+
+        let established = drive_handshake(&mut link, HandshakeRole::Dialer, local, Some(-42))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            established,
+            EstablishedPeer {
+                identity: peer_identity,
+                transport: EstablishedTransport::ColumbaGatt,
+                peer_rssi: Some(-42),
+            }
+        );
+        assert_eq!(link.sent_identity, Some(local.identity));
+    }
+
+    #[tokio::test]
+    async fn a_columba_listener_uses_the_received_identity_without_writing_one() {
+        let local = LocalPeer {
+            identity: BleIdentity::new([1; 16]),
+            endpoint: android(),
+            capabilities: caps(0x0080),
+        };
+        let peer_identity = BleIdentity::new([2; 16]);
+        let mut link = ColumbaLink {
+            address: BleAddress::new([3; 6]),
+            peer_identity: Some(peer_identity),
+            sent_identity: None,
+        };
+
+        let established = drive_handshake(&mut link, HandshakeRole::Listener, local, None)
+            .await
+            .unwrap();
+
+        assert_eq!(established.identity, peer_identity);
+        assert_eq!(established.transport, EstablishedTransport::ColumbaGatt);
+        assert_eq!(link.sent_identity, None);
     }
 
     impl BleSink for LoopbackSink {
@@ -1018,7 +1102,7 @@ mod tests {
         type Error = Closed;
         type Link = LoopbackLink;
 
-        async fn set_advertising(&mut self, _enabled: bool) -> Result<(), Closed> {
+        async fn set_advertising(&mut self, _mode: AdvertisingMode) -> Result<(), Closed> {
             Ok(())
         }
 
@@ -1057,12 +1141,12 @@ mod tests {
 
     #[tokio::test]
     async fn two_nodes_handshake_over_loopback_and_a_frame_crosses() {
-        let local_a = Local {
+        let local_a = LocalPeer {
             identity: BleIdentity::new([1u8; 16]),
             endpoint: mac(),
             capabilities: caps(0x0081),
         };
-        let local_b = Local {
+        let local_b = LocalPeer {
             identity: BleIdentity::new([2u8; 16]),
             endpoint: linux(),
             capabilities: caps(0x0082),
@@ -1092,11 +1176,13 @@ mod tests {
             (established, link)
         };
         let ((established_a, link_a), (established_b, link_b)) = tokio::join!(dialer, listener);
+        let (endpoint_a, _) = native_transport(established_a);
+        let (endpoint_b, _) = native_transport(established_b);
 
         assert_eq!(established_a.identity, local_b.identity);
-        assert_eq!(established_a.endpoint, local_b.endpoint);
+        assert_eq!(endpoint_a, local_b.endpoint);
         assert_eq!(established_b.identity, local_a.identity);
-        assert_eq!(established_b.endpoint, local_a.endpoint);
+        assert_eq!(endpoint_b, local_a.endpoint);
 
         let (source_a, sink_a) = link_a.into_data();
         let (source_b, sink_b) = link_b.into_data();
@@ -1152,12 +1238,12 @@ mod tests {
 
     #[tokio::test]
     async fn a_gatt_only_listener_settles_the_link_on_the_floor() {
-        let local_a = Local {
+        let local_a = LocalPeer {
             identity: BleIdentity::new([1u8; 16]),
             endpoint: mac(),
             capabilities: caps(0x0081),
         };
-        let local_b = Local {
+        let local_b = LocalPeer {
             identity: BleIdentity::new([2u8; 16]),
             endpoint: linux(),
             capabilities: LinkCapabilities {
@@ -1188,16 +1274,18 @@ mod tests {
                 .unwrap()
         };
         let (established_a, established_b) = tokio::join!(dialer, listener);
+        let (endpoint_a, capabilities_a) = native_transport(established_a);
+        let (endpoint_b, capabilities_b) = native_transport(established_b);
 
-        let arr_a = arrangement(local_a.endpoint, established_a.endpoint);
-        let arr_b = arrangement(local_b.endpoint, established_b.endpoint);
+        let arr_a = l2cap_arrangement(local_a.endpoint, endpoint_a);
+        let arr_b = l2cap_arrangement(local_b.endpoint, endpoint_b);
         assert_eq!(
             l2cap_plan(
                 arr_a,
                 HandshakeRole::Dialer,
                 local_a.endpoint,
                 &local_a.capabilities,
-                &established_a.capabilities,
+                &capabilities_a,
             ),
             L2capPlan::None
         );
@@ -1207,7 +1295,7 @@ mod tests {
                 HandshakeRole::Listener,
                 local_b.endpoint,
                 &local_b.capabilities,
-                &established_b.capabilities,
+                &capabilities_b,
             ),
             L2capPlan::None
         );
@@ -1215,12 +1303,12 @@ mod tests {
 
     #[tokio::test]
     async fn an_android_peer_is_the_l2cap_opener_and_the_mac_accepts() {
-        let mac_local = Local {
+        let mac_local = LocalPeer {
             identity: BleIdentity::new([1u8; 16]),
             endpoint: mac(),
             capabilities: caps(0x00c0),
         };
-        let android_local = Local {
+        let android_local = LocalPeer {
             identity: BleIdentity::new([2u8; 16]),
             endpoint: android(),
             capabilities: caps(0x0080),
@@ -1248,8 +1336,10 @@ mod tests {
                 .unwrap()
         };
         let (mac_established, android_established) = tokio::join!(mac_side, android_side);
+        let (mac_endpoint, mac_capabilities) = native_transport(mac_established);
+        let (_, android_capabilities) = native_transport(android_established);
 
-        let arr = arrangement(mac_local.endpoint, mac_established.endpoint);
+        let arr = l2cap_arrangement(mac_local.endpoint, mac_endpoint);
         let mac_keeper = is_keeper(
             arr,
             HandshakeRole::Dialer,
@@ -1272,7 +1362,7 @@ mod tests {
                 HandshakeRole::Listener,
                 android_local.endpoint,
                 &android_local.capabilities,
-                &android_established.capabilities,
+                &android_capabilities,
             ),
             L2capPlan::None
         );
@@ -1282,7 +1372,7 @@ mod tests {
                 HandshakeRole::Dialer,
                 mac_local.endpoint,
                 &mac_local.capabilities,
-                &mac_established.capabilities,
+                &mac_capabilities,
             ),
             L2capPlan::Accept
         );
