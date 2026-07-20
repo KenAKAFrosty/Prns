@@ -127,5 +127,5 @@ pub mod shared_instance;
 #[cfg(feature = "ble")]
 pub mod ble;
 
-#[cfg(feature = "ble-host")]
+#[cfg(feature = "ble")]
 pub mod ble_host;
