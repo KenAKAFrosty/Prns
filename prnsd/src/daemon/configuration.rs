@@ -9,6 +9,12 @@ pub(crate) const DEFAULT_CONFIG: &str = "[reticulum]\n\
     [interfaces]\n\
       [[Default Interface]]\n\
         type = AutoInterface\n\
+        interface_enabled = Yes\n\
+      [[USB Auto]]\n\
+        type = PrnsUsbAuto\n\
+        interface_enabled = Yes\n\
+      [[Bluetooth Auto]]\n\
+        type = PrnsBluetoothAuto\n\
         interface_enabled = Yes\n";
 
 pub(super) struct LoadedConfiguration {
@@ -50,5 +56,38 @@ pub(super) fn load_or_exit(config_dir: Option<&Path>) -> LoadedConfiguration {
         path: discovered.config,
         plan: report.value,
         warnings: report.warnings,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use personal_rns::config::PlannedMedium;
+
+    #[test]
+    fn built_in_config_enables_each_auto_interface() {
+        let plan = parse_and_plan_named("<built-in config>", DEFAULT_CONFIG)
+            .expect("built-in configuration is valid")
+            .value;
+
+        assert_eq!(
+            plan.interfaces
+                .iter()
+                .map(|interface| interface.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Default Interface", "USB Auto", "Bluetooth Auto"]
+        );
+        assert!(matches!(
+            plan.interfaces[0].medium,
+            PlannedMedium::AutoWifi(_)
+        ));
+        assert!(matches!(
+            plan.interfaces[1].medium,
+            PlannedMedium::PrnsUsbAuto
+        ));
+        assert!(matches!(
+            plan.interfaces[2].medium,
+            PlannedMedium::PrnsBluetoothAuto
+        ));
     }
 }
