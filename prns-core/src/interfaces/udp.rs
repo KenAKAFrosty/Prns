@@ -1,10 +1,3 @@
-//! The host-agnostic core of the UDP interface: datagram ceilings and the descriptor
-//! shape. As with TCP, the wire figures are per-instance — only the host knows its pipe,
-//! so the constructor demands a bitrate and the descriptor maps it through the
-//! reference's `Interface.optimise_mtu` tier table — but UDP adds a ceiling TCP doesn't
-//! have: a frame is one datagram, and IPv4 UDP cannot carry more than
-//! [`UDP_DATAGRAM_MAX`] bytes, so no declared MTU may promise past it.
-
 use crate::interfaces::{
     AnnounceBandwidthCap, BitrateBps, ConfiguredInterfacePolicy, EffectiveInterfacePolicy,
     EgressCapability, IngressCapability, InterfaceCapabilities, InterfaceDefaults,

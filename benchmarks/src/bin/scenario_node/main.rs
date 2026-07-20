@@ -23,10 +23,8 @@ use personal_rns::engine::{
     SendToChannelFailure, SendToLink, SendToLinkPayload, Settlement,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::interfaces::tcp::core as tcp_core;
-use personal_rns::interfaces::udp::core as udp_core;
 use personal_rns::interfaces::{
-    BitrateBps, InterfaceDescriptor, InterfaceId, InterfaceKind, ReportsStatus,
+    tcp, udp, BitrateBps, InterfaceDescriptor, InterfaceId, InterfaceKind, ReportsStatus,
 };
 use personal_rns::reactor::interface_seam::{Interface, InterfaceSeam, MAX_WIRE_FRAME_LEN};
 use personal_rns::reactor::reconnect::ReconnectPolicy;
@@ -55,9 +53,7 @@ use personal_rns::shared_instance::{
 type NodeStorage = personal_rns::storage::Esp32S3<allocator_api2::alloc::Global>;
 #[cfg(not(feature = "fixed-storage"))]
 use personal_rns::storage::GrowableHeap as NodeStorage;
-use personal_rns::tcp::client::TcpClientInterface;
-use personal_rns::tcp::server::TcpServerConnection;
-use personal_rns::tcp::tokio_socket::tune;
+use personal_rns::tcp::{tune, TcpClientInterface, TcpServerConnection};
 use personal_rns::udp::UdpInterface;
 use personal_rns::wire::DestinationHash;
 use tokio::io::AsyncRead;
@@ -101,11 +97,11 @@ impl BenchTcpListener {
 }
 
 impl Interface for BenchTcpListener {
-    const HW_MTU: usize = tcp_core::TCP_HW_MTU_CAP;
+    const HW_MTU: usize = tcp::TCP_HW_MTU_CAP;
     const KIND: InterfaceKind = InterfaceKind::TcpServerPeer;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        tcp_core::descriptor(self.id, tcp_core::policy_for_bitrate(self.bitrate))
+        tcp::descriptor(self.id, tcp::policy_for_bitrate(self.bitrate))
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -542,7 +538,7 @@ where
         let client = TcpClientInterface::new_with_id(
             TCP_INTERFACE_ID,
             addr.to_string(),
-            tcp_core::TCP_BITRATE_ESTIMATE,
+            tcp::TCP_BITRATE_ESTIMATE,
             ReconnectPolicy::STANDARD,
         );
         let node = PrnsNode::new(PrnsNodeRecipe {
@@ -563,7 +559,7 @@ where
             TCP_INTERFACE_ID,
             local,
             peer,
-            udp_core::UDP_BITRATE_ESTIMATE,
+            udp::UDP_BITRATE_ESTIMATE,
         )
         .await
         .expect("binds the scenario port");
@@ -581,7 +577,7 @@ where
         (node, addr.to_string())
     } else {
         let primary =
-            BenchTcpListener::bind_with_id(TCP_INTERFACE_ID, addr, tcp_core::TCP_BITRATE_ESTIMATE)
+            BenchTcpListener::bind_with_id(TCP_INTERFACE_ID, addr, tcp::TCP_BITRATE_ESTIMATE)
                 .await
                 .expect("binds the scenario port");
         let mut addresses = primary.local_addr().expect("bound address").to_string();
@@ -590,7 +586,7 @@ where
             let extra = BenchTcpListener::bind_with_id(
                 fanin_listener_id(index),
                 "127.0.0.1:0",
-                tcp_core::TCP_BITRATE_ESTIMATE,
+                tcp::TCP_BITRATE_ESTIMATE,
             )
             .await
             .expect("binds an extra listener");
@@ -630,7 +626,7 @@ where
             TCP_INTERFACE_ID,
             local,
             peer,
-            udp_core::UDP_BITRATE_ESTIMATE,
+            udp::UDP_BITRATE_ESTIMATE,
         )
         .await
         .expect("binds the scenario port");
@@ -649,7 +645,7 @@ where
         let client = TcpClientInterface::new_with_id(
             TCP_INTERFACE_ID,
             addr.to_string(),
-            tcp_core::TCP_BITRATE_ESTIMATE,
+            tcp::TCP_BITRATE_ESTIMATE,
             ReconnectPolicy::STANDARD,
         );
         PrnsNode::new(PrnsNodeRecipe {

@@ -29,8 +29,7 @@ use prns_runtime::interfaces::rnode::core::{RadioConfig, RadioConfigError, Radio
 use prns_runtime::runtime::{AttachIntent, Attachable, PrnsNodeHandle};
 
 use crate::ax25::{Ax25KissInterface, Ax25KissSettings};
-use crate::backbone::client::BackboneClientInterface;
-use crate::backbone::server::BackboneServer;
+use crate::backbone::{BackboneClientInterface, BackboneServer};
 #[cfg(feature = "ble")]
 use crate::ble_host::AutoBle;
 use crate::host_network::{
@@ -55,17 +54,16 @@ use crate::serial_host::{
     open_host_serial, open_host_serial_with_settings, HostSerialDataBits, HostSerialLineSettings,
     HostSerialParity, HostSerialStopBits,
 };
-use crate::tcp::client::TcpClientInterface;
-use crate::tcp::server::TcpServer;
-use crate::tcp::tokio_socket::{
-    AddressFamilyPreference, ReconnectLimit, TcpConnectionSettings, TcpTunnelMode,
+use crate::tcp::{
+    AddressFamilyPreference, ReconnectLimit, TcpClientInterface, TcpConnectionSettings, TcpServer,
+    TcpTunnelMode,
 };
 use crate::udp::UdpInterface;
 #[cfg(feature = "usb")]
 use crate::usb_host::AutoUsb;
 use crate::weave::WeaveInterface;
 #[cfg(feature = "websocket")]
-use crate::websocket::{client::WebSocketClientInterface, server::WebSocketServer};
+use crate::websocket::{WebSocketClientInterface, WebSocketServer};
 use crate::wifi::{AutoWifi, AutoWifiDevicePolicy, AutoWifiSettings, AutoWifiSettingsError};
 
 const RECONNECT_POLICY: ReconnectPolicy = ReconnectPolicy::STANDARD;

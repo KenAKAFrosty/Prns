@@ -37,9 +37,9 @@ impl Cycle {
             .expect("registers the bench destination");
         let initiator =
             EngineState::<GrowableHeap>::new(Zeroizing::new([0x22; IDENTITY_SECRET_KEY_LEN]));
-        let interfaces = vec![tcp_core::descriptor(
+        let interfaces = vec![tcp::descriptor(
             WIRE,
-            tcp_core::policy_for_bitrate(tcp_core::TCP_BITRATE_ESTIMATE),
+            tcp::policy_for_bitrate(tcp::TCP_BITRATE_ESTIMATE),
         )];
 
         let mut cycle = Self {

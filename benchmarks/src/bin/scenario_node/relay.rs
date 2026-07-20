@@ -17,20 +17,20 @@ pub(super) async fn relay_node(manifest: &Manifest) {
         (RELAY_SECOND_INTERFACE_ID, out_b_tx),
     ]);
     let interfaces = vec![
-        tcp_core::descriptor(
+        tcp::descriptor(
             TCP_INTERFACE_ID,
-            tcp_core::policy_for_bitrate(tcp_core::TCP_BITRATE_ESTIMATE),
+            tcp::policy_for_bitrate(tcp::TCP_BITRATE_ESTIMATE),
         ),
-        tcp_core::descriptor(
+        tcp::descriptor(
             RELAY_SECOND_INTERFACE_ID,
-            tcp_core::policy_for_bitrate(tcp_core::TCP_BITRATE_ESTIMATE),
+            tcp::policy_for_bitrate(tcp::TCP_BITRATE_ESTIMATE),
         ),
     ];
 
     let side_a = BenchTcpListener::bind_with_id(
         TCP_INTERFACE_ID,
         "127.0.0.1:0",
-        tcp_core::TCP_BITRATE_ESTIMATE,
+        tcp::TCP_BITRATE_ESTIMATE,
     )
     .await
     .expect("binds side a");
@@ -38,7 +38,7 @@ pub(super) async fn relay_node(manifest: &Manifest) {
     let side_b = BenchTcpListener::bind_with_id(
         RELAY_SECOND_INTERFACE_ID,
         "127.0.0.1:0",
-        tcp_core::TCP_BITRATE_ESTIMATE,
+        tcp::TCP_BITRATE_ESTIMATE,
     )
     .await
     .expect("binds side b");
@@ -83,20 +83,20 @@ pub(super) async fn chain_node(upstream: &str) {
         (RELAY_SECOND_INTERFACE_ID, out_up_tx),
     ]);
     let interfaces = vec![
-        tcp_core::descriptor(
+        tcp::descriptor(
             TCP_INTERFACE_ID,
-            tcp_core::policy_for_bitrate(tcp_core::TCP_BITRATE_ESTIMATE),
+            tcp::policy_for_bitrate(tcp::TCP_BITRATE_ESTIMATE),
         ),
-        tcp_core::descriptor(
+        tcp::descriptor(
             RELAY_SECOND_INTERFACE_ID,
-            tcp_core::policy_for_bitrate(tcp_core::TCP_BITRATE_ESTIMATE),
+            tcp::policy_for_bitrate(tcp::TCP_BITRATE_ESTIMATE),
         ),
     ];
 
     let downstream = BenchTcpListener::bind_with_id(
         TCP_INTERFACE_ID,
         "127.0.0.1:0",
-        tcp_core::TCP_BITRATE_ESTIMATE,
+        tcp::TCP_BITRATE_ESTIMATE,
     )
     .await
     .expect("binds downstream side");
@@ -104,7 +104,7 @@ pub(super) async fn chain_node(upstream: &str) {
     let up = TcpClientInterface::new_with_id(
         RELAY_SECOND_INTERFACE_ID,
         upstream.to_string(),
-        tcp_core::TCP_BITRATE_ESTIMATE,
+        tcp::TCP_BITRATE_ESTIMATE,
         ReconnectPolicy::STANDARD,
     );
     tokio::spawn(downstream.run(seam_down));

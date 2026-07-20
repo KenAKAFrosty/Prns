@@ -4,7 +4,7 @@ use std::net::{IpAddr, SocketAddr};
 use tokio::net::UdpSocket;
 
 use prns_core::engine::InstantMillis;
-use prns_core::interfaces::udp::core;
+use prns_core::interfaces::udp;
 use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{
     ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind,
@@ -64,7 +64,7 @@ impl UdpInterface {
         peer: impl tokio::net::ToSocketAddrs,
         bitrate: BitrateBps,
     ) -> io::Result<Self> {
-        Self::bind_with_policy(local, peer, core::policy_for_bitrate(bitrate)).await
+        Self::bind_with_policy(local, peer, udp::policy_for_bitrate(bitrate)).await
     }
 
     pub async fn bind_with_policy(
@@ -102,7 +102,7 @@ impl UdpInterface {
         peer: impl tokio::net::ToSocketAddrs,
         bitrate: BitrateBps,
     ) -> io::Result<Self> {
-        Self::bind_with_id_and_policy(id, local, peer, core::policy_for_bitrate(bitrate)).await
+        Self::bind_with_id_and_policy(id, local, peer, udp::policy_for_bitrate(bitrate)).await
     }
 
     pub async fn bind_with_id_and_policy(
@@ -178,11 +178,11 @@ impl UdpInterface {
 }
 
 impl Interface for UdpInterface {
-    const HW_MTU: usize = core::UDP_HW_MTU_CAP;
+    const HW_MTU: usize = udp::UDP_HW_MTU_CAP;
     const KIND: InterfaceKind = InterfaceKind::Udp;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::descriptor(self.id, self.policy)
+        udp::descriptor(self.id, self.policy)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -193,7 +193,7 @@ impl Interface for UdpInterface {
         let mut airtime = AirtimeLedger::new();
         let mut throughput = ThroughputLedger::new();
         let started = tokio::time::Instant::now();
-        let mut recv_buf = std::vec![0u8; core::RECV_BUF_LEN].into_boxed_slice();
+        let mut recv_buf = std::vec![0u8; udp::RECV_BUF_LEN].into_boxed_slice();
         self.status.set_connection(ConnectionState::Connected);
         match self.flow {
             UdpSocketFlow::ReceiveOnly => loop {
@@ -211,7 +211,7 @@ impl Interface for UdpInterface {
             },
             UdpSocketFlow::SendOnly { peer } => loop {
                 let outbound = seam.next_outbound().await;
-                if outbound.is_empty() || outbound.len() > core::UDP_DATAGRAM_MAX {
+                if outbound.is_empty() || outbound.len() > udp::UDP_DATAGRAM_MAX {
                     continue;
                 }
                 let Ok(sent) = self.socket.send_to(outbound, peer).await else {
@@ -239,7 +239,7 @@ impl Interface for UdpInterface {
                         seam.next_inbound(&recv_buf[..len]).await;
                     }
                     outbound = seam.next_outbound() => {
-                        if outbound.is_empty() || outbound.len() > core::UDP_DATAGRAM_MAX {
+                        if outbound.is_empty() || outbound.len() > udp::UDP_DATAGRAM_MAX {
                             continue;
                         }
                         let Ok(sent) = self.socket.send_to(outbound, peer).await else {
@@ -318,7 +318,7 @@ mod tests {
             .expect("binds the test peer");
         let far_addr = far.local_addr().expect("the peer address is known");
 
-        let interface = UdpInterface::bind("127.0.0.1:0", far_addr, core::UDP_BITRATE_ESTIMATE)
+        let interface = UdpInterface::bind("127.0.0.1:0", far_addr, udp::UDP_BITRATE_ESTIMATE)
             .await
             .expect("binds an ephemeral local port");
         let near_addr = interface.local_addr().expect("the bound address is known");
@@ -363,7 +363,7 @@ mod tests {
     async fn receive_only_never_requires_a_forward_target() {
         let interface = UdpInterface::bind_receive_with_policy(
             "127.0.0.1:0",
-            core::policy_for_bitrate(core::UDP_BITRATE_ESTIMATE),
+            udp::policy_for_bitrate(udp::UDP_BITRATE_ESTIMATE),
         )
         .await
         .expect("binds a receive-only socket");
@@ -398,7 +398,7 @@ mod tests {
         let interface = UdpInterface::bind_send_with_policy(
             "127.0.0.1:0",
             far_addr,
-            core::policy_for_bitrate(core::UDP_BITRATE_ESTIMATE),
+            udp::policy_for_bitrate(udp::UDP_BITRATE_ESTIMATE),
         )
         .await
         .expect("binds a send-only socket");

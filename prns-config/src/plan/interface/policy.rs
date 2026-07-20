@@ -6,17 +6,14 @@ use prns_core::interfaces::i2p::core as i2p_core;
 use prns_core::interfaces::kiss::core as kiss_core;
 use prns_core::interfaces::pipe::core as pipe_core;
 use prns_core::interfaces::serial::core as serial_core;
-use prns_core::interfaces::tcp::core as tcp_core;
-use prns_core::interfaces::udp::core as udp_core;
 use prns_core::interfaces::usb_auto::core as usb_auto_core;
 use prns_core::interfaces::weave::core as weave_core;
-use prns_core::interfaces::websocket::core as websocket_core;
 use prns_core::interfaces::wifi_auto::core as wifi_core;
 use prns_core::interfaces::{
-    AnnounceBandwidthCap, AnnounceRateLimit, BitrateBps, ConfiguredInterfacePolicy,
-    EffectiveInterfacePolicy, EgressCapability, FrequencyMilliHertz, IngressCapability,
-    InterfaceCommonPolicy, InterfaceDefaults, InterfaceForwardingPolicy, InterfaceMode, MtuBytes,
-    MtuPolicy,
+    tcp, udp, websocket, AnnounceBandwidthCap, AnnounceRateLimit, BitrateBps,
+    ConfiguredInterfacePolicy, EffectiveInterfacePolicy, EgressCapability, FrequencyMilliHertz,
+    IngressCapability, InterfaceCommonPolicy, InterfaceDefaults, InterfaceForwardingPolicy,
+    InterfaceMode, MtuBytes, MtuPolicy,
 };
 use prns_core::routing::links::MAX_LINK_MTU;
 
@@ -168,8 +165,8 @@ fn interface_defaults(medium: &PlannedMedium) -> Result<InterfaceDefaults, PlanE
         PlannedMedium::TcpClient { .. }
         | PlannedMedium::TcpServer { .. }
         | PlannedMedium::Backbone { .. }
-        | PlannedMedium::BackboneClient { .. } => Ok(tcp_core::DEFAULTS),
-        PlannedMedium::Udp { .. } => Ok(udp_core::DEFAULTS),
+        | PlannedMedium::BackboneClient { .. } => Ok(tcp::DEFAULTS),
+        PlannedMedium::Udp { .. } => Ok(udp::DEFAULTS),
         PlannedMedium::I2p { .. } => Ok(i2p_core::DEFAULTS),
         PlannedMedium::Weave { .. } => Ok(weave_core::DEFAULTS),
         PlannedMedium::PrnsUsbAuto => Ok(usb_auto_core::HOST_DEFAULTS),
@@ -177,7 +174,7 @@ fn interface_defaults(medium: &PlannedMedium) -> Result<InterfaceDefaults, PlanE
             bluetooth_core::BLE_BITRATE_GUESS_BPS,
         )),
         PlannedMedium::PrnsWebSocketClient { .. } | PlannedMedium::PrnsWebSocketServer { .. } => {
-            Ok(websocket_core::DEFAULTS)
+            Ok(websocket::DEFAULTS)
         }
         PlannedMedium::Serial { line, .. } => {
             let bitrate =

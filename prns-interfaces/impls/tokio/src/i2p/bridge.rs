@@ -14,7 +14,7 @@ use super::sam::{
 use super::transport::{
     SamBridgeTransport, SamFailureClass, SamSessionTransport, SamTransportError,
 };
-use crate::tcp::tokio_socket::tune_i2p;
+use crate::tcp::tune_i2p;
 
 const DEFAULT_SAM_BRIDGE_HOST: &str = "127.0.0.1";
 const DEFAULT_SAM_BRIDGE_PORT: u16 = 7656;

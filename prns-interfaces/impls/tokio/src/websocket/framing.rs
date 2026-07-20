@@ -4,7 +4,7 @@ use tokio_tungstenite::tungstenite::protocol::{Message, WebSocketConfig};
 use tokio_tungstenite::WebSocketStream;
 
 use prns_core::engine::InstantMillis;
-use prns_core::interfaces::websocket::core;
+use prns_core::interfaces::websocket;
 use prns_core::interfaces::BitrateBps;
 use prns_runtime::reactor::airtime::{frame_airtime_us, AirtimeLedger};
 use prns_runtime::reactor::driver::TokioInterfaceStatus;
@@ -18,12 +18,12 @@ pub(crate) fn config() -> WebSocketConfig {
         .read_buffer_size(SOCKET_BUFFER_LEN)
         .write_buffer_size(SOCKET_BUFFER_LEN)
         .max_write_buffer_size(
-            core::FRAME_CAP
+            websocket::FRAME_CAP
                 .saturating_add(SOCKET_BUFFER_LEN)
                 .saturating_add(1),
         )
-        .max_message_size(Some(core::FRAME_CAP))
-        .max_frame_size(Some(core::FRAME_CAP))
+        .max_message_size(Some(websocket::FRAME_CAP))
+        .max_frame_size(Some(websocket::FRAME_CAP))
 }
 
 pub async fn serve<S, Seam>(
@@ -50,7 +50,7 @@ pub async fn serve<S, Seam>(
                 };
                 match message {
                     Message::Binary(frame) => {
-                        if frame.is_empty() || frame.len() > core::FRAME_CAP {
+                        if frame.is_empty() || frame.len() > websocket::FRAME_CAP {
                             continue;
                         }
                         status.add_rx(frame.len() as u64);
@@ -68,7 +68,7 @@ pub async fn serve<S, Seam>(
                 }
             }
             outbound = seam.next_outbound() => {
-                if outbound.len() > core::FRAME_CAP {
+                if outbound.len() > websocket::FRAME_CAP {
                     continue;
                 }
                 let frame = outbound.to_vec();
@@ -98,9 +98,9 @@ mod tests {
         let config = config();
         assert_eq!(config.read_buffer_size, SOCKET_BUFFER_LEN);
         assert_eq!(config.write_buffer_size, SOCKET_BUFFER_LEN);
-        assert_eq!(config.max_message_size, Some(core::FRAME_CAP));
-        assert_eq!(config.max_frame_size, Some(core::FRAME_CAP));
-        assert!(config.max_write_buffer_size > config.write_buffer_size + core::FRAME_CAP);
+        assert_eq!(config.max_message_size, Some(websocket::FRAME_CAP));
+        assert_eq!(config.max_frame_size, Some(websocket::FRAME_CAP));
+        assert!(config.max_write_buffer_size > config.write_buffer_size + websocket::FRAME_CAP);
     }
 
     #[tokio::test]
@@ -109,7 +109,7 @@ mod tests {
         let mut client = WebSocketStream::from_raw_socket(client_io, Role::Client, None).await;
         let mut server =
             WebSocketStream::from_raw_socket(server_io, Role::Server, Some(config())).await;
-        let oversized = std::vec![0u8; core::FRAME_CAP + 1];
+        let oversized = std::vec![0u8; websocket::FRAME_CAP + 1];
         let sending = tokio::spawn(async move { client.send(Message::binary(oversized)).await });
         let received = server.next().await;
         sending.abort();

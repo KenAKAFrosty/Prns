@@ -9,7 +9,7 @@ use std::vec::Vec;
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::sync::{mpsc, watch};
 
-use crate::tcp::tokio_socket::{tune, CONNECT_TIMEOUT};
+use crate::tcp::{tune, CONNECT_TIMEOUT};
 use crate::wifi_direct::member::WifiDirectMember;
 use prns_core::interfaces::wifi_auto::core::{
     classify_beacon, peering_token, BeaconVerdict, DISCOVERY_GROUP,

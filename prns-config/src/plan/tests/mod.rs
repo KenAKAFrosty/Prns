@@ -6,7 +6,7 @@ use crate::reference::keys::interface as interface_key;
 use crate::reference::parse;
 use crate::ConfigDiagnosticCode;
 use prns_core::interface_discovery::{InterfaceDiscoveryPolicy, DEFAULT_STAMP_COST};
-use prns_core::interfaces::tcp::core::TcpWireFraming;
+use prns_core::interfaces::tcp::TcpWireFraming;
 use prns_core::interfaces::IfacSize;
 use prns_core::interfaces::{
     AnnounceBandwidthCap, AnnounceRateLimit, BitrateBps, EgressCapability, IngressCapability,

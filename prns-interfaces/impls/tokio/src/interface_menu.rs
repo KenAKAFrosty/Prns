@@ -3,9 +3,9 @@ pub use crate::auto::Auto;
 #[cfg(feature = "ax25")]
 pub use crate::ax25::Ax25KissInterface;
 #[cfg(feature = "backbone")]
-pub use crate::backbone::client::BackboneClientInterface;
+pub use crate::backbone::BackboneClientInterface;
 #[cfg(feature = "backbone")]
-pub use crate::backbone::server::BackboneServer;
+pub use crate::backbone::BackboneServer;
 #[cfg(feature = "ble")]
 pub use crate::ble::tokio::BluetoothAuto;
 #[cfg(feature = "ble")]
@@ -23,9 +23,9 @@ pub use crate::serial::SerialInterface;
 #[cfg(feature = "shared-instance")]
 pub use crate::shared_instance::server::LocalServer;
 #[cfg(feature = "tcp")]
-pub use crate::tcp::client::TcpClientInterface;
+pub use crate::tcp::TcpClientInterface;
 #[cfg(feature = "tcp")]
-pub use crate::tcp::server::TcpServer;
+pub use crate::tcp::TcpServer;
 #[cfg(feature = "udp")]
 pub use crate::udp::UdpInterface;
 #[cfg(feature = "usb")]
@@ -35,9 +35,9 @@ pub use crate::usb_host::AutoUsb;
 #[cfg(feature = "weave")]
 pub use crate::weave::WeaveInterface;
 #[cfg(feature = "websocket")]
-pub use crate::websocket::client::WebSocketClientInterface;
+pub use crate::websocket::WebSocketClientInterface;
 #[cfg(feature = "websocket")]
-pub use crate::websocket::server::WebSocketServer;
+pub use crate::websocket::WebSocketServer;
 #[cfg(feature = "wifi")]
 pub use crate::wifi::AutoWifi;
 #[cfg(feature = "wifi-direct")]

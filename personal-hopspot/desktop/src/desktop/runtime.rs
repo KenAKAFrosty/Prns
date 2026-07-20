@@ -7,7 +7,7 @@ use personal_rns::ble::tokio::BluetoothAutoStatus;
 use personal_rns::engine::RatchetPolicy;
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::shared_instance::core as instance_core;
-use personal_rns::interfaces::tcp::core as tcp_core;
+use personal_rns::interfaces::tcp;
 #[cfg(target_os = "macos")]
 use personal_rns::interfaces::wifi_auto::core as wifi_core;
 use personal_rns::interfaces::{InterfaceId, InterfaceKind};
@@ -21,7 +21,7 @@ use personal_rns::shared_instance::rpc_compat::{
 };
 use personal_rns::shared_instance::server::LocalServer;
 use personal_rns::storage::GrowableHeap;
-use personal_rns::tcp::client::TcpClientInterface;
+use personal_rns::tcp::TcpClientInterface;
 use personal_rns::usb::UsbAutoHost;
 use personal_rns::wifi::{AutoWifi, AutoWifiStatus};
 use personal_rns::wire::DestinationHash;
@@ -244,7 +244,7 @@ fn run_node(
             Ok(target) if !target.is_empty() => {
                 let tcp = TcpClientInterface::new(
                     target.clone(),
-                    tcp_core::TCP_BITRATE_ESTIMATE,
+                    tcp::TCP_BITRATE_ESTIMATE,
                     ReconnectPolicy::STANDARD,
                 );
                 let status = tcp.status();

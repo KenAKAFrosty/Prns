@@ -6,8 +6,8 @@ use std::vec::Vec;
 use tokio::net::TcpListener;
 use tokio_tungstenite::{accept_async_with_config, WebSocketStream};
 
-use crate::websocket::tokio_wire;
-use prns_core::interfaces::websocket::core;
+use crate::websocket::framing;
+use prns_core::interfaces::websocket;
 use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{
     ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind,
@@ -35,7 +35,7 @@ pub struct WebSocketServerConnection<S> {
 impl<S> WebSocketServerConnection<S> {
     #[must_use]
     pub fn new(channel_tag: Vec<u8>, socket: WebSocketStream<S>, bitrate: BitrateBps) -> Self {
-        Self::with_policy(channel_tag, socket, core::policy_for_bitrate(bitrate))
+        Self::with_policy(channel_tag, socket, websocket::policy_for_bitrate(bitrate))
     }
 
     #[must_use]
@@ -68,11 +68,11 @@ impl<S> WebSocketServerConnection<S> {
 impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> Interface
     for WebSocketServerConnection<S>
 {
-    const HW_MTU: usize = core::WEBSOCKET_HW_MTU_CAP;
+    const HW_MTU: usize = websocket::WEBSOCKET_HW_MTU_CAP;
     const KIND: InterfaceKind = InterfaceKind::WebSocketServerPeer;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::descriptor(self.id, self.policy)
+        websocket::descriptor(self.id, self.policy)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -86,7 +86,7 @@ impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> Interface
         let mut airtime = AirtimeLedger::new();
         let mut throughput = ThroughputLedger::new();
         let started = tokio::time::Instant::now();
-        tokio_wire::serve(
+        framing::serve(
             socket,
             &mut seam,
             &self.status,
@@ -115,7 +115,7 @@ impl WebSocketServer {
         addr: impl tokio::net::ToSocketAddrs,
         bitrate: BitrateBps,
     ) -> io::Result<Self> {
-        Self::bind_with_policy(addr, core::policy_for_bitrate(bitrate)).await
+        Self::bind_with_policy(addr, websocket::policy_for_bitrate(bitrate)).await
     }
 
     pub async fn bind_with_policy(
@@ -165,7 +165,7 @@ impl InterfaceSupervisor for WebSocketServer {
                             handshakes.spawn(async move {
                                 let result = tokio::time::timeout(
                                     WEBSOCKET_HANDSHAKE_TIMEOUT,
-                                    accept_async_with_config(stream, Some(tokio_wire::config())),
+                                    accept_async_with_config(stream, Some(framing::config())),
                                 )
                                 .await;
                                 (peer, result)
@@ -394,12 +394,13 @@ mod tests {
 
     #[tokio::test]
     async fn the_member_inherits_the_servers_complete_effective_policy() {
-        let policy = core::configured_policy(prns_core::interfaces::ConfiguredInterfacePolicy {
-            mode: Some(prns_core::interfaces::InterfaceMode::Gateway),
-            bitrate: Some(BitrateBps::guess(900_000_000)),
-            mtu: Some(prns_core::interfaces::MtuPolicy::fixed(4_096)),
-            ..prns_core::interfaces::ConfiguredInterfacePolicy::default()
-        });
+        let policy =
+            websocket::configured_policy(prns_core::interfaces::ConfiguredInterfacePolicy {
+                mode: Some(prns_core::interfaces::InterfaceMode::Gateway),
+                bitrate: Some(BitrateBps::guess(900_000_000)),
+                mtu: Some(prns_core::interfaces::MtuPolicy::fixed(4_096)),
+                ..prns_core::interfaces::ConfiguredInterfacePolicy::default()
+            });
         let (near, _far) = tokio::io::duplex(64);
         let socket = WebSocketStream::from_raw_socket(
             near,
@@ -420,7 +421,7 @@ mod tests {
         let addr = listener.local_addr().expect("the bound address is known");
 
         let (in_tx, mut in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
-        let (mut out_tx, out_rx) = tokio_grant_lane(core::FRAME_CAP, 2);
+        let (mut out_tx, out_rx) = tokio_grant_lane(websocket::FRAME_CAP, 2);
         let seam = MockSeam {
             inbound: in_tx,
             sink: std::vec::Vec::new(),
@@ -429,13 +430,13 @@ mod tests {
 
         tokio::spawn(async move {
             let (stream, peer) = listener.accept().await.expect("the listener accepts");
-            let socket = accept_async_with_config(stream, Some(tokio_wire::config()))
+            let socket = accept_async_with_config(stream, Some(framing::config()))
                 .await
                 .expect("the websocket handshake completes");
             WebSocketServerConnection::new(
                 peer.to_string().into_bytes(),
                 socket,
-                core::WEBSOCKET_BITRATE_ESTIMATE,
+                websocket::WEBSOCKET_BITRATE_ESTIMATE,
             )
             .run(seam)
             .await;

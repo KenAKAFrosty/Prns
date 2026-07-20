@@ -21,9 +21,9 @@ pub(super) async fn run_tunnel_probe(manifest: &Manifest, addr: &str, duration: 
     let (out_tx, out_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, LANE_DEPTH);
     let seam = TokioInterfaceSeam::new(TCP_INTERFACE_ID, in_tx, notify_tx, out_rx);
     let egress = Egress::new(vec![(TCP_INTERFACE_ID, out_tx)]);
-    let interfaces = vec![tcp_core::descriptor(
+    let interfaces = vec![tcp::descriptor(
         TCP_INTERFACE_ID,
-        tcp_core::policy_for_bitrate(tcp_core::TCP_BITRATE_ESTIMATE),
+        tcp::policy_for_bitrate(tcp::TCP_BITRATE_ESTIMATE),
     )];
     let (event_tx, event_rx) = mpsc::unbounded_channel::<Event>();
     let journal = move |journaled: Journaled<'_>| match journaled {
@@ -38,7 +38,7 @@ pub(super) async fn run_tunnel_probe(manifest: &Manifest, addr: &str, duration: 
     let interface = TcpClientInterface::new_with_id(
         TCP_INTERFACE_ID,
         addr.to_string(),
-        tcp_core::TCP_BITRATE_ESTIMATE,
+        tcp::TCP_BITRATE_ESTIMATE,
         ReconnectPolicy::STANDARD,
     );
     tokio::spawn(interface.run(seam));
@@ -75,9 +75,9 @@ pub(super) async fn tunnel_relay_node(manifest: &Manifest) {
         out_b_rx,
     );
     let egress = Egress::new(vec![(RELAY_SECOND_INTERFACE_ID, out_b_tx)]);
-    let interfaces = vec![tcp_core::descriptor(
+    let interfaces = vec![tcp::descriptor(
         RELAY_SECOND_INTERFACE_ID,
-        tcp_core::policy_for_bitrate(tcp_core::TCP_BITRATE_ESTIMATE),
+        tcp::policy_for_bitrate(tcp::TCP_BITRATE_ESTIMATE),
     )];
 
     let client_side = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -87,7 +87,7 @@ pub(super) async fn tunnel_relay_node(manifest: &Manifest) {
     let peer_side = BenchTcpListener::bind_with_id(
         RELAY_SECOND_INTERFACE_ID,
         "127.0.0.1:0",
-        tcp_core::TCP_BITRATE_ESTIMATE,
+        tcp::TCP_BITRATE_ESTIMATE,
     )
     .await
     .expect("binds the peer side");
@@ -131,9 +131,9 @@ async fn tunnel_client_side(
         tune(&stream);
         let tag = format!("{peer}#{connection_index}").into_bytes();
         let id = InterfaceId::from_channel_tag(InterfaceKind::TcpServerPeer, &tag);
-        let descriptor = tcp_core::descriptor(
+        let descriptor = tcp::descriptor(
             id,
-            tcp_core::policy_for_bitrate(tcp_core::TCP_BITRATE_ESTIMATE),
+            tcp::policy_for_bitrate(tcp::TCP_BITRATE_ESTIMATE),
         );
         let (in_tx, in_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, LANE_DEPTH);
         let (out_tx, out_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, LANE_DEPTH);
@@ -152,7 +152,7 @@ async fn tunnel_client_side(
             return;
         }
         let connection =
-            TcpServerConnection::new(tag, stream, tcp_core::TCP_BITRATE_ESTIMATE).run(seam);
+            TcpServerConnection::new(tag, stream, tcp::TCP_BITRATE_ESTIMATE).run(seam);
         let task = tokio::spawn(connection);
         if connection_index == 0 {
             tokio::spawn(async move {

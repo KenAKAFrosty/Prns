@@ -8,9 +8,8 @@ use tokio::net::TcpListener;
 
 use crate::framed_stream;
 use crate::reconnect::ReconnectPolicy;
-use crate::tcp::tokio_socket::{tune_for_tunnel, TcpTunnelMode};
-use prns_core::interfaces::tcp::core;
-use prns_core::interfaces::tcp::core::TcpWireFraming;
+use crate::tcp::{tune_for_tunnel, TcpTunnelMode};
+use prns_core::interfaces::tcp::{self, TcpWireFraming};
 use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{
     ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind,
@@ -43,7 +42,7 @@ impl<S> TcpServerConnection<S> {
     /// collision loudly.
     #[must_use]
     pub fn new(channel_tag: Vec<u8>, stream: S, bitrate: BitrateBps) -> Self {
-        Self::with_policy(channel_tag, stream, core::policy_for_bitrate(bitrate))
+        Self::with_policy(channel_tag, stream, tcp::policy_for_bitrate(bitrate))
     }
 
     #[must_use]
@@ -85,11 +84,11 @@ impl<S> TcpServerConnection<S> {
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin> Interface for TcpServerConnection<S> {
-    const HW_MTU: usize = core::TCP_HW_MTU_CAP;
+    const HW_MTU: usize = tcp::TCP_HW_MTU_CAP;
     const KIND: InterfaceKind = InterfaceKind::TcpServerPeer;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::descriptor(self.id, self.policy)
+        tcp::descriptor(self.id, self.policy)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -114,13 +113,13 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for TcpServerConnection<S> {
             TcpWireFraming::Hdlc => {
                 let mut buffers = framed_stream::FramedBuffers::<
                     framed_stream::HdlcFraming,
-                    { core::READ_BUF_LEN },
-                    { core::FRAMED_LEN },
+                    { tcp::READ_BUF_LEN },
+                    { tcp::FRAMED_LEN },
                 >::new();
                 framed_stream::serve::<
                     framed_stream::HdlcFraming,
-                    { core::READ_BUF_LEN },
-                    { core::FRAMED_LEN },
+                    { tcp::READ_BUF_LEN },
+                    { tcp::FRAMED_LEN },
                     _,
                     _,
                 >(stream, &mut buffers, &mut seam, &mut meters)
@@ -129,13 +128,13 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for TcpServerConnection<S> {
             TcpWireFraming::Kiss => {
                 let mut buffers = framed_stream::FramedBuffers::<
                     framed_stream::KissFraming,
-                    { core::READ_BUF_LEN },
-                    { core::KISS_FRAMED_LEN },
+                    { tcp::READ_BUF_LEN },
+                    { tcp::KISS_FRAMED_LEN },
                 >::new();
                 framed_stream::serve::<
                     framed_stream::KissFraming,
-                    { core::READ_BUF_LEN },
-                    { core::KISS_FRAMED_LEN },
+                    { tcp::READ_BUF_LEN },
+                    { tcp::KISS_FRAMED_LEN },
                     _,
                     _,
                 >(stream, &mut buffers, &mut seam, &mut meters)
@@ -166,7 +165,7 @@ impl TcpServer {
         addr: impl tokio::net::ToSocketAddrs,
         bitrate: BitrateBps,
     ) -> io::Result<Self> {
-        Self::bind_with_policy(addr, core::policy_for_bitrate(bitrate)).await
+        Self::bind_with_policy(addr, tcp::policy_for_bitrate(bitrate)).await
     }
 
     pub async fn bind_with_policy(
@@ -424,7 +423,7 @@ mod tests {
     }
 
     async fn read_deframed(socket: &mut TcpStream) -> std::vec::Vec<u8> {
-        let mut decoder = std::boxed::Box::new(RnsSerialDecoder::<{ core::FRAME_CAP }>::new());
+        let mut decoder = std::boxed::Box::new(RnsSerialDecoder::<{ tcp::FRAME_CAP }>::new());
         let mut buf = [0u8; 256];
         loop {
             let n = socket.read(&mut buf).await.expect("reads from the wire");
@@ -440,7 +439,7 @@ mod tests {
     }
 
     async fn read_kiss_deframed(socket: &mut TcpStream) -> std::vec::Vec<u8> {
-        let mut decoder = std::boxed::Box::new(KissDecoder::<{ core::FRAME_CAP }>::new());
+        let mut decoder = std::boxed::Box::new(KissDecoder::<{ tcp::FRAME_CAP }>::new());
         let mut buf = [0u8; 256];
         loop {
             let n = socket.read(&mut buf).await.expect("reads from the wire");
@@ -465,11 +464,11 @@ mod tests {
 
     #[test]
     fn the_member_id_is_a_tcp_server_peer_kind_from_the_tag() {
-        let iface = duplex_member(b"127.0.0.1:54321", core::TCP_BITRATE_ESTIMATE);
+        let iface = duplex_member(b"127.0.0.1:54321", tcp::TCP_BITRATE_ESTIMATE);
         assert_eq!(iface.id().kind(), Some(InterfaceKind::TcpServerPeer));
-        let same = duplex_member(b"127.0.0.1:54321", core::TCP_BITRATE_ESTIMATE);
+        let same = duplex_member(b"127.0.0.1:54321", tcp::TCP_BITRATE_ESTIMATE);
         assert_eq!(iface.id(), same.id(), "the same peer addr is the same id");
-        let other = duplex_member(b"127.0.0.1:54322", core::TCP_BITRATE_ESTIMATE);
+        let other = duplex_member(b"127.0.0.1:54322", tcp::TCP_BITRATE_ESTIMATE);
         assert_ne!(iface.id(), other.id(), "a different peer is a different id");
     }
 
@@ -487,7 +486,7 @@ mod tests {
 
     #[test]
     fn the_member_inherits_the_servers_complete_effective_policy() {
-        let policy = core::configured_policy(prns_core::interfaces::ConfiguredInterfacePolicy {
+        let policy = tcp::configured_policy(prns_core::interfaces::ConfiguredInterfacePolicy {
             mode: Some(prns_core::interfaces::InterfaceMode::Gateway),
             bitrate: Some(BitrateBps::guess(900_000_000)),
             mtu: Some(prns_core::interfaces::MtuPolicy::fixed(4_096)),
@@ -512,7 +511,7 @@ mod tests {
         );
         assert_eq!(status.id().kind(), Some(InterfaceKind::TcpServer));
 
-        let client = duplex_member(b"127.0.0.1:54321", core::TCP_BITRATE_ESTIMATE);
+        let client = duplex_member(b"127.0.0.1:54321", tcp::TCP_BITRATE_ESTIMATE);
         let client_status = client.status();
         status.admit(client_status.clone());
         assert_eq!(
@@ -538,7 +537,7 @@ mod tests {
         let addr = listener.local_addr().expect("the bound address is known");
 
         let (in_tx, mut in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
-        let (mut out_tx, out_rx) = tokio_grant_lane(core::FRAME_CAP, 2);
+        let (mut out_tx, out_rx) = tokio_grant_lane(tcp::FRAME_CAP, 2);
         let seam = MockSeam {
             inbound: in_tx,
             sink: std::vec::Vec::new(),
@@ -551,7 +550,7 @@ mod tests {
             TcpServerConnection::new(
                 peer.to_string().into_bytes(),
                 stream,
-                core::TCP_BITRATE_ESTIMATE,
+                tcp::TCP_BITRATE_ESTIMATE,
             )
             .run(seam)
             .await;
@@ -589,7 +588,7 @@ mod tests {
             .expect("binds an ephemeral test port");
         let addr = listener.local_addr().expect("the bound address is known");
         let (in_tx, mut in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
-        let (mut out_tx, out_rx) = tokio_grant_lane(core::FRAME_CAP, 2);
+        let (mut out_tx, out_rx) = tokio_grant_lane(tcp::FRAME_CAP, 2);
         let seam = MockSeam {
             inbound: in_tx,
             sink: std::vec::Vec::new(),
@@ -600,7 +599,7 @@ mod tests {
             TcpServerConnection::with_policy_and_framing(
                 peer.to_string().into_bytes(),
                 stream,
-                core::DEFAULTS.configured(Default::default()),
+                tcp::DEFAULTS.configured(Default::default()),
                 TcpWireFraming::Kiss,
             )
             .run(seam)

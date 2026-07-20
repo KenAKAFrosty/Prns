@@ -171,7 +171,7 @@ fn traversed_network_defaults_share_the_500_mbps_policy() {
     assert_eq!(udp.policy.bitrate.get(), 500_000_000);
     assert_eq!(
         udp.policy.mtu.resolve(udp.policy.bitrate),
-        Some(prns_core::interfaces::udp::core::UDP_DATAGRAM_MAX)
+        Some(prns_core::interfaces::udp::UDP_DATAGRAM_MAX)
     );
     let backbone = named(&plan, "Backbone");
     assert_eq!(backbone.policy.bitrate.get(), 500_000_000);

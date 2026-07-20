@@ -8,7 +8,7 @@ use crate::rnode::{
     TCP_RNODE_DETECT_TIMEOUT, TCP_RNODE_KEEPALIVE,
 };
 use crate::serial_host::open_host_serial;
-use crate::tcp::tokio_socket::{connect, tune, TcpConnectionSettings};
+use crate::tcp::{connect, tune, TcpConnectionSettings};
 
 pub(crate) const RNODE_BAUD: u32 = 115_200;
 

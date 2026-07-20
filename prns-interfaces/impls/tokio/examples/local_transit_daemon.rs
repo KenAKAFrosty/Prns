@@ -22,7 +22,7 @@ use prns_interfaces_tokio::shared_instance::rpc_compat::{
     SharedInstanceCredentials, SharedInstanceRpcCompat,
 };
 use prns_interfaces_tokio::shared_instance::server::LocalServer;
-use prns_interfaces_tokio::tcp::client::TcpClientInterface;
+use prns_interfaces_tokio::tcp::TcpClientInterface;
 
 const BITRATE: BitrateBps = BitrateBps::guess(10_000_000);
 

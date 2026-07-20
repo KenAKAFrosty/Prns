@@ -24,8 +24,7 @@ use personal_rns::runtime::{
     PrnsNodeRecipe, RequestHandlerRegistration,
 };
 use personal_rns::storage::GrowableHeap;
-use personal_rns::tcp::client::TcpClientInterface;
-use personal_rns::tcp::server::TcpServer;
+use personal_rns::tcp::{TcpClientInterface, TcpServer};
 use personal_rns::wire::DestinationHash;
 
 const BITRATE: BitrateBps = BitrateBps::guess(1_000_000);

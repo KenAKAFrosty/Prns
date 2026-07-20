@@ -5,7 +5,7 @@ use personal_rns::interfaces::usb_auto::core::{self, Capabilities, Message, Node
 use personal_rns::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
 use personal_rns::reactor::interface_seam::{Interface, InterfaceSeam};
 use personal_rns::reactor::tokio::TokioInterfaceStatus;
-use personal_rns::tcp::tokio_socket;
+use personal_rns::tcp::tune;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -96,7 +96,7 @@ impl Interface for UsbMuxAutoDevice {
             };
 
             println!("usbmux-auto: accepted USB Auto stream from {peer}");
-            tokio_socket::tune(&stream);
+            tune(&stream);
             self.status.set_connection(ConnectionState::Reconnecting);
             serve_stream(stream, self.node_tag, &self.status, &mut seam).await;
             if self.status.is_enabled() {

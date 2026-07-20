@@ -1,12 +1,4 @@
-//! The host-agnostic core of the Backbone interface. Backbone is wire-identical to TCP, so the
-//! sizing brain *is* TCP's, re-exported from [`tcp::core`](super::super::tcp::core) rather than
-//! duplicated; the descriptor is kind-agnostic, so a Backbone interface mints its own
-//! Backbone-kind id and passes it through.
-//!
-//! Backbone uses the same traversed-network bitrate estimate and MTU policy as TCP.
-//! `BackboneInterface`'s 1 MiB `HW_MTU` is a Python autoconfigure ceiling far above what we carry.
-
-pub use crate::interfaces::tcp::core::{
+pub use crate::interfaces::tcp::{
     configured_policy, descriptor, policy_for_bitrate, DEFAULTS, FRAMED_LEN, FRAME_CAP,
     READ_BUF_LEN, TCP_HW_MTU_CAP as HW_MTU_CAP,
 };

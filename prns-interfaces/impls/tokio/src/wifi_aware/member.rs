@@ -4,7 +4,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 
 use crate::framed_stream;
-use prns_core::interfaces::tcp::core as tcp_core;
+use prns_core::interfaces::tcp;
 use prns_core::interfaces::wifi_aware::core;
 use prns_core::interfaces::{
     BitrateBps, ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind,
@@ -75,13 +75,13 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for WifiAwareMember<S> {
         let started = tokio::time::Instant::now();
         let mut buffers = framed_stream::FramedBuffers::<
             framed_stream::HdlcFraming,
-            { tcp_core::READ_BUF_LEN },
-            { tcp_core::FRAMED_LEN },
+            { tcp::READ_BUF_LEN },
+            { tcp::FRAMED_LEN },
         >::new();
         framed_stream::serve::<
             framed_stream::HdlcFraming,
-            { tcp_core::READ_BUF_LEN },
-            { tcp_core::FRAMED_LEN },
+            { tcp::READ_BUF_LEN },
+            { tcp::FRAMED_LEN },
             _,
             _,
         >(
