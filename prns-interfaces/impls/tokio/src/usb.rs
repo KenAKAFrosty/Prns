@@ -289,10 +289,12 @@ where
                             });
                         }
                         Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                            eprintln!("usb-auto: {name} requested re-enumeration");
+                            crate::diagnostic_log::debug!(
+                                "usb-auto: {name} requested re-enumeration"
+                            );
                         }
                         Err(error) => {
-                            eprintln!("usb-auto: open {name} failed: {error}");
+                            crate::diagnostic_log::warn!("usb-auto: open {name} failed: {error}");
                             failed_opens.insert(name, Instant::now());
                         }
                     }
