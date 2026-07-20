@@ -148,7 +148,7 @@ where
             let (session, published) = match opened {
                 Ok(opened) => opened,
                 Err(error) => {
-                    self.status.set_listener_online(false);
+                    self.status.mark_listener_offline();
                     self.status.set_issue(error.issue());
                     crate::diagnostic_log::error!(
                         "i2p interface [{}]: endpoint setup failed: {error}",
@@ -165,7 +165,7 @@ where
             };
             self.status.set_issue(I2pRuntimeIssue::None);
             self.status.set_published_destination(published);
-            self.status.set_listener_online(true);
+            self.status.mark_listener_online();
             loop {
                 tokio::select! {
                     () = self.status.wait_until_disabled() => return,
@@ -178,7 +178,7 @@ where
                     accepted = session.accept() => match accepted {
                         Ok(accepted) => self.attach_accepted_peer(accepted),
                         Err(error) => {
-                            self.status.set_listener_online(false);
+                            self.status.mark_listener_offline();
                             self.status.set_issue(I2pRuntimeIssue::SamUnavailable);
                             crate::diagnostic_log::error!(
                                 "i2p interface [{}]: accept failed: {error}",
@@ -238,13 +238,13 @@ where
     }
 
     fn settle_initial_attempts(&self) {
-        self.status.set_attempts_complete(
-            self.pending_initial.is_empty() && !self.endpoint_initial_pending,
-        );
+        if self.pending_initial.is_empty() && !self.endpoint_initial_pending {
+            self.status.complete_initial_attempts();
+        }
     }
 
     fn teardown(&mut self) {
-        self.status.set_listener_online(false);
+        self.status.mark_listener_offline();
         for (_, member) in self.members.drain() {
             member.attached.teardown();
         }

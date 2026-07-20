@@ -65,32 +65,26 @@ pub(crate) fn interface_snapshots() -> std::vec::Vec<InterfaceSnapshot> {
 pub(crate) fn toggle_interface(id: InterfaceId) {
     let engine = engine();
     if id == USB_INTERFACE_ID {
-        engine
-            .usb_status
-            .set_enabled(!engine.usb_status.is_enabled());
+        engine.usb_status.toggle_enabled();
     } else if id == engine.wifi_status.id() {
-        engine
-            .wifi_status
-            .set_enabled(!engine.wifi_status.is_enabled());
+        engine.wifi_status.toggle_enabled();
     } else if id.kind() == Some(InterfaceKind::BluetoothAuto) {
-        engine
-            .ble_status
-            .set_enabled(!engine.ble_status.is_enabled());
+        engine.ble_status.toggle_enabled();
     }
 }
 
 pub(crate) fn sleep_interfaces() {
     let engine = engine();
-    engine.usb_status.set_enabled(false);
-    engine.wifi_status.set_enabled(false);
-    engine.ble_status.set_enabled(false);
+    engine.usb_status.disable();
+    engine.wifi_status.disable();
+    engine.ble_status.disable();
 }
 
 pub(crate) fn wake_interfaces() {
     let engine = engine();
-    engine.usb_status.set_enabled(true);
-    engine.wifi_status.set_enabled(true);
-    engine.ble_status.set_enabled(true);
+    engine.usb_status.enable();
+    engine.wifi_status.enable();
+    engine.ble_status.enable();
 }
 
 pub(crate) fn announce() {

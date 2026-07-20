@@ -121,7 +121,7 @@ async fn connectable_supervisor_persists_identity_accepts_members_and_recovers_l
         persisted
     );
 
-    status.set_enabled(false);
+    status.disable();
     wait_until(|| status.member_vitals().is_empty()).await;
     assert_eq!(status.connection(), ConnectionState::Disabled);
 
@@ -141,7 +141,7 @@ async fn outbound_only_interface_without_peers_becomes_quiescent_after_initializ
     assert_eq!(status.connection(), ConnectionState::Disconnected);
     assert!(status.member_vitals().is_empty());
 
-    status.set_enabled(false);
+    status.disable();
     task.abort();
     let _ = task.await;
 }

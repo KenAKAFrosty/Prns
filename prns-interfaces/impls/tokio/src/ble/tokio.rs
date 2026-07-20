@@ -303,7 +303,22 @@ impl BluetoothAutoStatus {
         }
     }
 
-    pub fn set_enabled(&self, enabled: bool) {
+    pub fn enable(&self) {
+        self.update_enabled(true);
+    }
+
+    pub fn disable(&self) {
+        self.update_enabled(false);
+    }
+
+    pub fn toggle_enabled(&self) {
+        self.shared.enabled.send_if_modified(|current| {
+            *current = !*current;
+            true
+        });
+    }
+
+    fn update_enabled(&self, enabled: bool) {
         self.shared.enabled.send_if_modified(|current| {
             let changed = *current != enabled;
             *current = enabled;

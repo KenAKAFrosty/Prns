@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 
-use tokio::sync::Notify;
+use tokio::sync::watch;
 
 use prns_core::interfaces::{
     ConnectionState, InterfaceId, InterfaceStatus, InterfaceVitals, TransferRates,
@@ -106,8 +106,7 @@ pub struct I2pInterfaceStatus {
 
 struct I2pInterfaceStatusShared {
     id: InterfaceId,
-    enabled: AtomicBool,
-    enabled_changed: Notify,
+    enabled: watch::Sender<bool>,
     attempts_complete: AtomicBool,
     listener_online: AtomicBool,
     expects_activity: bool,
@@ -118,11 +117,11 @@ struct I2pInterfaceStatusShared {
 
 impl I2pInterfaceStatus {
     pub(crate) fn new(id: InterfaceId, expects_activity: bool) -> Self {
+        let (enabled, _) = watch::channel(true);
         Self {
             shared: Arc::new(I2pInterfaceStatusShared {
                 id,
-                enabled: AtomicBool::new(true),
-                enabled_changed: Notify::new(),
+                enabled,
                 attempts_complete: AtomicBool::new(false),
                 listener_online: AtomicBool::new(false),
                 expects_activity,
@@ -133,13 +132,31 @@ impl I2pInterfaceStatus {
         }
     }
 
-    pub fn set_enabled(&self, enabled: bool) {
-        self.shared.enabled.store(enabled, Ordering::Relaxed);
-        self.shared.enabled_changed.notify_waiters();
+    pub fn enable(&self) {
+        self.update_enabled(true);
+    }
+
+    pub fn disable(&self) {
+        self.update_enabled(false);
+    }
+
+    pub fn toggle_enabled(&self) {
+        self.shared.enabled.send_if_modified(|current| {
+            *current = !*current;
+            true
+        });
+    }
+
+    fn update_enabled(&self, enabled: bool) {
+        self.shared.enabled.send_if_modified(|current| {
+            let changed = *current != enabled;
+            *current = enabled;
+            changed
+        });
     }
 
     pub fn is_enabled(&self) -> bool {
-        self.shared.enabled.load(Ordering::Relaxed)
+        *self.shared.enabled.borrow()
     }
 
     pub fn published_destination(&self) -> Option<I2pBase32Address> {
@@ -171,14 +188,16 @@ impl I2pInterfaceStatus {
         self.set_members(Vec::new());
     }
 
-    pub(crate) fn set_attempts_complete(&self, complete: bool) {
-        self.shared
-            .attempts_complete
-            .store(complete, Ordering::Relaxed);
+    pub(crate) fn complete_initial_attempts(&self) {
+        self.shared.attempts_complete.store(true, Ordering::Relaxed);
     }
 
-    pub(crate) fn set_listener_online(&self, online: bool) {
-        self.shared.listener_online.store(online, Ordering::Relaxed);
+    pub(crate) fn mark_listener_online(&self) {
+        self.shared.listener_online.store(true, Ordering::Relaxed);
+    }
+
+    pub(crate) fn mark_listener_offline(&self) {
+        self.shared.listener_online.store(false, Ordering::Relaxed);
     }
 
     pub(crate) fn set_issue(&self, issue: I2pRuntimeIssue) {
@@ -206,16 +225,8 @@ impl I2pInterfaceStatus {
     }
 
     async fn wait_for_enabled_state(&self, enabled: bool) {
-        loop {
-            if self.is_enabled() == enabled {
-                return;
-            }
-            let changed = self.shared.enabled_changed.notified();
-            if self.is_enabled() == enabled {
-                return;
-            }
-            changed.await;
-        }
+        let mut changed = self.shared.enabled.subscribe();
+        let _ = changed.wait_for(|current| *current == enabled).await;
     }
 
     fn members(&self) -> Vec<I2pPeerStatus> {

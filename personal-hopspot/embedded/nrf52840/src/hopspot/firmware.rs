@@ -434,8 +434,8 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
                             ui_state.show_notice(hopspot::UiNotice::Sleeping);
                             notice_until_ms =
                                 Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
-                            lora_status.set_enabled(false);
-                            usb_status.set_enabled(false);
+                            lora_status.disable();
+                            usb_status.disable();
                             let status = BluetoothAutoStatus::new(&BLE_SHARED);
                             status.disable();
                         }
@@ -443,8 +443,8 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
                             ui_state.show_notice(hopspot::UiNotice::Awake);
                             notice_until_ms =
                                 Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
-                            lora_status.set_enabled(true);
-                            usb_status.set_enabled(true);
+                            lora_status.enable();
+                            usb_status.enable();
                             let status = BluetoothAutoStatus::new(&BLE_SHARED);
                             status.enable();
                         }
@@ -471,7 +471,7 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
                                     });
                                     notice_until_ms =
                                         Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
-                                    lora_status.set_enabled(!lora_status.is_enabled());
+                                    lora_status.toggle_enabled();
                                 } else if card.id == usb_status.id() {
                                     ui_state.show_notice(if usb_status.is_enabled() {
                                         hopspot::UiNotice::TurningOff
@@ -480,7 +480,7 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
                                     });
                                     notice_until_ms =
                                         Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
-                                    usb_status.set_enabled(!usb_status.is_enabled());
+                                    usb_status.toggle_enabled();
                                 } else if card.id == FLEET_ID {
                                     let status = BluetoothAutoStatus::new(&BLE_SHARED);
                                     ui_state.show_notice(if status.is_enabled() {

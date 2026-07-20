@@ -129,7 +129,7 @@ where
                 reconnect.record_connection_lifetime(connected_at.elapsed());
             }
             self.status.complete_initial_attempt();
-            self.status.set_connected(false);
+            self.status.mark_disconnected();
             let issue = match result {
                 Err(error) if error.kind() == io::ErrorKind::TimedOut => {
                     crate::diagnostic_log::warn!(
@@ -260,7 +260,7 @@ where
                         }
                         DeviceEvent::Connected if remote_switch.is_some() => {
                             *connected_at = Some(tokio::time::Instant::now());
-                            status.set_connected(true);
+                            status.mark_connected();
                             status.set_issue(WeaveRuntimeIssue::None);
                             status.complete_initial_attempt();
                         }
