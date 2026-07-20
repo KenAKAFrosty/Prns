@@ -23,6 +23,9 @@ pub enum ServiceError {
     StopTimedOut {
         pid: u32,
     },
+    ReloadTimedOut {
+        pid: u32,
+    },
 }
 
 impl fmt::Display for ServiceError {
@@ -55,6 +58,10 @@ impl fmt::Display for ServiceError {
             Self::StopTimedOut { pid } => write!(
                 formatter,
                 "prnsd process {pid} did not stop within 30 seconds"
+            ),
+            Self::ReloadTimedOut { pid } => write!(
+                formatter,
+                "prnsd process {pid} did not answer the interface apply request within 30 seconds"
             ),
         }
     }

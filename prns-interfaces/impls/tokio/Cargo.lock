@@ -1920,6 +1920,7 @@ dependencies = [
  "dirs",
  "prns-core",
  "shlex",
+ "tempfile",
 ]
 
 [[package]]

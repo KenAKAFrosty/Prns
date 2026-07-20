@@ -12,6 +12,7 @@ description = "Cross-platform process lifecycle control for prnsd."
 [dependencies]
 dirs = "6"
 tempfile = "3.27"
+sha2 = "0.10"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_System_Threading"] }

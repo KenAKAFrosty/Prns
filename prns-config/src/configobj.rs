@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::fmt;
+use std::ops::Range;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value {
@@ -142,6 +143,126 @@ pub struct ParsedConfigObj {
     pub locations: SourceLocations,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DocumentSection {
+    path: Vec<String>,
+    depth: usize,
+    range: Range<usize>,
+    header: Range<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DocumentKey {
+    path: Vec<String>,
+    range: Range<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigDocument {
+    source: String,
+    parsed: ParsedConfigObj,
+    sections: Vec<DocumentSection>,
+    keys: Vec<DocumentKey>,
+    newline: &'static str,
+}
+
+impl ConfigDocument {
+    pub fn parse(input: &str) -> Result<Self, ConfigError> {
+        parse_document(input)
+    }
+
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+
+    pub fn root(&self) -> &Section {
+        &self.parsed.root
+    }
+
+    pub fn locations(&self) -> &SourceLocations {
+        &self.parsed.locations
+    }
+
+    pub fn newline(&self) -> &'static str {
+        self.newline
+    }
+
+    pub(crate) fn section_range(&self, path: &[&str]) -> Option<Range<usize>> {
+        self.sections
+            .iter()
+            .find(|section| path_matches(&section.path, path))
+            .map(|section| section.range.clone())
+    }
+
+    pub(crate) fn section_header_range(&self, path: &[&str]) -> Option<Range<usize>> {
+        self.sections
+            .iter()
+            .find(|section| path_matches(&section.path, path))
+            .map(|section| section.header.clone())
+    }
+
+    pub(crate) fn key_range(&self, path: &[&str]) -> Option<Range<usize>> {
+        self.keys
+            .iter()
+            .find(|key| path_matches(&key.path, path))
+            .map(|key| key.range.clone())
+    }
+
+    pub(crate) fn child_section_names(&self, path: &[&str]) -> Vec<&str> {
+        let depth = path.len() + 1;
+        self.sections
+            .iter()
+            .filter(|section| {
+                section.depth == depth
+                    && section.path.len() == depth
+                    && section
+                        .path
+                        .iter()
+                        .zip(path)
+                        .all(|(actual, expected)| actual == expected)
+            })
+            .filter_map(|section| section.path.last().map(String::as_str))
+            .collect()
+    }
+
+    pub(crate) fn first_child_section_start(&self, path: &[&str]) -> Option<usize> {
+        let depth = path.len() + 1;
+        self.sections
+            .iter()
+            .filter(|section| {
+                section.depth == depth
+                    && section.path.len() == depth
+                    && section
+                        .path
+                        .iter()
+                        .zip(path)
+                        .all(|(actual, expected)| actual == expected)
+            })
+            .map(|section| section.range.start)
+            .min()
+    }
+
+    pub(crate) fn section_value(&self, path: &[&str], key: &str) -> Option<&Value> {
+        let mut section = &self.parsed.root;
+        for part in path {
+            section = section.section(part)?;
+        }
+        section.get(key)
+    }
+
+    pub(crate) fn into_parsed(self) -> ParsedConfigObj {
+        self.parsed
+    }
+}
+
+fn path_matches(actual: &[String], expected: &[&str]) -> bool {
+    actual.len() == expected.len()
+        && actual
+            .iter()
+            .zip(expected)
+            .all(|(actual, expected)| actual == expected)
+}
+
 struct Frame {
     name: String,
     depth: usize,
@@ -203,15 +324,62 @@ pub fn parse(input: &str) -> Result<Section, ConfigError> {
 }
 
 pub fn parse_located(input: &str) -> Result<ParsedConfigObj, ConfigError> {
+    parse_document(input).map(ConfigDocument::into_parsed)
+}
+
+#[derive(Clone, Copy)]
+struct SourceLine<'a> {
+    number: usize,
+    start: usize,
+    full_end: usize,
+    text: &'a str,
+}
+
+fn source_lines(input: &str) -> Vec<SourceLine<'_>> {
+    let mut lines = Vec::new();
+    let mut start = 0;
+    for (index, raw) in input.split_inclusive('\n').enumerate() {
+        let full_end = start + raw.len();
+        let without_lf = raw.strip_suffix('\n').unwrap_or(raw);
+        let text = without_lf.strip_suffix('\r').unwrap_or(without_lf);
+        lines.push(SourceLine {
+            number: index + 1,
+            start,
+            full_end,
+            text,
+        });
+        start = full_end;
+    }
+    if input.is_empty() {
+        return lines;
+    }
+    if start < input.len() {
+        let text = &input[start..];
+        lines.push(SourceLine {
+            number: lines.len() + 1,
+            start,
+            full_end: input.len(),
+            text,
+        });
+    }
+    lines
+}
+
+fn parse_document(input: &str) -> Result<ConfigDocument, ConfigError> {
     let mut stack = SectionStack::default();
     let mut locations = SourceLocations::default();
     let mut current_path = Vec::new();
-
-    let mut lines = input.lines().enumerate();
-    while let Some((index, raw_line)) = lines.next() {
-        let line_no = index + 1;
-        let trimmed = raw_line.trim();
+    let mut sections: Vec<DocumentSection> = Vec::new();
+    let mut open_sections: Vec<usize> = Vec::new();
+    let mut keys = Vec::new();
+    let lines = source_lines(input);
+    let mut index = 0;
+    while index < lines.len() {
+        let line = lines[index];
+        let line_no = line.number;
+        let trimmed = line.text.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
+            index += 1;
             continue;
         }
 
@@ -236,23 +404,72 @@ pub fn parse_located(input: &str) -> Result<ParsedConfigObj, ConfigError> {
             current_path.truncate(depth - 1);
             current_path.push(name);
             locations.lines.insert(current_path.clone(), line_no);
+            while open_sections
+                .last()
+                .is_some_and(|open| sections[*open].depth >= depth)
+            {
+                let Some(open) = open_sections.pop() else {
+                    break;
+                };
+                sections[open].range.end = line.start;
+            }
+            let section_index = sections.len();
+            sections.push(DocumentSection {
+                path: current_path.clone(),
+                depth,
+                range: line.start..input.len(),
+                header: line.start..line.full_end,
+            });
+            open_sections.push(section_index);
+            index += 1;
             continue;
         }
 
-        let (key, value) = parse_key_value(raw_line, line_no, &mut lines)?;
+        let key_start = line.start;
+        let mut key_end = line.full_end;
+        let mut raw_value_line = line.text.to_string();
+        while unterminated_triple(
+            raw_value_line
+                .split_once('=')
+                .map_or(raw_value_line.as_str(), |(_, value)| value),
+        )
+        .is_some()
+        {
+            index += 1;
+            let Some(next) = lines.get(index).copied() else {
+                return Err(ConfigError::UnterminatedQuote { line: line_no });
+            };
+            raw_value_line.push('\n');
+            raw_value_line.push_str(next.text);
+            key_end = next.full_end;
+        }
+        let (key, value) = parse_key_value(&raw_value_line, line_no)?;
         let current = stack.current_section_mut();
         if current.get(&key).is_some() {
             return Err(ConfigError::DuplicateKey { line: line_no, key });
         }
         let mut key_path = current_path.clone();
         key_path.push(key.clone());
-        locations.lines.insert(key_path, line_no);
+        locations.lines.insert(key_path.clone(), line_no);
+        keys.push(DocumentKey {
+            path: key_path,
+            range: key_start..key_end,
+        });
         current.scalars.push((key, value));
+        index += 1;
     }
-
-    Ok(ParsedConfigObj {
-        root: stack.finish(),
-        locations,
+    for open in open_sections {
+        sections[open].range.end = input.len();
+    }
+    Ok(ConfigDocument {
+        source: input.to_string(),
+        parsed: ParsedConfigObj {
+            root: stack.finish(),
+            locations,
+        },
+        sections,
+        keys,
+        newline: if input.contains("\r\n") { "\r\n" } else { "\n" },
     })
 }
 
@@ -271,14 +488,7 @@ fn parse_section_header(trimmed: &str, line_no: usize) -> Result<(String, usize)
     Ok((unquote(name).to_string(), depth))
 }
 
-fn parse_key_value<'a, I>(
-    raw_line: &str,
-    line_no: usize,
-    lines: &mut I,
-) -> Result<(String, Value), ConfigError>
-where
-    I: Iterator<Item = (usize, &'a str)>,
-{
+fn parse_key_value(raw_line: &str, line_no: usize) -> Result<(String, Value), ConfigError> {
     let equals = raw_line
         .find('=')
         .ok_or(ConfigError::MissingEquals { line: line_no })?;
@@ -286,15 +496,8 @@ where
     if key.is_empty() {
         return Err(ConfigError::EmptyKey { line: line_no });
     }
-    let mut value_text = raw_line[equals + 1..].to_string();
-    while unterminated_triple(&value_text).is_some() {
-        let (_, next) = lines
-            .next()
-            .ok_or(ConfigError::UnterminatedQuote { line: line_no })?;
-        value_text.push('\n');
-        value_text.push_str(next);
-    }
-    Ok((key.to_string(), parse_value(&value_text, line_no)?))
+    let value_text = &raw_line[equals + 1..];
+    Ok((key.to_string(), parse_value(value_text, line_no)?))
 }
 
 fn unterminated_triple(value_text: &str) -> Option<&'static str> {

@@ -29,13 +29,13 @@ impl MonitoredInterfaces {
         self.interfaces.subscribe()
     }
 
-    fn add(&self, interfaces: impl IntoIterator<Item = InterfaceId>) {
+    pub(crate) fn add(&self, interfaces: impl IntoIterator<Item = InterfaceId>) {
         self.interfaces.send_modify(|monitored| {
             monitored.extend(interfaces);
         });
     }
 
-    fn remove(&self, interfaces: impl IntoIterator<Item = InterfaceId>) {
+    pub(crate) fn remove(&self, interfaces: impl IntoIterator<Item = InterfaceId>) {
         self.interfaces.send_modify(|monitored| {
             for interface in interfaces {
                 monitored.remove(&interface);
@@ -57,16 +57,23 @@ impl BootstrapInterfaces {
         context: PlanRuntimeContext,
         active: PlanAttachments,
         monitored: MonitoredInterfaces,
-    ) -> Option<Self> {
-        plan.discovery.enabled_policy()?.auto_connect().maximum()?;
+    ) -> Result<Self, PlanAttachments> {
+        if plan
+            .discovery
+            .enabled_policy()
+            .and_then(|policy| policy.auto_connect().maximum())
+            .is_none()
+        {
+            return Err(active);
+        }
         let mut bootstrap_plan = plan.clone();
         bootstrap_plan
             .interfaces
             .retain(|interface| interface.lifecycle == ConfiguredInterfaceLifecycle::BootstrapOnly);
         if bootstrap_plan.interfaces.is_empty() {
-            return None;
+            return Err(active);
         }
-        Some(Self {
+        Ok(Self {
             plan: bootstrap_plan,
             context,
             active: active.for_lifecycle(ConfiguredInterfaceLifecycle::BootstrapOnly),
@@ -89,6 +96,14 @@ impl BootstrapInterfaces {
                 BootstrapAction::Restore => self.restore(&handle).await,
             }
         }
+        let active = std::mem::take(&mut self.active);
+        let interfaces = active.interfaces().collect::<Vec<_>>();
+        self.monitored.remove(interfaces);
+        active.detach(&handle).await;
+    }
+
+    pub fn into_active(self) -> PlanAttachments {
+        self.active
     }
 
     async fn retire(&mut self, handle: &PrnsNodeHandle) {
@@ -105,19 +120,21 @@ impl BootstrapInterfaces {
     async fn restore(&mut self, handle: &PrnsNodeHandle) {
         let constructed = construct_configured_interfaces(handle, &self.plan, &self.context).await;
         let interfaces = constructed
-            .runtime
-            .interfaces()
+            .attached()
+            .iter()
+            .map(|interface| interface.id)
             .collect::<Vec<InterfaceId>>();
+        let startup = constructed.startup;
         self.monitored.add(interfaces.iter().copied());
         self.active = constructed
-            .runtime
+            .into_attachments()
             .for_lifecycle(ConfiguredInterfaceLifecycle::BootstrapOnly);
         tracing::info!(
             event = "bootstrap_interfaces_restored",
-            online = constructed.startup.online,
-            listening = constructed.startup.listening,
-            retrying = constructed.startup.retrying,
-            failed = constructed.startup.failed,
+            online = startup.online,
+            listening = startup.listening,
+            retrying = startup.retrying,
+            failed = startup.failed,
             interfaces = interfaces.len(),
         );
     }
@@ -243,7 +260,7 @@ mod tests {
             PlanAttachments::default(),
             monitored,
         )
-        .expect("auto-connect and a bootstrap interface prepare a lifecycle");
+        .unwrap_or_else(|_| panic!("auto-connect and a bootstrap interface prepare a lifecycle"));
         let exercise = async {
             bootstrap.restore(&handle).await;
             wait_for_interface_count(&handle, 1).await;

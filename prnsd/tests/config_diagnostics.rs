@@ -60,6 +60,10 @@ fn invalid_config_exits_before_startup_and_renders_every_actionable_error() {
     assert!(rendered.contains("[interfaces] > [[Hub]] > outgoing"));
     assert!(rendered.contains("accepted:"));
     assert!(rendered.contains("fix:"));
+    assert!(rendered.contains(&format!(
+        "prnsd interfaces repair --config {}",
+        directory.0.display()
+    )));
     assert!(!rendered.contains("\"event\":\"network_identity_failed\""));
     assert!(!rendered.contains("\"event\":\"config_invalid\""));
 }

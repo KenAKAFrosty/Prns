@@ -546,6 +546,7 @@ dependencies = [
  "proptest",
  "serde_json",
  "shlex",
+ "tempfile",
 ]
 
 [[package]]

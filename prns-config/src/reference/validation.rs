@@ -1,5 +1,5 @@
 use crate::configobj::{Section, SourceLocations, Value};
-use crate::diagnostic::{ConfigDiagnostic, ConfigDiagnosticCode};
+use crate::diagnostic::{ConfigDiagnostic, ConfigDiagnosticCode, ConfigFix, ConfigFixSafety};
 use prns_core::interfaces::ifac::IFAC_MAX_SIZE;
 use prns_core::interfaces::rnode::core::{
     BANDWIDTH_HZ_MAX, BANDWIDTH_HZ_MIN, CODING_RATE_MAX, CODING_RATE_MIN, FREQUENCY_HZ_MAX,
@@ -70,7 +70,7 @@ pub(super) enum ValidationResult {
         warnings: ValidationWarnings,
     },
     Invalid {
-        errors: ValidationErrors,
+        errors: Box<ValidationErrors>,
         warnings: ValidationWarnings,
     },
 }
@@ -176,7 +176,10 @@ pub(super) fn validate(
     }
 
     match errors.finish() {
-        Some(errors) => ValidationResult::Invalid { errors, warnings },
+        Some(errors) => ValidationResult::Invalid {
+            errors: Box::new(errors),
+            warnings,
+        },
         None => ValidationResult::Valid { warnings },
     }
 }
@@ -1546,33 +1549,45 @@ pub(super) fn validate_alias_group(
         let accepted = Some(kind.accepted().to_string());
         let correction = format!("keep only `{canonical} = {}`", first.2);
         if first.2 == second.2 {
-            warnings.push(WarningDiagnostic::new(
-                WarningCode::RedundantAliases,
-                source,
-                line,
-                path,
-                value,
-                format!(
-                    "{0:?} and {1:?} specify the same setting",
-                    first.0, second.0
-                ),
-                accepted,
-                correction,
-            ));
+            warnings.push(
+                WarningDiagnostic::new(
+                    WarningCode::RedundantAliases,
+                    source,
+                    line,
+                    path,
+                    value,
+                    format!(
+                        "{0:?} and {1:?} specify the same setting",
+                        first.0, second.0
+                    ),
+                    accepted,
+                    correction,
+                )
+                .with_fixes(vec![ConfigFix::RemoveValue {
+                    path: format!("{display_path} > {}", second.0),
+                    safety: ConfigFixSafety::Safe,
+                }]),
+            );
         } else {
-            errors.push(ErrorDiagnostic::new(
-                ErrorCode::ConflictingAliases,
-                source,
-                line,
-                path,
-                value,
-                format!(
-                    "{0:?} and {1:?} specify different values",
-                    first.0, second.0
-                ),
-                accepted,
-                correction,
-            ));
+            errors.push(
+                ErrorDiagnostic::new(
+                    ErrorCode::ConflictingAliases,
+                    source,
+                    line,
+                    path.clone(),
+                    value,
+                    format!(
+                        "{0:?} and {1:?} specify different values",
+                        first.0, second.0
+                    ),
+                    accepted,
+                    correction,
+                )
+                .with_fixes(vec![ConfigFix::ResolveAliases {
+                    path,
+                    aliases: vec![second.0.to_string()],
+                }]),
+            );
         }
     }
     Some(first.2.clone())
@@ -1610,27 +1625,39 @@ fn compare_alias_pair(
     let accepted = Some(kind.accepted().to_string());
     let correction = format!("keep only {canonical} = {canonical_normalized}");
     if canonical_normalized == alias_normalized {
-        warnings.push(WarningDiagnostic::new(
-            WarningCode::RedundantAliases,
-            source,
-            line,
-            path,
-            value,
-            format!("{canonical:?} and {alias:?} specify the same setting"),
-            accepted,
-            correction,
-        ));
+        warnings.push(
+            WarningDiagnostic::new(
+                WarningCode::RedundantAliases,
+                source,
+                line,
+                path,
+                value,
+                format!("{canonical:?} and {alias:?} specify the same setting"),
+                accepted,
+                correction,
+            )
+            .with_fixes(vec![ConfigFix::RemoveValue {
+                path: format!("[interfaces] > [[{interface}]] > {alias}"),
+                safety: ConfigFixSafety::Safe,
+            }]),
+        );
     } else {
-        errors.push(ErrorDiagnostic::new(
-            ErrorCode::ConflictingAliases,
-            source,
-            line,
-            path,
-            value,
-            format!("{canonical:?} and {alias:?} specify different values"),
-            accepted,
-            correction,
-        ));
+        errors.push(
+            ErrorDiagnostic::new(
+                ErrorCode::ConflictingAliases,
+                source,
+                line,
+                path.clone(),
+                value,
+                format!("{canonical:?} and {alias:?} specify different values"),
+                accepted,
+                correction,
+            )
+            .with_fixes(vec![ConfigFix::ResolveAliases {
+                path,
+                aliases: vec![alias.to_string()],
+            }]),
+        );
     }
 }
 

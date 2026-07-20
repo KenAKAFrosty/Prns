@@ -1,12 +1,14 @@
 pub mod configobj;
 pub mod diagnostic;
 pub mod discovery;
+pub mod editing;
 pub mod plan;
 pub mod reference;
 
-pub use configobj::{ParsedConfigObj, SourceLocations};
+pub use configobj::{ConfigDocument, ParsedConfigObj, SourceLocations};
 pub use diagnostic::{
-    ConfigDiagnostic, ConfigDiagnosticCode, ConfigErrors, ConfigReport, ConfigSeverity,
+    ConfigDiagnostic, ConfigDiagnosticCode, ConfigErrors, ConfigFix, ConfigFixSafety, ConfigReport,
+    ConfigSeverity, DisplayedConfigDiagnostic, SecretDisplay,
 };
 pub use discovery::{discover, DiscoveredConfig, DiscoveryError};
 pub use plan::{
@@ -27,7 +29,7 @@ pub use plan::{
     UdpFlowPlan, WebSocketTargetPlan, RNODE_TCP_PORT,
 };
 pub use reference::{
-    RNodeRadio, RNodeSubinterface, ReferenceBlackholeExchange, ReferenceConfig,
+    InterfaceKind, RNodeRadio, RNodeSubinterface, ReferenceBlackholeExchange, ReferenceConfig,
     ReferenceConfigParams, ReferenceDiscoveryConfig, ReferenceInterface,
     ReferenceInterfaceDiscovery, ReferenceMode, ReferenceValue,
 };

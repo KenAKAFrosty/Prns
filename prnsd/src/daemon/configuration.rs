@@ -48,6 +48,10 @@ pub(super) fn load_or_exit(config_dir: Option<&Path>) -> LoadedConfiguration {
             for diagnostic in errors.diagnostics() {
                 eprintln!("{diagnostic}");
             }
+            eprintln!(
+                "prnsd: run `prnsd interfaces repair --config {}` to inspect safe repairs",
+                discovered.dir.display()
+            );
             process::exit(1);
         }
     };

@@ -23,6 +23,55 @@ offending value, accepted form, and a concrete correction.
 Disabled interface stanzas are skipped before `type` and medium-specific validation. This makes it
 safe to retain an unavailable or incomplete stanza with `enabled = No`.
 
+## Safe interface editor
+
+`prnsd interfaces` opens a numbered, line-oriented editor when attached to a terminal. The same
+surface is available non-interactively through `list`, `check`, `add`, `edit`, `enable`, `disable`,
+`remove`, `repair`, and `apply` subcommands. From a checkout, `cargo prnsd interfaces ...` routes
+directly to the same one-shot command without starting the managed daemon. `--config DIR` follows
+the normal config discovery rules and may appear anywhere inside the `interfaces` command.
+
+Add and edit accept explicit, typed options for the selected interface kind. Inapplicable options
+are rejected before an edit exists, and every complete candidate is passed through the same
+authoritative planner used by daemon startup. Complete scripted mutations save directly;
+`--dry-run` prints the candidate diff without writing, `remove` requires `--yes` without a terminal,
+and `--apply` requests live application after a successful save. Guided mutations show a diff and
+ask before saving and applying. Passphrases and RPC secrets are redacted from diffs and control
+messages unless `--show-secrets` is explicitly selected for local display.
+
+RNodeMulti creation and radio replacement use a repeatable typed
+`--radio NAME:VPORT:FREQUENCY:BANDWIDTH:TXPOWER:SPREADING_FACTOR:CODING_RATE` option. The parent
+still takes its serial device through `--port`; each emitted child has the canonical required
+RNodeMulti settings and is validated with the complete candidate before it can be saved.
+
+The editor preserves comments, blank lines, ordering, newline style, unknown sections, aliases,
+disabled third-party interfaces, and all unrelated source bytes. It re-reads the source immediately
+before writing to reject concurrent edits. An existing config is copied to
+`config.prns-backup` with its permissions preserved, then the replacement is synced and atomically
+installed from the same directory. Editing an installation that still uses the built-in default
+materializes `DIR/config` as an owner-only file. The command never elevates privileges.
+
+`prnsd interfaces repair --safe` applies only unambiguous semantic repairs, such as disabling an
+invalid enabled interface so the rest of the daemon can start. Guided repair can present choices
+for ambiguous values and interface types. Malformed ConfigObj syntax is reported with its exact
+line and remains untouched. Managed startup never prompts or rewrites configuration; on failure it
+prints the matching repair command.
+
+`prnsd interfaces apply` sends only the managed generation, a request identifier, and the expected
+SHA-256 digest through the private control directory. The daemon re-reads its active config path,
+verifies the digest, reparses it, and refuses non-interface changes with `RestartRequired`.
+Unchanged interface units remain running; RNodeMulti members reconcile as one hardware unit;
+changed listeners are detached before their replacements bind. Failure during construction restores
+the previous runtime interface set while leaving the valid on-disk edit intact. Discovery
+publication, bootstrap lifecycle, endpoint reservations, and interface-failure monitoring refresh
+with the accepted plan. No file watcher is installed: saving and applying remain explicit actions.
+
+Live apply is available only to a managed daemon that owns the routing tables. A shared-instance
+client reports that the owning process must apply the change, and an unmanaged foreground process
+cannot receive an external request. Exit status 3 means no managed daemon is running. Semantic
+validity does not require serial hardware, radios, peers, routers, or remote listeners to be online;
+retry-capable interfaces can remain visibly degraded after a valid apply.
+
 ## Daemon behavior
 
 Prnsd applies transport enablement and identity policy independently, shared-instance type/name/data

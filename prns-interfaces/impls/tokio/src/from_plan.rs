@@ -109,6 +109,10 @@ struct PlanAttachmentGroup {
 }
 
 impl PlanAttachments {
+    pub fn append(&mut self, mut other: Self) {
+        self.groups.append(&mut other.groups);
+    }
+
     pub fn for_lifecycle(mut self, lifecycle: ConfiguredInterfaceLifecycle) -> Self {
         self.groups
             .retain(|attachment| attachment.lifecycle == lifecycle);

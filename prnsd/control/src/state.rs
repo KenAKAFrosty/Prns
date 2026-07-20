@@ -74,7 +74,11 @@ pub(crate) fn write_record(
     )
 }
 
-fn atomic_write(path: &Path, bytes: &[u8], operation: &'static str) -> Result<(), ServiceError> {
+pub(crate) fn atomic_write(
+    path: &Path,
+    bytes: &[u8],
+    operation: &'static str,
+) -> Result<(), ServiceError> {
     let parent = path.parent().ok_or_else(|| ServiceError::Io {
         operation,
         source: io::Error::new(io::ErrorKind::InvalidInput, "state path has no parent"),
