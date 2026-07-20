@@ -82,8 +82,7 @@ fn network_identity_owns_the_destination_while_transport_identity_stays_advertis
     let transport_secret = identity_secret(0x11, 0x22);
     let network_secret = identity_secret(0x33, 0x44);
 
-    let (destination, prepared) = prepare(&plan, &transport_secret, Some(&network_secret))
-        .expect("the discoverable interface prepares a publisher");
+    let (destination, prepared) = prepare(&plan, &transport_secret, Some(&network_secret));
 
     let transport = InMemoryNodeIdentity::from_secret_key_bytes(&transport_secret);
     let network = InMemoryNodeIdentity::from_secret_key_bytes(&network_secret);
@@ -114,8 +113,7 @@ fn transport_identity_owns_the_destination_without_a_network_identity() {
     let plan = planned(TCP_SERVER);
     let transport_secret = identity_secret(0x11, 0x22);
 
-    let (destination, prepared) = prepare(&plan, &transport_secret, None)
-        .expect("the discoverable interface prepares a publisher");
+    let (destination, prepared) = prepare(&plan, &transport_secret, None);
     let transport = InMemoryNodeIdentity::from_secret_key_bytes(&transport_secret);
     let expected_destination = discovery_destination_hash(&transport.identity_hash());
 
@@ -130,7 +128,7 @@ fn transport_identity_owns_the_destination_without_a_network_identity() {
 }
 
 #[test]
-fn no_publishable_interface_registers_no_discovery_destination() {
+fn no_publishable_interface_still_registers_the_dormant_discovery_destination() {
     let plan = planned(
         "[interfaces]\n\
          [[LAN]]\n\
@@ -140,7 +138,13 @@ fn no_publishable_interface_registers_no_discovery_destination() {
     );
     let transport_secret = identity_secret(0x11, 0x22);
 
-    assert!(prepare(&plan, &transport_secret, None).is_none());
+    let (destination, prepared) = prepare(&plan, &transport_secret, None);
+    assert_eq!(
+        destination
+            .destination_hash()
+            .expect("the pinned discovery name is valid"),
+        prepared.destination
+    );
 }
 
 #[tokio::test]
@@ -151,8 +155,7 @@ async fn configured_fields_materialize_into_the_complete_wire_advertisement() {
     };
     announcement.name = Some(String::from("  Public\r\n TCP  "));
     let transport_secret = identity_secret(0x11, 0x22);
-    let (_, prepared) = prepare(&plan, &transport_secret, None)
-        .expect("the discoverable interface prepares a publisher");
+    let (_, prepared) = prepare(&plan, &transport_secret, None);
     let id = interface_id(0x51);
     let sources = prepared
         .publication_sources(vec![AttachedConfiguredInterface {
@@ -209,8 +212,7 @@ fn unavailable_network_encryption_does_not_suppress_plaintext_interfaces() {
     let mut plan = planned(&config);
     assert_eq!(plan.interfaces.len(), 2);
     let transport_secret = identity_secret(0x11, 0x22);
-    let (_, prepared) = prepare(&plan, &transport_secret, None)
-        .expect("the plaintext interface prepares the publisher");
+    let (_, prepared) = prepare(&plan, &transport_secret, None);
     let second = plan.interfaces.remove(1);
     let first = plan.interfaces.remove(0);
 
@@ -243,8 +245,7 @@ fn unavailable_network_encryption_does_not_suppress_plaintext_interfaces() {
 fn duplicate_attached_interface_ids_are_rejected() {
     let mut plan = planned(TCP_SERVER);
     let transport_secret = identity_secret(0x11, 0x22);
-    let (_, prepared) = prepare(&plan, &transport_secret, None)
-        .expect("the discoverable interface prepares a publisher");
+    let (_, prepared) = prepare(&plan, &transport_secret, None);
     let first = plan.interfaces.remove(0);
     let second = first.clone();
     let id = interface_id(0x51);

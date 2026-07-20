@@ -33,6 +33,57 @@ pub enum ConfigDiagnosticCode {
     IneffectiveSetting,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfigFix {
+    DisableInterface {
+        name: String,
+    },
+    InsertValue {
+        path: String,
+        accepted: String,
+    },
+    ReplaceValue {
+        path: String,
+        accepted: String,
+    },
+    RemoveValue {
+        path: String,
+        safety: ConfigFixSafety,
+    },
+    ResolveAliases {
+        path: String,
+        aliases: Vec<String>,
+    },
+    ChooseInterfaceType {
+        name: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfigFixSafety {
+    Safe,
+    Guided,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SecretDisplay {
+    Redacted,
+    Revealed,
+}
+
+impl ConfigFix {
+    pub const fn is_safe(&self) -> bool {
+        matches!(
+            self,
+            Self::DisableInterface { .. }
+                | Self::RemoveValue {
+                    safety: ConfigFixSafety::Safe,
+                    ..
+                }
+        )
+    }
+}
+
 impl ConfigDiagnosticCode {
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -79,6 +130,7 @@ pub struct ConfigDiagnostic {
     message: String,
     accepted: Option<String>,
     correction: String,
+    fixes: Vec<ConfigFix>,
 }
 
 impl ConfigDiagnostic {
@@ -93,15 +145,18 @@ impl ConfigDiagnostic {
         accepted: Option<String>,
         correction: impl Into<String>,
     ) -> Self {
+        let path = path.into();
+        let fixes = default_fixes(code, &path, accepted.as_deref());
         Self {
             code,
             source: source.into(),
             line,
-            path: path.into(),
+            path,
             value,
             message: message.into(),
             accepted,
             correction: correction.into(),
+            fixes,
         }
     }
 
@@ -140,28 +195,141 @@ impl ConfigDiagnostic {
     pub fn correction(&self) -> &str {
         &self.correction
     }
+
+    pub fn fixes(&self) -> &[ConfigFix] {
+        &self.fixes
+    }
+
+    pub(crate) fn with_fixes(mut self, fixes: Vec<ConfigFix>) -> Self {
+        self.fixes = fixes;
+        self
+    }
+
+    pub fn display_with(&self, secrets: SecretDisplay) -> DisplayedConfigDiagnostic<'_> {
+        DisplayedConfigDiagnostic {
+            diagnostic: self,
+            secrets,
+        }
+    }
+}
+
+fn default_fixes(code: ConfigDiagnosticCode, path: &str, accepted: Option<&str>) -> Vec<ConfigFix> {
+    let interface = interface_name(path);
+    match code {
+        ConfigDiagnosticCode::MissingRequiredKey if path.ends_with(" > type") => interface
+            .into_iter()
+            .flat_map(|name| {
+                [
+                    ConfigFix::ChooseInterfaceType { name: name.clone() },
+                    ConfigFix::DisableInterface { name },
+                ]
+            })
+            .collect(),
+        ConfigDiagnosticCode::MissingRequiredKey => accepted
+            .map(|accepted| ConfigFix::InsertValue {
+                path: path.to_string(),
+                accepted: accepted.to_string(),
+            })
+            .into_iter()
+            .chain(interface.map(|name| ConfigFix::DisableInterface { name }))
+            .collect(),
+        ConfigDiagnosticCode::InvalidValue => accepted
+            .map(|accepted| ConfigFix::ReplaceValue {
+                path: path.to_string(),
+                accepted: accepted.to_string(),
+            })
+            .into_iter()
+            .chain(interface.map(|name| ConfigFix::DisableInterface { name }))
+            .collect(),
+        ConfigDiagnosticCode::ConflictingAliases => vec![ConfigFix::ResolveAliases {
+            path: path.to_string(),
+            aliases: Vec::new(),
+        }],
+        ConfigDiagnosticCode::RedundantAliases => {
+            vec![ConfigFix::RemoveValue {
+                path: path.to_string(),
+                safety: ConfigFixSafety::Safe,
+            }]
+        }
+        ConfigDiagnosticCode::UnknownKey => vec![ConfigFix::RemoveValue {
+            path: path.to_string(),
+            safety: ConfigFixSafety::Guided,
+        }],
+        ConfigDiagnosticCode::UnsupportedInterface => interface
+            .into_iter()
+            .flat_map(|name| {
+                [
+                    ConfigFix::ChooseInterfaceType { name: name.clone() },
+                    ConfigFix::DisableInterface { name },
+                ]
+            })
+            .collect(),
+        ConfigDiagnosticCode::UnsupportedTransport => interface
+            .map(|name| vec![ConfigFix::DisableInterface { name }])
+            .unwrap_or_default(),
+        ConfigDiagnosticCode::Syntax
+        | ConfigDiagnosticCode::MisplacedKey
+        | ConfigDiagnosticCode::UnknownSection
+        | ConfigDiagnosticCode::UnsupportedSetting
+        | ConfigDiagnosticCode::IneffectiveSetting => Vec::new(),
+    }
+}
+
+fn interface_name(path: &str) -> Option<String> {
+    let start = path.find("[[")? + 2;
+    let rest = &path[start..];
+    let end = rest.find("]]")?;
+    let name = rest[..end].trim();
+    (!name.is_empty()).then(|| name.to_string())
 }
 
 impl fmt::Display for ConfigDiagnostic {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.display_with(SecretDisplay::Redacted).fmt(formatter)
+    }
+}
+
+pub struct DisplayedConfigDiagnostic<'a> {
+    diagnostic: &'a ConfigDiagnostic,
+    secrets: SecretDisplay,
+}
+
+impl fmt::Display for DisplayedConfigDiagnostic<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let diagnostic = self.diagnostic;
         write!(
             formatter,
             "{}:{}: {}[{}] {}: {}",
-            self.source,
-            self.line,
-            self.severity(),
-            self.code.as_str(),
-            self.path,
-            self.message,
+            diagnostic.source,
+            diagnostic.line,
+            diagnostic.severity(),
+            diagnostic.code.as_str(),
+            diagnostic.path,
+            diagnostic.message,
         )?;
-        if let Some(value) = &self.value {
-            write!(formatter, "; found {value:?}")?;
+        if let Some(value) = &diagnostic.value {
+            if self.secrets == SecretDisplay::Revealed || !secret_path(&diagnostic.path) {
+                write!(formatter, "; found {value:?}")?;
+            } else {
+                formatter.write_str("; found <redacted>")?;
+            }
         }
-        if let Some(accepted) = &self.accepted {
+        if let Some(accepted) = &diagnostic.accepted {
             write!(formatter, "; accepted: {accepted}")?;
         }
-        write!(formatter, "; fix: {}", self.correction)
+        if self.secrets == SecretDisplay::Redacted && secret_path(&diagnostic.path) {
+            formatter.write_str("; fix: correct the secret-bearing setting")
+        } else {
+            write!(formatter, "; fix: {}", diagnostic.correction)
+        }
     }
+}
+
+fn secret_path(path: &str) -> bool {
+    matches!(
+        path.rsplit(" > ").next().map(str::trim),
+        Some("pass_phrase" | "passphrase" | "rpc_key")
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -207,4 +375,29 @@ pub struct ConfigReport<T> {
     pub warnings: Vec<ConfigDiagnostic>,
     pub source: String,
     pub locations: SourceLocations,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnostics_redact_secret_values_unless_revealed() {
+        let diagnostic = ConfigDiagnostic::new(
+            ConfigDiagnosticCode::InvalidValue,
+            "config",
+            4,
+            "[interfaces] > [[WiFi]] > pass_phrase",
+            Some("private value".to_string()),
+            "invalid passphrase",
+            Some("a valid passphrase".to_string()),
+            "replace the value",
+        );
+
+        assert!(!diagnostic.to_string().contains("private value"));
+        assert!(diagnostic
+            .display_with(SecretDisplay::Revealed)
+            .to_string()
+            .contains("private value"));
+    }
 }

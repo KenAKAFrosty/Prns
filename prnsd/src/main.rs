@@ -4,6 +4,7 @@ mod cli;
 mod daemon;
 mod i2p;
 mod interface_discovery;
+mod interfaces;
 mod managed_service;
 mod observability;
 mod persistence;
@@ -43,6 +44,7 @@ async fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         cli::Command::I2p(args) => i2p::run(args).await,
+        cli::Command::Interfaces(args) => interfaces::run(*args),
         cli::Command::Status(args) => match utilities::rnstatus::run(args).await {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => {

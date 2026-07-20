@@ -1,6 +1,6 @@
 use personal_rns::config::{
-    DaemonPlan, DiscoveryPublicationProblem, InterfaceDiscoveryPlan, PlannedInterface,
-    PlannedMedium,
+    ConfiguredInterfaceLifecycle, DaemonPlan, DiscoveryPublicationProblem,
+    InterfaceDiscoveryPlan, PlannedInterface, PlannedMedium,
 };
 use personal_rns::from_plan::{
     attach_plan_with_context, PlanAttachments, PlanOutcome, PlanRuntimeContext,
@@ -8,6 +8,9 @@ use personal_rns::from_plan::{
 use personal_rns::interfaces::{InterfaceId, InterfaceOriginKind};
 use personal_rns::runtime::PrnsNodeHandle;
 
+use crate::interface_discovery::MonitoredInterfaces;
+
+#[derive(Clone)]
 pub(crate) struct AttachedConfiguredInterface {
     pub(crate) id: InterfaceId,
     pub(crate) plan: PlannedInterface,
@@ -36,9 +39,39 @@ impl StartupInterfaceReport {
 
 #[derive(Default)]
 pub(crate) struct ConstructedInterfaces {
+    pub(crate) units: Vec<ActiveInterfaceUnit>,
+    pub(crate) startup: StartupInterfaceReport,
+}
+
+pub(crate) struct ActiveInterfaceUnit {
+    key: InterfaceUnitKey,
+    plan: Vec<PlannedInterface>,
     pub(crate) attached: Vec<AttachedConfiguredInterface>,
     pub(crate) runtime: PlanAttachments,
-    pub(crate) startup: StartupInterfaceReport,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum InterfaceUnitKey {
+    Named(String),
+    RnodeMulti { name: String, device: String },
+}
+
+#[derive(Clone)]
+struct InterfaceUnitSpec {
+    key: InterfaceUnitKey,
+    plan: Vec<PlannedInterface>,
+}
+
+pub(crate) struct ConfiguredInterfaceManager {
+    units: Vec<ActiveInterfaceUnit>,
+    monitored: MonitoredInterfaces,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReconcileResult {
+    Applied,
+    Unchanged,
+    RolledBack { rollback_failed: bool },
 }
 
 pub(crate) async fn construct(
@@ -46,11 +79,180 @@ pub(crate) async fn construct(
     plan: &DaemonPlan,
     context: &PlanRuntimeContext,
 ) -> ConstructedInterfaces {
+    construct_specs(handle, plan, context, unit_specs(&plan.interfaces)).await
+}
+
+impl ConstructedInterfaces {
+    pub(crate) fn attached(&self) -> Vec<AttachedConfiguredInterface> {
+        self.units
+            .iter()
+            .flat_map(|unit| unit.attached.iter().cloned())
+            .collect()
+    }
+
+    pub(crate) fn into_attachments(self) -> PlanAttachments {
+        attachments_from_units(self.units)
+    }
+}
+
+impl ConfiguredInterfaceManager {
+    pub(crate) fn new(
+        units: Vec<ActiveInterfaceUnit>,
+        monitored: MonitoredInterfaces,
+    ) -> Self {
+        Self { units, monitored }
+    }
+
+    pub(crate) fn attached(&self) -> Vec<AttachedConfiguredInterface> {
+        self.units
+            .iter()
+            .flat_map(|unit| unit.attached.iter().cloned())
+            .collect()
+    }
+
+    pub(crate) async fn reconcile(
+        &mut self,
+        handle: &PrnsNodeHandle,
+        plan: &DaemonPlan,
+        context: &PlanRuntimeContext,
+    ) -> ReconcileResult {
+        let mut requested = unit_specs(&plan.interfaces)
+            .into_iter()
+            .filter(|spec| {
+                spec.plan.first().is_some_and(|interface| {
+                    interface.lifecycle == ConfiguredInterfaceLifecycle::Persistent
+                })
+            })
+            .collect::<Vec<_>>();
+        let unchanged = self.units.len() == requested.len()
+            && self.units.iter().all(|unit| {
+                requested
+                    .iter()
+                    .any(|spec| spec.key == unit.key && spec.plan == unit.plan)
+            });
+        if unchanged {
+            return ReconcileResult::Unchanged;
+        }
+        let mut retained = Vec::new();
+        let mut replaced = Vec::new();
+        for unit in std::mem::take(&mut self.units) {
+            if let Some(index) = requested
+                .iter()
+                .position(|spec| spec.key == unit.key && spec.plan == unit.plan)
+            {
+                requested.remove(index);
+                retained.push(unit);
+            } else {
+                self.monitored
+                    .remove(unit.attached.iter().map(|interface| interface.id));
+                replaced.push(InterfaceUnitSpec {
+                    key: unit.key.clone(),
+                    plan: unit.plan.clone(),
+                });
+                unit.runtime.detach(handle).await;
+            }
+        }
+        let mut replacements = construct_specs(handle, plan, context, requested).await;
+        if replacements.startup.failed == 0 {
+            self.monitored.add(
+                replacements
+                    .units
+                    .iter()
+                    .flat_map(|unit| unit.attached.iter().map(|interface| interface.id)),
+            );
+            retained.append(&mut replacements.units);
+            self.units = retained;
+            return ReconcileResult::Applied;
+        }
+        for unit in replacements.units {
+            unit.runtime.detach(handle).await;
+        }
+        let mut restored = construct_specs(handle, plan, context, replaced).await;
+        let rollback_failed = restored.startup.failed != 0;
+        self.monitored.add(
+            restored
+                .units
+                .iter()
+                .flat_map(|unit| unit.attached.iter().map(|interface| interface.id)),
+        );
+        retained.append(&mut restored.units);
+        self.units = retained;
+        ReconcileResult::RolledBack { rollback_failed }
+    }
+
+}
+
+pub(crate) fn attached_from_units(
+    units: &[ActiveInterfaceUnit],
+) -> Vec<AttachedConfiguredInterface> {
+    units
+        .iter()
+        .flat_map(|unit| unit.attached.iter().cloned())
+        .collect()
+}
+
+pub(super) fn partition_units(
+    units: Vec<ActiveInterfaceUnit>,
+) -> (Vec<ActiveInterfaceUnit>, Vec<ActiveInterfaceUnit>) {
+    units.into_iter().partition(|unit| {
+        unit.plan.first().is_some_and(|interface| {
+            interface.lifecycle == ConfiguredInterfaceLifecycle::Persistent
+        })
+    })
+}
+
+pub(crate) fn attachments_from_units(
+    units: Vec<ActiveInterfaceUnit>,
+) -> PlanAttachments {
+    let mut attachments = PlanAttachments::default();
+    for unit in units {
+        attachments.append(unit.runtime);
+    }
+    attachments
+}
+
+async fn construct_specs(
+    handle: &PrnsNodeHandle,
+    plan: &DaemonPlan,
+    context: &PlanRuntimeContext,
+    specs: Vec<InterfaceUnitSpec>,
+) -> ConstructedInterfaces {
+    let mut tasks = tokio::task::JoinSet::new();
+    for spec in specs {
+        let handle = handle.clone();
+        let mut unit_plan = plan.clone();
+        unit_plan.interfaces = spec.plan.clone();
+        let context = context.clone();
+        tasks.spawn(async move { construct_unit(&handle, &unit_plan, &context, spec).await });
+    }
     let mut constructed = ConstructedInterfaces::default();
+    while let Some(result) = tasks.join_next().await {
+        match result {
+            Ok((unit, startup)) => {
+                constructed.startup.merge(startup);
+                constructed.units.push(unit);
+            }
+            Err(error) => {
+                constructed.startup.failed = constructed.startup.failed.saturating_add(1);
+                tracing::error!(event = "interface_start_task_failed", error = %error);
+            }
+        }
+    }
+    constructed
+}
+
+async fn construct_unit(
+    handle: &PrnsNodeHandle,
+    plan: &DaemonPlan,
+    context: &PlanRuntimeContext,
+    spec: InterfaceUnitSpec,
+) -> (ActiveInterfaceUnit, StartupInterfaceReport) {
+    let mut startup = StartupInterfaceReport::default();
+    let mut attached = Vec::new();
     let runtime = attach_plan_with_context(handle, plan, context, &mut |outcome| {
-        constructed.startup.merge(classify(&outcome));
+        startup.merge(classify(&outcome));
         if let PlanOutcome::Up { interface, id } = &outcome {
-            constructed.attached.push(AttachedConfiguredInterface {
+            attached.push(AttachedConfiguredInterface {
                 id: *id,
                 plan: (*interface).clone(),
             });
@@ -58,8 +260,37 @@ pub(crate) async fn construct(
         render(outcome);
     })
     .await;
-    constructed.runtime = runtime;
-    constructed
+    (
+        ActiveInterfaceUnit {
+            key: spec.key,
+            plan: spec.plan,
+            attached,
+            runtime,
+        },
+        startup,
+    )
+}
+
+fn unit_specs(interfaces: &[PlannedInterface]) -> Vec<InterfaceUnitSpec> {
+    let mut specs: Vec<InterfaceUnitSpec> = Vec::new();
+    for interface in interfaces {
+        let key = match &interface.medium {
+            PlannedMedium::RnodeMulti { member } => InterfaceUnitKey::RnodeMulti {
+                name: member.parent().name().to_string(),
+                device: member.parent().device().to_string(),
+            },
+            _ => InterfaceUnitKey::Named(interface.name.clone()),
+        };
+        if let Some(spec) = specs.iter_mut().find(|spec| spec.key == key) {
+            spec.plan.push(interface.clone());
+        } else {
+            specs.push(InterfaceUnitSpec {
+                key,
+                plan: vec![interface.clone()],
+            });
+        }
+    }
+    specs
 }
 
 fn classify(outcome: &PlanOutcome<'_>) -> StartupInterfaceReport {
@@ -190,9 +421,48 @@ fn medium_name(medium: &PlannedMedium) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{classify, PlanOutcome, StartupInterfaceReport};
+    use super::{
+        classify, construct, unit_specs, ConfiguredInterfaceManager, PlanOutcome,
+        ReconcileResult, StartupInterfaceReport,
+    };
     use personal_rns::config::parse_and_plan;
     use personal_rns::interfaces::InterfaceId;
+    use personal_rns::runtime::{Manual, PreConfiguredDestination, PrnsNode, PrnsNodeRecipe};
+    use personal_rns::storage::GrowableHeap;
+
+    use crate::interface_discovery::MonitoredInterfaces;
+
+    macro_rules! test_node {
+        () => {
+            PrnsNode::new(PrnsNodeRecipe {
+                transport_identity: None,
+                pre_configured_destinations: std::iter::empty::<
+                    PreConfiguredDestination<'static>,
+                >(),
+                app_state: (),
+                storage: GrowableHeap,
+                routes: personal_rns::routes![],
+                interfaces: Manual,
+                on_event: |_event, _state: &()| {},
+            })
+        };
+    }
+
+    fn listener(name: &str, port: u16) -> personal_rns::config::DaemonPlan {
+        parse_and_plan(&format!(
+            "[interfaces]\n[[{name}]]\ntype = TCPServerInterface\ninterface_enabled = Yes\nlisten_ip = 127.0.0.1\nlisten_port = {port}\n"
+        ))
+        .unwrap_or_else(|error| panic!("{error}"))
+        .value
+    }
+
+    fn free_port() -> u16 {
+        std::net::TcpListener::bind(("127.0.0.1", 0))
+            .unwrap_or_else(|error| panic!("{error}"))
+            .local_addr()
+            .unwrap_or_else(|error| panic!("{error}"))
+            .port()
+    }
 
     #[test]
     fn startup_counts_merge_and_expose_degraded_readiness() {
@@ -276,6 +546,120 @@ mod tests {
             }
         );
         assert!(report.degraded());
+        assert_eq!(unit_specs(&plan.interfaces).len(), 1);
+    }
+
+    #[tokio::test]
+    async fn reconciliation_keeps_unchanged_units_and_replaces_only_changed_units() {
+        let node = test_node!();
+        let handle = node.handle();
+        let first_port = free_port();
+        let second_port = free_port();
+        let third_port = free_port();
+        let initial = listener("First", first_port);
+        let exercise = async {
+            let constructed = construct(
+                &handle,
+                &initial,
+                &personal_rns::PlanRuntimeContext::default(),
+            )
+            .await;
+            assert_eq!(constructed.startup.failed, 0);
+            let monitored = MonitoredInterfaces::new(
+                constructed
+                    .attached()
+                    .iter()
+                    .map(|interface| interface.id),
+            );
+            let mut manager = ConfiguredInterfaceManager::new(constructed.units, monitored.clone());
+            let first_id = manager.attached()[0].id;
+
+            let mut added = initial.clone();
+            added.interfaces.extend(listener("Second", second_port).interfaces);
+            assert_eq!(
+                manager
+                    .reconcile(
+                        &handle,
+                        &added,
+                        &personal_rns::PlanRuntimeContext::default(),
+                    )
+                    .await,
+                ReconcileResult::Applied
+            );
+            let attached = manager.attached();
+            assert_eq!(attached.len(), 2);
+            assert!(attached.iter().any(|interface| interface.id == first_id));
+
+            let replacement = listener("Second", third_port);
+            let second_id = attached
+                .iter()
+                .find(|interface| interface.plan.name == "Second")
+                .map(|interface| interface.id)
+                .unwrap_or_else(|| panic!("second interface was not attached"));
+            assert_eq!(
+                manager
+                    .reconcile(
+                        &handle,
+                        &replacement,
+                        &personal_rns::PlanRuntimeContext::default(),
+                    )
+                    .await,
+                ReconcileResult::Applied
+            );
+            let attached = manager.attached();
+            assert_eq!(attached.len(), 1);
+            assert_ne!(attached[0].id, second_id);
+            assert_eq!(monitored.subscribe().borrow().len(), 1);
+        };
+        tokio::select! {
+            result = node.run() => panic!("test node stopped unexpectedly: {result:?}"),
+            () = exercise => {}
+        }
+    }
+
+    #[tokio::test]
+    async fn immediate_replacement_failure_restores_the_previous_unit() {
+        let node = test_node!();
+        let handle = node.handle();
+        let initial = listener("Listener", free_port());
+        let exercise = async {
+            let constructed = construct(
+                &handle,
+                &initial,
+                &personal_rns::PlanRuntimeContext::default(),
+            )
+            .await;
+            let monitored = MonitoredInterfaces::new(
+                constructed
+                    .attached()
+                    .iter()
+                    .map(|interface| interface.id),
+            );
+            let mut manager = ConfiguredInterfaceManager::new(constructed.units, monitored);
+            let invalid_runtime = parse_and_plan(
+                "[interfaces]\n[[Listener]]\ntype = TCPServerInterface\ninterface_enabled = Yes\nlisten_ip = 256.256.256.256\nlisten_port = 4242\n",
+            )
+            .unwrap_or_else(|error| panic!("{error}"))
+            .value;
+
+            assert_eq!(
+                manager
+                    .reconcile(
+                        &handle,
+                        &invalid_runtime,
+                        &personal_rns::PlanRuntimeContext::default(),
+                    )
+                    .await,
+                ReconcileResult::RolledBack {
+                    rollback_failed: false
+                }
+            );
+            assert_eq!(manager.attached().len(), 1);
+        };
+        tokio::select! {
+            result = node.run() => panic!("test node stopped unexpectedly: {result:?}"),
+            () = exercise => {}
+        }
     }
 
     #[test]

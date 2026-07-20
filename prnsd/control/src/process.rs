@@ -17,7 +17,7 @@ use crate::state::{
     cleanup_stale, open_lock, prepare_state_dir, read_generation, read_record, ready_generation,
     remove_generation_if_matching, runtime_is_locked, write_generation, write_record,
 };
-use crate::{ServiceError, ServicePaths};
+use crate::{ReloadRequest, ReloadResult, ServiceError, ServicePaths};
 
 pub(crate) const POLL_INTERVAL: Duration = Duration::from_millis(100);
 const RECORD_WAIT_TIMEOUT: Duration = Duration::from_secs(1);
@@ -145,6 +145,18 @@ impl ManagedProcess {
     pub fn stop_requested(&self) -> Result<bool, ServiceError> {
         read_generation(&self.paths.stop, "could not read prnsd stop request")
             .map(|generation| generation == Some(self.generation))
+    }
+
+    pub fn reload_request(&self) -> Result<Option<ReloadRequest>, ServiceError> {
+        ReloadRequest::read(&self.paths, self.generation)
+    }
+
+    pub fn finish_reload(
+        &self,
+        request: &ReloadRequest,
+        result: ReloadResult,
+    ) -> Result<(), ServiceError> {
+        result.write(&self.paths, request)
     }
 
     pub fn hold_runtime_lock_until_process_exit(self) {

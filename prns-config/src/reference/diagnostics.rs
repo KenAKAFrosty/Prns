@@ -73,6 +73,10 @@ impl WarningDiagnostic {
     pub(super) fn into_inner(self) -> ConfigDiagnostic {
         self.0
     }
+
+    pub(super) fn with_fixes(self, fixes: Vec<crate::ConfigFix>) -> Self {
+        Self(self.0.with_fixes(fixes))
+    }
 }
 
 pub(super) struct ErrorDiagnostic(ConfigDiagnostic);
@@ -103,5 +107,9 @@ impl ErrorDiagnostic {
 
     pub(super) fn into_inner(self) -> ConfigDiagnostic {
         self.0
+    }
+
+    pub(super) fn with_fixes(self, fixes: Vec<crate::ConfigFix>) -> Self {
+        Self(self.0.with_fixes(fixes))
     }
 }

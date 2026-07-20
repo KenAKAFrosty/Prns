@@ -9,6 +9,7 @@ mod schema;
 mod types;
 mod validation;
 
+pub use interface_type::InterfaceKind;
 pub(crate) use interpret::cleaned_number;
 pub use parse::{parse, parse_named};
 pub use types::{

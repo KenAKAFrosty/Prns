@@ -10,6 +10,7 @@ use crate::utilities::rnpath::RnpathArgs;
 use crate::utilities::rnprobe::RnprobeArgs;
 use crate::utilities::rnstatus::RnstatusArgs;
 use crate::utilities::rnx::RnxArgs;
+use crate::interfaces::InterfacesArgs;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
 pub enum LogFormat {
@@ -119,7 +120,7 @@ fn parse_i2p_peer(value: &str) -> Result<I2pPeerAddress, I2pPeerAddressError> {
     I2pPeerAddress::new(value)
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Subcommand)]
+#[derive(Clone, Debug, PartialEq, Subcommand)]
 pub enum Command {
     Start(LaunchArgs),
     Restart(LaunchArgs),
@@ -128,6 +129,8 @@ pub enum Command {
     Run(DaemonArgs),
     #[command(about = "Inspect I2P connectivity")]
     I2p(I2pArgs),
+    #[command(about = "Inspect and safely edit Reticulum interfaces")]
+    Interfaces(Box<InterfacesArgs>),
     #[command(about = "Show Reticulum interface and transport status")]
     Status(RnstatusArgs),
     #[command(about = "Inspect and manage Reticulum paths")]
@@ -162,6 +165,7 @@ pub fn parse_from(args: impl IntoIterator<Item = OsString>) -> Result<Command, c
                     | "logs"
                     | "run"
                     | "i2p"
+                    | "interfaces"
                     | "status"
                     | "path"
                     | "probe"
@@ -328,6 +332,49 @@ mod tests {
                 }),
             })
         );
+    }
+
+    #[test]
+    fn interfaces_accepts_canonical_and_short_case_insensitive_types() {
+        for configured in ["PrnsBluetoothAuto", "BLE", "bluetooth-auto"] {
+            let command = parse(&[
+                "prnsd",
+                "interfaces",
+                "add",
+                configured,
+                "--name",
+                "Bluetooth",
+                "--dry-run",
+            ]);
+            let Command::Interfaces(args) = command else {
+                panic!("interfaces command was not selected");
+            };
+            let Some(crate::interfaces::arguments::InterfacesCommand::Add(add)) = args.command
+            else {
+                panic!("interfaces add command was not selected");
+            };
+            assert_eq!(add.kind, Some(prns_config::InterfaceKind::PrnsBluetoothAuto));
+        }
+    }
+
+    #[test]
+    fn interfaces_rejects_untyped_option_values() {
+        let error = parse_from(
+            [
+                "prnsd",
+                "interfaces",
+                "add",
+                "websocket-server",
+                "--name",
+                "WebSocket",
+                "--listen-port",
+                "not-a-port",
+            ]
+            .into_iter()
+            .map(OsString::from),
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), clap::error::ErrorKind::ValueValidation);
     }
 
     #[test]

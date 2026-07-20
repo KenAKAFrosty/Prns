@@ -29,6 +29,7 @@ use advertisement::expand_user_path;
 use advertisement::resolve_reachable_on;
 use advertisement::{security_name, DiscoveryAdvertisementResolutionError, PublicationSource};
 
+#[derive(Clone)]
 pub(crate) struct PreparedDiscoveryPublisher {
     destination: DestinationHash,
     transport_enabled: bool,
@@ -40,18 +41,10 @@ pub(crate) fn prepare(
     plan: &DaemonPlan,
     transport_identity: &Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
     network_identity: Option<&Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>>,
-) -> Option<(
+) -> (
     PreConfiguredDestination<'static>,
     PreparedDiscoveryPublisher,
-)> {
-    if !plan
-        .interfaces
-        .iter()
-        .any(|interface| matches!(interface.discovery, InterfaceDiscoveryPlan::Announce(_)))
-    {
-        return None;
-    }
-
+) {
     let transport_signer = InMemoryNodeIdentity::from_secret_key_bytes(transport_identity);
     let transport_id = TransportId::new(*transport_signer.identity_hash().as_bytes());
     let destination_identity = match network_identity {
@@ -68,7 +61,7 @@ pub(crate) fn prepare(
         )
     });
 
-    Some((
+    (
         PreConfiguredDestination::Single {
             app_name: APP_NAME,
             aspects: APP_ASPECTS,
@@ -86,7 +79,7 @@ pub(crate) fn prepare(
             transport_id,
             network_identity,
         },
-    ))
+    )
 }
 
 impl PreparedDiscoveryPublisher {

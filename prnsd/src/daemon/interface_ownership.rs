@@ -1,8 +1,7 @@
 use personal_rns::config::{
-    ConfiguredInterfaceLifecycle, DaemonPlan, SharedInstance,
-    SharedInstanceTransport as ConfigSharedInstanceTransport,
+    DaemonPlan, SharedInstance, SharedInstanceTransport as ConfigSharedInstanceTransport,
 };
-use personal_rns::from_plan::{PlanAttachments, PlanRuntimeContext};
+use personal_rns::from_plan::PlanRuntimeContext;
 use personal_rns::identity::IdentityHash;
 use personal_rns::runtime::PrnsNodeHandle;
 use personal_rns::shared_instance::{
@@ -12,7 +11,7 @@ use personal_rns::shared_instance::{
 };
 
 use super::configured_interfaces::{
-    self, AttachedConfiguredInterface, ConstructedInterfaces, StartupInterfaceReport,
+    self, ActiveInterfaceUnit, ConstructedInterfaces, StartupInterfaceReport,
 };
 
 pub(super) struct InterfaceOwnership {
@@ -21,8 +20,7 @@ pub(super) struct InterfaceOwnership {
 }
 
 pub(super) struct RoutingTableOwnership {
-    pub(super) configured_interfaces: Vec<AttachedConfiguredInterface>,
-    pub(super) bootstrap_attachments: PlanAttachments,
+    pub(super) configured_units: Vec<ActiveInterfaceUnit>,
 }
 
 impl InterfaceOwnership {
@@ -42,10 +40,7 @@ impl InterfaceOwnership {
         Self {
             startup: constructed.startup,
             routing_tables: Some(RoutingTableOwnership {
-                configured_interfaces: constructed.attached,
-                bootstrap_attachments: constructed
-                    .runtime
-                    .for_lifecycle(ConfiguredInterfaceLifecycle::BootstrapOnly),
+                configured_units: constructed.units,
             }),
         }
     }

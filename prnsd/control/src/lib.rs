@@ -5,6 +5,7 @@ mod logs;
 mod paths;
 mod process;
 mod record;
+mod reload;
 mod state;
 
 pub use error::ServiceError;
@@ -15,3 +16,4 @@ pub use process::{
     StartOutcome,
 };
 pub use record::{LogLane, ServiceRecord, ServiceState};
+pub use reload::{config_digest, request_reload, ReloadRequest, ReloadResult};

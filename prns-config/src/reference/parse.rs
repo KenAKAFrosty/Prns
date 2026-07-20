@@ -36,7 +36,7 @@ pub fn parse_named(
     let warnings = match validate(&source, &parsed.root, &parsed.locations) {
         ValidationResult::Valid { warnings } => warnings.into_inner(),
         ValidationResult::Invalid { errors, warnings } => {
-            return Err(ConfigErrors::new(errors.with_warnings(warnings)));
+            return Err(ConfigErrors::new((*errors).with_warnings(warnings)));
         }
     };
     let value = interpret(&parsed.root).map_err(|error| {

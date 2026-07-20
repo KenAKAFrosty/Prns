@@ -152,6 +152,7 @@ impl RunningDiscovery {
     }
 }
 
+#[derive(Clone)]
 pub struct DiscoveryObserver {
     ingress: TokioDiscoveryIngress,
 }

@@ -12,6 +12,9 @@ pub(crate) use configured_interfaces::{
 pub(crate) use configuration::DEFAULT_CONFIG;
 
 use std::process;
+use std::future;
+use std::path::Path;
+use std::time::Duration;
 
 use crate::{cli, interface_discovery, observability, persistence, services, splash};
 use personal_rns::config::{SharedInstance, TransportIdentityPolicy};
@@ -30,7 +33,7 @@ use personal_rns::runtime::{
 use personal_rns::shared_instance::{RnsBlackholeFiles, SharedInstanceCredentials};
 use personal_rns::storage::GrowableHeap;
 use personal_rns::PlanRuntimeContext;
-use prnsd_control::ManagedProcess;
+use prnsd_control::{config_digest, ManagedProcess, ReloadRequest, ReloadResult, ServiceError};
 
 pub(super) async fn run(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
     let started = std::time::Instant::now();
@@ -141,8 +144,7 @@ pub(super) async fn run(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
             &plan,
             &visible_secret,
             network_identity.as_ref(),
-        )
-        .unzip();
+        );
     let remote_management_transport =
         routing_enabled.then_some(services::TransportStatusIdentity {
             transport: visible_identity_hash,
@@ -170,15 +172,13 @@ pub(super) async fn run(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
         workers: PoolWorkers::Auto,
     })
     .with_protocol_policy(protocol_policy);
-    if let Some(destination) = discovery_destination {
-        if let Err(error) = prns.register_preconfigured_destination(destination) {
-            tracing::error!(
-                event = "interface_discovery_destination_failed",
-                error = ?error,
-            );
-            observability.shutdown().await;
-            process::exit(1);
-        }
+    if let Err(error) = prns.register_preconfigured_destination(discovery_destination) {
+        tracing::error!(
+            event = "interface_discovery_destination_failed",
+            error = ?error,
+        );
+        observability.shutdown().await;
+        process::exit(1);
     }
     if let Some(secret) = non_routing_identity_secret {
         prns = match prns.with_non_routing_identity(secret) {
@@ -255,14 +255,16 @@ pub(super) async fn run(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
         ));
     }
 
-    let (prns, background_tasks) = background::start(background::BackgroundInputs {
+    let (prns, mut background_tasks) = background::start(background::BackgroundInputs {
         node: prns,
         handle: &prns_handle,
         plan: &plan,
         interface_runtime: &interface_runtime,
         ownership: interface_ownership,
         prepared_discovery,
-        prepared_discovery_publisher,
+        prepared_discovery_publisher: Some(prepared_discovery_publisher),
+        network_identity: network_identity.clone(),
+        config_dir: config_dir.clone(),
         blackhole_files,
         management_destinations,
         observability: &observability,
@@ -290,27 +292,61 @@ pub(super) async fn run(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
     }
     let mut interface_failure = None;
     let mut node_failure = false;
-    tokio::select! {
-        result = prns.run() => {
-            node_failure = true;
-            match result {
-                Ok(()) => tracing::error!(event = "node_stopped"),
-                Err(error) => tracing::error!(event = "node_panic_shutdown", error = ?error),
+    let mut active_plan = plan.clone();
+    let active_config_path = config_path.unwrap_or_else(|| config_dir.join("config"));
+    let mut node_run = Box::pin(prns.run());
+    let mut persistence_run = Box::pin(persistence::run_until_shutdown(persistence, managed.as_ref()));
+    loop {
+        tokio::select! {
+            result = &mut node_run => {
+                node_failure = true;
+                match result {
+                    Ok(()) => tracing::error!(event = "node_stopped"),
+                    Err(error) => tracing::error!(event = "node_panic_shutdown", error = ?error),
+                }
+                break;
+            }
+            () = &mut persistence_run => break,
+            failed = interface_failure::wait(
+                &prns_handle,
+                background_tasks.interface_failure_watch(),
+                active_plan.panic_on_interface_error,
+            ) => {
+                interface_failure = Some(failed);
+                tracing::error!(
+                    event = "interface_failure_shutdown",
+                    interface = ?failed,
+                );
+                break;
+            }
+            request = next_reload(managed.as_ref()) => {
+                match request {
+                    Ok(request) => {
+                        let (result, replacement) = apply_reload(
+                            &request,
+                            &active_config_path,
+                            &active_plan,
+                            &mut background_tasks,
+                            &prns_handle,
+                        ).await;
+                        if let Some(replacement) = replacement {
+                            active_plan = replacement;
+                        }
+                        if let Some(managed) = managed.as_ref() {
+                            if let Err(error) = managed.finish_reload(&request, result) {
+                                tracing::error!(event = "interface_apply_result_failed", error = %error);
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        tracing::error!(event = "interface_apply_request_failed", error = %error);
+                    }
+                }
             }
         }
-        () = persistence::run_until_shutdown(persistence, managed.as_ref()) => {}
-        failed = interface_failure::wait(
-            &prns_handle,
-            background_tasks.interface_failure_watch(),
-            plan.panic_on_interface_error,
-        ) => {
-            interface_failure = Some(failed);
-            tracing::error!(
-                event = "interface_failure_shutdown",
-                interface = ?failed,
-            );
-        }
     }
+    drop(persistence_run);
+    drop(node_run);
     background_tasks.shutdown().await;
     observability.shutdown().await;
     if let Some(managed) = managed {
@@ -319,4 +355,75 @@ pub(super) async fn run(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
     if interface_failure.is_some() || node_failure {
         process::exit(1);
     }
+}
+
+async fn next_reload(managed: Option<&ManagedProcess>) -> Result<ReloadRequest, ServiceError> {
+    let Some(managed) = managed else {
+        return future::pending().await;
+    };
+    loop {
+        if let Some(request) = managed.reload_request()? {
+            return Ok(request);
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+async fn apply_reload(
+    request: &ReloadRequest,
+    config_path: &Path,
+    active_plan: &personal_rns::config::DaemonPlan,
+    background: &mut background::BackgroundTasks,
+    handle: &personal_rns::runtime::PrnsNodeHandle,
+) -> (ReloadResult, Option<personal_rns::config::DaemonPlan>) {
+    let bytes = match std::fs::read(config_path) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            tracing::warn!(
+                event = "interface_apply_rejected",
+                reason = "config_read_failed",
+                error_kind = ?error.kind(),
+            );
+            return (ReloadResult::Rejected, None);
+        }
+    };
+    if config_digest(&bytes) != request.digest() {
+        tracing::warn!(event = "interface_apply_rejected", reason = "digest_mismatch");
+        return (ReloadResult::Rejected, None);
+    }
+    let text = match String::from_utf8(bytes) {
+        Ok(text) => text,
+        Err(_) => {
+            tracing::warn!(event = "interface_apply_rejected", reason = "invalid_utf8");
+            return (ReloadResult::Rejected, None);
+        }
+    };
+    let replacement = match personal_rns::config::parse_and_plan_named(
+        config_path.display().to_string(),
+        &text,
+    ) {
+        Ok(report) => report.value,
+        Err(errors) => {
+            tracing::warn!(
+                event = "interface_apply_rejected",
+                reason = "invalid_configuration",
+                diagnostics = errors.len(),
+            );
+            return (ReloadResult::Rejected, None);
+        }
+    };
+    let mut active_globals = active_plan.clone();
+    active_globals.interfaces.clear();
+    let mut replacement_globals = replacement.clone();
+    replacement_globals.interfaces.clear();
+    if active_globals != replacement_globals {
+        tracing::info!(event = "interface_apply_restart_required");
+        return (ReloadResult::RestartRequired, None);
+    }
+    let result = background
+        .apply_interfaces(handle, replacement.clone())
+        .await;
+    let applied = matches!(result, ReloadResult::Applied | ReloadResult::Unchanged)
+        .then_some(replacement);
+    (result, applied)
 }
