@@ -11,9 +11,9 @@ semantics. Both oracle installs run `rns==1.3.9` (security update), pinned in
 remains a compatibility fallback for legacy clients, but it is not the primary
 RPC parity target.
 
-Daemon configuration semantics additionally track the RNS `1.3.8` `internal`
-mode, recursive path-request forwarding, and internal-announcement controls.
-This does not change the broader wire and transport pin above.
+Interface-mode semantics track RNS `1.3.9`, including `internal` mode, recursive path-request
+forwarding, internal-announcement controls, and discovery-mode preservation. This does not change
+the broader wire, transport, daemon configuration, management, or control-RPC pins above.
 
 The normal workspace tests stay the first pass:
 

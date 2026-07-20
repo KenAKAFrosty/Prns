@@ -10,7 +10,7 @@ pub enum InterfaceMode {
 }
 
 impl InterfaceMode {
-    /// RNS 1.3.5 `Interface.DISCOVER_PATHS_FOR = [ACCESS_POINT, GATEWAY, ROAMING]`:
+    /// RNS 1.3.9 `Interface.DISCOVER_PATHS_FOR = [ACCESS_POINT, GATEWAY, ROAMING, INTERNAL]`:
     /// the modes on which a transport node will recursively forward a path request
     /// for an unknown destination on the requester's behalf. Other modes answer
     /// only from what they already hold.
@@ -22,5 +22,29 @@ impl InterfaceMode {
                 | InterfaceMode::Roaming
                 | InterfaceMode::Internal
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recursive_unknown_path_discovery_matches_rns_1_3_9() {
+        for mode in [
+            InterfaceMode::AccessPoint,
+            InterfaceMode::Gateway,
+            InterfaceMode::Roaming,
+            InterfaceMode::Internal,
+        ] {
+            assert!(mode.recursively_forwards_unknown_paths(), "{mode:?}");
+        }
+        for mode in [
+            InterfaceMode::Full,
+            InterfaceMode::PointToPoint,
+            InterfaceMode::Boundary,
+        ] {
+            assert!(!mode.recursively_forwards_unknown_paths(), "{mode:?}");
+        }
     }
 }

@@ -24,7 +24,7 @@ pub fn route_expiry_millis(mode: InterfaceMode) -> u64 {
     }
 }
 
-/// RNS 1.3.5 `Transport.PATH_REQUEST_GRACE` (0.4s): a transport node waits this long before answering a path request from cache, so directly reachable peers respond first.
+/// RNS 1.3.9 `Transport.PATH_REQUEST_GRACE` (0.4s): a transport node waits this long before answering a path request from cache, so directly reachable peers respond first.
 ///
 /// `..._RG` is the extra delay when the answering interface roams.
 pub const PATH_REQUEST_GRACE_MS: u64 = 400;
@@ -78,7 +78,7 @@ mod tests {
     }
 
     #[test]
-    fn mode_keyed_route_expiries_match_the_reference_lifetimes() {
+    fn mode_keyed_route_expiries_match_rns_1_3_9() {
         use crate::interfaces::InterfaceMode;
         assert_eq!(
             route_expiry_millis(InterfaceMode::AccessPoint),

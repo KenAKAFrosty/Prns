@@ -101,8 +101,8 @@ back up the Prns storage containing them.
 
 Every enabled interface applies `mode`, `outgoing`, `bitrate`, announce cap and rate controls, IFAC
 network name/passphrase/size, ingress and egress controls, `recursive_prs`,
-`announces_from_internal`, and the common IC/EC tuning values. `mode = internal` follows the RNS
-1.3.8 forwarding rules. `outgoing = No` disables egress while retaining ingress.
+`announces_from_internal`, and the common IC/EC tuning values. Interface-mode behavior follows RNS
+1.3.9. `outgoing = No` disables egress while retaining ingress.
 
 An explicit `bitrate` overrides the medium estimate and recomputes optimized MTU. TCP client/server
 `fixed_mtu` remains authoritative. Network-traversing TCP, UDP, Backbone, and WebSocket media use a
@@ -110,6 +110,55 @@ An explicit `bitrate` overrides the medium estimate and recomputes optimized MTU
 estimate from baud, KISS and AX.25 KISS use 1200 bps, Pipe uses 1 Mbps, and RNode derives LoRa bitrate
 from its radio configuration. Every RNodeMulti radio derives its own bitrate and effective policy.
 Weave uses stock's 250 kbps estimate and fixed 1024-byte hardware MTU.
+
+### Interface modes
+
+These descriptions and the announce matrix follow the RNS 1.3.9
+[`Interface` policy](https://github.com/markqvist/Reticulum/blob/1.3.9/RNS/Interfaces/Interface.py)
+and [`Transport` implementation](https://github.com/markqvist/Reticulum/blob/1.3.9/RNS/Transport.py).
+
+Use the canonical RNS names and `mode` configuration values below. Prns also accepts
+`interface_mode` as a compatibility key, but new configuration should use `mode`.
+
+| Canonical mode | Configuration | Meaning |
+| --- | --- | --- |
+| Full | `full` | The default: ordinary announce propagation and seven-day paths. It does not recursively search for unknown paths unless `recursive_prs = Yes`. |
+| Point-to-Point | `pointtopoint` or `ptp` | Behaviorally identical to Full in RNS 1.3.9. It identifies the intended topology but imposes no additional routing restriction. |
+| Access Point | `access_point` or `ap` | Suppresses automatic announce broadcasts on the interface, recursively resolves paths for attached clients, and expires learned paths after one day. |
+| Roaming | `roaming` | Serves a physically mobile segment. It uses six-hour paths, recursively resolves unknown paths, waits an additional 1.5 seconds before answering path requests, refuses to answer with a route learned on the same Roaming interface, and propagates announces conservatively. |
+| Boundary | `boundary` | Connects a significantly different or external segment. It controls outbound announce propagation and failed-path recovery; it does not block inbound announce learning. |
+| Gateway | `gateway` or `gw` | Uses Full announce and path-expiry behavior while recursively resolving unknown paths on behalf of nodes facing this interface. |
+| Internal | `internal` | Represents the inside counterpart to Boundary. It rejects Boundary-sourced announce propagation, recursively resolves outward paths, and can be filtered with `announces_from_internal = No` on other interfaces. |
+
+The following matrix covers automatic propagation of non-local announces. Rows identify the mode of
+the interface on which the route was learned; columns identify the outgoing interface mode.
+
+| Learned on / sent out | Full | Point-to-Point | Access Point | Roaming | Boundary | Gateway | Internal |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Full | Yes | Yes | No | Yes | Yes | Yes | Yes |
+| Point-to-Point | Yes | Yes | No | Yes | Yes | Yes | Yes |
+| Access Point | Yes | Yes | No | Yes | Yes | Yes | Yes |
+| Roaming | Yes | Yes | No | No | No | Yes | Yes |
+| Boundary | Yes | Yes | No | No | Yes | Yes | No |
+| Gateway | Yes | Yes | No | Yes | Yes | Yes | Yes |
+| Internal | Yes | Yes | No | Yes | Yes | Yes | Yes |
+
+Locally originated announces use every outgoing mode except Access Point. Setting
+`announces_from_internal = No` on an interface changes the Internal row to `No` for that outgoing
+interface without changing path-request resolution.
+
+Interface modes are Transport policy. They are not authentication, an ingress firewall, or a
+substitute for an IFAC network name and passphrase. In particular, Boundary interfaces still learn
+valid inbound announces; the mode controls where those announces can be propagated afterward.
+`recursive_prs = Yes` enables recursive unknown-path discovery on any mode.
+
+RNS 1.3.9 preserves an explicitly configured Gateway, Access Point, or Internal mode when interface
+discovery is enabled. Other discoverable radio interfaces are automatically configured as Access
+Point, while other discoverable interfaces are configured as Gateway.
+
+Any future CLI helper or generated example configuration that offers a mode choice should show the
+canonical name, accepted configuration value, and corresponding description together. Ordinary
+status output remains compact and displays only the canonical mode name.
 
 ## Existing interface backends
 

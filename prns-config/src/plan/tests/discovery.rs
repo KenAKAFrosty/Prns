@@ -134,6 +134,34 @@ fn a_discoverable_rnode_defaults_to_ap_and_six_hour_announcements() {
 }
 
 #[test]
+fn explicit_internal_mode_survives_discovery_on_backbone_and_rnode_interfaces() {
+    let plan = plan_of(
+        "[interfaces]\n\
+               [[Spine]]\n\
+                 type = BackboneInterface\n\
+                 enabled = Yes\n\
+                 listen_port = 4242\n\
+                 reachable_on = spine.example.com\n\
+                 discoverable = Yes\n\
+                 mode = internal\n\
+               [[Radio]]\n\
+                 type = RNodeInterface\n\
+                 enabled = Yes\n\
+                 port = /dev/ttyUSB0\n\
+                 frequency = 868000000\n\
+                 bandwidth = 125000\n\
+                 txpower = 7\n\
+                 spreadingfactor = 8\n\
+                 codingrate = 5\n\
+                 discoverable = Yes\n\
+                 mode = internal\n",
+    );
+
+    assert_eq!(named(&plan, "Spine").policy.mode, InterfaceMode::Internal);
+    assert_eq!(named(&plan, "Radio").policy.mode, InterfaceMode::Internal);
+}
+
+#[test]
 fn discoverable_tcp_and_kiss_plans_are_wire_complete() {
     let plan = plan_of(
         "[interfaces]\n\

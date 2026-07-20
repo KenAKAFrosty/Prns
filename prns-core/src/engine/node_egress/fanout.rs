@@ -128,16 +128,35 @@ mod tests {
     }
 
     #[test]
-    fn a_self_announce_is_withheld_from_an_access_point_interface() {
+    fn local_announces_use_every_mode_except_access_point() {
         let interfaces = [
-            routable_descriptor(iface(0x01)),
+            InterfaceDescriptor {
+                mode: InterfaceMode::Full,
+                ..routable_descriptor(iface(0xE1))
+            },
+            InterfaceDescriptor {
+                mode: InterfaceMode::PointToPoint,
+                ..routable_descriptor(iface(0xE2))
+            },
             InterfaceDescriptor {
                 mode: InterfaceMode::AccessPoint,
-                ..routable_descriptor(iface(0x02))
+                ..routable_descriptor(iface(0xE3))
             },
             InterfaceDescriptor {
                 mode: InterfaceMode::Roaming,
-                ..routable_descriptor(iface(0x03))
+                ..routable_descriptor(iface(0xE4))
+            },
+            InterfaceDescriptor {
+                mode: InterfaceMode::Boundary,
+                ..routable_descriptor(iface(0xE5))
+            },
+            InterfaceDescriptor {
+                mode: InterfaceMode::Gateway,
+                ..routable_descriptor(iface(0xE6))
+            },
+            InterfaceDescriptor {
+                mode: InterfaceMode::Internal,
+                ..routable_descriptor(iface(0xE7))
             },
         ];
 
@@ -163,8 +182,14 @@ mod tests {
 
         assert_eq!(
             targets,
-            std::vec![iface(0x01), iface(0x03)],
-            "a full and a roaming interface carry our own announce; the access point does not",
+            std::vec![
+                iface(0xE1),
+                iface(0xE2),
+                iface(0xE4),
+                iface(0xE5),
+                iface(0xE6),
+                iface(0xE7),
+            ],
         );
     }
 }
