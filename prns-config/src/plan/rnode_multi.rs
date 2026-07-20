@@ -371,4 +371,19 @@ mod tests {
             }
         );
     }
+
+    #[test]
+    fn discoverable_members_preserve_explicit_internal_mode() {
+        let plan = plan_of(
+            "[interfaces]\n[[Dual]]\ntype = RNodeMultiInterface\nenabled = Yes\nport = /dev/ttyACM0\n\
+             mode = internal\ndiscoverable = Yes\n\
+             [[[Radio]]]\ninterface_enabled = Yes\nvport = 0\nfrequency = 868000000\n\
+             bandwidth = 125000\ntxpower = 7\nspreadingfactor = 8\ncodingrate = 5\n",
+        );
+
+        assert_eq!(
+            named(&plan, "Dual[Radio]").policy.mode,
+            InterfaceMode::Internal,
+        );
+    }
 }

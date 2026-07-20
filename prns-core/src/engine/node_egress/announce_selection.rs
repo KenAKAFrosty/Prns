@@ -21,7 +21,7 @@ pub(in crate::engine) fn allows_announce_rebroadcast(
         )
 }
 
-/// RNS 1.3.5 `Transport.outbound` announce mode gating.
+/// RNS 1.3.9 `Transport.outbound` announce mode gating.
 fn mode_allows_announce_egress(
     egress: InterfaceMode,
     next_hop_mode: Option<InterfaceMode>,
@@ -92,6 +92,16 @@ mod tests {
     use super::*;
     use crate::engine::test_support::routable_descriptor;
 
+    const MODES: [InterfaceMode; 7] = [
+        InterfaceMode::Full,
+        InterfaceMode::PointToPoint,
+        InterfaceMode::AccessPoint,
+        InterfaceMode::Roaming,
+        InterfaceMode::Boundary,
+        InterfaceMode::Gateway,
+        InterfaceMode::Internal,
+    ];
+
     #[test]
     fn a_fleet_flood_to_a_lone_source_member_reaches_nobody() {
         let source = InterfaceId::new([InterfaceKind::BluetoothPeer as u8, 0x42, 0, 0, 0, 0, 0, 0]);
@@ -135,30 +145,67 @@ mod tests {
     }
 
     #[test]
-    fn internal_mode_blocks_boundary_announces_but_accepts_internal_announces() {
-        assert!(!mode_allows_announce_egress(
-            InterfaceMode::Internal,
-            Some(InterfaceMode::Boundary),
-            true,
-        ));
-        assert!(mode_allows_announce_egress(
-            InterfaceMode::Internal,
-            Some(InterfaceMode::Internal),
-            true,
-        ));
+    fn every_learned_on_and_egress_mode_pair_matches_rns_1_3_9() {
+        let expected_by_learned_on = [
+            (
+                InterfaceMode::Full,
+                [true, true, false, true, true, true, true],
+            ),
+            (
+                InterfaceMode::PointToPoint,
+                [true, true, false, true, true, true, true],
+            ),
+            (
+                InterfaceMode::AccessPoint,
+                [true, true, false, true, true, true, true],
+            ),
+            (
+                InterfaceMode::Roaming,
+                [true, true, false, false, false, true, true],
+            ),
+            (
+                InterfaceMode::Boundary,
+                [true, true, false, false, true, true, false],
+            ),
+            (
+                InterfaceMode::Gateway,
+                [true, true, false, true, true, true, true],
+            ),
+            (
+                InterfaceMode::Internal,
+                [true, true, false, true, true, true, true],
+            ),
+        ];
+
+        for (learned_on, expected_egress) in expected_by_learned_on {
+            for (egress, expected) in MODES.into_iter().zip(expected_egress) {
+                assert_eq!(
+                    mode_allows_announce_egress(egress, Some(learned_on), true),
+                    expected,
+                    "learned on {learned_on:?}, egress {egress:?}",
+                );
+            }
+        }
     }
 
     #[test]
-    fn announces_from_internal_can_close_the_internal_to_boundary_direction() {
-        assert!(!mode_allows_announce_egress(
-            InterfaceMode::Boundary,
-            Some(InterfaceMode::Internal),
-            false,
-        ));
-        assert!(mode_allows_announce_egress(
-            InterfaceMode::Boundary,
-            Some(InterfaceMode::Internal),
-            true,
-        ));
+    fn announces_from_internal_only_closes_internal_sourced_egress() {
+        for egress in MODES {
+            assert!(!mode_allows_announce_egress(
+                egress,
+                Some(InterfaceMode::Internal),
+                false,
+            ));
+            for learned_on in MODES {
+                if learned_on == InterfaceMode::Internal {
+                    continue;
+                }
+                assert_eq!(
+                    mode_allows_announce_egress(egress, Some(learned_on), false),
+                    mode_allows_announce_egress(egress, Some(learned_on), true),
+                    "learned on {learned_on:?}, egress {egress:?}",
+                );
+            }
+        }
     }
 }

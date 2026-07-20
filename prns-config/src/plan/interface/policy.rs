@@ -226,7 +226,7 @@ fn planned_mode(
     if matches!(discovery, InterfaceDiscoveryPlan::Disabled)
         || matches!(
             configured,
-            InterfaceMode::Gateway | InterfaceMode::AccessPoint
+            InterfaceMode::Gateway | InterfaceMode::AccessPoint | InterfaceMode::Internal
         )
     {
         return configured;
