@@ -296,7 +296,8 @@ pub fn transporting_interfaces() -> [InterfaceDescriptor; 1] {
 }
 
 pub fn filled_frame(fill: &mut dyn FnMut(&mut [u8]) -> Option<usize>) -> Option<std::vec::Vec<u8>> {
-    let mut scratch = std::vec![0u8; crate::routing::links::MAX_LINK_MTU + crate::interfaces::ifac::IFAC_MAX_SIZE];
+    let mut scratch =
+        std::vec![0u8; crate::routing::links::MAX_LINK_MTU + crate::interfaces::IFAC_MAX_SIZE];
     let len = fill(&mut scratch)?;
     scratch.truncate(len);
     Some(scratch)

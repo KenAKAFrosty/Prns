@@ -16,7 +16,7 @@ pub const KISS_BITRATE_BPS: BitrateBps = BitrateBps::guess(1_200);
 /// RNS `KISSInterface.HW_MTU`.
 pub const KISS_HW_MTU: usize = 564;
 /// The deframer's payload ceiling: the hardware MTU plus the access tag a frame may carry.
-pub const KISS_FRAME_LEN: usize = KISS_HW_MTU + crate::interfaces::ifac::IFAC_MAX_SIZE;
+pub const KISS_FRAME_LEN: usize = KISS_HW_MTU + crate::interfaces::IFAC_MAX_SIZE;
 pub const FRAMED_LEN: usize = kiss_framing::max_encoded_len(KISS_FRAME_LEN);
 pub type Decoder = KissDecoder<KISS_FRAME_LEN>;
 

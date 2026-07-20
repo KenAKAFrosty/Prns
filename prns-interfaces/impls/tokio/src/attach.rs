@@ -34,7 +34,7 @@ macro_rules! attaches_as_wire {
             fn attach_to_with_ifac(
                 self,
                 handle: &prns_runtime::runtime::PrnsNodeHandle,
-                ifac: prns_core::interfaces::ifac::IfacContext,
+                ifac: prns_core::interfaces::IfacContext,
                 network_name: Option<std::string::String>,
             ) -> prns_runtime::runtime::AttachedInterface {
                 handle.add_interface_with_ifac_name(self, ifac, network_name)
@@ -74,7 +74,7 @@ macro_rules! attaches_as_fleet {
             fn attach_to_with_ifac(
                 self,
                 handle: &prns_runtime::runtime::PrnsNodeHandle,
-                ifac: prns_core::interfaces::ifac::IfacContext,
+                ifac: prns_core::interfaces::IfacContext,
                 network_name: Option<std::string::String>,
             ) -> prns_runtime::runtime::AttachedSupervisor {
                 handle.supervise_with_ifac_name(self, ifac, network_name)

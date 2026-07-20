@@ -1,7 +1,7 @@
 #[cfg(feature = "runtime-metrics")]
 use crate::engine::AnnounceOrigin;
 use crate::engine::{EngineReaction, FanTarget, InstantMillis, Journaled};
-use crate::interfaces::ifac::InterfaceIfac;
+use crate::interfaces::InterfaceIfac;
 use crate::interfaces::{ConnectionView, InterfaceDescriptor, InterfaceId, InterfaceKind};
 #[cfg(feature = "runtime-metrics")]
 use crate::reactor::announce_pacer::PacerOffer;
@@ -528,7 +528,7 @@ pub(super) fn enqueue_announce_for_wire(
 }
 
 /// A paced announce is broadcast-sized by construction, so its mask scratch fits on the stack — the wire-sized [`WireScratch`] is reserved for the frame paths.
-const PACED_MASK_LEN: usize = crate::wire::BROADCAST_MTU + crate::interfaces::ifac::IFAC_MAX_SIZE;
+const PACED_MASK_LEN: usize = crate::wire::BROADCAST_MTU + crate::interfaces::IFAC_MAX_SIZE;
 
 pub(super) struct PacedAnnounce<'a> {
     pub(super) bytes: &'a [u8],

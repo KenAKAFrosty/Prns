@@ -174,7 +174,7 @@ Current seed coverage:
 
 - `wire`: arbitrary typed packet headers must write and parse back to the same
   value.
-- `interfaces::ifac`: arbitrary open-header payloads, across every accepted
+- `interfaces::packet::ifac`: arbitrary open-header payloads, across every accepted
   IFAC size and rejection boundary, must mask and unmask back to the original
   packet under the same access context.
 - `interfaces::rns_serial_framing`: arbitrary payloads must round-trip through
@@ -220,7 +220,7 @@ Current proof coverage:
 - `links::maintenance`: any RTT yields a keepalive inside the reference clamp
   `[5_000, 360_000]`, and staleness is exactly twice that keepalive with no
   overflow; the timeout grace never drops under the stale-grace floor.
-- `interfaces::kind`: every fleet supervisor/member kind pair is a two-way
+- `interfaces::identity::kind`: every fleet supervisor/member kind pair is a two-way
   inverse, including the Android/local `LocalServer` -> `LocalClient` lane, and
   every supervisor discriminant fits the u128 announce-fan mask shift.
 - `links::resources::control`: resource proof and cancel plaintexts round-trip

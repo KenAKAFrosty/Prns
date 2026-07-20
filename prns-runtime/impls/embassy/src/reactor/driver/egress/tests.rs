@@ -3,7 +3,7 @@ use heapless::Vec as HeaplessVec;
 
 use crate::engine::test_support::{bytes_from_hex, RNS_1_3_5_ANNOUNCE};
 use crate::engine::FanTarget;
-use crate::interfaces::ifac::InterfaceIfac;
+use crate::interfaces::InterfaceIfac;
 use crate::interfaces::{InterfaceId, InterfaceKind};
 use crate::reactor::grant::{FrameTarget, GrantConsumer};
 use crate::reactor::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
@@ -35,7 +35,7 @@ fn pooled_egress_retag_relabels_a_lane_and_ignores_a_missing_id() {
 
 #[test]
 fn a_fleet_lane_masks_direct_and_broadcast_frames_once() {
-    use crate::interfaces::ifac::{IfacContext, IfacSize};
+    use crate::interfaces::{IfacContext, IfacSize};
 
     let supervisor = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, b"private-fleet");
     let child = InterfaceId::from_channel_tag(InterfaceKind::WifiPeer, b"peer");

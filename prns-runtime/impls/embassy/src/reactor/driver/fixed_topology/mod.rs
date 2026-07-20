@@ -6,7 +6,7 @@ use heapless::Vec as HeaplessVec;
 use crate::engine::{
     ClassifiedInboundPacket, EngineState, IngestIo, IssuedCommand, Journaled, ProofRequest,
 };
-use crate::interfaces::ifac::InterfaceIfac;
+use crate::interfaces::InterfaceIfac;
 use crate::interfaces::{AttachedInterfaces, InboundPacket, InterfaceId};
 use crate::reactor::grant::{AnyGrantConsumer, FrameTarget};
 use crate::reactor::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;

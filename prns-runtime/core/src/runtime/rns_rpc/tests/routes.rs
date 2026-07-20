@@ -108,7 +108,7 @@ async fn interface_stats_renders_each_held_interface_with_its_live_counters() {
                 },
                 ifac: Some(InterfaceIfacSnapshot {
                     signature: [0x5a; 64],
-                    size: prns_core::interfaces::ifac::IfacSize::WIDE,
+                    size: prns_core::interfaces::IfacSize::WIDE,
                     network_name: Some("private-net".into()),
                 }),
             },

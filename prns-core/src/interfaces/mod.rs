@@ -1,17 +1,6 @@
-pub mod capabilities;
-pub mod connection_state;
-pub mod id;
-pub mod ifac;
-pub mod kind;
-pub mod mac;
-pub mod mode;
-pub mod wire_limits;
-
-mod attached;
-mod bitrate;
 mod descriptor;
 mod framing;
-mod origin;
+mod identity;
 mod packet;
 mod policy;
 mod status;
@@ -40,37 +29,29 @@ pub mod wifi_auto;
 pub mod wifi_aware;
 pub mod wifi_direct;
 
-pub use capabilities::{
-    Capabilities, EgressCapability, IngressCapability, InterfaceCapabilities,
-    InterfaceCapabilitiesError, TransportCapability,
-};
-pub use connection_state::ConnectionState;
-pub use id::{InterfaceId, INTERFACE_ID_LEN};
-pub use kind::InterfaceKind;
-pub use mac::MacAddress;
-pub use mode::InterfaceMode;
-pub use origin::InterfaceOriginKind;
-
 #[cfg(feature = "alloc")]
-pub use attached::IndexedAttachedInterfaces;
-pub use attached::{AttachedInterfaces, Egress};
-pub use bitrate::BitrateBps;
+pub use descriptor::IndexedAttachedInterfaces;
 pub use descriptor::{
-    hardware_mtu_for_bitrate, AirtimeDutyCycle, AnnounceBandwidthCap, AnnounceRateLimit,
-    FrequencyMilliHertz, IngressControlPolicy, InterfaceCommonPolicy, InterfaceDescriptor,
-    InterfaceForwardingPolicy, PathRequestEgressControl,
+    hardware_mtu_for_bitrate, AttachedInterfaces, BitrateBps, Egress, InterfaceDescriptor,
 };
+pub use identity::{InterfaceId, InterfaceKind, InterfaceOriginKind, MacAddress, INTERFACE_ID_LEN};
 pub use packet::{
-    InboundPacket, OutboundPacket, PacketPhyStats, RssiDbm, SignalQualityTenthsPercent,
-    SnrQuarterDb,
+    frame_cap_for, IfacContext, IfacSize, IfacSizeError, InboundPacket, InterfaceIfac,
+    OutboundPacket, PacketPhyStats, RssiDbm, SignalQualityTenthsPercent, SnrQuarterDb,
+    BROADCAST_WIRE_FRAME_LEN, DEFAULT_IFAC_SIZE, EMBEDDED_MAX_LINK_MTU,
+    EMBEDDED_MAX_WIRE_FRAME_LEN, IFAC_MAX_SIZE, MAX_WIRE_FRAME_LEN,
 };
 pub use policy::{
-    ConfiguredInterfacePolicy, EffectiveInterfacePolicy, InterfaceDefaults, MtuBytes, MtuPolicy,
-    LOCAL_INTERFACE_BITRATE_ESTIMATE, TRAVERSED_NETWORK_BITRATE_ESTIMATE,
+    AirtimeDutyCycle, AnnounceBandwidthCap, AnnounceRateLimit, Capabilities,
+    ConfiguredInterfacePolicy, EffectiveInterfacePolicy, EgressCapability, FrequencyMilliHertz,
+    IngressCapability, IngressControlPolicy, InterfaceCapabilities, InterfaceCapabilitiesError,
+    InterfaceCommonPolicy, InterfaceDefaults, InterfaceForwardingPolicy, InterfaceMode, MtuBytes,
+    MtuPolicy, PathRequestEgressControl, TransportCapability, LOCAL_INTERFACE_BITRATE_ESTIMATE,
+    TRAVERSED_NETWORK_BITRATE_ESTIMATE,
 };
 pub use status::{
-    AirtimeUtilization, InterfaceSnapshot, InterfaceStatus, InterfaceVitals, Membership,
-    TransferRates,
+    AirtimeUtilization, ConnectionState, InterfaceSnapshot, InterfaceStatus, InterfaceVitals,
+    Membership, TransferRates,
 };
 #[cfg(feature = "tokio-host")]
 pub use status::{ConnectionView, ReportsStatus, StatusView};

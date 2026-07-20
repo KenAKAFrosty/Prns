@@ -1,7 +1,7 @@
 use super::*;
 use crate::engine::RouteSnapshot;
 use crate::identity::IdentityHash;
-use crate::interfaces::ifac::IfacSize;
+use crate::interfaces::IfacSize;
 use crate::interfaces::{
     ConnectionState, InterfaceId, InterfaceKind, InterfaceSnapshot, Membership, TransferRates,
 };

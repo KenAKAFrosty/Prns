@@ -1,5 +1,5 @@
 use prns_runtime::interfaces::bluetooth_auto::core::{self, BleIdentity};
-use prns_runtime::interfaces::ifac::IfacContext;
+use prns_runtime::interfaces::IfacContext;
 use prns_runtime::interfaces::{
     ConfiguredInterfacePolicy, EffectiveInterfacePolicy, InterfaceId, InterfaceKind,
     InterfaceStatus, ReportsStatus,

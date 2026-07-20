@@ -1,10 +1,10 @@
 use crate::configobj::{Section, SourceLocations, Value};
 use crate::diagnostic::{ConfigDiagnostic, ConfigDiagnosticCode, ConfigFix, ConfigFixSafety};
-use prns_core::interfaces::ifac::IFAC_MAX_SIZE;
 use prns_core::interfaces::rnode::core::{
     BANDWIDTH_HZ_MAX, BANDWIDTH_HZ_MIN, CODING_RATE_MAX, CODING_RATE_MIN, FREQUENCY_HZ_MAX,
     FREQUENCY_HZ_MIN, SPREADING_FACTOR_MAX, SPREADING_FACTOR_MIN, TXPOWER_DBM_MAX, TXPOWER_DBM_MIN,
 };
+use prns_core::interfaces::IFAC_MAX_SIZE;
 
 use super::diagnostics::{ErrorCode, ErrorDiagnostic, WarningCode, WarningDiagnostic};
 use super::i2p::validate_peers;

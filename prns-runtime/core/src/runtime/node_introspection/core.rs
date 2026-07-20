@@ -1,4 +1,4 @@
-use prns_core::interfaces::ifac::IfacSize;
+use prns_core::interfaces::IfacSize;
 use prns_core::interfaces::{
     ConnectionState, InterfaceId, InterfaceOriginKind, InterfaceSnapshot, Membership, TransferRates,
 };

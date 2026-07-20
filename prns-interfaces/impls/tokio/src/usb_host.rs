@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use prns_runtime::interfaces::ifac::IfacContext;
+use prns_runtime::interfaces::IfacContext;
 use prns_runtime::interfaces::{ConfiguredInterfacePolicy, EffectiveInterfacePolicy, InterfaceId};
 use prns_runtime::runtime::{Attachable, AttachedInterface, PrnsNodeHandle};
 use tokio::sync::Notify;

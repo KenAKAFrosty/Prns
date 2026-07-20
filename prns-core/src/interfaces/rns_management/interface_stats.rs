@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 use core::time::Duration;
 
 use crate::identity::IdentityHash;
-use crate::interfaces::ifac::IfacSize;
+use crate::interfaces::IfacSize;
 use crate::interfaces::{ConnectionState, InterfaceId, InterfaceSnapshot, TransferRates};
 
 use super::message_pack::MessagePackEncoder;

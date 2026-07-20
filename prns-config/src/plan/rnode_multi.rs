@@ -208,7 +208,7 @@ fn radio_config_error(error: RadioConfigError) -> PlanErrorKind {
 
 #[cfg(test)]
 mod tests {
-    use prns_core::interfaces::ifac::IfacSize;
+    use prns_core::interfaces::IfacSize;
     use prns_core::interfaces::{
         AnnounceBandwidthCap, AnnounceRateLimit, EgressCapability, InterfaceMode,
         TransportCapability,

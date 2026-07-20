@@ -2,7 +2,7 @@ use crate::interfaces::{
     FrameSink, InterfaceDescriptor, InterfaceKind, InterfaceOriginKind, PacketPhyStats,
 };
 
-pub use prns_core::interfaces::wire_limits::{
+pub use prns_core::interfaces::{
     frame_cap_for, BROADCAST_WIRE_FRAME_LEN, EMBEDDED_MAX_LINK_MTU, EMBEDDED_MAX_WIRE_FRAME_LEN,
     MAX_WIRE_FRAME_LEN,
 };

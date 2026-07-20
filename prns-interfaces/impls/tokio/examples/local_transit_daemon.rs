@@ -12,8 +12,8 @@
 use std::string::String;
 
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::interfaces::ifac::{IfacContext, IfacSize};
 use personal_rns::interfaces::BitrateBps;
+use personal_rns::interfaces::{IfacContext, IfacSize};
 use personal_rns::routes;
 use personal_rns::runtime::{Diagnostic, Manual, PrnsEvent, PrnsNode, PrnsNodeRecipe};
 use personal_rns::storage::GrowableHeap;

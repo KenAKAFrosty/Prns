@@ -8,7 +8,7 @@ use crate::interfaces::{
 pub const WEAVE_SERIAL_BAUD: u32 = 3_000_000;
 pub const WEAVE_BITRATE_ESTIMATE: BitrateBps = BitrateBps::guess(250_000);
 pub const WEAVE_HW_MTU: usize = 1_024;
-pub const WEAVE_MAX_WIRE_PACKET: usize = WEAVE_HW_MTU + crate::interfaces::ifac::IFAC_MAX_SIZE;
+pub const WEAVE_MAX_WIRE_PACKET: usize = WEAVE_HW_MTU + crate::interfaces::IFAC_MAX_SIZE;
 pub const PEERING_TIMEOUT_MILLIS: u64 = 20_000;
 pub const HANDSHAKE_TIMEOUT_MILLIS: u64 = 2_000;
 pub const MULTIPATH_DEDUPLICATION_MILLIS: u64 = 750;

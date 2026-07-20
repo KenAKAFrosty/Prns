@@ -2,13 +2,13 @@
 //! The wire figures are per-instance: only the host knows its pipe, so the constructors demand a bitrate and the descriptor maps it through the reference's `Interface.optimise_mtu` tier table ([`crate::interfaces::hardware_mtu_for_bitrate`]). The buffers are sized to the engine's own ceiling instead, a capacity, not a claim, so every frame any negotiable MTU can produce already fits.
 
 use crate::interfaces::rns_serial_framing;
-use crate::interfaces::wire_limits::{EMBEDDED_MAX_WIRE_FRAME_LEN, MAX_WIRE_FRAME_LEN};
 use crate::interfaces::{
     AnnounceBandwidthCap, BitrateBps, ConfiguredInterfacePolicy, EffectiveInterfacePolicy,
     EgressCapability, IngressCapability, InterfaceCapabilities, InterfaceDefaults,
     InterfaceDescriptor, InterfaceId, InterfaceMode, MtuPolicy, TransportCapability,
     TRAVERSED_NETWORK_BITRATE_ESTIMATE,
 };
+use crate::interfaces::{EMBEDDED_MAX_WIRE_FRAME_LEN, MAX_WIRE_FRAME_LEN};
 use crate::routing::links::MAX_LINK_MTU;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

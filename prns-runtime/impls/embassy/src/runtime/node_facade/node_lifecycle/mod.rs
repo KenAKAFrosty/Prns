@@ -6,7 +6,7 @@ use embassy_sync::channel::{Channel, Receiver};
 use heapless::Vec as HeaplessVec;
 
 use crate::engine::{IssuedCommand, Journaled, MAX_SEND_REQUEST_DATA_LEN};
-use crate::interfaces::ifac::{IfacContext, InterfaceIfac};
+use crate::interfaces::{IfacContext, InterfaceIfac};
 use crate::interfaces::{InterfaceDescriptor, InterfaceId};
 use crate::reactor::driver::{
     run_pooled, EmbassyGrantConsumer, InterfaceLifecycle, PooledEgress, PooledWiring,

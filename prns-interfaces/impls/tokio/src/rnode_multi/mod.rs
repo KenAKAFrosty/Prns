@@ -5,11 +5,11 @@ use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use prns_core::interfaces::ifac::IfacContext;
 use prns_core::interfaces::kiss::transmission_control::{
     ReadyCommandFlowControl, StationIdentification,
 };
 use prns_core::interfaces::rnode::{core, multi};
+use prns_core::interfaces::IfacContext;
 use prns_core::interfaces::{EffectiveInterfacePolicy, InterfaceId, InterfaceKind};
 use prns_runtime::runtime::PrnsNodeHandle;
 

@@ -1,4 +1,4 @@
-use crate::interfaces::ifac::IFAC_MAX_SIZE;
+use crate::interfaces::IFAC_MAX_SIZE;
 use crate::interfaces::{
     AnnounceBandwidthCap, BitrateBps, ConfiguredInterfacePolicy, EffectiveInterfacePolicy,
     EgressCapability, IngressCapability, InterfaceCapabilities, InterfaceDefaults,

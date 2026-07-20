@@ -19,8 +19,7 @@ pub const AX25_HW_MTU: usize = 564;
 pub const AX25_HEADER_SIZE: usize = 16;
 /// The deframer's payload ceiling: the AX.25 header plus the Reticulum payload (and access tag) a
 /// single KISS frame carries on this link.
-pub const AX25_FRAME_LEN: usize =
-    AX25_HEADER_SIZE + AX25_HW_MTU + crate::interfaces::ifac::IFAC_MAX_SIZE;
+pub const AX25_FRAME_LEN: usize = AX25_HEADER_SIZE + AX25_HW_MTU + crate::interfaces::IFAC_MAX_SIZE;
 pub const FRAMED_LEN: usize = kiss_framing::max_encoded_len(AX25_FRAME_LEN);
 pub type Decoder = KissDecoder<AX25_FRAME_LEN>;
 

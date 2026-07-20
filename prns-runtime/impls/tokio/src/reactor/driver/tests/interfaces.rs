@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn ifac_members_hear_each_other_and_strangers_stay_outside() {
-    use crate::interfaces::ifac::IfacContext;
+    use crate::interfaces::IfacContext;
     use crate::wire::DestinationHash;
 
     let source = InterfaceId::new([0xA1; 8]);
@@ -15,7 +15,7 @@ async fn ifac_members_hear_each_other_and_strangers_stay_outside() {
         IfacContext::derive(
             Some("testnet"),
             Some("s3cret"),
-            crate::interfaces::ifac::IfacSize::NARROW,
+            crate::interfaces::IfacSize::NARROW,
         )
         .unwrap()
     };
@@ -119,7 +119,7 @@ async fn ifac_members_hear_each_other_and_strangers_stay_outside() {
     let stranger = IfacContext::derive(
         Some("testnet"),
         Some("wrong"),
-        crate::interfaces::ifac::IfacSize::NARROW,
+        crate::interfaces::IfacSize::NARROW,
     )
     .unwrap();
     let mut stranger_wire = std::vec![0u8; MAX_WIRE_FRAME_LEN];
@@ -142,7 +142,7 @@ async fn ifac_members_hear_each_other_and_strangers_stay_outside() {
 
 #[tokio::test]
 async fn dynamic_ifac_state_arrives_and_leaves_with_its_interface() {
-    use crate::interfaces::ifac::{IfacContext, IfacSize};
+    use crate::interfaces::{IfacContext, IfacSize};
     use crate::wire::DestinationHash;
 
     let source = InterfaceId::new([0xD4; 8]);

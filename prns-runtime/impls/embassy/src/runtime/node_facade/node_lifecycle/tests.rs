@@ -44,7 +44,7 @@ fn leak<T>(value: T) -> &'static T {
 
 #[test]
 fn a_recipe_node_hears_an_ifac_announce_a_supervisor_stands_a_peer_up_for() {
-    use crate::interfaces::ifac::{IfacContext, IfacSize};
+    use crate::interfaces::{IfacContext, IfacSize};
 
     let notify: &'static Channel<Mtx, InterfaceId, 4> = leak(Channel::new());
     let commands: &'static Channel<Mtx, IssuedCommand, 4> = leak(Channel::new());
