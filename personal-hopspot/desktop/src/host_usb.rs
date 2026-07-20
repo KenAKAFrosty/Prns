@@ -17,7 +17,7 @@ use personal_rns::interfaces::usb_auto::core::{
     ANDROID_ACCESSORY_SERIAL, ANDROID_ACCESSORY_URI, ANDROID_ACCESSORY_VERSION, WEBUSB_PRODUCT_ID,
     WEBUSB_VENDOR_ID,
 };
-use personal_rns::tcp::tokio_socket;
+use personal_rns::tcp::tune;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
 
@@ -321,7 +321,7 @@ async fn connect_usbmux_tcp(target: &str) -> io::Result<TcpStream> {
     loop {
         match TcpStream::connect(target).await {
             Ok(stream) => {
-                tokio_socket::tune(&stream);
+                tune(&stream);
                 return Ok(stream);
             }
             Err(error) if tokio::time::Instant::now() < deadline => {

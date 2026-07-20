@@ -100,7 +100,7 @@ use personal_rns::runtime::{
     PrnsNode, PrnsNodeHandle, PrnsNodeRecipe, ReactorPlumbing, RequestHandlerRegistration,
 };
 use personal_rns::storage::StorageLayout;
-use personal_rns::tcp::client::TcpClient;
+use personal_rns::tcp::TcpClient;
 use personal_rns::usb::UsbAutoDevice;
 use personal_rns::wifi::{AutoWifi, AutoWifiShared, AutoWifiStatus};
 

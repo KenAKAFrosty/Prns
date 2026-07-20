@@ -5,7 +5,7 @@
 //! one peer.
 //!
 //! Its decoder and frame buffers size to the board's embedded wire ceiling
-//! ([`core::EMBEDDED_FRAME_CAP`]), never the host's absolute one — the host-vs-embedded split the
+//! ([`tcp::EMBEDDED_FRAME_CAP`]), never the host's absolute one — the host-vs-embedded split the
 //! reactor lanes draw. The reactor clamps the declared MTU to those lanes regardless, so a link can
 //! never negotiate past the buffers a frame must land in.
 
@@ -18,9 +18,9 @@ use embedded_io_async_07::Write;
 
 use prns_core::engine::InstantMillis;
 use prns_core::interfaces::rns_serial_framing::{self, RnsSerialDecoder};
-use prns_core::interfaces::tcp::core;
-use prns_core::interfaces::BitrateBps;
-use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
+use prns_core::interfaces::{
+    tcp, BitrateBps, ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind,
+};
 use prns_runtime::reactor::airtime::{frame_airtime_us, AirtimeLedger};
 use prns_runtime::reactor::driver::EmbassyInterfaceStatus;
 use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam, EMBEDDED_MAX_LINK_MTU};
@@ -40,7 +40,7 @@ pub const KEEP_ALIVE: Duration = Duration::from_secs(5);
 /// `tag` is the stable channel identity — the configured target's bytes — the interface id derives
 /// from, so the same node reconnects under the same routing key. `bitrate` is the host's claim
 /// about its pipe; it sets the declared MTU through the reference's tier table, so claim honestly
-/// ([`core::TCP_BITRATE_ESTIMATE`] when genuinely unknown).
+/// ([`tcp::TCP_BITRATE_ESTIMATE`] when genuinely unknown).
 pub struct TcpClient<'a> {
     id: InterfaceId,
     stack: Stack<'a>,
@@ -102,7 +102,7 @@ impl Interface for TcpClient<'_> {
     const KIND: InterfaceKind = InterfaceKind::TcpClient;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::descriptor(self.id, core::policy_for_bitrate(self.bitrate))
+        tcp::descriptor(self.id, tcp::policy_for_bitrate(self.bitrate))
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -121,9 +121,9 @@ impl Interface for TcpClient<'_> {
             tx_buffer,
             status,
         } = self;
-        let mut decoder = RnsSerialDecoder::<{ core::EMBEDDED_FRAME_CAP }>::new();
-        let mut read_buf = [0u8; core::EMBEDDED_READ_BUF_LEN];
-        let mut frame_buf = [0u8; core::EMBEDDED_FRAMED_LEN];
+        let mut decoder = RnsSerialDecoder::<{ tcp::EMBEDDED_FRAME_CAP }>::new();
+        let mut read_buf = [0u8; tcp::EMBEDDED_READ_BUF_LEN];
+        let mut frame_buf = [0u8; tcp::EMBEDDED_FRAMED_LEN];
         let mut airtime = AirtimeLedger::new();
         let mut throughput = ThroughputLedger::new();
         let started = Instant::now();
@@ -190,7 +190,7 @@ async fn serve<Seam: InterfaceSeam>(
     socket: &mut TcpSocket<'_>,
     seam: &mut Seam,
     status: &EmbassyInterfaceStatus,
-    decoder: &mut RnsSerialDecoder<{ core::EMBEDDED_FRAME_CAP }>,
+    decoder: &mut RnsSerialDecoder<{ tcp::EMBEDDED_FRAME_CAP }>,
     read_buf: &mut [u8],
     frame_buf: &mut [u8],
     airtime: &mut AirtimeLedger,

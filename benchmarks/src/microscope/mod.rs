@@ -8,7 +8,7 @@ use personal_rns::engine::{
     LinkEstablished, RatchetPolicy, SendSinglePacket, SendSinglePacketPayload, Settlement,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::interfaces::tcp::core as tcp_core;
+use personal_rns::interfaces::tcp;
 use personal_rns::interfaces::AttachedInterfaces;
 use personal_rns::interfaces::{InboundPacket, InterfaceDescriptor, InterfaceId};
 use personal_rns::reactor::interface_seam::MAX_WIRE_FRAME_LEN;

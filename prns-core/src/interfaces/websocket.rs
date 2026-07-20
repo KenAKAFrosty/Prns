@@ -1,8 +1,7 @@
-use crate::interfaces::IFAC_MAX_SIZE;
 use crate::interfaces::{
     AnnounceBandwidthCap, BitrateBps, ConfiguredInterfacePolicy, EffectiveInterfacePolicy,
     EgressCapability, IngressCapability, InterfaceCapabilities, InterfaceDefaults,
-    InterfaceDescriptor, InterfaceId, InterfaceMode, MtuPolicy, TransportCapability,
+    InterfaceDescriptor, InterfaceId, InterfaceMode, MtuPolicy, TransportCapability, IFAC_MAX_SIZE,
     TRAVERSED_NETWORK_BITRATE_ESTIMATE,
 };
 use crate::routing::links::MAX_LINK_MTU;

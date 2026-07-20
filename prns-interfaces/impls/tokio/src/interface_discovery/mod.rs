@@ -25,9 +25,9 @@ use prns_runtime::reactor::Host;
 use prns_runtime::runtime::{AttachedInterface, InterfaceAttachmentMetadata, PrnsNodeHandle};
 use tokio::sync::mpsc::{self, error::TrySendError, Receiver, Sender};
 
-use crate::backbone::client::BackboneClientInterface;
+use crate::backbone::BackboneClientInterface;
 use crate::reconnect::ReconnectPolicy;
-use crate::tcp::client::TcpClientInterface;
+use crate::tcp::TcpClientInterface;
 
 mod publication;
 

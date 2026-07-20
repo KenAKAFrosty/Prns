@@ -11,9 +11,7 @@ use tokio::sync::mpsc::{self, Receiver, Sender, UnboundedReceiver};
 use tokio::sync::watch;
 
 use crate::reconnect::ReconnectPolicy;
-use crate::tcp::client::TcpClientInterface;
-use crate::tcp::server::TcpServerConnection;
-use crate::tcp::tokio_socket::tune;
+use crate::tcp::{tune, TcpClientInterface, TcpServerConnection};
 use prns_core::engine::InstantMillis;
 use prns_core::interfaces::wifi_auto::core;
 use prns_core::interfaces::BitrateBps;

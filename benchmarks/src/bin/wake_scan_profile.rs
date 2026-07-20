@@ -7,8 +7,7 @@ use personal_rns::engine::{
     SendSinglePacket, SendSinglePacketPayload, WakeSchedule,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::interfaces::tcp::core as tcp_core;
-use personal_rns::interfaces::{InboundPacket, InterfaceDescriptor, InterfaceId};
+use personal_rns::interfaces::{tcp, InboundPacket, InterfaceDescriptor, InterfaceId};
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::DestinationHash;
@@ -31,9 +30,9 @@ impl Splitmix {
 }
 
 fn interfaces() -> Vec<InterfaceDescriptor> {
-    vec![tcp_core::descriptor(
+    vec![tcp::descriptor(
         WIRE,
-        tcp_core::policy_for_bitrate(tcp_core::TCP_BITRATE_ESTIMATE),
+        tcp::policy_for_bitrate(tcp::TCP_BITRATE_ESTIMATE),
     )]
 }
 

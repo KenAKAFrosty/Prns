@@ -1,7 +1,7 @@
 use core::convert::TryFrom;
 
 use personal_rns::identity::IDENTITY_SECRET_KEY_LEN;
-use personal_rns::interfaces::websocket::core as websocket_core;
+use personal_rns::interfaces::websocket;
 use personal_rns::interfaces::{BitrateBps, INTERFACE_ID_LEN};
 use personal_rns::wire::TRUNCATED_HASH_BYTE_LEN;
 use wasm_bindgen::prelude::*;
@@ -23,17 +23,17 @@ pub fn destination_hash_length() -> usize {
 
 #[wasm_bindgen(js_name = websocketBitrateBps)]
 pub fn websocket_bitrate_bps() -> u32 {
-    bitrate_bps_u32(websocket_core::WEBSOCKET_BITRATE_ESTIMATE)
+    bitrate_bps_u32(websocket::WEBSOCKET_BITRATE_ESTIMATE)
 }
 
 #[wasm_bindgen(js_name = websocketHardwareMtu)]
 pub fn websocket_hardware_mtu() -> usize {
-    websocket_core::WEBSOCKET_HW_MTU_CAP
+    websocket::WEBSOCKET_HW_MTU_CAP
 }
 
 #[wasm_bindgen(js_name = websocketFrameCap)]
 pub fn websocket_frame_cap() -> usize {
-    websocket_core::FRAME_CAP
+    websocket::FRAME_CAP
 }
 
 pub(crate) fn bitrate_bps_u32(bitrate: BitrateBps) -> u32 {

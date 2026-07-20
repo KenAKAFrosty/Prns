@@ -1,5 +1,5 @@
 use prns_core::interface_discovery::{StampCost, DEFAULT_STAMP_COST};
-use prns_core::interfaces::tcp::core::TcpWireFraming;
+use prns_core::interfaces::tcp::TcpWireFraming;
 use prns_core::units::DurationMillis;
 
 use super::medium::PlannedMedium;

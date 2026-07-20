@@ -4,7 +4,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 
 use crate::framed_stream;
-use prns_core::interfaces::tcp::core as tcp_core;
+use prns_core::interfaces::tcp;
 use prns_core::interfaces::wifi_direct::core;
 use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
@@ -74,13 +74,13 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for WifiDirectMember<S> {
         let started = tokio::time::Instant::now();
         let mut buffers = framed_stream::FramedBuffers::<
             framed_stream::HdlcFraming,
-            { tcp_core::READ_BUF_LEN },
-            { tcp_core::FRAMED_LEN },
+            { tcp::READ_BUF_LEN },
+            { tcp::FRAMED_LEN },
         >::new();
         framed_stream::serve::<
             framed_stream::HdlcFraming,
-            { tcp_core::READ_BUF_LEN },
-            { tcp_core::FRAMED_LEN },
+            { tcp::READ_BUF_LEN },
+            { tcp::FRAMED_LEN },
             _,
             _,
         >(
@@ -186,7 +186,7 @@ mod tests {
         let (member, mut far) = duplex_member(b"peer");
 
         let (in_tx, mut in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
-        let (mut out_tx, out_rx) = tokio_grant_lane(tcp_core::FRAME_CAP, 2);
+        let (mut out_tx, out_rx) = tokio_grant_lane(tcp::FRAME_CAP, 2);
         let seam = MockSeam {
             inbound: in_tx,
             sink: std::vec::Vec::new(),
@@ -212,7 +212,7 @@ mod tests {
             .expect("the outbound lane has a free slot")
             .fill(&out_payload);
         out_tx.commit();
-        let mut decoder = std::boxed::Box::new(RnsSerialDecoder::<{ tcp_core::FRAME_CAP }>::new());
+        let mut decoder = std::boxed::Box::new(RnsSerialDecoder::<{ tcp::FRAME_CAP }>::new());
         let mut buf = [0u8; 256];
         'outer: loop {
             let n = far.read(&mut buf).await.expect("reads from the pipe");
@@ -230,7 +230,7 @@ mod tests {
 
     fn idle_seam() -> MockSeam {
         let (discard, _discard_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
-        let (_idle_producer, idle_consumer) = tokio_grant_lane(tcp_core::FRAME_CAP, 2);
+        let (_idle_producer, idle_consumer) = tokio_grant_lane(tcp::FRAME_CAP, 2);
         MockSeam {
             inbound: discard,
             sink: std::vec::Vec::new(),

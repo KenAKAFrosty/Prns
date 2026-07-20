@@ -9,7 +9,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 
-use crate::tcp::tokio_socket::{tune, CONNECT_TIMEOUT};
+use crate::tcp::{tune, CONNECT_TIMEOUT};
 use crate::wifi_aware::member::WifiAwareMember;
 use prns_core::interfaces::wifi_aware::core::{
     AwareDataPlan, AwareEndpoint, NdpRole, RendezvousToken, FAMILY_TAG, MAX_NDP_PEERS,

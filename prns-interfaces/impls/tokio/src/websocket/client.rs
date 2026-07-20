@@ -4,8 +4,8 @@ use std::time::Duration;
 use tokio_tungstenite::connect_async_with_config;
 
 use crate::reconnect::ReconnectPolicy;
-use crate::websocket::tokio_wire;
-use prns_core::interfaces::websocket::core;
+use crate::websocket::framing;
+use prns_core::interfaces::websocket;
 use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{
     ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind,
@@ -35,7 +35,7 @@ impl WebSocketClientInterface {
         Self::with_id_and_policy(
             id,
             target,
-            core::policy_for_bitrate(bitrate),
+            websocket::policy_for_bitrate(bitrate),
             reconnect_policy,
         )
     }
@@ -62,7 +62,7 @@ impl WebSocketClientInterface {
         Self::with_id_and_policy(
             id,
             target,
-            core::policy_for_bitrate(bitrate),
+            websocket::policy_for_bitrate(bitrate),
             reconnect_policy,
         )
     }
@@ -95,11 +95,11 @@ impl WebSocketClientInterface {
 }
 
 impl Interface for WebSocketClientInterface {
-    const HW_MTU: usize = core::WEBSOCKET_HW_MTU_CAP;
+    const HW_MTU: usize = websocket::WEBSOCKET_HW_MTU_CAP;
     const KIND: InterfaceKind = InterfaceKind::WebSocketClient;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::descriptor(self.id, self.policy)
+        websocket::descriptor(self.id, self.policy)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -115,7 +115,7 @@ impl Interface for WebSocketClientInterface {
         loop {
             let connect = tokio::time::timeout(
                 WEBSOCKET_HANDSHAKE_TIMEOUT,
-                connect_async_with_config(self.target.as_str(), Some(tokio_wire::config()), false),
+                connect_async_with_config(self.target.as_str(), Some(framing::config()), false),
             );
             #[cfg(feature = "tracing")]
             let connected = tracing::Instrument::instrument(
@@ -140,7 +140,7 @@ impl Interface for WebSocketClientInterface {
                     );
                     self.status.set_connection(ConnectionState::Connected);
                     seam.request_tunnel_synthesis().await;
-                    tokio_wire::serve(
+                    framing::serve(
                         socket,
                         &mut seam,
                         &self.status,
@@ -245,7 +245,7 @@ mod tests {
         let addr = listener.local_addr().expect("the bound address is known");
 
         let (in_tx, mut in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
-        let (mut out_tx, out_rx) = tokio_grant_lane(core::FRAME_CAP, 2);
+        let (mut out_tx, out_rx) = tokio_grant_lane(websocket::FRAME_CAP, 2);
         let seam = MockSeam {
             inbound: in_tx,
             sink: std::vec::Vec::new(),
@@ -254,7 +254,7 @@ mod tests {
 
         let interface = WebSocketClientInterface::new(
             std::format!("ws://{addr}/prns"),
-            core::WEBSOCKET_BITRATE_ESTIMATE,
+            websocket::WEBSOCKET_BITRATE_ESTIMATE,
             ReconnectPolicy::STANDARD,
         );
         tokio::spawn(interface.run(seam));

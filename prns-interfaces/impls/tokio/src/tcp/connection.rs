@@ -3,6 +3,7 @@
 //! hits the wire when it is written, the keepalive probe schedule that declares a silent peer dead,
 //! and the connect wait (`TCPClientInterface.INITIAL_CONNECT_TIMEOUT`).
 
+#[cfg(feature = "tcp")]
 use crate::reconnect::ReconnectPolicy;
 #[cfg(feature = "tcp")]
 use std::io;
@@ -20,17 +21,17 @@ pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// misses 12 probes — or leaves writes unacknowledged for 24s — is declared dead, so the
 /// stream drops and the reconnect loop takes over.
 #[cfg(feature = "tcp")]
-pub const TCP_PROBE_AFTER: Duration = Duration::from_secs(5);
+const TCP_PROBE_AFTER: Duration = Duration::from_secs(5);
 #[cfg(feature = "tcp")]
-pub const TCP_PROBE_INTERVAL: Duration = Duration::from_secs(2);
+const TCP_PROBE_INTERVAL: Duration = Duration::from_secs(2);
 #[cfg(feature = "tcp")]
-pub const TCP_PROBES: u32 = 12;
+const TCP_PROBES: u32 = 12;
 #[cfg(feature = "tcp")]
-pub const TCP_USER_TIMEOUT: Duration = Duration::from_secs(24);
-pub const I2P_PROBE_AFTER: Duration = Duration::from_secs(10);
-pub const I2P_PROBE_INTERVAL: Duration = Duration::from_secs(9);
-pub const I2P_PROBES: u32 = 5;
-pub const I2P_USER_TIMEOUT: Duration = Duration::from_secs(45);
+const TCP_USER_TIMEOUT: Duration = Duration::from_secs(24);
+const I2P_PROBE_AFTER: Duration = Duration::from_secs(10);
+const I2P_PROBE_INTERVAL: Duration = Duration::from_secs(9);
+const I2P_PROBES: u32 = 5;
+const I2P_USER_TIMEOUT: Duration = Duration::from_secs(45);
 
 #[cfg(feature = "tcp")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,7 +87,10 @@ impl TcpConnectionSettings {
 }
 
 #[cfg(feature = "tcp")]
-pub async fn connect(target: &str, settings: TcpConnectionSettings) -> io::Result<TcpStream> {
+pub(crate) async fn connect(
+    target: &str,
+    settings: TcpConnectionSettings,
+) -> io::Result<TcpStream> {
     let address = resolve(target, settings.address_family).await?;
     tokio::time::timeout(settings.connect_timeout, TcpStream::connect(address))
         .await
@@ -124,11 +128,12 @@ pub fn tune(stream: &TcpStream) {
     tune_for_tunnel(stream, TcpTunnelMode::Direct);
 }
 
-pub fn tune_i2p(stream: &TcpStream) {
+#[cfg(feature = "i2p")]
+pub(crate) fn tune_i2p(stream: &TcpStream) {
     tune_for_tunnel(stream, TcpTunnelMode::I2p);
 }
 
-pub fn tune_for_tunnel(stream: &TcpStream, tunnel: TcpTunnelMode) {
+pub(crate) fn tune_for_tunnel(stream: &TcpStream, tunnel: TcpTunnelMode) {
     let _ = stream.set_nodelay(true);
     let socket = SockRef::from(stream);
     let (probe_after, probe_interval, probes, _user_timeout) = match tunnel {

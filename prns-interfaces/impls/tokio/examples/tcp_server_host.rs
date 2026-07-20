@@ -28,7 +28,7 @@ use personal_rns::runtime::{
     RequestHandlerRegistration,
 };
 use personal_rns::storage::GrowableHeap;
-use prns_interfaces_tokio::tcp::server::TcpServer;
+use prns_interfaces_tokio::tcp::TcpServer;
 
 /// The host's honest order-of-magnitude pipe to a LAN client — sets the members' declared MTU tier.
 const BITRATE: BitrateBps = BitrateBps::guess(65_000_000);

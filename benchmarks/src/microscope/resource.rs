@@ -104,9 +104,9 @@ impl ResourceCycle {
             responder,
             initiator_entropy: Splitmix(101),
             responder_entropy: Splitmix(202),
-            interfaces: vec![tcp_core::descriptor(
+            interfaces: vec![tcp::descriptor(
                 WIRE,
-                tcp_core::policy_for_bitrate(tcp_core::TCP_BITRATE_ESTIMATE),
+                tcp::policy_for_bitrate(tcp::TCP_BITRATE_ESTIMATE),
             )],
             destination,
             link_id: LinkId::new([0; 16]),

@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use prns_core::interfaces::rnode::policy as rnode_policy;
-use prns_core::interfaces::tcp::core::TcpWireFraming;
+use prns_core::interfaces::tcp::TcpWireFraming;
 pub use prns_core::interfaces::wifi_auto::core::{
     DiscoveryScope as AutoInterfaceDiscoveryScope,
     MulticastAddressType as AutoInterfaceMulticastAddressType,

@@ -12,8 +12,8 @@ use tokio::net::TcpListener;
 
 use crate::framed_stream;
 use crate::reconnect::ReconnectPolicy;
-use crate::tcp::tokio_socket::tune;
-use prns_core::interfaces::backbone::core;
+use crate::tcp::tune;
+use prns_core::interfaces::backbone;
 use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{
     ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind,
@@ -43,7 +43,7 @@ impl<S> BackboneServerConnection<S> {
     /// collision loudly.
     #[must_use]
     pub fn new(channel_tag: Vec<u8>, stream: S, bitrate: BitrateBps) -> Self {
-        Self::with_policy(channel_tag, stream, core::policy_for_bitrate(bitrate))
+        Self::with_policy(channel_tag, stream, backbone::policy_for_bitrate(bitrate))
     }
 
     #[must_use]
@@ -74,11 +74,11 @@ impl<S> BackboneServerConnection<S> {
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin> Interface for BackboneServerConnection<S> {
-    const HW_MTU: usize = core::HW_MTU_CAP;
+    const HW_MTU: usize = backbone::HW_MTU_CAP;
     const KIND: InterfaceKind = InterfaceKind::BackboneServerPeer;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::descriptor(self.id, self.policy)
+        backbone::descriptor(self.id, self.policy)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -94,13 +94,13 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for BackboneServerConnection<S
         let started = tokio::time::Instant::now();
         let mut buffers = framed_stream::FramedBuffers::<
             framed_stream::HdlcFraming,
-            { core::READ_BUF_LEN },
-            { core::FRAMED_LEN },
+            { backbone::READ_BUF_LEN },
+            { backbone::FRAMED_LEN },
         >::new();
         framed_stream::serve::<
             framed_stream::HdlcFraming,
-            { core::READ_BUF_LEN },
-            { core::FRAMED_LEN },
+            { backbone::READ_BUF_LEN },
+            { backbone::FRAMED_LEN },
             _,
             _,
         >(
@@ -124,7 +124,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for BackboneServerConnection<S
 /// per-connection members, each a distinct engine interface. It owns no wire of its own (the
 /// reference's `process_outgoing` is a no-op; the members carry the traffic); teardown
 /// cascades. `bitrate` sets each member's declared MTU through the reference's tier table;
-/// claim honestly ([`core::BACKBONE_BITRATE_ESTIMATE`] when genuinely unknown).
+/// claim honestly ([`backbone::BACKBONE_BITRATE_ESTIMATE`] when genuinely unknown).
 pub struct BackboneServer {
     listener: TcpListener,
     policy: EffectiveInterfacePolicy,
@@ -136,7 +136,7 @@ impl BackboneServer {
         addr: impl tokio::net::ToSocketAddrs,
         bitrate: BitrateBps,
     ) -> io::Result<Self> {
-        Self::bind_with_policy(addr, core::policy_for_bitrate(bitrate)).await
+        Self::bind_with_policy(addr, backbone::policy_for_bitrate(bitrate)).await
     }
 
     pub async fn bind_with_policy(
@@ -263,7 +263,7 @@ mod tests {
     }
 
     async fn read_deframed(socket: &mut TcpStream) -> std::vec::Vec<u8> {
-        let mut decoder = std::boxed::Box::new(RnsSerialDecoder::<{ core::FRAME_CAP }>::new());
+        let mut decoder = std::boxed::Box::new(RnsSerialDecoder::<{ backbone::FRAME_CAP }>::new());
         let mut buf = [0u8; 256];
         loop {
             let n = socket.read(&mut buf).await.expect("reads from the wire");
@@ -288,11 +288,11 @@ mod tests {
 
     #[test]
     fn the_member_id_is_a_backbone_server_peer_kind_from_the_tag() {
-        let iface = duplex_member(b"127.0.0.1:54321", core::BACKBONE_BITRATE_ESTIMATE);
+        let iface = duplex_member(b"127.0.0.1:54321", backbone::BACKBONE_BITRATE_ESTIMATE);
         assert_eq!(iface.id().kind(), Some(InterfaceKind::BackboneServerPeer));
-        let same = duplex_member(b"127.0.0.1:54321", core::BACKBONE_BITRATE_ESTIMATE);
+        let same = duplex_member(b"127.0.0.1:54321", backbone::BACKBONE_BITRATE_ESTIMATE);
         assert_eq!(iface.id(), same.id(), "the same peer addr is the same id");
-        let other = duplex_member(b"127.0.0.1:54322", core::BACKBONE_BITRATE_ESTIMATE);
+        let other = duplex_member(b"127.0.0.1:54322", backbone::BACKBONE_BITRATE_ESTIMATE);
         assert_ne!(iface.id(), other.id(), "a different peer is a different id");
     }
 
@@ -316,7 +316,7 @@ mod tests {
         let addr = listener.local_addr().expect("the bound address is known");
 
         let (in_tx, mut in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
-        let (mut out_tx, out_rx) = tokio_grant_lane(core::FRAME_CAP, 2);
+        let (mut out_tx, out_rx) = tokio_grant_lane(backbone::FRAME_CAP, 2);
         let seam = MockSeam {
             inbound: in_tx,
             sink: std::vec::Vec::new(),
@@ -329,7 +329,7 @@ mod tests {
             BackboneServerConnection::new(
                 peer.to_string().into_bytes(),
                 stream,
-                core::BACKBONE_BITRATE_ESTIMATE,
+                backbone::BACKBONE_BITRATE_ESTIMATE,
             )
             .run(seam)
             .await;

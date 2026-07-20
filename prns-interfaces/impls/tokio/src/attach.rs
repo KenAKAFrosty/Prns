@@ -84,13 +84,13 @@ macro_rules! attaches_as_fleet {
 }
 
 #[cfg(feature = "tcp")]
-attaches_as_wire!(impl[] crate::tcp::client::TcpClientInterface);
+attaches_as_wire!(impl[] crate::tcp::TcpClientInterface);
 #[cfg(feature = "udp")]
 attaches_as_wire!(impl[] crate::udp::UdpInterface);
 #[cfg(feature = "websocket")]
-attaches_as_wire!(impl[] crate::websocket::client::WebSocketClientInterface);
+attaches_as_wire!(impl[] crate::websocket::WebSocketClientInterface);
 #[cfg(feature = "backbone")]
-attaches_as_wire!(impl[] crate::backbone::client::BackboneClientInterface);
+attaches_as_wire!(impl[] crate::backbone::BackboneClientInterface);
 #[cfg(feature = "serial")]
 attaches_as_wire!(impl[Open] crate::serial::SerialInterface<Open>);
 #[cfg(feature = "kiss")]
@@ -107,13 +107,13 @@ attaches_as_wire!(impl[Scan, Open] crate::usb::UsbAutoHost<Scan, Open>);
 #[cfg(feature = "wifi")]
 attaches_as_fleet!(impl[] crate::wifi::AutoWifi);
 #[cfg(feature = "tcp")]
-attaches_as_fleet!(impl[] crate::tcp::server::TcpServer);
+attaches_as_fleet!(impl[] crate::tcp::TcpServer);
 #[cfg(feature = "websocket")]
-attaches_as_fleet!(impl[] crate::websocket::server::WebSocketServer);
+attaches_as_fleet!(impl[] crate::websocket::WebSocketServer);
 #[cfg(feature = "shared-instance")]
 attaches_as_fleet!(impl[] crate::shared_instance::server::LocalServer);
 #[cfg(feature = "backbone")]
-attaches_as_fleet!(impl[] crate::backbone::server::BackboneServer);
+attaches_as_fleet!(impl[] crate::backbone::BackboneServer);
 #[cfg(feature = "i2p")]
 attaches_as_fleet!(impl[B] crate::i2p::I2pInterface<B>);
 #[cfg(feature = "weave")]

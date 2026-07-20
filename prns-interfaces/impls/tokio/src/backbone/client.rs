@@ -7,8 +7,8 @@ use crate::reconnect::ReconnectPolicy;
 use std::string::String;
 
 use crate::framed_stream;
-use crate::tcp::tokio_socket::{connect, tune_for_tunnel, TcpConnectionSettings};
-use prns_core::interfaces::backbone::core;
+use crate::tcp::{connect, tune_for_tunnel, TcpConnectionSettings};
+use prns_core::interfaces::backbone;
 use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{
     ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind,
@@ -24,7 +24,7 @@ use prns_runtime::reactor::throughput::ThroughputLedger;
 /// reconnect delay,
 /// connect again. Point-to-point: one engine interface, one peer. `bitrate` is the host's claim
 /// about its pipe — it sets the declared hardware MTU through the reference's tier table, so claim
-/// honestly ([`core::BACKBONE_CLIENT_BITRATE_ESTIMATE`] when genuinely unknown).
+/// honestly ([`backbone::BACKBONE_CLIENT_BITRATE_ESTIMATE`] when genuinely unknown).
 pub struct BackboneClientInterface {
     id: InterfaceId,
     target: String,
@@ -40,7 +40,7 @@ impl BackboneClientInterface {
         Self::with_id_and_policy(
             id,
             target,
-            core::policy_for_bitrate(bitrate),
+            backbone::policy_for_bitrate(bitrate),
             reconnect_policy,
         )
     }
@@ -78,7 +78,7 @@ impl BackboneClientInterface {
         Self::with_id_and_policy(
             id,
             target,
-            core::policy_for_bitrate(bitrate),
+            backbone::policy_for_bitrate(bitrate),
             reconnect_policy,
         )
     }
@@ -134,11 +134,11 @@ impl BackboneClientInterface {
 }
 
 impl Interface for BackboneClientInterface {
-    const HW_MTU: usize = core::HW_MTU_CAP;
+    const HW_MTU: usize = backbone::HW_MTU_CAP;
     const KIND: InterfaceKind = InterfaceKind::BackboneClient;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::descriptor(self.id, self.policy)
+        backbone::descriptor(self.id, self.policy)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -153,8 +153,8 @@ impl Interface for BackboneClientInterface {
         let mut buffers: Option<
             framed_stream::FramedBuffers<
                 framed_stream::HdlcFraming,
-                { core::READ_BUF_LEN },
-                { core::FRAMED_LEN },
+                { backbone::READ_BUF_LEN },
+                { backbone::FRAMED_LEN },
             >,
         > = None;
         let mut reconnect_attempts = 0u32;
@@ -185,8 +185,8 @@ impl Interface for BackboneClientInterface {
                 seam.request_tunnel_synthesis().await;
                 framed_stream::serve::<
                     framed_stream::HdlcFraming,
-                    { core::READ_BUF_LEN },
-                    { core::FRAMED_LEN },
+                    { backbone::READ_BUF_LEN },
+                    { backbone::FRAMED_LEN },
                     _,
                     _,
                 >(
@@ -294,7 +294,7 @@ mod tests {
     }
 
     async fn read_deframed(socket: &mut TcpStream) -> std::vec::Vec<u8> {
-        let mut decoder = std::boxed::Box::new(RnsSerialDecoder::<{ core::FRAME_CAP }>::new());
+        let mut decoder = std::boxed::Box::new(RnsSerialDecoder::<{ backbone::FRAME_CAP }>::new());
         let mut buf = [0u8; 256];
         loop {
             let n = socket.read(&mut buf).await.expect("reads from the wire");
@@ -313,7 +313,7 @@ mod tests {
     fn the_client_id_is_a_backbone_client_kind_from_the_target() {
         let iface = BackboneClientInterface::new(
             "hub.example.com:4965".to_string(),
-            core::BACKBONE_CLIENT_BITRATE_ESTIMATE,
+            backbone::BACKBONE_CLIENT_BITRATE_ESTIMATE,
             ReconnectPolicy::STANDARD,
         );
         assert_eq!(iface.id().kind(), Some(InterfaceKind::BackboneClient));
@@ -327,7 +327,7 @@ mod tests {
         let addr = listener.local_addr().expect("the bound address is known");
 
         let (in_tx, mut in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
-        let (mut out_tx, out_rx) = tokio_grant_lane(core::FRAME_CAP, 2);
+        let (mut out_tx, out_rx) = tokio_grant_lane(backbone::FRAME_CAP, 2);
         let seam = MockSeam {
             inbound: in_tx,
             sink: std::vec::Vec::new(),
@@ -336,7 +336,7 @@ mod tests {
 
         let interface = BackboneClientInterface::new(
             addr.to_string(),
-            core::BACKBONE_CLIENT_BITRATE_ESTIMATE,
+            backbone::BACKBONE_CLIENT_BITRATE_ESTIMATE,
             ReconnectPolicy::STANDARD,
         );
         tokio::spawn(interface.run(seam));
