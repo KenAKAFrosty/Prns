@@ -8,6 +8,7 @@ use prns_core::interfaces::rnode::core::{
 
 use super::diagnostics::{ErrorCode, ErrorDiagnostic, WarningCode, WarningDiagnostic};
 use super::i2p::validate_peers;
+use super::interface_type::InterfaceType;
 use super::interpret::{cleaned_number, parse_bool, parse_identity_hash, ReferenceError};
 use super::keys::rnode as rnode_key;
 use super::keys::{
@@ -255,6 +256,8 @@ fn validate_interfaces(
     warnings: &mut ValidationWarnings,
     errors: &mut ValidationErrorCollector,
 ) {
+    let mut usb_auto = None;
+    let mut bluetooth_auto = None;
     for (key, value) in &interfaces.scalars {
         warnings.push(unknown_key(
             source,
@@ -267,7 +270,72 @@ fn validate_interfaces(
     }
     for (name, section) in &interfaces.sections {
         validate_interface(source, name, section, locations, warnings, errors);
+        match enabled_interface_type(section) {
+            Some(InterfaceType::PrnsUsbAuto) => reject_duplicate_singleton_interface(
+                source,
+                name,
+                section,
+                locations,
+                &mut usb_auto,
+                errors,
+            ),
+            Some(InterfaceType::PrnsBluetoothAuto) => reject_duplicate_singleton_interface(
+                source,
+                name,
+                section,
+                locations,
+                &mut bluetooth_auto,
+                errors,
+            ),
+            _ => {}
+        }
     }
+}
+
+fn enabled_interface_type(section: &Section) -> Option<InterfaceType> {
+    let mut enabled_values = interface_key::ENABLED_ALIASES
+        .iter()
+        .filter_map(|key| section.get(key).and_then(Value::as_scalar));
+    let first = enabled_values.next()?;
+    if parse_bool(first) != Some(true)
+        || enabled_values.any(|value| parse_bool(value) != Some(true))
+    {
+        return None;
+    }
+    section
+        .get(interface_key::TYPE)
+        .and_then(Value::as_scalar)
+        .and_then(InterfaceType::parse)
+}
+
+fn reject_duplicate_singleton_interface<'a>(
+    source: &str,
+    name: &'a str,
+    section: &Section,
+    locations: &SourceLocations,
+    first: &mut Option<&'a str>,
+    errors: &mut ValidationErrorCollector,
+) {
+    let Some(previous) = first.replace(name) else {
+        return;
+    };
+    let configured_type = section
+        .get(interface_key::TYPE)
+        .and_then(Value::as_scalar)
+        .unwrap_or_default();
+    errors.push(ErrorDiagnostic::new(
+        ErrorCode::InvalidValue,
+        source,
+        location(
+            locations,
+            &[section_key::INTERFACES, name, interface_key::TYPE],
+        ),
+        format!("[interfaces] > [[{name}]] > {}", interface_key::TYPE),
+        Some(configured_type.to_string()),
+        format!("[[{name}]] duplicates the singleton interface [[{previous}]]"),
+        Some("one enabled stanza for this auto-interface family".to_string()),
+        format!("set `enabled = No` under [[{name}]], or merge its settings into [[{previous}]]"),
+    ));
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -444,7 +512,7 @@ fn validate_interface(
         return;
     };
 
-    if !SUPPORTED_INTERFACES.contains(&type_name) {
+    let Some(interface_type) = InterfaceType::parse(type_name) else {
         errors.push(ErrorDiagnostic::new(
             ErrorCode::UnsupportedInterface,
             source,
@@ -458,7 +526,8 @@ fn validate_interface(
             ),
         ));
         return;
-    }
+    };
+    let type_name = interface_type.canonical_name();
 
     validate_alias_group(
         source,
@@ -579,6 +648,17 @@ fn validate_interface(
 
     match type_name {
         "TCPServerInterface" => compare_alias_pair(
+            source,
+            name,
+            section,
+            locations,
+            interface_key::PORT,
+            interface_key::LISTEN_PORT,
+            ValueKind::U16,
+            warnings,
+            errors,
+        ),
+        "PrnsWebSocketServer" => compare_alias_pair(
             source,
             name,
             section,
@@ -896,6 +976,37 @@ fn validate_medium_requirements(
                 errors,
             );
         }
+        "PrnsWebSocketClient" => {
+            require_setting(
+                &context,
+                RequiredSetting {
+                    primary: interface_key::TARGET,
+                    alternatives: &[],
+                    accepted: "a ws:// WebSocket target",
+                    correction: format!(
+                        "add `{} = ws://example.com:4242/prns` under [[{interface}]]",
+                        interface_key::TARGET
+                    ),
+                },
+                errors,
+            );
+            validate_websocket_target(&context, errors);
+        }
+        "PrnsWebSocketServer" => {
+            require_setting(
+                &context,
+                RequiredSetting {
+                    primary: interface_key::PORT,
+                    alternatives: &[interface_key::LISTEN_PORT],
+                    accepted: "port or listen_port",
+                    correction: format!(
+                        "add `{} = 4242` under [[{interface}]]",
+                        interface_key::PORT
+                    ),
+                },
+                errors,
+            );
+        }
         "TCPServerInterface" => {
             require_setting(
                 &context,
@@ -1116,6 +1227,51 @@ fn validate_medium_requirements(
         }
         _ => {}
     }
+}
+
+fn validate_websocket_target(
+    context: &InterfaceRequirementContext<'_>,
+    errors: &mut ValidationErrorCollector,
+) {
+    let Some(target) = context
+        .section
+        .get(interface_key::TARGET)
+        .and_then(Value::as_scalar)
+    else {
+        return;
+    };
+    let target = target.trim();
+    if target.starts_with("ws://")
+        && target.len() > "ws://".len()
+        && !target.chars().any(char::is_whitespace)
+    {
+        return;
+    }
+    errors.push(ErrorDiagnostic::new(
+        ErrorCode::InvalidValue,
+        context.source,
+        location(
+            context.locations,
+            &[
+                section_key::INTERFACES,
+                context.interface,
+                interface_key::TARGET,
+            ],
+        ),
+        format!(
+            "[interfaces] > [[{}]] > {}",
+            context.interface,
+            interface_key::TARGET
+        ),
+        Some(target.to_string()),
+        "the WebSocket client target is not a plain ws:// URL",
+        Some("a ws:// URL with no whitespace".to_string()),
+        format!(
+            "set `{} = ws://example.com:4242/prns` under [[{}]]",
+            interface_key::TARGET,
+            context.interface
+        ),
+    ));
 }
 
 fn validate_station_identification(

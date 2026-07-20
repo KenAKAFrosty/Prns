@@ -24,10 +24,10 @@ pub use plan::{
     ReconnectLimit, SerialDataBits, SerialLinePlan, SerialParity, SerialStopBits, SharedInstance,
     SharedInstanceTransport, StationIdentificationPlan, TcpDialPlan, TcpListenHost, TcpListenPlan,
     TcpTunnelMode, TransportIdentityPolicy, TransportPlan, UdpEndpointHost, UdpEndpointPlan,
-    UdpFlowPlan, RNODE_TCP_PORT,
+    UdpFlowPlan, WebSocketTargetPlan, RNODE_TCP_PORT,
 };
 pub use reference::{
     RNodeRadio, RNodeSubinterface, ReferenceBlackholeExchange, ReferenceConfig,
-    ReferenceDiscoveryConfig, ReferenceInterface, ReferenceInterfaceDiscovery, ReferenceMode,
-    ReferenceParams, ReferenceValue,
+    ReferenceConfigParams, ReferenceDiscoveryConfig, ReferenceInterface,
+    ReferenceInterfaceDiscovery, ReferenceMode, ReferenceValue,
 };

@@ -46,7 +46,7 @@ Set `enable_remote_management = Yes` to expose the stock
 `remote_management_allowed` must be a 32-character hexadecimal identity hash. Both handlers require
 the peer to identify over the link as one of those identities; an empty list permits nobody. The
 service is owned only by a standalone daemon or the process that wins shared-instance election. A
-process that joins an existing shared instance does not register it. Stock RNS 1.3.8 `rnstatus -R`
+process that joins an existing shared instance does not register it. Stock RNS 1.3.9 `rnstatus -R`
 and the table/rate forms of `rnpath -R` use these endpoints.
 
 Set `respond_to_probes = Yes` to expose the stock `rnstransport.probe` destination. It refuses link
@@ -181,8 +181,54 @@ status output remains compact and displays only the canonical mode name.
 Enabled interface types without a backend fail with “not available in this build.” RNodeMulti
 remains a local serial-device interface.
 
+## Prns-owned host interface backends
+
+Prnsd also accepts these canonical interface types, which stock RNS 1.3.9 does not implement:
+
+| Canonical type | Applied configuration |
+| --- | --- |
+| `PrnsUsbAuto` | Discovers and supervises supported USB CDC devices. Only common interface policy is required. |
+| `PrnsBluetoothAuto` | Discovers and supervises Prns Bluetooth LE peers. Only common interface policy is required. |
+| `PrnsWebSocketClient` | Connects to the required plain `ws://` URL in `target` and retries after disconnects. |
+| `PrnsWebSocketServer` | Listens on `port` or `listen_port`, with optional `listen_ip`, `device`, and `prefer_ipv6`. Accepted members inherit the full policy and IFAC access. |
+
+Prns-owned type values are ASCII case-insensitive. The explicit `Interface` suffix is accepted as
+an alias, and `Bluetooth` and `Ble` are interchangeable. For example, `prnsusbauto`,
+`PrnsUsbAutoInterface`, `PRNSBLEAUTO`, and `PrnsBleAutoInterface` normalize to the canonical names
+above. Stock interface type values remain case-sensitive. USB Auto and Bluetooth Auto each permit
+one enabled stanza because each stanza represents the host's single aggregate device fleet;
+WebSocket client and server stanzas may be repeated.
+
+```ini
+[interfaces]
+  [[USB devices]]
+    type = PrnsUsbAuto
+    enabled = Yes
+
+  [[Nearby Prns peers]]
+    type = PrnsBluetoothAuto
+    enabled = Yes
+
+  [[WebSocket uplink]]
+    type = PrnsWebSocketClient
+    enabled = Yes
+    target = ws://peer.example:4242/prns
+
+  [[WebSocket listener]]
+    type = PrnsWebSocketServer
+    enabled = Yes
+    listen_ip = ::
+    listen_port = 4242
+    prefer_ipv6 = Yes
+```
+
+Stock RNS treats these names as external interface module names. If no matching module file exists,
+it logs the missing module, skips the stanza, finishes bringing up its other interfaces, and keeps
+running. Auto Wi-Fi continues to use stock `AutoInterface`. Wi-Fi Direct and Wi-Fi Aware do not yet
+have accepted config types because Prnsd cannot construct their required platform adapters.
+
 RNode Bluetooth LE uses the stock Nordic UART Service transport and accepts the same three target
-forms as RNS 1.3.8:
+forms as RNS 1.3.9:
 
 ```ini
 port = ble://

@@ -60,7 +60,7 @@ fn parse_coerces_typed_fields_and_folds_dual_keys_and_aliases() {
     assert_eq!(hub.mode, Some(ReferenceMode::Gateway));
     assert_eq!(
         hub.params,
-        ReferenceParams::TcpClient {
+        ReferenceConfigParams::TcpClient {
             target_host: Some("hub.example.com".to_string()),
             target_port: Some(4965),
             kiss_framing: None,
@@ -103,7 +103,7 @@ const RNODE_MULTI: &str = "[interfaces]\n\
 #[test]
 fn rnode_multi_types_each_enabled_child_setting() {
     let config = parse(RNODE_MULTI).expect("valid RNodeMulti config");
-    let ReferenceParams::RnodeMulti {
+    let ReferenceConfigParams::RnodeMulti {
         port,
         id_callsign,
         id_interval,
@@ -139,7 +139,8 @@ fn disabled_rnode_multi_children_are_skipped_before_their_contents() {
         "{RNODE_MULTI}[[[Unused]]]\ninterface_enabled = No\nfrquency = definitely-not-a-number\n"
     );
     let report = parse_named("/tmp/rns/config", &config).expect("disabled child is ignored");
-    let ReferenceParams::RnodeMulti { subinterfaces, .. } = &report.value.interfaces[0].params
+    let ReferenceConfigParams::RnodeMulti { subinterfaces, .. } =
+        &report.value.interfaces[0].params
     else {
         panic!("RNodeMulti parameters expected")
     };
@@ -489,6 +490,11 @@ fn application_contract_config(type_name: &'static str, key: &'static str, value
     if rule.application() == KeyApplication::DiscoveryOnly {
         settings.insert(interface_key::DISCOVERABLE, "Yes");
     }
+    let value = if type_name == "PrnsWebSocketClient" && key == interface_key::TARGET {
+        "ws://peer.example:4242/prns"
+    } else {
+        value
+    };
     settings.insert(key, value);
 
     let mut config = String::from("[interfaces]\n[[Application Contract]]\n");
@@ -516,7 +522,7 @@ fn application_contract_baseline(type_name: &'static str) -> BTreeMap<&'static s
         (interface_key::ENABLED, "Yes"),
     ]);
     match type_name {
-        "AutoInterface" | "I2PInterface" => {}
+        "AutoInterface" | "I2PInterface" | "PrnsUsbAuto" | "PrnsBluetoothAuto" => {}
         "TCPClientInterface" => {
             settings.insert(interface_key::TARGET_HOST, "peer.example");
             settings.insert(interface_key::TARGET_PORT, "4242");
@@ -565,6 +571,12 @@ fn application_contract_baseline(type_name: &'static str) -> BTreeMap<&'static s
         "WeaveInterface" => {
             settings.insert(interface_key::PORT, "/dev/ttyACM0");
         }
+        "PrnsWebSocketClient" => {
+            settings.insert(interface_key::TARGET, "ws://peer.example:4242/prns");
+        }
+        "PrnsWebSocketServer" => {
+            settings.insert(interface_key::PORT, "4242");
+        }
         _ => panic!("unsupported contract interface {type_name}"),
     }
     settings
@@ -584,6 +596,67 @@ fn enabled_external_module_type_is_an_explicit_unsupported_error() {
         &errors,
         ConfigDiagnosticCode::UnsupportedInterface
     ));
+}
+
+#[test]
+fn prns_interface_names_accept_explicit_and_short_case_insensitive_aliases() {
+    for (configured, canonical) in [
+        ("prnsusbauto", "PrnsUsbAuto"),
+        ("PRNSUSBAUTOINTERFACE", "PrnsUsbAuto"),
+        ("prnsbluetoothauto", "PrnsBluetoothAuto"),
+        ("PRNSBLUETOOTHAUTOINTERFACE", "PrnsBluetoothAuto"),
+        ("prnsbleauto", "PrnsBluetoothAuto"),
+        ("PRNSBLEAUTOINTERFACE", "PrnsBluetoothAuto"),
+        ("prnswebsocketclient", "PrnsWebSocketClient"),
+        ("PRNSWEBSOCKETCLIENTINTERFACE", "PrnsWebSocketClient"),
+        ("prnswebsocketserver", "PrnsWebSocketServer"),
+        ("PRNSWEBSOCKETSERVERINTERFACE", "PrnsWebSocketServer"),
+    ] {
+        let settings = match canonical {
+            "PrnsWebSocketClient" => "target = ws://peer.example:4242/prns\n",
+            "PrnsWebSocketServer" => "port = 4242\n",
+            _ => "",
+        };
+        let config =
+            format!("[interfaces]\n[[Prns]]\ntype = {configured}\nenabled = Yes\n{settings}");
+        let parsed = parse(&config).unwrap_or_else(|errors| panic!("{configured}: {errors:?}"));
+        assert_eq!(parsed.interfaces[0].type_name, canonical, "{configured}");
+    }
+}
+
+#[test]
+fn stock_interface_names_remain_case_sensitive() {
+    let errors =
+        parse("[interfaces]\n[[Wrong Case]]\ntype = autointerface\nenabled = Yes\n").unwrap_err();
+    assert!(has_code(
+        &errors,
+        ConfigDiagnosticCode::UnsupportedInterface
+    ));
+}
+
+#[test]
+fn websocket_targets_require_a_plain_ws_url() {
+    for target in ["wss://peer.example/prns", "peer.example", "ws://bad target"] {
+        let errors = parse(&format!(
+            "[interfaces]\n[[WebSocket]]\ntype = PrnsWebSocketClient\nenabled = Yes\ntarget = {target}\n"
+        ))
+        .unwrap_err();
+        assert!(has_code(&errors, ConfigDiagnosticCode::InvalidValue));
+    }
+}
+
+#[test]
+fn singleton_prns_auto_interfaces_reject_duplicate_enabled_stanzas() {
+    for (first, second) in [
+        ("PrnsUsbAuto", "PRNSUSBAUTOINTERFACE"),
+        ("PrnsBluetoothAuto", "prnsbleauto"),
+    ] {
+        let errors = parse(&format!(
+            "[interfaces]\n[[First]]\ntype = {first}\nenabled = Yes\n[[Second]]\ntype = {second}\nenabled = Yes\n"
+        ))
+        .unwrap_err();
+        assert!(has_code(&errors, ConfigDiagnosticCode::InvalidValue));
+    }
 }
 
 #[test]
@@ -646,7 +719,7 @@ fn digit_grouping_underscores_parse_like_python_int() {
     assert_eq!(hub.bitrate, Some(1_000_000));
     assert!(matches!(
         hub.params,
-        ReferenceParams::TcpClient {
+        ReferenceConfigParams::TcpClient {
             target_port: Some(4965),
             ..
         }

@@ -17,7 +17,7 @@ use crate::reference::keys::{
     global as global_key, interface as interface_key, logging as logging_key,
     section as section_key,
 };
-use crate::reference::{ReferenceConfig, ReferenceParams, ReferenceRemoteManagement};
+use crate::reference::{ReferenceConfig, ReferenceConfigParams, ReferenceRemoteManagement};
 use crate::{ConfigDiagnostic, ConfigDiagnosticCode, ConfigErrors, ConfigReport, SourceLocations};
 
 /// The complete, host-agnostic description of a node to stand up, projected from a stock RNS config.
@@ -271,7 +271,7 @@ pub(super) fn build_plan(config: &ReferenceConfig) -> Result<DaemonPlan, Vec<Pla
     let announce_rate =
         global_announce_rate(config).map_err(|error| vec![PlanningError::Global(error)])?;
     for interface in &config.interfaces {
-        if matches!(interface.params, ReferenceParams::RnodeMulti { .. }) {
+        if matches!(interface.params, ReferenceConfigParams::RnodeMulti { .. }) {
             match rnode_multi::plan(
                 interface,
                 common,

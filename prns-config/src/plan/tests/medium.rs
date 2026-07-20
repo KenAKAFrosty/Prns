@@ -51,6 +51,48 @@ fn every_host_constructible_medium_maps() {
 }
 
 #[test]
+fn prns_owned_host_interfaces_reach_typed_plans() {
+    let plan = plan_of(
+        "[interfaces]\n\
+         [[USB]]\ntype = prnsusbautointerface\nenabled = Yes\nbitrate = 7654321\n\
+         [[BLE]]\ntype = PrnsBleAuto\nenabled = Yes\nbitrate = 7654321\n\
+         [[WebSocket Client]]\ntype = PRNSWEBSOCKETCLIENT\nenabled = Yes\ntarget = ws://peer.example:4242/prns\nbitrate = 7654321\n\
+         [[WebSocket Server]]\ntype = PrnsWebSocketServerInterface\nenabled = Yes\nlisten_ip = ::1\nlisten_port = 4243\nprefer_ipv6 = Yes\nbitrate = 7654321\n",
+    );
+
+    assert!(matches!(
+        named(&plan, "USB").medium,
+        PlannedMedium::PrnsUsbAuto
+    ));
+    assert!(matches!(
+        named(&plan, "BLE").medium,
+        PlannedMedium::PrnsBluetoothAuto
+    ));
+    let PlannedMedium::PrnsWebSocketClient { target } = &named(&plan, "WebSocket Client").medium
+    else {
+        panic!("Prns WebSocket client medium expected")
+    };
+    assert_eq!(target.as_str(), "ws://peer.example:4242/prns");
+    assert_eq!(
+        named(&plan, "WebSocket Server").medium,
+        PlannedMedium::PrnsWebSocketServer {
+            listener: TcpListenPlan {
+                host: TcpListenHost::Address("::1".to_string()),
+                port: 4243,
+                address_family: AddressFamilyPreference::Ipv6,
+                tunnel: TcpTunnelMode::Direct,
+            },
+        }
+    );
+    for interface in &plan.interfaces {
+        assert_eq!(
+            interface.policy.bitrate,
+            BitrateBps::new(7_654_321).unwrap()
+        );
+    }
+}
+
+#[test]
 fn auto_interface_settings_and_bootstrap_lifecycle_are_fully_typed() {
     let plan = plan_of(
         "[interfaces]\n[[Field LAN]]\ntype = AutoInterface\nenabled = Yes\n\

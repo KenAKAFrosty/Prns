@@ -66,10 +66,15 @@ fn classify(outcome: &PlanOutcome<'_>) -> StartupInterfaceReport {
     let mut report = StartupInterfaceReport::default();
     match outcome {
         PlanOutcome::Up { interface, .. } => match &interface.medium {
-            PlannedMedium::TcpServer { .. } | PlannedMedium::Backbone { .. } => {
+            PlannedMedium::TcpServer { .. }
+            | PlannedMedium::Backbone { .. }
+            | PlannedMedium::PrnsWebSocketServer { .. } => {
                 report.listening = 1;
             }
-            PlannedMedium::AutoWifi(_) | PlannedMedium::Udp { .. } => report.online = 1,
+            PlannedMedium::AutoWifi(_)
+            | PlannedMedium::Udp { .. }
+            | PlannedMedium::PrnsUsbAuto
+            | PlannedMedium::PrnsBluetoothAuto => report.online = 1,
             PlannedMedium::I2p {
                 peers,
                 reachability,
@@ -83,7 +88,8 @@ fn classify(outcome: &PlanOutcome<'_>) -> StartupInterfaceReport {
             | PlannedMedium::BackboneClient { .. }
             | PlannedMedium::Pipe { .. }
             | PlannedMedium::I2p { .. }
-            | PlannedMedium::Weave { .. } => report.retrying = 1,
+            | PlannedMedium::Weave { .. }
+            | PlannedMedium::PrnsWebSocketClient { .. } => report.retrying = 1,
         },
         PlanOutcome::Failed { .. } => report.failed = 1,
     }
@@ -175,6 +181,10 @@ fn medium_name(medium: &PlannedMedium) -> &'static str {
         PlannedMedium::Pipe { .. } => "pipe",
         PlannedMedium::I2p { .. } => "i2p",
         PlannedMedium::Weave { .. } => "weave",
+        PlannedMedium::PrnsUsbAuto => "prns_usb_auto",
+        PlannedMedium::PrnsBluetoothAuto => "prns_bluetooth_auto",
+        PlannedMedium::PrnsWebSocketClient { .. } => "prns_websocket_client",
+        PlannedMedium::PrnsWebSocketServer { .. } => "prns_websocket_server",
     }
 }
 
@@ -284,6 +294,35 @@ mod tests {
             StartupInterfaceReport {
                 retrying: 1,
                 ..StartupInterfaceReport::default()
+            }
+        );
+    }
+
+    #[test]
+    fn prns_owned_interfaces_have_truthful_startup_states() {
+        let plan = parse_and_plan(
+            "[interfaces]\n[[USB]]\ntype = PrnsUsbAuto\nenabled = Yes\n\
+             [[BLE]]\ntype = PrnsBluetoothAuto\nenabled = Yes\n\
+             [[WebSocket Client]]\ntype = PrnsWebSocketClient\nenabled = Yes\ntarget = ws://peer.example/prns\n\
+             [[WebSocket Server]]\ntype = PrnsWebSocketServer\nenabled = Yes\nport = 4242\n",
+        )
+        .expect("valid Prns-owned interface configuration")
+        .value;
+        let mut report = StartupInterfaceReport::default();
+        for interface in &plan.interfaces {
+            report.merge(classify(&PlanOutcome::Up {
+                interface,
+                id: InterfaceId::new([0; 8]),
+            }));
+        }
+
+        assert_eq!(
+            report,
+            StartupInterfaceReport {
+                online: 2,
+                listening: 1,
+                retrying: 1,
+                failed: 0,
             }
         );
     }

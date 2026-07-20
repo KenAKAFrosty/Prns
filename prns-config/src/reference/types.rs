@@ -79,7 +79,7 @@ pub struct ReferenceInterfaceDiscovery {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum ReferenceParams {
+pub enum ReferenceConfigParams {
     Auto {
         group_id: Option<String>,
         discovery_scope: Option<String>,
@@ -189,6 +189,18 @@ pub enum ReferenceParams {
     Weave {
         port: Option<String>,
     },
+    PrnsUsbAuto,
+    PrnsBluetoothAuto,
+    PrnsWebSocketClient {
+        target: Option<String>,
+    },
+    PrnsWebSocketServer {
+        listen_ip: Option<String>,
+        listen_port: Option<u16>,
+        device: Option<String>,
+        port: Option<u16>,
+        prefer_ipv6: Option<bool>,
+    },
     Unknown,
 }
 
@@ -223,13 +235,13 @@ pub struct ReferenceInterface {
     pub passphrase: Option<String>,
     pub ifac_size_bits: Option<u32>,
     pub discovery: ReferenceInterfaceDiscovery,
-    pub params: ReferenceParams,
+    pub params: ReferenceConfigParams,
     pub extra: BTreeMap<String, ReferenceValue>,
 }
 
 impl ReferenceInterface {
     pub fn is_known(&self) -> bool {
-        !matches!(self.params, ReferenceParams::Unknown)
+        !matches!(self.params, ReferenceConfigParams::Unknown)
     }
 }
 

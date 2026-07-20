@@ -4,7 +4,7 @@ use prns_core::units::DurationMillis;
 
 use super::medium::PlannedMedium;
 use crate::reference::keys::interface as interface_key;
-use crate::reference::{ReferenceInterface, ReferenceParams};
+use crate::reference::{ReferenceConfigParams, ReferenceInterface};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum InterfaceDiscoveryPlan {
@@ -145,7 +145,7 @@ fn plan_discovery_advertisement(
     match (medium, &interface.params) {
         (
             PlannedMedium::Backbone { .. },
-            ReferenceParams::Backbone {
+            ReferenceConfigParams::Backbone {
                 listen_port, port, ..
             },
         ) => Ok(DiscoveryAdvertisementPlan::Backbone {
@@ -158,7 +158,7 @@ fn plan_discovery_advertisement(
         }),
         (
             PlannedMedium::TcpServer { .. },
-            ReferenceParams::TcpServer {
+            ReferenceConfigParams::TcpServer {
                 listen_port, port, ..
             },
         ) => Ok(DiscoveryAdvertisementPlan::TcpServer {
@@ -177,14 +177,14 @@ fn plan_discovery_advertisement(
                 coding_rate,
                 ..
             },
-            ReferenceParams::Rnode { .. },
+            ReferenceConfigParams::Rnode { .. },
         ) => Ok(rnode_discovery_advertisement(
             *frequency_hz,
             *bandwidth_hz,
             *spreading_factor,
             *coding_rate,
         )),
-        (PlannedMedium::RnodeMulti { member }, ReferenceParams::RnodeMulti { .. }) => {
+        (PlannedMedium::RnodeMulti { member }, ReferenceConfigParams::RnodeMulti { .. }) => {
             let radio = member.radio();
             Ok(rnode_discovery_advertisement(
                 u64::from(radio.frequency().hz()),
@@ -193,15 +193,15 @@ fn plan_discovery_advertisement(
                 radio.coding_rate(),
             ))
         }
-        (PlannedMedium::Kiss { .. }, ReferenceParams::Kiss { .. }) => kiss(),
+        (PlannedMedium::Kiss { .. }, ReferenceConfigParams::Kiss { .. }) => kiss(),
         (
             PlannedMedium::TcpClient {
                 framing: TcpWireFraming::Kiss,
                 ..
             },
-            ReferenceParams::TcpClient { .. },
+            ReferenceConfigParams::TcpClient { .. },
         ) => kiss(),
-        (PlannedMedium::TcpClient { .. }, ReferenceParams::TcpClient { .. }) => {
+        (PlannedMedium::TcpClient { .. }, ReferenceConfigParams::TcpClient { .. }) => {
             Err(DiscoveryPublicationProblem::IncompatibleSetting {
                 key: interface_key::KISS_FRAMING,
             })

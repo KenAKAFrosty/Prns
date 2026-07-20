@@ -2,7 +2,7 @@ use prns_core::interfaces::rnode::multi::{RadioConfig, RadioConfigError, RadioCo
 use prns_core::interfaces::{AnnounceRateLimit, InterfaceCommonPolicy};
 
 use crate::reference::keys::interface as interface_key;
-use crate::reference::{RNodeSubinterface, ReferenceInterface, ReferenceParams};
+use crate::reference::{RNodeSubinterface, ReferenceConfigParams, ReferenceInterface};
 
 use super::interface::{
     airtime_limit, effective_policy, plan_access, plan_interface_discovery,
@@ -85,7 +85,7 @@ pub(super) fn plan(
     global_announce_rate: AnnounceRateLimit,
     transport_enabled: bool,
 ) -> Result<Vec<PlannedInterface>, PlanFailure> {
-    let ReferenceParams::RnodeMulti {
+    let ReferenceConfigParams::RnodeMulti {
         port,
         id_callsign,
         id_interval,

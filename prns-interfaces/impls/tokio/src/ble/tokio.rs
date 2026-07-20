@@ -28,8 +28,8 @@ const DIAL_TRACK: usize = 16;
 /// reconnect window does not look like BLE has gone dormant.
 const RECENT_MEMBER_GRACE: Duration = Duration::from_secs(3);
 use prns_core::interfaces::{
-    ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceStatus,
-    TransferRates,
+    ConfiguredInterfacePolicy, ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor,
+    InterfaceId, InterfaceKind, InterfaceStatus, TransferRates,
 };
 use prns_runtime::reactor::driver::TokioInterfaceStatus;
 use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam, MAX_WIRE_FRAME_LEN};
@@ -47,12 +47,28 @@ pub struct BluetoothPeer<Src, Snk> {
     source: Src,
     sink: Snk,
     channel_tag: [u8; 16],
+    policy: EffectiveInterfacePolicy,
     status: TokioInterfaceStatus,
     closed: Option<ClosedSignal>,
 }
 
 impl<Src: BleSource, Snk: BleSink> BluetoothPeer<Src, Snk> {
     pub fn new(identity: BleIdentity, source: Src, sink: Snk) -> Self {
+        Self::with_policy(
+            identity,
+            source,
+            sink,
+            core::defaults_for_bitrate(core::BLE_BITRATE_GUESS_BPS)
+                .configured(ConfiguredInterfacePolicy::default()),
+        )
+    }
+
+    pub fn with_policy(
+        identity: BleIdentity,
+        source: Src,
+        sink: Snk,
+        policy: EffectiveInterfacePolicy,
+    ) -> Self {
         let channel_tag = *identity.as_bytes();
         let id = InterfaceId::from_channel_tag(InterfaceKind::BluetoothPeer, &channel_tag);
         Self {
@@ -61,6 +77,7 @@ impl<Src: BleSource, Snk: BleSink> BluetoothPeer<Src, Snk> {
             source,
             sink,
             channel_tag,
+            policy,
             status: TokioInterfaceStatus::new(id, ConnectionState::Connected),
             closed: None,
         }
@@ -100,7 +117,7 @@ impl<Src: BleSource, Snk: BleSink> Interface for BluetoothPeer<Src, Snk> {
     const KIND: InterfaceKind = InterfaceKind::BluetoothPeer;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::descriptor(self.id, core::BLE_BITRATE_GUESS_BPS)
+        self.policy.descriptor(self.id)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -195,6 +212,7 @@ enum Step<L: BleLink> {
 pub struct BluetoothAuto<B, const MAX_PEERS: usize> {
     backend: B,
     local: Local,
+    policy: EffectiveInterfacePolicy,
     status: BluetoothAutoStatus,
 }
 
@@ -214,6 +232,12 @@ impl<B: BleBackend, const MAX_PEERS: usize> BluetoothAuto<B, MAX_PEERS> {
         )
     }
 
+    #[must_use]
+    pub fn with_policy(mut self, policy: EffectiveInterfacePolicy) -> Self {
+        self.policy = policy;
+        self
+    }
+
     pub(crate) fn with_status(
         backend: B,
         identity: BleIdentity,
@@ -228,6 +252,8 @@ impl<B: BleBackend, const MAX_PEERS: usize> BluetoothAuto<B, MAX_PEERS> {
                 endpoint,
                 capabilities,
             },
+            policy: core::defaults_for_bitrate(core::BLE_BITRATE_GUESS_BPS)
+                .configured(ConfiguredInterfacePolicy::default()),
             status,
         }
     }
@@ -409,6 +435,7 @@ where
         let Self {
             mut backend,
             local,
+            policy,
             status,
         } = self;
         if let Some(reason) = backend.blocked() {
@@ -547,6 +574,7 @@ where
                                 &closed_tx,
                                 &mut members,
                                 &mut backend,
+                                policy,
                             )
                             .await;
                         }
@@ -666,6 +694,7 @@ async fn apply_settle<B>(
     closed: &mpsc::UnboundedSender<(BleIdentity, BleAddress)>,
     members: &mut HashMap<BleIdentity, TokioMember>,
     backend: &mut B,
+    policy: EffectiveInterfacePolicy,
 ) where
     B: BleBackend,
     B::Link: 'static,
@@ -685,7 +714,7 @@ async fn apply_settle<B>(
                 if let Some(mut held) = link.take() {
                     arm_fast_lane(&mut held, &lane).await;
                     let (source, sink) = held.into_data();
-                    let member = BluetoothPeer::new(identity, source, sink)
+                    let member = BluetoothPeer::with_policy(identity, source, sink, policy)
                         .report_close_to(address, closed.clone());
                     let status = member.status();
                     let attached = fleet.add(member);
@@ -1102,6 +1131,23 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(received, frame);
+    }
+
+    #[test]
+    fn configured_policy_reaches_a_bluetooth_auto_peer_descriptor() {
+        let identity = BleIdentity::new([0x44; 16]);
+        let (link, _peer) = link_pair(BleAddress::new([0x11; 6]), BleAddress::new([0x22; 6]));
+        let (source, sink) = link.into_data();
+        let policy = core::defaults_for_bitrate(core::BLE_BITRATE_GUESS_BPS).configured(
+            ConfiguredInterfacePolicy {
+                mode: Some(prns_core::interfaces::InterfaceMode::AccessPoint),
+                bitrate: Some(prns_core::interfaces::BitrateBps::guess(7_654_321)),
+                ..ConfiguredInterfacePolicy::default()
+            },
+        );
+        let member = BluetoothPeer::with_policy(identity, source, sink, policy);
+
+        assert_eq!(member.descriptor(), policy.descriptor(member.id()));
     }
 
     #[tokio::test]

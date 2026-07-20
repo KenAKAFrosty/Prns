@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use prns_runtime::interfaces::ifac::IfacContext;
-use prns_runtime::interfaces::InterfaceId;
+use prns_runtime::interfaces::{ConfiguredInterfacePolicy, EffectiveInterfacePolicy, InterfaceId};
 use prns_runtime::runtime::{Attachable, AttachedInterface, PrnsNodeHandle};
 use tokio::sync::Notify;
 
@@ -20,6 +20,7 @@ pub const DEFAULT_USB_BAUD: u32 = 115_200;
 /// to make plug-in instant.
 pub struct AutoUsb {
     baud: u32,
+    policy: EffectiveInterfacePolicy,
     rescan: Arc<Notify>,
 }
 
@@ -27,6 +28,8 @@ impl Default for AutoUsb {
     fn default() -> Self {
         Self {
             baud: DEFAULT_USB_BAUD,
+            policy: prns_runtime::interfaces::usb_auto::core::HOST_DEFAULTS
+                .configured(ConfiguredInterfacePolicy::default()),
             rescan: Arc::new(Notify::new()),
         }
     }
@@ -41,6 +44,12 @@ impl AutoUsb {
     #[must_use]
     pub fn with_baud(mut self, baud: u32) -> Self {
         self.baud = baud;
+        self
+    }
+
+    #[must_use]
+    pub fn with_policy(mut self, policy: EffectiveInterfacePolicy) -> Self {
+        self.policy = policy;
         self
     }
 }
@@ -58,11 +67,12 @@ impl Attachable for AutoUsb {
     type Attached = AttachedInterface;
     fn attach_to(self, handle: &PrnsNodeHandle) -> AttachedInterface {
         let baud = self.baud;
-        handle.add_interface(UsbAutoHost::new(
+        handle.add_interface(UsbAutoHost::with_policy(
             DEFAULT_USB_AUTO_ID,
             scan_cdc_targets,
             move |name: String| async move { open_host_serial(&name, baud) },
             self.rescan,
+            self.policy,
         ))
     }
 
@@ -74,11 +84,12 @@ impl Attachable for AutoUsb {
     ) -> AttachedInterface {
         let baud = self.baud;
         handle.add_interface_with_ifac_name(
-            UsbAutoHost::new(
+            UsbAutoHost::with_policy(
                 DEFAULT_USB_AUTO_ID,
                 scan_cdc_targets,
                 move |name: String| async move { open_host_serial(&name, baud) },
                 self.rescan,
+                self.policy,
             ),
             ifac,
             network_name,

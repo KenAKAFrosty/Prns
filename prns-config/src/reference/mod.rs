@@ -1,5 +1,6 @@
 mod diagnostics;
 pub(crate) mod i2p;
+mod interface_type;
 mod interpret;
 pub(crate) mod keys;
 mod parse;
@@ -12,8 +13,8 @@ pub(crate) use interpret::cleaned_number;
 pub use parse::{parse, parse_named};
 pub use types::{
     RNodeRadio, RNodeSubinterface, ReferenceBlackholeExchange, ReferenceConfig,
-    ReferenceDiscoveryConfig, ReferenceInterface, ReferenceInterfaceDiscovery, ReferenceMode,
-    ReferenceParams, ReferenceRemoteManagement, ReferenceValue,
+    ReferenceConfigParams, ReferenceDiscoveryConfig, ReferenceInterface,
+    ReferenceInterfaceDiscovery, ReferenceMode, ReferenceRemoteManagement, ReferenceValue,
 };
 
 #[cfg(test)]

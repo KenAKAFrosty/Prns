@@ -58,7 +58,11 @@ impl PreparedDiscovery {
                 | PlannedMedium::Backbone { .. }
                 | PlannedMedium::Pipe { .. }
                 | PlannedMedium::I2p { .. }
-                | PlannedMedium::Weave { .. } => {}
+                | PlannedMedium::Weave { .. }
+                | PlannedMedium::PrnsUsbAuto
+                | PlannedMedium::PrnsBluetoothAuto
+                | PlannedMedium::PrnsWebSocketClient { .. }
+                | PlannedMedium::PrnsWebSocketServer { .. } => {}
             }
         }
         Some(Self {
