@@ -24,7 +24,8 @@ use personal_rns::identity::IdentitySigner;
 use personal_rns::persistence::FileStore;
 use personal_rns::routes;
 use personal_rns::runtime::{
-    boot_timeline_origin, Diagnostic, Manual, PrnsEvent, PrnsNode, PrnsNodeRecipe,
+    boot_timeline_origin, CryptoPoolConfig, Diagnostic, Manual, PoolWorkers, PrnsEvent, PrnsNode,
+    PrnsNodeRecipe,
 };
 use personal_rns::shared_instance::{RnsBlackholeFiles, SharedInstanceCredentials};
 use personal_rns::storage::GrowableHeap;
@@ -165,6 +166,9 @@ pub(super) async fn run(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
         },
     })
     .with_timeline_origin(timeline_origin)
+    .with_crypto_pool(CryptoPoolConfig::Pooled {
+        workers: PoolWorkers::Auto,
+    })
     .with_protocol_policy(protocol_policy);
     if let Some(destination) = discovery_destination {
         if let Err(error) = prns.register_preconfigured_destination(destination) {

@@ -15,7 +15,7 @@ use std::process::ExitCode;
 
 use prnsd_control::ManagedProcess;
 
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread")]
 async fn main() -> ExitCode {
     let args: Vec<_> = std::env::args_os().collect();
     if args.len() == 2 && args.get(1).is_some_and(|arg| arg == "--print-banner") {
