@@ -7,7 +7,7 @@ use std::time::Duration;
 use prns_core::interfaces::bluetooth_auto::{AdvertisingMode, BleBackend, BleEvent, Origin};
 use prns_core::interfaces::bluetooth_auto::{
     BleAddress, BleIdentity, BLE_SERVICE_UUID, COLUMBA_IDENTITY_UUID, COLUMBA_RX_UUID,
-    COLUMBA_TX_UUID, NATIVE_CONTROL_UUID, NATIVE_DATA_UUID, WINDOWS_MAX_PEERS,
+    COLUMBA_TX_UUID, NATIVE_CONTROL_UUID, NATIVE_DATA_UUID,
 };
 use tokio::sync::{mpsc as tokio_mpsc, oneshot};
 use tokio::task::JoinSet;
@@ -37,6 +37,8 @@ pub struct WindowsBleBackend {
 }
 
 impl WindowsBleBackend {
+    pub const MAX_PEERS: usize = 8;
+
     pub async fn new(identity: BleIdentity) -> Result<Self, WindowsBleError> {
         let (events_tx, events_rx) = tokio_mpsc::unbounded_channel::<Event>();
         let (keepalive, shutdown_rx) = sync_mpsc::channel::<()>();
@@ -165,8 +167,7 @@ impl Drop for WindowsBleBackend {
     }
 }
 
-impl BleBackend for WindowsBleBackend {
-    const MAX_PEERS: usize = WINDOWS_MAX_PEERS;
+impl BleBackend<{ WindowsBleBackend::MAX_PEERS }> for WindowsBleBackend {
     type Error = WindowsBleError;
     type Link = WinGattLink;
 

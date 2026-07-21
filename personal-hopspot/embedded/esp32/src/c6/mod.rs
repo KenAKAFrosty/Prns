@@ -40,8 +40,7 @@ use crate::storage::{C6Storage, EngineStorageType};
 use embassy_sync::signal::Signal;
 use embassy_sync::zerocopy_channel;
 #[cfg(feature = "bluetooth-auto")]
-use personal_rns::bluetooth_auto::BluetoothAutoShared;
-use personal_rns::interfaces::bluetooth_auto::ESP32_C6_MAX_PEERS;
+use personal_rns::bluetooth_auto::{BluetoothAutoShared, EmbeddedBleBackend};
 use personal_rns::interfaces::InterfaceKind;
 use personal_rns::reactor::embassy::embassy_grant_lane;
 use personal_rns::reactor::grant::FrameSlot;
@@ -71,7 +70,10 @@ const ESPNOW_LANE: usize = cfg!(feature = "esp-now") as usize;
 const BLE_LANE: usize = cfg!(feature = "bluetooth-auto") as usize;
 const LANE_COUNT: usize = USB_LANE + ESPNOW_LANE + BLE_LANE;
 const IFACES: usize = if LANE_COUNT == 0 { 1 } else { LANE_COUNT };
-pub const BLE_MEMBERS: usize = ESP32_C6_MAX_PEERS;
+#[cfg(feature = "bluetooth-auto")]
+pub const BLE_MEMBERS: usize = EmbeddedBleBackend::MAX_PEERS;
+#[cfg(not(feature = "bluetooth-auto"))]
+pub const BLE_MEMBERS: usize = 0;
 pub const BLE_CONTROLLER_CONNECTIONS: usize = 8;
 const MAX_IFACES: usize = IFACES + BLE_LANE * BLE_MEMBERS + 1;
 pub const NOTIFY_CAP: usize = 32;

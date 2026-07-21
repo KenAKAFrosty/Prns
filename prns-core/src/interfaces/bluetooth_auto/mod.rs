@@ -3,7 +3,6 @@ mod backend;
 mod framing;
 mod handshake;
 mod identity;
-mod limits;
 mod policy;
 
 pub use advertisement::{
@@ -29,10 +28,6 @@ pub use handshake::{
     WinRtHost, CONTROL_MAX_LEN,
 };
 pub use identity::{BleAddress, BleIdentity, GROUP_ID};
-pub use limits::{
-    ANDROID_MAX_PEERS, DESKTOP_MAX_PEERS, ESP32_C6_MAX_PEERS, ESP32_S3_MAX_PEERS, IOS_MAX_PEERS,
-    LINUX_MAX_PEERS, MACOS_MAX_PEERS, T_ECHO_MAX_PEERS, WINDOWS_MAX_PEERS,
-};
 pub use policy::{
     defaults_for_bitrate, descriptor, role_for, ConnectionPolicy, PolicyAction, PolicyInput,
     BLE_BITRATE_GUESS_BPS, DIAL_FAILED_RETRY_TTL_MS, DIAL_PAUSE_MS, DIAL_RETRY_TTL_MS,

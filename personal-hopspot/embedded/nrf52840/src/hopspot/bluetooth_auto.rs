@@ -23,7 +23,6 @@ use personal_rns::interfaces::bluetooth_auto::{
 };
 use personal_rns::interfaces::bluetooth_auto::{
     AdvertisingMode, BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin, ScanningMode,
-    T_ECHO_MAX_PEERS,
 };
 use personal_rns::interfaces::{InterfaceId, InterfaceKind};
 
@@ -31,7 +30,7 @@ type Mtx = CriticalSectionRawMutex;
 type FrameBytes = heapless09::Vec<u8, BLE_HW_MTU>;
 type GattValue = heapless09::Vec<u8, 244>;
 
-pub(super) const MEMBERS: usize = T_ECHO_MAX_PEERS;
+pub(super) const MEMBERS: usize = NrfBleBackend::MAX_PEERS;
 pub(super) const FLEET_ID: InterfaceId =
     InterfaceId::new([InterfaceKind::BluetoothAuto as u8, 0, 0, 0, 0, 0, 0, 0]);
 
@@ -405,6 +404,8 @@ pub(super) struct NrfBleBackend {
 }
 
 impl NrfBleBackend {
+    pub(super) const MAX_PEERS: usize = 5;
+
     pub(super) fn new(hub: &'static BleHub) -> Self {
         Self {
             connected: hub.connected.receiver(),
@@ -434,8 +435,7 @@ impl NrfBleBackend {
     }
 }
 
-impl BleBackend for NrfBleBackend {
-    const MAX_PEERS: usize = MEMBERS;
+impl BleBackend<{ NrfBleBackend::MAX_PEERS }> for NrfBleBackend {
     type Error = Closed;
     type Link = NrfBleLink;
 

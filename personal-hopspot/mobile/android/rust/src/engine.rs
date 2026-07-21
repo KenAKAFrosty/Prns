@@ -11,7 +11,6 @@ use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::interfaces::bluetooth_auto::BleBackend;
 use personal_rns::interfaces::bluetooth_auto::{
     AndroidHost, Endpoint, LinkCapabilities, BLE_HW_MTU,
 };

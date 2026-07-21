@@ -60,9 +60,7 @@ pub enum BleEvent<L> {
 }
 
 #[allow(async_fn_in_trait)]
-pub trait BleBackend {
-    const MAX_PEERS: usize;
-
+pub trait BleBackend<const MAX_PEERS: usize> {
     type Error: core::fmt::Debug;
     type Link: BleLink<Error = Self::Error>;
 
