@@ -310,23 +310,17 @@ impl UiState {
         }
     }
 
-    /// Apply one single-button event, returning what the app should do about it. `selected_kind` (read from the card list) lets the interface menu resolve its kind-specific items.
-    pub fn handle_input(
-        &mut self,
-        event: InputEvent,
-        card_count: usize,
-        selected_kind: Option<CardKind>,
-    ) -> UiAction {
-        self.handle_input_with_footer(event, card_count, false, selected_kind)
+    pub fn handle_input(&mut self, event: InputEvent, cards: &[Card]) -> UiAction {
+        self.handle_input_with_footer(event, cards, false)
     }
 
     pub fn handle_input_with_footer(
         &mut self,
         event: InputEvent,
-        card_count: usize,
+        cards: &[Card],
         has_footer: bool,
-        selected_kind: Option<CardKind>,
     ) -> UiAction {
+        let card_count = cards.len();
         self.notice = None;
         self.sync_card_count_with_footer(card_count, has_footer);
         let item_count = focus_item_count_with_footer(card_count, has_footer);
@@ -359,13 +353,11 @@ impl UiState {
                 UiAction::OpenDocs
             }
             (InputEvent::LongPress, UiMode::Cards) => {
-                if let Some(kind) = selected_kind {
-                    if self.selected_card_index(card_count).is_some() {
-                        self.mode = UiMode::InterfaceMenu {
-                            selected_item: 0,
-                            kind,
-                        };
-                    }
+                if let Some(card) = self.selected_card(cards) {
+                    self.mode = UiMode::InterfaceMenu {
+                        selected_item: 0,
+                        kind: card.kind(),
+                    };
                 }
                 UiAction::None
             }

@@ -7,7 +7,7 @@ fn render_marks_selected_card_below_global_row() {
     display.set_allow_out_of_bounds_drawing(true);
     let cards = [test_card("A"), test_card("B")];
     let mut state = test_ui_state();
-    state.handle_input(InputEvent::ShortPress, cards.len(), Some(CardKind::Usb));
+    state.handle_input(InputEvent::ShortPress, &cards);
 
     render_with_state(&mut display, &cards, BatteryState::Unknown, &state);
 
@@ -89,12 +89,7 @@ fn render_scrolls_local_docs_after_the_last_card() {
         docs_host: "127.0.0.1",
     };
     for _ in 0..4 {
-        state.handle_input_with_footer(
-            InputEvent::ShortPress,
-            cards.len(),
-            true,
-            Some(CardKind::Usb),
-        );
+        state.handle_input_with_footer(InputEvent::ShortPress, &cards, true);
     }
 
     assert!(state.selected_card(&cards).is_none());
@@ -124,12 +119,7 @@ fn render_shows_local_docs_access_details() {
         docs_host: "192.168.4.1",
     };
     for _ in 0..4 {
-        state.handle_input_with_footer(
-            InputEvent::ShortPress,
-            cards.len(),
-            true,
-            Some(CardKind::Usb),
-        );
+        state.handle_input_with_footer(InputEvent::ShortPress, &cards, true);
     }
 
     let mut display = PanelDisplay::new();
@@ -154,7 +144,7 @@ fn footer_focus_long_press_opens_docs() {
     let mut state = test_ui_state();
 
     assert_eq!(
-        state.handle_input_with_footer(InputEvent::ShortPress, 1, true, Some(CardKind::Usb)),
+        state.handle_input_with_footer(InputEvent::ShortPress, &cards, true),
         UiAction::None
     );
     assert!(state
@@ -162,13 +152,13 @@ fn footer_focus_long_press_opens_docs() {
         .is_some_and(|selected| core::ptr::eq(selected, &cards[0])));
 
     assert_eq!(
-        state.handle_input_with_footer(InputEvent::ShortPress, 1, true, None),
+        state.handle_input_with_footer(InputEvent::ShortPress, &cards, true),
         UiAction::None
     );
     assert!(state.selected_card(&cards).is_none());
 
     assert_eq!(
-        state.handle_input_with_footer(InputEvent::LongPress, 1, true, None),
+        state.handle_input_with_footer(InputEvent::LongPress, &cards, true),
         UiAction::OpenDocs
     );
 }
@@ -180,9 +170,9 @@ fn render_scrolls_global_row_out_of_card_window() {
     display.set_allow_out_of_bounds_drawing(true);
     let cards = [test_card("A"), test_card("B"), test_card("C")];
     let mut state = test_ui_state();
-    state.handle_input(InputEvent::ShortPress, cards.len(), Some(CardKind::Usb));
-    state.handle_input(InputEvent::ShortPress, cards.len(), Some(CardKind::Usb));
-    state.handle_input(InputEvent::ShortPress, cards.len(), Some(CardKind::Usb));
+    state.handle_input(InputEvent::ShortPress, &cards);
+    state.handle_input(InputEvent::ShortPress, &cards);
+    state.handle_input(InputEvent::ShortPress, &cards);
 
     render_with_state(&mut display, &cards, BatteryState::Unknown, &state);
 
@@ -207,7 +197,7 @@ fn render_shows_global_menu() {
     display.set_allow_out_of_bounds_drawing(true);
     let cards = [test_card("USB")];
     let mut state = test_ui_state();
-    state.handle_input(InputEvent::LongPress, cards.len(), Some(CardKind::Usb));
+    state.handle_input(InputEvent::LongPress, &cards);
 
     render_with_state(&mut display, &cards, BatteryState::Unknown, &state);
 
@@ -252,9 +242,9 @@ fn render_shows_selected_interface_menu() {
         },
     ];
     let mut state = test_ui_state();
-    state.handle_input(InputEvent::ShortPress, cards.len(), Some(CardKind::Usb));
-    state.handle_input(InputEvent::ShortPress, cards.len(), Some(CardKind::Usb));
-    state.handle_input(InputEvent::LongPress, cards.len(), Some(CardKind::Usb));
+    state.handle_input(InputEvent::ShortPress, &cards);
+    state.handle_input(InputEvent::ShortPress, &cards);
+    state.handle_input(InputEvent::LongPress, &cards);
 
     render_with_state(&mut display, &cards, BatteryState::Unknown, &state);
 

@@ -14,9 +14,13 @@ fn lora_working_profile(state: &UiState) -> RadioProfile {
     }
 }
 
+fn input(state: &mut UiState, event: InputEvent) -> UiAction {
+    state.handle_input(event, &test_cards::<1>(CardKind::LoRa))
+}
+
 fn tap(state: &mut UiState, times: usize) {
     for _ in 0..times {
-        state.handle_input(InputEvent::ShortPress, 1, None);
+        input(state, InputEvent::ShortPress);
     }
 }
 
@@ -58,7 +62,7 @@ fn accepting_a_region_snaps_the_default_frequency_and_power_ceiling() {
     state.open_lora_editor(DEFAULT_915_PROFILE);
     let target = region_index(Region::Eu868);
     tap(&mut state, target);
-    state.handle_input(InputEvent::LongPress, 1, None);
+    input(&mut state, InputEvent::LongPress);
 
     assert!(matches!(lora_screen(&state), LoRaScreen::Preset { .. }));
     let profile = lora_working_profile(&state);
@@ -81,7 +85,7 @@ fn cancel_from_the_region_list_returns_to_cards_without_committing() {
             cursor: LORA_REGION_CANCEL,
         }
     );
-    let action = state.handle_input(InputEvent::LongPress, 1, None);
+    let action = input(&mut state, InputEvent::LongPress);
     assert_eq!(action, UiAction::None);
     assert_eq!(state.mode, UiMode::Cards);
 }
@@ -92,7 +96,7 @@ fn a_nonpreset_modulation_lands_the_cursor_on_custom() {
     let mut profile = DEFAULT_915_PROFILE;
     profile.modulation = step_custom_row(DEFAULT_915_PROFILE, CustomRow::Bandwidth).modulation;
     state.open_lora_editor(profile);
-    state.handle_input(InputEvent::LongPress, 1, None);
+    input(&mut state, InputEvent::LongPress);
     assert_eq!(
         lora_screen(&state),
         LoRaScreen::Preset {
@@ -105,9 +109,9 @@ fn a_nonpreset_modulation_lands_the_cursor_on_custom() {
 fn choosing_a_named_preset_applies_it_then_opens_the_frequency_step() {
     let mut state = test_ui_state();
     state.open_lora_editor(DEFAULT_915_PROFILE);
-    state.handle_input(InputEvent::LongPress, 1, None);
+    input(&mut state, InputEvent::LongPress);
     tap_to_preset_choice(&mut state, PresetChoice::Preset(ModemPreset::ShortFast));
-    let action = state.handle_input(InputEvent::LongPress, 1, None);
+    let action = input(&mut state, InputEvent::LongPress);
 
     assert_eq!(action, UiAction::None);
     assert_eq!(
@@ -127,9 +131,9 @@ fn choosing_a_named_preset_applies_it_then_opens_the_frequency_step() {
 fn the_channel_row_cycles_to_the_next_band_channel_center() {
     let mut state = test_ui_state();
     state.open_lora_editor(DEFAULT_915_PROFILE);
-    state.handle_input(InputEvent::LongPress, 1, None);
+    input(&mut state, InputEvent::LongPress);
     tap_to_preset_choice(&mut state, PresetChoice::Preset(ModemPreset::ShortFast));
-    state.handle_input(InputEvent::LongPress, 1, None);
+    input(&mut state, InputEvent::LongPress);
     assert_eq!(
         lora_screen(&state),
         LoRaScreen::Frequency {
@@ -137,8 +141,8 @@ fn the_channel_row_cycles_to_the_next_band_channel_center() {
             edit: EditMode::Browsing,
         }
     );
-    state.handle_input(InputEvent::LongPress, 1, None);
-    state.handle_input(InputEvent::ShortPress, 1, None);
+    input(&mut state, InputEvent::LongPress);
+    input(&mut state, InputEvent::ShortPress);
 
     let hz = lora_working_profile(&state).frequency.hz();
     let (low, _) = Region::Us915.band();
@@ -150,9 +154,9 @@ fn the_channel_row_cycles_to_the_next_band_channel_center() {
 fn the_frequency_step_dials_a_channel_then_saves_with_the_preset() {
     let mut state = test_ui_state();
     state.open_lora_editor(DEFAULT_915_PROFILE);
-    state.handle_input(InputEvent::LongPress, 1, None);
+    input(&mut state, InputEvent::LongPress);
     tap_to_preset_choice(&mut state, PresetChoice::Preset(ModemPreset::ShortFast));
-    state.handle_input(InputEvent::LongPress, 1, None);
+    input(&mut state, InputEvent::LongPress);
     assert_eq!(
         lora_screen(&state),
         LoRaScreen::Frequency {
@@ -161,17 +165,17 @@ fn the_frequency_step_dials_a_channel_then_saves_with_the_preset() {
         }
     );
     tap(&mut state, 2);
-    state.handle_input(InputEvent::LongPress, 1, None);
+    input(&mut state, InputEvent::LongPress);
     tap(&mut state, 6);
-    state.handle_input(InputEvent::LongPress, 1, None);
+    input(&mut state, InputEvent::LongPress);
     tap(&mut state, 2);
-    state.handle_input(InputEvent::LongPress, 1, None);
+    input(&mut state, InputEvent::LongPress);
     tap(&mut state, 5);
-    state.handle_input(InputEvent::LongPress, 1, None);
+    input(&mut state, InputEvent::LongPress);
     assert_eq!(lora_working_profile(&state).frequency.hz(), 915_625_000);
 
     tap(&mut state, 1);
-    let committed = state.handle_input(InputEvent::LongPress, 1, None);
+    let committed = input(&mut state, InputEvent::LongPress);
     let mut expected = DEFAULT_915_PROFILE;
     expected.modulation = ModemPreset::ShortFast.modulation();
     expected.frequency = Frequency::new(915_625_000);
@@ -183,9 +187,9 @@ fn the_frequency_step_dials_a_channel_then_saves_with_the_preset() {
 fn back_from_the_frequency_step_returns_to_the_preset_list() {
     let mut state = test_ui_state();
     state.open_lora_editor(DEFAULT_915_PROFILE);
-    state.handle_input(InputEvent::LongPress, 1, None);
+    input(&mut state, InputEvent::LongPress);
     tap_to_preset_choice(&mut state, PresetChoice::Preset(ModemPreset::ShortFast));
-    state.handle_input(InputEvent::LongPress, 1, None);
+    input(&mut state, InputEvent::LongPress);
     tap(&mut state, 4);
     assert_eq!(
         lora_screen(&state),
@@ -194,15 +198,15 @@ fn back_from_the_frequency_step_returns_to_the_preset_list() {
             edit: EditMode::Browsing,
         }
     );
-    state.handle_input(InputEvent::LongPress, 1, None);
+    input(&mut state, InputEvent::LongPress);
     assert!(matches!(lora_screen(&state), LoRaScreen::Preset { .. }));
 }
 
 fn open_custom(state: &mut UiState) {
     state.open_lora_editor(DEFAULT_915_PROFILE);
-    state.handle_input(InputEvent::LongPress, 1, None);
+    input(state, InputEvent::LongPress);
     tap_to_preset_choice(state, PresetChoice::Custom);
-    state.handle_input(InputEvent::LongPress, 1, None);
+    input(state, InputEvent::LongPress);
     assert_eq!(
         lora_screen(state),
         LoRaScreen::Custom {
@@ -217,11 +221,11 @@ fn custom_grabs_a_field_steps_it_and_saves() {
     let mut state = test_ui_state();
     open_custom(&mut state);
     tap(&mut state, 1);
-    state.handle_input(InputEvent::LongPress, 1, None);
+    input(&mut state, InputEvent::LongPress);
     tap(&mut state, 1);
-    state.handle_input(InputEvent::LongPress, 1, None);
+    input(&mut state, InputEvent::LongPress);
     tap(&mut state, 5);
-    let committed = state.handle_input(InputEvent::LongPress, 1, None);
+    let committed = input(&mut state, InputEvent::LongPress);
 
     let mut expected = DEFAULT_915_PROFILE;
     expected.modulation = step_custom_row(DEFAULT_915_PROFILE, CustomRow::Bandwidth).modulation;
@@ -240,17 +244,17 @@ fn custom_dials_a_fractional_frequency_across_the_two_rows() {
             edit: EditMode::Browsing,
         }
     );
-    state.handle_input(InputEvent::LongPress, 1, None);
+    input(&mut state, InputEvent::LongPress);
     tap(&mut state, 6);
-    state.handle_input(InputEvent::LongPress, 1, None);
+    input(&mut state, InputEvent::LongPress);
     tap(&mut state, 2);
-    state.handle_input(InputEvent::LongPress, 1, None);
+    input(&mut state, InputEvent::LongPress);
     tap(&mut state, 5);
-    state.handle_input(InputEvent::LongPress, 1, None);
+    input(&mut state, InputEvent::LongPress);
     assert_eq!(lora_working_profile(&state).frequency.hz(), 915_625_000);
 
     tap(&mut state, 2);
-    match state.handle_input(InputEvent::LongPress, 1, None) {
+    match input(&mut state, InputEvent::LongPress) {
         UiAction::SetLoRaProfile(profile) => assert_eq!(profile.frequency.hz(), 915_625_000),
         other => panic!("expected SetLoRaProfile, got {other:?}"),
     }
@@ -261,11 +265,11 @@ fn custom_clamps_an_out_of_band_frequency_to_the_region_edge() {
     let mut state = test_ui_state();
     open_custom(&mut state);
     tap(&mut state, 3);
-    state.handle_input(InputEvent::LongPress, 1, None);
-    state.handle_input(InputEvent::LongPress, 1, None);
+    input(&mut state, InputEvent::LongPress);
+    input(&mut state, InputEvent::LongPress);
     tap(&mut state, 2);
-    state.handle_input(InputEvent::LongPress, 1, None);
-    state.handle_input(InputEvent::LongPress, 1, None);
+    input(&mut state, InputEvent::LongPress);
+    input(&mut state, InputEvent::LongPress);
     assert_eq!(lora_working_profile(&state).frequency.hz(), 928_000_000);
 }
 
@@ -281,7 +285,7 @@ fn back_from_custom_returns_to_the_preset_list() {
             edit: EditMode::Browsing,
         }
     );
-    state.handle_input(InputEvent::LongPress, 1, None);
+    input(&mut state, InputEvent::LongPress);
     assert!(matches!(lora_screen(&state), LoRaScreen::Preset { .. }));
 }
 

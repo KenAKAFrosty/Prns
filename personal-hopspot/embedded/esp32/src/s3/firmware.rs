@@ -460,13 +460,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                         continue;
                     }
                     oled_off_at_ms = None;
-                    let selected_kind = ui_state.selected_card(&cards).map(|card| card.kind());
-                    match ui_state.handle_input_with_footer(
-                        event,
-                        card_count,
-                        has_local_docs,
-                        selected_kind,
-                    ) {
+                    match ui_state.handle_input_with_footer(event, &cards, has_local_docs) {
                         screen::UiAction::OledOff => {
                             ui_state.show_notice(screen::UiNotice::OledOff);
                             notice_until_ms = Some(now_ms + NOTICE_MS);

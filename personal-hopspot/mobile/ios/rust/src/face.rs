@@ -56,17 +56,12 @@ impl HopspotFace {
 
     pub fn post_input(&mut self, event: InputEvent) -> UiAction {
         let cards = self.build_cards();
-        self.state.sync_card_count(cards.len());
-        let selected_kind = self.state.selected_card(&cards).map(|card| card.kind());
-        let selected_id = self.state.selected_card(&cards).map(|card| card.id());
-        let action = self.state.handle_input(event, cards.len(), selected_kind);
+        let action = self.state.handle_input(event, &cards);
         match action {
             UiAction::ToggleSelectedInterface => {
-                if let Some(id) = selected_id {
-                    let turning_on = cards.iter().any(|card| {
-                        card.id() == id
-                            && card.liveness() == personal_hopspot_core::Liveness::Disabled
-                    });
+                if let Some(card) = self.state.selected_card(&cards) {
+                    let id = card.id();
+                    let turning_on = card.liveness() == personal_hopspot_core::Liveness::Disabled;
                     self.show_notice(if turning_on {
                         UiNotice::TurningOn
                     } else {
@@ -206,9 +201,7 @@ mod tests {
         let mut after = fresh_buffer();
 
         face.render_cards(&cards, &[], &mut before);
-        let _ = face
-            .state
-            .handle_input(InputEvent::ShortPress, cards.len(), None);
+        let _ = face.state.handle_input(InputEvent::ShortPress, &cards);
         face.render_cards(&cards, &[], &mut after);
 
         assert_ne!(before, after);
@@ -222,9 +215,7 @@ mod tests {
         let mut after = fresh_buffer();
 
         face.render_cards(&cards, &[], &mut before);
-        let _ = face
-            .state
-            .handle_input(InputEvent::LongPress, cards.len(), None);
+        let _ = face.state.handle_input(InputEvent::LongPress, &cards);
         face.render_cards(&cards, &[], &mut after);
 
         assert_ne!(before, after);

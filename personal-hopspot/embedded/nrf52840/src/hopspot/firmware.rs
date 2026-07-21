@@ -434,8 +434,8 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
             .await
             {
                 Either3::First(event) => {
-                    let selected_kind = ui_state.selected_card(&cards).map(|card| card.kind());
-                    match ui_state.handle_input(event, card_count, selected_kind) {
+                    let action = ui_state.handle_input(event, &cards);
+                    match action {
                         hopspot::UiAction::Sleep => {
                             ui_state.show_notice(hopspot::UiNotice::Sleeping);
                             notice_until_ms =

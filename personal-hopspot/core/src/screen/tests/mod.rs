@@ -146,6 +146,14 @@ fn test_card(label: &'static str) -> Card {
     }
 }
 
+fn test_cards<const N: usize>(kind: CardKind) -> [Card; N] {
+    core::array::from_fn(|_| {
+        let mut card = test_card("Test");
+        card.kind = kind;
+        card
+    })
+}
+
 fn test_ui_state() -> UiState {
     UiState::new(UiConfiguration {
         storage_limits: DisplayedStorageLimits::DYNAMIC,

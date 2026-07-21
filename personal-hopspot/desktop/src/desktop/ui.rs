@@ -24,7 +24,7 @@ use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 use personal_hopspot_core::{
-    self as screen, AccessPointState, Card, CardKind, DisplayPowerControl, InputEvent, UiAction,
+    self as screen, AccessPointState, Card, DisplayPowerControl, InputEvent, UiAction,
     UiConfiguration, UiState,
 };
 
@@ -69,15 +69,14 @@ fn press_start(source: PressSource) -> PressStart {
 fn dispatch_long_press_if_ready(
     active_press: &mut Option<PressStart>,
     now: Instant,
-    card_count: usize,
+    cards: &[Card],
     has_footer: bool,
-    selected_kind: Option<CardKind>,
     ui_state: &mut UiState,
 ) -> UiAction {
     let Some(press) = active_press.as_mut() else {
         return UiAction::None;
     };
-    if card_count == 0
+    if cards.is_empty()
         || press.long_press_sent
         || now.duration_since(press.started_at) < LONG_PRESS_THRESHOLD
     {
@@ -85,16 +84,15 @@ fn dispatch_long_press_if_ready(
     }
 
     press.long_press_sent = true;
-    ui_state.handle_input_with_footer(InputEvent::LongPress, card_count, has_footer, selected_kind)
+    ui_state.handle_input_with_footer(InputEvent::LongPress, cards, has_footer)
 }
 
 fn finish_press(
     active_press: &mut Option<PressStart>,
     source: PressSource,
     released_at: Instant,
-    card_count: usize,
+    cards: &[Card],
     has_footer: bool,
-    selected_kind: Option<CardKind>,
     ui_state: &mut UiState,
 ) -> UiAction {
     let Some(press) = active_press.take() else {
@@ -114,15 +112,11 @@ fn finish_press(
     } else {
         InputEvent::ShortPress
     };
-    ui_state.handle_input_with_footer(event, card_count, has_footer, selected_kind)
+    ui_state.handle_input_with_footer(event, cards, has_footer)
 }
 
 fn selected_card_id(ui_state: &UiState, cards: &[Card]) -> Option<InterfaceId> {
     ui_state.selected_card(cards).map(|card| card.id())
-}
-
-fn selected_card_kind(ui_state: &UiState, cards: &[Card]) -> Option<CardKind> {
-    ui_state.selected_card(cards).map(|card| card.kind())
 }
 
 struct LoggedStatus {
@@ -710,14 +704,12 @@ pub(super) fn run_window(handles: WindowHandles) {
                     needs_redraw = true;
                 }
                 SimulatorEvent::KeyUp { .. } => {
-                    let selected_kind = selected_card_kind(&ui_state, &cards);
                     let released = finish_press(
                         &mut active_press,
                         PressSource::Key,
                         Instant::now(),
-                        cards.len(),
+                        &cards,
                         has_local_docs,
-                        selected_kind,
                         &mut ui_state,
                     );
                     let selected = selected_card_id(&ui_state, &cards);
@@ -735,14 +727,12 @@ pub(super) fn run_window(handles: WindowHandles) {
                     needs_redraw = true;
                 }
                 SimulatorEvent::MouseButtonUp { .. } => {
-                    let selected_kind = selected_card_kind(&ui_state, &cards);
                     let released = finish_press(
                         &mut active_press,
                         PressSource::Mouse,
                         Instant::now(),
-                        cards.len(),
+                        &cards,
                         has_local_docs,
-                        selected_kind,
                         &mut ui_state,
                     );
                     let selected = selected_card_id(&ui_state, &cards);
@@ -762,13 +752,11 @@ pub(super) fn run_window(handles: WindowHandles) {
         }
 
         let holding = active_press.is_some();
-        let selected_kind = selected_card_kind(&ui_state, &cards);
         let long_press = dispatch_long_press_if_ready(
             &mut active_press,
             Instant::now(),
-            cards.len(),
+            &cards,
             has_local_docs,
-            selected_kind,
             &mut ui_state,
         );
         let selected = selected_card_id(&ui_state, &cards);
@@ -868,6 +856,25 @@ pub(super) fn run_window(handles: WindowHandles) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use personal_rns::interfaces::{InterfaceSnapshot, Membership};
+
+    fn test_cards() -> HVec<Card, 1> {
+        screen::snapshots_to_cards(
+            &[InterfaceSnapshot {
+                id: InterfaceId::new([0; 8]),
+                connection: ConnectionState::Connected,
+                failure_reason: None,
+                rx_bytes: 0,
+                tx_bytes: 0,
+                transfer_rates: None,
+                destinations: 0,
+                links: 0,
+                transported_links: 0,
+                membership: Membership::Independent,
+            }],
+            |_| Some((screen::CardKind::Usb, screen::card_label("USB"))),
+        )
+    }
 
     #[test]
     fn release_before_threshold_is_short_press() {
@@ -878,14 +885,14 @@ mod tests {
             long_press_sent: false,
         });
         let mut ui_state = ui_state();
+        let cards = test_cards();
 
         finish_press(
             &mut active_press,
             PressSource::Key,
             started_at + LONG_PRESS_THRESHOLD - Duration::from_millis(1),
-            4,
+            &cards,
             false,
-            None,
             &mut ui_state,
         );
 
@@ -903,13 +910,13 @@ mod tests {
             long_press_sent: false,
         });
         let mut ui_state = ui_state();
+        let cards = test_cards();
 
         dispatch_long_press_if_ready(
             &mut active_press,
             started_at + LONG_PRESS_THRESHOLD,
-            4,
+            &cards,
             false,
-            None,
             &mut ui_state,
         );
 
@@ -926,22 +933,21 @@ mod tests {
             long_press_sent: false,
         });
         let mut ui_state = ui_state();
+        let cards = test_cards();
 
         dispatch_long_press_if_ready(
             &mut active_press,
             started_at + LONG_PRESS_THRESHOLD,
-            4,
+            &cards,
             false,
-            None,
             &mut ui_state,
         );
         finish_press(
             &mut active_press,
             PressSource::Key,
             started_at + LONG_PRESS_THRESHOLD + Duration::from_millis(1),
-            4,
+            &cards,
             false,
-            None,
             &mut ui_state,
         );
 
@@ -958,14 +964,14 @@ mod tests {
             long_press_sent: false,
         });
         let mut ui_state = ui_state();
+        let cards = test_cards();
 
         finish_press(
             &mut active_press,
             PressSource::Key,
             started_at + LONG_PRESS_THRESHOLD,
-            4,
+            &cards,
             false,
-            None,
             &mut ui_state,
         );
 
