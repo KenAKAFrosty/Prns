@@ -26,14 +26,11 @@ cfg_if::cfg_if! {
     }
 }
 
-mod attach;
+mod attachment;
 
 pub mod reconnect;
 
 pub mod interface_menu;
-
-#[cfg(any(feature = "wifi-auto", feature = "usb", feature = "bluetooth-auto"))]
-pub mod auto;
 
 #[cfg(feature = "config")]
 pub mod from_plan;

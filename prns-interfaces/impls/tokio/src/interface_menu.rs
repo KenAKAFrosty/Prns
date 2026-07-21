@@ -1,5 +1,5 @@
 #[cfg(any(feature = "wifi-auto", feature = "usb", feature = "bluetooth-auto"))]
-pub use crate::auto::Auto;
+pub use crate::attachment::DefaultAutoInterfaces;
 #[cfg(feature = "ax25")]
 pub use crate::ax25_kiss::Ax25KissInterface;
 #[cfg(feature = "backbone")]

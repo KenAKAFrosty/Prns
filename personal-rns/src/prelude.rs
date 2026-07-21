@@ -76,7 +76,7 @@ pub use usb_auto::AutoUsb;
     feature = "tokio-host",
     any(feature = "wifi-auto", feature = "usb", feature = "bluetooth-auto")
 ))]
-pub use prns_interfaces_tokio::auto::Auto;
+pub use prns_interfaces_tokio::interface_menu::DefaultAutoInterfaces;
 
 #[cfg(feature = "tokio-host")]
 pub use prns_interfaces_tokio::interface_menu;

@@ -1,7 +1,3 @@
-//! The menu: every attachable family's one [`Attachable`](prns_runtime::runtime::Attachable)
-//! registration, so `handle.attach(x)` works on any of them and the wire-vs-fleet
-//! distinction lives here instead of at callsites.
-
 #[cfg(any(
     feature = "tcp",
     feature = "udp",
