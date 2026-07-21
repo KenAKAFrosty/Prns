@@ -1,11 +1,11 @@
-mod bluetooth;
+mod bluetooth_auto;
 mod face;
 mod usb;
 mod wifi_auto;
 mod wifi_aware;
 mod wifi_direct;
 
-pub use bluetooth::*;
+pub use bluetooth_auto::*;
 pub use face::*;
 pub use usb::*;
 pub use wifi_auto::*;

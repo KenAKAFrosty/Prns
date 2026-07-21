@@ -1,13 +1,13 @@
 #![forbid(unsafe_code)]
 
-mod bluetooth;
+mod bluetooth_auto;
 mod input;
 mod js_translation;
 mod parameters;
 mod runtime;
 mod usb_auto;
 
-pub use bluetooth::{
+pub use bluetooth_auto::{
     bluetooth_bitrate_bps, bluetooth_control_uuid, bluetooth_data_fragments, bluetooth_data_uuid,
     bluetooth_decode_control, bluetooth_dialer_hello, bluetooth_hardware_mtu,
     bluetooth_service_uuid, BluetoothReassembler,

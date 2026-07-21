@@ -5,7 +5,7 @@ use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, Directive, EngineCommand,
     EngineReaction, EngineState, FanTarget, InstantMillis, IssuedCommand, RatchetPolicy,
 };
-use personal_rns::interfaces::bluetooth_auto::core as bluetooth_core;
+use personal_rns::interfaces::bluetooth_auto as bluetooth_contract;
 use personal_rns::interfaces::{
     AnnounceBandwidthCap, BitrateBps, Capabilities, InboundPacket, InterfaceCapabilities,
     InterfaceCommonPolicy, InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceMode,
@@ -50,7 +50,7 @@ pub struct PrnsRuntime {
     events: Vec<JsValue>,
     outbound: Vec<OutboundFrame>,
     next_command_id: u64,
-    ble_identity: bluetooth_core::BleIdentity,
+    ble_identity: bluetooth_contract::BleIdentity,
 }
 
 #[wasm_bindgen]
@@ -68,7 +68,7 @@ impl PrnsRuntime {
             events: Vec::new(),
             outbound: Vec::new(),
             next_command_id: 0,
-            ble_identity: bluetooth_core::BleIdentity::new(ble_identity_bytes),
+            ble_identity: bluetooth_contract::BleIdentity::new(ble_identity_bytes),
         })
     }
 

@@ -39,7 +39,7 @@ case "$mode" in
             routing::routes::impls::fixed_array::tests \
             routing::routes::impls::fixed_indexed::tests \
             routing::links::resources::table::core::tests \
-            interfaces::bluetooth_auto::core::tests
+            interfaces::bluetooth_auto::tests
         do
             run_miri stacked "$filter"
         done

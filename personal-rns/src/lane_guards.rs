@@ -24,10 +24,12 @@ compile_error!(
 compile_error!("the `usb` family needs a runtime lane: enable `tokio-host` or `embassy-host`");
 
 #[cfg(all(
-    feature = "ble",
+    feature = "bluetooth-auto",
     not(any(feature = "tokio-host", feature = "embassy-host"))
 ))]
-compile_error!("the `ble` family needs a runtime lane: enable `tokio-host` or `embassy-host`");
+compile_error!(
+    "the `bluetooth-auto` family needs a runtime lane: enable `tokio-host` or `embassy-host`"
+);
 
 #[cfg(all(feature = "wifi-direct", not(feature = "tokio-host")))]
 compile_error!("the `wifi-direct` family is tokio-only: enable `tokio-host`");

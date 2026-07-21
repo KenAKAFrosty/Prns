@@ -8,10 +8,10 @@ use epd_waveshare::color::Color as EpdColor;
 use epd_waveshare::epd1in54_v2::Display1in54;
 
 use personal_hopspot_core as hopspot;
-use personal_rns::ble::BluetoothAutoStatus;
+use personal_rns::bluetooth_auto::BluetoothAutoStatus;
 use personal_rns::interfaces::{InterfaceId, InterfaceSnapshot, InterfaceStatus, Membership};
 
-use super::bluetooth::{BLE_SHARED, FLEET_ID, MEMBERS};
+use super::bluetooth_auto::{BLE_SHARED, FLEET_ID, MEMBERS};
 use super::node::INTERFACE_STORE;
 
 const PANEL_SIZE: i32 = 200;

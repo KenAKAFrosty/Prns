@@ -22,7 +22,7 @@ fn classify_card(
             screen::tcp_card_label(HOPSPOT_TCP_TARGET),
         ))
     } else {
-        #[cfg(feature = "ble")]
+        #[cfg(feature = "bluetooth-auto")]
         if id == BLE_FLEET_ID {
             return Some((screen::CardKind::Ble, screen::card_label("BLE")));
         }
@@ -63,11 +63,11 @@ pub(super) fn build_snapshots(
     espnow: Option<&EmbassyInterfaceStatus>,
 ) -> HVec<InterfaceSnapshot, 8> {
     use personal_rns::interfaces::InterfaceStatus;
-    #[cfg(feature = "ble")]
+    #[cfg(feature = "bluetooth-auto")]
     let ble = BluetoothAutoStatus::new(&BLE_SHARED);
     let mut entries: HVec<(&dyn InterfaceStatus, Membership), 8> = HVec::new();
     let _ = entries.push((lora, Membership::Independent));
-    #[cfg(feature = "ble")]
+    #[cfg(feature = "bluetooth-auto")]
     {
         let _ = entries.push((&ble, Membership::Independent));
     }
@@ -88,7 +88,7 @@ pub(super) fn build_snapshots(
             let _ = entries.push((member, Membership::FleetMember { supervisor_id }));
         }
     }
-    #[cfg(feature = "ble")]
+    #[cfg(feature = "bluetooth-auto")]
     {
         let supervisor_id = ble.id();
         for member in ble.members() {

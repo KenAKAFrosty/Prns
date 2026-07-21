@@ -5,7 +5,7 @@ use std::io::{Read, Write};
 use std::path::Path;
 
 use prns_core::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use prns_core::interfaces::bluetooth_auto::core::BleIdentity;
+use prns_core::interfaces::bluetooth_auto::BleIdentity;
 
 /// A fresh identity secret from the OS CSPRNG.
 #[must_use]

@@ -1,4 +1,4 @@
-#[cfg(any(feature = "wifi-auto", feature = "usb", feature = "ble"))]
+#[cfg(any(feature = "wifi-auto", feature = "usb", feature = "bluetooth-auto"))]
 pub use crate::auto::Auto;
 #[cfg(feature = "ax25")]
 pub use crate::ax25_kiss::Ax25KissInterface;
@@ -6,10 +6,10 @@ pub use crate::ax25_kiss::Ax25KissInterface;
 pub use crate::backbone::BackboneClientInterface;
 #[cfg(feature = "backbone")]
 pub use crate::backbone::BackboneServer;
-#[cfg(feature = "ble")]
-pub use crate::ble::tokio::BluetoothAuto;
-#[cfg(feature = "ble")]
-pub use crate::ble_host::{AttachedBle, AutoBle};
+#[cfg(feature = "bluetooth-auto")]
+pub use crate::bluetooth_auto::BluetoothAuto;
+#[cfg(feature = "bluetooth-auto")]
+pub use crate::bluetooth_auto::{AttachedBle, AutoBle};
 #[cfg(feature = "config")]
 pub use crate::from_plan::FromPlan;
 #[cfg(feature = "kiss")]

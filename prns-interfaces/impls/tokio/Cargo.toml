@@ -73,7 +73,7 @@ required-features = ["tcp"]
 
 [[example]]
 name = "bluetooth_node"
-required-features = ["ble", "log"]
+required-features = ["bluetooth-auto", "log"]
 
 [[example]]
 name = "wifi_direct_linux"
@@ -105,7 +105,7 @@ wifi-aware = ["tcp"]
 usb = ["serial", "dep:futures-util", "dep:serialport"]
 interface-discovery = ["tcp", "backbone", "dep:getrandom", "prns-core/interface-discovery", "prns-runtime/interface-discovery"]
 config = ["tcp", "udp", "serial", "kiss", "ax25", "rnode", "pipe", "backbone", "wifi-auto", "i2p", "weave", "dep:prns-config", "dep:tokio", "tokio/rt"]
-ble = ["dep:tokio", "tokio/rt", "dep:futures-util", "dep:bluer", "dep:prns-ffi"]
+bluetooth-auto = ["dep:tokio", "tokio/rt", "dep:futures-util", "dep:bluer", "dep:prns-ffi"]
 
 [lints.clippy]
 dbg_macro = "deny"

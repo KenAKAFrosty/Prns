@@ -3,7 +3,7 @@ use std::io;
 use std::sync::mpsc::{self, Sender};
 use std::sync::Arc;
 
-use personal_rns::ble::tokio::BluetoothAutoStatus;
+use personal_rns::bluetooth_auto::BluetoothAutoStatus;
 use personal_rns::engine::RatchetPolicy;
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::shared_instance::core as instance_core;

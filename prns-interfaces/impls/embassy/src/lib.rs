@@ -1,7 +1,7 @@
 #![cfg_attr(not(test), no_std)]
 #![forbid(unsafe_code)]
 
-#[cfg(any(feature = "esp-now", feature = "ble-trouble"))]
+#[cfg(any(feature = "esp-now", feature = "bluetooth-auto-trouble"))]
 extern crate alloc;
 
 #[cfg(feature = "log")]
@@ -40,11 +40,8 @@ pub mod lora;
 #[cfg(feature = "esp-now")]
 pub mod esp_now;
 
-#[cfg(feature = "ble")]
-pub mod ble;
-
-#[cfg(feature = "ble-trouble")]
-pub mod ble_trouble;
+#[cfg(feature = "bluetooth-auto")]
+pub mod bluetooth_auto;
 
 #[cfg(feature = "usb")]
 pub mod usb_auto;

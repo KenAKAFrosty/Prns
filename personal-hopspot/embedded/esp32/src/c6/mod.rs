@@ -39,9 +39,9 @@ use crate::storage::{C6Storage, EngineStorageType};
 
 use embassy_sync::signal::Signal;
 use embassy_sync::zerocopy_channel;
-#[cfg(feature = "ble")]
-use personal_rns::ble::BluetoothAutoShared;
-use personal_rns::interfaces::bluetooth_auto::limits;
+#[cfg(feature = "bluetooth-auto")]
+use personal_rns::bluetooth_auto::BluetoothAutoShared;
+use personal_rns::interfaces::bluetooth_auto::ESP32_C6_MAX_PEERS;
 use personal_rns::interfaces::InterfaceKind;
 use personal_rns::reactor::embassy::embassy_grant_lane;
 use personal_rns::reactor::grant::FrameSlot;
@@ -68,10 +68,10 @@ const ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x13Personal Hopspot C6\xc0";
 
 const USB_LANE: usize = 1;
 const ESPNOW_LANE: usize = cfg!(feature = "esp-now") as usize;
-const BLE_LANE: usize = cfg!(feature = "ble") as usize;
+const BLE_LANE: usize = cfg!(feature = "bluetooth-auto") as usize;
 const LANE_COUNT: usize = USB_LANE + ESPNOW_LANE + BLE_LANE;
 const IFACES: usize = if LANE_COUNT == 0 { 1 } else { LANE_COUNT };
-pub const BLE_MEMBERS: usize = limits::ESP32_C6_MAX_PEERS;
+pub const BLE_MEMBERS: usize = ESP32_C6_MAX_PEERS;
 pub const BLE_CONTROLLER_CONNECTIONS: usize = 8;
 const MAX_IFACES: usize = IFACES + BLE_LANE * BLE_MEMBERS + 1;
 pub const NOTIFY_CAP: usize = 32;
@@ -82,21 +82,21 @@ const INTERFACE_STORE_CAP: usize = 32;
 const PACKET_PHY_RETENTION_CAPACITY: usize = 32;
 const PACKET_PHY_INDEX_BUCKETS: usize =
     personal_rns::routing::dedup::dedup_index_buckets(PACKET_PHY_RETENTION_CAPACITY);
-#[cfg(feature = "ble")]
+#[cfg(feature = "bluetooth-auto")]
 const BLE_START_DELAY: Duration = Duration::from_secs(3);
 // BLE needs heap for esp-radio's controller + trouble-host's boxed GATT clients/reassemblers; 64 KB
 // covers it with margin. Kept off the larger end so the leftover linker `.stack` region stays big
 // enough for the BLE construction transient (the single-core main task runs on `.stack` — esp-rtos
 // gives it no separate task stack, so RAM spent on the heap is RAM taken from that one stack).
-#[cfg(not(any(feature = "ble", feature = "esp-now")))]
+#[cfg(not(any(feature = "bluetooth-auto", feature = "esp-now")))]
 const HEAP_BYTES: usize = 32 * 1024;
-#[cfg(all(feature = "ble", not(feature = "esp-now")))]
+#[cfg(all(feature = "bluetooth-auto", not(feature = "esp-now")))]
 const HEAP_BYTES: usize = 64 * 1024;
-#[cfg(all(feature = "esp-now", not(feature = "ble")))]
+#[cfg(all(feature = "esp-now", not(feature = "bluetooth-auto")))]
 const HEAP_BYTES: usize = 72 * 1024;
-#[cfg(all(feature = "esp-now", feature = "ble"))]
+#[cfg(all(feature = "esp-now", feature = "bluetooth-auto"))]
 const HEAP_BYTES: usize = 88 * 1024;
-#[cfg(feature = "ble")]
+#[cfg(feature = "bluetooth-auto")]
 fn c6_ble_config() -> esp_radio::ble::Config {
     esp_radio::ble::Config::default()
         .with_task_priority(0)
@@ -110,9 +110,9 @@ const USB_SLOT: usize = 0;
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"hopsp-c6");
 #[cfg(feature = "esp-now")]
 const ESPNOW_SLOT: usize = USB_LANE;
-#[cfg(feature = "ble")]
+#[cfg(feature = "bluetooth-auto")]
 const BLE_FLEET_SLOT: usize = USB_LANE + ESPNOW_LANE;
-#[cfg(feature = "ble")]
+#[cfg(feature = "bluetooth-auto")]
 const BLE_FLEET_ID: InterfaceId =
     InterfaceId::new([InterfaceKind::BluetoothAuto as u8, 0, 0, 0, 0, 0, 0, 0]);
 
@@ -140,7 +140,7 @@ type InterfaceStore = EmbassyInterfaceStore<
     PACKET_PHY_RETENTION_CAPACITY,
     PACKET_PHY_INDEX_BUCKETS,
 >;
-#[cfg(feature = "ble")]
+#[cfg(feature = "bluetooth-auto")]
 type C6BleFleet = Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP>;
 type Node = PrnsNode<
     (),
@@ -169,9 +169,9 @@ static INTERFACE_STORE: InterfaceStore = EmbassyInterfaceStore::new();
 static ENTROPY_STATE: AtomicU64 = AtomicU64::new(0x9e37_79b9_7f4a_7c15);
 static USB_STATUS: EmbassyInterfaceStatus =
     EmbassyInterfaceStatus::new(USB_INTERFACE_ID, ConnectionState::Initializing);
-#[cfg(feature = "ble")]
+#[cfg(feature = "bluetooth-auto")]
 static BLE_SHARED: BluetoothAutoShared<BLE_MEMBERS> = BluetoothAutoShared::new(BLE_FLEET_ID);
-#[cfg(feature = "ble")]
+#[cfg(feature = "bluetooth-auto")]
 static BLE_OUTBOUND_WAKE: Signal<Mtx, ()> = Signal::new();
 
 macro_rules! mk_static {
@@ -236,7 +236,7 @@ const fn espnow_phy_rate() -> WifiPhyRate {
     WifiPhyRate::Rate6m
 }
 
-#[cfg(feature = "ble")]
+#[cfg(feature = "bluetooth-auto")]
 #[embassy_executor::task]
 async fn ble_task(
     spawner: Spawner,
@@ -248,7 +248,7 @@ async fn ble_task(
     Timer::after(BLE_START_DELAY).await;
     let connector =
         esp_radio::ble::controller::BleConnector::new(bt, c6_ble_config()).expect("ble connector");
-    crate::ble::run(connector, mac, fleet, shared, spawner).await;
+    crate::bluetooth_auto::run(connector, mac, fleet, shared, spawner).await;
 }
 
 #[cfg(feature = "esp-now")]

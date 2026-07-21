@@ -65,7 +65,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         if slot == WIFI_FLEET_SLOT {
             out_producer.set_outbound_wake(&OUTBOUND_WAKE);
         }
-        #[cfg(feature = "ble")]
+        #[cfg(feature = "bluetooth-auto")]
         if slot == BLE_FLEET_SLOT {
             out_producer.set_outbound_wake(&BLE_OUTBOUND_WAKE);
         }
@@ -184,7 +184,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         if has_wifi {
             node.activate_fleet(WIFI_FLEET_SLOT, WIFI_FLEET_ID);
         }
-        #[cfg(feature = "ble")]
+        #[cfg(feature = "bluetooth-auto")]
         if radio_mode == RadioMode::Ble {
             node.activate_fleet(BLE_FLEET_SLOT, BLE_FLEET_ID);
         }
@@ -275,7 +275,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     #[cfg(feature = "wifi-auto")]
     let wifi_sec_data_buf: &'static mut [u8] =
         alloc::vec![0u8; wifi_auto_contract::HARDWARE_MTU].leak();
-    #[cfg(feature = "ble")]
+    #[cfg(feature = "bluetooth-auto")]
     let ble_fleet: Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP> = {
         let (in_producer, out_consumer) =
             iface_halves[BLE_FLEET_SLOT].take().expect("ble fleet half");
@@ -474,7 +474,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                             if let Some(tcp) = tcp_status {
                                 tcp.disable();
                             }
-                            #[cfg(feature = "ble")]
+                            #[cfg(feature = "bluetooth-auto")]
                             {
                                 let status = BluetoothAutoStatus::new(&BLE_SHARED);
                                 status.disable();
@@ -500,7 +500,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                             if let Some(tcp) = tcp_status {
                                 tcp.enable();
                             }
-                            #[cfg(feature = "ble")]
+                            #[cfg(feature = "bluetooth-auto")]
                             {
                                 let status = BluetoothAutoStatus::new(&BLE_SHARED);
                                 status.enable();
@@ -562,14 +562,14 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                         if card.id == tcp_id {
                                             show_toggle_notice(tcp.is_enabled());
                                             tcp.toggle_enabled();
-                                            #[cfg(feature = "ble")]
+                                            #[cfg(feature = "bluetooth-auto")]
                                             {
                                                 handled = true;
                                             }
                                         }
                                     }
                                 }
-                                #[cfg(feature = "ble")]
+                                #[cfg(feature = "bluetooth-auto")]
                                 if !handled && card.id == BLE_FLEET_ID {
                                     let status = BluetoothAutoStatus::new(&BLE_SHARED);
                                     show_toggle_notice(status.is_enabled());
@@ -605,7 +605,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         }
     };
 
-    #[cfg(all(feature = "ble", not(feature = "wifi-auto")))]
+    #[cfg(all(feature = "bluetooth-auto", not(feature = "wifi-auto")))]
     // Halve the BLE controller task stack (8192 -> 4096; esp-radio's own default hints "4096?") to
     // reclaim ~4 KiB internal SRAM toward the full radio stack + SoftAP fit.
     let ble_connector = esp_radio::ble::controller::BleConnector::new(
@@ -614,16 +614,16 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     )
     .expect("ble connector");
 
-    #[cfg(all(feature = "ble", not(feature = "wifi-auto")))]
+    #[cfg(all(feature = "bluetooth-auto", not(feature = "wifi-auto")))]
     {
         let _ = (wifi, tcp, has_wifi);
         join(
-            crate::ble::run(ble_connector, mac_octets, ble_fleet, &BLE_SHARED),
+            crate::bluetooth_auto::run(ble_connector, mac_octets, ble_fleet, &BLE_SHARED),
             render,
         )
         .await;
     }
-    #[cfg(all(feature = "wifi-auto", not(feature = "ble")))]
+    #[cfg(all(feature = "wifi-auto", not(feature = "bluetooth-auto")))]
     {
         let lora_run = lora.run(lora_seam);
         let espnow_run = async {
@@ -660,7 +660,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             }
         }
     }
-    #[cfg(all(feature = "ble", feature = "wifi-auto"))]
+    #[cfg(all(feature = "bluetooth-auto", feature = "wifi-auto"))]
     {
         let lora_run = lora.run(lora_seam);
         let espnow_run = async {
@@ -677,7 +677,8 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 )
                 .expect("ble connector");
                 log_heap_footprint("post-ble-connector (core 0)");
-                let ble_run = crate::ble::run(ble_connector, mac_octets, ble_fleet, &BLE_SHARED);
+                let ble_run =
+                    crate::bluetooth_auto::run(ble_connector, mac_octets, ble_fleet, &BLE_SHARED);
                 match (wifi, tcp) {
                     (Some(wifi), Some((tcp, tcp_seam))) => {
                         join(

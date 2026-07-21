@@ -1,6 +1,6 @@
 use js_sys::{Object, Reflect, Uint8Array};
 use personal_rns::engine::{FanTarget, Journaled, RouteRemovalCause};
-use personal_rns::interfaces::bluetooth_auto::core as bluetooth_core;
+use personal_rns::interfaces::bluetooth_auto as bluetooth_contract;
 use personal_rns::interfaces::usb_auto;
 use personal_rns::interfaces::InterfaceKind;
 use wasm_bindgen::prelude::*;
@@ -227,10 +227,10 @@ pub(crate) fn usb_auto_message_to_js(message: usb_auto::Message<'_>) -> JsValue 
     object.into()
 }
 
-pub(crate) fn bluetooth_control_to_js(control: bluetooth_core::Control) -> JsValue {
+pub(crate) fn bluetooth_control_to_js(control: bluetooth_contract::Control) -> JsValue {
     let object = Object::new();
     match control {
-        bluetooth_core::Control::Hello {
+        bluetooth_contract::Control::Hello {
             identity,
             endpoint,
             capabilities,
@@ -245,7 +245,7 @@ pub(crate) fn bluetooth_control_to_js(control: bluetooth_core::Control) -> JsVal
                 set_i32(&object, "peerRssi", rssi as i32);
             }
         }
-        bluetooth_core::Control::Welcome {
+        bluetooth_contract::Control::Welcome {
             identity,
             endpoint,
             capabilities,
@@ -260,7 +260,7 @@ pub(crate) fn bluetooth_control_to_js(control: bluetooth_core::Control) -> JsVal
                 set_i32(&object, "peerRssi", rssi as i32);
             }
         }
-        bluetooth_core::Control::Close { reason } => {
+        bluetooth_contract::Control::Close { reason } => {
             set_str(&object, "type", "close");
             set_str(&object, "reason", &format!("{reason:?}"));
         }

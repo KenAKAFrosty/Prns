@@ -52,7 +52,7 @@ macro_rules! attaches_as_wire {
     feature = "i2p",
     feature = "weave",
     feature = "wifi-direct",
-    feature = "ble"
+    feature = "bluetooth-auto"
 ))]
 macro_rules! attaches_as_fleet {
     (impl[$($generics:tt)*] $ty:ty) => {
@@ -120,5 +120,5 @@ attaches_as_fleet!(impl[B] crate::i2p::I2pInterface<B>);
 attaches_as_fleet!(impl[Open] crate::weave::WeaveInterface<Open>);
 #[cfg(feature = "wifi-direct")]
 attaches_as_fleet!(impl[B] crate::wifi_direct::WifiDirectAuto<B>);
-#[cfg(feature = "ble")]
-attaches_as_fleet!(impl[B, const MAX_PEERS: usize] crate::ble::tokio::BluetoothAuto<B, MAX_PEERS>);
+#[cfg(feature = "bluetooth-auto")]
+attaches_as_fleet!(impl[B, const MAX_PEERS: usize] crate::bluetooth_auto::BluetoothAuto<B, MAX_PEERS>);

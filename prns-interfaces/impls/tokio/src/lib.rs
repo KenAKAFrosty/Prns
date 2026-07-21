@@ -32,7 +32,7 @@ pub mod reconnect;
 
 pub mod interface_menu;
 
-#[cfg(any(feature = "wifi-auto", feature = "usb", feature = "ble"))]
+#[cfg(any(feature = "wifi-auto", feature = "usb", feature = "bluetooth-auto"))]
 pub mod auto;
 
 #[cfg(feature = "config")]
@@ -105,8 +105,5 @@ pub mod usb_auto;
 #[cfg(feature = "shared-instance")]
 pub mod shared_instance;
 
-#[cfg(feature = "ble")]
-pub mod ble;
-
-#[cfg(feature = "ble")]
-pub mod ble_host;
+#[cfg(feature = "bluetooth-auto")]
+pub mod bluetooth_auto;
