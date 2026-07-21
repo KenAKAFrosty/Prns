@@ -8,11 +8,7 @@ pub const RNODE_HW_MTU: usize = 508;
 
 #[must_use]
 pub const fn nominal_bitrate_bps(spreading_factor: u8, coding_rate: u8, bandwidth_hz: u32) -> u32 {
-    crate::interfaces::lora::core::nominal_lora_bitrate_bps(
-        spreading_factor,
-        coding_rate,
-        bandwidth_hz,
-    )
+    crate::interfaces::lora::nominal_lora_bitrate_bps(spreading_factor, coding_rate, bandwidth_hz)
 }
 
 #[must_use]

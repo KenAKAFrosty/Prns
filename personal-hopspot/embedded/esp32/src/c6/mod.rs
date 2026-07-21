@@ -56,7 +56,7 @@ use esp_radio::wifi::ControllerConfig;
 #[cfg(feature = "esp-now")]
 use personal_rns::esp_now::EspNowInterface;
 #[cfg(feature = "esp-now")]
-use personal_rns::interfaces::esp_now::core::{
+use personal_rns::interfaces::esp_now::{
     self as espnow_core, Channel as EspNowChannel, ChannelPolicy,
 };
 use personal_rns::reactor::interface_seam::Interface;

@@ -11,8 +11,8 @@ use ssd1306::mode::BufferedGraphicsMode;
 use ssd1306::prelude::*;
 use ssd1306::{I2CDisplayInterface, Ssd1306};
 
-use personal_rns::interfaces::radios::sx126x::{BoardConfig, Sx126x, TcxoVoltage};
 use personal_rns::interfaces::{ConnectionState, InterfaceId};
+use personal_rns::radios::sx126x::{BoardConfig, Sx126x, TcxoVoltage};
 use personal_rns::reactor::embassy::EmbassyInterfaceStatus;
 
 use personal_hopspot_core as screen;

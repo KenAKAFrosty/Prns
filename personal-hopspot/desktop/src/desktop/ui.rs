@@ -12,7 +12,7 @@ use embedded_graphics_simulator::{
 };
 use heapless::Vec as HVec;
 use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand};
-use personal_rns::interfaces::lora::core::{RadioProfile, DEFAULT_915_PROFILE};
+use personal_rns::interfaces::lora::{RadioProfile, DEFAULT_915_PROFILE};
 use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus};
 use personal_rns::storage::{GrowableHeap, StorageLayout};
 use sdl2::event::{Event, WindowEvent};

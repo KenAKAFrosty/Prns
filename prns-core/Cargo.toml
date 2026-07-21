@@ -72,10 +72,6 @@ rmp = { version = "0.8", optional = true, default-features = false }
 serde = { version = "1", optional = true, features = ["derive"] }
 serde_json = { version = "1", optional = true }
 
-# The HAL-agnostic trait surface our own SX1262 driver (`interfaces::radios::sx126x`) is generic over: an `embedded-hal-async` SpiDevice + Wait/DelayNs, plus the blocking `OutputPin`. Tiny no_std trait-only crates, so the driver stays an unconditional module (no feature gate, like `crypto`).
-embedded-hal = { version = "1", default-features = false }
-embedded-hal-async = { version = "1", default-features = false }
-
 # OS secret store for the host identity vault (under `keyring`): the platform's own credential manager (Secret Service / kwallet on Linux, Keychain on macOS, Credential Manager on Windows), so a host's private key rests where the OS guards it rather than in a plain file. Off by default and never built by the core gates; only an opt-in host pulls the dbus/security-framework tree.
 keyring = { version = "3", optional = true, default-features = false }
 

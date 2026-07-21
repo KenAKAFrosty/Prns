@@ -4,7 +4,7 @@ use embedded_graphics::mock_display::MockDisplay;
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;
 use heapless::Vec as HVec;
-use personal_rns::interfaces::lora::core::{
+use personal_rns::interfaces::lora::{
     Frequency, ModemPreset, RadioProfile, Region, DEFAULT_915_PROFILE,
 };
 use personal_rns::interfaces::InterfaceId;

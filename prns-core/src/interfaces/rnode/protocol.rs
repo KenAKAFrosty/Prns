@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 
 use super::FirmwareVersion;
 use crate::interfaces::kiss_framing::{self, KissCommandDecoder, FEND};
-use crate::interfaces::lora::core::SpreadingFactor;
+use crate::interfaces::lora::SpreadingFactor;
 use crate::interfaces::rnode::policy::{nominal_bitrate_bps, RNODE_HW_MTU};
 use crate::interfaces::{PacketPhyStats, RssiDbm, SnrQuarterDb};
 

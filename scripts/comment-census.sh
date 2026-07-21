@@ -7,10 +7,11 @@ STATUS=0
 
 count_dir() {
   local dir="$1"
-  git ls-files "$dir" \
+  git ls-files --cached --others --exclude-standard "$dir" \
     | grep '\.rs$' \
     | grep -v '^benchmarks/external/' \
     | while read -r f; do
+        [ -f "$f" ] || continue
         grep -cE '^[[:space:]]*(//[^/!]|//$|///|//!)' "$f" || true
         echo "-$(grep -cE '^[[:space:]]*// SAFETY' "$f" || true)"
       done \

@@ -14,7 +14,6 @@ pub mod i2p;
 pub mod kiss;
 pub mod lora;
 pub mod pipe;
-pub mod radios;
 pub mod rnode;
 #[cfg(feature = "shared-instance-rpc")]
 pub mod rns_management;

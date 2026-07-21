@@ -73,11 +73,10 @@ use personal_rns::esp_now::EspNowInterface;
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 #[cfg(feature = "wifi-auto")]
-use personal_rns::interfaces::esp_now::core::{
+use personal_rns::interfaces::esp_now::{
     self as espnow_core, Channel as EspNowChannel, ChannelPolicy,
 };
-use personal_rns::interfaces::lora::core::{channel_tag, DEFAULT_915_PROFILE};
-use personal_rns::interfaces::radios::sx126x::Sx126x;
+use personal_rns::interfaces::lora::{channel_tag, DEFAULT_915_PROFILE};
 use personal_rns::interfaces::usb_auto::device_descriptor;
 use personal_rns::interfaces::wifi_auto as wifi_auto_contract;
 use personal_rns::interfaces::BitrateBps;
@@ -86,6 +85,7 @@ use personal_rns::interfaces::{
     Membership,
 };
 use personal_rns::lora::{LoRaControl, LoRaInterface};
+use personal_rns::radios::sx126x::Sx126x;
 use personal_rns::reactor::embassy::timebase::EmbassyTimebase;
 use personal_rns::reactor::embassy::{
     embassy_grant_lane, EmbassyGrantConsumer, EmbassyGrantProducer, EmbassyHost,

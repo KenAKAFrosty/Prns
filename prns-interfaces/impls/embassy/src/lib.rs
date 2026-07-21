@@ -37,6 +37,9 @@ pub mod wifi_auto;
 #[cfg(feature = "lora")]
 pub mod lora;
 
+#[cfg(feature = "lora")]
+pub mod radios;
+
 #[cfg(feature = "esp-now")]
 pub mod esp_now;
 

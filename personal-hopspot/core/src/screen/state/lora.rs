@@ -1,4 +1,4 @@
-use personal_rns::interfaces::lora::core::{
+use personal_rns::interfaces::lora::{
     Frequency, ModemPreset, Modulation, RadioProfile, Region, TxPower,
 };
 
