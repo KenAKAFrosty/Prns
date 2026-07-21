@@ -1,8 +1,8 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
-pub mod battery;
-pub mod screen;
+mod battery;
+mod screen;
 
 pub use battery::{BatteryGauge, BatteryPercent, BatterySource, BatteryState, NoBattery};
 pub use screen::{

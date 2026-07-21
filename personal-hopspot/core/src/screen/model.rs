@@ -44,7 +44,7 @@ pub const fn liveness_from_connection(connection: ConnectionState) -> Liveness {
 }
 
 /// The card label's backing buffer: owned, not `&'static str`, so a face can format a runtime tag into it (a discovered peer's id). Truncated to the cap; the panel clips past its width.
-pub const CARD_LABEL_CAP: usize = 16;
+const CARD_LABEL_CAP: usize = 16;
 pub type CardLabel = heapless::String<CARD_LABEL_CAP>;
 
 #[must_use]
@@ -58,8 +58,8 @@ pub fn card_label(text: &str) -> CardLabel {
     label
 }
 
-pub const INTERFACE_MENU_DETAIL_TEXT_CAP: usize = 16;
-pub const INTERFACE_MENU_DETAIL_ROWS_CAP: usize = 8;
+const INTERFACE_MENU_DETAIL_TEXT_CAP: usize = 16;
+const INTERFACE_MENU_DETAIL_ROWS_CAP: usize = 8;
 pub type InterfaceMenuDetailText = HString<INTERFACE_MENU_DETAIL_TEXT_CAP>;
 pub type InterfaceMenuDetailRows = HVec<InterfaceMenuDetailRow, INTERFACE_MENU_DETAIL_ROWS_CAP>;
 

@@ -10,8 +10,7 @@ pub use model::{
     card_label, liveness_from_connection, push_interface_menu_info, push_named_peer_row,
     push_supervisor_peer_rows, tcp_card_label, Card, CardActivityTracker, CardKind, CardLabel,
     InterfaceMenuDetailKind, InterfaceMenuDetailRow, InterfaceMenuDetailRows,
-    InterfaceMenuDetailText, Liveness, SupervisorPeerMenuStatus, UiFooter, CARD_LABEL_CAP,
-    INTERFACE_MENU_DETAIL_ROWS_CAP, INTERFACE_MENU_DETAIL_TEXT_CAP,
+    InterfaceMenuDetailText, Liveness, SupervisorPeerMenuStatus, UiFooter,
 };
 pub use render::{
     draw_with_state, draw_with_state_at, draw_with_state_footer_at,
