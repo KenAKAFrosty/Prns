@@ -24,6 +24,7 @@ import init, {
   usbAutoWebUsbVendorId,
 } from "/pkg/prns_wasm.js";
 import {
+  BLE_IDENTITY_LENGTH,
   Prns,
   appData,
   appName,
@@ -108,6 +109,7 @@ async function runRuntimeSmoke(): Promise<void> {
   const identityLength = identitySecretKeyLength();
   const runtime: PrnsRuntimeBinding = new PrnsRuntime(
     identitySecretKey(entropy(identityLength), identityLength),
+    entropy(BLE_IDENTITY_LENGTH),
   );
 
   const interfaceOptions: RuntimeRegisterInterfaceInput = {

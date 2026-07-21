@@ -50,25 +50,32 @@ pub struct PrnsRuntime {
     events: Vec<JsValue>,
     outbound: Vec<OutboundFrame>,
     next_command_id: u64,
-    ble_identity: bluetooth_contract::BleIdentity,
+    ble_identity: Option<bluetooth_contract::BleIdentity>,
 }
 
 #[wasm_bindgen]
 impl PrnsRuntime {
     #[wasm_bindgen(constructor)]
-    pub fn new(identity_secret_key: Vec<u8>) -> Result<PrnsRuntime, JsValue> {
+    pub fn new(
+        identity_secret_key: Vec<u8>,
+        ble_identity: Option<Vec<u8>>,
+    ) -> Result<PrnsRuntime, JsValue> {
         let secret = secret_key_from_vec(identity_secret_key)?;
-        let mut ble_identity_bytes = [0u8; 16];
-        getrandom::getrandom(&mut ble_identity_bytes).map_err(|error| {
-            JsValue::from_str(&format!("no CSPRNG for the BLE wire identity: {error}"))
-        })?;
+        let ble_identity = ble_identity
+            .map(|bytes| {
+                let identity: [u8; 16] = bytes
+                    .try_into()
+                    .map_err(|_| JsValue::from_str("BLE identity must be exactly 16 bytes"))?;
+                Ok::<_, JsValue>(bluetooth_contract::BleIdentity::new(identity))
+            })
+            .transpose()?;
         Ok(Self {
             engine: EngineState::new(secret),
             interfaces: Vec::new(),
             events: Vec::new(),
             outbound: Vec::new(),
             next_command_id: 0,
-            ble_identity: bluetooth_contract::BleIdentity::new(ble_identity_bytes),
+            ble_identity,
         })
     }
 
@@ -128,8 +135,11 @@ impl PrnsRuntime {
     }
 
     #[wasm_bindgen(js_name = bluetoothIdentity)]
-    pub fn bluetooth_identity(&self) -> Vec<u8> {
-        self.ble_identity.as_bytes().to_vec()
+    pub fn bluetooth_identity(&self) -> Result<Vec<u8>, JsValue> {
+        self.ble_identity
+            .as_ref()
+            .map(|identity| identity.as_bytes().to_vec())
+            .ok_or_else(|| JsValue::from_str("persisted BLE identity is unavailable"))
     }
 
     #[wasm_bindgen(js_name = registerSingleDestination)]

@@ -9,7 +9,7 @@ import type {
 
 declare module "/pkg/prns_wasm.js" {
   export class PrnsRuntime implements PrnsRuntimeBinding {
-    constructor(identitySecretKey: IdentitySecretKey);
+    constructor(identitySecretKey: IdentitySecretKey, bleIdentity?: Uint8Array);
     registerInterface: PrnsRuntimeBinding["registerInterface"];
     removeInterface: PrnsRuntimeBinding["removeInterface"];
     bluetoothIdentity: PrnsRuntimeBinding["bluetoothIdentity"];

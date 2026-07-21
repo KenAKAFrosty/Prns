@@ -1,7 +1,22 @@
 import { Tag, from, match, match_into } from "./casework.js";
+import { AutoWifiInterface } from "./auto_wifi.js";
 
 export { Tag, from, match, match_into };
 export type { DataFrom, TagFrom } from "./casework.js";
+export {
+  AutoWifiController,
+  AutoWifiInterface,
+  parseBrowserGatewayCatalog,
+  validateBrowserGatewayUrl,
+} from "./auto_wifi.js";
+export type {
+  AutoWifiControllerCloseOutcome,
+  AutoWifiControllerStatus,
+  AutoWifiFailure,
+  AutoWifiGatewayStatus,
+  BrowserGatewayCatalogOutcome,
+  BrowserRendezvousId,
+} from "./auto_wifi.js";
 
 declare const brand: unique symbol;
 
@@ -13,8 +28,10 @@ type BrandedBigInt<Name extends string> = bigint & Brand<Name>;
 export const INTERFACE_ID_LENGTH = 8;
 export const DESTINATION_HASH_LENGTH = 16;
 export const MIN_ENTROPY_BYTES = 64;
+export const BLE_IDENTITY_LENGTH = 16;
 
 export type IdentitySecretKey = BrandedBytes<"IdentitySecretKey">;
+export type BleIdentity = BrandedBytes<"BleIdentity">;
 export type InterfaceId = BrandedBytes<"InterfaceId">;
 export type DestinationHash = BrandedBytes<"DestinationHash">;
 export type ChannelTag = BrandedBytes<"ChannelTag">;
@@ -74,7 +91,8 @@ export type HostApi =
   | "Base64Decoder"
   | "WebUSB"
   | "WebBluetooth"
-  | "WebSocket";
+  | "WebSocket"
+  | "Fetch";
 
 export type HostApiUnavailable<Api extends HostApi = HostApi> = Tag<
   "HostApiUnavailable",
@@ -98,6 +116,21 @@ export type IdentitySaveFailure =
 export type IdentityStoreFailure =
   | IdentityLoadFailure
   | IdentitySaveFailure;
+
+export type StableIdentityStoreFailure =
+  | HostApiUnavailable<"LocalStorage" | "Base64Encoder" | "Base64Decoder">
+  | Tag<
+      "StableIdentityStoreFailed",
+      { readonly operation: "Load" | "Save"; readonly detail: string }
+    >
+  | Tag<"StoredStableIdentityInvalid", { readonly detail: string }>;
+
+export type StableIdentityUnavailable<
+  Name extends InterfaceName = InterfaceName,
+> = Tag<
+  "StableIdentityUnavailable",
+  { readonly interface: Name; readonly detail: string }
+>;
 
 export type IdentityLoadOutcome =
   | Tag<"Loaded", IdentitySecretKey>
@@ -218,6 +251,7 @@ export type BluetoothConnectOutcome =
   | ConnectTimedOut<"bluetooth">
   | ConnectionFailed<"bluetooth">
   | AlreadyActive<"bluetooth">
+  | StableIdentityUnavailable<"bluetooth">
   | RuntimeRejected;
 
 export type BluetoothConnectFailure = Exclude<
@@ -296,7 +330,10 @@ export type SnapshotOutcome =
 
 export type PrnsWasmModule = {
   PrnsRuntime: {
-    new(identitySecretKey: IdentitySecretKey): PrnsRuntimeBinding;
+    new(
+      identitySecretKey: IdentitySecretKey,
+      bleIdentity?: BleIdentity,
+    ): PrnsRuntimeBinding;
   };
   UsbAutoDecoder: {
     new(): UsbAutoDecoderBinding;
@@ -350,6 +387,7 @@ export type InterfaceName =
   | "usb-auto"
   | "rnode"
   | "bluetooth"
+  | "auto-wifi"
   | "websocket"
   | "serial"
   | "kiss"
@@ -361,6 +399,7 @@ export type RuntimeInterfaceKind =
   | "rnode"
   | "bluetooth-auto"
   | "bluetooth-peer"
+  | "auto-wifi"
   | "websocket-client"
   | "websocket-server"
   | "websocket-server-peer"
@@ -472,6 +511,20 @@ export type PrnsSnapshot = {
 export type IdentityStore = {
   load(expectedLength: number): Promise<IdentityLoadOutcome>;
   save(secretKey: IdentitySecretKey): Promise<IdentitySaveOutcome>;
+};
+
+export type StableIdentityLoadOutcome =
+  | Tag<"Loaded", Uint8Array>
+  | Tag<"Missing">
+  | StableIdentityStoreFailure;
+
+export type StableIdentitySaveOutcome =
+  | Tag<"Saved">
+  | StableIdentityStoreFailure;
+
+export type StableIdentityStore = {
+  load(expectedLength: number): Promise<StableIdentityLoadOutcome>;
+  save(identity: Uint8Array): Promise<StableIdentitySaveOutcome>;
 };
 
 type HostGlobal = typeof globalThis & {
@@ -655,6 +708,12 @@ type IdentityGenerationOutcome =
   | Tag<"Generated", IdentitySecretKey>
   | HostApiUnavailable<"Crypto">
   | Tag<"EntropySourceFailed", { readonly detail: string }>;
+export type BleIdentityAvailability =
+  | Tag<"Available", BleIdentity>
+  | StableIdentityUnavailable<"bluetooth">;
+export type BleIdentityValidationOutcome =
+  | Tag<"ValidBleIdentity", BleIdentity>
+  | Tag<"InvalidBleIdentity", { readonly actualLength: number }>;
 type Available<Host, Api extends HostApi> =
   | Tag<"Available", Host>
   | HostApiUnavailable<Api>;
@@ -767,11 +826,67 @@ export class BrowserLocalStorageIdentityStore implements IdentityStore {
   }
 }
 
+export class BrowserLocalStorageBleIdentityStore implements StableIdentityStore {
+  #key: string;
+
+  constructor(key: string = "prns.ble-identity.v1") {
+    this.#key = key;
+  }
+
+  async load(expectedLength: number): Promise<StableIdentityLoadOutcome> {
+    try {
+      const storage = hostGlobal().localStorage;
+      if (!storage) {
+        return Tag("HostApiUnavailable", { api: "LocalStorage" });
+      }
+      if (!hostGlobal().atob) {
+        return Tag("HostApiUnavailable", { api: "Base64Decoder" });
+      }
+      const encoded = storage.getItem(this.#key);
+      if (encoded === null) {
+        return Tag("Missing");
+      }
+      const bytes = decodeBase64(encoded);
+      if (bytes.length !== expectedLength) {
+        return Tag("StoredStableIdentityInvalid", {
+          detail: `stored BLE identity has ${bytes.length} bytes; expected ${expectedLength}`,
+        });
+      }
+      return Tag("Loaded", bytes);
+    } catch (error) {
+      return Tag("StableIdentityStoreFailed", {
+        operation: "Load",
+        detail: describeHostError(error),
+      });
+    }
+  }
+
+  async save(identity: Uint8Array): Promise<StableIdentitySaveOutcome> {
+    try {
+      const storage = hostGlobal().localStorage;
+      if (!storage) {
+        return Tag("HostApiUnavailable", { api: "LocalStorage" });
+      }
+      if (!hostGlobal().btoa) {
+        return Tag("HostApiUnavailable", { api: "Base64Encoder" });
+      }
+      storage.setItem(this.#key, encodeBase64(identity));
+      return Tag("Saved");
+    } catch (error) {
+      return Tag("StableIdentityStoreFailed", {
+        operation: "Save",
+        detail: describeHostError(error),
+      });
+    }
+  }
+}
+
 export type EntropySource = (length: number) => EntropyOutcome;
 
 export type PrnsOptions = {
   wasm: PrnsWasmModule;
   identityStore?: IdentityStore;
+  bleIdentityStore?: StableIdentityStore;
   entropy?: EntropySource;
   now?: () => InstantMillis;
 };
@@ -817,12 +932,14 @@ export class PrnsInterfaces {
   readonly usbAuto: UsbAutoInterface;
   readonly rnode: RNodeInterface;
   readonly bluetooth: BluetoothInterface;
+  readonly autoWifi: AutoWifiInterface;
   readonly webSocket: WebSocketInterface;
 
   constructor(host: RuntimeHost) {
     this.usbAuto = new UsbAutoInterface(host);
     this.rnode = new RNodeInterface(host);
     this.bluetooth = new BluetoothInterface(host);
+    this.autoWifi = new AutoWifiInterface(host);
     this.webSocket = new WebSocketInterface(host);
   }
 }
@@ -838,7 +955,7 @@ export class UsbAutoInterface {
   async connect(
     options: UsbAutoConnectOptions = {},
   ): Promise<UsbAutoConnectOutcome> {
-    const ready = this.#host.assertReady();
+    const ready = this.#host.runtimeReadiness();
     if (ready.tag !== "Ready") {
       return ready;
     }
@@ -1307,7 +1424,7 @@ export class WebSocketInterface {
     url: string | URL,
     options: WebSocketConnectOptions = {},
   ): Promise<WebSocketConnectOutcome> {
-    const ready = this.#host.assertReady();
+    const ready = this.#host.runtimeReadiness();
     if (ready.tag !== "Ready") {
       return ready;
     }
@@ -1593,7 +1710,7 @@ export class RNodeInterface {
   }
 
   async connect(): Promise<RNodeConnectOutcome> {
-    const ready = this.#host.assertReady();
+    const ready = this.#host.runtimeReadiness();
     if (ready.tag !== "Ready") {
       return ready;
     }
@@ -1613,7 +1730,11 @@ export class BluetoothInterface {
   }
 
   async connect(): Promise<BluetoothConnectOutcome> {
-    const ready = this.#host.assertReady();
+    const identity = this.#host.bluetoothIdentityReadiness();
+    if (identity.tag !== "Ready") {
+      return identity;
+    }
+    const ready = this.#host.runtimeReadiness();
     if (ready.tag !== "Ready") {
       return ready;
     }
@@ -2058,12 +2179,13 @@ export class Prns {
     runtime: PrnsRuntimeBinding,
     entropy: EntropySource,
     now: () => InstantMillis,
+    bleIdentityAvailability: BleIdentityAvailability,
   ) {
     this.#runtime = runtime;
     this.#entropy = entropy;
     this.#now = now;
     this.interfaces = new PrnsInterfaces(
-      new RuntimeHost(wasm, runtime, entropy, now),
+      new RuntimeHost(wasm, runtime, entropy, now, bleIdentityAvailability),
     );
   }
 
@@ -2122,14 +2244,22 @@ export class Prns {
         }
       }
     }
+    const bleIdentityAvailability = await loadOrCreateBleIdentity(
+      options.bleIdentityStore ?? new BrowserLocalStorageBleIdentityStore(),
+    );
+    const bleIdentity =
+      bleIdentityAvailability.tag === "Available"
+        ? bleIdentityAvailability.data
+        : undefined;
     try {
       return Tag(
         "Ready",
         new Prns(
           options.wasm,
-          new options.wasm.PrnsRuntime(identity),
+          new options.wasm.PrnsRuntime(identity, bleIdentity),
           options.entropy ?? webCryptoEntropy,
           options.now ?? nowMillis,
+          bleIdentityAvailability,
         ),
       );
     } catch (error) {
@@ -2197,6 +2327,7 @@ class RuntimeHost {
   readonly #runtime: PrnsRuntimeBinding;
   readonly #entropy: EntropySource;
   readonly #now: () => InstantMillis;
+  readonly #bleIdentityAvailability: BleIdentityAvailability;
   #activeInterfaces = new Map<
     string,
     {
@@ -2214,14 +2345,16 @@ class RuntimeHost {
     runtime: PrnsRuntimeBinding,
     entropy: EntropySource,
     now: () => InstantMillis,
+    bleIdentityAvailability: BleIdentityAvailability,
   ) {
     this.#wasm = wasm;
     this.#runtime = runtime;
     this.#entropy = entropy;
     this.#now = now;
+    this.#bleIdentityAvailability = bleIdentityAvailability;
   }
 
-  assertReady(): RuntimeReadyOutcome {
+  runtimeReadiness(): RuntimeReadyOutcome {
     try {
       this.#runtime.snapshot();
       return Tag("Ready");
@@ -2365,6 +2498,14 @@ class RuntimeHost {
     return this.#wasm.bluetoothServiceUuid();
   }
 
+  bluetoothIdentityReadiness():
+    | Tag<"Ready">
+    | StableIdentityUnavailable<"bluetooth"> {
+    return this.#bleIdentityAvailability.tag === "Available"
+      ? Tag("Ready")
+      : this.#bleIdentityAvailability;
+  }
+
   bluetoothControlUuid(): string {
     return this.#wasm.bluetoothControlUuid();
   }
@@ -2403,6 +2544,52 @@ class RuntimeHost {
 
   websocketHardwareMtu(): HardwareMtu {
     return hardwareMtu(this.#wasm.websocketHardwareMtu());
+  }
+
+  autoWifiReady(): RuntimeReadyOutcome {
+    return this.runtimeReadiness();
+  }
+
+  autoWifiRegister(id: Uint8Array): InterfaceRegistrationOutcome<"auto-wifi"> {
+    try {
+      return this.registerInterface({
+        interfaceName: "auto-wifi",
+        kind: "auto-wifi",
+        channelTag: channelTag(id),
+        bitrateBps: this.websocketBitrateBps(),
+        hardwareMtu: this.websocketHardwareMtu(),
+      });
+    } catch (error) {
+      return runtimeRejected("register-interface", error);
+    }
+  }
+
+  autoWifiDeactivate(id: InterfaceId): InterfaceDetachOutcome {
+    return this.deactivateInterface(id);
+  }
+
+  autoWifiIngest(id: InterfaceId, bytes: Uint8Array): RuntimeIngestOutcome {
+    try {
+      return this.ingest(id, packetFrame(bytes));
+    } catch (error) {
+      return runtimeRejected("ingest", error);
+    }
+  }
+
+  autoWifiTakeOutbound(id: InterfaceId): OutboundTakeOutcome {
+    return this.takeOutboundFor(id);
+  }
+
+  autoWifiBitrateBps(): BitrateBps {
+    return this.websocketBitrateBps();
+  }
+
+  autoWifiHardwareMtu(): HardwareMtu {
+    return this.websocketHardwareMtu();
+  }
+
+  autoWifiFrameCap(): number {
+    return this.websocketFrameCap();
   }
 
   usbAutoHostBitrateBps(): BitrateBps {
@@ -2448,6 +2635,12 @@ export function identitySecretKey(
   expectedLength: number,
 ): IdentitySecretKey {
   return exactBytes(bytes, expectedLength, "IdentitySecretKey") as IdentitySecretKey;
+}
+
+export function bleIdentity(bytes: Uint8Array): BleIdentityValidationOutcome {
+  return bytes.length === BLE_IDENTITY_LENGTH
+    ? Tag("ValidBleIdentity", copyBytes(bytes) as BleIdentity)
+    : Tag("InvalidBleIdentity", { actualLength: bytes.length });
 }
 
 export function interfaceId(bytes: Uint8Array): InterfaceId {
@@ -3485,6 +3678,81 @@ function webCryptoIdentity(length: number): IdentityGenerationOutcome {
   }
 }
 
+async function loadOrCreateBleIdentity(
+  store: StableIdentityStore,
+): Promise<BleIdentityAvailability> {
+  let loaded: StableIdentityLoadOutcome;
+  try {
+    loaded = await store.load(BLE_IDENTITY_LENGTH);
+  } catch (error) {
+    return Tag("StableIdentityUnavailable", {
+      interface: "bluetooth",
+      detail: `load BLE identity: ${describeHostError(error)}`,
+    });
+  }
+  if (loaded.tag === "Loaded") {
+    const validated = bleIdentity(loaded.data);
+    return validated.tag === "ValidBleIdentity"
+      ? Tag("Available", validated.data)
+      : Tag("StableIdentityUnavailable", {
+          interface: "bluetooth",
+          detail: `stored BLE identity has ${validated.data.actualLength} bytes; expected ${BLE_IDENTITY_LENGTH}`,
+        });
+  }
+  if (loaded.tag !== "Missing") {
+    return Tag("StableIdentityUnavailable", {
+      interface: "bluetooth",
+      detail: describeStableIdentityStoreFailure(loaded),
+    });
+  }
+  let generatedBytes: Uint8Array;
+  try {
+    generatedBytes = webCryptoBytes(BLE_IDENTITY_LENGTH);
+  } catch (error) {
+    return Tag("StableIdentityUnavailable", {
+      interface: "bluetooth",
+      detail: `generate BLE identity: ${describeHostError(error)}`,
+    });
+  }
+  const validated = bleIdentity(generatedBytes);
+  if (validated.tag !== "ValidBleIdentity") {
+    return Tag("StableIdentityUnavailable", {
+      interface: "bluetooth",
+      detail: `generated BLE identity has ${validated.data.actualLength} bytes; expected ${BLE_IDENTITY_LENGTH}`,
+    });
+  }
+  const generated = validated.data;
+  let saved: StableIdentitySaveOutcome;
+  try {
+    saved = await store.save(generated);
+  } catch (error) {
+    return Tag("StableIdentityUnavailable", {
+      interface: "bluetooth",
+      detail: `save BLE identity: ${describeHostError(error)}`,
+    });
+  }
+  if (saved.tag !== "Saved") {
+    return Tag("StableIdentityUnavailable", {
+      interface: "bluetooth",
+      detail: describeStableIdentityStoreFailure(saved),
+    });
+  }
+  return Tag("Available", generated);
+}
+
+function describeStableIdentityStoreFailure(
+  failure: StableIdentityStoreFailure,
+): string {
+  switch (failure.tag) {
+    case "HostApiUnavailable":
+      return `${failure.data.api} is unavailable`;
+    case "StableIdentityStoreFailed":
+      return `${failure.data.operation} stable identity: ${failure.data.detail}`;
+    case "StoredStableIdentityInvalid":
+      return failure.data.detail;
+  }
+}
+
 function unexpectedSessionFailure(error: unknown): Extract<
   InterfaceSessionFailure,
   Tag<"UnexpectedSessionFailure", unknown>
@@ -3540,6 +3808,7 @@ function describeBluetoothConnectFailure(
       `Bluetooth ${stage} timed out after ${timeoutMs}ms`,
     ConnectionFailed: ({ detail }) => detail,
     AlreadyActive: ({ target }) => `${target} is already active`,
+    StableIdentityUnavailable: ({ detail }) => detail,
     RuntimeRejected: ({ operation, detail }) => `${operation}: ${detail}`,
   });
 }

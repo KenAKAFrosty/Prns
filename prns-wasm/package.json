@@ -12,6 +12,7 @@
     "build:smoke": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
     "check:casework": "npm run build:smoke && node smoke/dist/smoke/casework-smoke.js",
+    "check:auto-wifi": "npm run build:smoke && node smoke/dist/smoke/auto-wifi-smoke.js",
     "check:websocket": "npm run build:smoke && node smoke/dist/smoke/websocket-smoke.js"
   },
   "devDependencies": {
