@@ -21,7 +21,7 @@ pub use crate::rnode::RNodeInterface;
 #[cfg(feature = "serial")]
 pub use crate::serial::SerialInterface;
 #[cfg(feature = "shared-instance")]
-pub use crate::shared_instance::server::LocalServer;
+pub use crate::shared_instance::SharedInstanceServer;
 #[cfg(feature = "tcp")]
 pub use crate::tcp::TcpClientInterface;
 #[cfg(feature = "tcp")]

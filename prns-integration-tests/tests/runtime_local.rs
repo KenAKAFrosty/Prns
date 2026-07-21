@@ -13,7 +13,7 @@ use personal_rns::runtime::{
     Diagnostic, Manual, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle,
     PrnsNodeRecipe, RequestHandlerRegistration,
 };
-use personal_rns::shared_instance::server::LocalServer;
+use personal_rns::shared_instance::SharedInstanceServer;
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::{TcpClientInterface, TcpServer};
 
@@ -44,9 +44,6 @@ async fn an_app_dials_the_shared_instance_and_is_heard_at_a_discounted_hop() {
         .destination_hash()
         .expect("the test destination name is valid");
 
-    // A loopback port free right now: bind an ephemeral one and drop it immediately, so the
-    // LocalServer can rebind it. A small TOCTOU window, fine for a single-process test; the dialing
-    // client retries until the server is up regardless.
     let port = std::net::TcpListener::bind("127.0.0.1:0")
         .expect("an ephemeral port binds")
         .local_addr()
@@ -73,10 +70,8 @@ async fn an_app_dials_the_shared_instance_and_is_heard_at_a_discounted_hop() {
         },
     });
     let daemon_commands = daemon.handle();
-    let _server = daemon_commands.supervise(LocalServer::with_port(port));
+    let _server = daemon_commands.supervise(SharedInstanceServer::with_port(port));
 
-    // The app: dials the daemon's port over TCP (the same HDLC wire a real RNS app speaks), and
-    // announces its destination.
     let app = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [app_single],
@@ -161,7 +156,7 @@ async fn a_leaf_shared_instance_carries_announces_across_its_local_boundary() {
     .with_shared_instance_identity(secret(0xD1))
     .expect("the shared instance identity fits");
     let daemon_handle = daemon.handle();
-    let _local = daemon_handle.supervise(LocalServer::with_port(local_port));
+    let _local = daemon_handle.supervise(SharedInstanceServer::with_port(local_port));
     let _network = daemon_handle.supervise(server);
 
     let network_single = single(secret(0xA1));

@@ -21,7 +21,7 @@ use personal_rns::runtime::{
     IdentityBlackholeControlError, IdentityBlackholeSource, PreConfiguredDestination, PrnsEvent,
     PrnsNode, PrnsNodeHandle, RegisterRequestRouteError, RequestHandlerRegistration, SendError,
 };
-use personal_rns::shared_instance::blackhole_compat::{RnsBlackholeFileError, RnsBlackholeFiles};
+use personal_rns::shared_instance::{RnsBlackholeFileError, RnsBlackholeFiles};
 use personal_rns::storage::StorageLayout;
 use personal_rns::wire::DestinationHash;
 

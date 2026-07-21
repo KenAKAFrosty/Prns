@@ -5,10 +5,8 @@ use std::string::String;
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::routes;
 use personal_rns::runtime::{Diagnostic, Manual, PrnsEvent, PrnsNode, PrnsNodeRecipe};
-use personal_rns::shared_instance::rpc_compat::{
-    SharedInstanceCredentials, SharedInstanceRpcCompat,
-};
-use personal_rns::shared_instance::server::LocalServer;
+use personal_rns::shared_instance::rns_rpc::{SharedInstanceCredentials, SharedInstanceRpcServer};
+use personal_rns::shared_instance::SharedInstanceServer;
 use personal_rns::storage::GrowableHeap;
 
 fn hex16(bytes: &[u8]) -> String {
@@ -55,8 +53,8 @@ async fn main() {
     });
 
     let handle = node.handle();
-    handle.supervise(LocalServer::with_port(local_port));
-    let rpc = SharedInstanceRpcCompat::tcp(credentials, local_port + 1, handle.clone())
+    handle.supervise(SharedInstanceServer::with_port(local_port));
+    let rpc = SharedInstanceRpcServer::tcp(credentials, local_port + 1, handle.clone())
         .bind()
         .await
         .expect("the shared-instance RPC listener binds");

@@ -108,7 +108,7 @@ pub fn prepare_discovery_publication_with_stamp_cache<E>(
     fill_entropy: impl FnMut(&mut [u8; STAMP_SIZE]) -> Result<(), E>,
     cancelled: impl FnMut() -> bool,
 ) -> DiscoveryPublicationPreparation<E> {
-    if let Some(value) = super::model::invalid_reachable_on(advertisement) {
+    if let Some(value) = super::advertisement::invalid_reachable_on(advertisement) {
         return DiscoveryPublicationPreparation::InvalidReachableOn {
             value: String::from(value),
         };

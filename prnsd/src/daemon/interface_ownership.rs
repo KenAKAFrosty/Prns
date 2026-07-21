@@ -5,9 +5,9 @@ use personal_rns::from_plan::PlanRuntimeContext;
 use personal_rns::identity::IdentityHash;
 use personal_rns::runtime::PrnsNodeHandle;
 use personal_rns::shared_instance::{
-    join_shared_instance, InstancePorts, JoinError, OnExisting, RnsBlackholeFiles, Role,
-    SharedInstanceCredentials, SharedInstanceIntent,
-    SharedInstanceTransport as RuntimeSharedInstanceTransport,
+    join_shared_instance, ExistingSharedInstancePolicy, RnsBlackholeFiles,
+    SharedInstanceCredentials, SharedInstanceIntent, SharedInstanceJoinError, SharedInstancePorts,
+    SharedInstanceRole, SharedInstanceTransport as RuntimeSharedInstanceTransport,
 };
 
 use super::configured_interfaces::{
@@ -64,7 +64,7 @@ pub(super) async fn establish(
     transport_identity: IdentityHash,
     network_identity: Option<IdentityHash>,
     blackhole_files: &RnsBlackholeFiles,
-) -> Result<InterfaceOwnership, JoinError> {
+) -> Result<InterfaceOwnership, SharedInstanceJoinError> {
     match &plan.shared_instance {
         SharedInstance::Enabled {
             name,
@@ -74,7 +74,7 @@ pub(super) async fn establish(
             forced_bitrate,
             ..
         } => {
-            let ports = InstancePorts {
+            let ports = SharedInstancePorts {
                 bus: *instance_port,
                 control: *control_port,
             };
@@ -98,7 +98,7 @@ pub(super) async fn establish(
                     }
                 }
             };
-            let policy = personal_rns::interfaces::shared_instance::core::configured_policy(
+            let policy = personal_rns::interfaces::shared_instance::configured_policy(
                 personal_rns::interfaces::ConfiguredInterfacePolicy {
                     bitrate: *forced_bitrate,
                     ..Default::default()
@@ -115,12 +115,12 @@ pub(super) async fn establish(
                     ports,
                     transport: runtime_transport,
                     policy,
-                    on_existing: OnExisting::JoinAsClient,
+                    on_existing: ExistingSharedInstancePolicy::JoinAsClient,
                 },
             )
             .await?
             {
-                Role::BecameInstance => {
+                SharedInstanceRole::BecameInstance => {
                     tracing::info!(
                         event = "shared_instance_started",
                         bus_port = ports.bus,
@@ -132,7 +132,7 @@ pub(super) async fn establish(
                     ownership.startup.listening = ownership.startup.listening.saturating_add(1);
                     Ok(ownership)
                 }
-                Role::JoinedAsClient { of } => {
+                SharedInstanceRole::JoinedAsClient { of } => {
                     tracing::info!(event = "shared_instance_joined");
                     tracing::debug!(event = "shared_instance_joined_detail", instance = %of);
                     Ok(InterfaceOwnership::shared_client())
@@ -147,12 +147,12 @@ pub(super) async fn establish(
     }
 }
 
-pub(super) fn report_join_error(error: &JoinError) {
+pub(super) fn report_join_error(error: &SharedInstanceJoinError) {
     match error {
-        JoinError::InstanceAlreadyRunning { at } => {
+        SharedInstanceJoinError::InstanceAlreadyRunning { at } => {
             tracing::error!(event = "shared_instance_refused", endpoint = %at);
         }
-        JoinError::EndpointUnavailable { endpoint, kind } => {
+        SharedInstanceJoinError::EndpointUnavailable { endpoint, kind } => {
             tracing::error!(
                 event = "shared_instance_endpoint_unavailable",
                 endpoint = endpoint.as_str(),

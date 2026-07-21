@@ -21,7 +21,7 @@ use prns_core::interfaces::kiss::{
     EmptyStationIdentification, ReadyCommandFlowControl, ReadyTimeout, StationIdInterval,
     StationIdWireFormat, StationIdentification,
 };
-use prns_core::interfaces::weave::core as weave_core;
+use prns_core::interfaces::weave as weave_core;
 use prns_core::interfaces::IfacContext;
 use prns_core::interfaces::{InterfaceId, InterfaceOriginKind};
 use prns_runtime::interfaces::kiss::TncConfig;
@@ -36,9 +36,9 @@ use crate::host_network::{
     resolve_tcp_listener, resolve_udp_endpoint, tcp_target, udp_ephemeral_bind,
 };
 use crate::i2p::{
-    DuplicateI2pPeer, I2pInterface, I2pInterfaceName, I2pInterfaceNameError, I2pPeerAddress,
-    I2pPeerAddressError, I2pPeers, I2pReachability, I2pRetryPolicy, I2pRuntimeConfig,
-    RnsI2pStorage, TokioSamBridge,
+    DuplicateI2pPeer, I2pInterface, I2pInterfaceConfig, I2pInterfaceName, I2pInterfaceNameError,
+    I2pPeerAddress, I2pPeerAddressError, I2pPeers, I2pReachability, I2pRetryPolicy, RnsI2pStorage,
+    TokioSamBridge,
 };
 use crate::kiss::{KissInterface, KissSettings, DEFAULT_TNC_CONFIGURE_DELAY};
 use crate::pipe::{PipeInterface, PipeRespawnDelay};
@@ -977,7 +977,7 @@ fn i2p_runtime_config(
     planned_peers: &I2pPeersPlan,
     planned_reachability: PlannedI2pReachability,
     context: &PlanRuntimeContext,
-) -> Result<I2pRuntimeConfig, PlanFailure> {
+) -> Result<I2pInterfaceConfig, PlanFailure> {
     let name = I2pInterfaceName::new(interface.name.clone()).map_err(PlanFailure::from)?;
     let peers = planned_peers
         .iter()
@@ -997,7 +997,7 @@ fn i2p_runtime_config(
             }
         }
     };
-    Ok(I2pRuntimeConfig {
+    Ok(I2pInterfaceConfig {
         name,
         peers,
         reachability,

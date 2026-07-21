@@ -22,10 +22,8 @@ use personal_rns::runtime::{
     ephemeral_ble_identity, Manual, PreConfiguredDestination, PrnsNode, PrnsNodeHandle,
     PrnsNodeRecipe, RequestHandlerRegistration, RuntimeHealth,
 };
-use personal_rns::shared_instance::rpc_compat::{
-    SharedInstanceCredentials, SharedInstanceRpcCompat,
-};
-use personal_rns::shared_instance::server::LocalServer;
+use personal_rns::shared_instance::rns_rpc::{SharedInstanceCredentials, SharedInstanceRpcServer};
+use personal_rns::shared_instance::SharedInstanceServer;
 use personal_rns::storage::GrowableHeap;
 use personal_rns::usb_auto::UsbAutoHost;
 use personal_rns::wifi_auto::{AutoWifi, AutoWifiStatus};
@@ -359,8 +357,8 @@ fn run_engine(
         let usb_status = usb.status();
         handle.add_interface(usb);
 
-        handle.supervise(LocalServer::with_port(LOCAL_RNS_PORT));
-        let rpc = match SharedInstanceRpcCompat::tcp(credentials, RPC_PORT, handle.clone())
+        handle.supervise(SharedInstanceServer::with_port(LOCAL_RNS_PORT));
+        let rpc = match SharedInstanceRpcServer::tcp(credentials, RPC_PORT, handle.clone())
             .bind()
             .await
         {

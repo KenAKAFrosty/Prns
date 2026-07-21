@@ -1,18 +1,13 @@
-//! A minimal Prns-owned shared instance with the 1.3.5 control-RPC shim enabled.
-//!
-//! The local RPC interop smoke drives this with a stock RNS 1.3.5 client. The
-//! client joins over the shared-instance bus and then calls Reticulum's own
-//! `get_*` methods, which issue msgpack control-RPC requests.
 #![allow(clippy::expect_used)]
 
 use personal_rns::identity::IDENTITY_SECRET_KEY_LEN;
 use personal_rns::routes;
 use personal_rns::runtime::{Manual, PrnsNode, PrnsNodeRecipe};
 use personal_rns::storage::GrowableHeap;
-use prns_interfaces_tokio::shared_instance::rpc_compat::{
-    SharedInstanceCredentials, SharedInstanceRpcCompat,
+use prns_interfaces_tokio::shared_instance::rns_rpc::{
+    SharedInstanceCredentials, SharedInstanceRpcServer,
 };
-use prns_interfaces_tokio::shared_instance::server::LocalServer;
+use prns_interfaces_tokio::shared_instance::SharedInstanceServer;
 
 fn env_port(name: &str, fallback: u16) -> u16 {
     std::env::var(name)
@@ -56,8 +51,8 @@ async fn main() {
     });
 
     let handle = node.handle();
-    handle.supervise(LocalServer::with_port(local_port));
-    let rpc = SharedInstanceRpcCompat::tcp(credentials, rpc_port, handle.clone())
+    handle.supervise(SharedInstanceServer::with_port(local_port));
+    let rpc = SharedInstanceRpcServer::tcp(credentials, rpc_port, handle.clone())
         .bind()
         .await
         .expect("the shared-instance RPC listener binds");

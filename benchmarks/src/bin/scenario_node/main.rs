@@ -46,8 +46,8 @@ use personal_rns::runtime::{
     PrnsNode, PrnsNodeHandle, PrnsNodeRecipe, RequestHandlerRegistration, SegmentCompression,
 };
 use personal_rns::shared_instance::{
-    join_shared_instance, InstancePorts, OnExisting, RnsBlackholeFiles, Role,
-    SharedInstanceCredentials, SharedInstanceIntent,
+    join_shared_instance, ExistingSharedInstancePolicy, RnsBlackholeFiles,
+    SharedInstanceCredentials, SharedInstanceIntent, SharedInstancePorts, SharedInstanceRole,
 };
 #[cfg(feature = "fixed-storage")]
 type NodeStorage = personal_rns::storage::Esp32S3<allocator_api2::alloc::Global>;
@@ -555,14 +555,10 @@ where
         (node, addr.to_string())
     } else if manifest.profile.wire == "udp" {
         let (local, peer) = udp_halves(addr);
-        let udp = UdpInterface::bind_with_id(
-            TCP_INTERFACE_ID,
-            local,
-            peer,
-            udp::UDP_BITRATE_ESTIMATE,
-        )
-        .await
-        .expect("binds the scenario port");
+        let udp =
+            UdpInterface::bind_with_id(TCP_INTERFACE_ID, local, peer, udp::UDP_BITRATE_ESTIMATE)
+                .await
+                .expect("binds the scenario port");
         let node = PrnsNode::new(PrnsNodeRecipe {
             transport_identity,
             pre_configured_destinations: [single],
@@ -622,14 +618,10 @@ where
 {
     if manifest.profile.wire == "udp" {
         let (local, peer) = udp_halves(addr);
-        let udp = UdpInterface::bind_with_id(
-            TCP_INTERFACE_ID,
-            local,
-            peer,
-            udp::UDP_BITRATE_ESTIMATE,
-        )
-        .await
-        .expect("binds the scenario port");
+        let udp =
+            UdpInterface::bind_with_id(TCP_INTERFACE_ID, local, peer, udp::UDP_BITRATE_ESTIMATE)
+                .await
+                .expect("binds the scenario port");
         PrnsNode::new(PrnsNodeRecipe {
             transport_identity: None,
             pre_configured_destinations: [single],

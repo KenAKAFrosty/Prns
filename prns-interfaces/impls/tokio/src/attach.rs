@@ -111,7 +111,7 @@ attaches_as_fleet!(impl[] crate::tcp::TcpServer);
 #[cfg(feature = "websocket")]
 attaches_as_fleet!(impl[] crate::websocket::WebSocketServer);
 #[cfg(feature = "shared-instance")]
-attaches_as_fleet!(impl[] crate::shared_instance::server::LocalServer);
+attaches_as_fleet!(impl[] crate::shared_instance::SharedInstanceServer);
 #[cfg(feature = "backbone")]
 attaches_as_fleet!(impl[] crate::backbone::BackboneServer);
 #[cfg(feature = "i2p")]

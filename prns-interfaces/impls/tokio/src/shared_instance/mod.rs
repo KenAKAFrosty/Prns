@@ -1,17 +1,18 @@
-pub mod blackhole_compat;
 mod election;
-pub mod rpc_compat;
-pub mod server;
+mod persistence;
+pub mod rns_rpc;
+mod supervision;
 
-pub use blackhole_compat::RnsBlackholeFiles;
 pub use election::{
-    connect_existing_shared_instance, join_shared_instance, ExistingSharedInstanceUnavailable,
-    InstancePorts, JoinError, OnExisting, Role, SharedInstanceBusEndpoint,
-    SharedInstanceClientIntent, SharedInstanceEndpoint, SharedInstanceIntent,
-    SharedInstanceTransport,
+    connect_existing_shared_instance, join_shared_instance, ExistingSharedInstancePolicy,
+    ExistingSharedInstanceUnavailable, SharedInstanceBusEndpoint, SharedInstanceClientIntent,
+    SharedInstanceEndpoint, SharedInstanceIntent, SharedInstanceJoinError, SharedInstancePorts,
+    SharedInstanceRole, SharedInstanceTransport,
 };
-pub use rpc_compat::{
+pub use persistence::{RnsBlackholeFileError, RnsBlackholeFiles};
+pub use rns_rpc::{
     SharedInstanceBlackholeOutcome, SharedInstanceCredentials, SharedInstancePacketPhyStats,
     SharedInstanceRpcClient, SharedInstanceRpcClientError, SharedInstanceRpcClientPhase,
     SharedInstanceRpcEndpoint, SharedInstanceUnblackholeOutcome,
 };
+pub use supervision::{SharedInstanceClient, SharedInstanceServer};

@@ -1,8 +1,3 @@
-//! `join_shared_instance` end to end: the role election (become the instance when none runs, join the
-//! running one as a client, or refuse), and the honorable-client proof — two real Prns nodes where
-//! one becomes the instance and the other joins as a client, and the client's announce rides the
-//! instance's bus to it. An integration test, so it builds against the public API.
-
 use core::time::Duration;
 
 use personal_rns::engine::{
@@ -16,8 +11,9 @@ use personal_rns::runtime::{
     RequestHandlerRegistration,
 };
 use personal_rns::shared_instance::{
-    join_shared_instance, InstancePorts, JoinError, OnExisting, RnsBlackholeFiles, Role,
+    join_shared_instance, ExistingSharedInstancePolicy, RnsBlackholeFiles,
     SharedInstanceCredentials, SharedInstanceEndpoint, SharedInstanceIntent,
+    SharedInstanceJoinError, SharedInstancePorts, SharedInstanceRole,
 };
 use personal_rns::storage::GrowableHeap;
 use tokio::net::{TcpListener, TcpStream};
@@ -52,14 +48,14 @@ async fn free_port() -> u16 {
 }
 
 #[allow(clippy::expect_used)]
-async fn free_instance_ports() -> InstancePorts {
+async fn free_instance_ports() -> SharedInstancePorts {
     let bus = TcpListener::bind("127.0.0.1:0")
         .await
         .expect("a loopback bus port is free");
     let control = TcpListener::bind("127.0.0.1:0")
         .await
         .expect("a loopback control port is free");
-    InstancePorts {
+    SharedInstancePorts {
         bus: bus.local_addr().expect("the bus has an address").port(),
         control: control
             .local_addr()
@@ -72,7 +68,10 @@ fn identity_dir(tag: u16) -> std::path::PathBuf {
     std::env::temp_dir().join(std::format!("prns-local-instance-test-{tag}"))
 }
 
-fn instance(ports: InstancePorts, on_existing: OnExisting) -> SharedInstanceIntent {
+fn instance(
+    ports: SharedInstancePorts,
+    on_existing: ExistingSharedInstancePolicy,
+) -> SharedInstanceIntent {
     let identity_dir = identity_dir(ports.bus);
     let credentials =
         SharedInstanceCredentials::from_identity_secret(&[0xA1; IDENTITY_SECRET_KEY_LEN]);
@@ -84,9 +83,7 @@ fn instance(ports: InstancePorts, on_existing: OnExisting) -> SharedInstanceInte
         blackhole_files: RnsBlackholeFiles::new(identity_dir.join("storage/blackhole")),
         ports,
         transport: personal_rns::shared_instance::SharedInstanceTransport::Tcp,
-        policy: personal_rns::interfaces::shared_instance::core::configured_policy(
-            Default::default(),
-        ),
+        policy: personal_rns::interfaces::shared_instance::configured_policy(Default::default()),
         on_existing,
     }
 }
@@ -108,12 +105,15 @@ async fn becomes_the_instance_when_none_is_running() {
         on_event: |_event, _state| {},
     });
 
-    let role =
-        join_shared_instance(&node.handle(), instance(ports, OnExisting::JoinAsClient)).await;
+    let role = join_shared_instance(
+        &node.handle(),
+        instance(ports, ExistingSharedInstancePolicy::JoinAsClient),
+    )
+    .await;
 
     assert_eq!(
         role,
-        Ok(Role::BecameInstance),
+        Ok(SharedInstanceRole::BecameInstance),
         "with nothing on the bus, the node becomes the instance"
     );
     assert!(
@@ -146,13 +146,16 @@ async fn a_control_collision_prevents_election_and_releases_the_bus() {
         interfaces: Manual,
         on_event: |_event, _state| {},
     });
-    let intent = instance(InstancePorts { bus, control }, OnExisting::JoinAsClient);
+    let intent = instance(
+        SharedInstancePorts { bus, control },
+        ExistingSharedInstancePolicy::JoinAsClient,
+    );
 
     let role = join_shared_instance(&node.handle(), intent).await;
 
     assert_eq!(
         role,
-        Err(JoinError::EndpointUnavailable {
+        Err(SharedInstanceJoinError::EndpointUnavailable {
             endpoint: SharedInstanceEndpoint::TcpControl,
             kind: std::io::ErrorKind::AddrInUse,
         })
@@ -165,7 +168,6 @@ async fn a_control_collision_prevents_election_and_releases_the_bus() {
 
 #[tokio::test]
 async fn joins_as_a_client_when_an_instance_is_already_running() {
-    // A listener on the bus stands in for a running instance: the dial succeeds, so the node defers.
     let standin = TcpListener::bind("127.0.0.1:0")
         .await
         .expect("the standin binds");
@@ -184,12 +186,15 @@ async fn joins_as_a_client_when_an_instance_is_already_running() {
 
     let role = join_shared_instance(
         &node.handle(),
-        instance(InstancePorts { bus, control }, OnExisting::JoinAsClient),
+        instance(
+            SharedInstancePorts { bus, control },
+            ExistingSharedInstancePolicy::JoinAsClient,
+        ),
     )
     .await;
 
     assert!(
-        matches!(role, Ok(Role::JoinedAsClient { .. })),
+        matches!(role, Ok(SharedInstanceRole::JoinedAsClient { .. })),
         "with an instance already on the bus, the node joins it as a client, got {role:?}"
     );
 }
@@ -214,12 +219,18 @@ async fn refuses_to_take_a_role_when_told_to_and_an_instance_exists() {
 
     let role = join_shared_instance(
         &node.handle(),
-        instance(InstancePorts { bus, control }, OnExisting::Refuse),
+        instance(
+            SharedInstancePorts { bus, control },
+            ExistingSharedInstancePolicy::Refuse,
+        ),
     )
     .await;
 
     assert!(
-        matches!(role, Err(JoinError::InstanceAlreadyRunning { .. })),
+        matches!(
+            role,
+            Err(SharedInstanceJoinError::InstanceAlreadyRunning { .. })
+        ),
         "Refuse declines to join a running instance, got {role:?}"
     );
 }
@@ -242,9 +253,16 @@ async fn a_client_rides_the_instances_bus() {
             }
         },
     });
-    let role_a =
-        join_shared_instance(&node_a.handle(), instance(ports, OnExisting::JoinAsClient)).await;
-    assert_eq!(role_a, Ok(Role::BecameInstance), "A becomes the instance");
+    let role_a = join_shared_instance(
+        &node_a.handle(),
+        instance(ports, ExistingSharedInstancePolicy::JoinAsClient),
+    )
+    .await;
+    assert_eq!(
+        role_a,
+        Ok(SharedInstanceRole::BecameInstance),
+        "A becomes the instance"
+    );
 
     let single_b = single(secret(0xB2));
     let dest_b = single_b.destination_hash().expect("B's name is valid");
@@ -261,8 +279,11 @@ async fn a_client_rides_the_instances_bus() {
 
     let (role_tx, role_rx) = tokio::sync::oneshot::channel();
     tokio::spawn(async move {
-        let role_b =
-            join_shared_instance(&handle_b, instance(ports, OnExisting::JoinAsClient)).await;
+        let role_b = join_shared_instance(
+            &handle_b,
+            instance(ports, ExistingSharedInstancePolicy::JoinAsClient),
+        )
+        .await;
         let _ = role_tx.send(role_b);
 
         let mut ticker = tokio::time::interval(Duration::from_millis(200));
@@ -296,7 +317,10 @@ async fn a_client_rides_the_instances_bus() {
         "A heard B's destination across the shared-instance bus"
     );
     assert!(
-        matches!(role_rx.await, Ok(Ok(Role::JoinedAsClient { .. }))),
+        matches!(
+            role_rx.await,
+            Ok(Ok(SharedInstanceRole::JoinedAsClient { .. }))
+        ),
         "B joined A's instance as a client"
     );
 }

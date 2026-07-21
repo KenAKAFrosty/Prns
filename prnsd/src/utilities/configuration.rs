@@ -11,8 +11,8 @@ use personal_rns::identity::{in_memory::InMemoryNodeIdentity, IdentityHash, Iden
 use personal_rns::interfaces::shared_instance::rns_rpc::RpcAuthenticationKey;
 use personal_rns::interfaces::{BitrateBps, ConfiguredInterfacePolicy};
 use personal_rns::shared_instance::{
-    InstancePorts, SharedInstanceClientIntent, SharedInstanceRpcClient, SharedInstanceRpcEndpoint,
-    SharedInstanceTransport as RuntimeSharedInstanceTransport,
+    SharedInstanceClientIntent, SharedInstancePorts, SharedInstanceRpcClient,
+    SharedInstanceRpcEndpoint, SharedInstanceTransport as RuntimeSharedInstanceTransport,
 };
 
 pub struct LoadedConfiguration {
@@ -66,7 +66,7 @@ impl LoadedConfiguration {
         Ok(SharedInstanceClientIntent {
             bus_port: shared.ports.bus,
             transport: runtime_transport(shared.name, shared.transport),
-            policy: personal_rns::interfaces::shared_instance::core::configured_policy(
+            policy: personal_rns::interfaces::shared_instance::configured_policy(
                 ConfiguredInterfacePolicy {
                     bitrate: shared.forced_bitrate,
                     ..Default::default()
@@ -111,7 +111,7 @@ impl LoadedConfiguration {
         Ok(SharedInstanceSettings {
             name,
             transport: *transport,
-            ports: InstancePorts {
+            ports: SharedInstancePorts {
                 bus: *instance_port,
                 control: *control_port,
             },
@@ -124,7 +124,7 @@ impl LoadedConfiguration {
 struct SharedInstanceSettings<'a> {
     name: &'a str,
     transport: ConfigSharedInstanceTransport,
-    ports: InstancePorts,
+    ports: SharedInstancePorts,
     rpc_key: Option<&'a [u8]>,
     forced_bitrate: Option<BitrateBps>,
 }
