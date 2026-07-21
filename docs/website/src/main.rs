@@ -1,14 +1,25 @@
 use dioxus::prelude::*;
+#[cfg(not(feature = "embedded-site"))]
 use dioxus_i18n::prelude::*;
+#[cfg(not(feature = "embedded-site"))]
 use unic_langid::langid;
 
+#[cfg(not(feature = "embedded-site"))]
 mod components;
-mod flash_manifest;
+#[cfg(feature = "embedded-site")]
+mod embedded;
+#[cfg(not(feature = "embedded-site"))]
 mod links;
+#[cfg(not(feature = "embedded-site"))]
 mod pages;
+#[cfg(not(feature = "embedded-site"))]
 mod platforms;
+#[cfg(not(feature = "embedded-site"))]
 mod routes;
+#[cfg(not(feature = "embedded-site"))]
+mod site_mode;
 
+#[cfg(not(feature = "embedded-site"))]
 use routes::Route;
 
 fn main() {
@@ -17,6 +28,11 @@ fn main() {
 
 #[component]
 fn App() -> Element {
+    #[cfg(feature = "embedded-site")]
+    return rsx! { embedded::EmbeddedSite {} };
+
+    #[cfg(not(feature = "embedded-site"))]
+    {
     use_init_i18n(|| {
         I18nConfig::new(langid!("en-US"))
             .with_fallback(langid!("en-US"))
@@ -75,5 +91,6 @@ fn App() -> Element {
         // Twitter) lives in the static index.html so social crawlers, which do
         // not run wasm, can read it. See docs/website/index.html.
         Router::<Route> {}
+    }
     }
 }

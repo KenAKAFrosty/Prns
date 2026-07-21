@@ -76,6 +76,12 @@ pub mod board_images {
     include!(concat!(env!("OUT_DIR"), "/board_images.rs"));
 }
 
+pub mod shipping_boards {
+    include!(concat!(env!("OUT_DIR"), "/shipping_boards.rs"));
+}
+
+pub use shipping_boards::SHIPPING_BOARD_TARGETS;
+
 #[derive(Clone, Copy, PartialEq)]
 pub struct BoardTarget {
     pub name: &'static str,
@@ -112,53 +118,7 @@ pub const GROUPS: &[Group] = &[
     Group::GameEngine,
 ];
 
-pub const BOARD_TARGETS: &[BoardTarget] = &[
-    BoardTarget {
-        name: "Heltec V4",
-        slug: "heltec-v4",
-        silicon: "ESP32-S3 + SX1262",
-        tier: Tier::Flashable,
-        interfaces: &[
-            "Wi-Fi Auto",
-            "TCP Client",
-            "BLE Auto",
-            "LoRa",
-            "ESP-NOW",
-            "USB Auto",
-        ],
-        icon: Some("espressif"),
-    },
-    BoardTarget {
-        name: "LilyGO T-Beam Supreme",
-        slug: "t-beam-supreme",
-        silicon: "ESP32-S3 + SX1262 + AXP2101",
-        tier: Tier::Flashable,
-        interfaces: &[
-            "Wi-Fi Auto",
-            "TCP Client",
-            "BLE Auto",
-            "LoRa",
-            "ESP-NOW",
-            "USB Auto",
-        ],
-        icon: Some("espressif"),
-    },
-    BoardTarget {
-        name: "Seeed XIAO ESP32-C6",
-        slug: "xiao-esp32-c6",
-        silicon: "ESP32-C6",
-        tier: Tier::Flashable,
-        interfaces: &["ESP-NOW", "BLE Auto", "USB Auto"],
-        icon: Some("espressif"),
-    },
-    BoardTarget {
-        name: "LilyGO T-Echo",
-        slug: "t-echo",
-        silicon: "nRF52840 + SX1262",
-        tier: Tier::Flashable,
-        interfaces: &["BLE Auto", "LoRa", "USB Auto"],
-        icon: Some("nordicsemiconductor"),
-    },
+pub const ROADMAP_BOARD_TARGETS: &[BoardTarget] = &[
     BoardTarget {
         name: "Heltec V3/V3.1",
         slug: "heltec-v3",
@@ -234,7 +194,10 @@ pub const BOARD_TARGETS: &[BoardTarget] = &[
 ];
 
 pub fn board_target_by_slug(slug: &str) -> Option<&'static BoardTarget> {
-    BOARD_TARGETS.iter().find(|board| board.slug == slug)
+    SHIPPING_BOARD_TARGETS
+        .iter()
+        .chain(ROADMAP_BOARD_TARGETS.iter())
+        .find(|board| board.slug == slug)
 }
 
 pub const PLATFORMS: &[Platform] = &[

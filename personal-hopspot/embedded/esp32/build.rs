@@ -59,8 +59,7 @@ fn generate_hopspot_site(out: &std::path::Path, build_commit_short: &str) {
 
     let mut files = Vec::new();
     collect_site_files(&site_dir, &site_dir, &mut files);
-    prune_hosted_firmware_assets(&mut files);
-    prune_browser_playground_assets(&mut files);
+    prune_hosted_only_assets(&mut files);
     prune_stale_dioxus_assets(&site_dir, &mut files);
     files.sort_by(|a, b| a.0.cmp(&b.0));
 
@@ -74,13 +73,6 @@ fn generate_hopspot_site(out: &std::path::Path, build_commit_short: &str) {
             site_dir.display()
         );
     }
-    if !files.iter().any(|(path, _)| path == "/source.zip") {
-        panic!(
-            "Hopspot SoftAP website bundle at {} is missing /source.zip.",
-            site_dir.display()
-        );
-    }
-
     let prepared_dir = out.join("hopspot_site_assets");
     let _ = fs::remove_dir_all(&prepared_dir);
     fs::create_dir_all(&prepared_dir).unwrap();
@@ -152,16 +144,15 @@ fn collect_site_files(
     }
 }
 
-fn prune_hosted_firmware_assets(files: &mut Vec<(String, PathBuf)>) {
-    files.retain(|(path, _)| !is_hosted_firmware_asset(path));
-}
-
-fn is_hosted_firmware_asset(path: &str) -> bool {
-    path == "/firmware" || path.starts_with("/firmware/")
-}
-
-fn prune_browser_playground_assets(files: &mut Vec<(String, PathBuf)>) {
-    files.retain(|(path, _)| !path.starts_with("/browser-node-playground-console/"));
+fn prune_hosted_only_assets(files: &mut Vec<(String, PathBuf)>) {
+    files.retain(|(path, _)| {
+        path == "/index.html"
+            || path == "/assets/tailwind.css"
+            || path == "/assets/prns-mark.svg"
+            || path == "/assets/favicon.svg"
+            || is_dioxus_hashed_js(path)
+            || is_dioxus_hashed_wasm(path)
+    });
 }
 
 fn prune_stale_dioxus_assets(site_dir: &std::path::Path, files: &mut Vec<(String, PathBuf)>) {

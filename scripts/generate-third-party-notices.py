@@ -40,6 +40,32 @@ GRAPHS = (
         "xtensa-esp32s3-none-elf",
     ),
     ("WASM", "prns-wasm/Cargo.toml", "wasm32-unknown-unknown"),
+    ("website Rust/WASM", "docs/website/Cargo.toml", "wasm32-unknown-unknown"),
+    (
+        "flasher macOS arm64",
+        "personal-hopspot/flasher/Cargo.toml",
+        "aarch64-apple-darwin",
+    ),
+    (
+        "flasher macOS x86_64",
+        "personal-hopspot/flasher/Cargo.toml",
+        "x86_64-apple-darwin",
+    ),
+    (
+        "flasher Linux x86_64",
+        "personal-hopspot/flasher/Cargo.toml",
+        "x86_64-unknown-linux-gnu",
+    ),
+    (
+        "flasher Linux arm64",
+        "personal-hopspot/flasher/Cargo.toml",
+        "aarch64-unknown-linux-gnu",
+    ),
+    (
+        "flasher Windows x86_64",
+        "personal-hopspot/flasher/Cargo.toml",
+        "x86_64-pc-windows-msvc",
+    ),
 )
 MAVEN = (
     ("androidx.annotation:annotation:1.5.0", "Apache-2.0"),
@@ -47,6 +73,20 @@ MAVEN = (
     ("org.jetbrains:annotations:13.0", "Apache-2.0"),
     ("org.jetbrains.kotlin:kotlin-stdlib:2.0.20", "Apache-2.0"),
 )
+NPM = (
+    ("atob-lite 2.0.0", "MIT", "docs/website/node_modules/atob-lite/LICENSE.md"),
+    ("esptool-js 0.6.0", "Apache-2.0", "docs/website/node_modules/esptool-js/LICENSE"),
+    ("pako 2.2.0", "MIT", "docs/website/node_modules/pako/LICENSE"),
+    ("pako 2.2.0", "Zlib", "release/licenses/pako-Zlib.txt"),
+    ("spark-md5 3.0.2", "MIT", "release/licenses/spark-md5-MIT.txt"),
+    ("tslib 2.8.1", "0BSD", "docs/website/node_modules/tslib/LICENSE.txt"),
+)
+
+
+def normalized_notice_text(value: str) -> str:
+    """Keep legal text intact while making line endings and trailing space reproducible."""
+    normalized = value.replace("\r\n", "\n").replace("\r", "\n")
+    return "\n".join(line.rstrip() for line in normalized.split("\n")).strip()
 
 
 def about_version() -> str:
@@ -102,7 +142,7 @@ def notice_bundle() -> str:
         for graph, manifest, target in GRAPHS:
             data = generate_graph(manifest, target, directory)
             for license_info in data["licenses"]:
-                text = license_info["text"].strip()
+                text = normalized_notice_text(license_info["text"])
                 key = (license_info["id"], text)
                 notice = notices.setdefault(
                     key,
@@ -116,6 +156,19 @@ def notice_bundle() -> str:
                 for used in license_info.get("used_by", []):
                     package = used["crate"]
                     notice["packages"].add(f'{package["name"]} {package["version"]}')
+        for package, identifier, relative in NPM:
+            path = ROOT / relative
+            if not path.is_file():
+                raise RuntimeError(
+                    f"npm notice source {relative} is missing; run npm ci in docs/website"
+                )
+            text = normalized_notice_text(path.read_text(encoding="utf-8"))
+            notice = notices.setdefault(
+                (identifier, text),
+                {"name": identifier, "packages": set(), "graphs": set()},
+            )
+            notice["packages"].add(package)
+            notice["graphs"].add("website JavaScript")
     nordic = [key for key in notices if key[0] == "LicenseRef-Nordic-SoftDevice"]
     if len(nordic) != 1:
         raise RuntimeError("Nordic SoftDevice notice was not generated exactly once")
@@ -123,7 +176,7 @@ def notice_bundle() -> str:
     lines = [
         "# Third-Party Notices",
         "",
-        "This checked bundle covers the shipped Rust release graphs and Android runtime artifacts.",
+        "This checked bundle covers the shipped Rust, JavaScript, and Android release graphs.",
         f"It was generated with `{version}` by `scripts/generate-third-party-notices.py`.",
         "Entries are deduplicated by SPDX identifier and exact notice text.",
         "",
@@ -132,6 +185,16 @@ def notice_bundle() -> str:
     ]
     for graph, manifest, target in GRAPHS:
         lines.append(f"- {graph}: `{manifest}` (`{target}`, locked resolution)")
+    lines.extend(["", "## Website JavaScript runtime", ""])
+    lines.extend(
+        [
+            "- `esptool-js 0.6.0` — `Apache-2.0`",
+            "- `spark-md5 3.0.2` — `MIT` alternative selected from `(WTFPL OR MIT)`",
+            "- `atob-lite 2.0.0` — `MIT`",
+            "- `pako 2.2.0` — `MIT AND Zlib`",
+            "- `tslib 2.8.1` — `0BSD`",
+        ]
+    )
     lines.extend(["", "## Android Maven runtime", ""])
     for coordinate, expression in MAVEN:
         lines.append(f"- `{coordinate}` — `{expression}`")
@@ -183,8 +246,7 @@ def main() -> int:
         return 2
     rendered_bytes = rendered.encode("utf-8")
     if arguments.write:
-        # Preserve license texts byte-for-byte, including CRLF sequences embedded in upstream
-        # notices. Path.read_text/write_text use universal-newline translation on some platforms.
+        # Write deterministic UTF-8/LF output after source notices have been whitespace-normalized.
         arguments.output.write_bytes(rendered_bytes)
         try:
             shown = arguments.output.relative_to(ROOT)

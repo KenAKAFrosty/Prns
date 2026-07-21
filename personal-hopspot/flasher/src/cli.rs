@@ -1,14 +1,13 @@
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
-
-use crate::boards::BoardId;
+use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Parser)]
 #[command(
     name = "hopspot-flash",
-    about = "Interactive firmware flasher for Personal Hopspot boards.",
-    long_about = "Run without a subcommand for a guided board flashing flow."
+    version,
+    about = "Guided, verified firmware flasher for Personal Hopspot boards.",
+    long_about = "Run without a subcommand for a guided flow. Published firmware is signature- and hash-verified before a device is opened."
 )]
 pub(crate) struct Cli {
     #[command(subcommand)]
@@ -17,52 +16,130 @@ pub(crate) struct Cli {
 
 #[derive(Subcommand)]
 pub(crate) enum CommandMode {
-    /// List boards known to the helper.
-    List,
-    /// Build a hosted docs firmware artifact.
+    /// List all publicly supported boards.
+    List {
+        /// Emit one stable JSON document instead of terminal formatting.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Inspect connected serial devices or a board's readiness.
+    Doctor {
+        /// Optional board slug.
+        board: Option<String>,
+        /// Explicit serial port to inspect.
+        #[arg(long, value_name = "PORT")]
+        port: Option<String>,
+        /// Emit stable JSON diagnostics.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Download, verify, and flash published Hopspot firmware.
+    Flash {
+        /// Stable board slug.
+        board: String,
+        /// Signed release channel.
+        #[arg(long, value_enum, default_value_t = ChannelArg::Stable)]
+        channel: ChannelArg,
+        /// Immutable release version; bypasses channel resolution.
+        #[arg(long, value_name = "VERSION")]
+        version: Option<String>,
+        /// Explicitly acknowledge that a pinned version may downgrade the device.
+        #[arg(long, requires = "version")]
+        allow_downgrade: bool,
+        /// Explicit serial port for ESP boards.
+        #[arg(long, value_name = "PORT")]
+        port: Option<String>,
+        /// Provisioning behavior. Preserve is always the default.
+        #[arg(long, value_enum, default_value_t = WifiMode::Preserve)]
+        wifi: WifiMode,
+        /// SSID used with `--wifi configure`.
+        #[arg(long, value_name = "SSID")]
+        wifi_ssid: Option<String>,
+        /// Read the Wi-Fi password from standard input; it never appears in argv.
+        #[arg(long)]
+        wifi_password_stdin: bool,
+        /// Read HOPSPOT_WIFI_SSID/PASSWORD from the environment.
+        #[arg(long)]
+        wifi_from_env: bool,
+        /// Use only a previously verified local cache.
+        #[arg(long)]
+        offline: bool,
+        /// Confirm the exact board noninteractively.
+        #[arg(long)]
+        yes: bool,
+        /// Open a basic serial monitor after verified ESP flashing.
+        #[arg(long)]
+        monitor: bool,
+        /// Emit newline-delimited schema-1 events and never prompt.
+        #[arg(long)]
+        json: bool,
+        /// Build and use repository firmware instead of a signed public release.
+        #[arg(long, hide = true)]
+        local_build: bool,
+        /// Use an extracted, signed release candidate for pre-publication qualification.
+        #[arg(
+            long,
+            value_name = "DIR",
+            hide = true,
+            conflicts_with_all = ["version", "offline", "local_build"]
+        )]
+        candidate: Option<PathBuf>,
+        /// Explicit mounted TECHOBOOT directory.
+        #[arg(long, value_name = "DIR", hide = true)]
+        mount: Option<PathBuf>,
+    },
+    /// Build sparse developer artifacts for one board.
     #[command(hide = true)]
     Build {
-        #[arg(value_enum)]
-        board: BoardId,
+        board: String,
         #[arg(long, value_name = "DIR")]
         out_root: Option<PathBuf>,
     },
-    /// Flash Hopspot firmware to the board.
-    Flash {
-        #[arg(value_enum)]
-        board: BoardId,
-        #[arg(long, value_name = "PORT", help = "Serial port for ESP boards")]
-        port: Option<String>,
-        #[arg(
-            long,
-            value_name = "SSID",
-            help = "Explicit Wi-Fi SSID to write into Hopspot config"
-        )]
-        wifi_ssid: Option<String>,
-        #[arg(
-            long,
-            value_name = "PASSWORD",
-            help = "Explicit Wi-Fi password to write into Hopspot config"
-        )]
-        wifi_password: Option<String>,
-        #[arg(
-            long,
-            help = "Load Wi-Fi Auto credentials from HOPSPOT_WIFI_* or .wifi-env"
-        )]
-        wifi_from_env: bool,
-        #[arg(
-            long,
-            help = "Explicitly clear/omit Wi-Fi Auto credentials for this flash"
-        )]
-        no_wifi_creds: bool,
-        #[arg(long, help = "Open espflash monitor after flashing ESP boards")]
-        monitor: bool,
-        #[arg(long, value_name = "DIR", help = "Mounted TECHOBOOT directory")]
-        mount: Option<PathBuf>,
+    /// Assemble manifest v2 after all four developer artifacts have been built.
+    #[command(hide = true)]
+    AssembleManifest {
+        #[arg(long, value_name = "DIR")]
+        out_root: PathBuf,
+        #[arg(long, value_enum, default_value_t = ChannelArg::Preview)]
+        channel: ChannelArg,
+        #[arg(long, value_name = "COMMIT")]
+        commit: String,
+        #[arg(long, value_name = "KEY_ID")]
+        key_id: String,
     },
-    /// Show board-specific flashing steps.
-    Steps {
-        #[arg(value_enum)]
-        board: BoardId,
-    },
+}
+
+impl Cli {
+    pub(crate) fn json_mode(&self) -> bool {
+        match &self.command {
+            Some(CommandMode::List { json })
+            | Some(CommandMode::Doctor { json, .. })
+            | Some(CommandMode::Flash { json, .. }) => *json,
+            _ => false,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub(crate) enum ChannelArg {
+    #[default]
+    Stable,
+    Preview,
+}
+
+impl ChannelArg {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Stable => "stable",
+            Self::Preview => "preview",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub(crate) enum WifiMode {
+    #[default]
+    Preserve,
+    Configure,
+    Clear,
 }

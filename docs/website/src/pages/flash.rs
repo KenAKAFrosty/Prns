@@ -1,112 +1,426 @@
 use dioxus::prelude::*;
 use dioxus_i18n::t;
+use prns_flash_manifest::{
+    ChannelDescriptor, FlashManifest, FlashPartKind, PINNED_MINISIGN_PUBLIC_KEY,
+    ProvisioningAction, ReleaseChannel, TargetManifest, Transport, WifiCredentials,
+    board_catalog, pinned_key_id, pinned_key_is_configured, provisioning_image, sha256_hex,
+    verify_minisign,
+};
+use serde::{Deserialize, Serialize};
 
 use crate::components::PlatformChip;
-use crate::flash_manifest::{
-    embedded_docs_mode, flash_artifact_for_board, EmbeddedPolicy, FlashArtifactRecord,
-    FlashTransport,
+use crate::platforms::{
+    BoardTarget, ROADMAP_BOARD_TARGETS, SHIPPING_BOARD_TARGETS, board_target_by_slug,
 };
-use crate::platforms::{board_target_by_slug, BoardTarget, BOARD_TARGETS};
 use crate::routes::Route;
+use crate::site_mode::embedded_docs_mode;
 
-const ESP_WEB_TOOLS_SCRIPT: &str =
-    "https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module";
-const HOPSPOT_CONFIG_OFFSET: u32 = 0xD000;
+const RELEASE_CHANNEL: &str = env!("PRNS_BUILD_CHANNEL");
+
+const FETCH_CHANNEL_SCRIPT: &str = r#"
+const channel = '__PRNS_RELEASE_CHANNEL__';
+const descriptor = await fetch(`/releases/channels/${channel}.json`, { cache: 'no-store', credentials: 'omit', redirect: 'error' });
+const signature = await fetch(`/releases/channels/${channel}.json.minisig`, { cache: 'no-store', credentials: 'omit', redirect: 'error' });
+if (!descriptor.ok || !signature.ok) throw new Error('release channel documents unavailable');
+dioxus.send({ descriptor: await descriptor.text(), signature: await signature.text() });
+"#;
+
+const FETCH_MANIFEST_SCRIPT: &str = r#"
+const manifestUrl = await dioxus.recv();
+const immutable = new URL(manifestUrl);
+const localQualification = ['localhost', '127.0.0.1', '::1'].includes(location.hostname);
+const resolvedUrl = localQualification ? immutable.pathname : immutable.href;
+const manifest = await fetch(resolvedUrl, { cache: 'no-store', credentials: 'omit', redirect: 'error' });
+const signature = await fetch(`${resolvedUrl}.minisig`, { cache: 'no-store', credentials: 'omit', redirect: 'error' });
+if (!manifest.ok || !signature.ok) throw new Error('immutable release documents unavailable');
+dioxus.send({ manifest: await manifest.text(), signature: await signature.text() });
+"#;
+
+const PREPARE_SCRIPT: &str = r#"
+const request = await dioxus.recv();
+window.__prnsFlash = window.__prnsFlash || await import('/assets/flasher/prns-flash.js');
+try {
+  await window.__prnsFlash.prepare(request, event => dioxus.send(event));
+} catch (_) {}
+"#;
+
+const FLASH_SCRIPT: &str = r#"
+try {
+  await window.__prnsFlash.flash(event => dioxus.send(event));
+} catch (_) {}
+"#;
+
+const BROWSER_SUPPORT_SCRIPT: &str =
+    "return Boolean(window.isSecureContext && navigator.serial && navigator.serial.requestPort);";
+
+const FOCUS_STATUS_SCRIPT: &str =
+    "document.getElementById('flash-status')?.focus({ preventScroll: false });";
 
 #[component]
 pub fn FlashPage() -> Element {
-    rsx! {
-        FlashExperience { selected_slug: None }
-    }
+    rsx! { FlashExperience { selected_slug: None } }
 }
 
 #[component]
 pub fn FlashBoardPage(board: String) -> Element {
-    rsx! {
-        FlashExperience { selected_slug: Some(board) }
-    }
+    rsx! { FlashExperience { selected_slug: Some(board) } }
 }
 
 #[component]
 fn FlashExperience(selected_slug: Option<String>) -> Element {
     let selected_target = selected_slug.as_deref().and_then(board_target_by_slug);
     let missing_selection = selected_slug.is_some() && selected_target.is_none();
-    let has_board_slug = selected_slug.is_some();
 
     rsx! {
         header { class: "mb-10",
-            if has_board_slug {
-                Link {
-                    to: Route::FlashPage {},
-                    class: "text-sm text-soft hover:text-accent transition-colors",
-                    "← "
-                    {t!("flash-back-boards")}
-                }
-            } else {
-                Link {
-                    to: Route::PlatformsPage {},
-                    class: "text-sm text-soft hover:text-accent transition-colors",
-                    "← "
-                    {t!("flash-back")}
-                }
+            Link {
+                to: if selected_slug.is_some() { Route::FlashPage {} } else { Route::PlatformsPage {} },
+                class: "text-sm text-soft hover:text-accent transition-colors",
+                "← "
+                if selected_slug.is_some() { {t!("flash-back-boards")} } else { {t!("flash-back")} }
             }
             p { class: "mt-6 text-xs font-semibold tracking-[0.22em] uppercase text-accent",
-                {t!("flash-kicker")}
+                "Release flasher"
             }
             h1 { class: "mt-3 text-3xl md:text-4xl font-semibold tracking-tight text-paper",
-                {t!("flash-title")}
+                "Flash a Personal Hopspot"
+            }
+            p { class: "mt-4 max-w-3xl leading-relaxed text-soft",
+                "Choose the exact board, verify the signed release locally, then write only its sparse firmware parts. Existing Wi-Fi is preserved unless you explicitly change it."
             }
         }
 
         if let Some(target) = selected_target {
             if target.is_flashable() {
-                ReadyTargetPanel {
-                    target,
-                    artifact: flash_artifact_for_board(target.slug),
-                }
+                GuidedFlasher { target }
             } else {
-                section { class: "mt-8 rounded-card border border-line/60 bg-layer/40 p-5",
-                    h2 { class: "text-xl font-semibold text-paper",
-                        {t!("flash-unavailable-title")}
-                    }
-                    p { class: "mt-3 text-soft leading-relaxed",
-                        {t!("flash-unavailable-body")}
-                    }
-                }
+                UnavailablePanel {}
             }
         } else if missing_selection {
-            section { class: "mt-8 rounded-card border border-line/60 bg-layer/40 p-5",
-                h2 { class: "text-xl font-semibold text-paper",
-                    {t!("flash-missing-title")}
-                }
-                p { class: "mt-3 text-soft leading-relaxed",
-                    {t!("flash-missing-body")}
-                }
+            section { class: "rounded-card border border-line/60 bg-layer/40 p-5",
+                h2 { class: "text-xl font-semibold text-paper", "Board not found" }
+                p { class: "mt-3 text-soft", "Choose one of the supported shipping boards below." }
             }
         }
 
-        section { class: if selected_target.is_some() { "mt-10" } else { "mt-4" },
-            if selected_target.is_some() {
-                h2 { class: "text-2xl font-semibold tracking-tight text-paper",
-                    {t!("flash-picker-change-title")}
-                }
-                p { class: "mt-3 text-soft max-w-3xl leading-relaxed",
-                    {t!("flash-board-lead")}
-                }
+        section { class: if selected_target.is_some() { "mt-12" } else { "mt-4" },
+            h2 { class: "text-2xl font-semibold tracking-tight text-paper",
+                if selected_target.is_some() { "Change board" } else { "Select the exact board" }
             }
-            if selected_target.is_none() {
-                p { class: "text-soft max-w-3xl leading-relaxed",
-                    {t!("flash-board-lead")}
-                }
+            p { class: "mt-3 max-w-3xl leading-relaxed text-soft",
+                "The four shipping targets are first. Hardware still in bring-up remains visible, but cannot be flashed from a public release."
             }
             div { class: "mt-6 grid gap-4 md:grid-cols-2",
-                for board in BOARD_TARGETS.iter() {
+                for board in SHIPPING_BOARD_TARGETS.iter() {
                     BoardTargetCard {
                         key: "{board.slug}",
                         board,
-                        selected: selected_target
-                            .map(|target| target.slug == board.slug)
-                            .unwrap_or(false),
+                        selected: selected_target.is_some_and(|target| target.slug == board.slug),
+                    }
+                }
+            }
+            details { class: "mt-6 rounded-card border border-line/50 bg-layer/30 p-4",
+                summary { class: "cursor-pointer font-semibold text-soft", "Coming later" }
+                div { class: "mt-4 grid gap-4 md:grid-cols-2",
+                    for board in ROADMAP_BOARD_TARGETS.iter() {
+                        BoardTargetCard { key: "{board.slug}", board, selected: false }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn GuidedFlasher(target: &'static BoardTarget) -> Element {
+    let embedded = embedded_docs_mode();
+    let key_ready = pinned_key_is_configured();
+    let is_esp = matches!(target.slug, "heltec-v4" | "t-beam-supreme" | "xiao-esp32-c6");
+    let supports_wifi = matches!(target.slug, "heltec-v4" | "t-beam-supreme");
+    let is_uf2 = target.slug == "t-echo";
+
+    let mut confirmed = use_signal(|| false);
+    let mut wifi_action = use_signal(|| "preserve".to_string());
+    let mut ssid = use_signal(String::new);
+    let mut password = use_signal(String::new);
+    let phase = use_signal(|| "idle".to_string());
+    let mut status = use_signal(|| "Confirm the exact board to begin.".to_string());
+    let progress_current = use_signal(|| 0_u64);
+    let progress_total = use_signal(|| 0_u64);
+    let mut prepared = use_signal(|| false);
+    let mut release = use_signal(|| None::<ReleaseDetails>);
+    let mut web_serial = use_signal(|| None::<bool>);
+
+    use_effect(move || {
+        if is_esp && !embedded {
+            spawn(async move {
+                if let Ok(supported) = document::eval(BROWSER_SUPPORT_SCRIPT).join::<bool>().await {
+                    web_serial.set(Some(supported));
+                }
+            });
+        }
+    });
+
+    let busy = is_busy(&phase());
+    let browser_blocked = is_esp && web_serial() == Some(false);
+    let can_prepare = confirmed() && !busy && !embedded && key_ready && !browser_blocked;
+    let can_flash = prepared() && !busy;
+    let action_label = if is_uf2 {
+        "Download verified UF2"
+    } else {
+        "Connect and flash"
+    };
+
+    rsx! {
+        section { class: "flash-flasher-panel",
+            div { class: "flash-flasher-panel__main",
+                p { class: "text-xs font-semibold tracking-[0.2em] uppercase text-accent",
+                    "Selected target"
+                }
+                div { class: "flash-ready-target mt-4",
+                    div { class: "flash-ready-target__summary",
+                        div { class: "flash-ready-target__copy",
+                            PlatformChip {
+                                name: target.name.to_string(),
+                                icon: target.icon.map(str::to_string),
+                                badge: None,
+                                muted: false,
+                                decorative: false,
+                            }
+                            p { class: "flash-board-silicon font-mono text-xs", "{target.silicon}" }
+                            if let Some(image) = target.image() {
+                                span { class: "flash-board-slot flash-board-slot--inset flash-board-slot--hero",
+                                    img {
+                                        class: "flash-board-img",
+                                        src: image.data_uri,
+                                        alt: "{target.name}",
+                                        loading: "eager",
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                label { class: "mt-5 flex cursor-pointer items-start gap-3 rounded-lg border border-line/60 bg-surface/40 p-4 text-sm text-soft",
+                    input {
+                        r#type: "checkbox",
+                        checked: confirmed(),
+                        onchange: move |event| {
+                            confirmed.set(event.checked());
+                            prepared.set(false);
+                            document::eval("window.__prnsFlash?.clearPrepared();");
+                        },
+                    }
+                    span {
+                        "I checked the board label and image: this is "
+                        strong { class: "text-paper", "{target.name}" }
+                        if target.slug == "heltec-v4" || target.slug == "t-beam-supreme" {
+                            span { class: "mt-1 block text-xs text-mid",
+                                "Heltec V4 and T-Beam Supreme share ESP32-S3 silicon, so software cannot distinguish the exact model."
+                            }
+                        }
+                    }
+                }
+
+                if supports_wifi {
+                    fieldset { class: "flash-wifi-config mt-5",
+                        legend { class: "font-semibold text-paper", "Wi-Fi configuration" }
+                        p { class: "flash-wifi-note mt-2",
+                            "Credentials remain in this browser and are never sent to a server. Preserve is the default."
+                        }
+                        div { class: "grid gap-2 text-sm text-soft",
+                            for (value, label) in [
+                                ("preserve", "Preserve existing configuration"),
+                                ("configure", "Configure a network locally"),
+                                ("clear", "Clear configuration explicitly"),
+                            ] {
+                                label { class: "flex items-center gap-2",
+                                    input {
+                                        r#type: "radio",
+                                        name: "wifi-action",
+                                        value,
+                                        checked: wifi_action() == value,
+                                        onchange: move |_| {
+                                            wifi_action.set(value.to_string());
+                                            prepared.set(false);
+                                            document::eval("window.__prnsFlash?.clearPrepared();");
+                                        },
+                                    }
+                                    "{label}"
+                                }
+                            }
+                        }
+                        if wifi_action() == "configure" {
+                            div { class: "flash-wifi-grid mt-4",
+                                label { class: "flash-wifi-field",
+                                    span { "SSID" }
+                                    input {
+                                        value: ssid(),
+                                        maxlength: "32",
+                                        autocomplete: "off",
+                                        oninput: move |event| {
+                                            ssid.set(event.value());
+                                            prepared.set(false);
+                                            document::eval("window.__prnsFlash?.clearPrepared();");
+                                        },
+                                    }
+                                }
+                                label { class: "flash-wifi-field",
+                                    span { "Password" }
+                                    input {
+                                        r#type: "password",
+                                        value: password(),
+                                        maxlength: "64",
+                                        autocomplete: "new-password",
+                                        oninput: move |event| {
+                                            password.set(event.value());
+                                            prepared.set(false);
+                                            document::eval("window.__prnsFlash?.clearPrepared();");
+                                        },
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                div { class: "flash-plan-panel mt-5",
+                    div { class: "flash-plan-panel__head",
+                        h3 { class: "font-semibold text-paper", "Review and verify" }
+                        span { class: status_class(&phase()), "{phase_label(&phase())}" }
+                    }
+                    ol { class: "flash-step-list mt-4",
+                        for (index, step) in guided_steps(is_uf2).iter().enumerate() {
+                            li {
+                                span { class: "flash-step-list__index", "{index + 1}" }
+                                span { "{step}" }
+                            }
+                        }
+                    }
+                    p { class: "mt-4 text-sm font-semibold text-accent",
+                        "No full-chip erase. Every published byte is signature- and hash-verified before device access."
+                    }
+                }
+
+                if embedded {
+                    div { class: "flash-embedded-note mt-5",
+                        "The SoftAP copy intentionally excludes the hosted serial engine. Open "
+                        a { href: "https://reticulum.rs/flash/{target.slug}", class: "text-accent", "the online flasher" }
+                        " or use "
+                        code { class: "flash-local-command", "hopspot-flash flash {target.slug}" }
+                        "."
+                    }
+                } else if !key_ready {
+                    div { class: "flash-web-install-message mt-5",
+                        "Release signing custody is not configured yet. The flasher fails closed until the offline Minisign public key is pinned."
+                    }
+                } else if browser_blocked {
+                    div { class: "flash-web-install-message mt-5",
+                        "Direct ESP flashing requires a secure current Chrome or Edge browser with Web Serial. The standalone CLI provides the same verified release path."
+                    }
+                }
+
+                div {
+                    id: "flash-status",
+                    class: "mt-5 rounded-lg border border-line/60 bg-surface/50 p-4",
+                    role: "status",
+                    "aria-live": "polite",
+                    tabindex: "-1",
+                    p { class: "text-sm font-semibold text-paper", "{status}" }
+                    if progress_total() > 0 {
+                        progress {
+                            class: "mt-3 h-2 w-full accent-[var(--color-accent)]",
+                            max: "{progress_total}",
+                            value: "{progress_current}",
+                        }
+                        p { class: "mt-2 font-mono text-xs text-mid",
+                            "{progress_current} / {progress_total} bytes"
+                        }
+                    }
+                }
+
+                if let Some(details) = release() {
+                    details { class: "flash-artifact-panel mt-5",
+                        summary { class: "cursor-pointer font-semibold text-soft", "Verified artifact details" }
+                        div { class: "flash-artifact-details mt-4",
+                            FlashFact { label: "Version", value: details.version.clone(), mono: false }
+                            FlashFact { label: "Channel", value: details.channel.clone(), mono: false }
+                            FlashFact { label: "Total", value: format!("{} bytes", details.total), mono: true }
+                            for part in details.parts {
+                                FlashFact {
+                                    key: "{part.kind}",
+                                    label: part.kind,
+                                    value: format!("{} bytes · {}", part.size, part.sha256),
+                                    mono: true,
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            div { class: "flash-flasher-panel__action grid gap-3",
+                button {
+                    r#type: "button",
+                    class: "flash-primary-action",
+                    disabled: !can_prepare,
+                    onclick: move |_| {
+                        let target_slug = target.slug.to_string();
+                        let selected_action = wifi_action();
+                        let selected_ssid = ssid();
+                        let selected_password = password();
+                        prepared.set(false);
+                        release.set(None);
+                        spawn(async move {
+                            prepare_release(
+                                target_slug,
+                                selected_action,
+                                selected_ssid,
+                                selected_password,
+                                phase,
+                                status,
+                                progress_current,
+                                progress_total,
+                                prepared,
+                                release,
+                                ssid,
+                                password,
+                            )
+                            .await;
+                        });
+                    },
+                    if prepared() { "Re-verify release" } else { "Prepare and verify release" }
+                }
+                button {
+                    r#type: "button",
+                    class: "flash-primary-action",
+                    disabled: !can_flash,
+                    onclick: move |_| {
+                        spawn(async move {
+                            run_flash(
+                                phase,
+                                status,
+                                progress_current,
+                                progress_total,
+                                prepared,
+                                ssid,
+                                password,
+                            )
+                            .await;
+                        });
+                    },
+                    "{action_label}"
+                }
+                if busy {
+                    button {
+                        r#type: "button",
+                        class: "rounded-lg border border-line px-4 py-3 text-sm font-semibold text-soft",
+                        onclick: move |_| {
+                            document::eval("window.__prnsFlash?.cancel();");
+                            status.set("Cancellation requested; an active write will finish its safe operation before stopping.".to_string());
+                        },
+                        "Cancel safely"
                     }
                 }
             }
@@ -117,8 +431,7 @@ fn FlashExperience(selected_slug: Option<String>) -> Element {
 #[component]
 fn BoardTargetCard(board: &'static BoardTarget, selected: bool) -> Element {
     rsx! {
-        div {
-            class: board_card_class(board, selected),
+        div { class: board_card_class(board, selected),
             div { class: "flex flex-wrap items-start gap-3",
                 PlatformChip {
                     name: board.name.to_string(),
@@ -131,545 +444,522 @@ fn BoardTargetCard(board: &'static BoardTarget, selected: bool) -> Element {
             div { class: "mt-4 flex items-center gap-4",
                 if let Some(image) = board.image() {
                     span { class: "flash-board-slot flash-board-slot--inset",
-                        img {
-                            class: "flash-board-img",
-                            src: image.data_uri,
-                            alt: "",
-                            loading: "lazy",
-                        }
+                        img { class: "flash-board-img", src: image.data_uri, alt: "", loading: "lazy" }
                     }
                 }
-                p { class: "flash-board-silicon font-mono text-xs leading-snug",
-                    "{board.silicon}"
-                }
-            }
-            if board.interfaces.is_empty() {
-                p { class: "flash-interfaces-pending mt-4",
-                    {t!("flash-interfaces-pending")}
-                }
-            } else {
-                div { class: "mt-4",
-                    p { class: "text-[0.7rem] font-bold tracking-[0.18em] uppercase text-mid",
-                        {t!("flash-interfaces-label")}
-                    }
-                    div { class: "mt-2 flex flex-wrap gap-2",
-                        for interface in board.interfaces.iter() {
-                            span {
-                                key: "{interface}",
-                                class: "flash-interface-chip",
-                                "{interface}"
-                            }
-                        }
-                    }
-                }
+                p { class: "flash-board-silicon font-mono text-xs", "{board.silicon}" }
             }
             if board.is_flashable() {
                 div { class: "mt-5 flex justify-end",
                     if selected {
-                        span {
-                            class: "inline-flex items-center py-2.5 text-xs font-bold uppercase tracking-wider text-accent leading-none",
-                            "aria-current": "true",
-                            {t!("flash-card-selected")}
-                        }
+                        span { class: "py-2.5 text-xs font-bold uppercase tracking-wider text-accent", "Selected" }
                     } else {
                         Link {
                             to: Route::FlashBoardPage { board: board.slug.to_string() },
                             class: "flash-card-action",
-                            "aria-label": "Flash {board.name}",
-                            span { {t!("flash-card-action")} }
-                            span {
-                                class: "flash-card-action__arrow",
-                                "aria-hidden": "true",
-                                "→"
-                            }
+                            "Flash "
+                            span { class: "flash-card-action__arrow", "→" }
                         }
                     }
                 }
+            } else {
+                p { class: "flash-interfaces-pending mt-4", "Coming later" }
             }
         }
     }
 }
 
 #[component]
-fn ReadyTargetPanel(
-    target: &'static BoardTarget,
-    artifact: Option<&'static FlashArtifactRecord>,
-) -> Element {
-    let embedded_site = embedded_docs_mode();
-    let action_enabled = artifact
-        .map(|artifact| artifact.web_action_enabled(embedded_site))
-        .unwrap_or(false);
-    let action_label = artifact
-        .map(|artifact| artifact.action_label(embedded_site).to_string())
-        .unwrap_or_else(|| "Manifest missing".to_string());
-    let download_path = artifact.and_then(|artifact| artifact.download_path(embedded_site));
-    let esp_web_manifest_path =
-        artifact.and_then(|artifact| artifact.esp_web_manifest_path(embedded_site));
-    let esp_firmware_path = artifact.and_then(|artifact| artifact.artifact_path);
-    let embedded_hosted_only = artifact
-        .map(|artifact| {
-            embedded_site && matches!(artifact.embedded_policy, EmbeddedPolicy::HostedOnly)
-        })
-        .unwrap_or(false);
-    let download_file = artifact
-        .and_then(artifact_file_name)
-        .map(str::to_string)
-        .unwrap_or_else(|| format!("{}.uf2", target.slug));
-    let ready_title = artifact.map(flash_ready_title).unwrap_or("Web flashing");
-    let configurable_wifi = !embedded_site && target.interfaces.contains(&"Wi-Fi Auto");
-
-    rsx! {
-        section { class: "flash-flasher-panel mt-8",
-            div { class: "flash-flasher-panel__main",
-                p { class: "text-xs font-semibold tracking-[0.2em] uppercase text-accent",
-                    {t!("flash-ready-kicker")}
-                }
-                h2 { class: "mt-2 text-2xl font-semibold tracking-tight text-paper",
-                    "{ready_title}"
-                }
-                div { class: "flash-ready-target mt-5",
-                    div { class: "flash-ready-target__summary",
-                        div { class: "flash-ready-target__copy",
-                            PlatformChip {
-                                name: target.name.to_string(),
-                                icon: target.icon.map(str::to_string),
-                                badge: None,
-                                muted: false,
-                                decorative: false,
-                            }
-                            p { class: "flash-board-silicon font-mono text-xs leading-snug",
-                                "{target.silicon}"
-                            }
-                            if let Some(image) = target.image() {
-                                span { class: "flash-board-slot flash-board-slot--inset flash-board-slot--hero",
-                                    img {
-                                        class: "flash-board-img",
-                                        src: image.data_uri,
-                                        alt: "",
-                                        loading: "lazy",
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if !target.interfaces.is_empty() {
-                        div { class: "mt-4",
-                            p { class: "text-[0.7rem] font-bold tracking-[0.18em] uppercase text-mid",
-                                {t!("flash-interfaces-label")}
-                            }
-                            div { class: "mt-2 flex flex-wrap gap-2",
-                                for interface in target.interfaces.iter() {
-                                    span {
-                                        key: "{interface}",
-                                        class: "flash-interface-chip",
-                                        "{interface}"
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if let Some(artifact) = artifact {
-                    FlashPlanPanel {
-                        artifact,
-                        embedded_site,
-                    }
-                } else {
-                    div { class: "flash-artifact-panel mt-5",
-                        p { class: "flash-status-chip flash-status-chip--blocked",
-                            "Manifest missing"
-                        }
-                        p { class: "mt-3 text-sm leading-relaxed text-soft",
-                            "This board is flashable in the catalog, but no artifact manifest entry exists yet."
-                        }
-                    }
-                }
-            }
-            div { class: "flash-flasher-panel__action",
-                if embedded_hosted_only {
-                    if let Some(artifact) = artifact {
-                        p { class: "flash-embedded-note",
-                            "Build this repo locally and flash the board with "
-                            code { class: "flash-local-command",
-                                "{artifact.local_command}"
-                            }
-                            "."
-                        }
-                    }
-                } else if let Some(manifest_path) = esp_web_manifest_path {
-                    EspWebInstallAction {
-                        manifest_path,
-                        firmware_path: esp_firmware_path.map(str::to_string),
-                        board_slug: target.slug.to_string(),
-                        install_name: target.name.to_string(),
-                        chip_family: esp_chip_family(target).map(str::to_string),
-                        action_label: action_label.clone(),
-                        configurable_wifi,
-                    }
-                } else if let Some(download_path) = download_path {
-                    a {
-                        href: "{download_path}",
-                        class: "flash-primary-action",
-                        download: "{download_file}",
-                        "{action_label}"
-                    }
-                } else {
-                    button {
-                        r#type: "button",
-                        disabled: !action_enabled,
-                        class: "flash-primary-action",
-                        "{action_label}"
-                    }
-                }
-                if !embedded_hosted_only {
-                    p { class: "mt-3 text-xs leading-relaxed text-mid",
-                        if let Some(artifact) = artifact {
-                            "{artifact.status_note(embedded_site)}"
-                        } else {
-                            "Add this board to the flash artifact manifest before enabling web actions."
-                        }
-                    }
-                }
-            }
-        }
-
-        section { class: "flash-local-panel mt-5 rounded-card border border-line/60 bg-surface/45 p-4",
-            h2 { class: "text-sm font-semibold text-paper",
-                {t!("flash-local-title")}
-            }
-            p { class: "mt-2 text-sm leading-relaxed text-soft",
-                "Fully offline? Build this repo locally and flash the board"
-                if let Some(artifact) = artifact {
-                    " "
-                    code { class: "flash-local-command",
-                        "{artifact.local_command}"
-                    }
-                }
-            }
-        }
-    }
-}
-
-#[component]
-fn EspWebInstallAction(
-    manifest_path: String,
-    firmware_path: Option<String>,
-    board_slug: String,
-    install_name: String,
-    chip_family: Option<String>,
-    action_label: String,
-    configurable_wifi: bool,
-) -> Element {
-    let manifest_path = html_escape(&manifest_path);
-    let action_label = html_escape(&action_label);
-    let install_id = format!("hopspot-install-{}", board_slug);
-    let firmware_path = firmware_path.unwrap_or_default();
-    let chip_family = chip_family.unwrap_or_default();
-    let install_script =
-        if configurable_wifi && !firmware_path.is_empty() && !chip_family.is_empty() {
-            wifi_config_installer_script(&install_id)
-        } else {
-            String::new()
-        };
-    let installer_html = format!(
-        r#"<esp-web-install-button manifest="{manifest_path}">
-  <button slot="activate" type="button" class="flash-primary-action">{action_label}</button>
-  <span slot="unsupported" class="flash-web-install-message">Chrome or Edge with Web Serial is required.</span>
-  <span slot="not-allowed" class="flash-web-install-message">Open this page over HTTPS or localhost to use Web Serial.</span>
-</esp-web-install-button>"#
-    );
-
-    rsx! {
-        div {
-            id: "{install_id}",
-            class: "flash-web-install",
-            "data-firmware-path": "{firmware_path}",
-            "data-chip-family": "{chip_family}",
-            "data-install-name": "{install_name}",
-            "data-config-offset": "{HOPSPOT_CONFIG_OFFSET}",
-            if configurable_wifi && !firmware_path.is_empty() && !chip_family.is_empty() {
-                div { class: "flash-wifi-config",
-                    p { class: "flash-wifi-note",
-                        "Optional: write credentials if you want Wi-Fi Auto to join a local network after flashing."
-                    }
-                    div { class: "flash-wifi-grid",
-                        label { class: "flash-wifi-field",
-                            span { "Wi-Fi Auto SSID" }
-                            input {
-                                r#type: "text",
-                                maxlength: "32",
-                                autocomplete: "network-name",
-                                placeholder: "Optional",
-                                "data-hopspot-wifi-ssid": "true",
-                            }
-                        }
-                        label { class: "flash-wifi-field",
-                            span { "Wi-Fi password" }
-                            input {
-                                r#type: "password",
-                                maxlength: "64",
-                                autocomplete: "current-password",
-                                placeholder: "Optional",
-                                "data-hopspot-wifi-password": "true",
-                            }
-                        }
-                    }
-                }
-            }
-            script {
-                r#type: "module",
-                src: ESP_WEB_TOOLS_SCRIPT,
-            }
-            div {
-                dangerous_inner_html: "{installer_html}",
-            }
-            if !install_script.is_empty() {
-                script {
-                    dangerous_inner_html: "{install_script}",
-                }
-            }
-        }
-    }
-}
-
-#[component]
-fn FlashPlanPanel(artifact: &'static FlashArtifactRecord, embedded_site: bool) -> Element {
-    rsx! {
-        div { class: "flash-plan-panel mt-5",
-            div { class: "flash-plan-panel__head",
-                h3 { class: "text-sm font-semibold text-paper",
-                    "Flash plan"
-                }
-                span { class: flash_status_class(artifact, embedded_site),
-                    "{flash_status_label(artifact, embedded_site)}"
-                }
-            }
-            ol { class: "flash-step-list mt-3",
-                for (index, step) in artifact.steps.iter().enumerate() {
-                    li {
-                        key: "{index}",
-                        span { class: "flash-step-list__index", "{index + 1}" }
-                        span { "{step}" }
-                    }
-                }
-            }
-            FlashArtifactDetails {
-                artifact,
-            }
-            if matches!(artifact.transport, FlashTransport::Uf2MassStorage) {
-                p { class: "flash-uf2-note mt-4",
-                    "T-Echo uses the UF2 bootloader flow: the browser downloads firmware, and the board flashes itself when you copy that file to TECHOBOOT."
-                }
-            }
-        }
-    }
-}
-
-#[component]
-fn FlashArtifactDetails(artifact: &'static FlashArtifactRecord) -> Element {
-    let file_name = artifact_file_name(artifact)
-        .map(str::to_string)
-        .unwrap_or_else(|| "Firmware artifact".to_string());
-    let size = artifact
-        .artifact_size
-        .map(format_artifact_size)
-        .unwrap_or_else(|| "Pending".to_string());
-    let checksum = artifact
-        .artifact_sha256
-        .map(short_checksum)
-        .unwrap_or_else(|| "Pending".to_string());
-
-    rsx! {
-        div { class: "flash-artifact-details mt-4",
-            FlashArtifactFact {
-                label: "File",
-                value: file_name,
-            }
-            FlashArtifactFact {
-                label: "Size",
-                value: size,
-            }
-            FlashArtifactFact {
-                label: "Flash method",
-                value: artifact.transport.label().to_string(),
-            }
-            FlashArtifactFact {
-                label: "SHA-256",
-                value: checksum,
-                mono: true,
-            }
-        }
-    }
-}
-
-#[component]
-fn FlashArtifactFact(
-    label: &'static str,
-    value: String,
-    #[props(default = false)] mono: bool,
-) -> Element {
-    let value_class = if mono {
-        "flash-artifact-fact__value flash-artifact-fact__value--mono"
-    } else {
-        "flash-artifact-fact__value"
-    };
-
+fn FlashFact(label: &'static str, value: String, mono: bool) -> Element {
     rsx! {
         div { class: "flash-artifact-fact",
-            span { class: "flash-artifact-fact__label",
-                "{label}"
-            }
-            span { class: value_class,
+            span { class: "flash-artifact-fact__label", "{label}" }
+            span {
+                class: if mono { "flash-artifact-fact__value flash-artifact-fact__value--mono" } else { "flash-artifact-fact__value" },
                 "{value}"
             }
         }
     }
 }
 
-fn flash_status_class(artifact: &FlashArtifactRecord, embedded_site: bool) -> &'static str {
-    if embedded_site && matches!(artifact.embedded_policy, EmbeddedPolicy::HostedOnly) {
-        "flash-status-chip flash-status-chip--blocked"
-    } else if artifact.web_action_enabled(embedded_site) {
-        "flash-status-chip flash-status-chip--ready"
-    } else {
-        "flash-status-chip flash-status-chip--pending"
+#[component]
+fn UnavailablePanel() -> Element {
+    rsx! {
+        section { class: "rounded-card border border-line/60 bg-layer/40 p-5",
+            h2 { class: "text-xl font-semibold text-paper", "Not flashable yet" }
+            p { class: "mt-3 text-soft", "This target is still in bring-up or roadmap tracking." }
+        }
     }
 }
 
-fn flash_status_label(artifact: &FlashArtifactRecord, embedded_site: bool) -> &'static str {
-    if embedded_site && matches!(artifact.embedded_policy, EmbeddedPolicy::HostedOnly) {
-        "Local build"
-    } else {
-        artifact.state.label()
+#[derive(Deserialize)]
+struct ChannelDocuments {
+    descriptor: String,
+    signature: String,
+}
+
+#[derive(Deserialize)]
+struct ManifestDocuments {
+    manifest: String,
+    signature: String,
+}
+
+#[derive(Clone)]
+struct ReleaseDetails {
+    version: String,
+    channel: String,
+    total: u64,
+    parts: Vec<PartDetails>,
+}
+
+#[derive(Clone)]
+struct PartDetails {
+    kind: &'static str,
+    size: u64,
+    sha256: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BridgeRequest {
+    schema: u8,
+    board_slug: String,
+    display_name: String,
+    transport: Transport,
+    expected_chip: Option<String>,
+    flash_size: Option<u32>,
+    flash_mode: Option<String>,
+    flash_frequency: Option<String>,
+    before_reset: Option<String>,
+    after_reset: Option<String>,
+    provisioning: Option<BridgeProvisioning>,
+    parts: Vec<BridgePart>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BridgePart {
+    kind: &'static str,
+    path: String,
+    url: String,
+    offset: Option<u32>,
+    size: u64,
+    sha256: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BridgeProvisioning {
+    action: String,
+    offset: u32,
+    size: u32,
+    ssid: String,
+    password: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BridgeEvent {
+    phase: String,
+    code: Option<String>,
+    message: Option<String>,
+    current: Option<u64>,
+    total: Option<u64>,
+    part: Option<String>,
+    part_index: Option<usize>,
+    part_count: Option<usize>,
+    detected_chip: Option<String>,
+    bytes: Option<u64>,
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn prepare_release(
+    board_slug: String,
+    selected_action: String,
+    ssid_value: String,
+    password_value: String,
+    mut phase: Signal<String>,
+    mut status: Signal<String>,
+    mut progress_current: Signal<u64>,
+    mut progress_total: Signal<u64>,
+    mut prepared: Signal<bool>,
+    mut release: Signal<Option<ReleaseDetails>>,
+    mut ssid_input: Signal<String>,
+    mut password: Signal<String>,
+) {
+    phase.set("validating_manifest".to_string());
+    status.set("Downloading and verifying the signed release manifest…".to_string());
+    progress_current.set(0);
+    progress_total.set(0);
+
+    let result = async {
+        if !pinned_key_is_configured() {
+            return Err("Release signing custody is not configured.".to_string());
+        }
+        let channel_script =
+            FETCH_CHANNEL_SCRIPT.replace("__PRNS_RELEASE_CHANNEL__", RELEASE_CHANNEL);
+        let mut channel_eval = document::eval(&channel_script);
+        let channel_documents = channel_eval
+            .recv::<ChannelDocuments>()
+            .await
+            .map_err(|_| format!("The signed {RELEASE_CHANNEL} channel is unavailable."))?;
+        verify_minisign(
+            channel_documents.descriptor.as_bytes(),
+            &channel_documents.signature,
+            PINNED_MINISIGN_PUBLIC_KEY,
+        )
+        .map_err(|error| error.to_string())?;
+        let descriptor = ChannelDescriptor::from_json(
+            channel_documents.descriptor.as_bytes(),
+            configured_release_channel(),
+        )
+        .map_err(|error| error.to_string())?;
+
+        let mut manifest_eval = document::eval(FETCH_MANIFEST_SCRIPT);
+        manifest_eval
+            .send(descriptor.manifest_url.clone())
+            .map_err(|_| "Could not request the immutable release manifest.".to_string())?;
+        let documents = manifest_eval
+            .recv::<ManifestDocuments>()
+            .await
+            .map_err(|_| "The immutable signed release is unavailable.".to_string())?;
+        if sha256_hex(documents.manifest.as_bytes()) != descriptor.manifest_sha256 {
+            return Err("The manifest does not match the signed release channel.".to_string());
+        }
+        verify_minisign(
+            documents.manifest.as_bytes(),
+            &documents.signature,
+            PINNED_MINISIGN_PUBLIC_KEY,
+        )
+        .map_err(|error| error.to_string())?;
+        let catalog = board_catalog().map_err(|error| error.to_string())?;
+        let manifest = FlashManifest::from_json(documents.manifest.as_bytes(), &catalog)
+            .map_err(|error| error.to_string())?;
+        let expected_key_id = pinned_key_id()
+            .ok_or_else(|| "The pinned release key has no canonical key ID.".to_string())?;
+        if !manifest.signing.key_id.eq_ignore_ascii_case(&expected_key_id) {
+            return Err("The signed manifest names a different release key.".to_string());
+        }
+        if manifest.release.version != descriptor.version
+            || manifest.release.channel != descriptor.channel
+        {
+            return Err("The signed channel and manifest release identity disagree.".to_string());
+        }
+        let target = manifest
+            .targets
+            .iter()
+            .find(|target| target.board_slug == board_slug)
+            .cloned()
+            .ok_or_else(|| "The signed release does not contain this board.".to_string())?;
+        let provisioning = bridge_provisioning(
+            &target,
+            &selected_action,
+            ssid_value,
+            password_value,
+        )?;
+        let request = bridge_request(&target, &descriptor.manifest_url, provisioning)?;
+        let details = ReleaseDetails {
+            version: manifest.release.version,
+            channel: match manifest.release.channel {
+                prns_flash_manifest::ReleaseChannel::Stable => "stable".to_string(),
+                prns_flash_manifest::ReleaseChannel::Preview => "preview".to_string(),
+            },
+            total: target.parts.iter().map(|part| part.size).sum(),
+            parts: target
+                .parts
+                .iter()
+                .map(|part| PartDetails {
+                    kind: part_kind(part.kind),
+                    size: part.size,
+                    sha256: part.sha256.clone(),
+                })
+                .collect(),
+        };
+
+        let mut bridge = document::eval(PREPARE_SCRIPT);
+        bridge
+            .send(request)
+            .map_err(|_| "Could not start the local flasher engine.".to_string())?;
+        loop {
+            let event = bridge
+                .recv::<BridgeEvent>()
+                .await
+                .map_err(|_| "The local flasher engine stopped unexpectedly.".to_string())?;
+            let terminal = apply_event(
+                &event,
+                &mut phase,
+                &mut status,
+                &mut progress_current,
+                &mut progress_total,
+            );
+            if terminal {
+                if event.phase == "ready" {
+                    release.set(Some(details));
+                    prepared.set(true);
+                    password.set(String::new());
+                    return Ok(());
+                }
+                return Err(event
+                    .message
+                    .unwrap_or_else(|| "Release preparation failed safely.".to_string()));
+            }
+        }
+    }
+    .await;
+
+    if let Err(message) = result {
+        phase.set("failed".to_string());
+        status.set(message);
+        prepared.set(false);
+        ssid_input.set(String::new());
+        password.set(String::new());
+        focus_status();
     }
 }
 
-fn flash_ready_title(artifact: &FlashArtifactRecord) -> &'static str {
-    match artifact.transport {
-        FlashTransport::EspWebSerial => "Web flashing",
-        FlashTransport::Uf2MassStorage => "Field-recover firmware",
+fn configured_release_channel() -> ReleaseChannel {
+    match RELEASE_CHANNEL {
+        "stable" => ReleaseChannel::Stable,
+        "preview" => ReleaseChannel::Preview,
+        _ => panic!("unsupported compiled release channel"),
     }
 }
 
-fn artifact_file_name(artifact: &FlashArtifactRecord) -> Option<&'static str> {
-    artifact
-        .artifact_path
-        .and_then(|path| path.rsplit('/').next())
-        .filter(|name| !name.is_empty())
-}
-
-fn short_checksum(hash: &str) -> String {
-    if hash.len() > 16 {
-        format!("{}…{}", &hash[..12], &hash[hash.len() - 8..])
-    } else {
-        hash.to_string()
+async fn run_flash(
+    mut phase: Signal<String>,
+    mut status: Signal<String>,
+    mut progress_current: Signal<u64>,
+    mut progress_total: Signal<u64>,
+    mut prepared: Signal<bool>,
+    mut ssid: Signal<String>,
+    mut password: Signal<String>,
+) {
+    phase.set("requesting_port".to_string());
+    status.set("Waiting for the browser's device picker…".to_string());
+    let mut bridge = document::eval(FLASH_SCRIPT);
+    loop {
+        let event = match bridge.recv::<BridgeEvent>().await {
+            Ok(event) => event,
+            Err(_) => {
+                phase.set("failed".to_string());
+                status.set("The local device engine stopped unexpectedly. No success was reported.".to_string());
+                ssid.set(String::new());
+                password.set(String::new());
+                focus_status();
+                return;
+            }
+        };
+        let terminal = apply_event(
+            &event,
+            &mut phase,
+            &mut status,
+            &mut progress_current,
+            &mut progress_total,
+        );
+        if terminal {
+            prepared.set(false);
+            ssid.set(String::new());
+            password.set(String::new());
+            focus_status();
+            return;
+        }
     }
 }
 
-fn format_artifact_size(size: u64) -> String {
-    const KIB: f64 = 1024.0;
-    const MIB: f64 = 1024.0 * 1024.0;
-    if size >= 1024 * 1024 {
-        format!("{:.1} MiB", size as f64 / MIB)
-    } else if size >= 1024 {
-        format!("{:.0} KiB", size as f64 / KIB)
-    } else {
-        format!("{size} bytes")
+fn bridge_provisioning(
+    target: &TargetManifest,
+    action: &str,
+    ssid: String,
+    password: String,
+) -> Result<Option<BridgeProvisioning>, String> {
+    let Some(slot) = &target.provisioning else {
+        return Ok(None);
+    };
+    let provisioning_action = match action {
+        "preserve" => ProvisioningAction::Preserve,
+        "clear" => ProvisioningAction::Clear,
+        "configure" => ProvisioningAction::Configure(WifiCredentials {
+            ssid: ssid.clone(),
+            password: password.clone(),
+        }),
+        _ => return Err("Unknown provisioning action.".to_string()),
+    };
+    provisioning_image(&provisioning_action).map_err(|error| error.to_string())?;
+    Ok(Some(BridgeProvisioning {
+        action: action.to_string(),
+        offset: slot.offset,
+        size: slot.size,
+        ssid: if action == "configure" { ssid } else { String::new() },
+        password: if action == "configure" {
+            password
+        } else {
+            String::new()
+        },
+    }))
+}
+
+fn bridge_request(
+    target: &TargetManifest,
+    manifest_url: &str,
+    provisioning: Option<BridgeProvisioning>,
+) -> Result<BridgeRequest, String> {
+    let (base_url, _) = manifest_url
+        .rsplit_once('/')
+        .ok_or_else(|| "The immutable manifest URL has no release directory.".to_string())?;
+    Ok(BridgeRequest {
+        schema: 1,
+        board_slug: target.board_slug.clone(),
+        display_name: target.display_name.clone(),
+        transport: target.transport,
+        expected_chip: target.expected_chip.clone(),
+        flash_size: target.flash_size,
+        flash_mode: target.flash_mode.clone(),
+        flash_frequency: target.flash_frequency.clone(),
+        before_reset: target.before_reset.clone(),
+        after_reset: target.after_reset.clone(),
+        provisioning,
+        parts: target
+            .parts
+            .iter()
+            .map(|part| BridgePart {
+                kind: part_kind(part.kind),
+                path: part.path.clone(),
+                url: format!("{base_url}/{}", part.path),
+                offset: part.offset,
+                size: part.size,
+                sha256: part.sha256.clone(),
+            })
+            .collect(),
+    })
+}
+
+fn apply_event(
+    event: &BridgeEvent,
+    phase: &mut Signal<String>,
+    status: &mut Signal<String>,
+    current: &mut Signal<u64>,
+    total: &mut Signal<u64>,
+) -> bool {
+    phase.set(event.phase.clone());
+    if let Some(value) = event.current {
+        current.set(value);
+    }
+    if let Some(value) = event.total {
+        total.set(value);
+    }
+    status.set(
+        event
+            .message
+            .clone()
+            .unwrap_or_else(|| event_message(event)),
+    );
+    matches!(event.phase.as_str(), "ready" | "success" | "failed" | "cancelled")
+}
+
+fn event_message(event: &BridgeEvent) -> String {
+    match event.phase.as_str() {
+        "validating_manifest" => "Validating the signed sparse flash plan…".to_string(),
+        "downloading" => format!("Downloading verified {} bytes…", event.total.unwrap_or_default()),
+        "verifying_artifacts" => "Checking exact size and SHA-256 locally…".to_string(),
+        "ready" => format!(
+            "Release ready: {} local bytes verified. Device access has not started.",
+            event.bytes.unwrap_or_default()
+        ),
+        "requesting_port" => "Choose the board's USB serial port in the browser dialog.".to_string(),
+        "connecting" => "Connecting to the Espressif ROM bootloader…".to_string(),
+        "verifying_target" => format!(
+            "Detected {} and matched the selected chip family.",
+            event.detected_chip.as_deref().unwrap_or("the expected chip")
+        ),
+        "writing" => format!(
+            "Writing{}{} without a full erase…",
+            event.part.as_deref().map(|part| format!(" {part}")).unwrap_or_default(),
+            match (event.part_index, event.part_count) {
+                (Some(index), Some(count)) => format!(" (part {} of {count})", index + 1),
+                _ => String::new(),
+            }
+        ),
+        "verifying_flash" => "Performing device-side MD5 verification…".to_string(),
+        "resetting" => "Verification passed. Resetting into Personal Hopspot…".to_string(),
+        "success" => "Verified operation complete. The device is starting Personal Hopspot.".to_string(),
+        "cancelled" => "Operation cancelled; no success was reported.".to_string(),
+        "failed" => format!(
+            "Flashing stopped safely ({}). Follow the recovery steps and restart the complete operation.",
+            event.code.as_deref().unwrap_or("unknown error")
+        ),
+        _ => "Working locally…".to_string(),
     }
 }
 
-fn esp_chip_family(target: &BoardTarget) -> Option<&'static str> {
-    if target.silicon.contains("ESP32-S3") {
-        Some("ESP32-S3")
-    } else if target.silicon.contains("ESP32-C6") {
-        Some("ESP32-C6")
-    } else {
-        None
-    }
+fn focus_status() {
+    document::eval(FOCUS_STATUS_SCRIPT);
 }
 
-fn wifi_config_installer_script(install_id: &str) -> String {
-    let install_id = js_string_escape(install_id);
-    format!(
-        r#"(function() {{
-  const root = document.getElementById("{install_id}");
-  if (!root || root.dataset.hopspotConfigReady === "1") return;
-  root.dataset.hopspotConfigReady = "1";
-  const install = root.querySelector("esp-web-install-button");
-  const ssidInput = root.querySelector("[data-hopspot-wifi-ssid]");
-  const passwordInput = root.querySelector("[data-hopspot-wifi-password]");
-  if (!install || !ssidInput || !passwordInput) return;
-  const encoder = new TextEncoder();
-  let configUrl = "";
-  let manifestUrl = "";
-  const revoke = () => {{
-    if (configUrl) URL.revokeObjectURL(configUrl);
-    if (manifestUrl) URL.revokeObjectURL(manifestUrl);
-  }};
-  const writeConfig = () => {{
-    const bytes = new Uint8Array(4096);
-    bytes.fill(0xff);
-    bytes.set([72, 83, 80, 67, 70, 71, 49, 0], 0);
-    bytes[8] = 1;
-    const ssid = encoder.encode(ssidInput.value.trim()).slice(0, 32);
-    const password = encoder.encode(passwordInput.value).slice(0, 64);
-    bytes[10] = ssid.length;
-    bytes[11] = password.length;
-    bytes.set(ssid, 16);
-    bytes.set(password, 48);
-    return bytes;
-  }};
-  const refreshManifest = () => {{
-    revoke();
-    configUrl = URL.createObjectURL(new Blob([writeConfig()], {{ type: "application/octet-stream" }}));
-    const manifest = {{
-      name: root.dataset.installName || "Hopspot",
-      version: "preview",
-      new_install_prompt_erase: true,
-      new_install_improv_wait_time: 0,
-      builds: [{{
-        chipFamily: root.dataset.chipFamily,
-        improv: false,
-        parts: [
-          {{ path: new URL(root.dataset.firmwarePath, window.location.href).href, offset: 0 }},
-          {{ path: configUrl, offset: Number(root.dataset.configOffset || "53248") }}
+const fn guided_steps(uf2: bool) -> &'static [&'static str] {
+    if uf2 {
+        &[
+            "Confirm the exact T-Echo pictured above.",
+            "Prepare the release; its Minisign signature, byte count, and SHA-256 are checked locally.",
+            "Download the verified UF2, double-tap RESET, and copy it to TECHOBOOT.",
+            "The bootloader drive disappears when the device reboots.",
         ]
-      }}]
-    }};
-    manifestUrl = URL.createObjectURL(new Blob([JSON.stringify(manifest)], {{ type: "application/json" }}));
-    install.setAttribute("manifest", manifestUrl);
-  }};
-  ssidInput.addEventListener("input", refreshManifest);
-  passwordInput.addEventListener("input", refreshManifest);
-  window.addEventListener("pagehide", revoke, {{ once: true }});
-  refreshManifest();
-}})();"#
+    } else {
+        &[
+            "Confirm the exact board pictured above.",
+            "Prepare the release; all sparse parts are downloaded and SHA-256 verified before USB access.",
+            "Connect and choose the board's USB serial port.",
+            "The chip family is checked before any write begins.",
+            "Every part receives device-side MD5 verification before reset.",
+        ]
+    }
+}
+
+const fn part_kind(kind: FlashPartKind) -> &'static str {
+    match kind {
+        FlashPartKind::Bootloader => "bootloader",
+        FlashPartKind::PartitionTable => "partition-table",
+        FlashPartKind::Application => "application",
+        FlashPartKind::Uf2 => "uf2",
+    }
+}
+
+fn is_busy(phase: &str) -> bool {
+    matches!(
+        phase,
+        "validating_manifest"
+            | "downloading"
+            | "verifying_artifacts"
+            | "requesting_port"
+            | "connecting"
+            | "verifying_target"
+            | "writing"
+            | "verifying_flash"
+            | "resetting"
     )
 }
 
-fn js_string_escape(value: &str) -> String {
-    value
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n")
-        .replace('\r', "\\r")
+fn status_class(phase: &str) -> &'static str {
+    match phase {
+        "ready" | "success" => "flash-status-chip flash-status-chip--ready",
+        "failed" | "cancelled" => "flash-status-chip flash-status-chip--blocked",
+        "idle" => "flash-status-chip",
+        _ => "flash-status-chip flash-status-chip--pending",
+    }
 }
 
-fn html_escape(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('"', "&quot;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
+fn phase_label(phase: &str) -> &'static str {
+    match phase {
+        "idle" => "Waiting",
+        "ready" => "Verified",
+        "success" => "Complete",
+        "failed" => "Stopped",
+        "cancelled" => "Cancelled",
+        _ => "Working",
+    }
 }
 
-fn board_card_class(board: &BoardTarget, is_selected: bool) -> String {
-    let selected_class = if is_selected {
-        " flash-board-card--selected"
-    } else {
-        ""
-    };
+fn board_card_class(board: &BoardTarget, selected: bool) -> String {
+    let selected_class = if selected { " flash-board-card--selected" } else { "" };
     format!(
         "flash-board-card {}{} rounded-card border border-line/60 bg-layer/40 p-5 shadow-card",
         board.tier.flash_card_class(),

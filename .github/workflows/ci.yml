@@ -172,6 +172,44 @@ jobs:
         run: cargo clippy --target wasm32-unknown-unknown --all-targets --locked -- -D warnings
         working-directory: prns-wasm
 
+  flasher-contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: flasher-contracts
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: docs/website/package-lock.json
+      - name: Shared manifest and standalone CLI
+        run: cargo test --locked -p prns-flash-manifest -p hopspot-flash
+      - name: Shared manifest and standalone CLI lint
+        run: cargo clippy --locked -p prns-flash-manifest -p hopspot-flash --all-targets -- -D warnings
+      - name: Website Rust shell
+        run: cargo clippy --manifest-path docs/website/Cargo.toml --locked --all-targets -- -D warnings
+      - name: Compact embedded website shell
+        run: cargo clippy --manifest-path docs/website/Cargo.toml --locked --all-targets --features embedded-site -- -D warnings
+      - name: Exact JavaScript graph and fake-serial suite
+        working-directory: docs/website
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run test:flasher
+          npm run build:flasher
+          npm run build:css
+      - name: Production engine and lock audit
+        run: |
+          python3 scripts/npm-production-audit.py
+          if rg -i 'esp-web-install-button|unpkg\.com|esp-web-tools' docs/website/target/hosted-assets/prns-flash.js; then exit 1; fi
+          git diff --exit-code -- docs/website/public/assets/tailwind.css
+
   msrv:
     # The declared MSRV (workspace `rust-version`) must actually build. Pinned to the
     # declared workspace floor (1.90); catches a feature or a dependency bump that

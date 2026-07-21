@@ -1,0 +1,170 @@
+name: flasher release candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Signed release channel
+        required: true
+        default: preview
+        type: choice
+        options: [preview, stable]
+      key_id:
+        description: Maintainer-controlled Minisign key ID
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  cli:
+    name: CLI ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: aarch64-apple-darwin
+            binary: target/aarch64-apple-darwin/release/hopspot-flash
+          - os: macos-13
+            target: x86_64-apple-darwin
+            binary: target/x86_64-apple-darwin/release/hopspot-flash
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            binary: target/x86_64-unknown-linux-gnu/release/hopspot-flash
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            binary: target/aarch64-unknown-linux-gnu/release/hopspot-flash
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            binary: target/x86_64-pc-windows-msvc/release/hopspot-flash.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: flasher-cli-${{ matrix.target }}
+      - name: Build standalone CLI
+        run: cargo build --release --locked -p hopspot-flash --target ${{ matrix.target }}
+      - name: Package deterministic archive
+        run: python scripts/package-hopspot-flash.py --binary "${{ matrix.binary }}" --target "${{ matrix.target }}" --out-dir target/flasher-cli
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flasher-cli-${{ matrix.target }}
+          path: target/flasher-cli/*
+          if-no-files-found: error
+
+  core-candidate:
+    name: Sparse firmware and hosted site
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv7em-none-eabihf,riscv32imac-unknown-none-elf
+      - uses: esp-rs/xtensa-toolchain@v1.7.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          buildtargets: esp32s3
+          default: false
+          override: false
+          ldproxy: true
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            docs/website
+            personal-hopspot/embedded/esp32
+            personal-hopspot/embedded/nrf52840
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: docs/website/package-lock.json
+      - uses: cargo-bins/cargo-binstall@main
+      - name: Install exact Dioxus CLI
+        run: cargo binstall --no-confirm --force dioxus-cli@0.7.5
+      - name: Build unsigned core candidate
+        run: bash scripts/build-flasher-candidate.sh target/flasher-candidate "${{ inputs.channel }}" "${{ inputs.key_id }}" "${{ github.sha }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flasher-core-candidate
+          path: target/flasher-candidate/**
+          if-no-files-found: error
+
+  dependency-audit:
+    name: Release dependency and notice evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: flasher-release-audit
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: docs/website/package-lock.json
+      - name: Install exact audit tools
+        run: |
+          cargo install cargo-deny --version 0.19.8 --locked
+          cargo install cargo-about --version 0.9.1 --locked --features cli
+      - run: bash scripts/deps-audit.sh
+      - run: bash scripts/write-release-audit-evidence.sh target/release-audit-evidence.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flasher-audit-evidence
+          path: target/release-audit-evidence.md
+
+  assemble:
+    name: Assemble immutable unsigned candidate
+    needs: [cli, core-candidate, dependency-audit]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: flasher-cli-*
+          path: target/candidate/cli
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: flasher-core-candidate
+          path: target/candidate
+      - uses: actions/download-artifact@v4
+        with:
+          name: flasher-audit-evidence
+          path: target/candidate/audit
+      - name: Finalize checksums, installers, channel, and immutable website paths
+        run: python3 scripts/finalize-flasher-candidate.py target/candidate --channel "${{ inputs.channel }}" --commit "${{ github.sha }}" --key-id "${{ inputs.key_id }}"
+      - name: Archive for offline review and signing
+        run: tar -czf "target/prns-flasher-candidate-v$(cat VERSION)-unsigned.tar.gz" -C target/candidate .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flasher-unsigned-candidate-v${{ github.run_number }}
+          path: target/prns-flasher-candidate-v*-unsigned.tar.gz
+          retention-days: 30
+          if-no-files-found: error
+      - name: Create or update draft GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(cat VERSION)"
+          bundle="target/prns-flasher-candidate-v${version}-unsigned.tar.gz"
+          if gh release view "v${version}" >/dev/null 2>&1; then
+            gh release upload "v${version}" "$bundle" target/candidate/cli/hopspot-flash-* --clobber
+          else
+            gh release create "v${version}" "$bundle" target/candidate/cli/hopspot-flash-* --draft --title "Prns ${version}" --notes "Unsigned flasher candidate. Public promotion requires offline signatures and the complete hardware acceptance record."
+          fi
