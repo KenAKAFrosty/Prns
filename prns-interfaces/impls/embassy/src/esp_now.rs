@@ -1,9 +1,3 @@
-//! The embassy ESP-NOW worker: bridges a board's [`EspNowRadio`] to the reactor seam as a
-//! broadcast-only interface. Generic over the radio trait, so it compile-checks off-target and the
-//! concrete esp-radio handle is supplied by the board crate. Far simpler than the LoRa worker — no
-//! CSMA, no duty gate, no split/reassembly: the silicon owns channel access and fragmentation, so a
-//! frame is broadcast and received whole.
-
 use alloc::boxed::Box;
 
 use embassy_futures::select::{select3, Either3};
@@ -11,7 +5,7 @@ use embassy_time::Instant;
 use heapless::Vec as HeaplessVec;
 
 use prns_core::engine::InstantMillis;
-use prns_core::interfaces::esp_now::core::{
+use prns_core::interfaces::esp_now::{
     self, ChannelPolicy, EspNowRadio, CHANNEL_TAG_CAP, ESP_NOW_HW_MTU, ESP_NOW_V2_AIR_MTU,
 };
 use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
@@ -19,9 +13,6 @@ use prns_runtime::reactor::driver::EmbassyInterfaceStatus;
 use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
 use prns_runtime::reactor::throughput::ThroughputLedger;
 
-/// One ESP-NOW radio spoken as a broadcast Reticulum interface. Owns the radio for its whole life;
-/// `policy` decides whether it parks on a fixed channel or follows the WiFi station; `status` carries
-/// its enable gate and counters.
 pub struct EspNowInterface<'a, R> {
     id: InterfaceId,
     radio: R,
@@ -34,10 +25,10 @@ impl<'a, R> EspNowInterface<'a, R> {
     #[must_use]
     pub fn new(radio: R, policy: ChannelPolicy, status: &'a EmbassyInterfaceStatus) -> Self {
         Self {
-            id: core::interface_id(),
+            id: esp_now::interface_id(),
             radio,
             policy,
-            tag: core::channel_tag(),
+            tag: esp_now::channel_tag(),
             status,
         }
     }
@@ -47,11 +38,10 @@ impl<'a, R> EspNowInterface<'a, R> {
         self.id
     }
 
-    /// The id this interface will carry — for the caller that stands its
-    /// [`EmbassyInterfaceStatus`] up under the same key before building the interface.
+    /// The id this interface will carry — for the caller that stands its [`EmbassyInterfaceStatus`] up under the same key before building the interface.
     #[must_use]
     pub fn interface_id() -> InterfaceId {
-        core::interface_id()
+        esp_now::interface_id()
     }
 }
 
@@ -60,7 +50,7 @@ impl<R: EspNowRadio> Interface for EspNowInterface<'_, R> {
     const KIND: InterfaceKind = InterfaceKind::EspNow;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::descriptor(self.id)
+        esp_now::descriptor(self.id)
     }
 
     fn channel_tag(&self) -> &[u8] {

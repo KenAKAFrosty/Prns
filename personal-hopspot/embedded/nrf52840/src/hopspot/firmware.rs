@@ -31,11 +31,11 @@ use personal_rns::identity::IdentitySigner;
 use personal_rns::interfaces::bluetooth_auto::{
     BleIdentity, Endpoint, LinkCapabilities, Nrf52Host, BLE_HW_MTU,
 };
-use personal_rns::interfaces::lora::core::{channel_tag, DEFAULT_915_PROFILE};
-use personal_rns::interfaces::radios::sx126x::{BoardConfig, Sx126x, TcxoVoltage};
+use personal_rns::interfaces::lora::{channel_tag, DEFAULT_915_PROFILE};
 use personal_rns::interfaces::usb_auto::{WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID};
 use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus};
 use personal_rns::lora::LoRaInterface;
+use personal_rns::radios::sx126x::{BoardConfig, Sx126x, TcxoVoltage};
 use personal_rns::reactor::embassy::{
     embassy_grant_lane, EmbassyGrantConsumer, EmbassyGrantProducer, EmbassyHost,
     EmbassyInterfaceSeam, EmbassyInterfaceStatus, PooledEgress,

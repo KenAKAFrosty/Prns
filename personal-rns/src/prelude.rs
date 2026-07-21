@@ -146,7 +146,7 @@ pub use prns_interfaces_tokio::shared_instance;
 pub use prns_runtime::runtime::rns_remote_management;
 
 #[cfg(all(feature = "lora", feature = "embassy-host"))]
-pub use prns_interfaces_embassy::lora;
+pub use prns_interfaces_embassy::{lora, radios};
 
 #[cfg(all(feature = "esp-now", feature = "embassy-host"))]
 pub use prns_interfaces_embassy::esp_now;

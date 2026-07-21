@@ -6,7 +6,7 @@ use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::Rectangle;
 use embedded_graphics::text::{Baseline, Text};
-use personal_rns::interfaces::lora::core::{Modulation, RadioProfile, Region};
+use personal_rns::interfaces::lora::{Modulation, RadioProfile, Region};
 
 use crate::screen::state::lora::{
     channel_count, current_channel, scroll_start, CustomRow, EditMode, FreqPlace, FreqRow,

@@ -1,6 +1,6 @@
 pub(in crate::screen) mod lora;
 
-use personal_rns::interfaces::lora::core::{RadioProfile, DEFAULT_915_PROFILE};
+use personal_rns::interfaces::lora::{RadioProfile, DEFAULT_915_PROFILE};
 use personal_rns::storage::DisplayedStorageLimits;
 
 use super::limits::storage_limit_page_count;

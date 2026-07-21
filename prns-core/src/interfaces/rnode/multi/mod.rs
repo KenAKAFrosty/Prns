@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 
 use crate::interfaces::kiss_framing::{FEND, FESC, TFEND, TFESC};
-use crate::interfaces::lora::core::SpreadingFactor;
+use crate::interfaces::lora::SpreadingFactor;
 use crate::interfaces::{PacketPhyStats, RssiDbm, SnrQuarterDb};
 
 use super::{policy, protocol, FirmwareVersion};

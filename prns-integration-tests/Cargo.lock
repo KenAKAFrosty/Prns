@@ -1294,8 +1294,6 @@ dependencies = [
  "cfg-if",
  "crc32fast",
  "ed25519-dalek",
- "embedded-hal 1.0.0",
- "embedded-hal-async",
  "heapless 0.8.0",
  "hkdf",
  "hmac",

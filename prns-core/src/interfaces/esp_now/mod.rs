@@ -1,8 +1,9 @@
-//! ESP-NOW: a connectionless, broadcast-only WiFi-MAC carrier, embedded-only. The platform-agnostic
-//! [`core`] (descriptor, the [`Channel`] newtype + [`ChannelPolicy`],
-//! and the [`EspNowRadio`] abstraction the board implements) is always built; the
-//! embassy worker that drives it lives in `prns-interfaces-embassy`.
+mod backend;
+mod policy;
+mod protocol;
 
-pub mod core;
-
-pub use core::{Channel, ChannelPolicy, EspNowRadio, ESP_NOW_HW_MTU, ESP_NOW_V2_AIR_MTU};
+pub use backend::EspNowRadio;
+pub use policy::{descriptor, DEFAULTS, ESP_NOW_BITRATE_BPS, ESP_NOW_HW_MTU};
+pub use protocol::{
+    channel_tag, interface_id, Channel, ChannelPolicy, CHANNEL_TAG_CAP, ESP_NOW_V2_AIR_MTU,
+};

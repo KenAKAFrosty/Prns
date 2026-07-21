@@ -12,8 +12,8 @@ use embedded_graphics::prelude::{OriginDimensions, Point, Size};
 use embedded_graphics::Pixel;
 use embedded_hal_bus::spi::ExclusiveDevice;
 
-use personal_rns::interfaces::radios::sx126x::{BoardConfig, Sx126x, TcxoVoltage};
 use personal_rns::interfaces::{ConnectionState, InterfaceId};
+use personal_rns::radios::sx126x::{BoardConfig, Sx126x, TcxoVoltage};
 use personal_rns::reactor::embassy::EmbassyInterfaceStatus;
 
 use personal_hopspot_core as screen;
