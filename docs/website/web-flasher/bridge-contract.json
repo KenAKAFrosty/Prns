@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "phases": [
+    { "wire": "idle", "terminal": false, "busy": false, "label": "Waiting", "tone": "neutral" },
+    { "wire": "validating_manifest", "terminal": false, "busy": true, "label": "Working", "tone": "working" },
+    { "wire": "downloading", "terminal": false, "busy": true, "label": "Working", "tone": "working" },
+    { "wire": "verifying_artifacts", "terminal": false, "busy": true, "label": "Working", "tone": "working" },
+    { "wire": "ready", "terminal": true, "busy": false, "label": "Verified", "tone": "ready" },
+    { "wire": "requesting_port", "terminal": false, "busy": true, "label": "Working", "tone": "working" },
+    { "wire": "connecting", "terminal": false, "busy": true, "label": "Working", "tone": "working" },
+    { "wire": "verifying_target", "terminal": false, "busy": true, "label": "Working", "tone": "working" },
+    { "wire": "writing", "terminal": false, "busy": true, "label": "Working", "tone": "working" },
+    { "wire": "verifying_flash", "terminal": false, "busy": true, "label": "Working", "tone": "working" },
+    { "wire": "resetting", "terminal": false, "busy": true, "label": "Working", "tone": "working" },
+    { "wire": "success", "terminal": true, "busy": false, "label": "Complete", "tone": "ready" },
+    { "wire": "failed", "terminal": true, "busy": false, "label": "Stopped", "tone": "blocked" },
+    { "wire": "cancelled", "terminal": true, "busy": false, "label": "Cancelled", "tone": "blocked" }
+  ],
+  "errors": [
+    "invalid_request",
+    "invalid_config",
+    "unsupported_browser",
+    "insecure_context",
+    "permission_denied",
+    "connection_failure",
+    "wrong_chip",
+    "wrong_flash_size",
+    "artifact_fetch",
+    "artifact_size_mismatch",
+    "artifact_hash_mismatch",
+    "device_lost",
+    "write_failure",
+    "verification_failure",
+    "reset_failure",
+    "cancelled",
+    "not_prepared",
+    "busy",
+    "flash_failed"
+  ],
+  "event_fields": [
+    "schema",
+    "phase",
+    "code",
+    "message",
+    "current",
+    "total",
+    "part",
+    "partIndex",
+    "partCount",
+    "detectedChip",
+    "bytes"
+  ]
+}

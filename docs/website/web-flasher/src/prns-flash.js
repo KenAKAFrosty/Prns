@@ -8,6 +8,7 @@ import {
   sha256Hex,
   validateRequest,
 } from "./core.js";
+import { BRIDGE_SCHEMA, validateBridgeEvent } from "./contract.js";
 
 let prepared = null;
 let active = false;
@@ -16,7 +17,7 @@ let DefaultLoader = null;
 let DefaultTransport = null;
 
 function emitEvent(emit, event) {
-  emit({ schema: 1, ...event });
+  emit(validateBridgeEvent({ schema: BRIDGE_SCHEMA, ...event }));
 }
 
 function assertHostedEnvironment(environment = globalThis) {
@@ -124,8 +125,8 @@ export async function prepare(request, emit = () => {}, dependencies = {}) {
     return { ready: true };
   } catch (error) {
     const failure = safeFailure(error);
-    emitEvent(emit, { phase: failure.code === "cancelled" ? "cancelled" : "failed", ...failure });
     discardPrepared();
+    emitEvent(emit, { phase: failure.code === "cancelled" ? "cancelled" : "failed", ...failure });
     throw error;
   } finally {
     if (request?.provisioning) {
@@ -310,10 +311,10 @@ export async function flash(emit = () => {}, dependencies = {}) {
 
 function throwEarlyFailure(emit, error, discard = true) {
   const failure = safeFailure(error);
-  emitEvent(emit, { phase: failure.code === "cancelled" ? "cancelled" : "failed", ...failure });
   if (discard) {
     discardPrepared();
   }
+  emitEvent(emit, { phase: failure.code === "cancelled" ? "cancelled" : "failed", ...failure });
   throw error;
 }
 

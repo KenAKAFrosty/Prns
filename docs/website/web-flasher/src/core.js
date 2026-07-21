@@ -1,5 +1,7 @@
 import SparkMD5 from "spark-md5";
 
+import { BRIDGE_SCHEMA } from "./contract.js";
+
 export const CONFIG_OFFSET = 0xd000;
 export const CONFIG_SIZE = 0x1000;
 export const CONFIG_SSID_MAX_BYTES = 32;
@@ -17,7 +19,7 @@ export class FlashBridgeError extends Error {
 }
 
 export function validateRequest(request) {
-  if (!request || request.schema !== 1) {
+  if (!request || request.schema !== BRIDGE_SCHEMA) {
     throw new FlashBridgeError("invalid_request", "The flasher request schema is unsupported.");
   }
   if (!/^[a-z0-9-]+$/.test(request.boardSlug ?? "")) {

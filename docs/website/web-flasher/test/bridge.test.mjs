@@ -67,6 +67,34 @@ test("prepare verifies every artifact and never sends credentials", async () => 
   assert.equal(configurationBytes.every((byte) => byte === 0), true);
 });
 
+test("throwing preparation event consumers cannot retain provisioning bytes", async () => {
+  const { value, payloads } = request();
+  let fetchIndex = 0;
+  let configurationBytes;
+  await assert.rejects(
+    prepare(value, (event) => {
+      if (event.phase === "ready") {
+        configurationBytes = testing.prepared().files.at(-1).bytes;
+        throw new Error("consumer stopped");
+      }
+      if (event.phase === "failed") {
+        throw new Error("consumer stopped");
+      }
+    }, {
+      loadEsptool: false,
+      cryptoImpl: webcrypto,
+      fetchImpl: async () => {
+        const data = payloads[fetchIndex++];
+        return { ok: true, arrayBuffer: async () => data.buffer.slice(0) };
+      },
+    }),
+    /consumer stopped/,
+  );
+  assert.ok(configurationBytes);
+  assert.equal(testing.prepared(), null);
+  assert.equal(configurationBytes.every((byte) => byte === 0), true);
+});
+
 test("hash mismatch fails before serial access", async () => {
   const { value, payloads } = request();
   payloads[0][0] = 99;
@@ -219,6 +247,22 @@ test("unsupported and insecure browser failures emit terminal bridge events", as
   );
   assert.equal(testing.prepared(), null);
   assert.equal(unsupportedConfiguration.every((byte) => byte === 0), true);
+});
+
+test("throwing early-failure consumers cannot retain provisioning bytes", async () => {
+  await prepareDefault();
+  const configurationBytes = testing.prepared().files.at(-1).bytes;
+
+  await assert.rejects(
+    flash(() => {
+      throw new Error("consumer stopped");
+    }, {
+      environment: { isSecureContext: false },
+    }),
+    /consumer stopped/,
+  );
+  assert.equal(testing.prepared(), null);
+  assert.equal(configurationBytes.every((byte) => byte === 0), true);
 });
 
 test("device-side MD5 mismatch is a verification failure and releases the port", async () => {
