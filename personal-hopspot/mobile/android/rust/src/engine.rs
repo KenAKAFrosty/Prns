@@ -30,9 +30,9 @@ use personal_rns::shared_instance::rpc_compat::{
 use personal_rns::shared_instance::server::LocalServer;
 use personal_rns::storage::GrowableHeap;
 use personal_rns::usb_auto::UsbAutoHost;
-use personal_rns::wifi::{AutoWifi, AutoWifiStatus};
-use personal_rns::wifi_aware::tokio::{WifiAwareAuto, WifiAwareStatus};
-use personal_rns::wifi_direct::tokio::WifiDirectStatus;
+use personal_rns::wifi_auto::{AutoWifi, AutoWifiStatus};
+use personal_rns::wifi_aware::{WifiAwareAuto, WifiAwareStatus};
+use personal_rns::wifi_direct::WifiDirectStatus;
 use personal_rns::wire::DestinationHash;
 
 use crate::ble::{AndroidBleBackend, AndroidBleBridge};

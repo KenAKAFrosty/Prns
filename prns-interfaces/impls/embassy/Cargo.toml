@@ -50,7 +50,7 @@ embassy-time = { version = "0.5", default-features = false, features = ["std", "
 default = []
 log = ["dep:log", "trouble-host?/log"]
 tcp = ["dep:embassy-net", "dep:embedded-io-async-07"]
-wifi = ["dep:embassy-net", "dep:embedded-io-async-07"]
+wifi-auto = ["dep:embassy-net", "dep:embedded-io-async-07"]
 lora = ["dep:embedded-hal", "dep:embedded-hal-async"]
 esp-now = ["prns-core/alloc", "prns-runtime/alloc"]
 ble = []

@@ -1,5 +1,7 @@
-pub mod member;
-pub mod tokio;
+mod member;
+mod runtime;
+
+pub use runtime::{WifiDirectAuto, WifiDirectStatus};
 
 #[cfg(target_os = "linux")]
 pub mod supplicant;

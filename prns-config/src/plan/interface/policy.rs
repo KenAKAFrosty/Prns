@@ -8,7 +8,7 @@ use prns_core::interfaces::pipe;
 use prns_core::interfaces::serial;
 use prns_core::interfaces::usb_auto;
 use prns_core::interfaces::weave::core as weave_core;
-use prns_core::interfaces::wifi_auto::core as wifi_core;
+use prns_core::interfaces::wifi_auto as wifi_auto_contract;
 use prns_core::interfaces::{
     tcp, udp, websocket, AnnounceBandwidthCap, AnnounceRateLimit, BitrateBps,
     ConfiguredInterfacePolicy, EffectiveInterfacePolicy, EgressCapability, FrequencyMilliHertz,
@@ -161,7 +161,7 @@ fn checked_milliseconds(seconds: u64, key: &'static str) -> Result<u64, PlanErro
 
 fn interface_defaults(medium: &PlannedMedium) -> Result<InterfaceDefaults, PlanErrorKind> {
     match medium {
-        PlannedMedium::AutoWifi(_) => Ok(wifi_core::DEFAULTS),
+        PlannedMedium::AutoWifi(_) => Ok(wifi_auto_contract::DEFAULTS),
         PlannedMedium::TcpClient { .. }
         | PlannedMedium::TcpServer { .. }
         | PlannedMedium::Backbone { .. }

@@ -11,17 +11,17 @@ use tokio::sync::{mpsc, watch};
 
 use crate::tcp::{tune, CONNECT_TIMEOUT};
 use crate::wifi_direct::member::WifiDirectMember;
-use prns_core::interfaces::wifi_auto::core::{
+use prns_core::interfaces::wifi_auto::{
     classify_beacon, peering_token, BeaconVerdict, DISCOVERY_GROUP,
 };
-use prns_core::interfaces::wifi_direct::core::{
+use prns_core::interfaces::wifi_direct::{
     DataPlanePlan, GoIntent, GroupRole, SegmentAddress, FAMILY_TAG, WIFI_DIRECT_BEACON_PORT,
     WIFI_DIRECT_BITRATE_GUESS_BPS, WIFI_DIRECT_RENDEZVOUS_PORT,
 };
-use prns_core::interfaces::wifi_direct::manager::{GroupPolicy, ManagerAction, ManagerInput};
-use prns_core::interfaces::wifi_direct::seam::{
+use prns_core::interfaces::wifi_direct::{
     DiscoveryMode, WifiDirectBackend, WifiDirectEvent, WifiDirectGroup,
 };
+use prns_core::interfaces::wifi_direct::{GroupPolicy, PolicyAction, PolicyInput};
 use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{
     ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus, TransferRates,
@@ -324,7 +324,7 @@ impl<B: WifiDirectBackend> InterfaceSupervisor for WifiDirectAuto<B> {
         }
         let started = Instant::now();
         let mut policy = GroupPolicy::<DIAL_TRACK>::new(intent);
-        let mut pending: Vec<ManagerAction> = Vec::new();
+        let mut pending: Vec<PolicyAction> = Vec::new();
         let mut members: HashMap<InterfaceId, TokioMember> = HashMap::new();
         let mut plane = Plane::Down;
         let mut current_plan: Option<DataPlanePlan> = None;
@@ -376,13 +376,13 @@ impl<B: WifiDirectBackend> InterfaceSupervisor for WifiDirectAuto<B> {
             let mut emit = |action| pending.push(action);
             match step {
                 Step::Disabled => {}
-                Step::Tick => policy.handle(ManagerInput::Tick { now_ms }, &mut emit),
+                Step::Tick => policy.handle(PolicyInput::Tick { now_ms }, &mut emit),
                 Step::Event(event) => match event {
                     WifiDirectEvent::Sighting {
                         peer, initiative, ..
                     } => {
                         policy.handle(
-                            ManagerInput::Sighting {
+                            PolicyInput::Sighting {
                                 peer,
                                 initiative,
                                 now_ms,
@@ -392,29 +392,29 @@ impl<B: WifiDirectBackend> InterfaceSupervisor for WifiDirectAuto<B> {
                     }
                     WifiDirectEvent::PeerGone { .. } => {}
                     WifiDirectEvent::Invitation { peer } => {
-                        policy.handle(ManagerInput::Invitation { peer, now_ms }, &mut emit);
+                        policy.handle(PolicyInput::Invitation { peer, now_ms }, &mut emit);
                     }
                     WifiDirectEvent::GroupOffer { peer } => {
-                        policy.handle(ManagerInput::GroupOffer { peer, now_ms }, &mut emit);
+                        policy.handle(PolicyInput::GroupOffer { peer, now_ms }, &mut emit);
                     }
                     WifiDirectEvent::GroupFormed { group } => {
                         current_plan = Some(group.data_plane());
                         let role = group.role();
-                        policy.handle(ManagerInput::GroupFormed { role, now_ms }, &mut emit);
+                        policy.handle(PolicyInput::GroupFormed { role, now_ms }, &mut emit);
                     }
                     WifiDirectEvent::GroupLost { .. } => {
                         current_plan = None;
-                        policy.handle(ManagerInput::GroupLost { now_ms }, &mut emit);
+                        policy.handle(PolicyInput::GroupLost { now_ms }, &mut emit);
                     }
                     WifiDirectEvent::FormationFailed { peer } => {
-                        policy.handle(ManagerInput::FormationFailed { peer, now_ms }, &mut emit);
+                        policy.handle(PolicyInput::FormationFailed { peer, now_ms }, &mut emit);
                     }
                     WifiDirectEvent::FormationProgress => {
-                        policy.handle(ManagerInput::FormationProgress { now_ms }, &mut emit);
+                        policy.handle(PolicyInput::FormationProgress { now_ms }, &mut emit);
                     }
                     WifiDirectEvent::AvailabilityChanged(state) => {
                         policy.handle(
-                            ManagerInput::AvailabilityChanged { state, now_ms },
+                            PolicyInput::AvailabilityChanged { state, now_ms },
                             &mut emit,
                         );
                     }
@@ -422,7 +422,7 @@ impl<B: WifiDirectBackend> InterfaceSupervisor for WifiDirectAuto<B> {
                 Step::Plane(PlaneEvent::Accepted(stream, peer)) => {
                     admit(stream, peer, bitrate, &fleet, &closed_tx, &mut members);
                     policy.handle(
-                        ManagerInput::MembersChanged {
+                        PolicyInput::MembersChanged {
                             count: members.len(),
                         },
                         &mut emit,
@@ -432,7 +432,7 @@ impl<B: WifiDirectBackend> InterfaceSupervisor for WifiDirectAuto<B> {
                     admit(stream, target, bitrate, &fleet, &closed_tx, &mut members);
                     plane = Plane::Linked { target };
                     policy.handle(
-                        ManagerInput::MembersChanged {
+                        PolicyInput::MembersChanged {
                             count: members.len(),
                         },
                         &mut emit,
@@ -452,7 +452,7 @@ impl<B: WifiDirectBackend> InterfaceSupervisor for WifiDirectAuto<B> {
                         }
                     }
                     policy.handle(
-                        ManagerInput::MembersChanged {
+                        PolicyInput::MembersChanged {
                             count: members.len(),
                         },
                         &mut emit,
@@ -489,7 +489,7 @@ impl<B: WifiDirectBackend> prns_core::interfaces::ReportsStatus for WifiDirectAu
 }
 
 async fn apply<B: WifiDirectBackend>(
-    pending: &mut Vec<ManagerAction>,
+    pending: &mut Vec<PolicyAction>,
     backend: &mut B,
     plane: &mut Plane,
     members: &mut HashMap<InterfaceId, TokioMember>,
@@ -499,20 +499,20 @@ async fn apply<B: WifiDirectBackend>(
     let actions = std::mem::take(pending);
     for action in actions {
         match action {
-            ManagerAction::SetDiscovery(mode) => {
+            PolicyAction::SetDiscovery(mode) => {
                 let _ = backend.set_discovery(mode).await;
             }
-            ManagerAction::Form { peer, intent } => backend.form_group(peer, intent).await,
-            ManagerAction::Accept { peer } => backend.accept_invitation(peer, intent).await,
-            ManagerAction::Join { peer } => backend.join_group(peer).await,
-            ManagerAction::RemoveGroup => backend.remove_group().await,
-            ManagerAction::OpenDataPlane { .. } => {
+            PolicyAction::Form { peer, intent } => backend.form_group(peer, intent).await,
+            PolicyAction::Accept { peer } => backend.accept_invitation(peer, intent).await,
+            PolicyAction::Join { peer } => backend.join_group(peer).await,
+            PolicyAction::RemoveGroup => backend.remove_group().await,
+            PolicyAction::OpenDataPlane { .. } => {
                 *plane = match current_plan {
                     Some(plan) => open_plane(*plan).await,
                     None => Plane::Down,
                 };
             }
-            ManagerAction::CloseDataPlane => {
+            PolicyAction::CloseDataPlane => {
                 for (_, member) in members.drain() {
                     member.attached.teardown();
                 }
@@ -712,7 +712,7 @@ fn segment_socket(address: SegmentAddress, port: u16) -> SocketAddr {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prns_core::interfaces::wifi_direct::core::{Initiative, PeerEvidence};
+    use prns_core::interfaces::wifi_direct::{Initiative, PeerEvidence};
     use prns_core::interfaces::MacAddress;
     use std::net::Ipv4Addr;
 

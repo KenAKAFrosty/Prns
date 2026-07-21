@@ -11,12 +11,12 @@ use tokio::task::JoinHandle;
 
 use crate::tcp::{tune, CONNECT_TIMEOUT};
 use crate::wifi_aware::member::WifiAwareMember;
-use prns_core::interfaces::wifi_aware::core::{
+use prns_core::interfaces::wifi_aware::{
     AwareDataPlan, AwareEndpoint, NdpRole, RendezvousToken, FAMILY_TAG, MAX_NDP_PEERS,
     WIFI_AWARE_BITRATE_GUESS_BPS,
 };
-use prns_core::interfaces::wifi_aware::manager::{AwarePolicy, ManagerAction, ManagerInput};
-use prns_core::interfaces::wifi_aware::seam::{DiscoveryMode, WifiAwareBackend, WifiAwareEvent};
+use prns_core::interfaces::wifi_aware::{AwarePolicy, PolicyAction, PolicyInput};
+use prns_core::interfaces::wifi_aware::{DiscoveryMode, WifiAwareBackend, WifiAwareEvent};
 use prns_core::interfaces::{
     BitrateBps, ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus, TransferRates,
 };
@@ -344,7 +344,7 @@ impl<B: WifiAwareBackend> InterfaceSupervisor for WifiAwareAuto<B> {
         let started = Instant::now();
         let local = backend.local_token();
         let mut policy = AwarePolicy::<PEER_TRACK>::new(local);
-        let mut pending: Vec<ManagerAction> = Vec::new();
+        let mut pending: Vec<PolicyAction> = Vec::new();
         let mut dp = DataPlane::default();
         let (closed_tx, mut closed_rx) = mpsc::unbounded_channel::<InterfaceId>();
         let (opened_tx, mut opened_rx) = mpsc::unbounded_channel::<Opened>();
@@ -374,13 +374,13 @@ impl<B: WifiAwareBackend> InterfaceSupervisor for WifiAwareAuto<B> {
             let mut emit = |action| pending.push(action);
             match step {
                 Step::Disabled => {}
-                Step::Tick => policy.handle(ManagerInput::Tick { now_ms }, &mut emit),
+                Step::Tick => policy.handle(PolicyInput::Tick { now_ms }, &mut emit),
                 Step::Event(event) => match event {
                     WifiAwareEvent::PeerDiscovered { peer } => {
-                        policy.handle(ManagerInput::PeerDiscovered { peer, now_ms }, &mut emit);
+                        policy.handle(PolicyInput::PeerDiscovered { peer, now_ms }, &mut emit);
                     }
                     WifiAwareEvent::NdpRequested { peer } => {
-                        policy.handle(ManagerInput::NdpRequested { peer, now_ms }, &mut emit);
+                        policy.handle(PolicyInput::NdpRequested { peer, now_ms }, &mut emit);
                     }
                     WifiAwareEvent::DataPathUp {
                         peer,
@@ -388,18 +388,18 @@ impl<B: WifiAwareBackend> InterfaceSupervisor for WifiAwareAuto<B> {
                         endpoint,
                     } => {
                         dp.endpoints.insert((peer, role), endpoint);
-                        policy.handle(ManagerInput::DataPathUp { peer, role, now_ms }, &mut emit);
+                        policy.handle(PolicyInput::DataPathUp { peer, role, now_ms }, &mut emit);
                     }
                     WifiAwareEvent::DataPathDown { peer, role, .. } => {
                         dp.endpoints.remove(&(peer, role));
-                        policy.handle(ManagerInput::DataPathDown { peer, role, now_ms }, &mut emit);
+                        policy.handle(PolicyInput::DataPathDown { peer, role, now_ms }, &mut emit);
                     }
                     WifiAwareEvent::NdpFailed { peer, role } => {
-                        policy.handle(ManagerInput::NdpFailed { peer, role, now_ms }, &mut emit);
+                        policy.handle(PolicyInput::NdpFailed { peer, role, now_ms }, &mut emit);
                     }
                     WifiAwareEvent::AvailabilityChanged(state) => {
                         policy.handle(
-                            ManagerInput::AvailabilityChanged { state, now_ms },
+                            PolicyInput::AvailabilityChanged { state, now_ms },
                             &mut emit,
                         );
                     }
@@ -432,12 +432,12 @@ impl<B: WifiAwareBackend> InterfaceSupervisor for WifiAwareAuto<B> {
                 Step::Opened(Opened::Failed { peer, role }) => {
                     if dp.opens.get(&peer).map(|handle| handle.role) == Some(role) {
                         dp.opens.remove(&peer);
-                        policy.handle(ManagerInput::DataPathDown { peer, role, now_ms }, &mut emit);
+                        policy.handle(PolicyInput::DataPathDown { peer, role, now_ms }, &mut emit);
                     }
                 }
                 Step::Closed(id) => {
                     if let Some((peer, role)) = dp.member_meta.get(&id).copied() {
-                        policy.handle(ManagerInput::DataPathDown { peer, role, now_ms }, &mut emit);
+                        policy.handle(PolicyInput::DataPathDown { peer, role, now_ms }, &mut emit);
                     }
                 }
             }
@@ -463,7 +463,7 @@ impl<B: WifiAwareBackend> prns_core::interfaces::ReportsStatus for WifiAwareAuto
 }
 
 async fn apply<B: WifiAwareBackend>(
-    pending: &mut Vec<ManagerAction>,
+    pending: &mut Vec<PolicyAction>,
     backend: &mut B,
     dp: &mut DataPlane,
     opened: &mpsc::UnboundedSender<Opened>,
@@ -471,16 +471,16 @@ async fn apply<B: WifiAwareBackend>(
     let actions = std::mem::take(pending);
     for action in actions {
         match action {
-            ManagerAction::SetDiscovery(mode) => {
+            PolicyAction::SetDiscovery(mode) => {
                 let _ = backend.set_discovery(mode).await;
             }
-            ManagerAction::RequestDataPath { peer, role } => {
+            PolicyAction::RequestDataPath { peer, role } => {
                 backend.request_data_path(peer, role).await;
             }
-            ManagerAction::AbandonDataPath { peer, role } => {
+            PolicyAction::AbandonDataPath { peer, role } => {
                 backend.abandon_data_path(peer, role).await;
             }
-            ManagerAction::OpenDataPlane { peer, role } => {
+            PolicyAction::OpenDataPlane { peer, role } => {
                 if let Some(handle) = dp.opens.remove(&peer) {
                     handle.task.abort();
                 }
@@ -492,7 +492,7 @@ async fn apply<B: WifiAwareBackend>(
                 let task = tokio::spawn(open_path(peer, role, plan, sink));
                 dp.opens.insert(peer, OpenHandle { role, task });
             }
-            ManagerAction::CloseDataPlane { peer } => dp.close_peer(peer),
+            PolicyAction::CloseDataPlane { peer } => dp.close_peer(peer),
         }
     }
 }

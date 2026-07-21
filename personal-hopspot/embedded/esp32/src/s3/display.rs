@@ -128,7 +128,7 @@ pub(super) fn build_cards(
     })
 }
 
-#[cfg(feature = "wifi")]
+#[cfg(feature = "wifi-auto")]
 pub(super) fn build_interface_menu_details(
     selected_card: Option<&screen::Card>,
     snapshots: &[InterfaceSnapshot],

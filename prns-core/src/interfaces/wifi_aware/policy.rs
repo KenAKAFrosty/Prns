@@ -1,11 +1,55 @@
-use super::core::{is_keeper, NdpRole, RendezvousToken};
-use super::seam::{Availability, DiscoveryMode};
+use super::backend::{Availability, DiscoveryMode};
+use super::protocol::{is_keeper, NdpRole, RendezvousToken};
+use crate::interfaces::{
+    AnnounceBandwidthCap, BitrateBps, ConfiguredInterfacePolicy, EgressCapability,
+    IngressCapability, InterfaceCapabilities, InterfaceDefaults, InterfaceDescriptor, InterfaceId,
+    InterfaceMode, MtuPolicy, TransportCapability,
+};
+use crate::routing::links::MAX_LINK_MTU;
+
+pub const HARDWARE_MTU: usize = 1196;
+
+pub const WIFI_AWARE_HW_MTU: usize = if HARDWARE_MTU < MAX_LINK_MTU {
+    HARDWARE_MTU
+} else {
+    MAX_LINK_MTU
+};
+
+pub const WIFI_AWARE_BITRATE_GUESS_BPS: BitrateBps = BitrateBps::guess(100_000_000);
+
+pub const MAX_NDP_PEERS: usize = 8;
+
+pub const ESP32_UNAVAILABLE_REASON: &str =
+    "no Wi-Fi Aware on ESP32; SoftAP+STA rides AutoWifi, connectionless rides ESP-NOW";
+pub const WINDOWS_UNAVAILABLE_REASON: &str =
+    "no public Wi-Fi Aware API on Windows; Wi-Fi Direct is the analog";
+
+pub fn descriptor(id: InterfaceId, bitrate: BitrateBps) -> InterfaceDescriptor {
+    defaults_for_bitrate(bitrate)
+        .configured(ConfiguredInterfacePolicy::default())
+        .descriptor(id)
+}
+
+pub fn defaults_for_bitrate(bitrate: BitrateBps) -> InterfaceDefaults {
+    InterfaceDefaults {
+        capabilities: InterfaceCapabilities {
+            ingress: IngressCapability::Enabled,
+            egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
+        },
+        mode: InterfaceMode::Full,
+        bitrate,
+        mtu: MtuPolicy::fixed(WIFI_AWARE_HW_MTU),
+        announce_rate_limit: None,
+        announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
+        airtime_duty_cycle: None,
+    }
+}
 
 pub const NDP_TIMEOUT_MS: u64 = 15_000;
 pub const SUPPRESS_TTL_MS: u64 = 12_000;
 
 #[derive(Debug, Clone, Copy)]
-pub enum ManagerInput {
+pub enum PolicyInput {
     PeerDiscovered {
         peer: RendezvousToken,
         now_ms: u64,
@@ -39,7 +83,7 @@ pub enum ManagerInput {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ManagerAction {
+pub enum PolicyAction {
     SetDiscovery(DiscoveryMode),
     RequestDataPath {
         peer: RendezvousToken,
@@ -108,7 +152,7 @@ impl<const PEER_TRACK: usize> AwarePolicy<PEER_TRACK> {
         }
     }
 
-    pub fn start<F: FnMut(ManagerAction)>(&mut self, emit: &mut F) {
+    pub fn start<F: FnMut(PolicyAction)>(&mut self, emit: &mut F) {
         self.reconcile_discovery(emit);
     }
 
@@ -142,31 +186,31 @@ impl<const PEER_TRACK: usize> AwarePolicy<PEER_TRACK> {
             .min()
     }
 
-    pub fn handle<F: FnMut(ManagerAction)>(&mut self, input: ManagerInput, emit: &mut F) {
+    pub fn handle<F: FnMut(PolicyAction)>(&mut self, input: PolicyInput, emit: &mut F) {
         match input {
-            ManagerInput::PeerDiscovered { peer, now_ms } => {
+            PolicyInput::PeerDiscovered { peer, now_ms } => {
                 self.on_attempt(peer, NdpRole::Initiator, now_ms, emit);
             }
-            ManagerInput::NdpRequested { peer, now_ms } => {
+            PolicyInput::NdpRequested { peer, now_ms } => {
                 self.on_attempt(peer, NdpRole::Responder, now_ms, emit);
             }
-            ManagerInput::DataPathUp { peer, role, now_ms } => {
+            PolicyInput::DataPathUp { peer, role, now_ms } => {
                 self.on_data_path_up(peer, role, now_ms, emit);
             }
-            ManagerInput::DataPathDown { peer, role, now_ms } => {
+            PolicyInput::DataPathDown { peer, role, now_ms } => {
                 self.on_path_lost(peer, role, now_ms, emit);
             }
-            ManagerInput::NdpFailed { peer, role, now_ms } => {
+            PolicyInput::NdpFailed { peer, role, now_ms } => {
                 self.on_path_lost(peer, role, now_ms, emit);
             }
-            ManagerInput::AvailabilityChanged { state, now_ms } => {
+            PolicyInput::AvailabilityChanged { state, now_ms } => {
                 self.on_availability(state, now_ms, emit);
             }
-            ManagerInput::Tick { now_ms } => self.on_tick(now_ms, emit),
+            PolicyInput::Tick { now_ms } => self.on_tick(now_ms, emit),
         }
     }
 
-    fn on_attempt<F: FnMut(ManagerAction)>(
+    fn on_attempt<F: FnMut(PolicyAction)>(
         &mut self,
         peer: RendezvousToken,
         role: NdpRole,
@@ -194,11 +238,11 @@ impl<const PEER_TRACK: usize> AwarePolicy<PEER_TRACK> {
             NdpRole::Responder => session.fired_responder = true,
         }
         self.sessions[index] = Some(session);
-        emit(ManagerAction::RequestDataPath { peer, role });
+        emit(PolicyAction::RequestDataPath { peer, role });
         self.reconcile_discovery(emit);
     }
 
-    fn on_data_path_up<F: FnMut(ManagerAction)>(
+    fn on_data_path_up<F: FnMut(PolicyAction)>(
         &mut self,
         peer: RendezvousToken,
         role: NdpRole,
@@ -216,7 +260,7 @@ impl<const PEER_TRACK: usize> AwarePolicy<PEER_TRACK> {
                 session.admitted = Some(role);
                 self.sessions[index] = Some(session);
                 self.clear_suppress(peer);
-                emit(ManagerAction::OpenDataPlane { peer, role });
+                emit(PolicyAction::OpenDataPlane { peer, role });
             }
             Some(incumbent) if incumbent == role => {}
             Some(incumbent) => {
@@ -225,20 +269,20 @@ impl<const PEER_TRACK: usize> AwarePolicy<PEER_TRACK> {
                 if challenger_keeps && !incumbent_keeps {
                     session.admitted = Some(role);
                     self.sessions[index] = Some(session);
-                    emit(ManagerAction::CloseDataPlane { peer });
-                    emit(ManagerAction::AbandonDataPath {
+                    emit(PolicyAction::CloseDataPlane { peer });
+                    emit(PolicyAction::AbandonDataPath {
                         peer,
                         role: incumbent,
                     });
-                    emit(ManagerAction::OpenDataPlane { peer, role });
+                    emit(PolicyAction::OpenDataPlane { peer, role });
                 } else {
-                    emit(ManagerAction::AbandonDataPath { peer, role });
+                    emit(PolicyAction::AbandonDataPath { peer, role });
                 }
             }
         }
     }
 
-    fn on_path_lost<F: FnMut(ManagerAction)>(
+    fn on_path_lost<F: FnMut(PolicyAction)>(
         &mut self,
         peer: RendezvousToken,
         role: NdpRole,
@@ -260,9 +304,9 @@ impl<const PEER_TRACK: usize> AwarePolicy<PEER_TRACK> {
         };
         self.sessions[index] = None;
         self.upsert_suppress(peer, now_ms);
-        emit(ManagerAction::CloseDataPlane { peer });
+        emit(PolicyAction::CloseDataPlane { peer });
         if other.1 {
-            emit(ManagerAction::AbandonDataPath {
+            emit(PolicyAction::AbandonDataPath {
                 peer,
                 role: other.0,
             });
@@ -270,7 +314,7 @@ impl<const PEER_TRACK: usize> AwarePolicy<PEER_TRACK> {
         self.reconcile_discovery(emit);
     }
 
-    fn on_availability<F: FnMut(ManagerAction)>(
+    fn on_availability<F: FnMut(PolicyAction)>(
         &mut self,
         state: Availability,
         _now_ms: u64,
@@ -283,16 +327,16 @@ impl<const PEER_TRACK: usize> AwarePolicy<PEER_TRACK> {
                         continue;
                     };
                     if session.admitted.is_some() {
-                        emit(ManagerAction::CloseDataPlane { peer: session.peer });
+                        emit(PolicyAction::CloseDataPlane { peer: session.peer });
                     }
                     if session.fired_initiator && session.admitted != Some(NdpRole::Initiator) {
-                        emit(ManagerAction::AbandonDataPath {
+                        emit(PolicyAction::AbandonDataPath {
                             peer: session.peer,
                             role: NdpRole::Initiator,
                         });
                     }
                     if session.fired_responder && session.admitted != Some(NdpRole::Responder) {
-                        emit(ManagerAction::AbandonDataPath {
+                        emit(PolicyAction::AbandonDataPath {
                             peer: session.peer,
                             role: NdpRole::Responder,
                         });
@@ -309,7 +353,7 @@ impl<const PEER_TRACK: usize> AwarePolicy<PEER_TRACK> {
         }
     }
 
-    fn on_tick<F: FnMut(ManagerAction)>(&mut self, now_ms: u64, emit: &mut F) {
+    fn on_tick<F: FnMut(PolicyAction)>(&mut self, now_ms: u64, emit: &mut F) {
         let mut freed = false;
         for index in 0..PEER_TRACK {
             let Some(session) = self.sessions[index] else {
@@ -323,13 +367,13 @@ impl<const PEER_TRACK: usize> AwarePolicy<PEER_TRACK> {
             }
             self.sessions[index] = None;
             if session.fired_initiator {
-                emit(ManagerAction::AbandonDataPath {
+                emit(PolicyAction::AbandonDataPath {
                     peer: session.peer,
                     role: NdpRole::Initiator,
                 });
             }
             if session.fired_responder {
-                emit(ManagerAction::AbandonDataPath {
+                emit(PolicyAction::AbandonDataPath {
                     peer: session.peer,
                     role: NdpRole::Responder,
                 });
@@ -373,11 +417,11 @@ impl<const PEER_TRACK: usize> AwarePolicy<PEER_TRACK> {
             .position(|slot| slot.is_some_and(|session| session.peer == peer))
     }
 
-    fn reconcile_discovery<F: FnMut(ManagerAction)>(&mut self, emit: &mut F) {
+    fn reconcile_discovery<F: FnMut(PolicyAction)>(&mut self, emit: &mut F) {
         let want = self.parked.is_none() && self.has_free_slot();
         if want != self.discovery {
             self.discovery = want;
-            emit(ManagerAction::SetDiscovery(if want {
+            emit(PolicyAction::SetDiscovery(if want {
                 DiscoveryMode::On
             } else {
                 DiscoveryMode::Off
@@ -459,8 +503,8 @@ mod tests {
 
     fn collect<const P: usize>(
         policy: &mut AwarePolicy<P>,
-        input: ManagerInput,
-    ) -> std::vec::Vec<ManagerAction> {
+        input: PolicyInput,
+    ) -> std::vec::Vec<PolicyAction> {
         let mut actions = std::vec::Vec::new();
         policy.handle(input, &mut |action| actions.push(action));
         actions
@@ -470,14 +514,14 @@ mod tests {
     // is the initiator path this node opened on the sighting.
     fn connect_lower(policy: &mut AwarePolicy<4>, peer: u32, now_ms: u64) {
         policy.handle(
-            ManagerInput::PeerDiscovered {
+            PolicyInput::PeerDiscovered {
                 peer: token(peer),
                 now_ms,
             },
             &mut |_| {},
         );
         policy.handle(
-            ManagerInput::DataPathUp {
+            PolicyInput::DataPathUp {
                 peer: token(peer),
                 role: NdpRole::Initiator,
                 now_ms,
@@ -493,7 +537,7 @@ mod tests {
         policy.start(&mut |action| actions.push(action));
         assert_eq!(
             actions,
-            std::vec![ManagerAction::SetDiscovery(DiscoveryMode::On)]
+            std::vec![PolicyAction::SetDiscovery(DiscoveryMode::On)]
         );
     }
 
@@ -502,14 +546,14 @@ mod tests {
         let mut policy = started(5);
         let discovered = collect(
             &mut policy,
-            ManagerInput::PeerDiscovered {
+            PolicyInput::PeerDiscovered {
                 peer: token(9),
                 now_ms: 0,
             },
         );
         assert_eq!(
             discovered,
-            std::vec![ManagerAction::RequestDataPath {
+            std::vec![PolicyAction::RequestDataPath {
                 peer: token(9),
                 role: NdpRole::Initiator,
             }]
@@ -517,14 +561,14 @@ mod tests {
 
         let requested = collect(
             &mut policy,
-            ManagerInput::NdpRequested {
+            PolicyInput::NdpRequested {
                 peer: token(9),
                 now_ms: 100,
             },
         );
         assert_eq!(
             requested,
-            std::vec![ManagerAction::RequestDataPath {
+            std::vec![PolicyAction::RequestDataPath {
                 peer: token(9),
                 role: NdpRole::Responder,
             }]
@@ -536,14 +580,14 @@ mod tests {
         let mut policy = started(5);
         collect(
             &mut policy,
-            ManagerInput::PeerDiscovered {
+            PolicyInput::PeerDiscovered {
                 peer: token(9),
                 now_ms: 0,
             },
         );
         let again = collect(
             &mut policy,
-            ManagerInput::PeerDiscovered {
+            PolicyInput::PeerDiscovered {
                 peer: token(9),
                 now_ms: 500,
             },
@@ -556,14 +600,14 @@ mod tests {
         let mut policy = started(5);
         collect(
             &mut policy,
-            ManagerInput::PeerDiscovered {
+            PolicyInput::PeerDiscovered {
                 peer: token(9),
                 now_ms: 0,
             },
         );
         let opened = collect(
             &mut policy,
-            ManagerInput::DataPathUp {
+            PolicyInput::DataPathUp {
                 peer: token(9),
                 role: NdpRole::Initiator,
                 now_ms: 200,
@@ -571,7 +615,7 @@ mod tests {
         );
         assert_eq!(
             opened,
-            std::vec![ManagerAction::OpenDataPlane {
+            std::vec![PolicyAction::OpenDataPlane {
                 peer: token(9),
                 role: NdpRole::Initiator,
             }]
@@ -586,14 +630,14 @@ mod tests {
         let mut policy = started(5);
         collect(
             &mut policy,
-            ManagerInput::PeerDiscovered {
+            PolicyInput::PeerDiscovered {
                 peer: token(9),
                 now_ms: 0,
             },
         );
         collect(
             &mut policy,
-            ManagerInput::NdpRequested {
+            PolicyInput::NdpRequested {
                 peer: token(9),
                 now_ms: 0,
             },
@@ -601,7 +645,7 @@ mod tests {
 
         let provisional = collect(
             &mut policy,
-            ManagerInput::DataPathUp {
+            PolicyInput::DataPathUp {
                 peer: token(9),
                 role: NdpRole::Responder,
                 now_ms: 100,
@@ -609,7 +653,7 @@ mod tests {
         );
         assert_eq!(
             provisional,
-            std::vec![ManagerAction::OpenDataPlane {
+            std::vec![PolicyAction::OpenDataPlane {
                 peer: token(9),
                 role: NdpRole::Responder,
             }]
@@ -617,7 +661,7 @@ mod tests {
 
         let swap = collect(
             &mut policy,
-            ManagerInput::DataPathUp {
+            PolicyInput::DataPathUp {
                 peer: token(9),
                 role: NdpRole::Initiator,
                 now_ms: 150,
@@ -626,12 +670,12 @@ mod tests {
         assert_eq!(
             swap,
             std::vec![
-                ManagerAction::CloseDataPlane { peer: token(9) },
-                ManagerAction::AbandonDataPath {
+                PolicyAction::CloseDataPlane { peer: token(9) },
+                PolicyAction::AbandonDataPath {
                     peer: token(9),
                     role: NdpRole::Responder,
                 },
-                ManagerAction::OpenDataPlane {
+                PolicyAction::OpenDataPlane {
                     peer: token(9),
                     role: NdpRole::Initiator,
                 },
@@ -646,21 +690,21 @@ mod tests {
         let mut policy = started(5);
         collect(
             &mut policy,
-            ManagerInput::PeerDiscovered {
+            PolicyInput::PeerDiscovered {
                 peer: token(9),
                 now_ms: 0,
             },
         );
         collect(
             &mut policy,
-            ManagerInput::NdpRequested {
+            PolicyInput::NdpRequested {
                 peer: token(9),
                 now_ms: 0,
             },
         );
         collect(
             &mut policy,
-            ManagerInput::DataPathUp {
+            PolicyInput::DataPathUp {
                 peer: token(9),
                 role: NdpRole::Initiator,
                 now_ms: 100,
@@ -669,7 +713,7 @@ mod tests {
 
         let rejected = collect(
             &mut policy,
-            ManagerInput::DataPathUp {
+            PolicyInput::DataPathUp {
                 peer: token(9),
                 role: NdpRole::Responder,
                 now_ms: 150,
@@ -677,7 +721,7 @@ mod tests {
         );
         assert_eq!(
             rejected,
-            std::vec![ManagerAction::AbandonDataPath {
+            std::vec![PolicyAction::AbandonDataPath {
                 peer: token(9),
                 role: NdpRole::Responder,
             }]
@@ -690,14 +734,14 @@ mod tests {
         for peer in [10, 11, 12] {
             let actions = collect(
                 &mut policy,
-                ManagerInput::PeerDiscovered {
+                PolicyInput::PeerDiscovered {
                     peer: token(peer),
                     now_ms: 0,
                 },
             );
             assert_eq!(
                 actions,
-                std::vec![ManagerAction::RequestDataPath {
+                std::vec![PolicyAction::RequestDataPath {
                     peer: token(peer),
                     role: NdpRole::Initiator,
                 }]
@@ -707,7 +751,7 @@ mod tests {
 
         let fills = collect(
             &mut policy,
-            ManagerInput::PeerDiscovered {
+            PolicyInput::PeerDiscovered {
                 peer: token(13),
                 now_ms: 0,
             },
@@ -715,17 +759,17 @@ mod tests {
         assert_eq!(
             fills,
             std::vec![
-                ManagerAction::RequestDataPath {
+                PolicyAction::RequestDataPath {
                     peer: token(13),
                     role: NdpRole::Initiator,
                 },
-                ManagerAction::SetDiscovery(DiscoveryMode::Off),
+                PolicyAction::SetDiscovery(DiscoveryMode::Off),
             ]
         );
 
         let overflow = collect(
             &mut policy,
-            ManagerInput::PeerDiscovered {
+            PolicyInput::PeerDiscovered {
                 peer: token(14),
                 now_ms: 0,
             },
@@ -743,7 +787,7 @@ mod tests {
 
         let dropped = collect(
             &mut policy,
-            ManagerInput::DataPathDown {
+            PolicyInput::DataPathDown {
                 peer: token(11),
                 role: NdpRole::Initiator,
                 now_ms: 5_000,
@@ -752,8 +796,8 @@ mod tests {
         assert_eq!(
             dropped,
             std::vec![
-                ManagerAction::CloseDataPlane { peer: token(11) },
-                ManagerAction::SetDiscovery(DiscoveryMode::On),
+                PolicyAction::CloseDataPlane { peer: token(11) },
+                PolicyAction::SetDiscovery(DiscoveryMode::On),
             ]
         );
         assert_eq!(policy.peer_count(), 3);
@@ -765,7 +809,7 @@ mod tests {
         connect_lower(&mut policy, 9, 0);
         let dropped = collect(
             &mut policy,
-            ManagerInput::DataPathDown {
+            PolicyInput::DataPathDown {
                 peer: token(9),
                 role: NdpRole::Initiator,
                 now_ms: 1_000,
@@ -773,12 +817,12 @@ mod tests {
         );
         assert_eq!(
             dropped,
-            std::vec![ManagerAction::CloseDataPlane { peer: token(9) }]
+            std::vec![PolicyAction::CloseDataPlane { peer: token(9) }]
         );
 
         let cooling = collect(
             &mut policy,
-            ManagerInput::PeerDiscovered {
+            PolicyInput::PeerDiscovered {
                 peer: token(9),
                 now_ms: 2_000,
             },
@@ -787,14 +831,14 @@ mod tests {
 
         let after = collect(
             &mut policy,
-            ManagerInput::PeerDiscovered {
+            PolicyInput::PeerDiscovered {
                 peer: token(9),
                 now_ms: 1_000 + SUPPRESS_TTL_MS,
             },
         );
         assert_eq!(
             after,
-            std::vec![ManagerAction::RequestDataPath {
+            std::vec![PolicyAction::RequestDataPath {
                 peer: token(9),
                 role: NdpRole::Initiator,
             }]
@@ -807,21 +851,21 @@ mod tests {
         let mut policy = started(5);
         collect(
             &mut policy,
-            ManagerInput::PeerDiscovered {
+            PolicyInput::PeerDiscovered {
                 peer: token(9),
                 now_ms: 0,
             },
         );
         collect(
             &mut policy,
-            ManagerInput::NdpRequested {
+            PolicyInput::NdpRequested {
                 peer: token(9),
                 now_ms: 0,
             },
         );
         collect(
             &mut policy,
-            ManagerInput::DataPathUp {
+            PolicyInput::DataPathUp {
                 peer: token(9),
                 role: NdpRole::Initiator,
                 now_ms: 100,
@@ -829,7 +873,7 @@ mod tests {
         );
         collect(
             &mut policy,
-            ManagerInput::DataPathUp {
+            PolicyInput::DataPathUp {
                 peer: token(9),
                 role: NdpRole::Responder,
                 now_ms: 150,
@@ -838,7 +882,7 @@ mod tests {
 
         let loser_dropped = collect(
             &mut policy,
-            ManagerInput::DataPathDown {
+            PolicyInput::DataPathDown {
                 peer: token(9),
                 role: NdpRole::Responder,
                 now_ms: 200,
@@ -853,14 +897,14 @@ mod tests {
         let mut policy = started(5);
         collect(
             &mut policy,
-            ManagerInput::PeerDiscovered {
+            PolicyInput::PeerDiscovered {
                 peer: token(9),
                 now_ms: 0,
             },
         );
         collect(
             &mut policy,
-            ManagerInput::NdpRequested {
+            PolicyInput::NdpRequested {
                 peer: token(9),
                 now_ms: 0,
             },
@@ -869,7 +913,7 @@ mod tests {
 
         let early = collect(
             &mut policy,
-            ManagerInput::Tick {
+            PolicyInput::Tick {
                 now_ms: NDP_TIMEOUT_MS - 1,
             },
         );
@@ -877,18 +921,18 @@ mod tests {
 
         let abandoned = collect(
             &mut policy,
-            ManagerInput::Tick {
+            PolicyInput::Tick {
                 now_ms: NDP_TIMEOUT_MS,
             },
         );
         assert_eq!(
             abandoned,
             std::vec![
-                ManagerAction::AbandonDataPath {
+                PolicyAction::AbandonDataPath {
                     peer: token(9),
                     role: NdpRole::Initiator,
                 },
-                ManagerAction::AbandonDataPath {
+                PolicyAction::AbandonDataPath {
                     peer: token(9),
                     role: NdpRole::Responder,
                 },
@@ -898,7 +942,7 @@ mod tests {
 
         let suppressed = collect(
             &mut policy,
-            ManagerInput::PeerDiscovered {
+            PolicyInput::PeerDiscovered {
                 peer: token(9),
                 now_ms: NDP_TIMEOUT_MS + 1_000,
             },
@@ -923,7 +967,7 @@ mod tests {
         connect_lower(&mut policy, 7, 0);
         collect(
             &mut policy,
-            ManagerInput::PeerDiscovered {
+            PolicyInput::PeerDiscovered {
                 peer: token(8),
                 now_ms: 0,
             },
@@ -931,7 +975,7 @@ mod tests {
 
         let parked = collect(
             &mut policy,
-            ManagerInput::AvailabilityChanged {
+            PolicyInput::AvailabilityChanged {
                 state: Availability::Unavailable("Wi-Fi Aware disabled by the platform"),
                 now_ms: 1_000,
             },
@@ -939,12 +983,12 @@ mod tests {
         assert_eq!(
             parked,
             std::vec![
-                ManagerAction::CloseDataPlane { peer: token(7) },
-                ManagerAction::AbandonDataPath {
+                PolicyAction::CloseDataPlane { peer: token(7) },
+                PolicyAction::AbandonDataPath {
                     peer: token(8),
                     role: NdpRole::Initiator,
                 },
-                ManagerAction::SetDiscovery(DiscoveryMode::Off),
+                PolicyAction::SetDiscovery(DiscoveryMode::Off),
             ]
         );
         assert_eq!(
@@ -954,7 +998,7 @@ mod tests {
 
         let while_parked = collect(
             &mut policy,
-            ManagerInput::PeerDiscovered {
+            PolicyInput::PeerDiscovered {
                 peer: token(9),
                 now_ms: 2_000,
             },
@@ -963,14 +1007,14 @@ mod tests {
 
         let restored = collect(
             &mut policy,
-            ManagerInput::AvailabilityChanged {
+            PolicyInput::AvailabilityChanged {
                 state: Availability::Available,
                 now_ms: 3_000,
             },
         );
         assert_eq!(
             restored,
-            std::vec![ManagerAction::SetDiscovery(DiscoveryMode::On)]
+            std::vec![PolicyAction::SetDiscovery(DiscoveryMode::On)]
         );
         assert_eq!(policy.park_reason(), None);
     }

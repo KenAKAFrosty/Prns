@@ -32,7 +32,7 @@ pub mod reconnect;
 
 pub mod interface_menu;
 
-#[cfg(any(feature = "wifi", feature = "usb", feature = "ble"))]
+#[cfg(any(feature = "wifi-auto", feature = "usb", feature = "ble"))]
 pub mod auto;
 
 #[cfg(feature = "config")]
@@ -90,8 +90,8 @@ pub mod ax25_kiss;
 #[cfg(feature = "backbone")]
 pub mod backbone;
 
-#[cfg(feature = "wifi")]
-pub mod wifi;
+#[cfg(feature = "wifi-auto")]
+pub mod wifi_auto;
 
 #[cfg(feature = "wifi-direct")]
 pub mod wifi_direct;

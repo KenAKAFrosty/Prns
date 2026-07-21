@@ -1,4 +1,4 @@
-use super::core::{AwareEndpoint, NdpRole, RendezvousToken};
+use super::protocol::{AwareEndpoint, NdpRole, RendezvousToken};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Availability {

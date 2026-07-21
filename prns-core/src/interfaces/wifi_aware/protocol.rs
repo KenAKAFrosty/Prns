@@ -1,10 +1,3 @@
-use crate::interfaces::{
-    AnnounceBandwidthCap, BitrateBps, ConfiguredInterfacePolicy, EgressCapability,
-    IngressCapability, InterfaceCapabilities, InterfaceDefaults, InterfaceDescriptor, InterfaceId,
-    InterfaceMode, MtuPolicy, TransportCapability,
-};
-use crate::routing::links::MAX_LINK_MTU;
-
 /// The rendezvous listener a responder binds on its NAN data-path interface, and the port an
 /// initiator dials. Each family gets its own decade so it has room to grow without colliding: wifi_auto
 /// sits in the 42690s (42699), wifi_direct owns the 42710s (42717 data, 42718 beacon), and Aware opens
@@ -12,28 +5,11 @@ use crate::routing::links::MAX_LINK_MTU;
 /// running several families never aliases one listener onto another.
 pub const AWARE_RENDEZVOUS_PORT: u16 = 42_720;
 
-pub const HARDWARE_MTU: usize = 1196;
-
-pub const WIFI_AWARE_HW_MTU: usize = if HARDWARE_MTU < MAX_LINK_MTU {
-    HARDWARE_MTU
-} else {
-    MAX_LINK_MTU
-};
-
-pub const WIFI_AWARE_BITRATE_GUESS_BPS: BitrateBps = BitrateBps::guess(100_000_000);
-
 pub const FAMILY_TAG: &[u8] = b"wifi-aware";
 
 pub const AWARE_SERVICE_NAME: &str = "prns-mesh";
 
 pub const AWARE_PASSPHRASE: &str = "prns-mesh-shared-key";
-
-pub const MAX_NDP_PEERS: usize = 8;
-
-pub const ESP32_UNAVAILABLE_REASON: &str =
-    "no Wi-Fi Aware on ESP32; SoftAP+STA rides AutoWifi, connectionless rides ESP-NOW";
-pub const WINDOWS_UNAVAILABLE_REASON: &str =
-    "no public Wi-Fi Aware API on Windows; Wi-Fi Direct is the analog";
 
 /// A node's stable-for-the-session identity, published in its Aware service info and doubling as the
 /// initiator-election rank. The OS peer handle is ephemeral and asymmetric, so the token is the only
@@ -115,27 +91,6 @@ impl NdpRole {
                 port: endpoint.port,
             },
         }
-    }
-}
-
-pub fn descriptor(id: InterfaceId, bitrate: BitrateBps) -> InterfaceDescriptor {
-    defaults_for_bitrate(bitrate)
-        .configured(ConfiguredInterfacePolicy::default())
-        .descriptor(id)
-}
-
-pub fn defaults_for_bitrate(bitrate: BitrateBps) -> InterfaceDefaults {
-    InterfaceDefaults {
-        capabilities: InterfaceCapabilities {
-            ingress: IngressCapability::Enabled,
-            egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
-        },
-        mode: InterfaceMode::Full,
-        bitrate,
-        mtu: MtuPolicy::fixed(WIFI_AWARE_HW_MTU),
-        announce_rate_limit: None,
-        announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
-        airtime_duty_cycle: None,
     }
 }
 

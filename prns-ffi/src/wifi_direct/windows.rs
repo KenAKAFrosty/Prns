@@ -13,12 +13,12 @@ use windows::Devices::WiFiDirect::{
 use windows::Foundation::TypedEventHandler;
 use windows::Win32::System::Com::CoIncrementMTAUsage;
 
-use prns_core::interfaces::wifi_direct::core::{
-    DataPlanePlan, GoIntent, GroupRole, SegmentAddress, GROUP_PASSPHRASE, GROUP_SSID_PREFIX,
-};
-use prns_core::interfaces::wifi_direct::seam::{
+use prns_core::interfaces::wifi_direct::{
     Availability, DiscoveryMode, GroupEndReason, WifiDirectBackend, WifiDirectEvent,
     WifiDirectGroup,
+};
+use prns_core::interfaces::wifi_direct::{
+    DataPlanePlan, GoIntent, GroupRole, SegmentAddress, GROUP_PASSPHRASE, GROUP_SSID_PREFIX,
 };
 use prns_core::interfaces::MacAddress;
 

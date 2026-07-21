@@ -58,7 +58,7 @@ tokio-host = [
     "personal-rns/backbone",
     "personal-rns/i2p",
     "personal-rns/weave",
-    "personal-rns/wifi",
+    "personal-rns/wifi-auto",
     "personal-rns/usb",
     "personal-rns/ble",
     "personal-rns/websocket",

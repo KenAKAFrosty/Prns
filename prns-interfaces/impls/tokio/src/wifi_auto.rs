@@ -13,7 +13,7 @@ use tokio::sync::watch;
 use crate::reconnect::ReconnectPolicy;
 use crate::tcp::{tune, TcpClientInterface, TcpServerConnection};
 use prns_core::engine::InstantMillis;
-use prns_core::interfaces::wifi_auto::core;
+use prns_core::interfaces::wifi_auto as contract;
 use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{
     ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind,
@@ -55,7 +55,7 @@ impl AutoWifiPeer {
         inbound: Receiver<std::vec::Vec<u8>>,
         bitrate: BitrateBps,
     ) -> Self {
-        Self::with_policy(socket, peer, inbound, core::policy_for_bitrate(bitrate))
+        Self::with_policy(socket, peer, inbound, contract::policy_for_bitrate(bitrate))
     }
 
     pub fn with_policy(
@@ -105,11 +105,11 @@ impl AutoWifiPeer {
 }
 
 impl Interface for AutoWifiPeer {
-    const HW_MTU: usize = core::WIFI_HW_MTU_CAP;
+    const HW_MTU: usize = contract::WIFI_HW_MTU_CAP;
     const KIND: InterfaceKind = InterfaceKind::WifiPeer;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::descriptor(self.id, self.policy)
+        contract::descriptor(self.id, self.policy)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -134,7 +134,7 @@ impl Interface for AutoWifiPeer {
                     seam.next_inbound(&frame).await;
                 }
                 outbound = seam.next_outbound() => {
-                    if outbound.is_empty() || outbound.len() > core::HARDWARE_MTU {
+                    if outbound.is_empty() || outbound.len() > contract::HARDWARE_MTU {
                         continue;
                     }
                     let Ok(sent) = self.socket.send_to(outbound, SocketAddr::V6(self.peer)).await
@@ -232,8 +232,8 @@ impl std::error::Error for AutoWifiSettingsError {}
 pub struct AutoWifiSettings {
     instance_tag: std::vec::Vec<u8>,
     group_id: std::vec::Vec<u8>,
-    discovery_scope: core::DiscoveryScope,
-    multicast_address_type: core::MulticastAddressType,
+    discovery_scope: contract::DiscoveryScope,
+    multicast_address_type: contract::MulticastAddressType,
     discovery_port: u16,
     data_port: u16,
     devices: AutoWifiDevicePolicy,
@@ -242,8 +242,8 @@ pub struct AutoWifiSettings {
 impl AutoWifiSettings {
     pub fn new(
         group_id: impl Into<std::vec::Vec<u8>>,
-        discovery_scope: core::DiscoveryScope,
-        multicast_address_type: core::MulticastAddressType,
+        discovery_scope: contract::DiscoveryScope,
+        multicast_address_type: contract::MulticastAddressType,
         discovery_port: u16,
         data_port: u16,
         devices: AutoWifiDevicePolicy,
@@ -275,11 +275,11 @@ impl AutoWifiSettings {
         self
     }
 
-    pub const fn discovery_scope(&self) -> core::DiscoveryScope {
+    pub const fn discovery_scope(&self) -> contract::DiscoveryScope {
         self.discovery_scope
     }
 
-    pub const fn multicast_address_type(&self) -> core::MulticastAddressType {
+    pub const fn multicast_address_type(&self) -> contract::MulticastAddressType {
         self.multicast_address_type
     }
 
@@ -296,7 +296,7 @@ impl AutoWifiSettings {
     }
 
     fn discovery_group(&self) -> Ipv6Addr {
-        core::discovery_group(
+        contract::discovery_group(
             &self.group_id,
             self.discovery_scope,
             self.multicast_address_type,
@@ -308,23 +308,23 @@ impl AutoWifiSettings {
     }
 
     fn prns_rendezvous_enabled(&self) -> bool {
-        self.group_id == core::GROUP_ID
-            && self.discovery_scope == core::DiscoveryScope::Link
-            && self.multicast_address_type == core::MulticastAddressType::Temporary
-            && self.discovery_port == core::DEFAULT_DISCOVERY_PORT
-            && self.data_port == core::DEFAULT_DATA_PORT
+        self.group_id == contract::GROUP_ID
+            && self.discovery_scope == contract::DiscoveryScope::Link
+            && self.multicast_address_type == contract::MulticastAddressType::Temporary
+            && self.discovery_port == contract::DEFAULT_DISCOVERY_PORT
+            && self.data_port == contract::DEFAULT_DATA_PORT
     }
 }
 
 impl Default for AutoWifiSettings {
     fn default() -> Self {
         Self {
-            instance_tag: core::GROUP_ID.to_vec(),
-            group_id: core::GROUP_ID.to_vec(),
-            discovery_scope: core::DiscoveryScope::Link,
-            multicast_address_type: core::MulticastAddressType::Temporary,
-            discovery_port: core::DEFAULT_DISCOVERY_PORT,
-            data_port: core::DEFAULT_DATA_PORT,
+            instance_tag: contract::GROUP_ID.to_vec(),
+            group_id: contract::GROUP_ID.to_vec(),
+            discovery_scope: contract::DiscoveryScope::Link,
+            multicast_address_type: contract::MulticastAddressType::Temporary,
+            discovery_port: contract::DEFAULT_DISCOVERY_PORT,
+            data_port: contract::DEFAULT_DATA_PORT,
             devices: AutoWifiDevicePolicy::default(),
         }
     }
@@ -333,13 +333,13 @@ impl Default for AutoWifiSettings {
 impl AutoWifi {
     #[must_use]
     pub fn new() -> Self {
-        Self::with_policy(core::configured_policy(Default::default()))
+        Self::with_policy(contract::configured_policy(Default::default()))
     }
 
     /// Declare a known pipe instead of the default wifi LAN bitrate; sets the members' announce pacing.
     #[must_use]
     pub fn with_bitrate(bitrate: BitrateBps) -> Self {
-        Self::with_policy(core::policy_for_bitrate(bitrate))
+        Self::with_policy(contract::policy_for_bitrate(bitrate))
     }
 
     #[must_use]
@@ -363,7 +363,7 @@ impl AutoWifi {
 
     /// Add Bonjour/mDNS as a second, concurrent discovery channel: each resolved rendezvous
     /// endpoint arriving on `sightings` is dialed as a [`TcpClientInterface`] to the same
-    /// [`core::TCP_RENDEZVOUS_PORT`] the multicast star and gateway fold use, deduped by
+    /// [`contract::TCP_RENDEZVOUS_PORT`] the multicast star and gateway fold use, deduped by
     /// target. This is what lets a peer that cannot run raw multicast (iOS, exempt from the
     /// entitlement only for standard Bonjour) still be reached; the platform backend feeds the channel from outside, keeping this supervisor `forbid-unsafe`.
     #[must_use]
@@ -545,7 +545,7 @@ impl InterfaceSupervisor for AutoWifi {
                     .map(|nic| {
                         (
                             nic.index,
-                            core::HeapAutoInterfaceProtocol::from_link_local_with_group(
+                            contract::HeapAutoInterfaceProtocol::from_link_local_with_group(
                                 nic.link_local,
                                 &settings.group_id,
                             ),
@@ -575,9 +575,9 @@ impl InterfaceSupervisor for AutoWifi {
         let mut beacon_cycle: u32 = 0;
         let mut discovery_buf = [0u8; 64];
         let mut unicast_buf = [0u8; 64];
-        let mut data_buf = [0u8; core::HARDWARE_MTU];
+        let mut data_buf = [0u8; contract::HARDWARE_MTU];
         let mut rendezvous = if settings.prns_rendezvous_enabled() {
-            TcpListener::bind(("0.0.0.0", core::TCP_RENDEZVOUS_PORT))
+            TcpListener::bind(("0.0.0.0", contract::TCP_RENDEZVOUS_PORT))
                 .await
                 .ok()
         } else {
@@ -680,7 +680,7 @@ impl InterfaceSupervisor for AutoWifi {
             }
             if reclaim_port {
                 if let Ok(listener) =
-                    TcpListener::bind(("0.0.0.0", core::TCP_RENDEZVOUS_PORT)).await
+                    TcpListener::bind(("0.0.0.0", contract::TCP_RENDEZVOUS_PORT)).await
                 {
                     rendezvous = Some(listener);
                     if let Some(loopback) = loopback.take() {
@@ -708,7 +708,7 @@ struct Supervisor {
     /// link-local (so its own peering token) and peer table. Inbound datagrams demux here by the
     /// source address's scope id (the interface they arrived on). Empty when the multicast plane did
     /// not come up (iOS), so the supervisor is rendezvous- and mDNS-only.
-    brains: HashMap<u32, core::HeapAutoInterfaceProtocol>,
+    brains: HashMap<u32, contract::HeapAutoInterfaceProtocol>,
     members: HashMap<Ipv6Addr, PeerMember>,
     gateways: HashMap<u32, GatewayDial>,
     /// One TCP dial per mDNS-discovered peer rendezvous, keyed by target so a repeated sighting never
@@ -739,7 +739,7 @@ impl Supervisor {
         let Some(brain) = self.brains.get_mut(&scope) else {
             return;
         };
-        if let core::BeaconVerdict::Peer(addr) =
+        if let contract::BeaconVerdict::Peer(addr) =
             brain.ingest_discovery_datagram(*v6.ip(), bytes, now_ms)
         {
             if !self.members.contains_key(&addr) {
@@ -909,7 +909,7 @@ impl Supervisor {
             old.attached.teardown();
         }
         if let Some(gateway) = gateway {
-            let target = SocketAddr::new(gateway, core::TCP_RENDEZVOUS_PORT).to_string();
+            let target = SocketAddr::new(gateway, contract::TCP_RENDEZVOUS_PORT).to_string();
             crate::diagnostic_log::debug!(
                 "wifi-auto: dialing gateway rendezvous {target} on ifindex {index}"
             );
@@ -957,7 +957,7 @@ impl Supervisor {
             let _ = discovery.join_multicast_v6(&discovery_group, nic.index);
             self.brains.insert(
                 nic.index,
-                core::HeapAutoInterfaceProtocol::from_link_local_with_group(
+                contract::HeapAutoInterfaceProtocol::from_link_local_with_group(
                     nic.link_local,
                     &self.settings.group_id,
                 ),
@@ -966,7 +966,7 @@ impl Supervisor {
         for nic in plan.rebound {
             self.brains.insert(
                 nic.index,
-                core::HeapAutoInterfaceProtocol::from_link_local_with_group(
+                contract::HeapAutoInterfaceProtocol::from_link_local_with_group(
                     nic.link_local,
                     &self.settings.group_id,
                 ),
@@ -1118,7 +1118,7 @@ fn bounce_to_local_core(
     if rendezvous.is_some() {
         return None;
     }
-    let target = std::format!("127.0.0.1:{}", core::TCP_RENDEZVOUS_PORT);
+    let target = std::format!("127.0.0.1:{}", contract::TCP_RENDEZVOUS_PORT);
     Some(fleet.add(TcpClientInterface::with_policy(
         target,
         policy,
@@ -1314,8 +1314,8 @@ mod tests {
     fn configured_auto_interface_settings_drive_the_rns_discovery_socket() {
         let settings = AutoWifiSettings::new(
             b"field-mesh".to_vec(),
-            core::DiscoveryScope::Site,
-            core::MulticastAddressType::Permanent,
+            contract::DiscoveryScope::Site,
+            contract::MulticastAddressType::Permanent,
             30_000,
             40_000,
             AutoWifiDevicePolicy::default(),
@@ -1324,10 +1324,10 @@ mod tests {
 
         assert_eq!(
             settings.discovery_group(),
-            core::discovery_group(
+            contract::discovery_group(
                 b"field-mesh",
-                core::DiscoveryScope::Site,
-                core::MulticastAddressType::Permanent,
+                contract::DiscoveryScope::Site,
+                contract::MulticastAddressType::Permanent,
             )
         );
         assert_eq!(settings.discovery_port(), 30_000);
@@ -1336,11 +1336,11 @@ mod tests {
         assert!(!settings.prns_rendezvous_enabled());
 
         let custom_port = AutoWifiSettings::new(
-            core::GROUP_ID.to_vec(),
-            core::DiscoveryScope::Link,
-            core::MulticastAddressType::Temporary,
+            contract::GROUP_ID.to_vec(),
+            contract::DiscoveryScope::Link,
+            contract::MulticastAddressType::Temporary,
             30_000,
-            core::DEFAULT_DATA_PORT,
+            contract::DEFAULT_DATA_PORT,
             AutoWifiDevicePolicy::default(),
         )
         .expect("ports are valid");
@@ -1350,7 +1350,7 @@ mod tests {
 
     #[tokio::test]
     async fn configured_auto_interface_instances_cannot_collapse_into_one_runtime_identity() {
-        let policy = core::configured_policy(Default::default());
+        let policy = contract::configured_policy(Default::default());
         let first_settings = AutoWifiSettings::default().with_instance_tag(b"LAN one".to_vec());
         let second_settings = AutoWifiSettings::default().with_instance_tag(b"LAN two".to_vec());
         let first = AutoWifi::with_policy_and_settings(policy, first_settings.clone());
@@ -1382,9 +1382,9 @@ mod tests {
     fn auto_interface_settings_reject_ports_the_runtime_cannot_represent() {
         let settings = |discovery_port, data_port| {
             AutoWifiSettings::new(
-                core::GROUP_ID.to_vec(),
-                core::DiscoveryScope::Link,
-                core::MulticastAddressType::Temporary,
+                contract::GROUP_ID.to_vec(),
+                contract::DiscoveryScope::Link,
+                contract::MulticastAddressType::Temporary,
                 discovery_port,
                 data_port,
                 AutoWifiDevicePolicy::default(),
@@ -1392,15 +1392,15 @@ mod tests {
         };
 
         assert_eq!(
-            settings(0, core::DEFAULT_DATA_PORT),
+            settings(0, contract::DEFAULT_DATA_PORT),
             Err(AutoWifiSettingsError::InvalidDiscoveryPort)
         );
         assert_eq!(
-            settings(u16::MAX, core::DEFAULT_DATA_PORT),
+            settings(u16::MAX, contract::DEFAULT_DATA_PORT),
             Err(AutoWifiSettingsError::InvalidDiscoveryPort)
         );
         assert_eq!(
-            settings(core::DEFAULT_DISCOVERY_PORT, 0),
+            settings(contract::DEFAULT_DISCOVERY_PORT, 0),
             Err(AutoWifiSettingsError::InvalidDataPort)
         );
     }
@@ -1500,7 +1500,7 @@ mod tests {
     }
 
     fn test_supervisor() -> (Supervisor, prns_runtime::runtime::DetachedFleet) {
-        let id = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, core::GROUP_ID);
+        let id = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, contract::GROUP_ID);
         let settings = AutoWifiSettings::default();
         let (fleet, guard) = Fleet::detached(id);
         let data = std::net::UdpSocket::bind((Ipv6Addr::UNSPECIFIED, 0)).expect("bind data socket");
@@ -1514,7 +1514,7 @@ mod tests {
             prefixes: std::vec::Vec::new(),
             fleet,
             data: Some(Arc::new(UdpSocket::from_std(data).expect("into tokio"))),
-            policy: core::configured_policy(Default::default()),
+            policy: contract::configured_policy(Default::default()),
             settings,
             status: AutoWifiStatus::new(id),
         };
@@ -1525,11 +1525,12 @@ mod tests {
     async fn a_peer_inherits_the_auto_wifi_effective_policy() {
         let socket = Arc::new(UdpSocket::bind("[::1]:0").await.unwrap());
         let (_inbound_tx, inbound_rx) = mpsc::channel(1);
-        let policy = core::configured_policy(prns_core::interfaces::ConfiguredInterfacePolicy {
-            mode: Some(prns_core::interfaces::InterfaceMode::Gateway),
-            bitrate: Some(BitrateBps::guess(900_000_000)),
-            ..prns_core::interfaces::ConfiguredInterfacePolicy::default()
-        });
+        let policy =
+            contract::configured_policy(prns_core::interfaces::ConfiguredInterfacePolicy {
+                mode: Some(prns_core::interfaces::InterfaceMode::Gateway),
+                bitrate: Some(BitrateBps::guess(900_000_000)),
+                ..prns_core::interfaces::ConfiguredInterfacePolicy::default()
+            });
         let peer = AutoWifiPeer::with_policy(
             socket,
             SocketAddrV6::new(Ipv6Addr::LOCALHOST, 1, 0, 0),
@@ -1565,7 +1566,7 @@ mod tests {
         let (mut sup, _guard) = test_supervisor();
         let peer = SocketAddr::new(
             IpAddr::V4(Ipv4Addr::new(192, 168, 1, 77)),
-            core::TCP_RENDEZVOUS_PORT,
+            contract::TCP_RENDEZVOUS_PORT,
         );
 
         sup.dial_mdns_sighting(peer);
@@ -1654,7 +1655,7 @@ mod tests {
 
         let peer = SocketAddr::new(
             IpAddr::V4(Ipv4Addr::new(192, 168, 1, 77)),
-            core::TCP_RENDEZVOUS_PORT,
+            contract::TCP_RENDEZVOUS_PORT,
         );
         sup.dial_mdns_sighting(peer);
         assert_eq!(sup.mdns_dials.len(), 1, "a fresh sighting becomes a dial");
@@ -1668,7 +1669,7 @@ mod tests {
 
         let ours = SocketAddr::new(
             IpAddr::V4(Ipv4Addr::new(192, 168, 1, 50)),
-            core::TCP_RENDEZVOUS_PORT,
+            contract::TCP_RENDEZVOUS_PORT,
         );
         sup.dial_mdns_sighting(ours);
         assert_eq!(
@@ -1680,7 +1681,7 @@ mod tests {
 
     #[test]
     fn the_card_is_dormant_or_live_but_never_failed() {
-        let id = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, core::GROUP_ID);
+        let id = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, contract::GROUP_ID);
         let status = AutoWifiStatus::new(id);
 
         assert_eq!(
@@ -1765,7 +1766,7 @@ mod tests {
             shared.clone(),
             peer_addr,
             demux_rx,
-            core::WIFI_BITRATE_GUESS_BPS,
+            contract::WIFI_BITRATE_GUESS_BPS,
         );
 
         let (in_tx, mut in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();

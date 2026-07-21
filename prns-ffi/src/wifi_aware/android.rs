@@ -5,10 +5,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use tokio::sync::Notify;
 
-use prns_core::interfaces::wifi_aware::core::{
+use prns_core::interfaces::wifi_aware::{
     is_keeper, AwareEndpoint, NdpRole, RendezvousToken, AWARE_RENDEZVOUS_PORT,
 };
-use prns_core::interfaces::wifi_aware::seam::{
+use prns_core::interfaces::wifi_aware::{
     Availability, DiscoveryMode, NdpEndReason, WifiAwareBackend, WifiAwareEvent,
 };
 

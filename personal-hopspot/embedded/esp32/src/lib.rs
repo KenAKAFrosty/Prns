@@ -11,11 +11,11 @@ extern crate alloc;
         feature = "lora",
         feature = "tcp",
         feature = "usb",
-        feature = "wifi"
+        feature = "wifi-auto"
     ))
 ))]
 compile_error!(
-    "ESP32-S3 firmware is built through a board package, which selects ble, esp-now, lora, tcp, usb, and wifi"
+    "ESP32-S3 firmware is built through a board package, which selects ble, esp-now, lora, tcp, usb, and wifi-auto"
 );
 
 #[cfg(all(
@@ -26,7 +26,7 @@ compile_error!(
         feature = "usb",
         not(feature = "lora"),
         not(feature = "tcp"),
-        not(feature = "wifi")
+        not(feature = "wifi-auto")
     ))
 ))]
 compile_error!(
@@ -42,7 +42,7 @@ pub mod ble;
     feature = "usb",
     not(feature = "lora"),
     not(feature = "tcp"),
-    not(feature = "wifi")
+    not(feature = "wifi-auto")
 ))]
 pub mod c6;
 #[cfg(all(
@@ -52,7 +52,7 @@ pub mod c6;
     feature = "lora",
     feature = "tcp",
     feature = "usb",
-    feature = "wifi"
+    feature = "wifi-auto"
 ))]
 pub mod s3;
 mod storage;

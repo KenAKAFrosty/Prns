@@ -92,7 +92,8 @@ pub fn service_response_is_prns(payload: &str) -> bool {
         .is_some_and(|tlvs| tlvs.contains(SERVICE_MARKER_HEX))
 }
 
-pub fn parse_status_ssid(status: &str) -> Option<String> {
+#[cfg(test)]
+fn parse_status_ssid(status: &str) -> Option<String> {
     status
         .lines()
         .find_map(|line| line.strip_prefix("ssid="))

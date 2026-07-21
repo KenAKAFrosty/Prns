@@ -9,7 +9,7 @@ use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::shared_instance::core as instance_core;
 use personal_rns::interfaces::tcp;
 #[cfg(target_os = "macos")]
-use personal_rns::interfaces::wifi_auto::core as wifi_core;
+use personal_rns::interfaces::wifi_auto as wifi_auto_contract;
 use personal_rns::interfaces::{InterfaceId, InterfaceKind};
 use personal_rns::prelude::*;
 use personal_rns::reactor::reconnect::ReconnectPolicy;
@@ -23,7 +23,7 @@ use personal_rns::shared_instance::server::LocalServer;
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::TcpClientInterface;
 use personal_rns::usb_auto::UsbAutoHost;
-use personal_rns::wifi::{AutoWifi, AutoWifiStatus};
+use personal_rns::wifi_auto::{AutoWifi, AutoWifiStatus};
 use personal_rns::wire::DestinationHash;
 use tokio::sync::Notify;
 
@@ -225,7 +225,7 @@ fn run_node(
             tracing::info!(event = "wifi_started_disabled");
         } else {
             #[cfg(target_os = "macos")]
-            spawn_mdns(wifi_core::TCP_RENDEZVOUS_PORT, mdns_tx);
+            spawn_mdns(wifi_auto_contract::TCP_RENDEZVOUS_PORT, mdns_tx);
         }
         handle.supervise(wifi);
 

@@ -12,7 +12,7 @@ use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::interfaces::wifi_auto::core as wifi_core;
+use personal_rns::interfaces::wifi_auto as wifi_auto_contract;
 use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus};
 use personal_rns::reactor::tokio::TokioInterfaceStatus;
 use personal_rns::routes;
@@ -23,7 +23,7 @@ use personal_rns::runtime::{
     RequestHandlerRegistration,
 };
 use personal_rns::storage::GrowableHeap;
-use personal_rns::wifi::{AutoWifi, AutoWifiStatus};
+use personal_rns::wifi_auto::{AutoWifi, AutoWifiStatus};
 use personal_rns::wire::DestinationHash;
 
 const ANNOUNCE_APP_NAME: &str = "lxmf";
@@ -202,10 +202,10 @@ fn run_engine(ready_tx: Sender<Ready>) {
         handle.supervise(wifi);
         println!(
             "HOPSPOT_IOS_ENGINE supervising WiFi/LAN: rendezvous on 0.0.0.0:{} (usbmux loopback rides it) + Bonjour mDNS discovery",
-            wifi_core::TCP_RENDEZVOUS_PORT
+            wifi_auto_contract::TCP_RENDEZVOUS_PORT
         );
         #[cfg(target_os = "ios")]
-        spawn_mdns(wifi_core::TCP_RENDEZVOUS_PORT, mdns_tx);
+        spawn_mdns(wifi_auto_contract::TCP_RENDEZVOUS_PORT, mdns_tx);
 
         let ble = handle.attach(AutoBle);
 

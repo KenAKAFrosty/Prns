@@ -1,4 +1,4 @@
-use super::core::{DataPlanePlan, GoIntent, GroupRole, Initiative, PeerEvidence};
+use super::protocol::{DataPlanePlan, GoIntent, GroupRole, Initiative, PeerEvidence};
 use crate::interfaces::MacAddress;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

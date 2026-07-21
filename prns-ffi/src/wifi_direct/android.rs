@@ -4,11 +4,11 @@ use std::sync::{Arc, Mutex};
 
 use tokio::sync::Notify;
 
-use prns_core::interfaces::wifi_direct::core::{
+use prns_core::interfaces::wifi_direct::{
     host_role, DataPlanePlan, GoIntent, GroupRole, HostRole, Initiative, PeerEvidence, Platform,
     SegmentAddress,
 };
-use prns_core::interfaces::wifi_direct::seam::{
+use prns_core::interfaces::wifi_direct::{
     Availability, DiscoveryMode, WifiDirectBackend, WifiDirectEvent, WifiDirectGroup,
 };
 use prns_core::interfaces::MacAddress;
@@ -296,7 +296,7 @@ impl WifiDirectBackend for AndroidWifiDirectBackend {
                 }
                 Some(Event::GroupLost) => {
                     return WifiDirectEvent::GroupLost {
-                        reason: prns_core::interfaces::wifi_direct::seam::GroupEndReason::LinkLost,
+                        reason: prns_core::interfaces::wifi_direct::GroupEndReason::LinkLost,
                     };
                 }
                 Some(Event::Availability(state)) => {

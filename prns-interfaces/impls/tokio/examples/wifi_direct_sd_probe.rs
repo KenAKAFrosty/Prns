@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use futures_util::StreamExt;
 use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
 
-use prns_interfaces_tokio::wifi_direct::wpa::proxies::{
+use prns_interfaces_tokio::wifi_direct::wpa::{
     P2PDeviceProxy, SupplicantProxy, P2P_DEVICE_INTERFACE, SUPPLICANT_SERVICE,
 };
 

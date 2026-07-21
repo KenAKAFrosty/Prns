@@ -7,14 +7,14 @@ use crate::engine::wd_bridge;
 use jni::objects::{JByteBuffer, JClass};
 use jni::sys::{jboolean, jint, jstring};
 use jni::JNIEnv;
-use personal_rns::interfaces::wifi_direct::core as wifi_direct_core;
+use personal_rns::interfaces::wifi_direct as wifi_direct_contract;
 
 #[no_mangle]
 pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiDirectServiceType(
     env: JNIEnv,
     _class: JClass,
 ) -> jstring {
-    jni_string(env, wifi_direct_core::SERVICE_TYPE)
+    jni_string(env, wifi_direct_contract::SERVICE_TYPE)
 }
 
 #[no_mangle]
@@ -22,7 +22,7 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiDirectDe
     env: JNIEnv,
     _class: JClass,
 ) -> jstring {
-    jni_string(env, wifi_direct_core::DEVICE_NAME_MARKER)
+    jni_string(env, wifi_direct_contract::DEVICE_NAME_MARKER)
 }
 
 #[no_mangle]
@@ -30,7 +30,7 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiDirectGr
     env: JNIEnv,
     _class: JClass,
 ) -> jstring {
-    jni_string(env, wifi_direct_core::GROUP_SSID_PREFIX)
+    jni_string(env, wifi_direct_contract::GROUP_SSID_PREFIX)
 }
 
 #[no_mangle]
@@ -38,7 +38,7 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiDirectGr
     env: JNIEnv,
     _class: JClass,
 ) -> jstring {
-    jni_string(env, wifi_direct_core::GROUP_PASSPHRASE)
+    jni_string(env, wifi_direct_contract::GROUP_PASSPHRASE)
 }
 
 #[no_mangle]
@@ -46,7 +46,7 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiDirectRe
     _env: JNIEnv,
     _class: JClass,
 ) -> jint {
-    i32::from(wifi_direct_core::WIFI_DIRECT_RENDEZVOUS_PORT)
+    i32::from(wifi_direct_contract::WIFI_DIRECT_RENDEZVOUS_PORT)
 }
 
 #[no_mangle]

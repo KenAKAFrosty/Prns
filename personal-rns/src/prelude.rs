@@ -45,15 +45,15 @@ pub use prns_interfaces_tokio::tcp;
 #[cfg(all(feature = "tcp", feature = "embassy-host", not(feature = "tokio-host")))]
 pub use prns_interfaces_embassy::tcp;
 
-#[cfg(all(feature = "wifi", feature = "tokio-host"))]
-pub use prns_interfaces_tokio::wifi;
+#[cfg(all(feature = "wifi-auto", feature = "tokio-host"))]
+pub use prns_interfaces_tokio::wifi_auto;
 
 #[cfg(all(
-    feature = "wifi",
+    feature = "wifi-auto",
     feature = "embassy-host",
     not(feature = "tokio-host")
 ))]
-pub use prns_interfaces_embassy::wifi;
+pub use prns_interfaces_embassy::wifi_auto;
 
 #[cfg(all(feature = "wifi-direct", feature = "tokio-host"))]
 pub use prns_interfaces_tokio::wifi_direct;
@@ -74,7 +74,7 @@ pub use usb_auto::AutoUsb;
 
 #[cfg(all(
     feature = "tokio-host",
-    any(feature = "wifi", feature = "usb", feature = "ble")
+    any(feature = "wifi-auto", feature = "usb", feature = "ble")
 ))]
 pub use prns_interfaces_tokio::auto::Auto;
 

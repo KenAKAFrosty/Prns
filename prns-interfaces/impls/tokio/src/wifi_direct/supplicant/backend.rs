@@ -1,9 +1,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use super::super::wpa::group::{
-    client_plan, owner_plan, wait_for_go_address, wait_link_local, WpaGroup,
-};
+use super::super::wpa::{client_plan, owner_plan, wait_for_go_address, wait_link_local, WpaGroup};
 use super::ctrl::{WpaCommand, WpaCtrlError, WpaMonitor};
 use super::parse;
 use super::process::{SupplicantLaunchError, SupplicantProcess};
@@ -11,11 +9,11 @@ use super::process::{SupplicantLaunchError, SupplicantProcess};
 use prns_core::interfaces::channel_rendezvous::{
     decide, ChannelCommitment, RendezvousOutcome, SocialChannel,
 };
-use prns_core::interfaces::wifi_direct::core::{
+use prns_core::interfaces::wifi_direct::{
     host_role, GoIntent, GroupRole, HostRole, Initiative, PeerEvidence, Platform,
     DEVICE_NAME_MARKER, GROUP_PASSPHRASE, GROUP_SSID_PREFIX,
 };
-use prns_core::interfaces::wifi_direct::seam::{
+use prns_core::interfaces::wifi_direct::{
     Availability, DiscoveryMode, GroupEndReason, WifiDirectBackend, WifiDirectEvent,
 };
 use prns_core::interfaces::MacAddress;

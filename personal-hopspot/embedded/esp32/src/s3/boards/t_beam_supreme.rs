@@ -353,7 +353,7 @@ impl Esp32S3Board for TBeamSupremeBoard {
             usb_device: p.USB_DEVICE,
             #[cfg(feature = "lora")]
             lora_radio,
-            #[cfg(feature = "wifi")]
+            #[cfg(feature = "wifi-auto")]
             wifi: p.WIFI,
             button: p.GPIO0,
             cpu_ctrl: p.CPU_CTRL,
