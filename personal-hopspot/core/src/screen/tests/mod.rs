@@ -10,6 +10,8 @@ use personal_rns::interfaces::lora::{
 use personal_rns::interfaces::InterfaceId;
 use personal_rns::storage::{DisplayedStorageLimits, StorageCapacity};
 
+use crate::battery::{BatteryPercent, BatteryState};
+
 use super::limits::{build_limit_rows, LimitValue};
 use super::render::cards::draw_card;
 use super::render::glyphs::{
@@ -37,10 +39,10 @@ use super::state::{
 };
 use super::{
     card_label, draw_with_state, draw_with_state_footer_at, push_interface_menu_info,
-    push_named_peer_row, push_supervisor_peer_rows, sort_cards_for_display, AccessPointState,
-    BatteryState, Card, CardActivityTracker, CardKind, DisplayPowerControl, InputEvent,
-    InterfaceMenuDetailKind, InterfaceMenuDetailRows, Liveness, SupervisorPeerMenuStatus, UiAction,
-    UiConfiguration, UiFooter, UiState,
+    push_named_peer_row, push_supervisor_peer_rows, sort_cards_for_display, AccessPointState, Card,
+    CardActivityTracker, CardKind, DisplayPowerControl, InputEvent, InterfaceMenuDetailKind,
+    InterfaceMenuDetailRows, Liveness, SupervisorPeerMenuStatus, UiAction, UiConfiguration,
+    UiFooter, UiState,
 };
 
 const TEST_WIDTH: usize = WIDTH as usize;

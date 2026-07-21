@@ -1,7 +1,7 @@
 use jni::objects::{JByteBuffer, JClass, JString};
 use jni::sys::{jboolean, jint, jlong, jlongArray, jstring};
 use jni::JNIEnv;
-use personal_hopspot_core::{BatteryState, InputEvent, UiAction};
+use personal_hopspot_core::{BatteryPercent, BatteryState, InputEvent, UiAction};
 
 use crate::engine::{rpc_key_hex, runtime_health};
 use crate::face::HopspotFace;
@@ -122,6 +122,7 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeSetBattery(
         return;
     };
     let pct = percent.clamp(0, 100) as u8;
+    let pct = BatteryPercent::saturating(pct);
     let state = if charging != 0 {
         BatteryState::Charging(pct)
     } else {

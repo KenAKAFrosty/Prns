@@ -1,4 +1,25 @@
-use crate::screen::BatteryState;
+#[derive(Clone, Copy)]
+pub struct BatteryPercent(u8);
+
+impl BatteryPercent {
+    #[must_use]
+    pub const fn saturating(percent: u8) -> Self {
+        Self(if percent > 100 { 100 } else { percent })
+    }
+
+    #[must_use]
+    pub const fn get(self) -> u8 {
+        self.0
+    }
+}
+
+/// What the title-bar battery glyph shows; `Unknown` (a dash) means no plausible battery is detected. Boards without a charge-status signal keep reporting `Level`/`Unknown`.
+#[derive(Clone, Copy)]
+pub enum BatteryState {
+    Level(BatteryPercent),
+    Charging(BatteryPercent),
+    Unknown,
+}
 
 /// A board's hardware battery probe: how to read its cell. The smoothing and percentage curve
 /// live in the shared [`BatteryGauge`]. Boards with no battery return `None`.
@@ -28,15 +49,11 @@ impl BatteryGauge {
     /// charge ceiling, because a cell sits at 4.0–4.2 V for its whole charged life — mapping that to
     /// 100% so the gauge reads full when it looks full, rather than parking a bar short near the top.
     pub const fn lipo() -> Self {
-        Self::new(3300, 4100, 3000)
-    }
-
-    pub const fn new(empty_mv: u32, full_mv: u32, absent_mv: u32) -> Self {
         Self {
             ema_mv: 0,
-            empty_mv,
-            full_mv,
-            absent_mv,
+            empty_mv: 3300,
+            full_mv: 4100,
+            absent_mv: 3000,
         }
     }
 
@@ -63,11 +80,13 @@ impl BatteryGauge {
             (self.ema_mv * 7 + mv) / 8
         };
         let span = self.full_mv - self.empty_mv;
-        let pct = (self.ema_mv.saturating_sub(self.empty_mv) * 100 / span).min(100) as u8;
+        let percent = BatteryPercent::saturating(
+            (self.ema_mv.saturating_sub(self.empty_mv) * 100 / span).min(100) as u8,
+        );
         if charging {
-            BatteryState::Charging(pct)
+            BatteryState::Charging(percent)
         } else {
-            BatteryState::Level(pct)
+            BatteryState::Level(percent)
         }
     }
 }
@@ -79,5 +98,16 @@ pub struct NoBattery;
 impl BatterySource for NoBattery {
     fn read_millivolts(&mut self) -> Option<u32> {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn battery_percent_saturates_at_full() {
+        assert_eq!(BatteryPercent::saturating(99).get(), 99);
+        assert_eq!(BatteryPercent::saturating(101).get(), 100);
     }
 }

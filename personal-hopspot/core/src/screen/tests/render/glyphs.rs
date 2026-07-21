@@ -1,5 +1,9 @@
 use super::*;
 
+fn charging(percent: u8) -> BatteryState {
+    BatteryState::Charging(BatteryPercent::saturating(percent))
+}
+
 #[test]
 fn usb_icon_draws_full_width_tongue() {
     let mut display = MockDisplay::new();
@@ -56,7 +60,7 @@ fn charging_battery_blinks_the_current_tier() {
     let mut display = MockDisplay::new();
     display.set_allow_overdraw(true);
 
-    draw_battery(&mut display, 2, 0, BatteryState::Charging(62), true);
+    draw_battery(&mut display, 2, 0, charging(62), true);
 
     assert_eq!(display.get_pixel(Point::new(7, 4)), Some(BinaryColor::Off));
     assert_eq!(display.get_pixel(Point::new(10, 4)), Some(BinaryColor::Off));
@@ -68,7 +72,7 @@ fn charging_battery_hides_only_the_current_tier_on_the_off_phase() {
     let mut display = MockDisplay::new();
     display.set_allow_overdraw(true);
 
-    draw_battery(&mut display, 2, 0, BatteryState::Charging(62), false);
+    draw_battery(&mut display, 2, 0, charging(62), false);
 
     assert_eq!(display.get_pixel(Point::new(7, 4)), None);
     assert_eq!(display.get_pixel(Point::new(10, 4)), Some(BinaryColor::Off));
@@ -80,7 +84,7 @@ fn charging_battery_draws_right_side_plug_until_full() {
     let mut display = MockDisplay::new();
     display.set_allow_overdraw(true);
 
-    draw_battery(&mut display, 2, 0, BatteryState::Charging(62), true);
+    draw_battery(&mut display, 2, 0, charging(62), true);
 
     for x in 17..=20 {
         assert_eq!(display.get_pixel(Point::new(x, 4)), Some(BinaryColor::Off));
@@ -94,7 +98,7 @@ fn full_charging_battery_uses_a_steady_filled_shape_without_the_plug() {
     let mut display = MockDisplay::new();
     display.set_allow_overdraw(true);
 
-    draw_battery(&mut display, 2, 0, BatteryState::Charging(100), false);
+    draw_battery(&mut display, 2, 0, charging(100), false);
 
     assert_eq!(display.get_pixel(Point::new(2, 0)), Some(BinaryColor::Off));
     assert_eq!(display.get_pixel(Point::new(16, 8)), Some(BinaryColor::Off));

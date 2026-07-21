@@ -5,7 +5,8 @@ use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{Line, Rectangle};
 use embedded_graphics::text::{Baseline, Text};
 
-use crate::screen::{BatteryState, CardKind};
+use crate::battery::BatteryState;
+use crate::screen::CardKind;
 
 use super::layout::*;
 use super::primitives::{draw_pattern_colored, fill, line, line_colored, stroke};
@@ -29,15 +30,17 @@ pub(in crate::screen) fn draw_battery<D: DrawTarget<Color = BinaryColor>>(
     match state {
         BatteryState::Level(pct) => {
             // Segments fill to the nearest quarter, anchored at the RIGHT so the leftmost bar empties first as the cell drains (matching the panel's orientation).
+            let pct = pct.get();
             let filled = ((pct as u32 * 4 + 50) / 100).min(4);
             for i in (4 - filled)..4 {
                 draw_battery_segment(display, x, y, i);
             }
         }
-        BatteryState::Charging(pct) if pct >= 100 => {
+        BatteryState::Charging(pct) if pct.get() >= 100 => {
             draw_full_battery(display, x, y);
         }
         BatteryState::Charging(pct) => {
+            let pct = pct.get();
             let filled = (pct as u32 * 4 / 100).min(3);
             for i in (4 - filled)..4 {
                 draw_battery_segment(display, x, y, i);

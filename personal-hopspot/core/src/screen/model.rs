@@ -342,14 +342,6 @@ impl<const N: usize> Default for CardActivityTracker<N> {
     }
 }
 
-/// What the title-bar battery glyph shows; `Unknown` (a dash) means no plausible battery is detected. Boards without a charge-status signal keep reporting `Level`/`Unknown`.
-#[derive(Clone, Copy)]
-pub enum BatteryState {
-    Level(u8),
-    Charging(u8),
-    Unknown,
-}
-
 /// A small free-form note drawn below the interface card stack.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct UiFooter<'a> {

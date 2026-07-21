@@ -7,7 +7,7 @@ mod usbmux;
 pub use face::HopspotFace;
 pub use framebuffer::{PANEL_HEIGHT, PANEL_WIDTH, RGBA_BYTES};
 
-use personal_hopspot_core::{BatteryState, InputEvent, UiAction};
+use personal_hopspot_core::{BatteryPercent, BatteryState, InputEvent, UiAction};
 
 const INPUT_SHORT_PRESS: i32 = 0;
 const INPUT_LONG_PRESS: i32 = 1;
@@ -87,6 +87,7 @@ pub unsafe extern "C" fn hopspot_set_battery(
         return;
     };
     let pct = percent.clamp(0, 100) as u8;
+    let pct = BatteryPercent::saturating(pct);
     let state = if charging {
         BatteryState::Charging(pct)
     } else {
