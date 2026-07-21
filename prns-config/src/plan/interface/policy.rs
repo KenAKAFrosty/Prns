@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use prns_core::interfaces::ax25_kiss;
+use prns_core::interfaces::backbone;
 use prns_core::interfaces::bluetooth_auto as bluetooth_contract;
 use prns_core::interfaces::i2p as i2p_core;
 use prns_core::interfaces::kiss;
@@ -162,10 +163,9 @@ fn checked_milliseconds(seconds: u64, key: &'static str) -> Result<u64, PlanErro
 fn interface_defaults(medium: &PlannedMedium) -> Result<InterfaceDefaults, PlanErrorKind> {
     match medium {
         PlannedMedium::AutoWifi(_) => Ok(wifi_auto_contract::DEFAULTS),
-        PlannedMedium::TcpClient { .. }
-        | PlannedMedium::TcpServer { .. }
-        | PlannedMedium::Backbone { .. }
-        | PlannedMedium::BackboneClient { .. } => Ok(tcp::DEFAULTS),
+        PlannedMedium::TcpClient { .. } | PlannedMedium::TcpServer { .. } => Ok(tcp::DEFAULTS),
+        PlannedMedium::Backbone { .. } => Ok(backbone::DEFAULTS),
+        PlannedMedium::BackboneClient { .. } => Ok(backbone::CLIENT_DEFAULTS),
         PlannedMedium::Udp { .. } => Ok(udp::DEFAULTS),
         PlannedMedium::I2p { .. } => Ok(i2p_core::DEFAULTS),
         PlannedMedium::Weave { .. } => Ok(weave_core::DEFAULTS),

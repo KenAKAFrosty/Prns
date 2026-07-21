@@ -157,11 +157,7 @@ fn traversed_network_defaults_share_the_500_mbps_policy() {
                  listen_ip = 0.0.0.0\n\
                  listen_port = 4242\n\
                  forward_ip = 255.255.255.255\n\
-                 forward_port = 4242\n\
-               [[Backbone]]\n\
-                 type = BackboneInterface\n\
-                 enabled = Yes\n\
-                 listen_port = 4243\n",
+                 forward_port = 4242\n",
     );
 
     let tcp = named(&plan, "Tcp");
@@ -173,10 +169,33 @@ fn traversed_network_defaults_share_the_500_mbps_policy() {
         udp.policy.mtu.resolve(udp.policy.bitrate),
         Some(prns_core::interfaces::udp::UDP_DATAGRAM_MAX)
     );
+}
+
+#[test]
+fn backbone_listeners_guess_a_gigabit_while_clients_guess_like_tcp() {
+    let plan = plan_of(
+        "[interfaces]\n\
+               [[Backbone]]\n\
+                 type = BackboneInterface\n\
+                 enabled = Yes\n\
+                 listen_port = 4243\n\
+               [[Uplink]]\n\
+                 type = BackboneClientInterface\n\
+                 enabled = Yes\n\
+                 remote = backbone.example.com\n\
+                 target_port = 4243\n",
+    );
+
     let backbone = named(&plan, "Backbone");
-    assert_eq!(backbone.policy.bitrate.get(), 500_000_000);
+    assert_eq!(backbone.policy.bitrate.get(), 1_000_000_000);
     assert_eq!(
         backbone.policy.mtu.resolve(backbone.policy.bitrate),
+        Some(524_288)
+    );
+    let uplink = named(&plan, "Uplink");
+    assert_eq!(uplink.policy.bitrate.get(), 500_000_000);
+    assert_eq!(
+        uplink.policy.mtu.resolve(uplink.policy.bitrate),
         Some(131_072)
     );
 }
