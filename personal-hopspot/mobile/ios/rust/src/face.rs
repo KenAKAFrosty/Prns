@@ -2,7 +2,7 @@ use heapless::Vec as HVec;
 use personal_hopspot_core::{
     render, snapshots_to_cards, snapshots_to_interface_menu_details, splash, AccessPointState,
     BatteryState, Card, CardActivityTracker, DisplayPowerControl, InputEvent, RenderFrame,
-    ScreenContent, UiAction, UiConfiguration, UiNotice, UiState,
+    ScreenContent, SplashContent, UiAction, UiConfiguration, UiNotice, UiState,
 };
 use personal_rns::interfaces::InterfaceSnapshot;
 use personal_rns::storage::{GrowableHeap, StorageLayout};
@@ -131,7 +131,7 @@ impl HopspotFace {
         }
         self.framebuffer.clear();
         if cards.is_empty() {
-            splash(&mut self.framebuffer, "connecting");
+            splash(&mut self.framebuffer, SplashContent::Connecting);
         } else {
             let animation_ms = self
                 .activity_started

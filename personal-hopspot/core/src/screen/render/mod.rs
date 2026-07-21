@@ -33,6 +33,12 @@ pub struct RenderFrame<'frame, 'docs> {
     pub animation_ms: u64,
 }
 
+pub enum SplashContent {
+    Brand,
+    Starting,
+    Connecting,
+}
+
 pub fn render<D: DrawTarget<Color = BinaryColor>>(display: &mut D, frame: RenderFrame<'_, '_>) {
     let RenderFrame {
         content,
@@ -124,7 +130,12 @@ pub fn render<D: DrawTarget<Color = BinaryColor>>(display: &mut D, frame: Render
     }
 }
 
-pub fn splash<D: DrawTarget<Color = BinaryColor>>(display: &mut D, status: &str) {
+pub fn splash<D: DrawTarget<Color = BinaryColor>>(display: &mut D, content: SplashContent) {
+    let status = match content {
+        SplashContent::Brand => "Personal Hopspot",
+        SplashContent::Starting => "starting",
+        SplashContent::Connecting => "connecting",
+    };
     let _ = display.clear(BinaryColor::Off);
     draw_title_bar(display, BatteryState::Unknown, 0);
     let style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);

@@ -308,7 +308,7 @@ impl Esp32S3Board for TBeamSupremeBoard {
         let mut display = Sh1106I2c::new(i2c);
         let oled_ok = display.init().is_ok();
         if oled_ok {
-            screen::splash(&mut display, "Personal Hopspot");
+            screen::splash(&mut display, screen::SplashContent::Brand);
             let _ = display.flush();
         }
 
