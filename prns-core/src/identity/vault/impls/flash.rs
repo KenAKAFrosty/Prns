@@ -11,9 +11,11 @@ const SLOT_LEN: usize = 256;
 const SECRET_LEN: usize = IDENTITY_SECRET_KEY_LEN;
 const LABEL_CAP: usize = MAX_IDENTITY_LABEL_LEN;
 const STATE_OFFSET: usize = 0;
-const LABEL_LEN_OFFSET: usize = 1;
-const LABEL_OFFSET: usize = 2;
+const COMMIT_LEN: usize = 4;
+const LABEL_LEN_OFFSET: usize = COMMIT_LEN;
+const LABEL_OFFSET: usize = LABEL_LEN_OFFSET + 1;
 const SECRET_OFFSET: usize = LABEL_OFFSET + LABEL_CAP;
+const SECRET_INVERSE_OFFSET: usize = SECRET_OFFSET + SECRET_LEN;
 const STATE_EMPTY: u8 = 0xFF;
 const STATE_OCCUPIED: u8 = 0xA5;
 const STATE_BLOB: u8 = 0x3C;
@@ -22,8 +24,6 @@ const BLOB_LEN_PREFIX_LEN: usize = 2;
 /// A blob shares the identity slot's frame, spending the fixed secret region on a length-prefixed body instead.
 pub const FLASH_VAULT_BLOB_CAP: usize = SLOT_LEN - SECRET_OFFSET - BLOB_LEN_PREFIX_LEN;
 
-/// The vault owns whole erase sectors: its region is `SLOTS * SLOT_LEN` rounded up to `ERASE_SIZE`.
-/// Every store or remove erases and rewrites the entire region, so no other data may share its sectors.
 pub struct FlashVault<F: NorFlash, const SLOTS: usize> {
     flash: RefCell<F>,
     offset: u32,
@@ -64,6 +64,14 @@ impl<F: NorFlash, const SLOTS: usize> FlashVault<F, SLOTS> {
     pub fn release(self) -> F {
         self.flash.into_inner()
     }
+
+    pub fn erase_all(&mut self) -> Result<(), FlashVaultError<F::Error>> {
+        let flash = self.flash.get_mut();
+        validate::<F>(flash, self.offset, SLOTS)?;
+        flash
+            .erase(self.offset, self.offset + erase_span::<F>(SLOTS) as u32)
+            .map_err(FlashVaultError::Flash)
+    }
 }
 
 impl<F: NorFlash, const SLOTS: usize> IdentityVault for FlashVault<F, SLOTS> {
@@ -73,13 +81,14 @@ impl<F: NorFlash, const SLOTS: usize> IdentityVault for FlashVault<F, SLOTS> {
         let mut flash = self.flash.borrow_mut();
         validate::<F>(&flash, self.offset, SLOTS)?;
         for index in 0..SLOTS {
-            if let Some(record) = read_slot(&mut *flash, self.offset, index)? {
-                if &record.label == label {
-                    return Ok(match record.payload {
-                        RecordPayload::Identity(secret) => Some(secret),
-                        RecordPayload::Blob { .. } => None,
-                    });
-                }
+            let Some(record) = read_slot(&mut *flash, self.offset, index)? else {
+                continue;
+            };
+            if &record.label == label {
+                return Ok(match record.payload {
+                    RecordPayload::Identity(secret) => Some(secret),
+                    RecordPayload::Blob { .. } => None,
+                });
             }
         }
         Ok(None)
@@ -117,13 +126,14 @@ impl<F: NorFlash, const SLOTS: usize> IdentityVault for FlashVault<F, SLOTS> {
         let mut flash = self.flash.borrow_mut();
         validate::<F>(&flash, self.offset, SLOTS)?;
         for index in 0..SLOTS {
-            if let Some(record) = read_slot(&mut *flash, self.offset, index)? {
-                if &record.label == label {
-                    return Ok(match record.payload {
-                        RecordPayload::Blob { len, .. } => Some(len),
-                        RecordPayload::Identity(_) => None,
-                    });
-                }
+            let Some(record) = read_slot(&mut *flash, self.offset, index)? else {
+                continue;
+            };
+            if &record.label == label {
+                return Ok(match record.payload {
+                    RecordPayload::Blob { len, .. } => Some(len),
+                    RecordPayload::Identity(_) => None,
+                });
             }
         }
         Ok(None)
@@ -137,20 +147,21 @@ impl<F: NorFlash, const SLOTS: usize> IdentityVault for FlashVault<F, SLOTS> {
         let mut flash = self.flash.borrow_mut();
         validate::<F>(&flash, self.offset, SLOTS)?;
         for index in 0..SLOTS {
-            if let Some(record) = read_slot(&mut *flash, self.offset, index)? {
-                if &record.label == label {
-                    let RecordPayload::Blob { len, bytes } = record.payload else {
-                        return Ok(None);
-                    };
-                    if buf.len() < len {
-                        return Err(FlashVaultError::BlobOutgrewBuffer {
-                            blob_len: len,
-                            buffer_len: buf.len(),
-                        });
-                    }
-                    buf[..len].copy_from_slice(&bytes[..len]);
-                    return Ok(Some(&buf[..len]));
+            let Some(record) = read_slot(&mut *flash, self.offset, index)? else {
+                continue;
+            };
+            if &record.label == label {
+                let RecordPayload::Blob { len, bytes } = record.payload else {
+                    return Ok(None);
+                };
+                if buf.len() < len {
+                    return Err(FlashVaultError::BlobOutgrewBuffer {
+                        blob_len: len,
+                        buffer_len: buf.len(),
+                    });
                 }
+                buf[..len].copy_from_slice(&bytes[..len]);
+                return Ok(Some(&buf[..len]));
             }
         }
         Ok(None)
@@ -182,17 +193,31 @@ impl<F: NorFlash, const SLOTS: usize> FlashVault<F, SLOTS> {
     ) -> Result<(), FlashVaultError<F::Error>> {
         let flash = self.flash.get_mut();
         validate::<F>(flash, self.offset, SLOTS)?;
-        let mut records = read_records::<F, SLOTS>(flash, self.offset)?;
-        match records.iter_mut().find(|record| &record.label == label) {
-            Some(existing) => existing.payload = payload,
-            None => records
-                .push(Record {
-                    label: label.clone(),
-                    payload,
-                })
-                .map_err(|_| FlashVaultError::StoreFull)?,
+        for index in 0..SLOTS {
+            let Some(record) = read_slot(flash, self.offset, index)? else {
+                continue;
+            };
+            if &record.label == label {
+                let mut records = read_records::<F, SLOTS>(flash, self.offset)?;
+                let existing = records
+                    .iter_mut()
+                    .find(|record| &record.label == label)
+                    .ok_or(FlashVaultError::Corrupt)?;
+                existing.payload = payload;
+                return rewrite::<F, SLOTS>(flash, self.offset, &records);
+            }
         }
-        rewrite::<F, SLOTS>(flash, self.offset, &records)
+        let index =
+            find_vacant_slot::<F, SLOTS>(flash, self.offset)?.ok_or(FlashVaultError::StoreFull)?;
+        write_slot(
+            flash,
+            self.offset,
+            index,
+            &Record {
+                label: label.clone(),
+                payload,
+            },
+        )
     }
 }
 
@@ -203,6 +228,8 @@ fn validate<F: NorFlash>(
 ) -> Result<(), FlashVaultError<F::Error>> {
     if !SLOT_LEN.is_multiple_of(F::READ_SIZE)
         || !SLOT_LEN.is_multiple_of(F::WRITE_SIZE)
+        || F::WRITE_SIZE > COMMIT_LEN
+        || !COMMIT_LEN.is_multiple_of(F::WRITE_SIZE)
         || !(offset as usize).is_multiple_of(F::ERASE_SIZE)
     {
         return Err(FlashVaultError::Misaligned);
@@ -252,6 +279,22 @@ fn read_slot<F: NorFlash>(
     }
 }
 
+fn find_vacant_slot<F: NorFlash, const SLOTS: usize>(
+    flash: &mut F,
+    base: u32,
+) -> Result<Option<usize>, FlashVaultError<F::Error>> {
+    for index in 0..SLOTS {
+        let mut buffer = Zeroizing::new([0u8; SLOT_LEN]);
+        flash
+            .read(slot_offset(base, index), &mut buffer[..])
+            .map_err(FlashVaultError::Flash)?;
+        if buffer.iter().all(|byte| *byte == STATE_EMPTY) {
+            return Ok(Some(index));
+        }
+    }
+    Ok(None)
+}
+
 fn parse_slot<E>(buffer: &[u8; SLOT_LEN]) -> Result<Record, FlashVaultError<E>> {
     let label_len = buffer[LABEL_LEN_OFFSET] as usize;
     if label_len == 0 || label_len > LABEL_CAP {
@@ -264,6 +307,13 @@ fn parse_slot<E>(buffer: &[u8; SLOT_LEN]) -> Result<Record, FlashVaultError<E>> 
         STATE_OCCUPIED => {
             let mut secret = Zeroizing::new([0u8; SECRET_LEN]);
             secret.copy_from_slice(&buffer[SECRET_OFFSET..SECRET_OFFSET + SECRET_LEN]);
+            if secret
+                .iter()
+                .zip(&buffer[SECRET_INVERSE_OFFSET..SECRET_INVERSE_OFFSET + SECRET_LEN])
+                .any(|(byte, inverse)| *byte != !*inverse)
+            {
+                return Err(FlashVaultError::Corrupt);
+            }
             RecordPayload::Identity(secret)
         }
         STATE_BLOB => {
@@ -306,21 +356,32 @@ fn write_slot<F: NorFlash>(
     let label = record.label.as_str().as_bytes();
     buffer[LABEL_LEN_OFFSET] = label.len() as u8;
     buffer[LABEL_OFFSET..LABEL_OFFSET + label.len()].copy_from_slice(label);
-    match &record.payload {
+    let state = match &record.payload {
         RecordPayload::Identity(secret) => {
-            buffer[STATE_OFFSET] = STATE_OCCUPIED;
             buffer[SECRET_OFFSET..SECRET_OFFSET + SECRET_LEN].copy_from_slice(&secret[..]);
+            for (inverse, byte) in buffer[SECRET_INVERSE_OFFSET..SECRET_INVERSE_OFFSET + SECRET_LEN]
+                .iter_mut()
+                .zip(secret.iter())
+            {
+                *inverse = !*byte;
+            }
+            STATE_OCCUPIED
         }
         RecordPayload::Blob { len, bytes } => {
-            buffer[STATE_OFFSET] = STATE_BLOB;
             buffer[SECRET_OFFSET..SECRET_OFFSET + BLOB_LEN_PREFIX_LEN]
                 .copy_from_slice(&(*len as u16).to_le_bytes());
             let body_at = SECRET_OFFSET + BLOB_LEN_PREFIX_LEN;
             buffer[body_at..body_at + len].copy_from_slice(&bytes[..*len]);
+            STATE_BLOB
         }
-    }
+    };
+    let at = slot_offset(base, index);
     flash
-        .write(slot_offset(base, index), &buffer[..])
+        .write(at + COMMIT_LEN as u32, &buffer[COMMIT_LEN..])
+        .map_err(FlashVaultError::Flash)?;
+    buffer[STATE_OFFSET] = state;
+    flash
+        .write(at, &buffer[..COMMIT_LEN])
         .map_err(FlashVaultError::Flash)
 }
 
@@ -363,18 +424,25 @@ mod tests {
 
     struct FakeFlash<const CAP: usize, const READ: usize = 1> {
         bytes: [u8; CAP],
+        erase_count: usize,
+        write_count: usize,
+        fail_write_at: Option<usize>,
     }
 
     #[derive(Debug)]
     enum FakeError {
         Unaligned,
         OutOfBounds,
+        Interrupted,
     }
 
     impl<const CAP: usize, const READ: usize> FakeFlash<CAP, READ> {
         fn new() -> Self {
             Self {
                 bytes: [STATE_EMPTY; CAP],
+                erase_count: 0,
+                write_count: 0,
+                fail_write_at: None,
             }
         }
     }
@@ -423,6 +491,7 @@ mod tests {
             for byte in &mut self.bytes[from..to] {
                 *byte = STATE_EMPTY;
             }
+            self.erase_count += 1;
             Ok(())
         }
 
@@ -433,6 +502,11 @@ mod tests {
                 || start + bytes.len() > CAP
             {
                 return Err(FakeError::Unaligned);
+            }
+            self.write_count += 1;
+            if self.fail_write_at == Some(self.write_count) {
+                self.fail_write_at = None;
+                return Err(FakeError::Interrupted);
             }
             for (index, byte) in bytes.iter().enumerate() {
                 self.bytes[start + index] &= byte;
@@ -488,6 +562,7 @@ mod tests {
             secret(0x01)
         );
         assert_eq!(*vault.load(&label("lxmf")).unwrap().unwrap(), secret(0x80));
+        assert_eq!(vault.release().erase_count, 0);
     }
 
     #[test]
@@ -592,6 +667,59 @@ mod tests {
             Err(FlashVaultError::Corrupt) => {}
             other => panic!("expected Corrupt, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_secret_with_a_corrupt_inverse_surfaces() {
+        let flash = {
+            let mut vault = FlashVault::<_, 2>::new(FakeFlash::<8192>::new(), 0);
+            vault.store(&label("primary"), &secret(0x66)).unwrap();
+            let mut flash = vault.release();
+            flash.bytes[SECRET_INVERSE_OFFSET + 3] ^= 0x01;
+            flash
+        };
+        let vault = FlashVault::<_, 2>::new(flash, 0);
+        match vault.load(&label("primary")) {
+            Err(FlashVaultError::Corrupt) => {}
+            other => panic!("expected Corrupt, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_interrupted_commit_remains_uncommitted() {
+        let mut flash = FakeFlash::<8192>::new();
+        flash.fail_write_at = Some(2);
+        let flash = {
+            let mut vault = FlashVault::<_, 2>::new(flash, 0);
+            match vault.store(&label("primary"), &secret(0x71)) {
+                Err(FlashVaultError::Flash(FakeError::Interrupted)) => {}
+                other => panic!("expected interrupted flash write, got {other:?}"),
+            }
+            vault.release()
+        };
+        let mut rebooted = FlashVault::<_, 2>::new(flash, 0);
+        assert!(rebooted.load(&label("primary")).unwrap().is_none());
+        rebooted.store(&label("primary"), &secret(0x72)).unwrap();
+        assert_eq!(
+            *rebooted.load(&label("primary")).unwrap().unwrap(),
+            secret(0x72)
+        );
+    }
+
+    #[test]
+    fn erase_all_clears_only_the_owned_region() {
+        let mut flash = FakeFlash::<8192>::new();
+        flash.bytes[FAKE_ERASE] = 0x37;
+        let flash = {
+            let mut vault = FlashVault::<_, 2>::new(flash, 0);
+            vault.store(&label("primary"), &secret(0x81)).unwrap();
+            vault.erase_all().unwrap();
+            vault.release()
+        };
+        assert!(flash.bytes[..FAKE_ERASE]
+            .iter()
+            .all(|byte| *byte == STATE_EMPTY));
+        assert_eq!(flash.bytes[FAKE_ERASE], 0x37);
     }
 
     #[test]
