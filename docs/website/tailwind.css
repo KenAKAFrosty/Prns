@@ -465,6 +465,38 @@ html, body {
 .flash-plan-panel {
     border-color: rgb(110 231 183 / 0.18);
 }
+.flash-preparation {
+    border: 1px solid rgb(165 172 184 / 0.16);
+    border-radius: 0.72rem;
+    background: rgb(11 14 19 / 0.32);
+    padding: 1rem;
+}
+.flash-preparation__steps {
+    display: grid;
+    gap: 0.65rem;
+}
+.flash-preparation__steps li {
+    display: grid;
+    grid-template-columns: 1.45rem minmax(0, 1fr);
+    gap: 0.65rem;
+    align-items: start;
+    color: var(--color-soft);
+    font-size: 0.82rem;
+    line-height: 1.5;
+}
+.flash-preparation__index {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.45rem;
+    height: 1.45rem;
+    border: 1px solid rgb(110 231 183 / 0.28);
+    border-radius: 999px;
+    color: var(--color-accent);
+    font-size: 0.68rem;
+    font-weight: 800;
+    line-height: 1;
+}
 .flash-plan-panel__head {
     display: flex;
     flex-wrap: wrap;
@@ -662,13 +694,6 @@ html, body {
     .flash-wifi-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
-}
-.flash-web-install esp-web-install-button {
-    display: block;
-    width: 100%;
-    --esp-tools-button-color: var(--color-accent);
-    --esp-tools-button-text-color: var(--color-ink);
-    --esp-tools-button-border-radius: 0.58rem;
 }
 .flash-web-install-message {
     display: block;

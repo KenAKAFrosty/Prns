@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 
-use crate::flash_manifest::embedded_docs_mode;
 use crate::links::{source_zip_download_name, SOURCE_ZIP_HREF};
+use crate::site_mode::embedded_docs_mode;
 
 #[component]
 pub fn BrowserPlaygroundPage() -> Element {

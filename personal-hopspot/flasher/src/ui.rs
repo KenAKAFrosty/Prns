@@ -1,7 +1,7 @@
 use std::env;
 use std::io::{self, IsTerminal, Write};
 
-use dialoguer::{theme::ColorfulTheme, Input, Password, Select};
+use dialoguer::{theme::ColorfulTheme, Confirm, Input, Password, Select};
 
 type Rgb = (u8, u8, u8);
 
@@ -40,34 +40,6 @@ pub fn print_key_value(key: &str, value: &str) {
     } else {
         println!("  {key:<12} {value}");
     }
-}
-
-pub fn pause(prompt: &str) -> Result<(), String> {
-    if !interactive_terminal() {
-        return Ok(());
-    }
-
-    print!("{prompt}");
-    io::stdout()
-        .flush()
-        .map_err(|err| format!("failed to flush stdout: {err}"))?;
-
-    let mut input = String::new();
-    let bytes_read = io::stdin()
-        .read_line(&mut input)
-        .map_err(|err| format!("failed to read input: {err}"))?;
-    if bytes_read == 0 {
-        return Err("no input received".to_string());
-    }
-    Ok(())
-}
-
-pub fn status_chip(label: &str, ready: bool) -> String {
-    if !fancy() {
-        return label.to_string();
-    }
-    let color = if ready { ACCENT_STRONG } else { MUTED };
-    format!("{}{}{}", fg(color), label, RESET)
 }
 
 pub fn select(prompt: &str, choices: &[String], default: usize) -> Result<Option<usize>, String> {
@@ -118,6 +90,17 @@ pub fn password(prompt: &str) -> Result<String, String> {
     } else {
         input(prompt)
     }
+}
+
+pub fn confirm(prompt: &str, default: bool) -> Result<bool, String> {
+    if !interactive_terminal() {
+        return Err("confirmation requires an interactive terminal; pass --yes after checking the exact board".to_string());
+    }
+    Confirm::with_theme(&ColorfulTheme::default())
+        .with_prompt(prompt)
+        .default(default)
+        .interact()
+        .map_err(|err| format!("failed to read confirmation: {err}"))
 }
 
 fn select_numbered(

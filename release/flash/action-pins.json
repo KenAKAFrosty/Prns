@@ -1,0 +1,58 @@
+{
+  "schema": 1,
+  "verified_at": "2026-07-21",
+  "actions": {
+    "Swatinem/rust-cache": {
+      "resolved_ref": "v2",
+      "sha": "e18b497796c12c097a38f9edb9d0641fb99eee32"
+    },
+    "actions/attest": {
+      "resolved_ref": "v4.1.0",
+      "sha": "59d89421af93a897026c735860bf21b6eb4f7b26"
+    },
+    "actions/checkout": {
+      "resolved_ref": "v4",
+      "sha": "11d5960a326750d5838078e36cf38b85af677262"
+    },
+    "actions/deploy-pages": {
+      "resolved_ref": "v4",
+      "sha": "d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e"
+    },
+    "actions/download-artifact": {
+      "resolved_ref": "v4",
+      "sha": "d3f86a106a0bac45b974a628896c90dbdf5c8093"
+    },
+    "actions/setup-java": {
+      "resolved_ref": "v4",
+      "sha": "c1e323688fd81a25caa38c78aa6df2d33d3e20d9"
+    },
+    "actions/setup-node": {
+      "resolved_ref": "v4",
+      "sha": "49933ea5288caeca8642d1e84afbd3f7d6820020"
+    },
+    "actions/upload-artifact": {
+      "resolved_ref": "v4",
+      "sha": "ea165f8d65b6e75b540449e92b4886f43607fa02"
+    },
+    "actions/upload-pages-artifact": {
+      "resolved_ref": "v3",
+      "sha": "56afc609e74202658d3ffba0e8f6dda462b719fa"
+    },
+    "android-actions/setup-android": {
+      "resolved_ref": "v3",
+      "sha": "9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407"
+    },
+    "astral-sh/setup-uv": {
+      "resolved_ref": "v5",
+      "sha": "d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86"
+    },
+    "cargo-bins/cargo-binstall": {
+      "resolved_ref": "main@2026-07-21",
+      "sha": "57726869e28f4038a847ec56e5fdd9142fded110"
+    },
+    "dtolnay/rust-toolchain": {
+      "resolved_ref": "stable@2026-07-21",
+      "sha": "4cda84d5c5c54efe2404f9d843567869ab1699d4"
+    }
+  }
+}

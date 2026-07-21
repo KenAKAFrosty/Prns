@@ -1,51 +1,29 @@
 name: reticulum.rs site
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "docs/website/**"
-      - "CONTRIBUTING.md"
-      - "benchmarks/RESULTS.md"
-      - "personal-rns/**"
-      - "prns-core/**"
-      - "prns-runtime/**"
-      - "prnsd/**"
-      - "personal-hopspot/**"
-      - "scripts/build-flash-artifact.sh"
-      - ".github/workflows/site.yml"
   workflow_dispatch:
 
 # Allow one concurrent deploy; cancel in-flight runs on new pushes.
 concurrency:
-  group: pages-${{ github.ref }}
-  cancel-in-progress: true
+  group: prns-public-pages
+  cancel-in-progress: false
 
 permissions:
+  actions: read
   contents: read
   pages: write
   id-token: write
 
-env:
-  SITE_BUILD_MODE: coming-soon
-
 jobs:
   build:
-    runs-on: ubuntu-latest
+    if: vars.PRNS_PUBLIC_SITE_PROMOTED != 'true'
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           submodules: false
 
-      - name: Check site build mode
-        run: |
-          case "$SITE_BUILD_MODE" in
-            coming-soon|full) ;;
-            *) echo "Unknown SITE_BUILD_MODE: $SITE_BUILD_MODE"; exit 1 ;;
-          esac
-
       - name: Assemble coming soon site
-        if: env.SITE_BUILD_MODE == 'coming-soon'
         run: |
           set -euo pipefail
           DIST=docs/website/target/site-coming-soon
@@ -59,128 +37,64 @@ jobs:
           echo "Dist contents:"
           ls -la "$DIST"
 
-      - name: Install Rust toolchain
-        if: env.SITE_BUILD_MODE == 'full'
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: thumbv7em-none-eabihf
-
-      - name: Install Rust for Xtensa
-        if: env.SITE_BUILD_MODE == 'full'
-        uses: esp-rs/xtensa-toolchain@v1.7.0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          buildtargets: esp32s3
-          default: false
-          override: false
-          ldproxy: true
-
-      - name: Cache cargo
-        if: env.SITE_BUILD_MODE == 'full'
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            .
-            docs/website
-            personal-hopspot/embedded/esp32
-            personal-hopspot/embedded/nrf52840
-
-      - name: Install dx (dioxus-cli)
-        if: env.SITE_BUILD_MODE == 'full'
-        uses: cargo-bins/cargo-binstall@main
-
-      - name: Pin dioxus-cli to 0.7.5
-        if: env.SITE_BUILD_MODE == 'full'
-        run: cargo binstall --no-confirm --force dioxus-cli@0.7.5
-
-      - name: Install espflash
-        if: env.SITE_BUILD_MODE == 'full'
-        run: cargo binstall --no-confirm espflash
-
-      - name: Set up Node (for Tailwind CLI)
-        if: env.SITE_BUILD_MODE == 'full'
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Build Tailwind
-        if: env.SITE_BUILD_MODE == 'full'
-        working-directory: docs/website
-        run: |
-          mkdir -p public/assets
-          npm install --no-fund --no-audit
-          npm run build:css
-
-      - name: Build embedded docs bundle for Hopspot SoftAP
-        if: env.SITE_BUILD_MODE == 'full'
-        working-directory: docs/website
-        env:
-          PRNS_EMBEDDED_SITE: "1"
-        run: dx build --platform web --release
-
-      - name: Build hosted flash artifacts
-        if: env.SITE_BUILD_MODE == 'full'
-        run: |
-          cargo run --locked -p hopspot-flash -- build t-echo --out-root docs/website/public
-          cargo run --locked -p hopspot-flash -- build heltec-v4 --out-root docs/website/public
-          cargo run --locked -p hopspot-flash -- build t-beam-supreme --out-root docs/website/public
-          cargo run --locked -p hopspot-flash -- build xiao-esp32-c6 --out-root docs/website/public
-
-      - name: Build site (web SPA)
-        if: env.SITE_BUILD_MODE == 'full'
-        working-directory: docs/website
-        env:
-          PRNS_FLASH_ARTIFACT_ROOT: ${{ github.workspace }}/docs/website/public
-        run: dx build --platform web --release
-
-      - name: Build workspace rustdoc
-        if: env.SITE_BUILD_MODE == 'full'
-        run: cargo doc --locked --no-deps --workspace
-        env:
-          RUSTDOCFLAGS: "-D warnings"
-
-      - name: Assemble dist
-        if: env.SITE_BUILD_MODE == 'full'
-        run: |
-          set -euo pipefail
-          DIST=docs/website/target/dx/reticulum-site/release/web/public
-          test -d "$DIST" || { echo "Bundle output missing"; exit 1; }
-          # Drop rustdoc under /api/ so the site nav's "API" link resolves.
-          mkdir -p "$DIST/api"
-          cp -R target/doc/. "$DIST/api/"
-          # Top-level redirect so /api/ lands somewhere meaningful.
-          cat > "$DIST/api/index.html" <<'HTML'
-          <!doctype html>
-          <meta http-equiv="refresh" content="0; url=./personal_rns/index.html">
-          <link rel="canonical" href="./personal_rns/index.html">
-          HTML
-          # CNAME ensures the custom domain survives every publish.
-          cp docs/website/public/CNAME "$DIST/CNAME"
-          # Hosted firmware and the web distribution carry the checked release notice bundle.
-          cp THIRD_PARTY_NOTICES.md "$DIST/THIRD_PARTY_NOTICES.md"
-          echo "Dist contents:"
-          ls -la "$DIST"
-
       - name: Upload coming soon Pages artifact
-        if: env.SITE_BUILD_MODE == 'coming-soon'
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa
         with:
           path: docs/website/target/site-coming-soon
 
-      - name: Upload Pages artifact
-        if: env.SITE_BUILD_MODE == 'full'
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: docs/website/target/dx/reticulum-site/release/web/public
-
   deploy:
     needs: build
-    runs-on: ubuntu-latest
+    if: needs.build.result == 'success' && vars.PRNS_PUBLIC_SITE_PROMOTED != 'true'
+    runs-on: ubuntu-24.04
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Install exact Minisign verifier
+        run: scripts/install-release-minisign.sh "${RUNNER_TEMP}/prns-release-bin"
+      - name: Refuse to overwrite any live signed stable channel
+        id: custody
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRNS_MINISIGN_BIN: ${{ runner.temp }}/prns-release-bin/minisign
+        run: |
+          mkdir -p target/live-site-custody
+          if [[ "$(gh variable get PRNS_PUBLIC_SITE_PROMOTED 2>/dev/null || true)" == true ]]; then
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          cache_key="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          curl --fail --location --retry 5 --retry-all-errors \
+            --header 'Cache-Control: no-cache' \
+            --output target/live-site-custody/stable.json \
+            "https://reticulum.rs/releases/channels/stable.json?custody=${cache_key}"
+          set +e
+          python3 scripts/flasher-website-history.py probe-stable \
+            --descriptor target/live-site-custody/stable.json
+          probe_status="$?"
+          set -e
+          case "$probe_status" in
+            0)
+              curl --fail --location --retry 5 --retry-all-errors \
+                --header 'Cache-Control: no-cache' \
+                --output target/live-site-custody/stable.json.minisig \
+                "https://reticulum.rs/releases/channels/stable.json.minisig?custody=${cache_key}"
+              "$PRNS_MINISIGN_BIN" -Vm target/live-site-custody/stable.json \
+                -x target/live-site-custody/stable.json.minisig \
+                -p release/keys/minisign.pub
+              echo "deploy=false" >> "$GITHUB_OUTPUT"
+              ;;
+            1)
+              cmp target/live-site-custody/stable.json \
+                docs/website/coming-soon/index.html
+              echo "deploy=true" >> "$GITHUB_OUTPUT"
+              ;;
+            *) exit "$probe_status" ;;
+          esac
       - name: Deploy to GitHub Pages
+        if: steps.custody.outputs.deploy == 'true'
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e

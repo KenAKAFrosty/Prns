@@ -72,9 +72,55 @@ pub struct BoardImage {
     pub data_uri: &'static str,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+pub enum PreparationProfile {
+    EspUsbBoot,
+    TechoUf2,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum BoardFlashTarget {
+    EspSerial {
+        expected_chip: &'static str,
+        supports_provisioning: bool,
+    },
+    Uf2MassStorage {
+        mount_label: &'static str,
+    },
+}
+
+impl BoardFlashTarget {
+    pub const fn uses_web_serial(self) -> bool {
+        matches!(self, Self::EspSerial { .. })
+    }
+
+    pub const fn supports_provisioning(self) -> bool {
+        matches!(
+            self,
+            Self::EspSerial {
+                supports_provisioning: true,
+                ..
+            }
+        )
+    }
+
+    pub const fn expected_chip(self) -> Option<&'static str> {
+        match self {
+            Self::EspSerial { expected_chip, .. } => Some(expected_chip),
+            Self::Uf2MassStorage { .. } => None,
+        }
+    }
+}
+
 pub mod board_images {
     include!(concat!(env!("OUT_DIR"), "/board_images.rs"));
 }
+
+pub mod shipping_boards {
+    include!(concat!(env!("OUT_DIR"), "/shipping_boards.rs"));
+}
+
+pub use shipping_boards::SHIPPING_BOARD_TARGETS;
 
 #[derive(Clone, Copy, PartialEq)]
 pub struct BoardTarget {
@@ -84,6 +130,8 @@ pub struct BoardTarget {
     pub tier: Tier,
     pub interfaces: &'static [&'static str],
     pub icon: Option<&'static str>,
+    pub preparation_profile: Option<PreparationProfile>,
+    pub flash_target: Option<BoardFlashTarget>,
 }
 
 impl BoardTarget {
@@ -112,53 +160,7 @@ pub const GROUPS: &[Group] = &[
     Group::GameEngine,
 ];
 
-pub const BOARD_TARGETS: &[BoardTarget] = &[
-    BoardTarget {
-        name: "Heltec V4",
-        slug: "heltec-v4",
-        silicon: "ESP32-S3 + SX1262",
-        tier: Tier::Flashable,
-        interfaces: &[
-            "Wi-Fi Auto",
-            "TCP Client",
-            "BLE Auto",
-            "LoRa",
-            "ESP-NOW",
-            "USB Auto",
-        ],
-        icon: Some("espressif"),
-    },
-    BoardTarget {
-        name: "LilyGO T-Beam Supreme",
-        slug: "t-beam-supreme",
-        silicon: "ESP32-S3 + SX1262 + AXP2101",
-        tier: Tier::Flashable,
-        interfaces: &[
-            "Wi-Fi Auto",
-            "TCP Client",
-            "BLE Auto",
-            "LoRa",
-            "ESP-NOW",
-            "USB Auto",
-        ],
-        icon: Some("espressif"),
-    },
-    BoardTarget {
-        name: "Seeed XIAO ESP32-C6",
-        slug: "xiao-esp32-c6",
-        silicon: "ESP32-C6",
-        tier: Tier::Flashable,
-        interfaces: &["ESP-NOW", "BLE Auto", "USB Auto"],
-        icon: Some("espressif"),
-    },
-    BoardTarget {
-        name: "LilyGO T-Echo",
-        slug: "t-echo",
-        silicon: "nRF52840 + SX1262",
-        tier: Tier::Flashable,
-        interfaces: &["BLE Auto", "LoRa", "USB Auto"],
-        icon: Some("nordicsemiconductor"),
-    },
+pub const ROADMAP_BOARD_TARGETS: &[BoardTarget] = &[
     BoardTarget {
         name: "Heltec V3/V3.1",
         slug: "heltec-v3",
@@ -166,6 +168,8 @@ pub const BOARD_TARGETS: &[BoardTarget] = &[
         tier: Tier::BringUp,
         interfaces: &[],
         icon: Some("espressif"),
+        preparation_profile: None,
+        flash_target: None,
     },
     BoardTarget {
         name: "RAK WisBlock Starter Kit",
@@ -174,6 +178,8 @@ pub const BOARD_TARGETS: &[BoardTarget] = &[
         tier: Tier::Roadmap,
         interfaces: &[],
         icon: Some("nordicsemiconductor"),
+        preparation_profile: None,
+        flash_target: None,
     },
     BoardTarget {
         name: "muzi works Base Duo",
@@ -182,6 +188,8 @@ pub const BOARD_TARGETS: &[BoardTarget] = &[
         tier: Tier::Roadmap,
         interfaces: &[],
         icon: Some("nordicsemiconductor"),
+        preparation_profile: None,
+        flash_target: None,
     },
     BoardTarget {
         name: "Seeed Card Tracker T1000-E",
@@ -190,6 +198,8 @@ pub const BOARD_TARGETS: &[BoardTarget] = &[
         tier: Tier::Roadmap,
         interfaces: &[],
         icon: Some("nordicsemiconductor"),
+        preparation_profile: None,
+        flash_target: None,
     },
     BoardTarget {
         name: "Seeed Wio Tracker L1",
@@ -198,6 +208,8 @@ pub const BOARD_TARGETS: &[BoardTarget] = &[
         tier: Tier::Roadmap,
         interfaces: &[],
         icon: Some("nordicsemiconductor"),
+        preparation_profile: None,
+        flash_target: None,
     },
     BoardTarget {
         name: "Heltec Mesh Node T114",
@@ -206,6 +218,8 @@ pub const BOARD_TARGETS: &[BoardTarget] = &[
         tier: Tier::Roadmap,
         interfaces: &[],
         icon: Some("nordicsemiconductor"),
+        preparation_profile: None,
+        flash_target: None,
     },
     BoardTarget {
         name: "LILYGO LoRa32 T3-S3",
@@ -214,6 +228,8 @@ pub const BOARD_TARGETS: &[BoardTarget] = &[
         tier: Tier::Roadmap,
         interfaces: &[],
         icon: Some("espressif"),
+        preparation_profile: None,
+        flash_target: None,
     },
     BoardTarget {
         name: "B&Q Nano G2 Ultra",
@@ -222,6 +238,8 @@ pub const BOARD_TARGETS: &[BoardTarget] = &[
         tier: Tier::Roadmap,
         interfaces: &[],
         icon: Some("nordicsemiconductor"),
+        preparation_profile: None,
+        flash_target: None,
     },
     BoardTarget {
         name: "B&Q Station G2",
@@ -230,11 +248,16 @@ pub const BOARD_TARGETS: &[BoardTarget] = &[
         tier: Tier::Roadmap,
         interfaces: &[],
         icon: Some("espressif"),
+        preparation_profile: None,
+        flash_target: None,
     },
 ];
 
 pub fn board_target_by_slug(slug: &str) -> Option<&'static BoardTarget> {
-    BOARD_TARGETS.iter().find(|board| board.slug == slug)
+    SHIPPING_BOARD_TARGETS
+        .iter()
+        .chain(ROADMAP_BOARD_TARGETS.iter())
+        .find(|board| board.slug == slug)
 }
 
 pub const PLATFORMS: &[Platform] = &[

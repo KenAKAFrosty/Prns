@@ -1,0 +1,489 @@
+name: flasher release candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Signed release channel
+        required: true
+        default: preview
+        type: choice
+        options: [preview, stable]
+      key_id:
+        description: Maintainer-controlled Minisign key ID
+        required: true
+        type: string
+      history_mode:
+        description: Retain the exact current signed history, or explicitly bootstrap the first schema-v2 release
+        required: true
+        default: retain
+        type: choice
+        options: [retain, bootstrap]
+      history_version:
+        description: Current immutable signed version to retain; empty only for explicit bootstrap
+        required: false
+        default: ""
+        type: string
+      history_release_record_sha256:
+        description: Lowercase SHA-256 of that version's signed release record; empty only for bootstrap
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUSTFLAGS: "-D warnings"
+  RUSTUP_TOOLCHAIN: 1.96.0
+
+jobs:
+  history:
+    name: Verify one cumulative signed website-history input
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      attestations: read
+      contents: read
+    outputs:
+      sha256: ${{ steps.package.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.96.0
+      - name: Require default-branch custody and exact history inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HISTORY_MODE: ${{ inputs.history_mode }}
+          HISTORY_VERSION: ${{ inputs.history_version }}
+          HISTORY_RELEASE_RECORD_SHA256: ${{ inputs.history_release_record_sha256 }}
+        run: |
+          default_branch="$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.default_branch')"
+          test "$GITHUB_REF" = "refs/heads/${default_branch}"
+          case "$HISTORY_MODE" in
+            bootstrap)
+              test -z "$HISTORY_VERSION"
+              test -z "$HISTORY_RELEASE_RECORD_SHA256"
+              ;;
+            retain)
+              [[ "$HISTORY_VERSION" =~ ^[0-9A-Za-z][0-9A-Za-z.+-]*$ ]]
+              test "${HISTORY_VERSION,,}" != "next"
+              [[ "$HISTORY_RELEASE_RECORD_SHA256" =~ ^[0-9a-f]{64}$ ]]
+              ;;
+            *) exit 2 ;;
+          esac
+      - name: Install exact Minisign verifier
+        run: scripts/install-release-minisign.sh "${RUNNER_TEMP}/prns-release-bin"
+      - name: Prepare explicit bootstrap or verified retained history
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HISTORY_MODE: ${{ inputs.history_mode }}
+          HISTORY_VERSION: ${{ inputs.history_version }}
+          HISTORY_RELEASE_RECORD_SHA256: ${{ inputs.history_release_record_sha256 }}
+          PRNS_MINISIGN_BIN: ${{ runner.temp }}/prns-release-bin/minisign
+        run: |
+          if [[ "$HISTORY_MODE" == bootstrap ]]; then
+            published_assets="$(
+              gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+                --jq '.[] | .assets[]?.name'
+            )"
+            if rg -q \
+              '^(release-record-v.+\.json|prns-flasher-candidate-v.+-signed\.tar\.gz)$' \
+              <<< "$published_assets"; then
+              echo "bootstrap is forbidden after any signed schema-v2 custody asset exists" >&2
+              exit 4
+            fi
+            mkdir -p target/bootstrap-live
+            curl --fail --location --retry 5 --retry-all-errors \
+              --output target/bootstrap-live/stable.json \
+              https://reticulum.rs/releases/channels/stable.json
+            if python3 scripts/flasher-website-history.py probe-stable \
+              --descriptor target/bootstrap-live/stable.json; then
+              echo "bootstrap is forbidden while a canonical stable descriptor is published" >&2
+              exit 4
+            else
+              probe_status=$?
+              test "$probe_status" -eq 1
+              cmp target/bootstrap-live/stable.json docs/website/coming-soon/index.html
+            fi
+            python3 scripts/flasher-website-history.py bootstrap \
+              --output target/release-history
+          else
+            assets="target/history-assets"
+            candidate="target/history-candidate"
+            mkdir -p "$assets"
+            gh release download "v${HISTORY_VERSION}" --dir "$assets"
+            record="$assets/release-record-v${HISTORY_VERSION}.json"
+            test -f "$record"
+            test "$(sha256sum "$record" | awk '{print $1}')" = \
+              "$HISTORY_RELEASE_RECORD_SHA256"
+            gh release view "v${HISTORY_VERSION}" \
+              --json isDraft,isPrerelease,publishedAt,tagName,targetCommitish \
+              > target/history-release.json
+            test "$(jq -r '.isDraft' target/history-release.json)" = false
+            test "$(jq -r '.isPrerelease' target/history-release.json)" = false
+            test "$(jq -r '.tagName' target/history-release.json)" = "v${HISTORY_VERSION}"
+            test "$(jq -r '.targetCommitish' target/history-release.json)" = \
+              "$(jq -r '.release.source_commit' "$record")"
+            bundle="$assets/prns-flasher-candidate-v${HISTORY_VERSION}-signed.tar.gz"
+            python3 scripts/extract-flasher-candidate.py "$bundle" "$candidate"
+            acceptance_commit="$(jq -r '.acceptance.source_commit' "$record")"
+            review_name="$(jq -r '.public_review.evidence.name' "$record")"
+            review_evidence="$assets/$review_name"
+            test -f "$review_evidence"
+            review_run_id="$(jq -r '.public_review.workflow_run_id' "$record")"
+            review_attempt="$(jq -r '.public_review.workflow_run_attempt' "$record")"
+            review_job_id="$(jq -r '.public_review.workflow_job_id' "$record")"
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/runs/${review_run_id}/attempts/${review_attempt}" \
+              > target/history-review-run.json
+            gh api --paginate \
+              "repos/${GITHUB_REPOSITORY}/actions/runs/${review_run_id}/attempts/${review_attempt}/jobs?per_page=100" \
+              --jq ".jobs[] | select(.id == ${review_job_id})" \
+              > target/history-review-job-pages.json
+            test "$(jq -s 'length' target/history-review-job-pages.json)" -eq 1
+            jq -s '.[0]' target/history-review-job-pages.json \
+              > target/history-review-job.json
+            python3 scripts/verify-historical-flasher-release.py \
+              --candidate "$candidate" \
+              --candidate-run "$assets/prns-flasher-candidate-run-v${HISTORY_VERSION}.json" \
+              --signed-bundle "$bundle" \
+              --acceptance "$assets/acceptance-v${HISTORY_VERSION}.json" \
+              --acceptance-source-commit "$acceptance_commit" \
+              --release-record "$record" \
+              --attestation-bundle "$assets/prns-flasher-attestation-v${HISTORY_VERSION}.json" \
+              --attestation-metadata "$assets/prns-flasher-attestation-v${HISTORY_VERSION}.metadata.json" \
+              --public-review-evidence "$review_evidence" \
+              --public-review-release target/history-release.json \
+              --public-review-run target/history-review-run.json \
+              --public-review-job target/history-review-job.json \
+              --assets "$assets" \
+              --repository "$GITHUB_REPOSITORY" \
+              --version "$HISTORY_VERSION"
+
+            attestation="$assets/prns-flasher-attestation-v${HISTORY_VERSION}.json"
+            signer="$GITHUB_REPOSITORY/.github/workflows/flasher-sign.yml"
+            gh attestation verify "$bundle" --repo "$GITHUB_REPOSITORY" \
+              --bundle "$attestation" --signer-workflow "$signer" \
+              --deny-self-hosted-runners
+            for archive in "$candidate"/cli/hopspot-flash-*; do
+              gh attestation verify "$archive" --repo "$GITHUB_REPOSITORY" \
+                --bundle "$attestation" --signer-workflow "$signer" \
+                --deny-self-hosted-runners
+            done
+            while IFS= read -r relative; do
+              gh attestation verify "$candidate/$relative" --repo "$GITHUB_REPOSITORY" \
+                --bundle "$attestation" --signer-workflow "$signer" \
+                --deny-self-hosted-runners
+            done < <(jq -r '[.targets[].parts[].path] | unique[]' "$candidate/flash-manifest.json")
+
+            live="target/live-stable"
+            mkdir -p "$live"
+            curl --fail --location --retry 5 --retry-all-errors \
+              --output "$live/stable.json" \
+              https://reticulum.rs/releases/channels/stable.json
+            curl --fail --location --retry 5 --retry-all-errors \
+              --output "$live/stable.json.minisig" \
+              https://reticulum.rs/releases/channels/stable.json.minisig
+            "$PRNS_MINISIGN_BIN" -Vm "$live/stable.json" \
+              -x "$live/stable.json.minisig" -p release/keys/minisign.pub
+            python3 scripts/flasher-website-history.py probe-stable \
+              --descriptor "$live/stable.json"
+            test "$(jq -r '.version' "$live/stable.json")" = "$HISTORY_VERSION"
+            test "$(jq -r '.manifest_sha256' "$live/stable.json")" = \
+              "$(sha256sum "$candidate/flash-manifest.json" | awk '{print $1}')"
+            python3 scripts/flasher-website-history.py retain \
+              --candidate "$candidate" \
+              --release-record "$record" \
+              --output target/release-history
+          fi
+      - name: Package the one history input consumed by both builds
+        id: package
+        run: |
+          python3 scripts/package-flasher-candidate.py \
+            target/release-history target/flasher-release-history.tar.gz
+          checksum="$(sha256sum target/flasher-release-history.tar.gz | awk '{print $1}')"
+          echo "sha256=$checksum" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: flasher-release-history-${{ github.run_id }}
+          path: target/flasher-release-history.tar.gz
+          retention-days: 30
+          if-no-files-found: error
+
+  cli:
+    name: CLI ${{ matrix.build_pass }} ${{ matrix.platform.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        build_pass: [primary, reproduction]
+        platform:
+          - os: macos-14
+            target: aarch64-apple-darwin
+            binary: target/aarch64-apple-darwin/release/hopspot-flash
+            rustflags: -D warnings
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            binary: target/x86_64-apple-darwin/release/hopspot-flash
+            rustflags: -D warnings
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            binary: target/x86_64-unknown-linux-gnu/release/hopspot-flash
+            rustflags: -D warnings
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            binary: target/aarch64-unknown-linux-gnu/release/hopspot-flash
+            rustflags: -D warnings
+          - os: windows-2025
+            target: x86_64-pc-windows-msvc
+            binary: target/x86_64-pc-windows-msvc/release/hopspot-flash.exe
+            rustflags: -D warnings -C link-arg=/Brepro
+    runs-on: ${{ matrix.platform.os }}
+    env:
+      RUSTFLAGS: ${{ matrix.platform.rustflags }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.96.0
+          targets: ${{ matrix.platform.target }}
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: flasher-cli-${{ matrix.build_pass }}-${{ matrix.platform.target }}
+          cache-targets: false
+      - name: Prove exact compiler and source epoch
+        shell: bash
+        run: |
+          rustc --version | rg '^rustc 1\.96\.0 '
+          cargo --version | rg '^cargo 1\.96\.0 '
+          echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$GITHUB_SHA")" >> "$GITHUB_ENV"
+      - name: Build standalone CLI from locked dependencies
+        run: cargo build --release --locked -p hopspot-flash --target ${{ matrix.platform.target }}
+      - name: Package deterministic archive
+        run: python scripts/package-hopspot-flash.py --binary "${{ matrix.platform.binary }}" --target "${{ matrix.platform.target }}" --out-dir target/flasher-cli
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: flasher-cli-${{ matrix.build_pass }}-${{ matrix.platform.target }}
+          path: target/flasher-cli/*
+          if-no-files-found: error
+
+  core-candidate:
+    name: Sparse firmware and hosted site ${{ matrix.build_pass }}
+    strategy:
+      fail-fast: false
+      matrix:
+        build_pass: [primary, reproduction]
+    runs-on: ubuntu-24.04
+    needs: history
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: flasher-release-history-${{ github.run_id }}
+          path: target/history-input
+      - name: Recheck and extract the shared history input
+        env:
+          EXPECTED_HISTORY_SHA256: ${{ needs.history.outputs.sha256 }}
+        run: |
+          archive="target/history-input/flasher-release-history.tar.gz"
+          test "$(sha256sum "$archive" | awk '{print $1}')" = \
+            "$EXPECTED_HISTORY_SHA256"
+          python3 scripts/extract-flasher-candidate.py \
+            "$archive" target/release-history
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.96.0
+          targets: thumbv7em-none-eabihf,riscv32imac-unknown-none-elf
+          components: llvm-tools-preview
+      - name: Install checksum-pinned ESP compiler and tools
+        run: scripts/install-release-esp-toolchain.sh "${RUNNER_TEMP}/prns-esp-tools"
+      - name: Force the non-ESP embedded build to production Rust
+        run: rustup override set --path personal-hopspot/embedded/nrf52840 1.96.0
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          workspaces: |
+            .
+            docs/website
+            personal-hopspot/embedded/esp32
+            personal-hopspot/embedded/nrf52840
+          shared-key: flasher-core-${{ matrix.build_pass }}
+          cache-targets: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24.18.0"
+          cache: npm
+          cache-dependency-path: docs/website/package-lock.json
+      - uses: cargo-bins/cargo-binstall@57726869e28f4038a847ec56e5fdd9142fded110
+        with:
+          version: "1.21.0"
+      - name: Install exact Dioxus CLI
+        run: cargo binstall --no-confirm --force dioxus-cli@0.7.5
+      - name: Prove exact release tools and source epoch
+        run: |
+          rustc --version | rg '^rustc 1\.96\.0 '
+          cargo --version | rg '^cargo 1\.96\.0 '
+          test "$(node --version)" = "v24.18.0"
+          cargo-binstall --version | rg '(^| )1\.21\.0($| )'
+          dx --version | rg '(^| )0\.7\.5($| )'
+          espup --version | rg '(^| )0\.17\.1($| )'
+          rustc +esp -vV | rg '^release: 1\.95\.0'
+          test "$(xtensa-esp-elf-gcc --version | head -n 1)" = \
+            'xtensa-esp-elf-gcc (crosstool-NG esp-15.2.0_20250920) 15.2.0'
+          host_triple="$(rustc -vV | sed -n 's/^host: //p')"
+          llvm_objcopy="$(rustc --print sysroot)/lib/rustlib/$host_triple/bin/llvm-objcopy"
+          test -x "$llvm_objcopy"
+          "$llvm_objcopy" --version | rg -i 'llvm'
+          test "$(cd personal-hopspot/embedded/nrf52840 && env -u RUSTUP_TOOLCHAIN rustc --version | awk '{print $2}')" = "1.96.0"
+          echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$GITHUB_SHA")" >> "$GITHUB_ENV"
+      - name: Build unsigned core candidate
+        env:
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          RELEASE_KEY_ID: ${{ inputs.key_id }}
+          SOURCE_COMMIT: ${{ github.sha }}
+          PRNS_RELEASE_HISTORY: ${{ github.workspace }}/target/release-history
+        run: scripts/build-flasher-candidate.sh target/flasher-candidate "$RELEASE_CHANNEL" "$RELEASE_KEY_ID" "$SOURCE_COMMIT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: flasher-core-candidate-${{ matrix.build_pass }}
+          path: target/flasher-candidate/**
+          if-no-files-found: error
+
+  dependency-audit:
+    name: Release dependency and notice evidence ${{ matrix.build_pass }}
+    strategy:
+      fail-fast: false
+      matrix:
+        build_pass: [primary, reproduction]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.96.0
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: flasher-release-audit-${{ matrix.build_pass }}
+          cache-targets: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24.18.0"
+          cache: npm
+          cache-dependency-path: docs/website/package-lock.json
+      - name: Prove exact audit compiler and runtime
+        run: |
+          rustc --version | rg '^rustc 1\.96\.0 '
+          test "$(node --version)" = "v24.18.0"
+      - name: Install exact audit tools
+        run: |
+          cargo install cargo-deny --version 0.19.8 --locked
+          cargo install cargo-about --version 0.9.1 --locked --features cli
+      - name: Audit every release dependency graph
+        run: scripts/deps-audit.sh
+      - name: Reject dirty generated notices
+        run: git diff --exit-code -- THIRD_PARTY_NOTICES.md
+      - name: Record deterministic audit evidence
+        run: scripts/write-release-audit-evidence.sh target/release-audit-evidence.md
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: flasher-audit-evidence-${{ matrix.build_pass }}
+          path: target/release-audit-evidence.md
+          if-no-files-found: error
+
+  assemble:
+    name: Assemble ${{ matrix.build_pass }} unsigned candidate
+    needs: [cli, core-candidate, dependency-audit]
+    strategy:
+      fail-fast: false
+      matrix:
+        build_pass: [primary, reproduction]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: flasher-cli-${{ matrix.build_pass }}-*
+          path: target/candidate/cli
+          merge-multiple: true
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: flasher-core-candidate-${{ matrix.build_pass }}
+          path: target/candidate
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: flasher-audit-evidence-${{ matrix.build_pass }}
+          path: target/candidate/audit
+      - name: Finalize checksums, installers, channel, sparse report, and immutable paths
+        env:
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          RELEASE_KEY_ID: ${{ inputs.key_id }}
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: python3 scripts/finalize-flasher-candidate.py target/candidate --channel "$RELEASE_CHANNEL" --commit "$SOURCE_COMMIT" --key-id "$RELEASE_KEY_ID"
+      - name: Create deterministic precomparison archive
+        run: python3 scripts/package-flasher-candidate.py target/candidate "target/prns-flasher-candidate-v$(cat VERSION)-precomparison.tar.gz"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: flasher-assembled-${{ matrix.build_pass }}
+          path: target/prns-flasher-candidate-v*-precomparison.tar.gz
+          retention-days: 7
+          if-no-files-found: error
+
+  reproducibility:
+    name: Independent candidate byte reproducibility
+    needs: assemble
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: flasher-assembled-primary
+          path: target/repro/primary
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: flasher-assembled-reproduction
+          path: target/repro/reproduction
+      - name: Compare every payload and deterministic archive byte
+        run: |
+          mkdir -p target/release
+          python3 scripts/compare-flasher-candidates.py \
+            --primary "target/repro/primary/prns-flasher-candidate-v$(cat VERSION)-precomparison.tar.gz" \
+            --reproduction "target/repro/reproduction/prns-flasher-candidate-v$(cat VERSION)-precomparison.tar.gz" \
+            --output "target/release/prns-flasher-candidate-v$(cat VERSION)-unsigned.tar.gz" \
+            --report target/release/reproducibility.json
+      - name: Revalidate final unsigned candidate boundary
+        env:
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          python3 scripts/extract-flasher-candidate.py \
+            "target/release/prns-flasher-candidate-v$(cat VERSION)-unsigned.tar.gz" \
+            target/verified-candidate
+          python3 scripts/validate-unsigned-flasher-candidate.py target/verified-candidate \
+            --expected-commit "$SOURCE_COMMIT" \
+            --repository-version VERSION \
+            --pinned-key release/keys/minisign.pub \
+            --tester-roster "release/acceptance/rosters/$(cat VERSION).json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: flasher-unsigned-candidate-run-${{ github.run_id }}
+          path: |
+            target/release/prns-flasher-candidate-v*-unsigned.tar.gz
+            target/release/reproducibility.json
+          retention-days: 30
+          if-no-files-found: error

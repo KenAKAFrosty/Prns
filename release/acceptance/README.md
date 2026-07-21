@@ -1,0 +1,110 @@
+# Flasher acceptance record
+
+The acceptance record is evidence for one exact signed candidate, not a checklist or a place to
+record intentions. Generate it only after the public prerelease exists. The generator binds the
+manifest, manifest signature, and signed-candidate archive by SHA-256 and produces all 24 physical
+rows, four unsupported-browser rows, and five native installer rows as `not-run`:
+
+```sh
+PUBLISHED_AT="$(gh release view vVERSION --json publishedAt --jq .publishedAt)"
+python3 qualification/create-flasher-acceptance.py \
+  --manifest CANDIDATE/flash-manifest.json \
+  --manifest-signature CANDIDATE/flash-manifest.json.minisig \
+  --signed-bundle prns-flasher-candidate-vVERSION-signed.tar.gz \
+  --prerelease-published-at "$PUBLISHED_AT" \
+  --output acceptance.json
+```
+
+The generator refuses to overwrite a record. Never mark an unperformed scenario as passed. The
+validator rejects placeholders, future dates, unknown fields, incomplete matrices, non-passing
+results, and any candidate identity that differs from those three exact files.
+
+## Physical runs
+
+`runs` contains exactly one result for every shipping board, surface (`web` or `cli`), and host OS
+(`macos`, `windows`, or `linux`): 24 rows. Each row records:
+
+- the exact OS version and architecture;
+- the signed-manifest display name, observed PCB revision, and a tester-assigned nonsecret label;
+- the exact client and, for web runs, the current stable Chrome or Edge version and `stable`
+  channel;
+- named scenario results, the exact signed-roster tester identity, a full UTC `completed_at`
+  timestamp no earlier than the prerelease `publishedAt`, and immutable redacted evidence;
+- its own passing `fresh-install` and `post-flash-boot` observations. Aggregate coverage from
+  another OS cannot substitute for these two baseline checks.
+
+Use `hardware_revision: "not-marked"` only when the board exposes no revision. Never put a USB
+serial number in `hardware_identity`. Every evidence object has this fail-closed form:
+
+```json
+{
+  "reference": "artifact://qualification/LOWERCASE_EVIDENCE_SHA256",
+  "sha256": "LOWERCASE_EVIDENCE_SHA256",
+  "redaction": {
+    "reviewer": "REVIEWER_IDENTITY",
+    "credentials_removed": true,
+    "device_identifiers_removed": true,
+    "local_paths_removed": true,
+    "private_network_data_removed": true
+  }
+}
+```
+
+The reference must be exactly `artifact://qualification/LOWERCASE_EVIDENCE_SHA256`. Place the exact
+nonempty reviewed object at `EVIDENCE_ROOT/LOWERCASE_EVIDENCE_SHA256`; URLs and hash assertions are
+not evidence. The validator reads the object and recomputes its digest, rejects missing, extra,
+linked, misnamed, empty, or mismatched objects, and binds the resulting deterministic evidence
+archive into the signed release record. The redaction reviewer must inspect each object after
+collection. Do not treat automated substitution as review.
+
+## Transport-aware scenarios
+
+ESP runs cover install/update, board selection, zero/one/multiple devices, sparse writes,
+wrong-chip rejection, BOOT/RESET recovery, disconnect boundaries, corrupt artifacts, signature
+rejection, reset failure, and post-flash boot. Additional requirements derive from the signed
+manifest and surface:
+
+- Web: permission denial, navigation warning, and device MD5 mismatch.
+- CLI: unavailable port and write-verification failure.
+- Heltec/T-Beam: Preserve, Configure, and Clear.
+- Targets sharing a chip: explicit same-chip board confirmation.
+
+T-Echo uses a distinct UF2 contract. Its web route proves signed download verification, truthful
+manual-copy behavior, missing-mount/copy-failure guidance, reboot guidance, and post-flash boot. It
+must not claim browser-side mount detection, filesystem sync, or device-side verification. Its CLI
+route proves zero/one/multiple mounts, copy/flush/sync failures, mount disappearance, bounded reboot
+detection and timeout, and post-flash boot.
+
+The authoritative scenario sets and deterministic distribution live in
+`qualification/flasher_acceptance_contract.py`, used by both generator and validator.
+
+## Browser fallbacks
+
+`browser_fallbacks` records exact stable Firefox checks on macOS, Windows, and Linux plus stable
+Safari on macOS. Every row must prove all four points: the ESP CLI guidance is present, ESP connect
+is unavailable, no broken connect action is shown, and the T-Echo UF2 route remains available.
+Fallback checks are separate from successful Web Serial flashing.
+
+## Native installation smoke
+
+`installation_smoke` contains exactly one result for each published CLI target triple. The host OS
+and architecture must agree with the target, its CLI version must equal the candidate version, and
+both `install` and `doctor` must pass.
+
+Validate the completed record with the same exact inputs:
+
+```sh
+python3 qualification/validate-flasher-acceptance.py \
+  --acceptance acceptance.json \
+  --manifest CANDIDATE/flash-manifest.json \
+  --manifest-signature CANDIDATE/flash-manifest.json.minisig \
+  --signed-bundle prns-flasher-candidate-vVERSION-signed.tar.gz \
+  --tester-roster CANDIDATE/qualification/tester-roster.json \
+  --evidence-root EVIDENCE_ROOT \
+  --prerelease-published-at "$PUBLISHED_AT"
+```
+
+Package `EVIDENCE_ROOT` with `qualification/package-flasher-qualification-evidence.py` as
+`qualification-evidence-vVERSION.tar.gz`. Commit only a complete passing record to
+`release/acceptance/records/VERSION.json` through normal review. Failed and exploratory
+observations stay outside the release evidence package.

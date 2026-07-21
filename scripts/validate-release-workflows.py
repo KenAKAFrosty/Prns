@@ -1,0 +1,309 @@
+#!/usr/bin/env python3
+"""Fail closed when release workflows regain mutable actions or toolchains."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+import re
+import sys
+
+
+ROOT = Path(__file__).resolve().parents[1]
+WORKFLOWS = tuple(sorted((ROOT / ".github" / "workflows").glob("*.yml")))
+ACTION_PATTERN = re.compile(r"^\s*(?:-\s*)?uses:\s*([^\s#]+)", re.MULTILINE)
+SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+
+
+def validate() -> list[str]:
+    errors: list[str] = []
+    lock_path = ROOT / "release" / "flash" / "action-pins.json"
+    lock = json.loads(lock_path.read_text(encoding="utf-8"))
+    actions = lock.get("actions")
+    if lock.get("schema") != 1 or not isinstance(actions, dict):
+        return ["release/flash/action-pins.json has an unsupported shape"]
+
+    used: set[str] = set()
+    for workflow in WORKFLOWS:
+        text = workflow.read_text(encoding="utf-8")
+        for reference in ACTION_PATTERN.findall(text):
+            if reference.startswith("./"):
+                continue
+            if "@" not in reference:
+                errors.append(f"{workflow.relative_to(ROOT)}: action has no ref: {reference}")
+                continue
+            action, revision = reference.rsplit("@", maxsplit=1)
+            used.add(action)
+            pin = actions.get(action)
+            if not isinstance(pin, dict):
+                errors.append(f"{workflow.relative_to(ROOT)}: {action} is absent from action-pins.json")
+                continue
+            expected = pin.get("sha")
+            if not isinstance(expected, str) or not SHA_PATTERN.fullmatch(expected):
+                errors.append(f"action-pins.json has an invalid SHA for {action}")
+            elif revision != expected:
+                errors.append(
+                    f"{workflow.relative_to(ROOT)}: {action}@{revision} must use {expected}"
+                )
+
+    unused = sorted(set(actions) - used)
+    if unused:
+        errors.append(f"action-pins.json contains unused actions: {unused}")
+
+    candidate = (ROOT / ".github" / "workflows" / "flasher-candidate.yml").read_text(
+        encoding="utf-8"
+    )
+    required_candidate_fragments = (
+        "RUSTUP_TOOLCHAIN: 1.96.0",
+        "components: llvm-tools-preview",
+        "esp-15.2.0_20250920",
+        'node-version: "24.18.0"',
+        'version: "1.21.0"',
+        "dioxus-cli@0.7.5",
+        "link-arg=/Brepro",
+        "scripts/compare-flasher-candidates.py",
+        "default: retain",
+        "bootstrap is forbidden after any signed schema-v2 custody asset exists",
+        "scripts/flasher-website-history.py probe-stable",
+        "flasher-release-history-${{ github.run_id }}",
+        "EXPECTED_HISTORY_SHA256",
+        "PRNS_RELEASE_HISTORY",
+        "targetCommitish",
+        "verify-historical-flasher-release.py",
+        "--public-review-evidence",
+        "actions/runs/${review_run_id}/attempts/${review_attempt}",
+        "release/acceptance/rosters/$(cat VERSION).json",
+    )
+    for fragment in required_candidate_fragments:
+        if fragment not in candidate:
+            errors.append(f"flasher-candidate.yml is missing exact release pin {fragment!r}")
+    for mutable in (
+        "ubuntu-latest",
+        "windows-latest",
+        "@main",
+        "@stable",
+        'node-version: "20"',
+    ):
+        if mutable in candidate:
+            errors.append(f"flasher-candidate.yml contains mutable production input {mutable!r}")
+
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    if "RUSTUP_TOOLCHAIN: 1.90.0" not in ci or "toolchain: 1.90.0" not in ci:
+        errors.append("ci.yml does not explicitly force and install the Rust 1.90.0 MSRV")
+    if 'node-version: "24.18.0"' not in ci:
+        errors.append("ci.yml does not test the release web graph with Node 24.18.0")
+    for browser_gate in (
+        "cargo fmt --manifest-path docs/website/Cargo.toml -- --check",
+        "cargo test --manifest-path docs/website/Cargo.toml --locked",
+        "playwright install --with-deps chromium",
+        "npm run test:browser",
+        "npm run test:production-boundary",
+    ):
+        if browser_gate not in ci:
+            errors.append(f"ci.yml is missing required browser gate {browser_gate!r}")
+    if "release-critical:" not in ci:
+        errors.append("ci.yml lacks the stable release-critical aggregate check")
+
+    signing = (ROOT / ".github" / "workflows" / "flasher-sign.yml").read_text(
+        encoding="utf-8"
+    )
+    for custody_gate in (
+        "subject-checksums: target/release/attestation-subjects.sha256",
+        'test "$GITHUB_WORKFLOW_SHA" = "$source_commit"',
+        "--workflow-sha \"$GITHUB_WORKFLOW_SHA\"",
+        "name: Complete protected 24-hour public review",
+        "environment: public-release",
+        "scripts/flasher-public-review.py create",
+        "Publish immutable attempt-specific public-review evidence",
+        "public-review-v${RELEASE_VERSION}-run-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}.json",
+        "actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}",
+        "qualification/tester-roster.json",
+        "Signed candidate SHA-256:",
+        "Manifest SHA-256:",
+    ):
+        if custody_gate not in signing:
+            errors.append(f"flasher-sign.yml is missing custody gate {custody_gate!r}")
+    if "subject-path:" in signing:
+        errors.append("flasher-sign.yml must preserve canonical names with subject-checksums")
+
+    finalization = (
+        ROOT / ".github" / "workflows" / "flasher-finalize-evidence.yml"
+    ).read_text(encoding="utf-8")
+    for finalization_gate in (
+        "qualification_evidence_sha256:",
+        "qualification-evidence-v${RELEASE_VERSION}.tar.gz",
+        "target/candidate/qualification/tester-roster.json",
+        "--evidence-root target/qualification-evidence",
+        "--prerelease-published-at",
+        "--qualification-evidence",
+        "--public-review-evidence",
+        "Select and verify the exact successful protected public review",
+        "actions/runs/${signing_run_id}/attempts/${run_attempt}",
+    ):
+        if finalization_gate not in finalization:
+            errors.append(
+                f"flasher-finalize-evidence.yml is missing gate {finalization_gate!r}"
+            )
+
+    promotion = (ROOT / ".github" / "workflows" / "flasher-promote.yml").read_text(
+        encoding="utf-8"
+    )
+    site = (ROOT / ".github" / "workflows" / "site.yml").read_text(encoding="utf-8")
+    for path, workflow in (("flasher-promote.yml", promotion), ("site.yml", site)):
+        if "group: prns-public-pages" not in workflow:
+            errors.append(f"{path} does not share the serialized Pages custody group")
+    for promotion_gate in (
+        "--allow-promoted",
+        "scripts/verify-flasher-release-assets.py",
+        "permissions:\n      contents: read",
+        "rollback_baseline_version",
+        "rollback_baseline_release_record_sha256",
+        "rollback_dry_run_id",
+        "rollback_dry_run_attempt",
+        "Block promotion without a matching <=15-minute rollback dry-run",
+        "scripts/flasher-rollback.py validate-record",
+        "--required-observed-live-state target_baseline",
+        "Recheck live promotion CAS immediately before Pages deployment",
+        "targetCommitish",
+        "verify-historical-flasher-release.py",
+        "scripts/flasher-public-review.py verify",
+        ".public_review.evidence.name",
+        "actions/runs/${signing_run_id}/attempts/${run_attempt}",
+        "Verify the complete prerelease asset inventory before deployment",
+        "--remote-inventory target/prerelease-assets-before-promotion.json",
+        "Recheck the verified release asset inventory before deployment",
+        "release_asset_inventory_sha256",
+        "rollback_baseline_asset_inventory_sha256",
+        "[.assets[] | {name, size, digest}] | sort_by(.name)",
+        "Verify deployed signed channel and website before release mutation",
+        "Bind Pages artifacts to this exact verification attempt",
+        "candidate_pages_artifact_name",
+        "rollback_baseline_pages_artifact_name",
+        "rollback_baseline_stage_artifact_name",
+        "restore-baseline-on-failure:",
+        "${{ always() && needs.verify.result == 'success'",
+        "needs: [verify, publish-and-deploy, post-promotion-smoke, mark-promoted]",
+        "Compare-and-swap only the failed candidate back to its verified baseline",
+        "target/recovery-live-cas/stable.json",
+        "scripts/flasher-rollback.py verify-live-website",
+        "EXPECTED_CURRENT_ASSET_INVENTORY_SHA256",
+        "EXPECTED_BASELINE_ASSET_INVENTORY_SHA256",
+        "artifact_name: ${{ needs.verify.outputs.rollback_baseline_pages_artifact_name }}",
+        "--prerelease=true --latest=false",
+        'gh release edit "v${ROLLBACK_BASELINE_VERSION}" --latest=true',
+    ):
+        if promotion_gate not in promotion:
+            errors.append(f"flasher-promote.yml is missing gate {promotion_gate!r}")
+    if "environment: public-release" in promotion:
+        errors.append("flasher-promote.yml must not start a second protected 24-hour wait")
+    asset_gate = "Verify the complete prerelease asset inventory before deployment"
+    deploy_gate = "actions/deploy-pages@"
+    live_verification_gate = (
+        "Verify deployed signed channel and website before release mutation"
+    )
+    release_mutation_gate = (
+        "Mark the verified prerelease stable without replacing assets"
+    )
+    if all(
+        gate in promotion
+        for gate in (deploy_gate, live_verification_gate, release_mutation_gate)
+    ) and not (
+        promotion.index(deploy_gate)
+        < promotion.index(live_verification_gate)
+        < promotion.index(release_mutation_gate)
+    ):
+        errors.append(
+            "flasher-promote.yml must deploy and verify the signed site before "
+            "marking the GitHub Release stable"
+        )
+    if asset_gate in promotion and deploy_gate in promotion and not (
+        promotion.index(asset_gate) < promotion.index(deploy_gate)
+    ):
+        errors.append(
+            "flasher-promote.yml must verify every release asset before Pages deployment"
+        )
+    recovery_job = "restore-baseline-on-failure:"
+    recovery_cas = "Compare-and-swap only the failed candidate back to its verified baseline"
+    recovery_deploy = "Redeploy the exact verified baseline Pages artifact"
+    recovery_verify = "Verify every restored website byte before release rollback"
+    recovery_metadata = "Restore baseline release metadata without modifying assets"
+    baseline_latest = 'gh release edit "v${ROLLBACK_BASELINE_VERSION}" --latest=true'
+    candidate_demote = (
+        'gh release edit "v${RELEASE_VERSION}" --prerelease=true --latest=false'
+    )
+    if recovery_job in promotion:
+        recovery = promotion[promotion.index(recovery_job) :]
+        ordered_recovery_gates = (
+            recovery_cas,
+            recovery_deploy,
+            recovery_verify,
+            recovery_metadata,
+            baseline_latest,
+            candidate_demote,
+        )
+        if all(gate in recovery for gate in ordered_recovery_gates) and not all(
+            recovery.index(first) < recovery.index(second)
+            for first, second in zip(
+                ordered_recovery_gates, ordered_recovery_gates[1:]
+            )
+        ):
+            errors.append(
+                "flasher-promote.yml must CAS, deploy, verify, restore baseline latest, "
+                "and only then demote the failed candidate"
+            )
+
+    for site_gate in (
+        "Refuse to overwrite any live signed stable channel",
+        "scripts/flasher-website-history.py probe-stable",
+        "steps.custody.outputs.deploy == 'true'",
+        "cmp target/live-site-custody/stable.json",
+    ):
+        if site_gate not in site:
+            errors.append(f"site.yml is missing permanent custody gate {site_gate!r}")
+
+    rollback = (ROOT / ".github" / "workflows" / "flasher-rollback.yml").read_text(
+        encoding="utf-8"
+    )
+    for rollback_gate in (
+        "group: prns-public-pages",
+        "environment: release-rollback",
+        "timeout-minutes: 15",
+        "scripts/flasher-rollback.py live-state",
+        '--mode "$ROLLBACK_MODE"',
+        "--mode deploy",
+        "scripts/flasher-rollback.py validate-record",
+        "run-id: ${{ inputs.dry_run_id }}",
+        "dry_run_attempt:",
+        "--expected-run-attempt",
+        "actions/runs/${DRY_RUN_ID}/attempts/${DRY_RUN_ATTEMPT}",
+        "actions/upload-pages-artifact@",
+        "actions/deploy-pages@",
+        "scripts/flasher-rollback.py verify-live-website",
+        "target/rollback-stage/rollback-stage.json",
+        "cmp target/assets-before-latest.json target/assets-after-latest.json",
+        "targetCommitish",
+        "verify-historical-flasher-release.py",
+    ):
+        if rollback_gate not in rollback:
+            errors.append(f"flasher-rollback.yml is missing gate {rollback_gate!r}")
+    for forbidden in ("PRNS_MINISIGN_SECRET_KEY_B64", "secrets."):
+        if forbidden in rollback:
+            errors.append(f"flasher-rollback.yml must not reference {forbidden!r}")
+    return errors
+
+
+def main() -> int:
+    try:
+        errors = validate()
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        errors = [f"workflow pin validation could not run: {error}"]
+    if errors:
+        for error in errors:
+            print(error, file=sys.stderr)
+        return 1
+    print("release workflows use only reviewed full-SHA actions and exact production tools")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

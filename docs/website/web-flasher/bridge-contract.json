@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "minimum_progress_total": 1,
+  "response_limits": {
+    "channel_bytes": 65536,
+    "manifest_bytes": 524288,
+    "signature_bytes": 65536,
+    "artifact_bytes": 67108864
+  },
+  "operations": [
+    { "wire": "preparation", "initial": ["validating_manifest", "failed", "cancelled"] },
+    { "wire": "device", "initial": ["requesting_port", "download_requested", "failed", "cancelled"] }
+  ],
+  "phases": [
+    { "wire": "idle", "terminal": false, "busy": false, "label": "Waiting", "tone": "neutral", "next": ["validating_manifest", "requesting_port"], "error_policy": "forbidden", "progress": "forbidden", "parts": "forbidden", "detected_chip": false, "bytes": false },
+    { "wire": "validating_manifest", "terminal": false, "busy": true, "label": "Working", "tone": "working", "next": ["downloading", "failed", "cancelled"], "error_policy": "forbidden", "progress": "forbidden", "parts": "forbidden", "detected_chip": false, "bytes": false },
+    { "wire": "downloading", "terminal": false, "busy": true, "label": "Working", "tone": "working", "next": ["verifying_artifacts", "failed", "cancelled"], "error_policy": "forbidden", "progress": "required", "parts": "required", "detected_chip": false, "bytes": false },
+    { "wire": "verifying_artifacts", "terminal": false, "busy": true, "label": "Working", "tone": "working", "next": ["downloading", "ready", "failed", "cancelled"], "error_policy": "forbidden", "progress": "required", "parts": "required", "detected_chip": false, "bytes": false },
+    { "wire": "ready", "terminal": true, "busy": false, "label": "Verified", "tone": "ready", "next": [], "error_policy": "forbidden", "progress": "complete", "parts": "forbidden", "detected_chip": false, "bytes": true },
+    { "wire": "requesting_port", "terminal": false, "busy": true, "label": "Working", "tone": "working", "next": ["connecting", "failed", "cancelled"], "error_policy": "forbidden", "progress": "forbidden", "parts": "forbidden", "detected_chip": false, "bytes": false },
+    { "wire": "connecting", "terminal": false, "busy": true, "label": "Working", "tone": "working", "next": ["verifying_target", "failed", "cancelled"], "error_policy": "forbidden", "progress": "forbidden", "parts": "forbidden", "detected_chip": false, "bytes": false },
+    { "wire": "verifying_target", "terminal": false, "busy": true, "label": "Working", "tone": "working", "next": ["writing", "failed", "cancelled"], "error_policy": "forbidden", "progress": "forbidden", "parts": "forbidden", "detected_chip": true, "bytes": false },
+    { "wire": "writing", "terminal": false, "busy": true, "label": "Working", "tone": "working", "next": ["writing", "verifying_flash", "failed", "cancelled"], "error_policy": "forbidden", "progress": "required", "parts": "optional", "detected_chip": false, "bytes": false },
+    { "wire": "verifying_flash", "terminal": false, "busy": true, "label": "Working", "tone": "working", "next": ["resetting", "failed", "cancelled"], "error_policy": "forbidden", "progress": "complete", "parts": "forbidden", "detected_chip": false, "bytes": false },
+    { "wire": "resetting", "terminal": false, "busy": true, "label": "Working", "tone": "working", "next": ["success", "failed", "cancelled"], "error_policy": "forbidden", "progress": "forbidden", "parts": "forbidden", "detected_chip": false, "bytes": false },
+    { "wire": "success", "terminal": true, "busy": false, "label": "Complete", "tone": "ready", "next": [], "error_policy": "forbidden", "progress": "complete", "parts": "forbidden", "detected_chip": false, "bytes": false },
+    { "wire": "download_requested", "terminal": true, "busy": false, "label": "Download requested", "tone": "ready", "next": [], "error_policy": "forbidden", "progress": "complete", "parts": "forbidden", "detected_chip": false, "bytes": false },
+    { "wire": "failed", "terminal": true, "busy": false, "label": "Stopped", "tone": "blocked", "next": [], "error_policy": "failure", "progress": "forbidden", "parts": "forbidden", "detected_chip": false, "bytes": false },
+    { "wire": "cancelled", "terminal": true, "busy": false, "label": "Cancelled", "tone": "blocked", "next": [], "error_policy": "cancelled", "progress": "forbidden", "parts": "forbidden", "detected_chip": false, "bytes": false }
+  ],
+  "errors": [
+    "invalid_request",
+    "invalid_config",
+    "unsupported_browser",
+    "insecure_context",
+    "permission_denied",
+    "connection_failure",
+    "wrong_chip",
+    "wrong_flash_size",
+    "artifact_fetch",
+    "artifact_size_mismatch",
+    "artifact_hash_mismatch",
+    "device_lost",
+    "write_failure",
+    "verification_failure",
+    "reset_failure",
+    "cancelled",
+    "not_prepared",
+    "busy",
+    "flash_failed"
+  ],
+  "event_fields": [
+    "schema",
+    "phase",
+    "code",
+    "message",
+    "current",
+    "total",
+    "part",
+    "partIndex",
+    "partCount",
+    "detectedChip",
+    "bytes"
+  ]
+}

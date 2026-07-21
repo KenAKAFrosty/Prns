@@ -1841,7 +1841,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "personal-rns"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "cfg-if",
  "prns-core",
@@ -1971,7 +1971,7 @@ dependencies = [
 
 [[package]]
 name = "prns-core"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "aes",
  "base64",
@@ -2010,7 +2010,7 @@ dependencies = [
 
 [[package]]
 name = "prns-interfaces-tokio"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "base64",
  "bluer",
@@ -2046,7 +2046,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "cfg-if",
  "heapless",
@@ -2055,7 +2055,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime-tokio"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "bzip2",
  "futures-util",

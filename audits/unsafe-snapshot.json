@@ -659,6 +659,8 @@
     {
       "graphs": {
         "engine": [
+          "serde",
+          "serde_core",
           "std"
         ]
       },
@@ -1590,6 +1592,21 @@
     },
     {
       "graphs": {
+        "engine": []
+      },
+      "name": "const-oid",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 1,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 1
+      },
+      "version": "0.10.2"
+    },
+    {
+      "graphs": {
         "android": [],
         "daemon-linux": [],
         "desktop-linux": [],
@@ -1967,7 +1984,9 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
-        "engine": [],
+        "engine": [
+          "std"
+        ],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-tbeam": [],
@@ -2618,9 +2637,11 @@
           "default"
         ],
         "engine": [
+          "alloc",
           "block-buffer",
           "core-api",
-          "default"
+          "default",
+          "std"
         ],
         "esp32-c6": [
           "block-buffer",
@@ -2692,9 +2713,11 @@
           "mac"
         ],
         "engine": [
+          "alloc",
           "block-api",
           "default",
-          "mac"
+          "mac",
+          "oid"
         ],
         "esp32-c6": [
           "block-api",
@@ -3749,13 +3772,11 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
-        "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-tbeam": [],
         "ios": [],
-        "nrf52840": [],
-        "wasm": []
+        "nrf52840": []
       },
       "name": "embedded-hal",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -3775,13 +3796,11 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
-        "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-tbeam": [],
         "ios": [],
-        "nrf52840": [],
-        "wasm": []
+        "nrf52840": []
       },
       "name": "embedded-hal-async",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -4159,6 +4178,11 @@
           "std"
         ],
         "desktop-linux": [
+          "default",
+          "std"
+        ],
+        "desktop-macos": [
+          "default",
           "std"
         ],
         "engine": [
@@ -5185,6 +5209,25 @@
     },
     {
       "graphs": {
+        "daemon-linux": [
+          "async",
+          "futures-core",
+          "futures-sink"
+        ]
+      },
+      "name": "flume",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.12.0"
+    },
+    {
+      "graphs": {
         "android": [
           "default",
           "std"
@@ -5236,6 +5279,24 @@
         "tokens": 0
       },
       "version": "1.0.7"
+    },
+    {
+      "graphs": {
+        "daemon-linux": [
+          "alloc",
+          "std"
+        ]
+      },
+      "name": "form_urlencoded",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 2,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 2
+      },
+      "version": "1.2.2"
     },
     {
       "graphs": {
@@ -6072,12 +6133,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-tbeam": [],
         "ios": [],
-        "nrf52840": [],
-        "wasm": [
-          "js",
-          "js-sys",
-          "wasm-bindgen"
-        ]
+        "nrf52840": []
       },
       "name": "getrandom",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -6551,6 +6607,119 @@
     },
     {
       "graphs": {
+        "daemon-linux": []
+      },
+      "name": "icu_collections",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 12,
+        "externs": 0,
+        "functions": 3,
+        "impls": 0,
+        "tokens": 15
+      },
+      "version": "2.2.0"
+    },
+    {
+      "graphs": {
+        "daemon-linux": [
+          "zerovec"
+        ]
+      },
+      "name": "icu_locale_core",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 3,
+        "externs": 0,
+        "functions": 1,
+        "impls": 1,
+        "tokens": 5
+      },
+      "version": "2.2.0"
+    },
+    {
+      "graphs": {
+        "daemon-linux": [
+          "compiled_data"
+        ]
+      },
+      "name": "icu_normalizer",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 35,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 35
+      },
+      "version": "2.2.0"
+    },
+    {
+      "graphs": {
+        "daemon-linux": []
+      },
+      "name": "icu_normalizer_data",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "2.2.0"
+    },
+    {
+      "graphs": {
+        "daemon-linux": [
+          "compiled_data"
+        ]
+      },
+      "name": "icu_properties",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "2.2.0"
+    },
+    {
+      "graphs": {
+        "daemon-linux": []
+      },
+      "name": "icu_properties_data",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "2.2.0"
+    },
+    {
+      "graphs": {
+        "daemon-linux": [
+          "baked"
+        ]
+      },
+      "name": "icu_provider",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 13,
+        "externs": 0,
+        "functions": 3,
+        "impls": 3,
+        "tokens": 19
+      },
+      "version": "2.2.0"
+    },
+    {
+      "graphs": {
         "android": [],
         "daemon-linux": [],
         "desktop-linux": [],
@@ -6574,6 +6743,42 @@
     },
     {
       "graphs": {
+        "daemon-linux": [
+          "alloc",
+          "compiled_data",
+          "std"
+        ]
+      },
+      "name": "idna",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 16,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 16
+      },
+      "version": "1.1.0"
+    },
+    {
+      "graphs": {
+        "daemon-linux": [
+          "compiled_data"
+        ]
+      },
+      "name": "idna_adapter",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "1.2.2"
+    },
+    {
+      "graphs": {
         "android": [],
         "daemon-linux": [],
         "desktop-linux": [],
@@ -6594,6 +6799,23 @@
         "tokens": 34
       },
       "version": "0.13.4"
+    },
+    {
+      "graphs": {
+        "daemon-linux": [
+          "link-local"
+        ]
+      },
+      "name": "if-addrs",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 35,
+        "externs": 1,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 36
+      },
+      "version": "0.15.0"
     },
     {
       "graphs": {
@@ -6845,6 +7067,7 @@
       "graphs": {
         "daemon-linux": [],
         "desktop-linux": [],
+        "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-tbeam": []
@@ -6998,7 +7221,8 @@
     {
       "graphs": {
         "desktop-linux": [
-          "blocking"
+          "blocking",
+          "tokio"
         ]
       },
       "name": "ksni",
@@ -7103,6 +7327,7 @@
         ],
         "engine": [
           "default",
+          "extra_traits",
           "std"
         ],
         "esp32-c6": [
@@ -7241,6 +7466,21 @@
         "tokens": 6930
       },
       "version": "0.12.1"
+    },
+    {
+      "graphs": {
+        "daemon-linux": []
+      },
+      "name": "litemap",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 2,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 2
+      },
+      "version": "0.8.2"
     },
     {
       "graphs": {
@@ -7618,6 +7858,26 @@
     },
     {
       "graphs": {
+        "daemon-linux": [
+          "async",
+          "default",
+          "log",
+          "logging"
+        ]
+      },
+      "name": "mdns-sd",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.20.2"
+    },
+    {
+      "graphs": {
         "engine": [
           "alloc",
           "default",
@@ -7792,6 +8052,8 @@
           "os-poll"
         ],
         "daemon-linux": [
+          "default",
+          "log",
           "net",
           "os-ext",
           "os-poll"
@@ -8333,6 +8595,7 @@
           "std"
         ],
         "engine": [
+          "default",
           "std"
         ],
         "esp32-c6": [
@@ -9445,6 +9708,24 @@
     },
     {
       "graphs": {
+        "daemon-linux": [
+          "alloc",
+          "std"
+        ]
+      },
+      "name": "percent-encoding",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 4,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 4
+      },
+      "version": "2.3.2"
+    },
+    {
+      "graphs": {
         "android": []
       },
       "name": "personal-hopspot-android",
@@ -9538,11 +9819,11 @@
       "name": "personal-hopspot-esp32",
       "source": "personal-hopspot/embedded/esp32",
       "unsafe": {
-        "blocks": 6,
+        "blocks": 8,
         "externs": 0,
         "functions": 1,
         "impls": 1,
-        "tokens": 8
+        "tokens": 10
       },
       "version": "0.1.0"
     },
@@ -9580,6 +9861,7 @@
           "ax25",
           "backbone",
           "bluetooth-auto",
+          "browser-rendezvous",
           "config",
           "i2p",
           "interface-discovery",
@@ -9712,7 +9994,7 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.2.6"
+      "version": "0.2.7"
     },
     {
       "graphs": {
@@ -9955,6 +10237,23 @@
     },
     {
       "graphs": {
+        "daemon-linux": [
+          "zerovec"
+        ]
+      },
+      "name": "potential_utf",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 6,
+        "externs": 0,
+        "functions": 2,
+        "impls": 2,
+        "tokens": 10
+      },
+      "version": "0.1.5"
+    },
+    {
+      "graphs": {
         "daemon-linux": [],
         "desktop-macos": [],
         "ios": []
@@ -10104,7 +10403,7 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.2.6"
+      "version": "0.2.7"
     },
     {
       "graphs": {
@@ -10218,7 +10517,7 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.2.6"
+      "version": "0.2.7"
     },
     {
       "graphs": {
@@ -10237,6 +10536,7 @@
           "ax25",
           "backbone",
           "bluetooth-auto",
+          "browser-rendezvous",
           "config",
           "i2p",
           "interface-discovery",
@@ -10328,7 +10628,7 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.2.6"
+      "version": "0.2.7"
     },
     {
       "graphs": {
@@ -10401,7 +10701,7 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.2.6"
+      "version": "0.2.7"
     },
     {
       "graphs": {
@@ -10446,7 +10746,7 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.2.6"
+      "version": "0.2.7"
     },
     {
       "graphs": {
@@ -10487,7 +10787,7 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.2.6"
+      "version": "0.2.7"
     },
     {
       "graphs": {
@@ -10523,7 +10823,7 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.2.6"
+      "version": "0.2.7"
     },
     {
       "graphs": {
@@ -11879,6 +12179,12 @@
           "result",
           "std"
         ],
+        "engine": [
+          "alloc",
+          "default",
+          "result",
+          "std"
+        ],
         "esp32-c6": [
           "alloc",
           "result",
@@ -11963,6 +12269,10 @@
           "std"
         ],
         "desktop-linux": [
+          "default",
+          "std"
+        ],
+        "engine": [
           "default",
           "std"
         ]
@@ -12084,7 +12394,10 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
-        "engine": [],
+        "engine": [
+          "default",
+          "std"
+        ],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-tbeam": [],
@@ -12110,7 +12423,11 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
-        "engine": [],
+        "engine": [
+          "alloc",
+          "default",
+          "oid"
+        ],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-tbeam": [],
@@ -12194,7 +12511,9 @@
     {
       "graphs": {
         "android": [],
-        "daemon-linux": []
+        "daemon-linux": [],
+        "desktop-linux": [],
+        "desktop-macos": []
       },
       "name": "signal-hook-registry",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -12341,7 +12660,9 @@
     },
     {
       "graphs": {
-        "daemon-linux": []
+        "daemon-linux": [
+          "const_generics"
+        ]
       },
       "name": "smallvec",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -12460,6 +12781,21 @@
     },
     {
       "graphs": {
+        "daemon-linux": []
+      },
+      "name": "socket-pktinfo",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 24,
+        "externs": 1,
+        "functions": 2,
+        "impls": 0,
+        "tokens": 27
+      },
+      "version": "0.4.0"
+    },
+    {
+      "graphs": {
         "android": [
           "all"
         ],
@@ -12538,6 +12874,31 @@
     },
     {
       "graphs": {
+        "daemon-linux": [
+          "barrier",
+          "default",
+          "lazy",
+          "lock_api",
+          "lock_api_crate",
+          "mutex",
+          "once",
+          "rwlock",
+          "spin_mutex"
+        ]
+      },
+      "name": "spin",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 61,
+        "externs": 0,
+        "functions": 25,
+        "impls": 31,
+        "tokens": 117
+      },
+      "version": "0.9.9"
+    },
+    {
+      "graphs": {
         "esp32-s3-heltec": [
           "default",
           "embedded-graphics-core",
@@ -12582,7 +12943,10 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
-        "engine": [],
+        "engine": [
+          "alloc",
+          "std"
+        ],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-tbeam": [],
@@ -12895,6 +13259,7 @@
           "default",
           "derive",
           "extra-traits",
+          "fold",
           "full",
           "parsing",
           "printing",
@@ -12907,6 +13272,7 @@
           "default",
           "derive",
           "extra-traits",
+          "fold",
           "full",
           "parsing",
           "printing",
@@ -13351,6 +13717,23 @@
     },
     {
       "graphs": {
+        "daemon-linux": [
+          "zerovec"
+        ]
+      },
+      "name": "tinystr",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 18,
+        "externs": 0,
+        "functions": 2,
+        "impls": 2,
+        "tokens": 22
+      },
+      "version": "0.8.3"
+    },
+    {
+      "graphs": {
         "android": [
           "bytes",
           "default",
@@ -13395,49 +13778,61 @@
         "desktop-linux": [
           "bytes",
           "default",
+          "fs",
           "io-util",
           "libc",
           "macros",
           "mio",
           "net",
+          "process",
           "rt",
           "rt-multi-thread",
+          "signal-hook-registry",
           "socket2",
           "sync",
           "time",
           "tokio-macros",
+          "tracing",
           "windows-sys"
         ],
         "desktop-macos": [
           "bytes",
           "default",
+          "fs",
           "io-util",
           "libc",
           "macros",
           "mio",
           "net",
+          "process",
           "rt",
           "rt-multi-thread",
+          "signal-hook-registry",
           "socket2",
           "sync",
           "time",
           "tokio-macros",
+          "tracing",
           "windows-sys"
         ],
         "desktop-windows": [
           "bytes",
           "default",
+          "fs",
           "io-util",
           "libc",
           "macros",
           "mio",
           "net",
+          "process",
           "rt",
           "rt-multi-thread",
+          "signal-hook-registry",
           "socket2",
           "sync",
           "time",
           "tokio-macros",
+          "tracing",
           "windows-sys"
         ],
         "esp32-c6": [
@@ -14335,6 +14730,24 @@
     },
     {
       "graphs": {
+        "daemon-linux": [
+          "default",
+          "std"
+        ]
+      },
+      "name": "url",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 1,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 1
+      },
+      "version": "2.5.8"
+    },
+    {
+      "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-tbeam": [],
@@ -14410,6 +14823,21 @@
         "tokens": 3
       },
       "version": "0.7.6"
+    },
+    {
+      "graphs": {
+        "daemon-linux": []
+      },
+      "name": "utf8_iter",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 10,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 10
+      },
+      "version": "1.0.4"
     },
     {
       "graphs": {
@@ -15109,6 +15537,21 @@
     },
     {
       "graphs": {
+        "daemon-linux": []
+      },
+      "name": "writeable",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 3,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 3
+      },
+      "version": "0.6.3"
+    },
+    {
+      "graphs": {
         "android": [
           "precomputed-tables",
           "static_secrets"
@@ -15272,7 +15715,42 @@
     },
     {
       "graphs": {
-        "desktop-linux": []
+        "daemon-linux": [
+          "derive",
+          "zerofrom"
+        ]
+      },
+      "name": "yoke",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 46,
+        "externs": 0,
+        "functions": 18,
+        "impls": 26,
+        "tokens": 94
+      },
+      "version": "0.8.3"
+    },
+    {
+      "graphs": {
+        "daemon-linux": []
+      },
+      "name": "yoke-derive",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 5,
+        "externs": 0,
+        "functions": 3,
+        "impls": 3,
+        "tokens": 11
+      },
+      "version": "0.8.2"
+    },
+    {
+      "graphs": {
+        "desktop-linux": [
+          "tokio"
+        ]
       },
       "name": "zbus",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -15393,6 +15871,38 @@
         "tokens": 296
       },
       "version": "0.8.50"
+    },
+    {
+      "graphs": {
+        "daemon-linux": [
+          "derive"
+        ]
+      },
+      "name": "zerofrom",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.1.8"
+    },
+    {
+      "graphs": {
+        "daemon-linux": []
+      },
+      "name": "zerofrom-derive",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.1.7"
     },
     {
       "graphs": {
@@ -15525,7 +16035,59 @@
     },
     {
       "graphs": {
-        "desktop-linux": []
+        "daemon-linux": [
+          "yoke",
+          "zerofrom"
+        ]
+      },
+      "name": "zerotrie",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 6,
+        "externs": 0,
+        "functions": 1,
+        "impls": 1,
+        "tokens": 8
+      },
+      "version": "0.2.4"
+    },
+    {
+      "graphs": {
+        "daemon-linux": [
+          "derive",
+          "yoke"
+        ]
+      },
+      "name": "zerovec",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 113,
+        "externs": 0,
+        "functions": 53,
+        "impls": 60,
+        "tokens": 231
+      },
+      "version": "0.11.6"
+    },
+    {
+      "graphs": {
+        "daemon-linux": []
+      },
+      "name": "zerovec-derive",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 4,
+        "externs": 0,
+        "functions": 1,
+        "impls": 6,
+        "tokens": 11
+      },
+      "version": "0.11.3"
+    },
+    {
+      "graphs": {
+        "desktop-linux": [],
+        "engine": []
       },
       "name": "zmij",
       "source": "registry+https://github.com/rust-lang/crates.io-index",

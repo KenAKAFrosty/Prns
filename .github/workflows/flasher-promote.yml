@@ -1,0 +1,791 @@
+name: promote signed flasher release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact VERSION without a v prefix
+        required: true
+        type: string
+      release_record_sha256:
+        description: Lowercase SHA-256 of the signed release-record asset
+        required: true
+        type: string
+      rollback_baseline_version:
+        description: Immutable signed stable version retained for rollback
+        required: true
+        type: string
+      rollback_baseline_release_record_sha256:
+        description: Lowercase SHA-256 of the baseline's signed release record
+        required: true
+        type: string
+      rollback_dry_run_id:
+        description: Successful <=15-minute rollback dry-run workflow ID
+        required: true
+        type: string
+      rollback_dry_run_attempt:
+        description: Exact successful rollback dry-run workflow attempt
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  RELEASE_VERSION: ${{ inputs.version }}
+  EXPECTED_RELEASE_RECORD_SHA256: ${{ inputs.release_record_sha256 }}
+  ROLLBACK_BASELINE_VERSION: ${{ inputs.rollback_baseline_version }}
+  ROLLBACK_BASELINE_RELEASE_RECORD_SHA256: ${{ inputs.rollback_baseline_release_record_sha256 }}
+  ROLLBACK_DRY_RUN_ID: ${{ inputs.rollback_dry_run_id }}
+  ROLLBACK_DRY_RUN_ATTEMPT: ${{ inputs.rollback_dry_run_attempt }}
+  RUSTUP_TOOLCHAIN: 1.96.0
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      attestations: read
+      contents: read
+    outputs:
+      current_manifest_sha256: ${{ steps.rollback.outputs.current_manifest_sha256 }}
+      rollback_baseline_manifest_sha256: ${{ steps.rollback.outputs.baseline_manifest_sha256 }}
+      release_asset_inventory_sha256: ${{ steps.release-assets.outputs.inventory_sha256 }}
+      rollback_baseline_asset_inventory_sha256: ${{ steps.rollback.outputs.baseline_asset_inventory_sha256 }}
+      candidate_pages_artifact_name: ${{ steps.pages-artifacts.outputs.candidate_pages }}
+      rollback_baseline_pages_artifact_name: ${{ steps.pages-artifacts.outputs.baseline_pages }}
+      rollback_baseline_stage_artifact_name: ${{ steps.pages-artifacts.outputs.baseline_stage }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.96.0
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: flasher-promotion
+          cache-targets: false
+      - name: Confirm default-branch custody and install exact Minisign verifier
+        id: repository
+        run: |
+          default_branch="$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.default_branch')"
+          test "$GITHUB_REF" = "refs/heads/${default_branch}"
+          echo "default_branch=$default_branch" >> "$GITHUB_OUTPUT"
+          scripts/install-release-minisign.sh "${RUNNER_TEMP}/prns-release-bin"
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Download every exact prerelease asset
+        id: release-assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p target/release
+          [[ "$RELEASE_VERSION" =~ ^[0-9A-Za-z][0-9A-Za-z.+-]*$ ]]
+          test "${RELEASE_VERSION,,}" != "next"
+          gh release download "v${RELEASE_VERSION}" --dir target/release
+          gh release view "v${RELEASE_VERSION}" --json assets \
+            --jq '[.assets[] | {name, size, digest}] | sort_by(.name)' \
+            > target/prerelease-assets-before-promotion.json
+          echo "inventory_sha256=$(sha256sum \
+            target/prerelease-assets-before-promotion.json | awk '{print $1}')" \
+            >> "$GITHUB_OUTPUT"
+      - name: Bind promotion to the reviewed release record
+        run: |
+          [[ "$EXPECTED_RELEASE_RECORD_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          record="target/release/release-record-v${RELEASE_VERSION}.json"
+          test "$(sha256sum "$record" | awk '{print $1}')" = "$EXPECTED_RELEASE_RECORD_SHA256"
+          signing_run_id="$(jq -r '.workflow_run_id' \
+            "target/release/prns-flasher-attestation-v${RELEASE_VERSION}.metadata.json")"
+          [[ "$signing_run_id" =~ ^[1-9][0-9]*$ ]]
+      - name: Extract exact signed candidate
+        run: |
+          python3 scripts/extract-flasher-candidate.py \
+            "target/release/prns-flasher-candidate-v${RELEASE_VERSION}-signed.tar.gz" \
+            target/signed-candidate
+      - name: Verify signatures, hashes, provenance, hardware evidence, and release record
+        env:
+          DEFAULT_BRANCH: ${{ steps.repository.outputs.default_branch }}
+          PRNS_MINISIGN_BIN: ${{ runner.temp }}/prns-release-bin/minisign
+        run: |
+          record="target/release/release-record-v${RELEASE_VERSION}.json"
+          acceptance_commit="$(jq -r '.acceptance.source_commit' "$record")"
+          source_commit="$(jq -r '.release.source_commit' "$record")"
+          published_at="$(jq -r '.release.prerelease_published_at' "$record")"
+          git merge-base --is-ancestor "$source_commit" \
+            "origin/${DEFAULT_BRANCH}"
+          git merge-base --is-ancestor "$acceptance_commit" \
+            "origin/${DEFAULT_BRANCH}"
+          scripts/verify-flasher-release.sh \
+            --candidate target/signed-candidate \
+            --candidate-run "target/release/prns-flasher-candidate-run-v${RELEASE_VERSION}.json" \
+            --signed-bundle "target/release/prns-flasher-candidate-v${RELEASE_VERSION}-signed.tar.gz" \
+            --acceptance "target/release/acceptance-v${RELEASE_VERSION}.json" \
+            --acceptance-source-commit "$acceptance_commit" \
+            --qualification-evidence "target/release/qualification-evidence-v${RELEASE_VERSION}.tar.gz" \
+            --public-review-evidence "target/release/$(jq -r '.public_review.evidence.name' "$record")" \
+            --prerelease-published-at "$published_at" \
+            --release-record "$record" \
+            --attestation-bundle "target/release/prns-flasher-attestation-v${RELEASE_VERSION}.json" \
+            --attestation-metadata "target/release/prns-flasher-attestation-v${RELEASE_VERSION}.metadata.json" \
+            --repository "$GITHUB_REPOSITORY"
+      - name: Verify GitHub attestations for every published binary
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bundle="target/release/prns-flasher-attestation-v${RELEASE_VERSION}.json"
+          signer_workflow="$GITHUB_REPOSITORY/.github/workflows/flasher-sign.yml"
+          gh attestation verify \
+            "target/release/prns-flasher-candidate-v${RELEASE_VERSION}-signed.tar.gz" \
+            --repo "$GITHUB_REPOSITORY" \
+            --bundle "$bundle" \
+            --signer-workflow "$signer_workflow" \
+            --deny-self-hosted-runners
+          for archive in target/signed-candidate/cli/hopspot-flash-*; do
+            gh attestation verify "$archive" \
+              --repo "$GITHUB_REPOSITORY" \
+              --bundle "$bundle" \
+              --signer-workflow "$signer_workflow" \
+              --deny-self-hosted-runners
+          done
+          while IFS= read -r relative; do
+            gh attestation verify "target/signed-candidate/$relative" \
+              --repo "$GITHUB_REPOSITORY" \
+              --bundle "$bundle" \
+              --signer-workflow "$signer_workflow" \
+              --deny-self-hosted-runners
+          done < <(jq -r '[.targets[].parts[].path] | unique[]' target/signed-candidate/flash-manifest.json)
+      - name: Verify the exact successful protected review and public age
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          record="target/release/release-record-v${RELEASE_VERSION}.json"
+          source_commit="$(jq -r '.release.source_commit' "$record")"
+          test "$(cat VERSION)" = "$RELEASE_VERSION"
+          test -f target/signed-candidate/channels/stable.json
+          mkdir -p target/public-review
+          gh release view "v${RELEASE_VERSION}" \
+            --json isDraft,isPrerelease,publishedAt,tagName,targetCommitish \
+            > target/public-review/release.json
+          python3 scripts/validate-flasher-prerelease.py \
+            --release-json target/public-review/release.json \
+            --version "$RELEASE_VERSION" \
+            --source-commit "$source_commit" \
+            --minimum-hours 24 \
+            --allow-promoted
+          signed_bundle="target/release/prns-flasher-candidate-v${RELEASE_VERSION}-signed.tar.gz"
+          evidence_name="$(jq -r '.public_review.evidence.name' "$record")"
+          evidence="target/release/${evidence_name}"
+          test -f "$evidence"
+          test "$(stat -c '%s' "$evidence")" = \
+            "$(jq -r '.public_review.evidence.size' "$record")"
+          test "$(sha256sum "$evidence" | awk '{print $1}')" = \
+            "$(jq -r '.public_review.evidence.sha256' "$record")"
+          signing_run_id="$(jq -r '.public_review.workflow_run_id' "$record")"
+          run_attempt="$(jq -r '.public_review.workflow_run_attempt' "$record")"
+          review_job_id="$(jq -r '.public_review.workflow_job_id' "$record")"
+          gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${signing_run_id}/attempts/${run_attempt}" \
+            > target/public-review/run.json
+          gh api --paginate \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${signing_run_id}/attempts/${run_attempt}/jobs?per_page=100" \
+            --jq ".jobs[] | select(.id == ${review_job_id})" \
+            > target/public-review/job-pages.json
+          test "$(jq -s 'length' target/public-review/job-pages.json)" -eq 1
+          jq -s '.[0]' target/public-review/job-pages.json \
+            > target/public-review/job.json
+          python3 scripts/flasher-public-review.py verify \
+            --evidence "$evidence" \
+            --release-json target/public-review/release.json \
+            --run-json target/public-review/run.json \
+            --job-json target/public-review/job.json \
+            --signed-bundle "$signed_bundle" \
+            --manifest target/signed-candidate/flash-manifest.json \
+            --repository "$GITHUB_REPOSITORY" \
+            --version "$RELEASE_VERSION" \
+            --source-commit "$source_commit" \
+            --minimum-hours 24 \
+            --allow-promoted
+      - name: Verify the complete prerelease asset inventory before deployment
+        run: |
+          python3 scripts/verify-flasher-release-assets.py \
+            --candidate target/signed-candidate \
+            --assets target/release \
+            --remote-inventory target/prerelease-assets-before-promotion.json \
+            --version "$RELEASE_VERSION"
+      - name: Verify and restage the exact signed rollback baseline
+        id: rollback
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRNS_MINISIGN_BIN: ${{ runner.temp }}/prns-release-bin/minisign
+        run: |
+          [[ "$ROLLBACK_BASELINE_VERSION" =~ ^[0-9A-Za-z][0-9A-Za-z.+-]*$ ]]
+          test "${ROLLBACK_BASELINE_VERSION,,}" != next
+          test "$ROLLBACK_BASELINE_VERSION" != "$RELEASE_VERSION"
+          [[ "$ROLLBACK_BASELINE_RELEASE_RECORD_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$ROLLBACK_DRY_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$ROLLBACK_DRY_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+
+          assets="target/rollback-baseline-assets"
+          candidate="target/rollback-baseline-candidate"
+          mkdir -p "$assets"
+          gh release download "v${ROLLBACK_BASELINE_VERSION}" --dir "$assets"
+          gh release view "v${ROLLBACK_BASELINE_VERSION}" --json assets \
+            --jq '[.assets[] | {name, size, digest}] | sort_by(.name)' \
+            > target/rollback-baseline-assets-verified.json
+          record="$assets/release-record-v${ROLLBACK_BASELINE_VERSION}.json"
+          test "$(sha256sum "$record" | awk '{print $1}')" = \
+            "$ROLLBACK_BASELINE_RELEASE_RECORD_SHA256"
+          gh release view "v${ROLLBACK_BASELINE_VERSION}" \
+            --json isDraft,isPrerelease,publishedAt,tagName,targetCommitish \
+            > target/rollback-baseline-release.json
+          test "$(jq -r '.isDraft' target/rollback-baseline-release.json)" = false
+          test "$(jq -r '.isPrerelease' target/rollback-baseline-release.json)" = false
+          test "$(jq -r '.tagName' target/rollback-baseline-release.json)" = \
+            "v${ROLLBACK_BASELINE_VERSION}"
+          test "$(jq -r '.targetCommitish' target/rollback-baseline-release.json)" = \
+            "$(jq -r '.release.source_commit' "$record")"
+          bundle="$assets/prns-flasher-candidate-v${ROLLBACK_BASELINE_VERSION}-signed.tar.gz"
+          python3 scripts/extract-flasher-candidate.py "$bundle" "$candidate"
+          acceptance_commit="$(jq -r '.acceptance.source_commit' "$record")"
+          review_name="$(jq -r '.public_review.evidence.name' "$record")"
+          review_evidence="$assets/$review_name"
+          test -f "$review_evidence"
+          review_run_id="$(jq -r '.public_review.workflow_run_id' "$record")"
+          review_attempt="$(jq -r '.public_review.workflow_run_attempt' "$record")"
+          review_job_id="$(jq -r '.public_review.workflow_job_id' "$record")"
+          gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${review_run_id}/attempts/${review_attempt}" \
+            > target/rollback-baseline-review-run.json
+          gh api --paginate \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${review_run_id}/attempts/${review_attempt}/jobs?per_page=100" \
+            --jq ".jobs[] | select(.id == ${review_job_id})" \
+            > target/rollback-baseline-review-job-pages.json
+          test "$(jq -s 'length' target/rollback-baseline-review-job-pages.json)" -eq 1
+          jq -s '.[0]' target/rollback-baseline-review-job-pages.json \
+            > target/rollback-baseline-review-job.json
+          python3 scripts/verify-historical-flasher-release.py \
+            --candidate "$candidate" \
+            --candidate-run "$assets/prns-flasher-candidate-run-v${ROLLBACK_BASELINE_VERSION}.json" \
+            --signed-bundle "$bundle" \
+            --acceptance "$assets/acceptance-v${ROLLBACK_BASELINE_VERSION}.json" \
+            --acceptance-source-commit "$acceptance_commit" \
+            --release-record "$record" \
+            --attestation-bundle "$assets/prns-flasher-attestation-v${ROLLBACK_BASELINE_VERSION}.json" \
+            --attestation-metadata "$assets/prns-flasher-attestation-v${ROLLBACK_BASELINE_VERSION}.metadata.json" \
+            --public-review-evidence "$review_evidence" \
+            --public-review-release target/rollback-baseline-release.json \
+            --public-review-run target/rollback-baseline-review-run.json \
+            --public-review-job target/rollback-baseline-review-job.json \
+            --assets "$assets" \
+            --repository "$GITHUB_REPOSITORY" \
+            --version "$ROLLBACK_BASELINE_VERSION"
+          python3 scripts/verify-flasher-release-assets.py \
+            --candidate "$candidate" \
+            --assets "$assets" \
+            --remote-inventory target/rollback-baseline-assets-verified.json \
+            --version "$ROLLBACK_BASELINE_VERSION"
+
+          attestation="$assets/prns-flasher-attestation-v${ROLLBACK_BASELINE_VERSION}.json"
+          signer="$GITHUB_REPOSITORY/.github/workflows/flasher-sign.yml"
+          gh attestation verify "$bundle" --repo "$GITHUB_REPOSITORY" \
+            --bundle "$attestation" --signer-workflow "$signer" \
+            --deny-self-hosted-runners
+          for archive in "$candidate"/cli/hopspot-flash-*; do
+            gh attestation verify "$archive" --repo "$GITHUB_REPOSITORY" \
+              --bundle "$attestation" --signer-workflow "$signer" \
+              --deny-self-hosted-runners
+          done
+          while IFS= read -r relative; do
+            gh attestation verify "$candidate/$relative" --repo "$GITHUB_REPOSITORY" \
+              --bundle "$attestation" --signer-workflow "$signer" \
+              --deny-self-hosted-runners
+          done < <(jq -r '[.targets[].parts[].path] | unique[]' "$candidate/flash-manifest.json")
+
+          python3 scripts/flasher-rollback.py stage \
+            --candidate "$candidate" \
+            --release-record "$record" \
+            --release-record-sha256 "$ROLLBACK_BASELINE_RELEASE_RECORD_SHA256" \
+            --version "$ROLLBACK_BASELINE_VERSION" \
+            --output target/rollback-baseline-website \
+            --identity-output target/rollback-baseline-stage.json
+          history=target/signed-candidate/metadata/release-history.json
+          test "$(jq -r '.mode' "$history")" = retained
+          test "$(jq -r '.head.version' "$history")" = "$ROLLBACK_BASELINE_VERSION"
+          test "$(jq -r '.head.release_record_sha256' "$history")" = \
+            "$ROLLBACK_BASELINE_RELEASE_RECORD_SHA256"
+          test "$(jq -r '.head.manifest_sha256' "$history")" = \
+            "$(jq -r '.target.manifest_sha256' target/rollback-baseline-stage.json)"
+          echo "baseline_manifest_sha256=$(jq -r '.target.manifest_sha256' \
+            target/rollback-baseline-stage.json)" >> "$GITHUB_OUTPUT"
+          echo "current_manifest_sha256=$(sha256sum \
+            target/signed-candidate/flash-manifest.json | awk '{print $1}')" \
+            >> "$GITHUB_OUTPUT"
+          echo "baseline_asset_inventory_sha256=$(sha256sum \
+            target/rollback-baseline-assets-verified.json | awk '{print $1}')" \
+            >> "$GITHUB_OUTPUT"
+      - name: Download the exact successful rollback dry-run record
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: flasher-rollback-dry-run-${{ inputs.rollback_dry_run_id }}-attempt-${{ inputs.rollback_dry_run_attempt }}
+          path: target/rollback-dry-run
+          run-id: ${{ inputs.rollback_dry_run_id }}
+          github-token: ${{ github.token }}
+      - name: Block promotion without a matching <=15-minute rollback dry-run
+        env:
+          DEFAULT_BRANCH: ${{ steps.repository.outputs.default_branch }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${ROLLBACK_DRY_RUN_ID}/attempts/${ROLLBACK_DRY_RUN_ATTEMPT}" \
+            > target/rollback-dry-run-workflow.json
+          dry_run_job_id="$(jq -r '.workflow_job_id' \
+            target/rollback-dry-run/rollback-dry-run.json)"
+          [[ "$dry_run_job_id" =~ ^[1-9][0-9]*$ ]]
+          gh api --paginate \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${ROLLBACK_DRY_RUN_ID}/attempts/${ROLLBACK_DRY_RUN_ATTEMPT}/jobs?per_page=100" \
+            --jq ".jobs[] | select(.id == ${dry_run_job_id})" \
+            > target/rollback-dry-run-job-pages.json
+          test "$(jq -s 'length' target/rollback-dry-run-job-pages.json)" -eq 1
+          jq -s '.[0]' target/rollback-dry-run-job-pages.json \
+            > target/rollback-dry-run-job.json
+          current_manifest_sha256="$(
+            sha256sum target/signed-candidate/flash-manifest.json | awk '{print $1}'
+          )"
+          python3 scripts/flasher-rollback.py validate-record \
+            --record target/rollback-dry-run/rollback-dry-run.json \
+            --run-json target/rollback-dry-run-workflow.json \
+            --job-json target/rollback-dry-run-job.json \
+            --stage-identity target/rollback-baseline-stage.json \
+            --repository "$GITHUB_REPOSITORY" \
+            --default-branch "$DEFAULT_BRANCH" \
+            --expected-run-id "$ROLLBACK_DRY_RUN_ID" \
+            --expected-run-attempt "$ROLLBACK_DRY_RUN_ATTEMPT" \
+            --target-version "$ROLLBACK_BASELINE_VERSION" \
+            --target-release-record-sha256 "$ROLLBACK_BASELINE_RELEASE_RECORD_SHA256" \
+            --expected-live-version "$RELEASE_VERSION" \
+            --expected-live-manifest-sha256 "$current_manifest_sha256" \
+            --required-workflow-sha "$GITHUB_SHA" \
+            --required-observed-live-state target_baseline
+      - name: Verify live baseline before publishing release state
+        env:
+          PRNS_MINISIGN_BIN: ${{ runner.temp }}/prns-release-bin/minisign
+          BASELINE_MANIFEST_SHA256: ${{ steps.rollback.outputs.baseline_manifest_sha256 }}
+          CURRENT_MANIFEST_SHA256: ${{ steps.rollback.outputs.current_manifest_sha256 }}
+        run: |
+          mkdir -p target/live-promotion-cas
+          curl --fail --location --retry 5 --retry-all-errors \
+            --output target/live-promotion-cas/stable.json \
+            https://reticulum.rs/releases/channels/stable.json
+          curl --fail --location --retry 5 --retry-all-errors \
+            --output target/live-promotion-cas/stable.json.minisig \
+            https://reticulum.rs/releases/channels/stable.json.minisig
+          "$PRNS_MINISIGN_BIN" -Vm target/live-promotion-cas/stable.json \
+            -x target/live-promotion-cas/stable.json.minisig \
+            -p release/keys/minisign.pub
+          python3 scripts/flasher-rollback.py live-state \
+            --descriptor target/live-promotion-cas/stable.json \
+            --mode deploy \
+            --target-version "$RELEASE_VERSION" \
+            --target-manifest-sha256 "$CURRENT_MANIFEST_SHA256" \
+            --expected-live-version "$ROLLBACK_BASELINE_VERSION" \
+            --expected-live-manifest-sha256 "$BASELINE_MANIFEST_SHA256"
+      - name: Bind Pages artifacts to this exact verification attempt
+        id: pages-artifacts
+        run: |
+          echo "baseline_pages=flasher-promotion-baseline-pages-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+          echo "baseline_stage=flasher-promotion-baseline-stage-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+          echo "candidate_pages=flasher-promotion-candidate-pages-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+      - name: Preserve the verified baseline as an automatic recovery Pages artifact
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa
+        with:
+          name: ${{ steps.pages-artifacts.outputs.baseline_pages }}
+          path: target/rollback-baseline-website
+          retention-days: 1
+      - name: Preserve the exact baseline website inventory for recovery verification
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ${{ steps.pages-artifacts.outputs.baseline_stage }}
+          path: target/rollback-baseline-stage.json
+          retention-days: 1
+          if-no-files-found: error
+      - name: Upload the exact candidate Pages artifact
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa
+        with:
+          name: ${{ steps.pages-artifacts.outputs.candidate_pages }}
+          path: target/signed-candidate/website
+
+  publish-and-deploy:
+    name: Deploy and verify exact signed website before publishing release state
+    needs: verify
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: prns-public-pages
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Install exact Minisign verifier
+        run: scripts/install-release-minisign.sh "${RUNNER_TEMP}/prns-release-bin"
+      - name: Recheck the verified release asset inventory before deployment
+        env:
+          EXPECTED_ASSET_INVENTORY_SHA256: ${{ needs.verify.outputs.release_asset_inventory_sha256 }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "v${RELEASE_VERSION}" --json assets \
+            --jq '[.assets[] | {name, size, digest}] | sort_by(.name)' \
+            > target/assets-before-deployment.json
+          test "$(sha256sum target/assets-before-deployment.json | awk '{print $1}')" = \
+            "$EXPECTED_ASSET_INVENTORY_SHA256"
+      - name: Recheck live promotion CAS immediately before Pages deployment
+        env:
+          PRNS_MINISIGN_BIN: ${{ runner.temp }}/prns-release-bin/minisign
+          BASELINE_MANIFEST_SHA256: ${{ needs.verify.outputs.rollback_baseline_manifest_sha256 }}
+          CURRENT_MANIFEST_SHA256: ${{ needs.verify.outputs.current_manifest_sha256 }}
+        run: |
+          mkdir -p target/live-final-promotion-cas
+          curl --fail --location --retry 5 --retry-all-errors \
+            --output target/live-final-promotion-cas/stable.json \
+            https://reticulum.rs/releases/channels/stable.json
+          curl --fail --location --retry 5 --retry-all-errors \
+            --output target/live-final-promotion-cas/stable.json.minisig \
+            https://reticulum.rs/releases/channels/stable.json.minisig
+          "$PRNS_MINISIGN_BIN" -Vm target/live-final-promotion-cas/stable.json \
+            -x target/live-final-promotion-cas/stable.json.minisig \
+            -p release/keys/minisign.pub
+          python3 scripts/flasher-rollback.py live-state \
+            --descriptor target/live-final-promotion-cas/stable.json \
+            --mode deploy \
+            --target-version "$RELEASE_VERSION" \
+            --target-manifest-sha256 "$CURRENT_MANIFEST_SHA256" \
+            --expected-live-version "$ROLLBACK_BASELINE_VERSION" \
+            --expected-live-manifest-sha256 "$BASELINE_MANIFEST_SHA256"
+      - name: Deploy exact signed website bundle with the stable descriptor last
+        id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e
+        with:
+          artifact_name: ${{ needs.verify.outputs.candidate_pages_artifact_name }}
+      - name: Verify deployed signed channel and website before release mutation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRNS_MINISIGN_BIN: ${{ runner.temp }}/prns-release-bin/minisign
+          SITE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          site_root="${SITE_URL%/}"
+          test -n "$site_root"
+          local_candidate=target/pre-publish-candidate
+          live=target/pre-publish-live
+          assets=target/pre-publish-assets
+          mkdir -p "$assets" "$live"
+          bundle="prns-flasher-candidate-v${RELEASE_VERSION}-signed.tar.gz"
+          gh release download "v${RELEASE_VERSION}" --pattern "$bundle" --dir "$assets"
+          python3 scripts/extract-flasher-candidate.py \
+            "$assets/$bundle" "$local_candidate"
+
+          fetch() {
+            curl --fail --location --retry 5 --retry-all-errors \
+              --output "$2" "$site_root/$1"
+          }
+          for attempt in {1..12}; do
+            fetch "releases/channels/stable.json" "$live/stable.json"
+            fetch "releases/channels/stable.json.minisig" "$live/stable.json.minisig"
+            if "$PRNS_MINISIGN_BIN" -Vm "$live/stable.json" \
+              -x "$live/stable.json.minisig" -p release/keys/minisign.pub \
+              && [[ "$(jq -r '.version' "$live/stable.json")" = "$RELEASE_VERSION" ]]; then
+              break
+            fi
+            test "$attempt" -lt 12
+            sleep 5
+          done
+
+          fetch "index.html" "$live/index.html"
+          fetch "assets/flasher/prns-flash.js" "$live/prns-flash.js"
+          fetch "releases/${RELEASE_VERSION}/flash-manifest.json" \
+            "$live/flash-manifest.json"
+          fetch "releases/${RELEASE_VERSION}/flash-manifest.json.minisig" \
+            "$live/flash-manifest.json.minisig"
+          "$PRNS_MINISIGN_BIN" -Vm "$live/flash-manifest.json" \
+            -x "$live/flash-manifest.json.minisig" -p release/keys/minisign.pub
+          test "$(sha256sum "$live/flash-manifest.json" | awk '{print $1}')" = \
+            "$(jq -r '.manifest_sha256' "$live/stable.json")"
+          cmp "$live/index.html" "$local_candidate/website/index.html"
+          cmp "$live/prns-flash.js" \
+            "$local_candidate/website/assets/flasher/prns-flash.js"
+          cmp "$live/stable.json" \
+            "$local_candidate/website/releases/channels/stable.json"
+          cmp "$live/stable.json.minisig" \
+            "$local_candidate/website/releases/channels/stable.json.minisig"
+          cmp "$live/flash-manifest.json" \
+            "$local_candidate/website/releases/${RELEASE_VERSION}/flash-manifest.json"
+          cmp "$live/flash-manifest.json.minisig" \
+            "$local_candidate/website/releases/${RELEASE_VERSION}/flash-manifest.json.minisig"
+      - name: Mark the verified prerelease stable without replacing assets
+        env:
+          EXPECTED_ASSET_INVENTORY_SHA256: ${{ needs.verify.outputs.release_asset_inventory_sha256 }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "v${RELEASE_VERSION}" --json assets \
+            --jq '[.assets[] | {name, size, digest}] | sort_by(.name)' \
+            > target/assets-before-promotion.json
+          test "$(sha256sum target/assets-before-promotion.json | awk '{print $1}')" = \
+            "$EXPECTED_ASSET_INVENTORY_SHA256"
+          gh release edit "v${RELEASE_VERSION}" --prerelease=false --latest=true
+          test "$(gh release view "v${RELEASE_VERSION}" --json isDraft --jq '.isDraft')" = false
+          test "$(gh release view "v${RELEASE_VERSION}" --json isPrerelease --jq '.isPrerelease')" = false
+          test "$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq '.tag_name')" = \
+            "v${RELEASE_VERSION}"
+          gh release view "v${RELEASE_VERSION}" --json assets \
+            --jq '[.assets[] | {name, size, digest}] | sort_by(.name)' \
+            > target/assets-after-promotion.json
+          cmp target/assets-before-promotion.json target/assets-after-promotion.json
+
+  post-promotion-smoke:
+    name: Post-promotion signed channel and installer smoke
+    needs: [verify, publish-and-deploy]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      SITE_URL: ${{ needs.publish-and-deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.96.0
+      - name: Fetch and reverify the complete public release under read-only permissions
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRNS_MINISIGN_BIN: ${{ runner.temp }}/prns-release-bin/minisign
+        run: |
+          scripts/install-release-minisign.sh "${RUNNER_TEMP}/prns-release-bin"
+          mkdir -p target/post-promotion/release-assets
+          gh release download "v${RELEASE_VERSION}" \
+            --dir target/post-promotion/release-assets
+          bundle="target/post-promotion/release-assets/prns-flasher-candidate-v${RELEASE_VERSION}-signed.tar.gz"
+          python3 scripts/extract-flasher-candidate.py \
+            "$bundle" \
+            target/post-promotion/candidate
+          record="target/post-promotion/release-assets/release-record-v${RELEASE_VERSION}.json"
+          acceptance_commit="$(jq -r '.acceptance.source_commit' "$record")"
+          published_at="$(jq -r '.release.prerelease_published_at' "$record")"
+          scripts/verify-flasher-release.sh \
+            --candidate target/post-promotion/candidate \
+            --candidate-run "target/post-promotion/release-assets/prns-flasher-candidate-run-v${RELEASE_VERSION}.json" \
+            --signed-bundle "$bundle" \
+            --acceptance "target/post-promotion/release-assets/acceptance-v${RELEASE_VERSION}.json" \
+            --acceptance-source-commit "$acceptance_commit" \
+            --qualification-evidence "target/post-promotion/release-assets/qualification-evidence-v${RELEASE_VERSION}.tar.gz" \
+            --public-review-evidence "target/post-promotion/release-assets/$(jq -r '.public_review.evidence.name' "$record")" \
+            --prerelease-published-at "$published_at" \
+            --release-record "$record" \
+            --attestation-bundle "target/post-promotion/release-assets/prns-flasher-attestation-v${RELEASE_VERSION}.json" \
+            --attestation-metadata "target/post-promotion/release-assets/prns-flasher-attestation-v${RELEASE_VERSION}.metadata.json" \
+            --repository "$GITHUB_REPOSITORY"
+          python3 scripts/verify-flasher-release-assets.py \
+            --candidate target/post-promotion/candidate \
+            --assets target/post-promotion/release-assets \
+            --version "$RELEASE_VERSION"
+      - name: Fetch and verify the live signed channel, manifest, website, and firmware
+        env:
+          PRNS_MINISIGN_BIN: ${{ runner.temp }}/prns-release-bin/minisign
+        run: |
+          site_root="${SITE_URL%/}"
+          test -n "$site_root"
+          live="target/post-promotion/live"
+          mkdir -p "$live"
+          fetch() {
+            curl --fail --location --retry 5 --retry-all-errors \
+              --output "$2" "$site_root/$1"
+          }
+          fetch "index.html" "$live/index.html"
+          fetch "assets/flasher/prns-flash.js" "$live/prns-flash.js"
+          fetch "releases/channels/stable.json" "$live/stable.json"
+          fetch "releases/channels/stable.json.minisig" "$live/stable.json.minisig"
+          "$PRNS_MINISIGN_BIN" -Vm "$live/stable.json" \
+            -x "$live/stable.json.minisig" -p release/keys/minisign.pub
+          test "$(jq -r '.version' "$live/stable.json")" = "$RELEASE_VERSION"
+
+          fetch "releases/${RELEASE_VERSION}/flash-manifest.json" "$live/flash-manifest.json"
+          fetch "releases/${RELEASE_VERSION}/flash-manifest.json.minisig" "$live/flash-manifest.json.minisig"
+          "$PRNS_MINISIGN_BIN" -Vm "$live/flash-manifest.json" \
+            -x "$live/flash-manifest.json.minisig" -p release/keys/minisign.pub
+          test "$(sha256sum "$live/flash-manifest.json" | awk '{print $1}')" = \
+            "$(jq -r '.manifest_sha256' "$live/stable.json")"
+          test "$(jq -r '.release.version' "$live/flash-manifest.json")" = "$RELEASE_VERSION"
+
+          cmp "$live/index.html" target/post-promotion/candidate/website/index.html
+          cmp "$live/prns-flash.js" \
+            target/post-promotion/candidate/website/assets/flasher/prns-flash.js
+          cmp "$live/stable.json" \
+            target/post-promotion/candidate/website/releases/channels/stable.json
+          cmp "$live/flash-manifest.json" \
+            "target/post-promotion/candidate/website/releases/${RELEASE_VERSION}/flash-manifest.json"
+
+          while IFS=$'\t' read -r relative size checksum; do
+            destination="$live/$(basename "$relative")-$checksum"
+            fetch "releases/${RELEASE_VERSION}/$relative" "$destination"
+            test "$(stat -c '%s' "$destination")" = "$size"
+            test "$(sha256sum "$destination" | awk '{print $1}')" = "$checksum"
+          done < <(
+            jq -r '.targets[].parts[] | [.path, (.size | tostring), .sha256] | @tsv' \
+              "$live/flash-manifest.json"
+          )
+      - name: Prove stable release state and immutable shell installer
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$(gh release view "v${RELEASE_VERSION}" --json isDraft --jq '.isDraft')" = "false"
+          test "$(gh release view "v${RELEASE_VERSION}" --json isPrerelease --jq '.isPrerelease')" = "false"
+          install_root="${RUNNER_TEMP}/hopspot-flash-smoke"
+          HOPSPOT_FLASH_INSTALL_DIR="$install_root" \
+            sh target/post-promotion/candidate/cli/install.sh
+          test "$("$install_root/hopspot-flash" --version)" = \
+            "hopspot-flash ${RELEASE_VERSION}"
+
+  mark-promoted:
+    name: Enable future full-site deployments
+    needs: post-promotion-smoke
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Enable full public site only after every promotion smoke passes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh variable set PRNS_PUBLIC_SITE_PROMOTED --body true
+
+  restore-baseline-on-failure:
+    name: Automatically restore the verified baseline after promotion failure
+    if: >-
+      ${{ always() && needs.verify.result == 'success' &&
+          (needs.publish-and-deploy.result != 'success' ||
+           needs.post-promotion-smoke.result != 'success' ||
+           needs.mark-promoted.result != 'success') }}
+    needs: [verify, publish-and-deploy, post-promotion-smoke, mark-promoted]
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: prns-public-pages
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      contents: write
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.baseline-deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Restore the exact baseline website inventory
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ${{ needs.verify.outputs.rollback_baseline_stage_artifact_name }}
+          path: target/promotion-baseline-stage
+      - name: Install exact Minisign verifier
+        run: scripts/install-release-minisign.sh "${RUNNER_TEMP}/prns-release-bin"
+      - name: Compare-and-swap only the failed candidate back to its verified baseline
+        env:
+          BASELINE_MANIFEST_SHA256: ${{ needs.verify.outputs.rollback_baseline_manifest_sha256 }}
+          CURRENT_MANIFEST_SHA256: ${{ needs.verify.outputs.current_manifest_sha256 }}
+          PRNS_MINISIGN_BIN: ${{ runner.temp }}/prns-release-bin/minisign
+        run: |
+          mkdir -p target/recovery-live-cas
+          curl --fail --location --retry 5 --retry-all-errors \
+            --output target/recovery-live-cas/stable.json \
+            https://reticulum.rs/releases/channels/stable.json
+          curl --fail --location --retry 5 --retry-all-errors \
+            --output target/recovery-live-cas/stable.json.minisig \
+            https://reticulum.rs/releases/channels/stable.json.minisig
+          "$PRNS_MINISIGN_BIN" -Vm target/recovery-live-cas/stable.json \
+            -x target/recovery-live-cas/stable.json.minisig \
+            -p release/keys/minisign.pub
+          python3 scripts/flasher-rollback.py live-state \
+            --descriptor target/recovery-live-cas/stable.json \
+            --mode deploy \
+            --target-version "$ROLLBACK_BASELINE_VERSION" \
+            --target-manifest-sha256 "$BASELINE_MANIFEST_SHA256" \
+            --expected-live-version "$RELEASE_VERSION" \
+            --expected-live-manifest-sha256 "$CURRENT_MANIFEST_SHA256"
+      - name: Redeploy the exact verified baseline Pages artifact
+        id: baseline-deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e
+        with:
+          artifact_name: ${{ needs.verify.outputs.rollback_baseline_pages_artifact_name }}
+      - name: Verify every restored website byte before release rollback
+        env:
+          BASELINE_MANIFEST_SHA256: ${{ needs.verify.outputs.rollback_baseline_manifest_sha256 }}
+          PRNS_MINISIGN_BIN: ${{ runner.temp }}/prns-release-bin/minisign
+          SITE_URL: ${{ steps.baseline-deployment.outputs.page_url }}
+        run: |
+          site_root="${SITE_URL%/}"
+          test -n "$site_root"
+          mkdir -p target/restored-baseline
+          for attempt in {1..12}; do
+            curl --fail --location --retry 5 --retry-all-errors \
+              --output target/restored-baseline/stable.json \
+              "$site_root/releases/channels/stable.json"
+            curl --fail --location --retry 5 --retry-all-errors \
+              --output target/restored-baseline/stable.json.minisig \
+              "$site_root/releases/channels/stable.json.minisig"
+            if "$PRNS_MINISIGN_BIN" -Vm target/restored-baseline/stable.json \
+              -x target/restored-baseline/stable.json.minisig \
+              -p release/keys/minisign.pub \
+              && python3 scripts/flasher-rollback.py cas \
+                --descriptor target/restored-baseline/stable.json \
+                --version "$ROLLBACK_BASELINE_VERSION" \
+                --manifest-sha256 "$BASELINE_MANIFEST_SHA256" \
+              && python3 scripts/flasher-rollback.py verify-live-website \
+                --stage-identity target/promotion-baseline-stage/rollback-baseline-stage.json \
+                --site-url "$site_root"; then
+              break
+            fi
+            test "$attempt" -lt 12
+            sleep 5
+          done
+      - name: Restore baseline release metadata without modifying assets
+        env:
+          EXPECTED_BASELINE_ASSET_INVENTORY_SHA256: ${{ needs.verify.outputs.rollback_baseline_asset_inventory_sha256 }}
+          EXPECTED_CURRENT_ASSET_INVENTORY_SHA256: ${{ needs.verify.outputs.release_asset_inventory_sha256 }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p target/recovery-release-state
+          for version in "$RELEASE_VERSION" "$ROLLBACK_BASELINE_VERSION"; do
+            gh release view "v${version}" --json assets \
+              --jq '[.assets[] | {name, size, digest}] | sort_by(.name)' \
+              > "target/recovery-release-state/${version}-before.json"
+          done
+          test "$(sha256sum "target/recovery-release-state/${RELEASE_VERSION}-before.json" | awk '{print $1}')" = \
+            "$EXPECTED_CURRENT_ASSET_INVENTORY_SHA256"
+          test "$(sha256sum "target/recovery-release-state/${ROLLBACK_BASELINE_VERSION}-before.json" | awk '{print $1}')" = \
+            "$EXPECTED_BASELINE_ASSET_INVENTORY_SHA256"
+          gh release edit "v${ROLLBACK_BASELINE_VERSION}" --latest=true
+          gh release edit "v${RELEASE_VERSION}" --prerelease=true --latest=false
+          test "$(gh release view "v${RELEASE_VERSION}" \
+            --json isPrerelease --jq '.isPrerelease')" = true
+          test "$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" \
+            --jq '.tag_name')" = "v${ROLLBACK_BASELINE_VERSION}"
+          for version in "$RELEASE_VERSION" "$ROLLBACK_BASELINE_VERSION"; do
+            gh release view "v${version}" --json assets \
+              --jq '[.assets[] | {name, size, digest}] | sort_by(.name)' \
+              > "target/recovery-release-state/${version}-after.json"
+            cmp "target/recovery-release-state/${version}-before.json" \
+              "target/recovery-release-state/${version}-after.json"
+          done
+          echo "Promotion failed after baseline verification; restored v${ROLLBACK_BASELINE_VERSION}." \
+            >> "$GITHUB_STEP_SUMMARY"

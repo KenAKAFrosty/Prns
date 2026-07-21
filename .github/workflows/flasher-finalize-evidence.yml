@@ -1,0 +1,343 @@
+name: finalize flasher release evidence
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact candidate VERSION without a v prefix
+        required: true
+        type: string
+      acceptance_commit:
+        description: Full default-branch commit containing release/acceptance/records/VERSION.json
+        required: true
+        type: string
+      qualification_evidence_sha256:
+        description: SHA-256 of the immutable qualification-evidence-vVERSION.tar.gz prerelease asset
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  attestations: read
+  contents: write
+
+concurrency:
+  group: flasher-evidence-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    name: Validate and sign physical acceptance
+    runs-on: ubuntu-24.04
+    environment: release-signing
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+      ACCEPTANCE_COMMIT: ${{ inputs.acceptance_commit }}
+      QUALIFICATION_EVIDENCE_SHA256: ${{ inputs.qualification_evidence_sha256 }}
+      RUSTUP_TOOLCHAIN: 1.96.0
+    steps:
+      - name: Checkout reviewed release implementation
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Read repository default branch
+        id: repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          default_branch="$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.default_branch')"
+          test -n "$default_branch"
+          test "$GITHUB_REF" = "refs/heads/${default_branch}"
+          echo "default_branch=$default_branch" >> "$GITHUB_OUTPUT"
+      - name: Checkout reviewed acceptance evidence commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.acceptance_commit }}
+          path: evidence-source
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require acceptance evidence on the default branch
+        id: acceptance
+        env:
+          DEFAULT_BRANCH: ${{ steps.repository.outputs.default_branch }}
+        run: |
+          [[ "$RELEASE_VERSION" =~ ^[0-9A-Za-z][0-9A-Za-z.+-]*$ ]]
+          test "${RELEASE_VERSION,,}" != "next"
+          [[ "$ACCEPTANCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git -C evidence-source rev-parse HEAD)" = "$ACCEPTANCE_COMMIT"
+          git -C evidence-source merge-base --is-ancestor \
+            "$ACCEPTANCE_COMMIT" \
+            "origin/${DEFAULT_BRANCH}"
+          source="evidence-source/release/acceptance/records/${RELEASE_VERSION}.json"
+          test -f "$source"
+          echo "source=$source" >> "$GITHUB_OUTPUT"
+      - name: Download immutable prerelease custody assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [[ "$QUALIFICATION_EVIDENCE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          mkdir -p target/release
+          gh release download "v${RELEASE_VERSION}" \
+            --pattern "prns-flasher-candidate-v${RELEASE_VERSION}-signed.tar.gz" \
+            --pattern "prns-flasher-candidate-run-v${RELEASE_VERSION}.json" \
+            --pattern "prns-flasher-attestation-v${RELEASE_VERSION}.json" \
+            --pattern "prns-flasher-attestation-v${RELEASE_VERSION}.metadata.json" \
+            --pattern "qualification-evidence-v${RELEASE_VERSION}.tar.gz" \
+            --dir target/release
+          gh release view "v${RELEASE_VERSION}" \
+            --json isDraft,isPrerelease,publishedAt,tagName,targetCommitish \
+            > target/release/prerelease.json
+          test "$(gh release view "v${RELEASE_VERSION}" --json isDraft --jq '.isDraft')" = "false"
+          test "$(gh release view "v${RELEASE_VERSION}" --json isPrerelease --jq '.isPrerelease')" = "true"
+          test "$(jq -r '.tagName' target/release/prerelease.json)" = "v${RELEASE_VERSION}"
+          published_at="$(jq -r '.publishedAt' target/release/prerelease.json)"
+          [[ "$published_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]
+          evidence="target/release/qualification-evidence-v${RELEASE_VERSION}.tar.gz"
+          test "$(sha256sum "$evidence" | awk '{print $1}')" = \
+            "$QUALIFICATION_EVIDENCE_SHA256"
+          assets="$(gh release view "v${RELEASE_VERSION}" --json assets --jq '.assets[].name')"
+          signing_run_id="$(jq -r '.workflow_run_id' \
+            "target/release/prns-flasher-attestation-v${RELEASE_VERSION}.metadata.json")"
+          [[ "$signing_run_id" =~ ^[1-9][0-9]*$ ]]
+          review_prefix="public-review-v${RELEASE_VERSION}-run-${signing_run_id}-attempt-"
+          mapfile -t review_assets < <(
+            while IFS= read -r name; do
+              suffix="${name#"$review_prefix"}"
+              if [[ "$name" == "$review_prefix"* \
+                && "$suffix" =~ ^[1-9][0-9]*\.json$ ]]; then
+                printf '%s\n' "$name"
+              fi
+            done <<< "$assets"
+          )
+          test "${#review_assets[@]}" -gt 0
+          for name in "${review_assets[@]}"; do
+            gh release download "v${RELEASE_VERSION}" \
+              --pattern "$name" --dir target/release
+          done
+          for name in \
+            "acceptance-v${RELEASE_VERSION}.json" \
+            "acceptance-v${RELEASE_VERSION}.json.minisig" \
+            "release-record-v${RELEASE_VERSION}.json" \
+            "release-record-v${RELEASE_VERSION}.json.minisig"; do
+            if grep -Fxq "$name" <<< "$assets"; then
+              gh release download "v${RELEASE_VERSION}" \
+                --pattern "$name" --dir target/release
+            fi
+          done
+      - name: Extract signed candidate
+        env:
+          ACCEPTANCE_SOURCE: ${{ steps.acceptance.outputs.source }}
+        run: |
+          python3 scripts/extract-flasher-candidate.py \
+            "target/release/prns-flasher-candidate-v${RELEASE_VERSION}-signed.tar.gz" \
+            target/candidate
+          python3 scripts/extract-flasher-candidate.py \
+            "target/release/qualification-evidence-v${RELEASE_VERSION}.tar.gz" \
+            target/qualification-evidence
+          acceptance="target/release/acceptance-v${RELEASE_VERSION}.json"
+          if [[ -f "$acceptance" ]]; then
+            cmp "$ACCEPTANCE_SOURCE" "$acceptance"
+          else
+            cp "$ACCEPTANCE_SOURCE" "$acceptance"
+          fi
+      - name: Install exact Minisign and Rust verification tools
+        run: scripts/install-release-minisign.sh "${RUNNER_TEMP}/prns-release-bin"
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.96.0
+      - name: Validate exact candidate and unsigned acceptance evidence
+        env:
+          PRNS_MINISIGN_BIN: ${{ runner.temp }}/prns-release-bin/minisign
+        run: |
+          test "$(cat VERSION)" = "$RELEASE_VERSION"
+          scripts/verify-flasher-candidate.sh target/candidate
+          published_at="$(jq -r '.publishedAt' target/release/prerelease.json)"
+          source_commit="$(jq -r '.release.commit' target/candidate/flash-manifest.json)"
+          test "$(jq -r '.targetCommitish' target/release/prerelease.json)" = "$source_commit"
+          python3 target/candidate/qualification/validate-flasher-acceptance.py \
+            --acceptance "target/release/acceptance-v${RELEASE_VERSION}.json" \
+            --manifest target/candidate/flash-manifest.json \
+            --manifest-signature target/candidate/flash-manifest.json.minisig \
+            --signed-bundle "target/release/prns-flasher-candidate-v${RELEASE_VERSION}-signed.tar.gz" \
+            --tester-roster target/candidate/qualification/tester-roster.json \
+            --evidence-root target/qualification-evidence \
+            --prerelease-published-at "$published_at"
+      - name: Verify GitHub provenance for every published binary
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bundle="target/release/prns-flasher-attestation-v${RELEASE_VERSION}.json"
+          signer_workflow="$GITHUB_REPOSITORY/.github/workflows/flasher-sign.yml"
+          gh attestation verify \
+            "target/release/prns-flasher-candidate-v${RELEASE_VERSION}-signed.tar.gz" \
+            --repo "$GITHUB_REPOSITORY" \
+            --bundle "$bundle" \
+            --signer-workflow "$signer_workflow" \
+            --deny-self-hosted-runners
+          for archive in target/candidate/cli/hopspot-flash-*; do
+            gh attestation verify "$archive" \
+              --repo "$GITHUB_REPOSITORY" \
+              --bundle "$bundle" \
+              --signer-workflow "$signer_workflow" \
+              --deny-self-hosted-runners
+          done
+          while IFS= read -r relative; do
+            gh attestation verify "target/candidate/$relative" \
+              --repo "$GITHUB_REPOSITORY" \
+              --bundle "$bundle" \
+              --signer-workflow "$signer_workflow" \
+              --deny-self-hosted-runners
+          done < <(jq -r '[.targets[].parts[].path] | unique[]' target/candidate/flash-manifest.json)
+      - name: Select and verify the exact successful protected public review
+        id: public_review
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          source_commit="$(jq -r '.release.commit' target/candidate/flash-manifest.json)"
+          signing_run_id="$(jq -r '.workflow_run_id' \
+            "target/release/prns-flasher-attestation-v${RELEASE_VERSION}.metadata.json")"
+          signed_bundle="target/release/prns-flasher-candidate-v${RELEASE_VERSION}-signed.tar.gz"
+          mapfile -t evidence_files < <(
+            python3 scripts/flasher-public-review.py discover \
+              --evidence-directory target/release \
+              --repository "$GITHUB_REPOSITORY" \
+              --version "$RELEASE_VERSION" \
+              --source-commit "$source_commit" \
+              --workflow-run-id "$signing_run_id" \
+              --signed-candidate-sha256 "$(sha256sum "$signed_bundle" | awk '{print $1}')" \
+              --manifest-sha256 "$(sha256sum target/candidate/flash-manifest.json | awk '{print $1}')"
+          )
+          selected_evidence=""
+          for evidence in "${evidence_files[@]}"; do
+            run_attempt="$(jq -r '.workflow_run_attempt' "$evidence")"
+            review_job_id="$(jq -r '.workflow_job_id' "$evidence")"
+            if ! gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/runs/${signing_run_id}/attempts/${run_attempt}" \
+              > target/release/public-review-run.json; then
+              continue
+            fi
+            if ! gh api --paginate \
+              "repos/${GITHUB_REPOSITORY}/actions/runs/${signing_run_id}/attempts/${run_attempt}/jobs?per_page=100" \
+              --jq ".jobs[] | select(.id == ${review_job_id})" \
+              > target/release/public-review-job-pages.json; then
+              continue
+            fi
+            if [[ "$(jq -s 'length' target/release/public-review-job-pages.json)" -ne 1 ]]; then
+              continue
+            fi
+            jq -s '.[0]' target/release/public-review-job-pages.json \
+              > target/release/public-review-job.json
+            if python3 scripts/flasher-public-review.py verify \
+              --evidence "$evidence" \
+              --release-json target/release/prerelease.json \
+              --run-json target/release/public-review-run.json \
+              --job-json target/release/public-review-job.json \
+              --signed-bundle "$signed_bundle" \
+              --manifest target/candidate/flash-manifest.json \
+              --repository "$GITHUB_REPOSITORY" \
+              --version "$RELEASE_VERSION" \
+              --source-commit "$source_commit" \
+              --minimum-hours 24; then
+              selected_evidence="$evidence"
+              break
+            fi
+          done
+          test -n "$selected_evidence"
+          echo "evidence=$selected_evidence" >> "$GITHUB_OUTPUT"
+      - name: Sign acceptance and its complete release record
+        env:
+          PRNS_MINISIGN_BIN: ${{ runner.temp }}/prns-release-bin/minisign
+          PRNS_MINISIGN_SECRET_KEY_B64: ${{ secrets.PRNS_MINISIGN_SECRET_KEY_B64 }}
+        run: |
+          test -n "$PRNS_MINISIGN_SECRET_KEY_B64"
+          umask 077
+          secret_key="${RUNNER_TEMP}/prns-release-signing.key"
+          trap 'rm -f "$secret_key"' EXIT HUP INT TERM
+          printf '%s' "$PRNS_MINISIGN_SECRET_KEY_B64" | base64 --decode > "$secret_key"
+          test -s "$secret_key"
+          acceptance="target/release/acceptance-v${RELEASE_VERSION}.json"
+          if [[ -f "$acceptance.minisig" ]]; then
+            "$PRNS_MINISIGN_BIN" -Vm "$acceptance" -x "$acceptance.minisig" \
+              -p release/keys/minisign.pub
+          else
+            scripts/sign-flasher-document.sh "$acceptance" "$secret_key"
+          fi
+          record="target/release/release-record-v${RELEASE_VERSION}.json"
+          published_at="$(jq -r '.publishedAt' target/release/prerelease.json)"
+          record_arguments=(
+            --candidate target/candidate
+            --candidate-run "target/release/prns-flasher-candidate-run-v${RELEASE_VERSION}.json"
+            --signed-bundle "target/release/prns-flasher-candidate-v${RELEASE_VERSION}-signed.tar.gz"
+            --acceptance "$acceptance"
+            --acceptance-source-commit "$ACCEPTANCE_COMMIT"
+            --qualification-evidence "target/release/qualification-evidence-v${RELEASE_VERSION}.tar.gz"
+            --public-review-evidence "${{ steps.public_review.outputs.evidence }}"
+            --prerelease-published-at "$published_at"
+            --attestation-bundle "target/release/prns-flasher-attestation-v${RELEASE_VERSION}.json"
+            --attestation-metadata "target/release/prns-flasher-attestation-v${RELEASE_VERSION}.metadata.json"
+            --repository "$GITHUB_REPOSITORY"
+          )
+          if [[ -f "$record" ]]; then
+            python3 scripts/flasher-release-record.py verify \
+              "${record_arguments[@]}" --release-record "$record"
+          else
+            python3 scripts/flasher-release-record.py create \
+              "${record_arguments[@]}" --output "$record"
+          fi
+          if [[ -f "$record.minisig" ]]; then
+            "$PRNS_MINISIGN_BIN" -Vm "$record" -x "$record.minisig" \
+              -p release/keys/minisign.pub
+          else
+            scripts/sign-flasher-document.sh "$record" "$secret_key"
+          fi
+      - name: Reverify the final signed evidence envelope
+        env:
+          PRNS_MINISIGN_BIN: ${{ runner.temp }}/prns-release-bin/minisign
+        run: |
+          scripts/verify-flasher-release.sh \
+            --candidate target/candidate \
+            --candidate-run "target/release/prns-flasher-candidate-run-v${RELEASE_VERSION}.json" \
+            --signed-bundle "target/release/prns-flasher-candidate-v${RELEASE_VERSION}-signed.tar.gz" \
+            --acceptance "target/release/acceptance-v${RELEASE_VERSION}.json" \
+            --acceptance-source-commit "$ACCEPTANCE_COMMIT" \
+            --qualification-evidence "target/release/qualification-evidence-v${RELEASE_VERSION}.tar.gz" \
+            --public-review-evidence "${{ steps.public_review.outputs.evidence }}" \
+            --prerelease-published-at "$(jq -r '.publishedAt' target/release/prerelease.json)" \
+            --release-record "target/release/release-record-v${RELEASE_VERSION}.json" \
+            --attestation-bundle "target/release/prns-flasher-attestation-v${RELEASE_VERSION}.json" \
+            --attestation-metadata "target/release/prns-flasher-attestation-v${RELEASE_VERSION}.metadata.json" \
+            --repository "$GITHUB_REPOSITORY"
+      - name: Publish immutable signed qualification evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$RELEASE_VERSION"
+          evidence=(
+            "target/release/acceptance-v${version}.json"
+            "target/release/acceptance-v${version}.json.minisig"
+            "target/release/qualification-evidence-v${version}.tar.gz"
+            "target/release/release-record-v${version}.json"
+            "target/release/release-record-v${version}.json.minisig"
+          )
+          mkdir -p "${RUNNER_TEMP}/published-evidence"
+          for local_asset in "${evidence[@]}"; do
+            name="$(basename "$local_asset")"
+            if gh release view "v${version}" --json assets --jq '.assets[].name' | grep -Fxq "$name"; then
+              remote="${RUNNER_TEMP}/published-evidence/$name"
+              gh release download "v${version}" --pattern "$name" \
+                --dir "${RUNNER_TEMP}/published-evidence"
+              cmp "$local_asset" "$remote"
+            else
+              gh release upload "v${version}" "$local_asset"
+            fi
+          done
+          for local_asset in "${evidence[@]}"; do
+            name="$(basename "$local_asset")"
+            remote="${RUNNER_TEMP}/published-evidence/$name"
+            if [[ ! -f "$remote" ]]; then
+              gh release download "v${version}" --pattern "$name" \
+                --dir "${RUNNER_TEMP}/published-evidence"
+            fi
+            cmp "$local_asset" "$remote"
+          done

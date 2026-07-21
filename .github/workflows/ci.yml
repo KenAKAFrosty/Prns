@@ -23,13 +23,13 @@ jobs:
   fmt:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           submodules: false
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           components: rustfmt
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
       - name: fmt + doc gate (scripts/fmt-check.sh, all workspaces)
         run: bash scripts/fmt-check.sh
       - name: validation docs drift guard
@@ -40,23 +40,23 @@ jobs:
   clippy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           submodules: false
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           components: clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           submodules: false
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
       - run: cargo test --workspace --locked
       - name: doc (intra-doc links are load-bearing navigation)
         run: cargo doc --locked -p prns-core -p prns-runtime -p personal-rns --no-deps --document-private-items --quiet
@@ -69,14 +69,14 @@ jobs:
     # unseen. This job lints, tests, and doc-checks each lane on its own.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           submodules: false
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           components: clippy
           targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
       # The tokio interface crate: every host interface family above the engine's tokio-host bind,
       # linted/tested/doc'd as the standalone workspace consumers actually build. --all-features is
       # honest here — the per-OS BLE backends live in target tables, so Linux gets BlueR and never
@@ -166,18 +166,110 @@ jobs:
         run: cargo clippy --target wasm32-unknown-unknown --all-targets --locked -- -D warnings
         working-directory: prns-wasm
 
+  flasher-contracts:
+    runs-on: ubuntu-24.04
+    env:
+      RUSTUP_TOOLCHAIN: 1.96.0
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.96.0
+          components: clippy,rustfmt
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: flasher-contracts
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24.18.0"
+          cache: npm
+          cache-dependency-path: docs/website/package-lock.json
+      - uses: cargo-bins/cargo-binstall@57726869e28f4038a847ec56e5fdd9142fded110
+        with:
+          version: "1.21.0"
+      - name: Install exact Dioxus CLI
+        run: cargo binstall --no-confirm --force dioxus-cli@0.7.5
+      - name: Shared manifest and standalone CLI
+        run: |
+          rustc --version | rg '^rustc 1\.96\.0 '
+          test "$(node --version)" = "v24.18.0"
+          cargo-binstall --version | rg '(^| )1\.21\.0($| )'
+          dx --version | rg '(^| )0\.7\.5($| )'
+          cargo test --locked -p prns-flash-manifest -p hopspot-flash
+      - name: Shared manifest and standalone CLI lint
+        run: cargo clippy --locked -p prns-flash-manifest -p hopspot-flash --all-targets -- -D warnings
+      - name: Website Rust shell
+        run: cargo clippy --manifest-path docs/website/Cargo.toml --locked --all-targets -- -D warnings
+      - name: Website Rust format
+        run: cargo fmt --manifest-path docs/website/Cargo.toml -- --check
+      - name: Website Rust contract tests
+        run: cargo test --manifest-path docs/website/Cargo.toml --locked
+      - name: Compact embedded website shell
+        run: cargo clippy --manifest-path docs/website/Cargo.toml --locked --all-targets --features embedded-site -- -D warnings
+      - name: Exact JavaScript graph and fake-serial suite
+        working-directory: docs/website
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run test:flasher
+          npm run build:flasher
+          npm run build:css
+      - name: Production browser-test and embedded-output boundary
+        working-directory: docs/website
+        run: |
+          npm ls --depth=0 @playwright/test@1.61.1 @axe-core/playwright@4.12.1
+          ./node_modules/.bin/playwright --version | rg '^Version 1\.61\.1$'
+          ./node_modules/.bin/playwright install --with-deps chromium
+          npm run test:browser
+          npm run test:production-boundary
+      - name: Production engine and lock audit
+        run: |
+          python3 scripts/npm-production-audit.py
+          if rg -i 'esp-web-install-button|unpkg\.com|esp-web-tools|playwright|axe-core' docs/website/target/hosted-assets/prns-flash.js; then exit 1; fi
+          git diff --exit-code -- docs/website/public/assets/tailwind.css
+
+  release-workflow-contracts:
+    name: Release workflow contracts
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Immutable actions and exact production tools
+        run: python3 scripts/validate-release-workflows.py
+      - name: Release custody, reproducibility, and acceptance tests
+        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
+      - name: Release shell syntax
+        run: |
+          bash -n \
+            scripts/build-flasher-candidate.sh \
+            scripts/install-release-esp-toolchain.sh \
+            scripts/install-release-minisign.sh \
+            scripts/sign-flasher-candidate.sh \
+            scripts/sign-flasher-document.sh \
+            scripts/verify-flasher-candidate.sh \
+            scripts/verify-flasher-release.sh
+
   msrv:
     # The declared MSRV (workspace `rust-version`) must actually build. Pinned to the
     # declared workspace floor (1.90); catches a feature or a dependency bump that
     # quietly requires a newer compiler than we advertise.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    env:
+      RUSTUP_TOOLCHAIN: 1.90.0
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           submodules: false
-      - uses: dtolnay/rust-toolchain@1.90.0
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo check --workspace --locked
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.90.0
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+      - name: Prove and check the advertised MSRV
+        run: |
+          rustc --version | rg '^rustc 1\.90\.0 '
+          cargo check --workspace --locked
       # The root-excluded workspaces declare the same 1.90 floor; hold them to it too.
       - run: cargo check --locked
         working-directory: prns-config
@@ -189,13 +281,13 @@ jobs:
     # to the ESP32-C6 (riscv32imac). Reuses the committed script verbatim.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           submodules: false
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           targets: riscv32imac-unknown-none-elf, thumbv7em-none-eabihf
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
       - run: bash scripts/no-std-esp-build.sh
       - name: prns-interfaces-embassy — cross-build (ESP32-C6 / riscv32imac)
         run: cargo build --locked --target riscv32imac-unknown-none-elf --features "tcp,wifi,lora,esp-now,ble,usb"
@@ -215,22 +307,22 @@ jobs:
     # foreground-service + signature bind contract intact.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           submodules: false
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           targets: aarch64-linux-android, armv7-linux-androideabi
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           workspaces: |
             .
             personal-hopspot/mobile/android/rust
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
         with:
           distribution: temurin
           java-version: "17"
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
       - name: install Android SDK pieces
         run: sdkmanager "platforms;android-34" "build-tools;34.0.0" "ndk;27.2.12479018"
       - name: install cargo-ndk
@@ -244,13 +336,13 @@ jobs:
   macos-ble:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           submodules: false
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           components: clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           workspaces: |
             prns-ffi
@@ -278,13 +370,13 @@ jobs:
     env:
       RUSTUP_TOOLCHAIN: stable
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           submodules: false
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           components: clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           workspaces: personal-hopspot/desktop
       # `prns-ffi` is an external path dependency of the desktop workspace, so Clippy does not lint
@@ -308,12 +400,12 @@ jobs:
     # and control RPC match what Sideband/NomadNet/MeshChat actually speak — not just our own framing.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           submodules: false
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - uses: astral-sh/setup-uv@v5
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
       - name: install the reference RNS (rns==1.3.9)
         run: uv venv /tmp/rns && uv pip install --python /tmp/rns/bin/python -r benchmarks/reference/requirements.txt
       - name: install the control-RPC reference RNS (rns==1.3.9)
@@ -325,7 +417,7 @@ jobs:
           RPC_SMOKE_PYTHON: /tmp/rns-rpc/bin/python
       - name: upload oracle evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: pr-oracles-${{ github.run_id }}
           retention-days: 14
@@ -334,26 +426,37 @@ jobs:
 
   deny:
     # Locked release graph matrix: zero-copyleft licenses, RustSec, sources, unsafe drift, notices.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
+    env:
+      RUSTUP_TOOLCHAIN: 1.96.0
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           submodules: false
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.96.0
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           shared-key: release-dependency-audit
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24.18.0"
+          cache: npm
+          cache-dependency-path: docs/website/package-lock.json
       - name: install pinned audit tools
         run: |
           cargo install cargo-deny --version 0.19.8 --locked
           cargo install cargo-about --version 0.9.1 --locked --features cli
       - name: complete release dependency audit
         run: bash scripts/deps-audit.sh
+      - name: reject dirty generated release notices
+        run: git diff --exit-code -- THIRD_PARTY_NOTICES.md
       - name: record exact release audit commit
         run: bash scripts/write-release-audit-evidence.sh
       - name: upload release audit evidence
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: release-dependency-audit
           path: |
@@ -362,3 +465,43 @@ jobs:
             THIRD_PARTY_NOTICES.md
             audits/unsafe-snapshot.json
             personal-hopspot/mobile/android/dependencies/release-runtime.tsv
+
+  release-critical:
+    name: Release critical
+    if: always()
+    needs:
+      - fmt
+      - clippy
+      - test
+      - feature-configs
+      - flasher-contracts
+      - release-workflow-contracts
+      - msrv
+      - no-std-embedded
+      - deny
+    runs-on: ubuntu-24.04
+    env:
+      FMT_RESULT: ${{ needs.fmt.result }}
+      CLIPPY_RESULT: ${{ needs.clippy.result }}
+      TEST_RESULT: ${{ needs.test.result }}
+      FEATURES_RESULT: ${{ needs.feature-configs.result }}
+      FLASHER_RESULT: ${{ needs.flasher-contracts.result }}
+      WORKFLOWS_RESULT: ${{ needs.release-workflow-contracts.result }}
+      MSRV_RESULT: ${{ needs.msrv.result }}
+      EMBEDDED_RESULT: ${{ needs.no-std-embedded.result }}
+      DENY_RESULT: ${{ needs.deny.result }}
+    steps:
+      - name: Require every release-critical lane
+        run: |
+          for result in \
+            "$FMT_RESULT" \
+            "$CLIPPY_RESULT" \
+            "$TEST_RESULT" \
+            "$FEATURES_RESULT" \
+            "$FLASHER_RESULT" \
+            "$WORKFLOWS_RESULT" \
+            "$MSRV_RESULT" \
+            "$EMBEDDED_RESULT" \
+            "$DENY_RESULT"; do
+            test "$result" = "success"
+          done

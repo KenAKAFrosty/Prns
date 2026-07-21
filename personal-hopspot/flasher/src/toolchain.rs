@@ -5,17 +5,17 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use crate::AppResult;
+use crate::error::AppError;
 
 struct EspToolchainEnv {
     path: OsString,
     libclang_path: Option<OsString>,
 }
 
-pub(crate) fn configure_esp_toolchain(command: &mut Command) -> AppResult<PathBuf> {
+pub(crate) fn configure_esp_toolchain(command: &mut Command) -> Result<PathBuf, AppError> {
     let env = esp_toolchain_env()?;
     let linker = find_on_path("xtensa-esp32s3-elf-gcc", &env.path).ok_or_else(|| {
-        "xtensa-esp32s3-elf-gcc was not found. Install the ESP Rust toolchain or update ~/export-esp.sh so it exports the Xtensa GCC bin directory.".to_string()
+        AppError::developer_toolchain("xtensa-esp32s3-elf-gcc was not found; install the ESP Rust toolchain or update export-esp.sh")
     })?;
 
     command.env("PATH", &env.path);
@@ -25,7 +25,7 @@ pub(crate) fn configure_esp_toolchain(command: &mut Command) -> AppResult<PathBu
     Ok(linker)
 }
 
-fn esp_toolchain_env() -> AppResult<EspToolchainEnv> {
+fn esp_toolchain_env() -> Result<EspToolchainEnv, AppError> {
     let mut path_entries = Vec::new();
     let mut libclang_path = env::var_os("LIBCLANG_PATH");
 
@@ -62,8 +62,9 @@ fn esp_toolchain_env() -> AppResult<EspToolchainEnv> {
 
     let mut seen = HashSet::new();
     path_entries.retain(|path| seen.insert(path.to_string_lossy().into_owned()));
-    let path = env::join_paths(path_entries)
-        .map_err(|err| format!("failed to build ESP toolchain PATH: {err}"))?;
+    let path = env::join_paths(path_entries).map_err(|err| {
+        AppError::developer_toolchain(format!("failed to build ESP toolchain PATH: {err}"))
+    })?;
 
     Ok(EspToolchainEnv {
         path,
@@ -136,36 +137,42 @@ fn home_dir() -> Option<PathBuf> {
     env::var_os("HOME").map(PathBuf::from)
 }
 
-pub(crate) fn rust_host_triple() -> AppResult<String> {
+pub(crate) fn rust_host_triple() -> Result<String, AppError> {
     let version = capture_stdout(Command::new("rustc").arg("-vV"), "rustc -vV")?;
     version
         .lines()
         .find_map(|line| line.strip_prefix("host: ").map(str::to_string))
-        .ok_or_else(|| "rustc -vV did not report a host triple".to_string())
+        .ok_or_else(|| AppError::developer_toolchain("rustc -vV did not report a host triple"))
 }
 
-pub(crate) fn run_status(command: &mut Command, label: &str) -> AppResult<()> {
+pub(crate) fn run_status(command: &mut Command, label: &str) -> Result<(), AppError> {
     command.stdin(Stdio::inherit());
     command.stdout(Stdio::inherit());
     command.stderr(Stdio::inherit());
     let status = command
         .status()
-        .map_err(|err| format!("failed to run {label}: {err}"))?;
+        .map_err(|err| AppError::developer_toolchain(format!("failed to run {label}: {err}")))?;
     if status.success() {
         Ok(())
     } else {
-        Err(format!("{label} exited with {status}"))
+        Err(AppError::developer_toolchain(format!(
+            "{label} exited with {status}"
+        )))
     }
 }
 
-pub(crate) fn capture_stdout(command: &mut Command, label: &str) -> AppResult<String> {
+pub(crate) fn capture_stdout(command: &mut Command, label: &str) -> Result<String, AppError> {
     let output = command
         .output()
-        .map_err(|err| format!("failed to run {label}: {err}"))?;
+        .map_err(|err| AppError::developer_toolchain(format!("failed to run {label}: {err}")))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("{label} exited with {}: {stderr}", output.status));
+        return Err(AppError::developer_toolchain(format!(
+            "{label} exited with {}: {stderr}",
+            output.status
+        )));
     }
-    String::from_utf8(output.stdout)
-        .map_err(|err| format!("{label} produced invalid UTF-8 output: {err}"))
+    String::from_utf8(output.stdout).map_err(|err| {
+        AppError::developer_toolchain(format!("{label} produced invalid UTF-8 output: {err}"))
+    })
 }

@@ -1,0 +1,155 @@
+import assert from "node:assert/strict";
+import { webcrypto } from "node:crypto";
+import test from "node:test";
+
+import {
+  FlashBridgeError,
+  jedecFlashSizeBytes,
+  md5Hex,
+  normalizeChipName,
+  provisioningImage,
+  recoveryGuidance,
+  sha256Hex,
+  validateRequest,
+} from "../src/core.js";
+import { testingContract } from "../src/contract.js";
+
+function request() {
+  return {
+    schema: 1,
+    boardSlug: "heltec-v4",
+    displayName: "Heltec LoRa 32 V4",
+    transport: "esp-serial",
+    expectedChip: "esp32s3",
+    flashSize: 8 * 1024 * 1024,
+    flashMode: "dio",
+    flashFrequency: "40m",
+    beforeReset: "usb-reset",
+    afterReset: "watchdog-reset",
+    mountLabel: null,
+    provisioning: { action: "preserve", offset: 0xd000, size: 0x1000 },
+    parts: [
+      { kind: "bootloader", path: "firmware/hopspot/heltec-v4/0.2.6/bootloader.bin", url: "/releases/0.2.6/firmware/hopspot/heltec-v4/0.2.6/bootloader.bin", offset: 0, size: 32, sha256: "a".repeat(64) },
+      { kind: "partition-table", path: "firmware/hopspot/heltec-v4/0.2.6/partition.bin", url: "/releases/0.2.6/firmware/hopspot/heltec-v4/0.2.6/partition.bin", offset: 0x8000, size: 32, sha256: "b".repeat(64) },
+      { kind: "application", path: "firmware/hopspot/heltec-v4/0.2.6/app.bin", url: "/releases/0.2.6/firmware/hopspot/heltec-v4/0.2.6/app.bin", offset: 0x10000, size: 32, sha256: "c".repeat(64) },
+    ],
+  };
+}
+
+test("valid sparse request is accepted", () => {
+  assert.equal(validateRequest(request()).boardSlug, "heltec-v4");
+});
+
+test("transport-specific request identity is complete and bounded", () => {
+  const esp = request();
+  esp.flashSize = 32 * 1024 * 1024;
+  assert.throws(() => validateRequest(esp), /target identity is incomplete/);
+
+  const uf2 = request();
+  Object.assign(uf2, {
+    transport: "uf2-mass-storage",
+    expectedChip: null,
+    flashSize: null,
+    flashMode: null,
+    flashFrequency: null,
+    beforeReset: null,
+    afterReset: null,
+    mountLabel: "TECHOBOOT",
+    provisioning: null,
+    parts: [{
+      kind: "uf2",
+      path: "firmware/hopspot/t-echo/0.2.6/t-echo.uf2",
+      url: "/releases/0.2.6/firmware/hopspot/t-echo/0.2.6/t-echo.uf2",
+      offset: null,
+      size: 32,
+      sha256: "d".repeat(64),
+    }],
+  });
+  assert.equal(validateRequest(uf2).mountLabel, "TECHOBOOT");
+  uf2.mountLabel = "";
+  assert.throws(() => validateRequest(uf2), /UF2 target identity is incomplete/);
+});
+
+test("provisioning overlap is rejected", () => {
+  const value = request();
+  value.parts[1].offset = 0xd000;
+  assert.throws(() => validateRequest(value), FlashBridgeError);
+});
+
+test("reserved configuration overlap is rejected without provisioning", () => {
+  const value = request();
+  value.provisioning = null;
+  value.parts[1].offset = 0xd000;
+  assert.throws(() => validateRequest(value), /reserved configuration slot/);
+});
+
+test("sparse part order is canonical", () => {
+  const value = request();
+  [value.parts[0], value.parts[1]] = [value.parts[1], value.parts[0]];
+  assert.throws(() => validateRequest(value), /invalid kind or offset/);
+});
+
+test("artifact paths and URLs must be exact normalized immutable locations", () => {
+  for (const path of [
+    "firmware/%2e%2e/application.bin",
+    "firmware/%252e%252e/application.bin",
+    "firmware/../application.bin",
+    "firmware//application.bin",
+  ]) {
+    const value = request();
+    value.parts[0].path = path;
+    value.parts[0].url = `/releases/0.2.6/${path}`;
+    assert.throws(() => validateRequest(value), /not normalized/);
+  }
+
+  for (const url of [
+    "/releases/0.2.6/firmware/hopspot/heltec-v4/0.2.6/../bootloader.bin",
+    "/releases/%30.2.6/firmware/hopspot/heltec-v4/0.2.6/bootloader.bin",
+    "https://reticulum.rs/releases/0.2.6/firmware/hopspot/heltec-v4/0.2.6/bootloader.bin",
+  ]) {
+    const value = request();
+    value.parts[0].url = url;
+    assert.throws(() => validateRequest(value), /not immutable|not normalized/);
+  }
+});
+
+test("configuration uses UTF-8 byte limits without truncation", () => {
+  assert.throws(
+    () => provisioningImage({ action: "configure", ssid: "é".repeat(17), password: "" }),
+    /34 bytes/,
+  );
+  const image = provisioningImage({ action: "clear" });
+  assert.equal(image.length, 4096);
+  assert.equal(image[10], 0);
+  assert.equal(image[11], 0);
+});
+
+test("standard digest vectors match", async () => {
+  const bytes = new TextEncoder().encode("test");
+  assert.equal(await sha256Hex(bytes, webcrypto), "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08");
+  assert.equal(md5Hex(bytes), "098f6bcd4621d373cade4e832627b4f6");
+});
+
+test("chip comparison is punctuation independent", () => {
+  assert.equal(normalizeChipName("ESP32-S3"), normalizeChipName("esp32s3"));
+});
+
+test("JEDEC capacity decoding accepts known IDs and fails closed on unknown IDs", () => {
+  assert.equal(jedecFlashSizeBytes(0x1640ef), 4 * 1024 * 1024);
+  assert.equal(jedecFlashSizeBytes(0x1740ef), 8 * 1024 * 1024);
+  assert.equal(jedecFlashSizeBytes(0x3640ef), 4 * 1024 * 1024);
+  assert.equal(jedecFlashSizeBytes(0x9940ef), null);
+  assert.equal(jedecFlashSizeBytes(0xffffff), null);
+  assert.equal(jedecFlashSizeBytes(Number.NaN), null);
+});
+
+test("every production bridge error has actionable recovery guidance", () => {
+  for (const code of testingContract.errors) {
+    const guidance = recoveryGuidance(code);
+    assert.match(
+      guidance,
+      /reload|correct|open|review|disconnect|re-check|do not|reconnect|re-enter|press|prepare|finish/i,
+      code,
+    );
+  }
+});

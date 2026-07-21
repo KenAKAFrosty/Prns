@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "release": {
+    "version": "REPLACE_WITH_VERSION"
+  },
+  "release_owner": "REPLACE_WITH_PUBLIC_MAINTAINER_IDENTITY",
+  "confirmed_on": "YYYY-MM-DD",
+  "assignments": []
+}
