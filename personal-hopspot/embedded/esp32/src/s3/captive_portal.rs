@@ -351,14 +351,16 @@ async fn serve_site_connection(
     if method != "GET" && !is_head {
         return send_site_response(
             socket,
-            "405 Method Not Allowed",
-            "text/plain; charset=utf-8",
-            b"method not allowed\n",
-            is_head,
-            None,
-            false,
-            "no-store",
-            None,
+            SiteResponse {
+                status: "405 Method Not Allowed",
+                content_type: "text/plain; charset=utf-8",
+                body: b"method not allowed\n",
+                head_only: is_head,
+                content_encoding: None,
+                vary_accept_encoding: false,
+                cache_control: "no-store",
+                content_disposition: None,
+            },
         )
         .await;
     }
@@ -373,14 +375,16 @@ async fn serve_site_connection(
     let Some(asset) = find_site_asset(path) else {
         return send_site_response(
             socket,
-            "404 Not Found",
-            "text/plain; charset=utf-8",
-            b"not found\n",
-            is_head,
-            None,
-            false,
-            "no-store",
-            None,
+            SiteResponse {
+                status: "404 Not Found",
+                content_type: "text/plain; charset=utf-8",
+                body: b"not found\n",
+                head_only: is_head,
+                content_encoding: None,
+                vary_accept_encoding: false,
+                cache_control: "no-store",
+                content_disposition: None,
+            },
         )
         .await;
     };
@@ -391,14 +395,16 @@ async fn serve_site_connection(
     };
     send_site_response(
         socket,
-        "200 OK",
-        asset.content_type,
-        body,
-        is_head,
-        content_encoding,
-        asset.gzip_bytes.is_some(),
-        site_cache_control(asset.path),
-        site_content_disposition(asset.path).as_deref(),
+        SiteResponse {
+            status: "200 OK",
+            content_type: asset.content_type,
+            body,
+            head_only: is_head,
+            content_encoding,
+            vary_accept_encoding: asset.gzip_bytes.is_some(),
+            cache_control: site_cache_control(asset.path),
+            content_disposition: site_content_disposition(asset.path).as_deref(),
+        },
     )
     .await
 }
@@ -547,14 +553,16 @@ async fn send_captive_portal_api(
     let body = b"{\"captive\":true,\"user-portal-url\":\"http://192.168.4.1/\",\"venue-info-url\":\"http://192.168.4.1/\"}\n";
     send_site_response(
         socket,
-        "200 OK",
-        "application/captive+json",
-        body,
-        head_only,
-        None,
-        false,
-        "no-store",
-        None,
+        SiteResponse {
+            status: "200 OK",
+            content_type: "application/captive+json",
+            body,
+            head_only,
+            content_encoding: None,
+            vary_accept_encoding: false,
+            cache_control: "no-store",
+            content_disposition: None,
+        },
     )
     .await
 }
@@ -577,17 +585,32 @@ async fn send_captive_portal_redirect(
 }
 
 #[cfg(feature = "wifi-auto")]
+struct SiteResponse<'a> {
+    status: &'a str,
+    content_type: &'a str,
+    body: &'a [u8],
+    head_only: bool,
+    content_encoding: Option<&'a str>,
+    vary_accept_encoding: bool,
+    cache_control: &'a str,
+    content_disposition: Option<&'a str>,
+}
+
+#[cfg(feature = "wifi-auto")]
 async fn send_site_response(
     socket: &mut TcpSocket<'static>,
-    status: &str,
-    content_type: &str,
-    body: &[u8],
-    head_only: bool,
-    content_encoding: Option<&str>,
-    vary_accept_encoding: bool,
-    cache_control: &str,
-    content_disposition: Option<&str>,
+    response: SiteResponse<'_>,
 ) -> Result<(), ()> {
+    let SiteResponse {
+        status,
+        content_type,
+        body,
+        head_only,
+        content_encoding,
+        vary_accept_encoding,
+        cache_control,
+        content_disposition,
+    } = response;
     let mut header = alloc::format!(
         "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: {cache_control}\r\n",
         body.len()

@@ -184,7 +184,7 @@ impl<I: embedded_hal::i2c::I2c> Sh1106I2c<I> {
     fn flush(&mut self) -> Result<(), ()> {
         for page in 0..8u8 {
             self.cmd(0xb0 | page)?;
-            self.cmd(0x00 | (SH1106_COL_OFFSET & 0x0f))?;
+            self.cmd(SH1106_COL_OFFSET & 0x0f)?;
             self.cmd(0x10 | (SH1106_COL_OFFSET >> 4))?;
             let start = page as usize * SH1106_W as usize;
             let mut chunk = [0u8; SH1106_W as usize + 1];
