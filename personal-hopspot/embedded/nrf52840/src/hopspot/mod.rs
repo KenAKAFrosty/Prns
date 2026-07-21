@@ -1,4 +1,4 @@
-mod bluetooth;
+mod bluetooth_auto;
 mod display;
 mod firmware;
 mod input;

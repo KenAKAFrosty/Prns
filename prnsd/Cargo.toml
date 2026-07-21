@@ -60,7 +60,7 @@ tokio-host = [
     "personal-rns/weave",
     "personal-rns/wifi-auto",
     "personal-rns/usb",
-    "personal-rns/ble",
+    "personal-rns/bluetooth-auto",
     "personal-rns/websocket",
     "personal-rns/shared-instance",
     "personal-rns/signed-artifact",

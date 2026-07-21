@@ -22,13 +22,13 @@ use nrf_softdevice::ble::l2cap;
 use nrf_softdevice::Softdevice;
 
 use personal_hopspot_core as hopspot;
-use personal_rns::ble::{BluetoothAuto, BluetoothAutoStatus};
+use personal_rns::bluetooth_auto::{BluetoothAuto, BluetoothAutoStatus};
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::IdentitySigner;
-use personal_rns::interfaces::bluetooth_auto::core::{
+use personal_rns::interfaces::bluetooth_auto::{
     BleIdentity, Endpoint, LinkCapabilities, Nrf52Host, BLE_HW_MTU,
 };
 use personal_rns::interfaces::lora::core::{channel_tag, DEFAULT_915_PROFILE};
@@ -49,7 +49,7 @@ use personal_rns::storage::StorageLayout;
 use personal_rns::usb_auto::UsbAutoDevice;
 use personal_rns::usb_auto::{WebUsbAutoClass, WebUsbAutoState, WEBUSB_AUTO_PACKET_SIZE};
 
-use super::bluetooth::{
+use super::bluetooth_auto::{
     acceptor, scanner, serve_slot, softdevice_config, softdevice_task, usb_vbus_present,
     L2capPacket, NrfBleBackend, Server, BLE_SHARED, FLEET_ID, HUB, MEMBERS, OUTBOUND_WAKE, POOL,
 };
@@ -131,7 +131,7 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
         BleIdentity::from_radio_address(&nrf_softdevice::ble::get_address(sd).bytes());
     static SERVER: StaticCell<Server> = StaticCell::new();
     let server: &'static Server = SERVER.init(Server::new(sd).unwrap());
-    super::bluetooth::set_columba_identity(server, ble_identity);
+    super::bluetooth_auto::set_columba_identity(server, ble_identity);
     static L2CAP: StaticCell<l2cap::L2cap<L2capPacket>> = StaticCell::new();
     let l2cap: &'static l2cap::L2cap<L2capPacket> = L2CAP.init(l2cap::L2cap::init(sd));
     spawner.spawn(softdevice_task(sd, vbus).expect("softdevice task fits"));

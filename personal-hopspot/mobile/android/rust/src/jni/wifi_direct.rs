@@ -1,6 +1,6 @@
 use std::net::Ipv4Addr;
 
-use super::bluetooth::ble_octets;
+use super::bluetooth_auto::ble_octets;
 use super::usb::jni_string;
 use super::wifi_aware::ipv4_octets;
 use crate::engine::wd_bridge;

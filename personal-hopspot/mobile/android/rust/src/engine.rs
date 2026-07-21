@@ -6,16 +6,15 @@ use std::thread;
 use std::time::Instant;
 
 use personal_hopspot_core::{card_label, CardKind, CardLabel};
-use personal_rns::ble::tokio::BluetoothAuto;
-use personal_rns::ble::tokio::BluetoothAutoStatus;
+use personal_rns::bluetooth_auto::{BluetoothAuto, BluetoothAutoStatus};
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::interfaces::bluetooth_auto::core::{
+use personal_rns::interfaces::bluetooth_auto::BleBackend;
+use personal_rns::interfaces::bluetooth_auto::{
     AndroidHost, Endpoint, LinkCapabilities, BLE_HW_MTU,
 };
-use personal_rns::interfaces::bluetooth_auto::seam::BleBackend;
 use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus};
 use personal_rns::reactor::tokio::TokioInterfaceStatus;
 use personal_rns::routes;
@@ -35,7 +34,7 @@ use personal_rns::wifi_aware::{WifiAwareAuto, WifiAwareStatus};
 use personal_rns::wifi_direct::WifiDirectStatus;
 use personal_rns::wire::DestinationHash;
 
-use crate::ble::{AndroidBleBackend, AndroidBleBridge};
+use crate::bluetooth_auto::{AndroidBleBackend, AndroidBleBridge};
 use crate::bridge::{AndroidUsbBridge, BridgeStream};
 use crate::mdns::AndroidMdnsBridge;
 use crate::wifi_aware::{AndroidWifiAwareBackend, AndroidWifiAwareBridge};

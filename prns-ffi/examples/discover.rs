@@ -1,8 +1,8 @@
 #[cfg(target_os = "macos")]
 #[tokio::main]
 async fn main() {
-    use prns_core::interfaces::bluetooth_auto::core::BleIdentity;
-    use prns_ffi::ble::macos::MacosBleBackend;
+    use prns_core::interfaces::bluetooth_auto::BleIdentity;
+    use prns_ffi::bluetooth_auto::macos::MacosBleBackend;
 
     let mut backend = match MacosBleBackend::new(BleIdentity::new([0; 16])).await {
         Ok(backend) => backend,

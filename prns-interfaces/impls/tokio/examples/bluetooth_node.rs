@@ -6,10 +6,10 @@ async fn main() {
 
     use personal_rns::engine::RatchetPolicy;
     use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-    use personal_rns::interfaces::bluetooth_auto::core::{
+    use personal_rns::interfaces::bluetooth_auto::BleBackend;
+    use personal_rns::interfaces::bluetooth_auto::{
         AppleHost, BleIdentity, Endpoint, LinkCapabilities, BLE_HW_MTU,
     };
-    use personal_rns::interfaces::bluetooth_auto::seam::BleBackend;
     use personal_rns::routes;
     use personal_rns::routing::links::resources::ResourceStrategy;
     use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
@@ -18,8 +18,8 @@ async fn main() {
         RequestHandlerRegistration,
     };
     use personal_rns::storage::GrowableHeap;
-    use prns_ffi::ble::macos::MacosBleBackend;
-    use prns_interfaces_tokio::ble::tokio::BluetoothAuto;
+    use prns_ffi::bluetooth_auto::macos::MacosBleBackend;
+    use prns_interfaces_tokio::bluetooth_auto::BluetoothAuto;
 
     let _ = env_logger::try_init();
 

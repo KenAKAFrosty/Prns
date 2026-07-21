@@ -22,7 +22,7 @@ pub(crate) mod diagnostic_log {
     pub(crate) use disabled as warn;
 }
 
-pub mod ble;
+pub mod bluetooth_auto;
 pub mod mdns;
 pub mod wifi_aware;
 pub mod wifi_direct;

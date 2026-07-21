@@ -17,10 +17,10 @@ use personal_rns::reactor::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
 use personal_rns::runtime::{CompletionPool, EmbassyInterfaceStore, PrnsEvent, PrnsNode};
 use personal_rns::storage::{StorageCapacity, StorageLayout};
 
-use super::bluetooth;
+use super::bluetooth_auto;
 
 pub(super) const IFACES: usize = 3;
-const MAX_IFACES: usize = 2 + bluetooth::MEMBERS;
+const MAX_IFACES: usize = 2 + bluetooth_auto::MEMBERS;
 pub(super) const LORA_SLOT: usize = 0;
 pub(super) const BLE_FLEET_SLOT: usize = 1;
 pub(super) const USB_SLOT: usize = 2;

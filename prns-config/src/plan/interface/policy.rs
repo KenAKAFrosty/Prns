@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use prns_core::interfaces::ax25_kiss;
-use prns_core::interfaces::bluetooth_auto::core as bluetooth_core;
+use prns_core::interfaces::bluetooth_auto as bluetooth_contract;
 use prns_core::interfaces::i2p::core as i2p_core;
 use prns_core::interfaces::kiss;
 use prns_core::interfaces::pipe;
@@ -170,8 +170,8 @@ fn interface_defaults(medium: &PlannedMedium) -> Result<InterfaceDefaults, PlanE
         PlannedMedium::I2p { .. } => Ok(i2p_core::DEFAULTS),
         PlannedMedium::Weave { .. } => Ok(weave_core::DEFAULTS),
         PlannedMedium::PrnsUsbAuto => Ok(usb_auto::HOST_DEFAULTS),
-        PlannedMedium::PrnsBluetoothAuto => Ok(bluetooth_core::defaults_for_bitrate(
-            bluetooth_core::BLE_BITRATE_GUESS_BPS,
+        PlannedMedium::PrnsBluetoothAuto => Ok(bluetooth_contract::defaults_for_bitrate(
+            bluetooth_contract::BLE_BITRATE_GUESS_BPS,
         )),
         PlannedMedium::PrnsWebSocketClient { .. } | PlannedMedium::PrnsWebSocketServer { .. } => {
             Ok(websocket::DEFAULTS)

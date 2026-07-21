@@ -6,7 +6,7 @@ extern crate alloc;
 #[cfg(all(
     target_arch = "xtensa",
     not(all(
-        feature = "ble",
+        feature = "bluetooth-auto",
         feature = "esp-now",
         feature = "lora",
         feature = "tcp",
@@ -15,13 +15,13 @@ extern crate alloc;
     ))
 ))]
 compile_error!(
-    "ESP32-S3 firmware is built through a board package, which selects ble, esp-now, lora, tcp, usb, and wifi-auto"
+    "ESP32-S3 firmware is built through a board package, which selects bluetooth-auto, esp-now, lora, tcp, usb, and wifi-auto"
 );
 
 #[cfg(all(
     target_arch = "riscv32",
     not(all(
-        feature = "ble",
+        feature = "bluetooth-auto",
         feature = "esp-now",
         feature = "usb",
         not(feature = "lora"),
@@ -30,14 +30,17 @@ compile_error!(
     ))
 ))]
 compile_error!(
-    "ESP32-C6 firmware is built through its board package, which selects ble, esp-now, and usb"
+    "ESP32-C6 firmware is built through its board package, which selects bluetooth-auto, esp-now, and usb"
 );
 
-#[cfg(all(feature = "ble", any(target_arch = "riscv32", target_arch = "xtensa")))]
-pub mod ble;
+#[cfg(all(
+    feature = "bluetooth-auto",
+    any(target_arch = "riscv32", target_arch = "xtensa")
+))]
+pub mod bluetooth_auto;
 #[cfg(all(
     target_arch = "riscv32",
-    feature = "ble",
+    feature = "bluetooth-auto",
     feature = "esp-now",
     feature = "usb",
     not(feature = "lora"),
@@ -47,7 +50,7 @@ pub mod ble;
 pub mod c6;
 #[cfg(all(
     target_arch = "xtensa",
-    feature = "ble",
+    feature = "bluetooth-auto",
     feature = "esp-now",
     feature = "lora",
     feature = "tcp",

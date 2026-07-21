@@ -360,7 +360,7 @@ impl Esp32S3Board for TBeamSupremeBoard {
             sw_int1,
             timebase,
             _rtc: rtc,
-            #[cfg(feature = "ble")]
+            #[cfg(feature = "bluetooth-auto")]
             bt: p.BT,
         }
     }

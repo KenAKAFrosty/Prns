@@ -74,7 +74,7 @@ pub use usb_auto::AutoUsb;
 
 #[cfg(all(
     feature = "tokio-host",
-    any(feature = "wifi-auto", feature = "usb", feature = "ble")
+    any(feature = "wifi-auto", feature = "usb", feature = "bluetooth-auto")
 ))]
 pub use prns_interfaces_tokio::auto::Auto;
 
@@ -96,17 +96,18 @@ pub use prns_interfaces_tokio::from_plan::{
     PlanOutcome, PlanRuntimeContext,
 };
 
-#[cfg(all(feature = "ble", feature = "tokio-host"))]
-pub use prns_interfaces_tokio::ble;
+#[cfg(all(feature = "bluetooth-auto", feature = "tokio-host"))]
+pub use prns_interfaces_tokio::bluetooth_auto;
 
-#[cfg(all(feature = "ble", feature = "tokio-host"))]
-pub use prns_interfaces_tokio::ble_host;
+#[cfg(all(feature = "bluetooth-auto", feature = "tokio-host"))]
+pub use prns_interfaces_tokio::bluetooth_auto::{AttachedBle, AutoBle};
 
-#[cfg(all(feature = "ble", feature = "tokio-host"))]
-pub use prns_interfaces_tokio::ble_host::{AttachedBle, AutoBle};
-
-#[cfg(all(feature = "ble", feature = "embassy-host", not(feature = "tokio-host")))]
-pub use prns_interfaces_embassy::ble;
+#[cfg(all(
+    feature = "bluetooth-auto",
+    feature = "embassy-host",
+    not(feature = "tokio-host")
+))]
+pub use prns_interfaces_embassy::bluetooth_auto;
 
 #[cfg(all(feature = "udp", feature = "tokio-host"))]
 pub use prns_interfaces_tokio::udp;

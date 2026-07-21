@@ -63,8 +63,8 @@ use esp_radio::wifi::{
 use esp_radio::esp_now::{
     EspNow, EspNowManager, EspNowReceiver, EspNowSender, WifiPhyRate, BROADCAST_ADDRESS,
 };
-#[cfg(feature = "ble")]
-use personal_rns::ble::{BluetoothAutoShared, BluetoothAutoStatus};
+#[cfg(feature = "bluetooth-auto")]
+use personal_rns::bluetooth_auto::{BluetoothAutoShared, BluetoothAutoStatus};
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
@@ -72,7 +72,7 @@ use personal_rns::engine::{
 use personal_rns::esp_now::EspNowInterface;
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::interfaces::bluetooth_auto::limits;
+use personal_rns::interfaces::bluetooth_auto::ESP32_S3_MAX_PEERS;
 #[cfg(feature = "wifi-auto")]
 use personal_rns::interfaces::esp_now::core::{
     self as espnow_core, Channel as EspNowChannel, ChannelPolicy,
@@ -164,7 +164,8 @@ const TCP_SOCKET_BUF: usize = 1_024;
 /// shared fleet lane (slot 2), and the LoRa SX1262 (slot 3). WiFi members do NOT each take a lane —
 /// they share slot 2. Under `ble` the BLE fleet takes the next slot; under `esp-now` the
 /// ESP-NOW broadcast carrier (which rides the same WiFi radio) takes another.
-const IFACES: usize = 4 + cfg!(feature = "ble") as usize + cfg!(feature = "esp-now") as usize;
+const IFACES: usize =
+    4 + cfg!(feature = "bluetooth-auto") as usize + cfg!(feature = "esp-now") as usize;
 /// The WiFi fleet's member budget: a peer costs a descriptor + status slot, never a lane buffer.
 const MEMBERS: usize = 24;
 /// The engine-interface (descriptor + pacer) pool: the fixed interfaces plus the WiFi members.
@@ -182,12 +183,12 @@ const TCP_SLOT: usize = 1;
 const LORA_SLOT: usize = 3;
 /// The BLE fleet's pool slot (after LoRa), present only under `ble`. Distinct from the WiFi
 /// slot so both supervisors run at once when WiFi and BLE coexist.
-#[cfg(feature = "ble")]
+#[cfg(feature = "bluetooth-auto")]
 const BLE_FLEET_SLOT: usize = 4;
 /// The ESP-NOW broadcast carrier's pool slot, after the BLE fleet when it is present. A 1:1 interface
 /// like LoRa (not a fleet); present under `esp-now`.
 #[cfg(feature = "esp-now")]
-const ESPNOW_SLOT: usize = 4 + cfg!(feature = "ble") as usize;
+const ESPNOW_SLOT: usize = 4 + cfg!(feature = "bluetooth-auto") as usize;
 pub const NOTIFY_CAP: usize = 16;
 const COMMANDS_CAP: usize = 8;
 pub const LIFECYCLE_CAP: usize = 8;
@@ -287,12 +288,12 @@ static WIFI_SHARED: AutoWifiShared<MEMBERS> = AutoWifiShared::new(WIFI_FLEET_ID)
 /// so `BluetoothPeer` members route to it. The radio carries `BLE_MEMBERS` concurrent connections (the
 /// pooled `ble.rs` backend sizes its slot pool + trouble-host `CONNECTIONS` to this) — 2 since the
 /// reduced embedded MTU ceiling (1472) freed the internal lane RAM to carry a second peer.
-#[cfg(feature = "ble")]
-pub const BLE_MEMBERS: usize = limits::ESP32_S3_MAX_PEERS;
-#[cfg(feature = "ble")]
+#[cfg(feature = "bluetooth-auto")]
+pub const BLE_MEMBERS: usize = ESP32_S3_MAX_PEERS;
+#[cfg(feature = "bluetooth-auto")]
 const BLE_FLEET_ID: InterfaceId =
     InterfaceId::new([InterfaceKind::BluetoothAuto as u8, 0, 0, 0, 0, 0, 0, 0]);
-#[cfg(feature = "ble")]
+#[cfg(feature = "bluetooth-auto")]
 static BLE_SHARED: BluetoothAutoShared<BLE_MEMBERS> = BluetoothAutoShared::new(BLE_FLEET_ID);
 static LORA_CONTROL: LoRaControl = LoRaControl::new();
 
@@ -314,7 +315,7 @@ static LIFECYCLE: Channel<Mtx, InterfaceLifecycle, LIFECYCLE_CAP> = Channel::new
 static OUTBOUND_WAKE: Signal<Mtx, ()> = Signal::new();
 /// The BLE fleet's own outbound-commit wake (slot 4), so the BLE supervisor is roused only by its own
 /// egress and not spuriously by WiFi commits when the two fleets coexist.
-#[cfg(feature = "ble")]
+#[cfg(feature = "bluetooth-auto")]
 static BLE_OUTBOUND_WAKE: Signal<Mtx, ()> = Signal::new();
 static COMPLETION: CompletionPool<Mtx, COMPLETIONS_CAP> = CompletionPool::new();
 static BUTTON_EVENTS: Channel<Mtx, screen::InputEvent, 4> = Channel::new();
@@ -400,7 +401,7 @@ pub struct Bringup<D, B> {
     pub timebase: EmbassyTimebase,
     /// The RTC handle is kept alive for the whole run so its disabled watchdogs stay disabled.
     pub _rtc: esp_hal::rtc_cntl::Rtc<'static>,
-    #[cfg(feature = "ble")]
+    #[cfg(feature = "bluetooth-auto")]
     pub bt: esp_hal::peripherals::BT<'static>,
 }
 

@@ -6,8 +6,8 @@ use std::sync::OnceLock;
 use std::thread;
 
 use personal_hopspot_core::{card_label, CardKind, CardLabel};
-use personal_rns::ble::tokio::BluetoothAutoStatus;
-use personal_rns::ble_host::AutoBle;
+use personal_rns::bluetooth_auto::AutoBle;
+use personal_rns::bluetooth_auto::BluetoothAutoStatus;
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };

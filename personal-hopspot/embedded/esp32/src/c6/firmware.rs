@@ -26,9 +26,9 @@ pub async fn run(spawner: Spawner) {
             .expect("valid name");
         personal_rns::routing::announce::derive_destination_hash(&signer.identity_hash(), &name)
     };
-    #[cfg(feature = "ble")]
+    #[cfg(feature = "bluetooth-auto")]
     let mut mac_octets = [0u8; 6];
-    #[cfg(feature = "ble")]
+    #[cfg(feature = "bluetooth-auto")]
     mac_octets.copy_from_slice(&mac.as_bytes()[..6]);
 
     let seed = self_destination.as_bytes();
@@ -103,7 +103,7 @@ pub async fn run(spawner: Spawner) {
         )
     };
 
-    #[cfg(feature = "ble")]
+    #[cfg(feature = "bluetooth-auto")]
     let ble_fleet: C6BleFleet = {
         static IN_BUF: ConstStaticCell<LaneBuf> = ConstStaticCell::new([EMPTY_SLOT; LANE_DEPTH]);
         static IN_CH: StaticCell<LaneChannel> = StaticCell::new();
@@ -167,9 +167,9 @@ pub async fn run(spawner: Spawner) {
     node.activate(USB_SLOT, device_descriptor(USB_INTERFACE_ID));
     #[cfg(feature = "esp-now")]
     node.activate(ESPNOW_SLOT, espnow.descriptor());
-    #[cfg(feature = "ble")]
+    #[cfg(feature = "bluetooth-auto")]
     node.activate_fleet(BLE_FLEET_SLOT, BLE_FLEET_ID);
-    #[cfg(all(feature = "ble", feature = "esp-now"))]
+    #[cfg(all(feature = "bluetooth-auto", feature = "esp-now"))]
     {
         spawner.spawn(
             ble_task(spawner, p.BT, mac_octets, ble_fleet, &BLE_SHARED).expect("ble task fits"),
@@ -180,7 +180,7 @@ pub async fn run(spawner: Spawner) {
         )
         .await;
     }
-    #[cfg(all(feature = "esp-now", not(feature = "ble")))]
+    #[cfg(all(feature = "esp-now", not(feature = "bluetooth-auto")))]
     {
         join(
             node.run_reactor_with_interface_store(&INTERFACE_STORE),
@@ -188,7 +188,7 @@ pub async fn run(spawner: Spawner) {
         )
         .await;
     }
-    #[cfg(all(feature = "ble", not(feature = "esp-now")))]
+    #[cfg(all(feature = "bluetooth-auto", not(feature = "esp-now")))]
     {
         spawner.spawn(
             ble_task(spawner, p.BT, mac_octets, ble_fleet, &BLE_SHARED).expect("ble task fits"),
@@ -196,7 +196,7 @@ pub async fn run(spawner: Spawner) {
         node.run_reactor_with_interface_store(&INTERFACE_STORE)
             .await;
     }
-    #[cfg(not(any(feature = "ble", feature = "esp-now")))]
+    #[cfg(not(any(feature = "bluetooth-auto", feature = "esp-now")))]
     node.run_reactor_with_interface_store(&INTERFACE_STORE)
         .await;
 }
