@@ -14,6 +14,40 @@ pub struct ScheduledAnnounce {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScheduleRejection {
+    /// A bounded queue is full. Existing entries are left unchanged.
+    QueueFull,
+}
+
+/// The result of scheduling one destination without changing queue admission policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub enum ScheduleOutcome {
+    Inserted,
+    Updated,
+    Rejected(ScheduleRejection),
+}
+
+/// Work removed for one destination from the active queue and its parked flood store.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub struct ScheduleCancellation {
+    pub active_removed: bool,
+    pub parked_removed: bool,
+}
+
+impl ScheduleCancellation {
+    pub const NOT_FOUND: Self = Self {
+        active_removed: false,
+        parked_removed: false,
+    };
+
+    pub const fn removed_any(self) -> bool {
+        self.active_removed || self.parked_removed
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EchoOutcome {
     NoPendingEntry,
     PeerEmissionCounted,
@@ -30,7 +64,7 @@ pub trait ScheduledAnnounceQueue {
         due_at: InstantMillis,
         source_interface: InterfaceId,
         hops: u8,
-    );
+    ) -> ScheduleOutcome;
 
     fn schedule_directed(
         &mut self,
@@ -38,7 +72,7 @@ pub trait ScheduledAnnounceQueue {
         due_at: InstantMillis,
         target: InterfaceId,
         hops: u8,
-    );
+    ) -> ScheduleOutcome;
 
     fn schedule_shared_client(
         &mut self,
@@ -46,7 +80,7 @@ pub trait ScheduledAnnounceQueue {
         due_at: InstantMillis,
         source_interface: InterfaceId,
         hops: u8,
-    );
+    ) -> ScheduleOutcome;
 
     fn schedule_directed_shared_client(
         &mut self,
@@ -54,7 +88,9 @@ pub trait ScheduledAnnounceQueue {
         due_at: InstantMillis,
         target: InterfaceId,
         hops: u8,
-    );
+    ) -> ScheduleOutcome;
+
+    fn cancel(&mut self, destination: &DestinationHash) -> ScheduleCancellation;
 
     fn drain_due(&mut self, now: InstantMillis) -> usize;
 

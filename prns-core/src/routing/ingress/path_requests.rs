@@ -5,7 +5,7 @@ use crate::interfaces::{
     AttachedInterfaces, InterfaceCommonPolicy, InterfaceId, InterfaceKind, InterfaceMode,
 };
 use crate::routing::announce::defaults::{PATH_REQUEST_GRACE_MS, PATH_REQUEST_ROAMING_GRACE_MS};
-use crate::routing::announce::schedule::ScheduledAnnounceQueue;
+use crate::routing::announce::schedule::{ScheduleOutcome, ScheduledAnnounceQueue};
 use crate::routing::path_requests::recursive::{
     RecursiveOutcome, RECURSIVE_PATH_REQUEST_TIMEOUT_MS,
 };
@@ -171,14 +171,23 @@ impl<S: StorageLayout> EngineState<S> {
                     .saturating_add(path_response_grace_ms(source_interface, interfaces)),
             )
         };
-        self.scheduled_announces.schedule_directed(
+        match self.scheduled_announces.schedule_directed(
             request.destination,
             due_at,
             source_interface,
             route.hops.0,
-        );
-        IngestPacketOutcome::ScheduledPathResponse {
-            destination: request.destination,
+        ) {
+            ScheduleOutcome::Inserted | ScheduleOutcome::Updated => {
+                IngestPacketOutcome::ScheduledPathResponse {
+                    destination: request.destination,
+                }
+            }
+            ScheduleOutcome::Rejected(rejection) => {
+                IngestPacketOutcome::PathResponseScheduleRejected {
+                    destination: request.destination,
+                    rejection,
+                }
+            }
         }
     }
 
@@ -879,6 +888,51 @@ mod tests {
     }
 
     #[test]
+    fn a_full_schedule_reports_capacity_instead_of_a_scheduled_path_response() {
+        let (mut relay, cached) = relay_holding_a_cached_route();
+        let _ = relay.scheduled_announces.cancel(&cached);
+        for byte in 0..64u8 {
+            assert_eq!(
+                relay.scheduled_announces.schedule(
+                    DestinationHash::new([byte; 16]),
+                    InstantMillis(9_000 + u64::from(byte)),
+                    iface(0xEE),
+                    byte,
+                ),
+                ScheduleOutcome::Inserted,
+            );
+        }
+        assert_eq!(relay.scheduled_announce_count(), 64);
+
+        let mut wire = path_request_wire(cached);
+        assert_eq!(
+            relay.ingest_packet_with(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: iface(0xA1),
+                    bytes: &mut wire,
+                },
+                &mut |_| {},
+                AttachedInterfaces::new(&transporting_interfaces()),
+                &mut |_| {},
+                None,
+            ),
+            IngestPacketOutcome::PathResponseScheduleRejected {
+                destination: cached,
+                rejection: crate::routing::announce::schedule::ScheduleRejection::QueueFull,
+            },
+        );
+        assert_eq!(relay.scheduled_announce_count(), 64);
+        assert!(
+            relay
+                .scheduled_announces
+                .iter()
+                .all(|entry| entry.destination != cached),
+            "a rejected path response must not replace an incumbent",
+        );
+    }
+
+    #[test]
     fn a_transport_form_request_answers_and_dedups_on_the_id_not_the_transport_id() {
         let (mut relay, cached) = relay_holding_a_cached_route();
         let transport_id = [0x7a; 16];
@@ -1234,7 +1288,7 @@ mod tests {
             Some(iface(0xA1)),
         );
 
-        relay
+        let _ = relay
             .scheduled_announces
             .schedule(cached, InstantMillis(1_100), iface(0xEE), 2);
         assert_eq!(relay.scheduled_announces.scheduled_count(), 1);

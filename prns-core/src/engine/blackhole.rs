@@ -1,5 +1,6 @@
 use crate::identity::IdentityHash;
 use crate::interfaces::AttachedInterfaces;
+use crate::routing::announce::schedule::ScheduledAnnounceQueue;
 use crate::routing::blackhole::BlackholeTable;
 use crate::routing::{
     BlackholeIdentityOutcome, BlackholeInsertFailure, BlackholedIdentity, RemovedRoute,
@@ -68,14 +69,21 @@ impl<S: StorageLayout> EngineState<S> {
             };
         }
         let dirty = &mut self.dirty_interfaces;
-        self.routing_table
-            .drop_routes_for_identity(&identity, &mut |removed| {
-                dirty.mark(removed.receiving_interface);
-                on_removed(removed);
-            });
+        let scheduled_announces = &mut self.scheduled_announces;
+        let dropped_routes =
+            self.routing_table
+                .drop_routes_for_identity(&identity, &mut |removed| {
+                    let _ = scheduled_announces.cancel(&removed.destination);
+                    dirty.mark(removed.receiving_interface);
+                    on_removed(removed);
+                });
+        let mut wake_schedules = self.blackhole_mutation_wake(interfaces);
+        if dropped_routes == 0 {
+            wake_schedules.scheduled_announces = crate::engine::WakeSchedule::Unchanged;
+        }
         BlackholeIdentityEffect {
             outcome,
-            wake_schedules: self.blackhole_mutation_wake(interfaces),
+            wake_schedules,
         }
     }
 
@@ -224,6 +232,10 @@ mod tests {
         );
         assert_eq!(effect.outcome, Ok(BlackholeIdentityOutcome::Added));
         assert_eq!(effect.wake_schedules.expired_routes, WakeSchedule::Idle);
+        assert_eq!(
+            effect.wake_schedules.scheduled_announces,
+            WakeSchedule::Idle
+        );
         assert_eq!(engine.blackholed_identity_count(), 1);
         assert!(engine.is_identity_blackholed(&identity));
         assert_eq!(
@@ -244,6 +256,7 @@ mod tests {
             }],
         );
         assert_eq!(engine.route_count(), 0);
+        assert_eq!(engine.scheduled_announce_count(), 0);
         assert!(engine.take_dirty_interfaces().contains(&source_interface));
         assert!(tick_capture(
             &mut engine,

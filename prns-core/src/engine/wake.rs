@@ -219,6 +219,7 @@ impl<S: StorageLayout> EngineState<S> {
         interfaces: AttachedInterfaces<'_>,
     ) -> WakeSchedules {
         WakeSchedules {
+            scheduled_announces: self.scheduled_announces_wake(),
             expired_routes: self.route_expiry_wake(interfaces),
             expired_destination_identities: self.destination_identity_expiry_wake(),
             ..WakeSchedules::UNCHANGED

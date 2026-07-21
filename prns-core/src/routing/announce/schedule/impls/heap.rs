@@ -6,7 +6,9 @@ use crate::lemire_index::HeapLemireIndex;
 use crate::routing::announce::defaults::{
     ANNOUNCE_ONE_SHOT_INITIAL_EMISSION_COUNT, ANNOUNCE_WITH_RETRY_INITIAL_EMISSION_COUNT,
 };
-use crate::routing::announce::schedule::{EchoOutcome, ScheduledAnnounce, ScheduledAnnounceQueue};
+use crate::routing::announce::schedule::{
+    EchoOutcome, ScheduleCancellation, ScheduleOutcome, ScheduledAnnounce, ScheduledAnnounceQueue,
+};
 #[cfg(feature = "std")]
 use crate::routing::temporal_index::HeapDeadlineIndex;
 use crate::wire::DestinationHash;
@@ -116,7 +118,7 @@ impl HeapScheduledAnnounceQueue {
         hops: u8,
         directed_to: Option<InterfaceId>,
         our_emission_count: u8,
-    ) {
+    ) -> ScheduleOutcome {
         if let Some(i) = self.index.get(&destination, &self.destination) {
             self.set_due_at(i, due_at);
             self.source_interface[i] = source_interface;
@@ -124,6 +126,8 @@ impl HeapScheduledAnnounceQueue {
             self.our_emission_count[i] = our_emission_count;
             self.peer_emission_count[i] = 0;
             self.directed_to[i] = directed_to;
+            self.refresh_earliest();
+            ScheduleOutcome::Updated
         } else {
             self.push_row(ScheduledAnnounce {
                 destination,
@@ -134,8 +138,9 @@ impl HeapScheduledAnnounceQueue {
                 peer_emission_count: 0,
                 directed_to,
             });
+            self.refresh_earliest();
+            ScheduleOutcome::Inserted
         }
-        self.refresh_earliest();
     }
 
     fn refresh_earliest(&mut self) {
@@ -215,7 +220,7 @@ impl ScheduledAnnounceQueue for HeapScheduledAnnounceQueue {
         due_at: InstantMillis,
         source_interface: InterfaceId,
         hops: u8,
-    ) {
+    ) -> ScheduleOutcome {
         self.clear_held(destination);
         self.upsert(
             destination,
@@ -224,7 +229,7 @@ impl ScheduledAnnounceQueue for HeapScheduledAnnounceQueue {
             hops,
             None,
             ANNOUNCE_WITH_RETRY_INITIAL_EMISSION_COUNT,
-        );
+        )
     }
     fn schedule_directed(
         &mut self,
@@ -232,9 +237,10 @@ impl ScheduledAnnounceQueue for HeapScheduledAnnounceQueue {
         due_at: InstantMillis,
         target: InterfaceId,
         hops: u8,
-    ) {
+    ) -> ScheduleOutcome {
+        let replacing = self.index.get(&destination, &self.destination).is_some();
         self.park_displaced_flood(destination);
-        self.upsert(
+        let outcome = self.upsert(
             destination,
             due_at,
             target,
@@ -242,6 +248,11 @@ impl ScheduledAnnounceQueue for HeapScheduledAnnounceQueue {
             Some(target),
             ANNOUNCE_WITH_RETRY_INITIAL_EMISSION_COUNT,
         );
+        if replacing && outcome == ScheduleOutcome::Inserted {
+            ScheduleOutcome::Updated
+        } else {
+            outcome
+        }
     }
     fn schedule_shared_client(
         &mut self,
@@ -249,7 +260,7 @@ impl ScheduledAnnounceQueue for HeapScheduledAnnounceQueue {
         due_at: InstantMillis,
         source_interface: InterfaceId,
         hops: u8,
-    ) {
+    ) -> ScheduleOutcome {
         self.clear_held(destination);
         self.upsert(
             destination,
@@ -258,7 +269,7 @@ impl ScheduledAnnounceQueue for HeapScheduledAnnounceQueue {
             hops,
             None,
             ANNOUNCE_ONE_SHOT_INITIAL_EMISSION_COUNT,
-        );
+        )
     }
     fn schedule_directed_shared_client(
         &mut self,
@@ -266,9 +277,10 @@ impl ScheduledAnnounceQueue for HeapScheduledAnnounceQueue {
         due_at: InstantMillis,
         target: InterfaceId,
         hops: u8,
-    ) {
+    ) -> ScheduleOutcome {
+        let replacing = self.index.get(&destination, &self.destination).is_some();
         self.park_displaced_flood(destination);
-        self.upsert(
+        let outcome = self.upsert(
             destination,
             due_at,
             target,
@@ -276,6 +288,36 @@ impl ScheduledAnnounceQueue for HeapScheduledAnnounceQueue {
             Some(target),
             ANNOUNCE_ONE_SHOT_INITIAL_EMISSION_COUNT,
         );
+        if replacing && outcome == ScheduleOutcome::Inserted {
+            ScheduleOutcome::Updated
+        } else {
+            outcome
+        }
+    }
+    fn cancel(&mut self, destination: &DestinationHash) -> ScheduleCancellation {
+        let active_removed = if let Some(index) = self.index.get(destination, &self.destination) {
+            self.swap_remove_row(index);
+            true
+        } else {
+            false
+        };
+        let parked_removed = if let Some(index) = self
+            .held
+            .iter()
+            .position(|entry| entry.destination == *destination)
+        {
+            self.held.swap_remove(index);
+            true
+        } else {
+            false
+        };
+        if active_removed {
+            self.refresh_earliest();
+        }
+        ScheduleCancellation {
+            active_removed,
+            parked_removed,
+        }
     }
     fn drain_due(&mut self, now: InstantMillis) -> usize {
         #[cfg(feature = "std")]
@@ -426,6 +468,8 @@ impl ScheduledAnnounceQueue for HeapScheduledAnnounceQueue {
 
 #[cfg(test)]
 mod tests {
+    #![allow(unused_must_use)]
+
     use super::*;
 
     fn dest(byte: u8) -> DestinationHash {
@@ -438,6 +482,61 @@ mod tests {
     }
     fn iface(byte: u8) -> InterfaceId {
         InterfaceId::new([byte; 8])
+    }
+
+    #[test]
+    fn growable_queue_reports_insert_and_update() {
+        let mut pending = HeapScheduledAnnounceQueue::default();
+        assert_eq!(
+            pending.schedule(dest(1), InstantMillis(300), iface(0xAA), 9),
+            ScheduleOutcome::Inserted,
+        );
+        assert_eq!(
+            pending.schedule(dest(1), InstantMillis(200), iface(0xBB), 1),
+            ScheduleOutcome::Updated,
+        );
+        for value in 2..=200 {
+            assert_eq!(
+                pending.schedule(dest_n(value), InstantMillis(value), iface(0xCC), 2),
+                ScheduleOutcome::Inserted,
+            );
+        }
+        assert_eq!(pending.scheduled_count(), 200);
+    }
+
+    #[test]
+    fn cancellation_removes_active_and_parked_work_and_recalculates_earliest() {
+        let mut pending = HeapScheduledAnnounceQueue::default();
+        assert_eq!(
+            pending.schedule(dest(1), InstantMillis(100), iface(0xAA), 2),
+            ScheduleOutcome::Inserted,
+        );
+        assert_eq!(
+            pending.schedule(dest(2), InstantMillis(200), iface(0xAA), 2),
+            ScheduleOutcome::Inserted,
+        );
+        assert_eq!(
+            pending.schedule_directed(dest(1), InstantMillis(50), iface(0xBB), 2),
+            ScheduleOutcome::Updated,
+        );
+        assert_eq!(pending.earliest_due_at(), Some(InstantMillis(50)));
+
+        assert_eq!(
+            pending.cancel(&dest(1)),
+            ScheduleCancellation {
+                active_removed: true,
+                parked_removed: true,
+            },
+        );
+        assert_eq!(pending.earliest_due_at(), Some(InstantMillis(200)));
+        assert_eq!(
+            pending
+                .iter()
+                .map(|entry| entry.destination)
+                .collect::<std::vec::Vec<_>>(),
+            std::vec![dest(2)],
+        );
+        assert_eq!(pending.cancel(&dest(1)), ScheduleCancellation::NOT_FOUND);
     }
 
     #[test]

@@ -259,6 +259,18 @@ impl<S: StorageLayout> EngineState<S> {
             IngestPacketOutcome::ScheduledPathResponse { .. } => {
                 wake_schedule_changes.scheduled_announces = self.scheduled_announces_wake();
             }
+            IngestPacketOutcome::PathResponseScheduleRejected {
+                rejection: _rejection,
+                ..
+            } => {
+                let _reason = match _rejection {
+                    crate::routing::announce::schedule::ScheduleRejection::QueueFull => {
+                        crate::routing::ingress::IgnoreReason::CapacityExhausted
+                    }
+                };
+                #[cfg(feature = "runtime-metrics")]
+                self.ignored_packet_counts.record(_reason);
+            }
             IngestPacketOutcome::ForwardRecursivePathRequest { destination, id } => {
                 self.relay_path_request(
                     RelayPathRequest {

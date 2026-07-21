@@ -72,11 +72,13 @@ impl<S: StorageLayout> EngineState<S> {
         }
         let warmth = WarmestOf(&self.tunnels, &self.departed_interfaces);
         let dirty = &mut self.dirty_interfaces;
-        self.routing_table.cull_expired_routes_indexed_with_warmth(
+        let scheduled_announces = &mut self.scheduled_announces;
+        let culled_routes = self.routing_table.cull_expired_routes_indexed_with_warmth(
             now,
             interfaces,
             &warmth,
             &mut |removed| {
+                let _ = scheduled_announces.cancel(&removed.destination);
                 dirty.mark(removed.receiving_interface);
                 sink(EngineReaction::Journaled(
                     crate::engine::node_ingress::journal_route_removal(removed),
@@ -93,6 +95,11 @@ impl<S: StorageLayout> EngineState<S> {
             &mut |iface| dirty.mark(iface),
         );
         WakeSchedules {
+            scheduled_announces: if culled_routes == 0 {
+                crate::engine::WakeSchedule::Unchanged
+            } else {
+                self.scheduled_announces_wake()
+            },
             expired_routes: self.route_expiry_wake(interfaces),
             expired_destination_identities: self.destination_identity_expiry_wake(),
             ..WakeSchedules::UNCHANGED
