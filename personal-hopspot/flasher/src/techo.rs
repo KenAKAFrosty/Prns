@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use prns_flash_manifest::BoardCatalogEntry;
 
 use crate::error::AppError;
-use crate::events::Reporter;
+use crate::events::{Phase, Reporter};
 use crate::release::PreparedPart;
 
 const REBOOT_TIMEOUT: Duration = Duration::from_secs(20);
@@ -30,14 +30,14 @@ pub(crate) fn flash(
 
     let destination = mount.join("prns-hopspot.uf2");
     reporter.phase(
-        "writing",
+        Phase::Writing,
         Some(&board.slug),
         &format!("Copying verified UF2 to {}…", destination.display()),
     );
     copy_uf2(&destination, &mount, &part.bytes, &board.slug, reporter)?;
 
     reporter.phase(
-        "resetting",
+        Phase::Resetting,
         Some(&board.slug),
         "Waiting for TECHOBOOT to disappear as the device reboots…",
     );
@@ -74,7 +74,7 @@ fn copy_uf2(
             .map_err(|error| AppError::flash(format!("UF2 copy failed: {error}")))?;
         written += chunk.len();
         reporter.progress(
-            "writing",
+            Phase::Writing,
             Some(board_slug),
             written as u64,
             bytes.len() as u64,
@@ -269,7 +269,7 @@ mod tests {
             &mount,
             b"signed uf2 bytes",
             "t-echo",
-            Reporter::new(true),
+            Reporter::json_lines(),
         )
         .expect("copy fake UF2");
         assert_eq!(

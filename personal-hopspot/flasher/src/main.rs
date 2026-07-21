@@ -22,13 +22,17 @@ use serde::Serialize;
 use build::{assemble_manifest, build_board, default_artifact_root};
 use cli::{ChannelArg, Cli, CommandMode, WifiMode};
 use error::AppError;
-use events::Reporter;
+use events::{Phase, Reporter};
 use release::{prepare_candidate_target, prepare_published_target, PreparedTarget};
 use wifi::WifiOptions;
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    let reporter = Reporter::new(cli.json_mode());
+    let reporter = if cli.json_mode() {
+        Reporter::json_lines()
+    } else {
+        Reporter::human()
+    };
     match run(cli, reporter) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
@@ -160,7 +164,7 @@ fn execute_flash(
     }
     verify_prepared_identity(board, &prepared)?;
     reporter.phase(
-        "ready",
+        Phase::Ready,
         Some(&board.slug),
         &format!(
             "{} {} is verified and ready; no full-chip erase will be performed.",

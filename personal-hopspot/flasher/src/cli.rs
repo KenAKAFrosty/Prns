@@ -68,7 +68,7 @@ pub(crate) enum CommandMode {
         #[arg(long)]
         yes: bool,
         /// Open a basic serial monitor after verified ESP flashing.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "json")]
         monitor: bool,
         /// Emit newline-delimited schema-1 events and never prompt.
         #[arg(long)]
@@ -133,6 +133,44 @@ impl ChannelArg {
             Self::Stable => "stable",
             Self::Preview => "preview",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::{error::ErrorKind, Parser};
+
+    use super::Cli;
+
+    #[test]
+    fn json_and_monitor_are_rejected_with_usage_exit_code() {
+        let result = Cli::try_parse_from([
+            "hopspot-flash",
+            "flash",
+            "heltec-v4",
+            "--yes",
+            "--json",
+            "--monitor",
+        ]);
+        let error = match result {
+            Ok(_) => panic!("JSON and raw serial output must not share stdout"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.kind(), ErrorKind::ArgumentConflict);
+        assert_eq!(error.exit_code(), 2);
+    }
+
+    #[test]
+    fn json_and_monitor_remain_valid_individually() {
+        assert!(
+            Cli::try_parse_from(["hopspot-flash", "flash", "heltec-v4", "--yes", "--json",])
+                .is_ok()
+        );
+        assert!(Cli::try_parse_from(
+            ["hopspot-flash", "flash", "heltec-v4", "--yes", "--monitor",]
+        )
+        .is_ok());
     }
 }
 

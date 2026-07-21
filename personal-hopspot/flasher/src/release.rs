@@ -10,7 +10,7 @@ use url::Url;
 
 use crate::cli::ChannelArg;
 use crate::error::AppError;
-use crate::events::Reporter;
+use crate::events::{Phase, Reporter};
 
 const CHANNEL_BASE_URL: &str = "https://reticulum.rs/releases/channels/";
 const IMMUTABLE_RELEASE_BASE_URL: &str = "https://reticulum.rs/releases/";
@@ -67,7 +67,7 @@ pub(crate) fn prepare_candidate_target(
         .map_err(|error| AppError::trust(error.to_string()))?;
 
     reporter.phase(
-        "validating_manifest",
+        Phase::ValidatingManifest,
         Some(board_slug),
         &format!(
             "Verifying local signed Hopspot candidate {}…",
@@ -103,7 +103,7 @@ pub(crate) fn prepare_candidate_target(
     let mut parts = Vec::with_capacity(target.parts.len());
     for part in &target.parts {
         reporter.phase(
-            "verifying_artifacts",
+            Phase::VerifyingArtifacts,
             Some(board_slug),
             &format!("Verifying local {} ({} bytes)…", part.path, part.size),
         );
@@ -171,7 +171,7 @@ pub(crate) fn prepare_published_target(
     };
 
     reporter.phase(
-        "validating_manifest",
+        Phase::ValidatingManifest,
         Some(board_slug),
         &format!("Verifying signed Hopspot release {version}…"),
     );
@@ -224,7 +224,7 @@ pub(crate) fn prepare_published_target(
     let mut parts = Vec::with_capacity(target.parts.len());
     for part in &target.parts {
         reporter.phase(
-            "downloading",
+            Phase::Downloading,
             Some(board_slug),
             &format!("Acquiring {} ({} bytes)…", part.path, part.size),
         );
@@ -292,7 +292,7 @@ fn resolve_channel(
 ) -> Result<(String, String, Option<String>), AppError> {
     let channel_name = channel.as_str();
     reporter.phase(
-        "resolving_release",
+        Phase::ResolvingRelease,
         None,
         &format!("Resolving signed {channel_name} channel…"),
     );

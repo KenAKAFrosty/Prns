@@ -12,7 +12,7 @@ use prns_flash_manifest::{
 
 use crate::cli::ChannelArg;
 use crate::error::AppError;
-use crate::events::Reporter;
+use crate::events::{Phase, Reporter};
 use crate::release::{PreparedPart, PreparedTarget};
 use crate::toolchain::{capture_stdout, configure_esp_toolchain, run_status, rust_host_triple};
 
@@ -100,7 +100,7 @@ fn build_esp(
 ) -> Result<BuildOutput, AppError> {
     prepare_embedded_site_bundle(build, repo, reporter)?;
     reporter.phase(
-        "building",
+        Phase::Building,
         Some(&board.slug),
         &format!("Building {} developer firmware…", board.display_name),
     );
@@ -229,7 +229,7 @@ fn build_uf2(
     reporter: Reporter,
 ) -> Result<BuildOutput, AppError> {
     reporter.phase(
-        "building",
+        Phase::Building,
         Some(&board.slug),
         &format!("Building {} developer firmware…", board.display_name),
     );
@@ -305,7 +305,7 @@ fn build_uf2(
     let target = target_record(board, vec![descriptor.clone()]);
     write_target_record(&output_dir, &target)?;
     reporter.phase(
-        "artifact_ready",
+        Phase::ArtifactReady,
         Some(&board.slug),
         &format!("UF2 ready: {} bytes", bytes.len()),
     );
@@ -375,7 +375,7 @@ fn prepare_embedded_site_bundle(
         ));
     }
     reporter.phase(
-        "building_embedded_site",
+        Phase::BuildingEmbeddedSite,
         None,
         "Building the hosted-JavaScript-free SoftAP site bundle…",
     );
@@ -425,7 +425,7 @@ fn report_sparse_size(
         }
     }
     reporter.phase(
-        "artifact_ready",
+        Phase::ArtifactReady,
         Some(&board.slug),
         &format!(
             "Sparse artifact ready: {total} bytes across {} parts",

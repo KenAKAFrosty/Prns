@@ -12,7 +12,7 @@ use prns_flash_manifest::{provisioning_image, BoardCatalogEntry, ProvisioningAct
 use serialport::{FlowControl, SerialPortInfo, SerialPortType, UsbPortInfo};
 
 use crate::error::AppError;
-use crate::events::Reporter;
+use crate::events::{Phase, Reporter};
 use crate::release::PreparedPart;
 
 static CANCELLED: AtomicBool = AtomicBool::new(false);
@@ -63,7 +63,7 @@ pub(crate) fn flash(
     };
 
     reporter.phase(
-        "requesting_port",
+        Phase::RequestingPort,
         Some(&board.slug),
         &format!("Opening {}…", selected.port_name),
     );
@@ -86,7 +86,7 @@ pub(crate) fn flash(
         921_600,
     );
     reporter.phase(
-        "connecting",
+        Phase::Connecting,
         Some(&board.slug),
         "Connecting to the Espressif bootloader…",
     );
@@ -130,7 +130,7 @@ pub(crate) fn flash(
     owned.sort_by_key(|(offset, _)| *offset);
     let total = owned.iter().map(|(_, bytes)| bytes.len() as u64).sum();
     reporter.phase(
-        "writing",
+        Phase::Writing,
         Some(&board.slug),
         &format!("Writing and verifying {total} bytes without a full-chip erase…"),
     );
@@ -168,6 +168,11 @@ pub(crate) fn flash(
     target.finish(flasher.connection(), true).map_err(|error| {
         AppError::flash(format!("final reset failed after verification: {error}"))
     })?;
+    drop(flasher);
+
+    if monitor {
+        monitor_port(&selected.port_name, reporter)?;
+    }
     reporter.success(
         &board.slug,
         &format!(
@@ -175,11 +180,6 @@ pub(crate) fn flash(
             board.display_name
         ),
     );
-    drop(flasher);
-
-    if monitor {
-        monitor_port(&selected.port_name, reporter)?;
-    }
     Ok(())
 }
 
@@ -309,7 +309,7 @@ fn after_reset(value: &str) -> Result<ResetAfterOperation, AppError> {
 fn monitor_port(port_name: &str, reporter: Reporter) -> Result<(), AppError> {
     CANCELLED.store(false, Ordering::SeqCst);
     reporter.phase(
-        "monitor",
+        Phase::Monitor,
         None,
         "Serial monitor active at 115200 baud; press Ctrl-C to close it.",
     );
@@ -376,7 +376,7 @@ impl ProgressCallbacks for FlashProgress<'_> {
                 .unwrap_or_default()
         };
         self.reporter.progress(
-            "writing",
+            Phase::Writing,
             Some(self.board),
             self.completed_bytes
                 .saturating_add(part_current)
@@ -387,7 +387,7 @@ impl ProgressCallbacks for FlashProgress<'_> {
 
     fn verifying(&mut self) {
         self.reporter.phase(
-            "verifying_flash",
+            Phase::VerifyingFlash,
             Some(self.board),
             "Verifying bytes on the device…",
         );
@@ -398,7 +398,7 @@ impl ProgressCallbacks for FlashProgress<'_> {
         // remains monotonic and reaches 100% when espflash skips a write.
         self.completed_bytes = self.completed_bytes.saturating_add(self.part_bytes);
         self.reporter.progress(
-            "writing",
+            Phase::Writing,
             Some(self.board),
             self.completed_bytes.min(self.operation_total),
             self.operation_total,
