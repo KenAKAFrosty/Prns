@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+from flasher_website_history import allowed_historical_signatures
+
 
 REPORT_PATH = "metadata/reproducibility.json"
 SEPARATE_ENVELOPES = [
@@ -52,9 +54,14 @@ def payload_identity(files: dict[str, dict[str, int | str]]) -> dict[str, int | 
     return {"file_count": len(files), "total_bytes": total, "tree_sha256": digest.hexdigest()}
 
 
-def find_generated_envelopes(files: dict[str, dict[str, int | str]]) -> list[str]:
+def find_generated_envelopes(
+    files: dict[str, dict[str, int | str]], *, allowed: set[str] | None = None
+) -> list[str]:
+    allowed = allowed or set()
     found = []
     for relative in files:
+        if relative in allowed:
+            continue
         name = Path(relative).name
         if (
             relative.endswith(".minisig")
@@ -108,7 +115,9 @@ def validate_report(root: Path, *, version: str, source_commit: str) -> None:
     if report.get("separate_envelopes") != SEPARATE_ENVELOPES:
         raise ValueError("candidate reproducibility evidence obscures separate signing envelopes")
     actual_files = payload_manifest(root, exclude_report=True)
-    if find_generated_envelopes(actual_files):
+    if find_generated_envelopes(
+        actual_files, allowed=allowed_historical_signatures(root)
+    ):
         raise ValueError("unsigned reproducibility evidence includes signing-time envelopes")
     if report.get("payload") != payload_identity(actual_files):
         raise ValueError("candidate reproducibility payload identity does not match its files")

@@ -20,6 +20,7 @@ from flasher_reproducibility import (
     payload_manifest,
     sha256,
 )
+from flasher_website_history import allowed_historical_signatures
 
 
 MAX_FILES = 100_000
@@ -128,7 +129,9 @@ def compare(arguments: argparse.Namespace) -> dict:
             raise ValueError(
                 f"independent candidate payloads differ ({len(differences)} files): {preview}"
             )
-        envelopes = find_generated_envelopes(primary_files)
+        envelopes = find_generated_envelopes(
+            primary_files, allowed=allowed_historical_signatures(primary_root)
+        )
         if envelopes:
             raise ValueError(f"unsigned candidate unexpectedly contains signing envelopes: {envelopes}")
         primary_hash = sha256(primary_archive)

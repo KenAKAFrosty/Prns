@@ -6,10 +6,16 @@ candidate="${1:-}"
 channel="${2:-preview}"
 key_id="${3:-}"
 commit="${4:-$(git -C "$root" rev-parse HEAD)}"
+history="${PRNS_RELEASE_HISTORY:-}"
 if [[ -z "$candidate" || -z "$key_id" ]]; then
     echo "usage: scripts/build-flasher-candidate.sh OUTPUT_DIR stable|preview KEY_ID [SOURCE_COMMIT]" >&2
     exit 2
 fi
+if [[ -z "$history" || ! -f "$history/history.json" ]]; then
+    echo "PRNS_RELEASE_HISTORY must name one verified bootstrap or retained history input" >&2
+    exit 2
+fi
+history="$(cd "$history" && pwd)"
 candidate="$(python3 "$root/scripts/flasher_candidate_output.py" "$root" "$candidate")"
 case "$channel" in
     stable|preview) ;;
@@ -70,12 +76,40 @@ if [[ "$(cargo run --quiet --locked -p hopspot-flash -- --version)" != "hopspot-
     echo "hopspot-flash package version must equal repository VERSION" >&2
     exit 2
 fi
-mkdir -p "$candidate" "$candidate/metadata"
+roster_source="$root/release/acceptance/rosters/${version}.json"
+if ! git -C "$root" ls-files --error-unmatch "release/acceptance/rosters/${version}.json" >/dev/null 2>&1; then
+    echo "a committed tester roster is required for release $version: $roster_source" >&2
+    exit 2
+fi
+python3 "$root/scripts/validate-flasher-tester-roster.py" \
+    --roster "$roster_source" \
+    --version "$version"
+
+mkdir -p "$candidate" "$candidate/metadata" "$candidate/qualification"
 cp "$root/VERSION" "$candidate/VERSION"
 cp "$root/THIRD_PARTY_NOTICES.md" "$candidate/THIRD_PARTY_NOTICES.md"
 cp "$root/LICENSE-APACHE" "$candidate/LICENSE-APACHE"
 cp "$root/LICENSE-MIT" "$candidate/LICENSE-MIT"
 cp "$root/release/keys/minisign.pub" "$candidate/minisign.pub"
+cp "$root/release/acceptance/QUALIFICATION.md" \
+    "$candidate/qualification/QUALIFICATION.md"
+cp "$root/scripts/create-flasher-acceptance.py" \
+    "$candidate/qualification/create-flasher-acceptance.py"
+cp "$root/scripts/validate-flasher-acceptance.py" \
+    "$candidate/qualification/validate-flasher-acceptance.py"
+cp "$root/scripts/flasher_acceptance_contract.py" \
+    "$candidate/qualification/flasher_acceptance_contract.py"
+cp "$root/scripts/flasher_tester_roster.py" \
+    "$candidate/qualification/flasher_tester_roster.py"
+cp "$root/scripts/package-flasher-qualification-evidence.py" \
+    "$candidate/qualification/package-flasher-qualification-evidence.py"
+cp "$root/scripts/serve-flasher-candidate.py" \
+    "$candidate/qualification/serve-flasher-candidate.py"
+cp "$root/scripts/verify-flasher-candidate-files.py" \
+    "$candidate/qualification/verify-flasher-candidate-files.py"
+cp "$root/scripts/validate-flasher-tester-roster.py" \
+    "$candidate/qualification/validate-flasher-tester-roster.py"
+cp "$roster_source" "$candidate/qualification/tester-roster.json"
 python3 "$root/scripts/write-flasher-build-metadata.py" \
     --output "$candidate/metadata/build.json" \
     --commit "$commit" \
@@ -147,6 +181,9 @@ cp -R "$hosted_dist/." "$candidate/website/"
 cp "$root/docs/website/target/hosted-assets/prns-flash.js" \
     "$candidate/website/assets/flasher/prns-flash.js"
 cp "$root/THIRD_PARTY_NOTICES.md" "$candidate/website/THIRD_PARTY_NOTICES.md"
+python3 "$root/scripts/flasher-website-history.py" apply \
+    --history "$history" \
+    --candidate "$candidate"
 bash "$root/docs/website/tools/verify-web-flasher-production-boundary.sh" \
     "$candidate/website" \
     "$boundary_root/embedded"

@@ -183,7 +183,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           toolchain: 1.96.0
-          components: clippy
+          components: clippy,rustfmt
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           shared-key: flasher-contracts
@@ -208,6 +208,10 @@ jobs:
         run: cargo clippy --locked -p prns-flash-manifest -p hopspot-flash --all-targets -- -D warnings
       - name: Website Rust shell
         run: cargo clippy --manifest-path docs/website/Cargo.toml --locked --all-targets -- -D warnings
+      - name: Website Rust format
+        run: cargo fmt --manifest-path docs/website/Cargo.toml -- --check
+      - name: Website Rust contract tests
+        run: cargo test --manifest-path docs/website/Cargo.toml --locked
       - name: Compact embedded website shell
         run: cargo clippy --manifest-path docs/website/Cargo.toml --locked --all-targets --features embedded-site -- -D warnings
       - name: Exact JavaScript graph and fake-serial suite

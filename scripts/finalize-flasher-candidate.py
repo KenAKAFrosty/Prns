@@ -12,6 +12,7 @@ import sys
 
 from flasher_sparse_sizes import build_report as build_sparse_size_report
 from flasher_sparse_sizes import render_summary as render_sparse_size_summary
+from flasher_website_history import allowed_historical_signatures
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -45,9 +46,15 @@ def read_version(candidate: Path) -> str:
 
 
 def require_unsigned(candidate: Path) -> None:
-    signatures = sorted(candidate.rglob("*.minisig"))
-    if signatures:
-        raise ValueError("candidate already contains signatures; finalize a fresh unsigned candidate")
+    allowed = allowed_historical_signatures(candidate)
+    signatures = {
+        path.relative_to(candidate).as_posix() for path in candidate.rglob("*.minisig")
+    }
+    unexpected = sorted(signatures - allowed)
+    if unexpected:
+        raise ValueError(
+            f"candidate already contains current or untracked signatures: {unexpected}"
+        )
     if (candidate / "SHA256SUMS.txt").exists():
         raise ValueError("candidate is already finalized; use a fresh unsigned directory")
 

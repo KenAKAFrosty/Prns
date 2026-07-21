@@ -7,11 +7,13 @@ import argparse
 import hashlib
 import json
 from pathlib import Path, PurePosixPath
+import subprocess
 import sys
 
 from flasher_build_metadata import validate_metadata
 from flasher_reproducibility import validate_report as validate_reproducibility_report
 from flasher_sparse_sizes import build_report as build_sparse_size_report
+from flasher_website_history import allowed_historical_signatures, validate_candidate_history
 
 
 CLI_TARGETS = {
@@ -32,7 +34,18 @@ REQUIRED_RELEASE_FILES = (
     "metadata/build.json",
     "metadata/sparse-sizes.json",
     "metadata/reproducibility.json",
+    "metadata/release-history.json",
     "audit/release-audit-evidence.md",
+    "qualification/QUALIFICATION.md",
+    "qualification/create-flasher-acceptance.py",
+    "qualification/validate-flasher-acceptance.py",
+    "qualification/flasher_acceptance_contract.py",
+    "qualification/flasher_tester_roster.py",
+    "qualification/package-flasher-qualification-evidence.py",
+    "qualification/serve-flasher-candidate.py",
+    "qualification/verify-flasher-candidate-files.py",
+    "qualification/validate-flasher-tester-roster.py",
+    "qualification/tester-roster.json",
     "website/index.html",
     "website/assets/flasher/prns-flash.js",
 )
@@ -72,13 +85,14 @@ def safe_path(root: Path, relative: str) -> Path:
 
 def payload_files(root: Path) -> set[str]:
     files: set[str] = set()
+    allowed_signatures = allowed_historical_signatures(root)
     for path in root.rglob("*"):
         if path.is_symlink():
             raise ValueError(f"candidate cannot contain symlink {path}")
         if not path.is_file():
             continue
         relative = path.relative_to(root).as_posix()
-        if relative == "SHA256SUMS.txt":
+        if relative == "SHA256SUMS.txt" or relative in allowed_signatures:
             continue
         files.add(relative)
     return files
@@ -96,6 +110,45 @@ def verify_required_release_files(root: Path) -> None:
     ):
         if mutable.exists():
             raise ValueError(f"candidate contains a mutable hosted release path: {mutable}")
+
+
+def verify_qualification_kit(root: Path, version: str, tester_roster: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    exact_sources = {
+        "qualification/QUALIFICATION.md": repository / "release" / "acceptance" / "QUALIFICATION.md",
+        "qualification/create-flasher-acceptance.py": repository / "scripts" / "create-flasher-acceptance.py",
+        "qualification/validate-flasher-acceptance.py": repository / "scripts" / "validate-flasher-acceptance.py",
+        "qualification/flasher_acceptance_contract.py": repository / "scripts" / "flasher_acceptance_contract.py",
+        "qualification/flasher_tester_roster.py": repository / "scripts" / "flasher_tester_roster.py",
+        "qualification/package-flasher-qualification-evidence.py": repository / "scripts" / "package-flasher-qualification-evidence.py",
+        "qualification/serve-flasher-candidate.py": repository / "scripts" / "serve-flasher-candidate.py",
+        "qualification/verify-flasher-candidate-files.py": repository / "scripts" / "verify-flasher-candidate-files.py",
+        "qualification/validate-flasher-tester-roster.py": repository / "scripts" / "validate-flasher-tester-roster.py",
+        "qualification/tester-roster.json": tester_roster,
+    }
+    for relative, source in exact_sources.items():
+        candidate_path = safe_path(root, relative)
+        if not source.is_file() or candidate_path.read_bytes() != source.read_bytes():
+            raise ValueError(
+                f"candidate qualification file differs from its reviewed source: {relative}"
+            )
+
+    validation = subprocess.run(
+        [
+            sys.executable,
+            str(repository / "scripts" / "validate-flasher-tester-roster.py"),
+            "--roster",
+            str(root / "qualification" / "tester-roster.json"),
+            "--version",
+            version,
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if validation.returncode != 0:
+        detail = validation.stderr.strip() or validation.stdout.strip()
+        raise ValueError(f"candidate tester roster is invalid: {detail}")
 
 
 def verify_production_website(root: Path) -> None:
@@ -177,9 +230,16 @@ def verify(arguments: argparse.Namespace) -> dict:
         raise ValueError(f"candidate directory does not exist: {root}")
     verify_required_release_files(root)
     verify_production_website(root)
-    signatures = sorted(path.relative_to(root).as_posix() for path in root.rglob("*.minisig"))
-    if signatures:
-        raise ValueError(f"unsigned candidate already contains signatures: {signatures}")
+    validate_candidate_history(root)
+    allowed_signatures = allowed_historical_signatures(root)
+    signatures = {
+        path.relative_to(root).as_posix() for path in root.rglob("*.minisig")
+    }
+    unexpected_signatures = sorted(signatures - allowed_signatures)
+    if unexpected_signatures:
+        raise ValueError(
+            f"unsigned candidate contains current or untracked signatures: {unexpected_signatures}"
+        )
     for forbidden in ("acceptance.json", "release-record.json"):
         if (root / forbidden).exists():
             raise ValueError(f"unsigned candidate must not contain {forbidden}")
@@ -198,6 +258,7 @@ def verify(arguments: argparse.Namespace) -> dict:
         raise ValueError("candidate VERSION differs from the publishable repository VERSION")
     if any(character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-+" for character in version):
         raise ValueError("candidate VERSION is not path-safe")
+    verify_qualification_kit(root, version, arguments.tester_roster.resolve())
     if not (
         len(arguments.expected_commit) == 40
         and all(character in "0123456789abcdef" for character in arguments.expected_commit)
@@ -311,6 +372,7 @@ def main() -> int:
     parser.add_argument("--expected-commit", required=True)
     parser.add_argument("--repository-version", type=Path, required=True)
     parser.add_argument("--pinned-key", type=Path, required=True)
+    parser.add_argument("--tester-roster", type=Path, required=True)
     parser.add_argument("--identity-output", type=Path)
     arguments = parser.parse_args()
     try:

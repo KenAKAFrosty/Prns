@@ -191,12 +191,79 @@ class CandidateFixture:
             },
         )
         write_json(
+            root / "metadata" / "release-history.json",
+            {
+                "schema": 1,
+                "mode": "bootstrap",
+                "head": None,
+                "tree": {
+                    "file_count": 0,
+                    "total_bytes": 0,
+                    "tree_sha256": hashlib.sha256(b"").hexdigest(),
+                },
+                "files": [],
+            },
+        )
+        write_json(
             root / "metadata" / "sparse-sizes.json",
             build_sparse_size_report(self.manifest),
         )
         audit = root / "audit" / "release-audit-evidence.md"
         audit.parent.mkdir(parents=True, exist_ok=True)
         audit.write_text("fixture release audit\n", encoding="utf-8")
+        qualification = root / "qualification"
+        qualification.mkdir()
+        qualification_sources = {
+            "QUALIFICATION.md": ROOT / "release" / "acceptance" / "QUALIFICATION.md",
+            "create-flasher-acceptance.py": SCRIPTS / "create-flasher-acceptance.py",
+            "validate-flasher-acceptance.py": SCRIPTS / "validate-flasher-acceptance.py",
+            "flasher_acceptance_contract.py": SCRIPTS / "flasher_acceptance_contract.py",
+            "serve-flasher-candidate.py": SCRIPTS / "serve-flasher-candidate.py",
+            "verify-flasher-candidate-files.py": SCRIPTS / "verify-flasher-candidate-files.py",
+            "validate-flasher-tester-roster.py": SCRIPTS / "validate-flasher-tester-roster.py",
+            "flasher_tester_roster.py": SCRIPTS / "flasher_tester_roster.py",
+            "package-flasher-qualification-evidence.py": SCRIPTS
+            / "package-flasher-qualification-evidence.py",
+        }
+        for name, source in qualification_sources.items():
+            shutil.copy2(source, qualification / name)
+        assignments = []
+        hosts = (
+            ("aarch64-apple-darwin", "macos", "aarch64", "chrome"),
+            ("x86_64-apple-darwin", "macos", "x86_64", "chrome"),
+            ("x86_64-unknown-linux-gnu", "linux", "x86_64", "chrome"),
+            ("aarch64-unknown-linux-gnu", "linux", "aarch64", "chrome"),
+            ("x86_64-pc-windows-msvc", "windows", "x86_64", "edge"),
+        )
+        for index, (target, os_name, architecture, browser) in enumerate(hosts, start=1):
+            assignments.append(
+                {
+                    "os": os_name,
+                    "architecture": architecture,
+                    "cli_target": target,
+                    "web_browser": {"name": browser, "channel": "stable"},
+                    "tester": f"github:fixture{index}",
+                    "boards": [
+                        "heltec-v4",
+                        "t-beam-supreme",
+                        "xiao-esp32-c6",
+                        "t-echo",
+                    ],
+                    "cables_ready": True,
+                    "device_permissions_ready": True,
+                    "recovery_instructions_reviewed": True,
+                }
+            )
+        roster = {
+            "schema": 1,
+            "release": {"version": VERSION},
+            "release_owner": "github:fixture-owner",
+            "confirmed_on": "2025-01-01",
+            "assignments": assignments,
+        }
+        self.tester_roster = root.parent / "tester-roster.json"
+        write_json(self.tester_roster, roster)
+        write_json(qualification / "tester-roster.json", roster)
         cli = root / "cli"
         cli.mkdir()
         self.cli_archives = []
@@ -269,6 +336,8 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
             self.fixture.repository_version,
             "--pinned-key",
             self.fixture.key,
+            "--tester-roster",
+            self.fixture.tester_roster,
         )
 
     def sign_candidate(self) -> subprocess.CompletedProcess[str]:
@@ -453,7 +522,7 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
 
     def make_release_evidence(
         self, *, include_firmware_attestations: bool = True
-    ) -> tuple[Path, Path, Path, Path, Path]:
+    ) -> tuple[Path, Path, Path, Path, Path, Path]:
         self.assertEqual(self.sign_candidate().returncode, 0)
         signed_bundle = self.workspace / f"prns-flasher-candidate-v{VERSION}-signed.tar.gz"
         result = run_script(
@@ -531,6 +600,8 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
                     "manifest_signature_sha256": sha256(
                         Path(f"{self.fixture.manifest_path}.minisig")
                     ),
+                    "signed_candidate_sha256": sha256(signed_bundle),
+                    "prerelease_published_at": "2026-07-20T12:00:00Z",
                 },
             },
         )
@@ -553,10 +624,49 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
                 "source_commit": SOURCE_COMMIT,
             },
         )
-        return signed_bundle, bundle, metadata, acceptance, candidate_run
+        qualification_evidence = (
+            self.workspace / f"qualification-evidence-v{VERSION}.tar.gz"
+        )
+        qualification_evidence.write_bytes(b"fixture qualification evidence\n")
+        self.public_review_evidence = (
+            self.workspace / f"public-review-v{VERSION}-run-77-attempt-2.json"
+        )
+        write_json(
+            self.public_review_evidence,
+            {
+                "schema": 1,
+                "repository": REPOSITORY,
+                "workflow_path": ".github/workflows/flasher-sign.yml",
+                "workflow_sha": SOURCE_COMMIT,
+                "workflow_run_id": 77,
+                "workflow_run_attempt": 2,
+                "workflow_job_id": 88,
+                "version": VERSION,
+                "source_commit": SOURCE_COMMIT,
+                "signed_candidate_sha256": sha256(signed_bundle),
+                "manifest_sha256": sha256(self.fixture.manifest_path),
+                "prerelease_published_at": "2026-07-20T12:00:00Z",
+                "gate_completed_at": "2026-07-21T12:01:00Z",
+            },
+        )
+        return (
+            signed_bundle,
+            bundle,
+            metadata,
+            acceptance,
+            candidate_run,
+            qualification_evidence,
+        )
 
     def test_release_record_binds_candidate_acceptance_audit_and_attestation(self) -> None:
-        signed_bundle, bundle, metadata, acceptance, candidate_run = self.make_release_evidence()
+        (
+            signed_bundle,
+            bundle,
+            metadata,
+            acceptance,
+            candidate_run,
+            qualification_evidence,
+        ) = self.make_release_evidence()
         record = self.workspace / f"release-record-v{VERSION}.json"
         common: list[object] = [
             "--candidate",
@@ -569,6 +679,12 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
             acceptance,
             "--acceptance-source-commit",
             ACCEPTANCE_COMMIT,
+            "--qualification-evidence",
+            qualification_evidence,
+            "--public-review-evidence",
+            self.public_review_evidence,
+            "--prerelease-published-at",
+            "2026-07-20T12:00:00Z",
             "--attestation-bundle",
             bundle,
             "--attestation-metadata",
@@ -582,6 +698,49 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
             "flasher-release-record.py", "verify", *common, "--release-record", record
         )
         self.assertEqual(verified.returncode, 0, verified.stderr)
+        record_value = json.loads(record.read_text(encoding="utf-8"))
+        self.assertEqual(
+            record_value["release"]["prerelease_published_at"],
+            "2026-07-20T12:00:00Z",
+        )
+        self.assertEqual(
+            record_value["qualification_evidence"],
+            {
+                "name": qualification_evidence.name,
+                "size": qualification_evidence.stat().st_size,
+                "sha256": sha256(qualification_evidence),
+            },
+        )
+        self.assertEqual(
+            record_value["public_review"]["evidence"]["sha256"],
+            sha256(self.public_review_evidence),
+        )
+        audit = self.fixture.root / "audit" / "release-audit-evidence.md"
+        audit_bytes = audit.read_bytes()
+        audit.write_bytes(audit_bytes + b"not in the signed archive\n")
+        rejected_candidate = run_script(
+            "flasher-release-record.py", "verify", *common, "--release-record", record
+        )
+        self.assertNotEqual(rejected_candidate.returncode, 0)
+        self.assertIn("candidate directory bytes differ", rejected_candidate.stderr)
+        audit.write_bytes(audit_bytes)
+
+        review_bytes = self.public_review_evidence.read_bytes()
+        self.public_review_evidence.write_bytes(review_bytes + b" ")
+        rejected_review = run_script(
+            "flasher-release-record.py", "verify", *common, "--release-record", record
+        )
+        self.assertNotEqual(rejected_review.returncode, 0)
+        self.assertIn("release record does not match", rejected_review.stderr)
+        self.public_review_evidence.write_bytes(review_bytes)
+        qualification_bytes = qualification_evidence.read_bytes()
+        qualification_evidence.write_bytes(qualification_bytes + b"tampered")
+        rejected_qualification = run_script(
+            "flasher-release-record.py", "verify", *common, "--release-record", record
+        )
+        self.assertNotEqual(rejected_qualification.returncode, 0)
+        self.assertIn("release record does not match", rejected_qualification.stderr)
+        qualification_evidence.write_bytes(qualification_bytes)
         acceptance.write_text(acceptance.read_text() + " ", encoding="utf-8")
         rejected = run_script(
             "flasher-release-record.py", "verify", *common, "--release-record", record
@@ -590,7 +749,14 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         self.assertIn("release record does not match", rejected.stderr)
 
     def test_release_record_rejects_candidate_run_tamper_and_identity_mismatch(self) -> None:
-        signed_bundle, bundle, metadata, acceptance, candidate_run = self.make_release_evidence()
+        (
+            signed_bundle,
+            bundle,
+            metadata,
+            acceptance,
+            candidate_run,
+            qualification_evidence,
+        ) = self.make_release_evidence()
         record = self.workspace / f"release-record-v{VERSION}.json"
         common: list[object] = [
             "--candidate",
@@ -603,6 +769,12 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
             acceptance,
             "--acceptance-source-commit",
             ACCEPTANCE_COMMIT,
+            "--qualification-evidence",
+            qualification_evidence,
+            "--public-review-evidence",
+            self.public_review_evidence,
+            "--prerelease-published-at",
+            "2026-07-20T12:00:00Z",
             "--attestation-bundle",
             bundle,
             "--attestation-metadata",
@@ -631,7 +803,7 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         self.assertIn("source commit differs", mismatched.stderr)
 
     def test_release_record_requires_provenance_for_every_firmware_payload(self) -> None:
-        signed_bundle, bundle, metadata, acceptance, candidate_run = (
+        signed_bundle, bundle, metadata, acceptance, candidate_run, qualification_evidence = (
             self.make_release_evidence(include_firmware_attestations=False)
         )
         record = self.workspace / f"release-record-v{VERSION}.json"
@@ -648,6 +820,12 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
             acceptance,
             "--acceptance-source-commit",
             ACCEPTANCE_COMMIT,
+            "--qualification-evidence",
+            qualification_evidence,
+            "--public-review-evidence",
+            self.public_review_evidence,
+            "--prerelease-published-at",
+            "2026-07-20T12:00:00Z",
             "--attestation-bundle",
             bundle,
             "--attestation-metadata",
@@ -716,6 +894,23 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
             self.fixture.root / "cli" / "install.sh",
             self.fixture.root / "cli" / "install.ps1",
             self.fixture.root / "cli" / "README.md",
+            self.fixture.root / "qualification" / "QUALIFICATION.md",
+            self.fixture.root / "qualification" / "create-flasher-acceptance.py",
+            self.fixture.root / "qualification" / "validate-flasher-acceptance.py",
+            self.fixture.root / "qualification" / "flasher_acceptance_contract.py",
+            self.fixture.root / "qualification" / "serve-flasher-candidate.py",
+            self.fixture.root / "qualification" / "verify-flasher-candidate-files.py",
+            self.fixture.root / "qualification" / "validate-flasher-tester-roster.py",
+            self.fixture.root / "qualification" / "flasher_tester_roster.py",
+            self.fixture.root
+            / "qualification"
+            / "package-flasher-qualification-evidence.py",
+            self.fixture.root / "qualification" / "tester-roster.json",
+            self.fixture.root / "audit" / "release-audit-evidence.md",
+            self.fixture.root / "metadata" / "build.json",
+            self.fixture.root / "metadata" / "sparse-sizes.json",
+            self.fixture.root / "metadata" / "reproducibility.json",
+            self.fixture.root / "metadata" / "release-history.json",
             *self.fixture.cli_archives,
         ]
         for source in candidate_assets:
@@ -727,10 +922,36 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
             f"prns-flasher-attestation-v{VERSION}.metadata.json",
             f"acceptance-v{VERSION}.json",
             f"acceptance-v{VERSION}.json.minisig",
+            f"qualification-evidence-v{VERSION}.tar.gz",
             f"release-record-v{VERSION}.json",
             f"release-record-v{VERSION}.json.minisig",
         ):
             (assets / name).write_text(f"fixture {name}\n", encoding="utf-8")
+        workflow_run_id = 77
+        write_json(
+            assets / f"prns-flasher-attestation-v{VERSION}.metadata.json",
+            {"repository": REPOSITORY, "workflow_run_id": workflow_run_id},
+        )
+        signed_bundle = assets / f"prns-flasher-candidate-v{VERSION}-signed.tar.gz"
+        write_json(
+            assets
+            / f"public-review-v{VERSION}-run-{workflow_run_id}-attempt-2.json",
+            {
+                "schema": 1,
+                "repository": REPOSITORY,
+                "workflow_path": ".github/workflows/flasher-sign.yml",
+                "workflow_sha": SOURCE_COMMIT,
+                "workflow_run_id": workflow_run_id,
+                "workflow_run_attempt": 2,
+                "workflow_job_id": 88,
+                "version": VERSION,
+                "source_commit": SOURCE_COMMIT,
+                "signed_candidate_sha256": sha256(signed_bundle),
+                "manifest_sha256": sha256(self.fixture.manifest_path),
+                "prerelease_published_at": "2026-07-20T12:00:00Z",
+                "gate_completed_at": "2026-07-21T12:01:00Z",
+            },
+        )
         arguments = (
             "--candidate",
             self.fixture.root,
@@ -741,6 +962,33 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         )
         verified = run_script("verify-flasher-release-assets.py", *arguments)
         self.assertEqual(verified.returncode, 0, verified.stderr)
+        remote_inventory = self.workspace / "release-assets.json"
+        inventory = [
+            {
+                "name": path.name,
+                "size": path.stat().st_size,
+                "digest": f"sha256:{sha256(path)}",
+            }
+            for path in sorted(assets.iterdir(), key=lambda path: path.name)
+        ]
+        write_json(remote_inventory, inventory)
+        verified_remote = run_script(
+            "verify-flasher-release-assets.py",
+            *arguments,
+            "--remote-inventory",
+            remote_inventory,
+        )
+        self.assertEqual(verified_remote.returncode, 0, verified_remote.stderr)
+        inventory[0]["digest"] = f"sha256:{'0' * 64}"
+        write_json(remote_inventory, inventory)
+        rejected_remote = run_script(
+            "verify-flasher-release-assets.py",
+            *arguments,
+            "--remote-inventory",
+            remote_inventory,
+        )
+        self.assertNotEqual(rejected_remote.returncode, 0)
+        self.assertIn("downloaded asset bytes differ", rejected_remote.stderr)
 
         readme = assets / "README.md"
         expected_readme = readme.read_bytes()
@@ -764,6 +1012,16 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         self.assertIn("candidate_run_id:", signing)
         self.assertIn("unsigned_bundle_sha256:", signing)
         self.assertIn("environment: release-signing", signing)
+        self.assertIn("name: Complete protected 24-hour public review", signing)
+        self.assertIn("environment: public-release", signing)
+        self.assertIn("scripts/flasher-public-review.py create", signing)
+        self.assertIn(
+            "Publish immutable attempt-specific public-review evidence", signing
+        )
+        self.assertIn(
+            "actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}", signing
+        )
+        self.assertIn("qualification/tester-roster.json", signing)
         self.assertIn("PRNS_MINISIGN_SECRET_KEY_B64", signing)
         self.assertIn(
             "actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26", signing
@@ -782,26 +1040,106 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         self.assertIn("published-evidence", evidence)
         self.assertIn("cmp \"$local_asset\" \"$remote\"", evidence)
         self.assertIn("--candidate-run", evidence)
+        self.assertIn("--public-review-evidence", evidence)
+        self.assertIn("Select and verify the exact successful protected public review", evidence)
+        self.assertIn(
+            "actions/runs/${signing_run_id}/attempts/${run_attempt}", evidence
+        )
         self.assertIn("sign-flasher-document.sh \"$record\"", evidence)
         self.assertIn("release_record_sha256:", promotion)
         self.assertIn("verify-flasher-release.sh", promotion)
         self.assertIn("--candidate-run", promotion)
         self.assertIn("--minimum-hours 24", promotion)
         self.assertIn("--allow-promoted", promotion)
+        self.assertIn("scripts/flasher-public-review.py verify", promotion)
+        self.assertIn(".public_review.evidence.name", promotion)
+        self.assertIn(".public_review.workflow_run_attempt", promotion)
+        self.assertIn(
+            "actions/runs/${signing_run_id}/attempts/${run_attempt}", promotion
+        )
+        self.assertNotIn("environment: public-release", promotion)
         self.assertIn("verify-flasher-release-assets.py", promotion)
+        self.assertLess(
+            promotion.index("Verify the complete prerelease asset inventory before deployment"),
+            promotion.index("actions/deploy-pages@"),
+        )
+        self.assertIn("{name, size, digest}", promotion)
         self.assertIn("group: prns-public-pages", promotion)
+        self.assertIn("Bind Pages artifacts to this exact verification attempt", promotion)
+        self.assertIn("candidate_pages_artifact_name:", promotion)
+        self.assertIn("rollback_baseline_pages_artifact_name:", promotion)
+        self.assertIn("rollback_baseline_stage_artifact_name:", promotion)
+        self.assertIn(
+            "artifact_name: ${{ needs.verify.outputs.candidate_pages_artifact_name }}",
+            promotion,
+        )
+        self.assertIn("  restore-baseline-on-failure:", promotion)
+        self.assertIn("${{ always() && needs.verify.result == 'success'", promotion)
+        self.assertIn(
+            "needs: [verify, publish-and-deploy, post-promotion-smoke, mark-promoted]",
+            promotion,
+        )
+        self.assertIn(
+            "Compare-and-swap only the failed candidate back to its verified baseline",
+            promotion,
+        )
+        self.assertIn("target/recovery-live-cas/stable.json", promotion)
+        self.assertIn(
+            "artifact_name: ${{ needs.verify.outputs.rollback_baseline_pages_artifact_name }}",
+            promotion,
+        )
+        self.assertIn("rollback_baseline_asset_inventory_sha256:", promotion)
+        self.assertIn("EXPECTED_CURRENT_ASSET_INVENTORY_SHA256", promotion)
+        self.assertIn("EXPECTED_BASELINE_ASSET_INVENTORY_SHA256", promotion)
+        self.assertIn("verify-live-website", promotion)
+        self.assertIn("--prerelease=true --latest=false", promotion)
         site = (ROOT / ".github/workflows/site.yml").read_text()
         self.assertIn("group: prns-public-pages", site)
         self.assertIn("vars.PRNS_PUBLIC_SITE_PROMOTED != 'true'", site)
+        self.assertIn("Refuse to overwrite any live signed stable channel", site)
+        self.assertIn("probe-stable", site)
+        self.assertIn("cmp target/live-site-custody/stable.json", site)
+        self.assertIn("steps.custody.outputs.deploy == 'true'", site)
         publish_job = promotion[
-            promotion.index("  publish-release:") : promotion.index("  deploy-stable-site:")
+            promotion.index("  publish-and-deploy:") : promotion.index("  post-promotion-smoke:")
         ]
         smoke_job = promotion[promotion.index("  post-promotion-smoke:") :]
         self.assertNotIn("PRNS_PUBLIC_SITE_PROMOTED", publish_job)
         self.assertIn("PRNS_PUBLIC_SITE_PROMOTED", smoke_job)
         self.assertLess(
+            publish_job.index("actions/deploy-pages@"),
+            publish_job.index(
+                "Verify deployed signed channel and website before release mutation"
+            ),
+        )
+        self.assertLess(
+            publish_job.index(
+                "Verify deployed signed channel and website before release mutation"
+            ),
+            publish_job.index(
+                "Mark the verified prerelease stable without replacing assets"
+            ),
+        )
+        self.assertLess(
             smoke_job.index("Prove stable release state"),
             smoke_job.index("PRNS_PUBLIC_SITE_PROMOTED"),
+        )
+        recovery_job = promotion[promotion.index("  restore-baseline-on-failure:") :]
+        self.assertLess(
+            recovery_job.index("Compare-and-swap only the failed candidate"),
+            recovery_job.index("Redeploy the exact verified baseline Pages artifact"),
+        )
+        self.assertLess(
+            recovery_job.index("Verify every restored website byte"),
+            recovery_job.index("Restore baseline release metadata"),
+        )
+        self.assertLess(
+            recovery_job.index(
+                'gh release edit "v${ROLLBACK_BASELINE_VERSION}" --latest=true'
+            ),
+            recovery_job.index(
+                'gh release edit "v${RELEASE_VERSION}" --prerelease=true --latest=false'
+            ),
         )
 
 

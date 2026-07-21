@@ -9,6 +9,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
+  actions: read
   contents: read
   pages: write
   id-token: write
@@ -49,6 +50,51 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Install exact Minisign verifier
+        run: scripts/install-release-minisign.sh "${RUNNER_TEMP}/prns-release-bin"
+      - name: Refuse to overwrite any live signed stable channel
+        id: custody
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRNS_MINISIGN_BIN: ${{ runner.temp }}/prns-release-bin/minisign
+        run: |
+          mkdir -p target/live-site-custody
+          if [[ "$(gh variable get PRNS_PUBLIC_SITE_PROMOTED 2>/dev/null || true)" == true ]]; then
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          cache_key="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          curl --fail --location --retry 5 --retry-all-errors \
+            --header 'Cache-Control: no-cache' \
+            --output target/live-site-custody/stable.json \
+            "https://reticulum.rs/releases/channels/stable.json?custody=${cache_key}"
+          set +e
+          python3 scripts/flasher-website-history.py probe-stable \
+            --descriptor target/live-site-custody/stable.json
+          probe_status="$?"
+          set -e
+          case "$probe_status" in
+            0)
+              curl --fail --location --retry 5 --retry-all-errors \
+                --header 'Cache-Control: no-cache' \
+                --output target/live-site-custody/stable.json.minisig \
+                "https://reticulum.rs/releases/channels/stable.json.minisig?custody=${cache_key}"
+              "$PRNS_MINISIGN_BIN" -Vm target/live-site-custody/stable.json \
+                -x target/live-site-custody/stable.json.minisig \
+                -p release/keys/minisign.pub
+              echo "deploy=false" >> "$GITHUB_OUTPUT"
+              ;;
+            1)
+              cmp target/live-site-custody/stable.json \
+                docs/website/coming-soon/index.html
+              echo "deploy=true" >> "$GITHUB_OUTPUT"
+              ;;
+            *) exit "$probe_status" ;;
+          esac
       - name: Deploy to GitHub Pages
+        if: steps.custody.outputs.deploy == 'true'
         id: deployment
         uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e

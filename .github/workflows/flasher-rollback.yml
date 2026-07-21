@@ -1,0 +1,414 @@
+name: verify or deploy an exact flasher rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Stage and record only, or deploy after a successful dry-run
+        required: true
+        default: dry-run
+        type: choice
+        options: [dry-run, deploy]
+      target_version:
+        description: Immutable prior signed stable version to restore
+        required: true
+        type: string
+      target_release_record_sha256:
+        description: Lowercase SHA-256 of the target version's signed release record
+        required: true
+        type: string
+      expected_live_version:
+        description: Version deploy must replace; prospective candidate during pre-promotion dry-run
+        required: true
+        type: string
+      expected_live_manifest_sha256:
+        description: Manifest SHA-256 deploy must replace; prospective candidate during dry-run
+        required: true
+        type: string
+      dry_run_id:
+        description: Successful <=15-minute dry-run workflow ID; empty in dry-run mode
+        required: false
+        default: ""
+        type: string
+      dry_run_attempt:
+        description: Exact successful dry-run attempt; empty in dry-run mode
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  ROLLBACK_MODE: ${{ inputs.mode }}
+  TARGET_VERSION: ${{ inputs.target_version }}
+  TARGET_RELEASE_RECORD_SHA256: ${{ inputs.target_release_record_sha256 }}
+  EXPECTED_LIVE_VERSION: ${{ inputs.expected_live_version }}
+  EXPECTED_LIVE_MANIFEST_SHA256: ${{ inputs.expected_live_manifest_sha256 }}
+  DRY_RUN_ID: ${{ inputs.dry_run_id }}
+  DRY_RUN_ATTEMPT: ${{ inputs.dry_run_attempt }}
+  RUSTUP_TOOLCHAIN: 1.96.0
+
+jobs:
+  stage:
+    name: Verify and stage complete prior website
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: release-rollback
+    permissions:
+      actions: read
+      attestations: read
+      contents: read
+    outputs:
+      target_manifest_sha256: ${{ steps.target.outputs.manifest_sha256 }}
+      asset_inventory_sha256: ${{ steps.target.outputs.asset_inventory_sha256 }}
+    steps:
+      - name: Start the measured recovery window
+        run: echo "ROLLBACK_STARTED_EPOCH=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.96.0
+      - name: Require protected default-branch workflow and exact inputs
+        id: repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          default_branch="$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.default_branch')"
+          test "$GITHUB_REF" = "refs/heads/${default_branch}"
+          echo "default_branch=$default_branch" >> "$GITHUB_OUTPUT"
+          [[ "$TARGET_VERSION" =~ ^[0-9A-Za-z][0-9A-Za-z.+-]*$ ]]
+          [[ "$EXPECTED_LIVE_VERSION" =~ ^[0-9A-Za-z][0-9A-Za-z.+-]*$ ]]
+          test "${TARGET_VERSION,,}" != next
+          test "${EXPECTED_LIVE_VERSION,,}" != next
+          test "$TARGET_VERSION" != "$EXPECTED_LIVE_VERSION"
+          [[ "$TARGET_RELEASE_RECORD_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$EXPECTED_LIVE_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          case "$ROLLBACK_MODE" in
+            dry-run) test -z "$DRY_RUN_ID" && test -z "$DRY_RUN_ATTEMPT" ;;
+            deploy)
+              [[ "$DRY_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+              [[ "$DRY_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+              ;;
+            *) exit 2 ;;
+          esac
+      - name: Install exact Minisign verifier
+        run: scripts/install-release-minisign.sh "${RUNNER_TEMP}/prns-release-bin"
+      - name: Download and verify every target release custody asset
+        id: target
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRNS_MINISIGN_BIN: ${{ runner.temp }}/prns-release-bin/minisign
+        run: |
+          assets="target/rollback-assets"
+          candidate="target/rollback-candidate"
+          mkdir -p "$assets"
+          gh release download "v${TARGET_VERSION}" --dir "$assets"
+          record="$assets/release-record-v${TARGET_VERSION}.json"
+          test "$(sha256sum "$record" | awk '{print $1}')" = \
+            "$TARGET_RELEASE_RECORD_SHA256"
+          gh release view "v${TARGET_VERSION}" \
+            --json isDraft,isPrerelease,publishedAt,tagName,targetCommitish \
+            > target/rollback-release.json
+          test "$(jq -r '.isDraft' target/rollback-release.json)" = false
+          test "$(jq -r '.isPrerelease' target/rollback-release.json)" = false
+          test "$(jq -r '.tagName' target/rollback-release.json)" = "v${TARGET_VERSION}"
+          test "$(jq -r '.targetCommitish' target/rollback-release.json)" = \
+            "$(jq -r '.release.source_commit' "$record")"
+          bundle="$assets/prns-flasher-candidate-v${TARGET_VERSION}-signed.tar.gz"
+          python3 scripts/extract-flasher-candidate.py "$bundle" "$candidate"
+          acceptance_commit="$(jq -r '.acceptance.source_commit' "$record")"
+          review_name="$(jq -r '.public_review.evidence.name' "$record")"
+          review_evidence="$assets/$review_name"
+          test -f "$review_evidence"
+          review_run_id="$(jq -r '.public_review.workflow_run_id' "$record")"
+          review_attempt="$(jq -r '.public_review.workflow_run_attempt' "$record")"
+          review_job_id="$(jq -r '.public_review.workflow_job_id' "$record")"
+          gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${review_run_id}/attempts/${review_attempt}" \
+            > target/rollback-review-run.json
+          gh api --paginate \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${review_run_id}/attempts/${review_attempt}/jobs?per_page=100" \
+            --jq ".jobs[] | select(.id == ${review_job_id})" \
+            > target/rollback-review-job-pages.json
+          test "$(jq -s 'length' target/rollback-review-job-pages.json)" -eq 1
+          jq -s '.[0]' target/rollback-review-job-pages.json \
+            > target/rollback-review-job.json
+          python3 scripts/verify-historical-flasher-release.py \
+            --candidate "$candidate" \
+            --candidate-run "$assets/prns-flasher-candidate-run-v${TARGET_VERSION}.json" \
+            --signed-bundle "$bundle" \
+            --acceptance "$assets/acceptance-v${TARGET_VERSION}.json" \
+            --acceptance-source-commit "$acceptance_commit" \
+            --release-record "$record" \
+            --attestation-bundle "$assets/prns-flasher-attestation-v${TARGET_VERSION}.json" \
+            --attestation-metadata "$assets/prns-flasher-attestation-v${TARGET_VERSION}.metadata.json" \
+            --public-review-evidence "$review_evidence" \
+            --public-review-release target/rollback-release.json \
+            --public-review-run target/rollback-review-run.json \
+            --public-review-job target/rollback-review-job.json \
+            --assets "$assets" \
+            --repository "$GITHUB_REPOSITORY" \
+            --version "$TARGET_VERSION"
+
+          attestation="$assets/prns-flasher-attestation-v${TARGET_VERSION}.json"
+          signer="$GITHUB_REPOSITORY/.github/workflows/flasher-sign.yml"
+          gh attestation verify "$bundle" --repo "$GITHUB_REPOSITORY" \
+            --bundle "$attestation" --signer-workflow "$signer" \
+            --deny-self-hosted-runners
+          for archive in "$candidate"/cli/hopspot-flash-*; do
+            gh attestation verify "$archive" --repo "$GITHUB_REPOSITORY" \
+              --bundle "$attestation" --signer-workflow "$signer" \
+              --deny-self-hosted-runners
+          done
+          while IFS= read -r relative; do
+            gh attestation verify "$candidate/$relative" --repo "$GITHUB_REPOSITORY" \
+              --bundle "$attestation" --signer-workflow "$signer" \
+              --deny-self-hosted-runners
+          done < <(jq -r '[.targets[].parts[].path] | unique[]' "$candidate/flash-manifest.json")
+
+          python3 scripts/flasher-rollback.py stage \
+            --candidate "$candidate" \
+            --release-record "$record" \
+            --release-record-sha256 "$TARGET_RELEASE_RECORD_SHA256" \
+            --version "$TARGET_VERSION" \
+            --output target/rollback-website \
+            --identity-output target/rollback-stage.json
+          manifest_sha256="$(jq -r '.target.manifest_sha256' target/rollback-stage.json)"
+          echo "manifest_sha256=$manifest_sha256" >> "$GITHUB_OUTPUT"
+          gh release view "v${TARGET_VERSION}" --json assets \
+            --jq '[.assets[] | {name, size, digest}] | sort_by(.name)' \
+            > target/rollback-asset-inventory.json
+          echo "asset_inventory_sha256=$(sha256sum target/rollback-asset-inventory.json | awk '{print $1}')" \
+            >> "$GITHUB_OUTPUT"
+      - name: Verify baseline state for dry-run or compare-and-swap state for deploy
+        id: live
+        env:
+          PRNS_MINISIGN_BIN: ${{ runner.temp }}/prns-release-bin/minisign
+          TARGET_MANIFEST_SHA256: ${{ steps.target.outputs.manifest_sha256 }}
+        run: |
+          mkdir -p target/live-before
+          curl --fail --location --retry 5 --retry-all-errors \
+            --output target/live-before/stable.json \
+            https://reticulum.rs/releases/channels/stable.json
+          curl --fail --location --retry 5 --retry-all-errors \
+            --output target/live-before/stable.json.minisig \
+            https://reticulum.rs/releases/channels/stable.json.minisig
+          "$PRNS_MINISIGN_BIN" -Vm target/live-before/stable.json \
+            -x target/live-before/stable.json.minisig -p release/keys/minisign.pub
+          live_state="$(python3 scripts/flasher-rollback.py live-state \
+              --descriptor target/live-before/stable.json \
+              --mode "$ROLLBACK_MODE" \
+              --target-version "$TARGET_VERSION" \
+              --target-manifest-sha256 "$TARGET_MANIFEST_SHA256" \
+              --expected-live-version "$EXPECTED_LIVE_VERSION" \
+              --expected-live-manifest-sha256 "$EXPECTED_LIVE_MANIFEST_SHA256")"
+          echo "$live_state"
+          echo "state=$live_state" >> "$GITHUB_OUTPUT"
+      - name: Download the exact successful dry-run record for deployment
+        if: inputs.mode == 'deploy'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: flasher-rollback-dry-run-${{ inputs.dry_run_id }}-attempt-${{ inputs.dry_run_attempt }}
+          path: target/dry-run
+          run-id: ${{ inputs.dry_run_id }}
+          github-token: ${{ github.token }}
+      - name: Bind deploy to the successful <=15-minute dry-run
+        if: inputs.mode == 'deploy'
+        env:
+          DEFAULT_BRANCH: ${{ steps.repository.outputs.default_branch }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${DRY_RUN_ID}/attempts/${DRY_RUN_ATTEMPT}" \
+            > target/dry-run-workflow.json
+          dry_run_job_id="$(jq -r '.workflow_job_id' \
+            target/dry-run/rollback-dry-run.json)"
+          [[ "$dry_run_job_id" =~ ^[1-9][0-9]*$ ]]
+          gh api --paginate \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${DRY_RUN_ID}/attempts/${DRY_RUN_ATTEMPT}/jobs?per_page=100" \
+            --jq ".jobs[] | select(.id == ${dry_run_job_id})" \
+            > target/dry-run-job-pages.json
+          test "$(jq -s 'length' target/dry-run-job-pages.json)" -eq 1
+          jq -s '.[0]' target/dry-run-job-pages.json > target/dry-run-job.json
+          python3 scripts/flasher-rollback.py validate-record \
+            --record target/dry-run/rollback-dry-run.json \
+            --run-json target/dry-run-workflow.json \
+            --job-json target/dry-run-job.json \
+            --stage-identity target/rollback-stage.json \
+            --repository "$GITHUB_REPOSITORY" \
+            --default-branch "$DEFAULT_BRANCH" \
+            --expected-run-id "$DRY_RUN_ID" \
+            --expected-run-attempt "$DRY_RUN_ATTEMPT" \
+            --target-version "$TARGET_VERSION" \
+            --target-release-record-sha256 "$TARGET_RELEASE_RECORD_SHA256" \
+            --expected-live-version "$EXPECTED_LIVE_VERSION" \
+            --expected-live-manifest-sha256 "$EXPECTED_LIVE_MANIFEST_SHA256" \
+            --required-workflow-sha "$GITHUB_SHA"
+      - name: Stage the complete prior website as a deployable Pages artifact
+        if: inputs.mode == 'deploy'
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa
+        with:
+          path: target/rollback-website
+      - name: Carry the exact staged website inventory into deployment
+        if: inputs.mode == 'deploy'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: flasher-rollback-stage-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: target/rollback-stage.json
+          retention-days: 1
+          if-no-files-found: error
+      - name: Record successful dry-run custody and measured recovery time
+        if: inputs.mode == 'dry-run'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          stage_job_ids="$(gh api --paginate \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}/jobs?per_page=100" \
+            --jq '.jobs[] | select(.name == "Verify and stage complete prior website") | .id')"
+          test "$(printf '%s\n' "$stage_job_ids" | sed '/^$/d' | wc -l | tr -d ' ')" = 1
+          [[ "$stage_job_ids" =~ ^[1-9][0-9]*$ ]]
+          python3 scripts/flasher-rollback.py record \
+            --stage-identity target/rollback-stage.json \
+            --expected-live-version "$EXPECTED_LIVE_VERSION" \
+            --expected-live-manifest-sha256 "$EXPECTED_LIVE_MANIFEST_SHA256" \
+            --repository "$GITHUB_REPOSITORY" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --workflow-run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --workflow-job-id "$stage_job_ids" \
+            --workflow-sha "$GITHUB_WORKFLOW_SHA" \
+            --observed-live-state "${{ steps.live.outputs.state }}" \
+            --started-epoch "$ROLLBACK_STARTED_EPOCH" \
+            --output target/rollback-dry-run.json
+      - name: Preserve successful dry-run record
+        if: inputs.mode == 'dry-run'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: flasher-rollback-dry-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: |
+            target/rollback-dry-run.json
+            target/rollback-website
+          retention-days: 90
+          if-no-files-found: error
+
+  deploy-and-finalize:
+    name: Deploy, verify, and finalize exact prior website
+    if: inputs.mode == 'deploy'
+    needs: stage
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: prns-public-pages
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      contents: write
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      TARGET_MANIFEST_SHA256: ${{ needs.stage.outputs.target_manifest_sha256 }}
+      EXPECTED_ASSET_INVENTORY_SHA256: ${{ needs.stage.outputs.asset_inventory_sha256 }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Restore the exact staged website inventory
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: flasher-rollback-stage-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: target/rollback-stage
+      - name: Install exact Minisign verifier
+        run: scripts/install-release-minisign.sh "${RUNNER_TEMP}/prns-release-bin"
+      - name: Recheck the verified target asset inventory before deployment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "v${TARGET_VERSION}" --json assets \
+            --jq '[.assets[] | {name, size, digest}] | sort_by(.name)' \
+            > target/assets-before-rollback-deployment.json
+          test "$(sha256sum target/assets-before-rollback-deployment.json | awk '{print $1}')" = \
+            "$EXPECTED_ASSET_INVENTORY_SHA256"
+      - name: Recheck live CAS immediately before deployment
+        env:
+          PRNS_MINISIGN_BIN: ${{ runner.temp }}/prns-release-bin/minisign
+          TARGET_MANIFEST_SHA256: ${{ needs.stage.outputs.target_manifest_sha256 }}
+        run: |
+          mkdir -p target/live-final-cas
+          curl --fail --location --retry 5 --retry-all-errors \
+            --output target/live-final-cas/stable.json \
+            https://reticulum.rs/releases/channels/stable.json
+          curl --fail --location --retry 5 --retry-all-errors \
+            --output target/live-final-cas/stable.json.minisig \
+            https://reticulum.rs/releases/channels/stable.json.minisig
+          "$PRNS_MINISIGN_BIN" -Vm target/live-final-cas/stable.json \
+            -x target/live-final-cas/stable.json.minisig -p release/keys/minisign.pub
+          python3 scripts/flasher-rollback.py live-state \
+            --descriptor target/live-final-cas/stable.json \
+            --mode deploy \
+            --target-version "$TARGET_VERSION" \
+            --target-manifest-sha256 "$TARGET_MANIFEST_SHA256" \
+            --expected-live-version "$EXPECTED_LIVE_VERSION" \
+            --expected-live-manifest-sha256 "$EXPECTED_LIVE_MANIFEST_SHA256"
+      - name: Deploy the staged complete prior website
+        id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e
+      - name: Verify the restored signed website before changing latest
+        env:
+          PRNS_MINISIGN_BIN: ${{ runner.temp }}/prns-release-bin/minisign
+        run: |
+          site="${{ steps.deployment.outputs.page_url }}"
+          site="${site%/}"
+          mkdir -p target/live-restored
+          curl --fail --location --retry 5 --retry-all-errors \
+            --output target/live-restored/stable.json \
+            "$site/releases/channels/stable.json"
+          curl --fail --location --retry 5 --retry-all-errors \
+            --output target/live-restored/stable.json.minisig \
+            "$site/releases/channels/stable.json.minisig"
+          "$PRNS_MINISIGN_BIN" -Vm target/live-restored/stable.json \
+            -x target/live-restored/stable.json.minisig -p release/keys/minisign.pub
+          python3 scripts/flasher-rollback.py cas \
+            --descriptor target/live-restored/stable.json \
+            --version "$TARGET_VERSION" \
+            --manifest-sha256 "$TARGET_MANIFEST_SHA256"
+          curl --fail --location --retry 5 --retry-all-errors \
+            --output target/live-restored/flash-manifest.json \
+            "$site/releases/${TARGET_VERSION}/flash-manifest.json"
+          curl --fail --location --retry 5 --retry-all-errors \
+            --output target/live-restored/flash-manifest.json.minisig \
+            "$site/releases/${TARGET_VERSION}/flash-manifest.json.minisig"
+          "$PRNS_MINISIGN_BIN" -Vm target/live-restored/flash-manifest.json \
+            -x target/live-restored/flash-manifest.json.minisig \
+            -p release/keys/minisign.pub
+          test "$(sha256sum target/live-restored/flash-manifest.json | awk '{print $1}')" = \
+            "$TARGET_MANIFEST_SHA256"
+          for attempt in {1..12}; do
+            if python3 scripts/flasher-rollback.py verify-live-website \
+              --stage-identity target/rollback-stage/rollback-stage.json \
+              --site-url "$site"; then
+              break
+            fi
+            test "$attempt" -lt 12
+            sleep 5
+          done
+      - name: Mark the prior release latest without modifying any asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "v${TARGET_VERSION}" --json assets \
+            --jq '[.assets[] | {name, size, digest}] | sort_by(.name)' \
+            > target/assets-before-latest.json
+          test "$(sha256sum target/assets-before-latest.json | awk '{print $1}')" = \
+            "$EXPECTED_ASSET_INVENTORY_SHA256"
+          gh release edit "v${TARGET_VERSION}" --latest=true
+          gh release view "v${TARGET_VERSION}" --json assets \
+            --jq '[.assets[] | {name, size, digest}] | sort_by(.name)' \
+            > target/assets-after-latest.json
+          cmp target/assets-before-latest.json target/assets-after-latest.json

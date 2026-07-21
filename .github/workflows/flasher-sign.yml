@@ -32,6 +32,12 @@ jobs:
       CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
       EXPECTED_UNSIGNED_SHA256: ${{ inputs.unsigned_bundle_sha256 }}
       RUSTUP_TOOLCHAIN: 1.96.0
+    outputs:
+      version: ${{ steps.prerelease.outputs.version }}
+      source_commit: ${{ steps.prerelease.outputs.source_commit }}
+      signed_bundle_sha256: ${{ steps.prerelease.outputs.signed_bundle_sha256 }}
+      manifest_sha256: ${{ steps.prerelease.outputs.manifest_sha256 }}
+      published_at: ${{ steps.prerelease.outputs.published_at }}
     steps:
       - name: Checkout reviewed signing implementation
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -88,6 +94,7 @@ jobs:
             --expected-commit "$(jq -r '.source_commit' target/candidate-run.json)" \
             --repository-version VERSION \
             --pinned-key release/keys/minisign.pub \
+            --tester-roster "release/acceptance/rosters/$(cat VERSION).json" \
             --identity-output target/candidate-identity.json
           source_commit="$(jq -r '.source_commit' target/candidate-identity.json)"
           test "$GITHUB_SHA" = "$source_commit"
@@ -192,16 +199,24 @@ jobs:
           retention-days: 90
           if-no-files-found: error
       - name: Publish immutable signed candidate as a prerelease
+        id: prerelease
         env:
           CANDIDATE_VERSION: ${{ steps.candidate.outputs.version }}
           GH_TOKEN: ${{ github.token }}
           SIGNED_BUNDLE: ${{ steps.signed.outputs.bundle }}
+          SIGNED_BUNDLE_SHA256: ${{ steps.signed.outputs.sha256 }}
           SOURCE_COMMIT: ${{ steps.candidate.outputs.source_commit }}
         run: |
           version="$CANDIDATE_VERSION"
           tag="v${version}"
           title="Prns ${version} release candidate"
-          notes="Immutable signed candidate under public review. It is not stable until signed physical acceptance and the signed release record pass protected promotion."
+          manifest_sha256="$(sha256sum target/candidate/flash-manifest.json | awk '{print $1}')"
+          notes="$(printf '%s\n\n%s\n%s\n%s\n\n%s' \
+            'Immutable signed candidate under public review. It is not stable until signed physical acceptance and the signed release record pass protected promotion.' \
+            "Source commit: ${SOURCE_COMMIT}" \
+            "Signed candidate SHA-256: ${SIGNED_BUNDLE_SHA256}" \
+            "Manifest SHA-256: ${manifest_sha256}" \
+            'This same signing run now enters its protected, secret-free 24-hour public-review job; authorize that environment only after these assets are visibly public.')"
           assets=(
             "$SIGNED_BUNDLE"
             "target/release/prns-flasher-candidate-run-v${version}.json"
@@ -218,6 +233,21 @@ jobs:
             target/candidate/cli/install.sh
             target/candidate/cli/install.ps1
             target/candidate/cli/README.md
+            target/candidate/qualification/QUALIFICATION.md
+            target/candidate/qualification/create-flasher-acceptance.py
+            target/candidate/qualification/validate-flasher-acceptance.py
+            target/candidate/qualification/flasher_acceptance_contract.py
+            target/candidate/qualification/serve-flasher-candidate.py
+            target/candidate/qualification/verify-flasher-candidate-files.py
+            target/candidate/qualification/validate-flasher-tester-roster.py
+            target/candidate/qualification/flasher_tester_roster.py
+            target/candidate/qualification/package-flasher-qualification-evidence.py
+            target/candidate/qualification/tester-roster.json
+            target/candidate/audit/release-audit-evidence.md
+            target/candidate/metadata/build.json
+            target/candidate/metadata/sparse-sizes.json
+            target/candidate/metadata/reproducibility.json
+            target/candidate/metadata/release-history.json
           )
           declare -A expected_names=()
           for asset in "${assets[@]}"; do
@@ -280,3 +310,101 @@ jobs:
           gh release edit "$tag" --draft=false --prerelease=true --latest=false
           test "$(gh release view "$tag" --json isDraft --jq '.isDraft')" = "false"
           test "$(gh release view "$tag" --json isPrerelease --jq '.isPrerelease')" = "true"
+          published_at="$(gh release view "$tag" --json publishedAt --jq '.publishedAt')"
+          test -n "$published_at"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "source_commit=$SOURCE_COMMIT" >> "$GITHUB_OUTPUT"
+          echo "signed_bundle_sha256=$SIGNED_BUNDLE_SHA256" >> "$GITHUB_OUTPUT"
+          echo "manifest_sha256=$manifest_sha256" >> "$GITHUB_OUTPUT"
+          echo "published_at=$published_at" >> "$GITHUB_OUTPUT"
+
+  public-review:
+    name: Complete protected 24-hour public review
+    needs: sign
+    runs-on: ubuntu-24.04
+    environment: public-release
+    permissions:
+      actions: read
+      contents: write
+    env:
+      RELEASE_VERSION: ${{ needs.sign.outputs.version }}
+      SOURCE_COMMIT: ${{ needs.sign.outputs.source_commit }}
+      EXPECTED_BUNDLE_SHA256: ${{ needs.sign.outputs.signed_bundle_sha256 }}
+      EXPECTED_MANIFEST_SHA256: ${{ needs.sign.outputs.manifest_sha256 }}
+      EXPECTED_PUBLISHED_AT: ${{ needs.sign.outputs.published_at }}
+    steps:
+      - name: Checkout the exact signing workflow revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Re-fetch the still-public exact prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$GITHUB_SHA" = "$SOURCE_COMMIT"
+          test "$GITHUB_WORKFLOW_SHA" = "$SOURCE_COMMIT"
+          [[ "$EXPECTED_BUNDLE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$EXPECTED_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          mkdir -p target/public-review
+          gh release view "v${RELEASE_VERSION}" \
+            --json isDraft,isPrerelease,publishedAt,tagName,targetCommitish \
+            > target/public-review/release.json
+          test "$(jq -r '.isDraft' target/public-review/release.json)" = false
+          test "$(jq -r '.isPrerelease' target/public-review/release.json)" = true
+          test "$(jq -r '.publishedAt' target/public-review/release.json)" = \
+            "$EXPECTED_PUBLISHED_AT"
+          gh release download "v${RELEASE_VERSION}" \
+            --pattern "prns-flasher-candidate-v${RELEASE_VERSION}-signed.tar.gz" \
+            --pattern flash-manifest.json \
+            --dir target/public-review
+          test "$(sha256sum "target/public-review/prns-flasher-candidate-v${RELEASE_VERSION}-signed.tar.gz" | awk '{print $1}')" = \
+            "$EXPECTED_BUNDLE_SHA256"
+          test "$(sha256sum target/public-review/flash-manifest.json | awk '{print $1}')" = \
+            "$EXPECTED_MANIFEST_SHA256"
+      - name: Bind the completed protected wait to this exact signing attempt
+        id: review
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}" \
+            > target/public-review/run.json
+          gh api --paginate \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}/jobs?per_page=100" \
+            --jq '.jobs[] | select(.name == "Complete protected 24-hour public review")' \
+            > target/public-review/job.json
+          test "$(jq -s 'length' target/public-review/job.json)" -eq 1
+          completed_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          evidence_name="public-review-v${RELEASE_VERSION}-run-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}.json"
+          python3 scripts/flasher-public-review.py create \
+            --release-json target/public-review/release.json \
+            --run-json target/public-review/run.json \
+            --job-json target/public-review/job.json \
+            --signed-bundle "target/public-review/prns-flasher-candidate-v${RELEASE_VERSION}-signed.tar.gz" \
+            --manifest target/public-review/flash-manifest.json \
+            --repository "$GITHUB_REPOSITORY" \
+            --version "$RELEASE_VERSION" \
+            --source-commit "$SOURCE_COMMIT" \
+            --minimum-hours 24 \
+            --completed-at "$completed_at" \
+            --output "target/public-review/${evidence_name}"
+          echo "evidence=target/public-review/${evidence_name}" >> "$GITHUB_OUTPUT"
+      - name: Publish immutable attempt-specific public-review evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REVIEW_EVIDENCE: ${{ steps.review.outputs.evidence }}
+        run: |
+          test -f "$REVIEW_EVIDENCE"
+          name="$(basename "$REVIEW_EVIDENCE")"
+          remote="${RUNNER_TEMP}/${name}"
+          if gh release view "v${RELEASE_VERSION}" \
+            --json assets --jq '.assets[].name' | grep -Fxq "$name"; then
+            gh release download "v${RELEASE_VERSION}" --pattern "$name" \
+              --dir "$RUNNER_TEMP"
+            cmp "$REVIEW_EVIDENCE" "$remote"
+          else
+            gh release upload "v${RELEASE_VERSION}" "$REVIEW_EVIDENCE"
+            gh release download "v${RELEASE_VERSION}" --pattern "$name" \
+              --dir "$RUNNER_TEMP"
+            cmp "$REVIEW_EVIDENCE" "$remote"
+          fi

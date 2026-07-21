@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import importlib.util
 import io
@@ -110,6 +111,29 @@ def candidate(root: Path, *, payload: bytes = b"same bytes") -> None:
     artifact = root / "firmware" / "fixture.bin"
     artifact.parent.mkdir(parents=True)
     artifact.write_bytes(payload)
+    release_directory = root / "website" / "releases" / VERSION
+    release_directory.mkdir(parents=True)
+    history = root / "metadata" / "release-history.json"
+    history.parent.mkdir(parents=True)
+    history.write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "mode": "bootstrap",
+                "head": None,
+                "tree": {
+                    "file_count": 0,
+                    "total_bytes": 0,
+                    "tree_sha256": hashlib.sha256(b"").hexdigest(),
+                },
+                "files": [],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 def duplicate_member_archive(path: Path) -> None:

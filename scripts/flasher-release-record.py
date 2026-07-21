@@ -6,8 +6,19 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path, PurePosixPath
+import subprocess
 import sys
+import tempfile
 
+from flasher_acceptance_contract import parse_utc_timestamp
+from flasher_public_review import (
+    EVIDENCE_FIELDS,
+    WORKFLOW_PATH as PUBLIC_REVIEW_WORKFLOW_PATH,
+    evidence_asset_name,
+    require_commit as require_review_commit,
+    require_positive,
+    require_sha256 as require_review_sha256,
+)
 from flasher_release_evidence import attestation_subjects, sha256
 
 
@@ -53,6 +64,105 @@ def load_object(path: Path, label: str) -> dict:
     return value
 
 
+def candidate_file_inventory(root: Path) -> list[dict[str, str | int]]:
+    if not root.is_dir() or root.is_symlink():
+        raise ValueError("candidate must be a regular directory")
+    inventory = []
+    for path in root.rglob("*"):
+        if path.is_symlink():
+            raise ValueError(f"candidate contains a symlink: {path}")
+        if path.is_dir():
+            continue
+        if not path.is_file():
+            raise ValueError(f"candidate contains an unsupported entry: {path}")
+        inventory.append(
+            {
+                "path": path.relative_to(root).as_posix(),
+                "size": path.stat().st_size,
+                "sha256": sha256(path),
+            }
+        )
+    return sorted(inventory, key=lambda item: str(item["path"]))
+
+
+def bind_candidate_to_signed_archive(candidate: Path, signed_bundle: Path) -> None:
+    extractor = Path(__file__).with_name("extract-flasher-candidate.py")
+    with tempfile.TemporaryDirectory(prefix="prns-release-record-candidate-") as temporary:
+        extracted = Path(temporary) / "candidate"
+        subprocess.run(
+            [sys.executable, str(extractor), str(signed_bundle), str(extracted)],
+            check=True,
+            stdout=subprocess.DEVNULL,
+        )
+        supplied_inventory = candidate_file_inventory(candidate)
+        archive_inventory = candidate_file_inventory(extracted)
+        if supplied_inventory != archive_inventory:
+            raise ValueError(
+                "candidate directory bytes differ from the exact signed candidate archive"
+            )
+
+
+def public_review_identity(
+    path: Path,
+    *,
+    repository: str,
+    version: str,
+    source_commit: str,
+    signed_bundle_sha256: str,
+    manifest_sha256: str,
+    prerelease_published_at: str,
+) -> dict:
+    evidence = load_object(path, "public-review evidence")
+    if set(evidence) != EVIDENCE_FIELDS or evidence.get("schema") != 1:
+        raise ValueError("public-review evidence has an unsupported shape")
+    run_id = require_positive(
+        evidence.get("workflow_run_id"), "public-review workflow run ID"
+    )
+    run_attempt = require_positive(
+        evidence.get("workflow_run_attempt"), "public-review workflow run attempt"
+    )
+    job_id = require_positive(
+        evidence.get("workflow_job_id"), "public-review workflow job ID"
+    )
+    expected_name = evidence_asset_name(
+        version=version, run_id=run_id, run_attempt=run_attempt
+    )
+    if path.name != expected_name:
+        raise ValueError(f"public-review evidence must be named {expected_name}")
+    expected = {
+        "repository": repository,
+        "workflow_path": PUBLIC_REVIEW_WORKFLOW_PATH,
+        "workflow_sha": source_commit,
+        "version": version,
+        "source_commit": source_commit,
+        "signed_candidate_sha256": signed_bundle_sha256,
+        "manifest_sha256": manifest_sha256,
+        "prerelease_published_at": prerelease_published_at,
+    }
+    if any(evidence.get(field) != value for field, value in expected.items()):
+        raise ValueError("public-review evidence differs from the exact signed release")
+    require_review_commit(evidence.get("workflow_sha"), "public-review workflow SHA")
+    require_review_sha256(
+        evidence.get("signed_candidate_sha256"), "public-review candidate SHA-256"
+    )
+    require_review_sha256(
+        evidence.get("manifest_sha256"), "public-review manifest SHA-256"
+    )
+    parse_utc_timestamp(
+        evidence.get("prerelease_published_at"), "public-review prerelease publishedAt"
+    )
+    parse_utc_timestamp(evidence.get("gate_completed_at"), "public-review completion")
+    return {
+        "evidence": file_identity(path),
+        "workflow_path": PUBLIC_REVIEW_WORKFLOW_PATH,
+        "workflow_sha": source_commit,
+        "workflow_run_id": run_id,
+        "workflow_run_attempt": run_attempt,
+        "workflow_job_id": job_id,
+        "gate_completed_at": evidence["gate_completed_at"],
+    }
+
+
 def require_commit(value: str, label: str) -> None:
     if len(value) != 40 or any(character not in "0123456789abcdef" for character in value):
         raise ValueError(f"{label} must be a lowercase full Git commit")
@@ -96,6 +206,7 @@ def candidate_run_identity(
 
 
 def build_record(arguments: argparse.Namespace) -> dict:
+    parse_utc_timestamp(arguments.prerelease_published_at, "prerelease publishedAt")
     candidate = arguments.candidate.resolve()
     manifest_path = candidate / "flash-manifest.json"
     manifest = load_object(manifest_path, "candidate manifest")
@@ -127,6 +238,13 @@ def build_record(arguments: argparse.Namespace) -> dict:
     expected_bundle_name = f"prns-flasher-candidate-v{version}-signed.tar.gz"
     if signed_bundle["name"] != expected_bundle_name:
         raise ValueError(f"signed candidate must be named {expected_bundle_name}")
+    bind_candidate_to_signed_archive(candidate, arguments.signed_bundle)
+    qualification_evidence = file_identity(arguments.qualification_evidence)
+    expected_evidence_name = f"qualification-evidence-v{version}.tar.gz"
+    if qualification_evidence["name"] != expected_evidence_name:
+        raise ValueError(f"qualification evidence must be named {expected_evidence_name}")
+    if qualification_evidence["size"] == 0:
+        raise ValueError("qualification evidence archive is empty")
 
     acceptance = load_object(arguments.acceptance, "acceptance record")
     acceptance_candidate = acceptance.get("candidate")
@@ -139,6 +257,8 @@ def build_record(arguments: argparse.Namespace) -> dict:
         "signing_key_id": key_id,
         "manifest_sha256": sha256(manifest_path),
         "manifest_signature_sha256": sha256(Path(f"{manifest_path}.minisig")),
+        "signed_candidate_sha256": signed_bundle["sha256"],
+        "prerelease_published_at": arguments.prerelease_published_at,
     }
     actual_acceptance_identity = dict(acceptance_candidate)
     actual_key_id = actual_acceptance_identity.get("signing_key_id")
@@ -164,10 +284,13 @@ def build_record(arguments: argparse.Namespace) -> dict:
         raise ValueError("candidate channel descriptor is missing or ambiguous")
     audit_path = candidate / "audit" / "release-audit-evidence.md"
     metadata_path = candidate / "metadata" / "build.json"
+    tester_roster_path = candidate / "qualification" / "tester-roster.json"
     if not audit_path.is_file() or not audit_path.read_bytes():
         raise ValueError("candidate audit evidence is unavailable")
     if not metadata_path.is_file():
         raise ValueError("candidate build metadata is unavailable")
+    if not tester_roster_path.is_file():
+        raise ValueError("candidate tester roster is unavailable")
 
     attestation_bundle = load_object(arguments.attestation_bundle, "attestation bundle")
     actual_subjects = attestation_subjects(attestation_bundle)
@@ -273,6 +396,20 @@ def build_record(arguments: argparse.Namespace) -> dict:
             f"missing={missing}, unexpected={unexpected}"
         )
 
+    public_review = public_review_identity(
+        arguments.public_review_evidence,
+        repository=arguments.repository,
+        version=version,
+        source_commit=source_commit,
+        signed_bundle_sha256=str(signed_bundle["sha256"]),
+        manifest_sha256=sha256(manifest_path),
+        prerelease_published_at=arguments.prerelease_published_at,
+    )
+    if public_review["workflow_run_id"] != attestation.get("workflow_run_id"):
+        raise ValueError(
+            "public-review evidence was not produced by the attested signing run"
+        )
+
     return {
         "schema": 1,
         "release": {
@@ -280,6 +417,7 @@ def build_record(arguments: argparse.Namespace) -> dict:
             "channel": channel,
             "source_commit": source_commit,
             "signing_key_id": key_id.upper(),
+            "prerelease_published_at": arguments.prerelease_published_at,
         },
         "candidate": {
             "archive": signed_bundle,
@@ -298,11 +436,17 @@ def build_record(arguments: argparse.Namespace) -> dict:
                 "path": "audit/release-audit-evidence.md",
                 "sha256": sha256(audit_path),
             },
+            "tester_roster": {
+                "path": "qualification/tester-roster.json",
+                "sha256": sha256(tester_roster_path),
+            },
             "firmware": sorted(
                 firmware, key=lambda item: (item["board_slug"], item["path"])
             ),
         },
         "acceptance": acceptance_identity,
+        "qualification_evidence": qualification_evidence,
+        "public_review": public_review,
         "attestation": {
             "metadata": attestation,
             "metadata_file": file_identity(arguments.attestation_metadata),
@@ -316,6 +460,9 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--signed-bundle", type=Path, required=True)
     parser.add_argument("--acceptance", type=Path, required=True)
     parser.add_argument("--acceptance-source-commit", required=True)
+    parser.add_argument("--qualification-evidence", type=Path, required=True)
+    parser.add_argument("--public-review-evidence", type=Path, required=True)
+    parser.add_argument("--prerelease-published-at", required=True)
     parser.add_argument("--attestation-bundle", type=Path, required=True)
     parser.add_argument("--attestation-metadata", type=Path, required=True)
     parser.add_argument("--repository", required=True)
@@ -349,7 +496,12 @@ def main() -> int:
                 f"verified flasher release record {actual['release']['version']} "
                 f"from {actual['release']['source_commit']}"
             )
-    except (OSError, ValueError, json.JSONDecodeError) as error:
+    except (
+        OSError,
+        ValueError,
+        json.JSONDecodeError,
+        subprocess.CalledProcessError,
+    ) as error:
         print(f"flasher release record validation failed: {error}", file=sys.stderr)
         return 1
     return 0
