@@ -12,7 +12,9 @@ fn render_marks_selected_card_below_global_row() {
     render_with_state(&mut display, &cards, BatteryState::Unknown, &state);
 
     let selected_top = FIRST_CARD_WITH_GLOBAL_TOP;
-    assert_eq!(state.selected_card(cards.len()), Some(0));
+    assert!(state
+        .selected_card(&cards)
+        .is_some_and(|selected| core::ptr::eq(selected, &cards[0])));
     assert_eq!(state.visible_start(cards.len()), 0);
     assert_eq!(
         display.get_pixel(Point::new(NAME_BACKING_X, selected_top + NAME_BACKING_Y)),
@@ -95,7 +97,7 @@ fn render_scrolls_local_docs_after_the_last_card() {
         );
     }
 
-    assert_eq!(state.selected_card(cards.len()), None);
+    assert!(state.selected_card(&cards).is_none());
     assert_eq!(state.visible_start_with_footer(cards.len(), true), 3);
 
     let mut display = PanelDisplay::new();
@@ -148,19 +150,22 @@ fn render_shows_local_docs_access_details() {
 
 #[test]
 fn footer_focus_long_press_opens_docs() {
+    let cards = [test_card("USB")];
     let mut state = test_ui_state();
 
     assert_eq!(
         state.handle_input_with_footer(InputEvent::ShortPress, 1, true, Some(CardKind::Usb)),
         UiAction::None
     );
-    assert_eq!(state.selected_card(1), Some(0));
+    assert!(state
+        .selected_card(&cards)
+        .is_some_and(|selected| core::ptr::eq(selected, &cards[0])));
 
     assert_eq!(
         state.handle_input_with_footer(InputEvent::ShortPress, 1, true, None),
         UiAction::None
     );
-    assert_eq!(state.selected_card(1), None);
+    assert!(state.selected_card(&cards).is_none());
 
     assert_eq!(
         state.handle_input_with_footer(InputEvent::LongPress, 1, true, None),
@@ -181,7 +186,9 @@ fn render_scrolls_global_row_out_of_card_window() {
 
     render_with_state(&mut display, &cards, BatteryState::Unknown, &state);
 
-    assert_eq!(state.selected_card(cards.len()), Some(2));
+    assert!(state
+        .selected_card(&cards)
+        .is_some_and(|selected| core::ptr::eq(selected, &cards[2])));
     assert_eq!(state.visible_start(cards.len()), 2);
     assert_eq!(
         display.get_pixel(Point::new(0, CARD_TOP)),
@@ -251,7 +258,9 @@ fn render_shows_selected_interface_menu() {
 
     render_with_state(&mut display, &cards, BatteryState::Unknown, &state);
 
-    assert_eq!(state.selected_card(cards.len()), Some(1));
+    assert!(state
+        .selected_card(&cards)
+        .is_some_and(|selected| core::ptr::eq(selected, &cards[1])));
     assert_eq!(state.interface_menu_selected_item(), Some(0));
     assert_eq!(
         display.get_pixel(Point::new(NAME_ICON_X + 4, MENU_HEADER_Y)),

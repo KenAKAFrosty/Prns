@@ -387,9 +387,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             let menu_ap_ssid = active_ap_ssid.as_deref();
             #[cfg(feature = "wifi-auto")]
             let interface_menu_details = build_interface_menu_details(
-                ui_state
-                    .selected_card(card_count)
-                    .and_then(|index| cards.get(index)),
+                ui_state.selected_card(&cards),
                 &snapshots,
                 usb_status,
                 &wifi_config,
@@ -462,10 +460,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                         continue;
                     }
                     oled_off_at_ms = None;
-                    let selected_kind = ui_state
-                        .selected_card(card_count)
-                        .and_then(|index| cards.get(index))
-                        .map(|card| card.kind());
+                    let selected_kind = ui_state.selected_card(&cards).map(|card| card.kind());
                     match ui_state.handle_input_with_footer(
                         event,
                         card_count,
@@ -535,10 +530,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                             }));
                         }
                         screen::UiAction::ToggleSelectedInterface => {
-                            if let Some(card) = ui_state
-                                .selected_card(card_count)
-                                .and_then(|index| cards.get(index))
-                            {
+                            if let Some(card) = ui_state.selected_card(&cards) {
                                 let mut handled = false;
                                 let mut show_toggle_notice = |enabled: bool| {
                                     ui_state.show_notice(if enabled {

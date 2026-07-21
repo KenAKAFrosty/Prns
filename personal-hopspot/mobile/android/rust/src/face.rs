@@ -59,16 +59,8 @@ impl HopspotFace {
     pub fn post_input(&mut self, event: InputEvent) -> UiAction {
         let cards = self.build_cards();
         self.state.sync_card_count(cards.len());
-        let selected_kind = self
-            .state
-            .selected_card(cards.len())
-            .and_then(|index| cards.get(index))
-            .map(|card| card.kind());
-        let selected_id = self
-            .state
-            .selected_card(cards.len())
-            .and_then(|index| cards.get(index))
-            .map(|card| card.id());
+        let selected_kind = self.state.selected_card(&cards).map(|card| card.kind());
+        let selected_id = self.state.selected_card(&cards).map(|card| card.id());
         let action = self.state.handle_input(event, cards.len(), selected_kind);
         match action {
             UiAction::ToggleSelectedInterface => {
@@ -146,12 +138,8 @@ impl HopspotFace {
                 .elapsed()
                 .as_millis()
                 .min(u128::from(u64::MAX)) as u64;
-            let interface_menu_details = snapshots_to_interface_menu_details(
-                self.state
-                    .selected_card(cards.len())
-                    .and_then(|index| cards.get(index)),
-                snapshots,
-            );
+            let interface_menu_details =
+                snapshots_to_interface_menu_details(self.state.selected_card(cards), snapshots);
             render(
                 &mut self.framebuffer,
                 RenderFrame {

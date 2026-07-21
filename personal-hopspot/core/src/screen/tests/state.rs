@@ -6,32 +6,32 @@ fn short_press_cycles_global_then_cards_and_pages_visible_window() {
     state.sync_card_count(5);
 
     assert!(state.global_selected());
-    assert_eq!(state.selected_card(5), None);
+    assert_eq!(state.selected_card_index(5), None);
     assert_eq!(state.visible_start(5), 0);
 
     state.handle_input(InputEvent::ShortPress, 5, Some(CardKind::Usb));
-    assert_eq!(state.selected_card(5), Some(0));
+    assert_eq!(state.selected_card_index(5), Some(0));
     assert_eq!(state.visible_start(5), 0);
 
     state.handle_input(InputEvent::ShortPress, 5, Some(CardKind::Usb));
-    assert_eq!(state.selected_card(5), Some(1));
+    assert_eq!(state.selected_card_index(5), Some(1));
     assert_eq!(state.visible_start(5), 0);
 
     state.handle_input(InputEvent::ShortPress, 5, Some(CardKind::Usb));
-    assert_eq!(state.selected_card(5), Some(2));
+    assert_eq!(state.selected_card_index(5), Some(2));
     assert_eq!(state.visible_start(5), 2);
 
     state.handle_input(InputEvent::ShortPress, 5, Some(CardKind::Usb));
-    assert_eq!(state.selected_card(5), Some(3));
+    assert_eq!(state.selected_card_index(5), Some(3));
     assert_eq!(state.visible_start(5), 3);
 
     state.handle_input(InputEvent::ShortPress, 5, Some(CardKind::Usb));
-    assert_eq!(state.selected_card(5), Some(4));
+    assert_eq!(state.selected_card_index(5), Some(4));
     assert_eq!(state.visible_start(5), 4);
 
     state.handle_input(InputEvent::ShortPress, 5, Some(CardKind::Usb));
     assert!(state.global_selected());
-    assert_eq!(state.selected_card(5), None);
+    assert_eq!(state.selected_card_index(5), None);
     assert_eq!(state.visible_start(5), 0);
 }
 
@@ -41,14 +41,14 @@ fn long_press_opens_global_menu_and_short_press_cycles_menu_items() {
 
     state.handle_input(InputEvent::LongPress, 4, Some(CardKind::Usb));
 
-    assert_eq!(state.selected_card(4), None);
+    assert_eq!(state.selected_card_index(4), None);
     assert_eq!(state.visible_start(4), 0);
     assert_eq!(state.global_menu_selected_item(), Some(0));
     assert_eq!(state.menu_selected_item(), Some(0));
 
     state.handle_input(InputEvent::ShortPress, 4, Some(CardKind::Usb));
 
-    assert_eq!(state.selected_card(4), None);
+    assert_eq!(state.selected_card_index(4), None);
     assert_eq!(state.global_menu_selected_item(), Some(1));
     assert_eq!(state.menu_selected_item(), Some(1));
 
@@ -249,17 +249,17 @@ fn long_press_opens_interface_menu_after_card_focus() {
 
     state.handle_input(InputEvent::LongPress, 4, Some(CardKind::Usb));
 
-    assert_eq!(state.selected_card(4), Some(0));
+    assert_eq!(state.selected_card_index(4), Some(0));
     assert_eq!(state.visible_start(4), 0);
     assert_eq!(state.interface_menu_selected_item(), Some(0));
 
     state.handle_input(InputEvent::ShortPress, 4, Some(CardKind::Usb));
 
-    assert_eq!(state.selected_card(4), Some(0));
+    assert_eq!(state.selected_card_index(4), Some(0));
     assert_eq!(state.interface_menu_selected_item(), Some(1));
 
     state.handle_input(InputEvent::LongPress, 4, Some(CardKind::Usb));
 
-    assert_eq!(state.selected_card(4), Some(0));
+    assert_eq!(state.selected_card_index(4), Some(0));
     assert_eq!(state.menu_selected_item(), None);
 }

@@ -117,18 +117,12 @@ fn finish_press(
     ui_state.handle_input_with_footer(event, card_count, has_footer, selected_kind)
 }
 
-fn selected_card_id(ui_state: &UiState, card_count: usize, cards: &[Card]) -> Option<InterfaceId> {
-    ui_state
-        .selected_card(card_count)
-        .and_then(|index| cards.get(index))
-        .map(|card| card.id())
+fn selected_card_id(ui_state: &UiState, cards: &[Card]) -> Option<InterfaceId> {
+    ui_state.selected_card(cards).map(|card| card.id())
 }
 
-fn selected_card_kind(ui_state: &UiState, card_count: usize, cards: &[Card]) -> Option<CardKind> {
-    ui_state
-        .selected_card(card_count)
-        .and_then(|index| cards.get(index))
-        .map(|card| card.kind())
+fn selected_card_kind(ui_state: &UiState, cards: &[Card]) -> Option<CardKind> {
+    ui_state.selected_card(cards).map(|card| card.kind())
 }
 
 struct LoggedStatus {
@@ -716,7 +710,7 @@ pub(super) fn run_window(handles: WindowHandles) {
                     needs_redraw = true;
                 }
                 SimulatorEvent::KeyUp { .. } => {
-                    let selected_kind = selected_card_kind(&ui_state, cards.len(), &cards);
+                    let selected_kind = selected_card_kind(&ui_state, &cards);
                     let released = finish_press(
                         &mut active_press,
                         PressSource::Key,
@@ -726,7 +720,7 @@ pub(super) fn run_window(handles: WindowHandles) {
                         selected_kind,
                         &mut ui_state,
                     );
-                    let selected = selected_card_id(&ui_state, cards.len(), &cards);
+                    let selected = selected_card_id(&ui_state, &cards);
                     apply_action(
                         released,
                         selected,
@@ -741,7 +735,7 @@ pub(super) fn run_window(handles: WindowHandles) {
                     needs_redraw = true;
                 }
                 SimulatorEvent::MouseButtonUp { .. } => {
-                    let selected_kind = selected_card_kind(&ui_state, cards.len(), &cards);
+                    let selected_kind = selected_card_kind(&ui_state, &cards);
                     let released = finish_press(
                         &mut active_press,
                         PressSource::Mouse,
@@ -751,7 +745,7 @@ pub(super) fn run_window(handles: WindowHandles) {
                         selected_kind,
                         &mut ui_state,
                     );
-                    let selected = selected_card_id(&ui_state, cards.len(), &cards);
+                    let selected = selected_card_id(&ui_state, &cards);
                     apply_action(
                         released,
                         selected,
@@ -768,7 +762,7 @@ pub(super) fn run_window(handles: WindowHandles) {
         }
 
         let holding = active_press.is_some();
-        let selected_kind = selected_card_kind(&ui_state, cards.len(), &cards);
+        let selected_kind = selected_card_kind(&ui_state, &cards);
         let long_press = dispatch_long_press_if_ready(
             &mut active_press,
             Instant::now(),
@@ -777,7 +771,7 @@ pub(super) fn run_window(handles: WindowHandles) {
             selected_kind,
             &mut ui_state,
         );
-        let selected = selected_card_id(&ui_state, cards.len(), &cards);
+        let selected = selected_card_id(&ui_state, &cards);
         apply_action(
             long_press,
             selected,
@@ -843,9 +837,7 @@ pub(super) fn run_window(handles: WindowHandles) {
             activity.update(&mut cards, activity_secs);
             ui_state.sync_card_count_with_footer(cards.len(), has_local_docs);
             let interface_menu_details = screen::snapshots_to_interface_menu_details(
-                ui_state
-                    .selected_card(cards.len())
-                    .and_then(|index| cards.get(index)),
+                ui_state.selected_card(&cards),
                 &snapshots,
             );
             let battery = screen::BatteryGauge::lipo().sample(&mut screen::NoBattery);
@@ -898,7 +890,7 @@ mod tests {
         );
 
         assert!(active_press.is_none());
-        assert_eq!(ui_state.selected_card(4), Some(0));
+        assert!(!ui_state.global_selected());
         assert_eq!(ui_state.menu_selected_item(), None);
     }
 
@@ -921,7 +913,6 @@ mod tests {
             &mut ui_state,
         );
 
-        assert_eq!(ui_state.selected_card(4), None);
         assert_eq!(ui_state.global_menu_selected_item(), Some(0));
         assert!(active_press.expect("press remains active").long_press_sent);
     }
@@ -955,7 +946,6 @@ mod tests {
         );
 
         assert!(active_press.is_none());
-        assert_eq!(ui_state.selected_card(4), None);
         assert_eq!(ui_state.global_menu_selected_item(), Some(0));
     }
 
@@ -980,7 +970,6 @@ mod tests {
         );
 
         assert!(active_press.is_none());
-        assert_eq!(ui_state.selected_card(4), None);
         assert_eq!(ui_state.global_menu_selected_item(), Some(0));
     }
 }

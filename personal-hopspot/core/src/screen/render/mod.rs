@@ -78,10 +78,10 @@ pub fn render<D: DrawTarget<Color = BinaryColor>>(display: &mut D, frame: Render
     }
 
     if let Some(selected_item) = state.interface_menu_selected_item() {
-        if let Some(selected_card) = state.selected_card(cards.len()) {
+        if let Some(selected_card) = state.selected_card(cards) {
             draw_interface_menu(
                 display,
-                &cards[selected_card],
+                selected_card,
                 selected_item,
                 interface_menu_details.as_slice(),
             );
@@ -89,7 +89,7 @@ pub fn render<D: DrawTarget<Color = BinaryColor>>(display: &mut D, frame: Render
         }
     }
 
-    let selected = state.selected_card(cards.len());
+    let selected = state.selected_card_index(cards.len());
     let item_count = focus_item_count_with_footer(cards.len(), local_docs.is_some());
     let footer_focus = cards.len() + 1;
     let start = visible_start_for(item_count, state.selected_focus, state.visible_start);

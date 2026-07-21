@@ -399,9 +399,7 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
 
             let _ = panel.clear(EpdColor::White);
             let interface_menu_details = hopspot::snapshots_to_interface_menu_details(
-                ui_state
-                    .selected_card(card_count)
-                    .and_then(|index| cards.get(index)),
+                ui_state.selected_card(&cards),
                 &snapshots,
             );
             hopspot::render(
@@ -436,10 +434,7 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
             .await
             {
                 Either3::First(event) => {
-                    let selected_kind = ui_state
-                        .selected_card(card_count)
-                        .and_then(|index| cards.get(index))
-                        .map(|card| card.kind());
+                    let selected_kind = ui_state.selected_card(&cards).map(|card| card.kind());
                     match ui_state.handle_input(event, card_count, selected_kind) {
                         hopspot::UiAction::Sleep => {
                             ui_state.show_notice(hopspot::UiNotice::Sleeping);
@@ -470,10 +465,7 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
                             }));
                         }
                         hopspot::UiAction::ToggleSelectedInterface => {
-                            if let Some(card) = ui_state
-                                .selected_card(card_count)
-                                .and_then(|index| cards.get(index))
-                            {
+                            if let Some(card) = ui_state.selected_card(&cards) {
                                 if card.id() == lora_status.id() {
                                     ui_state.show_notice(if lora_status.is_enabled() {
                                         hopspot::UiNotice::TurningOff

@@ -4,7 +4,7 @@ use personal_rns::interfaces::lora::{RadioProfile, DEFAULT_915_PROFILE};
 use personal_rns::storage::DisplayedStorageLimits;
 
 use super::limits::storage_limit_page_count;
-use super::model::CardKind;
+use super::model::{Card, CardKind};
 use lora::{lora_editor_hold, lora_editor_tap, region_index, LoRaHold, LoRaScreen};
 
 const INITIAL_VISIBLE_FOCUS_ITEMS: usize = 3;
@@ -41,7 +41,6 @@ pub(in crate::screen) fn interface_menu_items(kind: CardKind) -> &'static [&'sta
     }
 }
 
-/// Single-button input as interpreted by the board support layer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum InputEvent {
     ShortPress,
@@ -108,7 +107,6 @@ pub struct UiConfiguration {
     pub access_point: AccessPointState,
 }
 
-/// Interaction state for the Hopspot card stack. The renderer stays data-driven: this only records which focus row/card is selected, which slice of the stack is visible on the panel, and whether a menu is open.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct UiState {
     pub(in crate::screen) selected_focus: usize,
@@ -172,7 +170,11 @@ impl UiState {
         matches!(self.mode, UiMode::Cards) && self.selected_focus == 0
     }
 
-    pub fn selected_card(&self, card_count: usize) -> Option<usize> {
+    pub fn selected_card<'card>(&self, cards: &'card [Card]) -> Option<&'card Card> {
+        cards.get(self.selected_card_index(cards.len())?)
+    }
+
+    pub(in crate::screen) fn selected_card_index(&self, card_count: usize) -> Option<usize> {
         let card_index = self.selected_focus.checked_sub(1)?;
         if card_index < card_count {
             Some(card_index)
@@ -271,12 +273,10 @@ impl UiState {
         }
     }
 
-    /// Reconcile selection/window state after the runtime's interface list changes.
     pub fn sync_card_count(&mut self, card_count: usize) {
         self.sync_card_count_with_footer(card_count, false);
     }
 
-    /// Reconcile selection/window state when there is a non-card footer after the card list.
     pub fn sync_card_count_with_footer(&mut self, card_count: usize, has_footer: bool) {
         let item_count = focus_item_count_with_footer(card_count, has_footer);
         self.selected_focus = self.selected_focus.min(item_count - 1);
@@ -289,7 +289,7 @@ impl UiState {
             | UiMode::Sleeping
             | UiMode::LoRaEditor { .. }
             | UiMode::ConfirmRadioSwap { .. } => {}
-            UiMode::InterfaceMenu { .. } if self.selected_card(card_count).is_none() => {
+            UiMode::InterfaceMenu { .. } if self.selected_card_index(card_count).is_none() => {
                 self.mode = UiMode::Cards;
             }
             UiMode::InterfaceMenu {
@@ -320,7 +320,6 @@ impl UiState {
         self.handle_input_with_footer(event, card_count, false, selected_kind)
     }
 
-    /// Apply input when a non-card footer sits after the cards in the scroll stack.
     pub fn handle_input_with_footer(
         &mut self,
         event: InputEvent,
@@ -361,7 +360,7 @@ impl UiState {
             }
             (InputEvent::LongPress, UiMode::Cards) => {
                 if let Some(kind) = selected_kind {
-                    if self.selected_card(card_count).is_some() {
+                    if self.selected_card_index(card_count).is_some() {
                         self.mode = UiMode::InterfaceMenu {
                             selected_item: 0,
                             kind,
