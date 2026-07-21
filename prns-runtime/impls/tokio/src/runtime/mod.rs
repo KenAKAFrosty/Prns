@@ -23,9 +23,10 @@ pub(crate) use identity_blackhole_commands::{
     apply_identity_blackhole_command, IdentityBlackholeHostCommand,
 };
 pub use identity_bootstrap::{
-    ephemeral_ble_identity, fill_os_entropy, generate_identity_secret,
+    fill_os_entropy, generate_identity_secret, load_or_create_ble_identity,
+    load_or_create_browser_rendezvous_id, load_or_create_browser_selection_seed,
     load_or_create_identity_secret, try_generate_identity_secret, IdentitySecretFileError,
-    OsEntropyError,
+    LocalIdentityFileError, OsEntropyError,
 };
 pub use interface_store::{InterfaceStore, Subscription};
 pub use node_facade::{

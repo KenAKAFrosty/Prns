@@ -8,6 +8,7 @@ mod status;
 pub mod ax25_kiss;
 pub mod backbone;
 pub mod bluetooth_auto;
+pub mod browser_rendezvous;
 pub mod channel_rendezvous;
 pub mod esp_now;
 pub mod i2p;

@@ -1,6 +1,7 @@
-use crate::crypto::sha256_chunks;
-
 pub const GROUP_ID: &[u8] = b"bluetooth-auto";
+pub const PERSISTED_BLE_IDENTITY_LEN: usize = 40;
+
+const PERSISTED_BLE_IDENTITY_MAGIC: [u8; 8] = *b"PRNSBLE1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BleAddress([u8; 6]);
@@ -23,14 +24,79 @@ impl BleIdentity {
         Self(bytes)
     }
 
-    pub fn from_radio_address(address: &[u8; 6]) -> Self {
-        let digest = sha256_chunks(&[b"prns ble identity", address]);
-        let mut bytes = [0u8; 16];
-        bytes.copy_from_slice(&digest[..16]);
-        Self(bytes)
-    }
-
     pub const fn as_bytes(&self) -> &[u8; 16] {
         &self.0
+    }
+}
+
+pub fn encode_persisted_ble_identity(identity: BleIdentity) -> [u8; PERSISTED_BLE_IDENTITY_LEN] {
+    let mut record = [0u8; PERSISTED_BLE_IDENTITY_LEN];
+    record[..PERSISTED_BLE_IDENTITY_MAGIC.len()].copy_from_slice(&PERSISTED_BLE_IDENTITY_MAGIC);
+    record[8..24].copy_from_slice(identity.as_bytes());
+    for (encoded, byte) in record[24..].iter_mut().zip(identity.as_bytes()) {
+        *encoded = !byte;
+    }
+    record
+}
+
+pub fn decode_persisted_ble_identity(
+    record: &[u8; PERSISTED_BLE_IDENTITY_LEN],
+) -> Result<Option<BleIdentity>, PersistedBleIdentityError> {
+    if record.iter().all(|byte| *byte == u8::MAX) {
+        return Ok(None);
+    }
+    if record[..PERSISTED_BLE_IDENTITY_MAGIC.len()] != PERSISTED_BLE_IDENTITY_MAGIC {
+        return Err(PersistedBleIdentityError::Magic);
+    }
+    let mut identity = [0u8; 16];
+    identity.copy_from_slice(&record[8..24]);
+    if record[24..]
+        .iter()
+        .zip(identity)
+        .any(|(encoded, byte)| *encoded != !byte)
+    {
+        return Err(PersistedBleIdentityError::Integrity);
+    }
+    Ok(Some(BleIdentity::new(identity)))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PersistedBleIdentityError {
+    Magic,
+    Integrity,
+}
+
+impl core::fmt::Display for PersistedBleIdentityError {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Magic => formatter.write_str("persisted BLE identity has invalid magic"),
+            Self::Integrity => {
+                formatter.write_str("persisted BLE identity failed integrity validation")
+            }
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for PersistedBleIdentityError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn persisted_identity_record_round_trips_and_detects_partial_writes() {
+        let identity = BleIdentity::new([0x5a; 16]);
+        let mut record = encode_persisted_ble_identity(identity);
+        assert_eq!(decode_persisted_ble_identity(&record), Ok(Some(identity)));
+        record[31] ^= 1;
+        assert_eq!(
+            decode_persisted_ble_identity(&record),
+            Err(PersistedBleIdentityError::Integrity)
+        );
+        assert_eq!(
+            decode_persisted_ble_identity(&[u8::MAX; PERSISTED_BLE_IDENTITY_LEN]),
+            Ok(None)
+        );
     }
 }

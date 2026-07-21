@@ -33,16 +33,17 @@ pub use prns_runtime_tokio::runtime::node_introspection;
 
 #[cfg(feature = "tokio-host")]
 pub use prns_runtime_tokio::runtime::{
-    boot_timeline_origin, ephemeral_ble_identity, fill_os_entropy, generate_identity_secret,
+    boot_timeline_origin, fill_os_entropy, generate_identity_secret, load_or_create_ble_identity,
+    load_or_create_browser_rendezvous_id, load_or_create_browser_selection_seed,
     load_or_create_identity_secret, try_generate_identity_secret, AttachIntent, Attachable,
     AttachedInterface, AttachedSupervisor, ByteStreamReader, ByteStreamWriter, CryptoPoolConfig,
     DestinationIdentitySeedReport, DetachedFleet, Fleet, FlushError, FlushMark, FlushReport,
     IdentitySecretFileError, InterfaceAttachmentMetadata, InterfaceStore, InterfaceSupervisor,
-    NodeRunError, NonRoutingIdentityError, OsEntropyError, PoolWorkers, PrepareFlushError,
-    PreparedFlush, PreparedResourceReceiver, PrnsNode, PrnsNodeHandle, RatchetSeedReport,
-    RegionFlush, RegisterRequestRouteError, RequestPathError, ResourceAdmissionPeer,
-    ResourceOfferAdmission, ResourceOfferMonitor, ResourceProgress, ResourceReceipt,
-    ResourceReceiveError, ResourceSendError, RouteSeedProgress, RouteSeedReport,
+    LocalIdentityFileError, NodeRunError, NonRoutingIdentityError, OsEntropyError, PoolWorkers,
+    PrepareFlushError, PreparedFlush, PreparedResourceReceiver, PrnsNode, PrnsNodeHandle,
+    RatchetSeedReport, RegionFlush, RegisterRequestRouteError, RequestPathError,
+    ResourceAdmissionPeer, ResourceOfferAdmission, ResourceOfferMonitor, ResourceProgress,
+    ResourceReceipt, ResourceReceiveError, ResourceSendError, RouteSeedProgress, RouteSeedReport,
     SegmentCompression, SharedInstanceIdentityError, StreamId, Subscription, TunnelSeedReport,
     AUTO_COMPRESS_MAX_LEN,
 };

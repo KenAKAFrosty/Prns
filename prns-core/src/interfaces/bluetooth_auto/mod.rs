@@ -27,7 +27,10 @@ pub use handshake::{
     L2capArrangement, L2capPlan, LinkCapabilities, LocalPeer, Nrf52Host, PeerProtocol, Psm,
     WinRtHost, CONTROL_MAX_LEN,
 };
-pub use identity::{BleAddress, BleIdentity, GROUP_ID};
+pub use identity::{
+    decode_persisted_ble_identity, encode_persisted_ble_identity, BleAddress, BleIdentity,
+    PersistedBleIdentityError, GROUP_ID, PERSISTED_BLE_IDENTITY_LEN,
+};
 pub use policy::{
     defaults_for_bitrate, descriptor, role_for, ConnectionPolicy, PolicyAction, PolicyInput,
     BLE_BITRATE_GUESS_BPS, DIAL_FAILED_RETRY_TTL_MS, DIAL_PAUSE_MS, DIAL_RETRY_TTL_MS,
