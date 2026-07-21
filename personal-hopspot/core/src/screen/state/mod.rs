@@ -162,11 +162,11 @@ impl UiState {
         self.notice = None;
     }
 
-    pub fn notice(&self) -> Option<UiNotice> {
+    pub(in crate::screen) fn notice(&self) -> Option<UiNotice> {
         self.notice
     }
 
-    pub fn global_selected(&self) -> bool {
+    pub(in crate::screen) fn global_selected(&self) -> bool {
         matches!(self.mode, UiMode::Cards) && self.selected_focus == 0
     }
 
@@ -183,20 +183,7 @@ impl UiState {
         }
     }
 
-    pub fn menu_selected_item(&self) -> Option<usize> {
-        match self.mode {
-            UiMode::GlobalMenu { selected_item } | UiMode::InterfaceMenu { selected_item, .. } => {
-                Some(selected_item)
-            }
-            UiMode::Cards
-            | UiMode::LimitsPage { .. }
-            | UiMode::Sleeping
-            | UiMode::LoRaEditor { .. }
-            | UiMode::ConfirmRadioSwap { .. } => None,
-        }
-    }
-
-    pub fn global_menu_selected_item(&self) -> Option<usize> {
+    pub(in crate::screen) fn global_menu_selected_item(&self) -> Option<usize> {
         match self.mode {
             UiMode::GlobalMenu { selected_item } => Some(selected_item),
             UiMode::Cards
@@ -208,7 +195,7 @@ impl UiState {
         }
     }
 
-    pub fn interface_menu_selected_item(&self) -> Option<usize> {
+    pub(in crate::screen) fn interface_menu_selected_item(&self) -> Option<usize> {
         match self.mode {
             UiMode::InterfaceMenu { selected_item, .. } => Some(selected_item),
             UiMode::Cards

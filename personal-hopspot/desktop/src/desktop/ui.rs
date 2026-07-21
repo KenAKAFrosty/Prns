@@ -901,8 +901,7 @@ mod tests {
         );
 
         assert!(active_press.is_none());
-        assert!(!ui_state.global_selected());
-        assert_eq!(ui_state.menu_selected_item(), None);
+        assert!(ui_state.selected_card(content.cards).is_some());
     }
 
     #[test]
@@ -924,8 +923,11 @@ mod tests {
             &mut ui_state,
         );
 
-        assert_eq!(ui_state.global_menu_selected_item(), Some(0));
         assert!(active_press.expect("press remains active").long_press_sent);
+        assert_eq!(
+            ui_state.handle_input(InputEvent::LongPress, content),
+            UiAction::Announce
+        );
     }
 
     #[test]
@@ -955,7 +957,10 @@ mod tests {
         );
 
         assert!(active_press.is_none());
-        assert_eq!(ui_state.global_menu_selected_item(), Some(0));
+        assert_eq!(
+            ui_state.handle_input(InputEvent::LongPress, content),
+            UiAction::Announce
+        );
     }
 
     #[test]
@@ -979,6 +984,9 @@ mod tests {
         );
 
         assert!(active_press.is_none());
-        assert_eq!(ui_state.global_menu_selected_item(), Some(0));
+        assert_eq!(
+            ui_state.handle_input(InputEvent::LongPress, content),
+            UiAction::Announce
+        );
     }
 }

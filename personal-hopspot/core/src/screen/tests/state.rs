@@ -48,13 +48,11 @@ fn long_press_opens_global_menu_and_short_press_cycles_menu_items() {
     assert_eq!(state.selected_card_index(4), None);
     assert_eq!(state.visible_start, 0);
     assert_eq!(state.global_menu_selected_item(), Some(0));
-    assert_eq!(state.menu_selected_item(), Some(0));
 
     state.handle_input(InputEvent::ShortPress, content);
 
     assert_eq!(state.selected_card_index(4), None);
     assert_eq!(state.global_menu_selected_item(), Some(1));
-    assert_eq!(state.menu_selected_item(), Some(1));
 
     state.handle_input(InputEvent::ShortPress, content);
     assert_eq!(state.global_menu_selected_item(), Some(2));
@@ -64,7 +62,6 @@ fn long_press_opens_global_menu_and_short_press_cycles_menu_items() {
     state.handle_input(InputEvent::LongPress, content);
 
     assert!(state.global_selected());
-    assert_eq!(state.menu_selected_item(), None);
 }
 
 #[test]
@@ -83,7 +80,6 @@ fn long_press_on_the_announce_item_returns_the_announce_action() {
         state.handle_input(InputEvent::LongPress, content),
         UiAction::Announce,
     );
-    assert_eq!(state.menu_selected_item(), None);
     assert!(state.global_selected());
 }
 
@@ -100,7 +96,6 @@ fn long_press_on_limits_opens_the_paged_limits_page() {
         UiAction::None
     );
     assert_eq!(state.mode, UiMode::LimitsPage { page: 0 });
-    assert_eq!(state.menu_selected_item(), None);
     assert_eq!(
         state.handle_input(InputEvent::ShortPress, content),
         UiAction::None
@@ -174,7 +169,6 @@ fn long_press_on_back_closes_the_global_menu() {
         state.handle_input(InputEvent::LongPress, content),
         UiAction::None
     );
-    assert_eq!(state.menu_selected_item(), None);
     assert!(state.global_selected());
 }
 
@@ -285,5 +279,4 @@ fn long_press_opens_interface_menu_after_card_focus() {
     state.handle_input(InputEvent::LongPress, content);
 
     assert_eq!(state.selected_card_index(4), Some(0));
-    assert_eq!(state.menu_selected_item(), None);
 }
