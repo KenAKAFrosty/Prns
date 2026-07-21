@@ -1,16 +1,16 @@
 use dioxus::prelude::*;
 use dioxus_i18n::t;
 use prns_flash_manifest::{
-    ChannelDescriptor, FlashManifest, FlashPartKind, PINNED_MINISIGN_PUBLIC_KEY,
-    ProvisioningAction, ReleaseChannel, TargetManifest, Transport, WifiCredentials,
     board_catalog, pinned_key_id, pinned_key_is_configured, provisioning_image, sha256_hex,
-    verify_minisign,
+    verify_minisign, ChannelDescriptor, FlashManifest, FlashPartKind, ProvisioningAction,
+    ReleaseChannel, TargetManifest, Transport, WifiCredentials, PINNED_MINISIGN_PUBLIC_KEY,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::components::PlatformChip;
 use crate::platforms::{
-    BoardTarget, ROADMAP_BOARD_TARGETS, SHIPPING_BOARD_TARGETS, board_target_by_slug,
+    board_target_by_slug, BoardTarget, PreparationProfile, ROADMAP_BOARD_TARGETS,
+    SHIPPING_BOARD_TARGETS,
 };
 use crate::routes::Route;
 use crate::site_mode::embedded_docs_mode;
@@ -135,7 +135,10 @@ fn FlashExperience(selected_slug: Option<String>) -> Element {
 fn GuidedFlasher(target: &'static BoardTarget) -> Element {
     let embedded = embedded_docs_mode();
     let key_ready = pinned_key_is_configured();
-    let is_esp = matches!(target.slug, "heltec-v4" | "t-beam-supreme" | "xiao-esp32-c6");
+    let is_esp = matches!(
+        target.slug,
+        "heltec-v4" | "t-beam-supreme" | "xiao-esp32-c6"
+    );
     let supports_wifi = matches!(target.slug, "heltec-v4" | "t-beam-supreme");
     let is_uf2 = target.slug == "t-echo";
 
@@ -150,6 +153,10 @@ fn GuidedFlasher(target: &'static BoardTarget) -> Element {
     let mut prepared = use_signal(|| false);
     let mut release = use_signal(|| None::<ReleaseDetails>);
     let mut web_serial = use_signal(|| None::<bool>);
+
+    use_drop(|| {
+        document::eval("window.__prnsFlash?.clearPrepared();");
+    });
 
     use_effect(move || {
         if is_esp && !embedded {
@@ -208,6 +215,8 @@ fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                         checked: confirmed(),
                         onchange: move |event| {
                             confirmed.set(event.checked());
+                            ssid.set(String::new());
+                            password.set(String::new());
                             prepared.set(false);
                             document::eval("window.__prnsFlash?.clearPrepared();");
                         },
@@ -215,12 +224,16 @@ fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                     span {
                         "I checked the board label and image: this is "
                         strong { class: "text-paper", "{target.name}" }
-                        if target.slug == "heltec-v4" || target.slug == "t-beam-supreme" {
+                        if shares_esp32_s3_identity(target) {
                             span { class: "mt-1 block text-xs text-mid",
-                                "Heltec V4 and T-Beam Supreme share ESP32-S3 silicon, so software cannot distinguish the exact model."
+                                "The chip check can confirm ESP32-S3, but it cannot distinguish Heltec V4 from T-Beam Supreme. The printed board label and photo are the final identity check."
                             }
                         }
                     }
+                }
+
+                if let Some(profile) = target.preparation_profile {
+                    PreparationInstructions { profile }
                 }
 
                 if supports_wifi {
@@ -243,6 +256,8 @@ fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                                         checked: wifi_action() == value,
                                         onchange: move |_| {
                                             wifi_action.set(value.to_string());
+                                            ssid.set(String::new());
+                                            password.set(String::new());
                                             prepared.set(false);
                                             document::eval("window.__prnsFlash?.clearPrepared();");
                                         },
@@ -418,6 +433,8 @@ fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                         class: "rounded-lg border border-line px-4 py-3 text-sm font-semibold text-soft",
                         onclick: move |_| {
                             document::eval("window.__prnsFlash?.cancel();");
+                            ssid.set(String::new());
+                            password.set(String::new());
                             status.set("Cancellation requested; an active write will finish its safe operation before stopping.".to_string());
                         },
                         "Cancel safely"
@@ -425,6 +442,54 @@ fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                 }
             }
         }
+    }
+}
+
+#[component]
+fn PreparationInstructions(profile: PreparationProfile) -> Element {
+    let guide = preparation_guide(profile);
+
+    rsx! {
+        section {
+            class: "flash-preparation mt-5",
+            "aria-labelledby": "flash-preparation-title",
+            h3 { id: "flash-preparation-title", class: "font-semibold text-paper", "Prepare the board" }
+            p { class: "mt-2 text-sm leading-relaxed text-soft", "{guide.lead}" }
+            ol { class: "flash-preparation__steps mt-3",
+                for (index, step) in guide.steps.iter().enumerate() {
+                    li {
+                        span { class: "flash-preparation__index", "{index + 1}" }
+                        span { "{step}" }
+                    }
+                }
+            }
+        }
+    }
+}
+
+struct PreparationGuide {
+    lead: &'static str,
+    steps: &'static [&'static str],
+}
+
+const fn preparation_guide(profile: PreparationProfile) -> PreparationGuide {
+    match profile {
+        PreparationProfile::EspUsbBoot => PreparationGuide {
+            lead: "The flasher will try the board's cataloged automatic reset strategy first.",
+            steps: &[
+                "Use a USB data cable connected directly to this computer, and close serial monitors using the board.",
+                "When asked, choose this board's serial port. Do not identify Heltec V4 versus T-Beam Supreme by chip name alone.",
+                "If automatic connection fails, hold BOOT, tap RESET, release BOOT, then restart the complete connect-and-flash step.",
+            ],
+        },
+        PreparationProfile::TechoUf2 => PreparationGuide {
+            lead: "T-Echo uses its UF2 bootloader; the website only verifies and downloads the UF2 file.",
+            steps: &[
+                "Prepare the verified UF2 here before entering bootloader mode.",
+                "Connect with a USB data cable and double-press RESET until the TECHOBOOT drive appears.",
+                "Copy the downloaded UF2 to TECHOBOOT and wait for the copy to finish. The drive disappears when the device reboots.",
+            ],
+        },
     }
 }
 
@@ -637,7 +702,11 @@ async fn prepare_release(
             .map_err(|error| error.to_string())?;
         let expected_key_id = pinned_key_id()
             .ok_or_else(|| "The pinned release key has no canonical key ID.".to_string())?;
-        if !manifest.signing.key_id.eq_ignore_ascii_case(&expected_key_id) {
+        if !manifest
+            .signing
+            .key_id
+            .eq_ignore_ascii_case(&expected_key_id)
+        {
             return Err("The signed manifest names a different release key.".to_string());
         }
         if manifest.release.version != descriptor.version
@@ -651,12 +720,8 @@ async fn prepare_release(
             .find(|target| target.board_slug == board_slug)
             .cloned()
             .ok_or_else(|| "The signed release does not contain this board.".to_string())?;
-        let provisioning = bridge_provisioning(
-            &target,
-            &selected_action,
-            ssid_value,
-            password_value,
-        )?;
+        let provisioning =
+            bridge_provisioning(&target, &selected_action, ssid_value, password_value)?;
         let request = bridge_request(&target, &descriptor.manifest_url, provisioning)?;
         let details = ReleaseDetails {
             version: manifest.release.version,
@@ -696,7 +761,9 @@ async fn prepare_release(
                 if event.phase == "ready" {
                     release.set(Some(details));
                     prepared.set(true);
+                    ssid_input.set(String::new());
                     password.set(String::new());
+                    focus_status();
                     return Ok(());
                 }
                 return Err(event
@@ -742,7 +809,10 @@ async fn run_flash(
             Ok(event) => event,
             Err(_) => {
                 phase.set("failed".to_string());
-                status.set("The local device engine stopped unexpectedly. No success was reported.".to_string());
+                status.set(
+                    "The local device engine stopped unexpectedly. No success was reported."
+                        .to_string(),
+                );
                 ssid.set(String::new());
                 password.set(String::new());
                 focus_status();
@@ -789,7 +859,11 @@ fn bridge_provisioning(
         action: action.to_string(),
         offset: slot.offset,
         size: slot.size,
-        ssid: if action == "configure" { ssid } else { String::new() },
+        ssid: if action == "configure" {
+            ssid
+        } else {
+            String::new()
+        },
         password: if action == "configure" {
             password
         } else {
@@ -853,7 +927,10 @@ fn apply_event(
             .clone()
             .unwrap_or_else(|| event_message(event)),
     );
-    matches!(event.phase.as_str(), "ready" | "success" | "failed" | "cancelled")
+    matches!(
+        event.phase.as_str(),
+        "ready" | "success" | "failed" | "cancelled"
+    )
 }
 
 fn event_message(event: &BridgeEvent) -> String {
@@ -959,10 +1036,54 @@ fn phase_label(phase: &str) -> &'static str {
 }
 
 fn board_card_class(board: &BoardTarget, selected: bool) -> String {
-    let selected_class = if selected { " flash-board-card--selected" } else { "" };
+    let selected_class = if selected {
+        " flash-board-card--selected"
+    } else {
+        ""
+    };
     format!(
         "flash-board-card {}{} rounded-card border border-line/60 bg-layer/40 p-5 shadow-card",
         board.tier.flash_card_class(),
         selected_class
     )
+}
+
+fn shares_esp32_s3_identity(target: &BoardTarget) -> bool {
+    matches!(target.slug, "heltec-v4" | "t-beam-supreme")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn catalog_profiles_select_transport_specific_preparation() {
+        let heltec = board_target_by_slug("heltec-v4").expect("shipping board");
+        let t_echo = board_target_by_slug("t-echo").expect("shipping board");
+
+        let esp = preparation_guide(heltec.preparation_profile.expect("flashable profile"));
+        assert!(esp.steps.iter().any(|step| step.contains("hold BOOT")));
+        assert!(esp.steps.iter().any(|step| step.contains("tap RESET")));
+
+        let uf2 = preparation_guide(t_echo.preparation_profile.expect("flashable profile"));
+        assert!(uf2
+            .steps
+            .iter()
+            .any(|step| step.contains("double-press RESET")));
+        assert!(uf2.steps.iter().any(|step| step.contains("TECHOBOOT")));
+        assert!(uf2.lead.contains("only verifies and downloads"));
+    }
+
+    #[test]
+    fn exact_board_confirmation_is_required_only_for_same_chip_pair() {
+        let heltec = board_target_by_slug("heltec-v4").expect("shipping board");
+        let t_beam = board_target_by_slug("t-beam-supreme").expect("shipping board");
+        let xiao = board_target_by_slug("xiao-esp32-c6").expect("shipping board");
+        let t_echo = board_target_by_slug("t-echo").expect("shipping board");
+
+        assert!(shares_esp32_s3_identity(heltec));
+        assert!(shares_esp32_s3_identity(t_beam));
+        assert!(!shares_esp32_s3_identity(xiao));
+        assert!(!shares_esp32_s3_identity(t_echo));
+    }
 }

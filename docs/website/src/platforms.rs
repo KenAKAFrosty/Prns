@@ -72,6 +72,12 @@ pub struct BoardImage {
     pub data_uri: &'static str,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+pub enum PreparationProfile {
+    EspUsbBoot,
+    TechoUf2,
+}
+
 pub mod board_images {
     include!(concat!(env!("OUT_DIR"), "/board_images.rs"));
 }
@@ -90,6 +96,7 @@ pub struct BoardTarget {
     pub tier: Tier,
     pub interfaces: &'static [&'static str],
     pub icon: Option<&'static str>,
+    pub preparation_profile: Option<PreparationProfile>,
 }
 
 impl BoardTarget {
@@ -126,6 +133,7 @@ pub const ROADMAP_BOARD_TARGETS: &[BoardTarget] = &[
         tier: Tier::BringUp,
         interfaces: &[],
         icon: Some("espressif"),
+        preparation_profile: None,
     },
     BoardTarget {
         name: "RAK WisBlock Starter Kit",
@@ -134,6 +142,7 @@ pub const ROADMAP_BOARD_TARGETS: &[BoardTarget] = &[
         tier: Tier::Roadmap,
         interfaces: &[],
         icon: Some("nordicsemiconductor"),
+        preparation_profile: None,
     },
     BoardTarget {
         name: "muzi works Base Duo",
@@ -142,6 +151,7 @@ pub const ROADMAP_BOARD_TARGETS: &[BoardTarget] = &[
         tier: Tier::Roadmap,
         interfaces: &[],
         icon: Some("nordicsemiconductor"),
+        preparation_profile: None,
     },
     BoardTarget {
         name: "Seeed Card Tracker T1000-E",
@@ -150,6 +160,7 @@ pub const ROADMAP_BOARD_TARGETS: &[BoardTarget] = &[
         tier: Tier::Roadmap,
         interfaces: &[],
         icon: Some("nordicsemiconductor"),
+        preparation_profile: None,
     },
     BoardTarget {
         name: "Seeed Wio Tracker L1",
@@ -158,6 +169,7 @@ pub const ROADMAP_BOARD_TARGETS: &[BoardTarget] = &[
         tier: Tier::Roadmap,
         interfaces: &[],
         icon: Some("nordicsemiconductor"),
+        preparation_profile: None,
     },
     BoardTarget {
         name: "Heltec Mesh Node T114",
@@ -166,6 +178,7 @@ pub const ROADMAP_BOARD_TARGETS: &[BoardTarget] = &[
         tier: Tier::Roadmap,
         interfaces: &[],
         icon: Some("nordicsemiconductor"),
+        preparation_profile: None,
     },
     BoardTarget {
         name: "LILYGO LoRa32 T3-S3",
@@ -174,6 +187,7 @@ pub const ROADMAP_BOARD_TARGETS: &[BoardTarget] = &[
         tier: Tier::Roadmap,
         interfaces: &[],
         icon: Some("espressif"),
+        preparation_profile: None,
     },
     BoardTarget {
         name: "B&Q Nano G2 Ultra",
@@ -182,6 +196,7 @@ pub const ROADMAP_BOARD_TARGETS: &[BoardTarget] = &[
         tier: Tier::Roadmap,
         interfaces: &[],
         icon: Some("nordicsemiconductor"),
+        preparation_profile: None,
     },
     BoardTarget {
         name: "B&Q Station G2",
@@ -190,6 +205,7 @@ pub const ROADMAP_BOARD_TARGETS: &[BoardTarget] = &[
         tier: Tier::Roadmap,
         interfaces: &[],
         icon: Some("espressif"),
+        preparation_profile: None,
     },
 ];
 

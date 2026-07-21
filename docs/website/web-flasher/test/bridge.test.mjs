@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash, webcrypto } from "node:crypto";
 import test from "node:test";
 
-import { cancel, flash, prepare, testing } from "../src/prns-flash.js";
+import { cancel, clearPrepared, flash, prepare, testing } from "../src/prns-flash.js";
 
 function bytes(value) {
   return new Uint8Array([value, value + 1, value + 2, value + 3]);
@@ -54,9 +54,17 @@ test("prepare verifies every artifact and never sends credentials", async () => 
   });
   assert.deepEqual(calls.map((call) => call.options.credentials), ["omit", "omit", "omit"]);
   assert.equal(JSON.stringify(calls).includes("private"), false);
+  assert.equal(JSON.stringify(events).includes("private"), false);
+  assert.equal(JSON.stringify(events).includes("local"), false);
   assert.equal(events.at(-1).phase, "ready");
   assert.equal(testing.prepared().files.length, 4);
+  const configurationBytes = testing.prepared().files.at(-1).bytes;
+  assert.equal(configurationBytes.some((byte) => byte !== 0), true);
+  assert.equal(value.provisioning.ssid, "");
   assert.equal(value.provisioning.password, "");
+  clearPrepared();
+  assert.equal(testing.prepared(), null);
+  assert.equal(configurationBytes.every((byte) => byte === 0), true);
 });
 
 test("hash mismatch fails before serial access", async () => {
@@ -84,6 +92,7 @@ test("wrong chip is rejected and the port is released", async () => {
       return { ok: true, arrayBuffer: async () => data.buffer.slice(0) };
     },
   });
+  const configurationBytes = testing.prepared().files.at(-1).bytes;
   let disconnected = false;
   class FakeTransport {
     setDeviceLostCallback() {}
@@ -103,6 +112,8 @@ test("wrong chip is rejected and the port is released", async () => {
   );
   assert.equal(disconnected, true);
   assert.equal(events.at(-1).code, "wrong_chip");
+  assert.equal(testing.prepared(), null);
+  assert.equal(configurationBytes.every((byte) => byte === 0), true);
 });
 
 test("successful flash requires MD5 callback and cleans up", async () => {
@@ -116,6 +127,7 @@ test("successful flash requires MD5 callback and cleans up", async () => {
       return { ok: true, arrayBuffer: async () => data.buffer.slice(0) };
     },
   });
+  const configurationBytes = testing.prepared().files.at(-1).bytes;
   let disconnected = false;
   class FakeTransport {
     setDeviceLostCallback() {}
@@ -141,6 +153,8 @@ test("successful flash requires MD5 callback and cleans up", async () => {
   });
   assert.equal(disconnected, true);
   assert.equal(events.at(-1).phase, "success");
+  assert.equal(testing.prepared(), null);
+  assert.equal(configurationBytes.every((byte) => byte === 0), true);
 });
 
 async function prepareDefault() {
@@ -177,6 +191,7 @@ test("permission cancellation is distinct and happens before transport creation"
 
 test("unsupported and insecure browser failures emit terminal bridge events", async () => {
   await prepareDefault();
+  const insecureConfiguration = testing.prepared().files.at(-1).bytes;
   const insecureEvents = [];
   await assert.rejects(
     flash((event) => insecureEvents.push(event), {
@@ -187,8 +202,11 @@ test("unsupported and insecure browser failures emit terminal bridge events", as
     { phase: insecureEvents.at(-1).phase, code: insecureEvents.at(-1).code },
     { phase: "failed", code: "insecure_context" },
   );
+  assert.equal(testing.prepared(), null);
+  assert.equal(insecureConfiguration.every((byte) => byte === 0), true);
 
   await prepareDefault();
+  const unsupportedConfiguration = testing.prepared().files.at(-1).bytes;
   const unsupportedEvents = [];
   await assert.rejects(
     flash((event) => unsupportedEvents.push(event), {
@@ -199,6 +217,8 @@ test("unsupported and insecure browser failures emit terminal bridge events", as
     { phase: unsupportedEvents.at(-1).phase, code: unsupportedEvents.at(-1).code },
     { phase: "failed", code: "unsupported_browser" },
   );
+  assert.equal(testing.prepared(), null);
+  assert.equal(unsupportedConfiguration.every((byte) => byte === 0), true);
 });
 
 test("device-side MD5 mismatch is a verification failure and releases the port", async () => {
@@ -276,6 +296,7 @@ test("reset failure is reported only after writes verify", async () => {
 
 test("cancellation stops at the next verified part boundary", async () => {
   await prepareDefault();
+  const configurationBytes = testing.prepared().files.at(-1).bytes;
   let writes = 0;
   class FakeTransport {
     setDeviceLostCallback() {}
@@ -297,6 +318,8 @@ test("cancellation stops at the next verified part boundary", async () => {
   );
   assert.equal(writes, 1);
   assert.equal(events.at(-1).phase, "cancelled");
+  assert.equal(testing.prepared(), null);
+  assert.equal(configurationBytes.every((byte) => byte === 0), true);
 });
 
 test("UF2 completion reports delivery guidance without claiming device verification", async () => {

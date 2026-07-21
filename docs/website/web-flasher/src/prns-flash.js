@@ -29,7 +29,14 @@ function assertHostedEnvironment(environment = globalThis) {
 }
 
 export async function prepare(request, emit = () => {}, dependencies = {}) {
-  prepared = null;
+  if (active) {
+    throwEarlyFailure(
+      emit,
+      new FlashBridgeError("busy", "A device operation is already active."),
+      false,
+    );
+  }
+  discardPrepared();
   cancelRequested = false;
   const fetchImpl = dependencies.fetchImpl ?? globalThis.fetch;
   const cryptoImpl = dependencies.cryptoImpl ?? globalThis.crypto;
@@ -118,6 +125,7 @@ export async function prepare(request, emit = () => {}, dependencies = {}) {
   } catch (error) {
     const failure = safeFailure(error);
     emitEvent(emit, { phase: failure.code === "cancelled" ? "cancelled" : "failed", ...failure });
+    discardPrepared();
     throw error;
   } finally {
     if (request?.provisioning) {
@@ -135,13 +143,17 @@ export async function flash(emit = () => {}, dependencies = {}) {
     );
   }
   if (active) {
-    throwEarlyFailure(emit, new FlashBridgeError("busy", "A device operation is already active."));
+    throwEarlyFailure(
+      emit,
+      new FlashBridgeError("busy", "A device operation is already active."),
+      false,
+    );
   }
   if (prepared.transport === "uf2-mass-storage") {
     try {
       return downloadUf2(emit, dependencies);
     } catch (error) {
-      prepared = null;
+      discardPrepared();
       throwEarlyFailure(emit, error);
     }
   }
@@ -292,13 +304,16 @@ export async function flash(emit = () => {}, dependencies = {}) {
     } catch {
       // The device may already be gone after a successful reset. Cleanup remains best effort.
     }
-    prepared = null;
+    discardPrepared();
   }
 }
 
-function throwEarlyFailure(emit, error) {
+function throwEarlyFailure(emit, error, discard = true) {
   const failure = safeFailure(error);
   emitEvent(emit, { phase: failure.code === "cancelled" ? "cancelled" : "failed", ...failure });
+  if (discard) {
+    discardPrepared();
+  }
   throw error;
 }
 
@@ -307,8 +322,10 @@ export function cancel() {
 }
 
 export function clearPrepared() {
-  prepared = null;
-  cancelRequested = false;
+  cancelRequested = active;
+  if (!active) {
+    discardPrepared();
+  }
 }
 
 function downloadUf2(emit, dependencies) {
@@ -335,7 +352,7 @@ function downloadUf2(emit, dependencies) {
       total: file.bytes.length,
       message: "Verified UF2 downloaded. Copy it to TECHOBOOT; the drive disappears when the device reboots.",
     });
-    prepared = null;
+    discardPrepared();
     return { success: true };
   } finally {
     urlApi.revokeObjectURL(blobUrl);
@@ -372,10 +389,22 @@ function navigationGuard(event) {
   event.returnValue = "";
 }
 
+function discardPrepared() {
+  if (!prepared) {
+    return;
+  }
+  for (const file of prepared.files) {
+    if (file.kind === "provisioning") {
+      file.bytes.fill(0);
+    }
+  }
+  prepared = null;
+}
+
 export const testing = {
   prepared: () => prepared,
   reset() {
-    prepared = null;
+    discardPrepared();
     active = false;
     cancelRequested = false;
   },
