@@ -3,6 +3,7 @@ use personal_rns::engine::{FanTarget, Journaled, RouteRemovalCause};
 use personal_rns::interfaces::bluetooth_auto as bluetooth_contract;
 use personal_rns::interfaces::usb_auto;
 use personal_rns::interfaces::InterfaceKind;
+use personal_rns::routing::delivery::Delivery;
 use wasm_bindgen::prelude::*;
 
 use crate::runtime::{OutboundFrame, OutboundTarget};
@@ -95,7 +96,25 @@ pub(crate) fn journaled_to_js(journaled: Journaled<'_>) -> JsValue {
             set_str(&object, "messageType", &format!("{message_type:?}"));
             set_bytes(&object, "data", data);
         }
-        Journaled::Delivered(delivery) => {
+        Journaled::Delivered(Delivery::Single(delivery)) => {
+            set_str(&object, "type", "singleDelivery");
+            set_bytes(&object, "destination", delivery.destination.as_bytes());
+            set_bytes(&object, "plaintext", delivery.plaintext);
+            set_bytes(
+                &object,
+                "sourceInterface",
+                delivery.source_interface.as_bytes(),
+            );
+        }
+        Journaled::Delivered(Delivery::Plain(delivery)) => {
+            set_str(&object, "type", "delivered");
+            set_str(&object, "detail", &format!("{delivery:?}"));
+        }
+        Journaled::Delivered(Delivery::Group(delivery)) => {
+            set_str(&object, "type", "delivered");
+            set_str(&object, "detail", &format!("{delivery:?}"));
+        }
+        Journaled::Delivered(Delivery::Link(delivery)) => {
             set_str(&object, "type", "delivered");
             set_str(&object, "detail", &format!("{delivery:?}"));
         }

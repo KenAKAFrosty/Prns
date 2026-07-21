@@ -36,31 +36,34 @@ The package exports its zero-dependency `Tag`, `match`, `match_into`, and
 unions. Synchronous branded-value constructors still throw
 `PrnsValidationError` when the caller violates their immediate input contract.
 
-## Browser Node Playground Smoke
+## Browser Transport Playground
 
-Build the WASM package and TypeScript smoke bundle:
+The documentation playground is a plain TypeScript browser application under
+`examples/browser-playground`. It runs a WebAssembly node, keeps Auto Wi-Fi and
+USB Auto behind explicit clicks, registers an LXMF delivery destination, and
+displays live gateway, interface, single-packet, announce, and outcome activity.
+It is deliberately a transport demonstration rather than a messaging client.
+
+Build it and stage its static assets into the documentation site:
 
 ```sh
-npm --prefix prns-wasm run build:browser
+npm --prefix prns-wasm run stage:docs
 ```
 
-Serve the package directory from the repo root:
+Serve the documentation public directory from the repo root:
 
 ```sh
-python3 -m http.server 8878 --bind 127.0.0.1 --directory prns-wasm
+python3 -m http.server 8878 --bind 127.0.0.1 --directory docs/website/public
 ```
 
 Open:
 
 ```text
-http://127.0.0.1:8878/smoke/
+http://127.0.0.1:8878/browser-node-playground-console/
 ```
 
-The smoke page is a small browser node playground. It verifies the in-browser
-runtime path, opens a USB Auto device through WebUSB, shows live
-interface snapshots, and logs announces and command events in readable form. A
-successful USB run shows a confirmed peer, an announce event, and a snapshot
-with one active interface.
+The lower-level browser smoke bundle remains available through
+`npm --prefix prns-wasm run build:browser` for development checks.
 
 ## Linux WebUSB Setup
 

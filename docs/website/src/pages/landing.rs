@@ -6,6 +6,7 @@ use unic_langid::langid;
 use crate::components::PlatformChip;
 use crate::platforms::LANDING_PLATFORM_CHIPS;
 use crate::routes::Route;
+use crate::site_mode::embedded_docs_mode;
 
 /// The eyebrow's last word animates. It opens on "yours" (plain), rotates
 /// through seven qualities, then rests back on "yours" (underlined). The first
@@ -35,6 +36,7 @@ pub fn Landing() -> Element {
     // word both phrases differently, so they get the plain kicker and title.
     let i18n = i18n();
     let is_english = i18n.language() == langid!("en-US");
+    let embedded_docs = embedded_docs_mode();
     let resting_word = KICKER_WORDS.last().copied().unwrap_or("yours");
 
     rsx! {
@@ -243,7 +245,7 @@ pub fn Landing() -> Element {
                         body: t!("start-embedded-body"),
                         chips: t!("start-embedded-code"),
                         target_label: t!("start-embedded-target"),
-                        to: Route::FlashPage {},
+                        target: UseCaseTarget::Route(Route::FlashPage {}),
                     }
                     UseCaseCard {
                         glyph: UseGlyph::Daemon,
@@ -251,15 +253,19 @@ pub fn Landing() -> Element {
                         body: t!("start-daemon-body"),
                         chips: t!("start-daemon-code"),
                         target_label: t!("start-daemon-target"),
-                        to: Route::SingleCrate { name: "prnsd".to_string() },
+                        target: UseCaseTarget::Route(Route::SingleCrate {
+                            name: "prnsd".to_string(),
+                        }),
                     }
-                    UseCaseCard {
-                        glyph: UseGlyph::Browser,
-                        headline: t!("start-web-headline"),
-                        body: t!("start-web-body"),
-                        chips: t!("start-web-code"),
-                        target_label: t!("start-web-target"),
-                        to: Route::BrowserPlaygroundPage {},
+                    if !embedded_docs {
+                        UseCaseCard {
+                            glyph: UseGlyph::Browser,
+                            headline: t!("start-web-headline"),
+                            body: t!("start-web-body"),
+                            chips: t!("start-web-code"),
+                            target_label: t!("start-web-target"),
+                            target: UseCaseTarget::NewTab("/browser-node-playground-console/"),
+                        }
                     }
                     UseCaseCard {
                         glyph: UseGlyph::Build,
@@ -267,7 +273,7 @@ pub fn Landing() -> Element {
                         body: t!("start-rust-body"),
                         chips: t!("start-rust-code"),
                         target_label: t!("start-rust-target"),
-                        to: Route::CratesIndex {},
+                        target: UseCaseTarget::Route(Route::CratesIndex {}),
                     }
                 }
             }
@@ -334,7 +340,7 @@ fn UseCaseCard(
     body: String,
     chips: String,
     target_label: String,
-    to: Route,
+    target: UseCaseTarget,
 ) -> Element {
     let chip_items: Vec<String> = chips
         .lines()
@@ -343,37 +349,58 @@ fn UseCaseCard(
         .map(ToString::to_string)
         .collect();
 
-    rsx! {
-        Link {
-            to,
-            style: "--route: {glyph.accent()}",
-            class: "route-card spotlight group flex flex-col rounded-card border border-line/60 bg-layer/40 p-5 shadow-card hover:-translate-y-px transition-all",
-            div { class: "route-header flex items-center gap-2.5",
-                UseCaseGlyph { kind: glyph }
-                span { class: "text-base font-semibold text-paper leading-snug",
-                    "{headline}"
-                }
+    let contents = rsx! {
+        div { class: "route-header flex items-center gap-2.5",
+            UseCaseGlyph { kind: glyph }
+            span { class: "text-base font-semibold text-paper leading-snug",
+                "{headline}"
             }
-            p { class: "mt-4 text-sm text-soft leading-relaxed",
-                "{body}"
-            }
-            if !chip_items.is_empty() {
-                div { class: "mt-4 flex flex-wrap gap-2",
-                    for chip in chip_items.iter() {
-                        span {
-                            key: "{chip}",
-                            class: "rounded-md border border-line/70 bg-surface/70 px-2 py-1 font-mono text-[0.7rem] text-soft leading-none",
-                            "{chip}"
-                        }
+        }
+        p { class: "mt-4 text-sm text-soft leading-relaxed",
+            "{body}"
+        }
+        if !chip_items.is_empty() {
+            div { class: "mt-4 flex flex-wrap gap-2",
+                for chip in chip_items.iter() {
+                    span {
+                        key: "{chip}",
+                        class: "rounded-md border border-line/70 bg-surface/70 px-2 py-1 font-mono text-[0.7rem] text-soft leading-none",
+                        "{chip}"
                     }
                 }
             }
-            div { class: "route-cta mt-auto pt-5 flex items-center gap-1.5 font-mono text-xs transition-colors",
-                span { "{target_label}" }
-                span { class: "route-arrow", "→" }
-            }
         }
+        div { class: "route-cta mt-auto pt-5 flex items-center gap-1.5 font-mono text-xs transition-colors",
+            span { "{target_label}" }
+            span { class: "route-arrow", "→" }
+        }
+    };
+    match target {
+        UseCaseTarget::Route(to) => rsx! {
+            Link {
+                to,
+                style: "--route: {glyph.accent()}",
+                class: "route-card spotlight group flex flex-col rounded-card border border-line/60 bg-layer/40 p-5 shadow-card hover:-translate-y-px transition-all",
+                {contents}
+            }
+        },
+        UseCaseTarget::NewTab(href) => rsx! {
+            a {
+                href,
+                target: "_blank",
+                rel: "noopener",
+                style: "--route: {glyph.accent()}",
+                class: "route-card spotlight group flex flex-col rounded-card border border-line/60 bg-layer/40 p-5 shadow-card hover:-translate-y-px transition-all",
+                {contents}
+            }
+        },
     }
+}
+
+#[derive(Clone, PartialEq)]
+enum UseCaseTarget {
+    Route(Route),
+    NewTab(&'static str),
 }
 
 #[derive(Clone, Copy, PartialEq)]

@@ -302,6 +302,8 @@ function describeEvent(event: PrnsEvent): string {
   switch (event.type) {
     case "announce":
       return `announce destination=${hex(event.destination)} hops=${event.hops} interface=${hex(event.sourceInterface)}`;
+    case "singleDelivery":
+      return `single delivery destination=${hex(event.destination)} bytes=${event.plaintext.length} interface=${hex(event.sourceInterface)}`;
     case "commandSettled":
       return `command settled id=${event.commandId.toString()} ${event.debugSettlement}`;
     case "routeExpired":

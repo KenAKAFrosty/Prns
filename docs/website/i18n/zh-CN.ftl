@@ -87,10 +87,12 @@ start-embedded-code = Board matrix
     Local flash
 start-embedded-target = Flash a Hopspot
 
-start-web-headline = 我为 web 或 edge 构建
-start-web-body = 一个 WebAssembly build，可在浏览器以及 Cloudflare Workers、Fastly、Spin 等 edge runtime 上运行。
-start-web-code = npm install personal-rns
-start-web-target = personal-rns (wasm32)
+start-web-headline = 使用浏览器节点演示平台
+start-web-body = 体验通过 WebAssembly 运行共享 Rust 引擎的 TypeScript API，使用 Auto Wi-Fi 或 USB Auto 连接，并实时查看本地节点活动。
+start-web-code = WebAssembly 运行时
+    Auto Wi-Fi + USB Auto
+    TypeScript 示例
+start-web-target = 打开演示平台
 
 start-rust-headline = 我要嵌入 Rust app
 start-rust-body = 开箱即用的完整 RNS runtime，或用于围绕它构建你自己的 runtime 的纯核心。

@@ -547,10 +547,6 @@ pub const LANDING_PLATFORM_CHIPS: &[LandingPlatformChip] = &[
         icon: Some("webassembly"),
     },
     LandingPlatformChip {
-        name: "Dioxus",
-        icon: Some("dioxus.png"),
-    },
-    LandingPlatformChip {
         name: "Chrome",
         icon: Some("googlechrome"),
     },

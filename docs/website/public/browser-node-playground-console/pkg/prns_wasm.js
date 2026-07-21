@@ -94,11 +94,14 @@ export class PrnsRuntime {
     }
     /**
      * @param {Uint8Array} identity_secret_key
+     * @param {Uint8Array | null} [ble_identity]
      */
-    constructor(identity_secret_key) {
+    constructor(identity_secret_key, ble_identity) {
         const ptr0 = passArray8ToWasm0(identity_secret_key, wasm.__wbindgen_malloc);
         const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.prnsruntime_new(ptr0, len0);
+        var ptr1 = isLikeNone(ble_identity) ? 0 : passArray8ToWasm0(ble_identity, wasm.__wbindgen_malloc);
+        var len1 = WASM_VECTOR_LEN;
+        const ret = wasm.prnsruntime_new(ptr0, len0, ptr1, len1);
         if (ret[2]) {
             throw takeFromExternrefTable0(ret[1]);
         }
@@ -131,6 +134,17 @@ export class PrnsRuntime {
         var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
         wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
         return v1;
+    }
+    /**
+     * @param {any} options
+     * @returns {boolean}
+     */
+    removeInterface(options) {
+        const ret = wasm.prnsruntime_removeInterface(this.__wbg_ptr, options);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return ret[0] !== 0;
     }
     /**
      * @returns {any}
@@ -392,6 +406,30 @@ export function usbAutoWebUsbProductId() {
 export function usbAutoWebUsbVendorId() {
     const ret = wasm.usbAutoWebUsbVendorId();
     return ret;
+}
+
+/**
+ * @returns {number}
+ */
+export function websocketBitrateBps() {
+    const ret = wasm.websocketBitrateBps();
+    return ret >>> 0;
+}
+
+/**
+ * @returns {number}
+ */
+export function websocketFrameCap() {
+    const ret = wasm.websocketFrameCap();
+    return ret >>> 0;
+}
+
+/**
+ * @returns {number}
+ */
+export function websocketHardwareMtu() {
+    const ret = wasm.websocketHardwareMtu();
+    return ret >>> 0;
 }
 function __wbg_get_imports() {
     const import0 = {

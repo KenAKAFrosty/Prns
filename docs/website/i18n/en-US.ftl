@@ -97,10 +97,10 @@ start-embedded-code = Board matrix
 start-embedded-target = Flash a Hopspot
 
 start-web-headline = Use the browser node playground
-start-web-body = Try the shared Prns engine in WebAssembly, connect USB Auto hardware through WebUSB, and watch live node activity locally.
+start-web-body = Try the TypeScript API with the shared Rust engine in WebAssembly, connect through Auto Wi-Fi or USB Auto, and watch live node activity locally.
 start-web-code = WebAssembly runtime
-    USB Auto console
-    Local-only demo
+    Auto Wi-Fi + USB Auto
+    TypeScript example
 start-web-target = Open playground
 
 start-rust-headline = Build on Reticulum

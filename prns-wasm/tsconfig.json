@@ -6,7 +6,7 @@
     "moduleResolution": "Bundler",
     "baseUrl": ".",
     "paths": {
-      "/pkg/prns_wasm.js": ["./smoke/wasm-bindgen-web.d.ts"]
+      "/pkg/prns_wasm.js": ["./ts/wasm_web.d.ts"]
     },
     "strict": true,
     "exactOptionalPropertyTypes": true,
@@ -18,6 +18,6 @@
     "declaration": true,
     "declarationMap": true
   },
-  "include": ["ts/**/*.ts", "smoke/**/*.ts", "smoke/**/*.d.ts"],
+  "include": ["ts/**/*.ts", "smoke/**/*.ts"],
   "exclude": ["smoke/dist", "smoke/pkg"]
 }

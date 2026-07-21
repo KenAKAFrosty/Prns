@@ -452,6 +452,13 @@ export type AnnounceEvent = {
   sourceInterface: InterfaceId;
 };
 
+export type SingleDeliveryEvent = {
+  type: "singleDelivery";
+  destination: DestinationHash;
+  plaintext: Uint8Array;
+  sourceInterface: InterfaceId;
+};
+
 export type CommandSettledEvent = {
   type: "commandSettled";
   commandId: CommandId;
@@ -470,6 +477,7 @@ export type UnknownPrnsEvent = {
 
 export type PrnsEvent =
   | AnnounceEvent
+  | SingleDeliveryEvent
   | CommandSettledEvent
   | RouteEvent
   | UnknownPrnsEvent;
@@ -2867,6 +2875,13 @@ function parseEvent(raw: unknown): PrnsEvent {
         type,
         destination: destinationHash(bytesField(object, "destination")),
         hops: hopCount(numberField(object, "hops")),
+        sourceInterface: interfaceId(bytesField(object, "sourceInterface")),
+      };
+    case "singleDelivery":
+      return {
+        type,
+        destination: destinationHash(bytesField(object, "destination")),
+        plaintext: copyBytes(bytesField(object, "plaintext")),
         sourceInterface: interfaceId(bytesField(object, "sourceInterface")),
       };
     case "commandSettled":

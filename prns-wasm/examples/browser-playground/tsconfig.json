@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "../..",
+    "outDir": "../../target/browser-playground",
+    "declaration": false,
+    "declarationMap": false
+  },
+  "include": ["../../ts/**/*.ts", "./**/*.ts"],
+  "exclude": []
+}
