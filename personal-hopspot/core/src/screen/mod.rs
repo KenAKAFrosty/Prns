@@ -5,10 +5,11 @@ mod model;
 mod render;
 mod state;
 
+pub(crate) use model::sort_cards_for_display;
 pub use model::{
     card_label, liveness_from_connection, push_interface_menu_info, push_named_peer_row,
-    push_supervisor_peer_rows, sort_cards_for_display, tcp_card_label, Card, CardActivityTracker,
-    CardKind, CardLabel, InterfaceMenuDetailKind, InterfaceMenuDetailRow, InterfaceMenuDetailRows,
+    push_supervisor_peer_rows, tcp_card_label, Card, CardActivityTracker, CardKind, CardLabel,
+    InterfaceMenuDetailKind, InterfaceMenuDetailRow, InterfaceMenuDetailRows,
     InterfaceMenuDetailText, Liveness, SupervisorPeerMenuStatus, UiFooter, CARD_LABEL_CAP,
     INTERFACE_MENU_DETAIL_ROWS_CAP, INTERFACE_MENU_DETAIL_TEXT_CAP,
 };

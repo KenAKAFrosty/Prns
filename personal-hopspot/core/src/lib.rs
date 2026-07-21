@@ -2,17 +2,15 @@
 #![forbid(unsafe_code)]
 
 pub mod battery;
-pub mod card_store;
 pub mod screen;
 
 pub use battery::{BatteryGauge, BatteryPercent, BatterySource, BatteryState, NoBattery};
-pub use card_store::CardStore;
 pub use screen::{
     card_label, draw_with_state, draw_with_state_at, draw_with_state_footer_at,
     draw_with_state_footer_details_at, liveness_from_connection, push_interface_menu_info,
-    push_named_peer_row, push_supervisor_peer_rows, sort_cards_for_display, splash, tcp_card_label,
-    AccessPointState, Card, CardActivityTracker, CardKind, CardLabel, DisplayPowerControl,
-    InputEvent, InterfaceMenuDetailKind, InterfaceMenuDetailRow, InterfaceMenuDetailRows,
+    push_named_peer_row, push_supervisor_peer_rows, splash, tcp_card_label, AccessPointState, Card,
+    CardActivityTracker, CardKind, CardLabel, DisplayPowerControl, InputEvent,
+    InterfaceMenuDetailKind, InterfaceMenuDetailRow, InterfaceMenuDetailRows,
     InterfaceMenuDetailText, Liveness, SupervisorPeerMenuStatus, UiAction, UiConfiguration,
     UiFooter, UiNotice, UiState,
 };

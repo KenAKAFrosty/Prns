@@ -242,7 +242,7 @@ impl Card {
     }
 }
 
-pub fn sort_cards_for_display<const N: usize>(cards: &mut HVec<Card, N>) {
+pub(crate) fn sort_cards_for_display<const N: usize>(cards: &mut HVec<Card, N>) {
     cards.sort_unstable_by_key(|card| card_display_rank(card.kind));
 }
 
