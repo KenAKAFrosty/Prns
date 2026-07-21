@@ -33,13 +33,14 @@ use super::state::lora::{
 };
 use super::state::{
     UiMode, ANNOUNCE_MENU_ITEM, LORA_RESET_MENU_ITEM, LORA_TUNE_MENU_ITEM, OLED_OFF_MENU_ITEM,
-    POWER_MENU_ITEM, POWER_ONLY_MENU_ITEMS, SLEEP_MENU_ITEM,
+    POWER_MENU_ITEM, POWER_ONLY_MENU_ITEMS, RADIO_MENU_ITEM_NO_DISPLAY, SLEEP_MENU_ITEM,
 };
 use super::{
     card_label, draw_with_state, draw_with_state_footer_at, push_interface_menu_info,
-    push_named_peer_row, push_supervisor_peer_rows, sort_cards_for_display, BatteryState, Card,
-    CardActivityTracker, CardKind, InputEvent, InterfaceMenuDetailKind, InterfaceMenuDetailRows,
-    Liveness, SupervisorPeerMenuStatus, UiAction, UiFooter, UiState,
+    push_named_peer_row, push_supervisor_peer_rows, sort_cards_for_display, AccessPointState,
+    BatteryState, Card, CardActivityTracker, CardKind, DisplayPowerControl, InputEvent,
+    InterfaceMenuDetailKind, InterfaceMenuDetailRows, Liveness, SupervisorPeerMenuStatus, UiAction,
+    UiConfiguration, UiFooter, UiState,
 };
 
 const TEST_WIDTH: usize = WIDTH as usize;
@@ -102,6 +103,30 @@ fn test_card(label: &'static str) -> Card {
         rate_bytes_per_sec: 0,
         last_activity_secs: None,
     }
+}
+
+fn test_ui_state() -> UiState {
+    UiState::new(UiConfiguration {
+        storage_limits: DisplayedStorageLimits::DYNAMIC,
+        display_power_control: DisplayPowerControl::Unavailable,
+        access_point: AccessPointState::Unsupported,
+    })
+}
+
+fn test_ui_state_with_display_power() -> UiState {
+    UiState::new(UiConfiguration {
+        storage_limits: DisplayedStorageLimits::DYNAMIC,
+        display_power_control: DisplayPowerControl::Available,
+        access_point: AccessPointState::Unsupported,
+    })
+}
+
+fn test_ui_state_with_access_point(access_point: AccessPointState) -> UiState {
+    UiState::new(UiConfiguration {
+        storage_limits: DisplayedStorageLimits::DYNAMIC,
+        display_power_control: DisplayPowerControl::Unavailable,
+        access_point,
+    })
 }
 
 fn has_on_pixel(

@@ -119,18 +119,12 @@ pub fn draw_with_state_footer_details_at<D: DrawTarget<Color = BinaryColor>>(
     }
 
     if let UiMode::ConfirmRadioSwap { confirm } = state.mode {
-        draw_radio_confirm(display, confirm, state.ap_active);
+        draw_radio_confirm(display, confirm, state.access_point);
         return;
     }
 
     if let Some(selected_item) = state.global_menu_selected_item() {
-        draw_global_menu(
-            display,
-            selected_item,
-            state.display_power_capable,
-            state.ap_capable,
-            state.ap_active,
-        );
+        draw_global_menu(display, selected_item, state);
         return;
     }
 

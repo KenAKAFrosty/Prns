@@ -367,8 +367,11 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
             Some(epd) => epd,
             None => core::future::pending().await,
         };
-        let mut ui_state = hopspot::UiState::new();
-        ui_state.set_storage_limits(<crate::storage::TechoStorage as StorageLayout>::LIMITS);
+        let mut ui_state = hopspot::UiState::new(hopspot::UiConfiguration {
+            storage_limits: <crate::storage::TechoStorage as StorageLayout>::LIMITS,
+            display_power_control: hopspot::DisplayPowerControl::Unavailable,
+            access_point: hopspot::AccessPointState::Unsupported,
+        });
         let mut working_lora_profile = DEFAULT_915_PROFILE;
         let mut since_full = 0u32;
         let mut displayed_hash = 0u64;

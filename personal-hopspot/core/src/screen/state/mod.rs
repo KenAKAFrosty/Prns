@@ -89,15 +89,33 @@ impl UiNotice {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DisplayPowerControl {
+    Unavailable,
+    Available,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AccessPointState {
+    Unsupported,
+    Inactive,
+    Active,
+}
+
+pub struct UiConfiguration {
+    pub storage_limits: DisplayedStorageLimits,
+    pub display_power_control: DisplayPowerControl,
+    pub access_point: AccessPointState,
+}
+
 /// Interaction state for the Hopspot card stack. The renderer stays data-driven: this only records which focus row/card is selected, which slice of the stack is visible on the panel, and whether a menu is open.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct UiState {
     pub(in crate::screen) selected_focus: usize,
     pub(in crate::screen) visible_start: usize,
     pub(in crate::screen) mode: UiMode,
-    pub(in crate::screen) display_power_capable: bool,
-    pub(in crate::screen) ap_capable: bool,
-    pub(in crate::screen) ap_active: bool,
+    pub(in crate::screen) display_power_control: DisplayPowerControl,
+    pub(in crate::screen) access_point: AccessPointState,
     pub(in crate::screen) notice: Option<UiNotice>,
     pub(in crate::screen) storage_limits: DisplayedStorageLimits,
 }
@@ -126,16 +144,15 @@ pub(in crate::screen) enum UiMode {
 }
 
 impl UiState {
-    pub const fn new() -> Self {
+    pub const fn new(configuration: UiConfiguration) -> Self {
         Self {
             selected_focus: 0,
             visible_start: 0,
             mode: UiMode::Cards,
-            display_power_capable: false,
-            ap_capable: false,
-            ap_active: false,
+            display_power_control: configuration.display_power_control,
+            access_point: configuration.access_point,
             notice: None,
-            storage_limits: DisplayedStorageLimits::DYNAMIC,
+            storage_limits: configuration.storage_limits,
         }
     }
 
@@ -223,41 +240,34 @@ impl UiState {
         };
     }
 
-    pub fn set_radio_state(&mut self, capable: bool, active: bool) {
-        self.ap_capable = capable;
-        self.ap_active = active;
-    }
-
-    pub fn set_display_power_capable(&mut self, capable: bool) {
-        self.display_power_capable = capable;
-    }
-
-    pub fn set_storage_limits(&mut self, limits: DisplayedStorageLimits) {
-        self.storage_limits = limits;
-    }
-
-    fn global_menu_items(&self) -> &'static [&'static str] {
-        match (self.display_power_capable, self.ap_capable) {
-            (true, true) => GLOBAL_MENU_ITEMS_AP_DISPLAY,
-            (true, false) => GLOBAL_MENU_ITEMS_DISPLAY,
-            (false, true) => GLOBAL_MENU_ITEMS_AP,
-            (false, false) => GLOBAL_MENU_ITEMS,
+    pub(in crate::screen) fn global_menu_items(&self) -> &'static [&'static str] {
+        match (self.display_power_control, self.access_point) {
+            (
+                DisplayPowerControl::Available,
+                AccessPointState::Inactive | AccessPointState::Active,
+            ) => GLOBAL_MENU_ITEMS_AP_DISPLAY,
+            (DisplayPowerControl::Available, AccessPointState::Unsupported) => {
+                GLOBAL_MENU_ITEMS_DISPLAY
+            }
+            (
+                DisplayPowerControl::Unavailable,
+                AccessPointState::Inactive | AccessPointState::Active,
+            ) => GLOBAL_MENU_ITEMS_AP,
+            (DisplayPowerControl::Unavailable, AccessPointState::Unsupported) => GLOBAL_MENU_ITEMS,
         }
     }
 
-    fn global_radio_menu_item(&self) -> usize {
-        if self.display_power_capable {
-            RADIO_MENU_ITEM
-        } else {
-            RADIO_MENU_ITEM_NO_DISPLAY
+    pub(in crate::screen) fn global_radio_menu_item(&self) -> usize {
+        match self.display_power_control {
+            DisplayPowerControl::Available => RADIO_MENU_ITEM,
+            DisplayPowerControl::Unavailable => RADIO_MENU_ITEM_NO_DISPLAY,
         }
     }
 
     fn global_sleep_menu_item(&self) -> usize {
-        if self.display_power_capable {
-            SLEEP_MENU_ITEM
-        } else {
-            SLEEP_MENU_ITEM_NO_DISPLAY
+        match self.display_power_control {
+            DisplayPowerControl::Available => SLEEP_MENU_ITEM,
+            DisplayPowerControl::Unavailable => SLEEP_MENU_ITEM_NO_DISPLAY,
         }
     }
 
@@ -376,7 +386,9 @@ impl UiState {
                     self.mode = UiMode::LimitsPage { page: 0 };
                     UiAction::None
                 }
-                OLED_OFF_MENU_ITEM if self.display_power_capable => {
+                OLED_OFF_MENU_ITEM
+                    if self.display_power_control == DisplayPowerControl::Available =>
+                {
                     self.mode = UiMode::Cards;
                     UiAction::OledOff
                 }
@@ -384,7 +396,9 @@ impl UiState {
                     self.mode = UiMode::Sleeping;
                     UiAction::Sleep
                 }
-                item if self.ap_capable && item == self.global_radio_menu_item() => {
+                item if self.access_point != AccessPointState::Unsupported
+                    && item == self.global_radio_menu_item() =>
+                {
                     self.mode = UiMode::ConfirmRadioSwap { confirm: false };
                     UiAction::None
                 }
@@ -459,12 +473,6 @@ impl UiState {
         };
         self.sync_card_count_with_footer(card_count, has_footer);
         action
-    }
-}
-
-impl Default for UiState {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

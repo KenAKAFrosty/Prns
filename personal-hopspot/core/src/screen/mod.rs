@@ -16,7 +16,9 @@ pub use render::{
     draw, draw_at, draw_with_state, draw_with_state_at, draw_with_state_footer_at,
     draw_with_state_footer_details_at, splash,
 };
-pub use state::{InputEvent, UiAction, UiNotice, UiState};
+pub use state::{
+    AccessPointState, DisplayPowerControl, InputEvent, UiAction, UiConfiguration, UiNotice, UiState,
+};
 
 #[cfg(test)]
 mod tests;

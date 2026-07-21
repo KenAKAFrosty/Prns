@@ -1,7 +1,8 @@
 use heapless::Vec as HVec;
 use personal_hopspot_core::{
     draw_with_state_footer_details_at, snapshots_to_cards, snapshots_to_interface_menu_details,
-    splash, BatteryState, Card, CardActivityTracker, InputEvent, UiAction, UiNotice, UiState,
+    splash, AccessPointState, BatteryState, Card, CardActivityTracker, DisplayPowerControl,
+    InputEvent, UiAction, UiConfiguration, UiNotice, UiState,
 };
 use personal_rns::interfaces::InterfaceSnapshot;
 use personal_rns::storage::{GrowableHeap, StorageLayout};
@@ -16,9 +17,11 @@ use crate::framebuffer::FrameBuffer;
 const NOTICE_TIMEOUT: Duration = Duration::from_millis(900);
 
 fn ui_state() -> UiState {
-    let mut state = UiState::new();
-    state.set_storage_limits(<GrowableHeap as StorageLayout>::LIMITS);
-    state
+    UiState::new(UiConfiguration {
+        storage_limits: <GrowableHeap as StorageLayout>::LIMITS,
+        display_power_control: DisplayPowerControl::Unavailable,
+        access_point: AccessPointState::Unsupported,
+    })
 }
 
 pub struct HopspotFace {

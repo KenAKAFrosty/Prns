@@ -319,13 +319,22 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     ) = (None, None);
 
     let render = async move {
-        let mut ui_state = screen::UiState::new();
-        ui_state.set_storage_limits(<EngineStorageType as StorageLayout>::LIMITS);
-        ui_state.set_display_power_capable(oled_ok);
-        ui_state.set_radio_state(
-            cfg!(feature = "wifi-auto"),
-            radio_mode == RadioMode::AccessPoint,
-        );
+        let access_point = if !cfg!(feature = "wifi-auto") {
+            screen::AccessPointState::Unsupported
+        } else if radio_mode == RadioMode::AccessPoint {
+            screen::AccessPointState::Active
+        } else {
+            screen::AccessPointState::Inactive
+        };
+        let mut ui_state = screen::UiState::new(screen::UiConfiguration {
+            storage_limits: <EngineStorageType as StorageLayout>::LIMITS,
+            display_power_control: if oled_ok {
+                screen::DisplayPowerControl::Available
+            } else {
+                screen::DisplayPowerControl::Unavailable
+            },
+            access_point,
+        });
         let mut working_lora_profile = DEFAULT_915_PROFILE;
         let mut battery_state = screen::BatteryState::Unknown;
         let mut battery_gauge = screen::BatteryGauge::lipo();

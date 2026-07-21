@@ -13,9 +13,7 @@ use heapless::String as HString;
 use crate::screen::limits::{limit_page_count, LimitRow, LimitValue, LIMITS_PER_PAGE};
 use crate::screen::model::{Card, InterfaceMenuDetailKind, InterfaceMenuDetailRow, Liveness};
 use crate::screen::state::{
-    interface_menu_items, UiNotice, GLOBAL_MENU_ITEMS, GLOBAL_MENU_ITEMS_AP,
-    GLOBAL_MENU_ITEMS_AP_DISPLAY, GLOBAL_MENU_ITEMS_DISPLAY, POWER_MENU_ITEM, RADIO_MENU_ITEM,
-    RADIO_MENU_ITEM_NO_DISPLAY,
+    interface_menu_items, AccessPointState, UiNotice, UiState, POWER_MENU_ITEM,
 };
 
 use super::glyphs::{draw_global_icon, draw_interface_icon, draw_menu_cursor};
@@ -118,9 +116,7 @@ fn draw_interface_menu_details<D: DrawTarget<Color = BinaryColor>>(
 pub(super) fn draw_global_menu<D: DrawTarget<Color = BinaryColor>>(
     display: &mut D,
     selected_item: usize,
-    display_power_capable: bool,
-    ap_capable: bool,
-    ap_active: bool,
+    state: &UiState,
 ) {
     draw_global_icon(display, NAME_ICON_X, MENU_HEADER_Y, BinaryColor::On);
     let header_style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
@@ -146,23 +142,14 @@ pub(super) fn draw_global_menu<D: DrawTarget<Color = BinaryColor>>(
         Point::new(WIDTH - 1, MENU_DIVIDER_Y),
     );
 
-    let items = match (display_power_capable, ap_capable) {
-        (true, true) => GLOBAL_MENU_ITEMS_AP_DISPLAY,
-        (true, false) => GLOBAL_MENU_ITEMS_DISPLAY,
-        (false, true) => GLOBAL_MENU_ITEMS_AP,
-        (false, false) => GLOBAL_MENU_ITEMS,
-    };
-    let radio_menu_item = if display_power_capable {
-        RADIO_MENU_ITEM
-    } else {
-        RADIO_MENU_ITEM_NO_DISPLAY
-    };
+    let items = state.global_menu_items();
+    let radio_menu_item = state.global_radio_menu_item();
     for (index, item) in items.iter().enumerate() {
-        let label = if index == radio_menu_item && ap_capable {
-            if ap_active {
-                "BLE Mode"
-            } else {
-                "AP Mode"
+        let label = if index == radio_menu_item {
+            match state.access_point {
+                AccessPointState::Active => "BLE Mode",
+                AccessPointState::Inactive => "AP Mode",
+                AccessPointState::Unsupported => *item,
             }
         } else {
             *item
@@ -179,7 +166,7 @@ pub(super) fn draw_global_menu<D: DrawTarget<Color = BinaryColor>>(
 pub(super) fn draw_radio_confirm<D: DrawTarget<Color = BinaryColor>>(
     display: &mut D,
     confirm: bool,
-    ap_active: bool,
+    access_point: AccessPointState,
 ) {
     let header_style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
     let _ = Text::with_baseline(
@@ -195,7 +182,11 @@ pub(super) fn draw_radio_confirm<D: DrawTarget<Color = BinaryColor>>(
         Point::new(WIDTH - 1, MENU_DIVIDER_Y),
     );
     let body = MonoTextStyle::new(&FONT_5X8, BinaryColor::On);
-    let prompt = if ap_active { "To BLE?" } else { "To AP?" };
+    let prompt = match access_point {
+        AccessPointState::Active => "To BLE?",
+        AccessPointState::Inactive => "To AP?",
+        AccessPointState::Unsupported => "",
+    };
     let _ = Text::with_baseline(prompt, Point::new(2, MENU_ITEM_TOP), body, Baseline::Top)
         .draw(display);
     let _ = Text::with_baseline(

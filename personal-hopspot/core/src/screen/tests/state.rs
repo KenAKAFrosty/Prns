@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn short_press_cycles_global_then_cards_and_pages_visible_window() {
-    let mut state = UiState::new();
+    let mut state = test_ui_state();
     state.sync_card_count(5);
 
     assert!(state.global_selected());
@@ -37,7 +37,7 @@ fn short_press_cycles_global_then_cards_and_pages_visible_window() {
 
 #[test]
 fn long_press_opens_global_menu_and_short_press_cycles_menu_items() {
-    let mut state = UiState::new();
+    let mut state = test_ui_state();
 
     state.handle_input(InputEvent::LongPress, 4, Some(CardKind::Usb));
 
@@ -65,7 +65,7 @@ fn long_press_opens_global_menu_and_short_press_cycles_menu_items() {
 
 #[test]
 fn long_press_on_the_announce_item_returns_the_announce_action() {
-    let mut state = UiState::new();
+    let mut state = test_ui_state();
 
     assert_eq!(
         state.handle_input(InputEvent::LongPress, 4, Some(CardKind::Usb)),
@@ -83,7 +83,7 @@ fn long_press_on_the_announce_item_returns_the_announce_action() {
 
 #[test]
 fn long_press_on_limits_opens_the_paged_limits_page() {
-    let mut state = UiState::new();
+    let mut state = test_ui_state();
     state.handle_input(InputEvent::LongPress, 4, Some(CardKind::Usb));
     state.handle_input(InputEvent::ShortPress, 4, Some(CardKind::Usb));
 
@@ -107,7 +107,7 @@ fn long_press_on_limits_opens_the_paged_limits_page() {
 
 #[test]
 fn long_press_on_sleep_enters_sleep_and_next_press_wakes() {
-    let mut state = UiState::new();
+    let mut state = test_ui_state();
     state.handle_input(InputEvent::LongPress, 4, Some(CardKind::Usb));
     state.handle_input(InputEvent::ShortPress, 4, Some(CardKind::Usb));
     state.handle_input(InputEvent::ShortPress, 4, Some(CardKind::Usb));
@@ -126,8 +126,7 @@ fn long_press_on_sleep_enters_sleep_and_next_press_wakes() {
 
 #[test]
 fn oled_capable_menu_offers_display_off_before_sleep() {
-    let mut state = UiState::new();
-    state.set_display_power_capable(true);
+    let mut state = test_ui_state_with_display_power();
     state.handle_input(InputEvent::LongPress, 4, Some(CardKind::Usb));
     state.handle_input(InputEvent::ShortPress, 4, Some(CardKind::Usb));
     state.handle_input(InputEvent::ShortPress, 4, Some(CardKind::Usb));
@@ -151,7 +150,7 @@ fn oled_capable_menu_offers_display_off_before_sleep() {
 
 #[test]
 fn long_press_on_back_closes_the_global_menu() {
-    let mut state = UiState::new();
+    let mut state = test_ui_state();
     state.handle_input(InputEvent::LongPress, 4, Some(CardKind::Usb));
     for _ in 0..3 {
         state.handle_input(InputEvent::ShortPress, 4, Some(CardKind::Usb));
@@ -167,7 +166,7 @@ fn long_press_on_back_closes_the_global_menu() {
 
 #[test]
 fn global_menu_cycles_only_actionable_items() {
-    let mut state = UiState::new();
+    let mut state = test_ui_state();
     state.handle_input(InputEvent::LongPress, 1, Some(CardKind::Usb));
 
     assert_eq!(state.global_menu_selected_item(), Some(0));
@@ -182,8 +181,34 @@ fn global_menu_cycles_only_actionable_items() {
 }
 
 #[test]
+fn supported_access_point_states_offer_the_radio_swap_action() {
+    for access_point in [AccessPointState::Inactive, AccessPointState::Active] {
+        let mut state = test_ui_state_with_access_point(access_point);
+        state.handle_input(InputEvent::LongPress, 1, Some(CardKind::Usb));
+        for _ in 0..RADIO_MENU_ITEM_NO_DISPLAY {
+            state.handle_input(InputEvent::ShortPress, 1, Some(CardKind::Usb));
+        }
+
+        assert_eq!(
+            state.global_menu_selected_item(),
+            Some(RADIO_MENU_ITEM_NO_DISPLAY)
+        );
+        assert_eq!(
+            state.handle_input(InputEvent::LongPress, 1, Some(CardKind::Usb)),
+            UiAction::None
+        );
+        assert_eq!(state.mode, UiMode::ConfirmRadioSwap { confirm: false });
+        state.handle_input(InputEvent::ShortPress, 1, Some(CardKind::Usb));
+        assert_eq!(
+            state.handle_input(InputEvent::LongPress, 1, Some(CardKind::Usb)),
+            UiAction::SwapRadioMode
+        );
+    }
+}
+
+#[test]
 fn non_lora_interface_menus_cycle_power_and_back_only() {
-    let mut state = UiState::new();
+    let mut state = test_ui_state();
     state.handle_input(InputEvent::ShortPress, 1, Some(CardKind::Usb));
     state.handle_input(InputEvent::LongPress, 1, Some(CardKind::Usb));
 
@@ -196,7 +221,7 @@ fn non_lora_interface_menus_cycle_power_and_back_only() {
 
 #[test]
 fn lora_interface_menu_keeps_tune_and_reset() {
-    let mut state = UiState::new();
+    let mut state = test_ui_state();
     state.handle_input(InputEvent::ShortPress, 1, Some(CardKind::LoRa));
     state.handle_input(InputEvent::LongPress, 1, Some(CardKind::LoRa));
 
@@ -219,7 +244,7 @@ fn lora_interface_menu_keeps_tune_and_reset() {
 
 #[test]
 fn long_press_opens_interface_menu_after_card_focus() {
-    let mut state = UiState::new();
+    let mut state = test_ui_state();
     state.handle_input(InputEvent::ShortPress, 4, Some(CardKind::Usb));
 
     state.handle_input(InputEvent::LongPress, 4, Some(CardKind::Usb));

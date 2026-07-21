@@ -6,7 +6,7 @@ fn draw_with_state_marks_selected_card_below_global_row() {
     display.set_allow_overdraw(true);
     display.set_allow_out_of_bounds_drawing(true);
     let cards = [test_card("A"), test_card("B")];
-    let mut state = UiState::new();
+    let mut state = test_ui_state();
     state.handle_input(InputEvent::ShortPress, cards.len(), Some(CardKind::Usb));
 
     draw_with_state(&mut display, &cards, BatteryState::Unknown, &state);
@@ -37,7 +37,7 @@ fn draw_with_state_renders_selected_global_row() {
     display.set_allow_overdraw(true);
     display.set_allow_out_of_bounds_drawing(true);
     let cards = [test_card("USB")];
-    let state = UiState::new();
+    let state = test_ui_state();
 
     draw_with_state(&mut display, &cards, BatteryState::Unknown, &state);
 
@@ -81,7 +81,7 @@ fn draw_with_state_renders_selected_global_row() {
 #[test]
 fn draw_with_state_footer_scrolls_after_the_last_card() {
     let cards = [test_card("USB"), test_card("BLE"), test_card("WiFi")];
-    let mut state = UiState::new();
+    let mut state = test_ui_state();
     let footer = UiFooter::new("Docs", Some("127.0.0.1"));
     for _ in 0..4 {
         state.handle_input_with_footer(
@@ -114,7 +114,7 @@ fn draw_with_state_footer_scrolls_after_the_last_card() {
 #[test]
 fn draw_with_state_footer_can_show_softap_docs_details() {
     let cards = [test_card("USB"), test_card("BLE"), test_card("WiFi")];
-    let mut state = UiState::new();
+    let mut state = test_ui_state();
     let footer = UiFooter::with_lines(
         "WifiAP",
         Some("Hopspot-EW53"),
@@ -149,7 +149,7 @@ fn draw_with_state_footer_can_show_softap_docs_details() {
 
 #[test]
 fn footer_focus_long_press_opens_docs() {
-    let mut state = UiState::new();
+    let mut state = test_ui_state();
 
     assert_eq!(
         state.handle_input_with_footer(InputEvent::ShortPress, 1, true, Some(CardKind::Usb)),
@@ -175,7 +175,7 @@ fn draw_with_state_scrolls_global_row_out_of_card_window() {
     display.set_allow_overdraw(true);
     display.set_allow_out_of_bounds_drawing(true);
     let cards = [test_card("A"), test_card("B"), test_card("C")];
-    let mut state = UiState::new();
+    let mut state = test_ui_state();
     state.handle_input(InputEvent::ShortPress, cards.len(), Some(CardKind::Usb));
     state.handle_input(InputEvent::ShortPress, cards.len(), Some(CardKind::Usb));
     state.handle_input(InputEvent::ShortPress, cards.len(), Some(CardKind::Usb));
@@ -200,7 +200,7 @@ fn draw_with_state_renders_global_menu() {
     display.set_allow_overdraw(true);
     display.set_allow_out_of_bounds_drawing(true);
     let cards = [test_card("USB")];
-    let mut state = UiState::new();
+    let mut state = test_ui_state();
     state.handle_input(InputEvent::LongPress, cards.len(), Some(CardKind::Usb));
 
     draw_with_state(&mut display, &cards, BatteryState::Unknown, &state);
@@ -246,7 +246,7 @@ fn draw_with_state_renders_selected_interface_menu() {
             last_activity_secs: None,
         },
     ];
-    let mut state = UiState::new();
+    let mut state = test_ui_state();
     state.handle_input(InputEvent::ShortPress, cards.len(), Some(CardKind::Usb));
     state.handle_input(InputEvent::ShortPress, cards.len(), Some(CardKind::Usb));
     state.handle_input(InputEvent::LongPress, cards.len(), Some(CardKind::Usb));

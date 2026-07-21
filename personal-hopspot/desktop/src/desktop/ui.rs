@@ -23,7 +23,10 @@ use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 #[cfg(not(target_os = "linux"))]
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
-use personal_hopspot_core::{self as screen, Card, CardKind, InputEvent, UiAction, UiState};
+use personal_hopspot_core::{
+    self as screen, AccessPointState, Card, CardKind, DisplayPowerControl, InputEvent, UiAction,
+    UiConfiguration, UiState,
+};
 
 use super::runtime::{classify, WindowHandles, USB_INTERFACE_ID};
 
@@ -33,6 +36,15 @@ const LIVE_REFRESH: Duration = Duration::from_millis(250);
 const STATUS_LOG_THROTTLE: Duration = Duration::from_millis(1000);
 const NOTICE_TIMEOUT: Duration = Duration::from_millis(900);
 const LONG_PRESS_THRESHOLD: Duration = Duration::from_millis(500);
+
+fn ui_state() -> UiState {
+    UiState::new(UiConfiguration {
+        storage_limits: <GrowableHeap as StorageLayout>::LIMITS,
+        display_power_control: DisplayPowerControl::Unavailable,
+        access_point: AccessPointState::Unsupported,
+    })
+}
+
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum PressSource {
     Key,
@@ -649,8 +661,7 @@ pub(super) fn run_window(handles: WindowHandles) {
         UiAction::OpenDocs => {}
     };
 
-    let mut ui_state = UiState::new();
-    ui_state.set_storage_limits(<GrowableHeap as StorageLayout>::LIMITS);
+    let mut ui_state = ui_state();
     let mut working_lora_profile = DEFAULT_915_PROFILE;
     let mut notice_until: Option<Instant> = None;
     let mut active_press: Option<PressStart> = None;
@@ -872,7 +883,7 @@ mod tests {
             started_at,
             long_press_sent: false,
         });
-        let mut ui_state = UiState::new();
+        let mut ui_state = ui_state();
 
         finish_press(
             &mut active_press,
@@ -897,7 +908,7 @@ mod tests {
             started_at,
             long_press_sent: false,
         });
-        let mut ui_state = UiState::new();
+        let mut ui_state = ui_state();
 
         dispatch_long_press_if_ready(
             &mut active_press,
@@ -921,7 +932,7 @@ mod tests {
             started_at,
             long_press_sent: false,
         });
-        let mut ui_state = UiState::new();
+        let mut ui_state = ui_state();
 
         dispatch_long_press_if_ready(
             &mut active_press,
@@ -954,7 +965,7 @@ mod tests {
             started_at,
             long_press_sent: false,
         });
-        let mut ui_state = UiState::new();
+        let mut ui_state = ui_state();
 
         finish_press(
             &mut active_press,
