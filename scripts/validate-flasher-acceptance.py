@@ -5,86 +5,30 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter, defaultdict
-from datetime import date
-import hashlib
+from datetime import datetime, timezone
 import json
 from pathlib import Path
+import re
 import sys
+from typing import NamedTuple
 
+SCRIPT_DIRECTORY = Path(__file__).resolve().parent
+if str(SCRIPT_DIRECTORY) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIRECTORY))
 
-SHIPPING_BOARDS = {"heltec-v4", "t-beam-supreme", "xiao-esp32-c6", "t-echo"}
-SURFACES = {"web", "cli"}
-OS_ARCHITECTURES = {
-    ("macos", "aarch64"),
-    ("macos", "x86_64"),
-    ("linux", "x86_64"),
-    ("linux", "aarch64"),
-    ("windows", "x86_64"),
-}
-CLI_TARGETS = {
-    "aarch64-apple-darwin": ("macos", "aarch64"),
-    "x86_64-apple-darwin": ("macos", "x86_64"),
-    "x86_64-unknown-linux-gnu": ("linux", "x86_64"),
-    "aarch64-unknown-linux-gnu": ("linux", "aarch64"),
-    "x86_64-pc-windows-msvc": ("windows", "x86_64"),
-}
-REQUIRED_FALLBACKS = {
-    ("firefox", "macos"),
-    ("firefox", "windows"),
-    ("firefox", "linux"),
-    ("safari", "macos"),
-}
-
-ESP_COMMON_SCENARIOS = {
-    "fresh-install",
-    "update",
-    "correct-board",
-    "incorrect-board",
-    "zero-devices",
-    "one-device",
-    "multiple-devices",
-    "sparse-write",
-    "wrong-chip",
-    "boot-reset-recovery",
-    "disconnect-before-write",
-    "disconnect-during-write",
-    "disconnect-before-reset",
-    "corrupt-artifact",
-    "signature-rejection",
-    "reset-failure",
-    "post-flash-boot",
-}
-ESP_WEB_SCENARIOS = {"permission-denial", "device-md5-mismatch", "navigation-warning"}
-ESP_CLI_SCENARIOS = {"port-unavailable", "write-verification-failure"}
-PROVISIONING_SCENARIOS = {"preserve", "configure", "clear"}
-
-UF2_COMMON_SCENARIOS = {
-    "fresh-install",
-    "update",
-    "correct-board",
-    "incorrect-board",
-    "signed-uf2-verification",
-    "corrupt-artifact",
-    "signature-rejection",
-    "post-flash-boot",
-}
-UF2_WEB_SCENARIOS = {
-    "manual-copy-flow",
-    "missing-mount-guidance",
-    "copy-failure-guidance",
-    "reboot-guidance",
-}
-UF2_CLI_SCENARIOS = {
-    "zero-mounts",
-    "one-mount",
-    "multiple-mounts",
-    "failed-copy",
-    "failed-flush",
-    "failed-sync",
-    "mount-disappearance",
-    "reboot-detection",
-    "reboot-timeout",
-}
+from flasher_acceptance_contract import (  # noqa: E402
+    CLI_TARGETS,
+    FALLBACK_SCENARIOS,
+    OS_ARCHITECTURES,
+    PER_RUN_BASELINE_SCENARIOS,
+    REQUIRED_FALLBACKS,
+    SHIPPING_BOARDS,
+    SURFACES,
+    applicable_scenarios,
+    parse_utc_timestamp,
+    sha256,
+)
+from flasher_tester_roster import TesterAssignment, validate_roster  # noqa: E402
 
 TOP_LEVEL_FIELDS = {"schema", "candidate", "runs", "browser_fallbacks", "installation_smoke"}
 CANDIDATE_FIELDS = {
@@ -94,6 +38,8 @@ CANDIDATE_FIELDS = {
     "signing_key_id",
     "manifest_sha256",
     "manifest_signature_sha256",
+    "signed_candidate_sha256",
+    "prerelease_published_at",
 }
 RUN_FIELDS = {
     "board",
@@ -109,21 +55,29 @@ RUN_FIELDS = {
     "scenarios",
     "result",
     "tester",
-    "date",
+    "completed_at",
     "evidence",
 }
 CLIENT_FIELDS = {"name", "version"}
-BROWSER_FIELDS = {"name", "version"}
-EVIDENCE_FIELDS = {"reference", "redaction"}
+BROWSER_FIELDS = {"name", "channel", "version"}
+EVIDENCE_FIELDS = {"reference", "sha256", "redaction"}
+REDACTION_FIELDS = {
+    "reviewer",
+    "credentials_removed",
+    "device_identifiers_removed",
+    "local_paths_removed",
+    "private_network_data_removed",
+}
 FALLBACK_FIELDS = {
     "os",
     "architecture",
     "os_version",
     "client",
     "browser",
+    "scenarios",
     "result",
     "tester",
-    "date",
+    "completed_at",
     "evidence",
 }
 INSTALLATION_FIELDS = {
@@ -135,18 +89,14 @@ INSTALLATION_FIELDS = {
     "scenarios",
     "result",
     "tester",
-    "date",
+    "completed_at",
     "evidence",
 }
-PLACEHOLDER_PREFIXES = ("REPLACE", "TODO", "TBD", "UNKNOWN")
-
-
-def sha256(path: Path) -> str:
-    value = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            value.update(chunk)
-    return value.hexdigest()
+PLACEHOLDER_PREFIXES = ("REPLACE", "TODO", "TBD", "UNKNOWN", "NOT_RUN", "NOT-RUN")
+EVIDENCE_REFERENCE = re.compile(r"^artifact://qualification/([0-9a-f]{64})$")
+BROWSER_VERSION = re.compile(
+    r"^[1-9][0-9]*(?:\.(?:0|[1-9][0-9]*)){1,3}$"
+)
 
 
 def is_sha256(value: object) -> bool:
@@ -177,29 +127,151 @@ def require_text(record: dict, fields: set[str], label: str, errors: list[str]) 
         errors.append(f"{label} has missing, placeholder, or malformed text fields: {missing}")
 
 
-def validate_date(record: dict, label: str, errors: list[str]) -> None:
-    value = record.get("date")
-    if not isinstance(value, str):
-        errors.append(f"{label} date must be ISO YYYY-MM-DD")
-        return
+def validate_completed_at(
+    record: dict,
+    label: str,
+    prerelease_published_at: datetime,
+    now: datetime,
+    errors: list[str],
+) -> None:
     try:
-        recorded = date.fromisoformat(value)
-    except ValueError:
-        errors.append(f"{label} date must be ISO YYYY-MM-DD")
+        completed_at = parse_utc_timestamp(record.get("completed_at"), f"{label} completed_at")
+    except ValueError as error:
+        errors.append(str(error))
         return
-    if recorded > date.today():
-        errors.append(f"{label} date cannot be in the future")
+    if completed_at < prerelease_published_at:
+        errors.append(f"{label} completed_at predates the exact public prerelease")
+    if completed_at > now:
+        errors.append(f"{label} completed_at cannot be in the future")
 
 
-def validate_evidence(value: object, label: str, errors: list[str]) -> None:
+class EvidenceReference(NamedTuple):
+    digest: str
+
+    @classmethod
+    def parse(cls, value: object) -> EvidenceReference:
+        if not isinstance(value, str):
+            raise ValueError("evidence reference is missing or malformed")
+        matched = EVIDENCE_REFERENCE.fullmatch(value)
+        if matched is None:
+            raise ValueError(
+                "evidence reference must be artifact://qualification/LOWERCASE_SHA256"
+            )
+        return cls(matched.group(1))
+
+
+class EvidenceStore:
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self.referenced_digests: set[str] = set()
+        self.verified_digests: set[str] = set()
+
+    def validate(
+        self,
+        reference: EvidenceReference,
+        declared_digest: str,
+        label: str,
+        errors: list[str],
+    ) -> None:
+        self.referenced_digests.add(reference.digest)
+        if reference.digest != declared_digest:
+            errors.append(f"{label} evidence reference and declared sha256 differ")
+            return
+        if reference.digest in self.verified_digests:
+            return
+        path = self.root / reference.digest
+        if path.is_symlink() or not path.is_file():
+            errors.append(f"{label} evidence object is missing from the offline evidence root")
+            return
+        try:
+            if path.stat().st_size == 0:
+                errors.append(f"{label} evidence object is empty")
+                return
+            actual_digest = sha256(path)
+        except OSError as error:
+            errors.append(f"{label} evidence object cannot be read: {error}")
+            return
+        if actual_digest != declared_digest:
+            errors.append(f"{label} evidence bytes do not match the declared sha256")
+            return
+        self.verified_digests.add(reference.digest)
+
+    def validate_inventory(self, errors: list[str]) -> None:
+        if self.root.is_symlink() or not self.root.is_dir():
+            errors.append("offline qualification evidence root is missing or is not a directory")
+            return
+        actual: set[str] = set()
+        try:
+            entries = list(self.root.iterdir())
+        except OSError as error:
+            errors.append(f"offline qualification evidence root cannot be read: {error}")
+            return
+        for entry in entries:
+            if (
+                EVIDENCE_REFERENCE.fullmatch(f"artifact://qualification/{entry.name}") is None
+                or entry.is_symlink()
+                or not entry.is_file()
+            ):
+                errors.append(
+                    "offline qualification evidence root must contain only regular files named by lowercase SHA-256"
+                )
+                continue
+            actual.add(entry.name)
+        missing = sorted(self.referenced_digests - actual)
+        unexpected = sorted(actual - self.referenced_digests)
+        if missing:
+            errors.append(f"offline qualification evidence root is missing objects: {missing}")
+        if unexpected:
+            errors.append(f"offline qualification evidence root contains unreferenced objects: {unexpected}")
+
+
+def validate_evidence(
+    value: object,
+    label: str,
+    evidence_store: EvidenceStore,
+    errors: list[str],
+) -> None:
     if not isinstance(value, dict):
         errors.append(f"{label} evidence must be an object")
         return
     reject_unknown_fields(value, EVIDENCE_FIELDS, f"{label}.evidence", errors)
-    if not is_evidence_text(value.get("reference")):
-        errors.append(f"{label} evidence reference is missing or still a placeholder")
-    if value.get("redaction") != "reviewed":
-        errors.append(f"{label} evidence redaction must be 'reviewed'")
+    reference = value.get("reference")
+    evidence_sha256 = value.get("sha256")
+    parsed_reference: EvidenceReference | None = None
+    try:
+        parsed_reference = EvidenceReference.parse(reference)
+    except ValueError as error:
+        errors.append(f"{label} {error}")
+    if not is_sha256(evidence_sha256):
+        errors.append(f"{label} evidence sha256 must be a lowercase SHA-256 value")
+    elif parsed_reference is not None:
+        evidence_store.validate(parsed_reference, evidence_sha256, label, errors)
+    redaction = value.get("redaction")
+    if not isinstance(redaction, dict):
+        errors.append(f"{label} evidence redaction must be an object")
+        return
+    reject_unknown_fields(redaction, REDACTION_FIELDS, f"{label}.evidence.redaction", errors)
+    if not is_evidence_text(redaction.get("reviewer")):
+        errors.append(f"{label} evidence redaction reviewer is missing or still a placeholder")
+    checks = REDACTION_FIELDS - {"reviewer"}
+    failed = sorted(field for field in checks if redaction.get(field) is not True)
+    if failed:
+        errors.append(f"{label} evidence redaction checks are not complete: {failed}")
+
+
+def validate_tester(
+    record: dict,
+    host: tuple[str, str],
+    assignments: dict[tuple[str, str], TesterAssignment],
+    label: str,
+    errors: list[str],
+) -> None:
+    assignment = assignments.get(host)
+    if assignment is None:
+        errors.append(f"{label} host has no assignment in the exact signed tester roster")
+        return
+    if record.get("tester") != assignment.tester:
+        errors.append(f"{label} tester differs from the exact signed tester roster assignment")
 
 
 def validate_client(
@@ -223,11 +295,17 @@ def validate_browser(
         return None, None
     reject_unknown_fields(value, BROWSER_FIELDS, f"{label}.browser", errors)
     name = value.get("name")
+    channel = value.get("channel")
     version = value.get("version")
-    if name != expected_name or not is_evidence_text(version) or not any(
-        character.isdigit() for character in str(version)
+    if (
+        name != expected_name
+        or not isinstance(version, str)
+        or len(version) > 64
+        or BROWSER_VERSION.fullmatch(version) is None
     ):
         errors.append(f"{label} must record exact {expected_name} browser version")
+    if channel != "stable":
+        errors.append(f"{label} browser channel must be stable")
     return name if isinstance(name, str) else None, version if isinstance(version, str) else None
 
 
@@ -243,7 +321,9 @@ def validate_scenarios(
     failed = sorted(name for name, result in value.items() if result != "pass")
     if failed:
         errors.append(f"{label} contains non-passing scenarios: {failed}")
-    return set(value) & allowed
+    return {
+        name for name, result in value.items() if name in allowed and result == "pass"
+    }
 
 
 def manifest_targets(manifest: dict, errors: list[str]) -> dict[str, dict]:
@@ -260,29 +340,9 @@ def manifest_targets(manifest: dict, errors: list[str]) -> dict[str, dict]:
         if board in targets:
             errors.append(f"candidate manifest duplicates board {board}")
         targets[board] = target
-    if set(targets) != SHIPPING_BOARDS:
+    if set(targets) != set(SHIPPING_BOARDS):
         errors.append("candidate manifest does not contain exactly the four shipping boards")
     return targets
-
-
-def applicable_scenarios(
-    target: dict, surface: str, chip_counts: Counter[str]
-) -> set[str]:
-    transport = target.get("transport")
-    if transport == "esp-serial":
-        scenarios = set(ESP_COMMON_SCENARIOS)
-        scenarios.update(ESP_WEB_SCENARIOS if surface == "web" else ESP_CLI_SCENARIOS)
-        chip = target.get("expected_chip")
-        if isinstance(chip, str) and chip_counts[chip] > 1:
-            scenarios.add("same-chip-board-confirmation")
-        if target.get("provisioning") is not None:
-            scenarios.update(PROVISIONING_SCENARIOS)
-        return scenarios
-    if transport == "uf2-mass-storage":
-        scenarios = set(UF2_COMMON_SCENARIOS)
-        scenarios.update(UF2_WEB_SCENARIOS if surface == "web" else UF2_CLI_SCENARIOS)
-        return scenarios
-    return set()
 
 
 def validate_candidate_identity(
@@ -290,6 +350,8 @@ def validate_candidate_identity(
     manifest: dict,
     manifest_path: Path,
     signature_path: Path,
+    signed_bundle_path: Path,
+    prerelease_published_at: str,
     errors: list[str],
 ) -> tuple[str, dict[str, dict]]:
     release = manifest.get("release") if isinstance(manifest.get("release"), dict) else {}
@@ -307,6 +369,8 @@ def validate_candidate_identity(
         "signing_key_id": signing.get("key_id"),
         "manifest_sha256": sha256(manifest_path),
         "manifest_signature_sha256": sha256(signature_path),
+        "signed_candidate_sha256": sha256(signed_bundle_path),
+        "prerelease_published_at": prerelease_published_at,
     }
     for field, expected_value in expected.items():
         actual = candidate.get(field)
@@ -315,14 +379,24 @@ def validate_candidate_identity(
         else:
             matches = actual == expected_value
         if not matches:
-            errors.append(f"acceptance {field} does not match the exact signed manifest")
+            boundary = (
+                "signed candidate archive"
+                if field == "signed_candidate_sha256"
+                else "signed manifest"
+            )
+            errors.append(f"acceptance {field} does not match the exact {boundary}")
     require_text(candidate, CANDIDATE_FIELDS, "candidate", errors)
     if candidate.get("channel") not in {"stable", "preview"}:
         errors.append("acceptance channel must be stable or preview")
     if candidate.get("version") == "next":
         errors.append("acceptance version cannot be next")
-    if not is_sha256(candidate.get("manifest_sha256")) or not is_sha256(
-        candidate.get("manifest_signature_sha256")
+    if not all(
+        is_sha256(candidate.get(field))
+        for field in (
+            "manifest_sha256",
+            "manifest_signature_sha256",
+            "signed_candidate_sha256",
+        )
     ):
         errors.append("acceptance candidate hashes must be lowercase SHA-256 values")
     source_commit = candidate.get("source_commit")
@@ -346,6 +420,10 @@ def validate_runs(
     acceptance: dict,
     targets: dict[str, dict],
     version: str,
+    assignments: dict[tuple[str, str], TesterAssignment],
+    evidence_store: EvidenceStore,
+    prerelease_published_at: datetime,
+    now: datetime,
     errors: list[str],
 ) -> None:
     required_matrix = {
@@ -390,6 +468,7 @@ def validate_runs(
             errors.append(f"{label} has an unsupported OS/architecture pair")
         else:
             physical_architectures.add((os_name, architecture))
+            validate_tester(run, (os_name, architecture), assignments, label, errors)
         if run.get("result") != "pass":
             errors.append(f"{label} is not a passing acceptance run")
         require_text(
@@ -404,8 +483,8 @@ def validate_runs(
             label,
             errors,
         )
-        validate_date(run, label, errors)
-        validate_evidence(run.get("evidence"), label, errors)
+        validate_completed_at(run, label, prerelease_published_at, now, errors)
+        validate_evidence(run.get("evidence"), label, evidence_store, errors)
         target = targets.get(str(board), {})
         if run.get("hardware_model") != target.get("display_name"):
             errors.append(f"{label} hardware_model differs from the signed manifest")
@@ -419,9 +498,13 @@ def validate_runs(
         allowed = applicable_scenarios(target, str(surface), chip_counts)
         if not allowed:
             errors.append(f"{label} target has an unsupported transport")
-        coverage[(str(board), str(surface))].update(
-            validate_scenarios(run.get("scenarios"), allowed, label, errors)
-        )
+        observed = validate_scenarios(run.get("scenarios"), allowed, label, errors)
+        missing_baseline = sorted(PER_RUN_BASELINE_SCENARIOS - observed)
+        if missing_baseline:
+            errors.append(
+                f"{label} must independently prove baseline scenarios: {missing_baseline}"
+            )
+        coverage[(str(board), str(surface))].update(observed)
 
     missing_matrix = sorted(required_matrix - seen_matrix)
     if missing_matrix:
@@ -437,7 +520,15 @@ def validate_runs(
                 errors.append(f"{board}/{surface} is missing scenarios: {missing}")
 
 
-def validate_fallbacks(acceptance: dict, version: str, errors: list[str]) -> None:
+def validate_fallbacks(
+    acceptance: dict,
+    version: str,
+    assignments: dict[tuple[str, str], TesterAssignment],
+    evidence_store: EvidenceStore,
+    prerelease_published_at: datetime,
+    now: datetime,
+    errors: list[str],
+) -> None:
     entries = acceptance.get("browser_fallbacks")
     if not isinstance(entries, list):
         errors.append("acceptance browser_fallbacks must be an array")
@@ -456,9 +547,11 @@ def validate_fallbacks(acceptance: dict, version: str, errors: list[str]) -> Non
             continue
         if (os_name, architecture) not in OS_ARCHITECTURES:
             errors.append(f"{label} has an unsupported OS/architecture pair")
+        else:
+            validate_tester(entry, (os_name, architecture), assignments, label, errors)
         require_text(entry, {"os_version", "tester"}, label, errors)
-        validate_date(entry, label, errors)
-        validate_evidence(entry.get("evidence"), label, errors)
+        validate_completed_at(entry, label, prerelease_published_at, now, errors)
+        validate_evidence(entry.get("evidence"), label, evidence_store, errors)
         validate_client(entry.get("client"), "prns-web-flasher", version, label, errors)
         browser = entry.get("browser")
         raw_browser_name = browser.get("name") if isinstance(browser, dict) else None
@@ -473,12 +566,26 @@ def validate_fallbacks(acceptance: dict, version: str, errors: list[str]) -> Non
         seen.add(key)
         if entry.get("result") != "pass":
             errors.append(f"{label} is not a passing fallback check")
+        observed = validate_scenarios(
+            entry.get("scenarios"), FALLBACK_SCENARIOS, label, errors
+        )
+        missing_scenarios = sorted(FALLBACK_SCENARIOS - observed)
+        if missing_scenarios:
+            errors.append(f"{label} is missing fallback scenarios: {missing_scenarios}")
     missing = sorted(REQUIRED_FALLBACKS - seen)
     if missing:
         errors.append(f"missing browser fallback checks: {missing}")
 
 
-def validate_installation_smokes(acceptance: dict, version: str, errors: list[str]) -> None:
+def validate_installation_smokes(
+    acceptance: dict,
+    version: str,
+    assignments: dict[tuple[str, str], TesterAssignment],
+    evidence_store: EvidenceStore,
+    prerelease_published_at: datetime,
+    now: datetime,
+    errors: list[str],
+) -> None:
     entries = acceptance.get("installation_smoke")
     if not isinstance(entries, list):
         errors.append("acceptance installation_smoke must be an array")
@@ -500,13 +607,15 @@ def validate_installation_smokes(acceptance: dict, version: str, errors: list[st
         expected_host = CLI_TARGETS[target]
         if (entry.get("os"), entry.get("architecture")) != expected_host:
             errors.append(f"{label} host does not match target {target}")
+        else:
+            validate_tester(entry, expected_host, assignments, label, errors)
         if entry.get("cli_version") != version:
             errors.append(f"{label} CLI version differs from the exact candidate")
         if entry.get("result") != "pass":
             errors.append(f"{label} is not a passing installation/doctor smoke")
         require_text(entry, {"os_version", "tester"}, label, errors)
-        validate_date(entry, label, errors)
-        validate_evidence(entry.get("evidence"), label, errors)
+        validate_completed_at(entry, label, prerelease_published_at, now, errors)
+        validate_evidence(entry.get("evidence"), label, evidence_store, errors)
         validate_scenarios(entry.get("scenarios"), {"install", "doctor"}, label, errors)
         if isinstance(entry.get("scenarios"), dict) and set(entry["scenarios"]) != {
             "install",
@@ -518,23 +627,71 @@ def validate_installation_smokes(acceptance: dict, version: str, errors: list[st
         errors.append(f"missing native installation/doctor smokes: {missing}")
 
 
-def validate(arguments: argparse.Namespace) -> list[str]:
+def validate(arguments: argparse.Namespace, now: datetime | None = None) -> list[str]:
     errors: list[str] = []
     acceptance = json.loads(arguments.acceptance.read_text(encoding="utf-8"))
     manifest = json.loads(arguments.manifest.read_text(encoding="utf-8"))
+    roster = json.loads(arguments.tester_roster.read_text(encoding="utf-8"))
     if not isinstance(acceptance, dict):
         return ["acceptance document must be a JSON object"]
     if not isinstance(manifest, dict):
         return ["candidate manifest must be a JSON object"]
+    try:
+        published_at = parse_utc_timestamp(
+            arguments.prerelease_published_at, "prerelease publishedAt"
+        )
+    except ValueError as error:
+        return [str(error)]
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        return ["acceptance validator current time must include a timezone"]
+    current = current.astimezone(timezone.utc)
+    version_value = manifest.get("release")
+    version = version_value.get("version") if isinstance(version_value, dict) else ""
+    assignments, roster_errors = validate_roster(roster, str(version))
+    errors.extend(f"signed tester roster: {error}" for error in roster_errors)
+    evidence_store = EvidenceStore(arguments.evidence_root)
     reject_unknown_fields(acceptance, TOP_LEVEL_FIELDS, "acceptance", errors)
     if acceptance.get("schema") != 2:
         errors.append("acceptance schema must be 2")
     version, targets = validate_candidate_identity(
-        acceptance, manifest, arguments.manifest, arguments.manifest_signature, errors
+        acceptance,
+        manifest,
+        arguments.manifest,
+        arguments.manifest_signature,
+        arguments.signed_bundle,
+        arguments.prerelease_published_at,
+        errors,
     )
-    validate_runs(acceptance, targets, version, errors)
-    validate_fallbacks(acceptance, version, errors)
-    validate_installation_smokes(acceptance, version, errors)
+    validate_runs(
+        acceptance,
+        targets,
+        version,
+        assignments,
+        evidence_store,
+        published_at,
+        current,
+        errors,
+    )
+    validate_fallbacks(
+        acceptance,
+        version,
+        assignments,
+        evidence_store,
+        published_at,
+        current,
+        errors,
+    )
+    validate_installation_smokes(
+        acceptance,
+        version,
+        assignments,
+        evidence_store,
+        published_at,
+        current,
+        errors,
+    )
+    evidence_store.validate_inventory(errors)
     return errors
 
 
@@ -543,6 +700,10 @@ def main() -> int:
     parser.add_argument("--acceptance", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--manifest-signature", type=Path, required=True)
+    parser.add_argument("--signed-bundle", type=Path, required=True)
+    parser.add_argument("--tester-roster", type=Path, required=True)
+    parser.add_argument("--evidence-root", type=Path, required=True)
+    parser.add_argument("--prerelease-published-at", required=True)
     arguments = parser.parse_args()
     try:
         errors = validate(arguments)

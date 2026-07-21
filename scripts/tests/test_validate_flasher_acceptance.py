@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 from copy import deepcopy
-from datetime import date
+from datetime import datetime, timedelta, timezone
 import hashlib
 import importlib.util
 import json
@@ -21,6 +21,8 @@ SPEC.loader.exec_module(VALIDATOR)
 VERSION = "0.2.6"
 SOURCE_COMMIT = "a" * 40
 KEY_ID = "0123456789ABCDEF"
+PUBLISHED_AT = "2026-07-20T12:00:00Z"
+COMPLETED_AT = "2026-07-20T13:00:00Z"
 MODELS = {
     "heltec-v4": "Heltec LoRa 32 V4",
     "t-beam-supreme": "LilyGO T-Beam Supreme",
@@ -53,8 +55,21 @@ def manifest() -> dict:
     }
 
 
-def evidence(reference: str) -> dict:
-    return {"reference": reference, "redaction": "reviewed"}
+def evidence(root: Path, label: str) -> dict:
+    content = label.encode("utf-8")
+    digest = hashlib.sha256(content).hexdigest()
+    (root / digest).write_bytes(content)
+    return {
+        "reference": f"artifact://qualification/{digest}",
+        "sha256": digest,
+        "redaction": {
+            "reviewer": "fixture-reviewer",
+            "credentials_removed": True,
+            "device_identifiers_removed": True,
+            "local_paths_removed": True,
+            "private_network_data_removed": True,
+        },
+    }
 
 
 def architecture(board: str, os_name: str) -> str:
@@ -65,7 +80,14 @@ def architecture(board: str, os_name: str) -> str:
     return "x86_64"
 
 
-def complete_acceptance(manifest_document: dict, manifest_path: Path, signature_path: Path) -> dict:
+def complete_acceptance(
+    manifest_document: dict,
+    manifest_path: Path,
+    signature_path: Path,
+    signed_bundle_path: Path,
+    evidence_root: Path,
+    roster: dict,
+) -> dict:
     targets = {target["board_slug"]: target for target in manifest_document["targets"]}
     chip_counts = VALIDATOR.Counter(
         target["expected_chip"]
@@ -95,14 +117,15 @@ def complete_acceptance(manifest_document: dict, manifest_path: Path, signature_
                     },
                     "scenarios": dict(scenarios),
                     "result": "pass",
-                    "tester": "fixture-tester",
-                    "date": date.today().isoformat(),
-                    "evidence": evidence(f"evidence://{board}/{surface}/{os_name}"),
+                    "tester": tester_for(roster, os_name, architecture(board, os_name)),
+                    "completed_at": COMPLETED_AT,
+                    "evidence": evidence(evidence_root, f"evidence://{board}/{surface}/{os_name}"),
                 }
                 if surface == "web":
                     run["browser"] = {
                         "name": "edge" if os_name == "windows" else "chrome",
-                        "version": "fixture-126.0.1",
+                        "channel": "stable",
+                        "version": "126.0.1",
                     }
                 runs.append(run)
 
@@ -115,11 +138,18 @@ def complete_acceptance(manifest_document: dict, manifest_path: Path, signature_
                 "architecture": fallback_architecture[os_name],
                 "os_version": f"{os_name}-fixture-1",
                 "client": {"name": "prns-web-flasher", "version": VERSION},
-                "browser": {"name": browser, "version": "fixture-126.0.1"},
+                "browser": {
+                    "name": browser,
+                    "channel": "stable",
+                    "version": "126.0.1",
+                },
+                "scenarios": {
+                    name: "pass" for name in VALIDATOR.FALLBACK_SCENARIOS
+                },
                 "result": "pass",
-                "tester": "fixture-tester",
-                "date": date.today().isoformat(),
-                "evidence": evidence(f"evidence://fallback/{browser}/{os_name}"),
+                "tester": tester_for(roster, os_name, fallback_architecture[os_name]),
+                "completed_at": COMPLETED_AT,
+                "evidence": evidence(evidence_root, f"evidence://fallback/{browser}/{os_name}"),
             }
         )
 
@@ -134,9 +164,9 @@ def complete_acceptance(manifest_document: dict, manifest_path: Path, signature_
                 "cli_version": VERSION,
                 "scenarios": {"install": "pass", "doctor": "pass"},
                 "result": "pass",
-                "tester": "fixture-tester",
-                "date": date.today().isoformat(),
-                "evidence": evidence(f"evidence://install/{target}"),
+                "tester": tester_for(roster, os_name, target_architecture),
+                "completed_at": COMPLETED_AT,
+                "evidence": evidence(evidence_root, f"evidence://install/{target}"),
             }
         )
 
@@ -149,11 +179,52 @@ def complete_acceptance(manifest_document: dict, manifest_path: Path, signature_
             "signing_key_id": KEY_ID,
             "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
             "manifest_signature_sha256": hashlib.sha256(signature_path.read_bytes()).hexdigest(),
+            "signed_candidate_sha256": hashlib.sha256(signed_bundle_path.read_bytes()).hexdigest(),
+            "prerelease_published_at": PUBLISHED_AT,
         },
         "runs": runs,
         "browser_fallbacks": browser_fallbacks,
         "installation_smoke": installation_smoke,
     }
+
+
+def complete_roster() -> dict:
+    assignments = []
+    for index, (target, (os_name, target_architecture)) in enumerate(
+        VALIDATOR.CLI_TARGETS.items()
+    ):
+        assignments.append(
+            {
+                "os": os_name,
+                "architecture": target_architecture,
+                "cli_target": target,
+                "web_browser": {
+                    "name": "edge" if os_name == "windows" else "chrome",
+                    "channel": "stable",
+                },
+                "tester": f"github:fixture-{index}",
+                "boards": list(VALIDATOR.SHIPPING_BOARDS),
+                "cables_ready": True,
+                "device_permissions_ready": True,
+                "recovery_instructions_reviewed": True,
+            }
+        )
+    return {
+        "schema": 1,
+        "release": {"version": VERSION},
+        "release_owner": "github:release-owner",
+        "confirmed_on": "2026-07-20",
+        "assignments": assignments,
+    }
+
+
+def tester_for(roster: dict, os_name: str, target_architecture: str) -> str:
+    return next(
+        assignment["tester"]
+        for assignment in roster["assignments"]
+        if (assignment["os"], assignment["architecture"])
+        == (os_name, target_architecture)
+    )
 
 
 class AcceptanceValidatorTests(unittest.TestCase):
@@ -163,12 +234,26 @@ class AcceptanceValidatorTests(unittest.TestCase):
         self.manifest_document = manifest()
         self.manifest_path = self.root / "flash-manifest.json"
         self.signature_path = self.root / "flash-manifest.json.minisig"
+        self.signed_bundle_path = self.root / "prns-flasher-0.2.6-signed.tar.gz"
+        self.roster_path = self.root / "tester-roster.json"
+        self.evidence_root = self.root / "qualification-evidence"
+        self.evidence_root.mkdir()
+        self.roster = complete_roster()
         self.manifest_path.write_text(
             json.dumps(self.manifest_document, sort_keys=True) + "\n", encoding="utf-8"
         )
         self.signature_path.write_text("fixture signature\n", encoding="utf-8")
+        self.signed_bundle_path.write_bytes(b"exact signed fixture candidate\n")
+        self.roster_path.write_text(
+            json.dumps(self.roster, sort_keys=True) + "\n", encoding="utf-8"
+        )
         self.acceptance = complete_acceptance(
-            self.manifest_document, self.manifest_path, self.signature_path
+            self.manifest_document,
+            self.manifest_path,
+            self.signature_path,
+            self.signed_bundle_path,
+            self.evidence_root,
+            self.roster,
         )
 
     def tearDown(self) -> None:
@@ -185,7 +270,12 @@ class AcceptanceValidatorTests(unittest.TestCase):
                 acceptance=acceptance_path,
                 manifest=self.manifest_path,
                 manifest_signature=self.signature_path,
-            )
+                signed_bundle=self.signed_bundle_path,
+                tester_roster=self.roster_path,
+                evidence_root=self.evidence_root,
+                prerelease_published_at=PUBLISHED_AT,
+            ),
+            now=datetime(2026, 7, 20, 14, 0, tzinfo=timezone.utc),
         )
 
     def runs(self, board: str, surface: str) -> list[dict]:
@@ -252,17 +342,108 @@ class AcceptanceValidatorTests(unittest.TestCase):
         self.assertTrue(any("source_commit does not match" in error for error in errors))
         self.assertTrue(any("hardware_model differs" in error for error in errors))
 
+    def test_tampered_signed_candidate_bundle_is_rejected(self) -> None:
+        self.signed_bundle_path.write_bytes(b"tampered signed fixture candidate\n")
+        self.assertTrue(
+            any("signed_candidate_sha256 does not match" in error for error in self.validate())
+        )
+
+    def test_every_physical_row_must_prove_fresh_install_and_post_flash_boot(self) -> None:
+        run = self.runs("heltec-v4", "web")[0]
+        run["scenarios"].pop("post-flash-boot")
+        errors = self.validate()
+        self.assertTrue(
+            any("must independently prove baseline scenarios: ['post-flash-boot']" in error for error in errors)
+        )
+        self.assertFalse(any("heltec-v4/web is missing scenarios" in error for error in errors))
+
+    def test_browser_must_be_stable_channel(self) -> None:
+        self.runs("heltec-v4", "web")[0]["browser"]["channel"] = "beta"
+        self.assertTrue(any("browser channel must be stable" in error for error in self.validate()))
+
+    def test_browser_version_must_be_canonical_numeric_dotted_form(self) -> None:
+        self.runs("heltec-v4", "web")[0]["browser"]["version"] = "Chrome/126.0.1"
+        self.acceptance["browser_fallbacks"][0]["browser"]["version"] = "126"
+        errors = self.validate()
+        self.assertGreaterEqual(
+            sum("must record exact" in error and "browser version" in error for error in errors),
+            2,
+        )
+
     def test_placeholders_and_unreviewed_evidence_fail_closed(self) -> None:
         run = self.runs("heltec-v4", "cli")[0]
         run["tester"] = "TBD"
-        run["evidence"] = {"reference": "REPLACE_WITH_LINK", "redaction": "pending"}
+        run["evidence"] = {
+            "reference": "REPLACE_WITH_LINK",
+            "sha256": "NOT_RUN",
+            "redaction": {
+                "reviewer": "TBD",
+                "credentials_removed": False,
+                "device_identifiers_removed": False,
+                "local_paths_removed": False,
+                "private_network_data_removed": False,
+            },
+        }
         errors = self.validate()
         self.assertTrue(any("placeholder" in error for error in errors))
-        self.assertTrue(any("redaction must be 'reviewed'" in error for error in errors))
+        self.assertTrue(any("redaction checks are not complete" in error for error in errors))
+
+    def test_evidence_requires_strict_digest_reference_and_redaction(self) -> None:
+        run = self.runs("heltec-v4", "cli")[0]
+        run["evidence"]["sha256"] = "A" * 64
+        run["evidence"]["reference"] = "https://user:password@example.com/latest/log.txt?token=secret"
+        run["evidence"]["redaction"]["credentials_removed"] = False
+        errors = self.validate()
+        self.assertTrue(any("artifact://qualification/LOWERCASE_SHA256" in error for error in errors))
+        self.assertTrue(any("evidence sha256" in error for error in errors))
+        self.assertTrue(any("credentials_removed" in error for error in errors))
+
+    def test_malformed_evidence_reference_fails_without_crashing(self) -> None:
+        run = self.runs("heltec-v4", "cli")[0]
+        run["evidence"]["reference"] = "https://[malformed/" + run["evidence"]["sha256"]
+        self.assertTrue(
+            any("artifact://qualification/LOWERCASE_SHA256" in error for error in self.validate())
+        )
+
+    def test_bogus_tester_not_assigned_to_host_is_rejected(self) -> None:
+        run = self.runs("heltec-v4", "cli")[0]
+        run["tester"] = "github:unassigned-person"
+        self.assertTrue(
+            any("differs from the exact signed tester roster" in error for error in self.validate())
+        )
+
+    def test_missing_evidence_object_is_rejected(self) -> None:
+        run = self.runs("heltec-v4", "cli")[0]
+        (self.evidence_root / run["evidence"]["sha256"]).unlink()
+        self.assertTrue(
+            any("evidence object is missing" in error for error in self.validate())
+        )
+
+    def test_mismatched_evidence_bytes_are_rejected(self) -> None:
+        run = self.runs("heltec-v4", "cli")[0]
+        (self.evidence_root / run["evidence"]["sha256"]).write_bytes(b"tampered evidence")
+        self.assertTrue(
+            any("evidence bytes do not match" in error for error in self.validate())
+        )
+
+    def test_unreferenced_evidence_object_is_rejected(self) -> None:
+        content = b"unreferenced reviewed object"
+        digest = hashlib.sha256(content).hexdigest()
+        (self.evidence_root / digest).write_bytes(content)
+        self.assertTrue(
+            any("contains unreferenced objects" in error for error in self.validate())
+        )
+
+    def test_completion_before_prerelease_publication_is_rejected(self) -> None:
+        self.runs("heltec-v4", "cli")[0]["completed_at"] = "2026-07-20T11:59:59Z"
+        self.assertTrue(
+            any("predates the exact public prerelease" in error for error in self.validate())
+        )
 
     def test_cli_run_cannot_claim_browser_evidence(self) -> None:
         self.runs("heltec-v4", "cli")[0]["browser"] = {
             "name": "chrome",
+            "channel": "stable",
             "version": "126.0.1",
         }
         self.assertTrue(any("CLI run must not claim browser evidence" in error for error in self.validate()))
@@ -271,13 +452,19 @@ class AcceptanceValidatorTests(unittest.TestCase):
         self.acceptance["installation_smoke"][0]["scenarios"].pop("doctor")
         self.assertTrue(any("must prove both install and doctor" in error for error in self.validate()))
 
-    def test_unknown_fields_and_future_dates_are_rejected(self) -> None:
+    def test_browser_fallback_requires_every_truthful_fallback_scenario(self) -> None:
+        self.acceptance["browser_fallbacks"][0]["scenarios"].pop("no-broken-connect-action")
+        self.assertTrue(
+            any("is missing fallback scenarios: ['no-broken-connect-action']" in error for error in self.validate())
+        )
+
+    def test_unknown_fields_and_future_timestamps_are_rejected(self) -> None:
         run = self.runs("heltec-v4", "web")[0]
         run["serial_number"] = "secret-device-serial"
-        run["date"] = "9999-12-31"
+        run["completed_at"] = "9999-12-31T23:59:59Z"
         errors = self.validate()
         self.assertTrue(any("unknown fields: ['serial_number']" in error for error in errors))
-        self.assertTrue(any("date cannot be in the future" in error for error in errors))
+        self.assertTrue(any("completed_at cannot be in the future" in error for error in errors))
 
     def test_malformed_identity_fields_fail_without_crashing(self) -> None:
         self.acceptance["runs"][0]["board"] = {"not": "a string"}

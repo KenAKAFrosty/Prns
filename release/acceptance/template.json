@@ -6,7 +6,9 @@
     "source_commit": "REPLACE_WITH_FULL_GIT_COMMIT",
     "signing_key_id": "REPLACE_WITH_16_HEX_KEY_ID",
     "manifest_sha256": "REPLACE_WITH_SHA256",
-    "manifest_signature_sha256": "REPLACE_WITH_SHA256"
+    "manifest_signature_sha256": "REPLACE_WITH_SHA256",
+    "signed_candidate_sha256": "REPLACE_WITH_SHA256",
+    "prerelease_published_at": "REPLACE_WITH_FULL_UTC_TIMESTAMP"
   },
   "runs": [],
   "browser_fallbacks": [],
