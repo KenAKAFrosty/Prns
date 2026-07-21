@@ -1,10 +1,14 @@
 {
-  "schema": 1,
+  "schema": 2,
   "candidate": {
     "version": "REPLACE_WITH_VERSION",
+    "channel": "REPLACE_WITH_STABLE_OR_PREVIEW",
+    "source_commit": "REPLACE_WITH_FULL_GIT_COMMIT",
+    "signing_key_id": "REPLACE_WITH_16_HEX_KEY_ID",
     "manifest_sha256": "REPLACE_WITH_SHA256",
     "manifest_signature_sha256": "REPLACE_WITH_SHA256"
   },
   "runs": [],
+  "browser_fallbacks": [],
   "installation_smoke": []
 }
