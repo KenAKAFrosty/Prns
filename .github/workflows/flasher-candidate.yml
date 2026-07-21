@@ -15,7 +15,7 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -31,7 +31,7 @@ jobs:
           - os: macos-14
             target: aarch64-apple-darwin
             binary: target/aarch64-apple-darwin/release/hopspot-flash
-          - os: macos-13
+          - os: macos-15-intel
             target: x86_64-apple-darwin
             binary: target/x86_64-apple-darwin/release/hopspot-flash
           - os: ubuntu-latest
@@ -95,7 +95,11 @@ jobs:
       - name: Install exact Dioxus CLI
         run: cargo binstall --no-confirm --force dioxus-cli@0.7.5
       - name: Build unsigned core candidate
-        run: bash scripts/build-flasher-candidate.sh target/flasher-candidate "${{ inputs.channel }}" "${{ inputs.key_id }}" "${{ github.sha }}"
+        env:
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          RELEASE_KEY_ID: ${{ inputs.key_id }}
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: bash scripts/build-flasher-candidate.sh target/flasher-candidate "$RELEASE_CHANNEL" "$RELEASE_KEY_ID" "$SOURCE_COMMIT"
       - uses: actions/upload-artifact@v4
         with:
           name: flasher-core-candidate
@@ -148,23 +152,16 @@ jobs:
           name: flasher-audit-evidence
           path: target/candidate/audit
       - name: Finalize checksums, installers, channel, and immutable website paths
-        run: python3 scripts/finalize-flasher-candidate.py target/candidate --channel "${{ inputs.channel }}" --commit "${{ github.sha }}" --key-id "${{ inputs.key_id }}"
+        env:
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          RELEASE_KEY_ID: ${{ inputs.key_id }}
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: python3 scripts/finalize-flasher-candidate.py target/candidate --channel "$RELEASE_CHANNEL" --commit "$SOURCE_COMMIT" --key-id "$RELEASE_KEY_ID"
       - name: Archive for offline review and signing
         run: tar -czf "target/prns-flasher-candidate-v$(cat VERSION)-unsigned.tar.gz" -C target/candidate .
       - uses: actions/upload-artifact@v4
         with:
-          name: flasher-unsigned-candidate-v${{ github.run_number }}
+          name: flasher-unsigned-candidate-run-${{ github.run_id }}
           path: target/prns-flasher-candidate-v*-unsigned.tar.gz
           retention-days: 30
           if-no-files-found: error
-      - name: Create or update draft GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          version="$(cat VERSION)"
-          bundle="target/prns-flasher-candidate-v${version}-unsigned.tar.gz"
-          if gh release view "v${version}" >/dev/null 2>&1; then
-            gh release upload "v${version}" "$bundle" target/candidate/cli/hopspot-flash-* --clobber
-          else
-            gh release create "v${version}" "$bundle" target/candidate/cli/hopspot-flash-* --draft --title "Prns ${version}" --notes "Unsigned flasher candidate. Public promotion requires offline signatures and the complete hardware acceptance record."
-          fi

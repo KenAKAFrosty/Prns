@@ -4,23 +4,20 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 candidate="${1:-}"
 secret_key="${2:-}"
+public_key="${PRNS_MINISIGN_PUBLIC_KEY:-$root/release/keys/minisign.pub}"
 if [[ -z "$candidate" || -z "$secret_key" ]]; then
-    echo "usage: scripts/sign-flasher-candidate.sh CANDIDATE_DIR OFFLINE_MINISIGN_SECRET_KEY" >&2
+    echo "usage: scripts/sign-flasher-candidate.sh CANDIDATE_DIR MINISIGN_SECRET_KEY" >&2
     exit 2
 fi
 if [[ ! -d "$candidate" || ! -f "$secret_key" ]]; then
     echo "candidate directory or offline secret key is unavailable" >&2
     exit 2
 fi
-if ! command -v minisign >/dev/null 2>&1; then
-    echo "minisign is required on the offline signing workstation" >&2
-    exit 2
-fi
-if rg -q 'PRNS_RELEASE_KEY_NOT_CONFIGURED' "$root/release/keys/minisign.pub"; then
-    echo "release/keys/minisign.pub still contains the fail-closed custody marker" >&2
+if grep -q 'PRNS_RELEASE_KEY_NOT_CONFIGURED' "$public_key"; then
+    echo "release public key still contains the fail-closed custody marker" >&2
     exit 4
 fi
-if ! cmp -s "$candidate/minisign.pub" "$root/release/keys/minisign.pub"; then
+if ! cmp -s "$candidate/minisign.pub" "$public_key"; then
     echo "candidate public key differs from the repository-pinned release key" >&2
     exit 4
 fi
@@ -44,8 +41,7 @@ for document in "${documents[@]}"; do
         echo "missing document or existing signature: $document" >&2
         exit 2
     fi
-    minisign -S -s "$secret_key" -m "$document" -x "$document.minisig"
-    minisign -Vm "$document" -x "$document.minisig" -p "$root/release/keys/minisign.pub"
+    "$root/scripts/sign-flasher-document.sh" "$document" "$secret_key"
 done
 
 release_dir="$candidate/website/releases/$version"
@@ -53,4 +49,4 @@ channel_dir="$candidate/website/releases/channels"
 cp "$candidate/flash-manifest.json.minisig" "$release_dir/flash-manifest.json.minisig"
 cp "$channel_file.minisig" "$channel_dir/$channel_name.json.minisig"
 
-echo "Signed candidate $version with the offline Minisign key. The private key was not copied."
+echo "Signed exact candidate $version. The private key was not copied into the candidate."

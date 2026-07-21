@@ -1,0 +1,204 @@
+name: sign exact flasher candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_run_id:
+        description: Successful default-branch flasher candidate workflow run ID
+        required: true
+        type: string
+      unsigned_bundle_sha256:
+        description: Lowercase SHA-256 of the exact downloaded unsigned candidate archive
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  artifact-metadata: write
+  attestations: write
+  contents: write
+  id-token: write
+
+concurrency:
+  group: flasher-signing
+  cancel-in-progress: false
+
+jobs:
+  sign:
+    name: Sign, attest, and publish immutable prerelease
+    runs-on: ubuntu-24.04
+    environment: release-signing
+    env:
+      CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+      EXPECTED_UNSIGNED_SHA256: ${{ inputs.unsigned_bundle_sha256 }}
+    steps:
+      - name: Checkout reviewed signing implementation
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Read public repository custody state
+        id: repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}" > "${RUNNER_TEMP}/repository.json"
+          test "$(jq -r '.private' "${RUNNER_TEMP}/repository.json")" = "false"
+          default_branch="$(jq -r '.default_branch' "${RUNNER_TEMP}/repository.json")"
+          test -n "$default_branch"
+          test "$GITHUB_REF" = "refs/heads/${default_branch}"
+          echo "default_branch=$default_branch" >> "$GITHUB_OUTPUT"
+      - name: Download only the requested run's candidate artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          run-id: ${{ inputs.candidate_run_id }}
+          pattern: flasher-unsigned-candidate-run-*
+          path: target/unsigned
+          merge-multiple: true
+          github-token: ${{ github.token }}
+      - name: Bind the archive to its expected SHA-256
+        id: unsigned
+        run: |
+          [[ "$CANDIDATE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$EXPECTED_UNSIGNED_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          mapfile -t bundles < <(find target/unsigned -maxdepth 1 -type f -name 'prns-flasher-candidate-v*-unsigned.tar.gz' -print)
+          test "${#bundles[@]}" -eq 1
+          actual="$(sha256sum "${bundles[0]}" | awk '{print $1}')"
+          test "$actual" = "$EXPECTED_UNSIGNED_SHA256"
+          echo "bundle=${bundles[0]}" >> "$GITHUB_OUTPUT"
+      - name: Extract the exact candidate without links or path escapes
+        env:
+          UNSIGNED_BUNDLE: ${{ steps.unsigned.outputs.bundle }}
+        run: python3 scripts/extract-flasher-candidate.py "$UNSIGNED_BUNDLE" target/candidate
+      - name: Verify candidate workflow provenance
+        id: candidate
+        env:
+          DEFAULT_BRANCH: ${{ steps.repository.outputs.default_branch }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${CANDIDATE_RUN_ID}" > "${RUNNER_TEMP}/candidate-run.json"
+          python3 scripts/validate-flasher-candidate-run.py \
+            --run-json "${RUNNER_TEMP}/candidate-run.json" \
+            --manifest target/candidate/flash-manifest.json \
+            --expected-run-id "$CANDIDATE_RUN_ID" \
+            --repository "$GITHUB_REPOSITORY" \
+            --default-branch "$DEFAULT_BRANCH" \
+            --output target/candidate-run.json
+          python3 scripts/validate-unsigned-flasher-candidate.py target/candidate \
+            --expected-commit "$(jq -r '.source_commit' target/candidate-run.json)" \
+            --repository-version VERSION \
+            --pinned-key release/keys/minisign.pub \
+            --identity-output target/candidate-identity.json
+          echo "version=$(jq -r '.version' target/candidate-identity.json)" >> "$GITHUB_OUTPUT"
+          echo "source_commit=$(jq -r '.source_commit' target/candidate-identity.json)" >> "$GITHUB_OUTPUT"
+      - name: Install exact release signing tool
+        run: scripts/install-release-minisign.sh "${RUNNER_TEMP}/prns-release-bin"
+      - name: Install exact Rust candidate verifier toolchain
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.96.0
+      - name: Sign the exact finalized documents
+        env:
+          PRNS_MINISIGN_BIN: ${{ runner.temp }}/prns-release-bin/minisign
+          PRNS_MINISIGN_SECRET_KEY_B64: ${{ secrets.PRNS_MINISIGN_SECRET_KEY_B64 }}
+        run: |
+          test -n "$PRNS_MINISIGN_SECRET_KEY_B64"
+          umask 077
+          secret_key="${RUNNER_TEMP}/prns-release-signing.key"
+          trap 'rm -f "$secret_key"' EXIT HUP INT TERM
+          printf '%s' "$PRNS_MINISIGN_SECRET_KEY_B64" | base64 --decode > "$secret_key"
+          test -s "$secret_key"
+          scripts/sign-flasher-candidate.sh target/candidate "$secret_key"
+      - name: Verify every signed candidate invariant
+        env:
+          PRNS_MINISIGN_BIN: ${{ runner.temp }}/prns-release-bin/minisign
+        run: scripts/verify-flasher-candidate.sh target/candidate
+      - name: Package deterministic signed candidate
+        id: signed
+        env:
+          CANDIDATE_VERSION: ${{ steps.candidate.outputs.version }}
+        run: |
+          mkdir -p target/release
+          bundle="target/release/prns-flasher-candidate-v${CANDIDATE_VERSION}-signed.tar.gz"
+          candidate_run="target/release/prns-flasher-candidate-run-v${CANDIDATE_VERSION}.json"
+          python3 scripts/package-flasher-candidate.py target/candidate "$bundle"
+          cp target/candidate-run.json "$candidate_run"
+          echo "bundle=$bundle" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(sha256sum "$bundle" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+      - name: Attest the signed bundle and every published CLI archive
+        id: attest
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        with:
+          subject-path: |
+            ${{ steps.signed.outputs.bundle }}
+            target/candidate/cli/hopspot-flash-*
+      - name: Record exact attestation identity and subjects
+        env:
+          ATTESTATION_BUNDLE_PATH: ${{ steps.attest.outputs.bundle-path }}
+          ATTESTATION_ID: ${{ steps.attest.outputs.attestation-id }}
+          ATTESTATION_URL: ${{ steps.attest.outputs.attestation-url }}
+          CANDIDATE_VERSION: ${{ steps.candidate.outputs.version }}
+          SIGNED_BUNDLE: ${{ steps.signed.outputs.bundle }}
+        run: |
+          version="$CANDIDATE_VERSION"
+          attestation_bundle="target/release/prns-flasher-attestation-v${version}.json"
+          cp "$ATTESTATION_BUNDLE_PATH" "$attestation_bundle"
+          required=(--required-subject "$SIGNED_BUNDLE")
+          while IFS= read -r archive; do required+=(--required-subject "$archive"); done \
+            < <(find target/candidate/cli -maxdepth 1 -type f -name 'hopspot-flash-*' | sort)
+          test "$((${#required[@]} / 2))" -eq 6
+          python3 scripts/record-flasher-attestation.py \
+            --bundle "$attestation_bundle" \
+            "${required[@]}" \
+            --repository "$GITHUB_REPOSITORY" \
+            --workflow-ref "$GITHUB_WORKFLOW_REF" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --attestation-id "$ATTESTATION_ID" \
+            --attestation-url "$ATTESTATION_URL" \
+            --output "target/release/prns-flasher-attestation-v${version}.metadata.json"
+      - name: Preserve signed custody output as a workflow artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: flasher-signed-candidate-run-${{ github.run_id }}
+          path: |
+            target/release/*
+            target/candidate/cli/hopspot-flash-*
+          retention-days: 90
+          if-no-files-found: error
+      - name: Publish immutable signed candidate as a prerelease
+        env:
+          CANDIDATE_VERSION: ${{ steps.candidate.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+          SIGNED_BUNDLE: ${{ steps.signed.outputs.bundle }}
+          SOURCE_COMMIT: ${{ steps.candidate.outputs.source_commit }}
+        run: |
+          version="$CANDIDATE_VERSION"
+          tag="v${version}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "release $tag already exists; candidate releases are immutable" >&2
+            exit 1
+          fi
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" >/dev/null 2>&1; then
+            echo "tag $tag already exists; refusing ambiguous prerelease custody" >&2
+            exit 1
+          fi
+          gh release create "$tag" \
+            "$SIGNED_BUNDLE" \
+            target/release/prns-flasher-candidate-run-v"${version}".json \
+            target/release/prns-flasher-attestation-v"${version}".json \
+            target/release/prns-flasher-attestation-v"${version}".metadata.json \
+            target/candidate/cli/hopspot-flash-* \
+            target/candidate/SHA256SUMS.txt \
+            target/candidate/SHA256SUMS.txt.minisig \
+            target/candidate/flash-manifest.json \
+            target/candidate/flash-manifest.json.minisig \
+            target/candidate/channels/*.json \
+            target/candidate/channels/*.json.minisig \
+            target/candidate/minisign.pub \
+            target/candidate/cli/install.sh \
+            target/candidate/cli/install.ps1 \
+            target/candidate/cli/README.md \
+            --target "$SOURCE_COMMIT" \
+            --title "Prns ${version} release candidate" \
+            --notes "Immutable signed candidate under public review. It is not stable until signed physical acceptance and the signed release record pass protected promotion." \
+            --prerelease \
+            --latest=false

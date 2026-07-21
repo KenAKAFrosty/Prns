@@ -7,9 +7,14 @@ on:
         description: Exact VERSION without a v prefix
         required: true
         type: string
+      release_record_sha256:
+        description: Lowercase SHA-256 of the signed release-record asset
+        required: true
+        type: string
 
 permissions:
   actions: write
+  attestations: read
   contents: write
   pages: write
   id-token: write
@@ -18,68 +23,138 @@ concurrency:
   group: flasher-promotion
   cancel-in-progress: false
 
+env:
+  RELEASE_VERSION: ${{ inputs.version }}
+  EXPECTED_RELEASE_RECORD_SHA256: ${{ inputs.release_record_sha256 }}
+
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: public-release
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: flasher-promotion
-      - name: Download exact signed candidate from the draft release
+      - name: Confirm default-branch custody and install exact Minisign verifier
+        id: repository
+        run: |
+          default_branch="$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.default_branch')"
+          test "$GITHUB_REF" = "refs/heads/${default_branch}"
+          echo "default_branch=$default_branch" >> "$GITHUB_OUTPUT"
+          scripts/install-release-minisign.sh "${RUNNER_TEMP}/prns-release-bin"
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release download "v${{ inputs.version }}" --pattern "prns-flasher-candidate-v${{ inputs.version }}-signed.tar.gz" --dir target
-      - name: Extract candidate
-        run: python3 scripts/extract-flasher-candidate.py "target/prns-flasher-candidate-v${{ inputs.version }}-signed.tar.gz" target/signed-candidate
-      - name: Verify signatures, hashes, provenance, and complete hardware evidence
-        run: bash scripts/verify-flasher-candidate.sh target/signed-candidate
-      - name: Confirm stable channel and repository VERSION
+      - name: Download exact prerelease custody assets
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          test "$(cat VERSION)" = "${{ inputs.version }}"
+          mkdir -p target/release
+          [[ "$RELEASE_VERSION" =~ ^[0-9A-Za-z][0-9A-Za-z.+-]*$ ]]
+          test "${RELEASE_VERSION,,}" != "next"
+          gh release download "v${RELEASE_VERSION}" \
+            --pattern "prns-flasher-candidate-v${RELEASE_VERSION}-signed.tar.gz" \
+            --pattern "prns-flasher-candidate-run-v${RELEASE_VERSION}.json" \
+            --pattern "prns-flasher-attestation-v${RELEASE_VERSION}.json" \
+            --pattern "prns-flasher-attestation-v${RELEASE_VERSION}.metadata.json" \
+            --pattern "acceptance-v${RELEASE_VERSION}.json" \
+            --pattern "acceptance-v${RELEASE_VERSION}.json.minisig" \
+            --pattern "release-record-v${RELEASE_VERSION}.json" \
+            --pattern "release-record-v${RELEASE_VERSION}.json.minisig" \
+            --dir target/release
+      - name: Bind promotion to the reviewed release record
+        run: |
+          [[ "$EXPECTED_RELEASE_RECORD_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          record="target/release/release-record-v${RELEASE_VERSION}.json"
+          test "$(sha256sum "$record" | awk '{print $1}')" = "$EXPECTED_RELEASE_RECORD_SHA256"
+      - name: Extract exact signed candidate
+        run: |
+          python3 scripts/extract-flasher-candidate.py \
+            "target/release/prns-flasher-candidate-v${RELEASE_VERSION}-signed.tar.gz" \
+            target/signed-candidate
+      - name: Verify signatures, hashes, provenance, hardware evidence, and release record
+        env:
+          DEFAULT_BRANCH: ${{ steps.repository.outputs.default_branch }}
+          PRNS_MINISIGN_BIN: ${{ runner.temp }}/prns-release-bin/minisign
+        run: |
+          record="target/release/release-record-v${RELEASE_VERSION}.json"
+          acceptance_commit="$(jq -r '.acceptance.source_commit' "$record")"
+          source_commit="$(jq -r '.release.source_commit' "$record")"
+          git merge-base --is-ancestor "$source_commit" \
+            "origin/${DEFAULT_BRANCH}"
+          git merge-base --is-ancestor "$acceptance_commit" \
+            "origin/${DEFAULT_BRANCH}"
+          scripts/verify-flasher-release.sh \
+            --candidate target/signed-candidate \
+            --candidate-run "target/release/prns-flasher-candidate-run-v${RELEASE_VERSION}.json" \
+            --signed-bundle "target/release/prns-flasher-candidate-v${RELEASE_VERSION}-signed.tar.gz" \
+            --acceptance "target/release/acceptance-v${RELEASE_VERSION}.json" \
+            --acceptance-source-commit "$acceptance_commit" \
+            --release-record "$record" \
+            --attestation-bundle "target/release/prns-flasher-attestation-v${RELEASE_VERSION}.json" \
+            --attestation-metadata "target/release/prns-flasher-attestation-v${RELEASE_VERSION}.metadata.json" \
+            --repository "$GITHUB_REPOSITORY"
+      - name: Verify GitHub attestations for every published binary
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bundle="target/release/prns-flasher-attestation-v${RELEASE_VERSION}.json"
+          signer_workflow="$GITHUB_REPOSITORY/.github/workflows/flasher-sign.yml"
+          gh attestation verify \
+            "target/release/prns-flasher-candidate-v${RELEASE_VERSION}-signed.tar.gz" \
+            --repo "$GITHUB_REPOSITORY" \
+            --bundle "$bundle" \
+            --signer-workflow "$signer_workflow" \
+            --deny-self-hosted-runners
+          for archive in target/signed-candidate/cli/hopspot-flash-*; do
+            gh attestation verify "$archive" \
+              --repo "$GITHUB_REPOSITORY" \
+              --bundle "$bundle" \
+              --signer-workflow "$signer_workflow" \
+              --deny-self-hosted-runners
+          done
+      - name: Confirm stable channel, source commit, and public review interval
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          record="target/release/release-record-v${RELEASE_VERSION}.json"
+          source_commit="$(jq -r '.release.source_commit' "$record")"
+          test "$(cat VERSION)" = "$RELEASE_VERSION"
           test -f "target/signed-candidate/channels/stable.json"
-      - name: Stage published assets on the draft release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release upload "v${{ inputs.version }}" \
-            target/signed-candidate/SHA256SUMS.txt \
-            target/signed-candidate/SHA256SUMS.txt.minisig \
-            target/signed-candidate/flash-manifest.json \
-            target/signed-candidate/flash-manifest.json.minisig \
-            target/signed-candidate/acceptance.json \
-            target/signed-candidate/minisign.pub \
-            target/signed-candidate/cli/install.sh \
-            target/signed-candidate/cli/install.ps1 \
-            target/signed-candidate/cli/README.md \
-            --clobber
+          gh release view "v${RELEASE_VERSION}" \
+            --json isDraft,isPrerelease,publishedAt,tagName,targetCommitish \
+            > "${RUNNER_TEMP}/prerelease.json"
+          python3 scripts/validate-flasher-prerelease.py \
+            --release-json "${RUNNER_TEMP}/prerelease.json" \
+            --version "$RELEASE_VERSION" \
+            --source-commit "$source_commit" \
+            --minimum-hours 24
       - uses: actions/upload-pages-artifact@v3
         with:
           path: target/signed-candidate/website
 
-  deploy-stable-site:
+  publish-release:
     needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Mark the verified prerelease stable without replacing assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh variable set PRNS_PUBLIC_SITE_PROMOTED --body true
+          gh release edit "v${RELEASE_VERSION}" --prerelease=false --latest=true
+
+  deploy-stable-site:
+    needs: [verify, publish-release]
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Deploy exact signed website bundle
+      - name: Deploy exact signed website bundle with the stable descriptor last
         id: deployment
         uses: actions/deploy-pages@v4
-
-  publish-release:
-    needs: [verify, deploy-stable-site]
-    runs-on: ubuntu-latest
-    environment: public-release
-    steps:
-      - uses: actions/checkout@v4
-      - name: Publish the verified draft atomically
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh variable set PRNS_PUBLIC_SITE_PROMOTED --body true
-          gh release delete-asset "v${{ inputs.version }}" "prns-flasher-candidate-v${{ inputs.version }}-unsigned.tar.gz" --yes
-          gh release edit "v${{ inputs.version }}" --draft=false --latest=true
