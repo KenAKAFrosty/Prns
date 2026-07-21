@@ -27,12 +27,7 @@ const BUS_LOST_REASON: &str = "the wpa_supplicant D-Bus connection closed";
 const SUPPLICANT_GONE_REASON: &str = "wpa_supplicant left the bus";
 const NETDEV_ACCESS_REASON: &str =
     "wpa_supplicant D-Bus access denied; add this user to the 'netdev' group and start a fresh login session";
-// _prns._tcp DNS-SD records in Wi-Fi P2P service-discovery wire form (RFC 1035 with the fixed P2P
-// compression pointers c0 0c -> _tcp.local and c0 27 -> _prns._tcp.local). Captured on the air from
-// Android's WifiP2pDnsSdServiceInfo, not derived. BONJOUR_PTR_QUERY/RESPONSE are the AddService
-// query/response; the response is RDATA only because wpa prepends the question echo itself (register
-// the full record and Android double-parses it and throws). SD_PTR_QUERY_TLV is the whole outgoing
-// query TLV (2-byte length, protocol 01 = bonjour, transaction) for ServiceDiscoveryRequest.
+// These DNS-SD records were captured from Android's WifiP2pDnsSdServiceInfo. The response is RDATA-only because wpa prepends the question echo; registering the full record makes Android parse it twice and reject it.
 const BONJOUR_PTR_QUERY: &[u8] = &[
     0x05, 0x5f, 0x70, 0x72, 0x6e, 0x73, 0xc0, 0x0c, 0x00, 0x0c, 0x01,
 ];

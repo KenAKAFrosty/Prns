@@ -1,13 +1,3 @@
-//! The tokio host side of the plug-and-play USB-auto interface: a hub that discovers CDC
-//! ports, handshakes each, and multiplexes them all behind one [`InterfaceId`]. Each port is
-//! its own async task that sleeps on its wire and funnels straight into the reactor's inbound,
-//! and discovery is event-driven (the consumer pokes a rescan signal on OS hot-plug), so a
-//! board appears the moment it is plugged.
-//!
-//! Inbound fans IN: every confirmed port fills its own grant lane and announces the commit on
-//! the hub's port-notify funnel (the reactor's own id-funnel pattern, one level down).
-//! Outbound fans OUT: the run loop write-grants each borrowed frame into every confirmed port's lane.
-
 mod host;
 
 pub use host::{AutoUsb, DEFAULT_USB_AUTO_ID, DEFAULT_USB_BAUD};
@@ -40,20 +30,13 @@ use prns_runtime::reactor::driver::{
 };
 use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
 
-/// A slow fallback re-enumeration. Hot-plug is event-driven (the consumer pokes the rescan
-/// signal the instant the OS reports a change), so this only backstops a missed event, a host
-/// with no hot-plug source (e.g. macOS), and re-opening a port whose task died without an unplug.
+/// Backstops missed hot-plug events, platforms without a hot-plug source, and ports whose task died without an unplug.
 const FALLBACK_SCAN_INTERVAL: Duration = Duration::from_secs(1);
-/// How often a not-yet-confirmed port re-sends its `Hello` — covering a board that was still
-/// booting when first opened, with no replug needed.
+/// Repeats the handshake while a newly opened board may still be booting.
 const PROBE_INTERVAL: Duration = Duration::from_millis(500);
-/// Briefly keep a just-confirmed host link in `Degraded` rather than dropping straight to
-/// `Disconnected`. Some Android USB host stacks close and reopen CDC pipes during otherwise
-/// healthy traffic; this keeps the app's liveness from flickering Dormant between re-handshakes.
+/// Masks brief CDC close-and-reopen cycles on Android without reporting a disconnected link between handshakes.
 const RECENT_LINK_GRACE: Duration = Duration::from_secs(3);
-/// A failed open usually means another process still owns the serial/USB interface or the device is
-/// mid-reenumeration. Back off per target so a busy interface does not turn into a once-per-second
-/// error storm.
+/// Backs off a busy or re-enumerating target so failures do not become a once-per-second error storm.
 const OPEN_FAILURE_BACKOFF: Duration = Duration::from_secs(5);
 
 struct Port {
@@ -85,9 +68,7 @@ struct PortContext {
     events: UnboundedSender<PortEvent>,
 }
 
-/// How many frames a port's lane holds in each direction before the hub (inbound) or
-/// the wire (outbound) is behind: backpressure for the port's own reads, drop-on-full
-/// for the broadcast fan-out, mirroring the reactor's egress posture.
+/// Port reads backpressure when inbound is full; broadcast fan-out drops for a full outbound lane.
 const PORT_LANE_DEPTH: usize = 8;
 
 pub struct UsbAutoHost<Scan, Open> {
@@ -131,8 +112,6 @@ impl<Scan, Open> UsbAutoHost<Scan, Open> {
         }
     }
 
-    /// A clone of the live-status handle for the app to read on its own render cadence. Call
-    /// before [`run`](Interface::run) consumes the interface.
     #[must_use]
     pub fn status(&self) -> TokioInterfaceStatus {
         self.status.clone()
@@ -178,10 +157,6 @@ where
         self.id.as_bytes()
     }
 
-    /// Multiplex every discovered, confirmed port behind this one interface: drain each port's
-    /// inbound lane across the seam as its notify names it, broadcast every seam outbound to all
-    /// of them, and re-enumerate ports whenever `rescan` is poked (the consumer's hot-plug
-    /// signal) or the fallback timer fires.
     async fn run<Seam: InterfaceSeam>(mut self, mut seam: Seam) {
         let (events_tx, mut events_rx) = mpsc::unbounded_channel::<PortEvent>();
         let (port_notify_tx, mut port_notify_rx) = mpsc::unbounded_channel::<u64>();
@@ -200,8 +175,7 @@ where
         let mut fallback = tokio::time::interval(FALLBACK_SCAN_INTERVAL);
 
         loop {
-            // The arrived key crosses the select so the seam is free again before the
-            // inbound handoff borrows it; every other arm completes in place.
+            // The arrived key crosses the select so the seam is released before the inbound handoff borrows it.
             let arrived = tokio::select! {
                 _ = fallback.tick() => {
                     self.reconcile(
@@ -345,8 +319,6 @@ where
     Fut: Future<Output = io::Result<S>> + Send + 'static,
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    /// Re-enumerate the present CDC ports: drop (and abort) the tasks of any that vanished, spawn
-    /// a fresh task for any newly present, and refresh the connection state.
     async fn reconcile(
         &mut self,
         ports: &mut Vec<Port>,
@@ -356,8 +328,7 @@ where
         last_confirmed_at: Option<Instant>,
     ) {
         if !self.status.is_enabled() {
-            // Off: drop every port (aborting its task releases the held serial FD) and report
-            // Disabled, so the OS frees the device for other readers — a log monitor — until resume.
+            // Dropping every port releases its serial descriptor for other readers while the interface is disabled.
             for port in ports.drain(..) {
                 port.task.abort();
             }
@@ -404,16 +375,12 @@ where
     }
 }
 
-/// The next frame owed to this port's wire, borrowed in place from its lane; the borrow
-/// releases on the following call — the seam's own outbound discipline, one level down.
+/// Releases the previous lane borrow before returning the next frame.
 async fn next_from_lane(lane: &mut TokioGrantConsumer) -> &[u8] {
     lane.release();
     lane.peek().await.frame()
 }
 
-/// Serve one CDC port: probe it with `Hello` until it answers, then deframe its inbound data
-/// into the port's own grant lane (announcing each commit on the hub's notify funnel) and write
-/// any broadcast outbound onto its wire. Returns on any IO error so the run loop prunes it.
 async fn serve_port<S>(
     id: String,
     mut stream: S,
@@ -551,7 +518,6 @@ mod tests {
         InterfaceId::new([0xD0; 8])
     }
 
-    /// Read the device end until a decoded frame satisfies `pick`, returning what it picks.
     async fn read_until<R, T>(
         wire: &mut R,
         decoder: &mut contract::Decoder,
@@ -601,8 +567,6 @@ mod tests {
         let seam = TokioInterfaceSeam::new(host_id(), in_tx, notify_tx, out_rx);
         tokio::spawn(host.run(seam));
 
-        // The host probes the newly discovered port with a Hello; the device answers HelloAck and
-        // the host confirms the link (its status turns Connected).
         let mut decoder = contract::Decoder::new();
         read_until(&mut device, &mut decoder, |message| {
             matches!(message, Message::Hello(_)).then_some(())
@@ -625,8 +589,6 @@ mod tests {
         .await
         .expect("the host confirms the link within the window");
 
-        // Outbound fans out: a frame granted into the egress lane reaches the confirmed port
-        // as a Data frame.
         let outbound_packet = [0x11u8, 0x22, 0x33];
         out_tx
             .try_grant()
@@ -640,8 +602,6 @@ mod tests {
         .await;
         assert_eq!(delivered, outbound_packet);
 
-        // Inbound fans in: a Data frame from the device lands in the host's grant lane,
-        // announced on the notify funnel with the host's id.
         let inbound_packet = [0xAAu8, 0xBB, 0xCC, 0xDD];
         let n = Message::Data(&inbound_packet)
             .write_framed(&mut frame)

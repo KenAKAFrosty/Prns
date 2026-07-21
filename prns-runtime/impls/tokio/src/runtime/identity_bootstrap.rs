@@ -1,5 +1,3 @@
-//! Host-side identity bootstrap: the OS-entropy and filesystem sides of minting the node's X25519 ‖ Ed25519 identity secret, which the sans-io engine only ever takes as bytes.
-
 use std::fs;
 use std::io::{Read, Write};
 use std::path::Path;
@@ -7,7 +5,6 @@ use std::path::Path;
 use prns_core::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use prns_core::interfaces::bluetooth_auto::BleIdentity;
 
-/// A fresh identity secret from the OS CSPRNG.
 #[must_use]
 #[expect(
     clippy::expect_used,
@@ -80,14 +77,10 @@ fn create_identity_secret(
     Ok(key)
 }
 
-/// Why [`load_or_create_identity_secret`] produced no identity.
 #[derive(Debug)]
 pub enum IdentitySecretFileError {
     Io(std::io::Error),
-    /// The file exists but is not exactly [`IDENTITY_SECRET_KEY_LEN`] bytes.
-    Malformed {
-        len: u64,
-    },
+    Malformed { len: u64 },
 }
 
 #[derive(Debug)]

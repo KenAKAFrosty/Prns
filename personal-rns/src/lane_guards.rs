@@ -1,8 +1,3 @@
-//! Every interface family's weak feature edges do nothing until a runtime lane enables
-//! the crate that implements it — so a family named without its lane would otherwise be
-//! a silent no-op. These guards turn each of those states into a compile error naming
-//! the lane to add.
-
 #[cfg(all(
     feature = "tcp",
     not(any(feature = "tokio-host", feature = "embassy-host"))

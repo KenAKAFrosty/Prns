@@ -21,11 +21,6 @@ use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
 use prns_runtime::reactor::throughput::ThroughputLedger;
 use prns_runtime::runtime::{Fleet, InterfaceSupervisor};
 
-/// One client connected to our TCP server: the server-spawned side of an RNS TCP pair (the
-/// reference's `spawned_interface`), a distinct engine interface over an already-accepted
-/// stream speaking the server's selected framing. The [`TcpServer`] supervisor stands one up per
-/// connection and drops it when the stream closes; this end never reconnects (the client owns
-/// the reconnect). Generic over the stream so the body serves a real socket or a duplex pipe under test.
 pub struct TcpServerConnection<S> {
     id: InterfaceId,
     channel_tag: Vec<u8>,
@@ -36,10 +31,6 @@ pub struct TcpServerConnection<S> {
 }
 
 impl<S> TcpServerConnection<S> {
-    /// Wrap an accepted connection. `channel_tag` uniquely tags this connection within the
-    /// server-peer medium — the peer's `ip:port`. The supervisor owes its uniqueness across
-    /// concurrent clients (distinct source ports give distinct tags); the attach path rejects a live
-    /// collision loudly.
     #[must_use]
     pub fn new(channel_tag: Vec<u8>, stream: S, bitrate: BitrateBps) -> Self {
         Self::with_policy(channel_tag, stream, tcp::policy_for_bitrate(bitrate))
@@ -68,15 +59,11 @@ impl<S> TcpServerConnection<S> {
         }
     }
 
-    /// This interface's id, minted from the channel tag. The supervisor lets the reactor cull
-    /// it when the connection drops (the run future ends), so it never holds the id itself.
     #[must_use]
     pub fn id(&self) -> InterfaceId {
         self.id
     }
 
-    /// A clone of this member's live-status handle, for a face to render the connected peer beside
-    /// the server. Call before [`run`](Interface::run) consumes the interface.
     #[must_use]
     pub fn status(&self) -> TokioInterfaceStatus {
         self.status.clone()
@@ -145,12 +132,6 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for TcpServerConnection<S> {
     }
 }
 
-/// The listening end of an RNS TCP pair (`TCPServerInterface` parity): bind a port and stand
-/// up a [`TcpServerConnection`] member per client, each a distinct engine interface (the
-/// reference spawns a child interface per accepted connection). It owns no wire of its own; a
-/// member whose connection drops deregisters itself when its run future ends, and tearing the
-/// supervisor down cascades to every member. `bitrate` is the host's claim about its pipe,
-/// setting each member's declared MTU through the reference's tier table; claim honestly.
 pub struct TcpServer {
     listener: TcpListener,
     policy: EffectiveInterfacePolicy,
@@ -203,24 +184,16 @@ impl TcpServer {
         })
     }
 
-    /// This supervisor's id — `TcpServer`-kind, derived from its bound address. The members it stands
-    /// up are `TcpServerPeer`-kind, a distinct id each. For the app that names the server card.
     #[must_use]
     pub fn id(&self) -> InterfaceId {
         InterfaceId::from_channel_tag(InterfaceKind::TcpServer, &self.channel_tag)
     }
 
-    /// A clone of this listener's aggregate live-status handle: Dormant while bound with no client,
-    /// Live once a client connects, with bytes and transfer rates summed across the connected clients.
-    /// Each accepted client also keeps its own [`TokioInterfaceStatus`], rendered as a peer card beside
-    /// the aggregate. Call before [`supervise`](prns_runtime::runtime::PrnsNodeHandle::supervise) consumes it.
     #[must_use]
     pub fn status(&self) -> TcpServerStatus {
         self.status.clone()
     }
 
-    /// The address the listener bound — with the OS-assigned port resolved, for a face to show and a
-    /// client to dial.
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
         self.listener.local_addr()
     }
@@ -259,10 +232,6 @@ impl InterfaceSupervisor for TcpServer {
     }
 }
 
-/// The TCP listener's aggregate live status, an [`InterfaceStatus`] over the whole server: one
-/// card, Dormant (bound, no client) or Live (clients connected), bytes and rates summed across
-/// the connected clients. Each client keeps its own [`TokioInterfaceStatus`], exposed through
-/// [`members`](Self::members) for per-peer cards.
 #[derive(Clone)]
 pub struct TcpServerStatus {
     shared: Arc<TcpServerShared>,
@@ -290,8 +259,6 @@ impl TcpServerStatus {
         }
     }
 
-    /// A snapshot of each connected client's own live status, for rendering the clients as ordinary
-    /// peer cards beside the aggregate. Cheap: each handle is an `Arc` clone.
     #[must_use]
     pub fn members(&self) -> Vec<TokioInterfaceStatus> {
         match self.shared.members.lock() {
@@ -382,8 +349,6 @@ mod tests {
     use tokio::net::TcpStream;
     use tokio::sync::mpsc::{self, UnboundedSender};
 
-    /// A hand-driven seam: it captures every `next_inbound` and supplies `next_outbound` from a
-    /// grant lane the test fills — so a member's framing can be exercised in isolation.
     struct MockSeam {
         inbound: UnboundedSender<std::vec::Vec<u8>>,
         sink: std::vec::Vec<u8>,
@@ -544,7 +509,6 @@ mod tests {
             outbound: out_rx,
         };
 
-        // The server side: accept one connection and serve it as a member.
         tokio::spawn(async move {
             let (stream, peer) = listener.accept().await.expect("the listener accepts");
             TcpServerConnection::new(
@@ -558,8 +522,6 @@ mod tests {
 
         let mut client = TcpStream::connect(addr).await.expect("the client connects");
 
-        // Inbound: a framed payload (FLAG/ESC exercise the escaping) crosses the real socket and
-        // lands deframed at the seam.
         let payload = [0x01u8, 0x02, FLAG, ESC, 0x03];
         write_framed(&mut client, &payload).await;
         let received = tokio::time::timeout(Duration::from_secs(2), in_rx.recv())
@@ -568,7 +530,6 @@ mod tests {
             .expect("the member task is alive");
         assert_eq!(received, payload);
 
-        // Outbound: the seam yields a frame; it leaves the socket framed.
         let out_payload = [0xAAu8, FLAG, 0xBB];
         out_tx
             .try_grant()

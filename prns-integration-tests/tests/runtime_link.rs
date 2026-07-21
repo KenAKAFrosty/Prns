@@ -1,5 +1,3 @@
-//! A link establishes and carries data across two live nodes over UDP — the public-API successor to the two-reactor UDP capstone that lived beside the interface implementation. Two `PrnsNode` instances talk through a fixed-peer `UdpInterface` pair (one raw wire packet per datagram, no framing); the responder announces, the initiator hears it, establishes a link, and round-trips a request over it. The TCP leg of the same claim lives in `runtime_request.rs`.
-
 use core::time::Duration;
 
 use personal_rns::engine::{
@@ -24,24 +22,19 @@ fn secret(byte: u8) -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
     Zeroizing::new([byte; IDENTITY_SECRET_KEY_LEN])
 }
 
-/// The responder's app state — nothing to hold; the answer is computed from the request.
 struct Responder;
 
-/// One route: echo the request bytes back with a suffix.
 struct Echo;
 impl RequestRoute<Responder> for Echo {
     const PATH: &'static str = QUERY_PATH;
     const POLICY: RoutePolicy = RoutePolicy::AllowAll;
     async fn handle(mut cx: RequestContext<'_, Responder>) -> Result<(), Decline> {
         let asked = cx.data;
-        cx.write(asked);
+        let _ = cx.write(asked);
         cx.respond(b"-pong")
     }
 }
 
-/// Two loopback ports free right now: bind ephemeral sockets to learn them and drop both, so the
-/// fixed-peer interfaces can rebind them pointed at each other. A small TOCTOU window, fine for a
-/// single-process test.
 async fn two_free_udp_ports() -> std::io::Result<(std::net::SocketAddr, std::net::SocketAddr)> {
     let probe_a = tokio::net::UdpSocket::bind("127.0.0.1:0").await?;
     let addr_a = probe_a.local_addr()?;

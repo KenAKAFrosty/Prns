@@ -6,11 +6,7 @@ pub enum ConnectionState {
     Reconnecting,
     Failed,
     Disconnected,
-    /// Turned off from the application (a Hopspot "Turn Off"): the interface keeps its reserved
-    /// slot and its learned routes but its driver has gone dormant — wire closed, nothing
-    /// ingested, egress drained and discarded — until it is turned back on. Distinct from `Failed`
-    /// (which is involuntary) and `Disconnected` (up but link-less): this is a deliberate, instantly
-    /// reversible off.
+    /// A deliberate, reversible off state that retains the interface slot and learned routes while closing the wire and discarding egress.
     Disabled,
     Unknown,
 }

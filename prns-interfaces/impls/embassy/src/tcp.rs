@@ -1,14 +1,3 @@
-//! The embassy TCP-client interface: an RNS `TCPClientInterface` over embassy-net's smoltcp
-//! socket. The board dials a fixed Reticulum TCP node on the LAN (no DNS — the target arrives as
-//! an already-resolved [`IpEndpoint`]), speaks the same RNS HDLC framing the serial and tokio-TCP
-//! interfaces speak, and reconnects when the stream drops. Point-to-point: one engine interface,
-//! one peer.
-//!
-//! Its decoder and frame buffers size to the board's embedded wire ceiling
-//! ([`tcp::EMBEDDED_FRAME_CAP`]), never the host's absolute one — the host-vs-embedded split the
-//! reactor lanes draw. The reactor clamps the declared MTU to those lanes regardless, so a link can
-//! never negotiate past the buffers a frame must land in.
-
 use ::core::time::Duration as CoreDuration;
 use embassy_futures::select::{select, select3, Either, Either3};
 use embassy_net::tcp::TcpSocket;
@@ -27,20 +16,10 @@ use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam, EMBEDDED_M
 use prns_runtime::reactor::reconnect::ReconnectPolicy;
 use prns_runtime::reactor::throughput::ThroughputLedger;
 
-/// How long one connect attempt gets (`TCPClientInterface.INITIAL_CONNECT_TIMEOUT`).
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
-/// The socket discipline, embassy-net's nearest equivalent to the reference's keepalive: a
-/// connection idle past [`SOCKET_TIMEOUT`] is dropped so the reconnect loop heals it, and
-/// [`KEEP_ALIVE`] probes keep a quiet-but-live link from tripping that timeout.
+/// A connection idle past [`SOCKET_TIMEOUT`] is dropped for reconnect, while [`KEEP_ALIVE`] prevents a quiet live link from reaching that timeout.
 pub const SOCKET_TIMEOUT: Duration = Duration::from_secs(24);
 pub const KEEP_ALIVE: Duration = Duration::from_secs(5);
-/// The initiating end of an RNS TCP pair on embassy. Owns its connection lifecycle: connect to
-/// `target`, serve until the stream drops, wait for the reconnect delay, connect again. The socket's smoltcp
-/// buffers (`rx_buffer`/`tx_buffer`) and the status handle are borrowed from the board's `static`s;
-/// `tag` is the stable channel identity — the configured target's bytes — the interface id derives
-/// from, so the same node reconnects under the same routing key. `bitrate` is the host's claim
-/// about its pipe; it sets the declared MTU through the reference's tier table, so claim honestly
-/// ([`tcp::TCP_BITRATE_ESTIMATE`] when genuinely unknown).
 pub struct TcpClient<'a> {
     id: InterfaceId,
     stack: Stack<'a>,
@@ -54,8 +33,6 @@ pub struct TcpClient<'a> {
 }
 
 impl<'a> TcpClient<'a> {
-    /// The id a client dialing `tag` will carry — for the caller that must stand its
-    /// [`EmbassyInterfaceStatus`] up under the same key before it builds the interface.
     #[must_use]
     pub fn interface_id(tag: &[u8]) -> InterfaceId {
         InterfaceId::from_channel_tag(InterfaceKind::TcpClient, tag)
@@ -89,8 +66,6 @@ impl<'a> TcpClient<'a> {
         }
     }
 
-    /// This interface's id, derived from the dial target — for the app that names it (an
-    /// [`AnnounceTarget::Interface`](prns_core::engine::AnnounceTarget), a log line).
     #[must_use]
     pub fn id(&self) -> InterfaceId {
         self.id
@@ -164,8 +139,7 @@ impl Interface for TcpClient<'_> {
                 ));
             }
             socket.abort();
-            // Skip the reconnect wait when the driver was just turned off, so the card shows "Off"
-            // at once rather than lingering Disconnected for the reconnect interval.
+            // Skip reconnect delay after disable so status changes immediately.
             if status.is_enabled() {
                 status.set_connection(ConnectionState::Disconnected);
                 let reconnect_delay = reconnect.next_delay(|bytes| seam.fill_entropy(bytes));
@@ -179,9 +153,6 @@ impl Interface for TcpClient<'_> {
     }
 }
 
-/// Serve one connection until the stream drops: read bytes and deframe them up to the seam, drain
-/// the seam and frame outbound onto the wire. Returns on any IO error so [`run`](TcpClient::run)
-/// reconnects. The socket is split so a read in flight and a write never contend for it.
 #[expect(
     clippy::too_many_arguments,
     reason = "embedded serve-loop internals pass the loop's split-borrowed locals; bundling awaits an on-hardware validation pass"

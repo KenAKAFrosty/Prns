@@ -64,9 +64,7 @@ pub trait BleBackend<const MAX_PEERS: usize> {
     type Error: core::fmt::Debug;
     type Link: BleLink<Error = Self::Error>;
 
-    /// Why this backend cannot safely run (e.g. a host policy that would prompt every nearby peer),
-    /// or `None` to start normally. The supervisor surfaces a blocked backend as a `Failed` interface
-    /// instead of bringing the radio up; most backends never block and keep the default.
+    /// A blocked backend is reported as a failed interface without bringing up the radio.
     fn blocked(&self) -> Option<&'static str> {
         None
     }

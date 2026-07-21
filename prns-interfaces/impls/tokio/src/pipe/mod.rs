@@ -33,11 +33,6 @@ impl PipeRespawnDelay {
     }
 }
 
-/// A pipe interface that owns its subprocess pipe's whole lifecycle (RNS `PipeInterface`): `open`
-/// yields a fresh async byte stream — the consumer supplies it, e.g. the daemon spawning the
-/// configured command and joining its stdout/stdin — and the interface respawns on its own: serve a
-/// connection until the stream drops (the subprocess exits), wait `respawn`, open again. Structurally
-/// the serial interface over a different medium; it frames with the same RNS HDLC octet-stuffing.
 pub struct PipeInterface<Open> {
     id: InterfaceId,
     open: Open,
@@ -48,9 +43,7 @@ pub struct PipeInterface<Open> {
 }
 
 impl<Open> PipeInterface<Open> {
-    /// `channel_tag` names *which* pipe this is — the command line the caller spawns. Two distinct
-    /// pipes must pass distinct bytes; the same command across a respawn should pass the same, so its
-    /// routes survive the respawn.
+    /// A respawned command must retain its `channel_tag`, and concurrent pipes must have distinct tags.
     #[must_use]
     pub fn new(open: Open, respawn_delay: PipeRespawnDelay, channel_tag: &[u8]) -> Self {
         Self::with_policy(
@@ -80,14 +73,11 @@ impl<Open> PipeInterface<Open> {
         }
     }
 
-    /// This interface's id, derived from its command `channel_tag`.
     #[must_use]
     pub fn id(&self) -> InterfaceId {
         self.id
     }
 
-    /// A clone of this interface's live-status handle for the app to read on its own render cadence.
-    /// Call before [`run`](Interface::run) consumes the interface.
     #[must_use]
     pub fn status(&self) -> TokioInterfaceStatus {
         self.status.clone()
@@ -205,8 +195,6 @@ mod tests {
 
     #[tokio::test]
     async fn frames_outbound_and_deframes_inbound_over_a_subprocess_like_stream() {
-        // A duplex stands in for the subprocess's stdout/stdin: the factory yields its end once,
-        // then refuses (the respawn loop just retries harmlessly until the test drops the task).
         let (interface_wire, mut test_wire) = tokio::io::duplex(2048);
         let mut wire = Some(interface_wire);
         let open = move || {
@@ -230,7 +218,6 @@ mod tests {
         let status = interface.status();
         tokio::spawn(interface.run(seam));
 
-        // Inbound: a framed payload (FLAG/ESC exercise escaping) crosses the pipe and lands deframed.
         let payload = [0x01u8, 0x02, FLAG, ESC, 0x03];
         let mut framed = [0u8; 32];
         let n = rns_serial_framing::encode(&payload, &mut framed).expect("encodes the payload");
@@ -244,7 +231,6 @@ mod tests {
             .expect("the interface task is alive");
         assert_eq!(received, payload);
 
-        // Outbound: the seam yields a frame; it leaves the pipe framed.
         let out_payload = [0xAAu8, FLAG, 0xBB];
         out_tx
             .try_grant()
@@ -270,7 +256,6 @@ mod tests {
         .expect("the interface frames outbound within the window");
         assert_eq!(decoded, out_payload);
 
-        // Live status reflects the connection and bytes both ways.
         tokio::time::timeout(Duration::from_secs(2), async {
             loop {
                 if status.connection() == ConnectionState::Connected

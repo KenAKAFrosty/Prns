@@ -1,8 +1,3 @@
-//! The initiating end of a Backbone pair (`BackboneClientInterface` parity): dial one peer, serve the
-//! HDLC-framed link until it drops, wait, dial again. Structurally identical to the
-//! [`tcp`](prns_core::interfaces::tcp) client (Backbone is TCP on the wire); only the
-//! interface kind and effective policy are Backbone's own.
-
 use crate::reconnect::ReconnectPolicy;
 use std::string::String;
 
@@ -18,13 +13,6 @@ use prns_runtime::reactor::driver::TokioInterfaceStatus;
 use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
 use prns_runtime::reactor::throughput::ThroughputLedger;
 
-/// The initiating end of a Backbone pair (`BackboneClientInterface` parity): owns the connection's
-/// whole lifecycle — resolve and connect to `target` (re-resolved every attempt, so a peer behind
-/// dynamic DNS heals), apply the socket discipline, serve until the stream drops, wait for the
-/// reconnect delay,
-/// connect again. Point-to-point: one engine interface, one peer. `bitrate` is the host's claim
-/// about its pipe — it sets the declared hardware MTU through the reference's tier table, so claim
-/// honestly ([`backbone::BACKBONE_CLIENT_BITRATE_ESTIMATE`] when genuinely unknown).
 pub struct BackboneClientInterface {
     id: InterfaceId,
     target: String,
@@ -65,9 +53,6 @@ impl BackboneClientInterface {
         Self::with_id_policy_and_connection_settings(id, target, policy, connection)
     }
 
-    /// Build with a caller-chosen id instead of one derived from the dial target — for advanced setups
-    /// that drive the reactor by hand and must pin the interface to a routing key their own wiring
-    /// references. Ordinary nodes call [`new`](Self::new).
     #[must_use]
     pub fn new_with_id(
         id: InterfaceId,
@@ -117,16 +102,11 @@ impl BackboneClientInterface {
         }
     }
 
-    /// This interface's id: minted by [`new`](Self::new), or the one handed to
-    /// [`new_with_id`](Self::new_with_id). For the app that wants to name it (an
-    /// [`AnnounceTarget::Interface`](prns_core::engine::AnnounceTarget), a log line).
     #[must_use]
     pub fn id(&self) -> InterfaceId {
         self.id
     }
 
-    /// A clone of this interface's live-status handle for the app to read on its own render cadence.
-    /// Call before [`run`](Interface::run) consumes the interface.
     #[must_use]
     pub fn status(&self) -> TokioInterfaceStatus {
         self.status.clone()
@@ -253,8 +233,6 @@ mod tests {
     use tokio::net::{TcpListener, TcpStream};
     use tokio::sync::mpsc::{self, UnboundedSender};
 
-    /// A hand-driven seam: it captures every `next_inbound` and supplies `next_outbound` from a grant
-    /// lane the test fills — so the interface's framing can be exercised in isolation.
     struct MockSeam {
         inbound: UnboundedSender<std::vec::Vec<u8>>,
         sink: std::vec::Vec<u8>,
@@ -346,8 +324,6 @@ mod tests {
             .expect("the client connects within the window")
             .expect("the listener accepts");
 
-        // Inbound: a framed payload (FLAG/ESC bytes exercise the escaping) crosses the real socket and
-        // lands deframed at the seam.
         let payload = [0x01u8, 0x02, FLAG, ESC, 0x03];
         write_framed(&mut first, &payload).await;
         let received = tokio::time::timeout(Duration::from_secs(2), in_rx.recv())
@@ -356,7 +332,6 @@ mod tests {
             .expect("the interface task is alive");
         assert_eq!(received, payload);
 
-        // Outbound: the seam yields a frame; it leaves the socket framed.
         let out_payload = [0xAAu8, FLAG, 0xBB];
         out_tx
             .try_grant()
@@ -368,8 +343,6 @@ mod tests {
             .expect("the frame leaves within the window");
         assert_eq!(decoded, out_payload);
 
-        // The connection drops; the client reconnects on its own and the next frame still arrives — the
-        // reference's RECONNECT_WAIT loop, compressed for the test.
         drop(first);
         let (mut second, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept())
             .await

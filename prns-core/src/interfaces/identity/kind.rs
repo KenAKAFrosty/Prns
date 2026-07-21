@@ -1,12 +1,4 @@
-//! The medium kind every interface declares: the namespace root of its
-//! [`InterfaceId`](super::InterfaceId).
-//!
-//! An id is `kind ++ hash(channel_tag)`: this byte names *what kind of wire* the interface is,
-//! the channel tag names *which* one. The kind namespaces the hash (two kinds never collide
-//! even if their channel-tag hashes did) and makes an id self-describing. Supervisors and the
-//! fleet members they stand up are distinct kinds. The discriminant is written into every id
-//! (and, once routes persist, onto disk), so it is a stable wire-like contract: never renumber
-//! a variant, only append; renumbering would silently repoint every persisted route of that kind.
+//! An id is `kind ++ hash(channel_tag)`: this byte names *what kind of wire* the interface is, the channel tag names *which* one. The kind namespaces the hash (two kinds never collide even if their channel-tag hashes did) and makes an id self-describing. Supervisors and the fleet members they stand up are distinct kinds. The discriminant is written into every id (and, once routes persist, onto disk), so it is a stable wire-like contract: never renumber a variant, only append; renumbering would silently repoint every persisted route of that kind.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
@@ -85,9 +77,6 @@ impl InterfaceKind {
         Self::WeavePeer,
     ];
 
-    /// Recover the kind from an id's first byte. `None` for an unknown discriminant — the byte is
-    /// data the kind never renumbers, so an unrecognized value is a foreign or corrupt id, not a
-    /// kind to guess at.
     #[must_use]
     pub const fn from_u8(byte: u8) -> Option<Self> {
         match byte {
@@ -129,10 +118,6 @@ impl InterfaceKind {
         }
     }
 
-    /// The kind of child a supervisor of this kind stands up, if it is a fleet supervisor. A fleet
-    /// lane registered under a supervisor's id serves every child of this kind, so the reactor
-    /// routes a child's frames to that one lane by the kind byte alone — no per-child entry. `None`
-    /// for a kind that owns no fleet (a 1:1 interface, or a member kind itself).
     #[must_use]
     pub const fn member_kind(self) -> Option<Self> {
         match self {
@@ -150,11 +135,6 @@ impl InterfaceKind {
         }
     }
 
-    /// The supervisor kind a member of this kind belongs to, if any — the inverse of
-    /// [`member_kind`](Self::member_kind). A `WifiPeer` reports `AutoWifi`; a 1:1 interface (or a
-    /// supervisor kind itself) reports `None`. The fan-out uses this to tell a fleet member from a
-    /// dedicated interface: members of one supervisor collapse into a single broadcast the supervisor
-    /// fans across its live peers, so a shared lane never has to carry a frame per member.
     #[must_use]
     pub const fn supervisor_kind(self) -> Option<Self> {
         match self {
@@ -224,7 +204,6 @@ mod tests {
             InterfaceKind::BackboneServerPeer.supervisor_kind(),
             Some(InterfaceKind::BackboneServer)
         );
-        // The outbound connector is a 1:1 interface, like TcpClient — it owns no fleet.
         assert_eq!(InterfaceKind::BackboneClient.member_kind(), None);
         assert_eq!(InterfaceKind::BackboneClient.supervisor_kind(), None);
     }

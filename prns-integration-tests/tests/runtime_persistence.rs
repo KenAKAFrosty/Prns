@@ -1,12 +1,3 @@
-//! The persistence arc end to end: node B learns A's route over live TCP, flushes its routing
-//! table and timebase through the handle, "reboots" as a fresh process-equivalent (new engine, new
-//! reactor, resumed timeline origin), seeds itself from the store, and then reaches A with a
-//! proven single packet — no announce ever crosses in phase two, so the route, A's public keys,
-//! and the timeline all came from the snapshot or the packet could not have been built.
-//! The tunnel capstone closes the ephemeral-client gap on top: the relay's per-connection
-//! interface id never comes back after its reboot, so only the peer's reconnect synthesize —
-//! matched against the seeded tunnel — can repoint the seeded route onto the live connection.
-
 use core::time::Duration;
 
 use personal_rns::engine::{
@@ -70,8 +61,6 @@ impl Drop for StoreDir {
 async fn a_rebooted_node_reaches_a_peer_from_its_seeded_snapshot_alone() {
     let dir = StoreDir::new("snapshot");
     let mut store = FileStore::new(&dir.path);
-    // B pins its client interface id so the reboot re-derives the same id even though the
-    // rebuilt server binds a fresh port; a config-tagged interface gets this for free.
     let pinned = InterfaceId::new(*b"\x00persist");
 
     let single_a = single(secret(0xA1));
@@ -79,7 +68,6 @@ async fn a_rebooted_node_reaches_a_peer_from_its_seeded_snapshot_alone() {
         .destination_hash()
         .expect("the test destination name is valid");
 
-    // Phase one: B (wall-anchored timeline) hears A's announce, then flushes and "powers off".
     let flushed_high_water = {
         let server = TcpServer::bind("127.0.0.1:0", BITRATE)
             .await
@@ -156,8 +144,6 @@ async fn a_rebooted_node_reaches_a_peer_from_its_seeded_snapshot_alone() {
         }
     };
 
-    // Phase two: everything from phase one is dropped. A returns on a fresh port and never
-    // announces; B reboots from the store alone.
     let server = TcpServer::bind("127.0.0.1:0", BITRATE)
         .await
         .expect("server rebinds");
@@ -225,7 +211,6 @@ async fn a_rebooted_node_reaches_a_peer_from_its_seeded_snapshot_alone() {
             commands_b.mark_destination_used(dest_a).await,
             Ok(MarkDestinationUsedOutcome::Retained),
         );
-        // The pinned interface reconnects on its own clock, so retry until the proof lands.
         let mut ticker = tokio::time::interval(Duration::from_millis(250));
         loop {
             ticker.tick().await;
@@ -252,10 +237,6 @@ async fn a_rebooted_node_reaches_a_peer_from_its_seeded_snapshot_alone() {
 async fn a_reconnecting_peer_reclaims_a_rebooted_relays_routes_through_its_tunnel() {
     let dir = StoreDir::new("tunnel");
     let mut store = FileStore::new(&dir.path);
-    // C pins its own client id: in production the dial target is fixed so the id derives stably,
-    // and a stable id is what keeps C's tunnel_id identical across the relay's reboot. The
-    // relay-side interface C arrives on is pinned by nothing — it derives from C's ephemeral
-    // source port, and its disappearance at reboot is exactly the gap the tunnel closes.
     let pinned = InterfaceId::new(*b"\x00tunnel\x00");
 
     let single_c = single(secret(0xC5));
@@ -263,8 +244,6 @@ async fn a_reconnecting_peer_reclaims_a_rebooted_relays_routes_through_its_tunne
         .destination_hash()
         .expect("the test destination name is valid");
 
-    // Phase one: the relay hears C's announce and C's connect-time tunnel synthesize, flushes
-    // until the store holds the tunnel row, and powers off.
     {
         let server = TcpServer::bind("127.0.0.1:0", BITRATE)
             .await
@@ -327,8 +306,6 @@ async fn a_reconnecting_peer_reclaims_a_rebooted_relays_routes_through_its_tunne
                 .expect("the relay hears C's announce within 5s")
                 .expect("the announce channel stays open");
             assert_eq!(heard, dest_c);
-            // The synthesize left C before its first announce, but flush until the store proves
-            // it landed rather than assuming the ordering.
             let flush_until_tunnel_stored = async {
                 let mut ticker = tokio::time::interval(Duration::from_millis(100));
                 loop {
@@ -364,8 +341,6 @@ async fn a_reconnecting_peer_reclaims_a_rebooted_relays_routes_through_its_tunne
         }
     }
 
-    // Phase two: the relay reboots from the store alone; C reconnects on a fresh source port and
-    // never announces, so only the seeded tunnel catching C's synthesize can revive the route.
     let server = TcpServer::bind("127.0.0.1:0", BITRATE)
         .await
         .expect("server rebinds");
@@ -408,9 +383,6 @@ async fn a_reconnecting_peer_reclaims_a_rebooted_relays_routes_through_its_tunne
     });
 
     let proven = async {
-        // Until C's reconnect synthesize repoints it, the seeded route points at phase one's
-        // dead relay-side interface: a send there is accepted, dropped at egress, and its
-        // receipt waits out the full retry ladder — so time-box each attempt and try again.
         let mut ticker = tokio::time::interval(Duration::from_millis(250));
         loop {
             ticker.tick().await;
@@ -507,8 +479,6 @@ async fn a_quiet_flush_skips_unchanged_regions_and_a_change_rewrites() {
                 break;
             }
         }
-        // Stop re-announcing so the table sits still, and let any in-flight announce land
-        // before the flush pair whose second half asserts nothing changed.
         announcer.abort();
         tokio::time::sleep(Duration::from_millis(300)).await;
 
@@ -601,7 +571,6 @@ async fn a_rebooted_destination_decrypts_singles_sealed_to_its_pre_reboot_ratche
         .destination_hash()
         .expect("the test destination name is valid");
 
-    // Phase one: R's first announce mints its ratchet and carries it to P; both flush.
     {
         let server = TcpServer::bind("127.0.0.1:0", BITRATE)
             .await
@@ -687,9 +656,6 @@ async fn a_rebooted_destination_decrypts_singles_sealed_to_its_pre_reboot_ratche
         }
     }
 
-    // Phase two: R reboots and reloads its ratchet secrets from the vault; P reboots from its
-    // store, whose seeded route carries R's announced ratchet key. No announce ever crosses, so
-    // P's single is sealed toward the pre-reboot ratchet — only the seeded secret can open it.
     let server = TcpServer::bind("127.0.0.1:0", BITRATE)
         .await
         .expect("server rebinds");

@@ -64,7 +64,7 @@ use esp_radio::esp_now::{
     EspNow, EspNowManager, EspNowReceiver, EspNowSender, WifiPhyRate, BROADCAST_ADDRESS,
 };
 #[cfg(feature = "bluetooth-auto")]
-use personal_rns::bluetooth_auto::{BluetoothAutoShared, BluetoothAutoStatus, EmbeddedBleBackend};
+use personal_rns::bluetooth_auto::{BluetoothAutoShared, BluetoothAutoStatus};
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
@@ -86,10 +86,10 @@ use personal_rns::interfaces::{
 };
 use personal_rns::lora::{LoRaControl, LoRaInterface};
 use personal_rns::radios::sx126x::Sx126x;
-use personal_rns::reactor::embassy::timebase::EmbassyTimebase;
 use personal_rns::reactor::embassy::{
     embassy_grant_lane, EmbassyGrantConsumer, EmbassyGrantProducer, EmbassyHost,
-    EmbassyInterfaceSeam, EmbassyInterfaceStatus, InterfaceLifecycle, PooledEgress,
+    EmbassyInterfaceSeam, EmbassyInterfaceStatus, EmbassyTimebase, InterfaceLifecycle,
+    PooledEgress,
 };
 use personal_rns::reactor::grant::FrameSlot;
 use personal_rns::reactor::interface_seam::{Interface, EMBEDDED_MAX_WIRE_FRAME_LEN};
@@ -102,6 +102,8 @@ use personal_rns::storage::StorageLayout;
 use personal_rns::tcp::TcpClient;
 use personal_rns::usb_auto::UsbAutoDevice;
 use personal_rns::wifi_auto::{AutoWifi, AutoWifiShared, AutoWifiStatus};
+#[cfg(feature = "bluetooth-auto")]
+use prns_interfaces_embassy::bluetooth_auto::EmbeddedBleBackend;
 
 use crate::storage::EngineStorageType;
 
@@ -476,7 +478,7 @@ macro_rules! boot_common {
         // slow, so it can overrun the RTC watchdog's ~2s timeout. Disable RWDT/SWD over the boot.
         rtc.rwdt.disable();
         rtc.swd.disable();
-        let timebase = ::personal_rns::reactor::embassy::timebase::EmbassyTimebase::start_at(
+        let timebase = ::personal_rns::reactor::embassy::EmbassyTimebase::start_at(
             ::personal_rns::engine::InstantMillis(rtc.current_time_us() / 1000),
         );
         ::esp_println::println!("{} boot — recipe runtime, engine core 1 + I/O core 0", $banner);

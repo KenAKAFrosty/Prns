@@ -24,9 +24,7 @@ pub struct InterfaceDescriptor {
     pub common: InterfaceCommonPolicy,
 }
 
-/// RNS 1.3.5 `Interface.optimise_mtu`: the hardware MTU an interface declares
-/// for its bitrate tier. What a link actually negotiates is this clamped by
-/// the engine's `MAX_LINK_MTU`.
+/// RNS 1.3.5 `Interface.optimise_mtu`; link negotiation clamps the result to the engine's `MAX_LINK_MTU`.
 pub const fn hardware_mtu_for_bitrate(bitrate_bps: u64) -> Option<usize> {
     match bitrate_bps {
         1_000_000_000.. => Some(524_288),

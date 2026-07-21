@@ -18,43 +18,121 @@ pub use prns_runtime::interface_discovery;
 #[cfg(feature = "tokio-host")]
 pub use prns_runtime_tokio::node_introspection;
 
-pub mod reactor {
-    pub use prns_runtime::reactor::{
-        airtime, announce_pacer, decline_all, duty_gate, grant, interface_seam, kernel, reconnect,
-        throughput, timers, AppDeciders, Host,
-    };
-
-    #[cfg(feature = "tokio-host")]
-    pub mod tokio {
-        pub use prns_runtime_tokio::reactor::compression;
-        pub use prns_runtime_tokio::reactor::driver::*;
-    }
-
-    #[cfg(feature = "embassy-host")]
-    pub mod embassy {
-        pub use prns_runtime_embassy::reactor::driver::*;
-        pub use prns_runtime_embassy::reactor::timebase;
-    }
-}
-
-pub mod runtime {
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "tokio-host")] {
-            pub use prns_runtime_tokio::runtime::*;
-        } else if #[cfg(feature = "embassy-host")] {
-            pub use prns_runtime_embassy::runtime::*;
-        } else {
-            pub use prns_runtime::runtime::*;
-        }
-    }
-
-    #[cfg(all(feature = "tokio-host", feature = "embassy-host"))]
-    pub use prns_runtime_embassy::runtime::{
-        CompletionPool, EmbassyFleet, EmbassyInterfaceStore, FleetWire,
-        PrnsNode as EmbassyPrnsNode, PrnsNodeHandle as EmbassyPrnsNodeHandle, ReactorPlumbing,
-    };
-}
-
+#[cfg(all(feature = "config", feature = "tokio-host"))]
+pub mod from_plan;
+mod interface_families;
 mod lane_guards;
 pub mod prelude;
-pub use prelude::*;
+pub mod reactor;
+pub mod runtime;
+
+#[cfg(all(feature = "ax25", feature = "tokio-host"))]
+pub use interface_families::ax25_kiss;
+#[cfg(all(feature = "backbone", feature = "tokio-host"))]
+pub use interface_families::backbone;
+#[cfg(all(
+    feature = "bluetooth-auto",
+    any(feature = "tokio-host", feature = "embassy-host")
+))]
+pub use interface_families::bluetooth_auto;
+#[cfg(all(feature = "esp-now", feature = "embassy-host"))]
+pub use interface_families::esp_now;
+#[cfg(all(feature = "i2p", feature = "tokio-host"))]
+pub use interface_families::i2p;
+#[cfg(all(feature = "kiss", feature = "tokio-host"))]
+pub use interface_families::kiss;
+#[cfg(all(feature = "pipe", feature = "tokio-host"))]
+pub use interface_families::pipe;
+#[cfg(all(feature = "rnode", feature = "tokio-host"))]
+pub use interface_families::rnode;
+#[cfg(all(feature = "serial", feature = "tokio-host"))]
+pub use interface_families::serial;
+#[cfg(all(feature = "shared-instance", feature = "tokio-host"))]
+pub use interface_families::shared_instance;
+#[cfg(all(feature = "tcp", any(feature = "tokio-host", feature = "embassy-host")))]
+pub use interface_families::tcp;
+#[cfg(all(feature = "udp", feature = "tokio-host"))]
+pub use interface_families::udp;
+#[cfg(all(feature = "usb", any(feature = "tokio-host", feature = "embassy-host")))]
+pub use interface_families::usb_auto;
+#[cfg(all(feature = "weave", feature = "tokio-host"))]
+pub use interface_families::weave;
+#[cfg(all(feature = "websocket", feature = "tokio-host"))]
+pub use interface_families::websocket;
+#[cfg(all(
+    feature = "wifi-auto",
+    any(feature = "tokio-host", feature = "embassy-host")
+))]
+pub use interface_families::wifi_auto;
+#[cfg(all(feature = "wifi-aware", feature = "tokio-host"))]
+pub use interface_families::wifi_aware;
+#[cfg(all(feature = "wifi-direct", feature = "tokio-host"))]
+pub use interface_families::wifi_direct;
+#[cfg(all(feature = "lora", feature = "embassy-host"))]
+pub use interface_families::{lora, radios};
+
+pub use prns_runtime::engine::{CommandId, EngineCommand, PacketReceiptDelivered, RatchetPolicy};
+pub use prns_runtime::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+pub use prns_runtime::interfaces::InterfaceStatus;
+pub use prns_runtime::routing::links::resources::ResourceStrategy;
+pub use prns_runtime::routing::ProofStrategy;
+pub use prns_runtime::runtime::{
+    Diagnostic, Manual, Message, PreConfiguredDestination, PrnsEvent, PrnsNodeApi, PrnsNodeRecipe,
+    RuntimeHealth, SendError,
+};
+pub use prns_runtime::storage::Nrf52840;
+pub use prns_runtime::wire::{DestinationHash, TransportId};
+
+#[cfg(feature = "alloc")]
+pub use prns_runtime::storage::GrowableHeap;
+
+#[cfg(feature = "external-alloc")]
+pub use prns_runtime::storage::{Esp32C6, Esp32S3};
+
+#[cfg(feature = "tokio-host")]
+pub use prns_runtime_tokio::runtime::{
+    ephemeral_ble_identity, fill_os_entropy, generate_identity_secret,
+    load_or_create_identity_secret, try_generate_identity_secret, AttachIntent, Attachable,
+    AttachedInterface, AttachedSupervisor, Fleet, IdentitySecretFileError, OsEntropyError,
+    PrnsNode, PrnsNodeHandle,
+};
+
+#[cfg(all(feature = "embassy-host", not(feature = "tokio-host")))]
+pub use prns_runtime_embassy::runtime::{Fleet, PrnsNode, PrnsNodeHandle};
+
+#[cfg(all(feature = "embassy-host", feature = "tokio-host"))]
+pub use prns_runtime_embassy::runtime::{
+    PrnsNode as EmbassyPrnsNode, PrnsNodeHandle as EmbassyPrnsNodeHandle,
+};
+
+#[cfg(all(
+    feature = "tokio-host",
+    any(feature = "wifi-auto", feature = "usb", feature = "bluetooth-auto")
+))]
+pub use prns_interfaces_tokio::interface_menu::DefaultAutoInterfaces;
+
+#[cfg(all(feature = "usb", feature = "tokio-host"))]
+pub use usb_auto::AutoUsb;
+
+#[cfg(all(feature = "bluetooth-auto", feature = "tokio-host"))]
+pub use bluetooth_auto::{AttachedBle, AutoBle};
+
+#[cfg(all(feature = "interface-discovery", feature = "tokio-host"))]
+pub use prns_interfaces_tokio::interface_discovery::{
+    DiscoveredConnectionFailure, DiscoveryIngressOutcome, RunningTokioInterfaceDiscoveryPublisher,
+    TokioDiscoveryEvent, TokioDiscoveryIngress, TokioDiscoveryPublicationEvent,
+    TokioDiscoveryPublicationFramingFailure, TokioDiscoveryPublicationPreparationFailure,
+    TokioDiscoveryPublisherConstructionError, TokioInterfaceDiscovery,
+    TokioInterfaceDiscoveryPublisher, DISCOVERY_PUBLICATION_JOB_INTERVAL,
+};
+
+#[cfg(all(feature = "config", feature = "tokio-host"))]
+pub use prns_interfaces_tokio::from_plan::config;
+#[cfg(all(feature = "config", feature = "tokio-host"))]
+pub use prns_interfaces_tokio::from_plan::{
+    attach_plan, attach_plan_with_context, FromPlan, PlanAttachments, PlanFailure, PlanOutcome,
+    PlanRuntimeContext,
+};
+
+#[cfg(feature = "shared-instance")]
+pub use prns_runtime::runtime::rns_remote_management;

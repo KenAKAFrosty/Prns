@@ -1,14 +1,3 @@
-//! A standalone TCP-server host for live multi-client testing: binds a `TcpServer` on `0.0.0.0:PORT`
-//! and logs every distinct member (a spawned `TcpServerPeer`) it hears an announce from — so dialing
-//! it from several clients (an S3 board, a phone, a loopback node) shows each land as its own
-//! interface, the live form of the multi-client integration test. It announces a destination of its
-//! own on a cadence so the dialers can find it too. Demo code: it `expect`s on setup.
-//!
-//! Run: `cargo run --release --example tcp_server_host --features tcp` (set `PORT` to override 4242).
-//! Then point any dialer at `this-host-ip:PORT` — e.g.
-//! `cd personal-hopspot/desktop && HOPSPOT_TCP_TARGET=127.0.0.1:4242 cargo desktop`
-//! for the loopback node, or the Heltec V4 firmware's `HOPSPOT_TCP_TARGET` for the board.
-
 #![cfg(feature = "tcp")]
 #![allow(clippy::expect_used)]
 
@@ -30,7 +19,6 @@ use personal_rns::runtime::{
 use personal_rns::storage::GrowableHeap;
 use prns_interfaces_tokio::tcp::TcpServer;
 
-/// The host's honest order-of-magnitude pipe to a LAN client — sets the members' declared MTU tier.
 const BITRATE: BitrateBps = BitrateBps::guess(65_000_000);
 
 #[tokio::main]
@@ -60,7 +48,6 @@ async fn main() {
         .destination_hash()
         .expect("the host destination name is valid");
 
-    // Log each member the first time we hear it, so two dialers print as two distinct interfaces.
     let seen: Arc<Mutex<HashSet<[u8; 8]>>> = Arc::new(Mutex::new(HashSet::new()));
     let seen_cb = Arc::clone(&seen);
     let node = PrnsNode::new(PrnsNodeRecipe {
@@ -96,7 +83,6 @@ async fn main() {
     let handle = node.handle();
     let _server_sup = handle.supervise(server);
 
-    // Announce ourselves so the dialers can find us, too.
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_secs(2));
         loop {

@@ -102,10 +102,6 @@ pub enum PolicyAction {
     },
 }
 
-/// One peer's rendezvous. A symmetric both-attempt fires up to two paths — the initiator path this
-/// node opened on sighting and the responder path it opened for the peer's request — so the session
-/// remembers which paths it has fired and which one (if any) it has admitted as the live member. At
-/// most one path is ever the member; the keeper duel picks it when a duplicate settles.
 #[derive(Clone, Copy)]
 struct PeerSession {
     peer: RendezvousToken,
@@ -127,11 +123,6 @@ impl Suppress {
     }
 }
 
-/// The Wi-Fi Aware brain: unlike a Wi-Fi Direct group (one owner, one join), Aware sustains a data
-/// path to each of several peers at once, so the policy tracks a bounded table of per-peer sessions
-/// rather than a single phase. Every node publishes and subscribes continuously; a sighting fires an
-/// attempt from both ends at once and the keeper duel dedups the survivor, and discovery stays live
-/// until the table fills so the mesh keeps widening.
 pub struct AwarePolicy<const PEER_TRACK: usize> {
     local: RendezvousToken,
     sessions: [Option<PeerSession>; PEER_TRACK],
@@ -510,8 +501,6 @@ mod tests {
         actions
     }
 
-    // Drive a peer to a live member over its keeper path. `local` is lower than `peer`, so the keeper
-    // is the initiator path this node opened on the sighting.
     fn connect_lower(policy: &mut AwarePolicy<4>, peer: u32, now_ms: u64) {
         policy.handle(
             PolicyInput::PeerDiscovered {
@@ -625,8 +614,6 @@ mod tests {
 
     #[test]
     fn the_keeper_evicts_a_non_keeper_incumbent() {
-        // local 5 < peer 9, so the keeper is our initiator path. The non-keeper responder path
-        // settles first and is admitted provisionally; the keeper then arrives and takes over.
         let mut policy = started(5);
         collect(
             &mut policy,
@@ -685,8 +672,6 @@ mod tests {
 
     #[test]
     fn a_keeper_incumbent_rejects_a_late_non_keeper() {
-        // local 5 < peer 9: the initiator path is the keeper and settles first, so the later
-        // responder path loses the duel and is abandoned.
         let mut policy = started(5);
         collect(
             &mut policy,
@@ -847,7 +832,6 @@ mod tests {
 
     #[test]
     fn a_losing_paths_teardown_leaves_the_live_member_untouched() {
-        // A rejected responder path later drops; the admitted initiator member must be unaffected.
         let mut policy = started(5);
         collect(
             &mut policy,

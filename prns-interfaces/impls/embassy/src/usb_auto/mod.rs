@@ -1,7 +1,3 @@
-//! The embassy device side of the plug-and-play USB-auto interface: one link to one host (the desktop or a board acting as USB host), built fresh against the reactor's [`InterfaceSeam`](prns_runtime::reactor::interface_seam). It reuses the legacy interface's framing core wholesale — the same `Prns`-magic handshake — so it speaks the exact wire the reactor (and legacy) host already does.
-//!
-//! Two behaviours the bare seam doesn't carry, both lifted from the live-proven legacy `serve`: the device answers a host's `Hello` with a `HelloAck` (only then is a host actively reading), and it **holds the engine's outbound until a host has linked** — writing announces into a void with no reader times out mid-frame (`WRITE_TIMEOUT`), and that half-frame would desync the host's decoder the moment it connects. Before a host links, outbound frames are drained and dropped (there is no peer to hear them), not streamed into nothing.
-
 mod device;
 
 pub use device::{
@@ -27,9 +23,6 @@ const PRESENCE_PROBE_INTERVAL: Duration = Duration::from_secs(2);
 
 const PRESENCE_STRIKES_TO_DORMANT: u8 = 2;
 
-/// A USB-auto device link over an async byte stream pair (the board's USB-Serial-JTAG rx/tx). It
-/// holds a `&'a` status handle the firmware shares with its display task; the link writes it as
-/// the wire moves, the display reads it lock-free.
 pub struct UsbAutoDevice<'a, R, W, P> {
     id: InterfaceId,
     rx: R,
@@ -208,13 +201,8 @@ mod tests {
 
     const WATCHDOG: Duration = Duration::from_secs(5);
 
-    /// The slot this device's lanes are sized by: its own declared hardware MTU
-    /// plus the access tag — not the engine-wide ceiling.
     const DEVICE_SLOT: usize = prns_core::interfaces::usb_auto::DEVICE_USB_HW_MTU + IFAC_MAX_SIZE;
 
-    /// An in-memory async byte stream over a shared queue: `read` parks (yields) until bytes are
-    /// available, `write` appends. One queue is the host->device wire, another the device->host
-    /// wire, so the test drives both ends of one link.
     struct MockStream<'a> {
         buf: &'a RefCell<VecDeque<u8>>,
     }
@@ -252,7 +240,6 @@ mod tests {
         InterfaceId::new([0xD0; 8])
     }
 
-    /// Read the device->host wire until a decoded frame satisfies `pick`.
     async fn read_until<T>(
         wire: &RefCell<VecDeque<u8>>,
         decoder: &mut contract::Decoder,
@@ -309,7 +296,6 @@ mod tests {
                 let mut frame = [0u8; contract::MAX_FRAMED_BYTES];
                 let mut decoder = contract::Decoder::new();
 
-                // The host probes with a Hello; the device answers HelloAck and turns Connected.
                 let hello = Message::Hello(Capabilities::host());
                 let n = hello.write_framed(&mut frame).expect("frames the hello");
                 host_to_device
@@ -322,8 +308,6 @@ mod tests {
                 .await;
                 assert_eq!(status.connection(), ConnectionState::Connected);
 
-                // Inbound: a Data frame from the host lands in the device's grant lane,
-                // announced on the notify funnel.
                 let inbound_packet = [0xAAu8, 0xBB, 0xCC, 0xDD];
                 let data = Message::Data(&inbound_packet);
                 let n = data.write_framed(&mut frame).expect("frames the data");
@@ -335,8 +319,6 @@ mod tests {
                 assert_eq!(received.frame(), &inbound_packet);
                 in_rx.release();
 
-                // Outbound: a frame granted into the egress lane is framed onto the
-                // device->host wire.
                 let outbound_packet = [0x11u8, 0x22, 0x33];
                 out_tx.grant().await.fill_for(device_id(), &outbound_packet);
                 out_tx.commit();

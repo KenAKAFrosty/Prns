@@ -1,9 +1,3 @@
-//! The engine's per-call view of the interfaces currently attached to the reactor.
-//! Point lookups all flow through [`AttachedInterfaces::descriptor_for`], so the scan strategy can change behind this surface without touching a consumer.
-//!
-//! A bare [`AttachedInterfaces::new`] view scans linearly, which wins at the handful of interfaces a fixed-layout host carries.
-//! A heap host serving an interface per client instead owns an [`IndexedAttachedInterfaces`] and vends views through it, so the per-packet lookup stays flat as the fleet grows.
-
 use crate::interfaces::{InterfaceDescriptor, InterfaceId};
 #[cfg(feature = "alloc")]
 use crate::lemire_index::HeapLemireIndex;
@@ -50,7 +44,6 @@ impl<'a> AttachedInterfaces<'a> {
             .find(|descriptor| descriptor.id == id)
     }
 
-    /// RNS would not push onto a receive-only or downed interface.
     pub fn is_egress_eligible(self, target: InterfaceId, egress_kind: Egress) -> bool {
         self.descriptor_for(target)
             .is_some_and(|descriptor| match egress_kind {
@@ -81,7 +74,6 @@ impl<'a> IntoIterator for AttachedInterfaces<'a> {
     }
 }
 
-/// The heap reactor's owned roster: descriptors, an id column for the probe to walk, and a [`HeapLemireIndex`] over it, kept in step on every attach and detach.
 #[cfg(feature = "alloc")]
 #[derive(Debug, Default)]
 pub struct IndexedAttachedInterfaces {

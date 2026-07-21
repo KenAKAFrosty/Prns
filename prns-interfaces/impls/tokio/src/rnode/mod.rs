@@ -31,9 +31,7 @@ use prns_runtime::reactor::driver::TokioInterfaceStatus;
 use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
 use prns_runtime::reactor::throughput::ThroughputLedger;
 
-/// How long to wait after opening the port before driving the device, mirroring RNS
-/// `configure_device`'s `reset_radio_state()` + `sleep(2.0)`: a freshly opened RNode needs a moment
-/// to settle, and bytes written into that window are lost. Tests pass `Duration::ZERO`.
+/// A freshly opened RNode needs the RNS two-second settle window before it will accept configuration bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RNodeResetDelay(Duration);
 
@@ -51,9 +49,7 @@ impl RNodeResetDelay {
 
 pub const DEFAULT_RNODE_RESET_DELAY: RNodeResetDelay = RNodeResetDelay::new(Duration::from_secs(2));
 
-/// How long to wait for the device to answer the detect query before giving up on this connection
-/// and reconnecting. RNS's serial path waits a fixed `0.2s`; a slightly longer window is more
-/// forgiving of a device still settling without changing the requirement that it *must* answer.
+/// A detect timeout drops the connection and reconnects; the default is slightly longer than RNS's fixed 200 ms serial window.
 pub use prns_core::interfaces::rnode::bring_up::DetectTimeout as RNodeDetectTimeout;
 pub use prns_core::interfaces::rnode::live::{
     Keepalive as RNodeKeepalive, KeepaliveInterval as RNodeKeepaliveInterval,
@@ -83,11 +79,6 @@ impl RNodeBuffers {
     }
 }
 
-/// A host RNode interface (RNS `RNodeInterface` parity): Reticulum packets carried by a LoRa
-/// RNode over a serial, TCP, or BLE byte stream. It owns its medium's whole lifecycle, but each
-/// connection first runs the RNode bring-up handshake (detect, write the radio configuration,
-/// validate the device's echoes) and only then pumps `CMD_DATA` frames; a bring-up that fails
-/// drops the link and retries, exactly as RNS closes the port and reconnects.
 pub struct RNodeInterface<Open> {
     id: InterfaceId,
     open: Open,
@@ -115,9 +106,7 @@ pub struct RNodeSettings<'a> {
 }
 
 impl<Open> RNodeInterface<Open> {
-    /// Build with RNS's default reset-settle delay. `channel_tag` names *which* host transport
-    /// this is: the same endpoint across a reopen passes the same
-    /// bytes so its routes survive. The radio determines the bitrate and bring-up configuration.
+    /// A reopened endpoint must retain its `channel_tag`, and concurrent endpoints must have distinct tags.
     #[must_use]
     pub fn new(
         open: Open,
@@ -152,8 +141,6 @@ impl<Open> RNodeInterface<Open> {
         )
     }
 
-    /// Build with an explicit reset-settle delay — the daemon supplies the configured device, and
-    /// tests pass `Duration::ZERO` to skip the real two-second RNode settle.
     #[must_use]
     pub fn with_settings(
         open: Open,
@@ -222,24 +209,17 @@ impl<Open> RNodeInterface<Open> {
         }
     }
 
-    /// This interface's id, derived from its device `channel_tag`, for the app that wants to name it.
     #[must_use]
     pub fn id(&self) -> InterfaceId {
         self.id
     }
 
-    /// A clone of this interface's live-status handle for the app to read on its own render cadence.
-    /// Call before [`run`](Interface::run) consumes the interface.
     #[must_use]
     pub fn status(&self) -> TokioInterfaceStatus {
         self.status.clone()
     }
 }
 
-/// Run the RNode bring-up handshake on a freshly opened link, returning once the radio is
-/// configured and validated. Any IO error, detect timeout, or parameter mismatch is reported
-/// so the run loop drops the link and reconnects, mirroring RNS `configure_device`. The
-/// `decoder` and `read_buf` are the run loop's, reused across reconnects.
 async fn bring_up<S: AsyncRead + AsyncWrite + Unpin>(
     stream: &mut S,
     radio: &RadioConfig,
@@ -305,10 +285,6 @@ fn bring_up_error(error: BringUpError) -> io::Error {
     }
 }
 
-/// Serve one configured connection until the stream drops: deliver `CMD_DATA` bodies to the
-/// seam (consuming telemetry and other commands) and frame the seam's outbound as `CMD_DATA`.
-/// Distinct from the generic [`framing::serve`](crate::byte_stream::framing) because the read
-/// side dispatches by command rather than treating every frame as data.
 async fn serve_rnode<S, Seam>(
     stream: &mut S,
     radio: &RadioConfig,
@@ -510,8 +486,7 @@ where
         let started = tokio::time::Instant::now();
         let mut control =
             KissTransmissionControl::new(self.flow_control, self.station_identification);
-        // The decoder and buffers are heap-held and reused across reconnects — no megabyte of buffer
-        // rides the stack, and a device that never answers allocates these exactly once.
+        // Decoder buffers are heap-held and reused across reconnects so they do not inflate the stack.
         let mut buffers = RNodeBuffers::new();
         let mut reconnect = self.reconnect_policy.schedule();
         loop {
@@ -605,8 +580,6 @@ mod tests {
     use prns_runtime::reactor::driver::{tokio_grant_lane, TokioGrantConsumer};
     use tokio::sync::mpsc::{self, UnboundedSender};
 
-    /// A hand-driven seam: it captures every `next_inbound` and supplies `next_outbound` from a grant
-    /// lane the test fills — so the interface's framing and data path can be exercised in isolation.
     struct MockSeam {
         inbound: UnboundedSender<(std::vec::Vec<u8>, PacketPhyStats)>,
         sink: std::vec::Vec<u8>,
@@ -655,8 +628,6 @@ mod tests {
         .expect("a valid radio config")
     }
 
-    /// Read decoded device-bound `(command, payload)` frames off the wire until `wanted` of them have
-    /// arrived, so the test can assert what the interface wrote to the "device".
     async fn read_commands<R: AsyncRead + Unpin>(
         wire: &mut R,
         wanted: usize,
@@ -681,7 +652,6 @@ mod tests {
         frames
     }
 
-    /// Write one device-bound command frame onto the wire (the device's echo back to the host).
     async fn write_command<W: AsyncWrite + Unpin>(wire: &mut W, command: u8, payload: &[u8]) {
         let mut framed = [0u8; 64];
         let n = kiss_framing::encode_with_command(command, payload, &mut framed)
@@ -689,13 +659,10 @@ mod tests {
         wire.write_all(&framed[..n]).await.expect("writes the echo");
     }
 
-    /// Play a cooperative RNode: answer detect, then echo back exactly the radio parameters the host
-    /// configured, so the host's bring-up validates and the link comes online.
     async fn answer_bringup<RW: AsyncRead + AsyncWrite + Unpin>(
         wire: &mut RW,
         radio: &RadioConfig,
     ) {
-        // The host writes the four detect frames first; consume them, then answer detect + firmware.
         let detect = read_commands(wire, 4).await;
         assert_eq!(
             detect[0],
@@ -704,8 +671,6 @@ mod tests {
         write_command(wire, protocol::CMD_DETECT, &[protocol::DETECT_RESP]).await;
         write_command(wire, protocol::CMD_FW_VERSION, &[1, 80]).await;
 
-        // Then the host writes the radio configuration; consume the six config frames and echo each
-        // back as the device would report it, ending with the radio powered on.
         let config = read_commands(wire, 6).await;
         assert_eq!(
             config[0],
@@ -757,7 +722,6 @@ mod tests {
         };
 
         let radio = sample_radio();
-        // settle = ZERO so the test does not wait the real two-second RNode reset delay.
         let interface = RNodeInterface::with_settings(
             open,
             ReconnectPolicy::STANDARD,
@@ -768,7 +732,6 @@ mod tests {
         let status = interface.status();
         tokio::spawn(interface.run(seam));
 
-        // The device plays its side of the bring-up handshake; the link should come online.
         tokio::time::timeout(Duration::from_secs(2), answer_bringup(&mut device, &radio))
             .await
             .expect("the bring-up handshake completes within the window");
@@ -780,8 +743,6 @@ mod tests {
         .await
         .expect("the interface comes online after a valid bring-up");
 
-        // Inbound: a CMD_DATA frame (FEND/FESC in the payload exercise the escaping) crosses the wire
-        // and lands deframed at the seam; the firmware/telemetry commands around it are consumed.
         let payload = [0x01u8, 0x02, FEND, kiss_framing::FESC, 0x03];
         write_command(&mut device, protocol::CMD_STAT_RSSI, &[74]).await;
         write_command(&mut device, protocol::CMD_STAT_SNR, &[0xf7]).await;
@@ -810,7 +771,6 @@ mod tests {
             .expect("the interface task is alive");
         assert_eq!(packet_phy, PacketPhyStats::default());
 
-        // Outbound: the seam yields a frame; the interface frames it as CMD_DATA onto the wire.
         let out_payload = [0xAAu8, FEND, 0xBB];
         out_tx
             .try_grant()
@@ -826,7 +786,6 @@ mod tests {
             "the interface frames outbound packets as CMD_DATA"
         );
 
-        // The live status reflects the connection and bytes both ways.
         tokio::time::timeout(Duration::from_secs(2), async {
             loop {
                 if status.rx_bytes() > 0
@@ -949,7 +908,6 @@ mod tests {
         let status = interface.status();
         tokio::spawn(interface.run(seam));
 
-        // Answer detect, but echo a spreading factor that does not match the configuration.
         let _detect = read_commands(&mut device, 4).await;
         write_command(&mut device, protocol::CMD_DETECT, &[protocol::DETECT_RESP]).await;
         write_command(&mut device, protocol::CMD_FW_VERSION, &[1, 80]).await;
@@ -981,8 +939,6 @@ mod tests {
         )
         .await;
 
-        // The interface must never report Connected on a mismatched bring-up; give it room to try and
-        // confirm it stayed out of the online state.
         tokio::time::sleep(Duration::from_millis(150)).await;
         assert_ne!(
             status.connection(),
