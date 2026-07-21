@@ -7,7 +7,7 @@ mod storage;
 
 use prns_flash_manifest::{
     minisign_public_key_id, pinned_key_is_configured, sha256_hex, verify_minisign, BoardCatalog,
-    ChannelDescriptor, FlashManifest, ReleaseChannel, PINNED_MINISIGN_PUBLIC_KEY,
+    ReleaseChannel, ValidatedChannelDescriptor, ValidatedFlashManifest, PINNED_MINISIGN_PUBLIC_KEY,
 };
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -131,10 +131,9 @@ struct VerifiedArtifact {
 struct VerifiedCandidate {
     version: String,
     channel: ReleaseChannel,
+    key_id: String,
     manifest: Vec<u8>,
     manifest_signature: Vec<u8>,
-    descriptor: Vec<u8>,
-    descriptor_signature: Vec<u8>,
     artifacts: Vec<VerifiedArtifact>,
 }
 
@@ -144,7 +143,7 @@ pub(crate) fn import_signed_candidate(
     reporter: Reporter,
 ) -> Result<ImportedCandidate, AppError> {
     if !pinned_key_is_configured() {
-        return Err(AppError::trust(
+        return Err(AppError::trust_signing(
             "release key custody is not configured; release/keys/minisign.pub still contains the fail-closed marker",
         ));
     }
@@ -206,7 +205,7 @@ fn import_with_limits(
         None,
         "Publishing the verified candidate to the immutable local cache…",
     );
-    storage::publish(cache_root, &verified)?;
+    storage::publish(cache_root, &verified, catalog, trusted_public_key, verifier)?;
 
     Ok(ImportedCandidate {
         version: verified.version,
@@ -247,9 +246,9 @@ fn verify_candidate(
         trusted_public_key,
         verifier,
     )?;
-    let manifest = FlashManifest::from_json(&manifest_bytes, catalog)
+    let manifest = ValidatedFlashManifest::from_json(&manifest_bytes, catalog)
         .map_err(|error| CandidateError::Manifest(error.to_string()))?;
-    if !manifest.signing.key_id.eq_ignore_ascii_case(&key_id) {
+    if manifest.signing().key_id().as_str() != key_id.to_ascii_uppercase() {
         return Err(CandidateError::ReleaseIdentity);
     }
 
@@ -261,22 +260,23 @@ fn verify_candidate(
             source,
         })?
         .trim();
-    if version != manifest.release.version {
+    if version != manifest.release().version().as_str() {
         return Err(CandidateError::ReleaseIdentity);
     }
 
-    let descriptor_path = exact_channel_file(root, manifest.release.channel)?;
+    let descriptor_path = exact_channel_file(root, manifest.release().channel())?;
     let descriptor_bytes = read_limited(&descriptor_path, MAX_CHANNEL_BYTES)?;
-    let descriptor_signature = verify_signed_file(
+    verify_signed_file(
         &descriptor_path,
         &descriptor_bytes,
         trusted_public_key,
         verifier,
     )?;
-    let descriptor = ChannelDescriptor::from_json(&descriptor_bytes, manifest.release.channel)
-        .map_err(|error| CandidateError::Channel(error.to_string()))?;
-    if descriptor.version != manifest.release.version
-        || descriptor.manifest_sha256 != sha256_hex(&manifest_bytes)
+    let descriptor =
+        ValidatedChannelDescriptor::from_json(&descriptor_bytes, manifest.release().channel())
+            .map_err(|error| CandidateError::Channel(error.to_string()))?;
+    if descriptor.version() != manifest.release().version()
+        || descriptor.manifest_sha256().as_str() != sha256_hex(&manifest_bytes)
     {
         return Err(CandidateError::ReleaseIdentity);
     }
@@ -285,45 +285,47 @@ fn verify_candidate(
 
     let mut destinations = BTreeSet::new();
     let mut artifacts = Vec::new();
-    for target in &manifest.targets {
-        for part in &target.parts {
+    for target in manifest.targets() {
+        for part in target.parts() {
+            let board_slug = target.board_id().as_str();
+            let part_path = part.path().as_str();
             check_cancelled()?;
             reporter.phase(
                 Phase::VerifyingArtifacts,
-                Some(&target.board_slug),
-                &format!("Verifying {} ({} bytes)…", part.path, part.size),
+                Some(board_slug),
+                &format!("Verifying {} ({} bytes)…", part_path, part.size()),
             );
-            let source = safe_join(root, &part.path)?;
-            if part.size > MAX_ARTIFACT_BYTES {
+            let source = safe_join(root, part_path)?;
+            if part.size() > MAX_ARTIFACT_BYTES {
                 return Err(CandidateError::FileTooLarge {
                     path: source,
                     limit: MAX_ARTIFACT_BYTES,
                 });
             }
             let limit = part
-                .size
+                .size()
                 .checked_add(1)
                 .ok_or_else(|| CandidateError::FileTooLarge {
                     path: source.clone(),
-                    limit: part.size,
+                    limit: part.size(),
                 })?;
             let bytes = read_limited(&source, limit)?;
-            if bytes.len() as u64 != part.size || sha256_hex(&bytes) != part.sha256 {
+            if bytes.len() as u64 != part.size() || sha256_hex(&bytes) != part.sha256().as_str() {
                 return Err(CandidateError::ArtifactMismatch { path: source });
             }
-            let file_name = Path::new(&part.path)
+            let file_name = Path::new(part_path)
                 .file_name()
                 .and_then(|name| name.to_str())
                 .ok_or_else(|| CandidateError::UnsafePath {
-                    path: part.path.clone(),
+                    path: part_path.to_string(),
                 })?
                 .to_string();
-            let destination = Path::new(&target.board_slug).join(&file_name);
+            let destination = Path::new(board_slug).join(&file_name);
             if !destinations.insert(destination.clone()) {
                 return Err(CandidateError::CachePathCollision { path: destination });
             }
             artifacts.push(VerifiedArtifact {
-                board_slug: target.board_slug.clone(),
+                board_slug: board_slug.to_string(),
                 file_name,
                 bytes,
             });
@@ -331,12 +333,11 @@ fn verify_candidate(
     }
 
     Ok(VerifiedCandidate {
-        version: manifest.release.version,
-        channel: manifest.release.channel,
+        version: manifest.release().version().as_str().to_string(),
+        channel: manifest.release().channel(),
+        key_id: manifest.signing().key_id().as_str().to_string(),
         manifest: manifest_bytes,
         manifest_signature,
-        descriptor: descriptor_bytes,
-        descriptor_signature,
         artifacts,
     })
 }
@@ -460,11 +461,27 @@ pub(crate) fn root() -> Result<PathBuf, AppError> {
                 .map(|path| path.join(".cache"))
         })
         .map(|path| path.join("hopspot-flash"));
-    root.ok_or_else(|| AppError::preflight("this operating system has no user cache directory"))
+    root.ok_or_else(|| {
+        AppError::host_preflight("this operating system has no user cache directory")
+    })
 }
 
-pub(crate) fn store_immutable(path: &Path, bytes: &[u8]) -> Result<(), AppError> {
-    storage::store_immutable(path, bytes).map_err(candidate_app_error)
+pub(crate) fn store_immutable(
+    cache_root: &Path,
+    path: &Path,
+    bytes: &[u8],
+) -> Result<(), AppError> {
+    storage::store_immutable(cache_root, path, bytes).map_err(candidate_app_error)
+}
+
+pub(crate) fn publish_verified_channel(
+    cache_root: &Path,
+    channel: ReleaseChannel,
+    descriptor: &[u8],
+    signature: &[u8],
+) -> Result<(), AppError> {
+    storage::publish_verified_channel(cache_root, channel, descriptor, signature)
+        .map_err(candidate_app_error)
 }
 
 fn read_limited(path: &Path, limit: u64) -> Result<Vec<u8>, CandidateError> {
@@ -484,13 +501,32 @@ fn read_limited(path: &Path, limit: u64) -> Result<Vec<u8>, CandidateError> {
             limit,
         });
     }
-    let mut file = File::open(path).map_err(|source| CandidateError::Filesystem {
+    let file = File::open(path).map_err(|source| CandidateError::Filesystem {
         action: "read",
         path: path.to_path_buf(),
         source,
     })?;
+    let opened_metadata = file
+        .metadata()
+        .map_err(|source| CandidateError::Filesystem {
+            action: "inspect open file",
+            path: path.to_path_buf(),
+            source,
+        })?;
+    if !opened_metadata.file_type().is_file() {
+        return Err(CandidateError::UnsafeEntry {
+            path: path.to_path_buf(),
+        });
+    }
+    if opened_metadata.len() > limit {
+        return Err(CandidateError::FileTooLarge {
+            path: path.to_path_buf(),
+            limit,
+        });
+    }
     let mut bytes = Vec::with_capacity(metadata.len() as usize);
-    file.read_to_end(&mut bytes)
+    file.take(limit.saturating_add(1))
+        .read_to_end(&mut bytes)
         .map_err(|source| CandidateError::Filesystem {
             action: "read",
             path: path.to_path_buf(),
@@ -731,7 +767,7 @@ fn check_cancelled() -> Result<(), CandidateError> {
 fn candidate_app_error(error: CandidateError) -> AppError {
     match error {
         CandidateError::Cancelled => AppError::Cancelled,
-        error => AppError::trust(error.to_string()),
+        error => AppError::trust_candidate(error.to_string()),
     }
 }
 
@@ -739,8 +775,8 @@ fn candidate_app_error(error: CandidateError) -> AppError {
 mod tests {
     use super::*;
     use prns_flash_manifest::{
-        board_catalog, BoardBuild, FlashPart, FlashPartKind, ReleaseInfo, SigningInfo,
-        TargetManifest, FLASH_MANIFEST_SCHEMA,
+        board_catalog, BoardBuild, ChannelDescriptor, FlashManifest, FlashPart, FlashPartKind,
+        ReleaseInfo, SigningInfo, TargetManifest, FLASH_MANIFEST_SCHEMA,
     };
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -795,9 +831,12 @@ mod tests {
     }
 
     fn fixture(seed: &str) -> Fixture {
+        fixture_with_version(seed, "0.2.6")
+    }
+
+    fn fixture_with_version(seed: &str, version: &str) -> Fixture {
         let directory = TestDirectory::new(&format!("candidate-{seed}"));
         let catalog = board_catalog().expect("catalog");
-        let version = "0.2.6";
         let mut application_path = None;
         let targets = catalog
             .boards
@@ -986,7 +1025,237 @@ mod tests {
             .path()
             .join("releases/0.2.6/heltec-v4/application.bin")
             .is_file());
-        assert!(cache.path().join("channels/preview").is_dir());
+        assert!(!cache.path().join("channels").exists());
+    }
+
+    #[test]
+    fn candidate_import_cannot_move_an_offline_channel_head() {
+        let fixture = fixture("head-isolation");
+        let cache = TestDirectory::new("cache");
+        let catalog = board_catalog().expect("catalog");
+        storage::publish_verified_channel(
+            cache.path(),
+            ReleaseChannel::Preview,
+            b"previously verified channel",
+            b"previously verified signature",
+        )
+        .expect("publish existing channel");
+        let head_path = cache.path().join("channels/preview/HEAD");
+        let head_before = fs::read(&head_path).expect("read existing head");
+
+        import_with(
+            &catalog,
+            fixture.directory.path(),
+            cache.path(),
+            TEST_PUBLIC_KEY,
+            &FakeVerifier,
+            Reporter::human(),
+        )
+        .expect("import immutable candidate");
+
+        assert_eq!(
+            fs::read(head_path).expect("read unchanged head"),
+            head_before
+        );
+    }
+
+    #[test]
+    fn verified_channel_publish_repairs_its_content_addressed_cache_files() {
+        let cache = TestDirectory::new("cache");
+        let descriptor = b"verified channel descriptor";
+        let signature = b"verified channel signature";
+        storage::publish_verified_channel(
+            cache.path(),
+            ReleaseChannel::Stable,
+            descriptor,
+            signature,
+        )
+        .expect("publish channel");
+        let identifier = sha256_hex(descriptor);
+        let signature_path = cache
+            .path()
+            .join("channels/stable")
+            .join(format!("{identifier}.json.minisig"));
+        fs::write(&signature_path, b"corrupt cache bytes").expect("corrupt signature cache");
+
+        storage::publish_verified_channel(
+            cache.path(),
+            ReleaseChannel::Stable,
+            descriptor,
+            signature,
+        )
+        .expect("repair channel cache");
+
+        assert_eq!(
+            fs::read(signature_path).expect("read repaired signature"),
+            signature
+        );
+        assert_eq!(
+            fs::read_to_string(cache.path().join("channels/stable/HEAD"))
+                .expect("read channel head"),
+            format!("{identifier}\n")
+        );
+    }
+
+    #[test]
+    fn verified_reimport_repairs_corrupt_local_cache_bytes() {
+        let fixture = fixture("repair");
+        let cache = TestDirectory::new("cache");
+        let catalog = board_catalog().expect("catalog");
+        import_with(
+            &catalog,
+            fixture.directory.path(),
+            cache.path(),
+            TEST_PUBLIC_KEY,
+            &FakeVerifier,
+            Reporter::human(),
+        )
+        .expect("first import");
+
+        let cached_application = cache
+            .path()
+            .join("releases/0.2.6/heltec-v4/application.bin");
+        fs::write(&cached_application, b"corrupt cached application")
+            .expect("corrupt cached application");
+
+        import_with(
+            &catalog,
+            fixture.directory.path(),
+            cache.path(),
+            TEST_PUBLIC_KEY,
+            &FakeVerifier,
+            Reporter::human(),
+        )
+        .expect("verified reimport repairs cache");
+
+        assert_eq!(
+            fs::read(&cached_application).expect("repaired application"),
+            fs::read(&fixture.application_path).expect("candidate application")
+        );
+    }
+
+    #[test]
+    fn signed_manifest_with_the_wrong_cached_identity_is_repaired() {
+        let candidate = fixture_with_version("identity-candidate", "0.2.6");
+        let foreign = fixture_with_version("foreign-version", "0.2.5");
+        let cache = TestDirectory::new("cache");
+        let catalog = board_catalog().expect("catalog");
+        import_with(
+            &catalog,
+            candidate.directory.path(),
+            cache.path(),
+            TEST_PUBLIC_KEY,
+            &FakeVerifier,
+            Reporter::human(),
+        )
+        .expect("first import");
+        let cached_manifest = cache.path().join("releases/0.2.6/flash-manifest.json");
+        let cached_signature = cache
+            .path()
+            .join("releases/0.2.6/flash-manifest.json.minisig");
+        fs::copy(
+            foreign.directory.path().join("flash-manifest.json"),
+            &cached_manifest,
+        )
+        .expect("install foreign signed manifest");
+        fs::copy(
+            foreign.directory.path().join("flash-manifest.json.minisig"),
+            &cached_signature,
+        )
+        .expect("install foreign signature");
+
+        import_with(
+            &catalog,
+            candidate.directory.path(),
+            cache.path(),
+            TEST_PUBLIC_KEY,
+            &FakeVerifier,
+            Reporter::human(),
+        )
+        .expect("repair wrong cached identity");
+
+        assert_eq!(
+            fs::read(cached_manifest).expect("read repaired manifest"),
+            fs::read(candidate.directory.path().join("flash-manifest.json"))
+                .expect("read candidate manifest")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn verified_reimport_replaces_a_nested_cache_directory_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let fixture = fixture("nested-cache-link");
+        let cache = TestDirectory::new("cache");
+        let outside = TestDirectory::new("outside-board-cache");
+        let catalog = board_catalog().expect("catalog");
+        import_with(
+            &catalog,
+            fixture.directory.path(),
+            cache.path(),
+            TEST_PUBLIC_KEY,
+            &FakeVerifier,
+            Reporter::human(),
+        )
+        .expect("first import");
+        let cached_board = cache.path().join("releases/0.2.6/heltec-v4");
+        let outside_board = outside.path().join("heltec-v4");
+        fs::rename(&cached_board, &outside_board).expect("move board cache outside");
+        let outside_application =
+            fs::read(outside_board.join("application.bin")).expect("read outside application");
+        symlink(&outside_board, &cached_board).expect("install nested cache symlink");
+
+        import_with(
+            &catalog,
+            fixture.directory.path(),
+            cache.path(),
+            TEST_PUBLIC_KEY,
+            &FakeVerifier,
+            Reporter::human(),
+        )
+        .expect("repair nested cache symlink");
+
+        let metadata = fs::symlink_metadata(&cached_board).expect("inspect repaired board cache");
+        assert!(metadata.file_type().is_dir());
+        assert_eq!(
+            fs::read(outside_board.join("application.bin")).expect("outside application remains"),
+            outside_application
+        );
+    }
+
+    #[test]
+    fn verified_reimport_replaces_an_overdeep_cached_release_tree() {
+        let fixture = fixture("overdeep-cache");
+        let cache = TestDirectory::new("cache");
+        let catalog = board_catalog().expect("catalog");
+        import_with(
+            &catalog,
+            fixture.directory.path(),
+            cache.path(),
+            TEST_PUBLIC_KEY,
+            &FakeVerifier,
+            Reporter::human(),
+        )
+        .expect("first import");
+        let junk_root = cache.path().join("releases/0.2.6/untrusted-depth");
+        let mut current = junk_root.clone();
+        for _ in 0..=storage::MAX_CACHED_RELEASE_DEPTH {
+            fs::create_dir(&current).expect("create overdeep cache entry");
+            current.push("nested");
+        }
+
+        import_with(
+            &catalog,
+            fixture.directory.path(),
+            cache.path(),
+            TEST_PUBLIC_KEY,
+            &FakeVerifier,
+            Reporter::human(),
+        )
+        .expect("replace overdeep cache tree");
+
+        assert!(!junk_root.exists());
     }
 
     #[test]
@@ -1265,5 +1534,64 @@ mod tests {
             ),
             Err(CandidateError::UnsafeEntry { .. })
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cache_publication_rejects_symlinked_storage_directories() {
+        use std::os::unix::fs::symlink;
+
+        let cache = TestDirectory::new("cache-parent-link");
+        let outside = TestDirectory::new("outside-cache");
+        symlink(outside.path(), cache.path().join("releases")).expect("create releases symlink");
+        let target = cache.path().join("releases/0.2.6/application.bin");
+        assert!(matches!(
+            storage::store_immutable(cache.path(), &target, b"verified"),
+            Err(CandidateError::UnsafeEntry { .. })
+        ));
+        assert!(fs::read_dir(outside.path())
+            .expect("inspect outside directory")
+            .next()
+            .is_none());
+
+        fs::remove_file(cache.path().join("releases")).expect("remove releases symlink");
+        symlink(outside.path(), cache.path().join("channels")).expect("create channels symlink");
+        assert!(matches!(
+            storage::publish_verified_channel(
+                cache.path(),
+                ReleaseChannel::Preview,
+                b"descriptor",
+                b"signature",
+            ),
+            Err(CandidateError::UnsafeEntry { .. })
+        ));
+        assert!(fs::read_dir(outside.path())
+            .expect("inspect outside directory")
+            .next()
+            .is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cache_publication_rejects_equal_bytes_behind_a_parent_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let cache = TestDirectory::new("cache-equal-parent-link");
+        let outside = TestDirectory::new("outside-equal-cache");
+        let outside_release = outside.path().join("0.2.6");
+        fs::create_dir(&outside_release).expect("create outside release");
+        fs::write(outside_release.join("application.bin"), b"verified")
+            .expect("write matching outside bytes");
+        symlink(outside.path(), cache.path().join("releases")).expect("create releases symlink");
+        let redirected = cache.path().join("releases/0.2.6/application.bin");
+
+        assert!(matches!(
+            storage::store_immutable(cache.path(), &redirected, b"verified"),
+            Err(CandidateError::UnsafeEntry { .. })
+        ));
+        assert_eq!(
+            fs::read(outside_release.join("application.bin")).expect("outside bytes remain"),
+            b"verified"
+        );
     }
 }

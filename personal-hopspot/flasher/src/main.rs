@@ -72,7 +72,7 @@ fn report_parse_error(error: clap::Error, json_requested: bool) -> ExitCode {
         // Clap's rendered error can repeat arbitrary argv values. Never include
         // it in machine output: a misspelled credential option must not turn a
         // secret into a diagnostic. Emit one stable terminal schema-1 event.
-        Reporter::json_lines().error(&AppError::usage(
+        Reporter::json_lines().error(&AppError::arguments(
             "invalid command-line arguments; run `hopspot-flash --help` for valid options",
         ));
         ExitCode::from(2)
@@ -84,8 +84,9 @@ fn report_parse_error(error: clap::Error, json_requested: bool) -> ExitCode {
 }
 
 fn run(cli: Cli, reporter: Reporter) -> Result<(), AppError> {
-    let catalog = board_catalog()
-        .map_err(|error| AppError::trust(format!("embedded board catalog failed: {error}")))?;
+    let catalog = board_catalog().map_err(|error| {
+        AppError::trust_catalog(format!("embedded board catalog failed: {error}"))
+    })?;
     match cli.command {
         Some(CommandMode::List { json }) => list_boards(&catalog, json),
         Some(CommandMode::Doctor { board, port, json }) => {
@@ -217,38 +218,46 @@ fn execute_flash(
     if esp::cancelled() {
         return Err(AppError::Cancelled);
     }
-    verify_prepared_identity(board, &prepared)?;
+    if prepared.board_id().as_str() != board.slug {
+        return Err(AppError::trust_identity(
+            "prepared artifact does not match the selected board",
+        ));
+    }
     reporter.phase(
         Phase::Ready,
         Some(&board.slug),
         &format!(
             "{} {} is verified and ready; no full-chip erase will be performed.",
-            board.display_name, prepared.version
+            board.display_name,
+            prepared.version()
         ),
     );
-    match board.transport {
-        Transport::EspSerial => esp::flash(
+    match (board.transport, prepared) {
+        (Transport::EspSerial, PreparedTarget::EspSerial(prepared)) => esp::flash(
             board,
-            &prepared.parts,
+            &prepared,
             &request.provisioning,
             request.port,
             request.monitor,
             reporter,
         ),
-        Transport::Uf2MassStorage => {
+        (Transport::Uf2MassStorage, PreparedTarget::Uf2(prepared)) => {
             if !matches!(request.provisioning, ProvisioningAction::Preserve) {
-                return Err(AppError::usage(
+                return Err(AppError::unsupported_operation(
                     "T-Echo does not support Wi-Fi provisioning",
                 ));
             }
-            techo::flash(board, &prepared.parts, request.mount, reporter)
+            techo::flash(board, &prepared, request.mount, reporter)
         }
+        _ => Err(AppError::trust_identity(
+            "prepared artifact transport does not match the selected board",
+        )),
     }
 }
 
 fn guided(catalog: &BoardCatalog, reporter: Reporter) -> Result<(), AppError> {
     if !ui::interactive_terminal() {
-        return Err(AppError::usage(
+        return Err(AppError::arguments(
             "guided mode requires a terminal; use `hopspot-flash flash <BOARD> --yes`",
         ));
     }
@@ -264,15 +273,15 @@ fn guided(catalog: &BoardCatalog, reporter: Reporter) -> Result<(), AppError> {
             )
         })
         .collect::<Vec<_>>();
-    let Some(index) =
-        ui::select("Which exact board are you flashing?", &labels, 0).map_err(AppError::usage)?
+    let Some(index) = ui::select("Which exact board are you flashing?", &labels, 0)
+        .map_err(AppError::configuration)?
     else {
         return Ok(());
     };
     let board = catalog
         .boards
         .get(index)
-        .ok_or_else(|| AppError::usage("board selection is out of range"))?;
+        .ok_or_else(|| AppError::configuration("board selection is out of range"))?;
     println!();
     print_board(board);
     confirm_board(board, false, true)?;
@@ -282,7 +291,7 @@ fn guided(catalog: &BoardCatalog, reporter: Reporter) -> Result<(), AppError> {
             "Configure Wi-Fi locally for this flash".to_string(),
             "Clear Wi-Fi configuration explicitly".to_string(),
         ];
-        match ui::select("Wi-Fi configuration", &choices, 0).map_err(AppError::usage)? {
+        match ui::select("Wi-Fi configuration", &choices, 0).map_err(AppError::configuration)? {
             Some(1) => WifiMode::Configure,
             Some(2) => WifiMode::Clear,
             Some(_) => WifiMode::Preserve,
@@ -324,7 +333,7 @@ fn confirm_board(board: &BoardCatalogEntry, yes: bool, interactive: bool) -> Res
         return Ok(());
     }
     if !interactive {
-        return Err(AppError::usage(format!(
+        return Err(AppError::confirmation(format!(
             "confirm {} with --yes after checking the board label and image",
             board.display_name
         )));
@@ -333,7 +342,7 @@ fn confirm_board(board: &BoardCatalogEntry, yes: bool, interactive: bool) -> Res
         &format!("I physically checked that this is {}", board.display_name),
         false,
     )
-    .map_err(AppError::usage)?;
+    .map_err(AppError::confirmation)?;
     if confirmed {
         Ok(())
     } else {
@@ -353,7 +362,7 @@ fn confirm_pinned_version(
         return Ok(());
     }
     if !interactive {
-        return Err(AppError::usage(format!(
+        return Err(AppError::confirmation(format!(
             "pinned version {version} may be a downgrade; acknowledge it with --allow-downgrade"
         )));
     }
@@ -361,7 +370,7 @@ fn confirm_pinned_version(
         &format!("Flash pinned version {version}, acknowledging that it may downgrade the device"),
         false,
     )
-    .map_err(AppError::usage)?;
+    .map_err(AppError::confirmation)?;
     if confirmed {
         Ok(())
     } else {
@@ -447,7 +456,7 @@ fn doctor(
     if board.is_some_and(|board| board.transport == Transport::Uf2MassStorage)
         && requested_port.is_some()
     {
-        return Err(AppError::usage(
+        return Err(AppError::unsupported_operation(
             "--port applies only to ESP serial boards; T-Echo uses the TECHOBOOT drive",
         ));
     }
@@ -585,20 +594,7 @@ fn ambiguous_esp_identity_peer<'a>(
 
 fn json_line<T: Serialize>(value: &T) -> Result<String, AppError> {
     serde_json::to_string(value)
-        .map_err(|error| AppError::usage(format!("could not encode JSON event: {error}")))
-}
-
-fn verify_prepared_identity(
-    board: &BoardCatalogEntry,
-    prepared: &PreparedTarget,
-) -> Result<(), AppError> {
-    if prepared.target.board_slug == board.slug && prepared.target.transport == board.transport {
-        Ok(())
-    } else {
-        Err(AppError::trust(
-            "prepared artifact does not match the selected board",
-        ))
-    }
+        .map_err(|error| AppError::output(format!("could not encode JSON event: {error}")))
 }
 
 fn find_board<'a>(
@@ -606,7 +602,7 @@ fn find_board<'a>(
     slug: &str,
 ) -> Result<&'a BoardCatalogEntry, AppError> {
     catalog.board(slug).ok_or_else(|| {
-        AppError::usage(format!(
+        AppError::arguments(format!(
             "unknown board {slug:?}; supported: {}",
             catalog
                 .boards
@@ -644,7 +640,7 @@ fn repo_root() -> Result<PathBuf, AppError> {
         .and_then(Path::parent)
         .map(Path::to_path_buf)
         .ok_or_else(|| {
-            AppError::developer(format!(
+            AppError::developer_repository(format!(
                 "cannot determine repository root from {}",
                 manifest_dir.display()
             ))
@@ -660,7 +656,7 @@ mod doctor_tests {
         let catalog = board_catalog().expect("catalog");
         assert!(matches!(
             doctor(&catalog, Some("t-echo"), Some("unused-port"), true),
-            Err(AppError::Usage(message)) if message.contains("TECHOBOOT")
+            Err(AppError::Usage(message)) if message.to_string().contains("TECHOBOOT")
         ));
     }
 

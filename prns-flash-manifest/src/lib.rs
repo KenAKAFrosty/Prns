@@ -1,6 +1,7 @@
 //! Shared release contract for the Personal Hopspot web and CLI flashers.
 
 mod catalog;
+mod domain;
 mod manifest;
 mod provisioning;
 mod trust;
@@ -8,6 +9,13 @@ mod trust;
 pub use catalog::{
     board_catalog, BoardBuild, BoardCatalog, BoardCatalogEntry, CatalogError, EspBuild,
     ProvisioningDescriptor, Transport, Uf2Build,
+};
+pub use domain::{
+    AfterResetStrategy, BeforeResetStrategy, BoardId, ChipFamily, DomainValueError, EspFlashPart,
+    EspSerialTarget, FlashFrequency, FlashMode, ImmutableArtifactPath, KeyId, PreparationProfile,
+    ProvisioningFormat, ProvisioningSlot, ReleasePartRef, ReleaseTarget, ReleaseVersion,
+    Sha256Digest, Uf2Part, Uf2Target, ValidatedChannelDescriptor, ValidatedFlashManifest,
+    ValidatedReleaseInfo, ValidatedSigningInfo,
 };
 pub use manifest::{
     ChannelDescriptor, FlashManifest, FlashPart, FlashPartKind, ManifestError, ReleaseChannel,
@@ -24,3 +32,6 @@ pub use trust::{
 
 /// Schema version for the signed public flash manifest.
 pub const FLASH_MANIFEST_SCHEMA: u32 = 2;
+
+/// Smallest erase unit used by supported Espressif flash targets.
+pub const ESP_FLASH_SECTOR_SIZE: u32 = 0x1000;

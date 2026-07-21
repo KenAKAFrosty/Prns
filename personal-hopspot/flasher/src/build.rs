@@ -7,17 +7,23 @@ use espflash::image_format::{idf::IdfBootloaderFormat, ImageFormat};
 use espflash::target::{Chip, XtalFrequency};
 use prns_flash_manifest::{
     sha256_hex, BoardBuild, BoardCatalog, BoardCatalogEntry, FlashManifest, FlashPart,
-    FlashPartKind, ReleaseChannel, ReleaseInfo, SigningInfo, TargetManifest, FLASH_MANIFEST_SCHEMA,
+    FlashPartKind, ReleaseChannel, ReleaseInfo, ReleaseVersion, SigningInfo, TargetManifest,
+    FLASH_MANIFEST_SCHEMA,
 };
 
 use crate::cli::ChannelArg;
 use crate::error::AppError;
 use crate::events::{Phase, Reporter};
-use crate::release::{PreparedPart, PreparedTarget};
+use crate::release::PreparedTarget;
 use crate::toolchain::{capture_stdout, configure_esp_toolchain, run_status, rust_host_triple};
 
 const PARTITION_TABLE_OFFSET: u32 = 0x8000;
 const APPLICATION_OFFSET: u32 = 0x10000;
+
+struct BuiltPart {
+    descriptor: FlashPart,
+    bytes: Vec<u8>,
+}
 
 pub(crate) struct BuildOutput {
     pub(crate) prepared: PreparedTarget,
@@ -51,13 +57,13 @@ pub(crate) fn assemble_manifest(
     for board in &catalog.boards {
         let record = board_output(out_root, &board.slug, &version).join("target.json");
         let bytes = fs::read(&record).map_err(|error| {
-            AppError::developer(format!(
+            AppError::developer_artifact(format!(
                 "missing built target record {}: {error}",
                 record.display()
             ))
         })?;
         let target = serde_json::from_slice::<TargetManifest>(&bytes).map_err(|error| {
-            AppError::developer(format!(
+            AppError::developer_artifact(format!(
                 "invalid target record {}: {error}",
                 record.display()
             ))
@@ -79,14 +85,16 @@ pub(crate) fn assemble_manifest(
     };
     manifest
         .validate(catalog)
-        .map_err(|error| AppError::developer(error.to_string()))?;
+        .map_err(|error| AppError::developer_manifest(error.to_string()))?;
     let path = out_root.join("flash-manifest.json");
-    let json = serde_json::to_vec_pretty(&manifest)
-        .map_err(|error| AppError::developer(format!("could not encode manifest: {error}")))?;
+    let json = serde_json::to_vec_pretty(&manifest).map_err(|error| {
+        AppError::developer_manifest(format!("could not encode manifest: {error}"))
+    })?;
     atomic_write(&path, &with_newline(json))?;
     let notices = repo.join("THIRD_PARTY_NOTICES.md");
-    fs::copy(&notices, out_root.join("THIRD_PARTY_NOTICES.md"))
-        .map_err(|error| AppError::developer(format!("could not copy release notices: {error}")))?;
+    fs::copy(&notices, out_root.join("THIRD_PARTY_NOTICES.md")).map_err(|error| {
+        AppError::developer_artifact(format!("could not copy release notices: {error}"))
+    })?;
     Ok(path)
 }
 
@@ -131,17 +139,16 @@ fn build_esp(
     run_status(&mut cargo, "embedded ESP cargo build")?;
 
     let elf_bytes = fs::read(&elf).map_err(|error| {
-        AppError::developer(format!("could not read {}: {error}", elf.display()))
+        AppError::developer_artifact(format!("could not read {}: {error}", elf.display()))
     })?;
-    let chip = build
-        .chip
-        .parse::<Chip>()
-        .map_err(|error| AppError::developer(format!("invalid chip {:?}: {error}", build.chip)))?;
+    let chip = build.chip.parse::<Chip>().map_err(|error| {
+        AppError::developer_build(format!("invalid chip {:?}: {error}", build.chip))
+    })?;
     let flash_size = match board.flash_size {
         Some(4_194_304) => FlashSize::_4Mb,
         Some(8_388_608) => FlashSize::_8Mb,
         other => {
-            return Err(AppError::developer(format!(
+            return Err(AppError::developer_build(format!(
                 "unsupported catalog flash size {other:?}"
             )));
         }
@@ -166,11 +173,11 @@ fn build_esp(
         Some("factory"),
     )
     .map_err(|error| {
-        AppError::developer(format!("could not construct sparse ESP image: {error}"))
+        AppError::developer_build(format!("could not construct sparse ESP image: {error}"))
     })?;
     let output_dir = board_output(out_root, &board.slug, version);
     fs::create_dir_all(&output_dir).map_err(|error| {
-        AppError::developer(format!(
+        AppError::developer_artifact(format!(
             "could not create {}: {error}",
             output_dir.display()
         ))
@@ -184,7 +191,7 @@ fn build_esp(
                 (FlashPartKind::Bootloader, "bootloader.bin")
             }
             address => {
-                return Err(AppError::developer(format!(
+                return Err(AppError::developer_build(format!(
                     "unexpected sparse ESP segment at 0x{address:x}"
                 )));
             }
@@ -199,7 +206,7 @@ fn build_esp(
             size: bytes.len() as u64,
             sha256: sha256_hex(&bytes),
         };
-        parts.push(PreparedPart { descriptor, bytes });
+        parts.push(BuiltPart { descriptor, bytes });
     }
     parts.sort_by_key(|part| part.descriptor.offset);
     let target = target_record(
@@ -207,14 +214,17 @@ fn build_esp(
         parts.iter().map(|part| part.descriptor.clone()).collect(),
     );
     write_target_record(&output_dir, &target)?;
+    let (version, target) = validated_prepared_target(board, version, target)?;
     report_sparse_size(board, &parts, reporter)?;
+    let prepared = PreparedTarget::bind(
+        version,
+        target,
+        parts.into_iter().map(|part| part.bytes).collect(),
+    )
+    .map_err(|error| AppError::developer_artifact(error.to_string()))?;
     let target_record = output_dir.join("target.json");
     Ok(BuildOutput {
-        prepared: PreparedTarget {
-            version: version.to_string(),
-            target,
-            parts,
-        },
+        prepared,
         output_dir,
         target_record,
     })
@@ -265,7 +275,7 @@ fn build_uf2(
         .join("work")
         .join(&board.slug);
     fs::create_dir_all(&work_dir).map_err(|error| {
-        AppError::developer(format!("could not create work directory: {error}"))
+        AppError::developer_artifact(format!("could not create work directory: {error}"))
     })?;
     let binary = work_dir.join("firmware.bin");
     run_status(
@@ -278,7 +288,7 @@ fn build_uf2(
     )?;
     let output_dir = board_output(out_root, &board.slug, version);
     fs::create_dir_all(&output_dir).map_err(|error| {
-        AppError::developer(format!(
+        AppError::developer_artifact(format!(
             "could not create {}: {error}",
             output_dir.display()
         ))
@@ -294,7 +304,7 @@ fn build_uf2(
         "bin2uf2.py",
     )?;
     let bytes = fs::read(&uf2)
-        .map_err(|error| AppError::developer(format!("could not read UF2: {error}")))?;
+        .map_err(|error| AppError::developer_artifact(format!("could not read UF2: {error}")))?;
     let descriptor = FlashPart {
         kind: FlashPartKind::Uf2,
         path: release_part_path(&board.slug, version, "t-echo.uf2"),
@@ -304,18 +314,17 @@ fn build_uf2(
     };
     let target = target_record(board, vec![descriptor.clone()]);
     write_target_record(&output_dir, &target)?;
+    let (version, target) = validated_prepared_target(board, version, target)?;
     reporter.phase(
         Phase::ArtifactReady,
         Some(&board.slug),
         &format!("UF2 ready: {} bytes", bytes.len()),
     );
+    let prepared = PreparedTarget::bind(version, target, vec![bytes])
+        .map_err(|error| AppError::developer_artifact(error.to_string()))?;
     let target_record = output_dir.join("target.json");
     Ok(BuildOutput {
-        prepared: PreparedTarget {
-            version: version.to_string(),
-            target,
-            parts: vec![PreparedPart { descriptor, bytes }],
-        },
+        prepared,
         output_dir,
         target_record,
     })
@@ -344,9 +353,24 @@ fn target_record(board: &BoardCatalogEntry, parts: Vec<FlashPart>) -> TargetMani
     }
 }
 
+fn validated_prepared_target(
+    board: &BoardCatalogEntry,
+    version: &str,
+    target: TargetManifest,
+) -> Result<(ReleaseVersion, prns_flash_manifest::ReleaseTarget), AppError> {
+    let version = ReleaseVersion::parse(version.to_string()).map_err(|error| {
+        AppError::developer_repository(format!("invalid repository VERSION: {error}"))
+    })?;
+    let target = target
+        .into_validated(board, &version)
+        .map_err(|error| AppError::developer_manifest(format!("invalid built target: {error}")))?;
+    Ok((version, target))
+}
+
 fn write_target_record(output_dir: &Path, target: &TargetManifest) -> Result<(), AppError> {
-    let json = serde_json::to_vec_pretty(target)
-        .map_err(|error| AppError::developer(format!("could not encode target record: {error}")))?;
+    let json = serde_json::to_vec_pretty(target).map_err(|error| {
+        AppError::developer_manifest(format!("could not encode target record: {error}"))
+    })?;
     atomic_write(&output_dir.join("target.json"), &with_newline(json))
 }
 
@@ -370,7 +394,7 @@ fn prepare_embedded_site_bundle(
         if output_dir.join("index.html").is_file() {
             return Ok(());
         }
-        return Err(AppError::developer(
+        return Err(AppError::developer_artifact(
             "PRNS_EMBEDDED_SITE_READY was set but the embedded site output is missing",
         ));
     }
@@ -381,7 +405,7 @@ fn prepare_embedded_site_bundle(
     );
     if output_dir.exists() {
         fs::remove_dir_all(&output_dir).map_err(|error| {
-            AppError::developer(format!(
+            AppError::developer_artifact(format!(
                 "could not clear generated Dioxus output {}: {error}",
                 output_dir.display()
             ))
@@ -401,7 +425,7 @@ fn prepare_embedded_site_bundle(
         .current_dir(&site_dir);
     run_status(&mut dx, "embedded site build")?;
     if !output_dir.join("index.html").is_file() {
-        return Err(AppError::developer(
+        return Err(AppError::developer_artifact(
             "embedded docs bundle is missing index.html",
         ));
     }
@@ -410,7 +434,7 @@ fn prepare_embedded_site_bundle(
 
 fn report_sparse_size(
     board: &BoardCatalogEntry,
-    parts: &[PreparedPart],
+    parts: &[BuiltPart],
     reporter: Reporter,
 ) -> Result<(), AppError> {
     let total = parts
@@ -419,7 +443,7 @@ fn report_sparse_size(
         .sum::<u64>();
     if let Some((baseline, maximum)) = sparse_size_gate(&board.slug) {
         if total > maximum {
-            return Err(AppError::developer(format!(
+            return Err(AppError::developer_artifact(format!(
                 "sparse artifact is {total} bytes versus the {baseline}-byte merged baseline and misses the 60% reduction gate (maximum {maximum})"
             )));
         }
@@ -446,10 +470,10 @@ fn sparse_size_gate(board_slug: &str) -> Option<(u64, u64)> {
 fn release_version(repo: &Path) -> Result<String, AppError> {
     fs::read_to_string(repo.join("VERSION"))
         .map(|value| value.trim().to_string())
-        .map_err(|error| AppError::developer(format!("could not read VERSION: {error}")))
+        .map_err(|error| AppError::developer_repository(format!("could not read VERSION: {error}")))
         .and_then(|version| {
             if version.is_empty() || version.eq_ignore_ascii_case("next") {
-                Err(AppError::developer("VERSION is not publishable"))
+                Err(AppError::developer_repository("VERSION is not publishable"))
             } else {
                 Ok(version)
             }
@@ -469,18 +493,18 @@ fn board_output(out_root: &Path, board: &str, version: &str) -> PathBuf {
 }
 
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), AppError> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| AppError::developer(format!("path has no parent: {}", path.display())))?;
+    let parent = path.parent().ok_or_else(|| {
+        AppError::developer_artifact(format!("path has no parent: {}", path.display()))
+    })?;
     fs::create_dir_all(parent).map_err(|error| {
-        AppError::developer(format!("could not create {}: {error}", parent.display()))
+        AppError::developer_artifact(format!("could not create {}: {error}", parent.display()))
     })?;
     let temporary = path.with_extension(format!("part-{}", std::process::id()));
     fs::write(&temporary, bytes).map_err(|error| {
-        AppError::developer(format!("could not write {}: {error}", temporary.display()))
+        AppError::developer_artifact(format!("could not write {}: {error}", temporary.display()))
     })?;
     fs::rename(&temporary, path).map_err(|error| {
-        AppError::developer(format!("could not publish {}: {error}", path.display()))
+        AppError::developer_artifact(format!("could not publish {}: {error}", path.display()))
     })
 }
 

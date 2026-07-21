@@ -25,7 +25,7 @@ pub(crate) fn resolve(
             || options.password_stdin
             || options.from_env
         {
-            return Err(AppError::usage(
+            return Err(AppError::configuration(
                 "this board does not support Wi-Fi provisioning",
             ));
         }
@@ -44,7 +44,7 @@ pub(crate) fn resolve(
         WifiMode::Configure => {
             if options.from_env {
                 if options.ssid.is_some() || options.password_stdin {
-                    return Err(AppError::usage(
+                    return Err(AppError::configuration(
                         "--wifi-from-env cannot be combined with SSID/password input options",
                     ));
                 }
@@ -53,9 +53,11 @@ pub(crate) fn resolve(
 
             let ssid = match options.ssid {
                 Some(ssid) => ssid,
-                None if options.interactive => ui::input("Wi-Fi SSID").map_err(AppError::usage)?,
+                None if options.interactive => {
+                    ui::input("Wi-Fi SSID").map_err(AppError::configuration)?
+                }
                 None => {
-                    return Err(AppError::usage(
+                    return Err(AppError::configuration(
                         "--wifi configure requires --wifi-ssid outside guided mode",
                     ));
                 }
@@ -63,16 +65,17 @@ pub(crate) fn resolve(
             let password = if options.password_stdin {
                 read_password_stdin(options.interactive)?
             } else if options.interactive {
-                ui::password("Wi-Fi password (empty for open network)").map_err(AppError::usage)?
+                ui::password("Wi-Fi password (empty for open network)")
+                    .map_err(AppError::configuration)?
             } else {
-                return Err(AppError::usage(
+                return Err(AppError::configuration(
                     "--wifi configure requires --wifi-password-stdin or --wifi-from-env outside guided mode",
                 ));
             };
             let credentials = WifiCredentials { ssid, password };
             credentials
                 .validate()
-                .map_err(|error| AppError::usage(error.to_string()))?;
+                .map_err(|error| AppError::configuration(error.to_string()))?;
             Ok(ProvisioningAction::Configure(credentials))
         }
     }
@@ -80,7 +83,7 @@ pub(crate) fn resolve(
 
 fn reject_unused_inputs(options: &WifiOptions) -> Result<(), AppError> {
     if options.ssid.is_some() || options.password_stdin || options.from_env {
-        return Err(AppError::usage(
+        return Err(AppError::configuration(
             "Wi-Fi credential inputs require `--wifi configure`",
         ));
     }
@@ -90,17 +93,17 @@ fn reject_unused_inputs(options: &WifiOptions) -> Result<(), AppError> {
 fn read_password_stdin(allow_masked_prompt: bool) -> Result<String, AppError> {
     if io::stdin().is_terminal() {
         return if allow_masked_prompt {
-            ui::password("Wi-Fi password (empty for open network)").map_err(AppError::usage)
+            ui::password("Wi-Fi password (empty for open network)").map_err(AppError::configuration)
         } else {
-            Err(AppError::usage(
+            Err(AppError::configuration(
                 "--wifi-password-stdin requires piped standard input in noninteractive/JSON mode",
             ))
         };
     }
     let mut value = String::new();
-    io::stdin()
-        .read_to_string(&mut value)
-        .map_err(|error| AppError::usage(format!("could not read password from stdin: {error}")))?;
+    io::stdin().read_to_string(&mut value).map_err(|error| {
+        AppError::configuration(format!("could not read password from stdin: {error}"))
+    })?;
     while value.ends_with(['\n', '\r']) {
         value.pop();
     }
@@ -111,12 +114,14 @@ fn credentials_from_env() -> Result<WifiCredentials, AppError> {
     let ssid = env::var("HOPSPOT_WIFI_SSID")
         .ok()
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| AppError::usage("HOPSPOT_WIFI_SSID is missing from the environment"))?;
+        .ok_or_else(|| {
+            AppError::configuration("HOPSPOT_WIFI_SSID is missing from the environment")
+        })?;
     let password = env::var("HOPSPOT_WIFI_PASSWORD").unwrap_or_default();
     let credentials = WifiCredentials { ssid, password };
     credentials
         .validate()
-        .map_err(|error| AppError::usage(error.to_string()))?;
+        .map_err(|error| AppError::configuration(error.to_string()))?;
     Ok(credentials)
 }
 

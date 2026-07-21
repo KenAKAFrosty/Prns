@@ -1,11 +1,16 @@
-use std::collections::{BTreeMap, BTreeSet};
-
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    BoardBuild, BoardCatalog, ProvisioningDescriptor, Transport, CONFIG_OFFSET,
-    FLASH_MANIFEST_SCHEMA,
+    BoardCatalog, ProvisioningDescriptor, Transport, ValidatedFlashManifest, FLASH_MANIFEST_SCHEMA,
+};
+
+mod conversion;
+mod validation;
+
+use conversion::{convert_channel_descriptor, convert_manifest};
+use validation::{
+    validate_release, validate_sha256, validate_target, validate_target_set, validate_version,
 };
 
 /// Signed release manifest consumed by every public flasher.
@@ -172,7 +177,28 @@ impl FlashManifest {
     pub fn from_json(bytes: &[u8], catalog: &BoardCatalog) -> Result<Self, ManifestError> {
         let manifest: Self = serde_json::from_slice(bytes)?;
         manifest.validate(catalog)?;
+        // Every accepted wire document must also admit the transport-specific
+        // domain conversion. Compatibility callers may retain the DTO, but no
+        // signed parse can bypass this trust-boundary proof.
+        let _ = convert_manifest(manifest.clone(), catalog)?;
         Ok(manifest)
+    }
+
+    /// Consume a schema-v2 wire DTO into the validated release-domain model.
+    pub fn into_validated(
+        self,
+        catalog: &BoardCatalog,
+    ) -> Result<ValidatedFlashManifest, ManifestError> {
+        self.validate(catalog)?;
+        convert_manifest(self, catalog)
+    }
+
+    /// Clone this DTO into the validated release-domain model.
+    pub fn to_validated(
+        &self,
+        catalog: &BoardCatalog,
+    ) -> Result<ValidatedFlashManifest, ManifestError> {
+        self.clone().into_validated(catalog)
     }
 
     /// Validate release, target, and flash-layout invariants.
@@ -186,47 +212,7 @@ impl FlashManifest {
             let board = catalog.board(&target.board_slug).ok_or_else(|| {
                 ManifestError::TargetSet(format!("unknown board {:?}", target.board_slug))
             })?;
-            let pairs = [
-                (
-                    target.display_name.as_str(),
-                    board.display_name.as_str(),
-                    "display_name",
-                ),
-                (target.silicon.as_str(), board.silicon.as_str(), "silicon"),
-                (
-                    target.preparation_profile.as_str(),
-                    board.preparation_profile.as_str(),
-                    "preparation_profile",
-                ),
-            ];
-            for (actual, expected, field) in pairs {
-                if actual != expected {
-                    return Err(mismatch(target, field));
-                }
-            }
-            if target.interfaces != board.interfaces
-                || target.transport != board.transport
-                || target.expected_chip != board.expected_chip
-                || target.flash_size != board.flash_size
-                || target.provisioning != board.provisioning
-            {
-                return Err(mismatch(target, "board transport/capability fields"));
-            }
-            match &board.build {
-                BoardBuild::Esp(build)
-                    if target.flash_mode.as_deref() == Some(build.flash_mode.as_str())
-                        && target.flash_frequency.as_deref()
-                            == Some(build.flash_frequency.as_str())
-                        && target.before_reset.as_deref() == Some(build.before_reset.as_str())
-                        && target.after_reset.as_deref() == Some(build.after_reset.as_str()) => {}
-                BoardBuild::Uf2(_)
-                    if target.flash_mode.is_none()
-                        && target.flash_frequency.is_none()
-                        && target.before_reset.is_none()
-                        && target.after_reset.is_none() => {}
-                _ => return Err(mismatch(target, "flash/reset parameters")),
-            }
-            validate_parts(target, &self.release.version)?;
+            validate_target(target, board, &self.release.version)?;
         }
         Ok(())
     }
@@ -237,6 +223,7 @@ impl ChannelDescriptor {
     pub fn from_json(bytes: &[u8], expected: ReleaseChannel) -> Result<Self, ManifestError> {
         let descriptor: Self = serde_json::from_slice(bytes)?;
         descriptor.validate(expected)?;
+        let _ = convert_channel_descriptor(descriptor.clone())?;
         Ok(descriptor)
     }
 
@@ -270,226 +257,6 @@ impl ChannelDescriptor {
     }
 }
 
-fn validate_release(manifest: &FlashManifest) -> Result<(), ManifestError> {
-    let release = &manifest.release;
-    validate_version(&release.version)?;
-    if release.commit.len() != 40 || !release.commit.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err(ManifestError::Release(
-            "commit must be a full 40-character Git hash".to_string(),
-        ));
-    }
-    if manifest.signing.key_id.len() != 16
-        || !manifest
-            .signing
-            .key_id
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit())
-    {
-        return Err(ManifestError::Release(
-            "signing key ID must be 16 hexadecimal characters".to_string(),
-        ));
-    }
-    Ok(())
-}
-
-fn validate_version(version: &str) -> Result<(), ManifestError> {
-    let valid = !version.is_empty()
-        && !version.eq_ignore_ascii_case("next")
-        && version
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'+'));
-    if valid {
-        Ok(())
-    } else {
-        Err(ManifestError::Release(
-            "version must be an immutable path-safe identifier".to_string(),
-        ))
-    }
-}
-
-fn validate_sha256(value: &str) -> Result<(), String> {
-    if value.len() == 64
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-    {
-        Ok(())
-    } else {
-        Err("SHA-256 must be 64 lowercase hexadecimal characters".to_string())
-    }
-}
-
-fn validate_target_set(
-    manifest: &FlashManifest,
-    catalog: &BoardCatalog,
-) -> Result<(), ManifestError> {
-    let actual = manifest
-        .targets
-        .iter()
-        .map(|target| target.board_slug.as_str())
-        .collect::<BTreeSet<_>>();
-    if actual.len() != manifest.targets.len() {
-        return Err(ManifestError::TargetSet("duplicate board slug".to_string()));
-    }
-    let expected = catalog
-        .boards
-        .iter()
-        .map(|board| board.slug.as_str())
-        .collect::<BTreeSet<_>>();
-    if actual != expected {
-        return Err(ManifestError::TargetSet(format!(
-            "expected {expected:?}, found {actual:?}"
-        )));
-    }
-    Ok(())
-}
-
-fn validate_parts(target: &TargetManifest, version: &str) -> Result<(), ManifestError> {
-    let expected_prefix = format!("firmware/hopspot/{}/{version}/", target.board_slug);
-    if target.parts.is_empty() {
-        return Err(invalid_part(target, "", "at least one part is required"));
-    }
-    let mut ranges = BTreeMap::<u32, (u32, &str)>::new();
-    let mut paths = BTreeSet::new();
-    for part in &target.parts {
-        if part.size == 0 {
-            return Err(invalid_part(target, &part.path, "size must be nonzero"));
-        }
-        if !part.path.starts_with(&expected_prefix)
-            || part.path.starts_with('/')
-            || part.path.contains(['\\', '?', '#'])
-            || part
-                .path
-                .split('/')
-                .any(|component| component.is_empty() || matches!(component, "." | ".."))
-            || part.path.contains("/latest/")
-        {
-            return Err(invalid_part(
-                target,
-                &part.path,
-                "path is not immutable and relative",
-            ));
-        }
-        if validate_sha256(&part.sha256).is_err() {
-            return Err(invalid_part(
-                target,
-                &part.path,
-                "SHA-256 must be lowercase hex",
-            ));
-        }
-        if !paths.insert(part.path.as_str()) {
-            return Err(invalid_part(
-                target,
-                &part.path,
-                "artifact path is duplicated",
-            ));
-        }
-        match target.transport {
-            Transport::EspSerial => validate_esp_part(target, part, &mut ranges)?,
-            Transport::Uf2MassStorage => {
-                if part.kind != FlashPartKind::Uf2
-                    || part.offset.is_some()
-                    || target.parts.len() != 1
-                {
-                    return Err(invalid_part(
-                        target,
-                        &part.path,
-                        "UF2 target must contain one offset-free UF2 part",
-                    ));
-                }
-            }
-        }
-    }
-    if target.transport == Transport::EspSerial {
-        let kinds = target
-            .parts
-            .iter()
-            .map(|part| part.kind)
-            .collect::<Vec<_>>();
-        let required = vec![
-            FlashPartKind::Bootloader,
-            FlashPartKind::PartitionTable,
-            FlashPartKind::Application,
-        ];
-        if kinds != required {
-            return Err(invalid_part(
-                target,
-                "",
-                "ESP parts must be ordered bootloader, partition-table, application",
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn validate_esp_part<'a>(
-    target: &'a TargetManifest,
-    part: &'a FlashPart,
-    ranges: &mut BTreeMap<u32, (u32, &'a str)>,
-) -> Result<(), ManifestError> {
-    let offset = part
-        .offset
-        .ok_or_else(|| invalid_part(target, &part.path, "ESP part requires an offset"))?;
-    let size = u32::try_from(part.size)
-        .map_err(|_| invalid_part(target, &part.path, "part is too large"))?;
-    let end = offset
-        .checked_add(size)
-        .ok_or_else(|| invalid_part(target, &part.path, "address range overflows"))?;
-    let flash_size = target
-        .flash_size
-        .ok_or_else(|| invalid_part(target, &part.path, "ESP target has no flash size"))?;
-    if end > flash_size {
-        return Err(invalid_part(
-            target,
-            &part.path,
-            "part exceeds physical flash",
-        ));
-    }
-    let config_end = CONFIG_OFFSET + crate::CONFIG_SIZE as u32;
-    if offset < config_end && CONFIG_OFFSET < end {
-        return Err(invalid_part(
-            target,
-            &part.path,
-            "part overlaps provisioning slot",
-        ));
-    }
-    if let Some((_, (previous_end, previous_path))) = ranges.range(..=offset).next_back() {
-        if *previous_end > offset {
-            return Err(invalid_part(
-                target,
-                &part.path,
-                &format!("overlaps {previous_path:?}"),
-            ));
-        }
-    }
-    if let Some((next_offset, (_, next_path))) = ranges.range(offset..).next() {
-        if end > *next_offset {
-            return Err(invalid_part(
-                target,
-                &part.path,
-                &format!("overlaps {next_path:?}"),
-            ));
-        }
-    }
-    ranges.insert(offset, (end, part.path.as_str()));
-    Ok(())
-}
-
-fn mismatch(target: &TargetManifest, field: &str) -> ManifestError {
-    ManifestError::CatalogMismatch {
-        board: target.board_slug.clone(),
-        field: field.to_string(),
-    }
-}
-
-fn invalid_part(target: &TargetManifest, path: &str, message: &str) -> ManifestError {
-    ManifestError::InvalidPart {
-        board: target.board_slug.clone(),
-        path: path.to_string(),
-        message: message.to_string(),
-    }
-}
-
 impl Ord for FlashPartKind {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         (*self as u8).cmp(&(*other as u8))
@@ -505,7 +272,7 @@ impl PartialOrd for FlashPartKind {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{board_catalog, BoardBuild};
+    use crate::{board_catalog, BoardBuild, ReleaseTarget, CONFIG_OFFSET};
 
     fn valid_manifest() -> Result<FlashManifest, crate::catalog::CatalogError> {
         let catalog = board_catalog()?;
@@ -599,6 +366,96 @@ mod tests {
     }
 
     #[test]
+    fn schema_two_wire_roundtrips_through_transport_typed_domain(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let catalog = board_catalog()?;
+        let wire = valid_manifest()?;
+        let encoded = serde_json::to_vec(&wire)?;
+
+        // Compatibility callers retain the exact schema-v2 DTO.
+        assert_eq!(FlashManifest::from_json(&encoded, &catalog)?, wire);
+
+        let validated = ValidatedFlashManifest::from_json(&encoded, &catalog)?;
+        assert_eq!(validated.schema(), FLASH_MANIFEST_SCHEMA);
+        assert_eq!(validated.release().version().as_str(), "0.2.6");
+        assert_eq!(validated.targets().len(), 4);
+        assert_eq!(
+            validated
+                .targets()
+                .iter()
+                .map(ReleaseTarget::to_wire)
+                .collect::<Vec<_>>(),
+            wire.targets
+        );
+        assert_eq!(
+            validated
+                .targets()
+                .iter()
+                .filter(|target| matches!(target, ReleaseTarget::EspSerial(_)))
+                .count(),
+            3
+        );
+        let t_echo = validated
+            .targets()
+            .iter()
+            .find(|target| target.board_id().as_str() == "t-echo")
+            .ok_or("missing typed T-Echo")?;
+        let ReleaseTarget::Uf2(t_echo) = t_echo else {
+            return Err("T-Echo did not convert to the UF2 variant".into());
+        };
+        assert_eq!(
+            t_echo.part().path().as_str(),
+            "firmware/hopspot/t-echo/0.2.6/firmware.uf2"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn uf2_cannot_cross_the_domain_boundary_with_esp_only_fields(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let catalog = board_catalog()?;
+        let mut wire = valid_manifest()?;
+        let target = wire
+            .targets
+            .iter_mut()
+            .find(|target| target.board_slug == "t-echo")
+            .ok_or("missing T-Echo")?;
+        target.expected_chip = Some("esp32s3".to_string());
+        target.flash_size = Some(8_388_608);
+        assert!(ValidatedFlashManifest::from_json(&serde_json::to_vec(&wire)?, &catalog).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn domain_conversion_rechecks_provisioning_even_with_an_unvalidated_catalog(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut catalog = board_catalog()?;
+        let mut wire = valid_manifest()?;
+        let catalog_board = catalog
+            .boards
+            .iter_mut()
+            .find(|board| board.slug == "heltec-v4")
+            .ok_or("missing catalog board")?;
+        let slot = catalog_board
+            .provisioning
+            .as_mut()
+            .ok_or("missing catalog provisioning")?;
+        slot.size /= 2;
+        let target = wire
+            .targets
+            .iter_mut()
+            .find(|target| target.board_slug == "heltec-v4")
+            .ok_or("missing manifest target")?;
+        target.provisioning = catalog_board.provisioning.clone();
+
+        let encoded = serde_json::to_vec(&wire)?;
+        assert!(wire.validate(&catalog).is_ok());
+        assert!(ValidatedFlashManifest::from_json(&encoded, &catalog).is_err());
+        assert!(FlashManifest::from_json(&encoded, &catalog).is_err());
+        Ok(())
+    }
+
+    #[test]
     fn provisioning_overlap_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
         let catalog = board_catalog()?;
         let mut manifest = valid_manifest()?;
@@ -608,6 +465,52 @@ mod tests {
             .find(|target| target.board_slug == "heltec-v4")
             .ok_or("missing test target")?;
         target.parts[1].offset = Some(CONFIG_OFFSET);
+        assert!(matches!(
+            manifest.validate(&catalog),
+            Err(ManifestError::InvalidPart { .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn esp_offsets_must_match_flash_erase_geometry() -> Result<(), Box<dyn std::error::Error>> {
+        let catalog = board_catalog()?;
+        let mut manifest = valid_manifest()?;
+        manifest.targets[0].parts[1].offset = Some(0x8001);
+        assert!(matches!(
+            manifest.validate(&catalog),
+            Err(ManifestError::InvalidPart { .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn byte_disjoint_parts_cannot_share_an_erase_sector() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let catalog = board_catalog()?;
+        let mut manifest = valid_manifest()?;
+        let target = &mut manifest.targets[0];
+        target.parts[0].size = 0x1001;
+        target.parts[1].offset = Some(0x1001);
+        assert!(matches!(
+            manifest.validate(&catalog),
+            Err(ManifestError::InvalidPart { .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn sector_rounding_cannot_reach_the_configuration_slot(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let catalog = board_catalog()?;
+        let mut manifest = valid_manifest()?;
+        let target = manifest
+            .targets
+            .iter_mut()
+            .find(|target| target.board_slug == "heltec-v4")
+            .ok_or("missing test target")?;
+        target.parts[1].offset = Some(0xC000);
+        target.parts[1].size = 0x1001;
         assert!(matches!(
             manifest.validate(&catalog),
             Err(ManifestError::InvalidPart { .. })

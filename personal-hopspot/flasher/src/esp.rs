@@ -10,7 +10,7 @@ use serialport::{SerialPortInfo, SerialPortType};
 
 use crate::error::AppError;
 use crate::events::{Phase, Reporter};
-use crate::release::PreparedPart;
+use crate::release::PreparedEspTarget;
 
 mod session;
 
@@ -30,7 +30,7 @@ pub(crate) fn begin_cancellable_operation() -> Result<(), AppError> {
         .map_err(|error| error.to_string())
     });
     if let Err(error) = result {
-        Err(AppError::preflight(format!(
+        Err(AppError::host_preflight(format!(
             "could not install cancellation handler: {error}"
         )))
     } else {
@@ -45,7 +45,7 @@ pub(crate) fn cancelled() -> bool {
 
 pub(crate) fn flash(
     board: &BoardCatalogEntry,
-    parts: &[PreparedPart],
+    target: &PreparedEspTarget,
     provisioning: &ProvisioningAction,
     port_name: Option<&str>,
     monitor: bool,
@@ -53,7 +53,7 @@ pub(crate) fn flash(
 ) -> Result<(), AppError> {
     let selected = select_port(port_name)?;
     let expected = expected_device(board)?;
-    let plan = sparse_plan(board, parts, provisioning)?;
+    let plan = sparse_plan(board, target, provisioning)?;
     let total = plan.iter().map(|part| part.bytes.len() as u64).sum::<u64>();
 
     reporter.phase(
@@ -106,7 +106,7 @@ pub(crate) fn doctor(
         port_name: selected_name,
         detected_chip: identity.chip.to_string(),
         flash_size: identity.flash_size.ok_or_else(|| {
-            AppError::preflight("the device did not report a verifiable flash capacity")
+            AppError::device_identity("the device did not report a verifiable flash capacity")
         })?,
     })
 }
@@ -122,12 +122,14 @@ fn expected_device(board: &BoardCatalogEntry) -> Result<ExpectedDevice<'_>, AppE
     let chip_name = board
         .expected_chip
         .as_deref()
-        .ok_or_else(|| AppError::trust("ESP board is missing expected-chip metadata"))?;
+        .ok_or_else(|| AppError::trust_manifest("ESP board is missing expected-chip metadata"))?;
     let chip = chip_name.parse::<Chip>().map_err(|error| {
-        AppError::trust(format!("invalid expected chip {chip_name:?}: {error}"))
+        AppError::trust_manifest(format!("invalid expected chip {chip_name:?}: {error}"))
     })?;
     if !matches!(board.build, prns_flash_manifest::BoardBuild::Esp(_)) {
-        return Err(AppError::usage("UF2 board cannot use the ESP engine"));
+        return Err(AppError::unsupported_operation(
+            "UF2 board cannot use the ESP engine",
+        ));
     }
     Ok(ExpectedDevice {
         board_slug: &board.slug,
@@ -144,7 +146,9 @@ fn real_session(
     let build = match &board.build {
         prns_flash_manifest::BoardBuild::Esp(build) => build,
         prns_flash_manifest::BoardBuild::Uf2(_) => {
-            return Err(AppError::usage("UF2 board cannot use the ESP engine"));
+            return Err(AppError::unsupported_operation(
+                "UF2 board cannot use the ESP engine",
+            ));
         }
     };
     Ok(EspflashSession::new(
@@ -157,28 +161,24 @@ fn real_session(
 
 fn sparse_plan(
     board: &BoardCatalogEntry,
-    parts: &[PreparedPart],
+    target: &PreparedEspTarget,
     provisioning: &ProvisioningAction,
 ) -> Result<Vec<SparsePart>, AppError> {
-    let mut plan = parts
+    let mut plan = target
+        .parts()
         .iter()
-        .map(|part| {
-            let offset = part.descriptor.offset.ok_or_else(|| {
-                AppError::trust(format!("ESP part {:?} has no offset", part.descriptor.path))
-            })?;
-            Ok(SparsePart {
-                offset,
-                bytes: part.bytes.clone(),
-            })
+        .map(|part| SparsePart {
+            offset: part.offset(),
+            bytes: part.bytes().to_vec(),
         })
-        .collect::<Result<Vec<_>, AppError>>()?;
-    if let Some(config) =
-        provisioning_image(provisioning).map_err(|error| AppError::usage(error.to_string()))?
+        .collect::<Vec<_>>();
+    if let Some(config) = provisioning_image(provisioning)
+        .map_err(|error| AppError::configuration(error.to_string()))?
     {
         let slot = board
             .provisioning
             .as_ref()
-            .ok_or_else(|| AppError::usage("this board has no provisioning slot"))?;
+            .ok_or_else(|| AppError::configuration("this board has no provisioning slot"))?;
         plan.push(SparsePart {
             offset: slot.offset,
             bytes: config,
@@ -186,7 +186,7 @@ fn sparse_plan(
     }
     plan.sort_by_key(|part| part.offset);
     if plan.is_empty() {
-        return Err(AppError::trust("ESP sparse flash plan is empty"));
+        return Err(AppError::trust_manifest("ESP sparse flash plan is empty"));
     }
     Ok(plan)
 }
@@ -284,23 +284,49 @@ fn run_doctor_session(
 fn map_preflight_session_error(error: SessionError) -> AppError {
     match error {
         SessionError::Cancelled => AppError::Cancelled,
-        error => AppError::preflight(error.to_string()),
+        SessionError::Connect(message) => {
+            AppError::serial_port(format!("could not connect to the bootloader: {message}"))
+        }
+        SessionError::Identity(message) => {
+            AppError::device_identity(format!("could not identify the device: {message}"))
+        }
+        SessionError::DeviceLost(message) => {
+            AppError::device_identity(format!("device connection was lost: {message}"))
+        }
+        SessionError::Write(message)
+        | SessionError::Verify(message)
+        | SessionError::Reset(message) => AppError::device_identity(format!(
+            "unexpected write-capable failure during non-writing preflight: {message}"
+        )),
     }
 }
 
 fn map_flash_session_error(error: SessionError) -> AppError {
     match error {
-        SessionError::Connect(_) | SessionError::Identity(_) => {
-            AppError::preflight(error.to_string())
+        SessionError::Connect(message) => {
+            AppError::serial_port(format!("could not connect to the bootloader: {message}"))
+        }
+        SessionError::Identity(message) => {
+            AppError::device_identity(format!("could not identify the device: {message}"))
         }
         SessionError::Cancelled => AppError::Cancelled,
-        error => AppError::flash(error.to_string()),
+        SessionError::Write(message) => AppError::write(format!("sparse write failed: {message}")),
+        SessionError::Verify(message) => {
+            AppError::verify(format!("device-side verification failed: {message}"))
+        }
+        SessionError::Reset(message) => {
+            AppError::reset(format!("could not reset device: {message}"))
+        }
+        SessionError::DeviceLost(message) => {
+            AppError::device_lost(format!("device connection was lost: {message}"))
+        }
     }
 }
 
 pub(crate) fn diagnostic_ports() -> Result<Vec<SerialPortInfo>, AppError> {
-    serialport::available_ports()
-        .map_err(|error| AppError::preflight(format!("could not enumerate serial ports: {error}")))
+    serialport::available_ports().map_err(|error| {
+        AppError::serial_port(format!("could not enumerate serial ports: {error}"))
+    })
 }
 
 fn select_port(requested: Option<&str>) -> Result<SerialPortInfo, AppError> {
@@ -316,7 +342,7 @@ fn select_port_from(
             .into_iter()
             .find(|port| port.port_name == requested)
             .ok_or_else(|| {
-                AppError::preflight(format!("serial port {requested:?} was not found"))
+                AppError::serial_port(format!("serial port {requested:?} was not found"))
             });
     }
     let mut candidates = ports
@@ -324,11 +350,11 @@ fn select_port_from(
         .filter(is_likely_device_port)
         .collect::<Vec<_>>();
     match candidates.len() {
-        0 => Err(AppError::preflight(
+        0 => Err(AppError::serial_port(
             "no usable serial device was found; connect the board with a USB data cable",
         )),
         1 => Ok(candidates.remove(0)),
-        _ => Err(AppError::preflight(format!(
+        _ => Err(AppError::serial_port(format!(
             "multiple serial devices are present ({}); rerun with --port",
             candidates
                 .iter()
@@ -345,25 +371,25 @@ fn validate_device_identity(
     identity: DeviceIdentity,
 ) -> Result<(), AppError> {
     if identity.chip != expected_chip {
-        return Err(AppError::preflight(format!(
+        return Err(AppError::device_identity(format!(
             "wrong chip: expected {expected_chip}, detected {}",
             identity.chip
         )));
     }
     if identity.secure_download_mode {
-        return Err(AppError::preflight(
+        return Err(AppError::device_identity(
             "secure download mode prevents the required device-side verification",
         ));
     }
     match (expected_flash_size, identity.flash_size) {
         (Some(expected), Some(detected)) if expected == detected => Ok(()),
-        (Some(expected), Some(detected)) => Err(AppError::preflight(format!(
+        (Some(expected), Some(detected)) => Err(AppError::device_identity(format!(
             "flash capacity mismatch: board catalog requires {expected} bytes, device reports {detected} bytes"
         ))),
-        (Some(_), None) => Err(AppError::preflight(
+        (Some(_), None) => Err(AppError::device_identity(
             "the device did not report a verifiable flash capacity",
         )),
-        _ => Err(AppError::trust(
+        _ => Err(AppError::trust_catalog(
             "ESP board catalog is missing its flash capacity",
         )),
     }
@@ -388,7 +414,7 @@ fn before_reset(value: &str) -> Result<ResetBeforeOperation, AppError> {
     match value {
         "default-reset" => Ok(ResetBeforeOperation::DefaultReset),
         "usb-reset" => Ok(ResetBeforeOperation::UsbReset),
-        _ => Err(AppError::trust(format!(
+        _ => Err(AppError::trust_catalog(format!(
             "unsupported before-reset mode {value:?}"
         ))),
     }
@@ -398,7 +424,7 @@ fn after_reset(value: &str) -> Result<ResetAfterOperation, AppError> {
     match value {
         "hard-reset" => Ok(ResetAfterOperation::HardReset),
         "watchdog-reset" => Ok(ResetAfterOperation::WatchdogReset),
-        _ => Err(AppError::trust(format!(
+        _ => Err(AppError::trust_catalog(format!(
             "unsupported after-reset mode {value:?}"
         ))),
     }
@@ -445,7 +471,7 @@ fn stream_monitor<R: Read + ?Sized>(
             Ok(0) => {}
             Ok(count) => {
                 write_output(&buffer[..count]).map_err(|error| {
-                    AppError::preflight(format!("monitor output failed: {error}"))
+                    AppError::monitor(format!("monitor output failed: {error}"))
                 })?;
                 if is_cancelled() {
                     return Err(AppError::Cancelled);
@@ -456,7 +482,7 @@ fn stream_monitor<R: Read + ?Sized>(
                 if is_cancelled() {
                     return Err(AppError::Cancelled);
                 }
-                return Err(AppError::preflight(format!(
+                return Err(AppError::monitor(format!(
                     "serial monitor disconnected: {error}"
                 )));
             }
@@ -488,7 +514,7 @@ fn reopen_monitor_port<T>(
     if is_cancelled() {
         Err(AppError::Cancelled)
     } else {
-        Err(AppError::preflight(format!(
+        Err(AppError::monitor(format!(
             "could not reopen {port_name} for monitoring"
         )))
     }
@@ -783,7 +809,7 @@ mod port_tests {
             );
             match category {
                 "preflight" => assert!(matches!(result, Err(AppError::Preflight(_)))),
-                "flash" => assert!(matches!(result, Err(AppError::Flash(_)))),
+                "flash" => assert!(matches!(result, Err(AppError::WriteVerifyReset(_)))),
                 "cancel" => assert!(matches!(result, Err(AppError::Cancelled))),
                 _ => unreachable!(),
             }
@@ -812,7 +838,7 @@ mod port_tests {
         );
         assert!(matches!(
             result,
-            Err(AppError::Flash(message)) if message.contains("reset")
+            Err(AppError::WriteVerifyReset(message)) if message.to_string().contains("reset")
         ));
         assert_eq!(
             session.calls[session.calls.len() - 2..],

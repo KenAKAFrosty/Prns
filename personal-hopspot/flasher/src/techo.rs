@@ -8,24 +8,16 @@ use prns_flash_manifest::BoardCatalogEntry;
 
 use crate::error::AppError;
 use crate::events::{Phase, Reporter};
-use crate::release::PreparedPart;
+use crate::release::PreparedUf2Target;
 
 const REBOOT_TIMEOUT: Duration = Duration::from_secs(20);
 
 pub(crate) fn flash(
     board: &BoardCatalogEntry,
-    parts: &[PreparedPart],
+    target: &PreparedUf2Target,
     mount_override: Option<&Path>,
     reporter: Reporter,
 ) -> Result<(), AppError> {
-    let part = match parts {
-        [part] => part,
-        _ => {
-            return Err(AppError::trust(
-                "T-Echo release must contain exactly one UF2",
-            ))
-        }
-    };
     let mount = select_mount(detect_mounts(), mount_override)?;
 
     let destination = mount.join("prns-hopspot.uf2");
@@ -34,7 +26,13 @@ pub(crate) fn flash(
         Some(&board.slug),
         &format!("Copying verified UF2 to {}…", destination.display()),
     );
-    copy_uf2(&destination, &mount, &part.bytes, &board.slug, reporter)?;
+    copy_uf2(
+        &destination,
+        &mount,
+        target.part().bytes(),
+        &board.slug,
+        reporter,
+    )?;
 
     reporter.phase(
         Phase::Resetting,
@@ -64,7 +62,9 @@ fn copy_uf2(
         .truncate(true)
         .write(true)
         .open(destination)
-        .map_err(|error| AppError::flash(format!("could not create UF2 on TECHOBOOT: {error}")))?;
+        .map_err(|error| {
+            AppError::uf2_delivery(format!("could not create UF2 on TECHOBOOT: {error}"))
+        })?;
     let mut written = 0usize;
     for chunk in bytes.chunks(64 * 1024) {
         if crate::esp::cancelled() {
@@ -74,7 +74,7 @@ fn copy_uf2(
         }
         output
             .write_all(chunk)
-            .map_err(|error| AppError::flash(format!("UF2 copy failed: {error}")))?;
+            .map_err(|error| AppError::uf2_delivery(format!("UF2 copy failed: {error}")))?;
         written += chunk.len();
         reporter.progress(
             Phase::Writing,
@@ -86,7 +86,7 @@ fn copy_uf2(
     output
         .flush()
         .and_then(|_| output.sync_all())
-        .map_err(|error| AppError::flash(format!("UF2 flush/sync failed: {error}")))?;
+        .map_err(|error| AppError::uf2_delivery(format!("UF2 flush/sync failed: {error}")))?;
     drop(output);
     sync_mount_directory(mount)
 }
@@ -100,7 +100,7 @@ fn wait_for_reboot(mount: &Path, timeout: Duration, poll: Duration) -> Result<()
         std::thread::sleep(poll);
     }
     if mount.exists() {
-        return Err(AppError::flash(
+        return Err(AppError::uf2_delivery(
             "UF2 was synchronized, but TECHOBOOT did not disappear within 20 seconds",
         ));
     }
@@ -115,11 +115,11 @@ fn select_mount(
         return validate_mount(mount);
     }
     match candidates.as_slice() {
-        [] => Err(AppError::preflight(
+        [] => Err(AppError::uf2_mount(
             "TECHOBOOT is not mounted; double-tap RESET and wait for the drive",
         )),
         [mount] => validate_mount(mount),
-        _ => Err(AppError::preflight(format!(
+        _ => Err(AppError::uf2_mount(format!(
             "multiple identifiable T-Echo UF2 bootloader drives were found ({}); disconnect or unmount the extras, then retry",
             candidates
                 .iter()
@@ -134,7 +134,9 @@ fn select_mount(
 fn sync_mount_directory(mount: &Path) -> Result<(), AppError> {
     File::open(mount)
         .and_then(|directory| directory.sync_all())
-        .map_err(|error| AppError::flash(format!("TECHOBOOT directory sync failed: {error}")))
+        .map_err(|error| {
+            AppError::uf2_delivery(format!("TECHOBOOT directory sync failed: {error}"))
+        })
 }
 
 #[cfg(windows)]
@@ -194,7 +196,7 @@ fn validate_mount(path: &Path) -> Result<PathBuf, AppError> {
     if is_techo_mount(path) {
         Ok(path.to_path_buf())
     } else {
-        Err(AppError::preflight(format!(
+        Err(AppError::uf2_mount(format!(
             "{} does not contain a T-Echo Board-ID in INFO_UF2.TXT",
             path.display()
         )))
@@ -367,7 +369,7 @@ mod tests {
         fs::create_dir(&stuck).expect("create stuck mount");
         assert!(matches!(
             wait_for_reboot(&stuck, Duration::ZERO, Duration::from_millis(1)),
-            Err(AppError::Flash(_))
+            Err(AppError::WriteVerifyReset(_))
         ));
         fs::remove_dir(stuck).expect("remove stuck mount");
     }

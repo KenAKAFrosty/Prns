@@ -15,7 +15,7 @@ struct EspToolchainEnv {
 pub(crate) fn configure_esp_toolchain(command: &mut Command) -> Result<PathBuf, AppError> {
     let env = esp_toolchain_env()?;
     let linker = find_on_path("xtensa-esp32s3-elf-gcc", &env.path).ok_or_else(|| {
-        AppError::developer("xtensa-esp32s3-elf-gcc was not found; install the ESP Rust toolchain or update export-esp.sh")
+        AppError::developer_toolchain("xtensa-esp32s3-elf-gcc was not found; install the ESP Rust toolchain or update export-esp.sh")
     })?;
 
     command.env("PATH", &env.path);
@@ -62,8 +62,9 @@ fn esp_toolchain_env() -> Result<EspToolchainEnv, AppError> {
 
     let mut seen = HashSet::new();
     path_entries.retain(|path| seen.insert(path.to_string_lossy().into_owned()));
-    let path = env::join_paths(path_entries)
-        .map_err(|err| AppError::developer(format!("failed to build ESP toolchain PATH: {err}")))?;
+    let path = env::join_paths(path_entries).map_err(|err| {
+        AppError::developer_toolchain(format!("failed to build ESP toolchain PATH: {err}"))
+    })?;
 
     Ok(EspToolchainEnv {
         path,
@@ -141,7 +142,7 @@ pub(crate) fn rust_host_triple() -> Result<String, AppError> {
     version
         .lines()
         .find_map(|line| line.strip_prefix("host: ").map(str::to_string))
-        .ok_or_else(|| AppError::developer("rustc -vV did not report a host triple"))
+        .ok_or_else(|| AppError::developer_toolchain("rustc -vV did not report a host triple"))
 }
 
 pub(crate) fn run_status(command: &mut Command, label: &str) -> Result<(), AppError> {
@@ -150,25 +151,28 @@ pub(crate) fn run_status(command: &mut Command, label: &str) -> Result<(), AppEr
     command.stderr(Stdio::inherit());
     let status = command
         .status()
-        .map_err(|err| AppError::developer(format!("failed to run {label}: {err}")))?;
+        .map_err(|err| AppError::developer_toolchain(format!("failed to run {label}: {err}")))?;
     if status.success() {
         Ok(())
     } else {
-        Err(AppError::developer(format!("{label} exited with {status}")))
+        Err(AppError::developer_toolchain(format!(
+            "{label} exited with {status}"
+        )))
     }
 }
 
 pub(crate) fn capture_stdout(command: &mut Command, label: &str) -> Result<String, AppError> {
     let output = command
         .output()
-        .map_err(|err| AppError::developer(format!("failed to run {label}: {err}")))?;
+        .map_err(|err| AppError::developer_toolchain(format!("failed to run {label}: {err}")))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(AppError::developer(format!(
+        return Err(AppError::developer_toolchain(format!(
             "{label} exited with {}: {stderr}",
             output.status
         )));
     }
-    String::from_utf8(output.stdout)
-        .map_err(|err| AppError::developer(format!("{label} produced invalid UTF-8 output: {err}")))
+    String::from_utf8(output.stdout).map_err(|err| {
+        AppError::developer_toolchain(format!("{label} produced invalid UTF-8 output: {err}"))
+    })
 }

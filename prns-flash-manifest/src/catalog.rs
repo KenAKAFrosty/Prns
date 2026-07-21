@@ -2,7 +2,9 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    CONFIG_OFFSET, CONFIG_PASSWORD_MAX_BYTES, CONFIG_SIZE, CONFIG_SSID_MAX_BYTES, CONFIG_VERSION,
+    AfterResetStrategy, BeforeResetStrategy, BoardId, ChipFamily, PreparationProfile,
+    ProvisioningFormat, CONFIG_OFFSET, CONFIG_PASSWORD_MAX_BYTES, CONFIG_SIZE,
+    CONFIG_SSID_MAX_BYTES, CONFIG_VERSION,
 };
 
 const CATALOG_JSON: &str = include_str!("../../release/flash/boards.json");
@@ -201,12 +203,7 @@ pub fn board_catalog() -> Result<BoardCatalog, CatalogError> {
 }
 
 fn validate_slug(board: &BoardCatalogEntry) -> Result<(), CatalogError> {
-    let valid = !board.slug.is_empty()
-        && board
-            .slug
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-');
-    if !valid {
+    if BoardId::parse(board.slug.clone()).is_err() {
         return Err(invalid(
             board,
             "slug must use lowercase ASCII, digits, and hyphens",
@@ -236,7 +233,7 @@ fn validate_transport(board: &BoardCatalogEntry) -> Result<(), CatalogError> {
     match (&board.transport, &board.build) {
         (Transport::EspSerial, BoardBuild::Esp(build)) => {
             if board.expected_chip.as_deref() != Some(build.chip.as_str())
-                || !matches!(build.chip.as_str(), "esp32s3" | "esp32c6")
+                || ChipFamily::parse(&build.chip).is_err()
                 || !matches!(board.flash_size, Some(4_194_304 | 8_388_608))
                 || build.flash_size_label
                     != if board.flash_size == Some(8_388_608) {
@@ -246,9 +243,10 @@ fn validate_transport(board: &BoardCatalogEntry) -> Result<(), CatalogError> {
                     }
                 || build.flash_mode != "dio"
                 || build.flash_frequency != "40m"
-                || !matches!(build.before_reset.as_str(), "default-reset" | "usb-reset")
-                || !matches!(build.after_reset.as_str(), "hard-reset" | "watchdog-reset")
-                || board.preparation_profile != "esp-usb-boot"
+                || BeforeResetStrategy::parse(&build.before_reset).is_err()
+                || AfterResetStrategy::parse(&build.after_reset).is_err()
+                || PreparationProfile::parse(&board.preparation_profile)
+                    != Ok(PreparationProfile::EspUsbBoot)
                 || build.package.trim().is_empty()
                 || build.binary.trim().is_empty()
                 || build.partition_table.contains(['/', '\\'])
@@ -265,7 +263,8 @@ fn validate_transport(board: &BoardCatalogEntry) -> Result<(), CatalogError> {
         (Transport::Uf2MassStorage, BoardBuild::Uf2(build)) => {
             if board.expected_chip.is_some()
                 || board.flash_size.is_some()
-                || board.preparation_profile != "techo-uf2"
+                || PreparationProfile::parse(&board.preparation_profile)
+                    != Ok(PreparationProfile::TechoUf2)
                 || build.mount_label != "TECHOBOOT"
                 || build.package.trim().is_empty()
                 || build.rust_target != "thumbv7em-none-eabihf"
@@ -297,7 +296,7 @@ fn validate_provisioning(board: &BoardCatalogEntry) -> Result<(), CatalogError> 
             "only ESP boards can have a provisioning slot",
         ));
     }
-    if slot.format != "HSPCFG1"
+    if ProvisioningFormat::parse(&slot.format) != Ok(ProvisioningFormat::Hspcfg1)
         || slot.version != CONFIG_VERSION
         || slot.offset != CONFIG_OFFSET
         || slot.size != CONFIG_SIZE as u32

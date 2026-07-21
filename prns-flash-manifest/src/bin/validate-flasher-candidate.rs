@@ -1,13 +1,26 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
-use std::fs;
+use std::fs::{self, File};
+use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
 use prns_flash_manifest::{
-    board_catalog, pinned_key_id, sha256_hex, verify_minisign, ChannelDescriptor, FlashManifest,
-    PINNED_MINISIGN_PUBLIC_KEY,
+    board_catalog, pinned_key_id, sha256_hex, verify_minisign, ValidatedChannelDescriptor,
+    ValidatedFlashManifest, PINNED_MINISIGN_PUBLIC_KEY,
 };
 use serde::Deserialize;
+
+const MAX_PUBLIC_KEY_BYTES: u64 = 16 * 1024;
+const MAX_SIGNATURE_BYTES: u64 = 64 * 1024;
+const MAX_VERSION_BYTES: u64 = 4 * 1024;
+const MAX_MANIFEST_BYTES: u64 = 512 * 1024;
+const MAX_CHANNEL_BYTES: u64 = 64 * 1024;
+const MAX_BUILD_METADATA_BYTES: u64 = 1024 * 1024;
+const MAX_CHECKSUM_BYTES: u64 = 8 * 1024 * 1024;
+const MAX_CANDIDATE_FILE_BYTES: u64 = 512 * 1024 * 1024;
+const MAX_CANDIDATE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const MAX_CANDIDATE_ENTRIES: usize = 200_000;
+const MAX_CANDIDATE_DEPTH: usize = 64;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -87,36 +100,39 @@ fn run() -> Result<(), String> {
     if arguments.next().is_some() {
         return Err("usage: validate-flasher-candidate CANDIDATE_DIR".to_string());
     }
-    if !root.is_dir() {
-        return Err(format!("{} is not a candidate directory", root.display()));
-    }
+
+    validate_candidate(&root)
+}
+
+fn validate_candidate(root: &Path) -> Result<(), String> {
+    let payload_files = walk_payload_files(root)?;
 
     let catalog = board_catalog().map_err(|error| error.to_string())?;
-    let candidate_key = fs::read_to_string(root.join("minisign.pub"))
-        .map_err(|error| format!("could not read candidate minisign.pub: {error}"))?;
+    let candidate_key = read_text_limited(&root.join("minisign.pub"), MAX_PUBLIC_KEY_BYTES)?;
     if candidate_key != PINNED_MINISIGN_PUBLIC_KEY {
         return Err("candidate Minisign public key differs from the repository pin".to_string());
     }
     let manifest_path = root.join("flash-manifest.json");
-    let manifest_bytes = read(&manifest_path)?;
+    let manifest_bytes = read_limited(&manifest_path, MAX_MANIFEST_BYTES)?;
     verify_file(&manifest_path, &manifest_bytes)?;
-    let manifest =
-        FlashManifest::from_json(&manifest_bytes, &catalog).map_err(|error| error.to_string())?;
+    let manifest = ValidatedFlashManifest::from_json(&manifest_bytes, &catalog)
+        .map_err(|error| error.to_string())?;
     let actual_key_id = pinned_key_id()
         .ok_or_else(|| "repository-pinned Minisign key has no canonical key ID".to_string())?;
-    if !manifest.signing.key_id.eq_ignore_ascii_case(&actual_key_id) {
+    if manifest.signing().key_id().as_str() != actual_key_id.to_ascii_uppercase() {
         return Err(format!(
             "manifest signing key ID {:?} differs from pinned key {actual_key_id}",
-            manifest.signing.key_id
+            manifest.signing().key_id().as_str()
         ));
     }
-    verify_provenance(&root, &manifest)?;
+    verify_provenance(root, &manifest)?;
 
-    for target in &manifest.targets {
-        for part in &target.parts {
-            let path = safe_join(&root, &part.path)?;
-            let bytes = read(&path)?;
-            if bytes.len() as u64 != part.size || sha256_hex(&bytes) != part.sha256 {
+    for target in manifest.targets() {
+        for part in target.parts() {
+            let part_path = part.path().as_str();
+            let path = safe_join(root, part_path)?;
+            let bytes = read_limited(&path, part.size())?;
+            if bytes.len() as u64 != part.size() || sha256_hex(&bytes) != part.sha256().as_str() {
                 return Err(format!(
                     "{} does not match its signed size and SHA-256",
                     path.display()
@@ -126,11 +142,13 @@ fn run() -> Result<(), String> {
                 &root
                     .join("website")
                     .join("releases")
-                    .join(&manifest.release.version),
-                &part.path,
+                    .join(manifest.release().version().as_str()),
+                part_path,
             )?;
-            let hosted_bytes = read(&hosted_path)?;
-            if hosted_bytes.len() as u64 != part.size || sha256_hex(&hosted_bytes) != part.sha256 {
+            let hosted_bytes = read_limited(&hosted_path, part.size())?;
+            if hosted_bytes.len() as u64 != part.size()
+                || sha256_hex(&hosted_bytes) != part.sha256().as_str()
+            {
                 return Err(format!(
                     "{} does not match the signed hosted artifact",
                     hosted_path.display()
@@ -139,44 +157,48 @@ fn run() -> Result<(), String> {
         }
     }
 
-    let channel_name = match manifest.release.channel {
+    let channel_name = match manifest.release().channel() {
         prns_flash_manifest::ReleaseChannel::Stable => "stable",
         prns_flash_manifest::ReleaseChannel::Preview => "preview",
     };
     let channel_path = root.join("channels").join(format!("{channel_name}.json"));
-    let channel_bytes = read(&channel_path)?;
+    let channel_bytes = read_limited(&channel_path, MAX_CHANNEL_BYTES)?;
     verify_file(&channel_path, &channel_bytes)?;
-    let descriptor = ChannelDescriptor::from_json(&channel_bytes, manifest.release.channel)
-        .map_err(|error| error.to_string())?;
-    if descriptor.version != manifest.release.version
-        || descriptor.manifest_sha256 != sha256_hex(&manifest_bytes)
+    let descriptor =
+        ValidatedChannelDescriptor::from_json(&channel_bytes, manifest.release().channel())
+            .map_err(|error| error.to_string())?;
+    if descriptor.version() != manifest.release().version()
+        || descriptor.manifest_sha256().as_str() != sha256_hex(&manifest_bytes)
     {
         return Err("signed channel descriptor disagrees with the manifest".to_string());
     }
 
-    verify_sums(&root)?;
+    verify_sums(root, &payload_files)?;
     verify_website_copies(
-        &root,
-        &manifest.release.version,
+        root,
+        manifest.release().version().as_str(),
         channel_name,
         &manifest_bytes,
         &channel_bytes,
     )?;
     println!(
         "verified signed flasher candidate {} ({})",
-        manifest.release.version, channel_name
+        manifest.release().version(),
+        channel_name
     );
     Ok(())
 }
 
-fn verify_provenance(root: &Path, manifest: &FlashManifest) -> Result<(), String> {
-    let version = fs::read_to_string(root.join("VERSION"))
-        .map_err(|error| format!("could not read candidate VERSION: {error}"))?;
-    if version.trim() != manifest.release.version {
+fn verify_provenance(root: &Path, manifest: &ValidatedFlashManifest) -> Result<(), String> {
+    let version = read_text_limited(&root.join("VERSION"), MAX_VERSION_BYTES)?;
+    if version.trim() != manifest.release().version().as_str() {
         return Err("candidate VERSION differs from the signed manifest".to_string());
     }
-    let metadata_bytes = read(&root.join("metadata").join("build.json"))?;
-    validate_build_metadata(&metadata_bytes, &manifest.release.commit)
+    let metadata_bytes = read_limited(
+        &root.join("metadata").join("build.json"),
+        MAX_BUILD_METADATA_BYTES,
+    )?;
+    validate_build_metadata(&metadata_bytes, manifest.release().commit())
 }
 
 fn validate_build_metadata(bytes: &[u8], expected_commit: &str) -> Result<(), String> {
@@ -282,15 +304,14 @@ fn civil_from_days(days_since_epoch: i64) -> Result<(i64, i64, i64), String> {
 
 fn verify_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let signature_path = PathBuf::from(format!("{}.minisig", path.display()));
-    let signature = fs::read_to_string(&signature_path)
-        .map_err(|error| format!("could not read {}: {error}", signature_path.display()))?;
+    let signature = read_text_limited(&signature_path, MAX_SIGNATURE_BYTES)?;
     verify_minisign(bytes, &signature, PINNED_MINISIGN_PUBLIC_KEY)
         .map_err(|error| format!("{}: {error}", path.display()))
 }
 
-fn verify_sums(root: &Path) -> Result<(), String> {
+fn verify_sums(root: &Path, actual_payloads: &BTreeSet<String>) -> Result<(), String> {
     let sums_path = root.join("SHA256SUMS.txt");
-    let bytes = read(&sums_path)?;
+    let bytes = read_limited(&sums_path, MAX_CHECKSUM_BYTES)?;
     verify_file(&sums_path, &bytes)?;
     let text = std::str::from_utf8(&bytes)
         .map_err(|error| format!("SHA256SUMS.txt is not UTF-8: {error}"))?;
@@ -307,17 +328,22 @@ fn verify_sums(root: &Path) -> Result<(), String> {
         {
             return Err(format!("duplicate SHA256SUMS path {relative:?}"));
         }
-        let actual = sha256_hex(&read(&path)?);
+        let actual = digest_file(&path, MAX_CANDIDATE_FILE_BYTES)?;
         if actual != digest {
             return Err(format!("SHA-256 mismatch for {relative}"));
         }
     }
 
-    let actual = walk_payload_files(root)?;
     let expected = listed.keys().cloned().collect::<BTreeSet<_>>();
-    if actual != expected {
-        let missing = actual.difference(&expected).cloned().collect::<Vec<_>>();
-        let stale = expected.difference(&actual).cloned().collect::<Vec<_>>();
+    if actual_payloads != &expected {
+        let missing = actual_payloads
+            .difference(&expected)
+            .cloned()
+            .collect::<Vec<_>>();
+        let stale = expected
+            .difference(actual_payloads)
+            .cloned()
+            .collect::<Vec<_>>();
         return Err(format!(
             "SHA256SUMS coverage differs; unlisted={missing:?}, missing-files={stale:?}"
         ));
@@ -326,14 +352,32 @@ fn verify_sums(root: &Path) -> Result<(), String> {
 }
 
 fn walk_payload_files(root: &Path) -> Result<BTreeSet<String>, String> {
-    fn visit(root: &Path, directory: &Path, output: &mut BTreeSet<String>) -> Result<(), String> {
+    fn visit(
+        root: &Path,
+        directory: &Path,
+        output: &mut BTreeSet<String>,
+        depth: usize,
+        entries_seen: &mut usize,
+        bytes_seen: &mut u64,
+    ) -> Result<(), String> {
+        if depth > MAX_CANDIDATE_DEPTH {
+            return Err(format!(
+                "candidate directory exceeds the safe traversal depth at {}",
+                directory.display()
+            ));
+        }
         for entry in fs::read_dir(directory)
             .map_err(|error| format!("could not inspect {}: {error}", directory.display()))?
         {
             let entry = entry.map_err(|error| error.to_string())?;
+            *entries_seen = entries_seen.saturating_add(1);
+            if *entries_seen > MAX_CANDIDATE_ENTRIES {
+                return Err(format!(
+                    "candidate directory exceeds the {MAX_CANDIDATE_ENTRIES}-entry safety limit"
+                ));
+            }
             let path = entry.path();
-            let metadata = entry
-                .metadata()
+            let metadata = fs::symlink_metadata(&path)
                 .map_err(|error| format!("could not inspect {}: {error}", path.display()))?;
             if metadata.file_type().is_symlink() {
                 return Err(format!(
@@ -341,13 +385,30 @@ fn walk_payload_files(root: &Path) -> Result<BTreeSet<String>, String> {
                     path.display()
                 ));
             }
-            if metadata.is_dir() {
-                visit(root, &path, output)?;
-            } else if metadata.is_file() {
+            if metadata.file_type().is_dir() {
+                visit(root, &path, output, depth + 1, entries_seen, bytes_seen)?;
+            } else if metadata.file_type().is_file() {
+                if metadata.len() > MAX_CANDIDATE_FILE_BYTES {
+                    return Err(format!(
+                        "candidate file {} exceeds the {MAX_CANDIDATE_FILE_BYTES}-byte safety limit",
+                        path.display()
+                    ));
+                }
+                *bytes_seen = bytes_seen.checked_add(metadata.len()).ok_or_else(|| {
+                    format!(
+                        "candidate files exceed the {MAX_CANDIDATE_BYTES}-byte aggregate safety limit"
+                    )
+                })?;
+                if *bytes_seen > MAX_CANDIDATE_BYTES {
+                    return Err(format!(
+                        "candidate files exceed the {MAX_CANDIDATE_BYTES}-byte aggregate safety limit"
+                    ));
+                }
                 let relative = path
                     .strip_prefix(root)
                     .map_err(|error| error.to_string())?
-                    .to_string_lossy()
+                    .to_str()
+                    .ok_or_else(|| format!("candidate path {} is not valid UTF-8", path.display()))?
                     .replace('\\', "/");
                 if relative != "SHA256SUMS.txt"
                     && relative != "acceptance.json"
@@ -355,13 +416,32 @@ fn walk_payload_files(root: &Path) -> Result<BTreeSet<String>, String> {
                 {
                     output.insert(relative);
                 }
+            } else {
+                return Err(format!(
+                    "candidate contains unsupported entry {}",
+                    path.display()
+                ));
             }
         }
         Ok(())
     }
 
+    let root_metadata = fs::symlink_metadata(root)
+        .map_err(|error| format!("could not inspect {}: {error}", root.display()))?;
+    if !root_metadata.file_type().is_dir() {
+        return Err(format!("{} is not a candidate directory", root.display()));
+    }
     let mut output = BTreeSet::new();
-    visit(root, root, &mut output)?;
+    let mut entries_seen = 0;
+    let mut bytes_seen = 0;
+    visit(
+        root,
+        root,
+        &mut output,
+        0,
+        &mut entries_seen,
+        &mut bytes_seen,
+    )?;
     Ok(output)
 }
 
@@ -382,7 +462,9 @@ fn verify_website_copies(
         .join("releases")
         .join("channels")
         .join(format!("{channel}.json"));
-    if read(&immutable_manifest)? != manifest || read(&hosted_channel)? != descriptor {
+    if read_limited(&immutable_manifest, manifest.len() as u64)? != manifest
+        || read_limited(&hosted_channel, descriptor.len() as u64)? != descriptor
+    {
         return Err("website release documents differ from the signed candidate".to_string());
     }
     verify_file(&immutable_manifest, manifest)?;
@@ -413,16 +495,142 @@ fn validate_digest(value: &str) -> Result<(), String> {
     }
 }
 
-fn read(path: &Path) -> Result<Vec<u8>, String> {
-    fs::read(path).map_err(|error| format!("could not read {}: {error}", path.display()))
+fn open_limited(path: &Path, limit: u64) -> Result<File, String> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| format!("could not inspect {}: {error}", path.display()))?;
+    if !metadata.file_type().is_file() {
+        return Err(format!(
+            "candidate path {} is not a regular file",
+            path.display()
+        ));
+    }
+    if metadata.len() > limit {
+        return Err(format!(
+            "candidate file {} exceeds the {limit}-byte safety limit",
+            path.display()
+        ));
+    }
+    let file =
+        File::open(path).map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    let opened_metadata = file
+        .metadata()
+        .map_err(|error| format!("could not inspect open file {}: {error}", path.display()))?;
+    if !opened_metadata.file_type().is_file() {
+        return Err(format!(
+            "candidate path {} is not a regular file",
+            path.display()
+        ));
+    }
+    if opened_metadata.len() > limit {
+        return Err(format!(
+            "candidate file {} exceeds the {limit}-byte safety limit",
+            path.display()
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+
+        if metadata.dev() != opened_metadata.dev() || metadata.ino() != opened_metadata.ino() {
+            return Err(format!(
+                "candidate file {} changed while it was opened",
+                path.display()
+            ));
+        }
+    }
+    Ok(file)
+}
+
+fn read_limited(path: &Path, limit: u64) -> Result<Vec<u8>, String> {
+    let file = open_limited(path, limit)?;
+    let mut bytes = Vec::new();
+    file.take(limit.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    if bytes.len() as u64 > limit {
+        return Err(format!(
+            "candidate file {} exceeds the {limit}-byte safety limit",
+            path.display()
+        ));
+    }
+    Ok(bytes)
+}
+
+fn read_text_limited(path: &Path, limit: u64) -> Result<String, String> {
+    String::from_utf8(read_limited(path, limit)?)
+        .map_err(|error| format!("{} is not UTF-8: {error}", path.display()))
+}
+
+fn digest_file(path: &Path, limit: u64) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+
+    let file = open_limited(path, limit)?;
+    let mut file = file.take(limit.saturating_add(1));
+    let mut digest = Sha256::new();
+    let mut bytes_read = 0_u64;
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let count = file
+            .read(&mut buffer)
+            .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+        if count == 0 {
+            break;
+        }
+        bytes_read += count as u64;
+        if bytes_read > limit {
+            return Err(format!(
+                "candidate file {} exceeds the {limit}-byte safety limit",
+                path.display()
+            ));
+        }
+        digest.update(&buffer[..count]);
+    }
+    Ok(format!("{:x}", digest.finalize()))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{utc_timestamp, validate_build_metadata};
+    use super::{
+        read_limited, utc_timestamp, validate_build_metadata, validate_candidate,
+        walk_payload_files, MAX_CANDIDATE_FILE_BYTES,
+    };
     use serde_json::{json, Value};
+    use std::fs::{self, File};
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     const COMMIT: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    static TEST_DIRECTORY_ID: AtomicU64 = AtomicU64::new(0);
+
+    struct TestDirectory(PathBuf);
+
+    impl TestDirectory {
+        fn new() -> Self {
+            let nonce = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "vfc-{}-{:x}-{}",
+                std::process::id(),
+                nonce & u32::MAX as u128,
+                TEST_DIRECTORY_ID.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::create_dir(&path).expect("create test directory");
+            Self(path)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
 
     fn metadata() -> Value {
         json!({
@@ -506,5 +714,109 @@ mod tests {
         let mut wrong_esptool = metadata();
         wrong_esptool["web_packages"]["esptool-js"] = json!("0.6.1");
         assert!(validate_build_metadata(&encoded(&wrong_esptool), COMMIT).is_err());
+    }
+
+    #[test]
+    fn bounded_read_rejects_oversized_files_before_allocating_their_contents() {
+        let root = TestDirectory::new();
+        let path = root.path().join("oversized.bin");
+        let file = File::create(&path).expect("create sparse payload");
+        file.set_len(9).expect("size sparse payload");
+
+        let error = read_limited(&path, 8).expect_err("oversized read must fail");
+        assert!(error.contains("exceeds the 8-byte safety limit"));
+    }
+
+    #[test]
+    fn candidate_inventory_rejects_oversized_files_before_required_files_are_read() {
+        let root = TestDirectory::new();
+        let path = root.path().join("oversized.bin");
+        let file = File::create(&path).expect("create sparse payload");
+        file.set_len(MAX_CANDIDATE_FILE_BYTES + 1)
+            .expect("size sparse payload");
+
+        let error = validate_candidate(root.path()).expect_err("oversized candidate must fail");
+        assert!(error.contains("oversized.bin"));
+        assert!(error.contains("safety limit"));
+        assert!(!error.contains("minisign.pub"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn payload_walk_rejects_file_and_directory_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let file_root = TestDirectory::new();
+        fs::write(file_root.path().join("payload.bin"), b"payload").expect("write payload");
+        symlink(
+            file_root.path().join("payload.bin"),
+            file_root.path().join("payload-link.bin"),
+        )
+        .expect("create file symlink");
+        assert!(walk_payload_files(file_root.path()).is_err());
+
+        let directory_root = TestDirectory::new();
+        let real_directory = directory_root.path().join("real");
+        fs::create_dir(&real_directory).expect("create payload directory");
+        fs::write(real_directory.join("payload.bin"), b"payload").expect("write payload");
+        symlink(
+            &real_directory,
+            directory_root.path().join("directory-link"),
+        )
+        .expect("create directory symlink");
+        assert!(walk_payload_files(directory_root.path()).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn candidate_inventory_rejects_symlinks_before_required_files_are_read() {
+        use std::os::unix::fs::symlink;
+
+        let root = TestDirectory::new();
+        let outside = TestDirectory::new();
+        fs::write(outside.path().join("payload.bin"), b"payload").expect("write payload");
+        fs::create_dir(root.path().join("nested")).expect("create nested directory");
+        symlink(outside.path(), root.path().join("nested").join("escape"))
+            .expect("create directory symlink");
+
+        let error = validate_candidate(root.path()).expect_err("symlink candidate must fail");
+        assert!(error.contains("candidate cannot contain symlink"));
+        assert!(error.contains("escape"));
+        assert!(!error.contains("minisign.pub"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn candidate_inventory_rejects_unsupported_entries_before_required_files_are_read() {
+        use std::process::Command;
+
+        let root = TestDirectory::new();
+        let fifo_path = root.path().join("candidate.fifo");
+        let status = Command::new("mkfifo")
+            .arg(&fifo_path)
+            .status()
+            .expect("run mkfifo");
+        assert!(status.success());
+
+        let error =
+            validate_candidate(root.path()).expect_err("unsupported candidate entry must fail");
+        assert!(error.contains("candidate contains unsupported entry"));
+        assert!(error.contains("candidate.fifo"));
+        assert!(!error.contains("minisign.pub"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bounded_read_rejects_symlinks_without_following_them() {
+        use std::os::unix::fs::symlink;
+
+        let root = TestDirectory::new();
+        let target = root.path().join("target.bin");
+        let link = root.path().join("link.bin");
+        fs::write(&target, b"payload").expect("write target");
+        symlink(&target, &link).expect("create symlink");
+
+        let error = read_limited(&link, 1024).expect_err("symlink read must fail");
+        assert!(error.contains("is not a regular file"));
     }
 }
