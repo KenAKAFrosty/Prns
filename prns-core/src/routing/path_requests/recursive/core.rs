@@ -1,7 +1,7 @@
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
 use crate::wire::DestinationHash;
-/// RNS 1.3.5 `Transport.PATH_REQUEST_TIMEOUT` (15s)
+/// RNS 1.4.0 `Transport.PATH_REQUEST_TIMEOUT` (15s)
 pub const RECURSIVE_PATH_REQUEST_TIMEOUT_MS: u64 = 15_000;
 
 pub trait RecursivePathRequestTable {
@@ -50,7 +50,7 @@ pub trait RecursivePathRequestTable {
     fn invalidate_expiry_index(&mut self) {}
 }
 
-/// RNS 1.3.5 `Transport.discovery_path_requests`.
+/// RNS 1.4.0 `Transport.discovery_path_requests`.
 #[derive(Debug, Default)]
 pub struct RecursivePathRequests<C: RecursivePathRequestTable> {
     table: C,

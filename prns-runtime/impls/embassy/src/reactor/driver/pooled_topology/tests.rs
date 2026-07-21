@@ -10,7 +10,7 @@ use embassy_time::{with_timeout, Duration, Timer};
 use heapless::Vec as HeaplessVec;
 
 use crate::engine::test_support::{
-    bytes_from_hex, pin_transport_id, TestStorageLayout, RNS_1_3_5_ANNOUNCE, TEST_TRANSPORT_ID,
+    bytes_from_hex, pin_transport_id, TestStorageLayout, RNS_1_4_0_ANNOUNCE, TEST_TRANSPORT_ID,
 };
 use crate::engine::{EngineState, IssuedCommand, Journaled};
 use crate::interfaces::InterfaceIfac;
@@ -61,7 +61,7 @@ fn a_pooled_ifac_slot_added_at_runtime_opens_inbound_then_frees_on_remove() {
     > = HeaplessVec::new();
     let _ = egress_lanes.push((source, source_out_tx));
 
-    let raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+    let raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
     let mut masked = [0u8; SLOT];
     let masked_len = network.mask_outbound(&raw, &mut masked).unwrap();
 
@@ -191,7 +191,7 @@ fn a_pooled_slot_retagged_at_runtime_carries_traffic_under_the_new_id() {
     > = HeaplessVec::new();
     let _ = egress_lanes.push((old_id, source_out_tx));
 
-    let raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+    let raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
 
     let heard: Rc<RefCell<usize>> = Rc::new(RefCell::new(0));
     let heard_sink = heard.clone();

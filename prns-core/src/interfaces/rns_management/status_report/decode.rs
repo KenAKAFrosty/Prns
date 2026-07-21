@@ -235,6 +235,7 @@ struct InterfaceBuilder {
     switch_id: RnsOptionalField<String>,
     endpoint_id: RnsOptionalField<String>,
     via_switch_id: RnsOptionalField<String>,
+    blocked_ip_list: RnsOptionalField<Vec<String>>,
 }
 
 impl InterfaceBuilder {
@@ -295,6 +296,7 @@ impl InterfaceBuilder {
             switch_id: self.switch_id,
             endpoint_id: self.endpoint_id,
             via_switch_id: self.via_switch_id,
+            blocked_ip_list: self.blocked_ip_list,
         })
     }
 }
@@ -563,6 +565,9 @@ fn read_interface(
             interface::VIA_SWITCH_ID => {
                 interface_report.via_switch_id = read_optional_string(reader, path)?
             }
+            interface::BLOCKED_IP_LIST => {
+                interface_report.blocked_ip_list = read_optional_string_array(reader, path)?
+            }
             _ => skip(reader)?,
         }
     }
@@ -624,6 +629,28 @@ fn read_optional_string(
         .map_err(|_| RnsInterfaceStatsDecodeError::InvalidMessagePack)?
         .map(|value| RnsOptionalField::Value(value.to_string()))
         .ok_or(RnsInterfaceStatsDecodeError::InvalidFieldType(path))
+}
+
+fn read_optional_string_array(
+    reader: &mut MessagePackReader<'_>,
+    path: RnsStatsFieldPath,
+) -> Result<RnsOptionalField<Vec<String>>, RnsInterfaceStatsDecodeError> {
+    let marker = marker(reader)?;
+    if marker == Marker::Null {
+        return Ok(RnsOptionalField::Null);
+    }
+    let length = reader
+        .array_length(marker)
+        .map_err(|_| RnsInterfaceStatsDecodeError::InvalidMessagePack)?
+        .ok_or_else(|| RnsInterfaceStatsDecodeError::InvalidFieldType(path.clone()))?;
+    let mut values = Vec::new();
+    values
+        .try_reserve_exact(length)
+        .map_err(|_| RnsInterfaceStatsDecodeError::AllocationFailed { entries: length })?;
+    for _ in 0..length {
+        values.push(read_string(reader, path.clone())?);
+    }
+    Ok(RnsOptionalField::Value(values))
 }
 
 fn read_optional_binary(

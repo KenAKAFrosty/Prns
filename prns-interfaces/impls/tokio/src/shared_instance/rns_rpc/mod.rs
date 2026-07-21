@@ -1,6 +1,7 @@
 mod authentication;
 mod client;
 mod framing;
+mod legacy;
 mod persistence;
 mod server;
 mod telemetry;

@@ -2,7 +2,7 @@ use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
 use crate::wire::DestinationHash;
 
-/// RNS 1.3.5 `Transport.REVERSE_TIMEOUT` (8 minutes).
+/// RNS 1.4.0 `Transport.REVERSE_TIMEOUT` (8 minutes).
 pub const DEFAULT_REVERSE_ROUTE_TIMEOUT_MS: u64 = 8 * 60 * 1_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -192,4 +192,4 @@ done
     exit 1
 }
 
-echo "PASS: Prnsd path queried and mutated the stock RNS 1.3.9 utility surfaces"
+echo "PASS: Prnsd path queried and mutated the stock RNS 1.4.0 utility surfaces"

@@ -1,6 +1,6 @@
 //! [`assemble_incoming`](super::assemble_incoming)'s open, streamed along the receive window's consecutive frontier: every part that extends it is authenticated, decrypted, and (uncompressed) hash-absorbed as it lands, so a completed transfer concludes in constant work instead of a whole-transfer sweep after the last part.
 //!
-//! Wire-invisible, an intentional deviation in timing only: RNS 1.3.5 `Resource.assemble` walks the joined transfer whole, and every refusal here surfaces at the same conclusion with the same cause. No decrypted byte is released before the MAC verdict.
+//! Wire-invisible, an intentional deviation in timing only: RNS 1.4.0 `Resource.assemble` walks the joined transfer whole, and every refusal here surfaces at the same conclusion with the same cause. No decrypted byte is released before the MAC verdict.
 
 use crate::crypto::{Sha256PrefixState, TokenOpenStream};
 use crate::routing::links::resources::assemble_incoming::{

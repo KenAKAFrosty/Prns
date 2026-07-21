@@ -1,7 +1,7 @@
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use heapless::Vec as HeaplessVec;
 
-use crate::engine::test_support::{bytes_from_hex, RNS_1_3_5_ANNOUNCE};
+use crate::engine::test_support::{bytes_from_hex, RNS_1_4_0_ANNOUNCE};
 use crate::engine::FanTarget;
 use crate::interfaces::InterfaceIfac;
 use crate::interfaces::{InterfaceId, InterfaceKind};
@@ -55,7 +55,7 @@ fn a_fleet_lane_masks_direct_and_broadcast_frames_once() {
         id: supervisor,
         context: network.clone(),
     }];
-    let clean = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+    let clean = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
 
     enqueue_for_wire(&mut egress, &ifacs, child, &clean);
     let direct = consumer.try_peek().unwrap();

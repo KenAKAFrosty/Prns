@@ -18,7 +18,7 @@ impl PathRequestId {
     }
 }
 
-/// RNS 1.3.5 `Transport.request_path`. The structured form of the reference's `await_path` poll.
+/// RNS 1.4.0 `Transport.request_path`. The structured form of the reference's `await_path` poll.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RequestPath {
     pub destination: DestinationHash,

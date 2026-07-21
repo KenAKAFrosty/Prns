@@ -292,6 +292,20 @@ impl<T: DiscoveryCatalogTable> DiscoveryCatalog<T> {
             .collect()
     }
 
+    pub fn remove_below_stamp_cost(&mut self, required: super::StampCost) -> Vec<DiscoveryRecord> {
+        let below_cost = self
+            .records()
+            .filter_map(|record| {
+                (record.interface().stamp_value.get() < u16::from(required.get()))
+                    .then_some(record.id())
+            })
+            .collect::<Vec<_>>();
+        below_cost
+            .into_iter()
+            .filter_map(|id| self.records.remove(id))
+            .collect()
+    }
+
     pub fn len(&self) -> usize {
         self.records.len()
     }

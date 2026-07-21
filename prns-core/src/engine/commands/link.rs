@@ -8,7 +8,7 @@ use crate::wire::DestinationHash;
 
 use super::{EngineCommand, PacketReceiptDelivered, Settleable, Settlement};
 
-/// RNS 1.3.5 `Link(destination)`.
+/// RNS 1.4.0 `Link(destination)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EstablishLink {
     pub destination: DestinationHash,
@@ -24,7 +24,7 @@ pub const MAX_SEND_TO_LINK_PLAINTEXT_LEN: usize = link_mdu(crate::wire::BROADCAS
 
 pub type SendToLinkPayload = HeaplessVec<u8, MAX_SEND_TO_LINK_PLAINTEXT_LEN>;
 
-/// RNS 1.3.5 `Link.identify`, initiator-only.
+/// RNS 1.4.0 `Link.identify`, initiator-only.
 /// Fire-and-forget in the reference: the peer validates it and fires its callback but sends nothing back, no proof and no ack, so there is no delivery confirmation to await and success settles at write time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Identify {
@@ -46,7 +46,7 @@ pub enum IdentifyFailure {
     WriteFailed,
 }
 
-/// RNS 1.3.5 `Packet(link, data).send()`
+/// RNS 1.4.0 `Packet(link, data).send()`
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SendToLink {
     pub link_id: LinkId,
@@ -59,7 +59,7 @@ pub enum SendToLinkRejection {
     LinkNotActive,
 }
 
-/// RNS 1.3.5 `Link.teardown`.
+/// RNS 1.4.0 `Link.teardown`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CloseLink {
     pub link_id: LinkId,

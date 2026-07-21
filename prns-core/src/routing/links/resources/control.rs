@@ -4,13 +4,13 @@
 //! - the initiator's cancel (0x06)
 //! - the receiver's cancel (0x07)
 //!
-//! All but the proof seal under the link key; the proof rides unencrypted as a PROOF-type packet (two hashes, nothing to hide; RNS 1.3.5 "Resource proofs are not encrypted").
+//! All but the proof seal under the link key; the proof rides unencrypted as a PROOF-type packet (two hashes, nothing to hide; RNS 1.4.0 "Resource proofs are not encrypted").
 
 use crate::routing::links::resources::{
     ResourceHash, ResourceProof, MAP_HASH_LEN, RESOURCE_HASH_LEN, WINDOW_MAX,
 };
 
-/// RNS 1.3.5 `Resource.HASHMAP_IS_EXHAUSTED` / `HASHMAP_IS_NOT_EXHAUSTED`: the part request's first byte.
+/// RNS 1.4.0 `Resource.HASHMAP_IS_EXHAUSTED` / `HASHMAP_IS_NOT_EXHAUSTED`: the part request's first byte.
 /// The reference tests equality with 0xFF only, so any other value reads as not-exhausted.
 pub const HASHMAP_IS_EXHAUSTED: u8 = 0xFF;
 pub const HASHMAP_IS_NOT_EXHAUSTED: u8 = 0x00;
@@ -29,7 +29,7 @@ pub enum ResourcePartRequestError {
     Malformed,
 }
 
-/// RNS 1.3.5 `Resource.request_next`'s pack: `[flag]` ‖ `[last known map hash]` (only when exhausted) ‖ resource hash ‖ the requested map hashes back to back.
+/// RNS 1.4.0 `Resource.request_next`'s pack: `[flag]` ‖ `[last known map hash]` (only when exhausted) ‖ resource hash ‖ the requested map hashes back to back.
 /// `last_known_map_hash` set means the receiver ran past the map hashes it holds and the sender owes a hashmap update naming the run after that mark.
 pub fn write_part_request_plaintext(
     hash: &ResourceHash,

@@ -290,7 +290,7 @@ pub struct OutgoingResources<C: ResourceTable<OutgoingResourceState>> {
 }
 
 impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
-    /// One resource per link at a time, matching RNS 1.3.5 `Link.ready_for_new_resource`.
+    /// One resource per link at a time, matching RNS 1.4.0 `Link.ready_for_new_resource`.
     ///
     /// Intentional deviation from reference: the next continuation segment may land beside the link's one occupied row and remain off the wire until the segment ahead proves. Its preparation therefore overlaps the wire instead of following it.
     /// The occupied row may itself still be staged: a proof settles its segment before the follower finishes sealing, and the host's next dispatch lands in that window.
@@ -517,7 +517,7 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
         &self.table.hashes()[index]
     }
 
-    /// The distinction RNS 1.3.5 draws between `part.send()` (counted toward `sent_parts`) and `part.resend()` (not counted).
+    /// The distinction RNS 1.4.0 draws between `part.send()` (counted toward `sent_parts`) and `part.resend()` (not counted).
     pub fn mark_sent(&mut self, index: usize, part_index: usize) -> PartSendOutcome {
         if part_index >= self.table.states()[index].part_count {
             return PartSendOutcome::NoSuchPart;
@@ -641,7 +641,7 @@ pub struct IncomingResources<C: ResourceTable<IncomingResourceState>> {
 
 impl<C: ResourceTable<IncomingResourceState>> IncomingResources<C> {
     /// The capacity and shape gate the engine asks at accept; policy gating happens before the offer ever reaches the table.
-    /// The duplicate refusal is RNS 1.3.5 `Resource.accept`'s `has_incoming_resource` registration gate.
+    /// The duplicate refusal is RNS 1.4.0 `Resource.accept`'s `has_incoming_resource` registration gate.
     pub fn accept(
         &mut self,
         link_id: LinkId,
@@ -714,7 +714,7 @@ impl<C: ResourceTable<IncomingResourceState>> IncomingResources<C> {
         Ok(index)
     }
 
-    /// RNS 1.3.5 `Resource.hashmap_update`. We refuse two shapes the reference mishandles:
+    /// RNS 1.4.0 `Resource.hashmap_update`. We refuse two shapes the reference mishandles:
     /// - Names past the part count: an `IndexError` off its fixed-length `[None] * total_parts` list, uncaught until the delivering interface's read loop, which tears the whole interface down.
     /// - A segment that skips ahead of the height: lands silently while `hashmap_height` (a fill count, not a prefix height) inflates, so `request_next` reads `None` holes.
     ///
@@ -766,7 +766,7 @@ impl<C: ResourceTable<IncomingResourceState>> IncomingResources<C> {
         state.hashmap_height = state.hashmap_height.max(height);
     }
 
-    /// RNS 1.3.5 `Resource.receive_part`'s bookkeeping half.
+    /// RNS 1.4.0 `Resource.receive_part`'s bookkeeping half.
     /// A part before the last must fill the sdu exactly: parts land at `index × sdu`, so a short middle part could only corrupt.
     pub fn place_part(
         &mut self,

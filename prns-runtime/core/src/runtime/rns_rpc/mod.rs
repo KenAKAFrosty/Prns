@@ -58,6 +58,34 @@ where
     reply.encode(request.dialect())
 }
 
+/// Execute an already-decoded request and return the canonical MessagePack
+/// reply. Host transports use this after normalizing legacy pickle requests;
+/// the transport then re-encodes the reply in the request's original dialect.
+pub async fn reply_decoded<B>(
+    request: &RnsRpcRequest,
+    query: &impl NodeIntrospection,
+    control: &impl RoutingControl,
+    retention: &impl DestinationIdentityRetentionControl,
+    blackholes: &B,
+    blackhole_source: IdentityHash,
+    transport_status: Option<RnsTransportStatus>,
+) -> Result<Vec<u8>, RnsRpcReplyEncodeError>
+where
+    B: IdentityBlackholeSource + IdentityBlackholeControl,
+{
+    reply_for_msgpack(
+        request,
+        query,
+        control,
+        retention,
+        blackholes,
+        blackhole_source,
+        transport_status,
+    )
+    .await
+    .encode(prns_core::interfaces::shared_instance::rns_rpc::RpcDialect::Msgpack)
+}
+
 async fn reply_for_msgpack<B>(
     request: &RnsRpcRequest,
     query: &impl NodeIntrospection,

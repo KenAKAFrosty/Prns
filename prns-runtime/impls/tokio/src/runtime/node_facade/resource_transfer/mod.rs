@@ -27,7 +27,7 @@ pub enum ResourceSendError {
     NodeStopped,
 }
 
-/// RNS 1.3.5 `Resource.AUTO_COMPRESS_MAX_SIZE`
+/// RNS 1.4.0 `Resource.AUTO_COMPRESS_MAX_SIZE`
 pub const AUTO_COMPRESS_MAX_LEN: u64 = 64 * 1024 * 1024;
 
 pub(super) const fn resource_segment_decompression_bound(uncompressed_data_len: u64) -> u64 {
@@ -128,7 +128,7 @@ impl PrnsNodeHandle {
         .await
     }
 
-    /// The RNS 1.3.5 `auto_compress` parameter: [`SegmentCompression::Never`] ships every segment uncompressed where the default attempts bz2 per segment.
+    /// The RNS 1.4.0 `auto_compress` parameter: [`SegmentCompression::Never`] ships every segment uncompressed where the default attempts bz2 per segment.
     pub async fn send_resource_with_compression(
         &self,
         link_id: LinkId,

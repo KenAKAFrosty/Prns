@@ -1,4 +1,4 @@
-//! RNS 1.3.5 `Resource.accept`: the strategy gate runs before a single part moves. The advertisement declares size and kind up front, so refusing is free.
+//! RNS 1.4.0 `Resource.accept`: the strategy gate runs before a single part moves. The advertisement declares size and kind up front, so refusing is free.
 
 use crate::engine::{CommandId, CommandOutcome, SetResourceStrategy, SetResourceStrategyRejection};
 use crate::engine::{Directive, EngineReaction, EngineState, InstantMillis};
@@ -38,7 +38,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// RNS 1.3.5 `Resource.accept`; strategy refusals are silent, like a reference receiver that never accepts — except an `AcceptIf` decline, which answers with the reference's `Resource.reject`.
+    /// RNS 1.4.0 `Resource.accept`; strategy refusals are silent, like a reference receiver that never accepts — except an `AcceptIf` decline, which answers with the reference's `Resource.reject`.
     /// Request-correlated and pending-response advertisements bypass the strategy, exactly the reference's `Link.receive` `RESOURCE_ADV` ladder: its strategy arms only ever see unsolicited resources, and a response naming no pending request drops before them.
     /// Accepting a response segment claims the pending request's timeout (the reference's `RECEIVING` flip); the transfer settles the row through every exit from here.
     /// Intentional deviation from reference: a split request advertisement stays behind the strategy — the reference accepts request resources unconditionally, but our inbound request dispatch reads the whole pack at once, which a split does not deliver. Under `AcceptIf` the decider judges it like any unsolicited offer, and an admitted request still faces the route policy at dispatch.
@@ -252,11 +252,12 @@ impl<S: StorageLayout> EngineState<S> {
         IngestPacketOutcome::OwesResourcePull { link_id, hash }
     }
 
-    /// RNS 1.3.5 `Resource.reject`: the declined segment's bare hash, sealed under the link key, context `RESOURCE_RCL`.
+    /// RNS 1.4.0 `Resource.reject`: the declined segment's bare hash, sealed under the link key, context `RESOURCE_RCL`.
     pub(crate) fn reject_offered_resource<F>(
         &mut self,
         link_id: &LinkId,
         hash: &ResourceHash,
+        now: InstantMillis,
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) where
@@ -272,8 +273,9 @@ impl<S: StorageLayout> EngineState<S> {
         fill_entropy(&mut reject_iv);
         let mut reject_plaintext = [0u8; RESOURCE_HASH_LEN];
         if write_cancel_plaintext(hash, &mut reject_plaintext).is_ok() {
+            let mut wrote = false;
             let mut fill = |slot: &mut [u8]| -> Option<usize> {
-                write_link_packet(
+                let wire_len = write_link_packet(
                     link_id,
                     key,
                     mtu,
@@ -282,13 +284,19 @@ impl<S: StorageLayout> EngineState<S> {
                     &reject_iv,
                     slot,
                 )
-                .ok()
+                .ok()?;
+                wrote = true;
+                Some(wire_len)
             };
             sink(EngineReaction::Directive(Directive::EmitFrame {
                 target: fire_on,
                 size_hint: link_data_frame_ceiling(RESOURCE_HASH_LEN),
                 fill: &mut fill,
             }));
+            drop(fill);
+            if wrote {
+                self.links.note_outbound(link_id, now);
+            }
         }
     }
 }

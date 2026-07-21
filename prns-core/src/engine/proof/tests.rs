@@ -17,7 +17,7 @@ use crate::routing::upstream_app_destinations::ProofStrategy;
 use crate::wire::{WirePacketHeader, BROADCAST_MTU, HEADER_MIN_LEN};
 
 #[test]
-fn write_proof_is_byte_identical_to_the_rns_1_3_5_implicit_proof() {
+fn write_proof_is_byte_identical_to_the_rns_1_4_0_implicit_proof() {
     let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
     let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
     let held = state.hold_identity(fixed_secret_key()).unwrap();
@@ -34,7 +34,7 @@ fn write_proof_is_byte_identical_to_the_rns_1_3_5_implicit_proof() {
         .unwrap();
 
     let mut raw = sealed_single_packet(&identity, destination, b"proof-parity");
-    assert_eq!(raw, bytes_from_hex(RNS_1_3_5_SEALED_FOR_PROOF));
+    assert_eq!(raw, bytes_from_hex(RNS_1_4_0_SEALED_FOR_PROOF));
 
     let outcome = state.ingest_packet_with(
         plain_data_packet(&mut raw),
@@ -55,7 +55,7 @@ fn write_proof_is_byte_identical_to_the_rns_1_3_5_implicit_proof() {
     let written = state.write_proof(&owed, &mut buf).unwrap();
     assert_eq!(
         &buf[..written],
-        bytes_from_hex(RNS_1_3_5_IMPLICIT_PROOF).as_slice()
+        bytes_from_hex(RNS_1_4_0_IMPLICIT_PROOF).as_slice()
     );
 }
 

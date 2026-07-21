@@ -8,7 +8,7 @@ use crate::routing::dedup::PacketHash;
 
 use super::{PacketMetricStorage, PacketPhyRetention};
 
-pub const RNS_1_3_8_PACKET_PHY_CAPACITY: usize = 512;
+pub const RNS_1_4_0_PACKET_PHY_CAPACITY: usize = 512;
 
 pub struct HeapPacketMetricStorage<Metric, const CAPACITY: usize> {
     packet_hashes: Vec<PacketHash>,
@@ -74,7 +74,7 @@ impl<Metric: Copy, const CAPACITY: usize> PacketMetricStorage
 }
 
 pub type HeapPacketPhyRetention = PacketPhyRetention<
-    HeapPacketMetricStorage<RssiDbm, RNS_1_3_8_PACKET_PHY_CAPACITY>,
-    HeapPacketMetricStorage<SnrQuarterDb, RNS_1_3_8_PACKET_PHY_CAPACITY>,
-    HeapPacketMetricStorage<SignalQualityTenthsPercent, RNS_1_3_8_PACKET_PHY_CAPACITY>,
+    HeapPacketMetricStorage<RssiDbm, RNS_1_4_0_PACKET_PHY_CAPACITY>,
+    HeapPacketMetricStorage<SnrQuarterDb, RNS_1_4_0_PACKET_PHY_CAPACITY>,
+    HeapPacketMetricStorage<SignalQualityTenthsPercent, RNS_1_4_0_PACKET_PHY_CAPACITY>,
 >;

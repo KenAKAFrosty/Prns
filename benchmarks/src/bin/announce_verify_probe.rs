@@ -11,9 +11,9 @@ use personal_rns::runtime::{
 };
 use personal_rns::storage::GrowableHeap;
 
-// A real announce wire packet (the engine's own test vector): valid header, keys,
-// id, and Ed25519 signature, so the verify does the full work.
-const RNS_1_3_5_ANNOUNCE: &str =
+// A real announce wire packet minted with RNS 1.3.5 and revalidated with RNS 1.4.0:
+// valid header, keys, id, and Ed25519 signature, so the verify does the full work.
+const RNS_1_4_0_ANNOUNCE: &str =
     "010016f8a6d3f7d7c5b6f106d293804d73140002281f6d21232cbba9d12e516183197f08e\
 59b7afba27e99e4fe39f01b0d4d2583a5920220253970a16861e82e52e955a05ee39e2b6d2\
 0a2331f515512f667009618ccc8f5ebce0600845468d9b829006a172e839fc07deb9b065b91\
@@ -72,7 +72,7 @@ async fn main() {
     let delivered = Arc::new(AtomicU64::new(0));
     let flood = AnnounceFlood {
         id: InterfaceId::new([0xAF; 8]),
-        packet: bytes_from_hex(RNS_1_3_5_ANNOUNCE),
+        packet: bytes_from_hex(RNS_1_4_0_ANNOUNCE),
         delivered: delivered.clone(),
         deadline: Instant::now() + duration,
     };

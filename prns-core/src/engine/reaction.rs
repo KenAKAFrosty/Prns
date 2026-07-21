@@ -29,7 +29,7 @@ pub enum EngineReaction<'a> {
 /// A notice that something has just happened within the engine.
 #[repr(C)]
 pub enum Journaled<'a> {
-    /// RNS 1.3.5's announce-handler `received_announce` callback as data.
+    /// RNS 1.4.0's announce-handler `received_announce` callback as data.
     AnnounceHeard {
         observation: AnnounceObservation<'a>,
         rate_accounting: AnnounceRateAccounting,
@@ -43,7 +43,7 @@ pub enum Journaled<'a> {
         source_interface: InterfaceId,
         cause: HeldDropCause,
     },
-    /// RNS 1.3.5's destination `set_packet_callback` delivery as data.
+    /// RNS 1.4.0's destination `set_packet_callback` delivery as data.
     Delivered(Delivery<'a>),
 
     CommandSettled {
@@ -51,16 +51,16 @@ pub enum Journaled<'a> {
         settlement: Settlement,
     },
 
-    /// RNS 1.3.5's `set_link_established_callback` as data.
+    /// RNS 1.4.0's `set_link_established_callback` as data.
     LinkEstablished(LinkEstablished),
 
-    /// RNS 1.3.5's `remote_identified` callback as data.
+    /// RNS 1.4.0's `remote_identified` callback as data.
     PeerIdentified {
         link_id: LinkId,
         identity: IdentityHash,
     },
 
-    /// RNS 1.3.5's request handler callback as data.
+    /// RNS 1.4.0's request handler callback as data.
     RequestReceived {
         destination: DestinationHash,
         link_id: LinkId,
@@ -72,7 +72,7 @@ pub enum Journaled<'a> {
         data: &'a [u8],
     },
 
-    /// RNS 1.3.5's request `response_callback` as data.
+    /// RNS 1.4.0's request `response_callback` as data.
     ResponseReceived {
         command_id: CommandId,
         link_id: LinkId,
@@ -91,27 +91,27 @@ pub enum Journaled<'a> {
         data: &'a [u8],
     },
 
-    /// RNS 1.3.5 `Channel._receive`'s callback as data.
+    /// RNS 1.4.0 `Channel._receive`'s callback as data.
     ChannelMessageReceived {
         link_id: LinkId,
         message_type: MessageType,
         data: &'a [u8],
     },
 
-    /// RNS 1.3.5's `set_link_closed_callback` as data.
+    /// RNS 1.4.0's `set_link_closed_callback` as data.
     LinkClosed {
         link_id: LinkId,
         reason: LinkClosedReason,
     },
 
-    /// RNS 1.3.5 `Link.receive`: a packet for an active link arrived on an interface other than the link's own, dropped unprocessed as a possible manipulation attempt.
+    /// RNS 1.4.0 `Link.receive`: a packet for an active link arrived on an interface other than the link's own, dropped unprocessed as a possible manipulation attempt.
     LinkInterfaceMismatch {
         link_id: LinkId,
         attached_interface: InterfaceId,
         arrived_on: InterfaceId,
     },
 
-    /// RNS 1.3.5's `resource_concluded` callback as data.
+    /// RNS 1.4.0's `resource_concluded` callback as data.
     /// `metadata` is the transfer's packed metadata, stripped from the stream head, opaque to the engine.
     ResourceReceived {
         link_id: LinkId,
@@ -120,7 +120,7 @@ pub enum Journaled<'a> {
         data: &'a [u8],
     },
 
-    /// The failure half of RNS 1.3.5's `resource_concluded` callback, with the cause the reference never names.
+    /// The failure half of RNS 1.4.0's `resource_concluded` callback, with the cause the reference never names.
     ResourceFailed {
         link_id: LinkId,
         hash: ResourceHash,

@@ -15,7 +15,7 @@ fn a_local_client_transit_is_discounted_one_hop() {
 #[test]
 fn an_ifac_flagged_packet_is_dropped_at_the_door_like_rns_on_a_non_ifac_interface() {
     let mut raw = crate::engine::test_support::bytes_from_hex(
-        crate::engine::test_support::RNS_1_3_5_ANNOUNCE,
+        crate::engine::test_support::RNS_1_4_0_ANNOUNCE,
     );
     raw[0] |= 0x80;
     let packet = InboundPacket {
@@ -48,7 +48,7 @@ fn rejected_packets_never_expose_a_canonical_hash() {
     });
     assert_eq!(malformed.packet_hash(), None);
 
-    let mut ifac = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+    let mut ifac = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
     ifac[0] |= 0x80;
     let refused = ClassifiedInboundPacket::classify(InboundPacket {
         arrived_at: InstantMillis(7),
@@ -184,7 +184,7 @@ fn data_packets_classify_for_every_destination_type() {
 
 #[test]
 fn announce_packets_must_target_a_single_destination() {
-    let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+    let mut raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
     raw[0] |= (DestinationType::Group as u8) << 2;
     let packet = InboundPacket {
         arrived_at: InstantMillis(11),
@@ -197,7 +197,7 @@ fn announce_packets_must_target_a_single_destination() {
 
 #[test]
 fn announce_received_hops_saturates_at_wire_max() {
-    let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+    let mut raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
     raw[1] = u8::MAX;
     let source_interface = iface(0x04);
     let arrived_at = InstantMillis(13);

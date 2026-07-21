@@ -21,7 +21,7 @@ use super::session::{
 pub async fn run(args: RnpathArgs) -> Result<(), RnpathError> {
     if args.version {
         println!(
-            "prnsd path {} (RNS 1.3.8 compatibility)",
+            "prnsd path {} (RNS 1.4.0 compatibility)",
             env!("CARGO_PKG_VERSION")
         );
         return Ok(());
@@ -425,7 +425,7 @@ impl fmt::Display for RnpathError {
             Self::NodeStopped(source) => source.fmt(formatter),
             Self::Json(source) => write!(formatter, "could not encode JSON output: {source}"),
             Self::UnsupportedRemote => formatter.write_str(
-                "remote mutation and path requests are not implemented by RNS 1.3.8; only --table and --rates support -R",
+                "remote mutation and path requests are not implemented by RNS 1.4.0; only --table and --rates support -R",
             ),
             Self::NoPathKnown => formatter.write_str("No path known"),
             Self::NoRateInformation => formatter.write_str("No information available"),

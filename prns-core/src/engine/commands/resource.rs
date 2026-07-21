@@ -4,7 +4,7 @@ use crate::routing::links::LinkId;
 
 use super::{EngineCommand, Settleable, Settlement};
 
-/// RNS 1.3.5 `Link.set_resource_strategy` as a command.
+/// RNS 1.4.0 `Link.set_resource_strategy` as a command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SetResourceStrategy {
     pub link_id: LinkId,
@@ -37,7 +37,7 @@ pub enum SendResourceRejection {
 pub enum SendResourceFailure {
     Rejected(SendResourceRejection),
     WriteFailed,
-    /// The receiver sent `RESOURCE_RCL`; RNS 1.3.5 `Resource._rejected`.
+    /// The receiver sent `RESOURCE_RCL`; RNS 1.4.0 `Resource._rejected`.
     RejectedByPeer,
     Sequencing,
     Timeout,

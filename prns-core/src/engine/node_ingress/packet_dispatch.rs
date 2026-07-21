@@ -177,6 +177,7 @@ impl<S: StorageLayout> EngineState<S> {
                     delivery,
                     proof,
                     source,
+                    now,
                     &mut DeliveryIo {
                         interfaces,
                         should_prove: &mut *should_prove,
@@ -367,6 +368,7 @@ impl<S: StorageLayout> EngineState<S> {
                     let mut proof = [0u8; LINK_PROOF_WIRE_LEN];
                     if let Ok(written) = self.write_channel_ack(&link_id, &packet_hash, &mut proof)
                     {
+                        self.links.note_outbound(&link_id, now);
                         sink(EngineReaction::Directive(Directive::Send {
                             target: source,
                             bytes: &proof[..written],
@@ -418,7 +420,7 @@ impl<S: StorageLayout> EngineState<S> {
                         wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
                     }
                 } else {
-                    self.reject_offered_resource(&link_id, &accepted.hash, fill_entropy, sink);
+                    self.reject_offered_resource(&link_id, &accepted.hash, now, fill_entropy, sink);
                 }
             }
             IngestPacketOutcome::OwesResourceAssembly { link_id, hash } => {
@@ -521,6 +523,7 @@ impl<S: StorageLayout> EngineState<S> {
                 if interfaces.is_egress_eligible(source, Egress::Transmit) {
                     let mut buf = [0u8; BROADCAST_MTU];
                     if let Ok(written) = write_keepalive(&link_id, KEEPALIVE_ECHO, &mut buf) {
+                        self.links.note_keepalive_sent(&link_id, now);
                         sink(EngineReaction::Directive(Directive::Send {
                             target: source,
                             bytes: &buf[..written],

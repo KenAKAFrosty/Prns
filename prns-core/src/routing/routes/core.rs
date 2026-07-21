@@ -8,14 +8,14 @@ pub const fn route_index_buckets(destinations: usize) -> usize {
     buckets_for_two_thirds_load(destinations)
 }
 
-/// RNS 1.3.5 `Transport.path_table`'s `received_from` column.
+/// RNS 1.4.0 `Transport.path_table`'s `received_from` column.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NextHop {
     Direct,
     Via(TransportId),
 }
 
-/// RNS 1.3.5 `Transport.path_is_unresponsive`
+/// RNS 1.4.0 `Transport.path_is_unresponsive`
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RouteResponsiveness {
     Unknown,

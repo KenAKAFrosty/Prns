@@ -13,7 +13,8 @@ use crate::wire::TransportId;
 use super::{
     decode_advertisement, decode_envelope, discovery_destination_hash, AdvertisementHash,
     DiscoveryAdvertisement, DiscoveryDecodeError, DiscoveryEnvelopeBody, DiscoveryEnvelopeError,
-    InterfaceDiscoveryPolicy, StampCost, StampValidation, StampValue,
+    DiscoveryValidationCache, FixedDiscoveryValidationCache, InterfaceDiscoveryPolicy, StampCost,
+    StampValidation, StampValue,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -140,6 +141,29 @@ pub fn ingest_discovery_announce(
     observation: AnnounceObservation<'_>,
     decrypt: impl FnOnce(&[u8]) -> Result<Vec<u8>, DiscoveryDecryptionError>,
 ) -> DiscoveryIntake {
+    ingest_discovery_announce_with_cache::<FixedDiscoveryValidationCache<0, 0, 0, 1, 1>>(
+        policy,
+        observation,
+        decrypt,
+        None,
+    )
+}
+
+pub(super) fn ingest_discovery_announce_cached<C: DiscoveryValidationCache>(
+    policy: &InterfaceDiscoveryPolicy,
+    observation: AnnounceObservation<'_>,
+    decrypt: impl FnOnce(&[u8]) -> Result<Vec<u8>, DiscoveryDecryptionError>,
+    cache: &mut C,
+) -> DiscoveryIntake {
+    ingest_discovery_announce_with_cache(policy, observation, decrypt, Some(cache))
+}
+
+fn ingest_discovery_announce_with_cache<C: DiscoveryValidationCache>(
+    policy: &InterfaceDiscoveryPolicy,
+    observation: AnnounceObservation<'_>,
+    decrypt: impl FnOnce(&[u8]) -> Result<Vec<u8>, DiscoveryDecryptionError>,
+    mut cache: Option<&mut C>,
+) -> DiscoveryIntake {
     let Some(enabled) = policy.enabled_policy() else {
         return DiscoveryIntake::NotApplicable(DiscoveryNotApplicable::Disabled);
     };
@@ -168,6 +192,34 @@ pub fn ingest_discovery_announce(
         }
     };
     let signed_flag = envelope.signed;
+    let payload_hash = sha256_chunks(&[&observation.app_data[1..]]);
+    let envelope_security = match &envelope.body {
+        DiscoveryEnvelopeBody::Plaintext { .. } => DiscoveryEnvelopeSecurity::Plaintext,
+        DiscoveryEnvelopeBody::Encrypted { .. } => DiscoveryEnvelopeSecurity::NetworkEncrypted,
+    };
+    let provenance = DiscoveryProvenance {
+        announced_by: observation.announced_identity,
+        hops: observation.hops,
+        received_on: observation.source_interface,
+        received_at: observation.arrived_at,
+        envelope_security,
+        signed_flag,
+    };
+    if let Some(stamp_value) = cache
+        .as_deref()
+        .and_then(|cache| cache.insufficient(&payload_hash))
+    {
+        return DiscoveryIntake::Rejected(DiscoveryRejection::StampBelowCost {
+            value: stamp_value,
+            required: enabled.required_stamp_cost(),
+        });
+    }
+    if let Some((packed_advertisement, stamp_value)) = cache
+        .as_deref()
+        .and_then(|cache| cache.valid(&payload_hash))
+    {
+        return finish_validated_intake(packed_advertisement, stamp_value, provenance);
+    }
     let (body, envelope_security) = match envelope.body {
         DiscoveryEnvelopeBody::Plaintext {
             packed_advertisement,
@@ -209,13 +261,11 @@ pub fn ingest_discovery_announce(
         enabled.required_stamp_cost(),
         body,
         DiscoveryProvenance {
-            announced_by: observation.announced_identity,
-            hops: observation.hops,
-            received_on: observation.source_interface,
-            received_at: observation.arrived_at,
             envelope_security,
-            signed_flag,
+            ..provenance
         },
+        payload_hash,
+        cache.as_deref_mut(),
     )
 }
 
@@ -256,22 +306,38 @@ fn split_plaintext(bytes: &[u8]) -> Option<(&[u8], &[u8; super::STAMP_SIZE])> {
     Some((packed, stamp.try_into().ok()?))
 }
 
-fn finish_intake(
+fn finish_intake<C: DiscoveryValidationCache>(
     required_stamp_cost: StampCost,
     body: PlaintextBody<'_>,
     provenance: DiscoveryProvenance,
+    payload_hash: [u8; 32],
+    mut cache: Option<&mut C>,
 ) -> DiscoveryIntake {
     let (packed, stamp) = body.parts();
     let advertisement_hash = AdvertisementHash::for_advertisement(packed);
     let stamp_value = match super::validate_stamp(&advertisement_hash, stamp, required_stamp_cost) {
         StampValidation::MeetsCost { value } => value,
         StampValidation::BelowCost { value, required } => {
+            if let Some(cache) = cache.as_deref_mut() {
+                cache.remember_insufficient(payload_hash, value);
+            }
             return DiscoveryIntake::Rejected(DiscoveryRejection::StampBelowCost {
                 value,
                 required,
             });
         }
     };
+    if let Some(cache) = cache.as_deref_mut() {
+        cache.remember_valid(payload_hash, packed, stamp_value);
+    }
+    finish_validated_intake(packed, stamp_value, provenance)
+}
+
+fn finish_validated_intake(
+    packed: &[u8],
+    stamp_value: StampValue,
+    provenance: DiscoveryProvenance,
+) -> DiscoveryIntake {
     let advertisement = match decode_advertisement(packed) {
         Ok(advertisement) => advertisement,
         Err(error) => {

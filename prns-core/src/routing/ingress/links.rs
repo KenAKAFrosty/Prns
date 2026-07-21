@@ -143,7 +143,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// Transported-link retries bypass packet dedup to match RNS 1.3.5; `switch_through` prevents loops by validating hop direction.
+    /// Transported-link retries bypass packet dedup to match RNS 1.4.0; `switch_through` prevents loops by validating hop direction.
     pub(super) fn relay_if_transported(
         &mut self,
         address: WireAddress,
@@ -185,7 +185,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// RNS 1.3.5 relays returning link proofs after validating their wire shape, interface, and hop direction; end-to-end verification belongs to the initiator.
+    /// RNS 1.4.0 relays returning link proofs after validating their wire shape, interface, and hop direction; end-to-end verification belongs to the initiator.
     fn ingest_transported_link_proof<'p>(
         &mut self,
         link_id: &LinkId,
@@ -697,8 +697,13 @@ impl<S: StorageLayout> EngineState<S> {
         };
         match (role, byte) {
             (LinkRole::Responder { .. }, KEEPALIVE_REQUEST) => {
+                let echo_due = self.links.keepalive_echo_due(&link_id, arrived_at);
                 self.links.note_inbound(&link_id, arrived_at);
-                IngestPacketOutcome::OwesKeepaliveEcho { link_id }
+                if echo_due {
+                    IngestPacketOutcome::OwesKeepaliveEcho { link_id }
+                } else {
+                    IngestPacketOutcome::Ignored(IgnoreReason::Consumed)
+                }
             }
             (LinkRole::Initiator { .. } | LinkRole::Responder { .. }, KEEPALIVE_ECHO) => {
                 self.links.note_inbound(&link_id, arrived_at);

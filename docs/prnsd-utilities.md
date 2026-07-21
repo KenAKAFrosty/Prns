@@ -1,6 +1,6 @@
 # Prnsd Utilities
 
-Prnsd provides the stock RNS 1.3.8-compatible utility roles as direct, prefixless subcommands. From a source
+Prnsd provides the stock RNS 1.4.0-compatible utility roles as direct, prefixless subcommands. From a source
 checkout, invoke them through `cargo prnsd`; an installed daemon exposes the same commands directly
 through `prnsd`.
 
@@ -68,10 +68,10 @@ prnsd x DESTINATION_HASH "uname -a"
 
 `--noid` suppresses client identification and is distinct from the listener's `--noauth` policy.
 
-## RNS 1.3.8 compatibility
+## RNS 1.4.0 compatibility
 
-The suite tracks stock RNS 1.3.8 behavior at the CLI and protocol boundaries through Python oracles
-pinned to the RNS 1.3.9 security release, whose utility wire semantics remain compatible with that target.
+The suite tracks stock RNS 1.4.0 behavior at the CLI and protocol boundaries through Python oracles
+pinned to the RNS 1.4.0 security release, whose utility wire semantics remain compatible with that target.
 Where a utility has two roles, the tests exercise both directions:
 
 ```sh

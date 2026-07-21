@@ -9,7 +9,7 @@ use embassy_sync::channel::Channel;
 use embassy_time::{with_timeout, Duration, Timer};
 
 use crate::engine::test_support::{
-    bytes_from_hex, pin_transport_id, TestStorageLayout, RNS_1_3_5_ANNOUNCE, TEST_TRANSPORT_ID,
+    bytes_from_hex, pin_transport_id, TestStorageLayout, RNS_1_4_0_ANNOUNCE, TEST_TRANSPORT_ID,
 };
 use crate::engine::{EngineState, IssuedCommand, Journaled};
 use crate::interfaces::InterfaceIfac;
@@ -103,7 +103,7 @@ fn an_ifac_frame_crosses_the_seam_and_leaves_masked_through_the_peer() {
     let (peer_in_tx, mut peer_in_rx) = leaked_grant_lane::<PEER_SLOT>(2);
     let (mut peer_out_tx, peer_out_rx) = leaked_grant_lane::<PEER_SLOT>(2);
 
-    let raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+    let raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
     let mut masked = [0u8; EMBEDDED_MAX_WIRE_FRAME_LEN];
     let masked_len = network().mask_outbound(&raw, &mut masked).unwrap();
     let original_hops = WirePacketHeader::parse(&raw)

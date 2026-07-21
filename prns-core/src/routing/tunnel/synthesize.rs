@@ -261,7 +261,7 @@ mod tests {
     #[test]
     fn a_tunnel_keeps_routes_warm_through_a_disconnect_and_repoints_them_on_reconnect() {
         use crate::engine::test_support::{
-            bytes_from_hex, routable_descriptor, transporting_node, RNS_1_3_5_ANNOUNCE,
+            bytes_from_hex, routable_descriptor, transporting_node, RNS_1_4_0_ANNOUNCE,
         };
         use crate::engine::InstantMillis;
         use crate::interfaces::{InboundPacket, InterfaceDescriptor, InterfaceId};
@@ -275,7 +275,7 @@ mod tests {
         let first_conn = InterfaceId::new([0xC1; 8]);
         let interfaces = [routable_descriptor(first_conn)];
 
-        let mut announce = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+        let mut announce = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
         let _ = relay.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),

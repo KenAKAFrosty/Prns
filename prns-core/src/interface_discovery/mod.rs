@@ -69,7 +69,9 @@ pub use stamp::{
     DEFAULT_STAMP_COST, STAMP_SIZE, WORKBLOCK_EXPAND_ROUNDS,
 };
 pub use storage::{
-    DiscoveredConnectionTable, DiscoveredEndpointSet, DiscoveryCatalogTable,
+    discovery_validation_index_buckets, DiscoveredConnectionTable, DiscoveredEndpointSet,
+    DiscoveryCatalogTable, DiscoveryValidationCache, FixedDiscoveryValidationCache,
     GrowableInterfaceDiscoveryStorage, HeapDiscoveredConnectionTable, HeapDiscoveredEndpointSet,
-    HeapDiscoveryCatalogTable, InterfaceDiscoveryStorage,
+    HeapDiscoveryCatalogTable, HeapDiscoveryValidationCache, InterfaceDiscoveryStorage,
+    RNS_VALIDATION_CACHE_CAPACITY,
 };

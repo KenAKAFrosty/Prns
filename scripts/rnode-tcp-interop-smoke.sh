@@ -58,7 +58,7 @@ wait "$DEVICE_PID" || { DEVICE_PID=""; echo "FAIL: reference RNode TCP device re
 DEVICE_PID=""
 grep -q "RNODE_TCP_DEVICE_OK" "$RESULT" || { echo "FAIL: missing RNode TCP success marker"; cat "$RESULT"; exit 1; }
 
-echo "PASS: Prnsd rejected hostile RNode bring-up sequences and recovered against a split-frame RNS 1.3.9 oracle"
+echo "PASS: Prnsd rejected hostile RNode bring-up sequences and recovered against a split-frame RNS 1.4.0 oracle"
 grep "RNODE_TCP_DEVICE_OK" "$RESULT"
 
 exit 0

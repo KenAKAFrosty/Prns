@@ -417,11 +417,11 @@ fn message_pack(_: super::message_pack::MessagePackDecodeError) -> RnsPathTableD
 mod tests {
     use super::*;
 
-    const RNS_138_PATH_TABLE: &str = "9186a468617368c41011111111111111111111111111111111a974696d657374616d70cb41d954fc40080000a3766961c41022222222222222222222222222222222a4686f707302a765787069726573cb41d954fc59200000a9696e74657266616365ba544350436c69656e74496e746572666163655b6f7261636c655d";
+    const RNS_140_PATH_TABLE: &str = "9186a468617368c41011111111111111111111111111111111a974696d657374616d70cb41d954fc40080000a3766961c41022222222222222222222222222222222a4686f707302a765787069726573cb41d954fc59200000a9696e74657266616365ba544350436c69656e74496e746572666163655b6f7261636c655d";
 
     #[test]
     fn decodes_and_reencodes_the_rns_138_path_table_fixture() {
-        let bytes = bytes_from_hex(RNS_138_PATH_TABLE);
+        let bytes = bytes_from_hex(RNS_140_PATH_TABLE);
         let table = RnsPathTable::decode_message_pack(&bytes).unwrap();
         assert_eq!(table.entries().len(), 1);
         let entry = &table.entries()[0];

@@ -134,6 +134,7 @@ pub struct RnsInterfaceStatusReport {
     pub switch_id: RnsOptionalField<String>,
     pub endpoint_id: RnsOptionalField<String>,
     pub via_switch_id: RnsOptionalField<String>,
+    pub blocked_ip_list: RnsOptionalField<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

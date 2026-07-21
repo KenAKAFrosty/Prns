@@ -55,6 +55,10 @@ fn complete_interface() -> Value {
         field(interface::SWITCH_ID, Value::from("switch-a")),
         field(interface::ENDPOINT_ID, Value::from("endpoint-b")),
         field(interface::VIA_SWITCH_ID, Value::from("switch-c")),
+        field(
+            interface::BLOCKED_IP_LIST,
+            Value::Array(vec![Value::from("192.0.2.10"), Value::from("2001:db8::1")]),
+        ),
         field("future_status_field", Value::Array(vec![Value::from(1)])),
     ])
 }
@@ -78,8 +82,21 @@ fn complete_report() -> Value {
     ])
 }
 
+fn interface_fields_mut(report: &mut Value) -> &mut Vec<(Value, Value)> {
+    let Value::Map(fields) = report else {
+        unreachable!();
+    };
+    let Value::Array(interfaces) = &mut fields[0].1 else {
+        unreachable!();
+    };
+    let Value::Map(interface_fields) = &mut interfaces[0] else {
+        unreachable!();
+    };
+    interface_fields
+}
+
 #[test]
-fn decodes_complete_rns_1_3_8_status_shape() {
+fn decodes_complete_rns_1_4_0_status_shape() {
     let report = RnsInterfaceStatsReport::decode_message_pack(&encode(&complete_report())).unwrap();
     let status = &report.interfaces[0];
 
@@ -93,6 +110,13 @@ fn decodes_complete_rns_1_3_8_status_shape() {
     assert_eq!(status.bitrate_bps, RnsOptionalField::Value(9_600.5));
     assert_eq!(status.parent_name, RnsOptionalField::Null);
     assert_eq!(status.parent_hash, RnsOptionalField::Absent);
+    assert_eq!(
+        status.blocked_ip_list,
+        RnsOptionalField::Value(vec![
+            String::from("192.0.2.10"),
+            String::from("2001:db8::1"),
+        ]),
+    );
     assert_eq!(status.held_announces, RnsOptionalField::Null);
     assert_eq!(status.interference_dbm, RnsOptionalField::Null);
     assert_eq!(
@@ -117,6 +141,52 @@ fn decodes_complete_rns_1_3_8_status_shape() {
         report.probe_responder.value().unwrap().as_bytes(),
         &[0x44; 16]
     );
+}
+
+#[test]
+fn blocked_ip_list_preserves_absent_and_null() {
+    let mut absent = complete_report();
+    interface_fields_mut(&mut absent)
+        .retain(|(key, _)| key.as_str() != Some(interface::BLOCKED_IP_LIST));
+    let decoded = RnsInterfaceStatsReport::decode_message_pack(&encode(&absent)).unwrap();
+    assert_eq!(
+        decoded.interfaces[0].blocked_ip_list,
+        RnsOptionalField::Absent
+    );
+
+    let mut null = complete_report();
+    interface_fields_mut(&mut null)
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some(interface::BLOCKED_IP_LIST))
+        .unwrap()
+        .1 = Value::Nil;
+    let decoded = RnsInterfaceStatsReport::decode_message_pack(&encode(&null)).unwrap();
+    assert_eq!(
+        decoded.interfaces[0].blocked_ip_list,
+        RnsOptionalField::Null
+    );
+}
+
+#[test]
+fn malformed_blocked_ip_list_reports_its_field_path() {
+    for malformed in [
+        Value::from("192.0.2.10"),
+        Value::Array(vec![Value::from("192.0.2.10"), Value::from(7)]),
+    ] {
+        let mut report = complete_report();
+        interface_fields_mut(&mut report)
+            .iter_mut()
+            .find(|(key, _)| key.as_str() == Some(interface::BLOCKED_IP_LIST))
+            .unwrap()
+            .1 = malformed;
+
+        assert_eq!(
+            RnsInterfaceStatsReport::decode_message_pack(&encode(&report)),
+            Err(RnsInterfaceStatsDecodeError::InvalidFieldType(
+                RnsStatsFieldPath::interface(0, interface::BLOCKED_IP_LIST),
+            )),
+        );
+    }
 }
 
 #[test]

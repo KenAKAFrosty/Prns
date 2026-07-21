@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""RNS 1.3.8-semantics msgpack control-RPC oracle for a Prns shared instance.
+"""Stock-RNS control-RPC oracle for a Prns shared instance.
 
 This intentionally drives Reticulum's public methods rather than hand-crafting
-frames. In RNS 1.3.8 those methods send msgpack RPC payloads over
-``multiprocessing.connection`` with ``send_bytes(mp.packb(...))`` and decode
-replies with ``mp.unpackb(recv_bytes())``.
+frames. The active RNS 1.4.0 lane uses MessagePack; an explicit compatibility
+lane can select the older pickle payload while exercising the same methods.
 """
 
 import os
@@ -20,7 +19,8 @@ import time
 import RNS
 from RNS.vendor import umsgpack as mp
 
-EXPECTED_RNS_VERSION = "1.3.9"
+EXPECTED_RNS_VERSION = os.environ.get("RPC_SMOKE_EXPECTED_RNS_VERSION", "1.4.0")
+LEGACY_PICKLE = os.environ.get("RPC_SMOKE_LEGACY_PICKLE") == "1"
 RPC_FRAME_MAX_LENGTH = 16_777_216
 EXPECTED_RPC_SURFACE = frozenset(
     {
@@ -182,7 +182,7 @@ def main() -> int:
     with open(os.path.join(configdir, "config"), "w", encoding="utf-8") as handle:
         handle.write(config)
 
-    hostile_cases = hostile_preflight(rpc_port, rpc_key_bytes)
+    hostile_cases = 0 if LEGACY_PICKLE else hostile_preflight(rpc_port, rpc_key_bytes)
     reticulum = RNS.Reticulum(configdir=configdir, loglevel=RNS.LOG_WARNING)
     time.sleep(1.0)
     covered = set()

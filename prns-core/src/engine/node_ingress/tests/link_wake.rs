@@ -2,7 +2,7 @@ use crate::engine::test_support::{routable_descriptor, TestStorageLayout};
 use crate::engine::{CommandId, EngineState, IngestIo};
 use crate::interfaces::{AttachedInterfaces, InboundPacket, InterfaceId};
 use crate::routing::links::maintenance::{write_keepalive, KEEPALIVE_ECHO};
-use crate::routing::links::table::{InitiatedLink, LinkActivation};
+use crate::routing::links::table::{InitiatedLink, LinkActivation, LinkPhase};
 use crate::routing::links::{LinkId, LinkKey};
 use crate::units::{InstantMillis, RttMillis};
 use crate::wire::{DestinationHash, BROADCAST_MTU};
@@ -48,7 +48,7 @@ fn engine_with_active_link() -> (EngineState<TestStorageLayout>, LinkId, Interfa
 }
 
 #[test]
-fn a_keepalive_echo_ingest_reports_the_rearmed_link_deadline() {
+fn a_keepalive_echo_records_inbound_without_postponing_the_silent_outbound_arm() {
     let (mut engine, link_id, lane) = engine_with_active_link();
     let before = engine.link_deadlines_wake();
 
@@ -73,12 +73,22 @@ fn a_keepalive_echo_ingest_reports_the_rearmed_link_deadline() {
     );
 
     let truth = engine.link_deadlines_wake();
-    assert_ne!(
+    assert_eq!(
         before, truth,
-        "the echo notes link activity and re-arms the link deadline",
+        "fresh inbound cannot mask the already-earlier outbound-silence wake",
     );
+    let Some(LinkPhase::Active {
+        last_inbound,
+        last_outbound,
+        ..
+    }) = engine.links.phase_for(&link_id)
+    else {
+        panic!("the keepalive echo must leave the link active");
+    };
+    assert_eq!(*last_inbound, InstantMillis(2_000));
+    assert_eq!(*last_outbound, InstantMillis(1_000));
     assert_eq!(
         wake.link_deadlines, truth,
-        "the ingest delta must carry the re-armed deadline, or the reactor's cached schedule rots and wakes late",
+        "the ingest delta must still report the complete recomputed schedule",
     );
 }

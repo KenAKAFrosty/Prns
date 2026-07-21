@@ -42,7 +42,7 @@ mod tests {
     }
 
     #[test]
-    fn sha256_matches_rns_1_3_5() {
+    fn sha256_matches_rns_1_4_0() {
         assert_eq!(
             sha256(b"personal-reticulum-suite"),
             bytes_from_hex("fbf93abb74e7a87e0bb67364e3eddf7718e5f1d38eedf1b21b806a8e612e89d2"),
@@ -50,7 +50,7 @@ mod tests {
     }
 
     #[test]
-    fn hmac_sha256_matches_rns_1_3_5_and_verifies_constant_time() {
+    fn hmac_sha256_matches_rns_1_4_0_and_verifies_constant_time() {
         let key: [u8; 32] = core::array::from_fn(|i| i as u8);
         let tag: [u8; 32] =
             bytes_from_hex("aa868925242368f32a02fef52ecf6fcdb07222647c9476e300e848ca886efe2e");
@@ -66,7 +66,7 @@ mod tests {
     }
 
     #[test]
-    fn hkdf_sha256_matches_rns_1_3_5() {
+    fn hkdf_sha256_matches_rns_1_4_0() {
         let ikm = [0x42u8; 32];
         let salt = [0x01u8; 16];
         assert_eq!(
@@ -83,7 +83,7 @@ mod tests {
     }
 
     #[test]
-    fn ed25519_sign_verify_and_pubkey_match_rns_1_3_5() {
+    fn ed25519_sign_verify_and_pubkey_match_rns_1_4_0() {
         let secret = Ed25519SecretKey::new([0x11u8; 32]);
         let public = Ed25519PublicKey(bytes_from_hex(
             "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
@@ -126,7 +126,7 @@ mod tests {
     }
 
     #[test]
-    fn x25519_dh_and_pubkey_match_rns_1_3_5() {
+    fn x25519_dh_and_pubkey_match_rns_1_4_0() {
         let a = X25519SecretKey::new([0x22u8; 32]);
         let a_pub = X25519PublicKey(bytes_from_hex(
             "0faa684ed28867b97f4a6a2dee5df8ce974e76b7018e3f22a1c4cf2678570f20",
@@ -142,7 +142,7 @@ mod tests {
     }
 
     #[test]
-    fn token_round_trips_and_matches_rns_1_3_5_aes128() {
+    fn token_round_trips_and_matches_rns_1_4_0_aes128() {
         let key: [u8; 32] = core::array::from_fn(|i| i as u8);
         let plaintext = b"secret payload one-twenty-eight";
         let rns_token = bytes_from_hex::<80>(
@@ -162,7 +162,7 @@ mod tests {
     }
 
     #[test]
-    fn token_matches_rns_1_3_5_aes256() {
+    fn token_matches_rns_1_4_0_aes256() {
         let key: [u8; 64] = core::array::from_fn(|i| i as u8);
         let plaintext = b"secret payload two-fifty-six!!";
         let rns_token = bytes_from_hex::<80>(

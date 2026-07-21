@@ -21,7 +21,7 @@ pub(in crate::engine) fn allows_announce_rebroadcast(
         )
 }
 
-/// RNS 1.3.9 `Transport.outbound` announce mode gating.
+/// RNS 1.4.0 `Transport.outbound` announce mode gating.
 fn mode_allows_announce_egress(
     egress: InterfaceMode,
     next_hop_mode: Option<InterfaceMode>,
@@ -145,7 +145,7 @@ mod tests {
     }
 
     #[test]
-    fn every_learned_on_and_egress_mode_pair_matches_rns_1_3_9() {
+    fn every_learned_on_and_egress_mode_pair_matches_rns_1_4_0() {
         let expected_by_learned_on = [
             (
                 InterfaceMode::Full,

@@ -1,4 +1,5 @@
 use std::fmt;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Duration;
 use std::vec::Vec;
 
@@ -10,7 +11,7 @@ use prns_core::interfaces::rns_management::{
 };
 use prns_core::interfaces::shared_instance::rns_rpc::{
     PacketHashArgument, RnsInteger, RnsNumber, RnsRpcRequest, RnsRpcScalarReply,
-    RnsRpcScalarReplyDecodeError, RpcAuthenticationKey, RpcVerb, RNS_NO_INTERFACE_NAME,
+    RnsRpcScalarReplyDecodeError, RpcAuthenticationKey, RpcDialect, RpcVerb, RNS_NO_INTERFACE_NAME,
 };
 use prns_core::routing::dedup::PacketHash;
 use prns_core::routing::BlackholedIdentity;
@@ -21,6 +22,12 @@ use tokio::net::TcpStream;
 
 use super::authentication::{answer_client_challenge, deliver_our_challenge};
 use super::framing::{read_frame, write_frame};
+use super::legacy;
+
+const DIALECT_UNKNOWN: u8 = 0;
+const DIALECT_MSGPACK: u8 = 1;
+const DIALECT_PICKLE: u8 = 2;
+const DIALECT_PROBE_TIMEOUT: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SharedInstanceRpcEndpoint {
@@ -91,6 +98,7 @@ pub enum SharedInstanceRpcClientError {
     CredentialsRejected,
     InstanceAuthenticationFailed,
     RequestEncode,
+    LegacyReplyDecode,
     InterfaceStatsReply(RnsInterfaceStatsDecodeError),
     LinkCountReply(RnsRpcScalarReplyDecodeError),
     InvalidLinkCount(RnsRpcScalarReply),
@@ -128,6 +136,9 @@ impl fmt::Display for SharedInstanceRpcClientError {
                 "the shared RNS instance could not prove that it knows the configured RPC key",
             ),
             Self::RequestEncode => formatter.write_str("the RNS RPC request could not be encoded"),
+            Self::LegacyReplyDecode => {
+                formatter.write_str("the legacy RNS RPC reply could not be decoded safely")
+            }
             Self::InterfaceStatsReply(error) => {
                 write!(formatter, "invalid rnstatus reply: {error}")
             }
@@ -163,6 +174,7 @@ pub struct SharedInstanceRpcClient {
     endpoint: SharedInstanceRpcEndpoint,
     rpc_key: RpcAuthenticationKey,
     timeout: Duration,
+    dialect: AtomicU8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -196,6 +208,7 @@ impl SharedInstanceRpcClient {
             endpoint,
             rpc_key,
             timeout,
+            dialect: AtomicU8::new(DIALECT_UNKNOWN),
         }
     }
 
@@ -497,7 +510,7 @@ impl SharedInstanceRpcClient {
         &self,
         request: RnsRpcRequest,
     ) -> Result<Vec<u8>, SharedInstanceRpcClientError> {
-        tokio::time::timeout(self.timeout, self.exchange_without_timeout(request))
+        tokio::time::timeout(self.timeout, self.exchange_negotiated(&request))
             .await
             .map_err(|_| SharedInstanceRpcClientError::TimedOut {
                 endpoint: self.endpoint.clone(),
@@ -507,7 +520,8 @@ impl SharedInstanceRpcClient {
 
     async fn exchange_without_timeout(
         &self,
-        request: RnsRpcRequest,
+        request: &RnsRpcRequest,
+        dialect: RpcDialect,
     ) -> Result<Vec<u8>, SharedInstanceRpcClientError> {
         match &self.endpoint {
             SharedInstanceRpcEndpoint::Tcp { control_port } => {
@@ -515,21 +529,106 @@ impl SharedInstanceRpcClient {
                 let mut stream = TcpStream::connect(address)
                     .await
                     .map_err(|error| self.io_error(SharedInstanceRpcClientPhase::Connect, error))?;
-                self.exchange_stream(&mut stream, request).await
+                self.exchange_stream_with_dialect(&mut stream, request, dialect)
+                    .await
             }
             #[cfg(target_os = "linux")]
             SharedInstanceRpcEndpoint::AbstractUnix { socket_path } => {
                 let mut stream = connect_abstract_rpc(socket_path)
                     .map_err(|error| self.io_error(SharedInstanceRpcClientPhase::Connect, error))?;
-                self.exchange_stream(&mut stream, request).await
+                self.exchange_stream_with_dialect(&mut stream, request, dialect)
+                    .await
             }
         }
     }
 
+    async fn exchange_negotiated(
+        &self,
+        request: &RnsRpcRequest,
+    ) -> Result<Vec<u8>, SharedInstanceRpcClientError> {
+        match self.cached_dialect() {
+            Some(dialect) => self.exchange_without_timeout(request, dialect).await,
+            None => {
+                // Never discover the dialect by replaying the caller's
+                // operation. RNS 1.3.3 can leave a rejected MessagePack
+                // connection open, so use a short, read-only probe and drop
+                // that connection before retrying pickle.
+                let (probe_reply, dialect) = self.negotiate().await?;
+                if matches!(request, RnsRpcRequest::LinkCount) {
+                    Ok(probe_reply)
+                } else {
+                    self.exchange_without_timeout(request, dialect).await
+                }
+            }
+        }
+    }
+
+    async fn negotiate(&self) -> Result<(Vec<u8>, RpcDialect), SharedInstanceRpcClientError> {
+        let probe = RnsRpcRequest::LinkCount;
+        match tokio::time::timeout(
+            DIALECT_PROBE_TIMEOUT,
+            self.exchange_without_timeout(&probe, RpcDialect::Msgpack),
+        )
+        .await
+        {
+            Ok(Ok(reply)) => {
+                self.cache_dialect(RpcDialect::Msgpack);
+                Ok((reply, RpcDialect::Msgpack))
+            }
+            Ok(Err(error)) if dialect_fallback_candidate(&error) => {
+                let reply = self
+                    .exchange_without_timeout(&probe, RpcDialect::Pickle)
+                    .await?;
+                self.cache_dialect(RpcDialect::Pickle);
+                Ok((reply, RpcDialect::Pickle))
+            }
+            Err(_) => {
+                let reply = self
+                    .exchange_without_timeout(&probe, RpcDialect::Pickle)
+                    .await?;
+                self.cache_dialect(RpcDialect::Pickle);
+                Ok((reply, RpcDialect::Pickle))
+            }
+            Ok(Err(error)) => Err(error),
+        }
+    }
+
+    fn cached_dialect(&self) -> Option<RpcDialect> {
+        match self.dialect.load(Ordering::Relaxed) {
+            DIALECT_MSGPACK => Some(RpcDialect::Msgpack),
+            DIALECT_PICKLE => Some(RpcDialect::Pickle),
+            _ => None,
+        }
+    }
+
+    fn cache_dialect(&self, dialect: RpcDialect) {
+        self.dialect.store(
+            match dialect {
+                RpcDialect::Msgpack => DIALECT_MSGPACK,
+                RpcDialect::Pickle => DIALECT_PICKLE,
+            },
+            Ordering::Relaxed,
+        );
+    }
+
+    #[cfg(test)]
     async fn exchange_stream<S>(
         &self,
         stream: &mut S,
         request: RnsRpcRequest,
+    ) -> Result<Vec<u8>, SharedInstanceRpcClientError>
+    where
+        S: AsyncRead + AsyncWrite + Unpin,
+    {
+        self.exchange_stream_with_dialect(stream, &request, RpcDialect::Msgpack)
+            .await
+    }
+
+    async fn exchange_stream_with_dialect<S>(
+        &self,
+        stream: &mut S,
+        request: &RnsRpcRequest,
+        dialect: RpcDialect,
     ) -> Result<Vec<u8>, SharedInstanceRpcClientError>
     where
         S: AsyncRead + AsyncWrite + Unpin,
@@ -551,15 +650,22 @@ impl SharedInstanceRpcClient {
         if !authenticated {
             return Err(SharedInstanceRpcClientError::InstanceAuthenticationFailed);
         }
-        let request = request
-            .encode_message_pack()
-            .map_err(|_| SharedInstanceRpcClientError::RequestEncode)?;
+        let request = match dialect {
+            RpcDialect::Msgpack => request.encode_message_pack(),
+            RpcDialect::Pickle => request.encode_pickle(),
+        }
+        .map_err(|_| SharedInstanceRpcClientError::RequestEncode)?;
         write_frame(stream, &request)
             .await
             .map_err(|error| self.io_error(SharedInstanceRpcClientPhase::WriteRequest, error))?;
-        read_frame(stream)
+        let reply = read_frame(stream)
             .await
-            .map_err(|error| self.io_error(SharedInstanceRpcClientPhase::ReadReply, error))
+            .map_err(|error| self.io_error(SharedInstanceRpcClientPhase::ReadReply, error))?;
+        match dialect {
+            RpcDialect::Msgpack => Ok(reply),
+            RpcDialect::Pickle => legacy::decode_reply(&reply)
+                .map_err(|_| SharedInstanceRpcClientError::LegacyReplyDecode),
+        }
     }
 
     fn io_error(
@@ -573,6 +679,17 @@ impl SharedInstanceRpcClient {
             kind: error.kind(),
         }
     }
+}
+
+fn dialect_fallback_candidate(error: &SharedInstanceRpcClientError) -> bool {
+    matches!(
+        error,
+        SharedInstanceRpcClientError::Io {
+            phase: SharedInstanceRpcClientPhase::WriteRequest
+                | SharedInstanceRpcClientPhase::ReadReply,
+            ..
+        }
+    )
 }
 
 fn packet_hash_argument(packet_hash: PacketHash) -> PacketHashArgument {
@@ -591,10 +708,15 @@ fn connect_abstract_rpc(socket_path: &str) -> std::io::Result<tokio::net::UnixSt
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::vec;
 
     use prns_core::identity::IdentityHash;
-    use prns_core::interfaces::shared_instance::rns_rpc::{RpcAuthenticationKey, RpcRequest};
+    use prns_core::interfaces::shared_instance::rns_rpc::{
+        RpcAuthenticationKey, RpcRequest, RpcVerb,
+    };
+    use serde_pickle::{HashableValue, Value};
+    use tokio::net::TcpListener;
 
     use super::*;
     use crate::shared_instance::rns_rpc::authentication::{
@@ -627,6 +749,21 @@ mod tests {
             Ok(RpcRequest::Msgpack(expected))
         );
         write_frame(&mut stream, &reply).await.unwrap();
+    }
+
+    async fn accept_authenticated_request(
+        listener: &TcpListener,
+        credentials: &SharedInstanceCredentials,
+    ) -> (TcpStream, Vec<u8>) {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        assert!(deliver_our_challenge(&mut stream, credentials.rpc_key())
+            .await
+            .unwrap());
+        assert!(answer_client_challenge(&mut stream, credentials.rpc_key())
+            .await
+            .unwrap());
+        let request = read_frame(&mut stream).await.unwrap();
+        (stream, request)
     }
 
     #[tokio::test]
@@ -674,6 +811,130 @@ mod tests {
             client
                 .exchange_stream(&mut client_stream, RnsRpcRequest::LinkCount)
                 .await,
+            Err(SharedInstanceRpcClientError::CredentialsRejected)
+        );
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn negotiates_pickle_when_a_legacy_peer_keeps_the_rejected_msgpack_connection_open() {
+        let credentials = credentials(0x31);
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (stream, request) = accept_authenticated_request(&listener, &credentials).await;
+            assert_eq!(
+                RpcRequest::decode(&request),
+                Ok(RpcRequest::Msgpack(RnsRpcRequest::LinkCount))
+            );
+            let _held_rejected_connection = tokio::spawn(async move {
+                tokio::time::sleep(DIALECT_PROBE_TIMEOUT.saturating_mul(4)).await;
+                drop(stream);
+            });
+
+            let (mut stream, request) = accept_authenticated_request(&listener, &credentials).await;
+            let decoded = RpcRequest::decode(&request).unwrap();
+            assert_eq!(decoded.dialect(), RpcDialect::Pickle);
+            assert_eq!(decoded.verb(), RpcVerb::GetLinkCount);
+            write_frame(&mut stream, b"I3\n.").await.unwrap();
+
+            let (mut stream, request) = accept_authenticated_request(&listener, &credentials).await;
+            let decoded = RpcRequest::decode(&request).unwrap();
+            assert_eq!(decoded.dialect(), RpcDialect::Pickle);
+            assert_eq!(decoded.verb(), RpcVerb::GetLinkCount);
+            write_frame(&mut stream, b"I4\n.").await.unwrap();
+        });
+        let client = SharedInstanceRpcClient::new(
+            SharedInstanceRpcEndpoint::tcp(port),
+            RpcAuthenticationKey::new(vec![0x31; 32]),
+            Duration::from_secs(2),
+        );
+
+        assert_eq!(client.link_count().await, Ok(3));
+        assert_eq!(client.link_count().await, Ok(4));
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn mutation_negotiation_uses_a_read_only_probe_and_sends_the_mutation_once() {
+        let credentials = credentials(0x32);
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let destination = DestinationHash::new([0x52; 16]);
+        let server = tokio::spawn(async move {
+            let (stream, request) = accept_authenticated_request(&listener, &credentials).await;
+            assert_eq!(
+                RpcRequest::decode(&request),
+                Ok(RpcRequest::Msgpack(RnsRpcRequest::LinkCount))
+            );
+            drop(stream);
+
+            let (mut stream, request) = accept_authenticated_request(&listener, &credentials).await;
+            let decoded = RpcRequest::decode(&request).unwrap();
+            assert_eq!(decoded.dialect(), RpcDialect::Pickle);
+            assert_eq!(decoded.verb(), RpcVerb::GetLinkCount);
+            write_frame(&mut stream, b"I0\n.").await.unwrap();
+
+            let (mut stream, request) = accept_authenticated_request(&listener, &credentials).await;
+            let decoded = RpcRequest::decode(&request).unwrap();
+            assert_eq!(decoded.dialect(), RpcDialect::Pickle);
+            assert_eq!(decoded.verb(), RpcVerb::DropPath);
+            assert_eq!(decoded.legacy_destination_hash(), Some(destination));
+            let Value::Dict(fields) =
+                serde_pickle::value_from_slice(&request, serde_pickle::DeOptions::new()).unwrap()
+            else {
+                panic!("legacy request must be a dictionary");
+            };
+            assert_eq!(
+                fields,
+                BTreeMap::from([
+                    (
+                        HashableValue::String(String::from("destination_hash")),
+                        Value::Bytes(vec![0x52; 16]),
+                    ),
+                    (
+                        HashableValue::String(String::from("drop")),
+                        Value::String(String::from("path")),
+                    ),
+                ])
+            );
+            write_frame(&mut stream, b"I01\n.").await.unwrap();
+        });
+        let client = SharedInstanceRpcClient::new(
+            SharedInstanceRpcEndpoint::tcp(port),
+            RpcAuthenticationKey::new(vec![0x32; 32]),
+            Duration::from_secs(2),
+        );
+
+        assert_eq!(client.drop_path(destination).await, Ok(true));
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn authentication_rejection_does_not_trigger_a_legacy_retry() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            assert!(
+                !deliver_our_challenge(&mut stream, credentials(0x42).rpc_key())
+                    .await
+                    .unwrap()
+            );
+            assert!(
+                tokio::time::timeout(Duration::from_millis(100), listener.accept())
+                    .await
+                    .is_err()
+            );
+        });
+        let client = SharedInstanceRpcClient::new(
+            SharedInstanceRpcEndpoint::tcp(port),
+            RpcAuthenticationKey::new(vec![0x41; 32]),
+            Duration::from_secs(1),
+        );
+
+        assert_eq!(
+            client.link_count().await,
             Err(SharedInstanceRpcClientError::CredentialsRejected)
         );
         server.await.unwrap();

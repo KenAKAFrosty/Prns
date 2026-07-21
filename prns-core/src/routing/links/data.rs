@@ -16,12 +16,12 @@ use crate::wire::{
     WirePacketHeader, BROADCAST_MTU, HEADER_MIN_LEN, IFAC_MIN_LEN,
 };
 
-/// RNS 1.3.5 `Link.TRAFFIC_TIMEOUT_FACTOR` / `TRAFFIC_TIMEOUT_MIN_MS`: how long a link send waits (as a multiple of its RTT) for its proof before giving up.
+/// RNS 1.4.0 `Link.TRAFFIC_TIMEOUT_FACTOR` / `TRAFFIC_TIMEOUT_MIN_MS`: how long a link send waits (as a multiple of its RTT) for its proof before giving up.
 pub const LINK_TRAFFIC_TIMEOUT_FACTOR: u64 = 6;
 
 pub const LINK_TRAFFIC_TIMEOUT_MIN_MS: u64 = 5;
 
-/// RNS 1.3.5 `Transport.receipts_check_interval`: the reference only fails receipts on a once-per-second culling pass, so a proof landing past the nominal deadline still validates until the next pass. On a fast link its effective deadline is `rtt × 6` plus up to a full second. We enforce deadlines precisely, so the interval rides on the deadline itself: a receipt fails exactly when the reference's last-possible pass would have failed it.
+/// RNS 1.4.0 `Transport.receipts_check_interval`: the reference only fails receipts on a once-per-second culling pass, so a proof landing past the nominal deadline still validates until the next pass. On a fast link its effective deadline is `rtt × 6` plus up to a full second. We enforce deadlines precisely, so the interval rides on the deadline itself: a receipt fails exactly when the reference's last-possible pass would have failed it.
 pub const RECEIPT_ENFORCEMENT_SLACK_MS: u64 = 1_000;
 
 pub fn link_traffic_timeout_ms(rtt: RttMillis) -> u64 {
@@ -31,7 +31,7 @@ pub fn link_traffic_timeout_ms(rtt: RttMillis) -> u64 {
         .saturating_add(RECEIPT_ENFORCEMENT_SLACK_MS)
 }
 
-/// RNS 1.3.5 `Link.update_mdu`
+/// RNS 1.4.0 `Link.update_mdu`
 pub const fn link_mdu(mtu: usize) -> usize {
     ((mtu - IFAC_MIN_LEN - HEADER_MIN_LEN - TOKEN_OVERHEAD) / 16) * 16 - 1
 }
@@ -76,7 +76,7 @@ pub fn write_link_packet(
 }
 
 /// A link packet whose payload rides exactly as given. No token around it.
-/// What RNS 1.3.5 `Packet.pack` does for context `RESOURCE` (parts are slices of an already-sealed stream) and `RESOURCE_PRF` (the proof is a bare hash pair on a PROOF-type packet).
+/// What RNS 1.4.0 `Packet.pack` does for context `RESOURCE` (parts are slices of an already-sealed stream) and `RESOURCE_PRF` (the proof is a bare hash pair on a PROOF-type packet).
 pub fn write_link_raw_packet(
     link_id: &LinkId,
     packet_type: PacketType,
@@ -142,7 +142,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// RNS 1.3.5 `Packet(link, data).send()`.
+    /// RNS 1.4.0 `Packet(link, data).send()`.
     ///
     /// Seal `send`'s payload under the link's session key, bounded by the link's negotiated MDU, framed directly into `buf` and owed to the interface the link rides.
     ///

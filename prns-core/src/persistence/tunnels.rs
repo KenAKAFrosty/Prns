@@ -1,5 +1,5 @@
 //! The tunnels region: tunnel id, the interface it last rode, and its expiry — three fixed-size columns per row.
-//! RNS 1.3.5 `Transport.save_tunnel_table` nests every path row under its tunnel; ours nest nothing because routing rows persist their interface themselves — the seeded tunnel only has to warm that interface and catch the peer's next synthesize as a reappearance.
+//! RNS 1.4.0 `Transport.save_tunnel_table` nests every path row under its tunnel; ours nest nothing because routing rows persist their interface themselves — the seeded tunnel only has to warm that interface and catch the peer's next synthesize as a reappearance.
 //! The codec carries rows verbatim and verifies nothing: a tunnel row holds no keys, so the worst a hostile store can plant is warmth on a dead interface, bounded by the row's own expiry.
 
 use super::envelope::{

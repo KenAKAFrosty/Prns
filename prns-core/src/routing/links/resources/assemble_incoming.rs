@@ -1,5 +1,5 @@
 //! The receiver's mirror of [`build_outgoing`](super::build_outgoing).
-//! RNS 1.3.5 `Resource.receive_part`/`assemble`/`prove`
+//! RNS 1.4.0 `Resource.receive_part`/`assemble`/`prove`
 
 use crate::crypto::{Sha256PrefixState, TokenOpenError};
 use crate::routing::links::resources::{
@@ -18,7 +18,7 @@ pub enum VerifyResourceError {
     HashMismatch,
 }
 
-/// RNS 1.3.5 `Resource.assemble`, the half the engine owns: open the joined parts with the link key in place and strip the stream nonce, leaving the stream the sender sealed (bz2 when the advertisement's compressed flag is set). A stream too short to carry its nonce is refused by name where the reference would slice it empty and fail the hash check later.
+/// RNS 1.4.0 `Resource.assemble`, the half the engine owns: open the joined parts with the link key in place and strip the stream nonce, leaving the stream the sender sealed (bz2 when the advertisement's compressed flag is set). A stream too short to carry its nonce is refused by name where the reference would slice it empty and fail the hash check later.
 pub fn open_transfer<'t>(
     key: &LinkKey,
     transfer: &'t mut [u8],
@@ -32,7 +32,7 @@ pub fn open_transfer<'t>(
     Ok(&stream[RESOURCE_NONCE_LEN..])
 }
 
-/// The hash check closing RNS 1.3.5 `Resource.assemble`, and `prove` in the same breath: the plaintext is genuine when `full_hash(data ‖ salt nonce)` equals the advertised hash, and the receipt sent back is `full_hash(data ‖ hash)`. A mismatch is the reference's CORRUPT verdict.
+/// The hash check closing RNS 1.4.0 `Resource.assemble`, and `prove` in the same breath: the plaintext is genuine when `full_hash(data ‖ salt nonce)` equals the advertised hash, and the receipt sent back is `full_hash(data ‖ hash)`. A mismatch is the reference's CORRUPT verdict.
 pub fn verify_and_prove(
     plaintext: &[u8],
     salt_nonce: &SaltNonce,

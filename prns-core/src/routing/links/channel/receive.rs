@@ -1,14 +1,14 @@
-//! RNS 1.3.5 `Channel._receive`'s window validation, duplicate rejection, and contiguous in-order drain, ported to integer sequence arithmetic (to match our integer units of ms).
+//! RNS 1.4.0 `Channel._receive`'s window validation, duplicate rejection, and contiguous in-order drain, ported to integer sequence arithmetic (to match our integer units of ms).
 
 use super::table::{BufferOutcome, ChannelTable, EnsureChannelError};
 use super::MessageType;
 use super::{ChannelSequence, SEQUENCE_MODULUS};
 use crate::routing::links::LinkId;
 
-/// RNS 1.3.5 `Channel.WINDOW_MAX` (`= WINDOW_MAX_FAST`): the furthest ahead a well-behaved peer ever transmits / the most out-of-order messages worth holding.
+/// RNS 1.4.0 `Channel.WINDOW_MAX` (`= WINDOW_MAX_FAST`): the furthest ahead a well-behaved peer ever transmits / the most out-of-order messages worth holding.
 pub const WINDOW_MAX_MESSAGES: u16 = 48;
 
-/// RNS 1.3.5 `Channel._receive`'s window guard
+/// RNS 1.4.0 `Channel._receive`'s window guard
 pub fn within_receive_window(sequence: ChannelSequence, next_rx: ChannelSequence) -> bool {
     if sequence.0 >= next_rx.0 {
         return true;

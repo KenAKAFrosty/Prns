@@ -163,7 +163,7 @@ mod tests {
     use super::*;
     use crate::engine::test_support::{
         bytes_from_hex, test_fill_entropy, tick_capture, transporting_interfaces,
-        transporting_node, TestStorageLayout, RNS_1_3_5_ANNOUNCE,
+        transporting_node, TestStorageLayout, RNS_1_4_0_ANNOUNCE,
     };
     use crate::engine::{AnnounceIngest, DeferredCrypto, IngestPacketOutcome, WakeSchedule};
     use crate::interfaces::{AttachedInterfaces, InboundPacket, InterfaceId};
@@ -195,7 +195,7 @@ mod tests {
     fn blackholing_an_identity_drops_its_routes_and_blocks_new_announces_before_crypto() {
         let interfaces = transporting_interfaces();
         let source_interface = interfaces[0].id;
-        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+        let mut raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
         let identity = identity_hash_from_announce(&mut raw, source_interface);
         let source = IdentityHash::new([0xC1; 16]);
         let mut engine = transporting_node();
@@ -297,7 +297,7 @@ mod tests {
     fn a_blackhole_added_during_deferred_verification_wins_at_acceptance() {
         let interfaces = transporting_interfaces();
         let source_interface = interfaces[0].id;
-        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+        let mut raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
         let identity = identity_hash_from_announce(&mut raw, source_interface);
         let mut engine = transporting_node();
         let mut deferred = DeferredCrypto::default();

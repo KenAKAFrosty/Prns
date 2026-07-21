@@ -146,7 +146,7 @@ mod tests {
     }
 
     #[test]
-    fn decrypt_in_place_opens_the_rns_1_3_5_token_without_a_copy() {
+    fn decrypt_in_place_opens_the_rns_1_4_0_token_without_a_copy() {
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key_bytes());
         let mut token = token_hex(RNS_SEALED_TOKEN);
         let plaintext = identity.decrypt_in_place(&mut token).unwrap();
@@ -172,7 +172,7 @@ mod tests {
     }
 
     #[test]
-    fn decrypt_opens_a_token_sealed_by_rns_1_3_5() {
+    fn decrypt_opens_a_token_sealed_by_rns_1_4_0() {
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key_bytes());
         let token = token_hex(RNS_SEALED_TOKEN);
         let mut out = [0u8; 64];
@@ -181,7 +181,7 @@ mod tests {
     }
 
     #[test]
-    fn encrypt_seals_the_token_rns_1_3_5_opens() {
+    fn encrypt_seals_the_token_rns_1_4_0_opens() {
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key_bytes());
         let mut out = [0u8; 128];
         let n = remote_for(&identity)
@@ -201,7 +201,7 @@ mod tests {
          c9d2525bfcfd385954b4ebda6c6702dd9b82ca630f3b45c1c57457ad70aa14e6";
 
     #[test]
-    fn encrypt_to_ratchet_reproduces_the_rns_1_3_5_minted_token() {
+    fn encrypt_to_ratchet_reproduces_the_rns_1_4_0_minted_token() {
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key_bytes());
         let ratchet_public = x25519_public_key(&X25519SecretKey::new([0x55; 32]));
         let mut out = [0u8; 128];

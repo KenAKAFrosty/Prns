@@ -90,7 +90,7 @@ async fn a_loopback_frame_crosses_the_seam_and_the_rebroadcast_leaves_through_th
         "an idle interface transmits nothing"
     );
 
-    let raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+    let raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
     let original_hops = WirePacketHeader::parse(&raw)
         .expect("valid announce wire")
         .0
@@ -178,10 +178,10 @@ async fn a_capped_link_holds_a_rebroadcast_burst_then_drains_it_over_time() {
     tokio::spawn(peer_iface.run(peer_seam));
 
     source_wire_in_tx
-        .send(bytes_from_hex(RNS_1_3_5_ANNOUNCE))
+        .send(bytes_from_hex(RNS_1_4_0_ANNOUNCE))
         .expect("the source interface holds its wire");
     source_wire_in_tx
-        .send(bytes_from_hex(RNS_1_3_5_RATCHETED_ANNOUNCE))
+        .send(bytes_from_hex(RNS_1_4_0_RATCHETED_ANNOUNCE))
         .expect("the source interface holds its wire");
 
     let first = tokio::time::timeout(Duration::from_secs(5), peer_wire_out_rx.recv())
@@ -267,7 +267,7 @@ async fn the_reactor_re_emits_a_rebroadcast_once_more_then_retires_it() {
     tokio::spawn(peer_iface.run(peer_seam));
 
     source_wire_in_tx
-        .send(bytes_from_hex(RNS_1_3_5_ANNOUNCE))
+        .send(bytes_from_hex(RNS_1_4_0_ANNOUNCE))
         .expect("the source interface holds its wire");
 
     let first = tokio::time::timeout(Duration::from_secs(2), peer_wire_out_rx.recv())
@@ -435,6 +435,6 @@ async fn a_delivery_answers_with_a_proof_directive_on_the_arrival_lane() {
     assert_eq!(
         frame.frame(),
         expected_proof,
-        "the proof is byte-identical to the RNS 1.3.5 implicit proof, on the arrival lane"
+        "the proof is byte-identical to the RNS 1.4.0 implicit proof, on the arrival lane"
     );
 }

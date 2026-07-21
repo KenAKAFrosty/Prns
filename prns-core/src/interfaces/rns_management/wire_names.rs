@@ -73,6 +73,7 @@ pub mod interface {
     pub const SWITCH_ID: &str = "switch_id";
     pub const ENDPOINT_ID: &str = "endpoint_id";
     pub const VIA_SWITCH_ID: &str = "via_switch_id";
+    pub const BLOCKED_IP_LIST: &str = "blocked_ip_list";
 }
 
 pub mod transport {

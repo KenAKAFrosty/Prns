@@ -22,7 +22,7 @@ pub enum RequestResponseTimeout {
     Exact(DurationMillis),
 }
 
-/// RNS 1.3.5 `Link.request(path, data)`, sub-MDU form; empty `data` = the reference's None.
+/// RNS 1.4.0 `Link.request(path, data)`, sub-MDU form; empty `data` = the reference's None.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SendRequest {
     pub link_id: LinkId,
@@ -70,7 +70,7 @@ pub enum RespondFailure {
     WriteFailed,
 }
 
-/// RNS 1.3.5 `Destination.register_request_handler(..., allowed_list=…)`, mutated at runtime.
+/// RNS 1.4.0 `Destination.register_request_handler(..., allowed_list=…)`, mutated at runtime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AllowRequester {
     pub destination: DestinationHash,

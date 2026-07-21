@@ -62,7 +62,7 @@ pub enum ExpandNameError {
     NameTooLong,
 }
 
-/// RNS 1.3.5 `Destination.hash`'s name-hash step: `sha256("app.aspect1.aspect2".utf8)` truncated to [`DOTTED_NAME_HASH_BYTE_LEN`] bytes; feed [`derive_destination_hash`] to address it.
+/// RNS 1.4.0 `Destination.hash`'s name-hash step: `sha256("app.aspect1.aspect2".utf8)` truncated to [`DOTTED_NAME_HASH_BYTE_LEN`] bytes; feed [`derive_destination_hash`] to address it.
 pub fn expand_name(app_name: &str, aspects: &[&str]) -> Result<DottedNameHash, ExpandNameError> {
     if app_name.contains('.') {
         return Err(ExpandNameError::DotInComponent);
@@ -84,7 +84,7 @@ pub fn expand_name(app_name: &str, aspects: &[&str]) -> Result<DottedNameHash, E
     Ok(DottedNameHash::new(name_hash))
 }
 
-/// `sha256(name_hash ‖ identity_hash)[..16]`: the final step of RNS 1.3.5 `Destination.hash`.
+/// `sha256(name_hash ‖ identity_hash)[..16]`: the final step of RNS 1.4.0 `Destination.hash`.
 /// Both directions run through this one derivation, so a validated announce and one we emit can never disagree on how a destination is addressed.
 pub fn derive_destination_hash(
     identity_hash: &IdentityHash,
@@ -99,7 +99,7 @@ pub fn derive_destination_hash(
     DestinationHash::new(truncated)
 }
 
-/// `sha256(name_hash)[..16]`: the identity-less arm of RNS 1.3.5 `Destination.hash`.
+/// `sha256(name_hash)[..16]`: the identity-less arm of RNS 1.4.0 `Destination.hash`.
 /// A plain destination is owned by no identity, so its address binds to the name alone.
 pub fn derive_plain_destination_hash(dotted_name_hash: &DottedNameHash) -> DestinationHash {
     let mut truncated = [0u8; TRUNCATED_HASH_BYTE_LEN];

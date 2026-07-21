@@ -3,17 +3,17 @@ use crate::interfaces::{
     IngressControlPolicy, InterfaceCommonPolicy, InterfaceId, PathRequestEgressControl,
 };
 
-/// RNS 1.3.5 `Interface.IC_PR_BURST_FREQ_NEW` (3 Hz, an interface younger than [`NEW_INTERFACE_AGE_MS`])
+/// RNS 1.4.0 `Interface.IC_PR_BURST_FREQ_NEW` (3 Hz, an interface younger than [`NEW_INTERFACE_AGE_MS`])
 pub const STRICT_RATE_LIMIT_HZ: u64 = 3;
-/// RNS 1.3.5 `Interface.IC_PR_BURST_FREQ` (8 Hz, an established interface)
+/// RNS 1.4.0 `Interface.IC_PR_BURST_FREQ` (8 Hz, an established interface)
 pub const RELAXED_RATE_LIMIT_HZ: u64 = 8;
-/// RNS 1.3.5 `Interface.IC_NEW_TIME` (2 hours)
+/// RNS 1.4.0 `Interface.IC_NEW_TIME` (2 hours)
 pub const NEW_INTERFACE_AGE_MS: u64 = 2 * 60 * 60 * 1_000;
-/// RNS 1.3.5 `Interface.IC_BURST_HOLD` (15 seconds): the minimum a burst stays latched
+/// RNS 1.4.0 `Interface.IC_BURST_HOLD` (15 seconds): the minimum a burst stays latched
 pub const BURST_HOLD_MS: u64 = 15 * 1_000;
-/// RNS 1.3.5 `Interface.PR_FREQ_DECAY` (10 seconds): the rate-measurement window
+/// RNS 1.4.0 `Interface.PR_FREQ_DECAY` (10 seconds): the rate-measurement window
 pub const FREQUENCY_WINDOW_MS: u64 = 10 * 1_000;
-/// RNS 1.3.5 `Interface.IC_DEQUE_MIN_SAMPLE` + 1: samples needed before a rate is judged
+/// RNS 1.4.0 `Interface.IC_DEQUE_MIN_SAMPLE` + 1: samples needed before a rate is judged
 pub const MIN_SAMPLES_TO_JUDGE: u16 = 3;
 const MIN_EGRESS_SAMPLES_TO_JUDGE: u16 = 6;
 
@@ -79,7 +79,7 @@ impl<C: InterfacePathRequestLimitTable> InterfacePathRequestLimits<C> {
         }
     }
 
-    /// Record a path request on `interface` and report whether to drop its recursive discovery forward. This implements RNS 1.3.5 `Interface.should_ingress_limit_pr`, replacing the 48-sample sliding deque with an integer fixed window of the same span.
+    /// Record a path request on `interface` and report whether to drop its recursive discovery forward. This implements RNS 1.4.0 `Interface.should_ingress_limit_pr`, replacing the 48-sample sliding deque with an integer fixed window of the same span.
     pub fn record_and_should_limit(&mut self, interface: InterfaceId, now: InstantMillis) -> bool {
         self.record_and_should_limit_with_policy(
             interface,

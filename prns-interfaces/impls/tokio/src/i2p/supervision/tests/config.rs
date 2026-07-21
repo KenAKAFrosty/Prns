@@ -44,7 +44,7 @@ fn retry_intervals_are_non_zero_by_construction() {
 }
 
 #[test]
-fn stock_retry_intervals_match_rns_1_3_8() {
+fn stock_retry_intervals_match_rns_1_4_0() {
     assert_eq!(
         I2pRetryPolicy::STOCK.tunnel_setup_interval(),
         Duration::from_secs(8)

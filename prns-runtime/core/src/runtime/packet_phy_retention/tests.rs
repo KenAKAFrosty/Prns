@@ -2,7 +2,7 @@ use super::{
     fixed_packet_phy_retention, FixedPacketPhyRetention, PacketMetricStorage, PacketPhyRetention,
 };
 #[cfg(feature = "alloc")]
-use super::{HeapPacketPhyRetention, RNS_1_3_8_PACKET_PHY_CAPACITY};
+use super::{HeapPacketPhyRetention, RNS_1_4_0_PACKET_PHY_CAPACITY};
 use crate::interfaces::{PacketPhyStats, RssiDbm, SignalQualityTenthsPercent, SnrQuarterDb};
 use crate::routing::dedup::{dedup_index_buckets, PacketHash};
 
@@ -152,7 +152,7 @@ fn assert_retention_contract<RssiStorage, SnrStorage, QualityStorage>(
 fn heap_backend_obeys_the_shared_retention_contract() {
     assert_retention_contract(
         HeapPacketPhyRetention::default,
-        RNS_1_3_8_PACKET_PHY_CAPACITY,
+        RNS_1_4_0_PACKET_PHY_CAPACITY,
     );
 }
 

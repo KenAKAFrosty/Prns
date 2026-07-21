@@ -224,14 +224,14 @@ mod tests {
     }
 
     #[test]
-    fn creates_the_rns_1_3_8_canonical_rsg() {
+    fn creates_the_rns_1_4_0_canonical_rsg() {
         let artifact =
             create_signed_artifact(&fixed_private(), b"artifact-oracle", false, &[]).unwrap();
         assert_eq!(artifact, from_hex(RNS_RSG));
     }
 
     #[test]
-    fn creates_and_validates_the_rns_1_3_8_canonical_rsm() {
+    fn creates_and_validates_the_rns_1_4_0_canonical_rsm() {
         let metadata = vec![
             (
                 "name".to_string(),

@@ -442,11 +442,11 @@ fn message_pack(_: super::message_pack::MessagePackDecodeError) -> RnsAnnounceRa
 mod tests {
     use super::*;
 
-    const RNS_138_RATE_TABLE: &str = "9185a468617368c41033333333333333333333333333333333a46c617374cb41d954fc40100000af726174655f76696f6c6174696f6e7303ad626c6f636b65645f756e74696ccb41d954fc72300000aa74696d657374616d707392cb41d954fb46000000cb41d954fc40100000";
+    const RNS_140_RATE_TABLE: &str = "9185a468617368c41033333333333333333333333333333333a46c617374cb41d954fc40100000af726174655f76696f6c6174696f6e7303ad626c6f636b65645f756e74696ccb41d954fc72300000aa74696d657374616d707392cb41d954fb46000000cb41d954fc40100000";
 
     #[test]
     fn decodes_and_reencodes_the_rns_138_rate_table_fixture() {
-        let bytes = bytes_from_hex(RNS_138_RATE_TABLE);
+        let bytes = bytes_from_hex(RNS_140_RATE_TABLE);
         let table = RnsAnnounceRateTable::decode_message_pack(&bytes).unwrap();
         assert_eq!(table.entries().len(), 1);
         let entry = &table.entries()[0];

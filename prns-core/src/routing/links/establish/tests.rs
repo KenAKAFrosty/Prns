@@ -164,7 +164,7 @@ fn an_establish_link_needs_a_known_route_and_takes_relayed_ones() {
 
     hear_announce(
         &mut state,
-        &bytes_from_hex(RNS_1_3_5_RETRANSMITTED_ANNOUNCE),
+        &bytes_from_hex(RNS_1_4_0_RETRANSMITTED_ANNOUNCE),
     );
     let outcome = state.ingest_command(
         IssuedCommand {
@@ -1437,7 +1437,7 @@ fn relay_that_routes_to_the_responder(
 }
 
 fn transported_request_wire(initiator: &mut EngineState<TestStorageLayout>) -> std::vec::Vec<u8> {
-    hear_announce(initiator, &bytes_from_hex(RNS_1_3_5_RETRANSMITTED_ANNOUNCE));
+    hear_announce(initiator, &bytes_from_hex(RNS_1_4_0_RETRANSMITTED_ANNOUNCE));
     let mut request = [0u8; BROADCAST_MTU];
     let dispatch = initiator
         .write_commanded_link_request(
@@ -1495,7 +1495,7 @@ fn a_duplicate_transported_link_request_is_dropped_as_a_duplicate() {
     assert_eq!(
         outcome,
         IngestPacketOutcome::Ignored(IgnoreReason::Duplicate),
-        "RNS 1.3.5 remembers transported link requests; the echo is a duplicate, not a capacity event",
+        "RNS 1.4.0 remembers transported link requests; the echo is a duplicate, not a capacity event",
     );
 }
 
@@ -1560,7 +1560,7 @@ fn a_returning_proof_switches_home_without_the_destinations_announce() {
     );
     assert!(
         matches!(outcome, IngestPacketOutcome::Forward(_)),
-        "RNS 1.3.5 switches a returning proof home on shape alone; verification is the initiator's job",
+        "RNS 1.4.0 switches a returning proof home on shape alone; verification is the initiator's job",
     );
 }
 
@@ -1663,7 +1663,7 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
     let mut initiator = EngineState::<TestStorageLayout>::new(second_secret_key());
     hear_announce(
         &mut initiator,
-        &bytes_from_hex(RNS_1_3_5_RETRANSMITTED_ANNOUNCE),
+        &bytes_from_hex(RNS_1_4_0_RETRANSMITTED_ANNOUNCE),
     );
 
     let mut request = [0u8; BROADCAST_MTU];
@@ -1826,14 +1826,9 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
         0x64,
         AttachedInterfaces::new(&arrival_interfaces()),
     );
-    assert_eq!(echoes.len(), 1, "the responder echoes the keepalive");
-    let (switched_echo, _, _, _) = ingest_via(
-        &mut relay,
-        &echoes[0].1,
-        iface_to_b,
-        2_700,
-        0x65,
-        AttachedInterfaces::new(&relay_view),
+    assert!(
+        echoes.is_empty(),
+        "a responder with recent outbound traffic suppresses the keepalive echo",
     );
 
     let (keepalive_again, _, _, _) = ingest_via(
@@ -1885,14 +1880,8 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
     assert_eq!(
         data_replay.len(),
         1,
-        "a byte-identical retry switches through again: RNS 1.3.5 never remembers a transported link's packets in the duplicate filter",
+        "a byte-identical retry switches through again: RNS 1.4.0 never remembers a transported link's packets in the duplicate filter",
     );
-    assert_eq!(switched_echo.len(), 1);
-    assert_eq!(
-        switched_echo[0].0, iface_to_a,
-        "the echo returns to A's side"
-    );
-
     let mut close_frames = std::vec::Vec::new();
     let _ = initiator.ingest_command_into(
         IssuedCommand {
@@ -2560,7 +2549,45 @@ fn a_quiet_link_keepalives_then_goes_stale_and_closes() {
             },
         },
     );
-    assert_eq!(echoes.len(), 1, "the responder answers the keepalive");
+    assert!(
+        echoes.is_empty(),
+        "the responder suppresses an echo while its own outbound side is still fresh",
+    );
+
+    let (sent, closed) = fire_deadlines(&mut initiator, 104_106);
+    assert!(closed.is_empty());
+    assert_eq!(
+        sent.len(),
+        1,
+        "the unanswered first keepalive leaves the initiator's cadence armed",
+    );
+    let mut raw = sent[0].clone();
+    let _ = responder.ingest_packet_into(
+        InboundPacket {
+            arrived_at: InstantMillis(104_118),
+            source_interface: arrival(),
+            bytes: &mut raw,
+        },
+        IngestIo {
+            interfaces: AttachedInterfaces::new(&arrival_interfaces()),
+            now: InstantMillis(104_118),
+            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xE8),
+            should_prove: &mut |_: &crate::engine::ProofRequest| false,
+            should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
+                false
+            },
+            sink: &mut |reaction| {
+                if let EngineReaction::Directive(Directive::Send { bytes, .. }) = reaction {
+                    echoes.push(bytes.to_vec());
+                }
+            },
+        },
+    );
+    assert_eq!(
+        echoes.len(),
+        1,
+        "the responder echoes once its outbound side has been silent for a full interval",
+    );
     let (header, payload) = WirePacketHeader::parse(&echoes[0]).unwrap();
     assert_eq!(header.context, WireContext::KeepAlive);
     assert_eq!(payload, &[KEEPALIVE_ECHO]);
@@ -2568,13 +2595,13 @@ fn a_quiet_link_keepalives_then_goes_stale_and_closes() {
     let mut raw = echoes[0].clone();
     let _ = initiator.ingest_packet_into(
         InboundPacket {
-            arrived_at: InstantMillis(52_700),
+            arrived_at: InstantMillis(104_128),
             source_interface: arrival(),
             bytes: &mut raw,
         },
         IngestIo {
             interfaces: AttachedInterfaces::new(&arrival_interfaces()),
-            now: InstantMillis(52_700),
+            now: InstantMillis(104_128),
             fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xE9),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
             should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
@@ -2584,11 +2611,11 @@ fn a_quiet_link_keepalives_then_goes_stale_and_closes() {
         },
     );
 
-    let (sent, closed) = fire_deadlines(&mut initiator, 104_128);
+    let (sent, closed) = fire_deadlines(&mut initiator, 155_534);
     assert!(closed.is_empty(), "the echo postponed staleness");
     assert_eq!(sent.len(), 1, "a second keepalive rides the new cadence");
 
-    let (sent, closed) = fire_deadlines(&mut initiator, 52_700 + 102_856);
+    let (sent, closed) = fire_deadlines(&mut initiator, 104_128 + 102_856);
     assert!(
         closed.is_empty(),
         "reaching the stale boundary sends a final keepalive, not a teardown",
@@ -2598,7 +2625,7 @@ fn a_quiet_link_keepalives_then_goes_stale_and_closes() {
     assert_eq!(header.context, WireContext::KeepAlive);
     assert_eq!(payload, &[KEEPALIVE_REQUEST]);
 
-    let (sent, closed) = fire_deadlines(&mut initiator, 52_700 + 102_856 + 6_000);
+    let (sent, closed) = fire_deadlines(&mut initiator, 104_128 + 102_856 + 6_000);
     assert_eq!(
         sent.len(),
         1,

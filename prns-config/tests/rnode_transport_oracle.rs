@@ -19,7 +19,7 @@ fn oracle(python: &std::ffi::OsStr, ports: &[&str]) -> serde_json::Value {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("spawn RNS 1.3.9 RNode transport oracle");
+        .expect("spawn RNS 1.4.0 RNode transport oracle");
     child
         .stdin
         .take()
@@ -99,7 +99,7 @@ fn planned_shape(port: &str) -> serde_json::Value {
 }
 
 #[test]
-fn transport_selection_matches_rns_1_3_9() {
+fn transport_selection_matches_rns_1_4_0() {
     let Some(python) = support::reference_python(
         "RPC_SMOKE_PYTHON",
         "../benchmarks/reference/.rpc-venv/bin/python",
@@ -122,7 +122,7 @@ fn transport_selection_matches_rns_1_3_9() {
         "ble://RNode 🛰️",
     ];
     let reference = oracle(&python, &ports);
-    assert_eq!(reference["version"], "1.3.9");
+    assert_eq!(reference["version"], "1.4.0");
     let reference_results = reference["results"]
         .as_array()
         .expect("oracle results are an array");

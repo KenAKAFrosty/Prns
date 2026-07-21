@@ -13,11 +13,11 @@ use super::autoconnect::{
     DiscoveredConnectionSelection, DiscoveredConnectionTransition,
 };
 use super::{
-    discovery_destination_hash, ingest_discovery_announce, DiscoveredConnectionHealth,
-    DiscoveredConnectionPlan, DiscoveredEndpointSet, DiscoveryCatalog, DiscoveryCatalogStoreError,
-    DiscoveryCatalogUpdate, DiscoveryDecryptionError, DiscoveryIntake, DiscoveryNotApplicable,
-    DiscoveryRecord, DiscoveryRejection, GrowableInterfaceDiscoveryStorage,
-    InterfaceDiscoveryPolicy, InterfaceDiscoveryStorage,
+    discovery_destination_hash, DiscoveredConnectionHealth, DiscoveredConnectionPlan,
+    DiscoveredEndpointSet, DiscoveryCatalog, DiscoveryCatalogStoreError, DiscoveryCatalogUpdate,
+    DiscoveryDecryptionError, DiscoveryIntake, DiscoveryNotApplicable, DiscoveryRecord,
+    DiscoveryRejection, GrowableInterfaceDiscoveryStorage, InterfaceDiscoveryPolicy,
+    InterfaceDiscoveryStorage,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -139,6 +139,7 @@ impl DiscoveryAttachmentRegistrationFailure {
 
 pub struct DiscoveryCoordinator<S: InterfaceDiscoveryStorage = GrowableInterfaceDiscoveryStorage> {
     policy: InterfaceDiscoveryPolicy,
+    validation_cache: S::ValidationCache,
     catalog: DiscoveryCatalog<S::Catalog>,
     connections: DiscoveredConnectionRegistry<S::Connections>,
     reserved_endpoints: S::ReservedEndpoints,
@@ -154,6 +155,7 @@ impl<S: InterfaceDiscoveryStorage> DiscoveryCoordinator<S> {
     pub fn with_storage(policy: InterfaceDiscoveryPolicy) -> Self {
         Self {
             policy,
+            validation_cache: S::ValidationCache::default(),
             catalog: DiscoveryCatalog::with_table(S::Catalog::default()),
             connections: DiscoveredConnectionRegistry::with_table(S::Connections::default()),
             reserved_endpoints: S::ReservedEndpoints::default(),
@@ -164,7 +166,10 @@ impl<S: InterfaceDiscoveryStorage> DiscoveryCoordinator<S> {
         DiscoveryIngressFilter::from_policy(&self.policy)
     }
 
-    pub fn seed_catalog(&mut self, catalog: DiscoveryCatalog<S::Catalog>) {
+    pub fn seed_catalog(&mut self, mut catalog: DiscoveryCatalog<S::Catalog>) {
+        if let Some(policy) = self.policy.enabled_policy() {
+            catalog.remove_below_stamp_cost(policy.required_stamp_cost());
+        }
         self.catalog = catalog;
     }
 
@@ -208,7 +213,12 @@ impl<S: InterfaceDiscoveryStorage> DiscoveryCoordinator<S> {
         now: InstantMillis,
         decrypt: impl FnOnce(&[u8]) -> Result<Vec<u8>, DiscoveryDecryptionError>,
     ) -> Vec<DiscoveryCoordinatorOutput> {
-        match ingest_discovery_announce(&self.policy, observation, decrypt) {
+        match super::intake::ingest_discovery_announce_cached(
+            &self.policy,
+            observation,
+            decrypt,
+            &mut self.validation_cache,
+        ) {
             DiscoveryIntake::NotApplicable(reason) => vec![DiscoveryCoordinatorOutput::Event(
                 DiscoveryCoordinatorEvent::IntakeNotApplicable(reason),
             )],

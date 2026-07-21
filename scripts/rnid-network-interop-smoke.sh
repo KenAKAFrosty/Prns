@@ -118,4 +118,4 @@ grep -q "RNID_ANNOUNCE_RECEIVED .* $ANNOUNCE_HASH" "$SERVER_LOG" || {
     exit 1
 }
 
-echo "PASS: Prnsd id resolved and announced identities through a stock RNS 1.3.9 shared instance"
+echo "PASS: Prnsd id resolved and announced identities through a stock RNS 1.4.0 shared instance"

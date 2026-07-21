@@ -33,3 +33,9 @@ impl IndexKey for crate::interfaces::InterfaceId {
         u64::from_le_bytes(*self.as_bytes())
     }
 }
+
+impl IndexKey for [u8; 32] {
+    fn lemire_key(&self) -> u64 {
+        lemire_key_from_prefix(self)
+    }
+}

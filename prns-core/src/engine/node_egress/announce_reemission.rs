@@ -26,7 +26,7 @@ impl ReemitAnnounce<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::test_support::{bytes_from_hex, RNS_1_3_5_ANNOUNCE};
+    use crate::engine::test_support::{bytes_from_hex, RNS_1_4_0_ANNOUNCE};
     use crate::wire::{
         DestinationType, PacketType, PropagationType, WireContext, WirePacketHeader, HEADER_MAX_LEN,
     };
@@ -39,7 +39,7 @@ mod tests {
 
     #[test]
     fn reemit_announce_to_wire_produces_a_well_formed_wire_packet() {
-        let raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+        let raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
         let (orig_header, orig_payload) = WirePacketHeader::parse(&raw).unwrap();
         let announce = Announce::from_wire(&orig_header, orig_payload).unwrap();
 
@@ -68,7 +68,7 @@ mod tests {
 
     #[test]
     fn a_directed_path_response_reemit_carries_the_path_response_context() {
-        let raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+        let raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
         let (orig_header, orig_payload) = WirePacketHeader::parse(&raw).unwrap();
         let announce = Announce::from_wire(&orig_header, orig_payload).unwrap();
 
@@ -95,7 +95,7 @@ mod tests {
 
     #[test]
     fn to_wire_with_buffer_too_short_returns_buffer_too_short() {
-        let raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+        let raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
         let (orig_header, orig_payload) = WirePacketHeader::parse(&raw).unwrap();
         let announce = Announce::from_wire(&orig_header, orig_payload).unwrap();
 
@@ -116,7 +116,7 @@ mod tests {
 
     #[test]
     fn to_wire_with_exactly_sized_buffer_succeeds() {
-        let raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+        let raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
         let (orig_header, orig_payload) = WirePacketHeader::parse(&raw).unwrap();
         let announce = Announce::from_wire(&orig_header, orig_payload).unwrap();
         let exact_len = HEADER_MAX_LEN + announce.wire_len();
@@ -141,7 +141,7 @@ mod tests {
 
     #[test]
     fn to_wire_output_round_trips_to_an_equivalent_announce() {
-        let raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+        let raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
         let (orig_header, orig_payload) = WirePacketHeader::parse(&raw).unwrap();
         let orig_announce = Announce::from_wire(&orig_header, orig_payload).unwrap();
 

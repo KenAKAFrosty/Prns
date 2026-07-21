@@ -1064,11 +1064,26 @@
     },
     {
       "graphs": {
-        "android": [],
-        "daemon-linux": [],
-        "desktop-linux": [],
-        "desktop-macos": [],
-        "desktop-windows": [],
+        "android": [
+          "default",
+          "std"
+        ],
+        "daemon-linux": [
+          "default",
+          "std"
+        ],
+        "desktop-linux": [
+          "default",
+          "std"
+        ],
+        "desktop-macos": [
+          "default",
+          "std"
+        ],
+        "desktop-windows": [
+          "default",
+          "std"
+        ],
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
@@ -7046,6 +7061,25 @@
     },
     {
       "graphs": {
+        "android": [],
+        "daemon-linux": [],
+        "desktop-linux": [],
+        "desktop-macos": [],
+        "desktop-windows": []
+      },
+      "name": "iter-read",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "1.1.0"
+    },
+    {
+      "graphs": {
         "daemon-linux": [
           "default",
           "use_alloc",
@@ -8538,6 +8572,40 @@
     },
     {
       "graphs": {
+        "android": [
+          "default",
+          "std"
+        ],
+        "daemon-linux": [
+          "default",
+          "std"
+        ],
+        "desktop-linux": [
+          "default",
+          "std"
+        ],
+        "desktop-macos": [
+          "default",
+          "std"
+        ],
+        "desktop-windows": [
+          "default",
+          "std"
+        ]
+      },
+      "name": "num-bigint",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 8,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 8
+      },
+      "version": "0.4.8"
+    },
+    {
+      "graphs": {
         "daemon-linux": [],
         "desktop-macos": [],
         "ios": []
@@ -8575,23 +8643,62 @@
     {
       "graphs": {
         "android": [
+          "i128",
+          "std"
+        ],
+        "daemon-linux": [
+          "i128",
+          "std"
+        ],
+        "desktop-linux": [
+          "i128",
+          "std"
+        ],
+        "desktop-macos": [
+          "i128",
+          "std"
+        ],
+        "desktop-windows": [
+          "i128",
+          "std"
+        ]
+      },
+      "name": "num-integer",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.1.46"
+    },
+    {
+      "graphs": {
+        "android": [
           "default",
+          "i128",
           "std"
         ],
         "daemon-linux": [
           "default",
+          "i128",
           "std"
         ],
         "desktop-linux": [
           "default",
+          "i128",
           "std"
         ],
         "desktop-macos": [
           "default",
+          "i128",
           "std"
         ],
         "desktop-windows": [
           "default",
+          "i128",
           "std"
         ],
         "engine": [
@@ -10304,7 +10411,7 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.1.0"
+      "version": "0.2.7"
     },
     {
       "graphs": {
@@ -12076,6 +12183,12 @@
     },
     {
       "graphs": {
+        "android": [
+          "default",
+          "derive",
+          "serde_derive",
+          "std"
+        ],
         "daemon-linux": [
           "default",
           "derive",
@@ -12144,6 +12257,25 @@
     },
     {
       "graphs": {
+        "android": [],
+        "daemon-linux": [],
+        "desktop-linux": [],
+        "desktop-macos": [],
+        "desktop-windows": []
+      },
+      "name": "serde-pickle",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "1.2.0"
+    },
+    {
+      "graphs": {
         "daemon-linux": []
       },
       "name": "serde-xml-rs",
@@ -12159,6 +12291,11 @@
     },
     {
       "graphs": {
+        "android": [
+          "alloc",
+          "result",
+          "std"
+        ],
         "daemon-linux": [
           "alloc",
           "result",
@@ -12223,6 +12360,9 @@
     },
     {
       "graphs": {
+        "android": [
+          "default"
+        ],
         "daemon-linux": [
           "default"
         ],

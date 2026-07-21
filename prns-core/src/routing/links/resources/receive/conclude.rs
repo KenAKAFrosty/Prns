@@ -28,7 +28,7 @@ use crate::units::RttMillis;
 use crate::wire::{PacketType, WireContext};
 
 impl<S: StorageLayout> EngineState<S> {
-    /// RNS 1.3.5 `Resource.assemble` + `prove`
+    /// RNS 1.4.0 `Resource.assemble` + `prove`
     pub(crate) fn conclude_resource(
         &mut self,
         link_id: &LinkId,
@@ -137,6 +137,7 @@ impl<S: StorageLayout> EngineState<S> {
                 Err(cause) => Err(cause),
                 Ok(verified) => {
                     emit_proof(verified.prove, fire_on, sink);
+                    self.links.note_outbound(link_id, now);
                     if multi_segment {
                         deliver_split_segment(
                             &self.receipts,
@@ -274,7 +275,7 @@ impl<S: StorageLayout> EngineState<S> {
         ConcludeResourceOutcome::Failed(cause)
     }
 
-    /// The receipts half of a response transfer's death: RNS 1.3.5 concludes any non-`COMPLETE` response resource through `request_timed_out`, so the pending request settles with the transfer.
+    /// The receipts half of a response transfer's death: RNS 1.4.0 concludes any non-`COMPLETE` response resource through `request_timed_out`, so the pending request settles with the transfer.
     /// The caller journals the failure settlement for the returned command.
     pub(super) fn settle_response_claim(
         &mut self,
@@ -390,6 +391,8 @@ impl<S: StorageLayout> EngineState<S> {
         };
 
         emit_proof(prove, fire_on, sink);
+        self.links.note_outbound(&link_id, now);
+        wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
 
         if is_split {
             let original_hash = self
@@ -474,7 +477,7 @@ impl<S: StorageLayout> EngineState<S> {
     }
 }
 
-/// RNS 1.3.5's assemble tail for a metadata transfer: segment one's verified stream opens with `3-byte-BE-length ‖ packed block`, split off ahead of delivery. Every byte count around this point (the advertised `d`, the assembly advance) stays on the whole pre-split stream.
+/// RNS 1.4.0's assemble tail for a metadata transfer: segment one's verified stream opens with `3-byte-BE-length ‖ packed block`, split off ahead of delivery. Every byte count around this point (the advertised `d`, the assembly advance) stays on the whole pre-split stream.
 ///
 /// A declared length past the stream's end fails by name where the reference's Python slicing would silently deliver a truncated block and empty data.
 fn split_metadata_block<'p>(

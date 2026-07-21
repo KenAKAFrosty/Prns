@@ -1,4 +1,4 @@
-use crate::engine::{Directive, EngineReaction, EngineState, Journaled};
+use crate::engine::{Directive, EngineReaction, EngineState, InstantMillis, Journaled};
 use crate::interfaces::{AttachedInterfaces, Egress, InterfaceId};
 use crate::routing::delivery::Delivery;
 use crate::routing::proof::{
@@ -29,6 +29,7 @@ impl<S: StorageLayout> EngineState<S> {
         delivery: Delivery<'d>,
         proof: ProofObligation,
         source: InterfaceId,
+        now: InstantMillis,
         io: &mut DeliveryIo<'_, P, K>,
     ) where
         P: FnMut(&ProofRequest) -> bool,
@@ -91,6 +92,7 @@ impl<S: StorageLayout> EngineState<S> {
                 if io.interfaces.is_egress_eligible(source, Egress::Transmit) {
                     let mut proof = [0u8; LINK_PROOF_WIRE_LEN];
                     if let Ok(written) = self.write_link_proof(&owed, &mut proof) {
+                        self.links.note_outbound(&owed.link_id, now);
                         (io.sink)(EngineReaction::Directive(Directive::Send {
                             target: source,
                             bytes: &proof[..written],

@@ -4,7 +4,7 @@ use crate::crypto::{hkdf_sha256, sha256, sha256_chunks};
 
 pub const STAMP_SIZE: usize = 32;
 pub const WORKBLOCK_EXPAND_ROUNDS: usize = 20;
-pub const DEFAULT_STAMP_COST: StampCost = StampCost::new_const(14);
+pub const DEFAULT_STAMP_COST: StampCost = StampCost::new_const(16);
 
 const WORKBLOCK_FRAGMENT_SIZE: usize = 256;
 

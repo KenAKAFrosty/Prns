@@ -294,4 +294,4 @@ fi
 [ ! -f "$WORK/auth-receive/prns-send.bin" ] || { echo "FAIL: unlisted stock bytes were published"; exit 1; }
 stop_listener
 
-echo "PASS: Prnsd cp rejects partial publication, settles cancellation, recovers, and exchanges boundary and bulk files with stock RNS 1.3.9 rncp"
+echo "PASS: Prnsd cp rejects partial publication, settles cancellation, recovers, and exchanges boundary and bulk files with stock RNS 1.4.0 rncp"

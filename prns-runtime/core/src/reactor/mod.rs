@@ -19,7 +19,7 @@ pub mod timers;
 
 pub(crate) mod window_ring;
 
-/// The app's synchronous judgment seams, consulted inline on the reactor: RNS 1.3.5 `PROVE_APP` and `ACCEPT_APP`.
+/// The app's synchronous judgment seams, consulted inline on the reactor: RNS 1.4.0 `PROVE_APP` and `ACCEPT_APP`.
 pub struct AppDeciders<P, A>
 where
     P: FnMut(&prns_core::routing::proof::ProofRequest) -> bool,

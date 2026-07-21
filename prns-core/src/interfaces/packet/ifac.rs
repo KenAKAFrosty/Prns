@@ -2,7 +2,7 @@ use crate::crypto::{hkdf_sha256, hmac_sha256, hmac_sha256_chunks, sha256, sha256
 use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 
-/// RNS 1.3.5 `Reticulum.IFAC_SALT`.
+/// RNS 1.4.0 `Reticulum.IFAC_SALT`.
 const IFAC_SALT: [u8; 32] = [
     0xad, 0xf5, 0x4d, 0x88, 0x2c, 0x9a, 0x9b, 0x80, 0x77, 0x1e, 0xb4, 0x99, 0x5d, 0x70, 0x2d, 0x4a,
     0x3e, 0x73, 0x33, 0x91, 0xb2, 0xa0, 0xf5, 0x3f, 0x41, 0x6d, 0x9f, 0x90, 0x7e, 0x55, 0xcf, 0xf8,
@@ -173,7 +173,7 @@ fn apply_rns_mask(
     let pseudorandom_key = hmac_sha256(salt, derive_from);
     let mut previous = [0u8; HMAC_SHA256_OUTPUT_LEN];
     for (block_index, chunk) in bytes.chunks_mut(HMAC_SHA256_OUTPUT_LEN).enumerate() {
-        // RNS 1.3.5 HKDF.py uses `bytes([(i + 1) % 256])`, so long IFAC masks wrap the counter to zero.
+        // RNS 1.4.0 HKDF.py uses `bytes([(i + 1) % 256])`, so long IFAC masks wrap the counter to zero.
         let counter = [(block_index + 1) as u8];
         let block = if block_index == 0 {
             hmac_sha256_chunks(&pseudorandom_key, &[&counter])
@@ -202,7 +202,7 @@ fn ct_eq(a: &[u8], b: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::test_support::{bytes_from_hex, RNS_1_3_5_ANNOUNCE};
+    use crate::engine::test_support::{bytes_from_hex, RNS_1_4_0_ANNOUNCE};
     use crate::wire::BROADCAST_MTU;
     use proptest::prelude::*;
 
@@ -249,7 +249,7 @@ mod tests {
 
     #[test]
     fn masking_reproduces_the_reference_wire() {
-        let clean = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+        let clean = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
         let mut out = [0u8; TEST_MASK_LEN];
         let written = testnet().mask_outbound(&clean, &mut out).unwrap();
         assert_eq!(out[..written], bytes_from_hex(REFERENCE_MASKED)[..]);
@@ -260,7 +260,7 @@ mod tests {
         let wire = bytes_from_hex(REFERENCE_MASKED);
         let mut out = [0u8; TEST_MASK_LEN];
         let clean_len = testnet().unmask_inbound(&wire, &mut out).unwrap();
-        assert_eq!(out[..clean_len], bytes_from_hex(RNS_1_3_5_ANNOUNCE)[..]);
+        assert_eq!(out[..clean_len], bytes_from_hex(RNS_1_4_0_ANNOUNCE)[..]);
     }
 
     #[test]
@@ -304,7 +304,7 @@ mod tests {
     #[test]
     fn a_wider_tag_round_trips_on_its_own() {
         let ctx = IfacContext::derive(None, Some("only-a-passphrase"), IfacSize::WIDE).unwrap();
-        let clean = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+        let clean = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
         let mut wire = [0u8; TEST_MASK_LEN];
         let written = ctx.mask_outbound(&clean, &mut wire).unwrap();
         assert_eq!(written, clean.len() + 16);

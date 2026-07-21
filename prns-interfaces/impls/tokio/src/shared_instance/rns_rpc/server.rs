@@ -7,7 +7,7 @@ use tokio::net::TcpListener;
 use tokio::net::UnixListener;
 
 use prns_core::interfaces::rns_management::RnsTransportStatus;
-use prns_core::interfaces::shared_instance::rns_rpc::RpcRequest;
+use prns_core::interfaces::shared_instance::rns_rpc::{RpcDialect, RpcRequest};
 use prns_runtime::node_introspection::NodeIntrospection;
 use prns_runtime::runtime::rns_rpc;
 use prns_runtime::runtime::{
@@ -19,6 +19,7 @@ use super::authentication::{
     answer_client_challenge, deliver_our_challenge, SharedInstanceCredentials,
 };
 use super::framing::{read_frame, write_frame};
+use super::legacy;
 use super::telemetry::RpcTelemetry;
 
 pub struct SharedInstanceRpcServer<Q, B = Q> {
@@ -398,14 +399,24 @@ where
         }
     };
     telemetry.record_request_frame();
-    let request = match RpcRequest::decode(&request) {
+    let decoded = match RpcRequest::decode(&request) {
         Ok(request) => request,
         Err(_) => {
             telemetry.record_protocol_failure();
             return Ok(());
         }
     };
-    let dialect = request.dialect();
+    let dialect = decoded.dialect();
+    let request = match decoded {
+        RpcRequest::Msgpack(request) => request,
+        RpcRequest::Pickle(_) => match legacy::decode_request(&request) {
+            Ok(request) => request,
+            Err(_) => {
+                telemetry.record_protocol_failure();
+                return Ok(());
+            }
+        },
+    };
     let verb = request.verb();
     telemetry.record_request(dialect, verb);
     #[cfg(feature = "tracing")]
@@ -414,7 +425,7 @@ where
         dialect = dialect.as_str(),
         verb = verb.as_str()
     );
-    let reply = rns_rpc::reply(
+    let reply = rns_rpc::reply_decoded(
         &request,
         &query,
         &query,
@@ -429,6 +440,15 @@ where
     )
     .await
     .map_err(std::io::Error::other)?;
+    let reply = match dialect {
+        RpcDialect::Msgpack => reply,
+        RpcDialect::Pickle => legacy::encode_reply(&reply).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "legacy shared-instance RPC reply could not be encoded",
+            )
+        })?,
+    };
     if let Err(err) = with_io_timeout(write_frame(&mut stream, &reply)).await {
         telemetry.record_write_failure();
         return Err(err);

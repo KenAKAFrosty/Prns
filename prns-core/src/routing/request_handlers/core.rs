@@ -2,7 +2,7 @@ use crate::identity::IdentityHash;
 use crate::storage::TablePushError;
 use crate::wire::{DestinationHash, TRUNCATED_HASH_BYTE_LEN};
 
-/// RNS 1.3.5 `Identity.truncated_hash(path.encode("utf-8"))`: the wire never carries the path string; both ends know it by contract and meet at this hash.
+/// RNS 1.4.0 `Identity.truncated_hash(path.encode("utf-8"))`: the wire never carries the path string; both ends know it by contract and meet at this hash.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RequestPathHash([u8; TRUNCATED_HASH_BYTE_LEN]);
 
@@ -26,7 +26,7 @@ impl RequestPathHash {
     }
 }
 
-/// RNS 1.3.5 `Destination.ALLOW_NONE / ALLOW_ALL / ALLOW_LIST`. `AllowNone` is the reference's registration default: the handler exists but answers no one until the policy says otherwise.
+/// RNS 1.4.0 `Destination.ALLOW_NONE / ALLOW_ALL / ALLOW_LIST`. `AllowNone` is the reference's registration default: the handler exists but answers no one until the policy says otherwise.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RequestPolicy {
     AllowNone,
@@ -139,7 +139,7 @@ impl<C: RequestHandlerTable> RequestHandlers<C> {
         Ok(())
     }
 
-    /// RNS 1.3.5 `Link.handle_request`'s gate, exactly: no handler refuses, `AllowNone` refuses, `AllowAll` permits, `AllowList` permits only a link whose peer has identified as a listed identity.
+    /// RNS 1.4.0 `Link.handle_request`'s gate, exactly: no handler refuses, `AllowNone` refuses, `AllowAll` permits, `AllowList` permits only a link whose peer has identified as a listed identity.
     pub fn permits(
         &self,
         destination: &DestinationHash,

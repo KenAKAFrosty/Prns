@@ -27,7 +27,7 @@ pub enum RnidError {
 pub async fn run(args: RnidArgs) -> Result<(), RnidError> {
     if args.version {
         println!(
-            "prnsd id {} (RNS 1.3.8 compatibility)",
+            "prnsd id {} (RNS 1.4.0 compatibility)",
             env!("CARGO_PKG_VERSION")
         );
         return Ok(());

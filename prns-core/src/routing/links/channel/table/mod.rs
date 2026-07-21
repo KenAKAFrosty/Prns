@@ -1,4 +1,4 @@
-//! RNS 1.3.5 `Channel`'s ring state as a backend-swappable table: reorder buffer, outstanding sends, and window column per link.
+//! RNS 1.4.0 `Channel`'s ring state as a backend-swappable table: reorder buffer, outstanding sends, and window column per link.
 
 pub mod core;
 pub mod impls;

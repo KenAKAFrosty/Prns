@@ -1,4 +1,4 @@
-//! RNS 1.3.5 `Channel.send`'s sequencing and windowed reliability, ported to the engine's command/receipt grammar.
+//! RNS 1.4.0 `Channel.send`'s sequencing and windowed reliability, ported to the engine's command/receipt grammar.
 
 use crate::crypto::{ed25519_verify, Ed25519Signature};
 use crate::engine::LinkClosedReason;
@@ -26,15 +26,15 @@ use crate::units::RttMillis;
 use crate::wire::DestinationHash;
 use crate::wire::{DestinationType, WireContext, BROADCAST_MTU, HEADER_MIN_LEN};
 
-/// RNS 1.3.5 `Channel.WINDOW`
+/// RNS 1.4.0 `Channel.WINDOW`
 pub const CHANNEL_TX_WINDOW: usize = ChannelWindow::INITIAL as usize;
 
 const CHANNEL_PLAINTEXT_CAP: usize = CHANNEL_ENVELOPE_HEADER_LEN + MAX_SEND_TO_CHANNEL_BODY_LEN;
 
-/// RNS 1.3.5 `Channel._max_tries`
+/// RNS 1.4.0 `Channel._max_tries`
 pub const CHANNEL_MAX_TRIES: u8 = 5;
 
-/// RNS 1.3.5 `Channel._get_packet_timeout_time` in integer millis: `1.5^(tries − 1) × max(rtt × 2.5, 25 ms) × (in_flight_count + 1.5)`.
+/// RNS 1.4.0 `Channel._get_packet_timeout_time` in integer millis: `1.5^(tries − 1) × max(rtt × 2.5, 25 ms) × (in_flight_count + 1.5)`.
 /// In-flight messages queue serially on the wire, so the deadline scales with the ring; the fractions cancel exactly as `base × (2·ring + 3) × 3^(tries−1) / 2^tries`.
 pub fn channel_retry_timeout_ms(rtt: RttMillis, tries: u8, in_flight_count: usize) -> u64 {
     let tries = tries.min(CHANNEL_MAX_TRIES);
@@ -184,7 +184,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// RNS 1.3.5 `PacketReceipt.validate_proof`: the outstanding-hash match gates the `ed25519` verify. The reference uses the same order, so proofs naming nothing we sent cost no signature check.
+    /// RNS 1.4.0 `PacketReceipt.validate_proof`: the outstanding-hash match gates the `ed25519` verify. The reference uses the same order, so proofs naming nothing we sent cost no signature check.
     pub fn settle_channel_ack(
         &mut self,
         link_id: &LinkId,
@@ -242,7 +242,7 @@ impl<S: StorageLayout> EngineState<S> {
         ))
     }
 
-    /// RNS 1.3.5 `Channel._packet_timeout`. Retransmits are byte-identical (same sequence and IV, so the same packet hash, so the original outstanding entry still settles).
+    /// RNS 1.4.0 `Channel._packet_timeout`. Retransmits are byte-identical (same sequence and IV, so the same packet hash, so the original outstanding entry still settles).
     /// A send that exhausts [`CHANNEL_MAX_TRIES`] tears the link down.
     pub fn fire_due_channel_timeouts<F>(
         &mut self,
@@ -323,7 +323,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// RNS 1.3.5 `PacketReceipt.sent_at` never resets on resend, so each deadline is `sent_at + timeout(tries)`. The retry ladder is the exponential curve itself, not a running sum of gaps.
+    /// RNS 1.4.0 `PacketReceipt.sent_at` never resets on resend, so each deadline is `sent_at + timeout(tries)`. The retry ladder is the exponential curve itself, not a running sum of gaps.
     #[allow(clippy::too_many_arguments)]
     fn retry_outstanding_send(
         &mut self,
@@ -396,7 +396,7 @@ impl<S: StorageLayout> EngineState<S> {
         self.channels.set_window(index, window);
     }
 
-    /// RNS 1.3.5 `Channel._update_packet_timeouts`: after every send and resend, each in-flight deadline is recomputed at the current ring size and only ever extended, never shortened.
+    /// RNS 1.4.0 `Channel._update_packet_timeouts`: after every send and resend, each in-flight deadline is recomputed at the current ring size and only ever extended, never shortened.
     fn stretch_channel_deadlines(&mut self, index: usize, rtt: RttMillis) {
         let in_flight_count = self.channels.outstanding_count(index);
         for outstanding_index in 0..in_flight_count {
@@ -478,8 +478,8 @@ mod tests {
     use crate::identity::{in_memory::InMemoryNodeIdentity, IdentitySigner};
     use crate::interfaces::{InboundPacket, InterfaceId};
     use crate::routing::links::channel::MessageType;
-    use crate::routing::links::table::LinkActivation;
     use crate::routing::links::table::{InitiatedLink, RespondingLink};
+    use crate::routing::links::table::{LinkActivation, LinkPhase};
     use crate::routing::links::{LinkId, LinkKey};
     use crate::routing::upstream_app_destinations::ProofStrategy;
     use crate::wire::BROADCAST_MTU;
@@ -847,6 +847,15 @@ mod tests {
             );
             assert!(fired.closed.is_empty() && fired.timed_out.is_empty());
             assert_eq!(initiator.channels.outstanding_tries(index, 0), tries);
+            let Some(LinkPhase::Active { last_outbound, .. }) = initiator.links.phase_for(&link_id)
+            else {
+                panic!("the retrying channel link must remain active");
+            };
+            assert_eq!(
+                *last_outbound,
+                InstantMillis(2_000),
+                "byte-identical channel retransmissions do not refresh outbound liveness",
+            );
         }
 
         let fired = fire(

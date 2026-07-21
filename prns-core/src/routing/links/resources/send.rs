@@ -1,4 +1,4 @@
-//! RNS 1.3.5 `Resource(data, link)` plus `Resource.advertise`.
+//! RNS 1.4.0 `Resource(data, link)` plus `Resource.advertise`.
 
 use crate::engine::{Directive, EngineReaction, EngineState, InstantMillis, Journaled};
 use crate::engine::{SendResourceFailure, SendResourceRejection, Settlement};
@@ -23,7 +23,7 @@ use crate::routing::links::resources::control::{
 };
 use crate::routing::links::resources::serve_outgoing::{plan_hashmap_update, serve_part_indices};
 use crate::routing::links::resources::table::{
-    OutgoingResourceStatus, TrackLane, TrackOutgoingResourceError, TrackedCommand,
+    OutgoingResourceStatus, PartSendOutcome, TrackLane, TrackOutgoingResourceError, TrackedCommand,
 };
 use crate::routing::links::resources::{
     resource_sdu, ResourceCorrelation, ResourceHash, ResourceMetadata, ResourcePartRequest,
@@ -90,7 +90,7 @@ impl<S: StorageLayout> EngineState<S> {
 
     /// Segment 1 of a split records its hash as the chain's `original_hash`; every later segment re-advertises it, so the host threads no hashes of its own.
     ///
-    /// `total_data_size` is the whole transfer's uncompressed DATA length. The engine adds the metadata block on top, and RNS 1.3.5 advertises the sum (the `d` field) on every segment, never the segment's own size.
+    /// `total_data_size` is the whole transfer's uncompressed DATA length. The engine adds the metadata block on top, and RNS 1.4.0 advertises the sum (the `d` field) on every segment, never the segment's own size.
     ///
     /// A continuation whose live segment failed on the wire before this command reached the engine settles `PredecessorFailed` without advertising. A pipelining host therefore cannot revive a dead transfer's tail.
     pub fn ingest_send_resource_segment_into<F>(
@@ -280,6 +280,8 @@ impl<S: StorageLayout> EngineState<S> {
             sink,
         ) {
             AdvertisementWriteOutcome::Wrote => {
+                self.links.note_outbound(&link_id, now);
+                wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
                 if let Some(index) = self.outgoing_resources.lookup(&link_id, &hash) {
                     self.outgoing_resources.state_mut(index).retries_left =
                         MAX_ADVERTISEMENT_RETRIES;
@@ -311,7 +313,7 @@ impl<S: StorageLayout> EngineState<S> {
         wake_schedule_changes
     }
 
-    /// Note that RNS 1.3.5 `Transport.packet_filter` exempts `RESOURCE_REQ` from duplicate filtering because a receiver's retry is byte-identical by design.
+    /// Note that RNS 1.4.0 `Transport.packet_filter` exempts `RESOURCE_REQ` from duplicate filtering because a receiver's retry is byte-identical by design.
     pub(crate) fn ingest_resource_request<'p>(
         &mut self,
         data: DataPacket<'p>,
@@ -344,7 +346,7 @@ impl<S: StorageLayout> EngineState<S> {
         })
     }
 
-    /// RNS 1.3.5 `Resource.validate_proof`. Note `RESOURCE_PRF` is exempt from duplicate filtering, like the request.
+    /// RNS 1.4.0 `Resource.validate_proof`. Note `RESOURCE_PRF` is exempt from duplicate filtering, like the request.
     pub(crate) fn ingest_resource_proof(
         &mut self,
         link_id: LinkId,
@@ -378,7 +380,7 @@ impl<S: StorageLayout> EngineState<S> {
         Resolved(IngestPacketOutcome::ResourceDelivered { id, link_id })
     }
 
-    /// RNS 1.3.5 `Resource._rejected`; sealed, and behind the duplicate filter.
+    /// RNS 1.4.0 `Resource._rejected`; sealed, and behind the duplicate filter.
     pub(crate) fn ingest_resource_receiver_cancel<'p>(
         &mut self,
         data: DataPacket<'p>,
@@ -420,7 +422,7 @@ impl<S: StorageLayout> EngineState<S> {
         IngestPacketOutcome::ResourceRejectedByPeer { id, link_id }
     }
 
-    /// RNS 1.3.5 `Resource.request`: parts go back raw (slices of the sealed stream,  no token around them).
+    /// RNS 1.4.0 `Resource.request`: parts go back raw (slices of the sealed stream,  no token around them).
     ///
     /// A request that breaks the segment sequencing cancels the transfer as the reference does, except we settle the command with the failure's name.
     pub(crate) fn serve_resource_request<F>(
@@ -459,6 +461,7 @@ impl<S: StorageLayout> EngineState<S> {
             .set_timeout_at(index, Some(transferring_deadline(now, rtt_ms)));
 
         let scope_start = self.outgoing_resources.state(index).scope_start;
+        let mut originated_outbound = false;
         for part in serve_part_indices(
             self.outgoing_resources.names_flat(index),
             scope_start,
@@ -486,7 +489,9 @@ impl<S: StorageLayout> EngineState<S> {
                 size_hint: link_raw_frame_ceiling(end - start),
                 fill: &mut fill,
             }));
-            self.outgoing_resources.mark_sent(index, part);
+            if self.outgoing_resources.mark_sent(index, part) == PartSendOutcome::FirstSend {
+                originated_outbound = true;
+            }
         }
 
         if let Some(last_known) = last_known_map_hash {
@@ -501,6 +506,7 @@ impl<S: StorageLayout> EngineState<S> {
                     let mut iv = [0u8; 16];
                     fill_entropy(&mut iv);
                     let outgoing = &self.outgoing_resources;
+                    let mut wrote = false;
                     let mut fill = |slot: &mut [u8]| -> Option<usize> {
                         let names = outgoing.names_flat(index);
                         let segment_names = &names
@@ -513,7 +519,7 @@ impl<S: StorageLayout> EngineState<S> {
                             &mut plaintext,
                         )
                         .ok()?;
-                        write_link_packet(
+                        let wire_len = write_link_packet(
                             link_id,
                             key,
                             mtu,
@@ -522,25 +528,36 @@ impl<S: StorageLayout> EngineState<S> {
                             &iv,
                             slot,
                         )
-                        .ok()
+                        .ok()?;
+                        wrote = true;
+                        Some(wire_len)
                     };
                     sink(EngineReaction::Directive(Directive::EmitFrame {
                         target: fire_on,
                         size_hint: link_data_frame_ceiling(LINK_MDU),
                         fill: &mut fill,
                     }));
+                    drop(fill);
+                    if wrote {
+                        originated_outbound = true;
+                    }
                 }
                 Err(_) => {
                     self.cancel_outgoing_resource(
                         link_id,
                         hash,
                         SendResourceFailure::Sequencing,
+                        now,
                         fill_entropy,
                         sink,
                     );
                     return;
                 }
             }
+        }
+
+        if originated_outbound {
+            self.links.note_outbound(link_id, now);
         }
 
         let state = self.outgoing_resources.state_mut(index);
@@ -769,6 +786,7 @@ impl<S: StorageLayout> EngineState<S> {
             sink,
         ) {
             AdvertisementWriteOutcome::Wrote => {
+                self.links.note_outbound(link_id, now);
                 self.outgoing_resources.state_mut(index).retries_left = MAX_ADVERTISEMENT_RETRIES;
                 self.outgoing_resources
                     .set_timeout_at(index, Some(advertised_deadline(now, rtt_ms)));
@@ -802,12 +820,13 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// RNS 1.3.5 `Resource.cancel`
+    /// RNS 1.4.0 `Resource.cancel`
     pub(crate) fn cancel_outgoing_resource<F>(
         &mut self,
         link_id: &LinkId,
         hash: &ResourceHash,
         failure: SendResourceFailure,
+        now: InstantMillis,
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) where
@@ -827,8 +846,9 @@ impl<S: StorageLayout> EngineState<S> {
             fill_entropy(&mut cancel_iv);
             let mut cancel_plaintext = [0u8; RESOURCE_HASH_LEN];
             if write_cancel_plaintext(hash, &mut cancel_plaintext).is_ok() {
+                let mut wrote = false;
                 let mut fill = |slot: &mut [u8]| -> Option<usize> {
-                    write_link_packet(
+                    let wire_len = write_link_packet(
                         link_id,
                         key,
                         mtu,
@@ -837,13 +857,19 @@ impl<S: StorageLayout> EngineState<S> {
                         &cancel_iv,
                         slot,
                     )
-                    .ok()
+                    .ok()?;
+                    wrote = true;
+                    Some(wire_len)
                 };
                 sink(EngineReaction::Directive(Directive::EmitFrame {
                     target: fire_on,
                     size_hint: link_data_frame_ceiling(RESOURCE_HASH_LEN),
                     fill: &mut fill,
                 }));
+                drop(fill);
+                if wrote {
+                    self.links.note_outbound(link_id, now);
+                }
             }
         }
         sink(EngineReaction::Journaled(Journaled::CommandSettled {
@@ -853,7 +879,7 @@ impl<S: StorageLayout> EngineState<S> {
         self.fail_staged_continuation(link_id, sink);
     }
 
-    /// RNS 1.3.5's watchdog states, held as deadlines on the register.
+    /// RNS 1.4.0's watchdog states, held as deadlines on the register.
     ///
     /// The reference also fires `Transport.cache_request` for a missing proof, but packet caching is disabled there: (`TODO: Enable when caching has been redesigned`), so that request recovers nothing: our retry-then-cancel is equivalent, minus the dead packet.
     pub(crate) fn fire_due_outgoing_resources<F>(
@@ -886,6 +912,7 @@ impl<S: StorageLayout> EngineState<S> {
                 &link_id,
                 &hash,
                 SendResourceFailure::Timeout,
+                now,
                 fill_entropy,
                 sink,
             );
@@ -907,6 +934,7 @@ impl<S: StorageLayout> EngineState<S> {
                         &link_id,
                         &hash,
                         SendResourceFailure::Timeout,
+                        now,
                         fill_entropy,
                         sink,
                     );
@@ -914,14 +942,19 @@ impl<S: StorageLayout> EngineState<S> {
                 }
                 let mut adv_iv = [0u8; 16];
                 fill_entropy(&mut adv_iv);
-                emit_resource_advertisement(
-                    &self.outgoing_resources,
-                    &link_id,
-                    &hash,
-                    &AdvertisementLane { key, mtu, fire_on },
-                    &adv_iv,
-                    sink,
-                );
+                if matches!(
+                    emit_resource_advertisement(
+                        &self.outgoing_resources,
+                        &link_id,
+                        &hash,
+                        &AdvertisementLane { key, mtu, fire_on },
+                        &adv_iv,
+                        sink,
+                    ),
+                    AdvertisementWriteOutcome::Wrote
+                ) {
+                    self.links.note_outbound(&link_id, now);
+                }
                 let state = self.outgoing_resources.state_mut(index);
                 state.retries_left -= 1;
                 self.outgoing_resources
@@ -932,6 +965,7 @@ impl<S: StorageLayout> EngineState<S> {
                     &link_id,
                     &hash,
                     SendResourceFailure::Timeout,
+                    now,
                     fill_entropy,
                     sink,
                 );
@@ -942,6 +976,7 @@ impl<S: StorageLayout> EngineState<S> {
                         &link_id,
                         &hash,
                         SendResourceFailure::Timeout,
+                        now,
                         fill_entropy,
                         sink,
                     );
@@ -964,7 +999,7 @@ fn advertised_deadline(now: InstantMillis, rtt_ms: u64) -> InstantMillis {
     )
 }
 
-/// RNS 1.3.5's sender-side transferring wait: one fat deadline re-armed on each request, after which the receiver is gone.
+/// RNS 1.4.0's sender-side transferring wait: one fat deadline re-armed on each request, after which the receiver is gone.
 fn transferring_deadline(now: InstantMillis, rtt_ms: u64) -> InstantMillis {
     let retry_rtts = rtt_ms
         .saturating_mul(LINK_TRAFFIC_TIMEOUT_FACTOR)
@@ -1060,7 +1095,7 @@ where
     outcome
 }
 
-/// RNS 1.3.5 `Resource.request`: `retries_left = 3` once every part has been sent and only the proof is owed.
+/// RNS 1.4.0 `Resource.request`: `retries_left = 3` once every part has been sent and only the proof is owed.
 const AWAITING_PROOF_RETRIES: u8 = 3;
 
 #[cfg(test)]
@@ -1578,6 +1613,11 @@ mod tests {
         assert_eq!(state.status, OutgoingResourceStatus::AwaitingProof);
         assert_eq!(state.sent_part_count, 4);
         assert_eq!(state.retries_left, 3);
+        let Some(LinkPhase::Active { last_outbound, .. }) = engine.links.phase_for(&link_id())
+        else {
+            panic!("the resource sender's link must remain active");
+        };
+        assert_eq!(*last_outbound, InstantMillis(2_000));
 
         let again = feed(&mut engine, &request_frame(&hash, None, &names), 2_500);
         assert_eq!(
@@ -1587,6 +1627,15 @@ mod tests {
         );
         let state = engine.outgoing_resources.state(index);
         assert_eq!(state.sent_part_count, 4, "a resend is never recounted");
+        let Some(LinkPhase::Active { last_outbound, .. }) = engine.links.phase_for(&link_id())
+        else {
+            panic!("the resource sender's link must remain active");
+        };
+        assert_eq!(
+            *last_outbound,
+            InstantMillis(2_000),
+            "byte-identical resource part retransmissions do not refresh outbound liveness",
+        );
     }
 
     #[test]

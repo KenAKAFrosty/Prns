@@ -6,7 +6,7 @@ use crate::routing::route_expiry::{LinearRouteExpiryIndex, RouteExpiryIndex};
 use crate::routing::routes::{NextHop, RouteResponsiveness, RouteTable};
 use crate::units::HopCount;
 
-/// RNS 1.3.5's `path_table`
+/// RNS 1.4.0's `path_table`
 ///
 /// NOTE: `PartialEq` compares backend representation byte-for-byte because the determinism tests rely on that. Do not use `==` and expect to compare the same set of routes.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]

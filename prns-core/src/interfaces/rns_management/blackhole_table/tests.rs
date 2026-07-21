@@ -6,7 +6,7 @@ use rmpv::Value;
 
 use super::*;
 
-const RNS_138_FIXTURE: &[u8] = b"\x82\xc4\x10\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x83\xa6source\xc4\x10\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xa5until\xcb\x41\xd9\x54\xfc\x40\x08\x00\x00\xa6reason\xa8operator\xc4\x10\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x83\xa6source\xc4\x10\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xa5until\xc0\xa6reason\xc0";
+const RNS_140_FIXTURE: &[u8] = b"\x82\xc4\x10\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x83\xa6source\xc4\x10\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xa5until\xcb\x41\xd9\x54\xfc\x40\x08\x00\x00\xa6reason\xa8operator\xc4\x10\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x83\xa6source\xc4\x10\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xa5until\xc0\xa6reason\xc0";
 
 fn source() -> IdentityHash {
     IdentityHash::new([0xaa; 16])
@@ -32,7 +32,7 @@ fn fixture_entries() -> Vec<BlackholedIdentity<&'static str>> {
 #[test]
 fn decodes_the_rns_138_umsgpack_file_and_applies_reload_expiry() {
     let decoded = RnsBlackholeTable::decode_source_file(
-        RNS_138_FIXTURE,
+        RNS_140_FIXTURE,
         source(),
         InstantMillis(1_700_000_000_124),
     )
@@ -51,7 +51,7 @@ fn decodes_the_rns_138_umsgpack_file_and_applies_reload_expiry() {
     );
 
     let at_equality = RnsBlackholeTable::decode_source_file(
-        RNS_138_FIXTURE,
+        RNS_140_FIXTURE,
         source(),
         InstantMillis(1_700_000_000_125),
     )
@@ -72,7 +72,7 @@ fn encodes_exactly_what_rns_138_umsgpack_emits() {
     assert!(
         RnsBlackholeTable::from_source_entries(source(), fixture_entries())
             .encode_message_pack()
-            .is_ok_and(|bytes| bytes == RNS_138_FIXTURE)
+            .is_ok_and(|bytes| bytes == RNS_140_FIXTURE)
     );
 }
 
@@ -87,12 +87,12 @@ fn source_encoding_excludes_entries_owned_by_another_source() {
     });
     assert!(RnsBlackholeTable::from_source_entries(source(), entries)
         .encode_message_pack()
-        .is_ok_and(|bytes| bytes == RNS_138_FIXTURE));
+        .is_ok_and(|bytes| bytes == RNS_140_FIXTURE));
 }
 
 #[test]
 fn published_table_requires_and_preserves_each_entry_source() {
-    let decoded = RnsBlackholeTable::decode_published_table(RNS_138_FIXTURE, InstantMillis(0))
+    let decoded = RnsBlackholeTable::decode_published_table(RNS_140_FIXTURE, InstantMillis(0))
         .map(RnsBlackholeTable::into_entries);
     assert!(decoded.is_ok_and(|entries| {
         entries.len() == 2 && entries.iter().all(|entry| entry.source == source())
@@ -193,7 +193,7 @@ fn persisted_numeric_forms_follow_rns_reload_semantics() {
 fn source_file_is_authoritative_and_short_hashes_are_skipped() {
     let replacement_source = IdentityHash::new([0xcc; 16]);
     let decoded = RnsBlackholeTable::decode_source_file(
-        RNS_138_FIXTURE,
+        RNS_140_FIXTURE,
         replacement_source,
         InstantMillis(0),
     )

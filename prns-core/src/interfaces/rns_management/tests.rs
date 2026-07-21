@@ -21,7 +21,7 @@ fn decode(bytes: &[u8]) -> rmpv::Value {
 }
 
 #[test]
-fn remote_status_matches_the_rns_1_3_8_outer_shape() {
+fn remote_status_matches_the_rns_1_4_0_outer_shape() {
     let status = RnsInterfaceStats::new(Vec::new()).with_transport(RnsTransportStatus::new(
         IdentityHash::new([0x11; 16]),
         Some(IdentityHash::new([0x22; 16])),

@@ -4,6 +4,7 @@ import tempfile
 from pathlib import Path
 
 import RNS
+import RNS.Discovery
 
 
 config_home = Path(tempfile.mkdtemp(prefix="prns-stock-interface-skip-"))
@@ -35,6 +36,7 @@ try:
         + json.dumps(
             {
                 "version": RNS.__version__,
+                "discovery_default_stamp_cost": RNS.Discovery.InterfaceAnnouncer.DEFAULT_STAMP_VALUE,
                 "registered": registered,
                 "configured": list(interface_types),
             }

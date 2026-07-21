@@ -38,6 +38,7 @@ btleplug = { version = "0.12", optional = true }
 uuid = { version = "1", optional = true }
 serde = { version = "1", optional = true, features = ["derive"] }
 serde_json = { version = "1", optional = true }
+serde-pickle = { version = "1.2", optional = true }
 url = { version = "2", optional = true }
 mdns-sd = { version = "0.20.2", optional = true }
 
@@ -103,7 +104,7 @@ websocket = ["dep:tokio", "tokio/net", "dep:tokio-tungstenite", "dep:futures-uti
 browser-rendezvous = ["websocket", "wifi-auto", "dep:serde", "dep:serde_json", "dep:url", "dep:mdns-sd"]
 i2p = ["dep:tokio", "tokio/net", "dep:socket2", "dep:getrandom", "prns-core/i2p"]
 weave = ["serial", "dep:getrandom"]
-shared-instance = ["dep:tokio", "tokio/net", "dep:getrandom", "prns-core/shared-instance-rpc", "prns-runtime/rns-management"]
+shared-instance = ["dep:tokio", "tokio/net", "dep:getrandom", "dep:serde-pickle", "prns-core/shared-instance-rpc", "prns-runtime/rns-management"]
 wifi-auto = ["tcp", "dep:if-addrs", "dep:netdev"]
 wifi-direct = ["tcp", "tokio/process", "dep:zbus", "dep:futures-util", "dep:if-addrs"]
 wifi-aware = ["tcp"]

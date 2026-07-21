@@ -1,6 +1,6 @@
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 
-use crate::engine::test_support::{bytes_from_hex, RNS_1_3_5_ANNOUNCE};
+use crate::engine::test_support::{bytes_from_hex, RNS_1_4_0_ANNOUNCE};
 use crate::engine::{ClassifiedInboundPacket, InstantMillis};
 use crate::interfaces::{InboundPacket, InterfaceId, PacketPhyStats};
 use crate::runtime::EmbassyInterfaceStore;
@@ -19,7 +19,7 @@ fn packet_phy_retention_reuses_the_classified_packet_hash() {
         PACKET_PHY_CAPACITY,
         PACKET_PHY_INDEX_BUCKETS,
     >::new();
-    let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+    let mut raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
     let expected = crate::routing::dedup::PacketHash::of_wire_packet(&raw)
         .expect("the fixture is a wire packet");
     let packet = ClassifiedInboundPacket::classify(InboundPacket {

@@ -64,6 +64,7 @@ pub enum LinkPhase {
         mtu: usize,
         attached_interface: InterfaceId,
         last_inbound: InstantMillis,
+        last_outbound: InstantMillis,
         last_keepalive_sent: InstantMillis,
         keepalive_ms: u64,
         peer_signing: Ed25519PublicKey,
@@ -119,6 +120,7 @@ impl core::fmt::Debug for LinkPhase {
                 mtu,
                 attached_interface,
                 last_inbound,
+                last_outbound,
                 last_keepalive_sent,
                 keepalive_ms,
                 ..
@@ -130,6 +132,7 @@ impl core::fmt::Debug for LinkPhase {
                 .field("mtu", mtu)
                 .field("attached_interface", attached_interface)
                 .field("last_inbound", last_inbound)
+                .field("last_outbound", last_outbound)
                 .field("last_keepalive_sent", last_keepalive_sent)
                 .field("keepalive_ms", keepalive_ms)
                 .finish(),
@@ -175,6 +178,7 @@ fn teardown_at(last_inbound: InstantMillis, keepalive_ms: u64, rtt: RttMillis) -
 fn active_deadline(
     role: &LinkRole,
     last_inbound: InstantMillis,
+    last_outbound: InstantMillis,
     last_keepalive_sent: InstantMillis,
     keepalive_ms: u64,
     rtt: RttMillis,
@@ -186,6 +190,7 @@ fn active_deadline(
             let stale_at = last_inbound.0.saturating_add(stale_ms_from(keepalive_ms));
             let send_at = last_inbound
                 .0
+                .min(last_outbound.0)
                 .max(last_keepalive_sent.0)
                 .saturating_add(keepalive_ms);
             if send_at <= stale_at {
@@ -414,7 +419,7 @@ impl<C: LinkTable> Links<C> {
             LinkPhase::Pending { link_signing, .. } => {
                 let keepalive_ms = keepalive_ms_from(rtt);
                 let role = LinkRole::Initiator { link_signing };
-                let deadline = active_deadline(&role, now, now, keepalive_ms, rtt);
+                let deadline = active_deadline(&role, now, now, now, keepalive_ms, rtt);
                 *phase = LinkPhase::Active {
                     remote_identity: None,
                     resource_strategy: ResourceStrategy::default(),
@@ -426,6 +431,7 @@ impl<C: LinkTable> Links<C> {
                     mtu,
                     attached_interface,
                     last_inbound: now,
+                    last_outbound: now,
                     last_keepalive_sent: now,
                     keepalive_ms,
                     peer_signing,
@@ -461,7 +467,7 @@ impl<C: LinkTable> Links<C> {
                 destination,
                 identity,
                 proof_strategy,
-                ..
+                requested_at,
             } => {
                 let keepalive_ms = keepalive_ms_from(rtt);
                 let role = LinkRole::Responder {
@@ -469,7 +475,8 @@ impl<C: LinkTable> Links<C> {
                     identity,
                     proof_strategy,
                 };
-                let deadline = active_deadline(&role, now, now, keepalive_ms, rtt);
+                let deadline =
+                    active_deadline(&role, now, requested_at, requested_at, keepalive_ms, rtt);
                 *phase = LinkPhase::Active {
                     remote_identity: None,
                     resource_strategy: ResourceStrategy::default(),
@@ -481,7 +488,8 @@ impl<C: LinkTable> Links<C> {
                     mtu,
                     attached_interface,
                     last_inbound: now,
-                    last_keepalive_sent: now,
+                    last_outbound: requested_at,
+                    last_keepalive_sent: requested_at,
                     keepalive_ms,
                     peer_signing: initiator_signing,
                 };
@@ -496,7 +504,7 @@ impl<C: LinkTable> Links<C> {
         }
     }
 
-    /// RNS 1.3.5 `Link.set_resource_strategy`: how this link answers inbound resource advertisements from now on.
+    /// RNS 1.4.0 `Link.set_resource_strategy`: how this link answers inbound resource advertisements from now on.
     pub fn set_resource_strategy(
         &mut self,
         link_id: &LinkId,
@@ -515,7 +523,7 @@ impl<C: LinkTable> Links<C> {
         Ok(())
     }
 
-    /// RNS 1.3.5 `Link.resource_concluded`'s memory. The window and expected in-flight rate an incoming transfer ended with, inherited by the next transfer this link accepts.
+    /// RNS 1.4.0 `Link.resource_concluded`'s memory. The window and expected in-flight rate an incoming transfer ended with, inherited by the next transfer this link accepts.
     pub fn note_resource_concluded(&mut self, link_id: &LinkId, window: usize, eifr: u64) {
         let Some(index) = self.index_of(link_id) else {
             return;
@@ -551,16 +559,86 @@ impl<C: LinkTable> Links<C> {
             role,
             rtt,
             last_inbound,
+            last_outbound,
             last_keepalive_sent,
             keepalive_ms,
             ..
         } = self.table.phase_mut(index)
         {
             *last_inbound = now;
-            let deadline = active_deadline(role, now, *last_keepalive_sent, *keepalive_ms, *rtt);
+            let deadline = active_deadline(
+                role,
+                now,
+                *last_outbound,
+                *last_keepalive_sent,
+                *keepalive_ms,
+                *rtt,
+            );
             self.table.set_timeout_at(index, Some(deadline));
         }
         self.refresh_earliest_timeout();
+    }
+
+    pub fn note_outbound(&mut self, link_id: &LinkId, now: InstantMillis) {
+        let Some(index) = self.index_of(link_id) else {
+            return;
+        };
+        if let LinkPhase::Active {
+            role,
+            rtt,
+            last_inbound,
+            last_outbound,
+            last_keepalive_sent,
+            keepalive_ms,
+            ..
+        } = self.table.phase_mut(index)
+        {
+            *last_outbound = now;
+            let deadline = active_deadline(
+                role,
+                *last_inbound,
+                now,
+                *last_keepalive_sent,
+                *keepalive_ms,
+                *rtt,
+            );
+            self.table.set_timeout_at(index, Some(deadline));
+        }
+        self.refresh_earliest_timeout();
+    }
+
+    pub fn note_keepalive_sent(&mut self, link_id: &LinkId, now: InstantMillis) {
+        let Some(index) = self.index_of(link_id) else {
+            return;
+        };
+        if let LinkPhase::Active {
+            role,
+            rtt,
+            last_inbound,
+            last_outbound,
+            last_keepalive_sent,
+            keepalive_ms,
+            ..
+        } = self.table.phase_mut(index)
+        {
+            *last_outbound = now;
+            *last_keepalive_sent = now;
+            let deadline = active_deadline(role, *last_inbound, now, now, *keepalive_ms, *rtt);
+            self.table.set_timeout_at(index, Some(deadline));
+        }
+        self.refresh_earliest_timeout();
+    }
+
+    pub fn keepalive_echo_due(&self, link_id: &LinkId, now: InstantMillis) -> bool {
+        matches!(
+            self.phase_for(link_id),
+            Some(LinkPhase::Active {
+                role: LinkRole::Responder { .. },
+                last_outbound,
+                keepalive_ms,
+                ..
+            }) if now.0 >= last_outbound.0.saturating_add(*keepalive_ms)
+        )
     }
 
     pub fn remove(&mut self, link_id: &LinkId) -> bool {
@@ -596,6 +674,7 @@ impl<C: LinkTable> Links<C> {
                 LinkPhase::Active {
                     role: LinkRole::Initiator { .. },
                     last_inbound,
+                    last_outbound,
                     last_keepalive_sent,
                     keepalive_ms,
                     ..
@@ -603,6 +682,7 @@ impl<C: LinkTable> Links<C> {
                     let stale_at = last_inbound.0.saturating_add(stale_ms_from(*keepalive_ms));
                     let send_at = last_inbound
                         .0
+                        .min(last_outbound.0)
                         .max(last_keepalive_sent.0)
                         .saturating_add(*keepalive_ms);
                     now.0 >= send_at && send_at <= stale_at
@@ -620,14 +700,16 @@ impl<C: LinkTable> Links<C> {
             attached_interface,
             rtt,
             last_inbound,
+            last_outbound,
             last_keepalive_sent,
             keepalive_ms,
             ..
         } = self.table.phase_mut(index)
         {
             *last_keepalive_sent = now;
+            *last_outbound = now;
             let attached_interface = *attached_interface;
-            let deadline = active_deadline(role, *last_inbound, now, *keepalive_ms, *rtt);
+            let deadline = active_deadline(role, *last_inbound, now, now, *keepalive_ms, *rtt);
             self.table.set_timeout_at(index, Some(deadline));
             self.refresh_earliest_timeout();
             return Some(DueKeepalive {
@@ -1184,7 +1266,7 @@ mod tests {
     }
 
     #[test]
-    fn an_inbound_inside_the_grace_revives_the_link() {
+    fn fresh_inbound_does_not_mask_an_already_silent_outbound_arm() {
         let mut links = TestLinks::default();
         active_initiator(&mut links, 1, RttMillis::new(250), 2_000);
 
@@ -1197,9 +1279,87 @@ mod tests {
         );
         assert_eq!(
             links.earliest_timeout_at(),
-            Some(InstantMillis(105_000 + 51_428)),
-            "the revived link rearms its keepalive cadence from the fresh inbound",
+            Some(InstantMillis(2_000 + 51_428)),
+            "the outbound-silence arm remains due despite fresh inbound traffic",
         );
+        assert_eq!(
+            links.pop_due_keepalive(InstantMillis(105_000)),
+            Some(DueKeepalive {
+                link_id: link_id(1),
+                attached_interface: iface(0xEE),
+            }),
+            "the overdue outbound arm sends immediately",
+        );
+        assert_eq!(
+            links.earliest_timeout_at(),
+            Some(InstantMillis(105_000 + 51_428)),
+            "sending the keepalive rearms the one-per-interval gate",
+        );
+    }
+
+    #[test]
+    fn outbound_activity_refreshes_only_the_outbound_silence_arm() {
+        let mut links = TestLinks::default();
+        active_initiator(&mut links, 1, RttMillis::new(250), 2_000);
+
+        links.note_outbound(&link_id(1), InstantMillis(3_000));
+        assert_eq!(
+            links.earliest_timeout_at(),
+            Some(InstantMillis(2_000 + 51_428)),
+            "fresh outbound cannot hide older inbound silence",
+        );
+
+        links.note_inbound(&link_id(1), InstantMillis(4_000));
+        assert_eq!(
+            links.earliest_timeout_at(),
+            Some(InstantMillis(3_000 + 51_428)),
+            "with inbound now newer, the outbound arm controls the wake",
+        );
+
+        links.note_outbound(&link_id(1), InstantMillis(5_000));
+        assert_eq!(
+            links.earliest_timeout_at(),
+            Some(InstantMillis(4_000 + 51_428)),
+            "refreshing outbound exposes the still-older inbound arm",
+        );
+    }
+
+    #[test]
+    fn outbound_activity_never_postpones_inbound_only_stale_teardown() {
+        let mut links = TestLinks::default();
+        active_initiator(&mut links, 1, RttMillis::new(250), 2_000);
+
+        links.note_outbound(&link_id(1), InstantMillis(110_000));
+
+        assert_eq!(
+            links.pop_stale(InstantMillis(110_856)),
+            Some(link_id(1)),
+            "teardown remains anchored exclusively to the last inbound frame",
+        );
+    }
+
+    #[test]
+    fn responder_echo_waits_for_a_full_outbound_silence_interval() {
+        let mut links = TestLinks::default();
+        links.track_responding(responding(2, 5_000)).unwrap();
+        links
+            .activate_responding(
+                &link_id(2),
+                RttMillis::new(500),
+                iface(0xEE),
+                InstantMillis(2_000),
+            )
+            .unwrap();
+
+        assert!(!links.keepalive_echo_due(&link_id(2), InstantMillis(103_856)));
+        assert!(
+            links.keepalive_echo_due(&link_id(2), InstantMillis(103_857)),
+            "the boundary itself is eligible",
+        );
+
+        links.note_keepalive_sent(&link_id(2), InstantMillis(103_857));
+        assert!(!links.keepalive_echo_due(&link_id(2), InstantMillis(206_713)));
+        assert!(links.keepalive_echo_due(&link_id(2), InstantMillis(206_714)));
     }
 
     #[test]

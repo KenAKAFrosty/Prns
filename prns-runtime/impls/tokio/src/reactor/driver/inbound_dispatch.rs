@@ -283,13 +283,13 @@ fn retain_packet_phy(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::test_support::{bytes_from_hex, RNS_1_3_5_ANNOUNCE};
+    use crate::engine::test_support::{bytes_from_hex, RNS_1_4_0_ANNOUNCE};
     use crate::interfaces::{RssiDbm, SignalQualityTenthsPercent, SnrQuarterDb};
 
     #[test]
     fn packet_phy_reuses_the_classified_wire_stable_packet_hash() {
         let store = InterfaceStore::new();
-        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+        let mut raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
         let expected = PacketHash::of_wire_packet(&raw).expect("the fixture is a wire packet");
         let packet = ClassifiedInboundPacket::classify(InboundPacket {
             arrived_at: crate::engine::InstantMillis(7),

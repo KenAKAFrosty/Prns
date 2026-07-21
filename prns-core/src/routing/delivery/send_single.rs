@@ -17,7 +17,7 @@ use crate::wire::{
     WirePacketHeader,
 };
 
-/// RNS 1.3.5 `Reticulum.DEFAULT_PER_HOP_TIMEOUT` (6s), serving both as the first-hop fallback (`Transport.first_hop_timeout` without bitrate data) and the per-hop increment (`Packet.TIMEOUT_PER_HOP`).
+/// RNS 1.4.0 `Reticulum.DEFAULT_PER_HOP_TIMEOUT` (6s), serving both as the first-hop fallback (`Transport.first_hop_timeout` without bitrate data) and the per-hop increment (`Packet.TIMEOUT_PER_HOP`).
 pub const DEFAULT_PER_HOP_TIMEOUT_SECONDS: u32 = 6;
 pub const DEFAULT_FIRST_HOP_TIMEOUT_MS: u64 = DEFAULT_PER_HOP_TIMEOUT_SECONDS as u64 * 1_000;
 pub const DEFAULT_PER_HOP_TIMEOUT_MS: u64 = DEFAULT_PER_HOP_TIMEOUT_SECONDS as u64 * 1_000;
@@ -157,7 +157,7 @@ impl<S: StorageLayout> EngineState<S> {
         CommandOutcome::OwesSendSinglePacket { id, send }
     }
 
-    /// Seals to the peer's announced ratchet, identity key when it never announced one (RNS 1.3.5 `Destination.encrypt`).
+    /// Seals to the peer's announced ratchet, identity key when it never announced one (RNS 1.4.0 `Destination.encrypt`).
     pub fn write_commanded_send_single_packet(
         &mut self,
         id: CommandId,
@@ -210,7 +210,7 @@ impl<S: StorageLayout> EngineState<S> {
         ))
     }
 
-    /// RNS 1.3.5 `Transport.outbound`: a destination more than one hop out rides transport, addressed at the relay that announced it; anything nearer is broadcast at the destination itself.
+    /// RNS 1.4.0 `Transport.outbound`: a destination more than one hop out rides transport, addressed at the relay that announced it; anything nearer is broadcast at the destination itself.
     /// The reference's behind-a-shared-instance inject (`hops == 1`) has no analog here: an engine is always its own instance.
     /// Intentional deviation: the reference also slides the path-table clock (`IDX_PT_TIMESTAMP`) on every transport-injected send, so merely sending keeps a route alive; ours slides on evidence only (link activation, returned proof).
     fn gather_send_single_plan(
@@ -577,11 +577,11 @@ mod tests {
     }
 
     #[test]
-    fn a_send_to_a_ratcheted_neighbor_reproduces_the_rns_1_3_5_wire() {
+    fn a_send_to_a_ratcheted_neighbor_reproduces_the_rns_1_4_0_wire() {
         let mut state = hearer();
         hear_announce(
             &mut state,
-            &bytes_from_hex(RNS_1_3_5_RATCHETED_ANNOUNCE),
+            &bytes_from_hex(RNS_1_4_0_RATCHETED_ANNOUNCE),
             arrival(),
         );
         let send = send_of(b"ratchet-parity");
@@ -613,7 +613,7 @@ mod tests {
 
         assert_eq!(
             &buf[..dispatch.wire_len],
-            bytes_from_hex(RNS_1_3_5_SEALED_TO_RATCHET).as_slice()
+            bytes_from_hex(RNS_1_4_0_SEALED_TO_RATCHET).as_slice()
         );
         assert_eq!(dispatch.fire_on, arrival());
         assert_eq!(dispatch.culled, None);
@@ -758,7 +758,7 @@ mod tests {
     #[test]
     fn a_multi_hop_route_with_no_relay_to_address_is_not_directly_reachable() {
         let mut state = hearer();
-        let mut relayed = bytes_from_hex(RNS_1_3_5_RATCHETED_ANNOUNCE);
+        let mut relayed = bytes_from_hex(RNS_1_4_0_RATCHETED_ANNOUNCE);
         relayed[1] = 1;
         hear_announce(&mut state, &relayed, arrival());
 
@@ -782,7 +782,7 @@ mod tests {
         let mut state = hearer();
         hear_announce(
             &mut state,
-            &bytes_from_hex(RNS_1_3_5_RETRANSMITTED_ANNOUNCE),
+            &bytes_from_hex(RNS_1_4_0_RETRANSMITTED_ANNOUNCE),
             arrival(),
         );
         let send = send_of(b"ratchet-parity");
@@ -814,7 +814,7 @@ mod tests {
 
         assert_eq!(
             &buf[..dispatch.wire_len],
-            bytes_from_hex(RNS_1_3_5_SEALED_TO_RATCHET_VIA_TRANSPORT).as_slice(),
+            bytes_from_hex(RNS_1_4_0_SEALED_TO_RATCHET_VIA_TRANSPORT).as_slice(),
             "the sealed packet rides transport addressed at the announcing relay",
         );
         assert_eq!(dispatch.fire_on, arrival());
@@ -825,7 +825,7 @@ mod tests {
     #[test]
     fn a_via_route_one_hop_out_is_broadcast_at_the_destination() {
         let mut state = hearer();
-        let mut relayed = bytes_from_hex(RNS_1_3_5_RETRANSMITTED_ANNOUNCE);
+        let mut relayed = bytes_from_hex(RNS_1_4_0_RETRANSMITTED_ANNOUNCE);
         relayed[1] = 0;
         hear_announce(&mut state, &relayed, arrival());
 
@@ -845,7 +845,7 @@ mod tests {
         assert_eq!(
             header.propagation,
             PropagationType::Broadcast,
-            "RNS 1.3.5 Transport.outbound only rides transport past one hop",
+            "RNS 1.4.0 Transport.outbound only rides transport past one hop",
         );
         assert_eq!(header.transport_id, None);
         assert_eq!(header.address, peer_destination().to_address());
@@ -919,7 +919,7 @@ mod tests {
         let mut state = hearer();
         hear_announce(
             &mut state,
-            &bytes_from_hex(RNS_1_3_5_RATCHETED_ANNOUNCE),
+            &bytes_from_hex(RNS_1_4_0_RATCHETED_ANNOUNCE),
             arrival(),
         );
 
@@ -961,9 +961,9 @@ mod tests {
         use crate::engine::{DeliveryEvidence, DeliveryProof, PacketReceiptDelivered, ProofIngest};
 
         let (mut state, wire) = unratcheted_neighbor_with_a_tracked_send(b"proof-parity", 1_000);
-        assert_eq!(wire, bytes_from_hex(RNS_1_3_5_SEALED_FOR_PROOF));
+        assert_eq!(wire, bytes_from_hex(RNS_1_4_0_SEALED_FOR_PROOF));
 
-        let mut proof = bytes_from_hex(RNS_1_3_5_IMPLICIT_PROOF);
+        let mut proof = bytes_from_hex(RNS_1_4_0_IMPLICIT_PROOF);
         let proof_packet_hash = PacketHash::of_wire_packet(&proof).unwrap();
         assert_eq!(
             state.ingest_packet_with(
@@ -987,7 +987,7 @@ mod tests {
         );
         assert_eq!(state.receipts.len(), 0);
 
-        let mut replay = bytes_from_hex(RNS_1_3_5_IMPLICIT_PROOF);
+        let mut replay = bytes_from_hex(RNS_1_4_0_IMPLICIT_PROOF);
         assert_eq!(
             state.ingest_packet_with(
                 InboundPacket {
@@ -1098,7 +1098,7 @@ mod tests {
         let mut state = hearer();
         hear_announce(
             &mut state,
-            &bytes_from_hex(RNS_1_3_5_RATCHETED_ANNOUNCE),
+            &bytes_from_hex(RNS_1_4_0_RATCHETED_ANNOUNCE),
             arrival(),
         );
         let mut buf = [0u8; BROADCAST_MTU];

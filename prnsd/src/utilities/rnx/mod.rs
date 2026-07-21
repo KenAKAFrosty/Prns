@@ -21,7 +21,7 @@ impl RnxOutcome {
 pub async fn run(args: RnxArgs) -> Result<RnxOutcome, RnxError> {
     if args.version {
         println!(
-            "prnsd x {} (RNS 1.3.8 compatibility)",
+            "prnsd x {} (RNS 1.4.0 compatibility)",
             env!("CARGO_PKG_VERSION")
         );
         return Ok(RnxOutcome { exit_code: 0 });

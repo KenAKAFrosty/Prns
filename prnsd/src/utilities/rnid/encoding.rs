@@ -146,7 +146,7 @@ mod tests {
     ];
 
     #[test]
-    fn stock_identity_encodings_match_rns_1_3_8() {
+    fn stock_identity_encodings_match_rns_1_4_0() {
         assert_eq!(
             encode(&PUBLIC, IdentityEncoding::Base32),
             "B6VGQTWSRBT3S72KNIW64XPYZ2LU45VXAGHD6IVBYTHSM6CXB4QNASVSGJ2CXNFLHIJWRPKGCXSONUBCJK3RUALLV6CSBIZSZF3YONY="

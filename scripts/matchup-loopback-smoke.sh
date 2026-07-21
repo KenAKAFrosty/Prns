@@ -7,7 +7,7 @@
 # and oracle for the grid, and it proves the loopback topology plus the participant's shared-instance
 # mode end to end before the Prns-host cells (which need the `local` feature) come online.
 #
-# Both ends are the pinned reference RNS 1.3.5 (benchmarks/reference/requirements.txt; $SMOKE_PYTHON
+# Both ends are the pinned reference RNS 1.4.0 (benchmarks/reference/requirements.txt; $SMOKE_PYTHON
 # if set, else the local reference venv). Prints PASS or FAIL and exits accordingly.
 set -u
 

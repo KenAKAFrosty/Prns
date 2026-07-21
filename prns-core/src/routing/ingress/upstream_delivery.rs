@@ -274,7 +274,7 @@ mod tests {
     fn a_single_sealed_to_the_announced_ratchet_is_delivered() {
         let mut state = ratcheted_personal_node_announcer();
         let destination = personal_node_destination();
-        let mut raw = bytes_from_hex(RNS_1_3_5_SEALED_TO_RATCHET);
+        let mut raw = bytes_from_hex(RNS_1_4_0_SEALED_TO_RATCHET);
 
         assert_eq!(
             state.ingest_packet_with(
@@ -301,7 +301,7 @@ mod tests {
     #[test]
     fn deferred_ratchet_decrypt_opens_to_the_same_plaintext_as_inline() {
         let mut state = ratcheted_personal_node_announcer();
-        let mut raw = bytes_from_hex(RNS_1_3_5_SEALED_TO_RATCHET);
+        let mut raw = bytes_from_hex(RNS_1_4_0_SEALED_TO_RATCHET);
         let mut deferred = DeferredCrypto::default();
         let outcome = state.ingest_packet_with(
             plain_data_packet(&mut raw),
@@ -350,7 +350,7 @@ mod tests {
             .written_len();
 
         let destination = personal_node_destination();
-        let mut raw = bytes_from_hex(RNS_1_3_5_SEALED_TO_RATCHET);
+        let mut raw = bytes_from_hex(RNS_1_4_0_SEALED_TO_RATCHET);
         assert_eq!(
             state.ingest_packet_with(
                 plain_data_packet(&mut raw),
@@ -441,7 +441,7 @@ mod tests {
     fn a_ratchets_required_destination_still_delivers_ratcheted_traffic() {
         let mut state = ratchets_required_personal_node_announcer();
         let destination = personal_node_destination();
-        let mut raw = bytes_from_hex(RNS_1_3_5_SEALED_TO_RATCHET);
+        let mut raw = bytes_from_hex(RNS_1_4_0_SEALED_TO_RATCHET);
 
         assert_eq!(
             state.ingest_packet_with(
@@ -521,7 +521,7 @@ mod tests {
     const RAW_PLAIN_DATA: &str = "080012f815e3e65add6ceb2fda0e7be338680068656c6c6f2d706c61696e";
 
     #[test]
-    fn neighbor_plain_data_for_a_registered_destination_delivers_the_rns_1_3_5_payload() {
+    fn neighbor_plain_data_for_a_registered_destination_delivers_the_rns_1_4_0_payload() {
         let mut raw = bytes_from_hex(RAW_PLAIN_DATA);
         let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
         let destination = state
@@ -982,8 +982,8 @@ mod tests {
     }
 
     #[test]
-    fn a_group_delivery_decrypts_with_the_shared_key_byte_for_byte_vs_rns_1_3_5() {
-        // Python RNS 1.3.5 GROUP vector for the fixed AES-256 key below, app name personal.group, and plaintext b"group-hello".
+    fn a_group_delivery_decrypts_with_the_shared_key_byte_for_byte_vs_rns_1_4_0() {
+        // Python RNS GROUP vector minted with 1.3.5 and revalidated with 1.4.0, for the fixed AES-256 key below, app name personal.group, and plaintext b"group-hello".
         const GROUP_KEY: &str = "42424242424242424242424242424242424242424242424242424242424242422424242424242424242424242424242424242424242424242424242424242424";
         const GROUP_TOKEN: &str = "614e1126ead06d77c97bdb042c1445d74288ac0645f40cdcdc67a949a0bce8212a4f3524305a78ae9cf89e9a8c302aa2b276c3914b9c3b60d8c41226a22aefcf";
 

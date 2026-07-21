@@ -4,12 +4,12 @@
     "smoke": {
       "environment": "SMOKE_PYTHON",
       "fallback": "benchmarks/reference/.venv/bin/python",
-      "package": "rns==1.3.9"
+      "package": "rns==1.4.0"
     },
     "rpc": {
       "environment": "RPC_SMOKE_PYTHON",
       "fallback": "benchmarks/reference/.rpc-venv/bin/python",
-      "package": "rns==1.3.9"
+      "package": "rns==1.4.0"
     }
   },
   "oracles": [

@@ -287,7 +287,7 @@ mod tests {
 
     #[test]
     fn next_wake_names_the_scheduled_announce_reason_future_then_due() {
-        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+        let mut raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
         let mut state = transporting_node();
         let _ = state.ingest_packet_with(
             InboundPacket {
@@ -332,7 +332,7 @@ mod tests {
 
         let source = InterfaceId::new([0u8; 8]);
         let interfaces = [routable_descriptor(source)];
-        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+        let mut raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
         let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
         let _ = state.ingest_packet_with(
             InboundPacket {
@@ -527,7 +527,7 @@ mod tests {
         let interfaces = AttachedInterfaces::new(&descriptors);
         let mut schedules = state.wake_schedules(interfaces);
 
-        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+        let mut raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
         let delta = state.ingest_packet_into(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
@@ -615,7 +615,7 @@ mod tests {
             mode: InterfaceMode::Roaming,
             ..routable_descriptor(source)
         }];
-        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+        let mut raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
         let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
         let _ = state.ingest_packet_with(
             InboundPacket {
@@ -649,7 +649,7 @@ mod tests {
         let interfaces = AttachedInterfaces::new(&descriptors);
         let mut schedules = state.wake_schedules(interfaces);
 
-        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+        let mut raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
         let delta = state.ingest_packet_into(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
@@ -696,7 +696,7 @@ mod tests {
         let interfaces = AttachedInterfaces::new(&descriptors);
         let mut schedules = state.wake_schedules(interfaces);
 
-        let mut first = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+        let mut first = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
         let delta = state.ingest_packet_into(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
@@ -717,7 +717,7 @@ mod tests {
         assert_eq!(state.route_count(), 1);
 
         let mut journal = std::vec::Vec::new();
-        let mut second = bytes_from_hex(RNS_1_3_5_RATCHETED_ANNOUNCE);
+        let mut second = bytes_from_hex(RNS_1_4_0_RATCHETED_ANNOUNCE);
         let delta = state.ingest_packet_into(
             InboundPacket {
                 arrived_at: InstantMillis(2_000),

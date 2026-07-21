@@ -4,9 +4,11 @@ use crate::identity::IdentityHash;
 use crate::interface_discovery::{
     frame_discovery_publication, prepare_discovery_publication, AdvertisedInterfaceType,
     AdvertisedTransport, AdvertisementDetails, AutoConnectPolicy, DiscoveredConnectionTable,
-    DiscoveredEndpointSet, DiscoveredInterfaceId, DiscoveryAdvertisement, DiscoveryCatalogTable,
-    DiscoveryEnvelopeSecurity, DiscoveryPublicationPreparation, DiscoveryPublicationSecurity,
-    DiscoveryRecord, DiscoverySourcePolicy, GeographicLocation, StampCost,
+    DiscoveredEndpointSet, DiscoveredInterface, DiscoveredInterfaceId, DiscoveryAdvertisement,
+    DiscoveryCatalogSeed, DiscoveryCatalogTable, DiscoveryEnvelopeSecurity,
+    DiscoveryObservationCount, DiscoveryProvenance, DiscoveryPublicationPreparation,
+    DiscoveryPublicationSecurity, DiscoveryRecord, DiscoverySourcePolicy,
+    FixedDiscoveryValidationCache, GeographicLocation, StampCost, StampValue,
     DISCOVERED_INTERFACE_DETACH_AFTER,
 };
 use crate::routing::announce::AnnounceObservation;
@@ -107,6 +109,7 @@ impl DiscoveredEndpointSet for CapacitylessEndpointSet {
 struct CapacitylessDiscoveryStorage;
 
 impl InterfaceDiscoveryStorage for CapacitylessDiscoveryStorage {
+    type ValidationCache = FixedDiscoveryValidationCache<0, 0, 0, 1, 1>;
     type Catalog = CapacitylessCatalogTable;
     type Connections = CapacitylessConnectionTable;
     type ReservedEndpoints = CapacitylessEndpointSet;
@@ -169,6 +172,33 @@ fn observation<'a>(identity: IdentityHash, app_data: &'a [u8]) -> AnnounceObserv
         arrived_at: InstantMillis(10_000),
         app_data,
         is_path_response: false,
+    }
+}
+
+fn restored_interface(id: u8, stamp_value: u16) -> DiscoveredInterface {
+    DiscoveredInterface {
+        id: DiscoveredInterfaceId::from_bytes([id; 32]),
+        name: alloc::format!("Restored {id}"),
+        advertisement: DiscoveryAdvertisement {
+            interface_type: AdvertisedInterfaceType::Backbone,
+            transport: AdvertisedTransport::Enabled(TransportId::new([id; 16])),
+            name: None,
+            location: GeographicLocation::UNKNOWN,
+            details: AdvertisementDetails::Reachable {
+                host: alloc::format!("restored-{id}.example"),
+                port: 4242,
+            },
+            published_ifac: None,
+        },
+        stamp_value: StampValue::new(stamp_value).expect("test stamp value is attainable"),
+        provenance: DiscoveryProvenance {
+            announced_by: IdentityHash::new([id; 16]),
+            hops: HopCount(1),
+            received_on: InterfaceId::new([id; 8]),
+            received_at: InstantMillis(10_000),
+            envelope_security: DiscoveryEnvelopeSecurity::Plaintext,
+            signed_flag: false,
+        },
     }
 }
 
@@ -250,6 +280,56 @@ fn accepted_observation_updates_catalog_and_plans_from_one_owner() {
         record.interface().provenance.envelope_security,
         DiscoveryEnvelopeSecurity::Plaintext
     );
+}
+
+#[test]
+fn seeding_discards_records_below_the_effective_stamp_policy() {
+    let mut default_catalog = DiscoveryCatalog::new();
+    default_catalog
+        .restore(DiscoveryCatalogSeed {
+            interface: restored_interface(1, 14),
+            first_heard: InstantMillis(9_000),
+            observation_count: DiscoveryObservationCount::FIRST,
+        })
+        .expect("the old record restores before policy filtering");
+    default_catalog
+        .restore(DiscoveryCatalogSeed {
+            interface: restored_interface(2, 16),
+            first_heard: InstantMillis(9_000),
+            observation_count: DiscoveryObservationCount::FIRST,
+        })
+        .expect("the current record restores before policy filtering");
+    let mut upgraded = DiscoveryCoordinator::new(InterfaceDiscoveryPolicy::enabled(
+        StampCost::new(16).expect("sixteen is a valid stamp cost"),
+        DiscoverySourcePolicy::from_sources(Vec::new()),
+        AutoConnectPolicy::from_maximum(1),
+    ));
+    upgraded.seed_catalog(default_catalog);
+    assert_eq!(upgraded.catalog().len(), 1);
+    assert!(upgraded
+        .catalog()
+        .get(DiscoveredInterfaceId::from_bytes([1; 32]))
+        .is_none());
+    assert!(upgraded
+        .catalog()
+        .get(DiscoveredInterfaceId::from_bytes([2; 32]))
+        .is_some());
+
+    let mut custom_catalog = DiscoveryCatalog::new();
+    custom_catalog
+        .restore(DiscoveryCatalogSeed {
+            interface: restored_interface(3, 14),
+            first_heard: InstantMillis(9_000),
+            observation_count: DiscoveryObservationCount::FIRST,
+        })
+        .expect("the custom-cost record restores");
+    let mut custom = DiscoveryCoordinator::new(InterfaceDiscoveryPolicy::enabled(
+        StampCost::new(14).expect("fourteen is a valid stamp cost"),
+        DiscoverySourcePolicy::from_sources(Vec::new()),
+        AutoConnectPolicy::from_maximum(1),
+    ));
+    custom.seed_catalog(custom_catalog);
+    assert_eq!(custom.catalog().len(), 1);
 }
 
 #[test]

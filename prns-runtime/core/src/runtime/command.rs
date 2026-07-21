@@ -97,7 +97,7 @@ pub trait PrnsNodeApi {
     /// embedded lane is full). The fire-and-forget escape hatch.
     fn issue(&self, command: EngineCommand) -> Option<CommandId>;
 
-    /// Announce `destination` on every interface with its registered app_data: RNS 1.3.5
+    /// Announce `destination` on every interface with its registered app_data: RNS 1.4.0
     /// `Destination.announce()` with no arguments. `None` once the node has stopped. For one
     /// interface or explicit app_data, [`issue`](Self::issue) a custom [`AnnounceNow`].
     fn announce(&self, destination: DestinationHash) -> Option<CommandId> {

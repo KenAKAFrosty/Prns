@@ -38,23 +38,82 @@ ci = ci_path.read_text()
 requirements = requirements_path.read_text().strip()
 rpc_requirements = rpc_requirements_path.read_text().strip()
 
-if requirements != "rns==1.3.9":
-    note_error(f"{requirements_path.relative_to(root)} pins {requirements!r}, expected 'rns==1.3.9'")
-if rpc_requirements != "rns==1.3.9":
-    note_error(f"{rpc_requirements_path.relative_to(root)} pins {rpc_requirements!r}, expected 'rns==1.3.9'")
+if requirements != "rns==1.4.0":
+    note_error(f"{requirements_path.relative_to(root)} pins {requirements!r}, expected 'rns==1.4.0'")
+if rpc_requirements != "rns==1.4.0":
+    note_error(f"{rpc_requirements_path.relative_to(root)} pins {rpc_requirements!r}, expected 'rns==1.4.0'")
 
 reference_section = docs.split("## Property Tests", 1)[0]
-if "Reticulum `1.3.5`" not in reference_section:
-    note_error("docs/validation.md Reference Target must name Reticulum `1.3.5`")
-if "RNS `1.3.8`" not in reference_section:
-    note_error("docs/validation.md Reference Target must name RNS `1.3.8`")
-if "rns==1.3.9" not in reference_section:
-    note_error("docs/validation.md Reference Target must name the running oracle pin rns==1.3.9")
+if "Reticulum `1.4.0`" not in reference_section:
+    note_error("docs/validation.md Reference Target must name Reticulum `1.4.0`")
+if "RNS `1.4.0`" not in reference_section:
+    note_error("docs/validation.md Reference Target must name RNS `1.4.0`")
+if "rns==1.4.0" not in reference_section:
+    note_error("docs/validation.md Reference Target must name the running oracle pin rns==1.4.0")
 if "1.3.1" in reference_section:
     note_error("docs/validation.md Reference Target still mentions stale 1.3.1")
 stale_rns_pin = "rns==" + "1.3.1"
 if stale_rns_pin in ci:
     note_error(f".github/workflows/ci.yml still mentions {stale_rns_pin}")
+
+historical_release = ".".join(str(part) for part in (1, 3, 5))
+historical_benchmark_paths = {
+    Path("benchmarks/CONTRIBUTING.md"),
+    Path("benchmarks/implementations") / f"rns-{historical_release}.json",
+    Path("benchmarks/scenarios/request-response/manifest.json"),
+    Path("benchmarks/scenarios/request-response-relayed/manifest.json"),
+    Path("benchmarks/scenarios/resource-bulk/manifest.json"),
+}
+historical_provenance_paths = {
+    Path("benchmarks/src/bin/announce_verify_probe.rs"),
+    Path("benchmarks/src/bin/render_results.rs"),
+    Path("docs/validation.md"),
+    Path("prns-core/src/engine/test_support.rs"),
+    Path("prns-core/src/routing/delivery/send_group.rs"),
+    Path("prns-core/src/routing/ingress/upstream_delivery.rs"),
+    Path("prns-core/src/routing/links/handshake.rs"),
+    Path("prns-runtime/impls/tokio/src/reactor/compression.rs"),
+}
+obsolete_rns = re.compile(
+    r"(?i)(?:rns|reticulum)[^\n]{0,32}1\.3\.(?:5|8|9)|rns[_-]1[_-]3[_-](?:5|8|9)"
+)
+text_suffixes = {".json", ".jsonl", ".md", ".py", ".rs", ".sh", ".toml", ".txt", ".yaml", ".yml"}
+for path in root.rglob("*"):
+    if not path.is_file() or path.suffix not in text_suffixes:
+        continue
+    relative = path.relative_to(root)
+    if any(part in {".git", "target", "validation-artifacts"} for part in relative.parts):
+        continue
+    if (
+        relative in historical_benchmark_paths
+        or relative.parts[:2] == ("benchmarks", "results")
+        or (relative.parent == Path("benchmarks") and relative.name.startswith("RESULTS"))
+    ):
+        continue
+    try:
+        contents = path.read_text()
+    except UnicodeDecodeError:
+        continue
+    for match in obsolete_rns.finditer(contents):
+        line = contents.count("\n", 0, match.start()) + 1
+        lines = contents.splitlines()
+        context = " ".join(lines[max(0, line - 3):line + 2]).lower()
+        if (
+            relative in historical_provenance_paths
+            and (
+                (
+                    "1.4.0" in context
+                    and any(marker in context for marker in ("minted", "generated", "originally"))
+                )
+                or "historical" in context
+                or (
+                    relative == Path("benchmarks/src/bin/render_results.rs")
+                    and "_conformance_" in context
+                )
+            )
+        ):
+            continue
+        note_error(f"obsolete active RNS target at {relative}:{line}: {match.group(0)!r}")
 
 fuzz_toml = tomllib.loads(fuzz_toml_path.read_text())
 toml_fuzz_targets = {

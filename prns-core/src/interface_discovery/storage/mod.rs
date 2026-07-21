@@ -1,8 +1,10 @@
+mod fixed;
 mod growable;
 
+pub use fixed::FixedDiscoveryValidationCache;
 pub use growable::{
     GrowableInterfaceDiscoveryStorage, HeapDiscoveredConnectionTable, HeapDiscoveredEndpointSet,
-    HeapDiscoveryCatalogTable,
+    HeapDiscoveryCatalogTable, HeapDiscoveryValidationCache, RNS_VALIDATION_CACHE_CAPACITY,
 };
 
 use crate::interfaces::InterfaceId;
@@ -10,8 +12,28 @@ use crate::storage::TablePushError;
 
 use super::{
     ActiveDiscoveredInterface, DiscoveredConnectionEndpointId, DiscoveredInterfaceId,
-    DiscoveryRecord,
+    DiscoveryRecord, StampValue,
 };
+
+/// Lemire-index bucket count that keeps a fixed validation cache at or below 2/3 load.
+pub const fn discovery_validation_index_buckets(entries: usize) -> usize {
+    crate::lemire_index::buckets_for_two_thirds_load(entries)
+}
+
+/// The memoization residence behind discovery stamp validation. Implementations may use
+/// growable host storage, fixed inline storage, external memory, or zero capacity; cache misses
+/// change only validation work, never acceptance semantics.
+pub trait DiscoveryValidationCache: Default {
+    fn valid(&self, payload_hash: &[u8; 32]) -> Option<(&[u8], StampValue)>;
+    fn insufficient(&self, payload_hash: &[u8; 32]) -> Option<StampValue>;
+    fn remember_valid(
+        &mut self,
+        payload_hash: [u8; 32],
+        packed_advertisement: &[u8],
+        stamp_value: StampValue,
+    );
+    fn remember_insufficient(&mut self, payload_hash: [u8; 32], stamp_value: StampValue);
+}
 
 pub trait DiscoveryCatalogTable: Default {
     type Records<'a>: Iterator<Item = &'a DiscoveryRecord>
@@ -70,6 +92,7 @@ pub trait DiscoveredEndpointSet: Default {
 }
 
 pub trait InterfaceDiscoveryStorage {
+    type ValidationCache: DiscoveryValidationCache;
     type Catalog: DiscoveryCatalogTable;
     type Connections: DiscoveredConnectionTable;
     type ReservedEndpoints: DiscoveredEndpointSet;

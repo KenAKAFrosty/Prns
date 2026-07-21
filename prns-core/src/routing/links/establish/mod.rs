@@ -32,7 +32,7 @@ pub fn link_mtu_ceiling(interfaces: AttachedInterfaces<'_>, interface_id: Interf
         .min(MAX_LINK_MTU)
 }
 
-/// RNS 1.3.5 `Link.KEEPALIVE` (360s); the responder's establishment timeout rides on it.
+/// RNS 1.4.0 `Link.KEEPALIVE` (360s); the responder's establishment timeout rides on it.
 pub const LINK_KEEPALIVE_MS: u64 = 360_000;
 
 /// A fresh X25519 ‖ Ed25519 pair, the same layout an identity persists.
@@ -130,7 +130,7 @@ impl<S: StorageLayout> EngineState<S> {
         CommandOutcome::OwesLinkRequest { id, establish }
     }
 
-    /// RNS 1.3.5 `Link.__init__`, which always signals the default MTU and mode.
+    /// RNS 1.4.0 `Link.__init__`, which always signals the default MTU and mode.
     pub fn write_commanded_link_request(
         &mut self,
         id: CommandId,
@@ -211,7 +211,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// RNS 1.3.5 `Link.validate_request`, echoing the negotiated MTU and mode.
+    /// RNS 1.4.0 `Link.validate_request`, echoing the negotiated MTU and mode.
     pub fn write_owed_link_proof(
         &mut self,
         accepted: &AcceptedLinkRequest,
@@ -312,7 +312,7 @@ impl<S: StorageLayout> EngineState<S> {
             .map_err(Into::into)
     }
 
-    /// RNS 1.3.5 `Link.validate_proof`
+    /// RNS 1.4.0 `Link.validate_proof`
     pub fn write_owed_link_rtt(
         &mut self,
         link_id: &LinkId,

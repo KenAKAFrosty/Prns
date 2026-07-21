@@ -7,9 +7,9 @@ use prns_core::identity::{
     RetainIdentityOutcome, IDENTITY_SECRET_KEY_LEN,
 };
 use prns_core::interfaces::shared_instance::rns_rpc::{
-    RnsRpcRequest, RpcAuthenticationControlMessage, RpcAuthenticationKey, RpcChallengeNonce,
-    RpcDigest, RpcRequest, RpcVerb, AUTHENTICATION_FRAME_MAX_LENGTH, LEGACY_MD5_MESSAGE_LENGTH,
-    RPC_FRAME_MAX_LENGTH,
+    PacketHashArgument, RnsRpcRequest, RpcAuthenticationControlMessage, RpcAuthenticationKey,
+    RpcChallengeNonce, RpcDigest, RpcRequest, RpcVerb, AUTHENTICATION_FRAME_MAX_LENGTH,
+    LEGACY_MD5_MESSAGE_LENGTH, RPC_FRAME_MAX_LENGTH,
 };
 use prns_core::interfaces::PacketPhyStats;
 use prns_core::routing::dedup::PacketHash;

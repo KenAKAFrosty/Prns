@@ -58,8 +58,8 @@ pub(super) fn implementation(name: &str) -> Implementation {
         },
         "reference" => Implementation {
             name: "reference",
-            slug: "rns-1.3.5",
-            label: "RNS 1.3.5",
+            slug: "rns-1.4.0",
+            label: "RNS 1.4.0",
             interop_roles: BOTH_ROLES,
             interop_mechanisms: None,
             interop_self_only: false,

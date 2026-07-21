@@ -4,7 +4,7 @@ import time
 
 import RNS
 
-EXPECTED_RNS_VERSION = "1.3.9"
+EXPECTED_RNS_VERSION = "1.4.0"
 
 
 def require_reference_version():

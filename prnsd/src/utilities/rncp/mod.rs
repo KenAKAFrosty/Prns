@@ -153,7 +153,7 @@ fn respond_fetch(
 pub async fn run(args: RncpArgs) -> Result<(), RncpError> {
     if args.version {
         println!(
-            "prnsd cp {} (RNS 1.3.8 compatibility)",
+            "prnsd cp {} (RNS 1.4.0 compatibility)",
             env!("CARGO_PKG_VERSION")
         );
         return Ok(());

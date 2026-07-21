@@ -146,7 +146,7 @@ mod tests {
     #[test]
     fn a_seeded_tunnel_repoints_seeded_routes_when_its_peer_reappears() {
         use crate::engine::test_support::{
-            bytes_from_hex, routable_descriptor, transporting_node, RNS_1_3_5_ANNOUNCE,
+            bytes_from_hex, routable_descriptor, transporting_node, RNS_1_4_0_ANNOUNCE,
         };
         use crate::engine::{InstantMillis, RouteSeedOutcome};
         use crate::interfaces::{AttachedInterfaces, InboundPacket};
@@ -161,7 +161,7 @@ mod tests {
         );
         let first_conn = InterfaceId::new([0xC1; 8]);
         let first_view = [routable_descriptor(first_conn)];
-        let mut announce = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+        let mut announce = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
         let _ = before_reboot.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),

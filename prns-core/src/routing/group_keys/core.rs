@@ -8,7 +8,7 @@ pub enum GroupKeyError {
     InvalidLength,
 }
 
-/// A GROUP destination's shared symmetric key. RNS 1.3.5 `Token.generate_key()` mints the AES-256 form by default (32-byte signing half ‖ 32-byte encryption half); the AES-128 form is 32 bytes. The length law lives in the variants, so a stored key views as a [`TokenKey`] without a fallible re-parse per packet.
+/// A GROUP destination's shared symmetric key. RNS 1.4.0 `Token.generate_key()` mints the AES-256 form by default (32-byte signing half ‖ 32-byte encryption half); the AES-128 form is 32 bytes. The length law lives in the variants, so a stored key views as a [`TokenKey`] without a fallible re-parse per packet.
 #[derive(Zeroize, ZeroizeOnDrop)]
 pub enum GroupKey {
     Aes128([u8; 32]),

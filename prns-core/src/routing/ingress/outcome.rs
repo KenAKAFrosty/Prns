@@ -47,7 +47,7 @@ impl IngestEffects<'_> {
     }
 }
 
-/// RNS 1.3.5 `Transport.packet_filter` drops PLAIN and GROUP data received more than one hop out.
+/// RNS 1.4.0 `Transport.packet_filter` drops PLAIN and GROUP data received more than one hop out.
 pub const NON_TRANSPORTED_DATA_MAX_RECEIVED_HOPS: u8 = 1;
 
 #[derive(Default)]
@@ -172,7 +172,7 @@ pub enum IngestPacketOutcome<'p> {
         link_id: LinkId,
         hash: ResourceHash,
     },
-    /// RNS 1.3.5 `ACCEPT_APP` callback point.
+    /// RNS 1.4.0 `ACCEPT_APP` callback point.
     ResourceOffered {
         link_id: LinkId,
         original_hash: ResourceHash,

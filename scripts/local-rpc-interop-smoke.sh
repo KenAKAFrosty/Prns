@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
-# RNS 1.3.8-semantics shared-instance control-RPC smoke.
+# Stock-RNS shared-instance control-RPC smoke.
 #
 # Stands up a Prns-owned LocalServer plus the RPC compatibility shim, then lets
-# a stock RNS 1.3.9 client connect and call Reticulum's own get_* methods. That
-# exercises the modern msgpack RPC dialect end to end.
+# a stock RNS client connect and call Reticulum's own get_* methods. The active
+# lane exercises RNS 1.4.0 MessagePack; compatibility runs may select the
+# earlier pickle dialect with RPC_SMOKE_LEGACY_PICKLE=1.
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT/scripts/lib/cargo-artifacts.sh"
 DAEMON="$(cargo_debug_example "$ROOT/prns-interfaces/impls/tokio/Cargo.toml" local_shared_rpc_instance)"
 VENV_PY="${RPC_SMOKE_PYTHON:-$ROOT/benchmarks/reference/.rpc-venv/bin/python}"
+EXPECTED_RNS_VERSION="${RPC_SMOKE_EXPECTED_RNS_VERSION:-1.4.0}"
 CLIENT="$ROOT/prns-core/tests/interop/rns_shared_rpc_client.py"
 RPC_KEY="${PRNS_RPC_KEY:-$(printf '5a%.0s' $(seq 1 32))}"
 DAEMON_LOG="$(mktemp)"
@@ -65,7 +67,7 @@ DAEMON_PID=$!
 
 for _ in $(seq 1 50); do grep -q "READY" "$DAEMON_LOG" && break; sleep 0.2; done
 grep -q "READY" "$DAEMON_LOG" || { echo "FAIL: daemon never became READY"; cat "$DAEMON_LOG"; exit 1; }
-echo "daemon ready; running the RNS 1.3.9 RPC oracle..."
+echo "daemon ready; running the RNS $EXPECTED_RNS_VERSION RPC oracle..."
 
 PRNS_LOCAL_PORT="$LOCAL_PORT" \
 PRNS_RPC_PORT="$RPC_PORT" \
@@ -74,12 +76,12 @@ PRNS_RPC_KEY="$RPC_KEY" \
 status=$?
 
 if [ "$status" -eq 0 ] && grep -q "RPC_ORACLE_OK" "$CLIENT_LOG"; then
-    echo "PASS: stock RNS 1.3.9 decoded Prns msgpack control-RPC replies"
+    echo "PASS: stock RNS $EXPECTED_RNS_VERSION decoded Prns control-RPC replies"
     grep "RPC_ORACLE_OK" "$CLIENT_LOG" | head -1
     exit 0
 fi
 
-echo "FAIL: RNS 1.3.9 RPC oracle failed"
+echo "FAIL: RNS $EXPECTED_RNS_VERSION RPC oracle failed"
 echo "--- client log ---"; cat "$CLIENT_LOG"
 echo "--- daemon log ---"; tail -30 "$DAEMON_LOG"
 exit 1

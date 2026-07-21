@@ -236,7 +236,7 @@ fn rejects_destination_mismatch() {
 }
 
 #[test]
-fn derive_destination_hash_matches_rns_1_3_5() {
+fn derive_destination_hash_matches_rns_1_4_0() {
     let identity_hash = IdentityHash::new(a("4cd0cc45a7405dbd5cf9b5be1ef92f10"));
     let dotted_name_hash = DottedNameHash::new(a("8794b70072dbf251144b"));
     assert_eq!(
@@ -260,7 +260,7 @@ fn derive_destination_hash_matches_rns_1_3_5() {
 }
 
 #[test]
-fn derive_plain_destination_hash_matches_rns_1_3_5() {
+fn derive_plain_destination_hash_matches_rns_1_4_0() {
     let name = expand_name("rnstransport", &["path", "request"]).unwrap();
     assert_eq!(name, DottedNameHash::new(a("7926bbe7dd7f9aba88b0")));
     assert_eq!(
@@ -270,7 +270,7 @@ fn derive_plain_destination_hash_matches_rns_1_3_5() {
 }
 
 #[test]
-fn derive_single_destination_hash_composes_the_rns_1_3_5_address_from_name_parts() {
+fn derive_single_destination_hash_composes_the_rns_1_4_0_address_from_name_parts() {
     let identity_hash = IdentityHash::new(a("4cd0cc45a7405dbd5cf9b5be1ef92f10"));
     assert_eq!(
         derive_single_destination_hash(&identity_hash, "personal", &["node"]),
@@ -283,7 +283,7 @@ fn derive_single_destination_hash_composes_the_rns_1_3_5_address_from_name_parts
 }
 
 #[test]
-fn expand_name_matches_rns_1_3_5() {
+fn expand_name_matches_rns_1_4_0() {
     assert_eq!(
         expand_name("personal", &["announce"]).unwrap(),
         DottedNameHash::new(a("8794b70072dbf251144b")),
@@ -320,7 +320,7 @@ fn expand_name_rejects_names_past_the_bound() {
 }
 
 #[test]
-fn build_signed_matches_rns_1_3_5() {
+fn build_signed_matches_rns_1_4_0() {
     use crate::identity::in_memory::InMemoryNodeIdentity;
     let mut secret_key_bytes = [0u8; 64];
     secret_key_bytes[..32].fill(0x22);

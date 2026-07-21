@@ -253,6 +253,12 @@ fn interface_value(status: &RnsInterfaceStatusReport) -> Value {
     insert_optional_string(&mut fields, interface::SWITCH_ID, &status.switch_id);
     insert_optional_string(&mut fields, interface::ENDPOINT_ID, &status.endpoint_id);
     insert_optional_string(&mut fields, interface::VIA_SWITCH_ID, &status.via_switch_id);
+    insert_optional(
+        &mut fields,
+        interface::BLOCKED_IP_LIST,
+        &status.blocked_ip_list,
+        |values| Value::Array(values.iter().cloned().map(Value::String).collect()),
+    );
     Value::Object(fields)
 }
 
@@ -373,6 +379,10 @@ mod tests {
             switch_id: RnsOptionalField::Absent,
             endpoint_id: RnsOptionalField::Absent,
             via_switch_id: RnsOptionalField::Absent,
+            blocked_ip_list: RnsOptionalField::Value(vec![
+                String::from("192.0.2.10"),
+                String::from("2001:db8::1"),
+            ]),
         };
         let Value::Object(fields) = interface_value(&status) else {
             unreachable!();
@@ -381,5 +391,9 @@ mod tests {
         assert_eq!(fields.get(interface::TYPE), Some(&Value::Null));
         assert_eq!(fields.get(interface::CLIENTS), Some(&Value::Null));
         assert_eq!(fields.get(interface::MODE), Some(&Value::from(7)));
+        assert_eq!(
+            fields.get(interface::BLOCKED_IP_LIST),
+            Some(&serde_json::json!(["192.0.2.10", "2001:db8::1"])),
+        );
     }
 }

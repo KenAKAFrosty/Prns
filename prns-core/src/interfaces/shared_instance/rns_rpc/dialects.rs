@@ -2,7 +2,13 @@ use super::request::{self, RnsRpcRequest, RpcRequestDecodeError};
 use super::wire_names::{argument, dialect, drop_operation, get, selector, verb};
 use crate::wire::DestinationHash;
 
-/// The wire codec a client's RPC payload speaks. RNS through 1.3.x carried the request and reply as `multiprocessing.connection`'s pickle (`connection.send`/`recv`); RNS 1.3.5 frames msgpack (`send_bytes(mp.packb(..))` / `mp.unpackb(recv_bytes())`). Both share the same length-prefixed framing and the same auth handshake — only the payload codec differs, so the reply must answer in the dialect the request arrived in or the client mis-decodes it (a pickle `None` reads back as the msgpack integer 78, which a client indexing the result then faults on).
+/// The wire codec a client's RPC payload speaks. RNS through 1.3.3 carried the
+/// request and reply as `multiprocessing.connection`'s pickle
+/// (`connection.send`/`recv`); RNS 1.3.4 and later frame msgpack
+/// (`send_bytes(mp.packb(..))` / `mp.unpackb(recv_bytes())`). Both share the
+/// same length-prefixed framing and the same auth handshake — only the payload
+/// codec differs, so the reply must answer in the dialect the request arrived
+/// in or the client mis-decodes it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RpcDialect {
     Pickle,
@@ -81,6 +87,32 @@ impl RpcVerb {
     }
 }
 
+impl RnsRpcRequest {
+    pub const fn verb(&self) -> RpcVerb {
+        match self {
+            Self::InterfaceStats => RpcVerb::GetInterfaceStats,
+            Self::PathTable { .. } => RpcVerb::GetPathTable,
+            Self::RateTable => RpcVerb::GetRateTable,
+            Self::LinkCount => RpcVerb::GetLinkCount,
+            Self::NextHop { .. } => RpcVerb::GetNextHop,
+            Self::NextHopInterface { .. } => RpcVerb::GetNextHopInterfaceName,
+            Self::FirstHopTimeout { .. } => RpcVerb::GetFirstHopTimeout,
+            Self::PacketRssi { .. } => RpcVerb::GetPacketRssi,
+            Self::PacketSnr { .. } => RpcVerb::GetPacketSnr,
+            Self::PacketQuality { .. } => RpcVerb::GetPacketQuality,
+            Self::BlackholedIdentities => RpcVerb::GetBlackholedIdentities,
+            Self::IsBlackholed { .. } => RpcVerb::CheckIdentityBlackholed,
+            Self::DropPath { .. } => RpcVerb::DropPath,
+            Self::DropAllVia { .. } => RpcVerb::DropAllVia,
+            Self::DropAnnounceQueues => RpcVerb::DropAnnounceQueues,
+            Self::BlackholeIdentity { .. } => RpcVerb::BlackholeIdentity,
+            Self::UnblackholeIdentity { .. } => RpcVerb::UnblackholeIdentity,
+            Self::DestinationData { .. } => RpcVerb::UpdateDestinationData,
+            Self::RetainIdentity { .. } => RpcVerb::RetainIdentity,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub enum RpcRequest<'a> {
     Pickle(&'a [u8]),
@@ -115,27 +147,7 @@ impl<'a> RpcRequest<'a> {
     pub fn verb(&self) -> RpcVerb {
         match self {
             Self::Pickle(bytes) => classify_pickle_rpc_verb(bytes),
-            Self::Msgpack(request) => match request {
-                RnsRpcRequest::InterfaceStats => RpcVerb::GetInterfaceStats,
-                RnsRpcRequest::PathTable { .. } => RpcVerb::GetPathTable,
-                RnsRpcRequest::RateTable => RpcVerb::GetRateTable,
-                RnsRpcRequest::LinkCount => RpcVerb::GetLinkCount,
-                RnsRpcRequest::NextHop { .. } => RpcVerb::GetNextHop,
-                RnsRpcRequest::NextHopInterface { .. } => RpcVerb::GetNextHopInterfaceName,
-                RnsRpcRequest::FirstHopTimeout { .. } => RpcVerb::GetFirstHopTimeout,
-                RnsRpcRequest::PacketRssi { .. } => RpcVerb::GetPacketRssi,
-                RnsRpcRequest::PacketSnr { .. } => RpcVerb::GetPacketSnr,
-                RnsRpcRequest::PacketQuality { .. } => RpcVerb::GetPacketQuality,
-                RnsRpcRequest::BlackholedIdentities => RpcVerb::GetBlackholedIdentities,
-                RnsRpcRequest::IsBlackholed { .. } => RpcVerb::CheckIdentityBlackholed,
-                RnsRpcRequest::DropPath { .. } => RpcVerb::DropPath,
-                RnsRpcRequest::DropAllVia { .. } => RpcVerb::DropAllVia,
-                RnsRpcRequest::DropAnnounceQueues => RpcVerb::DropAnnounceQueues,
-                RnsRpcRequest::BlackholeIdentity { .. } => RpcVerb::BlackholeIdentity,
-                RnsRpcRequest::UnblackholeIdentity { .. } => RpcVerb::UnblackholeIdentity,
-                RnsRpcRequest::DestinationData { .. } => RpcVerb::UpdateDestinationData,
-                RnsRpcRequest::RetainIdentity { .. } => RpcVerb::RetainIdentity,
-            },
+            Self::Msgpack(request) => request.verb(),
         }
     }
 

@@ -1,6 +1,6 @@
 use super::super::{CompletionPool, Fleet, FleetWire};
 use super::*;
-use crate::engine::test_support::{bytes_from_hex, RNS_1_3_5_ANNOUNCE};
+use crate::engine::test_support::{bytes_from_hex, RNS_1_4_0_ANNOUNCE};
 use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::{
     AnnounceBandwidthCap, BitrateBps, EgressCapability, IngressCapability, InterfaceCapabilities,
@@ -111,7 +111,7 @@ fn a_recipe_node_hears_an_ifac_announce_a_supervisor_stands_a_peer_up_for() {
     let network = IfacContext::derive(Some("fleet-net"), Some("secret"), IfacSize::NARROW).unwrap();
     assert!(node.activate_fleet_with_ifac(0, supervisor, network.clone()));
 
-    let raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+    let raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
     let mut masked = [0u8; SLOT];
     let masked_len = network.mask_outbound(&raw, &mut masked).unwrap();
     let peer = InterfaceId::from_channel_tag(InterfaceKind::WifiPeer, b"test-peer-medium");

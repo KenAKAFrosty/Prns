@@ -250,6 +250,7 @@ impl<S: StorageLayout> EngineState<S> {
                         {
                             Ok(dispatch) => {
                                 let wire_len = dispatch.wire_len;
+                                self.links.note_outbound(&send.link_id, now);
                                 wrote = Some(Ok(dispatch.culled));
                                 Some(wire_len)
                             }
@@ -297,6 +298,7 @@ impl<S: StorageLayout> EngineState<S> {
                     }
                 }
                 wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
+                wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
             }
             CommandOutcome::SendToLinkRejected { id, rejection } => {
                 settle(
@@ -324,6 +326,7 @@ impl<S: StorageLayout> EngineState<S> {
                             .write_commanded_send_to_channel(id, &send, now, &iv, slot)
                         {
                             Ok(dispatch) => {
+                                self.links.note_outbound(&send.link_id, now);
                                 wrote = Some(Ok(()));
                                 Some(dispatch.wire_len)
                             }
@@ -357,6 +360,7 @@ impl<S: StorageLayout> EngineState<S> {
                     }
                 }
                 wake_schedule_changes.channel_timeouts = self.channel_timeouts_wake();
+                wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
             }
             CommandOutcome::SendToChannelRejected { id, failure } => {
                 settle(sink, id, Settlement::SendToChannel(Err(failure)));
@@ -367,6 +371,7 @@ impl<S: StorageLayout> EngineState<S> {
                 let mut buf = [0u8; BROADCAST_MTU];
                 let settlement = match self.write_commanded_identify(&identify, &iv, &mut buf) {
                     Ok(dispatch) => {
+                        self.links.note_outbound(&identify.link_id, now);
                         fan_frame(
                             interfaces,
                             FanTarget::Only(dispatch.fire_on),
@@ -386,6 +391,7 @@ impl<S: StorageLayout> EngineState<S> {
                     }
                 };
                 settle(sink, id, settlement);
+                wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
             }
             CommandOutcome::OwesSendRequest { id, request } => {
                 let mut iv = [0u8; ENCRYPTION_IV_LEN];
@@ -407,6 +413,7 @@ impl<S: StorageLayout> EngineState<S> {
                         {
                             Ok(dispatch) => {
                                 let wire_len = dispatch.wire_len;
+                                self.links.note_outbound(&request.link_id, now);
                                 wrote = Some(Ok(dispatch.culled));
                                 Some(wire_len)
                             }
@@ -455,6 +462,7 @@ impl<S: StorageLayout> EngineState<S> {
                     }
                 }
                 wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
+                wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
             }
             CommandOutcome::SendRequestRejected { id, rejection } => {
                 settle(
@@ -477,6 +485,7 @@ impl<S: StorageLayout> EngineState<S> {
                         {
                             Ok(dispatch) => {
                                 let wire_len = dispatch.wire_len;
+                                self.links.note_outbound(&respond.link_id, now);
                                 wrote = Some(Ok(()));
                                 Some(wire_len)
                             }
@@ -506,6 +515,7 @@ impl<S: StorageLayout> EngineState<S> {
                     }
                 };
                 settle(sink, id, settlement);
+                wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
             }
             CommandOutcome::RespondRejected { id, rejection } => {
                 settle(

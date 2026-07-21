@@ -50,6 +50,7 @@ impl<S: StorageLayout> EngineState<S> {
             delivery,
             proof,
             source_interface,
+            arrived_at,
             &mut DeliveryIo {
                 interfaces,
                 should_prove: &mut *should_prove,
@@ -87,6 +88,7 @@ impl<S: StorageLayout> EngineState<S> {
             delivery,
             proof,
             owed.source_interface,
+            owed.arrived_at,
             &mut DeliveryIo {
                 interfaces,
                 should_prove: &mut *should_prove,

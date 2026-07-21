@@ -8,7 +8,7 @@ use crate::wire::DestinationHash;
 
 use super::{CommandId, CommandOutcome, EngineCommand, Settleable, Settlement};
 
-/// `Destination.announce(app_data=…, attached_interface=…)` as data (RNS 1.3.5 Destination.py).
+/// `Destination.announce(app_data=…, attached_interface=…)` as data (RNS 1.4.0 Destination.py).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AnnounceNow {
     pub destination: DestinationHash,

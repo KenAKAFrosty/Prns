@@ -25,7 +25,7 @@ use crate::storage::StorageLayout;
 use crate::wire::{DestinationType, PacketType, WireContext};
 
 impl<S: StorageLayout> EngineState<S> {
-    /// RNS 1.3.5 `Resource.request_next`; the request flags hashmap-exhausted, carrying the last known name, when the window runs past the names received.
+    /// RNS 1.4.0 `Resource.request_next`; the request flags hashmap-exhausted, carrying the last known name, when the window runs past the names received.
     pub(crate) fn emit_resource_pull<F>(
         &mut self,
         link_id: &LinkId,
@@ -124,6 +124,10 @@ impl<S: StorageLayout> EngineState<S> {
             size_hint: link_data_frame_ceiling(LINK_MDU),
             fill: &mut fill,
         }));
+        drop(fill);
+        if request_wire_len > 0 {
+            self.links.note_outbound(link_id, now);
+        }
         {
             let state = self.incoming_resources.state_mut(index);
             state.request_sent_at = Some(now);
@@ -137,12 +141,12 @@ impl<S: StorageLayout> EngineState<S> {
         EmitResourcePullOutcome::Requested
     }
 
-    /// RNS 1.3.5's link dispatch for context `RESOURCE`.
+    /// RNS 1.4.0's link dispatch for context `RESOURCE`.
     ///
     /// A part packet is nothing but sealed part bytes.
     /// So every in-flight transfer on the link tries to claim it by its salted name: `full_hash(part ‖ salt)` truncated to the 4-byte map hash, scanned within the transfer's open request window.
     ///
-    /// Parts are exempt from the duplicate filter (RNS 1.3.5 `Transport.py:1348-1350` exempts `RESOURCE`/`RESOURCE_REQ`/`RESOURCE_PRF` the same way) because a re-requested part is retransmitted byte-identical, so the hashlist would refuse exactly the retries we ask for.
+    /// Parts are exempt from the duplicate filter (RNS 1.4.0 `Transport.py:1348-1350` exempts `RESOURCE`/`RESOURCE_REQ`/`RESOURCE_PRF` the same way) because a re-requested part is retransmitted byte-identical, so the hashlist would refuse exactly the retries we ask for.
     ///
     /// Rate accounting counts the part's payload plus the request's whole frame, where the reference counts both whole frames. This means the nineteen header bytes are not counted in our case, but since the goal is to classify a 25x-apart threshold (250 bytes/sec for very slow detector and 6,250 bytes/sec for fast link detector), this is negligible and would require extra plumbing and accounting that doesn't justify itself for our implementation.
     pub(crate) fn ingest_resource_part<'p>(
@@ -217,7 +221,7 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     /// Walk the [`StreamedOpen`] up to the consecutive frontier the placement just extended — or, when the chew is the pool's, only make sure it has begun: the runtime walks the chews through [`owed_open_span`](EngineState::owed_open_span) and its pool's verdicts.
-    /// An intentional deviation in timing only: RNS 1.3.5 opens the joined transfer whole at assembly, we spread the same work under the part arrivals it was waiting on.
+    /// An intentional deviation in timing only: RNS 1.4.0 opens the joined transfer whole at assembly, we spread the same work under the part arrivals it was waiting on.
     fn advance_streamed_open(&mut self, index: usize) {
         let state = *self.incoming_resources.state(index);
         let Some(height) = state.consecutive_completed else {
@@ -259,7 +263,7 @@ impl<S: StorageLayout> EngineState<S> {
         self.incoming_resources.len() > 1
     }
 
-    /// RNS 1.3.5's `Resource.hashmap_update_packet` with an intentional deviation: A segment that misfits the register cancels the transfer, where the reference would crash its link thread.
+    /// RNS 1.4.0's `Resource.hashmap_update_packet` with an intentional deviation: A segment that misfits the register cancels the transfer, where the reference would crash its link thread.
     pub(crate) fn ingest_resource_hashmap_update<'p>(
         &mut self,
         data: DataPacket<'p>,
@@ -326,7 +330,7 @@ pub enum EmitResourcePullOutcome {
     Requested,
 }
 
-/// RNS 1.3.5 `Resource.update_eifr`. Never zero because the deadline arithmetic divides by it.
+/// RNS 1.4.0 `Resource.update_eifr`. Never zero because the deadline arithmetic divides by it.
 pub(super) fn expected_inflight_bits_per_second(
     state: &IncomingResourceState,
     link_rtt_ms: u64,
@@ -342,7 +346,7 @@ pub(super) fn expected_inflight_bits_per_second(
     eifr.max(1)
 }
 
-/// RNS 1.3.5's watchdog TRANSFERRING arithmetic: an HMU allowance of x3.5 (as x7/2)  when waiting on names or idle.
+/// RNS 1.4.0's watchdog TRANSFERRING arithmetic: an HMU allowance of x3.5 (as x7/2)  when waiting on names or idle.
 ///
 /// Until a round has measured a rate, the wait covers three sdu of flight, the reference's unmeasured fallback.
 fn part_round_deadline(
@@ -379,7 +383,7 @@ fn part_round_deadline(
     )
 }
 
-/// RNS 1.3.5 `Resource.receive_part`'s first-response bookkeeping. The round's RTT lands (stepped, never adopted raw) and the request/response byte rate feeds the fast-link detector.
+/// RNS 1.4.0 `Resource.receive_part`'s first-response bookkeeping. The round's RTT lands (stepped, never adopted raw) and the request/response byte rate feeds the fast-link detector.
 fn absorb_round_first_response(
     state: &mut IncomingResourceState,
     part_len: usize,
@@ -404,7 +408,7 @@ fn absorb_round_first_response(
     }
 }
 
-/// RNS 1.3.5's per-round RTT tracker: the measurement moves at most 5% toward each new sample, so one outlier round cannot yank the deadline arithmetic; the first sample adopts the link's own RTT.
+/// RNS 1.4.0's per-round RTT tracker: the measurement moves at most 5% toward each new sample, so one outlier round cannot yank the deadline arithmetic; the first sample adopts the link's own RTT.
 fn rtt_stepped_toward(measured_ms: Option<u64>, sample_ms: u64, link_rtt_ms: u64) -> u64 {
     match measured_ms {
         None => link_rtt_ms,
@@ -414,7 +418,7 @@ fn rtt_stepped_toward(measured_ms: Option<u64>, sample_ms: u64, link_rtt_ms: u64
     }
 }
 
-/// RNS 1.3.5 `Resource.receive_part` when a round comes home with nothing outstanding. The window grows, and the round's data rate feeds the fast and very-slow window-ceiling detectors.
+/// RNS 1.4.0 `Resource.receive_part` when a round comes home with nothing outstanding. The window grows, and the round's data rate feeds the fast and very-slow window-ceiling detectors.
 fn absorb_completed_round(state: &mut IncomingResourceState, arrived_at: InstantMillis) {
     grow_window_after_full_round(state);
     let Some(sent_at) = state.request_sent_at else {
@@ -440,7 +444,7 @@ fn absorb_completed_round(state: &mut IncomingResourceState, arrived_at: Instant
     }
 }
 
-/// RNS 1.3.5's fast-link detector: enough fast rounds lift the window ceiling to [`WINDOW_MAX`], once, permanently for this transfer.
+/// RNS 1.4.0's fast-link detector: enough fast rounds lift the window ceiling to [`WINDOW_MAX`], once, permanently for this transfer.
 fn note_fast_rate_round(state: &mut IncomingResourceState, rate: u64) {
     if rate > RATE_FAST_BYTES_PER_SECOND && state.fast_rate_rounds < FAST_RATE_THRESHOLD {
         state.fast_rate_rounds += 1;
@@ -450,7 +454,7 @@ fn note_fast_rate_round(state: &mut IncomingResourceState, rate: u64) {
     }
 }
 
-/// RNS 1.3.5 `Resource.receive_part`'s window growth. A fully-answered round widens the request window by one, and once the window outgrows the floor by the whole flexibility band, the floor steps up behind it.
+/// RNS 1.4.0 `Resource.receive_part`'s window growth. A fully-answered round widens the request window by one, and once the window outgrows the floor by the whole flexibility band, the floor steps up behind it.
 fn grow_window_after_full_round(state: &mut IncomingResourceState) {
     if state.window < state.window_max {
         state.window += 1;
@@ -460,7 +464,7 @@ fn grow_window_after_full_round(state: &mut IncomingResourceState) {
     }
 }
 
-/// RNS 1.3.5's watchdog retry back-off, its three coupled steps verbatim:
+/// RNS 1.4.0's watchdog retry back-off, its three coupled steps verbatim:
 /// - a silent round narrows the request window by one
 /// - the ceiling follows it down, and
 /// - while the ceiling still sits more than the flexibility band above the narrowed window, it drops once more.
@@ -1055,7 +1059,7 @@ mod loop_tests {
             assert_eq!(adv.original_hash, own);
             assert_eq!(
                 adv.data_size, total,
-                "RNS 1.3.5 parity: every segment advertises the original total, not its own size",
+                "RNS 1.4.0 parity: every segment advertises the original total, not its own size",
             );
         });
     }

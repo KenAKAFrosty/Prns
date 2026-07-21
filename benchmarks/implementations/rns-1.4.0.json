@@ -1,0 +1,10 @@
+{
+  "implementation": "RNS 1.4.0",
+  "slug": "rns-1.4.0",
+  "language": "Python",
+  "crypto_backend": "PyCA cryptography / OpenSSL",
+  "role": "reference",
+  "repo": "https://github.com/markqvist/Reticulum",
+  "pinned_ref": "1.4.0",
+  "license": "Reticulum License"
+}

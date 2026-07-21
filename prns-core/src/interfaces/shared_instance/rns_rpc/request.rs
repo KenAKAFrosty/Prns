@@ -174,6 +174,121 @@ pub enum RnsRpcRequest {
 }
 
 impl RnsRpcRequest {
+    /// Encode the Python-pickle request payload used by RNS through 1.3.3.
+    ///
+    /// Shared-instance authentication and framing are common to both dialects;
+    /// RNS switched the payload object codec in 1.3.4. Keeping this small
+    /// protocol-3 encoder in the wire-contract crate lets host clients fall
+    /// back without pulling a Python-specific object model into embedded
+    /// builds.
+    pub fn encode_pickle(&self) -> Result<Vec<u8>, RnsManagementEncodeError> {
+        let mut encoder = PickleRequestEncoder::new();
+        match self {
+            Self::InterfaceStats => encode_pickle_get(&mut encoder, get::INTERFACE_STATS)?,
+            Self::PathTable { max_hops } => {
+                encoder.string_field(selector::GET, get::PATH_TABLE)?;
+                encoder.field(argument::MAX_HOPS)?;
+                encode_pickle_optional_integer(&mut encoder, max_hops);
+            }
+            Self::RateTable => encode_pickle_get(&mut encoder, get::RATE_TABLE)?,
+            Self::NextHopInterface { destination_hash } => encode_pickle_get_with_binary(
+                &mut encoder,
+                get::NEXT_HOP_INTERFACE_NAME,
+                argument::DESTINATION_HASH,
+                destination_hash.as_bytes(),
+            )?,
+            Self::NextHop { destination_hash } => encode_pickle_get_with_binary(
+                &mut encoder,
+                get::NEXT_HOP,
+                argument::DESTINATION_HASH,
+                destination_hash.as_bytes(),
+            )?,
+            Self::FirstHopTimeout { destination_hash } => encode_pickle_get_with_binary(
+                &mut encoder,
+                get::FIRST_HOP_TIMEOUT,
+                argument::DESTINATION_HASH,
+                destination_hash.as_bytes(),
+            )?,
+            Self::LinkCount => encode_pickle_get(&mut encoder, get::LINK_COUNT)?,
+            Self::PacketRssi { packet_hash } => encode_pickle_get_with_binary(
+                &mut encoder,
+                get::PACKET_RSSI,
+                argument::PACKET_HASH,
+                packet_hash.as_bytes(),
+            )?,
+            Self::PacketSnr { packet_hash } => encode_pickle_get_with_binary(
+                &mut encoder,
+                get::PACKET_SNR,
+                argument::PACKET_HASH,
+                packet_hash.as_bytes(),
+            )?,
+            Self::PacketQuality { packet_hash } => encode_pickle_get_with_binary(
+                &mut encoder,
+                get::PACKET_QUALITY,
+                argument::PACKET_HASH,
+                packet_hash.as_bytes(),
+            )?,
+            Self::BlackholedIdentities => {
+                encode_pickle_get(&mut encoder, get::BLACKHOLED_IDENTITIES)?;
+            }
+            Self::IsBlackholed { identity_hash } => encode_pickle_get_with_binary(
+                &mut encoder,
+                get::IS_BLACKHOLED,
+                argument::IDENTITY_HASH,
+                identity_hash.as_bytes(),
+            )?,
+            Self::DropPath { destination_hash } => encode_pickle_drop_with_binary(
+                &mut encoder,
+                drop_operation::PATH,
+                destination_hash.as_bytes(),
+            )?,
+            Self::DropAllVia { transport_id } => encode_pickle_drop_with_binary(
+                &mut encoder,
+                drop_operation::ALL_VIA,
+                transport_id.as_bytes(),
+            )?,
+            Self::DropAnnounceQueues => {
+                encoder.string_field(selector::DROP, drop_operation::ANNOUNCE_QUEUES)?;
+            }
+            Self::BlackholeIdentity {
+                identity_hash,
+                until,
+                reason,
+            } => {
+                encoder.binary_field(selector::BLACKHOLE_IDENTITY, identity_hash.as_bytes())?;
+                encoder.field(argument::UNTIL)?;
+                encode_pickle_optional_number(&mut encoder, until);
+                encoder.field(argument::REASON)?;
+                match reason {
+                    Some(reason) => encoder.string(reason)?,
+                    None => encoder.nil(),
+                }
+            }
+            Self::UnblackholeIdentity { identity_hash } => {
+                encoder.binary_field(selector::UNBLACKHOLE_IDENTITY, identity_hash.as_bytes())?;
+            }
+            Self::DestinationData {
+                operation,
+                destination_hash,
+            } => {
+                encoder.string_field(
+                    selector::DESTINATION_DATA,
+                    match operation {
+                        DestinationDataOperation::Used => data_operation::USED,
+                        DestinationDataOperation::Retain => data_operation::RETAIN,
+                        DestinationDataOperation::Unretain => data_operation::UNRETAIN,
+                    },
+                )?;
+                encoder.binary_field(argument::DESTINATION_HASH, destination_hash.as_bytes())?;
+            }
+            Self::RetainIdentity { identity_hash } => {
+                encoder.string_field(selector::IDENTITY_DATA, data_operation::RETAIN)?;
+                encoder.binary_field(argument::IDENTITY_HASH, identity_hash.as_bytes())?;
+            }
+        }
+        Ok(encoder.finish())
+    }
+
     pub fn encode_message_pack(&self) -> Result<Vec<u8>, RnsManagementEncodeError> {
         let mut encoder = MessagePackEncoder::new();
         match self {
@@ -288,6 +403,145 @@ impl RnsRpcRequest {
             }
         }
         Ok(encoder.finish())
+    }
+}
+
+struct PickleRequestEncoder {
+    bytes: Vec<u8>,
+}
+
+impl PickleRequestEncoder {
+    fn new() -> Self {
+        // PROTO 3, EMPTY_DICT, MARK. Protocol 3 is understood by every
+        // supported Python 3 RNS release and gives byte strings their native
+        // `bytes` representation.
+        Self {
+            bytes: vec![0x80, 0x03, b'}', b'('],
+        }
+    }
+
+    fn finish(mut self) -> Vec<u8> {
+        self.bytes.extend_from_slice(&[b'u', b'.']);
+        self.bytes
+    }
+
+    fn field(&mut self, name: &str) -> Result<(), RnsManagementEncodeError> {
+        self.string(name)
+    }
+
+    fn string_field(&mut self, name: &str, value: &str) -> Result<(), RnsManagementEncodeError> {
+        self.field(name)?;
+        self.string(value)
+    }
+
+    fn binary_field(&mut self, name: &str, value: &[u8]) -> Result<(), RnsManagementEncodeError> {
+        self.field(name)?;
+        self.binary(value)
+    }
+
+    fn nil(&mut self) {
+        self.bytes.push(b'N');
+    }
+
+    fn signed(&mut self, value: i64) {
+        self.long(value.to_le_bytes(), value < 0);
+    }
+
+    fn unsigned(&mut self, value: u64) {
+        self.long(value.to_le_bytes(), false);
+    }
+
+    fn long(&mut self, raw: [u8; 8], negative: bool) {
+        let extension = if negative { 0xff } else { 0x00 };
+        let mut length = raw.len();
+        while length > 1
+            && raw[length - 1] == extension
+            && (raw[length - 2] & 0x80 != 0) == negative
+        {
+            length -= 1;
+        }
+        let length_position = self.bytes.len() + 1;
+        self.bytes.extend_from_slice(&[0x8a, length as u8]);
+        self.bytes.extend_from_slice(&raw[..length]);
+        if !negative && raw[length - 1] & 0x80 != 0 {
+            // LONG1 uses little-endian two's complement; retain the positive
+            // sign when the highest payload bit is set.
+            self.bytes[length_position] = (length + 1) as u8;
+            self.bytes.push(0);
+        }
+    }
+
+    fn float(&mut self, value: f64) {
+        self.bytes.push(b'G');
+        self.bytes.extend_from_slice(&value.to_be_bytes());
+    }
+
+    fn string(&mut self, value: &str) -> Result<(), RnsManagementEncodeError> {
+        let length = u32::try_from(value.len()).map_err(|_| RnsManagementEncodeError)?;
+        self.bytes.push(b'X');
+        self.bytes.extend_from_slice(&length.to_le_bytes());
+        self.bytes.extend_from_slice(value.as_bytes());
+        Ok(())
+    }
+
+    fn binary(&mut self, value: &[u8]) -> Result<(), RnsManagementEncodeError> {
+        if let Ok(length) = u8::try_from(value.len()) {
+            self.bytes.extend_from_slice(&[b'C', length]);
+        } else {
+            let length = u32::try_from(value.len()).map_err(|_| RnsManagementEncodeError)?;
+            self.bytes.push(b'B');
+            self.bytes.extend_from_slice(&length.to_le_bytes());
+        }
+        self.bytes.extend_from_slice(value);
+        Ok(())
+    }
+}
+
+fn encode_pickle_get(
+    encoder: &mut PickleRequestEncoder,
+    operation: &str,
+) -> Result<(), RnsManagementEncodeError> {
+    encoder.string_field(selector::GET, operation)
+}
+
+fn encode_pickle_get_with_binary(
+    encoder: &mut PickleRequestEncoder,
+    operation: &str,
+    argument: &str,
+    value: &[u8],
+) -> Result<(), RnsManagementEncodeError> {
+    encode_pickle_get(encoder, operation)?;
+    encoder.binary_field(argument, value)
+}
+
+fn encode_pickle_drop_with_binary(
+    encoder: &mut PickleRequestEncoder,
+    operation: &str,
+    value: &[u8],
+) -> Result<(), RnsManagementEncodeError> {
+    encoder.string_field(selector::DROP, operation)?;
+    encoder.binary_field(argument::DESTINATION_HASH, value)
+}
+
+fn encode_pickle_optional_integer(encoder: &mut PickleRequestEncoder, value: &Option<RnsInteger>) {
+    match value {
+        Some(value) => encode_pickle_integer(encoder, value),
+        None => encoder.nil(),
+    }
+}
+
+fn encode_pickle_integer(encoder: &mut PickleRequestEncoder, value: &RnsInteger) {
+    match value.0 {
+        RnsIntegerRepresentation::Negative(value) => encoder.signed(value),
+        RnsIntegerRepresentation::Nonnegative(value) => encoder.unsigned(value),
+    }
+}
+
+fn encode_pickle_optional_number(encoder: &mut PickleRequestEncoder, value: &Option<RnsNumber>) {
+    match value {
+        Some(RnsNumber::Integer(value)) => encode_pickle_integer(encoder, value),
+        Some(RnsNumber::Float(value)) => encoder.float(*value),
+        None => encoder.nil(),
     }
 }
 
@@ -1214,7 +1468,7 @@ mod tests {
     }
 
     #[test]
-    fn decodes_every_rns_1_3_8_operation() {
+    fn decodes_every_rns_1_4_0_operation() {
         let cases = [
             request(vec![("get", Value::from("interface_stats"))]),
             request(vec![

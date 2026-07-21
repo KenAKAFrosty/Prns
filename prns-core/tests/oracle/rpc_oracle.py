@@ -6,11 +6,11 @@ import os
 import struct
 import sys
 
-import msgpack
 import RNS
+import RNS.vendor.umsgpack as msgpack
 
 
-EXPECTED_RNS_VERSION = "1.3.9"
+EXPECTED_RNS_VERSION = "1.4.0"
 RPC_FRAME_MAX_LENGTH = 16_777_216
 
 
@@ -102,9 +102,11 @@ def capture_requests():
 
 
 def packed_pairs(pairs):
-    packer = msgpack.Packer(use_bin_type=True)
-    return packer.pack_map_header(len(pairs)) + b"".join(
-        packer.pack(key) + packer.pack(value) for key, value in pairs
+    if len(pairs) >= 16:
+        raise ValueError("the oracle's duplicate-field helper only needs fixmap")
+    return bytes([0x80 | len(pairs)]) + b"".join(
+        msgpack.packb(key, use_bin_type=True) + msgpack.packb(value, use_bin_type=True)
+        for key, value in pairs
     )
 
 
@@ -140,7 +142,7 @@ def mutation_corpus(canonical):
             msgpack.packb(
                 {
                     "get": "path_table",
-                    "max_hops": msgpack.ExtType(1, (1 << 64).to_bytes(9, "big")),
+                    "max_hops": msgpack.Ext(1, (1 << 64).to_bytes(9, "big")),
                 },
                 use_bin_type=True,
             ),

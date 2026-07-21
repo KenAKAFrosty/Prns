@@ -2,18 +2,17 @@
 
 ## Reference Target
 
-Wire, transport, and the shared-instance data plane target Reticulum `1.3.5`
-semantics through completion. Daemon configuration, management destinations,
-and the local shared-instance control RPC separately target RNS `1.3.8`
-semantics. Both oracle installs run `rns==1.3.9` (security update), pinned in
+Wire, transport, daemon configuration, management destinations, interface
+discovery, and both shared-instance planes target Reticulum `1.4.0` / RNS `1.4.0`.
+Both oracle installs run `rns==1.4.0`, pinned in
 `benchmarks/reference/requirements.txt` and
-`benchmarks/reference/rpc-requirements.txt`. Older pickle-shaped control RPC
-remains a compatibility fallback for legacy clients, but it is not the primary
-RPC parity target.
+`benchmarks/reference/rpc-requirements.txt`. The control channel also retains
+full protocol compatibility with the pickle payloads used through RNS `1.3.3`;
+RNS `1.3.4` and later use MessagePack. This compatibility lane does not change
+the primary RNS `1.4.0` parity target.
 
-Interface-mode semantics track RNS `1.3.9`, including `internal` mode, recursive path-request
-forwarding, internal-announcement controls, and discovery-mode preservation. This does not change
-the broader wire, transport, daemon configuration, management, or control-RPC pins above.
+Interface-mode semantics include `internal` mode, recursive path-request
+forwarding, internal-announcement controls, and discovery-mode preservation.
 
 The normal workspace tests stay the first pass:
 
@@ -85,7 +84,7 @@ bash scripts/validation-doc-drift.sh
 ## Deep Validation
 
 For release hardening or architecture changes, run the operator lane. It layers
-the drift guard, focused tests, local/tcp feature tests, the 1.3.8 local RPC
+the drift guard, focused tests, local/tcp feature tests, the 1.4.0 local RPC
 oracle, mutation file-list sanity, Kani proofs, cargo-fuzz checks, and a
 validation artifact manifest into one entrypoint:
 
@@ -316,11 +315,11 @@ The stable `MSG_STATUS` Bundle keys are:
 The same-signature client binding contract is documented in
 [`docs/android-shared-instance-client.md`](android-shared-instance-client.md).
 
-## RNS 1.3.8 Daemon Oracles
+## RNS 1.4.0 Daemon Oracles
 
 The shared-instance, management-service, and host-interface promises are checked against stock
-RNS `1.3.8` semantics at the client API boundary through the pinned RNS `1.3.9` security release. Prepare their dedicated reference
-environment without changing the broader 1.3.5 target:
+RNS `1.4.0` semantics at the client API boundary through the pinned RNS `1.4.0` security release. Prepare their dedicated reference
+environment without changing the broader 1.4.0 target:
 
 ```sh
 uv venv benchmarks/reference/.rpc-venv
@@ -335,7 +334,7 @@ python3 scripts/oracles.py --full
 
 The first smoke stands up a Prns-owned shared instance, lets a stock RNS client
 join it, and calls Reticulum's own `get_*` methods. Those methods issue msgpack
-control-RPC requests in 1.3.8 and decode msgpack replies. The second authenticates
+control-RPC requests in 1.4.0 and decode msgpack replies. The second authenticates
 to `rnstransport.remote.management` and exercises the stock status, path, and
 rate request forms. The third sends an ordinary packet to `rnstransport.probe`
 and requires a cryptographically valid delivery proof. The fourth runs both directions of the
@@ -343,9 +342,13 @@ blackhole exchange: stock RNS fetches Prnsd's published aggregate, then Prnsd fe
 stock RNS source list. The fifth uses the compatible RNode command constants in a Python TCP device
 oracle and verifies Prnsd's detect, radio configuration, report validation, and idle keepalive bytes.
 
-The compatibility shim still answers legacy pickle-shaped basics so older LXMF
-clients do not fault on startup or resource/link telemetry, but full RPC parity
-tracks the 1.3.8 msgpack contract. The current oracle covers all 21 operations:
+The compatibility codec accepts and returns the complete pickle control-RPC
+payload set used through RNS `1.3.3`, while RNS `1.3.4` and later use the
+MessagePack codec. Requests from either dialect reach the same typed runtime
+operations, and replies are encoded in the request's dialect. The active oracle
+tracks the RNS `1.4.0` MessagePack contract; an explicit RNS `1.3.3`
+compatibility smoke proves the legacy dialect in both directions. The current
+oracle covers all 21 operations:
 
 - Live-shaped reads: interface stats, link count, path table, rate table,
   next-hop hash/name, first-hop timeout, and packet RSSI/SNR/Q.
@@ -358,8 +361,8 @@ tracks the 1.3.8 msgpack contract. The current oracle covers all 21 operations:
 
 ## IFAC TCP Interop Oracle
 
-The protected TCP lane puts a Prns TCP client and a pinned RNS `1.3.9` TCP
-server exercising the `1.3.5` data-plane contract on the same named IFAC network with a 16-byte access code. Two stock RNS
+The protected TCP lane puts a Prns TCP client and a pinned RNS `1.4.0` TCP
+server exercising the `1.4.0` data-plane contract on the same named IFAC network with a 16-byte access code. Two stock RNS
 applications then establish links through that protected interface and transfer
 one-megabyte resources in both directions, crossing the mask counter wrap and
 the broadcast MTU boundary:
@@ -397,7 +400,7 @@ Current targets:
   parsers an open network can reach - `parse_link_request` (unsigned, so every
   byte is attacker-controlled), `validate_link_proof` against a fixed responder
   key, and `parse_link_rtt` against a fixed link key. The corpus seeds are the
-  pinned RNS 1.3.5 handshake vectors.
+  handshake vectors minted with RNS 1.3.5 and revalidated with RNS 1.4.0.
 - `engine_ingest_never_panics`: the deterministic core's whole inbound edge.
   Each input drives a sequence of 16-bit-length-prefixed frames, absolute and
   saturating logical-time changes, interface departures and reattachments, and
@@ -413,7 +416,7 @@ Current targets:
   Any parsed, writable shape is serialized and parsed again to pin the codec
   boundary without requiring production behavior changes.
 - `shared_instance_rpc_request_msgpack`: arbitrary bytes enter the private RNS
-  1.3.8 request decoder; malformed, contradictory, truncated, and unknown
+  1.4.0 request decoder; malformed, contradictory, truncated, and unknown
   messages must return a typed error without panicking.
 
 ## Mutation Testing

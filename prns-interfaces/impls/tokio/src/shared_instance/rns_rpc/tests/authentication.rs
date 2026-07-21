@@ -123,8 +123,17 @@ async fn a_legacy_md5_client_without_a_digest_prefix_still_authenticates() {
     )
     .await;
 
-    write_frame_dup(&mut client, b"(dp0\nVget\np1\nVpacket_rssi\np2\ns.").await;
-    assert_eq!(read_frame_dup(&mut client).await, b"N.");
+    let request = RnsRpcRequest::PacketRssi {
+        packet_hash: PacketHashArgument::new(std::vec![0; 32]),
+    }
+    .encode_pickle()
+    .unwrap();
+    write_frame_dup(&mut client, &request).await;
+    let reply = read_frame_dup(&mut client).await;
+    assert_eq!(
+        serde_pickle::value_from_slice(&reply, serde_pickle::DeOptions::new()).unwrap(),
+        serde_pickle::Value::None
+    );
 
     let _ = server_task.await;
     let snapshot = telemetry.snapshot();

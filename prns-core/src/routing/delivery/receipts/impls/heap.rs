@@ -8,7 +8,7 @@ use crate::routing::delivery::receipts::{
     OutstandingReceipt, ReceiptDeadline, ReceiptKind, ReceiptTable, TrackReceiptError,
 };
 
-/// RNS 1.3.5 `Transport.MAX_RECEIPTS`: past this, the wrapper culls the stalest receipt so the new send always proceeds. The culled command receives a typed settlement rather than disappearing silently.
+/// RNS 1.4.0 `Transport.MAX_RECEIPTS`: past this, the wrapper culls the stalest receipt so the new send always proceeds. The culled command receives a typed settlement rather than disappearing silently.
 pub const DEFAULT_MAX_OUTSTANDING_RECEIPTS: usize = 1024;
 
 #[derive(Debug, Default)]
