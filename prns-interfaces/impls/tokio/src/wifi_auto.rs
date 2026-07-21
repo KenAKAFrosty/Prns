@@ -182,7 +182,7 @@ impl AutoWifiDevicePolicy {
         &self.ignored
     }
 
-    fn allows(&self, name: &str, is_loopback: bool) -> bool {
+    pub(crate) fn allows(&self, name: &str, is_loopback: bool) -> bool {
         if is_loopback || self.ignored.iter().any(|ignored| ignored == name) {
             return false;
         }

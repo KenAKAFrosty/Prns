@@ -36,6 +36,10 @@ log = { version = "0.4", optional = true, default-features = false }
 tracing = { version = "0.1", optional = true, default-features = false, features = ["std"] }
 btleplug = { version = "0.12", optional = true }
 uuid = { version = "1", optional = true }
+serde = { version = "1", optional = true, features = ["derive"] }
+serde_json = { version = "1", optional = true }
+url = { version = "2", optional = true }
+mdns-sd = { version = "0.20.2", optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 bluer = { version = "0.17", optional = true, features = ["l2cap", "bluetoothd"] }
@@ -96,6 +100,7 @@ rnode = ["dep:tokio", "dep:prns-config", "dep:btleplug", "dep:uuid", "dep:future
 pipe = ["dep:tokio", "tokio/process"]
 backbone = ["tcp"]
 websocket = ["dep:tokio", "tokio/net", "dep:tokio-tungstenite", "dep:futures-util"]
+browser-rendezvous = ["websocket", "wifi-auto", "dep:serde", "dep:serde_json", "dep:url", "dep:mdns-sd"]
 i2p = ["dep:tokio", "tokio/net", "dep:socket2", "dep:getrandom", "prns-core/i2p"]
 weave = ["serial", "dep:getrandom"]
 shared-instance = ["dep:tokio", "tokio/net", "dep:getrandom", "prns-core/shared-instance-rpc", "prns-runtime/rns-management"]

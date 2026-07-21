@@ -1,5 +1,5 @@
 mod client;
-mod framing;
+pub(crate) mod framing;
 mod server;
 
 pub use client::WebSocketClientInterface;

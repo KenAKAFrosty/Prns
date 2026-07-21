@@ -17,6 +17,7 @@ use std::process;
 use std::time::Duration;
 
 use crate::{cli, interface_discovery, observability, persistence, services, splash};
+use personal_rns::browser_rendezvous::BrowserRendezvous;
 use personal_rns::config::{SharedInstance, TransportIdentityPolicy};
 use personal_rns::engine::{
     EngineProtocolPolicy, LinkMtuDiscovery, LocalHopCountOverride, ProofForm,
@@ -32,6 +33,7 @@ use personal_rns::runtime::{
 };
 use personal_rns::shared_instance::{RnsBlackholeFiles, SharedInstanceCredentials};
 use personal_rns::storage::GrowableHeap;
+use personal_rns::wifi_auto::AutoWifiDevicePolicy;
 use personal_rns::PlanRuntimeContext;
 use prnsd_control::{config_digest, ManagedProcess, ReloadRequest, ReloadResult, ServiceError};
 
@@ -87,6 +89,24 @@ pub(super) async fn run(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
 
     let storage_dir = config_dir.join("storage");
     let persistent_secret = identity::load_or_seed_transport_identity(&storage_dir);
+    let ble_identity =
+        match personal_rns::runtime::load_or_create_ble_identity(&storage_dir.join("ble_identity"))
+        {
+            Ok(identity) => Some(identity),
+            Err(error) => {
+                tracing::error!(event = "ble_identity_failed", error = %error);
+                None
+            }
+        };
+    let browser_rendezvous_id = match personal_rns::runtime::load_or_create_browser_rendezvous_id(
+        &storage_dir.join("browser_rendezvous_id"),
+    ) {
+        Ok(identity) => Some(identity),
+        Err(error) => {
+            tracing::error!(event = "browser_rendezvous_identity_failed", error = %error);
+            None
+        }
+    };
     let mut shared_instance_credentials =
         SharedInstanceCredentials::from_identity_secret(&persistent_secret);
     if let SharedInstance::Enabled {
@@ -107,8 +127,11 @@ pub(super) async fn run(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
     let network_identity_hash = network_identity
         .as_ref()
         .map(|identity| InMemoryNodeIdentity::from_secret_key_bytes(identity).identity_hash());
-    let interface_runtime =
+    let mut interface_runtime =
         PlanRuntimeContext::with_rns_i2p_storage(storage_dir.clone(), visible_identity_hash);
+    if let Some(identity) = ble_identity {
+        interface_runtime = interface_runtime.with_ble_identity(identity);
+    }
     let transport_secret = routing_enabled.then(|| visible_secret.clone());
     let non_routing_identity_secret = (!routing_enabled).then(|| visible_secret.clone());
     let protocol_policy = EngineProtocolPolicy {
@@ -191,6 +214,15 @@ pub(super) async fn run(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
         };
     }
     let prns_handle = prns.handle();
+    if routing_enabled {
+        if let Some(id) = browser_rendezvous_id {
+            prns_handle.supervise(BrowserRendezvous::new(
+                id,
+                AutoWifiDevicePolicy::default(),
+                personal_rns::interfaces::websocket::configured_policy(Default::default()),
+            ));
+        }
+    }
 
     let interface_ownership = match interface_ownership::establish(
         &prns_handle,

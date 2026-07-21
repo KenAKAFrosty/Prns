@@ -62,6 +62,7 @@ tokio-host = [
     "personal-rns/usb",
     "personal-rns/bluetooth-auto",
     "personal-rns/websocket",
+    "personal-rns/browser-rendezvous",
     "personal-rns/shared-instance",
     "personal-rns/signed-artifact",
     "personal-rns/rnx",

@@ -7,6 +7,8 @@ pub mod backbone;
     any(feature = "tokio-host", feature = "embassy-host")
 ))]
 pub mod bluetooth_auto;
+#[cfg(all(feature = "browser-rendezvous", feature = "tokio-host"))]
+pub mod browser_rendezvous;
 #[cfg(all(feature = "esp-now", feature = "embassy-host"))]
 pub mod esp_now;
 #[cfg(all(feature = "i2p", feature = "tokio-host"))]

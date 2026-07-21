@@ -35,6 +35,8 @@ pub use crate::backbone::{BackboneClientInterface, BackboneServer};
 pub use crate::bluetooth_auto::BluetoothAuto;
 #[cfg(all(feature = "bluetooth-auto", feature = "tokio-host"))]
 pub use crate::bluetooth_auto::{AttachedBle, AutoBle, BluetoothAuto};
+#[cfg(all(feature = "browser-rendezvous", feature = "tokio-host"))]
+pub use crate::browser_rendezvous::BrowserRendezvous;
 #[cfg(all(feature = "esp-now", feature = "embassy-host"))]
 pub use crate::esp_now::EspNowInterface;
 #[cfg(all(feature = "i2p", feature = "tokio-host"))]

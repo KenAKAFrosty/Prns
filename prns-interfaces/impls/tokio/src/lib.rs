@@ -75,6 +75,9 @@ mod host_network;
 #[cfg(feature = "websocket")]
 pub mod websocket;
 
+#[cfg(feature = "browser-rendezvous")]
+pub mod browser_rendezvous;
+
 #[cfg(feature = "i2p")]
 pub mod i2p;
 
