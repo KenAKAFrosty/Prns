@@ -3,7 +3,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use jni::objects::{JByteBuffer, JClass};
 use jni::sys::jint;
 use jni::JNIEnv;
-use personal_rns::interfaces::wifi_auto::core as wifi_core;
+use personal_rns::interfaces::wifi_auto as wifi_auto_contract;
 
 use crate::engine::mdns_bridge;
 
@@ -12,7 +12,7 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeRendezvousPo
     _env: JNIEnv,
     _class: JClass,
 ) -> jint {
-    jint::from(wifi_core::TCP_RENDEZVOUS_PORT)
+    jint::from(wifi_auto_contract::TCP_RENDEZVOUS_PORT)
 }
 
 /// Build a peer's rendezvous endpoint from the raw address bytes NsdManager resolved (4 = IPv4,

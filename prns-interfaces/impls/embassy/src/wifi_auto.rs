@@ -1,10 +1,3 @@
-//! The embassy WiFi/LAN `AutoInterface`: the no_std twin of the tokio supervisor, driven over
-//! embassy-net UDP on a board's WiFi stack. Same wire-exact [`core`] protocol brain: it beacons
-//! its peering token on the IPv6 link-local multicast group, validates inbound beacons, and
-//! stands a per-peer member up through the embassy [`Fleet`]. No spawn and no alloc: it drives
-//! its own bounded pool of member I/O loops inline (a `select_array` over their outbound
-//! lanes). The board hands it the stack, the two UDP sockets, the receive buffers, and its WiFi MAC (the EUI-64 link-local the brain hashes over).
-
 use ::core::cell::Cell;
 use ::core::net::Ipv6Addr;
 
@@ -18,7 +11,7 @@ use embassy_time::{with_timeout, Duration, Ticker};
 use portable_atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
 use prns_core::engine::FanTarget;
-use prns_core::interfaces::wifi_auto::core;
+use prns_core::interfaces::wifi_auto as contract;
 use prns_core::interfaces::{
     BitrateBps, ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus, MacAddress,
 };
@@ -113,7 +106,7 @@ pub struct AutoWifiShared<const MEMBERS: usize> {
 impl<const MEMBERS: usize> AutoWifiShared<MEMBERS> {
     /// The supervisor's shared state, every slot free — `const`, so it lives in a `static`. `id` is
     /// the aggregate WiFi card's id; the board passes the same id the supervisor mints from
-    /// [`core::GROUP_ID`].
+    /// [`contract::GROUP_ID`].
     #[must_use]
     pub const fn new(id: InterfaceId) -> Self {
         Self {
@@ -268,7 +261,7 @@ pub struct AutoWifi<'a, const MEMBERS: usize> {
     stack: Stack<'a>,
     discovery: UdpSocket<'a>,
     data: UdpSocket<'a>,
-    brain: core::FixedAutoInterfaceProtocol<MEMBERS>,
+    brain: contract::FixedAutoInterfaceProtocol<MEMBERS>,
     status: AutoWifiStatus<MEMBERS>,
     bitrate: BitrateBps,
     /// An optional second netif folded into the SAME umbrella (one card, one fleet): the SoftAP
@@ -278,7 +271,7 @@ pub struct AutoWifi<'a, const MEMBERS: usize> {
     secondary_discovery: Option<UdpSocket<'a>>,
     secondary_data: Option<UdpSocket<'a>>,
     /// The peering token for the SECONDARY segment, hashed over ITS own link-local — not the primary's.
-    /// The token is bound to the source address ([`core::peering_token`]); a receiver validates it
+    /// The token is bound to the source address ([`contract::peering_token`]); a receiver validates it
     /// against the address the beacon arrived from. The two segments have different link-locals, so
     /// reusing the primary token on the secondary makes every secondary beacon fail validation (a
     /// station-to-station peer never forms). Computed from the secondary's MAC in `with_secondary_netif`.
@@ -286,11 +279,11 @@ pub struct AutoWifi<'a, const MEMBERS: usize> {
 }
 
 impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
-    /// The aggregate id every supervisor mints from [`core::GROUP_ID`] — the board passes the same
+    /// The aggregate id every supervisor mints from [`contract::GROUP_ID`] — the board passes the same
     /// id to [`AutoWifiShared::new`] so the card and the supervisor agree.
     #[must_use]
     pub fn aggregate_id() -> InterfaceId {
-        InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, core::GROUP_ID)
+        InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, contract::GROUP_ID)
     }
 
     /// Build the supervisor over the board's stack, sockets, and WiFi MAC, reporting into `shared`.
@@ -307,9 +300,10 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
             stack,
             discovery,
             data,
-            brain: core::FixedAutoInterfaceProtocol::new(MacAddress::new(mac)),
+            brain: contract::FixedAutoInterfaceProtocol::new(MacAddress::new(mac)),
             status: AutoWifiStatus::new(shared),
-            bitrate: core::WIFI_LAN_BITRATE_BPS.min(core::WIFI_EMBEDDED_BITRATE_CEILING_BPS),
+            bitrate: contract::WIFI_LAN_BITRATE_BPS
+                .min(contract::WIFI_EMBEDDED_BITRATE_CEILING_BPS),
             secondary_stack: None,
             secondary_discovery: None,
             secondary_data: None,
@@ -328,11 +322,11 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
         data: UdpSocket<'a>,
         mac: [u8; 6],
     ) -> Self {
-        let link_local = core::link_local_from_mac(MacAddress::new(mac));
+        let link_local = contract::link_local_from_mac(MacAddress::new(mac));
         self.secondary_stack = Some(stack);
         self.secondary_discovery = Some(discovery);
         self.secondary_data = Some(data);
-        self.secondary_token = Some(*core::peering_token(&link_local).as_bytes());
+        self.secondary_token = Some(*contract::peering_token(&link_local).as_bytes());
         self
     }
 
@@ -364,11 +358,14 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
         // Wait for the link and our IPv6 config before binding — beaconing into a down link is
         // pointless, and a multicast join can fail before the interface is up.
         self.stack.wait_config_up().await;
-        let primary_ok = self.discovery.bind(core::DEFAULT_DISCOVERY_PORT).is_ok()
-            && self.data.bind(core::DEFAULT_DATA_PORT).is_ok()
+        let primary_ok = self
+            .discovery
+            .bind(contract::DEFAULT_DISCOVERY_PORT)
+            .is_ok()
+            && self.data.bind(contract::DEFAULT_DATA_PORT).is_ok()
             && self
                 .stack
-                .join_multicast_group(IpAddress::Ipv6(core::DISCOVERY_GROUP))
+                .join_multicast_group(IpAddress::Ipv6(contract::DISCOVERY_GROUP))
                 .is_ok();
         crate::diagnostic_log::debug!(
             "wifi-auto: primary segment {}",
@@ -389,10 +386,10 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
             embassy_time::with_timeout(Duration::from_secs(10), stack.wait_config_up())
                 .await
                 .is_ok()
-                && discovery.bind(core::DEFAULT_DISCOVERY_PORT).is_ok()
-                && data.bind(core::DEFAULT_DATA_PORT).is_ok()
+                && discovery.bind(contract::DEFAULT_DISCOVERY_PORT).is_ok()
+                && data.bind(contract::DEFAULT_DATA_PORT).is_ok()
                 && stack
-                    .join_multicast_group(IpAddress::Ipv6(core::DISCOVERY_GROUP))
+                    .join_multicast_group(IpAddress::Ipv6(contract::DISCOVERY_GROUP))
                     .is_ok()
         } else {
             false
@@ -437,7 +434,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                     self.discovery.recv_from(&mut discovery_buf),
                     self.data.recv_from(&mut data_buf[..]),
                     beacon.next(),
-                    fleet.next_outbound::<{ core::HARDWARE_MTU }>(),
+                    fleet.next_outbound::<{ contract::HARDWARE_MTU }>(),
                 ),
                 select3(
                     recv_or_pending(&self.secondary_discovery, &mut sec_discovery_buf),
@@ -489,8 +486,8 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                             self.discovery.send_to(
                                 &token,
                                 (
-                                    IpAddress::Ipv6(core::DISCOVERY_GROUP),
-                                    core::DEFAULT_DISCOVERY_PORT,
+                                    IpAddress::Ipv6(contract::DISCOVERY_GROUP),
+                                    contract::DEFAULT_DISCOVERY_PORT,
                                 ),
                             ),
                         )
@@ -504,8 +501,8 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                             secondary.send_to(
                                 secondary_token.as_ref().unwrap_or(&token),
                                 (
-                                    IpAddress::Ipv6(core::DISCOVERY_GROUP),
-                                    core::DEFAULT_DISCOVERY_PORT,
+                                    IpAddress::Ipv6(contract::DISCOVERY_GROUP),
+                                    contract::DEFAULT_DISCOVERY_PORT,
                                 ),
                             ),
                         )
@@ -559,7 +556,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                                         SEND_TIMEOUT,
                                         socket.send_to(
                                             &frame,
-                                            (IpAddress::Ipv6(peer), core::DEFAULT_DATA_PORT),
+                                            (IpAddress::Ipv6(peer), contract::DEFAULT_DATA_PORT),
                                         ),
                                     )
                                     .await,
@@ -634,7 +631,7 @@ async fn ingest_beacon<
     const NOTIFY: usize,
     const LIFECYCLE: usize,
 >(
-    brain: &mut core::FixedAutoInterfaceProtocol<MEMBERS>,
+    brain: &mut contract::FixedAutoInterfaceProtocol<MEMBERS>,
     peers: &mut [Option<Ipv6Addr>; MEMBERS],
     ids: &mut [InterfaceId; MEMBERS],
     peer_on_secondary: &mut [bool; MEMBERS],
@@ -650,9 +647,9 @@ async fn ingest_beacon<
     crate::diagnostic_log::debug!(
         "wifi-auto: rx beacon src={src} sec={on_secondary} len={} peer={}",
         bytes.len(),
-        matches!(verdict, core::BeaconVerdict::Peer(_))
+        matches!(verdict, contract::BeaconVerdict::Peer(_))
     );
-    let core::BeaconVerdict::Peer(addr) = verdict else {
+    let contract::BeaconVerdict::Peer(addr) = verdict else {
         return;
     };
     if peers.contains(&Some(addr)) {
@@ -663,7 +660,10 @@ async fn ingest_beacon<
     };
     let id = InterfaceId::from_channel_tag(InterfaceKind::WifiPeer, &addr.octets());
     fleet
-        .register_member(core::descriptor(id, core::policy_for_bitrate(bitrate)))
+        .register_member(contract::descriptor(
+            id,
+            contract::policy_for_bitrate(bitrate),
+        ))
         .await;
     peers[slot] = Some(addr);
     ids[slot] = id;
@@ -733,7 +733,7 @@ async fn retire_stale<
     const NOTIFY: usize,
     const LIFECYCLE: usize,
 >(
-    brain: &mut core::FixedAutoInterfaceProtocol<MEMBERS>,
+    brain: &mut contract::FixedAutoInterfaceProtocol<MEMBERS>,
     peers: &mut [Option<Ipv6Addr>; MEMBERS],
     ids: &[InterfaceId; MEMBERS],
     peer_on_secondary: &mut [bool; MEMBERS],

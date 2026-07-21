@@ -10,10 +10,12 @@
 compile_error!("the `tcp` family needs a runtime lane: enable `tokio-host` or `embassy-host`");
 
 #[cfg(all(
-    feature = "wifi",
+    feature = "wifi-auto",
     not(any(feature = "tokio-host", feature = "embassy-host"))
 ))]
-compile_error!("the `wifi` family needs a runtime lane: enable `tokio-host` or `embassy-host`");
+compile_error!(
+    "the `wifi-auto` family needs a runtime lane: enable `tokio-host` or `embassy-host`"
+);
 
 #[cfg(all(
     feature = "usb",

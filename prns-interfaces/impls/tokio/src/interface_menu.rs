@@ -1,4 +1,4 @@
-#[cfg(any(feature = "wifi", feature = "usb", feature = "ble"))]
+#[cfg(any(feature = "wifi-auto", feature = "usb", feature = "ble"))]
 pub use crate::auto::Auto;
 #[cfg(feature = "ax25")]
 pub use crate::ax25_kiss::Ax25KissInterface;
@@ -38,7 +38,7 @@ pub use crate::weave::WeaveInterface;
 pub use crate::websocket::WebSocketClientInterface;
 #[cfg(feature = "websocket")]
 pub use crate::websocket::WebSocketServer;
-#[cfg(feature = "wifi")]
-pub use crate::wifi::AutoWifi;
+#[cfg(feature = "wifi-auto")]
+pub use crate::wifi_auto::AutoWifi;
 #[cfg(feature = "wifi-direct")]
-pub use crate::wifi_direct::tokio::WifiDirectAuto;
+pub use crate::wifi_direct::WifiDirectAuto;

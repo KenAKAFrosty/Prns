@@ -2,13 +2,11 @@ use std::time::Duration;
 
 use prns_core::interfaces::rnode::policy as rnode_policy;
 use prns_core::interfaces::tcp::TcpWireFraming;
-pub use prns_core::interfaces::wifi_auto::core::{
+pub use prns_core::interfaces::wifi_auto::{
     DiscoveryScope as AutoInterfaceDiscoveryScope,
     MulticastAddressType as AutoInterfaceMulticastAddressType,
 };
-use prns_core::interfaces::wifi_auto::core::{
-    DEFAULT_DATA_PORT, DEFAULT_DISCOVERY_PORT, GROUP_NAME,
-};
+use prns_core::interfaces::wifi_auto::{DEFAULT_DATA_PORT, DEFAULT_DISCOVERY_PORT, GROUP_NAME};
 use prns_core::interfaces::{BitrateBps, InterfaceDefaults};
 
 use super::PlanErrorKind;

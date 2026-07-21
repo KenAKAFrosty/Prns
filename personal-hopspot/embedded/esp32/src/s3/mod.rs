@@ -7,7 +7,7 @@ use esp_hal::efuse::base_mac_address;
 use esp_hal::gpio::{Input, InputConfig, Output, Pull};
 use esp_hal::peripherals::USB_DEVICE;
 use esp_hal::rng::Rng;
-#[cfg(feature = "wifi")]
+#[cfg(feature = "wifi-auto")]
 use esp_hal::rom::spiflash::esp_rom_spiflash_read;
 use esp_hal::spi::master::Spi;
 use esp_hal::system::Stack as CpuStack;
@@ -15,51 +15,51 @@ use esp_hal::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx, UsbSerialJtagTx};
 use esp_hal::Async;
 use esp_println::println;
 
-#[cfg(feature = "wifi")]
+#[cfg(feature = "wifi-auto")]
 use alloc::string::{String, ToString};
 use core::fmt::Write as _;
 
 use embassy_executor::Spawner;
 use embassy_futures::join::join;
 use embassy_futures::select::{select3, Either3};
-#[cfg(feature = "wifi")]
+#[cfg(feature = "wifi-auto")]
 use embassy_net::tcp::TcpSocket;
 use embassy_net::udp::{PacketMetadata, UdpSocket};
 use embassy_net::{
     Config as NetConfig, ConfigV6, DhcpConfig, IpEndpoint, Ipv6Cidr, Runner, Stack, StackResources,
     StaticConfigV6,
 };
-#[cfg(feature = "wifi")]
+#[cfg(feature = "wifi-auto")]
 use embassy_net::{IpAddress, Ipv4Address, Ipv4Cidr, StaticConfigV4};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
 use embassy_sync::zerocopy_channel;
-#[cfg(feature = "wifi")]
+#[cfg(feature = "wifi-auto")]
 use embassy_time::with_timeout;
 use embassy_time::{Delay, Duration, Ticker, Timer};
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_hal_bus::spi::ExclusiveDevice;
 use heapless::Vec as HVec;
-#[cfg(feature = "wifi")]
+#[cfg(feature = "wifi-auto")]
 use portable_atomic::AtomicBool;
 use portable_atomic::{AtomicU64, Ordering};
 use static_cell::{ConstStaticCell, StaticCell};
 
-#[cfg(feature = "wifi")]
+#[cfg(feature = "wifi-auto")]
 use esp_radio::wifi::ap::AccessPointConfig;
-#[cfg(feature = "wifi")]
+#[cfg(feature = "wifi-auto")]
 use esp_radio::wifi::scan::ScanConfig;
-#[cfg(feature = "wifi")]
+#[cfg(feature = "wifi-auto")]
 use esp_radio::wifi::sta::StationConfig;
-#[cfg(feature = "wifi")]
+#[cfg(feature = "wifi-auto")]
 use esp_radio::wifi::{
     Config as WifiConfig, ControllerConfig, Interface as WifiStaDevice, PowerSaveMode,
     WifiController,
 };
 
-#[cfg(feature = "wifi")]
+#[cfg(feature = "wifi-auto")]
 use esp_radio::esp_now::{
     EspNow, EspNowManager, EspNowReceiver, EspNowSender, WifiPhyRate, BROADCAST_ADDRESS,
 };
@@ -68,19 +68,19 @@ use personal_rns::ble::{BluetoothAutoShared, BluetoothAutoStatus};
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
-#[cfg(feature = "wifi")]
+#[cfg(feature = "wifi-auto")]
 use personal_rns::esp_now::EspNowInterface;
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::bluetooth_auto::limits;
-#[cfg(feature = "wifi")]
+#[cfg(feature = "wifi-auto")]
 use personal_rns::interfaces::esp_now::core::{
     self as espnow_core, Channel as EspNowChannel, ChannelPolicy,
 };
 use personal_rns::interfaces::lora::core::{channel_tag, DEFAULT_915_PROFILE};
 use personal_rns::interfaces::radios::sx126x::Sx126x;
 use personal_rns::interfaces::usb_auto::device_descriptor;
-use personal_rns::interfaces::wifi_auto::core as wifi_core;
+use personal_rns::interfaces::wifi_auto as wifi_auto_contract;
 use personal_rns::interfaces::BitrateBps;
 use personal_rns::interfaces::{
     ConnectionState, InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus, MacAddress,
@@ -102,7 +102,7 @@ use personal_rns::runtime::{
 use personal_rns::storage::StorageLayout;
 use personal_rns::tcp::TcpClient;
 use personal_rns::usb_auto::UsbAutoDevice;
-use personal_rns::wifi::{AutoWifi, AutoWifiShared, AutoWifiStatus};
+use personal_rns::wifi_auto::{AutoWifi, AutoWifiShared, AutoWifiStatus};
 
 use crate::storage::EngineStorageType;
 
@@ -110,29 +110,29 @@ use personal_hopspot_core as screen;
 
 esp_app_desc!();
 
-#[cfg(feature = "wifi")]
+#[cfg(feature = "wifi-auto")]
 mod hopspot_site {
     include!(concat!(env!("OUT_DIR"), "/hopspot_site.rs"));
 }
 
-#[cfg(feature = "wifi")]
+#[cfg(feature = "wifi-auto")]
 const AP_IPV4: [u8; 4] = [192, 168, 4, 1];
-#[cfg(feature = "wifi")]
+#[cfg(feature = "wifi-auto")]
 const CAPTIVE_PORTAL_HOST: &str = "192.168.4.1";
 const CAPTIVE_PORTAL_URL: &str = "http://192.168.4.1/";
-#[cfg(feature = "wifi")]
+#[cfg(feature = "wifi-auto")]
 const CAPTIVE_PORTAL_API_URL: &str = "http://192.168.4.1/captive-portal/api";
-#[cfg(feature = "wifi")]
+#[cfg(feature = "wifi-auto")]
 const HOPSPOT_CONFIG_OFFSET: u32 = 0xD000;
-#[cfg(feature = "wifi")]
+#[cfg(feature = "wifi-auto")]
 const HOPSPOT_CONFIG_MAGIC: &[u8; 8] = b"HSPCFG1\0";
-#[cfg(feature = "wifi")]
+#[cfg(feature = "wifi-auto")]
 const HOPSPOT_CONFIG_VERSION: u8 = 1;
-#[cfg(feature = "wifi")]
+#[cfg(feature = "wifi-auto")]
 const HOPSPOT_CONFIG_READ_WORDS: usize = 32;
-#[cfg(feature = "wifi")]
+#[cfg(feature = "wifi-auto")]
 const HOPSPOT_CONFIG_SSID_MAX: usize = 32;
-#[cfg(feature = "wifi")]
+#[cfg(feature = "wifi-auto")]
 const HOPSPOT_CONFIG_PASSWORD_MAX: usize = 64;
 
 /// Fallback WiFi network the board joins as a station, read at build time. Normal flashing writes the
@@ -269,14 +269,14 @@ mod configuration;
 mod connectivity;
 mod display;
 
-#[cfg(feature = "wifi")]
+#[cfg(feature = "wifi-auto")]
 use captive_portal::ap_ssid;
-#[cfg(feature = "wifi")]
+#[cfg(feature = "wifi-auto")]
 use configuration::{hopspot_wifi_config, HopspotWifiConfig};
 use connectivity::build_tcp;
-#[cfg(feature = "wifi")]
+#[cfg(feature = "wifi-auto")]
 use connectivity::{build_wifi, espnow_channel_policy, EspNowAdapter};
-#[cfg(feature = "wifi")]
+#[cfg(feature = "wifi-auto")]
 use display::build_interface_menu_details;
 use display::{build_cards, build_snapshots, button_task};
 
@@ -333,7 +333,7 @@ const PACKET_PHY_INDEX_BUCKETS: usize =
 /// fixture; the long-term fix is to gate the TRNG on RF-up. A fn (not a closure) so the host type
 /// stays nameable for the cross-core move.
 static ENTROPY_STATE: AtomicU64 = AtomicU64::new(0x9e37_79b9_7f4a_7c15);
-#[cfg(feature = "wifi")]
+#[cfg(feature = "wifi-auto")]
 static WIFI_STATION_JOINED: AtomicBool = AtomicBool::new(false);
 
 fn seeded_entropy(bytes: &mut [u8]) {
@@ -392,7 +392,7 @@ pub struct Bringup<D, B> {
     pub usb_device: USB_DEVICE<'static>,
     #[cfg(feature = "lora")]
     pub lora_radio: LoraRadio,
-    #[cfg(feature = "wifi")]
+    #[cfg(feature = "wifi-auto")]
     pub wifi: esp_hal::peripherals::WIFI<'static>,
     pub button: esp_hal::peripherals::GPIO0<'static>,
     pub cpu_ctrl: esp_hal::peripherals::CPU_CTRL<'static>,
@@ -484,23 +484,23 @@ macro_rules! boot_common {
 pub(crate) use boot_common;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(not(feature = "wifi"), allow(dead_code))]
+#[cfg_attr(not(feature = "wifi-auto"), allow(dead_code))]
 pub enum RadioMode {
     Ble,
     AccessPoint,
 }
 
-#[cfg(feature = "wifi")]
+#[cfg(feature = "wifi-auto")]
 const RADIO_MODE_AP: u32 = 0x4150_0001;
-#[cfg(feature = "wifi")]
+#[cfg(feature = "wifi-auto")]
 const RADIO_MODE_BLE: u32 = 0x424C_4501;
-#[cfg(feature = "wifi")]
+#[cfg(feature = "wifi-auto")]
 #[esp_hal::ram(unstable(rtc_fast, persistent))]
 static mut RADIO_MODE_FLAG: u32 = 0;
 
 fn boot_radio_mode(station_configured: bool) -> RadioMode {
     let _ = station_configured;
-    #[cfg(feature = "wifi")]
+    #[cfg(feature = "wifi-auto")]
     {
         let flag = unsafe { core::ptr::addr_of!(RADIO_MODE_FLAG).read() };
         if flag == RADIO_MODE_AP {
@@ -508,13 +508,13 @@ fn boot_radio_mode(station_configured: bool) -> RadioMode {
         }
         RadioMode::Ble
     }
-    #[cfg(not(feature = "wifi"))]
+    #[cfg(not(feature = "wifi-auto"))]
     {
         RadioMode::Ble
     }
 }
 
-#[cfg(feature = "wifi")]
+#[cfg(feature = "wifi-auto")]
 fn request_radio_mode(mode: RadioMode) -> ! {
     let flag = match mode {
         RadioMode::AccessPoint => RADIO_MODE_AP,

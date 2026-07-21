@@ -1,25 +1,8 @@
-use crate::interfaces::{
-    AnnounceBandwidthCap, BitrateBps, ConfiguredInterfacePolicy, EgressCapability,
-    IngressCapability, InterfaceCapabilities, InterfaceDefaults, InterfaceDescriptor, InterfaceId,
-    InterfaceMode, MtuPolicy, TransportCapability,
-};
-use crate::routing::links::MAX_LINK_MTU;
-
 /// Distinct from wifi_auto's TCP_RENDEZVOUS_PORT (42699), which AutoWifi binds on 0.0.0.0 — both
 /// listeners must coexist on one host.
 pub const WIFI_DIRECT_RENDEZVOUS_PORT: u16 = 42_717;
 
 pub const WIFI_DIRECT_BEACON_PORT: u16 = 42_718;
-
-pub const HARDWARE_MTU: usize = 1196;
-
-pub const WIFI_DIRECT_HW_MTU: usize = if HARDWARE_MTU < MAX_LINK_MTU {
-    HARDWARE_MTU
-} else {
-    MAX_LINK_MTU
-};
-
-pub const WIFI_DIRECT_BITRATE_GUESS_BPS: BitrateBps = BitrateBps::guess(100_000_000);
 
 pub const FAMILY_TAG: &[u8] = b"wifi-direct";
 
@@ -30,13 +13,6 @@ pub const SERVICE_TYPE: &str = "_prns._tcp";
 pub const GROUP_SSID_PREFIX: &str = "DIRECT-Prns-";
 
 pub const GROUP_PASSPHRASE: &str = "prns-mesh-shared-key";
-
-pub const GO_MAX_CLIENTS: usize = 8;
-
-pub const APPLE_UNAVAILABLE_REASON: &str =
-    "no public Wi-Fi Direct API on Apple platforms; AWDL/Wi-Fi Aware is the analog";
-pub const ESP32_UNAVAILABLE_REASON: &str =
-    "no Wi-Fi Direct on ESP32; SoftAP+STA rides AutoWifi, connectionless rides ESP-NOW";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GroupRole {
@@ -119,27 +95,6 @@ pub enum DataPlanePlan {
         local: core::net::Ipv6Addr,
         scope: u32,
     },
-}
-
-pub fn descriptor(id: InterfaceId, bitrate: BitrateBps) -> InterfaceDescriptor {
-    defaults_for_bitrate(bitrate)
-        .configured(ConfiguredInterfacePolicy::default())
-        .descriptor(id)
-}
-
-pub fn defaults_for_bitrate(bitrate: BitrateBps) -> InterfaceDefaults {
-    InterfaceDefaults {
-        capabilities: InterfaceCapabilities {
-            ingress: IngressCapability::Enabled,
-            egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
-        },
-        mode: InterfaceMode::Full,
-        bitrate,
-        mtu: MtuPolicy::fixed(WIFI_DIRECT_HW_MTU),
-        announce_rate_limit: None,
-        announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
-        airtime_duty_cycle: None,
-    }
 }
 
 #[cfg(test)]

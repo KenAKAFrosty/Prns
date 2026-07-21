@@ -1,8 +1,8 @@
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::time::Duration;
 
-use prns_core::interfaces::wifi_direct::core::{DataPlanePlan, GroupRole, SegmentAddress};
-use prns_core::interfaces::wifi_direct::seam::WifiDirectGroup;
+use prns_core::interfaces::wifi_direct::WifiDirectGroup;
+use prns_core::interfaces::wifi_direct::{DataPlanePlan, GroupRole, SegmentAddress};
 
 const LINK_LOCAL_WAIT_ROUNDS: u32 = 50;
 const LINK_LOCAL_WAIT_STEP: Duration = Duration::from_millis(100);

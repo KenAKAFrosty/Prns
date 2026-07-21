@@ -5,7 +5,7 @@ use tokio::sync::mpsc;
 
 use crate::byte_stream::framing;
 use prns_core::interfaces::tcp;
-use prns_core::interfaces::wifi_aware::core;
+use prns_core::interfaces::wifi_aware as contract;
 use prns_core::interfaces::{
     BitrateBps, ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind,
 };
@@ -55,11 +55,11 @@ impl<S> WifiAwareMember<S> {
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin> Interface for WifiAwareMember<S> {
-    const HW_MTU: usize = core::WIFI_AWARE_HW_MTU;
+    const HW_MTU: usize = contract::WIFI_AWARE_HW_MTU;
     const KIND: InterfaceKind = InterfaceKind::WifiAwarePeer;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::descriptor(self.id, self.bitrate)
+        contract::descriptor(self.id, self.bitrate)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -124,7 +124,7 @@ mod tests {
     ) {
         let (near, far) = tokio::io::duplex(1024);
         (
-            WifiAwareMember::new(tag.to_vec(), near, core::WIFI_AWARE_BITRATE_GUESS_BPS),
+            WifiAwareMember::new(tag.to_vec(), near, contract::WIFI_AWARE_BITRATE_GUESS_BPS),
             far,
         )
     }
@@ -144,6 +144,6 @@ mod tests {
         let (member, _far) = duplex_member(b"peer");
         let descriptor = member.descriptor();
         assert_eq!(descriptor.id, member.id());
-        assert_eq!(descriptor.bitrate, core::WIFI_AWARE_BITRATE_GUESS_BPS);
+        assert_eq!(descriptor.bitrate, contract::WIFI_AWARE_BITRATE_GUESS_BPS);
     }
 }

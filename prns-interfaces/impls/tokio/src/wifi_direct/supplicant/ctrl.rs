@@ -80,10 +80,6 @@ impl WpaCommand {
                 .to_owned());
         }
     }
-
-    pub async fn accepted(&self, command: &str) -> Result<bool, WpaCtrlError> {
-        Ok(self.request(command).await? == "OK")
-    }
 }
 
 impl Drop for WpaCommand {

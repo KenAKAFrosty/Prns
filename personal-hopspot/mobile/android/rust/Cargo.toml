@@ -14,7 +14,7 @@ crate-type = ["cdylib", "lib"]
 
 [dependencies]
 personal-hopspot-core = { path = "../../../core", default-features = false }
-personal-rns = { path = "../../../../personal-rns", default-features = false, features = ["tokio-host", "wifi", "wifi-direct", "wifi-aware", "ble", "usb", "shared-instance", "log"] }
+personal-rns = { path = "../../../../personal-rns", default-features = false, features = ["tokio-host", "wifi-auto", "wifi-direct", "wifi-aware", "ble", "usb", "shared-instance", "log"] }
 prns-ffi = { path = "../../../../prns-ffi", default-features = false, features = ["log"] }
 embedded-graphics = "0.8"
 heapless = { version = "0.8", default-features = false }
@@ -23,7 +23,7 @@ getrandom = "0.2"
 log = "0.4"
 # The async runtime + the channels/IO traits the JNI-bridged USB stream rides; the reactor's
 # USB-auto host multiplexes it like any other stream. The WiFi-auto supervisor rides the same
-# runtime (prns-interfaces-tokio's `wifi` pulls tokio/net + socket2 + if-addrs); the Kotlin side
+# runtime (prns-interfaces-tokio's `wifi-auto` pulls tokio/net + socket2 + if-addrs); the Kotlin side
 # holds the multicast lock so the supervisor's IPv6 link-local multicast crosses.
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync", "io-util", "net"] }
 

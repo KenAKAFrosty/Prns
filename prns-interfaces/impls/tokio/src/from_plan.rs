@@ -64,7 +64,7 @@ use crate::usb_auto::AutoUsb;
 use crate::weave::WeaveInterface;
 #[cfg(feature = "websocket")]
 use crate::websocket::{WebSocketClientInterface, WebSocketServer};
-use crate::wifi::{AutoWifi, AutoWifiDevicePolicy, AutoWifiSettings, AutoWifiSettingsError};
+use crate::wifi_auto::{AutoWifi, AutoWifiDevicePolicy, AutoWifiSettings, AutoWifiSettingsError};
 
 const RECONNECT_POLICY: ReconnectPolicy = ReconnectPolicy::STANDARD;
 const KISS_FLOW_CONTROL_TIMEOUT: ReadyTimeout = ReadyTimeout::new(Duration::from_secs(5));
@@ -838,7 +838,7 @@ async fn stand_up(
 fn auto_wifi_settings(
     interface_name: &str,
     planned: &AutoInterfacePlan,
-) -> Result<AutoWifiSettings, crate::wifi::AutoWifiSettingsError> {
+) -> Result<AutoWifiSettings, crate::wifi_auto::AutoWifiSettingsError> {
     let group_id = planned.group_id().as_bytes();
     let mut instance_tag = (group_id.len() as u64).to_be_bytes().to_vec();
     instance_tag.extend_from_slice(group_id);
@@ -1194,11 +1194,11 @@ mod tests {
         assert_eq!(settings.group_id(), b"field-mesh");
         assert_eq!(
             settings.discovery_scope(),
-            prns_core::interfaces::wifi_auto::core::DiscoveryScope::Organisation
+            prns_core::interfaces::wifi_auto::DiscoveryScope::Organisation
         );
         assert_eq!(
             settings.multicast_address_type(),
-            prns_core::interfaces::wifi_auto::core::MulticastAddressType::Permanent
+            prns_core::interfaces::wifi_auto::MulticastAddressType::Permanent
         );
         assert_eq!(settings.discovery_port(), 31_000);
         assert_eq!(settings.data_port(), 32_000);

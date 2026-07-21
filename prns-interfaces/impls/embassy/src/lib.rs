@@ -31,8 +31,8 @@ pub(crate) mod diagnostic_log {
 #[cfg(feature = "tcp")]
 pub mod tcp;
 
-#[cfg(feature = "wifi")]
-pub mod wifi;
+#[cfg(feature = "wifi-auto")]
+pub mod wifi_auto;
 
 #[cfg(feature = "lora")]
 pub mod lora;

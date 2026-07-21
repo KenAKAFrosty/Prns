@@ -189,7 +189,7 @@ fn auto_wifi_keeps_its_gigabit_estimate_without_overpromising_its_datagram() {
     assert_eq!(wifi.policy.bitrate.get(), 1_000_000_000);
     assert_eq!(
         wifi.policy.mtu.resolve(wifi.policy.bitrate),
-        Some(prns_core::interfaces::wifi_auto::core::HARDWARE_MTU)
+        Some(prns_core::interfaces::wifi_auto::HARDWARE_MTU)
     );
 }
 

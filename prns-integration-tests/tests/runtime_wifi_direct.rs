@@ -5,10 +5,10 @@ use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::interfaces::wifi_direct::core::{
+use personal_rns::interfaces::wifi_direct::{
     DataPlanePlan, GoIntent, GroupRole, Initiative, PeerEvidence, SegmentAddress,
 };
-use personal_rns::interfaces::wifi_direct::seam::{
+use personal_rns::interfaces::wifi_direct::{
     DiscoveryMode, WifiDirectBackend, WifiDirectEvent, WifiDirectGroup,
 };
 use personal_rns::interfaces::MacAddress;
@@ -20,7 +20,7 @@ use personal_rns::runtime::{
     RequestHandlerRegistration,
 };
 use personal_rns::storage::GrowableHeap;
-use personal_rns::wifi_direct::tokio::WifiDirectAuto;
+use personal_rns::wifi_direct::WifiDirectAuto;
 use tokio::sync::mpsc;
 
 fn secret(byte: u8) -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {

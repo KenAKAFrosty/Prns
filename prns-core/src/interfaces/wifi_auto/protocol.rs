@@ -11,13 +11,7 @@ use core::net::Ipv6Addr;
 use heapless::{String as HString, Vec as HVec};
 
 use crate::crypto::{sha256, Sha256PrefixState};
-use crate::interfaces::{
-    AnnounceBandwidthCap, BitrateBps, ConfiguredInterfacePolicy, EffectiveInterfacePolicy,
-    EgressCapability, IngressCapability, InterfaceCapabilities, InterfaceDefaults,
-    InterfaceDescriptor, InterfaceId, InterfaceMode, MacAddress, MtuPolicy, TransportCapability,
-    LOCAL_INTERFACE_BITRATE_ESTIMATE,
-};
-use crate::routing::links::MAX_LINK_MTU;
+use crate::interfaces::MacAddress;
 
 pub const GROUP_NAME: &str = "reticulum";
 pub const GROUP_ID: &[u8] = GROUP_NAME.as_bytes();
@@ -121,73 +115,7 @@ pub const DEFAULT_DATA_PORT: u16 = 42671;
 /// UDP/TCP overload. Not part of RNS AutoInterface; a Prns extension.
 pub const TCP_RENDEZVOUS_PORT: u16 = 42699;
 
-/// The interface's hardware (link-layer) MTU, distinct from Reticulum's
-/// logical 500-byte `MTU`. RNS pins it at 1196 for the AutoInterface
-/// ([`AutoInterface.py` L44](https://github.com/markqvist/Reticulum/blob/1.3.5/RNS/Interfaces/AutoInterface.py#L44)).
-pub const HARDWARE_MTU: usize = 1196;
 pub const PEERING_TIMEOUT_MS: u64 = 22_000;
-
-/// What RNS guesses for an AutoInterface's pipe when none is configured: 10 Mbps
-/// (`AutoInterface.BITRATE_GUESS`,
-/// [`AutoInterface.py` L70](https://github.com/markqvist/Reticulum/blob/1.3.5/RNS/Interfaces/AutoInterface.py#L70)).
-pub const WIFI_BITRATE_GUESS_BPS: BitrateBps = BitrateBps::guess(10_000_000);
-
-/// What this stack declares for a real wifi LAN pipe: 1 Gbps for a local interface, far less
-/// conservative than RNS's 10 Mbps AutoInterface guess. The effective MTU follows the bitrate tier
-/// but remains capped by the interface's real [`HARDWARE_MTU`].
-pub const WIFI_LAN_BITRATE_BPS: BitrateBps = LOCAL_INTERFACE_BITRATE_ESTIMATE;
-
-/// The ceiling an embedded 2.4 GHz radio clamps the LAN pipe to: a single-stream 802.11n part (an
-/// ESP32-S3, say) tops out around 125 Mbps, well under a host's wired-backed wifi. An embedded impl
-/// declares `WIFI_LAN_BITRATE_BPS.min(WIFI_EMBEDDED_BITRATE_CEILING_BPS)` so its pacing and airtime
-/// reflect the radio it actually has, not a host's pipe.
-pub const WIFI_EMBEDDED_BITRATE_CEILING_BPS: BitrateBps = BitrateBps::guess(125_000_000);
-
-/// The hardware ceiling for a per-peer member. RNS pins the AutoInterface at
-/// [`HARDWARE_MTU`] (`FIXED_MTU = True`,
-/// [`AutoInterface.py` L44-L45](https://github.com/markqvist/Reticulum/blob/1.3.5/RNS/Interfaces/AutoInterface.py#L44-L45)),
-/// while Prns applies the common optimized policy without ever promising beyond that physical limit.
-pub const WIFI_HW_MTU_CAP: usize = if HARDWARE_MTU < MAX_LINK_MTU {
-    HARDWARE_MTU
-} else {
-    MAX_LINK_MTU
-};
-
-/// The descriptor one confirmed-peer member declares. Each peer is its own flat engine interface,
-/// so RNS 1.3.5's same-interface announce repeat across AutoInterface peers becomes ordinary
-/// cross-interface forwarding among sibling members here: the egress is
-/// [`TransportCapability::CrossInterfaceOnly`], and an announce arriving from one peer is forwarded
-/// out to the others (never back to its source) by the engine's normal fan-out. `mode` stays
-/// [`InterfaceMode::Full`], the mode RNS hands each spawned peer interface.
-pub const DEFAULTS: InterfaceDefaults = InterfaceDefaults {
-    capabilities: InterfaceCapabilities {
-        ingress: IngressCapability::Enabled,
-        egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
-    },
-    mode: InterfaceMode::Full,
-    bitrate: WIFI_LAN_BITRATE_BPS,
-    mtu: MtuPolicy::optimized_from_bitrate(WIFI_HW_MTU_CAP),
-    announce_rate_limit: None,
-    announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
-    airtime_duty_cycle: None,
-};
-
-#[must_use]
-pub fn configured_policy(configured: ConfiguredInterfacePolicy) -> EffectiveInterfacePolicy {
-    DEFAULTS.configured(configured)
-}
-
-#[must_use]
-pub fn policy_for_bitrate(bitrate: BitrateBps) -> EffectiveInterfacePolicy {
-    configured_policy(ConfiguredInterfacePolicy {
-        bitrate: Some(bitrate),
-        ..ConfiguredInterfacePolicy::default()
-    })
-}
-
-pub fn descriptor(id: InterfaceId, policy: EffectiveInterfacePolicy) -> InterfaceDescriptor {
-    policy.descriptor(id)
-}
 
 /// Reconstruct the IPv6 link-local address an SLAAC stack derives from `mac` via
 /// EUI-64: `fe80::` over the 64-bit interface id formed by flipping the U/L bit

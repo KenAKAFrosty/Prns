@@ -1846,11 +1846,10 @@ fn semantic_value_is_valid(key: &str, value: &Value, kind: ValueKind) -> bool {
             parse_float(text).is_ok_and(|value| (0.0..=100.0).contains(&value))
         }
         interface_key::DISCOVERY_SCOPE => {
-            prns_core::interfaces::wifi_auto::core::DiscoveryScope::from_name(text.trim()).is_some()
+            prns_core::interfaces::wifi_auto::DiscoveryScope::from_name(text.trim()).is_some()
         }
         interface_key::MULTICAST_ADDRESS_TYPE => {
-            prns_core::interfaces::wifi_auto::core::MulticastAddressType::from_name(text.trim())
-                .is_some()
+            prns_core::interfaces::wifi_auto::MulticastAddressType::from_name(text.trim()).is_some()
         }
         interface_key::DISCOVERY_PORT => {
             parse_integer::<u16>(text).is_ok_and(|value| (1..=u16::MAX - 1).contains(&value))

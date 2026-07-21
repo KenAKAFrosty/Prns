@@ -1,13 +1,56 @@
-use super::core::{GoIntent, GroupRole, Initiative, GO_MAX_CLIENTS};
-use super::seam::{Availability, DiscoveryMode};
-use crate::interfaces::MacAddress;
+use super::backend::{Availability, DiscoveryMode};
+use super::protocol::{GoIntent, GroupRole, Initiative};
+use crate::interfaces::{
+    AnnounceBandwidthCap, BitrateBps, ConfiguredInterfacePolicy, EgressCapability,
+    IngressCapability, InterfaceCapabilities, InterfaceDefaults, InterfaceDescriptor, InterfaceId,
+    InterfaceMode, MacAddress, MtuPolicy, TransportCapability,
+};
+use crate::routing::links::MAX_LINK_MTU;
+
+pub const HARDWARE_MTU: usize = 1196;
+
+pub const WIFI_DIRECT_HW_MTU: usize = if HARDWARE_MTU < MAX_LINK_MTU {
+    HARDWARE_MTU
+} else {
+    MAX_LINK_MTU
+};
+
+pub const WIFI_DIRECT_BITRATE_GUESS_BPS: BitrateBps = BitrateBps::guess(100_000_000);
+
+pub const GO_MAX_CLIENTS: usize = 8;
+
+pub const APPLE_UNAVAILABLE_REASON: &str =
+    "no public Wi-Fi Direct API on Apple platforms; AWDL/Wi-Fi Aware is the analog";
+pub const ESP32_UNAVAILABLE_REASON: &str =
+    "no Wi-Fi Direct on ESP32; SoftAP+STA rides AutoWifi, connectionless rides ESP-NOW";
+
+pub fn descriptor(id: InterfaceId, bitrate: BitrateBps) -> InterfaceDescriptor {
+    defaults_for_bitrate(bitrate)
+        .configured(ConfiguredInterfacePolicy::default())
+        .descriptor(id)
+}
+
+pub fn defaults_for_bitrate(bitrate: BitrateBps) -> InterfaceDefaults {
+    InterfaceDefaults {
+        capabilities: InterfaceCapabilities {
+            ingress: IngressCapability::Enabled,
+            egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
+        },
+        mode: InterfaceMode::Full,
+        bitrate,
+        mtu: MtuPolicy::fixed(WIFI_DIRECT_HW_MTU),
+        announce_rate_limit: None,
+        announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
+        airtime_duty_cycle: None,
+    }
+}
 
 pub const FORMATION_TIMEOUT_MS: u64 = 30_000;
 pub const FORM_RETRY_TTL_MS: u64 = 20_000;
 pub const SUPPRESS_TTL_MS: u64 = 12_000;
 
 #[derive(Debug, Clone, Copy)]
-pub enum ManagerInput {
+pub enum PolicyInput {
     Sighting {
         peer: MacAddress,
         initiative: Initiative,
@@ -48,7 +91,7 @@ pub enum ManagerInput {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ManagerAction {
+pub enum PolicyAction {
     SetDiscovery(DiscoveryMode),
     Form { peer: MacAddress, intent: GoIntent },
     Accept { peer: MacAddress },
@@ -120,7 +163,7 @@ impl<const DIAL_TRACK: usize> GroupPolicy<DIAL_TRACK> {
         }
     }
 
-    pub fn start<F: FnMut(ManagerAction)>(&mut self, emit: &mut F) {
+    pub fn start<F: FnMut(PolicyAction)>(&mut self, emit: &mut F) {
         self.reconcile_discovery(emit);
     }
 
@@ -148,30 +191,30 @@ impl<const DIAL_TRACK: usize> GroupPolicy<DIAL_TRACK> {
         }
     }
 
-    pub fn handle<F: FnMut(ManagerAction)>(&mut self, input: ManagerInput, emit: &mut F) {
+    pub fn handle<F: FnMut(PolicyAction)>(&mut self, input: PolicyInput, emit: &mut F) {
         match input {
-            ManagerInput::Sighting {
+            PolicyInput::Sighting {
                 peer,
                 initiative,
                 now_ms,
             } => self.on_sighting(peer, initiative, now_ms, emit),
-            ManagerInput::Invitation { peer, now_ms } => self.on_invitation(peer, now_ms, emit),
-            ManagerInput::GroupOffer { peer, now_ms } => self.on_group_offer(peer, now_ms, emit),
-            ManagerInput::GroupFormed { role, now_ms } => self.on_group_formed(role, now_ms, emit),
-            ManagerInput::FormationFailed { peer, now_ms } => {
+            PolicyInput::Invitation { peer, now_ms } => self.on_invitation(peer, now_ms, emit),
+            PolicyInput::GroupOffer { peer, now_ms } => self.on_group_offer(peer, now_ms, emit),
+            PolicyInput::GroupFormed { role, now_ms } => self.on_group_formed(role, now_ms, emit),
+            PolicyInput::FormationFailed { peer, now_ms } => {
                 self.on_formation_failed(peer, now_ms, emit);
             }
-            ManagerInput::FormationProgress { now_ms } => self.on_formation_progress(now_ms),
-            ManagerInput::GroupLost { now_ms } => self.on_group_lost(now_ms, emit),
-            ManagerInput::MembersChanged { count } => self.on_members_changed(count, emit),
-            ManagerInput::AvailabilityChanged { state, now_ms } => {
+            PolicyInput::FormationProgress { now_ms } => self.on_formation_progress(now_ms),
+            PolicyInput::GroupLost { now_ms } => self.on_group_lost(now_ms, emit),
+            PolicyInput::MembersChanged { count } => self.on_members_changed(count, emit),
+            PolicyInput::AvailabilityChanged { state, now_ms } => {
                 self.on_availability(state, now_ms, emit);
             }
-            ManagerInput::Tick { now_ms } => self.on_tick(now_ms, emit),
+            PolicyInput::Tick { now_ms } => self.on_tick(now_ms, emit),
         }
     }
 
-    fn on_sighting<F: FnMut(ManagerAction)>(
+    fn on_sighting<F: FnMut(PolicyAction)>(
         &mut self,
         peer: MacAddress,
         initiative: Initiative,
@@ -189,14 +232,14 @@ impl<const DIAL_TRACK: usize> GroupPolicy<DIAL_TRACK> {
             since_ms: now_ms,
         };
         self.upsert_backoff(peer, BackoffKind::Forming, now_ms);
-        emit(ManagerAction::Form {
+        emit(PolicyAction::Form {
             peer,
             intent: self.intent,
         });
         self.reconcile_discovery(emit);
     }
 
-    fn on_group_offer<F: FnMut(ManagerAction)>(
+    fn on_group_offer<F: FnMut(PolicyAction)>(
         &mut self,
         peer: MacAddress,
         now_ms: u64,
@@ -211,11 +254,11 @@ impl<const DIAL_TRACK: usize> GroupPolicy<DIAL_TRACK> {
             since_ms: now_ms,
         };
         self.upsert_backoff(peer, BackoffKind::Forming, now_ms);
-        emit(ManagerAction::Join { peer });
+        emit(PolicyAction::Join { peer });
         self.reconcile_discovery(emit);
     }
 
-    fn on_invitation<F: FnMut(ManagerAction)>(
+    fn on_invitation<F: FnMut(PolicyAction)>(
         &mut self,
         peer: MacAddress,
         now_ms: u64,
@@ -228,25 +271,25 @@ impl<const DIAL_TRACK: usize> GroupPolicy<DIAL_TRACK> {
                     since_ms: now_ms,
                 };
                 self.upsert_backoff(peer, BackoffKind::Forming, now_ms);
-                emit(ManagerAction::Accept { peer });
+                emit(PolicyAction::Accept { peer });
                 self.reconcile_discovery(emit);
             }
             Phase::Forming { peer: current, .. } => {
                 if current == peer {
-                    emit(ManagerAction::Accept { peer });
+                    emit(PolicyAction::Accept { peer });
                 }
             }
             Phase::Grouped { role, .. } => {
                 let joinable = matches!(role, GroupRole::Owner) && self.members < GO_MAX_CLIENTS;
                 if joinable {
-                    emit(ManagerAction::Accept { peer });
+                    emit(PolicyAction::Accept { peer });
                 }
             }
             Phase::Parked { .. } => {}
         }
     }
 
-    fn on_group_formed<F: FnMut(ManagerAction)>(
+    fn on_group_formed<F: FnMut(PolicyAction)>(
         &mut self,
         role: GroupRole,
         _now_ms: u64,
@@ -262,7 +305,7 @@ impl<const DIAL_TRACK: usize> GroupPolicy<DIAL_TRACK> {
         };
         self.phase = Phase::Grouped { role, formed_with };
         self.members = 0;
-        emit(ManagerAction::OpenDataPlane { role });
+        emit(PolicyAction::OpenDataPlane { role });
         self.reconcile_discovery(emit);
     }
 
@@ -276,7 +319,7 @@ impl<const DIAL_TRACK: usize> GroupPolicy<DIAL_TRACK> {
         }
     }
 
-    fn on_formation_failed<F: FnMut(ManagerAction)>(
+    fn on_formation_failed<F: FnMut(PolicyAction)>(
         &mut self,
         peer: MacAddress,
         now_ms: u64,
@@ -289,7 +332,7 @@ impl<const DIAL_TRACK: usize> GroupPolicy<DIAL_TRACK> {
         }
     }
 
-    fn on_group_lost<F: FnMut(ManagerAction)>(&mut self, now_ms: u64, emit: &mut F) {
+    fn on_group_lost<F: FnMut(PolicyAction)>(&mut self, now_ms: u64, emit: &mut F) {
         match self.phase {
             Phase::Grouped { formed_with, .. } => {
                 if let Some(peer) = formed_with {
@@ -297,7 +340,7 @@ impl<const DIAL_TRACK: usize> GroupPolicy<DIAL_TRACK> {
                 }
                 self.phase = Phase::Idle;
                 self.members = 0;
-                emit(ManagerAction::CloseDataPlane);
+                emit(PolicyAction::CloseDataPlane);
                 self.reconcile_discovery(emit);
             }
             Phase::Forming { peer, .. } => {
@@ -309,12 +352,12 @@ impl<const DIAL_TRACK: usize> GroupPolicy<DIAL_TRACK> {
         }
     }
 
-    fn on_members_changed<F: FnMut(ManagerAction)>(&mut self, count: usize, emit: &mut F) {
+    fn on_members_changed<F: FnMut(PolicyAction)>(&mut self, count: usize, emit: &mut F) {
         self.members = count;
         self.reconcile_discovery(emit);
     }
 
-    fn on_availability<F: FnMut(ManagerAction)>(
+    fn on_availability<F: FnMut(PolicyAction)>(
         &mut self,
         state: Availability,
         _now_ms: u64,
@@ -324,10 +367,10 @@ impl<const DIAL_TRACK: usize> GroupPolicy<DIAL_TRACK> {
             Availability::Unavailable(reason) => {
                 match self.phase {
                     Phase::Grouped { .. } => {
-                        emit(ManagerAction::RemoveGroup);
-                        emit(ManagerAction::CloseDataPlane);
+                        emit(PolicyAction::RemoveGroup);
+                        emit(PolicyAction::CloseDataPlane);
                     }
-                    Phase::Forming { .. } => emit(ManagerAction::RemoveGroup),
+                    Phase::Forming { .. } => emit(PolicyAction::RemoveGroup),
                     Phase::Idle | Phase::Parked { .. } => {}
                 }
                 self.phase = Phase::Parked { reason };
@@ -343,20 +386,20 @@ impl<const DIAL_TRACK: usize> GroupPolicy<DIAL_TRACK> {
         }
     }
 
-    fn on_tick<F: FnMut(ManagerAction)>(&mut self, now_ms: u64, emit: &mut F) {
+    fn on_tick<F: FnMut(PolicyAction)>(&mut self, now_ms: u64, emit: &mut F) {
         let Phase::Forming { peer, since_ms } = self.phase else {
             return;
         };
         if now_ms.saturating_sub(since_ms) < FORMATION_TIMEOUT_MS {
             return;
         }
-        emit(ManagerAction::RemoveGroup);
+        emit(PolicyAction::RemoveGroup);
         self.upsert_backoff(peer, BackoffKind::Suppressed, now_ms);
         self.phase = Phase::Idle;
         self.reconcile_discovery(emit);
     }
 
-    fn reconcile_discovery<F: FnMut(ManagerAction)>(&mut self, emit: &mut F) {
+    fn reconcile_discovery<F: FnMut(PolicyAction)>(&mut self, emit: &mut F) {
         let want = match self.phase {
             Phase::Idle => true,
             Phase::Forming { .. } | Phase::Parked { .. } => false,
@@ -367,7 +410,7 @@ impl<const DIAL_TRACK: usize> GroupPolicy<DIAL_TRACK> {
         };
         if want != self.discovery {
             self.discovery = want;
-            emit(ManagerAction::SetDiscovery(if want {
+            emit(PolicyAction::SetDiscovery(if want {
                 DiscoveryMode::On
             } else {
                 DiscoveryMode::Off
@@ -446,8 +489,8 @@ mod tests {
 
     fn collect<const D: usize>(
         policy: &mut GroupPolicy<D>,
-        input: ManagerInput,
-    ) -> std::vec::Vec<ManagerAction> {
+        input: PolicyInput,
+    ) -> std::vec::Vec<PolicyAction> {
         let mut actions = std::vec::Vec::new();
         policy.handle(input, &mut |action| actions.push(action));
         actions
@@ -455,14 +498,14 @@ mod tests {
 
     fn formed(policy: &mut GroupPolicy<8>, peer: u8, role: GroupRole) {
         policy.handle(
-            ManagerInput::Sighting {
+            PolicyInput::Sighting {
                 peer: addr(peer),
                 initiative: Initiative::Ours,
                 now_ms: 0,
             },
             &mut |_| {},
         );
-        policy.handle(ManagerInput::GroupFormed { role, now_ms: 100 }, &mut |_| {});
+        policy.handle(PolicyInput::GroupFormed { role, now_ms: 100 }, &mut |_| {});
     }
 
     #[test]
@@ -472,7 +515,7 @@ mod tests {
         policy.start(&mut |action| actions.push(action));
         assert_eq!(
             actions,
-            std::vec![ManagerAction::SetDiscovery(DiscoveryMode::On)]
+            std::vec![PolicyAction::SetDiscovery(DiscoveryMode::On)]
         );
     }
 
@@ -481,7 +524,7 @@ mod tests {
         let mut policy = started();
         let actions = collect(
             &mut policy,
-            ManagerInput::Sighting {
+            PolicyInput::Sighting {
                 peer: addr(9),
                 initiative: Initiative::Ours,
                 now_ms: 0,
@@ -490,11 +533,11 @@ mod tests {
         assert_eq!(
             actions,
             std::vec![
-                ManagerAction::Form {
+                PolicyAction::Form {
                     peer: addr(9),
                     intent: GoIntent::BALANCED
                 },
-                ManagerAction::SetDiscovery(DiscoveryMode::Off)
+                PolicyAction::SetDiscovery(DiscoveryMode::Off)
             ]
         );
     }
@@ -504,7 +547,7 @@ mod tests {
         let mut policy = started();
         let actions = collect(
             &mut policy,
-            ManagerInput::GroupOffer {
+            PolicyInput::GroupOffer {
                 peer: addr(9),
                 now_ms: 0,
             },
@@ -512,21 +555,21 @@ mod tests {
         assert_eq!(
             actions,
             std::vec![
-                ManagerAction::Join { peer: addr(9) },
-                ManagerAction::SetDiscovery(DiscoveryMode::Off)
+                PolicyAction::Join { peer: addr(9) },
+                PolicyAction::SetDiscovery(DiscoveryMode::Off)
             ]
         );
 
         let opened = collect(
             &mut policy,
-            ManagerInput::GroupFormed {
+            PolicyInput::GroupFormed {
                 role: GroupRole::Client,
                 now_ms: 100,
             },
         );
         assert_eq!(
             opened,
-            std::vec![ManagerAction::OpenDataPlane {
+            std::vec![PolicyAction::OpenDataPlane {
                 role: GroupRole::Client
             }]
         );
@@ -538,7 +581,7 @@ mod tests {
         let mut policy = started();
         let actions = collect(
             &mut policy,
-            ManagerInput::Sighting {
+            PolicyInput::Sighting {
                 peer: addr(9),
                 initiative: Initiative::Theirs,
                 now_ms: 0,
@@ -548,15 +591,12 @@ mod tests {
 
         let invited = collect(
             &mut policy,
-            ManagerInput::Invitation {
+            PolicyInput::Invitation {
                 peer: addr(9),
                 now_ms: 500,
             },
         );
-        assert!(matches!(
-            invited.first(),
-            Some(ManagerAction::Accept { .. })
-        ));
+        assert!(matches!(invited.first(), Some(PolicyAction::Accept { .. })));
     }
 
     #[test]
@@ -564,7 +604,7 @@ mod tests {
         let mut policy = started();
         collect(
             &mut policy,
-            ManagerInput::Sighting {
+            PolicyInput::Sighting {
                 peer: addr(9),
                 initiative: Initiative::Ours,
                 now_ms: 0,
@@ -573,7 +613,7 @@ mod tests {
         for peer in [9, 5] {
             let actions = collect(
                 &mut policy,
-                ManagerInput::Sighting {
+                PolicyInput::Sighting {
                     peer: addr(peer),
                     initiative: Initiative::Ours,
                     now_ms: 1_000,
@@ -588,7 +628,7 @@ mod tests {
         let mut policy = started();
         collect(
             &mut policy,
-            ManagerInput::Sighting {
+            PolicyInput::Sighting {
                 peer: addr(9),
                 initiative: Initiative::Ours,
                 now_ms: 0,
@@ -597,7 +637,7 @@ mod tests {
 
         let early = collect(
             &mut policy,
-            ManagerInput::Tick {
+            PolicyInput::Tick {
                 now_ms: FORMATION_TIMEOUT_MS - 1,
             },
         );
@@ -605,21 +645,21 @@ mod tests {
 
         let abandoned = collect(
             &mut policy,
-            ManagerInput::Tick {
+            PolicyInput::Tick {
                 now_ms: FORMATION_TIMEOUT_MS,
             },
         );
         assert_eq!(
             abandoned,
             std::vec![
-                ManagerAction::RemoveGroup,
-                ManagerAction::SetDiscovery(DiscoveryMode::On)
+                PolicyAction::RemoveGroup,
+                PolicyAction::SetDiscovery(DiscoveryMode::On)
             ]
         );
 
         let suppressed = collect(
             &mut policy,
-            ManagerInput::Sighting {
+            PolicyInput::Sighting {
                 peer: addr(9),
                 initiative: Initiative::Ours,
                 now_ms: FORMATION_TIMEOUT_MS + 1_000,
@@ -629,7 +669,7 @@ mod tests {
 
         let after = collect(
             &mut policy,
-            ManagerInput::Sighting {
+            PolicyInput::Sighting {
                 peer: addr(9),
                 initiative: Initiative::Ours,
                 now_ms: FORMATION_TIMEOUT_MS + SUPPRESS_TTL_MS,
@@ -638,11 +678,11 @@ mod tests {
         assert_eq!(
             after,
             std::vec![
-                ManagerAction::Form {
+                PolicyAction::Form {
                     peer: addr(9),
                     intent: GoIntent::BALANCED
                 },
-                ManagerAction::SetDiscovery(DiscoveryMode::Off)
+                PolicyAction::SetDiscovery(DiscoveryMode::Off)
             ]
         );
     }
@@ -652,7 +692,7 @@ mod tests {
         let mut policy = started();
         collect(
             &mut policy,
-            ManagerInput::Sighting {
+            PolicyInput::Sighting {
                 peer: addr(9),
                 initiative: Initiative::Ours,
                 now_ms: 0,
@@ -661,19 +701,19 @@ mod tests {
 
         let failed = collect(
             &mut policy,
-            ManagerInput::FormationFailed {
+            PolicyInput::FormationFailed {
                 peer: addr(9),
                 now_ms: 2_000,
             },
         );
         assert_eq!(
             failed,
-            std::vec![ManagerAction::SetDiscovery(DiscoveryMode::On)]
+            std::vec![PolicyAction::SetDiscovery(DiscoveryMode::On)]
         );
 
         let suppressed = collect(
             &mut policy,
-            ManagerInput::Sighting {
+            PolicyInput::Sighting {
                 peer: addr(9),
                 initiative: Initiative::Ours,
                 now_ms: 3_000,
@@ -683,13 +723,13 @@ mod tests {
 
         let after = collect(
             &mut policy,
-            ManagerInput::Sighting {
+            PolicyInput::Sighting {
                 peer: addr(9),
                 initiative: Initiative::Ours,
                 now_ms: 2_000 + SUPPRESS_TTL_MS,
             },
         );
-        assert!(matches!(after.first(), Some(ManagerAction::Form { .. })));
+        assert!(matches!(after.first(), Some(PolicyAction::Form { .. })));
     }
 
     #[test]
@@ -697,7 +737,7 @@ mod tests {
         let mut policy = started();
         assert_eq!(policy.formation_deadline_ms(), None);
         policy.handle(
-            ManagerInput::Sighting {
+            PolicyInput::Sighting {
                 peer: addr(9),
                 initiative: Initiative::Ours,
                 now_ms: 1_000,
@@ -709,7 +749,7 @@ mod tests {
             Some(1_000 + FORMATION_TIMEOUT_MS)
         );
         policy.handle(
-            ManagerInput::GroupFormed {
+            PolicyInput::GroupFormed {
                 role: GroupRole::Owner,
                 now_ms: 1_500,
             },
@@ -723,7 +763,7 @@ mod tests {
         let mut policy = started();
         collect(
             &mut policy,
-            ManagerInput::Sighting {
+            PolicyInput::Sighting {
                 peer: addr(9),
                 initiative: Initiative::Ours,
                 now_ms: 0,
@@ -731,13 +771,13 @@ mod tests {
         );
         collect(
             &mut policy,
-            ManagerInput::FormationProgress {
+            PolicyInput::FormationProgress {
                 now_ms: FORMATION_TIMEOUT_MS - 1_000,
             },
         );
         let after_original_deadline = collect(
             &mut policy,
-            ManagerInput::Tick {
+            PolicyInput::Tick {
                 now_ms: FORMATION_TIMEOUT_MS + 1_000,
             },
         );
@@ -745,13 +785,13 @@ mod tests {
 
         let after_rearmed_deadline = collect(
             &mut policy,
-            ManagerInput::Tick {
+            PolicyInput::Tick {
                 now_ms: (FORMATION_TIMEOUT_MS - 1_000) + FORMATION_TIMEOUT_MS,
             },
         );
         assert!(matches!(
             after_rearmed_deadline.first(),
-            Some(ManagerAction::RemoveGroup)
+            Some(PolicyAction::RemoveGroup)
         ));
     }
 
@@ -760,7 +800,7 @@ mod tests {
         let mut policy = started();
         collect(
             &mut policy,
-            ManagerInput::Sighting {
+            PolicyInput::Sighting {
                 peer: addr(9),
                 initiative: Initiative::Ours,
                 now_ms: 0,
@@ -768,16 +808,16 @@ mod tests {
         );
         let crossed = collect(
             &mut policy,
-            ManagerInput::Invitation {
+            PolicyInput::Invitation {
                 peer: addr(9),
                 now_ms: 500,
             },
         );
-        assert_eq!(crossed, std::vec![ManagerAction::Accept { peer: addr(9) }]);
+        assert_eq!(crossed, std::vec![PolicyAction::Accept { peer: addr(9) }]);
 
         let foreign = collect(
             &mut policy,
-            ManagerInput::Invitation {
+            PolicyInput::Invitation {
                 peer: addr(5),
                 now_ms: 600,
             },
@@ -790,7 +830,7 @@ mod tests {
         let mut policy = started();
         let actions = collect(
             &mut policy,
-            ManagerInput::Invitation {
+            PolicyInput::Invitation {
                 peer: addr(9),
                 now_ms: 0,
             },
@@ -798,8 +838,8 @@ mod tests {
         assert_eq!(
             actions,
             std::vec![
-                ManagerAction::Accept { peer: addr(9) },
-                ManagerAction::SetDiscovery(DiscoveryMode::Off)
+                PolicyAction::Accept { peer: addr(9) },
+                PolicyAction::SetDiscovery(DiscoveryMode::Off)
             ]
         );
     }
@@ -809,7 +849,7 @@ mod tests {
         let mut policy = started();
         collect(
             &mut policy,
-            ManagerInput::Sighting {
+            PolicyInput::Sighting {
                 peer: addr(9),
                 initiative: Initiative::Ours,
                 now_ms: 0,
@@ -818,7 +858,7 @@ mod tests {
 
         let opened = collect(
             &mut policy,
-            ManagerInput::GroupFormed {
+            PolicyInput::GroupFormed {
                 role: GroupRole::Owner,
                 now_ms: 100,
             },
@@ -826,37 +866,37 @@ mod tests {
         assert_eq!(
             opened,
             std::vec![
-                ManagerAction::OpenDataPlane {
+                PolicyAction::OpenDataPlane {
                     role: GroupRole::Owner
                 },
-                ManagerAction::SetDiscovery(DiscoveryMode::On)
+                PolicyAction::SetDiscovery(DiscoveryMode::On)
             ]
         );
         assert_eq!(policy.role(), Some(GroupRole::Owner));
 
-        let first_member = collect(&mut policy, ManagerInput::MembersChanged { count: 1 });
+        let first_member = collect(&mut policy, PolicyInput::MembersChanged { count: 1 });
         assert!(first_member.is_empty());
 
         let full = collect(
             &mut policy,
-            ManagerInput::MembersChanged {
+            PolicyInput::MembersChanged {
                 count: GO_MAX_CLIENTS,
             },
         );
         assert_eq!(
             full,
-            std::vec![ManagerAction::SetDiscovery(DiscoveryMode::Off)]
+            std::vec![PolicyAction::SetDiscovery(DiscoveryMode::Off)]
         );
 
         let freed = collect(
             &mut policy,
-            ManagerInput::MembersChanged {
+            PolicyInput::MembersChanged {
                 count: GO_MAX_CLIENTS - 1,
             },
         );
         assert_eq!(
             freed,
-            std::vec![ManagerAction::SetDiscovery(DiscoveryMode::On)]
+            std::vec![PolicyAction::SetDiscovery(DiscoveryMode::On)]
         );
     }
 
@@ -865,7 +905,7 @@ mod tests {
         let mut policy = started();
         collect(
             &mut policy,
-            ManagerInput::Sighting {
+            PolicyInput::Sighting {
                 peer: addr(9),
                 initiative: Initiative::Ours,
                 now_ms: 0,
@@ -874,31 +914,31 @@ mod tests {
 
         let opened = collect(
             &mut policy,
-            ManagerInput::GroupFormed {
+            PolicyInput::GroupFormed {
                 role: GroupRole::Client,
                 now_ms: 100,
             },
         );
         assert_eq!(
             opened,
-            std::vec![ManagerAction::OpenDataPlane {
+            std::vec![PolicyAction::OpenDataPlane {
                 role: GroupRole::Client
             }]
         );
         assert_eq!(policy.role(), Some(GroupRole::Client));
 
-        let lost = collect(&mut policy, ManagerInput::GroupLost { now_ms: 5_000 });
+        let lost = collect(&mut policy, PolicyInput::GroupLost { now_ms: 5_000 });
         assert_eq!(
             lost,
             std::vec![
-                ManagerAction::CloseDataPlane,
-                ManagerAction::SetDiscovery(DiscoveryMode::On)
+                PolicyAction::CloseDataPlane,
+                PolicyAction::SetDiscovery(DiscoveryMode::On)
             ]
         );
 
         let cooling = collect(
             &mut policy,
-            ManagerInput::Sighting {
+            PolicyInput::Sighting {
                 peer: addr(9),
                 initiative: Initiative::Ours,
                 now_ms: 6_000,
@@ -908,24 +948,24 @@ mod tests {
 
         let after = collect(
             &mut policy,
-            ManagerInput::Sighting {
+            PolicyInput::Sighting {
                 peer: addr(9),
                 initiative: Initiative::Ours,
                 now_ms: 5_000 + SUPPRESS_TTL_MS,
             },
         );
-        assert!(matches!(after.first(), Some(ManagerAction::Form { .. })));
+        assert!(matches!(after.first(), Some(PolicyAction::Form { .. })));
     }
 
     #[test]
     fn revocation_parks_and_restoration_reconciles() {
         let mut policy = started();
         formed(&mut policy, 9, GroupRole::Owner);
-        collect(&mut policy, ManagerInput::MembersChanged { count: 1 });
+        collect(&mut policy, PolicyInput::MembersChanged { count: 1 });
 
         let parked = collect(
             &mut policy,
-            ManagerInput::AvailabilityChanged {
+            PolicyInput::AvailabilityChanged {
                 state: Availability::Unavailable("Wi-Fi P2P disabled by the platform"),
                 now_ms: 1_000,
             },
@@ -933,9 +973,9 @@ mod tests {
         assert_eq!(
             parked,
             std::vec![
-                ManagerAction::RemoveGroup,
-                ManagerAction::CloseDataPlane,
-                ManagerAction::SetDiscovery(DiscoveryMode::Off)
+                PolicyAction::RemoveGroup,
+                PolicyAction::CloseDataPlane,
+                PolicyAction::SetDiscovery(DiscoveryMode::Off)
             ]
         );
         assert_eq!(
@@ -945,7 +985,7 @@ mod tests {
 
         let while_parked = collect(
             &mut policy,
-            ManagerInput::Sighting {
+            PolicyInput::Sighting {
                 peer: addr(5),
                 initiative: Initiative::Ours,
                 now_ms: 2_000,
@@ -955,14 +995,14 @@ mod tests {
 
         let restored = collect(
             &mut policy,
-            ManagerInput::AvailabilityChanged {
+            PolicyInput::AvailabilityChanged {
                 state: Availability::Available,
                 now_ms: 3_000,
             },
         );
         assert_eq!(
             restored,
-            std::vec![ManagerAction::SetDiscovery(DiscoveryMode::On)]
+            std::vec![PolicyAction::SetDiscovery(DiscoveryMode::On)]
         );
         assert_eq!(policy.phase_reason(), None);
     }

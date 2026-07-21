@@ -3,14 +3,14 @@ use crate::engine::wa_bridge;
 use jni::objects::{JByteBuffer, JClass};
 use jni::sys::{jboolean, jint, jlong, jstring};
 use jni::JNIEnv;
-use personal_rns::interfaces::wifi_aware::core as wifi_aware_core;
+use personal_rns::interfaces::wifi_aware as wifi_aware_contract;
 
 #[no_mangle]
 pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiAwareServiceName(
     env: JNIEnv,
     _class: JClass,
 ) -> jstring {
-    jni_string(env, wifi_aware_core::AWARE_SERVICE_NAME)
+    jni_string(env, wifi_aware_contract::AWARE_SERVICE_NAME)
 }
 
 #[no_mangle]
@@ -18,7 +18,7 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiAwarePas
     env: JNIEnv,
     _class: JClass,
 ) -> jstring {
-    jni_string(env, wifi_aware_core::AWARE_PASSPHRASE)
+    jni_string(env, wifi_aware_contract::AWARE_PASSPHRASE)
 }
 
 #[no_mangle]
@@ -26,7 +26,7 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiAwareRen
     _env: JNIEnv,
     _class: JClass,
 ) -> jint {
-    i32::from(wifi_aware_core::AWARE_RENDEZVOUS_PORT)
+    i32::from(wifi_aware_contract::AWARE_RENDEZVOUS_PORT)
 }
 
 #[no_mangle]
@@ -125,12 +125,15 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiAwareTak
 /// Pack an NDP request/abandon for the Kotlin poller: the peer token in the low 32 bits, the role in
 /// bit 32 (1 = initiator, 0 = responder), and -1 for an empty queue — a token never occupies the sign.
 fn encode_ndp(
-    entry: Option<(wifi_aware_core::RendezvousToken, wifi_aware_core::NdpRole)>,
+    entry: Option<(
+        wifi_aware_contract::RendezvousToken,
+        wifi_aware_contract::NdpRole,
+    )>,
 ) -> jlong {
     match entry {
         Some((peer, role)) => {
             let token = jlong::from(peer.value());
-            let role_bit = if matches!(role, wifi_aware_core::NdpRole::Initiator) {
+            let role_bit = if matches!(role, wifi_aware_contract::NdpRole::Initiator) {
                 1i64 << 32
             } else {
                 0

@@ -1,13 +1,13 @@
 use super::*;
 
-#[cfg(feature = "wifi")]
+#[cfg(feature = "wifi-auto")]
 #[derive(Clone, Debug)]
 pub(super) struct HopspotWifiConfig {
     pub(super) ssid: String,
     pub(super) password: String,
 }
 
-#[cfg(feature = "wifi")]
+#[cfg(feature = "wifi-auto")]
 impl HopspotWifiConfig {
     fn from_build_env() -> Self {
         Self {
@@ -21,12 +21,12 @@ impl HopspotWifiConfig {
     }
 }
 
-#[cfg(feature = "wifi")]
+#[cfg(feature = "wifi-auto")]
 pub(super) fn hopspot_wifi_config() -> HopspotWifiConfig {
     read_hopspot_config_slot().unwrap_or_else(HopspotWifiConfig::from_build_env)
 }
 
-#[cfg(feature = "wifi")]
+#[cfg(feature = "wifi-auto")]
 fn read_hopspot_config_slot() -> Option<HopspotWifiConfig> {
     let mut words = [0u32; HOPSPOT_CONFIG_READ_WORDS];
     let read = unsafe {
@@ -48,7 +48,7 @@ fn read_hopspot_config_slot() -> Option<HopspotWifiConfig> {
     parse_hopspot_config(bytes)
 }
 
-#[cfg(feature = "wifi")]
+#[cfg(feature = "wifi-auto")]
 fn parse_hopspot_config(bytes: &[u8]) -> Option<HopspotWifiConfig> {
     if bytes.get(0..8)? != HOPSPOT_CONFIG_MAGIC || *bytes.get(8)? != HOPSPOT_CONFIG_VERSION {
         return None;

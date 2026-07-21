@@ -1,4 +1,8 @@
-pub mod backend;
-pub mod ctrl;
-pub mod parse;
-pub mod process;
+mod backend;
+mod ctrl;
+mod parse;
+mod process;
+
+pub use backend::SupplicantBackend;
+pub use ctrl::WpaCtrlError;
+pub use process::SupplicantLaunchError;

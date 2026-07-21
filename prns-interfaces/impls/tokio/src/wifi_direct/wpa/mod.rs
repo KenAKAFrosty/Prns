@@ -1,5 +1,11 @@
-pub mod group;
-pub mod proxies;
+mod group;
+mod proxies;
+
+pub use group::WpaGroup;
+pub(crate) use group::{
+    client_plan, owner_plan, role_from_group, wait_for_go_address, wait_link_local,
+};
+pub use proxies::{P2PDeviceProxy, SupplicantProxy, P2P_DEVICE_INTERFACE, SUPPLICANT_SERVICE};
 
 use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
@@ -8,18 +14,12 @@ use futures_util::StreamExt;
 use tokio::sync::mpsc;
 use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
 
-use self::group::{
-    client_plan, owner_plan, role_from_group, wait_for_go_address, wait_link_local, WpaGroup,
-};
-use self::proxies::{
-    GroupProperties, P2PDeviceProxy, PeerProxy, SupplicantInterfaceProxy, SupplicantProxy,
-    P2P_DEVICE_INTERFACE, SUPPLICANT_SERVICE,
-};
-use prns_core::interfaces::wifi_direct::core::{
-    GoIntent, GroupRole, Initiative, PeerEvidence, DEVICE_NAME_MARKER, SERVICE_TYPE,
-};
-use prns_core::interfaces::wifi_direct::seam::{
+use self::proxies::{GroupProperties, PeerProxy, SupplicantInterfaceProxy};
+use prns_core::interfaces::wifi_direct::{
     Availability, DiscoveryMode, GroupEndReason, WifiDirectBackend, WifiDirectEvent,
+};
+use prns_core::interfaces::wifi_direct::{
+    GoIntent, GroupRole, Initiative, PeerEvidence, DEVICE_NAME_MARKER, SERVICE_TYPE,
 };
 use prns_core::interfaces::MacAddress;
 

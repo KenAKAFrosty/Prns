@@ -1,8 +1,17 @@
-//! The RNS 1.3.5 WiFi/LAN `AutoInterface`: an `InterfaceSupervisor` that discovers peers on a link
-//! via IPv6 link-local multicast, validates each with a peering-token ack, and (once confirmed)
-//! stands up a unicast-UDP member per peer through its `Fleet` handle, so the engine sees a flat
-//! list of per-peer interfaces. The sizing brain and the parity protocol are the platform-agnostic
-//! [`core`]; the tokio bodies (the per-peer leaf, and the supervisor that owns the shared sockets)
-//! live in `prns-interfaces-tokio`, the embassy body in `prns-interfaces-embassy`.
+mod policy;
+mod protocol;
 
-pub mod core;
+pub use policy::{
+    configured_policy, descriptor, policy_for_bitrate, DEFAULTS, HARDWARE_MTU,
+    WIFI_BITRATE_GUESS_BPS, WIFI_EMBEDDED_BITRATE_CEILING_BPS, WIFI_HW_MTU_CAP,
+    WIFI_LAN_BITRATE_BPS,
+};
+#[cfg(feature = "alloc")]
+pub use protocol::HeapAutoInterfaceProtocol;
+pub use protocol::{
+    classify_beacon, classify_beacon_for_group, discovery_group, link_local_from_mac,
+    peering_token, peering_token_for_group, AutoInterfaceProtocol, BeaconVerdict, DiscoveryScope,
+    FixedAutoInterfaceProtocol, MulticastAddressType, Peer, PeerObservation, PeerStore, PeerTable,
+    PeeringToken, DEFAULT_DATA_PORT, DEFAULT_DISCOVERY_PORT, DISCOVERY_GROUP, GROUP_ID, GROUP_NAME,
+    PEERING_TIMEOUT_MS, TCP_RENDEZVOUS_PORT, UNICAST_DISCOVERY_PORT,
+};

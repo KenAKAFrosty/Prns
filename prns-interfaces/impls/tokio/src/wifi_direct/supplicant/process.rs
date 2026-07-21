@@ -5,7 +5,7 @@ use std::time::Duration;
 use tokio::process::{Child, Command};
 
 use super::ctrl::WpaCtrlError;
-use prns_core::interfaces::wifi_direct::core::DEVICE_NAME_MARKER;
+use prns_core::interfaces::wifi_direct::DEVICE_NAME_MARKER;
 
 const SOCKET_POLL: Duration = Duration::from_millis(200);
 const SOCKET_ROUNDS: u32 = 40;

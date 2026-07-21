@@ -21,11 +21,11 @@ path = "src/lib.rs"
 # selects its complete supported set; the target crate rejects hand-assembled partial board images.
 default = []
 ble = ["dep:trouble-host", "dep:prns-interfaces-embassy", "esp-radio/ble", "esp-radio/coex", "esp-rtos/esp-radio", "personal-rns/ble"]
-wifi = ["esp-radio/wifi", "esp-radio/coex", "esp-rtos/esp-radio", "personal-rns/wifi"]
+wifi-auto = ["esp-radio/wifi", "esp-radio/coex", "esp-rtos/esp-radio", "personal-rns/wifi-auto"]
 esp-now = ["esp-radio/esp-now", "esp-radio/coex", "esp-rtos/esp-radio", "personal-rns/esp-now"]
 lora = ["personal-rns/lora"]
 usb = ["personal-rns/usb"]
-tcp = ["wifi", "personal-rns/tcp"]
+tcp = ["wifi-auto", "personal-rns/tcp"]
 
 [dependencies]
 cfg-if = "1.0"

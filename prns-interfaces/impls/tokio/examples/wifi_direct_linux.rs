@@ -14,14 +14,14 @@ mod linux_only {
         RequestHandlerRegistration,
     };
     use personal_rns::storage::GrowableHeap;
-    use prns_core::interfaces::wifi_direct::core::GoIntent;
-    use prns_core::interfaces::wifi_direct::seam::{
+    use prns_core::interfaces::wifi_direct::GoIntent;
+    use prns_core::interfaces::wifi_direct::{
         Availability, WifiDirectBackend, WifiDirectEvent, WifiDirectGroup,
     };
     use prns_core::interfaces::{InterfaceStatus, MacAddress};
-    use prns_interfaces_tokio::wifi_direct::supplicant::backend::SupplicantBackend;
-    use prns_interfaces_tokio::wifi_direct::tokio::WifiDirectAuto;
+    use prns_interfaces_tokio::wifi_direct::supplicant::SupplicantBackend;
     use prns_interfaces_tokio::wifi_direct::wpa::WpaP2pBackend;
+    use prns_interfaces_tokio::wifi_direct::WifiDirectAuto;
 
     const CROSSING_DEADLINE: Duration = Duration::from_secs(120);
     const ANNOUNCER_SECRET: u8 = 0xA7;
@@ -217,7 +217,7 @@ mod linux_only {
 
     async fn status_printer(
         role: &'static str,
-        status: prns_interfaces_tokio::wifi_direct::tokio::WifiDirectStatus,
+        status: prns_interfaces_tokio::wifi_direct::WifiDirectStatus,
     ) {
         let mut ticker = tokio::time::interval(Duration::from_secs(2));
         loop {

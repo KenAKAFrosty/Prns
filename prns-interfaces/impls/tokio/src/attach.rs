@@ -44,7 +44,7 @@ macro_rules! attaches_as_wire {
 }
 
 #[cfg(any(
-    feature = "wifi",
+    feature = "wifi-auto",
     feature = "tcp",
     feature = "websocket",
     feature = "shared-instance",
@@ -104,8 +104,8 @@ attaches_as_wire!(impl[Open] crate::rnode::RNodeInterface<Open>);
 #[cfg(feature = "usb")]
 attaches_as_wire!(impl[Scan, Open] crate::usb_auto::UsbAutoHost<Scan, Open>);
 
-#[cfg(feature = "wifi")]
-attaches_as_fleet!(impl[] crate::wifi::AutoWifi);
+#[cfg(feature = "wifi-auto")]
+attaches_as_fleet!(impl[] crate::wifi_auto::AutoWifi);
 #[cfg(feature = "tcp")]
 attaches_as_fleet!(impl[] crate::tcp::TcpServer);
 #[cfg(feature = "websocket")]
@@ -119,6 +119,6 @@ attaches_as_fleet!(impl[B] crate::i2p::I2pInterface<B>);
 #[cfg(feature = "weave")]
 attaches_as_fleet!(impl[Open] crate::weave::WeaveInterface<Open>);
 #[cfg(feature = "wifi-direct")]
-attaches_as_fleet!(impl[B] crate::wifi_direct::tokio::WifiDirectAuto<B>);
+attaches_as_fleet!(impl[B] crate::wifi_direct::WifiDirectAuto<B>);
 #[cfg(feature = "ble")]
 attaches_as_fleet!(impl[B, const MAX_PEERS: usize] crate::ble::tokio::BluetoothAuto<B, MAX_PEERS>);

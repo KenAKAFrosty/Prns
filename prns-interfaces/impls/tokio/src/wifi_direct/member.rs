@@ -5,7 +5,7 @@ use tokio::sync::mpsc;
 
 use crate::byte_stream::framing;
 use prns_core::interfaces::tcp;
-use prns_core::interfaces::wifi_direct::core;
+use prns_core::interfaces::wifi_direct as contract;
 use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
 use prns_runtime::reactor::airtime::AirtimeLedger;
@@ -54,11 +54,11 @@ impl<S> WifiDirectMember<S> {
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin> Interface for WifiDirectMember<S> {
-    const HW_MTU: usize = core::WIFI_DIRECT_HW_MTU;
+    const HW_MTU: usize = contract::WIFI_DIRECT_HW_MTU;
     const KIND: InterfaceKind = InterfaceKind::WifiDirectPeer;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::descriptor(self.id, self.bitrate)
+        contract::descriptor(self.id, self.bitrate)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -152,7 +152,7 @@ mod tests {
     fn duplex_member(tag: &[u8]) -> (WifiDirectMember<DuplexStream>, DuplexStream) {
         let (near, far) = tokio::io::duplex(1024);
         (
-            WifiDirectMember::new(tag.to_vec(), near, core::WIFI_DIRECT_BITRATE_GUESS_BPS),
+            WifiDirectMember::new(tag.to_vec(), near, contract::WIFI_DIRECT_BITRATE_GUESS_BPS),
             far,
         )
     }
@@ -172,7 +172,7 @@ mod tests {
         let (member, _far) = duplex_member(b"peer");
         let descriptor = member.descriptor();
         assert_eq!(descriptor.id, member.id());
-        assert_eq!(descriptor.bitrate, core::WIFI_DIRECT_BITRATE_GUESS_BPS);
+        assert_eq!(descriptor.bitrate, contract::WIFI_DIRECT_BITRATE_GUESS_BPS);
     }
 
     #[tokio::test]
