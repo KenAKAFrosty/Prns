@@ -28,6 +28,7 @@ jobs:
     env:
       RELEASE_VERSION: ${{ inputs.version }}
       ACCEPTANCE_COMMIT: ${{ inputs.acceptance_commit }}
+      RUSTUP_TOOLCHAIN: 1.96.0
     steps:
       - name: Checkout reviewed release implementation
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -78,6 +79,17 @@ jobs:
             --dir target/release
           test "$(gh release view "v${RELEASE_VERSION}" --json isDraft --jq '.isDraft')" = "false"
           test "$(gh release view "v${RELEASE_VERSION}" --json isPrerelease --jq '.isPrerelease')" = "true"
+          assets="$(gh release view "v${RELEASE_VERSION}" --json assets --jq '.assets[].name')"
+          for name in \
+            "acceptance-v${RELEASE_VERSION}.json" \
+            "acceptance-v${RELEASE_VERSION}.json.minisig" \
+            "release-record-v${RELEASE_VERSION}.json" \
+            "release-record-v${RELEASE_VERSION}.json.minisig"; do
+            if grep -Fxq "$name" <<< "$assets"; then
+              gh release download "v${RELEASE_VERSION}" \
+                --pattern "$name" --dir target/release
+            fi
+          done
       - name: Extract signed candidate
         env:
           ACCEPTANCE_SOURCE: ${{ steps.acceptance.outputs.source }}
@@ -85,8 +97,12 @@ jobs:
           python3 scripts/extract-flasher-candidate.py \
             "target/release/prns-flasher-candidate-v${RELEASE_VERSION}-signed.tar.gz" \
             target/candidate
-          cp "$ACCEPTANCE_SOURCE" \
-            "target/release/acceptance-v${RELEASE_VERSION}.json"
+          acceptance="target/release/acceptance-v${RELEASE_VERSION}.json"
+          if [[ -f "$acceptance" ]]; then
+            cmp "$ACCEPTANCE_SOURCE" "$acceptance"
+          else
+            cp "$ACCEPTANCE_SOURCE" "$acceptance"
+          fi
       - name: Install exact Minisign and Rust verification tools
         run: scripts/install-release-minisign.sh "${RUNNER_TEMP}/prns-release-bin"
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
@@ -121,6 +137,13 @@ jobs:
               --signer-workflow "$signer_workflow" \
               --deny-self-hosted-runners
           done
+          while IFS= read -r relative; do
+            gh attestation verify "target/candidate/$relative" \
+              --repo "$GITHUB_REPOSITORY" \
+              --bundle "$bundle" \
+              --signer-workflow "$signer_workflow" \
+              --deny-self-hosted-runners
+          done < <(jq -r '[.targets[].parts[].path] | unique[]' target/candidate/flash-manifest.json)
       - name: Sign acceptance and its complete release record
         env:
           PRNS_MINISIGN_BIN: ${{ runner.temp }}/prns-release-bin/minisign
@@ -133,19 +156,36 @@ jobs:
           printf '%s' "$PRNS_MINISIGN_SECRET_KEY_B64" | base64 --decode > "$secret_key"
           test -s "$secret_key"
           acceptance="target/release/acceptance-v${RELEASE_VERSION}.json"
-          scripts/sign-flasher-document.sh "$acceptance" "$secret_key"
+          if [[ -f "$acceptance.minisig" ]]; then
+            "$PRNS_MINISIGN_BIN" -Vm "$acceptance" -x "$acceptance.minisig" \
+              -p release/keys/minisign.pub
+          else
+            scripts/sign-flasher-document.sh "$acceptance" "$secret_key"
+          fi
           record="target/release/release-record-v${RELEASE_VERSION}.json"
-          python3 scripts/flasher-release-record.py create \
-            --candidate target/candidate \
-            --candidate-run "target/release/prns-flasher-candidate-run-v${RELEASE_VERSION}.json" \
-            --signed-bundle "target/release/prns-flasher-candidate-v${RELEASE_VERSION}-signed.tar.gz" \
-            --acceptance "$acceptance" \
-            --acceptance-source-commit "$ACCEPTANCE_COMMIT" \
-            --attestation-bundle "target/release/prns-flasher-attestation-v${RELEASE_VERSION}.json" \
-            --attestation-metadata "target/release/prns-flasher-attestation-v${RELEASE_VERSION}.metadata.json" \
-            --repository "$GITHUB_REPOSITORY" \
-            --output "$record"
-          scripts/sign-flasher-document.sh "$record" "$secret_key"
+          record_arguments=(
+            --candidate target/candidate
+            --candidate-run "target/release/prns-flasher-candidate-run-v${RELEASE_VERSION}.json"
+            --signed-bundle "target/release/prns-flasher-candidate-v${RELEASE_VERSION}-signed.tar.gz"
+            --acceptance "$acceptance"
+            --acceptance-source-commit "$ACCEPTANCE_COMMIT"
+            --attestation-bundle "target/release/prns-flasher-attestation-v${RELEASE_VERSION}.json"
+            --attestation-metadata "target/release/prns-flasher-attestation-v${RELEASE_VERSION}.metadata.json"
+            --repository "$GITHUB_REPOSITORY"
+          )
+          if [[ -f "$record" ]]; then
+            python3 scripts/flasher-release-record.py verify \
+              "${record_arguments[@]}" --release-record "$record"
+          else
+            python3 scripts/flasher-release-record.py create \
+              "${record_arguments[@]}" --output "$record"
+          fi
+          if [[ -f "$record.minisig" ]]; then
+            "$PRNS_MINISIGN_BIN" -Vm "$record" -x "$record.minisig" \
+              -p release/keys/minisign.pub
+          else
+            scripts/sign-flasher-document.sh "$record" "$secret_key"
+          fi
       - name: Reverify the final signed evidence envelope
         env:
           PRNS_MINISIGN_BIN: ${{ runner.temp }}/prns-release-bin/minisign
@@ -165,19 +205,30 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           version="$RELEASE_VERSION"
-          assets="$(gh release view "v${version}" --json assets --jq '.assets[].name')"
-          for name in \
-            "acceptance-v${version}.json" \
-            "acceptance-v${version}.json.minisig" \
-            "release-record-v${version}.json" \
-            "release-record-v${version}.json.minisig"; do
-            if grep -Fxq "$name" <<< "$assets"; then
-              echo "release evidence asset already exists and is immutable: $name" >&2
-              exit 1
+          evidence=(
+            "target/release/acceptance-v${version}.json"
+            "target/release/acceptance-v${version}.json.minisig"
+            "target/release/release-record-v${version}.json"
+            "target/release/release-record-v${version}.json.minisig"
+          )
+          mkdir -p "${RUNNER_TEMP}/published-evidence"
+          for local_asset in "${evidence[@]}"; do
+            name="$(basename "$local_asset")"
+            if gh release view "v${version}" --json assets --jq '.assets[].name' | grep -Fxq "$name"; then
+              remote="${RUNNER_TEMP}/published-evidence/$name"
+              gh release download "v${version}" --pattern "$name" \
+                --dir "${RUNNER_TEMP}/published-evidence"
+              cmp "$local_asset" "$remote"
+            else
+              gh release upload "v${version}" "$local_asset"
             fi
           done
-          gh release upload "v${version}" \
-            "target/release/acceptance-v${version}.json" \
-            "target/release/acceptance-v${version}.json.minisig" \
-            "target/release/release-record-v${version}.json" \
-            "target/release/release-record-v${version}.json.minisig"
+          for local_asset in "${evidence[@]}"; do
+            name="$(basename "$local_asset")"
+            remote="${RUNNER_TEMP}/published-evidence/$name"
+            if [[ ! -f "$remote" ]]; then
+              gh release download "v${version}" --pattern "$name" \
+                --dir "${RUNNER_TEMP}/published-evidence"
+            fi
+            cmp "$local_asset" "$remote"
+          done

@@ -13,32 +13,36 @@ on:
         type: string
 
 permissions:
-  actions: write
-  attestations: read
-  contents: write
-  pages: write
-  id-token: write
+  contents: read
 
 concurrency:
-  group: flasher-promotion
+  group: prns-public-pages
   cancel-in-progress: false
 
 env:
   RELEASE_VERSION: ${{ inputs.version }}
   EXPECTED_RELEASE_RECORD_SHA256: ${{ inputs.release_record_sha256 }}
+  RUSTUP_TOOLCHAIN: 1.96.0
 
 jobs:
   verify:
     runs-on: ubuntu-24.04
     environment: public-release
+    permissions:
+      attestations: read
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.96.0
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           shared-key: flasher-promotion
+          cache-targets: false
       - name: Confirm default-branch custody and install exact Minisign verifier
         id: repository
         run: |
@@ -116,6 +120,13 @@ jobs:
               --signer-workflow "$signer_workflow" \
               --deny-self-hosted-runners
           done
+          while IFS= read -r relative; do
+            gh attestation verify "target/signed-candidate/$relative" \
+              --repo "$GITHUB_REPOSITORY" \
+              --bundle "$bundle" \
+              --signer-workflow "$signer_workflow" \
+              --deny-self-hosted-runners
+          done < <(jq -r '[.targets[].parts[].path] | unique[]' target/signed-candidate/flash-manifest.json)
       - name: Confirm stable channel, source commit, and public review interval
         env:
           GH_TOKEN: ${{ github.token }}
@@ -131,30 +142,153 @@ jobs:
             --release-json "${RUNNER_TEMP}/prerelease.json" \
             --version "$RELEASE_VERSION" \
             --source-commit "$source_commit" \
-            --minimum-hours 24
-      - uses: actions/upload-pages-artifact@v3
+            --minimum-hours 24 \
+            --allow-promoted
+      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa
         with:
           path: target/signed-candidate/website
 
   publish-release:
     needs: verify
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
       - name: Mark the verified prerelease stable without replacing assets
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh variable set PRNS_PUBLIC_SITE_PROMOTED --body true
           gh release edit "v${RELEASE_VERSION}" --prerelease=false --latest=true
 
   deploy-stable-site:
     needs: [verify, publish-release]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Deploy exact signed website bundle with the stable descriptor last
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e
+
+  post-promotion-smoke:
+    name: Post-promotion signed channel and installer smoke
+    needs: [verify, publish-release, deploy-stable-site]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      SITE_URL: ${{ needs.deploy-stable-site.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.96.0
+      - name: Fetch and reverify the complete public release under read-only permissions
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRNS_MINISIGN_BIN: ${{ runner.temp }}/prns-release-bin/minisign
+        run: |
+          scripts/install-release-minisign.sh "${RUNNER_TEMP}/prns-release-bin"
+          mkdir -p target/post-promotion/release-assets
+          gh release download "v${RELEASE_VERSION}" \
+            --dir target/post-promotion/release-assets
+          bundle="target/post-promotion/release-assets/prns-flasher-candidate-v${RELEASE_VERSION}-signed.tar.gz"
+          python3 scripts/extract-flasher-candidate.py \
+            "$bundle" \
+            target/post-promotion/candidate
+          record="target/post-promotion/release-assets/release-record-v${RELEASE_VERSION}.json"
+          acceptance_commit="$(jq -r '.acceptance.source_commit' "$record")"
+          scripts/verify-flasher-release.sh \
+            --candidate target/post-promotion/candidate \
+            --candidate-run "target/post-promotion/release-assets/prns-flasher-candidate-run-v${RELEASE_VERSION}.json" \
+            --signed-bundle "$bundle" \
+            --acceptance "target/post-promotion/release-assets/acceptance-v${RELEASE_VERSION}.json" \
+            --acceptance-source-commit "$acceptance_commit" \
+            --release-record "$record" \
+            --attestation-bundle "target/post-promotion/release-assets/prns-flasher-attestation-v${RELEASE_VERSION}.json" \
+            --attestation-metadata "target/post-promotion/release-assets/prns-flasher-attestation-v${RELEASE_VERSION}.metadata.json" \
+            --repository "$GITHUB_REPOSITORY"
+          python3 scripts/verify-flasher-release-assets.py \
+            --candidate target/post-promotion/candidate \
+            --assets target/post-promotion/release-assets \
+            --version "$RELEASE_VERSION"
+      - name: Fetch and verify the live signed channel, manifest, website, and firmware
+        env:
+          PRNS_MINISIGN_BIN: ${{ runner.temp }}/prns-release-bin/minisign
+        run: |
+          site_root="${SITE_URL%/}"
+          test -n "$site_root"
+          live="target/post-promotion/live"
+          mkdir -p "$live"
+          fetch() {
+            curl --fail --location --retry 5 --retry-all-errors \
+              --output "$2" "$site_root/$1"
+          }
+          fetch "index.html" "$live/index.html"
+          fetch "assets/flasher/prns-flash.js" "$live/prns-flash.js"
+          fetch "releases/channels/stable.json" "$live/stable.json"
+          fetch "releases/channels/stable.json.minisig" "$live/stable.json.minisig"
+          "$PRNS_MINISIGN_BIN" -Vm "$live/stable.json" \
+            -x "$live/stable.json.minisig" -p release/keys/minisign.pub
+          test "$(jq -r '.version' "$live/stable.json")" = "$RELEASE_VERSION"
+
+          fetch "releases/${RELEASE_VERSION}/flash-manifest.json" "$live/flash-manifest.json"
+          fetch "releases/${RELEASE_VERSION}/flash-manifest.json.minisig" "$live/flash-manifest.json.minisig"
+          "$PRNS_MINISIGN_BIN" -Vm "$live/flash-manifest.json" \
+            -x "$live/flash-manifest.json.minisig" -p release/keys/minisign.pub
+          test "$(sha256sum "$live/flash-manifest.json" | awk '{print $1}')" = \
+            "$(jq -r '.manifest_sha256' "$live/stable.json")"
+          test "$(jq -r '.release.version' "$live/flash-manifest.json")" = "$RELEASE_VERSION"
+
+          cmp "$live/index.html" target/post-promotion/candidate/website/index.html
+          cmp "$live/prns-flash.js" \
+            target/post-promotion/candidate/website/assets/flasher/prns-flash.js
+          cmp "$live/stable.json" \
+            target/post-promotion/candidate/website/releases/channels/stable.json
+          cmp "$live/flash-manifest.json" \
+            "target/post-promotion/candidate/website/releases/${RELEASE_VERSION}/flash-manifest.json"
+
+          while IFS=$'\t' read -r relative size checksum; do
+            destination="$live/$(basename "$relative")-$checksum"
+            fetch "releases/${RELEASE_VERSION}/$relative" "$destination"
+            test "$(stat -c '%s' "$destination")" = "$size"
+            test "$(sha256sum "$destination" | awk '{print $1}')" = "$checksum"
+          done < <(
+            jq -r '.targets[].parts[] | [.path, (.size | tostring), .sha256] | @tsv' \
+              "$live/flash-manifest.json"
+          )
+      - name: Prove stable release state and immutable shell installer
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$(gh release view "v${RELEASE_VERSION}" --json isDraft --jq '.isDraft')" = "false"
+          test "$(gh release view "v${RELEASE_VERSION}" --json isPrerelease --jq '.isPrerelease')" = "false"
+          install_root="${RUNNER_TEMP}/hopspot-flash-smoke"
+          HOPSPOT_FLASH_INSTALL_DIR="$install_root" \
+            sh target/post-promotion/candidate/cli/install.sh
+          test "$("$install_root/hopspot-flash" --version)" = \
+            "hopspot-flash ${RELEASE_VERSION}"
+
+  mark-promoted:
+    name: Enable future full-site deployments
+    needs: post-promotion-smoke
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Enable full public site only after every promotion smoke passes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh variable set PRNS_PUBLIC_SITE_PROMOTED --body true

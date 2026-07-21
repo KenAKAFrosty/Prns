@@ -9,6 +9,10 @@ import json
 from pathlib import Path, PurePosixPath
 import sys
 
+from flasher_build_metadata import validate_metadata
+from flasher_reproducibility import validate_report as validate_reproducibility_report
+from flasher_sparse_sizes import build_report as build_sparse_size_report
+
 
 CLI_TARGETS = {
     "aarch64-apple-darwin": ".tar.gz",
@@ -18,6 +22,28 @@ CLI_TARGETS = {
     "x86_64-pc-windows-msvc": ".zip",
 }
 SHIPPING_BOARDS = {"heltec-v4", "t-beam-supreme", "xiao-esp32-c6", "t-echo"}
+REQUIRED_RELEASE_FILES = (
+    "VERSION",
+    "flash-manifest.json",
+    "minisign.pub",
+    "LICENSE-APACHE",
+    "LICENSE-MIT",
+    "THIRD_PARTY_NOTICES.md",
+    "metadata/build.json",
+    "metadata/sparse-sizes.json",
+    "metadata/reproducibility.json",
+    "audit/release-audit-evidence.md",
+    "website/index.html",
+    "website/assets/flasher/prns-flash.js",
+)
+FORBIDDEN_PRODUCTION_REFERENCES = (
+    b"esp-web-install-button",
+    b"esp-web-tools",
+    b"unpkg.com",
+    b"playwright",
+    b"axe-core",
+)
+BROWSER_FIXTURE_MARKER = b"PRNS_BROWSER_TEST_FIXTURE_TRUST_ROOT_V1"
 
 
 def digest(path: Path) -> str:
@@ -56,6 +82,55 @@ def payload_files(root: Path) -> set[str]:
             continue
         files.add(relative)
     return files
+
+
+def verify_required_release_files(root: Path) -> None:
+    for relative in REQUIRED_RELEASE_FILES:
+        path = safe_path(root, relative)
+        if not path.is_file() or path.stat().st_size == 0:
+            raise ValueError(f"candidate required release file is missing or empty: {relative}")
+    for mutable in (
+        root / "website" / "flash-manifest.json",
+        root / "website" / "firmware",
+        root / "website" / "assets" / "firmware",
+    ):
+        if mutable.exists():
+            raise ValueError(f"candidate contains a mutable hosted release path: {mutable}")
+
+
+def verify_production_website(root: Path) -> None:
+    bundle = (root / "website" / "assets" / "flasher" / "prns-flash.js").read_bytes().lower()
+    for forbidden in FORBIDDEN_PRODUCTION_REFERENCES:
+        if forbidden in bundle:
+            raise ValueError(
+                f"hosted flasher bundle contains forbidden production reference {forbidden.decode()}"
+            )
+
+    fixture_key_path = (
+        Path(__file__).resolve().parents[1]
+        / "docs"
+        / "website"
+        / "web-flasher"
+        / "browser"
+        / "fixtures"
+        / "signed-candidate"
+        / "minisign.pub"
+    )
+    fixture_key_payload = None
+    if fixture_key_path.is_file():
+        lines = fixture_key_path.read_bytes().splitlines()
+        fixture_key_payload = lines[1] if len(lines) > 1 else None
+    for path in (root / "website").rglob("*"):
+        if not path.is_file():
+            continue
+        value = path.read_bytes()
+        if BROWSER_FIXTURE_MARKER in value or (
+            fixture_key_payload and fixture_key_payload in value
+        ):
+            raise ValueError(
+                f"hosted website contains browser-test trust material: "
+                f"{path.relative_to(root).as_posix()}"
+            )
 
 
 def verify_sums(root: Path) -> None:
@@ -100,6 +175,8 @@ def verify(arguments: argparse.Namespace) -> dict:
     root = arguments.candidate.resolve()
     if not root.is_dir():
         raise ValueError(f"candidate directory does not exist: {root}")
+    verify_required_release_files(root)
+    verify_production_website(root)
     signatures = sorted(path.relative_to(root).as_posix() for path in root.rglob("*.minisig"))
     if signatures:
         raise ValueError(f"unsigned candidate already contains signatures: {signatures}")
@@ -201,12 +278,16 @@ def verify(arguments: argparse.Namespace) -> dict:
 
     metadata_path = root / "metadata" / "build.json"
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    if (
-        not isinstance(metadata, dict)
-        or metadata.get("schema") != 1
-        or metadata.get("source_commit") != arguments.expected_commit
-    ):
-        raise ValueError("candidate build metadata disagrees with its source commit")
+    if not isinstance(metadata, dict):
+        raise ValueError("candidate build metadata must be an object")
+    validate_metadata(metadata, commit=arguments.expected_commit)
+    sparse_path = root / "metadata" / "sparse-sizes.json"
+    sparse_report = json.loads(sparse_path.read_text(encoding="utf-8"))
+    if sparse_report != build_sparse_size_report(manifest):
+        raise ValueError("candidate sparse-size evidence differs from its manifest")
+    validate_reproducibility_report(
+        root, version=version, source_commit=arguments.expected_commit
+    )
     audit_path = root / "audit" / "release-audit-evidence.md"
     if not audit_path.is_file() or not audit_path.read_bytes():
         raise ValueError("candidate lacks release dependency audit evidence")

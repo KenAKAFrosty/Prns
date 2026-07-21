@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import sys
 
 from flasher_release_evidence import attestation_subjects, sha256
@@ -32,6 +32,18 @@ def document_identity(document: Path) -> dict[str, str]:
     if not document.is_file() or not signature.is_file():
         raise ValueError(f"signed release document is incomplete: {document}")
     return {"sha256": sha256(document), "signature_sha256": sha256(signature)}
+
+
+def safe_candidate_path(candidate: Path, relative: str) -> Path:
+    pure = PurePosixPath(relative)
+    if (
+        "\\" in relative
+        or pure.is_absolute()
+        or not pure.parts
+        or any(part in {"", ".", ".."} for part in pure.parts)
+    ):
+        raise ValueError(f"manifest firmware path is unsafe: {relative!r}")
+    return candidate.joinpath(*pure.parts)
 
 
 def load_object(path: Path, label: str) -> dict:
@@ -164,6 +176,7 @@ def build_record(arguments: argparse.Namespace) -> dict:
         "schema",
         "repository",
         "workflow_ref",
+        "workflow_sha",
         "workflow_run_id",
         "attestation_id",
         "attestation_url",
@@ -179,6 +192,8 @@ def build_record(arguments: argparse.Namespace) -> dict:
     )
     if not str(attestation.get("workflow_ref", "")).startswith(expected_workflow_prefix):
         raise ValueError("attestation was not produced by the protected flasher signer")
+    if attestation.get("workflow_sha") != source_commit:
+        raise ValueError("attestation signer implementation differs from the candidate source")
     expected_url_prefix = f"https://github.com/{arguments.repository}/attestations/"
     if not str(attestation.get("attestation_url", "")).startswith(expected_url_prefix):
         raise ValueError("attestation URL is outside the release repository")
@@ -190,15 +205,73 @@ def build_record(arguments: argparse.Namespace) -> dict:
     if attestation.get("subjects") != actual_subjects:
         raise ValueError("attestation metadata subjects differ from its signed statement")
 
-    required_subjects = [arguments.signed_bundle]
+    required_subjects = [(arguments.signed_bundle.name, arguments.signed_bundle)]
     for target, extension in CLI_TARGETS.items():
+        name = f"hopspot-flash-{version}-{target}{extension}"
         required_subjects.append(
-            candidate / "cli" / f"hopspot-flash-{version}-{target}{extension}"
+            (f"cli/{name}", candidate / "cli" / name)
         )
-    attested_hashes = {subject["sha256"] for subject in actual_subjects}
-    for required in required_subjects:
-        if not required.is_file() or sha256(required) not in attested_hashes:
-            raise ValueError(f"GitHub attestation does not cover {required.name}")
+
+    firmware = []
+    seen_firmware_paths = set()
+    targets = manifest.get("targets")
+    if not isinstance(targets, list):
+        raise ValueError("candidate manifest has no firmware targets")
+    for target in targets:
+        if not isinstance(target, dict) or not isinstance(target.get("board_slug"), str):
+            raise ValueError("candidate manifest contains a malformed firmware target")
+        parts = target.get("parts")
+        if not isinstance(parts, list) or not parts:
+            raise ValueError("candidate manifest contains an empty firmware plan")
+        for part in parts:
+            if not isinstance(part, dict):
+                raise ValueError("candidate manifest contains a malformed firmware part")
+            relative = part.get("path")
+            size = part.get("size")
+            checksum = part.get("sha256")
+            if (
+                not isinstance(relative, str)
+                or relative in seen_firmware_paths
+                or not isinstance(size, int)
+                or isinstance(size, bool)
+                or not isinstance(checksum, str)
+            ):
+                raise ValueError("candidate manifest contains an invalid firmware identity")
+            seen_firmware_paths.add(relative)
+            artifact = safe_candidate_path(candidate, relative)
+            if (
+                not artifact.is_file()
+                or artifact.stat().st_size != size
+                or sha256(artifact) != checksum
+            ):
+                raise ValueError(f"manifest firmware identity disagrees with {relative}")
+            required_subjects.append((relative, artifact))
+            firmware.append(
+                {
+                    "board_slug": target["board_slug"],
+                    "path": relative,
+                    "size": size,
+                    "sha256": checksum,
+                }
+            )
+
+    expected_subjects = {
+        (name, sha256(path))
+        for name, path in required_subjects
+        if path.is_file()
+    }
+    if len(expected_subjects) != len(required_subjects):
+        raise ValueError("release attestation inputs are missing or have duplicate identities")
+    attested_subjects = {
+        (subject["name"], subject["sha256"]) for subject in actual_subjects
+    }
+    if attested_subjects != expected_subjects:
+        missing = sorted(expected_subjects - attested_subjects)
+        unexpected = sorted(attested_subjects - expected_subjects)
+        raise ValueError(
+            f"GitHub attestation subjects differ from release paths; "
+            f"missing={missing}, unexpected={unexpected}"
+        )
 
     return {
         "schema": 1,
@@ -225,9 +298,15 @@ def build_record(arguments: argparse.Namespace) -> dict:
                 "path": "audit/release-audit-evidence.md",
                 "sha256": sha256(audit_path),
             },
+            "firmware": sorted(
+                firmware, key=lambda item: (item["board_slug"], item["path"])
+            ),
         },
         "acceptance": acceptance_identity,
-        "attestation": attestation,
+        "attestation": {
+            "metadata": attestation,
+            "metadata_file": file_identity(arguments.attestation_metadata),
+        },
     }
 
 

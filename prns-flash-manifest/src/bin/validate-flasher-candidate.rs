@@ -14,9 +14,13 @@ use serde::Deserialize;
 struct BuildMetadata {
     schema: u8,
     source_commit: String,
+    source_date_epoch: u64,
     built_at_utc: String,
+    timestamp_source: String,
     host: BuildHost,
-    tools: BTreeMap<String, String>,
+    expected_tools: ExpectedTools,
+    tools: ResolvedTools,
+    web_packages: WebPackages,
 }
 
 #[derive(Deserialize)]
@@ -24,6 +28,47 @@ struct BuildMetadata {
 struct BuildHost {
     system: String,
     machine: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExpectedTools {
+    rustc: String,
+    cargo: String,
+    node: String,
+    dioxus: String,
+    cargo_binstall: String,
+    espup: String,
+    esp_rustc: String,
+    llvm_objcopy: String,
+    xtensa_gcc: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ResolvedTools {
+    rustc: String,
+    cargo: String,
+    node: String,
+    npm: String,
+    dioxus: String,
+    cargo_binstall: String,
+    espup: String,
+    esp_rustc: String,
+    xtensa_gcc: String,
+    llvm_objcopy: String,
+    python: String,
+    git: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WebPackages {
+    #[serde(rename = "esptool-js")]
+    esptool_js: String,
+    #[serde(rename = "spark-md5")]
+    spark_md5: String,
+    esbuild: String,
 }
 
 fn main() {
@@ -131,35 +176,108 @@ fn verify_provenance(root: &Path, manifest: &FlashManifest) -> Result<(), String
         return Err("candidate VERSION differs from the signed manifest".to_string());
     }
     let metadata_bytes = read(&root.join("metadata").join("build.json"))?;
-    let metadata: BuildMetadata = serde_json::from_slice(&metadata_bytes)
+    validate_build_metadata(&metadata_bytes, &manifest.release.commit)
+}
+
+fn validate_build_metadata(bytes: &[u8], expected_commit: &str) -> Result<(), String> {
+    let metadata: BuildMetadata = serde_json::from_slice(bytes)
         .map_err(|error| format!("candidate build metadata is invalid: {error}"))?;
-    if metadata.schema != 1 || metadata.source_commit != manifest.release.commit {
+    if metadata.schema != 2 || metadata.source_commit != expected_commit {
         return Err("candidate build provenance differs from the signed manifest".to_string());
     }
-    if metadata.built_at_utc.trim().is_empty()
-        || metadata.host.system.trim().is_empty()
-        || metadata.host.machine.trim().is_empty()
+    if metadata.source_date_epoch == 0
+        || metadata.timestamp_source != "source_commit"
+        || metadata.built_at_utc != utc_timestamp(metadata.source_date_epoch)?
     {
+        return Err(
+            "candidate build timestamp is not deterministically source-derived".to_string(),
+        );
+    }
+    if metadata.host.system.trim().is_empty() || metadata.host.machine.trim().is_empty() {
         return Err("candidate build provenance is incomplete".to_string());
     }
-    for required in ["rustc", "cargo", "node", "npm", "dioxus", "git"] {
-        let value = metadata
+    if metadata.expected_tools.rustc != "1.96.0"
+        || metadata.expected_tools.cargo != "1.96.0"
+        || metadata.expected_tools.node != "24.18.0"
+        || metadata.expected_tools.dioxus != "0.7.5"
+        || metadata.expected_tools.cargo_binstall != "1.21.0"
+        || metadata.expected_tools.espup != "0.17.1"
+        || metadata.expected_tools.esp_rustc != "1.95.0"
+        || metadata.expected_tools.llvm_objcopy != "rust-1.96.0-llvm-tools-preview"
+        || metadata.expected_tools.xtensa_gcc != "esp-15.2.0_20250920-gcc-15.2.0"
+    {
+        return Err("candidate expected production tools drifted".to_string());
+    }
+    if !metadata.tools.rustc.starts_with("rustc 1.96.0 ")
+        || !metadata.tools.cargo.starts_with("cargo 1.96.0 ")
+        || metadata.tools.node != "v24.18.0"
+        || !has_version_token(&metadata.tools.dioxus, "0.7.5")
+        || !has_version_token(&metadata.tools.cargo_binstall, "1.21.0")
+        || !has_version_token(&metadata.tools.espup, "0.17.1")
+        || !metadata.tools.esp_rustc.starts_with("rustc 1.95.0")
+        || metadata.tools.xtensa_gcc
+            != "xtensa-esp-elf-gcc (crosstool-NG esp-15.2.0_20250920) 15.2.0"
+        || !metadata
             .tools
-            .get(required)
-            .map(String::as_str)
-            .unwrap_or("");
+            .llvm_objcopy
+            .to_ascii_lowercase()
+            .contains("llvm")
+    {
+        return Err("candidate resolved production tools disagree with exact pins".to_string());
+    }
+    for (name, value) in [
+        ("npm", metadata.tools.npm.as_str()),
+        ("python", metadata.tools.python.as_str()),
+        ("git", metadata.tools.git.as_str()),
+    ] {
         if value.trim().is_empty() || value == "unavailable" {
-            return Err(format!("candidate build provenance lacks {required}"));
+            return Err(format!("candidate build provenance lacks {name}"));
         }
     }
-    if !metadata
-        .tools
-        .get("dioxus")
-        .is_some_and(|value| value.contains("0.7.5"))
+    if metadata.web_packages.esptool_js != "0.6.0"
+        || metadata.web_packages.spark_md5 != "3.0.2"
+        || metadata.web_packages.esbuild != "0.28.1"
     {
-        return Err("candidate was not built with dioxus-cli 0.7.5".to_string());
+        return Err("candidate exact web package pins drifted".to_string());
     }
     Ok(())
+}
+
+fn has_version_token(value: &str, expected: &str) -> bool {
+    value
+        .split_ascii_whitespace()
+        .any(|token| token == expected)
+}
+
+fn utc_timestamp(epoch: u64) -> Result<String, String> {
+    let seconds_per_day = 86_400_u64;
+    let days = i64::try_from(epoch / seconds_per_day)
+        .map_err(|_| "candidate source epoch is outside the supported range".to_string())?;
+    let seconds = epoch % seconds_per_day;
+    let (year, month, day) = civil_from_days(days)?;
+    let hour = seconds / 3_600;
+    let minute = (seconds % 3_600) / 60;
+    let second = seconds % 60;
+    Ok(format!(
+        "{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}+00:00"
+    ))
+}
+
+fn civil_from_days(days_since_epoch: i64) -> Result<(i64, i64, i64), String> {
+    let adjusted = days_since_epoch
+        .checked_add(719_468)
+        .ok_or_else(|| "candidate source epoch is outside the supported range".to_string())?;
+    let era = adjusted.div_euclid(146_097);
+    let day_of_era = adjusted.rem_euclid(146_097);
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_prime = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
+    let month = month_prime + if month_prime < 10 { 3 } else { -9 };
+    let year_adjustment = if month <= 2 { 1 } else { 0 };
+    Ok((year + year_adjustment, month, day))
 }
 
 fn verify_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
@@ -297,4 +415,96 @@ fn validate_digest(value: &str) -> Result<(), String> {
 
 fn read(path: &Path) -> Result<Vec<u8>, String> {
     fs::read(path).map_err(|error| format!("could not read {}: {error}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{utc_timestamp, validate_build_metadata};
+    use serde_json::{json, Value};
+
+    const COMMIT: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    fn metadata() -> Value {
+        json!({
+            "schema": 2,
+            "source_commit": COMMIT,
+            "source_date_epoch": 1_774_358_400_u64,
+            "built_at_utc": "2026-03-24T13:20:00+00:00",
+            "timestamp_source": "source_commit",
+            "host": {"system": "Linux", "machine": "x86_64"},
+            "expected_tools": {
+                "rustc": "1.96.0",
+                "cargo": "1.96.0",
+                "node": "24.18.0",
+                "dioxus": "0.7.5",
+                "cargo_binstall": "1.21.0",
+                "espup": "0.17.1",
+                "esp_rustc": "1.95.0",
+                "llvm_objcopy": "rust-1.96.0-llvm-tools-preview",
+                "xtensa_gcc": "esp-15.2.0_20250920-gcc-15.2.0"
+            },
+            "tools": {
+                "rustc": "rustc 1.96.0 (fixture)",
+                "cargo": "cargo 1.96.0 (fixture)",
+                "node": "v24.18.0",
+                "npm": "11.0.0",
+                "dioxus": "dioxus 0.7.5",
+                "cargo_binstall": "cargo-binstall 1.21.0",
+                "espup": "espup 0.17.1",
+                "esp_rustc": "rustc 1.95.0-nightly (fixture)",
+                "xtensa_gcc": "xtensa-esp-elf-gcc (crosstool-NG esp-15.2.0_20250920) 15.2.0",
+                "llvm_objcopy": "llvm-objcopy version 20.1.8",
+                "python": "Python 3.13.0",
+                "git": "git version 2.50.0"
+            },
+            "web_packages": {
+                "esptool-js": "0.6.0",
+                "spark-md5": "3.0.2",
+                "esbuild": "0.28.1"
+            }
+        })
+    }
+
+    fn encoded(value: &Value) -> Vec<u8> {
+        value.to_string().into_bytes()
+    }
+
+    #[test]
+    fn accepts_exact_schema_two_release_metadata() {
+        assert_eq!(
+            utc_timestamp(1_774_358_400),
+            Ok("2026-03-24T13:20:00+00:00".to_string())
+        );
+        assert!(validate_build_metadata(&encoded(&metadata()), COMMIT).is_ok());
+    }
+
+    #[test]
+    fn rejects_schema_timestamp_and_unknown_field_tampering() {
+        let mut wrong_schema = metadata();
+        wrong_schema["schema"] = json!(1);
+        assert!(validate_build_metadata(&encoded(&wrong_schema), COMMIT).is_err());
+
+        let mut wrong_timestamp = metadata();
+        wrong_timestamp["built_at_utc"] = json!("2026-03-24T13:20:01+00:00");
+        assert!(validate_build_metadata(&encoded(&wrong_timestamp), COMMIT).is_err());
+
+        let mut unknown = metadata();
+        unknown["unreviewed"] = json!(true);
+        assert!(validate_build_metadata(&encoded(&unknown), COMMIT).is_err());
+    }
+
+    #[test]
+    fn rejects_production_tool_and_web_package_drift() {
+        let mut wrong_node = metadata();
+        wrong_node["tools"]["node"] = json!("v24.18.1");
+        assert!(validate_build_metadata(&encoded(&wrong_node), COMMIT).is_err());
+
+        let mut wrong_expected_rust = metadata();
+        wrong_expected_rust["expected_tools"]["rustc"] = json!("stable");
+        assert!(validate_build_metadata(&encoded(&wrong_expected_rust), COMMIT).is_err());
+
+        let mut wrong_esptool = metadata();
+        wrong_esptool["web_packages"]["esptool-js"] = json!("0.6.1");
+        assert!(validate_build_metadata(&encoded(&wrong_esptool), COMMIT).is_err());
+    }
 }

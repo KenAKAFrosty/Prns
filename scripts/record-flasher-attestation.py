@@ -5,27 +5,52 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import sys
 
 from flasher_release_evidence import attestation_subjects, sha256
+
+
+def canonical_name(value: str) -> str:
+    path = PurePosixPath(value)
+    if (
+        "\\" in value
+        or path.is_absolute()
+        or not path.parts
+        or any(part in {"", ".", ".."} for part in path.parts)
+        or path.as_posix() != value
+    ):
+        raise ValueError(f"attestation subject name is not canonical: {value!r}")
+    return value
 
 def build(arguments: argparse.Namespace) -> dict:
     bundle = json.loads(arguments.bundle.read_text(encoding="utf-8"))
     if not isinstance(bundle, dict):
         raise ValueError("attestation bundle must be a JSON object")
     subjects = attestation_subjects(bundle)
-    subject_hashes = {subject["sha256"] for subject in subjects}
-    required = []
-    for path in arguments.required_subject:
+    actual_subjects = {(subject["name"], subject["sha256"]) for subject in subjects}
+    required_subjects = set()
+    required_paths = set()
+    for raw_name, raw_path in arguments.required_subject:
+        name = canonical_name(raw_name)
+        path = Path(raw_path)
         if not path.is_file():
             raise ValueError(f"required attestation subject is unavailable: {path}")
-        checksum = sha256(path)
-        required.append({"name": path.name, "sha256": checksum})
-        if checksum not in subject_hashes:
-            raise ValueError(f"attestation does not cover required subject {path.name}")
-    if len({item["sha256"] for item in required}) != len(required):
-        raise ValueError("required attestation subjects must have distinct payload hashes")
+        resolved = path.resolve()
+        if resolved in required_paths:
+            raise ValueError(f"required attestation subject was repeated: {path}")
+        required_paths.add(resolved)
+        identity = (name, sha256(path))
+        if any(existing[0] == name for existing in required_subjects):
+            raise ValueError(f"required attestation subject name was repeated: {name}")
+        required_subjects.add(identity)
+    if actual_subjects != required_subjects:
+        missing = sorted(required_subjects - actual_subjects)
+        unexpected = sorted(actual_subjects - required_subjects)
+        raise ValueError(
+            f"attestation subjects differ from exact canonical inputs; "
+            f"missing={missing}, unexpected={unexpected}"
+        )
 
     expected_workflow_prefix = (
         f"{arguments.repository}/.github/workflows/flasher-sign.yml@refs/heads/"
@@ -43,10 +68,16 @@ def build(arguments: argparse.Namespace) -> dict:
         raise ValueError("attestation workflow run ID must be an integer") from error
     if run_id <= 0:
         raise ValueError("attestation workflow run ID must be positive")
+    workflow_sha = arguments.workflow_sha
+    if len(workflow_sha) != 40 or any(
+        character not in "0123456789abcdef" for character in workflow_sha
+    ):
+        raise ValueError("attestation workflow SHA must be a lowercase full Git commit")
     return {
         "schema": 1,
         "repository": arguments.repository,
         "workflow_ref": arguments.workflow_ref,
+        "workflow_sha": workflow_sha,
         "workflow_run_id": run_id,
         "attestation_id": arguments.attestation_id,
         "attestation_url": arguments.attestation_url,
@@ -58,9 +89,16 @@ def build(arguments: argparse.Namespace) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--bundle", type=Path, required=True)
-    parser.add_argument("--required-subject", type=Path, action="append", required=True)
+    parser.add_argument(
+        "--required-subject",
+        nargs=2,
+        action="append",
+        required=True,
+        metavar=("NAME", "PATH"),
+    )
     parser.add_argument("--repository", required=True)
     parser.add_argument("--workflow-ref", required=True)
+    parser.add_argument("--workflow-sha", required=True)
     parser.add_argument("--workflow-run-id", required=True)
     parser.add_argument("--attestation-id", required=True)
     parser.add_argument("--attestation-url", required=True)

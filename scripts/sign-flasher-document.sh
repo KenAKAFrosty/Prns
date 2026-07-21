@@ -29,5 +29,7 @@ if grep -q 'PRNS_RELEASE_KEY_NOT_CONFIGURED' "$public_key"; then
     exit 4
 fi
 
-"$signer" -S -s "$secret_key" -m "$document" -x "$signature"
+document_sha256="$(shasum -a 256 "$document" | awk '{print $1}')"
+"$signer" -S -s "$secret_key" -m "$document" -x "$signature" \
+    -t "prns-release-sha256:${document_sha256}"
 "$signer" -Vm "$document" -x "$signature" -p "$public_key"

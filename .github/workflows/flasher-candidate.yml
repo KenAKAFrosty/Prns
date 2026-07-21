@@ -19,149 +19,262 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
   RUSTFLAGS: "-D warnings"
+  RUSTUP_TOOLCHAIN: 1.96.0
 
 jobs:
   cli:
-    name: CLI ${{ matrix.target }}
+    name: CLI ${{ matrix.build_pass }} ${{ matrix.platform.target }}
     strategy:
       fail-fast: false
       matrix:
-        include:
+        build_pass: [primary, reproduction]
+        platform:
           - os: macos-14
             target: aarch64-apple-darwin
             binary: target/aarch64-apple-darwin/release/hopspot-flash
+            rustflags: -D warnings
           - os: macos-15-intel
             target: x86_64-apple-darwin
             binary: target/x86_64-apple-darwin/release/hopspot-flash
-          - os: ubuntu-latest
+            rustflags: -D warnings
+          - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             binary: target/x86_64-unknown-linux-gnu/release/hopspot-flash
+            rustflags: -D warnings
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             binary: target/aarch64-unknown-linux-gnu/release/hopspot-flash
-          - os: windows-latest
+            rustflags: -D warnings
+          - os: windows-2025
             target: x86_64-pc-windows-msvc
             binary: target/x86_64-pc-windows-msvc/release/hopspot-flash.exe
-    runs-on: ${{ matrix.os }}
+            rustflags: -D warnings -C link-arg=/Brepro
+    runs-on: ${{ matrix.platform.os }}
+    env:
+      RUSTFLAGS: ${{ matrix.platform.rustflags }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
-          shared-key: flasher-cli-${{ matrix.target }}
-      - name: Build standalone CLI
-        run: cargo build --release --locked -p hopspot-flash --target ${{ matrix.target }}
+          toolchain: 1.96.0
+          targets: ${{ matrix.platform.target }}
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: flasher-cli-${{ matrix.build_pass }}-${{ matrix.platform.target }}
+          cache-targets: false
+      - name: Prove exact compiler and source epoch
+        shell: bash
+        run: |
+          rustc --version | rg '^rustc 1\.96\.0 '
+          cargo --version | rg '^cargo 1\.96\.0 '
+          echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$GITHUB_SHA")" >> "$GITHUB_ENV"
+      - name: Build standalone CLI from locked dependencies
+        run: cargo build --release --locked -p hopspot-flash --target ${{ matrix.platform.target }}
       - name: Package deterministic archive
-        run: python scripts/package-hopspot-flash.py --binary "${{ matrix.binary }}" --target "${{ matrix.target }}" --out-dir target/flasher-cli
-      - uses: actions/upload-artifact@v4
+        run: python scripts/package-hopspot-flash.py --binary "${{ matrix.platform.binary }}" --target "${{ matrix.platform.target }}" --out-dir target/flasher-cli
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: flasher-cli-${{ matrix.target }}
+          name: flasher-cli-${{ matrix.build_pass }}-${{ matrix.platform.target }}
           path: target/flasher-cli/*
           if-no-files-found: error
 
   core-candidate:
-    name: Sparse firmware and hosted site
-    runs-on: ubuntu-latest
+    name: Sparse firmware and hosted site ${{ matrix.build_pass }}
+    strategy:
+      fail-fast: false
+      matrix:
+        build_pass: [primary, reproduction]
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.96.0
           targets: thumbv7em-none-eabihf,riscv32imac-unknown-none-elf
-      - uses: esp-rs/xtensa-toolchain@v1.7.0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          buildtargets: esp32s3
-          default: false
-          override: false
-          ldproxy: true
-      - uses: Swatinem/rust-cache@v2
+          components: llvm-tools-preview
+      - name: Install checksum-pinned ESP compiler and tools
+        run: scripts/install-release-esp-toolchain.sh "${RUNNER_TEMP}/prns-esp-tools"
+      - name: Force the non-ESP embedded build to production Rust
+        run: rustup override set --path personal-hopspot/embedded/nrf52840 1.96.0
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           workspaces: |
             .
             docs/website
             personal-hopspot/embedded/esp32
             personal-hopspot/embedded/nrf52840
-      - uses: actions/setup-node@v4
+          shared-key: flasher-core-${{ matrix.build_pass }}
+          cache-targets: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: "20"
+          node-version: "24.18.0"
           cache: npm
           cache-dependency-path: docs/website/package-lock.json
-      - uses: cargo-bins/cargo-binstall@main
+      - uses: cargo-bins/cargo-binstall@57726869e28f4038a847ec56e5fdd9142fded110
+        with:
+          version: "1.21.0"
       - name: Install exact Dioxus CLI
         run: cargo binstall --no-confirm --force dioxus-cli@0.7.5
+      - name: Prove exact release tools and source epoch
+        run: |
+          rustc --version | rg '^rustc 1\.96\.0 '
+          cargo --version | rg '^cargo 1\.96\.0 '
+          test "$(node --version)" = "v24.18.0"
+          cargo-binstall --version | rg '(^| )1\.21\.0($| )'
+          dx --version | rg '(^| )0\.7\.5($| )'
+          espup --version | rg '(^| )0\.17\.1($| )'
+          rustc +esp -vV | rg '^release: 1\.95\.0'
+          test "$(xtensa-esp-elf-gcc --version | head -n 1)" = \
+            'xtensa-esp-elf-gcc (crosstool-NG esp-15.2.0_20250920) 15.2.0'
+          host_triple="$(rustc -vV | sed -n 's/^host: //p')"
+          llvm_objcopy="$(rustc --print sysroot)/lib/rustlib/$host_triple/bin/llvm-objcopy"
+          test -x "$llvm_objcopy"
+          "$llvm_objcopy" --version | rg -i 'llvm'
+          test "$(cd personal-hopspot/embedded/nrf52840 && env -u RUSTUP_TOOLCHAIN rustc --version | awk '{print $2}')" = "1.96.0"
+          echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$GITHUB_SHA")" >> "$GITHUB_ENV"
       - name: Build unsigned core candidate
         env:
           RELEASE_CHANNEL: ${{ inputs.channel }}
           RELEASE_KEY_ID: ${{ inputs.key_id }}
           SOURCE_COMMIT: ${{ github.sha }}
-        run: bash scripts/build-flasher-candidate.sh target/flasher-candidate "$RELEASE_CHANNEL" "$RELEASE_KEY_ID" "$SOURCE_COMMIT"
-      - uses: actions/upload-artifact@v4
+        run: scripts/build-flasher-candidate.sh target/flasher-candidate "$RELEASE_CHANNEL" "$RELEASE_KEY_ID" "$SOURCE_COMMIT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: flasher-core-candidate
+          name: flasher-core-candidate-${{ matrix.build_pass }}
           path: target/flasher-candidate/**
           if-no-files-found: error
 
   dependency-audit:
-    name: Release dependency and notice evidence
-    runs-on: ubuntu-latest
+    name: Release dependency and notice evidence ${{ matrix.build_pass }}
+    strategy:
+      fail-fast: false
+      matrix:
+        build_pass: [primary, reproduction]
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          shared-key: flasher-release-audit
-      - uses: actions/setup-node@v4
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
-          node-version: "20"
+          toolchain: 1.96.0
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: flasher-release-audit-${{ matrix.build_pass }}
+          cache-targets: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24.18.0"
           cache: npm
           cache-dependency-path: docs/website/package-lock.json
+      - name: Prove exact audit compiler and runtime
+        run: |
+          rustc --version | rg '^rustc 1\.96\.0 '
+          test "$(node --version)" = "v24.18.0"
       - name: Install exact audit tools
         run: |
           cargo install cargo-deny --version 0.19.8 --locked
           cargo install cargo-about --version 0.9.1 --locked --features cli
-      - run: bash scripts/deps-audit.sh
-      - run: bash scripts/write-release-audit-evidence.sh target/release-audit-evidence.md
-      - uses: actions/upload-artifact@v4
+      - name: Audit every release dependency graph
+        run: scripts/deps-audit.sh
+      - name: Reject dirty generated notices
+        run: git diff --exit-code -- THIRD_PARTY_NOTICES.md
+      - name: Record deterministic audit evidence
+        run: scripts/write-release-audit-evidence.sh target/release-audit-evidence.md
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: flasher-audit-evidence
+          name: flasher-audit-evidence-${{ matrix.build_pass }}
           path: target/release-audit-evidence.md
+          if-no-files-found: error
 
   assemble:
-    name: Assemble immutable unsigned candidate
+    name: Assemble ${{ matrix.build_pass }} unsigned candidate
     needs: [cli, core-candidate, dependency-audit]
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        build_pass: [primary, reproduction]
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          pattern: flasher-cli-*
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: flasher-cli-${{ matrix.build_pass }}-*
           path: target/candidate/cli
           merge-multiple: true
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          name: flasher-core-candidate
+          name: flasher-core-candidate-${{ matrix.build_pass }}
           path: target/candidate
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          name: flasher-audit-evidence
+          name: flasher-audit-evidence-${{ matrix.build_pass }}
           path: target/candidate/audit
-      - name: Finalize checksums, installers, channel, and immutable website paths
+      - name: Finalize checksums, installers, channel, sparse report, and immutable paths
         env:
           RELEASE_CHANNEL: ${{ inputs.channel }}
           RELEASE_KEY_ID: ${{ inputs.key_id }}
           SOURCE_COMMIT: ${{ github.sha }}
         run: python3 scripts/finalize-flasher-candidate.py target/candidate --channel "$RELEASE_CHANNEL" --commit "$SOURCE_COMMIT" --key-id "$RELEASE_KEY_ID"
-      - name: Archive for offline review and signing
-        run: tar -czf "target/prns-flasher-candidate-v$(cat VERSION)-unsigned.tar.gz" -C target/candidate .
-      - uses: actions/upload-artifact@v4
+      - name: Create deterministic precomparison archive
+        run: python3 scripts/package-flasher-candidate.py target/candidate "target/prns-flasher-candidate-v$(cat VERSION)-precomparison.tar.gz"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: flasher-assembled-${{ matrix.build_pass }}
+          path: target/prns-flasher-candidate-v*-precomparison.tar.gz
+          retention-days: 7
+          if-no-files-found: error
+
+  reproducibility:
+    name: Independent candidate byte reproducibility
+    needs: assemble
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: flasher-assembled-primary
+          path: target/repro/primary
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: flasher-assembled-reproduction
+          path: target/repro/reproduction
+      - name: Compare every payload and deterministic archive byte
+        run: |
+          mkdir -p target/release
+          python3 scripts/compare-flasher-candidates.py \
+            --primary "target/repro/primary/prns-flasher-candidate-v$(cat VERSION)-precomparison.tar.gz" \
+            --reproduction "target/repro/reproduction/prns-flasher-candidate-v$(cat VERSION)-precomparison.tar.gz" \
+            --output "target/release/prns-flasher-candidate-v$(cat VERSION)-unsigned.tar.gz" \
+            --report target/release/reproducibility.json
+      - name: Revalidate final unsigned candidate boundary
+        env:
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          python3 scripts/extract-flasher-candidate.py \
+            "target/release/prns-flasher-candidate-v$(cat VERSION)-unsigned.tar.gz" \
+            target/verified-candidate
+          python3 scripts/validate-unsigned-flasher-candidate.py target/verified-candidate \
+            --expected-commit "$SOURCE_COMMIT" \
+            --repository-version VERSION \
+            --pinned-key release/keys/minisign.pub
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: flasher-unsigned-candidate-run-${{ github.run_id }}
-          path: target/prns-flasher-candidate-v*-unsigned.tar.gz
+          path: |
+            target/release/prns-flasher-candidate-v*-unsigned.tar.gz
+            target/release/reproducibility.json
           retention-days: 30
           if-no-files-found: error

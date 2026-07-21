@@ -34,6 +34,8 @@ site_package = json.loads((site / "package.json").read_text(encoding="utf-8"))
 site_lock = json.loads((site / "package-lock.json").read_text(encoding="utf-8"))
 expected_dependencies = {"esptool-js": "0.6.0", "spark-md5": "3.0.2"}
 expected_dev = {
+    "@axe-core/playwright": "4.12.1",
+    "@playwright/test": "1.61.1",
     "@tailwindcss/cli": "4.3.3",
     "esbuild": "0.28.1",
     "tailwindcss": "4.3.3",
@@ -65,6 +67,40 @@ if root_lock.get("dependencies") != expected_dependencies or root_lock.get("devD
     print("website lockfile root disagrees with package.json exact pins", file=sys.stderr)
     raise SystemExit(1)
 
+test_only = {
+    "node_modules/@axe-core/playwright": ("4.12.1", "MPL-2.0"),
+    "node_modules/@playwright/test": ("1.61.1", "Apache-2.0"),
+    "node_modules/axe-core": ("4.12.1", "MPL-2.0"),
+    "node_modules/playwright": ("1.61.1", "Apache-2.0"),
+    "node_modules/playwright-core": ("1.61.1", "Apache-2.0"),
+}
+for path, expected in test_only.items():
+    metadata = site_lock.get("packages", {}).get(path, {})
+    actual = (metadata.get("version"), metadata.get("license"))
+    if actual != expected or metadata.get("dev") is not True:
+        print(f"browser/accessibility test dependency drifted or became shipped: {path}", file=sys.stderr)
+        raise SystemExit(1)
+
+allowed_test_tool_licenses = {
+    "Apache-2.0",
+    "BSD-3-Clause",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+}
+for path, metadata in site_lock.get("packages", {}).items():
+    if not path or metadata.get("dev") is not True:
+        continue
+    resolved = metadata.get("resolved", "")
+    integrity = metadata.get("integrity", "")
+    if (
+        metadata.get("license") not in allowed_test_tool_licenses
+        or not resolved.startswith("https://registry.npmjs.org/")
+        or not integrity.startswith("sha512-")
+    ):
+        print(f"website test/build dependency lacks reviewed license/source/integrity: {path}", file=sys.stderr)
+        raise SystemExit(1)
+
 for source in (site / "src", site / "web-flasher"):
     for path in source.rglob("*"):
         if path.is_file() and path.suffix in {".rs", ".js", ".mjs", ".html", ".css"}:
@@ -73,4 +109,19 @@ for source in (site / "src", site / "web-flasher"):
                 print(f"legacy web flasher/CDN reference remains in {path.relative_to(repo)}", file=sys.stderr)
                 raise SystemExit(1)
 
-print("website npm graph is exact-pinned, license-allowlisted, and free of runtime CDN/legacy-engine references")
+for source in (site / "src", site / "web-flasher" / "src"):
+    for path in source.rglob("*"):
+        if not path.is_file() or path.suffix not in {".rs", ".js", ".mjs", ".html", ".css"}:
+            continue
+        text = path.read_text(encoding="utf-8").lower()
+        if "playwright" in text or "axe-core" in text:
+            print(
+                f"browser/accessibility test tooling entered production source: {path.relative_to(repo)}",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+
+print(
+    "website npm graph is exact-pinned; browser/accessibility tools remain dev-only with "
+    "reviewed licenses, registry sources, and lockfile integrity"
+)

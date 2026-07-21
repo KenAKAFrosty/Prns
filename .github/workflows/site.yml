@@ -5,8 +5,8 @@ on:
 
 # Allow one concurrent deploy; cancel in-flight runs on new pushes.
 concurrency:
-  group: pages-${{ github.ref }}
-  cancel-in-progress: true
+  group: prns-public-pages
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -16,9 +16,9 @@ permissions:
 jobs:
   build:
     if: vars.PRNS_PUBLIC_SITE_PROMOTED != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           submodules: false
 
@@ -37,17 +37,18 @@ jobs:
           ls -la "$DIST"
 
       - name: Upload coming soon Pages artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa
         with:
           path: docs/website/target/site-coming-soon
 
   deploy:
     needs: build
-    runs-on: ubuntu-latest
+    if: needs.build.result == 'success' && vars.PRNS_PUBLIC_SITE_PROMOTED != 'true'
+    runs-on: ubuntu-24.04
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e

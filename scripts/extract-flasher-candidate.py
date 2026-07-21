@@ -21,12 +21,22 @@ def main() -> int:
         members = archive.getmembers()
         if len(members) > MAX_FILES or sum(member.size for member in members) > MAX_BYTES:
             parser.error("candidate archive exceeds the release extraction limits")
+        names: set[str] = set()
         for member in members:
             path = PurePosixPath(member.name)
             if path.is_absolute() or ".." in path.parts or member.issym() or member.islnk():
                 parser.error(f"unsafe candidate archive member: {member.name}")
             if not member.isfile() and not member.isdir():
                 parser.error(f"unsupported candidate archive member: {member.name}")
+            normalized = path.as_posix()
+            if normalized in {"", "."}:
+                parser.error(f"unsafe candidate archive member: {member.name}")
+            if normalized in names:
+                parser.error(f"duplicate candidate archive member: {member.name}")
+            names.add(normalized)
+        if arguments.destination.exists():
+            if not arguments.destination.is_dir() or any(arguments.destination.iterdir()):
+                parser.error("candidate extraction destination must be an empty directory")
         arguments.destination.mkdir(parents=True, exist_ok=True)
         archive.extractall(arguments.destination, members=members, filter="data")
     return 0

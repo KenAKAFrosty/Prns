@@ -41,6 +41,7 @@ def attestation_subjects(bundle: dict) -> list[dict[str, str]]:
     if not isinstance(subjects, list) or not subjects:
         raise ValueError("attestation has no subjects")
     output = []
+    names = set()
     for index, subject in enumerate(subjects):
         if not isinstance(subject, dict) or not isinstance(subject.get("digest"), dict):
             raise ValueError(f"attestation subject {index} is malformed")
@@ -52,5 +53,8 @@ def attestation_subjects(bundle: dict) -> list[dict[str, str]]:
             character not in "0123456789abcdef" for character in checksum
         ):
             raise ValueError(f"attestation subject {index} has invalid SHA-256")
+        if name in names:
+            raise ValueError(f"attestation subject name is duplicated: {name}")
+        names.add(name)
         output.append({"name": name, "sha256": checksum})
     return sorted(output, key=lambda subject: (subject["name"], subject["sha256"]))

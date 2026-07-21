@@ -10,6 +10,9 @@ from pathlib import Path, PurePosixPath
 import shutil
 import sys
 
+from flasher_sparse_sizes import build_report as build_sparse_size_report
+from flasher_sparse_sizes import render_summary as render_sparse_size_summary
+
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGETS = (
@@ -245,6 +248,17 @@ def main() -> int:
             newline="\n",
         )
         stage_website(candidate, version, arguments.channel, descriptor_path)
+
+        sparse_report = build_sparse_size_report(manifest)
+        sparse_path = candidate / "metadata" / "sparse-sizes.json"
+        sparse_path.parent.mkdir(parents=True, exist_ok=True)
+        sparse_path.write_text(
+            json.dumps(sparse_report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        for line in render_sparse_size_summary(sparse_report):
+            print(f"[sparse-size] {line}")
 
         lines = [
             f"{digest(path)}  {path.relative_to(candidate).as_posix()}"

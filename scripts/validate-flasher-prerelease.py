@@ -26,8 +26,13 @@ def validate(arguments: argparse.Namespace, now: datetime | None = None) -> None
     release = json.loads(arguments.release_json.read_text(encoding="utf-8"))
     if not isinstance(release, dict):
         raise ValueError("GitHub release metadata must be a JSON object")
-    if release.get("isDraft") is not False or release.get("isPrerelease") is not True:
-        raise ValueError("candidate must remain a public, non-draft prerelease")
+    if release.get("isDraft") is not False:
+        raise ValueError("candidate release must remain public and non-draft")
+    is_prerelease = release.get("isPrerelease")
+    if is_prerelease is not True and not (
+        getattr(arguments, "allow_promoted", False) and is_prerelease is False
+    ):
+        raise ValueError("candidate must be a prerelease unless exact promotion is resuming")
     if release.get("tagName") != f"v{arguments.version}":
         raise ValueError("prerelease tag differs from the qualified version")
     if release.get("targetCommitish") != arguments.source_commit:
@@ -48,6 +53,7 @@ def main() -> int:
     parser.add_argument("--version", required=True)
     parser.add_argument("--source-commit", required=True)
     parser.add_argument("--minimum-hours", type=int, default=24)
+    parser.add_argument("--allow-promoted", action="store_true")
     arguments = parser.parse_args()
     try:
         if arguments.minimum_hours < 1:
@@ -56,7 +62,7 @@ def main() -> int:
     except (OSError, ValueError, json.JSONDecodeError) as error:
         print(f"prerelease validation failed: {error}", file=sys.stderr)
         return 1
-    print(f"verified {arguments.minimum_hours}-hour public prerelease review gate")
+    print(f"verified {arguments.minimum_hours}-hour public release review gate")
     return 0
 
 

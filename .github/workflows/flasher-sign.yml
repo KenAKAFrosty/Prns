@@ -31,6 +31,7 @@ jobs:
     env:
       CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
       EXPECTED_UNSIGNED_SHA256: ${{ inputs.unsigned_bundle_sha256 }}
+      RUSTUP_TOOLCHAIN: 1.96.0
     steps:
       - name: Checkout reviewed signing implementation
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -88,8 +89,11 @@ jobs:
             --repository-version VERSION \
             --pinned-key release/keys/minisign.pub \
             --identity-output target/candidate-identity.json
+          source_commit="$(jq -r '.source_commit' target/candidate-identity.json)"
+          test "$GITHUB_SHA" = "$source_commit"
+          test "$GITHUB_WORKFLOW_SHA" = "$source_commit"
           echo "version=$(jq -r '.version' target/candidate-identity.json)" >> "$GITHUB_OUTPUT"
-          echo "source_commit=$(jq -r '.source_commit' target/candidate-identity.json)" >> "$GITHUB_OUTPUT"
+          echo "source_commit=$source_commit" >> "$GITHUB_OUTPUT"
       - name: Install exact release signing tool
         run: scripts/install-release-minisign.sh "${RUNNER_TEMP}/prns-release-bin"
       - name: Install exact Rust candidate verifier toolchain
@@ -124,13 +128,26 @@ jobs:
           cp target/candidate-run.json "$candidate_run"
           echo "bundle=$bundle" >> "$GITHUB_OUTPUT"
           echo "sha256=$(sha256sum "$bundle" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
-      - name: Attest the signed bundle and every published CLI archive
+      - name: Build canonical attestation name and digest inputs
+        env:
+          CANDIDATE_VERSION: ${{ steps.candidate.outputs.version }}
+          SIGNED_BUNDLE: ${{ steps.signed.outputs.bundle }}
+        run: |
+          subjects=(--subject "$(basename "$SIGNED_BUNDLE")" "$SIGNED_BUNDLE")
+          while IFS= read -r archive; do
+            subjects+=(--subject "cli/$(basename "$archive")" "$archive")
+          done < <(find target/candidate/cli -maxdepth 1 -type f -name 'hopspot-flash-*' | sort)
+          while IFS= read -r relative; do
+            subjects+=(--subject "$relative" "target/candidate/$relative")
+          done < <(jq -r '[.targets[].parts[].path] | unique[]' target/candidate/flash-manifest.json)
+          python3 scripts/write-flasher-attestation-checksums.py \
+            "${subjects[@]}" \
+            --output target/release/attestation-subjects.sha256
+      - name: Attest the signed bundle, CLI archives, and sparse firmware payloads
         id: attest
         uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
         with:
-          subject-path: |
-            ${{ steps.signed.outputs.bundle }}
-            target/candidate/cli/hopspot-flash-*
+          subject-checksums: target/release/attestation-subjects.sha256
       - name: Record exact attestation identity and subjects
         env:
           ATTESTATION_BUNDLE_PATH: ${{ steps.attest.outputs.bundle-path }}
@@ -142,15 +159,25 @@ jobs:
           version="$CANDIDATE_VERSION"
           attestation_bundle="target/release/prns-flasher-attestation-v${version}.json"
           cp "$ATTESTATION_BUNDLE_PATH" "$attestation_bundle"
-          required=(--required-subject "$SIGNED_BUNDLE")
-          while IFS= read -r archive; do required+=(--required-subject "$archive"); done \
+          required=(--required-subject "$(basename "$SIGNED_BUNDLE")" "$SIGNED_BUNDLE")
+          while IFS= read -r archive; do
+            required+=(--required-subject "cli/$(basename "$archive")" "$archive")
+          done \
             < <(find target/candidate/cli -maxdepth 1 -type f -name 'hopspot-flash-*' | sort)
-          test "$((${#required[@]} / 2))" -eq 6
+          mapfile -t firmware_paths < <(
+            jq -r '[.targets[].parts[].path] | unique[]' target/candidate/flash-manifest.json
+          )
+          for relative in "${firmware_paths[@]}"; do
+            test -f "target/candidate/$relative"
+            required+=(--required-subject "$relative" "target/candidate/$relative")
+          done
+          test "$((${#required[@]} / 3))" -eq "$((6 + ${#firmware_paths[@]}))"
           python3 scripts/record-flasher-attestation.py \
             --bundle "$attestation_bundle" \
             "${required[@]}" \
             --repository "$GITHUB_REPOSITORY" \
             --workflow-ref "$GITHUB_WORKFLOW_REF" \
+            --workflow-sha "$GITHUB_WORKFLOW_SHA" \
             --workflow-run-id "$GITHUB_RUN_ID" \
             --attestation-id "$ATTESTATION_ID" \
             --attestation-url "$ATTESTATION_URL" \
@@ -173,32 +200,83 @@ jobs:
         run: |
           version="$CANDIDATE_VERSION"
           tag="v${version}"
+          title="Prns ${version} release candidate"
+          notes="Immutable signed candidate under public review. It is not stable until signed physical acceptance and the signed release record pass protected promotion."
+          assets=(
+            "$SIGNED_BUNDLE"
+            "target/release/prns-flasher-candidate-run-v${version}.json"
+            "target/release/prns-flasher-attestation-v${version}.json"
+            "target/release/prns-flasher-attestation-v${version}.metadata.json"
+            target/candidate/cli/hopspot-flash-*
+            target/candidate/SHA256SUMS.txt
+            target/candidate/SHA256SUMS.txt.minisig
+            target/candidate/flash-manifest.json
+            target/candidate/flash-manifest.json.minisig
+            target/candidate/channels/*.json
+            target/candidate/channels/*.json.minisig
+            target/candidate/minisign.pub
+            target/candidate/cli/install.sh
+            target/candidate/cli/install.ps1
+            target/candidate/cli/README.md
+          )
+          declare -A expected_names=()
+          for asset in "${assets[@]}"; do
+            test -f "$asset"
+            name="$(basename "$asset")"
+            if [[ -n "${expected_names[$name]:-}" ]]; then
+              echo "duplicate prerelease asset name: $name" >&2
+              exit 1
+            fi
+            expected_names[$name]="$asset"
+          done
+
           if gh release view "$tag" >/dev/null 2>&1; then
-            echo "release $tag already exists; candidate releases are immutable" >&2
-            exit 1
-          fi
-          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" >/dev/null 2>&1; then
-            echo "tag $tag already exists; refusing ambiguous prerelease custody" >&2
-            exit 1
+            gh release view "$tag" \
+              --json isDraft,isPrerelease,targetCommitish,title \
+              > "${RUNNER_TEMP}/draft-release.json"
+            test "$(jq -r '.isDraft' "${RUNNER_TEMP}/draft-release.json")" = "true"
+            test "$(jq -r '.isPrerelease' "${RUNNER_TEMP}/draft-release.json")" = "true"
+            test "$(jq -r '.targetCommitish' "${RUNNER_TEMP}/draft-release.json")" = "$SOURCE_COMMIT"
+            test "$(jq -r '.title' "${RUNNER_TEMP}/draft-release.json")" = "$title"
+            gh release delete "$tag" --yes --cleanup-tag
+          else
+            if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" >/dev/null 2>&1; then
+              echo "tag $tag exists without the resumable draft release" >&2
+              exit 1
+            fi
           fi
           gh release create "$tag" \
-            "$SIGNED_BUNDLE" \
-            target/release/prns-flasher-candidate-run-v"${version}".json \
-            target/release/prns-flasher-attestation-v"${version}".json \
-            target/release/prns-flasher-attestation-v"${version}".metadata.json \
-            target/candidate/cli/hopspot-flash-* \
-            target/candidate/SHA256SUMS.txt \
-            target/candidate/SHA256SUMS.txt.minisig \
-            target/candidate/flash-manifest.json \
-            target/candidate/flash-manifest.json.minisig \
-            target/candidate/channels/*.json \
-            target/candidate/channels/*.json.minisig \
-            target/candidate/minisign.pub \
-            target/candidate/cli/install.sh \
-            target/candidate/cli/install.ps1 \
-            target/candidate/cli/README.md \
             --target "$SOURCE_COMMIT" \
-            --title "Prns ${version} release candidate" \
-            --notes "Immutable signed candidate under public review. It is not stable until signed physical acceptance and the signed release record pass protected promotion." \
+            --title "$title" \
+            --notes "$notes" \
+            --draft \
             --prerelease \
             --latest=false
+
+          mkdir -p "${RUNNER_TEMP}/prerelease-assets"
+          for name in "${!expected_names[@]}"; do
+            local_asset="${expected_names[$name]}"
+            if gh release view "$tag" --json assets --jq '.assets[].name' | grep -Fxq "$name"; then
+              remote="${RUNNER_TEMP}/prerelease-assets/$name"
+              gh release download "$tag" --pattern "$name" \
+                --dir "${RUNNER_TEMP}/prerelease-assets"
+              cmp "$local_asset" "$remote"
+            else
+              gh release upload "$tag" "$local_asset"
+            fi
+          done
+          expected_asset_names="$(printf '%s\n' "${!expected_names[@]}" | sort)"
+          actual_asset_names="$(gh release view "$tag" --json assets --jq '.assets[].name' | sort)"
+          test "$actual_asset_names" = "$expected_asset_names"
+          for name in "${!expected_names[@]}"; do
+            remote="${RUNNER_TEMP}/prerelease-assets/$name"
+            if [[ ! -f "$remote" ]]; then
+              gh release download "$tag" --pattern "$name" \
+                --dir "${RUNNER_TEMP}/prerelease-assets"
+            fi
+            cmp "${expected_names[$name]}" "$remote"
+          done
+
+          gh release edit "$tag" --draft=false --prerelease=true --latest=false
+          test "$(gh release view "$tag" --json isDraft --jq '.isDraft')" = "false"
+          test "$(gh release view "$tag" --json isPrerelease --jq '.isPrerelease')" = "true"
