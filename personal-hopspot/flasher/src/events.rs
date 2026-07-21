@@ -11,6 +11,7 @@ pub(crate) enum Phase {
     ValidatingManifest,
     Downloading,
     VerifyingArtifacts,
+    PublishingCache,
     Ready,
     RequestingPort,
     Connecting,
@@ -32,6 +33,7 @@ impl Phase {
             Self::ValidatingManifest => "validating_manifest",
             Self::Downloading => "downloading",
             Self::VerifyingArtifacts => "verifying_artifacts",
+            Self::PublishingCache => "publishing_cache",
             Self::Ready => "ready",
             Self::RequestingPort => "requesting_port",
             Self::Connecting => "connecting",
@@ -158,12 +160,20 @@ impl Reporter {
     }
 
     pub(crate) fn success(self, board: &str, message: &str) {
+        self.emit_success(Some(board), message);
+    }
+
+    pub(crate) fn operation_success(self, message: &str) {
+        self.emit_success(None, message);
+    }
+
+    fn emit_success(self, board: Option<&str>, message: &str) {
         if matches!(self.output_mode, OutputMode::JsonLines) {
             self.emit(Event {
                 schema: 1,
                 event: EventKind::Success,
                 phase: Phase::Complete,
-                board: Some(board),
+                board,
                 current: None,
                 total: None,
                 message: Some(message),
@@ -251,6 +261,22 @@ mod tests {
         assert_eq!(
             encoded,
             r#"{"schema":1,"event":"error","phase":"failed","message":"operation cancelled; no success was reported","error_code":"cancelled"}"#
+        );
+
+        let operation_success = serde_json::to_string(&Event {
+            schema: 1,
+            event: EventKind::Success,
+            phase: Phase::Complete,
+            board: None,
+            current: None,
+            total: None,
+            message: Some("candidate imported"),
+            error_code: None,
+        })
+        .expect("event serializes");
+        assert_eq!(
+            operation_success,
+            r#"{"schema":1,"event":"success","phase":"complete","message":"candidate imported"}"#
         );
     }
 

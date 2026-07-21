@@ -8,6 +8,7 @@ use prns_flash_manifest::{
 };
 use url::Url;
 
+use crate::cache;
 use crate::cli::ChannelArg;
 use crate::error::AppError;
 use crate::events::{Phase, Reporter};
@@ -160,7 +161,7 @@ pub(crate) fn prepare_published_target(
             "release key custody is not configured; release/keys/minisign.pub still contains the fail-closed marker",
         ));
     }
-    let cache = cache_root()?;
+    let cache = cache::root()?;
     let (version, manifest_url, expected_manifest_hash) = match version {
         Some(version) => (
             validate_version(version)?.to_string(),
@@ -210,8 +211,8 @@ pub(crate) fn prepare_published_target(
         )));
     }
     if !offline {
-        atomic_store(&manifest_cache, &manifest_bytes)?;
-        atomic_store(&signature_cache, signature.as_bytes())?;
+        cache::store_immutable(&manifest_cache, &manifest_bytes)?;
+        cache::store_immutable(&signature_cache, signature.as_bytes())?;
     }
     let target = manifest
         .targets
@@ -256,7 +257,7 @@ pub(crate) fn prepare_published_target(
         }
         verify_hash(&bytes, &part.sha256, &part.path)?;
         if !offline {
-            atomic_store(&part_cache, &bytes)?;
+            cache::store_immutable(&part_cache, &bytes)?;
         }
         parts.push(PreparedPart {
             descriptor: part.clone(),
@@ -326,8 +327,8 @@ fn resolve_channel(
         .join(channel_name)
         .join(format!("{cache_id}.json"));
     let signature_cache = descriptor_cache.with_extension("json.minisig");
-    atomic_store(&descriptor_cache, &bytes)?;
-    atomic_store(&signature_cache, signature.as_bytes())?;
+    cache::store_immutable(&descriptor_cache, &bytes)?;
+    cache::store_immutable(&signature_cache, signature.as_bytes())?;
     Ok((
         descriptor.version,
         descriptor.manifest_url,
@@ -409,31 +410,6 @@ fn validate_version(version: &str) -> Result<&str, AppError> {
     }
 }
 
-fn cache_root() -> Result<PathBuf, AppError> {
-    #[cfg(target_os = "windows")]
-    let root = std::env::var_os("LOCALAPPDATA")
-        .map(PathBuf::from)
-        .map(|path| {
-            path.join("Personal Reticulum")
-                .join("hopspot-flash")
-                .join("cache")
-        });
-    #[cfg(target_os = "macos")]
-    let root = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .map(|path| path.join("Library").join("Caches").join("hopspot-flash"));
-    #[cfg(all(unix, not(target_os = "macos")))]
-    let root = std::env::var_os("XDG_CACHE_HOME")
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME")
-                .map(PathBuf::from)
-                .map(|path| path.join(".cache"))
-        })
-        .map(|path| path.join("hopspot-flash"));
-    root.ok_or_else(|| AppError::preflight("this operating system has no user cache directory"))
-}
-
 fn acquire(url: &str, cache_path: &Path, offline: bool, limit: u64) -> Result<Vec<u8>, AppError> {
     if offline {
         return fs::read(cache_path).map_err(|error| {
@@ -493,31 +469,6 @@ fn verify_hash(bytes: &[u8], expected: &str, label: &str) -> Result<(), AppError
     }
 }
 
-fn atomic_store(path: &Path, bytes: &[u8]) -> Result<(), AppError> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| AppError::trust(format!("cache path has no parent: {}", path.display())))?;
-    fs::create_dir_all(parent)
-        .map_err(|error| AppError::trust(format!("could not create cache: {error}")))?;
-    if path.is_file() {
-        let existing = fs::read(path)
-            .map_err(|error| AppError::trust(format!("could not read cache entry: {error}")))?;
-        if existing == bytes {
-            return Ok(());
-        }
-        return Err(AppError::trust(format!(
-            "immutable cache path {} already contains different verified bytes",
-            path.display()
-        )));
-    }
-    let temporary = path.with_extension(format!("part-{}", std::process::id()));
-    fs::write(&temporary, bytes).map_err(|error| {
-        AppError::trust(format!("could not write cache temporary file: {error}"))
-    })?;
-    fs::rename(&temporary, path)
-        .map_err(|error| AppError::trust(format!("could not publish cache entry: {error}")))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -550,11 +501,11 @@ mod tests {
     fn verified_cache_publication_is_atomic_and_immutable() -> Result<(), AppError> {
         let root = temporary_cache();
         let path = root.join("releases/0.2.6/application.bin");
-        atomic_store(&path, b"verified")?;
+        cache::store_immutable(&path, b"verified")?;
         assert_eq!(fs::read(&path).expect("read cache"), b"verified");
-        atomic_store(&path, b"verified")?;
+        cache::store_immutable(&path, b"verified")?;
         assert!(matches!(
-            atomic_store(&path, b"different"),
+            cache::store_immutable(&path, b"different"),
             Err(AppError::Trust(_))
         ));
         fs::remove_dir_all(root).expect("remove cache fixture");

@@ -1,4 +1,5 @@
 mod build;
+mod cache;
 mod cli;
 mod error;
 mod esp;
@@ -20,7 +21,7 @@ use prns_flash_manifest::{
 use serde::Serialize;
 
 use build::{assemble_manifest, build_board, default_artifact_root};
-use cli::{ChannelArg, Cli, CommandMode, WifiMode};
+use cli::{CacheCommand, ChannelArg, Cli, CommandMode, WifiMode};
 use error::AppError;
 use events::{Phase, Reporter};
 use release::{prepare_candidate_target, prepare_published_target, PreparedTarget};
@@ -49,6 +50,20 @@ fn run(cli: Cli, reporter: Reporter) -> Result<(), AppError> {
         Some(CommandMode::List { json }) => list_boards(&catalog, json),
         Some(CommandMode::Doctor { board, port, json }) => {
             doctor(&catalog, board.as_deref(), port.as_deref(), json)
+        }
+        Some(CommandMode::Cache {
+            command: CacheCommand::Import { candidate, .. },
+        }) => {
+            esp::begin_cancellable_operation()?;
+            let imported = cache::import_signed_candidate(&catalog, &candidate, reporter)?;
+            reporter.operation_success(&format!(
+                "Imported signed {} {} candidate ({} artifacts, {} bytes).",
+                imported.channel,
+                imported.version,
+                imported.artifact_count,
+                imported.artifact_bytes
+            ));
+            Ok(())
         }
         Some(CommandMode::Build { board, out_root }) => {
             let board = find_board(&catalog, &board)?;

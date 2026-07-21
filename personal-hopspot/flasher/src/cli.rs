@@ -33,6 +33,11 @@ pub(crate) enum CommandMode {
         #[arg(long)]
         json: bool,
     },
+    /// Manage signature- and hash-verified release cache entries.
+    Cache {
+        #[command(subcommand)]
+        command: CacheCommand,
+    },
     /// Download, verify, and flash published Hopspot firmware.
     Flash {
         /// Stable board slug.
@@ -109,12 +114,28 @@ pub(crate) enum CommandMode {
     },
 }
 
+#[derive(Subcommand)]
+pub(crate) enum CacheCommand {
+    /// Verify an extracted signed candidate directory and import it atomically.
+    Import {
+        /// Extracted signed candidate directory.
+        #[arg(value_name = "SIGNED_CANDIDATE_DIR")]
+        candidate: PathBuf,
+        /// Emit newline-delimited schema-1 events.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
 impl Cli {
     pub(crate) fn json_mode(&self) -> bool {
         match &self.command {
             Some(CommandMode::List { json })
             | Some(CommandMode::Doctor { json, .. })
-            | Some(CommandMode::Flash { json, .. }) => *json,
+            | Some(CommandMode::Flash { json, .. })
+            | Some(CommandMode::Cache {
+                command: CacheCommand::Import { json, .. },
+            }) => *json,
             _ => false,
         }
     }
@@ -170,6 +191,18 @@ mod tests {
         assert!(Cli::try_parse_from(
             ["hopspot-flash", "flash", "heltec-v4", "--yes", "--monitor",]
         )
+        .is_ok());
+    }
+
+    #[test]
+    fn cache_import_accepts_an_extracted_directory_and_json_mode() {
+        assert!(Cli::try_parse_from([
+            "hopspot-flash",
+            "cache",
+            "import",
+            "/tmp/signed-candidate",
+            "--json",
+        ])
         .is_ok());
     }
 }
