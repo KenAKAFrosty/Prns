@@ -211,19 +211,35 @@ pub fn tcp_card_label(target: &str) -> CardLabel {
 /// One interface's card: identity from the host, live numbers from the interface's status handle.
 pub struct Card {
     /// What a face acts on for the selected card (toggle off/on); no separate index-to-id table.
-    pub id: InterfaceId,
-    pub kind: CardKind,
-    pub label: CardLabel,
-    pub selected: bool,
-    pub liveness: Liveness,
-    pub failure_reason: Option<&'static str>,
-    pub tx_bytes: u64,
-    pub rx_bytes: u64,
-    pub links: u32,
+    pub(crate) id: InterfaceId,
+    pub(crate) kind: CardKind,
+    pub(crate) label: CardLabel,
+    pub(crate) liveness: Liveness,
+    pub(crate) failure_reason: Option<&'static str>,
+    pub(crate) tx_bytes: u64,
+    pub(crate) rx_bytes: u64,
+    pub(crate) links: u32,
     /// Routing-table destinations reachable via this interface.
-    pub destinations: u32,
-    pub rate_bytes_per_sec: u32,
-    pub last_activity_secs: Option<u32>,
+    pub(crate) destinations: u32,
+    pub(crate) rate_bytes_per_sec: u32,
+    pub(crate) last_activity_secs: Option<u32>,
+}
+
+impl Card {
+    #[must_use]
+    pub const fn id(&self) -> InterfaceId {
+        self.id
+    }
+
+    #[must_use]
+    pub const fn kind(&self) -> CardKind {
+        self.kind
+    }
+
+    #[must_use]
+    pub const fn liveness(&self) -> Liveness {
+        self.liveness
+    }
 }
 
 pub fn sort_cards_for_display<const N: usize>(cards: &mut HVec<Card, N>) {

@@ -49,7 +49,6 @@ mod tests {
             id: InterfaceId::new([tag, 0, 0, 0, 0, 0, 0, 0]),
             kind: CardKind::LoRa,
             label: card_label("test"),
-            selected: false,
             liveness: Liveness::Live,
             failure_reason: None,
             tx_bytes: 0,

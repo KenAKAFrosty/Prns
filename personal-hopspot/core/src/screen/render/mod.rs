@@ -16,7 +16,7 @@ use crate::battery::BatteryState;
 use super::limits::build_limit_rows;
 use super::model::{Card, InterfaceMenuDetailRow, UiFooter};
 use super::state::{focus_item_count_with_footer, visible_start_for, UiMode, UiState};
-use cards::{draw_card, draw_card_peek, draw_card_with_selection, draw_footer, draw_global_row};
+use cards::{draw_card_peek, draw_card_with_selection, draw_footer, draw_global_row};
 use glyphs::draw_title_bar;
 use layout::*;
 use menus::lora::draw_lora_editor;
@@ -25,38 +25,6 @@ use menus::{
     draw_sleeping,
 };
 
-/// Render the full screen: title bar + a card per interface (up to what fits). Clears first; the caller flushes.
-pub fn draw<D: DrawTarget<Color = BinaryColor>>(
-    display: &mut D,
-    cards: &[Card],
-    battery: BatteryState,
-) {
-    draw_at(display, cards, battery, 0);
-}
-
-pub fn draw_at<D: DrawTarget<Color = BinaryColor>>(
-    display: &mut D,
-    cards: &[Card],
-    battery: BatteryState,
-    animation_ms: u64,
-) {
-    let _ = display.clear(BinaryColor::Off);
-    draw_title_bar(display, battery, animation_ms);
-    draw_global_row(display, GLOBAL_ROW_TOP, false);
-    for (i, card) in cards.iter().enumerate() {
-        let top = FIRST_CARD_WITH_GLOBAL_TOP + i as i32 * CARD_SLOT_STEP;
-        if top >= HEIGHT {
-            break;
-        }
-        if top + CARD_H <= HEIGHT {
-            draw_card(display, top, card);
-        } else {
-            draw_card_peek(display, top, card, card.selected);
-        }
-    }
-}
-
-/// Render using [`UiState`] for selection and pagination: the real-interaction path. Plain [`draw`] remains for static/manual selected-card rendering.
 pub fn draw_with_state<D: DrawTarget<Color = BinaryColor>>(
     display: &mut D,
     cards: &[Card],

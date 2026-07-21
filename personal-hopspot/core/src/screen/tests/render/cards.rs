@@ -8,7 +8,6 @@ fn card_stacks_traffic_and_moves_peers_right() {
         id: InterfaceId::new([0; 8]),
         kind: CardKind::Usb,
         label: card_label("USB"),
-        selected: false,
         liveness: Liveness::Live,
         failure_reason: None,
         tx_bytes: 123,
@@ -19,7 +18,7 @@ fn card_stacks_traffic_and_moves_peers_right() {
         last_activity_secs: Some(3),
     };
 
-    draw_card(&mut display, 0, &card);
+    draw_card_with_selection(&mut display, 0, &card, false);
 
     assert_eq!(display.get_pixel(Point::new(4, 14)), Some(BinaryColor::On));
     assert_eq!(display.get_pixel(Point::new(4, 20)), None);
@@ -45,7 +44,6 @@ fn large_link_and_peer_counts_fit_right_column() {
         id: InterfaceId::new([0; 8]),
         kind: CardKind::Wifi,
         label: card_label("WiFi"),
-        selected: false,
         liveness: Liveness::Live,
         failure_reason: None,
         tx_bytes: 999_999_999,
@@ -56,7 +54,7 @@ fn large_link_and_peer_counts_fit_right_column() {
         last_activity_secs: Some(3599),
     };
 
-    draw_card(&mut display, 0, &card);
+    draw_card_with_selection(&mut display, 0, &card, false);
 
     assert_eq!(compact_numeric_width("999K"), 20);
     assert_eq!(compact_numeric_width("1.2B"), 17);
@@ -73,7 +71,6 @@ fn offline_card_centers_status_and_hides_metrics() {
         id: InterfaceId::new([0; 8]),
         kind: CardKind::EspNow,
         label: card_label("ESP-NOW"),
-        selected: false,
         liveness: Liveness::Failed,
         failure_reason: Some("BlueZ GATT Channels >1; set Channels=1"),
         tx_bytes: 123,
@@ -84,7 +81,7 @@ fn offline_card_centers_status_and_hides_metrics() {
         last_activity_secs: Some(12),
     };
 
-    draw_card(&mut display, 0, &card);
+    draw_card_with_selection(&mut display, 0, &card, false);
 
     assert_eq!(display.get_pixel(Point::new(18, 21)), Some(BinaryColor::On));
     assert_eq!(display.get_pixel(Point::new(3, 11)), None);
@@ -106,7 +103,6 @@ fn selected_card_inverts_name_content() {
         id: InterfaceId::new([0; 8]),
         kind: CardKind::Wifi,
         label: card_label("WiFi"),
-        selected: true,
         liveness: Liveness::Live,
         failure_reason: None,
         tx_bytes: 0,
@@ -117,7 +113,7 @@ fn selected_card_inverts_name_content() {
         last_activity_secs: None,
     };
 
-    draw_card(&mut display, 0, &card);
+    draw_card_with_selection(&mut display, 0, &card, true);
 
     assert_eq!(display.get_pixel(Point::new(0, 0)), Some(BinaryColor::On));
     assert_eq!(display.get_pixel(Point::new(63, 0)), Some(BinaryColor::On));

@@ -137,7 +137,7 @@ pub(super) fn build_interface_menu_details(
     ap_ssid: Option<&str>,
 ) -> screen::InterfaceMenuDetailRows {
     let mut rows = screen::InterfaceMenuDetailRows::new();
-    match selected_card.map(|card| card.kind) {
+    match selected_card.map(|card| card.kind()) {
         Some(screen::CardKind::Wifi) => {
             let station_ssid =
                 if wifi_config.has_station() && WIFI_STATION_JOINED.load(Ordering::Relaxed) {

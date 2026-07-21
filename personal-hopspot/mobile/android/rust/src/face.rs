@@ -63,18 +63,19 @@ impl HopspotFace {
             .state
             .selected_card(cards.len())
             .and_then(|index| cards.get(index))
-            .map(|card| card.kind);
+            .map(|card| card.kind());
         let selected_id = self
             .state
             .selected_card(cards.len())
             .and_then(|index| cards.get(index))
-            .map(|card| card.id);
+            .map(|card| card.id());
         let action = self.state.handle_input(event, cards.len(), selected_kind);
         match action {
             UiAction::ToggleSelectedInterface => {
                 if let Some(id) = selected_id {
                     let turning_on = cards.iter().any(|card| {
-                        card.id == id && card.liveness == personal_hopspot_core::Liveness::Disabled
+                        card.id() == id
+                            && card.liveness() == personal_hopspot_core::Liveness::Disabled
                     });
                     self.show_notice(if turning_on {
                         UiNotice::TurningOn
@@ -175,8 +176,10 @@ impl Default for HopspotFace {
 mod tests {
     use super::*;
     use crate::framebuffer::{ARGB_BYTES, DARK_RGBA};
-    use personal_hopspot_core::{card_label, CardKind, Liveness};
-    use personal_rns::interfaces::InterfaceId;
+    use personal_hopspot_core::{card_label, CardKind};
+    use personal_rns::interfaces::{
+        ConnectionState, InterfaceId, InterfaceSnapshot, Membership, TransferRates,
+    };
 
     impl HopspotFace {
         fn detached() -> Self {
@@ -191,37 +194,41 @@ mod tests {
         }
     }
 
+    fn snapshot(
+        tag: u8,
+        tx_bytes: u64,
+        rx_bytes: u64,
+        links: u32,
+        destinations: u32,
+        rate_bytes_per_sec: u32,
+    ) -> InterfaceSnapshot {
+        InterfaceSnapshot {
+            id: InterfaceId::new([tag, 0, 0, 0, 0, 0, 0, 0]),
+            connection: ConnectionState::Connected,
+            failure_reason: None,
+            rx_bytes,
+            tx_bytes,
+            transfer_rates: Some(TransferRates {
+                rx_bps: rate_bytes_per_sec.saturating_mul(8),
+                tx_bps: 0,
+            }),
+            destinations,
+            links,
+            transported_links: 0,
+            membership: Membership::Independent,
+        }
+    }
+
     fn stub_cards() -> HVec<Card, MAX_CARDS> {
-        let mut cards = HVec::new();
-        let _ = cards.push(Card {
-            id: InterfaceId::new([0; 8]),
-            kind: CardKind::Usb,
-            label: card_label("USB"),
-            selected: false,
-            liveness: Liveness::Live,
-            failure_reason: None,
-            tx_bytes: 1_204_000,
-            rx_bytes: 938_000,
-            links: 2,
-            destinations: 5,
-            rate_bytes_per_sec: 8_100,
-            last_activity_secs: Some(2),
-        });
-        let _ = cards.push(Card {
-            id: InterfaceId::new([0; 8]),
-            kind: CardKind::Wifi,
-            label: card_label("WiFi/LAN"),
-            selected: false,
-            liveness: Liveness::Live,
-            failure_reason: None,
-            tx_bytes: 22_400_000,
-            rx_bytes: 41_900_000,
-            links: 4,
-            destinations: 12,
-            rate_bytes_per_sec: 96_000,
-            last_activity_secs: Some(0),
-        });
-        cards
+        let snapshots = [
+            snapshot(1, 1_204_000, 938_000, 2, 5, 8_100),
+            snapshot(2, 22_400_000, 41_900_000, 4, 12, 96_000),
+        ];
+        snapshots_to_cards(&snapshots, |id| match id.as_bytes()[0] {
+            1 => Some((CardKind::Usb, card_label("USB"))),
+            2 => Some((CardKind::Wifi, card_label("WiFi/LAN"))),
+            _ => None,
+        })
     }
 
     fn fresh_buffer() -> Vec<u8> {

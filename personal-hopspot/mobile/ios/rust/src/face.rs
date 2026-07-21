@@ -61,18 +61,19 @@ impl HopspotFace {
             .state
             .selected_card(cards.len())
             .and_then(|index| cards.get(index))
-            .map(|card| card.kind);
+            .map(|card| card.kind());
         let selected_id = self
             .state
             .selected_card(cards.len())
             .and_then(|index| cards.get(index))
-            .map(|card| card.id);
+            .map(|card| card.id());
         let action = self.state.handle_input(event, cards.len(), selected_kind);
         match action {
             UiAction::ToggleSelectedInterface => {
                 if let Some(id) = selected_id {
                     let turning_on = cards.iter().any(|card| {
-                        card.id == id && card.liveness == personal_hopspot_core::Liveness::Disabled
+                        card.id() == id
+                            && card.liveness() == personal_hopspot_core::Liveness::Disabled
                     });
                     self.show_notice(if turning_on {
                         UiNotice::TurningOn

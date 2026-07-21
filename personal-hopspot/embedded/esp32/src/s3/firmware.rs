@@ -465,7 +465,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                     let selected_kind = ui_state
                         .selected_card(card_count)
                         .and_then(|index| cards.get(index))
-                        .map(|card| card.kind);
+                        .map(|card| card.kind());
                     match ui_state.handle_input_with_footer(
                         event,
                         card_count,
@@ -549,26 +549,26 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                     notice_until_ms =
                                         Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
                                 };
-                                if card.id == usb_status.id() {
+                                if card.id() == usb_status.id() {
                                     show_toggle_notice(usb_status.is_enabled());
                                     usb_status.toggle_enabled();
                                     handled = true;
                                 }
-                                if !handled && card.id == lora_status.id() {
+                                if !handled && card.id() == lora_status.id() {
                                     show_toggle_notice(lora_status.is_enabled());
                                     lora_status.toggle_enabled();
                                     handled = true;
                                 }
                                 if !handled {
                                     if let Some(status) = wifi_status.as_ref() {
-                                        if card.id == status.id() {
+                                        if card.id() == status.id() {
                                             show_toggle_notice(status.is_enabled());
                                             status.toggle_enabled();
                                             handled = true;
                                         }
                                     }
                                 }
-                                if !handled && Some(card.id) == espnow_card_id {
+                                if !handled && Some(card.id()) == espnow_card_id {
                                     if let Some(status) = espnow_card_status {
                                         show_toggle_notice(status.is_enabled());
                                         status.toggle_enabled();
@@ -577,7 +577,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                 }
                                 if !handled {
                                     if let (Some(tcp), Some(tcp_id)) = (tcp_status, tcp_id) {
-                                        if card.id == tcp_id {
+                                        if card.id() == tcp_id {
                                             show_toggle_notice(tcp.is_enabled());
                                             tcp.toggle_enabled();
                                             #[cfg(feature = "bluetooth-auto")]
@@ -588,7 +588,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                     }
                                 }
                                 #[cfg(feature = "bluetooth-auto")]
-                                if !handled && card.id == BLE_FLEET_ID {
+                                if !handled && card.id() == BLE_FLEET_ID {
                                     let status = BluetoothAutoStatus::new(&BLE_SHARED);
                                     show_toggle_notice(status.is_enabled());
                                     status.toggle_enabled();

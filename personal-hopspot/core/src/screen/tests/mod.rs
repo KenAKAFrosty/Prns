@@ -13,7 +13,7 @@ use personal_rns::storage::{DisplayedStorageLimits, StorageCapacity};
 use crate::battery::{BatteryPercent, BatteryState};
 
 use super::limits::{build_limit_rows, LimitValue};
-use super::render::cards::draw_card;
+use super::render::cards::draw_card_with_selection;
 use super::render::glyphs::{
     draw_battery, draw_clock, draw_interface_icon, draw_lightning, draw_link, draw_person,
 };
@@ -95,7 +95,6 @@ fn test_card(label: &'static str) -> Card {
         id: InterfaceId::new([0; 8]),
         kind: CardKind::Usb,
         label: card_label(label),
-        selected: false,
         liveness: Liveness::Live,
         failure_reason: None,
         tx_bytes: 0,

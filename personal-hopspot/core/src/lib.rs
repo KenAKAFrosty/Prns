@@ -8,7 +8,7 @@ pub mod screen;
 pub use battery::{BatteryGauge, BatteryPercent, BatterySource, BatteryState, NoBattery};
 pub use card_store::CardStore;
 pub use screen::{
-    card_label, draw, draw_at, draw_with_state, draw_with_state_at, draw_with_state_footer_at,
+    card_label, draw_with_state, draw_with_state_at, draw_with_state_footer_at,
     draw_with_state_footer_details_at, liveness_from_connection, push_interface_menu_info,
     push_named_peer_row, push_supervisor_peer_rows, sort_cards_for_display, splash, tcp_card_label,
     AccessPointState, Card, CardActivityTracker, CardKind, CardLabel, DisplayPowerControl,
@@ -74,7 +74,6 @@ pub fn snapshots_to_cards<const N: usize>(
             id: snapshot.id,
             kind,
             label,
-            selected: false,
             liveness,
             failure_reason: snapshot.failure_reason,
             tx_bytes: snapshot.tx_bytes,
@@ -204,7 +203,6 @@ mod tests {
             id: supervisor_id,
             kind: CardKind::Ble,
             label: card_label("BLE"),
-            selected: false,
             liveness: Liveness::Live,
             failure_reason: None,
             tx_bytes: 0,
@@ -251,7 +249,6 @@ mod tests {
             id: supervisor_id,
             kind: CardKind::Wifi,
             label: card_label("WiFi/LAN"),
-            selected: false,
             liveness: Liveness::Dormant,
             failure_reason: None,
             tx_bytes: 0,

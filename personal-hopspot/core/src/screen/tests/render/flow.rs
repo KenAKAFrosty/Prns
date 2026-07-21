@@ -235,7 +235,6 @@ fn draw_with_state_renders_selected_interface_menu() {
             id: InterfaceId::new([0; 8]),
             kind: CardKind::Ble,
             label: card_label("BLE"),
-            selected: false,
             liveness: Liveness::Live,
             failure_reason: None,
             tx_bytes: 0,

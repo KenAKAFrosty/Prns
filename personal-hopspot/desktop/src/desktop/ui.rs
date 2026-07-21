@@ -121,14 +121,14 @@ fn selected_card_id(ui_state: &UiState, card_count: usize, cards: &[Card]) -> Op
     ui_state
         .selected_card(card_count)
         .and_then(|index| cards.get(index))
-        .map(|card| card.id)
+        .map(|card| card.id())
 }
 
 fn selected_card_kind(ui_state: &UiState, card_count: usize, cards: &[Card]) -> Option<CardKind> {
     ui_state
         .selected_card(card_count)
         .and_then(|index| cards.get(index))
-        .map(|card| card.kind)
+        .map(|card| card.kind())
 }
 
 struct LoggedStatus {

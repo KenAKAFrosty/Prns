@@ -13,7 +13,7 @@ pub use model::{
     INTERFACE_MENU_DETAIL_ROWS_CAP, INTERFACE_MENU_DETAIL_TEXT_CAP,
 };
 pub use render::{
-    draw, draw_at, draw_with_state, draw_with_state_at, draw_with_state_footer_at,
+    draw_with_state, draw_with_state_at, draw_with_state_footer_at,
     draw_with_state_footer_details_at, splash,
 };
 pub use state::{

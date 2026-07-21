@@ -40,15 +40,7 @@ fn global_row_backing_width() -> u32 {
     let label_right = GLOBAL_TEXT_X + GLOBAL_LABEL.chars().count() as i32 * FONT_6X10_CHAR_W + 2;
     (label_right - GLOBAL_BACKING_X).max(0) as u32
 }
-pub(in crate::screen) fn draw_card<D: DrawTarget<Color = BinaryColor>>(
-    display: &mut D,
-    top: i32,
-    card: &Card,
-) {
-    draw_card_with_selection(display, top, card, card.selected);
-}
-
-pub(super) fn draw_card_with_selection<D: DrawTarget<Color = BinaryColor>>(
+pub(in crate::screen) fn draw_card_with_selection<D: DrawTarget<Color = BinaryColor>>(
     display: &mut D,
     top: i32,
     card: &Card,
