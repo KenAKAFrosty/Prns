@@ -5,7 +5,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use build_support::{
-    generate_board_images, generate_flash_manifest, generate_source_archive, git_output,
+    generate_board_catalog, generate_board_images, generate_source_archive, git_output,
 };
 
 const REPO_VERSION_PATH: &str = "../../VERSION";
@@ -23,10 +23,15 @@ fn main() {
         .ok()
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| short_commit(&commit));
+    let channel = env::var("PRNS_BUILD_CHANNEL").unwrap_or_else(|_| "stable".to_string());
+    assert!(
+        matches!(channel.as_str(), "stable" | "preview"),
+        "PRNS_BUILD_CHANNEL must be stable or preview"
+    );
     let write_public_assets = should_write_public_assets();
 
     generate_board_images();
-    generate_flash_manifest(&version, write_public_assets);
+    generate_board_catalog();
     if write_public_assets {
         generate_source_archive(&version, &commit);
     }
@@ -34,9 +39,11 @@ fn main() {
     println!("cargo:rustc-env=PRNS_BUILD_VERSION={version}");
     println!("cargo:rustc-env=PRNS_GIT_COMMIT={commit}");
     println!("cargo:rustc-env=PRNS_GIT_COMMIT_SHORT={short}");
+    println!("cargo:rustc-env=PRNS_BUILD_CHANNEL={channel}");
     println!("cargo:rerun-if-env-changed=PRNS_BUILD_VERSION");
     println!("cargo:rerun-if-env-changed=PRNS_BUILD_COMMIT");
     println!("cargo:rerun-if-env-changed=PRNS_BUILD_COMMIT_SHORT");
+    println!("cargo:rerun-if-env-changed=PRNS_BUILD_CHANNEL");
     println!("cargo:rerun-if-env-changed={EMBEDDED_SITE_ENV}");
     println!("cargo:rerun-if-env-changed={WRITE_PUBLIC_ASSETS_ENV}");
 
@@ -53,7 +60,7 @@ fn main() {
 }
 
 fn should_write_public_assets() -> bool {
-    env_flag(WRITE_PUBLIC_ASSETS_ENV) || env_flag(EMBEDDED_SITE_ENV)
+    env_flag(WRITE_PUBLIC_ASSETS_ENV)
 }
 
 fn env_flag(name: &str) -> bool {

@@ -2,6 +2,7 @@
 members = [
     "personal-rns",
     "prns-core",
+    "prns-flash-manifest",
     "prns-runtime/core",
     "personal-hopspot/core",
     "docs/command",

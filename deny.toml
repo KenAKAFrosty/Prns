@@ -1,7 +1,7 @@
 # cargo-deny — turns three of our promises into CI-enforced guarantees instead of
 # review-time discipline:
-#   1. the permissive-license claim (MIT/Apache, "no copyleft") — a GPL/AGPL/LGPL
-#      dependency anywhere in the tree fails the build;
+#   1. the permissive-by-default license claim — GPL/AGPL/LGPL fail, and the one required
+#      file-level MPL transport stays scoped to an exact package exception;
 #   2. no known-vulnerable dependencies (RUSTSEC advisory DB);
 #   3. no surprise dependency sources or yanked crates.
 #
@@ -29,12 +29,16 @@ allow = [
     "CC0-1.0",
     "0BSD",
     "bzip2-1.0.6",
+    "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.93
 # Licenses outside the general permissive set stay scoped to the exact reviewed package.
 exceptions = [
     { allow = ["Unlicense"], crate = "ksni@0.3.6" },
     { allow = ["LicenseRef-Nordic-SoftDevice"], crate = "nrf-softdevice-s140@0.1.2" },
+    # espflash 4.5.0's library serial engine requires serialport. Keep its file-level MPL
+    # obligations quarantined to this exact transport crate instead of widening the policy.
+    { allow = ["MPL-2.0"], crate = "serialport@4.9.0" },
 ]
 
 # `unescaper` declares the malformed/deprecated SPDX expression "GPL-3.0/MIT". It is

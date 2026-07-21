@@ -659,6 +659,8 @@
     {
       "graphs": {
         "engine": [
+          "serde",
+          "serde_core",
           "std"
         ]
       },
@@ -1590,6 +1592,21 @@
     },
     {
       "graphs": {
+        "engine": []
+      },
+      "name": "const-oid",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 1,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 1
+      },
+      "version": "0.10.2"
+    },
+    {
+      "graphs": {
         "android": [],
         "daemon-linux": [],
         "desktop-linux": [],
@@ -1967,7 +1984,9 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
-        "engine": [],
+        "engine": [
+          "std"
+        ],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-tbeam": [],
@@ -2618,9 +2637,11 @@
           "default"
         ],
         "engine": [
+          "alloc",
           "block-buffer",
           "core-api",
-          "default"
+          "default",
+          "std"
         ],
         "esp32-c6": [
           "block-buffer",
@@ -2692,9 +2713,11 @@
           "mac"
         ],
         "engine": [
+          "alloc",
           "block-api",
           "default",
-          "mac"
+          "mac",
+          "oid"
         ],
         "esp32-c6": [
           "block-api",
@@ -3749,13 +3772,11 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
-        "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-tbeam": [],
         "ios": [],
-        "nrf52840": [],
-        "wasm": []
+        "nrf52840": []
       },
       "name": "embedded-hal",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -3775,13 +3796,11 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
-        "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-tbeam": [],
         "ios": [],
-        "nrf52840": [],
-        "wasm": []
+        "nrf52840": []
       },
       "name": "embedded-hal-async",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -7103,6 +7122,7 @@
         ],
         "engine": [
           "default",
+          "extra_traits",
           "std"
         ],
         "esp32-c6": [
@@ -8333,6 +8353,7 @@
           "std"
         ],
         "engine": [
+          "default",
           "std"
         ],
         "esp32-c6": [
@@ -11879,6 +11900,12 @@
           "result",
           "std"
         ],
+        "engine": [
+          "alloc",
+          "default",
+          "result",
+          "std"
+        ],
         "esp32-c6": [
           "alloc",
           "result",
@@ -12084,7 +12111,10 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
-        "engine": [],
+        "engine": [
+          "default",
+          "std"
+        ],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-tbeam": [],
@@ -12110,7 +12140,11 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
-        "engine": [],
+        "engine": [
+          "alloc",
+          "default",
+          "oid"
+        ],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-tbeam": [],
@@ -12582,7 +12616,10 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
-        "engine": [],
+        "engine": [
+          "alloc",
+          "std"
+        ],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-tbeam": [],
@@ -12907,6 +12944,7 @@
           "default",
           "derive",
           "extra-traits",
+          "fold",
           "full",
           "parsing",
           "printing",

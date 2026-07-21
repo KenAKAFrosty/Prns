@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "candidate": {
+    "version": "REPLACE_WITH_VERSION",
+    "manifest_sha256": "REPLACE_WITH_SHA256",
+    "manifest_signature_sha256": "REPLACE_WITH_SHA256"
+  },
+  "runs": [],
+  "installation_smoke": []
+}

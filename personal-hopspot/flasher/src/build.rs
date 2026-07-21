@@ -2,47 +2,241 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::boards::{
-    BoardBackend, BoardTarget, EspImageSpec, ESP32S3_TARGET, T_ECHO_BASE, T_ECHO_FAMILY,
+use espflash::flasher::{FlashData, FlashFrequency, FlashMode, FlashSettings, FlashSize};
+use espflash::image_format::{idf::IdfBootloaderFormat, ImageFormat};
+use espflash::target::{Chip, XtalFrequency};
+use prns_flash_manifest::{
+    sha256_hex, BoardBuild, BoardCatalog, BoardCatalogEntry, FlashManifest, FlashPart,
+    FlashPartKind, ReleaseChannel, ReleaseInfo, SigningInfo, TargetManifest, FLASH_MANIFEST_SCHEMA,
 };
+
+use crate::cli::ChannelArg;
+use crate::error::AppError;
+use crate::events::Reporter;
+use crate::release::{PreparedPart, PreparedTarget};
 use crate::toolchain::{capture_stdout, configure_esp_toolchain, run_status, rust_host_triple};
-use crate::wifi::{hopspot_config_image_bytes, HOPSPOT_CONFIG_OFFSET};
-use crate::{ui, AppResult};
+
+const PARTITION_TABLE_OFFSET: u32 = 0x8000;
+const APPLICATION_OFFSET: u32 = 0x10000;
 
 pub(crate) struct BuildOutput {
-    pub(crate) artifact: PathBuf,
-    metadata: PathBuf,
-    web_manifest: Option<PathBuf>,
-    firmware_package: &'static str,
-    sha256: String,
-    size: u64,
-}
-
-pub(crate) struct EspFirmware {
-    pub(crate) elf: PathBuf,
-    pub(crate) partition_table: PathBuf,
+    pub(crate) prepared: PreparedTarget,
+    pub(crate) output_dir: PathBuf,
+    pub(crate) target_record: PathBuf,
 }
 
 pub(crate) fn build_board(
-    board: &BoardTarget,
+    board: &BoardCatalogEntry,
     repo: &Path,
     out_root: &Path,
-) -> AppResult<BuildOutput> {
-    ensure_supported(board)?;
-    match board.backend {
-        BoardBackend::TEchoUf2 => build_t_echo(repo, out_root),
-        BoardBackend::EspFlash(spec) => build_esp_board(board, spec, repo, out_root),
+    reporter: Reporter,
+) -> Result<BuildOutput, AppError> {
+    let version = release_version(repo)?;
+    match &board.build {
+        BoardBuild::Esp(build) => build_esp(board, build, repo, out_root, &version, reporter),
+        BoardBuild::Uf2(build) => build_uf2(board, build, repo, out_root, &version, reporter),
     }
 }
 
-pub(crate) fn ensure_supported(board: &BoardTarget) -> AppResult<()> {
-    let _ = board;
-    Ok(())
+pub(crate) fn assemble_manifest(
+    catalog: &BoardCatalog,
+    repo: &Path,
+    out_root: &Path,
+    channel: ChannelArg,
+    commit: String,
+    key_id: String,
+) -> Result<PathBuf, AppError> {
+    let version = release_version(repo)?;
+    let mut targets = Vec::with_capacity(catalog.boards.len());
+    for board in &catalog.boards {
+        let record = board_output(out_root, &board.slug, &version).join("target.json");
+        let bytes = fs::read(&record).map_err(|error| {
+            AppError::developer(format!(
+                "missing built target record {}: {error}",
+                record.display()
+            ))
+        })?;
+        let target = serde_json::from_slice::<TargetManifest>(&bytes).map_err(|error| {
+            AppError::developer(format!(
+                "invalid target record {}: {error}",
+                record.display()
+            ))
+        })?;
+        targets.push(target);
+    }
+    let manifest = FlashManifest {
+        schema: FLASH_MANIFEST_SCHEMA,
+        release: ReleaseInfo {
+            version,
+            channel: match channel {
+                ChannelArg::Stable => ReleaseChannel::Stable,
+                ChannelArg::Preview => ReleaseChannel::Preview,
+            },
+            commit,
+        },
+        signing: SigningInfo { key_id },
+        targets,
+    };
+    manifest
+        .validate(catalog)
+        .map_err(|error| AppError::developer(error.to_string()))?;
+    let path = out_root.join("flash-manifest.json");
+    let json = serde_json::to_vec_pretty(&manifest)
+        .map_err(|error| AppError::developer(format!("could not encode manifest: {error}")))?;
+    atomic_write(&path, &with_newline(json))?;
+    let notices = repo.join("THIRD_PARTY_NOTICES.md");
+    fs::copy(&notices, out_root.join("THIRD_PARTY_NOTICES.md"))
+        .map_err(|error| AppError::developer(format!("could not copy release notices: {error}")))?;
+    Ok(path)
 }
 
-pub(crate) fn build_t_echo(repo: &Path, out_root: &Path) -> AppResult<BuildOutput> {
-    ui::print_section("Building LilyGO T-Echo");
-    let crate_dir = t_echo_crate_dir(repo);
+fn build_esp(
+    board: &BoardCatalogEntry,
+    build: &prns_flash_manifest::EspBuild,
+    repo: &Path,
+    out_root: &Path,
+    version: &str,
+    reporter: Reporter,
+) -> Result<BuildOutput, AppError> {
+    prepare_embedded_site_bundle(build, repo, reporter)?;
+    reporter.phase(
+        "building",
+        Some(&board.slug),
+        &format!("Building {} developer firmware…", board.display_name),
+    );
+    let crate_dir = repo.join("personal-hopspot").join("embedded").join("esp32");
+    let elf = crate_dir
+        .join("target")
+        .join(&build.rust_target)
+        .join("release")
+        .join(&build.binary);
+    let partition_table = crate_dir.join(&build.partition_table);
+    let mut cargo = Command::new("cargo");
+    cargo
+        .env_remove("RUSTUP_TOOLCHAIN")
+        .arg("build")
+        .arg("--release")
+        .arg("--locked")
+        .arg("--package")
+        .arg(&build.package)
+        .arg("--bin")
+        .arg(&build.binary)
+        .arg("--target")
+        .arg(&build.rust_target)
+        .arg("-Zbuild-std=core,alloc")
+        .current_dir(&crate_dir);
+    if build.rust_target.starts_with("xtensa-") {
+        configure_esp_toolchain(&mut cargo)?;
+    }
+    run_status(&mut cargo, "embedded ESP cargo build")?;
+
+    let elf_bytes = fs::read(&elf).map_err(|error| {
+        AppError::developer(format!("could not read {}: {error}", elf.display()))
+    })?;
+    let chip = build
+        .chip
+        .parse::<Chip>()
+        .map_err(|error| AppError::developer(format!("invalid chip {:?}: {error}", build.chip)))?;
+    let flash_size = match board.flash_size {
+        Some(4_194_304) => FlashSize::_4Mb,
+        Some(8_388_608) => FlashSize::_8Mb,
+        other => {
+            return Err(AppError::developer(format!(
+                "unsupported catalog flash size {other:?}"
+            )));
+        }
+    };
+    let flash_data = FlashData::new(
+        FlashSettings::new(
+            Some(FlashMode::Dio),
+            Some(flash_size),
+            Some(FlashFrequency::_40Mhz),
+        ),
+        0,
+        None,
+        chip,
+        XtalFrequency::_40Mhz,
+    );
+    let image = IdfBootloaderFormat::new(
+        &elf_bytes,
+        &flash_data,
+        Some(&partition_table),
+        None,
+        Some(PARTITION_TABLE_OFFSET),
+        Some("factory"),
+    )
+    .map_err(|error| {
+        AppError::developer(format!("could not construct sparse ESP image: {error}"))
+    })?;
+    let output_dir = board_output(out_root, &board.slug, version);
+    fs::create_dir_all(&output_dir).map_err(|error| {
+        AppError::developer(format!(
+            "could not create {}: {error}",
+            output_dir.display()
+        ))
+    })?;
+    let mut parts = Vec::new();
+    for segment in ImageFormat::from(image).flash_segments() {
+        let (kind, filename) = match segment.addr {
+            PARTITION_TABLE_OFFSET => (FlashPartKind::PartitionTable, "partition-table.bin"),
+            APPLICATION_OFFSET => (FlashPartKind::Application, "application.bin"),
+            _ if segment.addr < PARTITION_TABLE_OFFSET => {
+                (FlashPartKind::Bootloader, "bootloader.bin")
+            }
+            address => {
+                return Err(AppError::developer(format!(
+                    "unexpected sparse ESP segment at 0x{address:x}"
+                )));
+            }
+        };
+        let bytes = segment.data.into_owned();
+        let path = output_dir.join(filename);
+        atomic_write(&path, &bytes)?;
+        let descriptor = FlashPart {
+            kind,
+            path: release_part_path(&board.slug, version, filename),
+            offset: Some(segment.addr),
+            size: bytes.len() as u64,
+            sha256: sha256_hex(&bytes),
+        };
+        parts.push(PreparedPart { descriptor, bytes });
+    }
+    parts.sort_by_key(|part| part.descriptor.offset);
+    let target = target_record(
+        board,
+        parts.iter().map(|part| part.descriptor.clone()).collect(),
+    );
+    write_target_record(&output_dir, &target)?;
+    report_sparse_size(board, &parts, reporter)?;
+    let target_record = output_dir.join("target.json");
+    Ok(BuildOutput {
+        prepared: PreparedTarget {
+            version: version.to_string(),
+            target,
+            parts,
+        },
+        output_dir,
+        target_record,
+    })
+}
+
+fn build_uf2(
+    board: &BoardCatalogEntry,
+    build: &prns_flash_manifest::Uf2Build,
+    repo: &Path,
+    out_root: &Path,
+    version: &str,
+    reporter: Reporter,
+) -> Result<BuildOutput, AppError> {
+    reporter.phase(
+        "building",
+        Some(&board.slug),
+        &format!("Building {} developer firmware…", board.display_name),
+    );
+    let crate_dir = repo
+        .join("personal-hopspot")
+        .join("embedded")
+        .join("nrf52840");
     let mut cargo = Command::new("cargo");
     cargo
         .env_remove("RUSTUP_TOOLCHAIN")
@@ -50,7 +244,7 @@ pub(crate) fn build_t_echo(repo: &Path, out_root: &Path) -> AppResult<BuildOutpu
         .arg("--release")
         .arg("--locked")
         .current_dir(&crate_dir);
-    run_status(&mut cargo, "cargo build --release --locked")?;
+    run_status(&mut cargo, "T-Echo cargo build")?;
 
     let host_triple = rust_host_triple()?;
     let sysroot = capture_stdout(Command::new("rustc").arg("--print").arg("sysroot"), "rustc")?;
@@ -60,186 +254,110 @@ pub(crate) fn build_t_echo(repo: &Path, out_root: &Path) -> AppResult<BuildOutpu
         .join(host_triple.trim())
         .join("bin")
         .join("llvm-objcopy");
-
+    let elf = crate_dir
+        .join("target")
+        .join(&build.rust_target)
+        .join("release")
+        .join(&build.package);
     let work_dir = repo
         .join("target")
         .join("flash-artifacts")
         .join("work")
-        .join("t-echo");
-    let board_out = out_root
-        .join("firmware")
-        .join("hopspot")
-        .join("t-echo")
-        .join("latest");
-    fs::create_dir_all(&work_dir)
-        .map_err(|err| format!("failed to create {}: {err}", work_dir.display()))?;
-    fs::create_dir_all(&board_out)
-        .map_err(|err| format!("failed to create {}: {err}", board_out.display()))?;
-    copy_notice_sidecar(repo, &board_out)?;
-
-    let elf = crate_dir
-        .join("target")
-        .join("thumbv7em-none-eabihf")
-        .join("release")
-        .join("t-echo");
-    let bin = work_dir.join("t-echo.bin");
-    let uf2 = board_out.join("t-echo.uf2");
-    let metadata = board_out.join("t-echo.uf2.json");
-
+        .join(&board.slug);
+    fs::create_dir_all(&work_dir).map_err(|error| {
+        AppError::developer(format!("could not create work directory: {error}"))
+    })?;
+    let binary = work_dir.join("firmware.bin");
     run_status(
         Command::new(&objcopy)
             .arg("-O")
             .arg("binary")
             .arg(&elf)
-            .arg(&bin),
+            .arg(&binary),
         "llvm-objcopy",
     )?;
+    let output_dir = board_output(out_root, &board.slug, version);
+    fs::create_dir_all(&output_dir).map_err(|error| {
+        AppError::developer(format!(
+            "could not create {}: {error}",
+            output_dir.display()
+        ))
+    })?;
+    let uf2 = output_dir.join("t-echo.uf2");
     run_status(
         Command::new("python3")
             .arg(repo.join("scripts").join("bin2uf2.py"))
-            .arg(&bin)
+            .arg(&binary)
             .arg(&uf2)
-            .arg(T_ECHO_BASE)
-            .arg(T_ECHO_FAMILY),
+            .arg(&build.base_address)
+            .arg(&build.family_id),
         "bin2uf2.py",
     )?;
-
-    let sha256 = sha256_file(&uf2)?;
-    let size = fs::metadata(&uf2)
-        .map_err(|err| format!("failed to inspect {}: {err}", uf2.display()))?
-        .len();
-    write_metadata(&metadata, &sha256, size, "t-echo")?;
-
-    Ok(BuildOutput {
-        artifact: uf2,
-        metadata,
-        web_manifest: None,
-        firmware_package: "t-echo",
-        sha256,
-        size,
-    })
-}
-
-fn build_esp_board(
-    board: &BoardTarget,
-    spec: &EspImageSpec,
-    repo: &Path,
-    out_root: &Path,
-) -> AppResult<BuildOutput> {
-    let firmware = build_esp_firmware(board, spec, repo)?;
-
-    let board_out = out_root
-        .join("firmware")
-        .join("hopspot")
-        .join(board.slug)
-        .join("latest");
-    fs::create_dir_all(&board_out)
-        .map_err(|err| format!("failed to create {}: {err}", board_out.display()))?;
-    copy_notice_sidecar(repo, &board_out)?;
-
-    let artifact = board_out.join(spec.artifact);
-    let metadata = board_out.join(format!("{}.json", spec.artifact));
-    let web_manifest = board_out.join("manifest.json");
-    if spec.wifi_configurable {
-        fs::write(
-            board_out.join("hopspot-config-empty.bin"),
-            hopspot_config_image_bytes(None),
-        )
-        .map_err(|err| {
-            format!(
-                "failed to write {}: {err}",
-                board_out.join("hopspot-config-empty.bin").display()
-            )
-        })?;
-    }
-
-    run_status(
-        Command::new("espflash")
-            .arg("save-image")
-            .arg("--chip")
-            .arg(spec.chip)
-            .arg("--flash-size")
-            .arg(spec.flash_size)
-            .arg("--partition-table")
-            .arg(&firmware.partition_table)
-            .arg("--target-app-partition")
-            .arg("factory")
-            .arg("--merge")
-            .arg("--skip-padding")
-            .arg(&firmware.elf)
-            .arg(&artifact),
-        "espflash save-image",
-    )?;
-
-    let sha256 = sha256_file(&artifact)?;
-    let size = fs::metadata(&artifact)
-        .map_err(|err| format!("failed to inspect {}: {err}", artifact.display()))?
-        .len();
-    write_esp_metadata(&metadata, board.slug, spec, &sha256, size)?;
-    write_esp_web_manifest(&web_manifest, spec)?;
-
-    Ok(BuildOutput {
-        artifact,
-        metadata,
-        web_manifest: Some(web_manifest),
-        firmware_package: spec.package,
-        sha256,
-        size,
-    })
-}
-
-pub(crate) fn build_esp_firmware(
-    board: &BoardTarget,
-    spec: &EspImageSpec,
-    repo: &Path,
-) -> AppResult<EspFirmware> {
-    prepare_embedded_site_bundle(spec, repo)?;
-
-    let section = format!("Building {}", board.name);
-    ui::print_section(&section);
-    let crate_dir = repo.join("personal-hopspot").join("embedded").join("esp32");
-    let elf = crate_dir
-        .join("target")
-        .join(spec.target)
-        .join("release")
-        .join(spec.binary);
-    let partition_table = crate_dir.join(spec.partition_table);
-
-    let mut cargo = Command::new("cargo");
-    cargo
-        .env_remove("RUSTUP_TOOLCHAIN")
-        .arg("build")
-        .arg("--release")
-        .arg("--locked")
-        .arg("--package")
-        .arg(spec.package)
-        .arg("--bin")
-        .arg(spec.binary)
-        .arg("--target")
-        .arg(spec.target)
-        .arg("-Zbuild-std=core,alloc");
-    cargo.current_dir(&crate_dir);
-    if spec.target == ESP32S3_TARGET {
-        let linker = configure_esp_toolchain(&mut cargo)?;
-        ui::print_key_value("xtensa gcc", &linker.display().to_string());
-    }
-    let build_label = format!(
-        "cargo build --release --locked --package {} --bin {} --target {} -Zbuild-std=core,alloc",
-        spec.package, spec.binary, spec.target
+    let bytes = fs::read(&uf2)
+        .map_err(|error| AppError::developer(format!("could not read UF2: {error}")))?;
+    let descriptor = FlashPart {
+        kind: FlashPartKind::Uf2,
+        path: release_part_path(&board.slug, version, "t-echo.uf2"),
+        offset: None,
+        size: bytes.len() as u64,
+        sha256: sha256_hex(&bytes),
+    };
+    let target = target_record(board, vec![descriptor.clone()]);
+    write_target_record(&output_dir, &target)?;
+    reporter.phase(
+        "artifact_ready",
+        Some(&board.slug),
+        &format!("UF2 ready: {} bytes", bytes.len()),
     );
-    run_status(&mut cargo, &build_label)?;
-
-    Ok(EspFirmware {
-        elf,
-        partition_table,
+    let target_record = output_dir.join("target.json");
+    Ok(BuildOutput {
+        prepared: PreparedTarget {
+            version: version.to_string(),
+            target,
+            parts: vec![PreparedPart { descriptor, bytes }],
+        },
+        output_dir,
+        target_record,
     })
 }
 
-fn prepare_embedded_site_bundle(spec: &EspImageSpec, repo: &Path) -> AppResult<()> {
-    if spec.target != ESP32S3_TARGET {
+fn target_record(board: &BoardCatalogEntry, parts: Vec<FlashPart>) -> TargetManifest {
+    let esp = match &board.build {
+        BoardBuild::Esp(build) => Some(build),
+        BoardBuild::Uf2(_) => None,
+    };
+    TargetManifest {
+        board_slug: board.slug.clone(),
+        display_name: board.display_name.clone(),
+        silicon: board.silicon.clone(),
+        interfaces: board.interfaces.clone(),
+        transport: board.transport,
+        expected_chip: board.expected_chip.clone(),
+        flash_size: board.flash_size,
+        flash_mode: esp.map(|build| build.flash_mode.clone()),
+        flash_frequency: esp.map(|build| build.flash_frequency.clone()),
+        before_reset: esp.map(|build| build.before_reset.clone()),
+        after_reset: esp.map(|build| build.after_reset.clone()),
+        preparation_profile: board.preparation_profile.clone(),
+        parts,
+        provisioning: board.provisioning.clone(),
+    }
+}
+
+fn write_target_record(output_dir: &Path, target: &TargetManifest) -> Result<(), AppError> {
+    let json = serde_json::to_vec_pretty(target)
+        .map_err(|error| AppError::developer(format!("could not encode target record: {error}")))?;
+    atomic_write(&output_dir.join("target.json"), &with_newline(json))
+}
+
+fn prepare_embedded_site_bundle(
+    build: &prns_flash_manifest::EspBuild,
+    repo: &Path,
+    reporter: Reporter,
+) -> Result<(), AppError> {
+    if !build.rust_target.starts_with("xtensa-") {
         return Ok(());
     }
-
     let site_dir = repo.join("docs").join("website");
     let output_dir = site_dir
         .join("target")
@@ -248,11 +366,27 @@ fn prepare_embedded_site_bundle(spec: &EspImageSpec, repo: &Path) -> AppResult<(
         .join("release")
         .join("web")
         .join("public");
-
-    ui::print_section("Building embedded docs bundle");
-    ui::print_key_value("mode", "Hopspot SoftAP");
-    ui::print_key_value("output", &output_dir.display().to_string());
-
+    if std::env::var_os("PRNS_EMBEDDED_SITE_READY").is_some() {
+        if output_dir.join("index.html").is_file() {
+            return Ok(());
+        }
+        return Err(AppError::developer(
+            "PRNS_EMBEDDED_SITE_READY was set but the embedded site output is missing",
+        ));
+    }
+    reporter.phase(
+        "building_embedded_site",
+        None,
+        "Building the hosted-JavaScript-free SoftAP site bundle…",
+    );
+    if output_dir.exists() {
+        fs::remove_dir_all(&output_dir).map_err(|error| {
+            AppError::developer(format!(
+                "could not clear generated Dioxus output {}: {error}",
+                output_dir.display()
+            ))
+        })?;
+    }
     let mut dx = Command::new("dx");
     dx.env("PRNS_EMBEDDED_SITE", "1")
         .env_remove("PRNS_FLASH_ARTIFACT_ROOT")
@@ -262,182 +396,97 @@ fn prepare_embedded_site_bundle(spec: &EspImageSpec, repo: &Path) -> AppResult<(
         .arg("--debug-symbols")
         .arg("false")
         .arg("--release")
+        .arg("--features")
+        .arg("embedded-site")
         .current_dir(&site_dir);
-    run_status(
-        &mut dx,
-        "dx build --platform web --debug-symbols false --release",
-    )?;
-
+    run_status(&mut dx, "embedded site build")?;
     if !output_dir.join("index.html").is_file() {
-        return Err(format!(
-            "embedded docs bundle did not produce {}",
-            output_dir.join("index.html").display()
+        return Err(AppError::developer(
+            "embedded docs bundle is missing index.html",
         ));
     }
-    if !output_dir.join("source.zip").is_file() {
-        return Err(format!(
-            "embedded docs bundle did not include {}",
-            output_dir.join("source.zip").display()
-        ));
-    }
-
     Ok(())
 }
 
-pub(crate) fn print_build_output(output: &BuildOutput) {
-    println!();
-    ui::print_section("Artifact ready");
-    ui::print_key_value("artifact", &output.artifact.display().to_string());
-    ui::print_key_value("metadata", &output.metadata.display().to_string());
-    if let Some(web_manifest) = &output.web_manifest {
-        ui::print_key_value("web manifest", &web_manifest.display().to_string());
+fn report_sparse_size(
+    board: &BoardCatalogEntry,
+    parts: &[PreparedPart],
+    reporter: Reporter,
+) -> Result<(), AppError> {
+    let total = parts
+        .iter()
+        .map(|part| part.bytes.len() as u64)
+        .sum::<u64>();
+    if let Some((baseline, maximum)) = sparse_size_gate(&board.slug) {
+        if total > maximum {
+            return Err(AppError::developer(format!(
+                "sparse artifact is {total} bytes versus the {baseline}-byte merged baseline and misses the 60% reduction gate (maximum {maximum})"
+            )));
+        }
     }
-    ui::print_key_value("firmware", output.firmware_package);
-    ui::print_key_value("sha256", &output.sha256);
-    ui::print_key_value("size", &format!("{} bytes", output.size));
-}
-
-fn write_metadata(path: &Path, sha256: &str, size: u64, firmware_package: &str) -> AppResult<()> {
-    let json = format!(
-        concat!(
-            "{{\n",
-            "  \"board_slug\": \"t-echo\",\n",
-            "  \"firmware_package\": \"{firmware_package}\",\n",
-            "  \"format\": \"uf2\",\n",
-            "  \"transport\": \"uf2-mass-storage\",\n",
-            "  \"artifact\": \"t-echo.uf2\",\n",
-            "  \"artifact_sha256\": \"{sha256}\",\n",
-            "  \"artifact_size\": {size},\n",
-            "  \"flash_base\": \"{base}\",\n",
-            "  \"family\": \"{family}\",\n",
-            "  \"source\": \"personal-hopspot/embedded/nrf52840\"\n",
-            "}}\n"
+    reporter.phase(
+        "artifact_ready",
+        Some(&board.slug),
+        &format!(
+            "Sparse artifact ready: {total} bytes across {} parts",
+            parts.len()
         ),
-        firmware_package = firmware_package,
-        sha256 = sha256,
-        size = size,
-        base = T_ECHO_BASE,
-        family = T_ECHO_FAMILY,
     );
-    fs::write(path, json).map_err(|err| format!("failed to write {}: {err}", path.display()))
+    Ok(())
 }
 
-fn copy_notice_sidecar(repo: &Path, board_out: &Path) -> AppResult<()> {
-    let source = repo.join("THIRD_PARTY_NOTICES.md");
-    let destination = board_out.join("THIRD_PARTY_NOTICES.md");
-    fs::copy(&source, &destination).map_err(|error| {
-        format!(
-            "failed to copy release notices from {} to {}: {error}",
-            source.display(),
-            destination.display()
-        )
+fn sparse_size_gate(board_slug: &str) -> Option<(u64, u64)> {
+    match board_slug {
+        "heltec-v4" => Some((7_643_152, 3_057_260)),
+        "t-beam-supreme" => Some((7_639_296, 3_055_718)),
+        _ => None,
+    }
+}
+
+fn release_version(repo: &Path) -> Result<String, AppError> {
+    fs::read_to_string(repo.join("VERSION"))
+        .map(|value| value.trim().to_string())
+        .map_err(|error| AppError::developer(format!("could not read VERSION: {error}")))
+        .and_then(|version| {
+            if version.is_empty() || version.eq_ignore_ascii_case("next") {
+                Err(AppError::developer("VERSION is not publishable"))
+            } else {
+                Ok(version)
+            }
+        })
+}
+
+fn release_part_path(board: &str, version: &str, filename: &str) -> String {
+    format!("firmware/hopspot/{board}/{version}/{filename}")
+}
+
+fn board_output(out_root: &Path, board: &str, version: &str) -> PathBuf {
+    out_root
+        .join("firmware")
+        .join("hopspot")
+        .join(board)
+        .join(version)
+}
+
+fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), AppError> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| AppError::developer(format!("path has no parent: {}", path.display())))?;
+    fs::create_dir_all(parent).map_err(|error| {
+        AppError::developer(format!("could not create {}: {error}", parent.display()))
     })?;
-    Ok(())
+    let temporary = path.with_extension(format!("part-{}", std::process::id()));
+    fs::write(&temporary, bytes).map_err(|error| {
+        AppError::developer(format!("could not write {}: {error}", temporary.display()))
+    })?;
+    fs::rename(&temporary, path).map_err(|error| {
+        AppError::developer(format!("could not publish {}: {error}", path.display()))
+    })
 }
 
-fn write_esp_metadata(
-    path: &Path,
-    board_slug: &str,
-    spec: &EspImageSpec,
-    sha256: &str,
-    size: u64,
-) -> AppResult<()> {
-    let json = format!(
-        concat!(
-            "{{\n",
-            "  \"board_slug\": \"{board_slug}\",\n",
-            "  \"firmware_package\": \"{firmware_package}\",\n",
-            "  \"format\": \"esp-bin\",\n",
-            "  \"transport\": \"esp-web-serial\",\n",
-            "  \"artifact\": \"{artifact}\",\n",
-            "  \"artifact_sha256\": \"{sha256}\",\n",
-            "  \"artifact_size\": {size},\n",
-            "  \"chip\": \"{chip}\",\n",
-            "  \"flash_size\": \"{flash_size}\",\n",
-            "  \"partition_table\": \"personal-hopspot/embedded/esp32/{partition_table}\",\n",
-            "  \"config_offset\": {config_offset},\n",
-            "  \"config_artifact\": {config_artifact},\n",
-            "  \"source\": \"personal-hopspot/embedded/esp32\"\n",
-            "}}\n"
-        ),
-        board_slug = board_slug,
-        firmware_package = spec.package,
-        artifact = spec.artifact,
-        sha256 = sha256,
-        size = size,
-        chip = spec.chip,
-        flash_size = spec.flash_size,
-        partition_table = spec.partition_table,
-        config_offset = if spec.wifi_configurable {
-            format!("\"0x{HOPSPOT_CONFIG_OFFSET:x}\"")
-        } else {
-            "null".to_string()
-        },
-        config_artifact = if spec.wifi_configurable {
-            "\"hopspot-config-empty.bin\"".to_string()
-        } else {
-            "null".to_string()
-        },
-    );
-    fs::write(path, json).map_err(|err| format!("failed to write {}: {err}", path.display()))
-}
-
-fn write_esp_web_manifest(path: &Path, spec: &EspImageSpec) -> AppResult<()> {
-    let config_part = if spec.wifi_configurable {
-        format!(
-            ",\n        {{ \"path\": \"hopspot-config-empty.bin\", \"offset\": {} }}",
-            HOPSPOT_CONFIG_OFFSET
-        )
-    } else {
-        String::new()
-    };
-    let json = format!(
-        concat!(
-            "{{\n",
-            "  \"name\": \"{name}\",\n",
-            "  \"version\": \"preview\",\n",
-            "  \"new_install_prompt_erase\": true,\n",
-            "  \"new_install_improv_wait_time\": 0,\n",
-            "  \"builds\": [\n",
-            "    {{\n",
-            "      \"chipFamily\": \"{chip_family}\",\n",
-            "      \"improv\": false,\n",
-            "      \"parts\": [\n",
-            "        {{ \"path\": \"{artifact}\", \"offset\": 0 }}{config_part}\n",
-            "      ]\n",
-            "    }}\n",
-            "  ]\n",
-            "}}\n"
-        ),
-        name = spec.web_name,
-        chip_family = spec.chip_family,
-        artifact = spec.artifact,
-        config_part = config_part,
-    );
-    fs::write(path, json).map_err(|err| format!("failed to write {}: {err}", path.display()))
-}
-
-fn sha256_file(path: &Path) -> AppResult<String> {
-    if let Ok(hash) = capture_stdout(
-        Command::new("shasum").arg("-a").arg("256").arg(path),
-        "shasum",
-    ) {
-        return first_word(&hash).ok_or_else(|| "shasum produced no hash".to_string());
-    }
-    if let Ok(hash) = capture_stdout(Command::new("sha256sum").arg(path), "sha256sum") {
-        return first_word(&hash).ok_or_else(|| "sha256sum produced no hash".to_string());
-    }
-    Err("missing shasum or sha256sum".to_string())
-}
-
-fn first_word(value: &str) -> Option<String> {
-    value.split_whitespace().next().map(str::to_string)
-}
-
-fn t_echo_crate_dir(repo: &Path) -> PathBuf {
-    repo.join("personal-hopspot")
-        .join("embedded")
-        .join("nrf52840")
+fn with_newline(mut bytes: Vec<u8>) -> Vec<u8> {
+    bytes.push(b'\n');
+    bytes
 }
 
 pub(crate) fn default_artifact_root(repo: &Path) -> PathBuf {
@@ -447,13 +496,37 @@ pub(crate) fn default_artifact_root(repo: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use prns_flash_manifest::Transport;
 
     #[test]
-    fn t_echo_workspace_manifest_exists() {
-        let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(Path::parent)
-            .unwrap();
-        assert!(t_echo_crate_dir(repo).join("Cargo.toml").is_file());
+    fn release_paths_are_versioned() {
+        assert_eq!(
+            release_part_path("heltec-v4", "0.2.6", "application.bin"),
+            "firmware/hopspot/heltec-v4/0.2.6/application.bin"
+        );
+    }
+
+    #[test]
+    fn all_catalog_boards_have_a_build_recipe() -> Result<(), Box<dyn std::error::Error>> {
+        let catalog = prns_flash_manifest::board_catalog()?;
+        assert_eq!(catalog.boards.len(), 4);
+        assert!(catalog.boards.iter().all(|board| {
+            matches!(
+                (&board.transport, &board.build),
+                (Transport::EspSerial, BoardBuild::Esp(_))
+                    | (Transport::Uf2MassStorage, BoardBuild::Uf2(_))
+            )
+        }));
+        Ok(())
+    }
+
+    #[test]
+    fn s3_size_gates_are_board_specific_and_at_least_sixty_percent() {
+        assert_eq!(sparse_size_gate("heltec-v4"), Some((7_643_152, 3_057_260)));
+        assert_eq!(
+            sparse_size_gate("t-beam-supreme"),
+            Some((7_639_296, 3_055_718))
+        );
+        assert_eq!(sparse_size_gate("xiao-esp32-c6"), None);
     }
 }

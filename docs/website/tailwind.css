@@ -663,13 +663,6 @@ html, body {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 }
-.flash-web-install esp-web-install-button {
-    display: block;
-    width: 100%;
-    --esp-tools-button-color: var(--color-accent);
-    --esp-tools-button-text-color: var(--color-ink);
-    --esp-tools-button-border-radius: 0.58rem;
-}
 .flash-web-install-message {
     display: block;
     border: 1px solid rgb(108 116 128 / 0.36);

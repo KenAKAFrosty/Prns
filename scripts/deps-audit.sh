@@ -25,6 +25,12 @@ graphs=(
     "esp32-s3-heltec|personal-hopspot/embedded/esp32/boards/heltec-v4/Cargo.toml|xtensa-esp32s3-none-elf"
     "esp32-s3-tbeam|personal-hopspot/embedded/esp32/boards/t-beam-supreme/Cargo.toml|xtensa-esp32s3-none-elf"
     "wasm|prns-wasm/Cargo.toml|wasm32-unknown-unknown"
+    "website-rust|docs/website/Cargo.toml|wasm32-unknown-unknown"
+    "flasher-macos-arm64|personal-hopspot/flasher/Cargo.toml|aarch64-apple-darwin"
+    "flasher-macos-x64|personal-hopspot/flasher/Cargo.toml|x86_64-apple-darwin"
+    "flasher-linux-x64|personal-hopspot/flasher/Cargo.toml|x86_64-unknown-linux-gnu"
+    "flasher-linux-arm64|personal-hopspot/flasher/Cargo.toml|aarch64-unknown-linux-gnu"
+    "flasher-windows-x64|personal-hopspot/flasher/Cargo.toml|x86_64-pc-windows-msvc"
 )
 
 for graph in "${graphs[@]}"; do
@@ -42,6 +48,7 @@ done
 
 python3 "$root/scripts/unsafe-audit.py"
 python3 "$root/scripts/npm-production-audit.py"
+npm --prefix "$root/docs/website" ci --ignore-scripts --no-audit --no-fund
 python3 "$root/scripts/generate-third-party-notices.py"
 
 echo "RELEASE_DEPENDENCY_AUDIT_COMPLETE"

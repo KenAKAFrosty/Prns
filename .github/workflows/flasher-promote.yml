@@ -1,0 +1,85 @@
+name: promote signed flasher release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact VERSION without a v prefix
+        required: true
+        type: string
+
+permissions:
+  actions: write
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: flasher-promotion
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    environment: public-release
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: flasher-promotion
+      - name: Download exact signed candidate from the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "v${{ inputs.version }}" --pattern "prns-flasher-candidate-v${{ inputs.version }}-signed.tar.gz" --dir target
+      - name: Extract candidate
+        run: python3 scripts/extract-flasher-candidate.py "target/prns-flasher-candidate-v${{ inputs.version }}-signed.tar.gz" target/signed-candidate
+      - name: Verify signatures, hashes, provenance, and complete hardware evidence
+        run: bash scripts/verify-flasher-candidate.sh target/signed-candidate
+      - name: Confirm stable channel and repository VERSION
+        run: |
+          test "$(cat VERSION)" = "${{ inputs.version }}"
+          test -f "target/signed-candidate/channels/stable.json"
+      - name: Stage published assets on the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "v${{ inputs.version }}" \
+            target/signed-candidate/SHA256SUMS.txt \
+            target/signed-candidate/SHA256SUMS.txt.minisig \
+            target/signed-candidate/flash-manifest.json \
+            target/signed-candidate/flash-manifest.json.minisig \
+            target/signed-candidate/acceptance.json \
+            target/signed-candidate/minisign.pub \
+            target/signed-candidate/cli/install.sh \
+            target/signed-candidate/cli/install.ps1 \
+            target/signed-candidate/cli/README.md \
+            --clobber
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: target/signed-candidate/website
+
+  deploy-stable-site:
+    needs: verify
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy exact signed website bundle
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  publish-release:
+    needs: [verify, deploy-stable-site]
+    runs-on: ubuntu-latest
+    environment: public-release
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish the verified draft atomically
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh variable set PRNS_PUBLIC_SITE_PROMOTED --body true
+          gh release delete-asset "v${{ inputs.version }}" "prns-flasher-candidate-v${{ inputs.version }}-unsigned.tar.gz" --yes
+          gh release edit "v${{ inputs.version }}" --draft=false --latest=true

@@ -1,0 +1,114 @@
+{
+  "schema": 1,
+  "boards": [
+    {
+      "slug": "heltec-v4",
+      "display_name": "Heltec LoRa 32 V4",
+      "silicon": "ESP32-S3 + SX1262",
+      "interfaces": ["Wi-Fi Auto", "TCP Client", "BLE Auto", "LoRa", "ESP-NOW", "USB Auto"],
+      "icon": "espressif",
+      "transport": "esp-serial",
+      "expected_chip": "esp32s3",
+      "flash_size": 8388608,
+      "preparation_profile": "esp-usb-boot",
+      "provisioning": {
+        "format": "HSPCFG1",
+        "version": 1,
+        "offset": 53248,
+        "size": 4096,
+        "ssid_max_bytes": 32,
+        "password_max_bytes": 64
+      },
+      "build": {
+        "kind": "esp",
+        "chip": "esp32s3",
+        "rust_target": "xtensa-esp32s3-none-elf",
+        "partition_table": "partitions-hopspot-8mb.csv",
+        "package": "hopspot-heltec-v4",
+        "binary": "hopspot-heltec-v4",
+        "flash_size_label": "8mb",
+        "flash_mode": "dio",
+        "flash_frequency": "40m",
+        "before_reset": "usb-reset",
+        "after_reset": "watchdog-reset"
+      }
+    },
+    {
+      "slug": "t-beam-supreme",
+      "display_name": "LilyGO T-Beam Supreme",
+      "silicon": "ESP32-S3 + SX1262 + AXP2101",
+      "interfaces": ["Wi-Fi Auto", "TCP Client", "BLE Auto", "LoRa", "ESP-NOW", "USB Auto"],
+      "icon": "espressif",
+      "transport": "esp-serial",
+      "expected_chip": "esp32s3",
+      "flash_size": 8388608,
+      "preparation_profile": "esp-usb-boot",
+      "provisioning": {
+        "format": "HSPCFG1",
+        "version": 1,
+        "offset": 53248,
+        "size": 4096,
+        "ssid_max_bytes": 32,
+        "password_max_bytes": 64
+      },
+      "build": {
+        "kind": "esp",
+        "chip": "esp32s3",
+        "rust_target": "xtensa-esp32s3-none-elf",
+        "partition_table": "partitions-hopspot-8mb.csv",
+        "package": "hopspot-t-beam-supreme",
+        "binary": "hopspot-t-beam-supreme",
+        "flash_size_label": "8mb",
+        "flash_mode": "dio",
+        "flash_frequency": "40m",
+        "before_reset": "usb-reset",
+        "after_reset": "watchdog-reset"
+      }
+    },
+    {
+      "slug": "xiao-esp32-c6",
+      "display_name": "Seeed XIAO ESP32-C6",
+      "silicon": "ESP32-C6",
+      "interfaces": ["ESP-NOW", "BLE Auto", "USB Auto"],
+      "icon": "espressif",
+      "transport": "esp-serial",
+      "expected_chip": "esp32c6",
+      "flash_size": 4194304,
+      "preparation_profile": "esp-usb-boot",
+      "provisioning": null,
+      "build": {
+        "kind": "esp",
+        "chip": "esp32c6",
+        "rust_target": "riscv32imac-unknown-none-elf",
+        "partition_table": "partitions-hopspot-4mb.csv",
+        "package": "hopspot-xiao-esp32-c6",
+        "binary": "hopspot-xiao-esp32-c6",
+        "flash_size_label": "4mb",
+        "flash_mode": "dio",
+        "flash_frequency": "40m",
+        "before_reset": "default-reset",
+        "after_reset": "hard-reset"
+      }
+    },
+    {
+      "slug": "t-echo",
+      "display_name": "LilyGO T-Echo",
+      "silicon": "nRF52840 + SX1262",
+      "interfaces": ["BLE Auto", "LoRa", "USB Auto"],
+      "icon": "nordicsemiconductor",
+      "transport": "uf2-mass-storage",
+      "expected_chip": null,
+      "flash_size": null,
+      "preparation_profile": "techo-uf2",
+      "provisioning": null,
+      "build": {
+        "kind": "uf2",
+        "package": "t-echo",
+        "rust_target": "thumbv7em-none-eabihf",
+        "family_id": "0xADA52840",
+        "base_address": "0x27000",
+        "mount_label": "TECHOBOOT"
+      }
+    }
+  ]
+}
