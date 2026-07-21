@@ -6,14 +6,15 @@ use std::sync::{
 use dioxus::prelude::*;
 
 use crate::components::PlatformChip;
-use crate::platforms::{BoardTarget, PreparationProfile};
+use crate::platforms::{BoardFlashTarget, BoardTarget, PreparationProfile};
 use crate::routes::Route;
 use crate::site_mode::embedded_docs_mode;
 
 use super::bridge;
+use super::contract::BridgePhase;
 use super::model::{
-    guided_steps, preparation_guide, shares_esp32_s3_identity, FlasherState, ReleaseDetails,
-    WifiAction,
+    guided_steps, initial_status, preparation_guide, shares_serial_chip_identity, FlasherState,
+    ReleaseDetails, WebSerialCapability, WifiAction,
 };
 use super::release;
 use super::trust;
@@ -22,27 +23,27 @@ use super::trust;
 pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
     let embedded = embedded_docs_mode();
     let key_ready = trust::key_is_configured();
-    let is_esp = matches!(
-        target.slug,
-        "heltec-v4" | "t-beam-supreme" | "xiao-esp32-c6"
-    );
-    let supports_wifi = matches!(target.slug, "heltec-v4" | "t-beam-supreme");
-    let is_uf2 = target.slug == "t-echo";
+    let flash_target = target
+        .flash_target
+        .expect("the guided flasher only renders cataloged flash targets");
+    let is_esp = flash_target.uses_web_serial();
+    let supports_wifi = flash_target.supports_provisioning();
 
     let mut confirmed = use_signal(|| false);
     let mut wifi_action = use_signal(|| WifiAction::Preserve);
     let mut ssid = use_signal(String::new);
     let mut password = use_signal(String::new);
-    let phase = use_signal(|| "idle".to_string());
-    let mut status = use_signal(|| "Confirm the exact board to begin.".to_string());
+    let phase = use_signal(|| BridgePhase::Idle);
+    let mut status = use_signal(|| initial_status(flash_target).to_string());
     let progress_current = use_signal(|| 0_u64);
     let progress_total = use_signal(|| 0_u64);
     let preparation_active = use_signal(|| false);
     let preparation_generation = use_hook(|| Arc::new(AtomicU64::new(0)));
     let mut prepared = use_signal(|| false);
     let mut release_details = use_signal(|| None::<ReleaseDetails>);
-    let mut web_serial = use_signal(|| None::<bool>);
+    let mut web_serial = use_signal(|| WebSerialCapability::Checking);
     let state = FlasherState {
+        flash_target,
         phase,
         status,
         progress_current,
@@ -64,22 +65,29 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
     use_effect(move || {
         if is_esp && !embedded {
             spawn(async move {
-                if let Some(supported) = bridge::browser_supported().await {
-                    web_serial.set(Some(supported));
+                if bridge::browser_supported().await {
+                    web_serial.set(WebSerialCapability::Supported);
+                } else {
+                    web_serial.set(WebSerialCapability::Unavailable);
+                    status.set(
+                        "Web Serial is unavailable in this browser or context. Open this page in current Chrome or Edge over HTTPS, or use the standalone CLI."
+                            .to_string(),
+                    );
                 }
             });
         }
     });
 
-    let busy = preparation_active() || bridge::is_busy(&phase());
+    let busy = preparation_active() || bridge::is_busy(phase());
     let device_operation_active = busy && !preparation_active();
-    let browser_blocked = is_esp && web_serial() == Some(false);
-    let can_prepare = confirmed() && !busy && !embedded && key_ready && !browser_blocked;
-    let can_flash = prepared() && !busy;
-    let action_label = if is_uf2 {
-        "Download verified UF2"
-    } else {
-        "Connect and flash"
+    let browser_ready = !is_esp || web_serial().permits_esp_flash();
+    let browser_checking = is_esp && web_serial() == WebSerialCapability::Checking;
+    let browser_blocked = is_esp && web_serial() == WebSerialCapability::Unavailable;
+    let can_prepare = confirmed() && !busy && !embedded && key_ready && browser_ready;
+    let can_flash = prepared() && !busy && browser_ready;
+    let action_label = match flash_target {
+        BoardFlashTarget::EspSerial { .. } => "Connect and flash",
+        BoardFlashTarget::Uf2MassStorage { .. } => "Download verified UF2",
     };
 
     rsx! {
@@ -139,16 +147,16 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                     span {
                         "I checked the board label and image: this is "
                         strong { class: "text-paper", "{target.name}" }
-                        if shares_esp32_s3_identity(target) {
+                        if shares_serial_chip_identity(target) {
                             span { class: "mt-1 block text-xs text-mid",
-                                "The chip check can confirm ESP32-S3, but it cannot distinguish Heltec V4 from T-Beam Supreme. The printed board label and photo are the final identity check."
+                                "The chip check confirms only the chip family; it cannot distinguish cataloged boards that share that family. The printed board label and photo are the final identity check."
                             }
                         }
                     }
                 }
 
                 if let Some(profile) = target.preparation_profile {
-                    PreparationInstructions { profile }
+                    PreparationInstructions { profile, flash_target }
                 }
 
                 if supports_wifi {
@@ -237,10 +245,10 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                 div { class: "flash-plan-panel mt-5",
                     div { class: "flash-plan-panel__head",
                         h3 { class: "font-semibold text-paper", "Review and verify" }
-                        span { class: bridge::status_class(&phase()), "{bridge::phase_label(&phase())}" }
+                        span { class: bridge::status_class(phase()), "{bridge::phase_label(phase())}" }
                     }
                     ol { class: "flash-step-list mt-4",
-                        for (index, step) in guided_steps(is_uf2).iter().enumerate() {
+                        for (index, step) in guided_steps(flash_target).iter().enumerate() {
                             li {
                                 span { class: "flash-step-list__index", "{index + 1}" }
                                 span { "{step}" }
@@ -264,6 +272,10 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                     div { class: "flash-web-install-message mt-5",
                         "Release signing custody is not configured yet. The flasher fails closed until the offline Minisign public key is pinned."
                     }
+                } else if browser_checking {
+                    div { class: "flash-web-install-message mt-5",
+                        "Checking this browser for secure Web Serial support before release preparation is enabled."
+                    }
                 } else if browser_blocked {
                     div { class: "flash-web-install-message mt-5",
                         "Direct ESP flashing requires a secure current Chrome or Edge browser with Web Serial. The standalone CLI provides the same verified release path."
@@ -275,6 +287,7 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                     class: "mt-5 rounded-lg border border-line/60 bg-surface/50 p-4",
                     role: "status",
                     "aria-live": "polite",
+                    "aria-atomic": "true",
                     tabindex: "-1",
                     p { class: "text-sm font-semibold text-paper", "{status}" }
                     if progress_total() > 0 {
@@ -286,6 +299,14 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                         p { class: "mt-2 font-mono text-xs text-mid",
                             "{progress_current} / {progress_total} bytes"
                         }
+                    }
+                }
+
+                if device_operation_active {
+                    p {
+                        class: "mt-3 rounded-lg border border-amber-300/40 bg-amber-300/10 p-3 text-sm font-semibold text-amber-100",
+                        role: "alert",
+                        "Internal navigation is blocked while the device operation owns the serial port. Keep this page open until completion or safe cancellation."
                     }
                 }
 
@@ -375,6 +396,7 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                                 if !was_preparing {
                                     status.set("Cancellation requested; an active write will finish its safe operation before stopping.".to_string());
                                 }
+                                bridge::focus_status();
                             }
                         },
                         "Cancel safely"
@@ -392,8 +414,8 @@ fn invalidate_preparation(mut state: FlasherState, message: &str, clear_credenti
     state.release.set(None);
     state.progress_current.set(0);
     state.progress_total.set(0);
-    if was_preparing || !bridge::is_busy(&(state.phase)()) {
-        state.phase.set("idle".to_string());
+    if was_preparing || !bridge::is_busy((state.phase)()) {
+        state.phase.set(BridgePhase::Idle);
     }
     state.status.set(message.to_string());
     if clear_credentials {
@@ -421,8 +443,8 @@ fn BrowserTestFixtureMarker() -> Element {
 }
 
 #[component]
-fn PreparationInstructions(profile: PreparationProfile) -> Element {
-    let guide = preparation_guide(profile);
+fn PreparationInstructions(profile: PreparationProfile, flash_target: BoardFlashTarget) -> Element {
+    let guide = preparation_guide(profile, flash_target);
 
     rsx! {
         section {

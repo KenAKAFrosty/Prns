@@ -6,6 +6,23 @@ import { installFakeBridge } from "../support/fake-bridge.mjs";
 const FIXTURE_MARKER = "PRNS_BROWSER_TEST_FIXTURE_TRUST_ROOT_V1";
 const SECRET_SSID = "Victory Local Network";
 const SECRET_PASSWORD = "never-send-this-password";
+const GUIDED_FAILURE_CASES = [
+  {
+    code: "permission_denied",
+    recovery: /No serial port was selected.*choose its port when you try again/i,
+    forbiddenPhases: ["connecting", "writing", "resetting", "success"],
+  },
+  {
+    code: "wrong_chip",
+    recovery: /Re-check the printed board label before retrying/i,
+    forbiddenPhases: ["writing", "resetting", "success"],
+  },
+  {
+    code: "reset_failure",
+    recovery: /Press RESET and check the next boot/i,
+    forbiddenPhases: ["success"],
+  },
+];
 
 test("the exact staged production bundle performs a hardware-free sparse flash", async ({
   page,
@@ -45,6 +62,7 @@ test("the exact staged production bundle performs a hardware-free sparse flash",
       flashFrequency: target.flash_frequency,
       beforeReset: target.before_reset,
       afterReset: target.after_reset,
+      mountLabel: null,
       provisioning: null,
       parts: target.parts.map((part) => ({
         ...part,
@@ -63,12 +81,14 @@ test("the exact staged production bundle performs a hardware-free sparse flash",
       }
     }
     class FakeLoader {
+      chip = { CHIP_NAME: "ESP32-C6" };
+
       async main(beforeReset) {
         if (beforeReset !== "default_reset") throw new Error("unexpected before-reset mode");
-        return "ESP32-C6";
+        return "ESP32-C6 (revision v0.1)";
       }
-      async detectFlashSize() {
-        return "4MB";
+      async readFlashId() {
+        return 0x1640ef;
       }
       async writeFlash(options) {
         const bytes = options.fileArray[0].data;
@@ -132,6 +152,178 @@ test("the exact staged production bundle performs a hardware-free sparse flash",
   );
 });
 
+test("the exact staged production bundle traps same-document Back during an active write", async ({
+  page,
+}) => {
+  const expectedHash = process.env.PRNS_EXPECTED_FLASH_BUNDLE_SHA256;
+  expect(expectedHash).toMatch(/^[0-9a-f]{64}$/);
+  await selectBoard(page, "xiao-esp32-c6");
+  expect(await stagedProductionBundleHash(page)).toBe(expectedHash);
+
+  await page.evaluate(async (pinnedHash) => {
+    const production = await import(`/assets/flasher/prns-flash.js?history=${pinnedHash}`);
+    production.testing.reset();
+    const manifest = await fetch("/releases/0.2.6/flash-manifest.json", {
+      cache: "no-store",
+      credentials: "omit",
+    }).then((response) => response.json());
+    const target = manifest.targets.find(({ board_slug: slug }) => slug === "xiao-esp32-c6");
+    const request = {
+      schema: 1,
+      boardSlug: target.board_slug,
+      displayName: target.display_name,
+      transport: target.transport,
+      expectedChip: target.expected_chip,
+      flashSize: target.flash_size,
+      flashMode: target.flash_mode,
+      flashFrequency: target.flash_frequency,
+      beforeReset: target.before_reset,
+      afterReset: target.after_reset,
+      mountLabel: null,
+      provisioning: null,
+      parts: target.parts.map((part) => ({
+        ...part,
+        url: `/releases/${manifest.release.version}/${part.path}`,
+      })),
+    };
+    const control = {
+      done: false,
+      error: null,
+      phases: [],
+      resume: null,
+      writeStarted: false,
+      writes: 0,
+    };
+    window.__prnsProductionHistory = control;
+    class FakeTransport {
+      setDeviceLostCallback() {}
+      async disconnect() {}
+    }
+    class PausedLoader {
+      chip = { CHIP_NAME: "ESP32-C6" };
+
+      async main() {}
+      async readFlashId() { return 0x1640ef; }
+      async writeFlash() {
+        control.writes += 1;
+        if (control.writes === 1) {
+          control.writeStarted = true;
+          await new Promise((resolve) => { control.resume = resolve; });
+          control.resume = null;
+        }
+      }
+      async after() {}
+    }
+
+    await production.prepare(request, (event) => control.phases.push(event.phase), {
+      loadEsptool: false,
+    });
+    void production.flash((event) => control.phases.push(event.phase), {
+      environment: window,
+      serial: { requestPort: async () => ({}) },
+      TransportImpl: FakeTransport,
+      LoaderImpl: PausedLoader,
+    }).then(() => {
+      control.done = true;
+    }).catch((error) => {
+      control.error = String(error?.message ?? error);
+      control.done = true;
+    });
+  }, expectedHash);
+
+  await expect
+    .poll(() => page.evaluate(() => window.__prnsProductionHistory.writeStarted))
+    .toBe(true);
+  const activeUrl = page.url();
+  await page.evaluate(() => history.back());
+  await expect.poll(() => page.url()).toBe(activeUrl);
+  expect(await page.evaluate(() => window.__prnsProductionHistory.done)).toBe(false);
+  expect(await page.evaluate(() => window.__prnsProductionHistory.phases)).toContain("writing");
+
+  await page.evaluate(() => window.__prnsProductionHistory.resume());
+  await expect
+    .poll(() => page.evaluate(() => window.__prnsProductionHistory.done))
+    .toBe(true);
+  const result = await page.evaluate(() => window.__prnsProductionHistory);
+  expect(result.error).toBeNull();
+  expect(result.writes).toBe(3);
+  expect(result.phases.at(-1)).toBe("success");
+  await expect(page).toHaveURL(/\/flash\/xiao-esp32-c6$/);
+});
+
+test("the exact staged production bundle rejects a partial artifact before serial access", async ({
+  page,
+}) => {
+  const expectedHash = process.env.PRNS_EXPECTED_FLASH_BUNDLE_SHA256;
+  expect(expectedHash).toMatch(/^[0-9a-f]{64}$/);
+  const credentialEvidence = observeCredentialLeaks(page);
+  await page.addInitScript(() => {
+    window.__prnsProductionPortRequests = 0;
+    Object.defineProperty(navigator, "serial", {
+      configurable: true,
+      value: {
+        async requestPort() {
+          window.__prnsProductionPortRequests += 1;
+          return {};
+        },
+      },
+    });
+  });
+  let tamperedResponses = 0;
+  await page.route("**/firmware/hopspot/heltec-v4/0.2.6/bootloader.bin", async (route) => {
+    const original = await route.fetch();
+    const body = await original.body();
+    expect(body.byteLength).toBeGreaterThan(1);
+    tamperedResponses += 1;
+    await route.fulfill({ response: original, body: body.subarray(0, body.byteLength - 1) });
+  });
+
+  await selectBoard(page, "heltec-v4");
+  expect(await stagedProductionBundleHash(page)).toBe(expectedHash);
+  await page.getByRole("checkbox").check();
+  await page.getByRole("radio", { name: "Configure a network locally" }).check();
+  await page.getByLabel("SSID").fill(SECRET_SSID);
+  await page.getByLabel("Password").fill(SECRET_PASSWORD);
+  await page.getByRole("button", { name: "Prepare and verify release" }).click();
+
+  const status = page.locator("#flash-status");
+  await expect(status).toContainText(/firmware part has the wrong byte length/i);
+  await expect(status).toContainText(/Do not connect the device.*Reload this page/i);
+  await expect(status).toBeFocused();
+  await expect(page.getByRole("button", { name: "Connect and flash" })).toBeDisabled();
+  await expect(page.getByLabel("SSID")).toHaveValue("");
+  await expect(page.getByLabel("Password")).toHaveValue("");
+  expect(tamperedResponses).toBe(1);
+  expect(await page.evaluate(() => window.__prnsProductionPortRequests)).toBe(0);
+  expect(await page.evaluate(() => window.__prnsFlash?.testing.prepared() ?? null)).toBe(null);
+  await assertNoCredentialLeak(page, credentialEvidence);
+});
+
+test("the exact staged production bundle starts a real verified UF2 download", async ({
+  page,
+}) => {
+  const expectedHash = process.env.PRNS_EXPECTED_FLASH_BUNDLE_SHA256;
+  expect(expectedHash).toMatch(/^[0-9a-f]{64}$/);
+  await selectBoard(page, "t-echo");
+  expect(await stagedProductionBundleHash(page)).toBe(expectedHash);
+
+  await page.getByRole("checkbox").check();
+  await page.getByRole("button", { name: "Prepare and verify release" }).click();
+  await expect(page.locator("#flash-status")).toContainText("Release ready:");
+
+  const downloadStarted = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download verified UF2" }).click();
+  const download = await downloadStarted;
+  expect(download.suggestedFilename()).toBe("prns-hopspot-t-echo.uf2");
+  expect(await download.failure()).toBeNull();
+  await expect(page.locator("#flash-status")).toContainText(
+    "Verified UF2 download requested. Check the browser's downloads",
+  );
+  await expect(page.getByText("Download requested", { exact: true })).toBeVisible();
+  await expect(page.getByText("Complete", { exact: true })).toHaveCount(0);
+  await expect(page.getByText(/device-side verification/i)).toHaveCount(0);
+});
+
 test("guided ESP flow verifies the signed candidate, protects credentials, and completes accessibly", async ({
   page,
 }) => {
@@ -141,7 +333,7 @@ test("guided ESP flow verifies the signed candidate, protects credentials, and c
 
   await expect(page.getByText("Prepare the board", { exact: true })).toBeVisible();
   await expect(page.getByText(/hold BOOT, tap RESET/i)).toBeVisible();
-  await expect(page.getByText(/cannot distinguish Heltec V4 from T-Beam Supreme/i)).toBeVisible();
+  await expect(page.getByText(/cannot distinguish cataloged boards that share that family/i)).toBeVisible();
 
   const confirmation = page.getByRole("checkbox");
   await confirmation.focus();
@@ -158,6 +350,7 @@ test("guided ESP flow verifies the signed candidate, protects credentials, and c
   const status = page.locator("#flash-status");
   await expect(status).toHaveAttribute("role", "status");
   await expect(status).toHaveAttribute("aria-live", "polite");
+  await expect(status).toHaveAttribute("aria-atomic", "true");
   const prepare = page.getByRole("button", { name: "Prepare and verify release" });
   await expect(prepare).toBeEnabled();
   await prepare.click();
@@ -180,7 +373,7 @@ test("guided ESP flow verifies the signed candidate, protects credentials, and c
   expect(accessibility.violations).toEqual([]);
 
   await page.getByRole("button", { name: "Connect and flash" }).click();
-  await expect(status).toContainText("Verified operation complete");
+  await expect(status).toContainText("Verified serial flash complete");
   await expect(status).toBeFocused();
 
   const bridgeEvidence = await page.evaluate(() => window.__prnsFlashTest.state);
@@ -233,15 +426,17 @@ test("browser support is feature-detected and T-Echo stays on the signed UF2 rou
   await installFakeBridge(page, { supported: false });
   await selectBoard(page, "xiao-esp32-c6");
 
+  await expect(page.locator("#flash-status")).toContainText(/Web Serial is unavailable/i);
   await expect(page.getByText(/requires a secure current Chrome or Edge browser with Web Serial/i)).toBeVisible();
   await page.getByRole("checkbox").check();
   await expect(page.getByRole("button", { name: "Prepare and verify release" })).toBeDisabled();
-  await expect(page.getByText(/cannot distinguish Heltec V4 from T-Beam Supreme/i)).toHaveCount(0);
+  await expect(page.getByText(/cannot distinguish cataloged boards that share that family/i)).toHaveCount(0);
   expect(await page.evaluate(() => navigator.userAgent.includes("Chrome"))).toBe(true);
 
   await page.goto("/flash/t-echo");
   await appReady(page);
   await fixtureBuildReady(page);
+  await expect(page.locator("#flash-status")).toContainText(/verified UF2 download/i);
   await expect(page.getByText(/TECHOBOOT/).first()).toBeVisible();
   await expect(page.getByText(/double-press RESET/i)).toBeVisible();
   await expect(page.locator(".flash-wifi-config")).toHaveCount(0);
@@ -250,9 +445,26 @@ test("browser support is feature-detected and T-Echo stays on the signed UF2 rou
   await expect(page.locator("#flash-status")).toContainText("Release ready:");
   await page.getByRole("button", { name: "Download verified UF2" }).click();
   await expect(page.locator("#flash-status")).toContainText(
-    "Verified UF2 downloaded. Copy it to TECHOBOOT",
+    "Verified UF2 download requested. Check the browser's downloads",
   );
   await expect(page.getByText(/device-side verification/i)).toHaveCount(0);
+});
+
+test("a Web Serial detection failure keeps ESP preparation and connection fail closed", async ({
+  page,
+}) => {
+  await installFakeBridge(page, { supported: true, supportDetectionFailure: true });
+  await selectBoard(page, "xiao-esp32-c6");
+
+  const status = page.locator("#flash-status");
+  await expect(status).toHaveAttribute("aria-live", "polite");
+  await expect(status).toHaveAttribute("aria-atomic", "true");
+  await expect(status).toContainText(/Web Serial is unavailable.*Chrome or Edge.*CLI/i);
+  await expect(page.getByText(/requires a secure current Chrome or Edge browser with Web Serial/i)).toBeVisible();
+  await page.getByRole("checkbox").check();
+  await expect(page.getByRole("button", { name: "Prepare and verify release" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Connect and flash" })).toBeDisabled();
+  expect(await page.evaluate(() => window.__prnsFlashTest.state.readyCount)).toBe(0);
 });
 
 test("a device failure gives recovery guidance, cleans up, and moves terminal focus", async ({
@@ -277,6 +489,86 @@ test("a device failure gives recovery guidance, cleans up, and moves terminal fo
   await assertNoCredentialLeak(page, evidence);
 });
 
+test("a malformed preparation event clears the hidden verified plan", async ({ page }) => {
+  await installFakeBridge(page, { supported: true, preparationProtocolViolation: true });
+  await selectBoard(page, "xiao-esp32-c6");
+  await page.getByRole("checkbox").check();
+  await page.getByRole("button", { name: "Prepare and verify release" }).click();
+
+  const status = page.locator("#flash-status");
+  await expect(status).toContainText(/requires complete byte progress/i);
+  await expect(status).toContainText(/Reload this page.*prepare and verify.*CLI/i);
+  await expect(status).toBeFocused();
+  await expect(page.getByRole("button", { name: "Connect and flash" })).toBeDisabled();
+  await expect
+    .poll(() => page.evaluate(() => window.__prnsFlashTest.state.clearPreparedCount))
+    .toBeGreaterThanOrEqual(2);
+  const state = await page.evaluate(() => window.__prnsFlashTest.state);
+  expect(state.preparedBoardSlug).toBe(null);
+  expect(state.readyCount).toBe(0);
+  expect(state.resumePreparation).toBe(null);
+});
+
+test("a malformed active-write event cancels JavaScript before another part can write", async ({
+  page,
+}) => {
+  await installFakeBridge(page, { supported: true, deviceProtocolViolation: true });
+  await selectBoard(page, "xiao-esp32-c6");
+  await page.getByRole("checkbox").check();
+  await page.getByRole("button", { name: "Prepare and verify release" }).click();
+  await expect(page.locator("#flash-status")).toContainText("Release ready:");
+  const clearCountBeforeFlash = await page.evaluate(
+    () => window.__prnsFlashTest.state.clearPreparedCount,
+  );
+  await page.getByRole("button", { name: "Connect and flash" }).click();
+
+  const status = page.locator("#flash-status");
+  await expect(status).toContainText(/byte progress is outside its declared total/i);
+  await expect(status).toContainText(/Do not assume success.*BOOT\/RESET.*restart the complete plan/i);
+  await expect(status).toBeFocused();
+  await expect
+    .poll(() => page.evaluate(() => window.__prnsFlashTest.state.cleanupCount))
+    .toBe(1);
+  const state = await page.evaluate(() => window.__prnsFlashTest.state);
+  expect(state.cancelled).toBe(true);
+  expect(state.clearPreparedCount).toBeGreaterThan(clearCountBeforeFlash);
+  expect(state.completedPartCount).toBe(0);
+  expect(state.preparedBoardSlug).toBe(null);
+  expect(state.phaseLog).not.toContain("verifying_flash");
+  expect(state.phaseLog).not.toContain("resetting");
+  expect(state.phaseLog).not.toContain("success");
+});
+
+for (const scenario of GUIDED_FAILURE_CASES) {
+  test(`guided ${scenario.code} failure is focused, recoverable, and redacted`, async ({ page }) => {
+    const evidence = observeCredentialLeaks(page);
+    await installFakeBridge(page, { supported: true, failureCode: scenario.code });
+    await selectBoard(page, "heltec-v4");
+    await page.getByRole("checkbox").check();
+    await page.getByRole("radio", { name: "Configure a network locally" }).check();
+    await page.getByLabel("SSID").fill(SECRET_SSID);
+    await page.getByLabel("Password").fill(SECRET_PASSWORD);
+    await page.getByRole("button", { name: "Prepare and verify release" }).click();
+    await expect(page.locator("#flash-status")).toContainText("Release ready:");
+    await expect(page.getByLabel("SSID")).toHaveValue("");
+    await expect(page.getByLabel("Password")).toHaveValue("");
+    await page.getByRole("button", { name: "Connect and flash" }).click();
+
+    const status = page.locator("#flash-status");
+    await expect(status).toContainText(scenario.recovery);
+    await expect(status).toBeFocused();
+    await expect(page.getByText("Stopped", { exact: true })).toBeVisible();
+    const state = await page.evaluate(() => window.__prnsFlashTest.state);
+    expect(state.phaseLog.at(-1)).toBe("failed");
+    expect(state.cleanupCount).toBe(1);
+    expect(state.provisioningWasCleared).toBe(true);
+    for (const phase of scenario.forbiddenPhases) {
+      expect(state.phaseLog).not.toContain(phase);
+    }
+    await assertNoCredentialLeak(page, evidence);
+  });
+}
+
 test("active writes warn on navigation and cancel only at the injected safe boundary", async ({
   page,
 }) => {
@@ -291,8 +583,13 @@ test("active writes warn on navigation and cancel only at the injected safe boun
   await expect(page.locator("#flash-status")).toContainText("Release ready:");
   await page.getByRole("button", { name: "Connect and flash" }).click();
   await expect(page.locator("#flash-status")).toContainText(/Writing bootloader/i);
+  await expect(page.getByRole("alert")).toContainText(/Internal navigation is blocked/i);
 
   expect(await dispatchBeforeUnload(page)).toBe(true);
+  const activeUrl = page.url();
+  await page.locator('a[href="/flash/xiao-esp32-c6"]').click();
+  expect(page.url()).toBe(activeUrl);
+  await expect(page.locator("#flash-status")).toContainText(/Writing bootloader/i);
   await page.getByRole("button", { name: "Cancel safely" }).click();
   const status = page.locator("#flash-status");
   await expect(status).toContainText(/safe part boundary; no success was reported/i);
@@ -364,6 +661,7 @@ test("cancelling a delayed preparation clears credentials and cannot publish rea
   await held.started;
 
   await page.getByRole("button", { name: "Cancel safely" }).click();
+  await expect(page.locator("#flash-status")).toBeFocused();
   expect(await page.evaluate(() => window.__prnsFlashTest.state.provisioningWasCleared)).toBe(true);
   held.release();
   await preparationSettled(page);
@@ -445,6 +743,37 @@ test("tampering the signed channel fails before the injected bridge is trusted",
   expect(await page.evaluate(() => window.__prnsFlashTest.state.phaseLog)).toEqual([]);
 });
 
+test("oversized channel, manifest, and signature responses fail closed before bridge trust", async ({
+  page,
+}) => {
+  await installFakeBridge(page, { supported: true });
+  const oversizedBody = "x".repeat(600 * 1024);
+  for (const path of [
+    "**/releases/channels/stable.json",
+    "**/releases/channels/stable.json.minisig",
+    "**/releases/0.2.6/flash-manifest.json",
+    "**/releases/0.2.6/flash-manifest.json.minisig",
+  ]) {
+    await page.route(path, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: path.endsWith(".minisig") ? "text/plain" : "application/json",
+        body: oversizedBody,
+      });
+    });
+    await selectBoard(page, "xiao-esp32-c6");
+    await page.getByRole("checkbox").check();
+    await page.getByRole("button", { name: "Prepare and verify release" }).click();
+
+    const status = page.locator("#flash-status");
+    await expect(status).toContainText(/exceeds the browser safety limit/i);
+    await expect(status).toContainText(/Do not connect a device.*Reload this page.*use the CLI/i);
+    await expect(status).toBeFocused();
+    expect(await page.evaluate(() => window.__prnsFlashTest.state.phaseLog)).toEqual([]);
+    await page.unroute(path);
+  }
+});
+
 async function selectBoard(page, slug) {
   await page.goto("/flash");
   await appReady(page);
@@ -505,11 +834,23 @@ async function assertNoCredentialLeak(page, evidence) {
     consoleMessages: evidence.consoleMessages,
     pageErrors: evidence.pageErrors,
     document: await page.locator("html").innerText(),
-    bridge: await page.evaluate(() => window.__prnsFlashTest.state),
+    bridge: await page.evaluate(() => window.__prnsFlashTest?.state ?? null),
   });
   expect(serialized).not.toContain(SECRET_SSID);
   expect(serialized).not.toContain(SECRET_PASSWORD);
   expect(evidence.pageErrors).toEqual([]);
+}
+
+async function stagedProductionBundleHash(page) {
+  return page.evaluate(async () => {
+    const response = await fetch("/assets/flasher/prns-flash.js", {
+      cache: "no-store",
+      credentials: "omit",
+    });
+    if (!response.ok) throw new Error("staged production bundle is unavailable");
+    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", await response.arrayBuffer()));
+    return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  });
 }
 
 async function holdFirstArtifact(page, boardSlug) {

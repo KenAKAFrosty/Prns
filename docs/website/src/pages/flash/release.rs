@@ -1,47 +1,116 @@
 use dioxus::prelude::*;
 use prns_flash_manifest::{
-    board_catalog, provisioning_image, sha256_hex, verify_minisign, ChannelDescriptor,
-    FlashManifest, ProvisioningAction, ReleaseChannel, TargetManifest, WifiCredentials,
+    board_catalog, provisioning_image, sha256_hex, verify_minisign, ProvisioningAction,
+    ReleaseChannel, ReleaseTarget, ValidatedChannelDescriptor, ValidatedFlashManifest,
+    WifiCredentials,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use std::fmt;
+
+use crate::platforms::BoardFlashTarget;
 
 use super::bridge::{self, BridgeProvisioning, BridgeRequest};
+use super::contract::BridgePhase;
 use super::model::{part_kind, FlasherState, PartDetails, ReleaseDetails, WifiAction};
 use super::trust;
 
 const RELEASE_CHANNEL: &str = env!("PRNS_BUILD_CHANNEL");
 
-const FETCH_CHANNEL_SCRIPT: &str = r#"
-const channel = '__PRNS_RELEASE_CHANNEL__';
-const descriptor = await fetch(`/releases/channels/${channel}.json`, { cache: 'no-store', credentials: 'omit', redirect: 'error' });
-const signature = await fetch(`/releases/channels/${channel}.json.minisig`, { cache: 'no-store', credentials: 'omit', redirect: 'error' });
-if (!descriptor.ok || !signature.ok) throw new Error('release channel documents unavailable');
-dioxus.send({ descriptor: await descriptor.text(), signature: await signature.text() });
+const FETCH_SIGNED_DOCUMENTS_SCRIPT: &str = r#"
+const request = await dioxus.recv();
+try {
+  window.__prnsFlashReleaseBoundary = window.__prnsFlashReleaseBoundary || await import('/assets/flasher/prns-flash.js');
+  dioxus.send(await window.__prnsFlashReleaseBoundary.fetchSignedDocuments(request));
+} catch (_) {
+  dioxus.send({ status: 'error', error: 'unavailable' });
+}
 "#;
 
-const FETCH_MANIFEST_SCRIPT: &str = r#"
-const manifestUrl = await dioxus.recv();
-const immutable = new URL(manifestUrl);
-const localQualification = ['localhost', '127.0.0.1', '::1'].includes(location.hostname);
-const resolvedUrl = localQualification ? immutable.pathname : immutable.href;
-const manifest = await fetch(resolvedUrl, { cache: 'no-store', credentials: 'omit', redirect: 'error' });
-const signature = await fetch(`${resolvedUrl}.minisig`, { cache: 'no-store', credentials: 'omit', redirect: 'error' });
-if (!manifest.ok || !signature.ok) throw new Error('immutable release documents unavailable');
-dioxus.send({ manifest: await manifest.text(), signature: await signature.text() });
-"#;
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ChannelDocuments {
-    descriptor: String,
-    signature: String,
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SignedDocumentRequest {
+    document_url: String,
+    document_max_bytes: u64,
+    signature_max_bytes: u64,
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ManifestDocuments {
-    manifest: String,
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+enum SignedDocumentResponse {
+    Ready { document: String, signature: String },
+    Error { error: SignedDocumentFetchError },
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum SignedDocumentFetchError {
+    Unavailable,
+    TooLarge,
+    InvalidUtf8,
+}
+
+struct SignedDocuments {
+    document: String,
     signature: String,
+}
+
+#[derive(Clone, Copy)]
+enum ReleaseRecovery {
+    BrowserRetry,
+    CustodyUnavailable,
+    ReviewSelection,
+}
+
+struct ReleaseAcquisitionError {
+    diagnosis: String,
+    recovery: ReleaseRecovery,
+}
+
+impl ReleaseAcquisitionError {
+    fn browser_retry(diagnosis: impl Into<String>) -> Self {
+        Self {
+            diagnosis: diagnosis.into(),
+            recovery: ReleaseRecovery::BrowserRetry,
+        }
+    }
+
+    fn custody_unavailable(diagnosis: impl Into<String>) -> Self {
+        Self {
+            diagnosis: diagnosis.into(),
+            recovery: ReleaseRecovery::CustodyUnavailable,
+        }
+    }
+
+    fn review_selection(diagnosis: impl Into<String>) -> Self {
+        Self {
+            diagnosis: diagnosis.into(),
+            recovery: ReleaseRecovery::ReviewSelection,
+        }
+    }
+}
+
+impl From<String> for ReleaseAcquisitionError {
+    fn from(diagnosis: String) -> Self {
+        Self::browser_retry(diagnosis)
+    }
+}
+
+impl fmt::Display for ReleaseAcquisitionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.diagnosis.trim())?;
+        formatter.write_str(" ")?;
+        formatter.write_str(match self.recovery {
+            ReleaseRecovery::BrowserRetry => {
+                "Do not connect a device. Reload this page and prepare the signed release again; if it repeats, use the CLI and report the selected board and release channel."
+            }
+            ReleaseRecovery::CustodyUnavailable => {
+                "Do not connect a device. Use the signed CLI release path until website signing custody is restored."
+            }
+            ReleaseRecovery::ReviewSelection => {
+                "Review the selected board and Wi-Fi values, then prepare and verify the release again. No device access has started."
+            }
+        })
+    }
 }
 
 struct AcquiredRelease {
@@ -61,14 +130,21 @@ pub(super) async fn prepare_release(
         return;
     }
     bridge::clear_prepared();
-    state.phase.set("validating_manifest".to_string());
+    state.phase.set(BridgePhase::ValidatingManifest);
     state
         .status
         .set("Downloading and verifying the signed release manifest…".to_string());
     state.progress_current.set(0);
     state.progress_total.set(0);
 
-    let acquired = acquire_release(board_slug, selected_action, ssid, password).await;
+    let acquired = acquire_release(
+        board_slug,
+        selected_action,
+        ssid,
+        password,
+        state.flash_target,
+    )
+    .await;
     if !state.preparation_is_current(generation) {
         return;
     }
@@ -78,7 +154,7 @@ pub(super) async fn prepare_release(
             Err(bridge::PreparationError::Stale) => return,
             Err(bridge::PreparationError::Failed(message)) => Err(message),
         },
-        Err(message) => Err(message),
+        Err(error) => Err(error.to_string()),
     };
     if !state.preparation_is_current(generation) {
         return;
@@ -94,7 +170,7 @@ pub(super) async fn prepare_release(
             bridge::focus_status();
         }
         Err(message) => {
-            state.phase.set("failed".to_string());
+            state.phase.set(BridgePhase::Failed);
             state.status.set(message);
             state.prepared.set(false);
             state.ssid.set(String::new());
@@ -109,88 +185,149 @@ async fn acquire_release(
     selected_action: WifiAction,
     ssid: String,
     password: String,
-) -> Result<AcquiredRelease, String> {
+    flash_target: BoardFlashTarget,
+) -> Result<AcquiredRelease, ReleaseAcquisitionError> {
     if !trust::key_is_configured() {
-        return Err("Release signing custody is not configured.".to_string());
+        return Err(ReleaseAcquisitionError::custody_unavailable(
+            "Release signing custody is not configured.",
+        ));
     }
-    let channel_script = FETCH_CHANNEL_SCRIPT.replace("__PRNS_RELEASE_CHANNEL__", RELEASE_CHANNEL);
-    let mut channel_eval = document::eval(&channel_script);
-    let channel_documents = channel_eval
-        .recv::<ChannelDocuments>()
-        .await
-        .map_err(|_| format!("The signed {RELEASE_CHANNEL} channel is unavailable."))?;
+    let limits = super::contract::response_limits();
+    let channel_documents = fetch_signed_documents(
+        format!("/releases/channels/{RELEASE_CHANNEL}.json"),
+        limits.channel_bytes(),
+        "release channel",
+    )
+    .await?;
     verify_minisign(
-        channel_documents.descriptor.as_bytes(),
+        channel_documents.document.as_bytes(),
         &channel_documents.signature,
         trust::PUBLIC_KEY,
     )
     .map_err(|error| error.to_string())?;
-    let descriptor = ChannelDescriptor::from_json(
-        channel_documents.descriptor.as_bytes(),
+    let descriptor = ValidatedChannelDescriptor::from_json(
+        channel_documents.document.as_bytes(),
         configured_release_channel(),
     )
     .map_err(|error| error.to_string())?;
-    require_exact_manifest_url(&descriptor.version, &descriptor.manifest_url)?;
+    require_exact_manifest_url(descriptor.version().as_str(), descriptor.manifest_url())?;
 
-    let mut manifest_eval = document::eval(FETCH_MANIFEST_SCRIPT);
-    manifest_eval
-        .send(descriptor.manifest_url.clone())
-        .map_err(|_| "Could not request the immutable release manifest.".to_string())?;
-    let documents = manifest_eval
-        .recv::<ManifestDocuments>()
-        .await
-        .map_err(|_| "The immutable signed release is unavailable.".to_string())?;
-    if sha256_hex(documents.manifest.as_bytes()) != descriptor.manifest_sha256 {
-        return Err("The manifest does not match the signed release channel.".to_string());
+    let documents = fetch_signed_documents(
+        descriptor.manifest_url().to_string(),
+        limits.manifest_bytes(),
+        "immutable release manifest",
+    )
+    .await?;
+    if sha256_hex(documents.document.as_bytes()) != descriptor.manifest_sha256().as_str() {
+        return Err(ReleaseAcquisitionError::browser_retry(
+            "The manifest does not match the signed release channel.",
+        ));
     }
     verify_minisign(
-        documents.manifest.as_bytes(),
+        documents.document.as_bytes(),
         &documents.signature,
         trust::PUBLIC_KEY,
     )
     .map_err(|error| error.to_string())?;
     let catalog = board_catalog().map_err(|error| error.to_string())?;
-    let manifest = FlashManifest::from_json(documents.manifest.as_bytes(), &catalog)
+    let manifest = ValidatedFlashManifest::from_json(documents.document.as_bytes(), &catalog)
         .map_err(|error| error.to_string())?;
     let expected_key_id = trust::key_id()
         .ok_or_else(|| "The pinned release key has no canonical key ID.".to_string())?;
     if !manifest
-        .signing
-        .key_id
+        .signing()
+        .key_id()
+        .as_str()
         .eq_ignore_ascii_case(&expected_key_id)
     {
-        return Err("The signed manifest names a different release key.".to_string());
+        return Err(ReleaseAcquisitionError::browser_retry(
+            "The signed manifest names a different release key.",
+        ));
     }
-    if manifest.release.version != descriptor.version
-        || manifest.release.channel != descriptor.channel
+    if manifest.release().version() != descriptor.version()
+        || manifest.release().channel() != descriptor.channel()
     {
-        return Err("The signed channel and manifest release identity disagree.".to_string());
+        return Err(ReleaseAcquisitionError::browser_retry(
+            "The signed channel and manifest release identity disagree.",
+        ));
     }
     let target = manifest
-        .targets
+        .targets()
         .iter()
-        .find(|target| target.board_slug == board_slug)
-        .ok_or_else(|| "The signed release does not contain this board.".to_string())?;
-    let provisioning = bridge_provisioning(target, selected_action, ssid, password)?;
-    let request = BridgeRequest::from_target(target, &descriptor.manifest_url, provisioning)?;
+        .find(|target| target.board_id().as_str() == board_slug)
+        .ok_or_else(|| {
+            ReleaseAcquisitionError::review_selection(
+                "The signed release does not contain this board.",
+            )
+        })?;
+    let provisioning = bridge_provisioning(target, selected_action, ssid, password)
+        .map_err(ReleaseAcquisitionError::review_selection)?;
+    let request = BridgeRequest::from_target(
+        target,
+        descriptor.manifest_url(),
+        provisioning,
+        flash_target,
+    )?;
+    let parts = target.parts();
     let details = ReleaseDetails {
-        version: manifest.release.version.to_string(),
-        channel: match manifest.release.channel {
+        version: manifest.release().version().as_str().to_string(),
+        channel: match manifest.release().channel() {
             ReleaseChannel::Stable => "stable".to_string(),
             ReleaseChannel::Preview => "preview".to_string(),
         },
-        total: target.parts.iter().map(|part| part.size).sum(),
-        parts: target
-            .parts
+        total: parts.iter().map(|part| part.size()).sum(),
+        parts: parts
             .iter()
             .map(|part| PartDetails {
-                kind: part_kind(part.kind),
-                size: part.size,
-                sha256: part.sha256.to_string(),
+                kind: part_kind(part.kind()),
+                size: part.size(),
+                sha256: part.sha256().as_str().to_string(),
             })
             .collect(),
     };
     Ok(AcquiredRelease { request, details })
+}
+
+async fn fetch_signed_documents(
+    document_url: String,
+    document_max_bytes: u64,
+    subject: &str,
+) -> Result<SignedDocuments, ReleaseAcquisitionError> {
+    let mut eval = document::eval(FETCH_SIGNED_DOCUMENTS_SCRIPT);
+    eval.send(SignedDocumentRequest {
+        document_url,
+        document_max_bytes,
+        signature_max_bytes: super::contract::response_limits().signature_bytes(),
+    })
+    .map_err(|_| {
+        ReleaseAcquisitionError::browser_retry(format!("Could not request the signed {subject}."))
+    })?;
+    let response = eval.recv::<SignedDocumentResponse>().await.map_err(|_| {
+        ReleaseAcquisitionError::browser_retry(format!("The signed {subject} is unavailable."))
+    })?;
+    match response {
+        SignedDocumentResponse::Ready {
+            document,
+            signature,
+        } => Ok(SignedDocuments {
+            document,
+            signature,
+        }),
+        SignedDocumentResponse::Error { error } => {
+            let diagnosis = match error {
+                SignedDocumentFetchError::Unavailable => {
+                    format!("The signed {subject} is unavailable or could not be streamed safely.")
+                }
+                SignedDocumentFetchError::TooLarge => {
+                    format!("The signed {subject} exceeds the browser safety limit.")
+                }
+                SignedDocumentFetchError::InvalidUtf8 => {
+                    format!("The signed {subject} is not valid UTF-8 text.")
+                }
+            };
+            Err(ReleaseAcquisitionError::browser_retry(diagnosis))
+        }
+    }
 }
 
 fn require_exact_manifest_url(version: &str, manifest_url: &str) -> Result<(), String> {
@@ -204,13 +341,18 @@ fn require_exact_manifest_url(version: &str, manifest_url: &str) -> Result<(), S
 }
 
 fn bridge_provisioning(
-    target: &TargetManifest,
+    target: &ReleaseTarget,
     action: WifiAction,
     ssid: String,
     password: String,
 ) -> Result<Option<BridgeProvisioning>, String> {
-    let Some(slot) = &target.provisioning else {
-        return Ok(None);
+    let Some(slot) = target.provisioning() else {
+        return match action {
+            WifiAction::Preserve => Ok(None),
+            WifiAction::Configure | WifiAction::Clear => {
+                Err("This target does not support Wi-Fi provisioning.".to_string())
+            }
+        };
     };
     let provisioning_action = match action {
         WifiAction::Preserve => ProvisioningAction::Preserve,
@@ -223,8 +365,8 @@ fn bridge_provisioning(
     provisioning_image(&provisioning_action).map_err(|error| error.to_string())?;
     Ok(Some(BridgeProvisioning {
         action: action.wire().to_string(),
-        offset: slot.offset,
-        size: slot.size,
+        offset: slot.offset(),
+        size: slot.size(),
         ssid: if action == WifiAction::Configure {
             ssid
         } else {
@@ -248,7 +390,12 @@ fn configured_release_channel() -> ReleaseChannel {
 
 #[cfg(test)]
 mod tests {
-    use super::require_exact_manifest_url;
+    use super::{
+        bridge_provisioning, require_exact_manifest_url, ReleaseAcquisitionError,
+        FETCH_SIGNED_DOCUMENTS_SCRIPT,
+    };
+    use crate::pages::flash::model::WifiAction;
+    use prns_flash_manifest::{board_catalog, ValidatedFlashManifest};
 
     #[test]
     fn manifest_url_must_be_exact_and_normalized() {
@@ -265,5 +412,59 @@ mod tests {
         ] {
             assert!(require_exact_manifest_url("0.2.6", malformed).is_err());
         }
+    }
+
+    #[test]
+    fn unsupported_provisioning_is_rejected_instead_of_discarded(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        const MANIFEST: &[u8] = include_bytes!(
+            "../../../web-flasher/browser/fixtures/signed-candidate/releases/0.2.6/flash-manifest.json"
+        );
+        let catalog = board_catalog()?;
+        let manifest = ValidatedFlashManifest::from_json(MANIFEST, &catalog)?;
+        let target = manifest
+            .targets()
+            .iter()
+            .find(|target| target.board_id().as_str() == "xiao-esp32-c6")
+            .ok_or("missing non-provisionable target")?;
+
+        assert!(
+            bridge_provisioning(target, WifiAction::Preserve, String::new(), String::new())?
+                .is_none()
+        );
+        assert!(bridge_provisioning(
+            target,
+            WifiAction::Configure,
+            "network".to_string(),
+            "password".to_string()
+        )
+        .is_err());
+        assert!(
+            bridge_provisioning(target, WifiAction::Clear, String::new(), String::new()).is_err()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn release_failures_keep_the_diagnosis_and_an_actionable_safe_path() {
+        let trust = ReleaseAcquisitionError::browser_retry("Minisign verification failed");
+        let trust_message = trust.to_string();
+        assert!(trust_message.contains("Minisign verification failed"));
+        assert!(trust_message.contains("Do not connect a device"));
+        assert!(trust_message.contains("Reload this page"));
+        assert!(trust_message.contains("use the CLI"));
+
+        let selection = ReleaseAcquisitionError::review_selection("Wi-Fi value is too long");
+        let selection_message = selection.to_string();
+        assert!(selection_message.contains("Wi-Fi value is too long"));
+        assert!(selection_message.contains("Review the selected board and Wi-Fi values"));
+        assert!(selection_message.contains("No device access has started"));
+    }
+
+    #[test]
+    fn signed_document_eval_delegates_to_the_bounded_production_reader() {
+        assert!(FETCH_SIGNED_DOCUMENTS_SCRIPT.contains("fetchSignedDocuments"));
+        assert!(!FETCH_SIGNED_DOCUMENTS_SCRIPT.contains(".text("));
+        assert!(!FETCH_SIGNED_DOCUMENTS_SCRIPT.contains(".arrayBuffer("));
     }
 }

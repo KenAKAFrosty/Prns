@@ -1,13 +1,13 @@
-mod board_images;
 mod board_catalog;
+mod board_images;
 mod source_archive;
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-pub(crate) use board_images::generate as generate_board_images;
 pub(crate) use board_catalog::generate as generate_board_catalog;
+pub(crate) use board_images::generate as generate_board_images;
 pub(crate) use source_archive::generate as generate_source_archive;
 
 fn sha256_file(path: &Path) -> String {

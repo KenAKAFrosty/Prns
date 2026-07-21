@@ -78,6 +78,40 @@ pub enum PreparationProfile {
     TechoUf2,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum BoardFlashTarget {
+    EspSerial {
+        expected_chip: &'static str,
+        supports_provisioning: bool,
+    },
+    Uf2MassStorage {
+        mount_label: &'static str,
+    },
+}
+
+impl BoardFlashTarget {
+    pub const fn uses_web_serial(self) -> bool {
+        matches!(self, Self::EspSerial { .. })
+    }
+
+    pub const fn supports_provisioning(self) -> bool {
+        matches!(
+            self,
+            Self::EspSerial {
+                supports_provisioning: true,
+                ..
+            }
+        )
+    }
+
+    pub const fn expected_chip(self) -> Option<&'static str> {
+        match self {
+            Self::EspSerial { expected_chip, .. } => Some(expected_chip),
+            Self::Uf2MassStorage { .. } => None,
+        }
+    }
+}
+
 pub mod board_images {
     include!(concat!(env!("OUT_DIR"), "/board_images.rs"));
 }
@@ -97,6 +131,7 @@ pub struct BoardTarget {
     pub interfaces: &'static [&'static str],
     pub icon: Option<&'static str>,
     pub preparation_profile: Option<PreparationProfile>,
+    pub flash_target: Option<BoardFlashTarget>,
 }
 
 impl BoardTarget {
@@ -134,6 +169,7 @@ pub const ROADMAP_BOARD_TARGETS: &[BoardTarget] = &[
         interfaces: &[],
         icon: Some("espressif"),
         preparation_profile: None,
+        flash_target: None,
     },
     BoardTarget {
         name: "RAK WisBlock Starter Kit",
@@ -143,6 +179,7 @@ pub const ROADMAP_BOARD_TARGETS: &[BoardTarget] = &[
         interfaces: &[],
         icon: Some("nordicsemiconductor"),
         preparation_profile: None,
+        flash_target: None,
     },
     BoardTarget {
         name: "muzi works Base Duo",
@@ -152,6 +189,7 @@ pub const ROADMAP_BOARD_TARGETS: &[BoardTarget] = &[
         interfaces: &[],
         icon: Some("nordicsemiconductor"),
         preparation_profile: None,
+        flash_target: None,
     },
     BoardTarget {
         name: "Seeed Card Tracker T1000-E",
@@ -161,6 +199,7 @@ pub const ROADMAP_BOARD_TARGETS: &[BoardTarget] = &[
         interfaces: &[],
         icon: Some("nordicsemiconductor"),
         preparation_profile: None,
+        flash_target: None,
     },
     BoardTarget {
         name: "Seeed Wio Tracker L1",
@@ -170,6 +209,7 @@ pub const ROADMAP_BOARD_TARGETS: &[BoardTarget] = &[
         interfaces: &[],
         icon: Some("nordicsemiconductor"),
         preparation_profile: None,
+        flash_target: None,
     },
     BoardTarget {
         name: "Heltec Mesh Node T114",
@@ -179,6 +219,7 @@ pub const ROADMAP_BOARD_TARGETS: &[BoardTarget] = &[
         interfaces: &[],
         icon: Some("nordicsemiconductor"),
         preparation_profile: None,
+        flash_target: None,
     },
     BoardTarget {
         name: "LILYGO LoRa32 T3-S3",
@@ -188,6 +229,7 @@ pub const ROADMAP_BOARD_TARGETS: &[BoardTarget] = &[
         interfaces: &[],
         icon: Some("espressif"),
         preparation_profile: None,
+        flash_target: None,
     },
     BoardTarget {
         name: "B&Q Nano G2 Ultra",
@@ -197,6 +239,7 @@ pub const ROADMAP_BOARD_TARGETS: &[BoardTarget] = &[
         interfaces: &[],
         icon: Some("nordicsemiconductor"),
         preparation_profile: None,
+        flash_target: None,
     },
     BoardTarget {
         name: "B&Q Station G2",
@@ -206,6 +249,7 @@ pub const ROADMAP_BOARD_TARGETS: &[BoardTarget] = &[
         interfaces: &[],
         icon: Some("espressif"),
         preparation_profile: None,
+        flash_target: None,
     },
 ];
 

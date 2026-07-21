@@ -1,8 +1,11 @@
 export async function installFakeBridge(page, overrides = {}) {
   const configuration = {
     supported: true,
+    supportDetectionFailure: false,
     failureCode: null,
     pauseAtWriting: false,
+    preparationProtocolViolation: false,
+    deviceProtocolViolation: false,
     ...overrides,
   };
 
@@ -18,21 +21,39 @@ export async function installFakeBridge(page, overrides = {}) {
       preparationSettledCount: 0,
       provisioningWasCleared: false,
       readyCount: 0,
+      completedPartCount: 0,
+      resumePreparation: null,
       resumeWriting: null,
     };
     let prepared = null;
     let preparingRequest = null;
     let preparationGeneration = 0;
 
-    Object.defineProperty(navigator, "serial", {
-      configurable: true,
-      value: config.supported ? { requestPort: async () => ({}) } : undefined,
-    });
+    Object.defineProperty(navigator, "serial", config.supportDetectionFailure
+      ? {
+          configurable: true,
+          get() {
+            throw new Error("injected Web Serial capability detection failure");
+          },
+        }
+      : {
+          configurable: true,
+          value: config.supported ? { requestPort: async () => ({}) } : undefined,
+        });
 
     const navigationGuard = (event) => {
       if (!state.active) return;
       event.preventDefault();
       event.returnValue = "";
+    };
+    const internalNavigationGuard = (event) => {
+      if (!state.active || event.defaultPrevented || event.button > 0) return;
+      const link = event.target?.closest?.("a[href]");
+      if (!link || link.download || (link.target && link.target !== "_self")) return;
+      const destination = new URL(link.href, window.location.href);
+      if (destination.origin !== window.location.origin || destination.href === window.location.href) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
     };
     const emitEvent = async (emit, event) => {
       const value = { schema: 1, ...event };
@@ -49,7 +70,55 @@ export async function installFakeBridge(page, overrides = {}) {
         byte.toString(16).padStart(2, "0"),
       ).join("");
     };
+    const readExactResponse = async (response, expectedSize) => {
+      const declared = response.headers.get("content-length");
+      if (declared !== null && BigInt(declared) > BigInt(expectedSize)) {
+        throw Object.assign(new Error("fixture artifact size mismatch"), {
+          code: "artifact_size_mismatch",
+        });
+      }
+      const reader = response.body?.getReader?.();
+      if (!reader) {
+        throw Object.assign(new Error("fixture artifact stream unavailable"), {
+          code: "artifact_fetch",
+        });
+      }
+      const output = new Uint8Array(expectedSize);
+      let current = 0;
+      try {
+        while (true) {
+          let result;
+          try {
+            result = await reader.read();
+          } catch (error) {
+            throw Object.assign(new Error("fixture artifact stream failed", { cause: error }), {
+              code: "artifact_fetch",
+            });
+          }
+          if (result.done) break;
+          if (!(result.value instanceof Uint8Array) || result.value.byteLength > expectedSize - current) {
+            await reader.cancel?.().catch(() => {});
+            throw Object.assign(new Error("fixture artifact size mismatch"), {
+              code: "artifact_size_mismatch",
+            });
+          }
+          output.set(result.value, current);
+          current += result.value.byteLength;
+        }
+      } finally {
+        reader.releaseLock?.();
+      }
+      if (current !== expectedSize) {
+        throw Object.assign(new Error("fixture artifact size mismatch"), {
+          code: "artifact_size_mismatch",
+        });
+      }
+      return output;
+    };
     const failMessage = (code) => {
+      if (code === "permission_denied") {
+        return "No serial port was selected. Review the board and choose its port when you try again.";
+      }
       if (code === "wrong_chip") {
         return "Wrong chip family. Re-check the printed board label before retrying.";
       }
@@ -78,6 +147,7 @@ export async function installFakeBridge(page, overrides = {}) {
           boardSlug: request.boardSlug,
           displayName: request.displayName,
           expectedChip: request.expectedChip,
+          mountLabel: request.mountLabel,
           transport: request.transport,
           provisioningAction: request.provisioning?.action ?? null,
           ssidBytes: new TextEncoder().encode(request.provisioning?.ssid ?? "").length,
@@ -112,7 +182,22 @@ export async function installFakeBridge(page, overrides = {}) {
               });
               throw new Error("fixture artifact fetch failed");
             }
-            const bytes = new Uint8Array(await response.arrayBuffer());
+            let bytes;
+            try {
+              bytes = await readExactResponse(response, part.size);
+            } catch (error) {
+              const code = error?.code === "artifact_size_mismatch"
+                ? "artifact_size_mismatch"
+                : "artifact_fetch";
+              await emitEvent(emit, {
+                phase: "failed",
+                code,
+                message: code === "artifact_size_mismatch"
+                  ? "The signed fixture artifact size did not match. Reload and prepare again."
+                  : "The signed fixture artifact could not be streamed safely. Reload and prepare again.",
+              });
+              throw error;
+            }
             requireCurrentPreparation(generation);
             if (bytes.byteLength !== part.size) {
               await emitEvent(emit, {
@@ -144,6 +229,7 @@ export async function installFakeBridge(page, overrides = {}) {
           requireCurrentPreparation(generation);
           prepared = {
             expectedChip: request.expectedChip,
+            mountLabel: request.mountLabel,
             parts: request.parts.map(({ kind, size }) => ({ kind, size })),
             transport: request.transport,
           };
@@ -152,6 +238,20 @@ export async function installFakeBridge(page, overrides = {}) {
             request.provisioning && request.provisioning.action !== "preserve"
               ? request.provisioning.size
               : 0;
+          if (config.preparationProtocolViolation) {
+            const stopped = new Promise((resolve) => {
+              state.resumePreparation = resolve;
+            });
+            await emitEvent(emit, {
+              phase: "ready",
+              current: total - 1,
+              total,
+              bytes: total + provisioningBytes,
+            });
+            await stopped;
+            state.resumePreparation = null;
+            requireCurrentPreparation(generation);
+          }
           await emitEvent(emit, {
             phase: "ready",
             current: total,
@@ -181,19 +281,28 @@ export async function installFakeBridge(page, overrides = {}) {
         state.active = true;
         state.cancelled = false;
         window.addEventListener("beforeunload", navigationGuard);
+        document.addEventListener("click", internalNavigationGuard, true);
         try {
           if (prepared.transport === "uf2-mass-storage") {
             const total = prepared.parts[0].size;
             await emitEvent(emit, {
-              phase: "success",
+              phase: "download_requested",
               current: total,
               total,
-              message: "Verified UF2 downloaded. Copy it to TECHOBOOT; the drive disappears when the device reboots.",
+              message: `Verified UF2 download requested. Check the browser's downloads, then copy it to ${prepared.mountLabel}; the drive disappears when the device reboots.`,
             });
             return;
           }
 
           await emitEvent(emit, { phase: "requesting_port" });
+          if (config.failureCode === "permission_denied") {
+            await emitEvent(emit, {
+              phase: "failed",
+              code: config.failureCode,
+              message: failMessage(config.failureCode),
+            });
+            return;
+          }
           await emitEvent(emit, { phase: "connecting" });
           await emitEvent(emit, {
             phase: "verifying_target",
@@ -219,6 +328,21 @@ export async function installFakeBridge(page, overrides = {}) {
               current,
               total,
             });
+            if (config.deviceProtocolViolation && partIndex === 0) {
+              const stopped = new Promise((resolve) => {
+                state.resumeWriting = resolve;
+              });
+              await emitEvent(emit, {
+                phase: "writing",
+                part: part.kind,
+                partIndex,
+                partCount: prepared.parts.length,
+                current: total + 1,
+                total,
+              });
+              await stopped;
+              state.resumeWriting = null;
+            }
             if (config.pauseAtWriting && partIndex === 0) {
               await new Promise((resolve) => {
                 state.resumeWriting = resolve;
@@ -242,6 +366,7 @@ export async function installFakeBridge(page, overrides = {}) {
               return;
             }
             current += part.size;
+            state.completedPartCount += 1;
           }
           await emitEvent(emit, { phase: "verifying_flash", current: total, total });
           await emitEvent(emit, { phase: "resetting" });
@@ -256,10 +381,12 @@ export async function installFakeBridge(page, overrides = {}) {
           await emitEvent(emit, { phase: "success", current: total, total });
         } finally {
           state.active = false;
+          state.preparedBoardSlug = null;
           state.resumeWriting = null;
           prepared = null;
           state.cleanupCount += 1;
           window.removeEventListener("beforeunload", navigationGuard);
+          document.removeEventListener("click", internalNavigationGuard, true);
         }
       },
 
@@ -267,6 +394,7 @@ export async function installFakeBridge(page, overrides = {}) {
         preparationGeneration += 1;
         clearPreparingRequest();
         state.cancelled = true;
+        state.resumePreparation?.();
         state.resumeWriting?.();
       },
 
@@ -274,6 +402,7 @@ export async function installFakeBridge(page, overrides = {}) {
         preparationGeneration += 1;
         clearPreparingRequest();
         state.clearPreparedCount += 1;
+        state.resumePreparation?.();
         if (state.active) {
           state.cancelled = true;
           state.resumeWriting?.();

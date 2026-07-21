@@ -4,12 +4,15 @@ import test from "node:test";
 
 import {
   FlashBridgeError,
+  jedecFlashSizeBytes,
   md5Hex,
   normalizeChipName,
   provisioningImage,
+  recoveryGuidance,
   sha256Hex,
   validateRequest,
 } from "../src/core.js";
+import { testingContract } from "../src/contract.js";
 
 function request() {
   return {
@@ -23,6 +26,7 @@ function request() {
     flashFrequency: "40m",
     beforeReset: "usb-reset",
     afterReset: "watchdog-reset",
+    mountLabel: null,
     provisioning: { action: "preserve", offset: 0xd000, size: 0x1000 },
     parts: [
       { kind: "bootloader", path: "firmware/hopspot/heltec-v4/0.2.6/bootloader.bin", url: "/releases/0.2.6/firmware/hopspot/heltec-v4/0.2.6/bootloader.bin", offset: 0, size: 32, sha256: "a".repeat(64) },
@@ -34,6 +38,36 @@ function request() {
 
 test("valid sparse request is accepted", () => {
   assert.equal(validateRequest(request()).boardSlug, "heltec-v4");
+});
+
+test("transport-specific request identity is complete and bounded", () => {
+  const esp = request();
+  esp.flashSize = 32 * 1024 * 1024;
+  assert.throws(() => validateRequest(esp), /target identity is incomplete/);
+
+  const uf2 = request();
+  Object.assign(uf2, {
+    transport: "uf2-mass-storage",
+    expectedChip: null,
+    flashSize: null,
+    flashMode: null,
+    flashFrequency: null,
+    beforeReset: null,
+    afterReset: null,
+    mountLabel: "TECHOBOOT",
+    provisioning: null,
+    parts: [{
+      kind: "uf2",
+      path: "firmware/hopspot/t-echo/0.2.6/t-echo.uf2",
+      url: "/releases/0.2.6/firmware/hopspot/t-echo/0.2.6/t-echo.uf2",
+      offset: null,
+      size: 32,
+      sha256: "d".repeat(64),
+    }],
+  });
+  assert.equal(validateRequest(uf2).mountLabel, "TECHOBOOT");
+  uf2.mountLabel = "";
+  assert.throws(() => validateRequest(uf2), /UF2 target identity is incomplete/);
 });
 
 test("provisioning overlap is rejected", () => {
@@ -98,4 +132,24 @@ test("standard digest vectors match", async () => {
 
 test("chip comparison is punctuation independent", () => {
   assert.equal(normalizeChipName("ESP32-S3"), normalizeChipName("esp32s3"));
+});
+
+test("JEDEC capacity decoding accepts known IDs and fails closed on unknown IDs", () => {
+  assert.equal(jedecFlashSizeBytes(0x1640ef), 4 * 1024 * 1024);
+  assert.equal(jedecFlashSizeBytes(0x1740ef), 8 * 1024 * 1024);
+  assert.equal(jedecFlashSizeBytes(0x3640ef), 4 * 1024 * 1024);
+  assert.equal(jedecFlashSizeBytes(0x9940ef), null);
+  assert.equal(jedecFlashSizeBytes(0xffffff), null);
+  assert.equal(jedecFlashSizeBytes(Number.NaN), null);
+});
+
+test("every production bridge error has actionable recovery guidance", () => {
+  for (const code of testingContract.errors) {
+    const guidance = recoveryGuidance(code);
+    assert.match(
+      guidance,
+      /reload|correct|open|review|disconnect|re-check|do not|reconnect|re-enter|press|prepare|finish/i,
+      code,
+    );
+  }
 });

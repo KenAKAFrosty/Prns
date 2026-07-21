@@ -1,6 +1,7 @@
 mod bridge;
 mod contract;
 mod model;
+mod protocol;
 mod release;
 mod trust;
 mod view;
