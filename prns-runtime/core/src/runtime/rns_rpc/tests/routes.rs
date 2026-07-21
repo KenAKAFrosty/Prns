@@ -28,9 +28,9 @@ async fn a_msgpack_path_table_renders_each_route_as_a_dict() {
         decoded,
         Value::Array(std::vec![Value::Map(std::vec![
             ("hash".into(), Value::Binary(std::vec![0xab; 16])),
+            ("timestamp".into(), Value::F64(2.25)),
             ("via".into(), Value::Binary(std::vec![0xab; 16])),
             ("hops".into(), Value::from(3i64)),
-            ("timestamp".into(), Value::F64(2.25)),
             ("expires".into(), Value::F64(62.25)),
             ("interface".into(), Value::from("AutoWifi[07070707]")),
         ])])

@@ -101,4 +101,4 @@ DENIED_STATUS=$?
 set -e
 [ "$DENIED_STATUS" -ne 0 ] || { echo "FAIL: unlisted stock x client was accepted"; cat "$WORK/denied.out"; exit 1; }
 
-echo "PASS: Prnsd x exchanges authenticated execution requests and results with stock RNS 1.3.8 rnx"
+echo "PASS: Prnsd x exchanges authenticated execution requests and results with stock RNS 1.3.9 rnx"

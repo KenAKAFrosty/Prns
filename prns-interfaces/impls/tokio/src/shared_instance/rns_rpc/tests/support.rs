@@ -44,7 +44,7 @@ pub(super) async fn read_frame_dup(c: &mut tokio::io::DuplexStream) -> Vec<u8> {
     read_test_frame(c).await
 }
 
-pub(super) async fn write_frame_dup(c: &mut tokio::io::DuplexStream, payload: &[u8]) {
+pub(super) async fn write_frame_dup<S: tokio::io::AsyncWrite + Unpin>(c: &mut S, payload: &[u8]) {
     c.write_all(&(payload.len() as u32).to_be_bytes())
         .await
         .unwrap();
@@ -52,17 +52,17 @@ pub(super) async fn write_frame_dup(c: &mut tokio::io::DuplexStream, payload: &[
     c.flush().await.unwrap();
 }
 
-pub(super) async fn authenticate_modern_client(
-    client: &mut tokio::io::DuplexStream,
-    rpc_key: &[u8; 32],
-) {
-    let server_challenge = read_frame_dup(client).await;
+pub(super) async fn authenticate_modern_client<S>(client: &mut S, rpc_key: &[u8; 32])
+where
+    S: AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    let server_challenge = read_test_frame(client).await;
     let server_message = server_challenge.strip_prefix(b"#CHALLENGE#").unwrap();
     let mut response = b"{sha256}".to_vec();
     response.extend_from_slice(&hmac_sha256(rpc_key, server_message));
     write_frame_dup(client, &response).await;
     assert_eq!(
-        read_frame_dup(client).await,
+        read_test_frame(client).await,
         RpcAuthenticationControlMessage::Welcome.wire_payload()
     );
 
@@ -71,7 +71,7 @@ pub(super) async fn authenticate_modern_client(
     let mut our_challenge = b"#CHALLENGE#".to_vec();
     our_challenge.extend_from_slice(&our_message);
     write_frame_dup(client, &our_challenge).await;
-    let server_reply = read_frame_dup(client).await;
+    let server_reply = read_test_frame(client).await;
     let server_mac = server_reply.strip_prefix(b"{sha256}").unwrap();
     assert!(hmac_sha256_verify(rpc_key, &our_message, server_mac).is_ok());
     write_frame_dup(

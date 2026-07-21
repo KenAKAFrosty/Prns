@@ -75,7 +75,7 @@ if [[ "$UPDATER_RESULT" != *"BLACKHOLE_UPDATER_OK"* ]]; then
     exit 1
 fi
 
-echo "PASS: stock RNS 1.3.8 fetched Prnsd's blackhole list"
+echo "PASS: stock RNS 1.3.9 fetched Prnsd's blackhole list"
 echo "$PUBLISHER_RESULT" | grep "BLACKHOLE_PUBLISHER_OK"
-echo "PASS: Prnsd fetched and persisted stock RNS 1.3.8's blackhole list"
+echo "PASS: Prnsd fetched and persisted stock RNS 1.3.9's blackhole list"
 echo "$UPDATER_RESULT" | grep "BLACKHOLE_UPDATER_OK"

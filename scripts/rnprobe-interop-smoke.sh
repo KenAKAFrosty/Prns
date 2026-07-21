@@ -81,4 +81,4 @@ SILENT_STATUS=$?
     exit 1
 }
 
-echo "PASS: Prnsd probe exchanged delivery proofs with stock RNS 1.3.8 and preserved loss exit 2"
+echo "PASS: Prnsd probe exchanged delivery proofs with stock RNS 1.3.9 and preserved loss exit 2"

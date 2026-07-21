@@ -14,6 +14,7 @@ BOOLS = {
 
 
 def coerce(text):
+    text = text.strip()
     result = {}
     try:
         result["int"] = str(int(text))

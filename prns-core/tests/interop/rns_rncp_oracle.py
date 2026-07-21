@@ -6,7 +6,7 @@ import time
 
 import RNS
 
-EXPECTED_RNS_VERSION = "1.3.8"
+EXPECTED_RNS_VERSION = "1.3.9"
 LISTENER_PRIVATE = bytes([0x31]) * 32 + bytes([0x32]) * 32
 CLIENT_PRIVATE = bytes([0x41]) * 32 + bytes([0x42]) * 32
 
@@ -17,6 +17,8 @@ def prepare(
     bus_port,
     control_port,
     network_port,
+    client_bus_port,
+    client_control_port,
     listener_path,
     client_path,
 ):
@@ -46,7 +48,10 @@ def prepare(
     client_config_dir.joinpath("config").write_text(
         "[reticulum]\n"
         "enable_transport = No\n"
-        "share_instance = No\n"
+        "share_instance = Yes\n"
+        "shared_instance_type = TCP\n"
+        f"shared_instance_port = {client_bus_port}\n"
+        f"instance_control_port = {client_control_port}\n"
         "[logging]\n"
         "loglevel = 2\n"
         "[interfaces]\n"
@@ -61,6 +66,13 @@ def prepare(
     listener.to_file(listener_path)
     RNS.Identity.from_bytes(CLIENT_PRIVATE).to_file(client_path)
     print(RNS.Destination.hash(listener, "rncp", "receive").hex())
+
+
+def hold(config_dir):
+    RNS.Reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
+    print("RNCP_CLIENT_READY", flush=True)
+    while True:
+        time.sleep(0.25)
 
 
 def serve(config_dir, listener_path, save_path, fetch_path):
@@ -119,12 +131,108 @@ def identity_hash(path):
     print(RNS.Identity.from_file(path).hash.hex())
 
 
+def wait_for(predicate, timeout, failure):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if predicate():
+            return
+        time.sleep(0.05)
+    raise RuntimeError(failure)
+
+
+def cancel_send(config_dir, identity_path, destination_hash, source_path, *recovery_paths):
+    RNS.Reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
+    destination_hash = bytes.fromhex(destination_hash)
+    if not RNS.Transport.has_path(destination_hash):
+        RNS.Transport.request_path(destination_hash)
+        print("RNCP_CANCEL_PATH_REQUESTED", flush=True)
+    wait_for(
+        lambda: RNS.Transport.has_path(destination_hash),
+        10,
+        "cancel destination path was not learned",
+    )
+    remote_identity = RNS.Identity.recall(destination_hash)
+    if remote_identity is None:
+        raise RuntimeError("cancel destination identity was not recalled")
+    destination = RNS.Destination(
+        remote_identity,
+        RNS.Destination.OUT,
+        RNS.Destination.SINGLE,
+        "rncp",
+        "receive",
+    )
+    link = RNS.Link(destination)
+    wait_for(lambda: link.status == RNS.Link.ACTIVE, 10, "cancel link did not activate")
+    local_identity = RNS.Identity.from_file(identity_path)
+    if local_identity is None:
+        raise RuntimeError("cancel sender identity did not load")
+    link.identify(local_identity)
+    source_path = pathlib.Path(source_path)
+    source = open(source_path, "rb")
+    resource = RNS.Resource(
+        source,
+        link,
+        metadata={"name": source_path.name.encode("utf-8")},
+        auto_compress=False,
+    )
+    wait_for(
+        lambda: resource.get_progress() > 0 or resource.status >= RNS.Resource.COMPLETE,
+        15,
+        "cancel transfer did not start",
+    )
+    if resource.status >= RNS.Resource.COMPLETE:
+        raise RuntimeError("cancel transfer completed before cancellation")
+    resource.cancel()
+    wait_for(
+        lambda: resource.status == RNS.Resource.FAILED,
+        3,
+        "cancel transfer did not settle as failed",
+    )
+    link.teardown()
+    source.close()
+    time.sleep(0.25)
+    recovery_link = RNS.Link(destination)
+    wait_for(
+        lambda: recovery_link.status == RNS.Link.ACTIVE,
+        10,
+        "recovery link did not activate",
+    )
+    recovery_link.identify(local_identity)
+    for recovery_path in map(pathlib.Path, recovery_paths):
+        recovery_source = open(recovery_path, "rb")
+        recovery = RNS.Resource(
+            recovery_source,
+            recovery_link,
+            metadata={"name": recovery_path.name.encode("utf-8")},
+            auto_compress=False,
+        )
+        wait_for(
+            lambda: recovery.status >= RNS.Resource.COMPLETE,
+            30,
+            f"recovery transfer {recovery_path.name} did not conclude",
+        )
+        if recovery.status != RNS.Resource.COMPLETE:
+            raise RuntimeError(
+                f"recovery transfer {recovery_path.name} failed with status {recovery.status}"
+            )
+        recovery_source.close()
+    recovery_link.teardown()
+    print(
+        f"RNCP_CANCEL_OK progress={resource.get_progress():.6f} "
+        f"recovery_files={len(recovery_paths)}"
+    )
+
+
 if __name__ == "__main__":
     if sys.argv[1] == "prepare":
         prepare(*sys.argv[2:])
     elif sys.argv[1] == "serve":
         serve(*sys.argv[2:])
+    elif sys.argv[1] == "hold":
+        hold(*sys.argv[2:])
     elif sys.argv[1] == "identity-hash":
         identity_hash(*sys.argv[2:])
+    elif sys.argv[1] == "cancel-send":
+        cancel_send(*sys.argv[2:])
     else:
         raise RuntimeError("unknown command")

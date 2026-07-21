@@ -1,0 +1,275 @@
+{
+  "schema": 1,
+  "interpreters": {
+    "smoke": {
+      "environment": "SMOKE_PYTHON",
+      "fallback": "benchmarks/reference/.venv/bin/python",
+      "package": "rns==1.3.9"
+    },
+    "rpc": {
+      "environment": "RPC_SMOKE_PYTHON",
+      "fallback": "benchmarks/reference/.rpc-venv/bin/python",
+      "package": "rns==1.3.9"
+    }
+  },
+  "oracles": [
+    {
+      "id": "config-configobj",
+      "kind": "deterministic",
+      "tiers": ["pr", "full"],
+      "interpreter": "smoke",
+      "command": ["cargo", "test", "--manifest-path", "prns-config/Cargo.toml", "--test", "configobj_oracle", "--locked"],
+      "timeout_seconds": 300,
+      "evidence": "validation-artifacts/oracles/config-configobj",
+      "inputs": ["prns-config/tests/configobj_oracle.rs", "prns-config/tests/oracle/configobj_oracle.py"]
+    },
+    {
+      "id": "config-coercion",
+      "kind": "deterministic",
+      "tiers": ["pr", "full"],
+      "interpreter": "smoke",
+      "command": ["cargo", "test", "--manifest-path", "prns-config/Cargo.toml", "--test", "coercion_oracle", "--locked"],
+      "timeout_seconds": 300,
+      "evidence": "validation-artifacts/oracles/config-coercion",
+      "inputs": ["prns-config/tests/coercion_oracle.rs", "prns-config/tests/oracle/coercion_oracle.py"]
+    },
+    {
+      "id": "config-rnode-transport",
+      "kind": "deterministic",
+      "tiers": ["pr", "full"],
+      "interpreter": "rpc",
+      "command": ["cargo", "test", "--manifest-path", "prns-config/Cargo.toml", "--test", "rnode_transport_oracle", "--locked"],
+      "timeout_seconds": 300,
+      "evidence": "validation-artifacts/oracles/config-rnode-transport",
+      "inputs": ["prns-config/tests/rnode_transport_oracle.rs", "prns-config/tests/oracle/rnode_transport_oracle.py"]
+    },
+    {
+      "id": "config-prns-interface-skip",
+      "kind": "deterministic",
+      "tiers": ["full"],
+      "interpreter": "smoke",
+      "command": ["cargo", "test", "--manifest-path", "prns-config/Cargo.toml", "--test", "prns_interface_stock_skip", "--locked"],
+      "timeout_seconds": 300,
+      "evidence": "validation-artifacts/oracles/config-prns-interface-skip",
+      "inputs": ["prns-config/tests/prns_interface_stock_skip.rs", "prns-config/tests/oracle/prns_interface_skip_oracle.py"]
+    },
+    {
+      "id": "wire-packet-boundaries",
+      "kind": "deterministic",
+      "tiers": ["pr", "full"],
+      "interpreter": "smoke",
+      "command": ["cargo", "test", "-p", "prns-core", "--test", "wire_oracle", "--locked"],
+      "timeout_seconds": 300,
+      "evidence": "validation-artifacts/oracles/wire-packet-boundaries",
+      "inputs": ["prns-core/tests/wire_oracle.rs", "prns-core/tests/oracle/wire_oracle.py"]
+    },
+    {
+      "id": "identity-crypto-boundaries",
+      "kind": "deterministic",
+      "tiers": ["pr", "full"],
+      "interpreter": "smoke",
+      "command": ["cargo", "test", "-p", "prns-core", "--test", "identity_oracle", "--locked"],
+      "timeout_seconds": 300,
+      "evidence": "validation-artifacts/oracles/identity-crypto-boundaries",
+      "inputs": ["prns-core/tests/identity_oracle.rs", "prns-core/tests/oracle/identity_oracle.py"]
+    },
+    {
+      "id": "shared-rpc-codec-boundaries",
+      "kind": "deterministic",
+      "tiers": ["pr", "full"],
+      "interpreter": "rpc",
+      "command": ["cargo", "test", "-p", "prns-core", "--features", "shared-instance-rpc", "--lib", "interfaces::shared_instance::rns_rpc::request::tests", "--locked"],
+      "timeout_seconds": 300,
+      "evidence": "validation-artifacts/oracles/shared-rpc-codec-boundaries",
+      "inputs": ["prns-core/src/interfaces/shared_instance/rns_rpc/request.rs", "prns-core/tests/oracle/rpc_oracle.py"]
+    },
+    {
+      "id": "live-local-shared-instance",
+      "kind": "live",
+      "tiers": ["pr", "full"],
+      "interpreter": "smoke",
+      "command": ["bash", "scripts/local-interop-smoke.sh"],
+      "timeout_seconds": 300,
+      "evidence": "validation-artifacts/oracles/live-local-shared-instance",
+      "inputs": ["scripts/local-interop-smoke.sh", "prns-core/tests/interop/rns_shared_instance_client.py"]
+    },
+    {
+      "id": "live-shared-rpc",
+      "kind": "live",
+      "tiers": ["pr", "full"],
+      "interpreter": "rpc",
+      "command": ["bash", "scripts/local-rpc-interop-smoke.sh"],
+      "timeout_seconds": 300,
+      "evidence": "validation-artifacts/oracles/live-shared-rpc",
+      "inputs": ["scripts/local-rpc-interop-smoke.sh", "prns-core/tests/interop/rns_shared_rpc_client.py"]
+    },
+    {
+      "id": "live-remote-management",
+      "kind": "live",
+      "tiers": ["pr", "full"],
+      "interpreter": "rpc",
+      "command": ["bash", "scripts/remote-management-interop-smoke.sh"],
+      "timeout_seconds": 360,
+      "evidence": "validation-artifacts/oracles/live-remote-management",
+      "inputs": ["scripts/remote-management-interop-smoke.sh", "prns-core/tests/interop/rns_remote_management_client.py"]
+    },
+    {
+      "id": "live-probe-responder",
+      "kind": "live",
+      "tiers": ["pr", "full"],
+      "interpreter": "rpc",
+      "command": ["bash", "scripts/probe-responder-interop-smoke.sh"],
+      "timeout_seconds": 360,
+      "evidence": "validation-artifacts/oracles/live-probe-responder",
+      "inputs": ["scripts/probe-responder-interop-smoke.sh", "prns-core/tests/interop/rns_probe_client.py"]
+    },
+    {
+      "id": "live-blackhole-exchange",
+      "kind": "live",
+      "tiers": ["pr", "full"],
+      "interpreter": "rpc",
+      "command": ["bash", "scripts/blackhole-exchange-interop-smoke.sh"],
+      "timeout_seconds": 420,
+      "evidence": "validation-artifacts/oracles/live-blackhole-exchange",
+      "inputs": ["scripts/blackhole-exchange-interop-smoke.sh", "prns-core/tests/interop/rns_blackhole_exchange.py"]
+    },
+    {
+      "id": "live-rnode-tcp",
+      "kind": "live",
+      "tiers": ["pr", "full"],
+      "interpreter": "rpc",
+      "command": ["bash", "scripts/rnode-tcp-interop-smoke.sh"],
+      "timeout_seconds": 300,
+      "evidence": "validation-artifacts/oracles/live-rnode-tcp",
+      "inputs": ["scripts/rnode-tcp-interop-smoke.sh", "prns-core/tests/interop/rns_rnode_tcp_device.py"]
+    },
+    {
+      "id": "live-local-transit",
+      "kind": "live",
+      "tiers": ["pr", "full"],
+      "interpreter": "smoke",
+      "command": ["bash", "scripts/local-transit-smoke.sh"],
+      "timeout_seconds": 420,
+      "evidence": "validation-artifacts/oracles/live-local-transit",
+      "inputs": ["scripts/local-transit-smoke.sh", "prns-core/tests/interop/rns_transit_client.py", "prns-core/tests/interop/rns_transit_peer.py"]
+    },
+    {
+      "id": "live-ifac-tcp",
+      "kind": "live",
+      "tiers": ["pr", "full"],
+      "interpreter": "smoke",
+      "command": ["bash", "scripts/ifac-tcp-interop-smoke.sh"],
+      "timeout_seconds": 600,
+      "evidence": "validation-artifacts/oracles/live-ifac-tcp",
+      "inputs": ["scripts/ifac-tcp-interop-smoke.sh", "scripts/local-transit-smoke.sh", "prns-core/tests/interop/rns_transit_client.py", "prns-core/tests/interop/rns_transit_peer.py", "prns-core/tests/interop/rns_ifac_hostile.py"]
+    },
+    {
+      "id": "live-inverse-shared-instance",
+      "kind": "live",
+      "tiers": ["pr", "full"],
+      "interpreter": "smoke",
+      "command": ["bash", "scripts/local-client-smoke.sh"],
+      "timeout_seconds": 300,
+      "evidence": "validation-artifacts/oracles/live-inverse-shared-instance",
+      "inputs": ["scripts/local-client-smoke.sh"]
+    },
+    {
+      "id": "live-tcp-server",
+      "kind": "live",
+      "tiers": ["pr", "full"],
+      "interpreter": "smoke",
+      "command": ["bash", "scripts/tcp-server-interop-smoke.sh"],
+      "timeout_seconds": 420,
+      "evidence": "validation-artifacts/oracles/live-tcp-server",
+      "inputs": ["scripts/tcp-server-interop-smoke.sh", "prns-core/tests/interop/rns_tcp_client_peer.py"]
+    },
+    {
+      "id": "utility-rnid-local",
+      "kind": "live",
+      "tiers": ["full"],
+      "interpreter": "rpc",
+      "command": ["bash", "scripts/rnid-local-interop-smoke.sh"],
+      "timeout_seconds": 300,
+      "evidence": "validation-artifacts/oracles/utility-rnid-local",
+      "inputs": ["scripts/rnid-local-interop-smoke.sh", "prns-core/tests/interop/rns_rnid_oracle.py"]
+    },
+    {
+      "id": "utility-rnid-network",
+      "kind": "live",
+      "tiers": ["full"],
+      "interpreter": "rpc",
+      "command": ["bash", "scripts/rnid-network-interop-smoke.sh"],
+      "timeout_seconds": 420,
+      "evidence": "validation-artifacts/oracles/utility-rnid-network",
+      "inputs": ["scripts/rnid-network-interop-smoke.sh", "prns-core/tests/interop/rns_rnid_network_server.py"]
+    },
+    {
+      "id": "utility-rnstatus",
+      "kind": "live",
+      "tiers": ["full"],
+      "interpreter": "rpc",
+      "command": ["bash", "scripts/rnstatus-interop-smoke.sh"],
+      "timeout_seconds": 420,
+      "evidence": "validation-artifacts/oracles/utility-rnstatus",
+      "inputs": ["scripts/rnstatus-interop-smoke.sh", "prns-core/tests/interop/rns_rnstatus_server.py"]
+    },
+    {
+      "id": "utility-rnpath",
+      "kind": "live",
+      "tiers": ["full"],
+      "interpreter": "rpc",
+      "command": ["bash", "scripts/rnpath-interop-smoke.sh"],
+      "timeout_seconds": 600,
+      "evidence": "validation-artifacts/oracles/utility-rnpath",
+      "inputs": ["scripts/rnpath-interop-smoke.sh", "prns-core/tests/interop/rns_rnpath_server.py"]
+    },
+    {
+      "id": "utility-rnprobe",
+      "kind": "live",
+      "tiers": ["full"],
+      "interpreter": "rpc",
+      "command": ["bash", "scripts/rnprobe-interop-smoke.sh"],
+      "timeout_seconds": 420,
+      "evidence": "validation-artifacts/oracles/utility-rnprobe",
+      "inputs": ["scripts/rnprobe-interop-smoke.sh", "prns-core/tests/interop/rns_rnprobe_server.py"]
+    },
+    {
+      "id": "utility-rncp",
+      "kind": "live",
+      "tiers": ["full"],
+      "interpreter": "rpc",
+      "command": ["bash", "scripts/rncp-interop-smoke.sh"],
+      "timeout_seconds": 600,
+      "evidence": "validation-artifacts/oracles/utility-rncp",
+      "inputs": ["scripts/rncp-interop-smoke.sh", "prns-core/tests/interop/rns_rncp_oracle.py"]
+    },
+    {
+      "id": "utility-rnx",
+      "kind": "live",
+      "tiers": ["full"],
+      "interpreter": "rpc",
+      "command": ["bash", "scripts/rnx-interop-smoke.sh"],
+      "timeout_seconds": 600,
+      "evidence": "validation-artifacts/oracles/utility-rnx",
+      "inputs": ["scripts/rnx-interop-smoke.sh", "prns-core/tests/interop/rns_rnx_oracle.py"]
+    }
+  ],
+  "exemptions": [
+    {
+      "path": "scripts/matchup-loopback-smoke.sh",
+      "reason": "The benchmark grid's stock-to-stock baseline does not exercise Prns."
+    },
+    {
+      "path": "scripts/android-runtime-smoke.sh",
+      "reason": "The Android build smoke does not invoke a Python interoperability peer."
+    },
+    {
+      "path": "scripts/android-service-smoke.sh",
+      "reason": "The Android service smoke does not invoke a Python interoperability peer."
+    },
+    {
+      "path": "scripts/wifi-direct-hwsim-smoke.sh",
+      "reason": "The privileged kernel simulation smoke is outside the stock-RNS oracle lanes."
+    }
+  ]
+}

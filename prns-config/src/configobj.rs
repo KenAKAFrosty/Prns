@@ -73,6 +73,12 @@ pub enum ConfigError {
     EmptyKey {
         line: usize,
     },
+    MalformedList {
+        line: usize,
+    },
+    MalformedValue {
+        line: usize,
+    },
 }
 
 impl fmt::Display for ConfigError {
@@ -98,6 +104,10 @@ impl fmt::Display for ConfigError {
                 write!(f, "line {line}: expected 'key = value'")
             }
             ConfigError::EmptyKey { line } => write!(f, "line {line}: empty key name"),
+            ConfigError::MalformedList { line } => {
+                write!(f, "line {line}: malformed comma-separated value")
+            }
+            ConfigError::MalformedValue { line } => write!(f, "line {line}: malformed value"),
         }
     }
 }
@@ -113,7 +123,9 @@ impl ConfigError {
             | ConfigError::DuplicateKey { line, .. }
             | ConfigError::DuplicateSection { line, .. }
             | ConfigError::MissingEquals { line }
-            | ConfigError::EmptyKey { line } => *line,
+            | ConfigError::EmptyKey { line }
+            | ConfigError::MalformedList { line }
+            | ConfigError::MalformedValue { line } => *line,
         }
     }
 }
@@ -525,38 +537,77 @@ fn parse_value(raw: &str, line_no: usize) -> Result<Value, ConfigError> {
 
     let mut elements = Vec::new();
     let mut current = String::new();
+    let mut current_was_quoted = false;
+    let mut current_quote_closed = false;
     let mut had_comma = false;
     let mut chars = raw.chars().peekable();
     while let Some(c) = chars.next() {
         match c {
             '\'' | '"' => {
+                if !current.trim().is_empty() {
+                    current.push(c);
+                    continue;
+                }
+                if current_was_quoted {
+                    return Err(ConfigError::MalformedValue { line: line_no });
+                }
+                current_was_quoted = true;
+                let mut closed = false;
                 for inner in chars.by_ref() {
                     if inner == c {
+                        closed = true;
                         break;
                     }
                     current.push(inner);
                 }
+                if !closed {
+                    return Err(ConfigError::UnterminatedQuote { line: line_no });
+                }
+                current_quote_closed = true;
             }
             '#' => break,
             ',' => {
                 had_comma = true;
-                elements.push(current.trim().to_string());
+                elements.push((current.trim().to_string(), current_was_quoted));
                 current = String::new();
+                current_was_quoted = false;
+                current_quote_closed = false;
             }
-            other => current.push(other),
+            other if current_quote_closed && !other.is_whitespace() => {
+                return Err(ConfigError::MalformedValue { line: line_no });
+            }
+            other if !current_quote_closed => current.push(other),
+            _ => {}
         }
     }
     let tail = current.trim();
-    if !tail.is_empty() || (had_comma && elements.is_empty()) {
-        elements.push(tail.to_string());
+    if !tail.is_empty() || current_was_quoted || (had_comma && elements.is_empty()) {
+        elements.push((tail.to_string(), current_was_quoted));
     }
 
     if had_comma {
-        elements.retain(|element| !element.is_empty());
-        Ok(Value::List(elements))
+        let standalone_empty_list =
+            elements.len() == 1 && elements[0].0.is_empty() && !elements[0].1 && tail.is_empty();
+        if !standalone_empty_list
+            && elements
+                .iter()
+                .any(|(element, quoted)| element.is_empty() && !quoted)
+        {
+            return Err(ConfigError::MalformedList { line: line_no });
+        }
+        Ok(Value::List(
+            elements
+                .into_iter()
+                .filter_map(|(element, quoted)| (!element.is_empty() || quoted).then_some(element))
+                .collect(),
+        ))
     } else {
         Ok(Value::Scalar(
-            elements.into_iter().next().unwrap_or_default(),
+            elements
+                .into_iter()
+                .next()
+                .map(|(element, _)| element)
+                .unwrap_or_default(),
         ))
     }
 }
@@ -659,6 +710,31 @@ mod tests {
         assert_eq!(
             root.section("x").unwrap().get("peers").unwrap().as_list(),
             std::vec!["a, b", "c"]
+        );
+    }
+
+    #[test]
+    fn malformed_quoted_and_list_values_are_rejected() {
+        assert!(matches!(
+            parse("[x]\nk = 'unterminated\n"),
+            Err(ConfigError::UnterminatedQuote { .. })
+        ));
+        assert!(matches!(
+            parse("[x]\nk = alpha,,beta\n"),
+            Err(ConfigError::MalformedList { .. })
+        ));
+        assert!(matches!(
+            parse("[x]\nk = \"alpha\"tail\n"),
+            Err(ConfigError::MalformedValue { .. })
+        ));
+    }
+
+    #[test]
+    fn explicitly_quoted_empty_list_elements_are_preserved() {
+        let root = parse("[x]\nk = \"\", alpha\n").unwrap();
+        assert_eq!(
+            root.section("x").unwrap().get("k").unwrap().as_list(),
+            std::vec!["", "alpha"]
         );
     }
 

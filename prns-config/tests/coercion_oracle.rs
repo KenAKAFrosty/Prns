@@ -4,17 +4,15 @@ use std::process::{Command, Stdio};
 
 use prns_config::reference;
 
-fn venv_python() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../benchmarks/reference/.venv/bin/python")
-}
+mod support;
 
 fn oracle_script() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/oracle/coercion_oracle.py")
 }
 
-fn run_oracle(corpus: &[String]) -> Vec<serde_json::Value> {
+fn run_oracle(python: &std::ffi::OsStr, corpus: &[String]) -> Vec<serde_json::Value> {
     let input = serde_json::to_string(corpus).expect("corpus serializes");
-    let mut child = Command::new(venv_python())
+    let mut child = Command::new(python)
         .arg(oracle_script())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -48,14 +46,15 @@ fn coerced_bool(scalar: &str) -> Result<bool, ()> {
 
 fn coerced_u64(scalar: &str) -> Result<u64, ()> {
     let config = format!(
-        "[interfaces]\n[[H]]\ntype = TCPClientInterface\nenabled = Yes\ntarget_host = host\ntarget_port = 4242\nannounce_rate_target = {scalar}\n"
+        "[interfaces]\n[[H]]\ntype = TCPClientInterface\nenabled = Yes\ntarget_host = host\ntarget_port = 4242\nconnect_timeout = {scalar}\n"
     );
     match reference::parse(&config) {
-        Ok(parsed) => parsed
-            .interfaces
-            .first()
-            .and_then(|i| i.announce_rate_target)
-            .ok_or(()),
+        Ok(parsed) => match &parsed.interfaces.first().ok_or(())?.params {
+            reference::ReferenceConfigParams::TcpClient {
+                connect_timeout, ..
+            } => connect_timeout.ok_or(()),
+            _ => Err(()),
+        },
         Err(_) => Err(()),
     }
 }
@@ -74,17 +73,24 @@ fn coerced_f64(scalar: &str) -> Result<f64, ()> {
     }
 }
 
-fn compare(corpus: &[String]) {
-    let oracle = run_oracle(corpus);
+fn compare(python: &std::ffi::OsStr, corpus: &[String], seed: Option<u64>) {
+    let oracle = run_oracle(python, corpus);
     assert_eq!(oracle.len(), corpus.len(), "one oracle result per scalar");
-    for (scalar, verdict) in corpus.iter().zip(&oracle) {
+    for (index, (scalar, verdict)) in corpus.iter().zip(&oracle).enumerate() {
+        let provenance = seed.map_or_else(
+            || format!("case {index}"),
+            |seed| format!("seed {seed:#018x}, case {index}"),
+        );
         match (coerced_bool(scalar), &verdict["bool"]) {
             (Ok(ours), serde_json::Value::Bool(python)) => {
-                assert_eq!(ours, *python, "bool mismatch for {scalar:?}")
+                assert_eq!(
+                    ours, *python,
+                    "bool mismatch at {provenance} for {scalar:?}"
+                )
             }
             (Err(()), serde_json::Value::Null) => {}
             (ours, python) => {
-                panic!("bool divergence for {scalar:?}: ours={ours:?}, ConfigObj={python}")
+                panic!("bool divergence at {provenance} for {scalar:?}: ours={ours:?}, ConfigObj={python}")
             }
         }
 
@@ -95,7 +101,7 @@ fn compare(corpus: &[String]) {
         assert_eq!(
             coerced_u64(scalar),
             expected_u64,
-            "u64 mismatch for {scalar:?}: python int = {:?}",
+            "u64 mismatch at {provenance} for {scalar:?}: python int = {:?}",
             verdict["int"]
         );
 
@@ -106,12 +112,12 @@ fn compare(corpus: &[String]) {
                     .expect("python float repr parses in rust");
                 assert!(
                     ours == python || (ours.is_nan() && python.is_nan()),
-                    "f64 mismatch for {scalar:?}: ours={ours}, python={python}"
+                    "f64 mismatch at {provenance} for {scalar:?}: ours={ours}, python={python}"
                 );
             }
             (Err(()), None) => {}
             (ours, python) => {
-                panic!("f64 divergence for {scalar:?}: ours={ours:?}, python={python:?}")
+                panic!("f64 divergence at {provenance} for {scalar:?}: ours={ours:?}, python={python:?}")
             }
         }
     }
@@ -162,6 +168,21 @@ const CURATED: &[&str] = &[
     "disabled",
     "2",
     "-1",
+    "18446744073709551615",
+    "18446744073709551616",
+    "9223372036854775807",
+    "9223372036854775808",
+    "-9223372036854775808",
+    "-9223372036854775809",
+    "4.9406564584124654e-324",
+    "1.7976931348623157e308",
+    "1.7976931348623159e308",
+    "-0.0",
+    "+0.0",
+    " 42 ",
+    "\t1\t",
+    "1\u{0}2",
+    "NaN(payload)",
 ];
 
 struct Generator {
@@ -200,27 +221,22 @@ fn generated_corpus(count: usize, seed: u64) -> Vec<String> {
 
 #[test]
 fn coercions_match_configobj_on_curated_scalars() {
-    let python = venv_python();
-    if !python.exists() {
-        eprintln!(
-            "skipping coercion oracle: reference venv python not found at {}",
-            python.display()
-        );
+    let Some(python) =
+        support::reference_python("SMOKE_PYTHON", "../benchmarks/reference/.venv/bin/python")
+    else {
         return;
-    }
+    };
     let corpus: Vec<String> = CURATED.iter().map(|scalar| scalar.to_string()).collect();
-    compare(&corpus);
+    compare(&python, &corpus, None);
 }
 
 #[test]
 fn coercions_match_configobj_on_generated_scalars() {
-    let python = venv_python();
-    if !python.exists() {
-        eprintln!(
-            "skipping coercion oracle: reference venv python not found at {}",
-            python.display()
-        );
+    let Some(python) =
+        support::reference_python("SMOKE_PYTHON", "../benchmarks/reference/.venv/bin/python")
+    else {
         return;
-    }
-    compare(&generated_corpus(400, 0xc0ffee));
+    };
+    const SEED: u64 = 0xc0ffee;
+    compare(&python, &generated_corpus(400, SEED), Some(SEED));
 }

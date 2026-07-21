@@ -4,7 +4,7 @@ import time
 
 import RNS
 
-EXPECTED_RNS_VERSION = "1.3.8"
+EXPECTED_RNS_VERSION = "1.3.9"
 
 
 def require_reference_version():
@@ -82,6 +82,17 @@ def request(link, path, data):
     return response
 
 
+def rejected_requests(cases):
+    receipts = [
+        (name, link.request(path, data=data, timeout=2))
+        for name, link, path, data in cases
+    ]
+    time.sleep(3)
+    for name, receipt in receipts:
+        if receipt.get_status() == RNS.RequestReceipt.READY:
+            raise RuntimeError(f"{name} unexpectedly returned {receipt.get_response()!r}")
+
+
 def query(client_config, transport_hash, identity_path):
     RNS.Reticulum(configdir=client_config, loglevel=RNS.LOG_ERROR)
     transport_identity_hash = bytes.fromhex(transport_hash)
@@ -106,11 +117,43 @@ def query(client_config, transport_hash, identity_path):
         "remote",
         "management",
     )
-    link = RNS.Link(destination)
-    wait_for(lambda: link.status == RNS.Link.ACTIVE, 10, "management link did not activate")
+    unidentified_link = RNS.Link(destination)
+    wait_for(
+        lambda: unidentified_link.status == RNS.Link.ACTIVE,
+        10,
+        "unidentified management link did not activate",
+    )
+    unauthorized_link = RNS.Link(destination)
+    wait_for(
+        lambda: unauthorized_link.status == RNS.Link.ACTIVE,
+        10,
+        "unauthorized management link did not activate",
+    )
+    unauthorized_link.identify(RNS.Identity())
+    malformed_link = RNS.Link(destination)
+    wait_for(
+        lambda: malformed_link.status == RNS.Link.ACTIVE,
+        10,
+        "malformed-request management link did not activate",
+    )
     management_identity = RNS.Identity.from_file(identity_path)
     if management_identity is None:
         raise RuntimeError("management identity did not load")
+    malformed_link.identify(management_identity)
+    rejected_requests(
+        [
+            ("unidentified status", unidentified_link, "/status", [True]),
+            ("unauthorized status", unauthorized_link, "/status", [True]),
+            ("malformed status", malformed_link, "/status", []),
+            ("malformed path", malformed_link, "/path", []),
+            ("malformed rates", malformed_link, "/path", [123]),
+        ]
+    )
+    unidentified_link.teardown()
+    unauthorized_link.teardown()
+    malformed_link.teardown()
+    link = RNS.Link(destination)
+    wait_for(lambda: link.status == RNS.Link.ACTIVE, 10, "management link did not recover")
     link.identify(management_identity)
     status = request(link, "/status", [True])
     if not isinstance(status, list) or len(status) != 2:
@@ -127,7 +170,7 @@ def query(client_config, transport_hash, identity_path):
         raise RuntimeError(f"rate table is not a list: {rates!r}")
     print(
         f"REMOTE_MANAGEMENT_OK interfaces={len(status[0]['interfaces'])} "
-        f"links={status[1]} paths={len(table)} rates={len(rates)}"
+        f"links={status[1]} paths={len(table)} rates={len(rates)} hostile_cases=5"
     )
 
 

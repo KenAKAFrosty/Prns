@@ -68,23 +68,8 @@ step "prns-interfaces-tokio all-features lane"
 (cd prns-interfaces/impls/tokio && cargo test --all-features)
 
 if [ "${run_interop}" = "1" ]; then
-  step "RNS 1.3.8 shared-instance msgpack RPC oracle"
-  bash scripts/local-rpc-interop-smoke.sh
-
-  step "RNS 1.3.8 remote-management oracle"
-  bash scripts/remote-management-interop-smoke.sh
-
-  step "RNS 1.3.8 probe-responder oracle"
-  bash scripts/probe-responder-interop-smoke.sh
-
-  step "RNS 1.3.8 blackhole-exchange oracle"
-  bash scripts/blackhole-exchange-interop-smoke.sh
-
-  step "RNS 1.3.8 RNode TCP device oracle"
-  bash scripts/rnode-tcp-interop-smoke.sh
-
-  step "RNS 1.3.5 IFAC TCP resource oracle"
-  bash scripts/ifac-tcp-interop-smoke.sh
+  step "complete Python oracle matrix"
+  python3 scripts/oracles.py --full
 fi
 
 step "mutation lane file list"

@@ -43,7 +43,7 @@ done
 "$PRNSD" run --log-format json --config "$CONFIG" >/dev/null 2>&1 &
 PRNS_PID=$!
 
-for _ in $(seq 1 150); do
+for _ in $(seq 1 600); do
     kill -0 "$DEVICE_PID" 2>/dev/null || break
     kill -0 "$PRNS_PID" 2>/dev/null || break
     sleep 0.1
@@ -58,7 +58,7 @@ wait "$DEVICE_PID" || { DEVICE_PID=""; echo "FAIL: reference RNode TCP device re
 DEVICE_PID=""
 grep -q "RNODE_TCP_DEVICE_OK" "$RESULT" || { echo "FAIL: missing RNode TCP success marker"; cat "$RESULT"; exit 1; }
 
-echo "PASS: Prnsd configured an RNS 1.3.8 RNode TCP device byte-for-byte"
+echo "PASS: Prnsd rejected hostile RNode bring-up sequences and recovered against a split-frame RNS 1.3.9 oracle"
 grep "RNODE_TCP_DEVICE_OK" "$RESULT"
 
 exit 0

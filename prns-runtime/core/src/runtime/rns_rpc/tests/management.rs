@@ -61,8 +61,9 @@ async fn rns_138_management_verbs_get_typed_conservative_replies() {
         b"\xc2",
         "an unknown destination cannot record use"
     );
+    let legacy_drop_path = legacy_string_request("drop", "path");
     assert_eq!(
-        reply_for(b"{'drop': 'path'}", &query).await,
+        reply_for(&legacy_drop_path, &query).await,
         b"I00\n.",
         "legacy clients get the same false value in pickle"
     );

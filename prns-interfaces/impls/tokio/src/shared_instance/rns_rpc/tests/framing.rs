@@ -65,3 +65,56 @@ async fn frame_writer_uses_the_cpython_wide_length_form_past_i32() {
     assert_eq!(&encoded[..4], &(-1i32).to_be_bytes());
     assert_eq!(&encoded[4..], &(len as u64).to_be_bytes());
 }
+
+#[test]
+fn rpc_frame_limit_accepts_its_boundary_and_rejects_the_next_byte() {
+    assert!(ensure_frame_length(RPC_FRAME_MAX_LENGTH, RPC_FRAME_MAX_LENGTH).is_ok());
+    assert_eq!(
+        ensure_frame_length(RPC_FRAME_MAX_LENGTH + 1, RPC_FRAME_MAX_LENGTH)
+            .unwrap_err()
+            .kind(),
+        std::io::ErrorKind::InvalidData
+    );
+}
+
+#[tokio::test]
+async fn rpc_frame_reader_rejects_negative_oversized_and_truncated_headers() {
+    let (mut client, mut server) = tokio::io::duplex(16);
+    client.write_all(&(-2i32).to_be_bytes()).await.unwrap();
+    client.shutdown().await.unwrap();
+    assert_eq!(
+        read_frame(&mut server).await.unwrap_err().kind(),
+        std::io::ErrorKind::InvalidData
+    );
+
+    let (mut client, mut server) = tokio::io::duplex(16);
+    client.write_all(&(-1i32).to_be_bytes()).await.unwrap();
+    client
+        .write_all(&((RPC_FRAME_MAX_LENGTH + 1) as u64).to_be_bytes())
+        .await
+        .unwrap();
+    client.shutdown().await.unwrap();
+    assert_eq!(
+        read_frame(&mut server).await.unwrap_err().kind(),
+        std::io::ErrorKind::InvalidData
+    );
+
+    let (mut client, mut server) = tokio::io::duplex(16);
+    client.write_all(&(-1i32).to_be_bytes()).await.unwrap();
+    client.write_all(&[0, 0, 0]).await.unwrap();
+    client.shutdown().await.unwrap();
+    assert_eq!(
+        read_frame(&mut server).await.unwrap_err().kind(),
+        std::io::ErrorKind::UnexpectedEof
+    );
+}
+
+#[tokio::test]
+async fn rpc_frame_writer_rejects_payloads_above_the_cap() {
+    let payload = std::vec![0u8; RPC_FRAME_MAX_LENGTH + 1];
+    let (mut writer, _reader) = tokio::io::duplex(16);
+    assert_eq!(
+        write_frame(&mut writer, &payload).await.unwrap_err().kind(),
+        std::io::ErrorKind::InvalidInput
+    );
+}

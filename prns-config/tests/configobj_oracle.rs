@@ -4,6 +4,8 @@ use std::process::{Command, Stdio};
 
 use prns_config::configobj::{self, Section, Value};
 
+mod support;
+
 fn canon(section: &Section) -> serde_json::Value {
     let mut map = serde_json::Map::new();
     for (key, value) in &section.scalars {
@@ -25,17 +27,13 @@ fn canon(section: &Section) -> serde_json::Value {
     serde_json::Value::Object(map)
 }
 
-fn venv_python() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../benchmarks/reference/.venv/bin/python")
-}
-
 fn oracle_script() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/oracle/configobj_oracle.py")
 }
 
-fn run_oracle(corpus: &[String]) -> Vec<serde_json::Value> {
+fn run_oracle(python: &std::ffi::OsStr, corpus: &[String]) -> Vec<serde_json::Value> {
     let input = serde_json::to_string(corpus).expect("corpus serializes");
-    let mut child = Command::new(venv_python())
+    let mut child = Command::new(python)
         .arg(oracle_script())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -57,14 +55,18 @@ fn run_oracle(corpus: &[String]) -> Vec<serde_json::Value> {
     serde_json::from_slice(&output.stdout).expect("oracle emits json array")
 }
 
-fn compare(corpus: &[String]) {
-    let oracle = run_oracle(corpus);
+fn compare(python: &std::ffi::OsStr, corpus: &[String], seed: Option<u64>) {
+    let oracle = run_oracle(python, corpus);
     assert_eq!(
         oracle.len(),
         corpus.len(),
         "oracle returned one result per config"
     );
     for (index, (text, verdict)) in corpus.iter().zip(&oracle).enumerate() {
+        let provenance = seed.map_or_else(
+            || format!("case {index}"),
+            |seed| format!("seed {seed:#018x}, case {index}"),
+        );
         let ours = configobj::parse(text);
         let verdict = verdict.as_object().expect("oracle result is an object");
         match (ours, verdict.get("ok"), verdict.get("error")) {
@@ -72,20 +74,22 @@ fn compare(corpus: &[String]) {
                 let mine = canon(&section);
                 assert_eq!(
                     &mine, tree,
-                    "config #{index} parsed differently from ConfigObj:\n--- input ---\n{text}\n--- ours ---\n{mine:#}\n--- oracle ---\n{tree:#}"
+                    "{provenance} parsed differently from ConfigObj:\n--- input ---\n{text}\n--- ours ---\n{mine:#}\n--- oracle ---\n{tree:#}"
                 );
             }
             (Err(error), _, Some(oracle_error)) => {
                 let _ = (error, oracle_error);
             }
             (Ok(section), None, Some(oracle_error)) => panic!(
-                "config #{index}: we accepted but ConfigObj rejected ({oracle_error}):\n{text}\nours={:#}",
+                "{provenance}: we accepted but ConfigObj rejected ({oracle_error}):\n{text}\nours={:#}",
                 canon(&section)
             ),
             (Err(error), Some(tree), None) => panic!(
-                "config #{index}: ConfigObj accepted but we rejected ({error}):\n{text}\noracle={tree:#}"
+                "{provenance}: ConfigObj accepted but we rejected ({error}):\n{text}\noracle={tree:#}"
             ),
-            (_, None, None) => panic!("config #{index}: oracle result had neither ok nor error"),
+            (_, None, None) => {
+                panic!("{provenance}: oracle result had neither ok nor error:\n{text}")
+            }
         }
     }
 }
@@ -108,6 +112,32 @@ const CURATED: &[&str] = &[
     "[x]\nzero = 0\nyes = Yes\nno = off\n",
     "[x]\npath = /dev/ttyUSB0\nhostport = host:4965\n",
     "[a]\nk1 = v1\n[b]\nk2 = v2\n[c]\nk3 = v3\n",
+];
+
+const ADVERSARIAL: &[&str] = &[
+    "[[orphan]]\nk = v\n",
+    "[parent]\n[[[skipped]]]\nk = v\n",
+    "[broken]]\nk = v\n",
+    "[[broken]\nk = v\n",
+    "[x]\nk = 'unterminated\n",
+    "[x]\nmissing equals\n",
+    "[x]\nk = first\nk = second\n",
+    "[x]\nk = first\n[x]\nk = second\n",
+    "[x]\n[[child]]\nk = first\n[[child]]\nk = second\n",
+    "[x]\nplain = alpha,beta\n",
+    "[x]\nleading = ,alpha\n",
+    "[x]\ndoubled = alpha,,beta\n",
+    "[x]\nquoted = 'alpha, beta', \"gamma # delta\" # tail\n",
+    "[x]\ncomment = value#attached\n",
+    "[x]\nempty =\nblank =   \nquoted_empty = \"\"\n",
+    "[unicode]\nключ = значение\nemoji = mesh-🛰️\n",
+    "[control]\nvalue = before\u{0}after\n",
+    "\t[x]\r\n\tkey\t=\tvalue\t\r\n",
+    "[ x ]\n spaced key = spaced value \n",
+    "root = value\n[x]\nk = v\n",
+    "[x]\nk = \\\"escaped\\\"\n",
+    "[x]\nk = \"backslash\\\\tail\"\n",
+    "[x]\nk = one, 'two,three', four # five\n",
 ];
 
 struct Generator {
@@ -203,27 +233,36 @@ fn generated_corpus(count: usize, seed: u64) -> Vec<String> {
 
 #[test]
 fn matches_configobj_on_curated_dialect_corners() {
-    let python = venv_python();
-    if !python.exists() {
-        eprintln!(
-            "skipping oracle test: reference venv python not found at {}",
-            python.display()
-        );
+    let Some(python) =
+        support::reference_python("SMOKE_PYTHON", "../benchmarks/reference/.venv/bin/python")
+    else {
         return;
-    }
+    };
     let corpus: Vec<String> = CURATED.iter().map(|text| text.to_string()).collect();
-    compare(&corpus);
+    compare(&python, &corpus, None);
 }
 
 #[test]
 fn matches_configobj_on_generated_configs() {
-    let python = venv_python();
-    if !python.exists() {
-        eprintln!(
-            "skipping oracle test: reference venv python not found at {}",
-            python.display()
-        );
+    let Some(python) =
+        support::reference_python("SMOKE_PYTHON", "../benchmarks/reference/.venv/bin/python")
+    else {
         return;
-    }
-    compare(&generated_corpus(250, 0x5eed_1337));
+    };
+    const SEED: u64 = 0x5eed_1337;
+    compare(&python, &generated_corpus(250, SEED), Some(SEED));
+}
+
+#[test]
+fn matches_configobj_on_adversarial_boundaries() {
+    let Some(python) =
+        support::reference_python("SMOKE_PYTHON", "../benchmarks/reference/.venv/bin/python")
+    else {
+        return;
+    };
+    let corpus = ADVERSARIAL
+        .iter()
+        .map(|text| text.to_string())
+        .collect::<Vec<_>>();
+    compare(&python, &corpus, None);
 }

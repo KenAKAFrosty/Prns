@@ -974,7 +974,11 @@ fn take_binary<const N: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::interfaces::shared_instance::rns_rpc::EncodedRpcFrameHeader;
     use rmpv::Value;
+    use std::ffi::OsString;
+    use std::path::Path;
+    use std::process::Command;
 
     fn request(entries: Vec<(&str, Value)>) -> Vec<u8> {
         let value = Value::Map(
@@ -990,6 +994,223 @@ mod tests {
 
     fn binary<const N: usize>(byte: u8) -> Value {
         Value::Binary(vec![byte; N])
+    }
+
+    fn decode_hex(hex: &str) -> Vec<u8> {
+        assert!(hex.len().is_multiple_of(2));
+        (0..hex.len())
+            .step_by(2)
+            .map(|index| u8::from_str_radix(&hex[index..index + 2], 16).expect("valid oracle hex"))
+            .collect()
+    }
+
+    fn reference_python() -> Option<OsString> {
+        if let Some(interpreter) = std::env::var_os("RPC_SMOKE_PYTHON") {
+            assert!(
+                !interpreter.is_empty(),
+                "RPC_SMOKE_PYTHON must name a Python interpreter"
+            );
+            return Some(interpreter);
+        }
+        let fallback = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../benchmarks/reference/.rpc-venv/bin/python");
+        if fallback.is_file() {
+            return Some(fallback.into_os_string());
+        }
+        assert!(
+            std::env::var_os("PRNS_ORACLE_REQUIRED").is_none(),
+            "RPC_SMOKE_PYTHON is required for this oracle lane and the developer fallback is missing at {}",
+            fallback.display()
+        );
+        None
+    }
+
+    fn rpc_oracle() -> Option<serde_json::Value> {
+        let python = reference_python()?;
+        let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/oracle/rpc_oracle.py");
+        let output = Command::new(python)
+            .arg(script)
+            .output()
+            .expect("spawn Python RPC oracle");
+        assert!(
+            output.status.success(),
+            "Python RPC oracle failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Some(serde_json::from_slice(&output.stdout).expect("Python RPC oracle emits JSON"))
+    }
+
+    #[test]
+    fn stock_public_methods_emit_the_complete_canonical_rpc_surface() {
+        let Some(oracle) = rpc_oracle() else {
+            return;
+        };
+        let destination_hash = DestinationHash::new([0x11; 16]);
+        let packet_hash = PacketHashArgument::new(vec![0x22; 32]);
+        let identity_hash = IdentityHash::new([0x33; 16]);
+        let expected = vec![
+            ("interface_stats", RnsRpcRequest::InterfaceStats),
+            (
+                "path_table",
+                RnsRpcRequest::PathTable {
+                    max_hops: Some(RnsInteger::from_u64(8)),
+                },
+            ),
+            ("rate_table", RnsRpcRequest::RateTable),
+            (
+                "next_hop_if_name",
+                RnsRpcRequest::NextHopInterface { destination_hash },
+            ),
+            ("next_hop", RnsRpcRequest::NextHop { destination_hash }),
+            (
+                "first_hop_timeout",
+                RnsRpcRequest::FirstHopTimeout { destination_hash },
+            ),
+            ("link_count", RnsRpcRequest::LinkCount),
+            (
+                "packet_rssi",
+                RnsRpcRequest::PacketRssi {
+                    packet_hash: PacketHashArgument::new(packet_hash.as_bytes().to_vec()),
+                },
+            ),
+            (
+                "packet_snr",
+                RnsRpcRequest::PacketSnr {
+                    packet_hash: PacketHashArgument::new(packet_hash.as_bytes().to_vec()),
+                },
+            ),
+            ("packet_q", RnsRpcRequest::PacketQuality { packet_hash }),
+            ("blackholed_identities", RnsRpcRequest::BlackholedIdentities),
+            (
+                "is_blackholed",
+                RnsRpcRequest::IsBlackholed { identity_hash },
+            ),
+            ("drop_path", RnsRpcRequest::DropPath { destination_hash }),
+            (
+                "drop_all_via",
+                RnsRpcRequest::DropAllVia {
+                    transport_id: TransportId::new([0x11; 16]),
+                },
+            ),
+            ("drop_announce_queues", RnsRpcRequest::DropAnnounceQueues),
+            (
+                "blackhole_identity",
+                RnsRpcRequest::BlackholeIdentity {
+                    identity_hash,
+                    until: Some(RnsNumber::Integer(RnsInteger::from_u64(2_147_483_648))),
+                    reason: Some("oracle".into()),
+                },
+            ),
+            (
+                "unblackhole_identity",
+                RnsRpcRequest::UnblackholeIdentity { identity_hash },
+            ),
+            (
+                "destination_data_used",
+                RnsRpcRequest::DestinationData {
+                    operation: DestinationDataOperation::Used,
+                    destination_hash,
+                },
+            ),
+            (
+                "destination_data_retain",
+                RnsRpcRequest::DestinationData {
+                    operation: DestinationDataOperation::Retain,
+                    destination_hash,
+                },
+            ),
+            (
+                "destination_data_unretain",
+                RnsRpcRequest::DestinationData {
+                    operation: DestinationDataOperation::Unretain,
+                    destination_hash,
+                },
+            ),
+            (
+                "identity_data_retain",
+                RnsRpcRequest::RetainIdentity { identity_hash },
+            ),
+        ];
+        let canonical = oracle["canonical"].as_array().expect("canonical array");
+        assert_eq!(canonical.len(), 21);
+        assert_eq!(expected.len(), canonical.len());
+        for ((name, expected), captured) in expected.into_iter().zip(canonical) {
+            assert_eq!(captured["name"].as_str(), Some(name));
+            let bytes = decode_hex(captured["hex"].as_str().expect("canonical hex"));
+            let decoded = decode(&bytes)
+                .unwrap_or_else(|error| panic!("stock request {name} did not decode: {error:?}"));
+            assert_eq!(decoded, expected, "stock request {name}");
+            assert_eq!(
+                decoded.encode_message_pack().unwrap(),
+                bytes,
+                "stock request {name} did not re-encode byte-identically"
+            );
+        }
+    }
+
+    #[test]
+    fn stock_generated_rpc_mutations_are_rejected_without_panics() {
+        let Some(oracle) = rpc_oracle() else {
+            return;
+        };
+        for mutation in oracle["mutations"].as_array().expect("mutation array") {
+            let name = mutation["name"].as_str().expect("mutation name");
+            let bytes = decode_hex(mutation["hex"].as_str().expect("mutation hex"));
+            assert!(
+                decode(&bytes).is_err(),
+                "Python mutation {name} unexpectedly decoded: {}",
+                mutation["hex"].as_str().unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn stock_and_prns_preserve_all_msgpack_integer_boundaries() {
+        let Some(oracle) = rpc_oracle() else {
+            return;
+        };
+        for boundary in oracle["integer_boundaries"]
+            .as_array()
+            .expect("integer boundary array")
+        {
+            let value = boundary["value"].as_str().expect("integer value");
+            let bytes = decode_hex(boundary["hex"].as_str().expect("integer hex"));
+            let expected = if value.starts_with('-') {
+                RnsInteger::from_i64(value.parse().expect("signed boundary"))
+            } else {
+                RnsInteger::from_u64(value.parse().expect("unsigned boundary"))
+            };
+            let decoded = decode(&bytes).expect("stock integer boundary decodes");
+            assert_eq!(
+                decoded,
+                RnsRpcRequest::PathTable {
+                    max_hops: Some(expected)
+                },
+                "stock integer boundary {value}"
+            );
+            assert_eq!(decoded.encode_message_pack().unwrap(), bytes);
+        }
+    }
+
+    #[test]
+    fn cpython_and_prns_agree_on_frame_header_boundaries() {
+        let Some(oracle) = rpc_oracle() else {
+            return;
+        };
+        assert_eq!(
+            oracle["request_frame_max_length"].as_u64(),
+            Some(crate::interfaces::shared_instance::rns_rpc::RPC_FRAME_MAX_LENGTH as u64)
+        );
+        for header in oracle["headers"].as_array().expect("header array") {
+            let length = header["length"]
+                .as_str()
+                .expect("header length")
+                .parse::<usize>()
+                .expect("platform header length");
+            let expected = decode_hex(header["hex"].as_str().expect("header hex"));
+            let actual = EncodedRpcFrameHeader::new(length).expect("length fits the RPC wire");
+            assert_eq!(actual.as_bytes(), expected, "frame length {length}");
+        }
     }
 
     #[test]

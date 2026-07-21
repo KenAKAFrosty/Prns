@@ -66,17 +66,18 @@ grep -q "STOCK_INSTANCE_UP" "$STOCK_LOG" || { echo "FAIL: the stock RNS instance
 sleep 0.5
 echo "stock instance up; running prnsd against the same bus..."
 
-"$PRNSD" --config "$PRNS_DIR" > "$PRNSD_LOG" 2>&1 &
+"$PRNSD" run --config "$PRNS_DIR" > "$PRNSD_LOG" 2>&1 &
 PRNSD_PID=$!
-for _ in $(seq 1 60); do grep -q "RNSD_READY" "$PRNSD_LOG" && break; sleep 0.2; done
+for _ in $(seq 1 60); do grep -q 'event="daemon_ready"' "$PRNSD_LOG" && break; sleep 0.2; done
 sleep 0.3
 
-if grep -q "RNSD_JOINED_AS_CLIENT" "$PRNSD_LOG" && ! grep -q "RNSD_INTERFACE_UP" "$PRNSD_LOG"; then
+if grep -q 'event="shared_instance_joined"' "$PRNSD_LOG" && ! grep -q 'event="interface_started"' "$PRNSD_LOG"; then
     echo "PASS: prnsd detected the stock RNS instance and joined as a client, standing up none of its own interfaces"
-    grep -E "RNSD_JOINED_AS_CLIENT|RNSD_BECAME_INSTANCE" "$PRNSD_LOG" | head -1
+    grep -E 'event="shared_instance_joined"|event="shared_instance_started"' "$PRNSD_LOG" | head -1
     exit 0
 fi
 
 echo "FAIL: prnsd did not join the stock instance as a client"
-echo "--- prnsd log ---"; grep -E "RNSD_" "$PRNSD_LOG"
+echo "--- stock log ---"; cat "$STOCK_LOG"
+echo "--- prnsd log ---"; cat "$PRNSD_LOG"
 exit 1

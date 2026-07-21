@@ -25,6 +25,53 @@ The extra lanes below are intentionally small. They set the pattern for deeper
 coverage without making every local edit pay the full proof, fuzzing, and
 mutation-testing cost.
 
+## Python Oracle Lanes
+
+The machine-readable inventory in `oracles/manifest.json` is the single source
+of truth for each oracle's interpreter seam, command, tier, timeout, inputs, and
+evidence location. Inspect the current inventory without executing it:
+
+```sh
+python3 scripts/oracles.py --list
+```
+
+The PR lane runs deterministic Python comparisons and the established live
+interop set. The full lane adds every utility and deep live scenario:
+
+```sh
+SMOKE_PYTHON=/path/to/rns-python RPC_SMOKE_PYTHON=/path/to/rpc-rns-python python3 scripts/oracles.py --pr
+SMOKE_PYTHON=/path/to/rns-python RPC_SMOKE_PYTHON=/path/to/rpc-rns-python python3 scripts/oracles.py --full
+```
+
+Both seams must resolve to executable interpreters in an oracle lane. Local
+developer runs may omit a seam only when its corresponding pinned reference
+venv exists. Each case runs in its own process group under an outer timeout and
+retains its exit metadata, stdout, and stderr below
+`validation-artifacts/oracles/<case>/`.
+
+The lane split is intentionally top-down; `--list` remains the exact roster:
+
+| Coverage layer | PR lane | Full lane |
+| --- | --- | --- |
+| Configuration | ConfigObj tree, scalar coercion, and RNode transport selection | PR coverage plus the stock Prns-interface skip contract |
+| Protocol and crypto | Packet boundaries, identity and token crypto, and the complete 21-operation RPC codec | Same deterministic corpus |
+| Live recovery | The required shared-instance, management, probe, blackhole, RNode, transit, IFAC, inverse-instance, and TCP-server set | Same required live set |
+| Utility interoperability | Not run | Manifest-registered RNID local/network, RNSTATUS, RNPATH, RNPROBE, RNCP, and RNX cases |
+
+The deterministic cases print their seed and failing input on divergence. They
+cover malformed configuration nesting and values; every packet flag, hop,
+truncation, minimum, and MTU edge; signature and token lengths plus wrong-key,
+corruption, and truncation rejection; and canonical and mutated MessagePack RPC
+payloads plus CPython short/wide frame headers. Accepted packets and requests
+must re-encode byte-identically, crypto failures expose no partial plaintext,
+and malformed RPC input must return a typed error without panicking.
+
+The hostile live cases prove recovery rather than rejection alone. Wrong RPC
+keys, malformed frames, unauthorized management identities, missing or wrong
+IFAC credentials, interrupted or cancelled resources, and invalid RNode reports
+are each followed by a valid stock peer. The follow-up must complete without
+stale listener, link, resource, or staging state.
+
 ## Drift Guard
 
 The validation docs name executable targets, so they get their own cheap drift
@@ -272,7 +319,7 @@ The same-signature client binding contract is documented in
 ## RNS 1.3.8 Daemon Oracles
 
 The shared-instance, management-service, and host-interface promises are checked against stock
-RNS `1.3.8` at the client API boundary. Prepare their dedicated reference
+RNS `1.3.8` semantics at the client API boundary through the pinned RNS `1.3.9` security release. Prepare their dedicated reference
 environment without changing the broader 1.3.5 target:
 
 ```sh
@@ -280,14 +327,10 @@ uv venv benchmarks/reference/.rpc-venv
 uv pip install --python benchmarks/reference/.rpc-venv/bin/python -r benchmarks/reference/rpc-requirements.txt
 ```
 
-Then run the oracles:
+Then run the complete oracle inventory:
 
 ```sh
-bash scripts/local-rpc-interop-smoke.sh
-bash scripts/remote-management-interop-smoke.sh
-bash scripts/probe-responder-interop-smoke.sh
-bash scripts/blackhole-exchange-interop-smoke.sh
-bash scripts/rnode-tcp-interop-smoke.sh
+python3 scripts/oracles.py --full
 ```
 
 The first smoke stands up a Prns-owned shared instance, lets a stock RNS client
@@ -297,7 +340,7 @@ to `rnstransport.remote.management` and exercises the stock status, path, and
 rate request forms. The third sends an ordinary packet to `rnstransport.probe`
 and requires a cryptographically valid delivery proof. The fourth runs both directions of the
 blackhole exchange: stock RNS fetches Prnsd's published aggregate, then Prnsd fetches and persists a
-stock RNS source list. The fifth uses the RNS 1.3.8 RNode command constants in a Python TCP device
+stock RNS source list. The fifth uses the compatible RNode command constants in a Python TCP device
 oracle and verifies Prnsd's detect, radio configuration, report validation, and idle keepalive bytes.
 
 The compatibility shim still answers legacy pickle-shaped basics so older LXMF
@@ -315,18 +358,14 @@ tracks the 1.3.8 msgpack contract. The current oracle covers all 21 operations:
 
 ## IFAC TCP Interop Oracle
 
-The protected TCP lane puts a Prns TCP client and a stock RNS `1.3.5` TCP
-server on the same named IFAC network with a 16-byte access code. Two stock RNS
+The protected TCP lane puts a Prns TCP client and a pinned RNS `1.3.9` TCP
+server exercising the `1.3.5` data-plane contract on the same named IFAC network with a 16-byte access code. Two stock RNS
 applications then establish links through that protected interface and transfer
 one-megabyte resources in both directions, crossing the mask counter wrap and
 the broadcast MTU boundary:
 
-```sh
-bash scripts/ifac-tcp-interop-smoke.sh
-```
-
-The ordinary open-interface transit smoke remains available as
-`scripts/local-transit-smoke.sh`.
+This case is registered in the full inventory and remains part of the established
+PR live set.
 
 ## Fuzzing
 

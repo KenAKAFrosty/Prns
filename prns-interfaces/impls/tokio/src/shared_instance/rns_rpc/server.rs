@@ -87,6 +87,7 @@ pub enum SharedInstanceRpcBindError {
 }
 
 const ACCEPT_RETRY_INTERVAL: Duration = Duration::from_secs(1);
+pub(super) const RPC_CONNECTION_IO_TIMEOUT: Duration = Duration::from_secs(10);
 
 impl<Q> SharedInstanceRpcServer<Q, Q>
 where
@@ -364,20 +365,20 @@ where
         network_identity,
     } = service;
     let _active = telemetry.connection_opened();
-    let client_authenticated = match deliver_our_challenge(&mut stream, credentials.rpc_key()).await
-    {
-        Ok(authenticated) => authenticated,
-        Err(err) => {
-            telemetry.record_read_failure(err.kind());
-            return Err(err);
-        }
-    };
+    let client_authenticated =
+        match with_io_timeout(deliver_our_challenge(&mut stream, credentials.rpc_key())).await {
+            Ok(authenticated) => authenticated,
+            Err(err) => {
+                telemetry.record_read_failure(err.kind());
+                return Err(err);
+            }
+        };
     if !client_authenticated {
         telemetry.record_auth_failure();
         return Ok(());
     }
     let server_authenticated =
-        match answer_client_challenge(&mut stream, credentials.rpc_key()).await {
+        match with_io_timeout(answer_client_challenge(&mut stream, credentials.rpc_key())).await {
             Ok(authenticated) => authenticated,
             Err(err) => {
                 telemetry.record_read_failure(err.kind());
@@ -389,7 +390,7 @@ where
         telemetry.record_protocol_failure();
         return Ok(());
     }
-    let request = match read_frame(&mut stream).await {
+    let request = match with_io_timeout(read_frame(&mut stream)).await {
         Ok(request) => request,
         Err(err) => {
             telemetry.record_read_failure(err.kind());
@@ -428,10 +429,18 @@ where
     )
     .await
     .map_err(std::io::Error::other)?;
-    if let Err(err) = write_frame(&mut stream, &reply).await {
+    if let Err(err) = with_io_timeout(write_frame(&mut stream, &reply)).await {
         telemetry.record_write_failure();
         return Err(err);
     }
     telemetry.record_completed();
     Ok(())
+}
+
+async fn with_io_timeout<T>(
+    operation: impl core::future::Future<Output = std::io::Result<T>>,
+) -> std::io::Result<T> {
+    tokio::time::timeout(RPC_CONNECTION_IO_TIMEOUT, operation)
+        .await
+        .map_err(|_| std::io::Error::from(std::io::ErrorKind::TimedOut))?
 }

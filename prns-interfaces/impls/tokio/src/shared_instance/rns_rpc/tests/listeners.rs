@@ -1,5 +1,24 @@
 use super::*;
 
+async fn connect_rpc(port: u16) -> tokio::net::TcpStream {
+    for _ in 0..20 {
+        if let Ok(stream) = tokio::net::TcpStream::connect(("127.0.0.1", port)).await {
+            return stream;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    panic!("RPC listener did not accept a loopback client")
+}
+
+async fn valid_link_count(port: u16, rpc_key: &[u8; 32], expected: u8) {
+    let mut client = connect_rpc(port).await;
+    authenticate_modern_client(&mut client, rpc_key).await;
+    write_frame(&mut client, b"\x81\xa3get\xaalink_count")
+        .await
+        .unwrap();
+    assert_eq!(read_test_frame(&mut client).await, [expected]);
+}
+
 #[test]
 fn explicit_blackhole_source_is_independent_of_rpc_credentials() {
     let query = StubQuery {
@@ -135,4 +154,94 @@ async fn tcp_bind_preserves_the_concrete_failure() {
             std::io::ErrorKind::AddrInUse
         ))
     );
+}
+
+#[tokio::test]
+async fn tcp_listener_recovers_after_hostile_rpc_connections() {
+    let rpc_key = [0x5au8; 32];
+    let probe = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = probe.local_addr().unwrap().port();
+    drop(probe);
+    let telemetry = RpcTelemetry::default();
+    let listener = SharedInstanceRpcServer::tcp(
+        test_credentials(rpc_key),
+        port,
+        StubQuery {
+            links: 9,
+            packet_phy: None,
+            rates: std::vec![],
+            routes: std::vec![],
+            interfaces: std::vec![],
+        },
+    )
+    .with_telemetry(telemetry.clone())
+    .bind()
+    .await
+    .unwrap();
+    let server_task = tokio::spawn(listener.run());
+
+    let mut wrong_key_client = connect_rpc(port).await;
+    let challenge = read_test_frame(&mut wrong_key_client).await;
+    let message = challenge.strip_prefix(b"#CHALLENGE#").unwrap();
+    let mut bad_response = b"{sha256}".to_vec();
+    bad_response.extend_from_slice(&hmac_sha256(&[0x6b; 32], message));
+    write_frame(&mut wrong_key_client, &bad_response)
+        .await
+        .unwrap();
+    assert_eq!(
+        read_test_frame(&mut wrong_key_client).await,
+        RpcAuthenticationControlMessage::Failure.wire_payload()
+    );
+    valid_link_count(port, &rpc_key, 9).await;
+
+    let mut negative = connect_rpc(port).await;
+    authenticate_modern_client(&mut negative, &rpc_key).await;
+    negative.write_all(&(-2i32).to_be_bytes()).await.unwrap();
+    negative.shutdown().await.unwrap();
+    valid_link_count(port, &rpc_key, 9).await;
+
+    let mut oversized = connect_rpc(port).await;
+    authenticate_modern_client(&mut oversized, &rpc_key).await;
+    oversized
+        .write_all(&((RPC_FRAME_MAX_LENGTH + 1) as i32).to_be_bytes())
+        .await
+        .unwrap();
+    oversized.shutdown().await.unwrap();
+    valid_link_count(port, &rpc_key, 9).await;
+
+    let mut truncated = connect_rpc(port).await;
+    authenticate_modern_client(&mut truncated, &rpc_key).await;
+    truncated.write_all(&8i32.to_be_bytes()).await.unwrap();
+    truncated.write_all(&[0x81, 0xa3]).await.unwrap();
+    truncated.shutdown().await.unwrap();
+    valid_link_count(port, &rpc_key, 9).await;
+
+    let mut malformed = connect_rpc(port).await;
+    authenticate_modern_client(&mut malformed, &rpc_key).await;
+    write_frame(&mut malformed, &[0xc1]).await.unwrap();
+    malformed.shutdown().await.unwrap();
+    valid_link_count(port, &rpc_key, 9).await;
+
+    let mut unknown = connect_rpc(port).await;
+    authenticate_modern_client(&mut unknown, &rpc_key).await;
+    write_frame(
+        &mut unknown,
+        &msgpack_request(std::vec![("get", Value::from("future"))]),
+    )
+    .await
+    .unwrap();
+    unknown.shutdown().await.unwrap();
+    valid_link_count(port, &rpc_key, 9).await;
+
+    let mut half_closed = connect_rpc(port).await;
+    authenticate_modern_client(&mut half_closed, &rpc_key).await;
+    half_closed.shutdown().await.unwrap();
+    valid_link_count(port, &rpc_key, 9).await;
+
+    let snapshot = telemetry.snapshot();
+    assert_eq!(snapshot.completed_requests, 7);
+    assert!(snapshot.auth_failures >= 1);
+    assert!(snapshot.protocol_failures >= 2);
+    assert!(snapshot.read_failures >= 4);
+    server_task.abort();
 }

@@ -2,6 +2,7 @@
 
 import socket
 import sys
+import time
 from pathlib import Path
 
 from RNS.Interfaces.RNodeInterface import KISS
@@ -42,6 +43,52 @@ def received_frames(connection):
                 current.append(byte)
 
 
+def send_split(connection, encoded):
+    for index in range(0, len(encoded), 2):
+        connection.sendall(encoded[index : index + 2])
+        time.sleep(0.002)
+
+
+def wait_for_detect(connection):
+    for command, payload in received_frames(connection):
+        if command == KISS.CMD_DETECT:
+            if payload != bytes([KISS.DETECT_REQ]):
+                raise RuntimeError(f"unexpected detect payload: {payload.hex()}")
+            return
+    raise RuntimeError("Prnsd disconnected before detection")
+
+
+def wait_for_disconnect(connection):
+    connection.settimeout(8)
+    while connection.recv(4096):
+        pass
+
+
+def expected_reports():
+    return {
+        KISS.CMD_FREQUENCY: FREQUENCY.to_bytes(4, "big"),
+        KISS.CMD_BANDWIDTH: BANDWIDTH.to_bytes(4, "big"),
+        KISS.CMD_TXPOWER: bytes([TXPOWER]),
+        KISS.CMD_SF: bytes([SPREADING_FACTOR]),
+        KISS.CMD_CR: bytes([CODING_RATE]),
+        KISS.CMD_RADIO_STATE: bytes([KISS.RADIO_STATE_ON]),
+    }
+
+
+def collect_configuration(connection, expected):
+    configured = set()
+    for command, payload in received_frames(connection):
+        if command in expected:
+            if payload != expected[command]:
+                raise RuntimeError(
+                    f"command {command:#04x}: expected {expected[command].hex()}, got {payload.hex()}"
+                )
+            configured.add(command)
+            if configured == set(expected):
+                return
+    raise RuntimeError("Prnsd disconnected before writing RNode configuration")
+
+
 def prepare(config_directory):
     directory = Path(config_directory)
     directory.mkdir(parents=True, exist_ok=True)
@@ -67,41 +114,60 @@ def prepare(config_directory):
 
 
 def serve(ready_path):
-    expected = {
-        KISS.CMD_FREQUENCY: FREQUENCY.to_bytes(4, "big"),
-        KISS.CMD_BANDWIDTH: BANDWIDTH.to_bytes(4, "big"),
-        KISS.CMD_TXPOWER: bytes([TXPOWER]),
-        KISS.CMD_SF: bytes([SPREADING_FACTOR]),
-        KISS.CMD_CR: bytes([CODING_RATE]),
-        KISS.CMD_RADIO_STATE: bytes([KISS.RADIO_STATE_ON]),
-    }
-    configured = set()
+    expected = expected_reports()
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         listener.bind((HOST, PORT))
-        listener.listen(1)
+        listener.listen(4)
         Path(ready_path).touch()
+
         connection, _ = listener.accept()
         with connection:
             connection.settimeout(12)
+            wait_for_detect(connection)
+        print("RNODE_DISCONNECT_REJECTED", flush=True)
+
+        connection, _ = listener.accept()
+        with connection:
+            connection.settimeout(12)
+            wait_for_detect(connection)
+            send_split(connection, frame(0xEE, bytes([KISS.FEND, KISS.FESC])))
+            send_split(connection, frame(KISS.CMD_DETECT, bytes([KISS.DETECT_RESP])))
+            send_split(connection, frame(KISS.CMD_FW_VERSION, bytes([1, 80])))
+            collect_configuration(connection, expected)
+            invalid = dict(expected)
+            invalid[KISS.CMD_SF] = bytes([SPREADING_FACTOR + 1])
+            for command, payload in reversed(list(invalid.items())):
+                send_split(connection, frame(command, payload))
+            wait_for_disconnect(connection)
+        print("RNODE_INVALID_REPORT_REJECTED", flush=True)
+
+        connection, _ = listener.accept()
+        with connection:
+            connection.settimeout(12)
+            wait_for_detect(connection)
+            for command, payload in reversed(list(expected.items())):
+                send_split(connection, frame(command, payload))
+            send_split(connection, frame(KISS.CMD_DETECT, bytes([KISS.DETECT_RESP])))
+            collect_configuration(connection, expected)
+            wait_for_disconnect(connection)
+        print("RNODE_OUT_OF_ORDER_REJECTED", flush=True)
+
+        connection, _ = listener.accept()
+        with connection:
+            connection.settimeout(12)
+            wait_for_detect(connection)
+            send_split(connection, frame(0xEE, bytes([KISS.FEND, KISS.FESC])))
+            send_split(connection, frame(KISS.CMD_DETECT, bytes([KISS.DETECT_RESP])))
+            send_split(connection, frame(KISS.CMD_FW_VERSION, bytes([1, 80])))
+            collect_configuration(connection, expected)
+            for command, payload in reversed(list(expected.items())):
+                send_split(connection, frame(command, payload))
             for command, payload in received_frames(connection):
-                if command == KISS.CMD_DETECT:
-                    if payload != bytes([KISS.DETECT_REQ]):
-                        raise RuntimeError(f"unexpected detect payload: {payload.hex()}")
-                    connection.sendall(frame(KISS.CMD_DETECT, bytes([KISS.DETECT_RESP])))
-                    if configured == set(expected):
-                        print("RNODE_TCP_DEVICE_OK", flush=True)
-                        return
-                elif command == KISS.CMD_FW_VERSION:
-                    connection.sendall(frame(KISS.CMD_FW_VERSION, bytes([1, 80])))
-                elif command in expected:
-                    if payload != expected[command]:
-                        raise RuntimeError(
-                            f"command {command:#04x}: expected {expected[command].hex()}, got {payload.hex()}"
-                        )
-                    connection.sendall(frame(command, payload))
-                    configured.add(command)
-    raise RuntimeError("Prnsd disconnected before completing RNode configuration")
+                if command == KISS.CMD_DETECT and payload == bytes([KISS.DETECT_REQ]):
+                    print("RNODE_TCP_DEVICE_OK hostile_cases=3 split_frames=1", flush=True)
+                    return
+    raise RuntimeError("Prnsd disconnected before valid RNode recovery")
 
 
 if __name__ == "__main__":

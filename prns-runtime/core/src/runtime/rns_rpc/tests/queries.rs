@@ -9,18 +9,18 @@ async fn the_set_answers_phy_stats_none_timeout_default_and_a_real_link_count() 
         routes: std::vec![],
         interfaces: std::vec![],
     };
-    let rssi = b"\x80\x04\x95...{'get': 'packet_rssi'}";
-    assert_eq!(reply_for(rssi, &query).await, b"N.");
-    let timeout = b"{'get': 'first_hop_timeout'}";
-    assert_eq!(reply_for(timeout, &query).await, b"I6\n.");
-    let links = b"{'get': 'link_count'}";
-    assert_eq!(reply_for(links, &query).await, b"I2\n.");
-    let path_table = b"{'get': 'path_table'}";
-    assert_eq!(reply_for(path_table, &query).await, b"].");
-    let rate_table = b"{'get': 'rate_table'}";
-    assert_eq!(reply_for(rate_table, &query).await, b"].");
-    let blackholes = b"{'get': 'blackholed_identities'}";
-    assert_eq!(reply_for(blackholes, &query).await, b"}.");
+    let rssi = legacy_string_request("get", "packet_rssi");
+    assert_eq!(reply_for(&rssi, &query).await, b"N.");
+    let timeout = legacy_string_request("get", "first_hop_timeout");
+    assert_eq!(reply_for(&timeout, &query).await, b"I6\n.");
+    let links = legacy_string_request("get", "link_count");
+    assert_eq!(reply_for(&links, &query).await, b"I2\n.");
+    let path_table = legacy_string_request("get", "path_table");
+    assert_eq!(reply_for(&path_table, &query).await, b"].");
+    let rate_table = legacy_string_request("get", "rate_table");
+    assert_eq!(reply_for(&rate_table, &query).await, b"].");
+    let blackholes = legacy_string_request("get", "blackholed_identities");
+    assert_eq!(reply_for(&blackholes, &query).await, b"}.");
 }
 
 #[futures_test::test]

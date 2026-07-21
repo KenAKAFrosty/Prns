@@ -95,6 +95,15 @@ pub(super) fn msgpack_request(entries: Vec<(&str, Value)>) -> Vec<u8> {
     encode_msgpack(value).unwrap()
 }
 
+pub(super) fn legacy_string_request(selector: &str, operation: &str) -> Vec<u8> {
+    let mut request = b"(dp0\nV".to_vec();
+    request.extend_from_slice(selector.as_bytes());
+    request.extend_from_slice(b"\np1\nV");
+    request.extend_from_slice(operation.as_bytes());
+    request.extend_from_slice(b"\np2\ns.");
+    request
+}
+
 pub(super) fn value_field<'a>(value: &'a Value, field: &str) -> Option<&'a Value> {
     value
         .as_map()?

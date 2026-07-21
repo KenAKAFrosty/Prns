@@ -4,12 +4,16 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use prns_core::interfaces::shared_instance::rns_rpc::{
     EncodedRpcFrameHeader, RpcFrameHeaderPrefix, AUTHENTICATION_FRAME_MAX_LENGTH,
+    RPC_FRAME_MAX_LENGTH,
 };
 
 pub(super) async fn write_frame<S: AsyncWrite + Unpin>(
     stream: &mut S,
     payload: &[u8],
 ) -> std::io::Result<()> {
+    if payload.len() > RPC_FRAME_MAX_LENGTH {
+        return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput));
+    }
     write_frame_header(stream, payload.len()).await?;
     stream.write_all(payload).await?;
     stream.flush().await?;
@@ -56,6 +60,7 @@ async fn read_frame_body<S: AsyncRead + Unpin>(
 
 pub(super) async fn read_frame<S: AsyncRead + Unpin>(stream: &mut S) -> std::io::Result<Vec<u8>> {
     let len = read_frame_length(stream).await?;
+    ensure_frame_length(len, RPC_FRAME_MAX_LENGTH)?;
     read_frame_body(stream, len).await
 }
 
@@ -63,8 +68,14 @@ pub(super) async fn read_auth_frame<S: AsyncRead + Unpin>(
     stream: &mut S,
 ) -> std::io::Result<Vec<u8>> {
     let len = read_frame_length(stream).await?;
-    if len > AUTHENTICATION_FRAME_MAX_LENGTH {
-        return Err(std::io::Error::from(std::io::ErrorKind::InvalidData));
-    }
+    ensure_frame_length(len, AUTHENTICATION_FRAME_MAX_LENGTH)?;
     read_frame_body(stream, len).await
+}
+
+pub(super) fn ensure_frame_length(len: usize, maximum: usize) -> std::io::Result<()> {
+    if len > maximum {
+        Err(std::io::Error::from(std::io::ErrorKind::InvalidData))
+    } else {
+        Ok(())
+    }
 }

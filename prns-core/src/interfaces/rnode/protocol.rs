@@ -333,6 +333,15 @@ impl DeviceReport {
         }
     }
 
+    pub(super) fn clear_radio_parameters(&mut self) {
+        self.r_frequency = None;
+        self.r_bandwidth = None;
+        self.r_txpower = None;
+        self.r_sf = None;
+        self.r_cr = None;
+        self.r_state = None;
+    }
+
     #[must_use]
     pub fn all_radio_params_present(&self) -> bool {
         self.r_frequency.is_some()

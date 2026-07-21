@@ -102,13 +102,19 @@ impl BringUp {
     }
 
     pub fn apply_command(&mut self, command: u8, payload: &[u8]) {
-        self.report.apply(command, payload);
         match self.phase {
-            Phase::AwaitingDetect { .. } if self.report.detected => {
-                self.phase = Phase::ConfigureRadio;
+            Phase::AwaitingDetect { .. } => {
+                self.report.apply(command, payload);
+                if self.report.detected {
+                    self.report.clear_radio_parameters();
+                    self.phase = Phase::ConfigureRadio;
+                }
             }
-            Phase::AwaitingValidation { .. } if self.report.all_radio_params_present() => {
-                self.conclude_validation();
+            Phase::AwaitingValidation { .. } => {
+                self.report.apply(command, payload);
+                if self.report.all_radio_params_present() {
+                    self.conclude_validation();
+                }
             }
             _ => {}
         }
@@ -211,6 +217,27 @@ mod tests {
         assert_eq!(
             bring_up.next_action(InstantMillis(2_000)),
             BringUpAction::Failed(BringUpError::DetectTimedOut)
+        );
+    }
+
+    #[test]
+    fn radio_reports_received_before_detection_cannot_satisfy_validation() {
+        let mut bring_up = BringUp::new(radio(), DEFAULT_DETECT_TIMEOUT);
+        let _ = bring_up.next_action(InstantMillis(0));
+        bring_up.apply_command(protocol::CMD_FREQUENCY, &868_000_000u32.to_be_bytes());
+        bring_up.apply_command(protocol::CMD_BANDWIDTH, &125_000u32.to_be_bytes());
+        bring_up.apply_command(protocol::CMD_TXPOWER, &[7]);
+        bring_up.apply_command(protocol::CMD_SF, &[8]);
+        bring_up.apply_command(protocol::CMD_RADIO_STATE, &[RADIO_STATE_ON]);
+        bring_up.apply_command(protocol::CMD_DETECT, &[DETECT_RESP]);
+        assert!(matches!(
+            bring_up.next_action(InstantMillis(100)),
+            BringUpAction::WriteRadioConfiguration { .. }
+        ));
+        bring_up.deadline_elapsed(InstantMillis(2_100));
+        assert_eq!(
+            bring_up.next_action(InstantMillis(2_100)),
+            BringUpAction::Failed(BringUpError::RadioMismatch)
         );
     }
 }

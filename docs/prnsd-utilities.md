@@ -1,6 +1,6 @@
 # Prnsd Utilities
 
-Prnsd provides the stock RNS 1.3.8 utility roles as direct, prefixless subcommands. From a source
+Prnsd provides the stock RNS 1.3.8-compatible utility roles as direct, prefixless subcommands. From a source
 checkout, invoke them through `cargo prnsd`; an installed daemon exposes the same commands directly
 through `prnsd`.
 
@@ -70,16 +70,13 @@ prnsd x DESTINATION_HASH "uname -a"
 
 ## RNS 1.3.8 compatibility
 
-The suite tracks stock RNS 1.3.8 behavior at the CLI and protocol boundaries. The automated Python
-oracles run the RNS 1.3.9 security release, whose utility wire semantics remain compatible with that
-target. Where a utility has two roles, the tests exercise both directions:
+The suite tracks stock RNS 1.3.8 behavior at the CLI and protocol boundaries through Python oracles
+pinned to the RNS 1.3.9 security release, whose utility wire semantics remain compatible with that target.
+Where a utility has two roles, the tests exercise both directions:
 
 ```sh
-bash scripts/rnstatus-interop-smoke.sh
-bash scripts/rnpath-interop-smoke.sh
-bash scripts/rnprobe-interop-smoke.sh
-bash scripts/rnid-local-interop-smoke.sh
-bash scripts/rnid-network-interop-smoke.sh
-bash scripts/rncp-interop-smoke.sh
-bash scripts/rnx-interop-smoke.sh
+python3 scripts/oracles.py --full
 ```
+
+`python3 scripts/oracles.py --list` reads the authoritative manifest and shows
+the utility cases currently included in that lane.

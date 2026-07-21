@@ -1,6 +1,8 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RpcFrameLength(usize);
 
+pub const RPC_FRAME_MAX_LENGTH: usize = 16_777_216;
+
 impl RpcFrameLength {
     pub const fn as_usize(self) -> usize {
         self.0

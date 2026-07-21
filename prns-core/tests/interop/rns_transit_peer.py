@@ -76,6 +76,13 @@ class ClientSeeker:
         RNS.Resource(os.urandom(1000000), link, auto_compress=False)
 
 
+class HostileDetector:
+    aspect_filter = "prns.hostile"
+
+    def received_announce(self, destination_hash, announced_identity, app_data):
+        print("HOSTILE_RECEIVED", flush=True)
+
+
 def main() -> int:
     configdir = tempfile.mkdtemp(prefix="rns-peer-")
     with open(os.path.join(configdir, "config"), "w") as handle:
@@ -108,6 +115,7 @@ def main() -> int:
     print("PEER_DEST " + mine.hash.hex(), flush=True)
 
     RNS.Transport.register_announce_handler(ClientSeeker())
+    RNS.Transport.register_announce_handler(HostileDetector())
 
     deadline = time.time() + 60
     while time.time() < deadline and not received["hit"]:

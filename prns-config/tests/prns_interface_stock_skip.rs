@@ -1,9 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-fn venv_python() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../benchmarks/reference/.venv/bin/python")
-}
+mod support;
 
 fn oracle_script() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/oracle/prns_interface_skip_oracle.py")
@@ -11,14 +9,11 @@ fn oracle_script() -> PathBuf {
 
 #[test]
 fn stock_rns_1_3_9_skips_prns_owned_types_and_aliases() {
-    let python = venv_python();
-    if !python.exists() {
-        eprintln!(
-            "skipping Prns interface oracle: RNS 1.3.9 venv not found at {}",
-            python.display()
-        );
+    let Some(python) =
+        support::reference_python("SMOKE_PYTHON", "../benchmarks/reference/.venv/bin/python")
+    else {
         return;
-    }
+    };
 
     let output = Command::new(python)
         .arg(oracle_script())

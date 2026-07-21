@@ -38,7 +38,7 @@ TRANSPORT_HASH="$($PYTHON "$CLIENT" identity-hash "$SERVER_CONFIG/storage/transp
 
 RESULT="$($PYTHON "$CLIENT" probe "$CLIENT_CONFIG" "$TRANSPORT_HASH" 2>&1)"
 if [[ "$RESULT" == *"PROBE_RESPONDER_OK"* ]]; then
-    echo "PASS: stock RNS 1.3.8 received Prnsd's delivery proof from rnstransport.probe"
+    echo "PASS: stock RNS 1.3.9 received Prnsd's delivery proof from rnstransport.probe"
     echo "$RESULT" | grep "PROBE_RESPONDER_OK"
     exit 0
 fi

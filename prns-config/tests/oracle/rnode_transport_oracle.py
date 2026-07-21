@@ -29,16 +29,21 @@ base = {
 
 results = []
 for port in json.load(sys.stdin):
-    interface = RNodeInterface(object(), dict(base, port=port))
-    results.append(
-        {
-            "serial_port": interface.port,
-            "use_ble": interface.use_ble,
-            "ble_name": interface.ble_name,
-            "ble_addr": interface.ble_addr,
-            "use_tcp": interface.use_tcp,
-            "tcp_host": interface.tcp_host,
-        }
-    )
+    try:
+        interface = RNodeInterface(object(), dict(base, port=port))
+        results.append(
+            {
+                "ok": {
+                    "serial_port": interface.port,
+                    "use_ble": interface.use_ble,
+                    "ble_name": interface.ble_name,
+                    "ble_addr": interface.ble_addr.upper() if interface.ble_addr else None,
+                    "use_tcp": interface.use_tcp,
+                    "tcp_host": interface.tcp_host,
+                }
+            }
+        )
+    except Exception as error:
+        results.append({"error": type(error).__name__})
 
 json.dump({"version": RNS.__version__, "results": results}, sys.stdout)

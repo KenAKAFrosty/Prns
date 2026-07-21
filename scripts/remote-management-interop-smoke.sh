@@ -40,7 +40,7 @@ TRANSPORT_HASH="$($PYTHON "$CLIENT" identity-hash "$SERVER_CONFIG/storage/transp
 
 RESULT="$($PYTHON "$CLIENT" query "$CLIENT_CONFIG" "$TRANSPORT_HASH" "$MANAGEMENT_IDENTITY" 2>&1)"
 if [[ "$RESULT" == *"REMOTE_MANAGEMENT_OK"* ]]; then
-    echo "PASS: stock RNS 1.3.8 authenticated and queried Prnsd remote status, paths, and rates"
+    echo "PASS: stock RNS 1.3.9 rejected hostile management requests and recovered for valid status, paths, and rates"
     echo "$RESULT" | grep "REMOTE_MANAGEMENT_OK"
     exit 0
 fi

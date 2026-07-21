@@ -15,7 +15,7 @@ pub use credentials::{RpcAuthenticationKey, SharedInstanceCredentials};
 pub use dialects::{RpcDialect, RpcRequest, RpcVerb};
 pub use framing::{
     EncodedRpcFrameHeader, RpcFrameHeaderEncodeError, RpcFrameHeaderPrefix, RpcFrameLength,
-    RpcFrameLengthDecodeError,
+    RpcFrameLengthDecodeError, RPC_FRAME_MAX_LENGTH,
 };
 pub use reply::{
     LegacyRpcReplyPlan, RnsRpcReply, RnsRpcReplyEncodeError, RnsRpcScalarReply,

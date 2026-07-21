@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""RNS 1.3.8 msgpack control-RPC oracle for a Prns shared instance.
+"""RNS 1.3.8-semantics msgpack control-RPC oracle for a Prns shared instance.
 
 This intentionally drives Reticulum's public methods rather than hand-crafting
 frames. In RNS 1.3.8 those methods send msgpack RPC payloads over
@@ -8,13 +8,20 @@ replies with ``mp.unpackb(recv_bytes())``.
 """
 
 import os
+import hashlib
+import hmac
+import multiprocessing.connection
+import socket
+import struct
 import sys
 import tempfile
 import time
 
 import RNS
+from RNS.vendor import umsgpack as mp
 
-EXPECTED_RNS_VERSION = "1.3.8"
+EXPECTED_RNS_VERSION = "1.3.9"
+RPC_FRAME_MAX_LENGTH = 16_777_216
 EXPECTED_RPC_SURFACE = frozenset(
     {
         "blackhole_identity",
@@ -57,6 +64,98 @@ def record(covered, operation, result):
     return result
 
 
+def recv_exact(peer, length):
+    received = bytearray()
+    while len(received) < length:
+        chunk = peer.recv(length - len(received))
+        if not chunk:
+            raise EOFError(f"connection closed with {length - len(received)} bytes pending")
+        received.extend(chunk)
+    return bytes(received)
+
+
+def recv_frame(peer):
+    short = struct.unpack("!i", recv_exact(peer, 4))[0]
+    if short == -1:
+        length = struct.unpack("!Q", recv_exact(peer, 8))[0]
+    elif short < 0:
+        raise ValueError(f"negative frame length {short}")
+    else:
+        length = short
+    return recv_exact(peer, length)
+
+
+def send_frame(peer, payload):
+    peer.sendall(struct.pack("!i", len(payload)) + payload)
+
+
+def authenticate_raw(peer, key):
+    challenge = recv_frame(peer)
+    require(challenge.startswith(b"#CHALLENGE#"), "server challenge prefix")
+    message = challenge[len(b"#CHALLENGE#") :]
+    require(message.startswith(b"{sha256}"), "server challenge digest")
+    send_frame(peer, b"{sha256}" + hmac.new(key, message, hashlib.sha256).digest())
+    require(recv_frame(peer) == b"#WELCOME#", "server did not welcome valid MAC")
+    our_message = b"{sha256}" + bytes(range(20))
+    send_frame(peer, b"#CHALLENGE#" + our_message)
+    response = recv_frame(peer)
+    require(response.startswith(b"{sha256}"), "server response digest")
+    require(
+        hmac.compare_digest(
+            response[len(b"{sha256}") :], hmac.new(key, our_message, hashlib.sha256).digest()
+        ),
+        "server authentication MAC",
+    )
+    send_frame(peer, b"#WELCOME#")
+
+
+def raw_peer(port):
+    peer = socket.create_connection(("127.0.0.1", port), timeout=3.0)
+    peer.settimeout(3.0)
+    return peer
+
+
+def prove_recovery(port, key):
+    connection = multiprocessing.connection.Client(("127.0.0.1", port), authkey=key)
+    try:
+        connection.send_bytes(mp.packb({"get": "link_count"}))
+        require(isinstance(mp.unpackb(connection.recv_bytes()), int), "recovery link_count")
+    finally:
+        connection.close()
+
+
+def hostile_preflight(port, key):
+    peer = raw_peer(port)
+    challenge = recv_frame(peer)
+    message = challenge[len(b"#CHALLENGE#") :]
+    send_frame(peer, b"{sha256}" + hmac.new(bytes([0x6B]) * 32, message, hashlib.sha256).digest())
+    require(recv_frame(peer) == b"#FAILURE#", "wrong key was not rejected")
+    peer.close()
+    prove_recovery(port, key)
+
+    cases = [
+        ("negative", struct.pack("!i", -2)),
+        ("oversized", struct.pack("!i", RPC_FRAME_MAX_LENGTH + 1)),
+        ("truncated", struct.pack("!i", 8) + b"\x81\xa3"),
+        ("malformed", struct.pack("!i", 1) + b"\xc1"),
+        (
+            "unknown",
+            struct.pack("!i", len(mp.packb({"get": "future"})))
+            + mp.packb({"get": "future"}),
+        ),
+        ("half-closed", b""),
+    ]
+    for name, payload in cases:
+        peer = raw_peer(port)
+        authenticate_raw(peer, key)
+        if payload:
+            peer.sendall(payload)
+        peer.shutdown(socket.SHUT_WR)
+        peer.close()
+        prove_recovery(port, key)
+    return len(cases) + 1
+
+
 def main() -> int:
     version = getattr(RNS, "__version__", "")
     if version != EXPECTED_RNS_VERSION:
@@ -65,6 +164,7 @@ def main() -> int:
     local_port = int(os.environ["PRNS_LOCAL_PORT"])
     rpc_port = int(os.environ["PRNS_RPC_PORT"])
     rpc_key = os.environ.get("PRNS_RPC_KEY", "5a" * 32)
+    rpc_key_bytes = bytes.fromhex(rpc_key)
 
     configdir = tempfile.mkdtemp(prefix="rns-rpc-oracle-")
     config = f"""[reticulum]
@@ -82,6 +182,7 @@ def main() -> int:
     with open(os.path.join(configdir, "config"), "w", encoding="utf-8") as handle:
         handle.write(config)
 
+    hostile_cases = hostile_preflight(rpc_port, rpc_key_bytes)
     reticulum = RNS.Reticulum(configdir=configdir, loglevel=RNS.LOG_WARNING)
     time.sleep(1.0)
     covered = set()
@@ -285,7 +386,8 @@ def main() -> int:
         f"paths={len(path_table)} "
         f"rates={len(rate_table)} "
         f"blackholes={len(blackholed)} "
-        f"operations={len(covered)}",
+        f"operations={len(covered)} "
+        f"hostile_cases={hostile_cases}",
         flush=True,
     )
     return 0

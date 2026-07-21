@@ -5,7 +5,7 @@ import sys
 import RNS
 from RNS.Utilities.rnid import create_rsg, validate_rsg
 
-EXPECTED_RNS_VERSION = "1.3.8"
+EXPECTED_RNS_VERSION = "1.3.9"
 ENCRYPTION_CHUNK_LEN = 1024 * 1024 * RNS.Identity.AES256_BLOCKSIZE
 DECRYPTION_CHUNK_LEN = ENCRYPTION_CHUNK_LEN + RNS.Cryptography.Token.TOKEN_OVERHEAD * 2
 PRIVATE = bytes([0x22]) * 32 + bytes([0x11]) * 32

@@ -85,4 +85,4 @@ REMOTE_RESULT="$("$PRNSD" status --config "$CONFIG" -R "$TRANSPORT_HASH" -i "$MA
     exit 1
 }
 
-echo "PASS: Prnsd status queried stock RNS 1.3.8 local RPC and authenticated remote management"
+echo "PASS: Prnsd status queried stock RNS 1.3.9 local RPC and authenticated remote management"

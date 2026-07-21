@@ -112,4 +112,4 @@ $PYTHON "$ORACLE" verify "$PRIVATE" "$CANDIDATE_MESSAGE" "$WORK/stdin.rsg"
 $BIN id -g "$WORK/generated.rid" > "$WORK/generate.out"
 [ "$(wc -c < "$WORK/generated.rid" | tr -d ' ')" -eq 64 ] || { echo "FAIL: generated identity has the wrong length"; exit 1; }
 
-echo "PASS: Prnsd id matches stock RNS 1.3.8 identity, RSG/RSM, encryption, and encoding behavior"
+echo "PASS: Prnsd id matches stock RNS 1.3.9 identity, RSG/RSM, encryption, and encoding behavior"

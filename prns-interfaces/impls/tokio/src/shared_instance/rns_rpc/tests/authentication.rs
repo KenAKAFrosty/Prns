@@ -123,7 +123,7 @@ async fn a_legacy_md5_client_without_a_digest_prefix_still_authenticates() {
     )
     .await;
 
-    write_frame_dup(&mut client, b"{'get': 'packet_rssi'}").await;
+    write_frame_dup(&mut client, b"(dp0\nVget\np1\nVpacket_rssi\np2\ns.").await;
     assert_eq!(read_frame_dup(&mut client).await, b"N.");
 
     let _ = server_task.await;
@@ -166,4 +166,38 @@ async fn deliver_our_challenge_rejects_a_bad_client_mac() {
         RpcAuthenticationControlMessage::Failure.wire_payload()
     );
     assert!(!server_task.await.unwrap().unwrap());
+}
+
+#[tokio::test(start_paused = true)]
+async fn stalled_rpc_bodies_time_out_without_leaving_active_state() {
+    let rpc_key = [0x5au8; 32];
+    let (mut client, server) = tokio::io::duplex(8192);
+    let telemetry = RpcTelemetry::default();
+    let server_telemetry = telemetry.clone();
+    let server_task = tokio::spawn(async move {
+        let query = StubQuery {
+            links: 0,
+            packet_phy: None,
+            rates: std::vec![],
+            routes: std::vec![],
+            interfaces: std::vec![],
+        };
+        serve_connection(server, test_rpc_service(rpc_key, query, server_telemetry)).await
+    });
+
+    authenticate_modern_client(&mut client, &rpc_key).await;
+    client.write_all(&8i32.to_be_bytes()).await.unwrap();
+    client.write_all(&[0x81, 0xa3]).await.unwrap();
+    client.flush().await.unwrap();
+    tokio::task::yield_now().await;
+    tokio::time::advance(RPC_CONNECTION_IO_TIMEOUT + std::time::Duration::from_secs(1)).await;
+
+    assert_eq!(
+        server_task.await.unwrap().unwrap_err().kind(),
+        std::io::ErrorKind::TimedOut
+    );
+    let snapshot = telemetry.snapshot();
+    assert_eq!(snapshot.active_clients, 0);
+    assert_eq!(snapshot.read_failures, 1);
+    assert_eq!(snapshot.completed_requests, 0);
 }

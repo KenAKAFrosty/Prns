@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# RNS 1.3.8 shared-instance control-RPC smoke.
+# RNS 1.3.8-semantics shared-instance control-RPC smoke.
 #
 # Stands up a Prns-owned LocalServer plus the RPC compatibility shim, then lets
-# a stock RNS 1.3.8 client connect and call Reticulum's own get_* methods. That
+# a stock RNS 1.3.9 client connect and call Reticulum's own get_* methods. That
 # exercises the modern msgpack RPC dialect end to end.
 set -u
 
@@ -65,7 +65,7 @@ DAEMON_PID=$!
 
 for _ in $(seq 1 50); do grep -q "READY" "$DAEMON_LOG" && break; sleep 0.2; done
 grep -q "READY" "$DAEMON_LOG" || { echo "FAIL: daemon never became READY"; cat "$DAEMON_LOG"; exit 1; }
-echo "daemon ready; running the RNS 1.3.8 RPC oracle..."
+echo "daemon ready; running the RNS 1.3.9 RPC oracle..."
 
 PRNS_LOCAL_PORT="$LOCAL_PORT" \
 PRNS_RPC_PORT="$RPC_PORT" \
@@ -74,12 +74,12 @@ PRNS_RPC_KEY="$RPC_KEY" \
 status=$?
 
 if [ "$status" -eq 0 ] && grep -q "RPC_ORACLE_OK" "$CLIENT_LOG"; then
-    echo "PASS: stock RNS 1.3.8 decoded Prns msgpack control-RPC replies"
+    echo "PASS: stock RNS 1.3.9 decoded Prns msgpack control-RPC replies"
     grep "RPC_ORACLE_OK" "$CLIENT_LOG" | head -1
     exit 0
 fi
 
-echo "FAIL: RNS 1.3.8 RPC oracle failed"
+echo "FAIL: RNS 1.3.9 RPC oracle failed"
 echo "--- client log ---"; cat "$CLIENT_LOG"
 echo "--- daemon log ---"; tail -30 "$DAEMON_LOG"
 exit 1

@@ -8,7 +8,7 @@ examine_globs = [
     "prns-core/src/interfaces/policy/capabilities.rs",
     "prns-core/src/interfaces/packet/ifac.rs",
     "prns-core/src/interfaces/framing/rns_serial_framing.rs",
-    "prns-interfaces/impls/tokio/src/shared_instance/rpc_compat/mod.rs",
+    "prns-interfaces/impls/tokio/src/shared_instance/rns_rpc/server.rs",
     "prns-core/src/interfaces/shared_instance/rns_rpc/dialects.rs",
     "prns-core/src/interfaces/shared_instance/rns_rpc/request.rs",
     "prns-runtime/impls/tokio/src/runtime/interface_store.rs",

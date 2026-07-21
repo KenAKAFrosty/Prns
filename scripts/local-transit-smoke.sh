@@ -20,6 +20,7 @@ DAEMON="$(cargo_debug_example "$ROOT/prns-interfaces/impls/tokio/Cargo.toml" loc
 VENV_PY="${SMOKE_PYTHON:-$ROOT/benchmarks/reference/.venv/bin/python}"
 PEER="$ROOT/prns-core/tests/interop/rns_transit_peer.py"
 CLIENT="$ROOT/prns-core/tests/interop/rns_transit_client.py"
+IFAC_HOSTILE="$ROOT/prns-core/tests/interop/rns_ifac_hostile.py"
 PEER_LOG="$(mktemp)"
 DAEMON_LOG="$(mktemp)"
 CLIENT_LOG="$(mktemp)"
@@ -58,6 +59,17 @@ for _ in $(seq 1 100); do grep -q "PEER_DEST" "$PEER_LOG" && break; sleep 0.2; d
 DEST="$(grep -o 'PEER_DEST [0-9a-f]*' "$PEER_LOG" | head -1 | cut -d' ' -f2)"
 [ -n "$DEST" ] || { echo "FAIL: the RNS peer never came up"; tail -20 "$PEER_LOG"; exit 1; }
 echo "peer up, dest=$DEST"
+
+if [ -n "${PRNS_IFAC_NETWORK_NAME:-}" ]; then
+    for mode in missing wrong; do
+        HOSTILE_LOG="$(mktemp)"
+        PEER_TCP_PORT="$PEER_TCP_PORT" "$VENV_PY" "$IFAC_HOSTILE" "$mode" > "$HOSTILE_LOG" 2>&1
+        grep -q "HOSTILE_SENT $mode" "$HOSTILE_LOG" || { echo "FAIL: $mode IFAC peer did not exercise the TCP interface"; cat "$HOSTILE_LOG"; exit 1; }
+        ! grep -q "HOSTILE_PEER_ANNOUNCE\|HOSTILE_LINK_ACTIVE" "$HOSTILE_LOG" || { echo "FAIL: $mode IFAC peer received authenticated traffic"; cat "$HOSTILE_LOG"; exit 1; }
+        ! grep -q "HOSTILE_RECEIVED" "$PEER_LOG" || { echo "FAIL: $mode IFAC peer injected an announce"; cat "$PEER_LOG"; exit 1; }
+    done
+    echo "IFAC_REJECTION_OK missing=1 incorrect=1"
+fi
 
 # 2) The Prns bridge: holds the local bus, dials the peer over TCP.
 PRNS_LOCAL_PORT="$LOCAL_PORT" PRNS_PEER_ADDR="127.0.0.1:$PEER_TCP_PORT" \

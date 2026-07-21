@@ -6,16 +6,14 @@ use prns_config::{
     parse_and_plan, PlannedMedium, RNodeBleTarget, RNodeTcpTarget, RNodeTransportPlan,
 };
 
-fn venv_python() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../benchmarks/reference/.rpc-venv/bin/python")
-}
+mod support;
 
 fn oracle_script() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/oracle/rnode_transport_oracle.py")
 }
 
-fn oracle(ports: &[&str]) -> serde_json::Value {
-    let mut child = Command::new(venv_python())
+fn oracle(python: &std::ffi::OsStr, ports: &[&str]) -> serde_json::Value {
+    let mut child = Command::new(python)
         .arg(oracle_script())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -41,21 +39,24 @@ fn oracle(ports: &[&str]) -> serde_json::Value {
     serde_json::from_slice(&output.stdout).expect("oracle emits JSON")
 }
 
-fn planned_transport(port: &str) -> RNodeTransportPlan {
+fn planned_transport(port: &str) -> Result<RNodeTransportPlan, prns_config::ConfigErrors> {
     let config = format!(
         "[interfaces]\n[[Radio]]\ntype = RNodeInterface\nenabled = Yes\nport = {port}\n\
          frequency = 868000000\nbandwidth = 125000\ntxpower = 7\nspreadingfactor = 8\n\
          codingrate = 5\n"
     );
-    let plan = parse_and_plan(&config).expect("RNode config plans").value;
+    let plan = parse_and_plan(&config)?.value;
     let PlannedMedium::Rnode { transport, .. } = &plan.interfaces[0].medium else {
         panic!("RNode transport expected")
     };
-    transport.clone()
+    Ok(transport.clone())
 }
 
 fn planned_shape(port: &str) -> serde_json::Value {
-    match planned_transport(port) {
+    let Ok(transport) = planned_transport(port) else {
+        return serde_json::json!({ "error": "PlanError" });
+    };
+    let shape = match transport {
         RNodeTransportPlan::Serial(device) => serde_json::json!({
             "serial_port": device.as_str(),
             "use_ble": false,
@@ -93,19 +94,18 @@ fn planned_shape(port: &str) -> serde_json::Value {
                 "tcp_host": null,
             })
         }
-    }
+    };
+    serde_json::json!({ "ok": shape })
 }
 
 #[test]
 fn transport_selection_matches_rns_1_3_9() {
-    let python = venv_python();
-    if !python.exists() {
-        eprintln!(
-            "skipping RNode transport oracle: RNS 1.3.9 venv not found at {}",
-            python.display()
-        );
+    let Some(python) = support::reference_python(
+        "RPC_SMOKE_PYTHON",
+        "../benchmarks/reference/.rpc-venv/bin/python",
+    ) else {
         return;
-    }
+    };
     let ports = [
         "/dev/ttyUSB0",
         "tcp://",
@@ -113,8 +113,15 @@ fn transport_selection_matches_rns_1_3_9() {
         "ble://",
         "ble://RNode 1234",
         "ble://AA:BB:CC:DD:EE:FF",
+        "BLE://aa:bb:cc:dd:ee:ff",
+        "tcp:/radio.example",
+        "ble:/RNode 1234",
+        "tcp:///radio/socket",
+        "ble://AA:BB:CC:DD:EE",
+        "ble://AA:BB:CC:DD:EE:FF:00",
+        "ble://RNode 🛰️",
     ];
-    let reference = oracle(&ports);
+    let reference = oracle(&python, &ports);
     assert_eq!(reference["version"], "1.3.9");
     let reference_results = reference["results"]
         .as_array()

@@ -20,9 +20,13 @@ impl RpcDialect {
 
 /// Tell the dialects apart by the request's first byte: every RNS RPC request is a small map, so a msgpack request opens with a fixmap tag (`0x81..=0x8f`), while a pickle stream opens with the PROTO opcode `0x80` (or a protocol-0 opcode) — never `0x81..=0x8f`.
 fn dialect_of(request: &[u8]) -> RpcDialect {
-    match request.first() {
-        Some(0x81..=0x8f | 0xde | 0xdf) => RpcDialect::Msgpack,
-        _ => RpcDialect::Pickle,
+    let binary_pickle = matches!(request, [0x80, 0x02..=0x05, ..]);
+    let text_pickle =
+        matches!(request.first(), Some(b'(' | b'd' | b'}')) && request.last() == Some(&b'.');
+    if binary_pickle || text_pickle {
+        RpcDialect::Pickle
+    } else {
+        RpcDialect::Msgpack
     }
 }
 
@@ -86,7 +90,17 @@ pub enum RpcRequest<'a> {
 impl<'a> RpcRequest<'a> {
     pub fn decode(bytes: &'a [u8]) -> Result<Self, RpcRequestDecodeError> {
         match dialect_of(bytes) {
-            RpcDialect::Pickle => Ok(Self::Pickle(bytes)),
+            RpcDialect::Pickle => {
+                let verb = classify_pickle_rpc_verb(bytes);
+                if verb == RpcVerb::Unknown {
+                    Err(RpcRequestDecodeError::UnknownOperation {
+                        selector: dialect::PICKLE,
+                        operation: verb.as_str().into(),
+                    })
+                } else {
+                    Ok(Self::Pickle(bytes))
+                }
+            }
             RpcDialect::Msgpack => request::decode(bytes).map(Self::Msgpack),
         }
     }
@@ -238,10 +252,8 @@ mod tests {
     #[test]
     fn legacy_pickle_classification_extracts_the_typed_route_argument() {
         let destination = [0x42; 16];
-        let mut request = b"next_hop destination_hash".to_vec();
-        request.extend_from_slice(&[0x43, 0x10]);
-        request.extend_from_slice(&destination);
-        let decoded = RpcRequest::decode(&request).unwrap();
+        let request = b"\x80\x04\x95\x3c\x00\x00\x00\x00\x00\x00\x00}\x94(\x8c\x03get\x94\x8c\x08next_hop\x94\x8c\x10destination_hash\x94C\x10BBBBBBBBBBBBBBBB\x94u.";
+        let decoded = RpcRequest::decode(request).unwrap();
 
         assert_eq!(decoded.dialect(), RpcDialect::Pickle);
         assert_eq!(decoded.verb(), RpcVerb::GetNextHop);
@@ -249,5 +261,20 @@ mod tests {
             decoded.legacy_destination_hash(),
             Some(DestinationHash::new(destination))
         );
+    }
+
+    #[test]
+    fn malformed_msgpack_and_unknown_pickle_operations_are_rejected() {
+        assert_eq!(
+            RpcRequest::decode(&[0xc1]),
+            Err(RpcRequestDecodeError::MessagePack)
+        );
+        assert!(matches!(
+            RpcRequest::decode(b"(dp0\nVget\np1\nVfuture\np2\ns."),
+            Err(RpcRequestDecodeError::UnknownOperation {
+                selector: "pickle",
+                operation,
+            }) if operation == "unknown"
+        ));
     }
 }

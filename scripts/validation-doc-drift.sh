@@ -6,6 +6,8 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 
+python3 "${repo_root}/scripts/oracles.py" --list >/dev/null
+
 python3 - "${repo_root}" <<'PY'
 from pathlib import Path
 import re
@@ -102,6 +104,10 @@ for raw_path in mutants_toml.get("examine_globs", []):
         note_error(f".cargo/mutants.toml examine_globs path is missing: {raw_path}")
 
 for command in ("cargo mutants --list-files", "cargo mutants"):
+    if command not in docs:
+        note_error(f"docs/validation.md no longer lists {command!r}")
+
+for command in ("python3 scripts/oracles.py --pr", "python3 scripts/oracles.py --full", "python3 scripts/oracles.py --list"):
     if command not in docs:
         note_error(f"docs/validation.md no longer lists {command!r}")
 
