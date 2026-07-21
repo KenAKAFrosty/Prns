@@ -28,31 +28,32 @@ pub(super) async fn join_bus(commands: &PrnsNodeHandle, port: u16) {
     let credentials = SharedInstanceCredentials::from_identity_secret(
         &[0xA2; personal_rns::identity::IDENTITY_SECRET_KEY_LEN],
     );
-    let role = join_shared_instance(
-        commands,
-        SharedInstanceIntent {
-            blackhole_source: credentials.transport_identity_hash(),
-            transport_identity: credentials.transport_identity_hash(),
-            network_identity: None,
-            credentials,
-            blackhole_files: RnsBlackholeFiles::new(
-                std::env::temp_dir().join(std::format!("prns-scenario-{port}-blackhole")),
-            ),
-            ports: InstancePorts {
-                bus: port,
-                control: port + 1,
+    let role =
+        join_shared_instance(
+            commands,
+            SharedInstanceIntent {
+                blackhole_source: credentials.transport_identity_hash(),
+                transport_identity: credentials.transport_identity_hash(),
+                network_identity: None,
+                credentials,
+                blackhole_files: RnsBlackholeFiles::new(
+                    std::env::temp_dir().join(std::format!("prns-scenario-{port}-blackhole")),
+                ),
+                ports: SharedInstancePorts {
+                    bus: port,
+                    control: port + 1,
+                },
+                transport: personal_rns::shared_instance::SharedInstanceTransport::Tcp,
+                policy: personal_rns::interfaces::shared_instance::configured_policy(
+                    Default::default(),
+                ),
+                on_existing: ExistingSharedInstancePolicy::JoinAsClient,
             },
-            transport: personal_rns::shared_instance::SharedInstanceTransport::Tcp,
-            policy: personal_rns::interfaces::shared_instance::core::configured_policy(
-                Default::default(),
-            ),
-            on_existing: OnExisting::JoinAsClient,
-        },
-    )
-    .await
-    .expect("join the shared-instance bus");
+        )
+        .await
+        .expect("join the shared-instance bus");
     assert!(
-        matches!(role, Role::JoinedAsClient { .. }),
+        matches!(role, SharedInstanceRole::JoinedAsClient { .. }),
         "expected to join a running host as a client, got {role:?}"
     );
 }

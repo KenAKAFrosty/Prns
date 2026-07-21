@@ -278,7 +278,7 @@ fn finish_intake(
             return DiscoveryIntake::Rejected(DiscoveryRejection::MalformedAdvertisement(error));
         }
     };
-    if let Some(value) = super::model::invalid_reachable_on(&advertisement) {
+    if let Some(value) = super::advertisement::invalid_reachable_on(&advertisement) {
         return DiscoveryIntake::Rejected(DiscoveryRejection::InvalidReachableOn {
             value: String::from(value),
         });

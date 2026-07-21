@@ -6,7 +6,7 @@ use std::sync::Arc;
 use personal_rns::bluetooth_auto::BluetoothAutoStatus;
 use personal_rns::engine::RatchetPolicy;
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::interfaces::shared_instance::core as instance_core;
+use personal_rns::interfaces::shared_instance as instance_core;
 use personal_rns::interfaces::tcp;
 #[cfg(target_os = "macos")]
 use personal_rns::interfaces::wifi_auto as wifi_auto_contract;
@@ -15,11 +15,11 @@ use personal_rns::prelude::*;
 use personal_rns::reactor::reconnect::ReconnectPolicy;
 use personal_rns::reactor::tokio::TokioInterfaceStatus;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
-use personal_rns::shared_instance::rpc_compat::{
+use personal_rns::shared_instance::rns_rpc::{
     load_or_seed_rns_rpc_key, reticulum_storage_dir, SharedInstanceCredentials,
-    SharedInstanceRpcCompat,
+    SharedInstanceRpcServer,
 };
-use personal_rns::shared_instance::server::LocalServer;
+use personal_rns::shared_instance::SharedInstanceServer;
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::TcpClientInterface;
 use personal_rns::usb_auto::UsbAutoHost;
@@ -231,7 +231,7 @@ fn run_node(
 
         let ble = handle.attach(AutoBle);
 
-        handle.supervise(LocalServer::default());
+        handle.supervise(SharedInstanceServer::default());
         tracing::info!(
             event = "shared_instance_started",
             bus_port = instance_core::DEFAULT_LOCAL_PORT,
@@ -256,7 +256,7 @@ fn run_node(
         };
 
         let tcp_rpc =
-            match SharedInstanceRpcCompat::tcp(credentials.clone(), rpc_port, handle.clone())
+            match SharedInstanceRpcServer::tcp(credentials.clone(), rpc_port, handle.clone())
                 .bind()
                 .await
             {
@@ -273,7 +273,7 @@ fn run_node(
         tokio::spawn(tcp_rpc.run());
         #[cfg(target_os = "linux")]
         {
-            let abstract_unix_rpc = match SharedInstanceRpcCompat::abstract_unix(
+            let abstract_unix_rpc = match SharedInstanceRpcServer::abstract_unix(
                 credentials,
                 instance_core::DEFAULT_SOCKET_PATH,
                 handle.clone(),

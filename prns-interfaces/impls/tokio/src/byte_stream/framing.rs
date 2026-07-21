@@ -1,19 +1,9 @@
-//! The serve loop every framed byte-stream interface shares under tokio: read a wire, deframe
-//! straight into the seam's granted inbound slot, frame the seam's outbound back down, generic
-//! over a [`Framing`] codec.
-//! Serial, TCP, and the shared-instance link pass [`HdlcFraming`]; KISS and AX.25 pass
-//! [`KissFraming`]. An interface owns a [`FramedBuffers`] and lends it to [`serve`] per
-//! connection, reused across reconnects and never re-allocated; `serve` resets the deframer on
-//! entry to discard any half-frame an earlier drop left mid-stream.
-
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use prns_core::engine::InstantMillis;
 #[cfg(feature = "i2p")]
-use prns_core::interfaces::i2p::watchdog::{I2pIdleWatchdog, WATCHDOG_TICK_INTERVAL};
-use prns_core::interfaces::i2p::watchdog::{
-    I2pReadObservation, I2pWatchdogVerdict, HDLC_KEEPALIVE,
-};
+use prns_core::interfaces::i2p::{I2pIdleWatchdog, WATCHDOG_TICK_INTERVAL};
+use prns_core::interfaces::i2p::{I2pReadObservation, I2pWatchdogVerdict, HDLC_KEEPALIVE};
 #[cfg(any(feature = "kiss", feature = "ax25", feature = "tcp"))]
 use prns_core::interfaces::kiss_framing::{self, KissScanner};
 #[cfg(any(
@@ -32,21 +22,10 @@ use prns_runtime::reactor::driver::TokioInterfaceStatus;
 use prns_runtime::reactor::interface_seam::InterfaceSeam;
 use prns_runtime::reactor::throughput::ThroughputLedger;
 
-/// A streaming deframer [`serve`] drives over one connection: built fresh, reset between
-/// connections, then fed wire bytes a chunk at a time, writing each frame into the caller's
-/// [`FrameSink`] — the seam's granted slot, so the frame bytes land once, already across the
-/// seam. Each framing's scanner implements it, so the serve loop names only this contract, not
-/// a concrete scanner.
 pub trait StreamDeframer {
     fn new() -> Self;
     fn reset(&mut self);
-    /// The next complete frame at or after `*offset` in `input`, its payload left in `sink`,
-    /// advancing `offset` past the bytes consumed. `Some(len)` is the payload length now in the
-    /// sink (`0` is a delimiter-only keepalive); `None` when the chunk is exhausted — mid-frame
-    /// the partial payload stays accumulated in the sink for the next chunk — or when a
-    /// malformed or oversized frame was swallowed (the scanner clears the sink, self-heals, and
-    /// realigns at the next delimiter), in which case `offset` has still advanced so the
-    /// caller's loop makes progress.
+    /// The next complete frame at or after `*offset` in `input`, its payload left in `sink`, advancing `offset` past the bytes consumed. `Some(len)` is the payload length now in the sink (`0` is a delimiter-only keepalive); `None` when the chunk is exhausted — mid-frame the partial payload stays accumulated in the sink for the next chunk — or when a malformed or oversized frame was swallowed (the scanner clears the sink, self-heals, and realigns at the next delimiter), in which case `offset` has still advanced so the caller's loop makes progress.
     fn next_frame_into(
         &mut self,
         input: &[u8],
@@ -55,19 +34,11 @@ pub trait StreamDeframer {
     ) -> Option<usize>;
 }
 
-/// The wire framing a byte-stream interface speaks — a scanner paired with its encoder, named
-/// by a zero-sized marker; the frame ceiling is the sink's (the seam sizes its slots from the
-/// interface descriptor), and the encoder is a stateless associated function.
 pub trait Framing {
     type Deframer: StreamDeframer;
-    /// Frame `input` into `output`, returning the encoded length, or `None` if `output` is too
-    /// small (the caller sizes `output` to the framing's worst case, so this does not happen in
-    /// practice; a too-small buffer just drops the frame rather than panicking).
     fn encode(input: &[u8], output: &mut [u8]) -> Option<usize>;
 }
 
-/// RNS HDLC-like serial framing (`0x7E` flag, `0x7D` escape) — what serial, TCP, and the
-/// shared-instance link speak.
 #[cfg(any(
     feature = "tcp",
     feature = "serial",
@@ -123,7 +94,6 @@ impl Framing for HdlcFraming {
     }
 }
 
-/// KISS TNC framing (`0xC0` FEND) — what the KISS and AX.25 interfaces speak.
 #[cfg(any(feature = "kiss", feature = "ax25", feature = "tcp"))]
 pub struct KissFraming;
 
@@ -158,12 +128,6 @@ impl Framing for KissFraming {
     }
 }
 
-/// The reusable scratch a framed serve loop works in: the deframer's scan state and the read
-/// and outbound-frame buffers, heap-held so no megabyte of buffer ever rides the stack. An
-/// interface lends one to [`serve`] per connection (allocated once across reconnects; a target
-/// that never answers, holding one behind an `Option`, never allocates at all).
-/// Inbound frames accumulate in the seam's granted slot, not here — the deframer carries no
-/// frame buffer of its own.
 pub struct FramedBuffers<F, const READ_LEN: usize, const FRAMED_LEN: usize>
 where
     F: Framing,
@@ -196,16 +160,6 @@ where
     }
 }
 
-/// Serve one connection until the stream drops: read bytes and deframe them up to the seam,
-/// drain the seam and frame outbound onto the wire. Returns on any IO error so the caller
-/// can reconnect. The deframer and buffers are the caller's [`FramedBuffers`], reset on entry and
-/// reused across reconnects. The framing `F` is the same the buffers were minted with.
-/// An outbound burst coalesces: frames already queued behind the one being written encode into
-/// the same buffer and leave in one wire write, flushing at most twice per wake so a saturating
-/// sender cannot starve the read half.
-/// The per-connection accounting one served stream reports into: the shared
-/// status handle, the airtime and throughput ledgers, the nominal bitrate that
-/// prices a frame's airtime, and the serve epoch the ledgers' clocks count from.
 pub struct WireMeters<'a> {
     pub status: &'a TokioInterfaceStatus,
     pub airtime: &'a mut AirtimeLedger,

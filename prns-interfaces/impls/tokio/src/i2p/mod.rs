@@ -1,7 +1,7 @@
 mod bridge;
-mod destination;
-mod runtime;
+mod persistence;
 mod session_id;
+mod supervision;
 mod transport;
 
 pub mod sam;
@@ -12,17 +12,17 @@ pub use bridge::{
     SamBridgeAddress, SamBridgeAddressError, SamBridgeError, SamBridgeScope, TokioSamBridge,
     TokioSamSession,
 };
-pub use destination::{
+pub use persistence::{
     load_destination, persist_destination, I2pDestinationKeyPath, I2pDestinationKeyPathError,
     I2pDestinationStorageError, RnsI2pStorage,
 };
-pub use runtime::{
-    DuplicateI2pPeer, I2pInterface, I2pInterfaceName, I2pInterfaceNameError, I2pInterfaceStatus,
-    I2pPeerAddress, I2pPeerAddressError, I2pPeers, I2pReachability, I2pRetryPolicy,
-    I2pRetryPolicyError, I2pRuntimeConfig, I2pRuntimeIssue,
-};
 pub use session_id::{generate_session_id, I2pSessionIdError};
+pub use supervision::{
+    DuplicateI2pPeer, I2pInterface, I2pInterfaceConfig, I2pInterfaceIssue, I2pInterfaceName,
+    I2pInterfaceNameError, I2pInterfaceStatus, I2pPeerAddress, I2pPeerAddressError, I2pPeers,
+    I2pReachability, I2pRetryPolicy, I2pRetryPolicyError,
+};
 pub use transport::{SamBridgeTransport, SamFailureClass, SamSessionTransport, SamTransportError};
 
 #[cfg(test)]
-mod bridge_tests;
+mod test_support;

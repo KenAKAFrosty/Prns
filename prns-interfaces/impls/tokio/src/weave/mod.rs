@@ -1,9 +1,3 @@
-mod member;
-mod status;
-mod supervisor;
+mod supervision;
 
-pub use status::{WeaveInterfaceStatus, WeaveRuntimeIssue};
-pub use supervisor::WeaveInterface;
-
-#[cfg(test)]
-mod tests;
+pub use supervision::{WeaveInterface, WeaveInterfaceIssue, WeaveInterfaceStatus};

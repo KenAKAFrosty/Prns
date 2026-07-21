@@ -1,12 +1,3 @@
-//! A shared-instance daemon that *bridges*: it holds the local bus (a [`LocalServer`]) for apps on
-//! this host and also dials a remote peer over TCP, then transports traffic between the two as a real
-//! RNS transport node would. The real-RNS transit smoke stands this up between two stock
-//! `RNS.Reticulum` instances, a local client and a TCP peer, and proves a message a local client sends
-//! crosses the instance to the peer (and its proof rides home), not just that announces propagate.
-//!
-//! Ports come from the environment so the smoke harness can pick free ones: `PRNS_LOCAL_PORT` is the
-//! loopback shared-instance port apps connect to, `PRNS_PEER_ADDR` is the `host:port` of the remote
-//! RNS node's TCP server we dial. Demo/test code, so it `expect`s and `println!`s.
 #![allow(clippy::expect_used)]
 
 use std::string::String;
@@ -18,10 +9,10 @@ use personal_rns::routes;
 use personal_rns::runtime::{Diagnostic, Manual, PrnsEvent, PrnsNode, PrnsNodeRecipe};
 use personal_rns::storage::GrowableHeap;
 use prns_interfaces_tokio::reconnect::ReconnectPolicy;
-use prns_interfaces_tokio::shared_instance::rpc_compat::{
-    SharedInstanceCredentials, SharedInstanceRpcCompat,
+use prns_interfaces_tokio::shared_instance::rns_rpc::{
+    SharedInstanceCredentials, SharedInstanceRpcServer,
 };
-use prns_interfaces_tokio::shared_instance::server::LocalServer;
+use prns_interfaces_tokio::shared_instance::SharedInstanceServer;
 use prns_interfaces_tokio::tcp::TcpClientInterface;
 
 const BITRATE: BitrateBps = BitrateBps::guess(10_000_000);
@@ -108,17 +99,14 @@ async fn main() {
         },
     });
     let handle = node.handle();
-    handle.supervise(LocalServer::with_port(local_port));
+    handle.supervise(SharedInstanceServer::with_port(local_port));
     let tcp = TcpClientInterface::new(peer_addr.clone(), BITRATE, ReconnectPolicy::STANDARD);
     let _peer = match ifac {
         Some(ifac) => handle.add_interface_with_ifac_name(tcp, ifac, ifac_network_name),
         None => handle.add_interface(tcp),
     };
 
-    // The control-RPC compatibility shim: stock RNS clients fetch per-packet phy stats over this
-    // channel during attachment (resource) delivery, and fault if nobody answers. It reads engine
-    // state (e.g. link_count) through the handle to answer with real values.
-    let rpc = SharedInstanceRpcCompat::tcp(credentials, rpc_port, handle.clone())
+    let rpc = SharedInstanceRpcServer::tcp(credentials, rpc_port, handle.clone())
         .bind()
         .await
         .expect("the shared-instance RPC listener binds");

@@ -2,12 +2,12 @@ use std::collections::BTreeMap;
 
 use prns_core::interfaces::ax25_kiss;
 use prns_core::interfaces::bluetooth_auto as bluetooth_contract;
-use prns_core::interfaces::i2p::core as i2p_core;
+use prns_core::interfaces::i2p as i2p_core;
 use prns_core::interfaces::kiss;
 use prns_core::interfaces::pipe;
 use prns_core::interfaces::serial;
 use prns_core::interfaces::usb_auto;
-use prns_core::interfaces::weave::core as weave_core;
+use prns_core::interfaces::weave as weave_core;
 use prns_core::interfaces::wifi_auto as wifi_auto_contract;
 use prns_core::interfaces::{
     tcp, udp, websocket, AnnounceBandwidthCap, AnnounceRateLimit, BitrateBps,

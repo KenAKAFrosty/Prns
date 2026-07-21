@@ -1,17 +1,28 @@
+mod advertisement;
+#[cfg(feature = "interface-discovery-archive")]
+mod archive;
 mod autoconnect;
 mod catalog;
 mod codec;
 mod coordinator;
-#[cfg(feature = "interface-discovery-archive")]
-mod impls;
 mod intake;
-mod model;
 mod policy;
+mod protocol;
 mod publication;
 mod stamp;
 mod storage;
 
 pub use crate::interfaces::InterfaceOriginKind;
+pub use advertisement::{
+    AdvertisedInterfaceType, AdvertisedTransport, AdvertisementDetails, DiscoveryAdvertisement,
+    GeographicLocation, PublishedIfac,
+};
+#[cfg(feature = "interface-discovery-archive")]
+pub use archive::{
+    discovered_interface_configuration, ArchiveFileOperation, ArchiveRecordError, DiscoveryArchive,
+    DiscoveryArchiveError, DiscoveryArchiveFileState, DiscoveryArchiveRecord, HexDecodeError,
+    LoadedDiscoveryArchive, DISCOVERED_INTERFACES_FILE,
+};
 pub use autoconnect::{
     ActiveDiscoveredInterface, DiscoveredConnectionAccess, DiscoveredConnectionEndpoint,
     DiscoveredConnectionEndpointId, DiscoveredConnectionHealth, DiscoveredConnectionKind,
@@ -32,20 +43,10 @@ pub use coordinator::{
     DiscoveryCoordinatorEvent, DiscoveryCoordinatorOutput, DiscoveryEndpointReservation,
     DiscoveryEndpointReservationError, DiscoveryIngressEligibility, DiscoveryIngressFilter,
 };
-#[cfg(feature = "interface-discovery-archive")]
-pub use impls::{
-    discovered_interface_configuration, ArchiveFileOperation, ArchiveRecordError, DiscoveryArchive,
-    DiscoveryArchiveError, DiscoveryArchiveFileState, DiscoveryArchiveRecord, HexDecodeError,
-    LoadedDiscoveryArchive, DISCOVERED_INTERFACES_FILE,
-};
 pub use intake::{
     ingest_discovery_announce, DiscoveredInterface, DiscoveredInterfaceId,
     DiscoveryDecryptionError, DiscoveryEnvelopeSecurity, DiscoveryIntake, DiscoveryNotApplicable,
     DiscoveryProvenance, DiscoveryRejection, DiscoveryRejectionKind, InterfaceOrigin,
-};
-pub use model::{
-    AdvertisedInterfaceType, AdvertisedTransport, AdvertisementDetails, DiscoveryAdvertisement,
-    GeographicLocation, PublishedIfac,
 };
 pub use policy::{
     discovered_interface_status, AutoConnectPolicy, DiscoveredInterfaceStatus,
@@ -53,6 +54,7 @@ pub use policy::{
     InterfaceDiscoveryPolicy, DISCOVERY_EXPIRES_AFTER, DISCOVERY_STALE_AFTER,
     DISCOVERY_UNKNOWN_AFTER,
 };
+pub use protocol::{discovery_destination_hash, APP_ASPECTS, APP_NAME, DOTTED_NAME_HASH};
 pub use publication::{
     frame_discovery_publication, prepare_discovery_publication,
     prepare_discovery_publication_with_stamp_cache, DiscoveryPublicationEncryptionError,
@@ -71,29 +73,3 @@ pub use storage::{
     GrowableInterfaceDiscoveryStorage, HeapDiscoveredConnectionTable, HeapDiscoveredEndpointSet,
     HeapDiscoveryCatalogTable, InterfaceDiscoveryStorage,
 };
-
-pub const APP_NAME: &str = "rnstransport";
-pub const APP_ASPECTS: &[&str] = &["discovery", "interface"];
-pub const DOTTED_NAME_HASH: crate::routing::announce::DottedNameHash =
-    crate::routing::announce::DottedNameHash::new([
-        0x55, 0xaa, 0x39, 0xe8, 0x5c, 0x3e, 0x04, 0x5e, 0x9c, 0xb1,
-    ]);
-
-pub fn discovery_destination_hash(
-    identity: &crate::identity::IdentityHash,
-) -> crate::wire::DestinationHash {
-    crate::routing::announce::derive_destination_hash(identity, &DOTTED_NAME_HASH)
-}
-
-#[cfg(test)]
-mod aspect_tests {
-    use super::*;
-
-    #[test]
-    fn pinned_discovery_name_hash_matches_the_shared_name_derivation() {
-        assert_eq!(
-            crate::routing::announce::expand_name(APP_NAME, APP_ASPECTS),
-            Ok(DOTTED_NAME_HASH)
-        );
-    }
-}

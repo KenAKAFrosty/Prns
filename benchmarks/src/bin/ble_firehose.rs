@@ -11,8 +11,8 @@ use personal_rns::runtime::{
     PrnsNodeHandle, PrnsNodeRecipe, RequestHandlerRegistration,
 };
 use personal_rns::shared_instance::{
-    join_shared_instance, InstancePorts, OnExisting, RnsBlackholeFiles, Role,
-    SharedInstanceCredentials, SharedInstanceIntent,
+    join_shared_instance, ExistingSharedInstancePolicy, RnsBlackholeFiles,
+    SharedInstanceCredentials, SharedInstanceIntent, SharedInstancePorts, SharedInstanceRole,
 };
 use personal_rns::storage::GrowableHeap as NodeStorage;
 use personal_rns::wire::DestinationHash;
@@ -96,21 +96,21 @@ async fn run(port: u16, target: Vec<u8>, phase: Duration, payload_len: usize, wi
                 blackhole_files: RnsBlackholeFiles::new(
                     std::env::temp_dir().join(std::format!("prns-firehose-{port}-blackhole")),
                 ),
-                ports: InstancePorts {
+                ports: SharedInstancePorts {
                     bus: port,
                     control: port + 1,
                 },
                 transport: personal_rns::shared_instance::SharedInstanceTransport::Tcp,
-                policy: personal_rns::interfaces::shared_instance::core::configured_policy(
+                policy: personal_rns::interfaces::shared_instance::configured_policy(
                     Default::default(),
                 ),
-                on_existing: OnExisting::JoinAsClient,
+                on_existing: ExistingSharedInstancePolicy::JoinAsClient,
             },
         )
         .await
         .expect("join the shared-instance bus");
         assert!(
-            matches!(role, Role::JoinedAsClient { .. }),
+            matches!(role, SharedInstanceRole::JoinedAsClient { .. }),
             "expected to join a running host as a client, got {role:?}"
         );
         println!(

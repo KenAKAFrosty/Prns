@@ -1,4 +1,3 @@
-//! A minimal shared-instance daemon for the real-RNS interop smoke test: a `PrnsNode` that supervises a [`LocalServer`] and prints every announce it hears. The smoke harness stands this up, then drives a stock `RNS.Reticulum` instance (the reference venv) that connects over the loopback shared-instance port and announces, proving a real RNS client interoperates with our server. Demo/test code, so it uses `expect` and `println!` rather than threading errors.
 #![allow(clippy::expect_used)]
 
 use std::string::String;
@@ -12,8 +11,8 @@ use personal_rns::runtime::{
     RequestHandlerRegistration,
 };
 use personal_rns::storage::GrowableHeap;
-use prns_core::interfaces::shared_instance::core::DEFAULT_LOCAL_PORT;
-use prns_interfaces_tokio::shared_instance::server::LocalServer;
+use prns_core::interfaces::shared_instance::DEFAULT_LOCAL_PORT;
+use prns_interfaces_tokio::shared_instance::SharedInstanceServer;
 
 fn hex16(bytes: &[u8]) -> String {
     let mut rendered = String::with_capacity(bytes.len() * 2);
@@ -64,7 +63,7 @@ async fn main() {
         },
     });
     let handle = node.handle();
-    handle.supervise(LocalServer::with_port(port));
+    handle.supervise(SharedInstanceServer::with_port(port));
     println!("READY shared-instance on 127.0.0.1:{port}");
     if let Err(error) = node.run().await {
         eprintln!("node stopped: {error}");
