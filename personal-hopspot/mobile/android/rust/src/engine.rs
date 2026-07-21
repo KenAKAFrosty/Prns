@@ -1,5 +1,6 @@
 use core::fmt::Write as _;
 use std::io;
+use std::path::PathBuf;
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
@@ -19,7 +20,7 @@ use personal_rns::reactor::tokio::TokioInterfaceStatus;
 use personal_rns::routes;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
-    ephemeral_ble_identity, Manual, PreConfiguredDestination, PrnsNode, PrnsNodeHandle,
+    load_or_create_ble_identity, Manual, PreConfiguredDestination, PrnsNode, PrnsNodeHandle,
     PrnsNodeRecipe, RequestHandlerRegistration, RuntimeHealth,
 };
 use personal_rns::shared_instance::rns_rpc::{SharedInstanceCredentials, SharedInstanceRpcServer};
@@ -64,6 +65,25 @@ struct Engine {
 }
 
 static ENGINE: OnceLock<Engine> = OnceLock::new();
+static STORAGE_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+#[derive(Debug)]
+pub(crate) enum EngineConfigurationError {
+    ConflictingStorageDirectory,
+}
+
+pub(crate) fn configure_storage_dir(path: PathBuf) -> Result<(), EngineConfigurationError> {
+    if let Some(configured) = STORAGE_DIR.get() {
+        return if configured == &path {
+            Ok(())
+        } else {
+            Err(EngineConfigurationError::ConflictingStorageDirectory)
+        };
+    }
+    STORAGE_DIR
+        .set(path)
+        .map_err(|_| EngineConfigurationError::ConflictingStorageDirectory)
+}
 
 fn engine() -> &'static Engine {
     ENGINE.get_or_init(spawn_engine)
@@ -306,10 +326,28 @@ fn run_engine(
         let credentials = SharedInstanceCredentials::from_identity_secret(&identity);
         let rpc_key = credentials.rpc_key().as_bytes().to_vec();
         let transport_secret = identity.clone();
-        let ble_identity = ephemeral_ble_identity();
-        ble.set_local_identity(ble_identity);
+        let ble_identity = match STORAGE_DIR.get() {
+            Some(storage_dir) => {
+                match load_or_create_ble_identity(&storage_dir.join("ble_identity")) {
+                    Ok(identity) => {
+                        ble.set_local_identity(identity);
+                        Some(identity)
+                    }
+                    Err(error) => {
+                        log::error!("BLE identity is unavailable: {error}");
+                        None
+                    }
+                }
+            }
+            None => {
+                log::error!(
+                    "BLE identity is unavailable: Android storage directory was not configured"
+                );
+                None
+            }
+        };
 
-        let announce_destination = PreConfiguredDestination::Single {
+        let hopspot_transport_node_destination = PreConfiguredDestination::Single {
             resource_strategy:
                 personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
             app_name: ANNOUNCE_APP_NAME,
@@ -321,13 +359,13 @@ fn run_engine(
             ratchet: RatchetPolicy::Ratcheted,
             request_handlers: RequestHandlerRegistration::None,
         };
-        let destination = announce_destination
+        let destination = hopspot_transport_node_destination
             .destination_hash()
             .expect("the lxmf.delivery name is valid");
 
         let node = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: Some(transport_secret),
-            pre_configured_destinations: [announce_destination],
+            pre_configured_destinations: [hopspot_transport_node_destination],
             app_state: (),
             storage: GrowableHeap,
             routes: routes![],
@@ -377,7 +415,7 @@ fn run_engine(
         let wifi_status = wifi.status();
         handle.supervise(wifi);
 
-        {
+        if let Some(ble_identity) = ble_identity {
             let handle = handle.clone();
             tokio::spawn(async move {
                 let bluetooth = BluetoothAuto::<_, { AndroidBleBackend::MAX_PEERS }>::new(

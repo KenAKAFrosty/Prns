@@ -10,6 +10,7 @@ use prns_config::{
 };
 use prns_core::identity::IdentityHash;
 use prns_core::interfaces::ax25_kiss::Ax25AddressError;
+use prns_core::interfaces::bluetooth_auto::BleIdentity;
 use prns_core::interfaces::kiss::EmptyStationIdentification;
 use prns_core::interfaces::{IfacContext, InterfaceId, InterfaceOriginKind};
 use prns_runtime::interfaces::rnode::protocol::RadioConfigError;
@@ -61,6 +62,7 @@ pub enum PlanFailure {
     I2pPeerAddress(I2pPeerAddressError),
     DuplicateI2pPeer(DuplicateI2pPeer),
     MissingI2pStorage,
+    MissingBleIdentity,
     RNodeMultiMembers(RNodeMultiMembersError),
     WeaveIdentity(getrandom::Error),
     InterfaceNotBuilt(PlannedInterfaceKind),
@@ -88,6 +90,9 @@ impl fmt::Display for PlanFailure {
             Self::MissingI2pStorage => formatter.write_str(
                 "connectable I2P requires the daemon's RNS storage directory and transport identity",
             ),
+            Self::MissingBleIdentity => {
+                formatter.write_str("Bluetooth Auto requires a persisted BLE identity")
+            }
             Self::RNodeMultiMembers(error) => error.fmt(formatter),
             Self::WeaveIdentity(error) => {
                 write!(formatter, "could not generate the Weave discovery identity: {error}")
@@ -116,6 +121,7 @@ impl std::error::Error for PlanFailure {
             | Self::RadioConfig(_)
             | Self::UngroupedRNodeMultiMember
             | Self::MissingI2pStorage
+            | Self::MissingBleIdentity
             | Self::WeaveIdentity(_)
             | Self::InterfaceNotBuilt(_) => None,
         }
@@ -185,6 +191,7 @@ impl From<getrandom::Error> for PlanFailure {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PlanRuntimeContext {
     i2p_storage: Option<RnsI2pStorage>,
+    ble_identity: Option<BleIdentity>,
 }
 
 impl PlanRuntimeContext {
@@ -194,7 +201,13 @@ impl PlanRuntimeContext {
     ) -> Self {
         Self {
             i2p_storage: Some(RnsI2pStorage::new(storage_dir, transport_identity)),
+            ble_identity: None,
         }
+    }
+
+    pub fn with_ble_identity(mut self, identity: BleIdentity) -> Self {
+        self.ble_identity = Some(identity);
+        self
     }
 }
 
@@ -408,7 +421,7 @@ async fn stand_up<'a>(
         PlannedMedium::PrnsBluetoothAuto => {
             #[cfg(feature = "bluetooth-auto")]
             {
-                bluetooth_auto::stand_up(construction)
+                bluetooth_auto::stand_up(construction, context)
             }
             #[cfg(not(feature = "bluetooth-auto"))]
             {

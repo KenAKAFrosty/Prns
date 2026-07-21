@@ -21,6 +21,8 @@ use static_cell::StaticCell;
 use personal_rns::engine::{InstantMillis, IssuedCommand, RatchetPolicy};
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
+#[cfg(feature = "bluetooth-auto")]
+use personal_rns::interfaces::bluetooth_auto::BleIdentity;
 use personal_rns::interfaces::usb_auto::device_descriptor;
 use personal_rns::interfaces::{ConnectionState, InterfaceId};
 use personal_rns::reactor::embassy::{
@@ -245,13 +247,14 @@ async fn ble_task(
     spawner: Spawner,
     bt: BT<'static>,
     mac: [u8; 6],
+    identity: BleIdentity,
     fleet: C6BleFleet,
     shared: &'static BluetoothAutoShared<BLE_MEMBERS>,
 ) {
     Timer::after(BLE_START_DELAY).await;
     let connector =
         esp_radio::ble::controller::BleConnector::new(bt, c6_ble_config()).expect("ble connector");
-    crate::bluetooth_auto::run(connector, mac, fleet, shared, spawner).await;
+    crate::bluetooth_auto::run(connector, mac, identity, fleet, shared, spawner).await;
 }
 
 #[cfg(feature = "esp-now")]

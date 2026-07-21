@@ -44,7 +44,7 @@ struct Engine {
     handle: PrnsNodeHandle,
     usb_status: TokioInterfaceStatus,
     wifi_status: AutoWifiStatus,
-    ble_status: BluetoothAutoStatus,
+    ble_status: Option<BluetoothAutoStatus>,
     destination: DestinationHash,
 }
 
@@ -69,7 +69,9 @@ pub(crate) fn toggle_interface(id: InterfaceId) {
     } else if id == engine.wifi_status.id() {
         engine.wifi_status.toggle_enabled();
     } else if id.kind() == Some(InterfaceKind::BluetoothAuto) {
-        engine.ble_status.toggle_enabled();
+        if let Some(status) = &engine.ble_status {
+            status.toggle_enabled();
+        }
     }
 }
 
@@ -77,14 +79,18 @@ pub(crate) fn sleep_interfaces() {
     let engine = engine();
     engine.usb_status.disable();
     engine.wifi_status.disable();
-    engine.ble_status.disable();
+    if let Some(status) = &engine.ble_status {
+        status.disable();
+    }
 }
 
 pub(crate) fn wake_interfaces() {
     let engine = engine();
     engine.usb_status.enable();
     engine.wifi_status.enable();
-    engine.ble_status.enable();
+    if let Some(status) = &engine.ble_status {
+        status.enable();
+    }
 }
 
 pub(crate) fn announce() {
@@ -120,7 +126,7 @@ struct Ready {
     handle: PrnsNodeHandle,
     usb_status: TokioInterfaceStatus,
     wifi_status: AutoWifiStatus,
-    ble_status: BluetoothAutoStatus,
+    ble_status: Option<BluetoothAutoStatus>,
     destination: DestinationHash,
 }
 
@@ -156,6 +162,25 @@ fn run_engine(ready_tx: Sender<Ready>) {
     runtime.block_on(async move {
         let secret_key = load_identity_secret_key();
         let transport_secret = secret_key.clone();
+        let ble_identity = match std::env::var_os("HOME") {
+            Some(home) => {
+                let identity_path = std::path::PathBuf::from(home)
+                    .join(".reticulum")
+                    .join("storage")
+                    .join("ble_identity");
+                match personal_rns::runtime::load_or_create_ble_identity(&identity_path) {
+                    Ok(identity) => Some(identity),
+                    Err(error) => {
+                        eprintln!("BLE identity is unavailable: {error}");
+                        None
+                    }
+                }
+            }
+            None => {
+                eprintln!("BLE identity is unavailable: HOME is not set");
+                None
+            }
+        };
 
         let announce_destination = PreConfiguredDestination::Single {
             resource_strategy: ResourceStrategy::AcceptNone,
@@ -207,13 +232,13 @@ fn run_engine(ready_tx: Sender<Ready>) {
         #[cfg(target_os = "ios")]
         spawn_mdns(wifi_auto_contract::TCP_RENDEZVOUS_PORT, mdns_tx);
 
-        let ble = handle.attach(AutoBle);
+        let ble_status = ble_identity.map(|identity| handle.attach(AutoBle::new(identity)).status());
 
         let _ = ready_tx.send(Ready {
             handle: handle.clone(),
             usb_status,
             wifi_status,
-            ble_status: ble.status(),
+            ble_status,
             destination,
         });
 

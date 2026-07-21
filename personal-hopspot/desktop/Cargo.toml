@@ -40,7 +40,7 @@ tray-icon = { version = "0.21.3", default-features = false }
 # event stream; tokio-stream gives it `.next()`. macOS leans on the fallback timer. The BlueR BLE
 # backend arrives through prns-interfaces-tokio's `ble` feature (its Linux target table).
 [target.'cfg(target_os = "linux")'.dependencies]
-ksni = { version = "0.3.6", default-features = false, features = ["blocking"] }
+ksni = { version = "0.3.6", default-features = false, features = ["blocking", "tokio"] }
 tokio-udev = "0.9"
 tokio-stream = "0.1"
 

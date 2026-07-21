@@ -1,4 +1,4 @@
-use jni::objects::{JByteBuffer, JClass};
+use jni::objects::{JByteBuffer, JClass, JString};
 use jni::sys::{jboolean, jint, jlong, jlongArray, jstring};
 use jni::JNIEnv;
 use personal_hopspot_core::{BatteryState, InputEvent, UiAction};
@@ -42,10 +42,22 @@ fn init_logging() {}
 
 #[no_mangle]
 pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeInit(
-    _env: JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
+    storage_dir: JString,
 ) -> jlong {
     init_logging();
+    let storage_dir = match env.get_string(&storage_dir) {
+        Ok(path) => std::path::PathBuf::from(path.to_string_lossy().into_owned()),
+        Err(error) => {
+            log::error!("invalid Android storage directory: {error}");
+            return 0;
+        }
+    };
+    if let Err(error) = crate::engine::configure_storage_dir(storage_dir) {
+        log::error!("Android engine storage configuration failed: {error:?}");
+        return 0;
+    }
     Box::into_raw(Box::new(HopspotFace::new())) as usize as jlong
 }
 

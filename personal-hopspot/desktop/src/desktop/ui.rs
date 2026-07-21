@@ -267,7 +267,7 @@ impl ksni::Tray for LinuxTray {
                 } else {
                     "Open Hopspot".into()
                 },
-                activate: Box::new(|tray| {
+                activate: Box::new(|tray: &mut LinuxTray| {
                     let control = if tray.window_open.load(Ordering::Relaxed) {
                         DesktopControl::HideWindow
                     } else {
@@ -280,7 +280,7 @@ impl ksni::Tray for LinuxTray {
             .into(),
             StandardItem {
                 label: "Announce Now".into(),
-                activate: Box::new(|tray| {
+                activate: Box::new(|tray: &mut LinuxTray| {
                     let _ = tray.controls.send(DesktopControl::Announce);
                 }),
                 ..Default::default()
@@ -289,7 +289,7 @@ impl ksni::Tray for LinuxTray {
             ksni::MenuItem::Separator,
             StandardItem {
                 label: "Quit Hopspot".into(),
-                activate: Box::new(|tray| {
+                activate: Box::new(|tray: &mut LinuxTray| {
                     let _ = tray.controls.send(DesktopControl::Quit);
                 }),
                 ..Default::default()
@@ -561,7 +561,9 @@ pub(super) fn run_window(handles: WindowHandles) {
             *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
             toggle_usb.disable();
             toggle_wifi.disable();
-            toggle_ble.disable();
+            if let Some(ble) = &toggle_ble {
+                ble.disable();
+            }
             if let Some(tcp) = &toggle_tcp {
                 tcp.disable();
             }
@@ -571,7 +573,9 @@ pub(super) fn run_window(handles: WindowHandles) {
             *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
             toggle_usb.enable();
             toggle_wifi.enable();
-            toggle_ble.enable();
+            if let Some(ble) = &toggle_ble {
+                ble.enable();
+            }
             if let Some(tcp) = &toggle_tcp {
                 tcp.enable();
             }
@@ -612,13 +616,15 @@ pub(super) fn run_window(handles: WindowHandles) {
                 toggle_wifi.toggle_enabled();
             }
             Some(id) if id.kind() == Some(InterfaceKind::BluetoothAuto) => {
-                ui_state.show_notice(if toggle_ble.is_enabled() {
-                    screen::UiNotice::TurningOff
-                } else {
-                    screen::UiNotice::TurningOn
-                });
-                *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
-                toggle_ble.toggle_enabled();
+                if let Some(ble) = &toggle_ble {
+                    ui_state.show_notice(if ble.is_enabled() {
+                        screen::UiNotice::TurningOff
+                    } else {
+                        screen::UiNotice::TurningOn
+                    });
+                    *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
+                    ble.toggle_enabled();
+                }
             }
             Some(id) if Some(id) == tcp_id => {
                 if let Some(tcp) = &toggle_tcp {

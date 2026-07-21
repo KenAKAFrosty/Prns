@@ -1,3 +1,4 @@
+mod ble_identity;
 mod bluetooth_auto;
 mod display;
 mod firmware;

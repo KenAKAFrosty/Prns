@@ -39,7 +39,7 @@ const USB_BAUD: u32 = 115_200;
 
 const ANNOUNCE_APP_NAME: &str = "lxmf";
 const ANNOUNCE_ASPECTS: &[&str] = &["delivery"];
-const ANNOUNCE_APP_DATA: &[u8] = b"personal-hopspot";
+const ANNOUNCE_APP_DATA: &[u8] = b"Personal Hopspot (Desktop)";
 
 fn load_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
     personal_rns::runtime::generate_identity_secret()
@@ -82,7 +82,7 @@ pub(super) struct WindowHandles {
     pub(super) handle: PrnsNodeHandle,
     pub(super) usb_status: TokioInterfaceStatus,
     pub(super) wifi_status: AutoWifiStatus,
-    pub(super) ble_status: BluetoothAutoStatus,
+    pub(super) ble_status: Option<BluetoothAutoStatus>,
     pub(super) tcp_status: Option<TokioInterfaceStatus>,
     pub(super) tcp_id: Option<InterfaceId>,
     pub(super) tcp_target: Option<String>,
@@ -162,8 +162,17 @@ fn run_node(
         };
         let credentials = SharedInstanceCredentials::from_identity_secret(&identity_secret_key)
             .with_rpc_authentication_key(rpc_key);
+        let ble_identity = match personal_rns::runtime::load_or_create_ble_identity(
+            &reticulum_storage_dir().join("ble_identity"),
+        ) {
+            Ok(identity) => Some(identity),
+            Err(error) => {
+                tracing::error!(event = "ble_identity_load_failed", %error);
+                None
+            }
+        };
 
-        let announce_destination = PreConfiguredDestination::Single {
+        let hopspot_transport_node_destination = PreConfiguredDestination::Single {
             resource_strategy:
                 personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
             app_name: ANNOUNCE_APP_NAME,
@@ -175,13 +184,13 @@ fn run_node(
             ratchet: RatchetPolicy::Ratcheted,
             request_handlers: personal_rns::runtime::RequestHandlerRegistration::None,
         };
-        let destination = announce_destination
+        let destination = hopspot_transport_node_destination
             .destination_hash()
             .expect("the lxmf.delivery name is valid");
 
         let node = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: Some(transport_secret),
-            pre_configured_destinations: [announce_destination],
+            pre_configured_destinations: [hopspot_transport_node_destination],
             app_state: (),
             storage: GrowableHeap,
             routes: routes![],
@@ -229,7 +238,8 @@ fn run_node(
         }
         handle.supervise(wifi);
 
-        let ble = handle.attach(AutoBle);
+        let ble_status =
+            ble_identity.map(|identity| handle.attach(AutoBle::new(identity)).status());
 
         handle.supervise(SharedInstanceServer::default());
         tracing::info!(
@@ -298,7 +308,7 @@ fn run_node(
             handle: handle.clone(),
             usb_status,
             wifi_status,
-            ble_status: ble.status(),
+            ble_status,
             tcp_status,
             tcp_id,
             tcp_target,

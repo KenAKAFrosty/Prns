@@ -18,7 +18,7 @@ modern phones.
 ## Native ABI — `com.personal.hopspot.NativeBridge`
 
 ```
-nativeInit() -> long handle
+nativeInit(storageDir) -> long handle
 nativePostInput(handle, code) -> int action   // code: 0 = tap, 1 = hold; action: 0 = none, 1 = announce
 nativeRender(handle, directByteBuffer)         // fills PANEL_WIDTH * PANEL_HEIGHT * 4 RGBA bytes
 nativeFree(handle)

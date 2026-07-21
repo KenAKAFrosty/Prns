@@ -20,7 +20,7 @@ object NativeBridge {
         System.loadLibrary("personal_hopspot_android")
     }
 
-    external fun nativeInit(): Long
+    external fun nativeInit(storageDir: String): Long
 
     external fun nativeFree(handle: Long)
 

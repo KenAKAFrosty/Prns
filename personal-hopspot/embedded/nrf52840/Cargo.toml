@@ -36,6 +36,7 @@ static_cell = "2.1"
 heapless = "0.8"
 
 embedded-io-async = "0.6"
+embedded-storage-async = "0.4"
 
 # T-Echo firmware. nrf-softdevice does not depend on embassy-nrf, so it rides alongside the
 # T-Echo's embassy-nrf 0.10. The S140 v7 binding talks to the SoftDevice over SVCs.

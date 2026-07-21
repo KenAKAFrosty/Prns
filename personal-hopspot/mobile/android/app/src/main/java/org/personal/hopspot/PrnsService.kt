@@ -48,7 +48,7 @@ class PrnsService : Service() {
         serviceStartedAtElapsedMs = SystemClock.elapsedRealtime()
         createNotificationChannel()
         startForegroundNow()
-        renderHandle = NativeBridge.nativeInit()
+        renderHandle = NativeBridge.nativeInit(filesDir.absolutePath)
         startPlatformLinks()
     }
 

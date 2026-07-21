@@ -30,6 +30,14 @@ pub async fn run(spawner: Spawner) {
     let mut mac_octets = [0u8; 6];
     #[cfg(feature = "bluetooth-auto")]
     mac_octets.copy_from_slice(&mac.as_bytes()[..6]);
+    #[cfg(feature = "bluetooth-auto")]
+    let ble_identity = match crate::bluetooth_auto::load_or_create_ble_identity() {
+        Ok(identity) => Some(identity),
+        Err(error) => {
+            log::error!("BLE identity is unavailable: {error}");
+            None
+        }
+    };
 
     let seed = self_destination.as_bytes();
     ENTROPY_STATE.store(
@@ -104,7 +112,7 @@ pub async fn run(spawner: Spawner) {
     };
 
     #[cfg(feature = "bluetooth-auto")]
-    let ble_fleet: C6BleFleet = {
+    let ble_fleet: Option<C6BleFleet> = ble_identity.map(|_| {
         static IN_BUF: ConstStaticCell<LaneBuf> = ConstStaticCell::new([EMPTY_SLOT; LANE_DEPTH]);
         static IN_CH: StaticCell<LaneChannel> = StaticCell::new();
         static OUT_BUF: ConstStaticCell<LaneBuf> = ConstStaticCell::new([EMPTY_SLOT; LANE_DEPTH]);
@@ -125,7 +133,7 @@ pub async fn run(spawner: Spawner) {
             },
             LIFECYCLE.sender(),
         )
-    };
+    });
 
     let handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
     let plumbing = ReactorPlumbing::new(
@@ -168,12 +176,17 @@ pub async fn run(spawner: Spawner) {
     #[cfg(feature = "esp-now")]
     node.activate(ESPNOW_SLOT, espnow.descriptor());
     #[cfg(feature = "bluetooth-auto")]
-    node.activate_fleet(BLE_FLEET_SLOT, BLE_FLEET_ID);
+    if ble_identity.is_some() {
+        node.activate_fleet(BLE_FLEET_SLOT, BLE_FLEET_ID);
+    }
     #[cfg(all(feature = "bluetooth-auto", feature = "esp-now"))]
     {
-        spawner.spawn(
-            ble_task(spawner, p.BT, mac_octets, ble_fleet, &BLE_SHARED).expect("ble task fits"),
-        );
+        if let (Some(identity), Some(fleet)) = (ble_identity, ble_fleet) {
+            spawner.spawn(
+                ble_task(spawner, p.BT, mac_octets, identity, fleet, &BLE_SHARED)
+                    .expect("ble task fits"),
+            );
+        }
         join(
             node.run_reactor_with_interface_store(&INTERFACE_STORE),
             espnow.run(espnow_seam),
@@ -190,9 +203,12 @@ pub async fn run(spawner: Spawner) {
     }
     #[cfg(all(feature = "bluetooth-auto", not(feature = "esp-now")))]
     {
-        spawner.spawn(
-            ble_task(spawner, p.BT, mac_octets, ble_fleet, &BLE_SHARED).expect("ble task fits"),
-        );
+        if let (Some(identity), Some(fleet)) = (ble_identity, ble_fleet) {
+            spawner.spawn(
+                ble_task(spawner, p.BT, mac_octets, identity, fleet, &BLE_SHARED)
+                    .expect("ble task fits"),
+            );
+        }
         node.run_reactor_with_interface_store(&INTERFACE_STORE)
             .await;
     }

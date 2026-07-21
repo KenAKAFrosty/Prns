@@ -105,6 +105,14 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let wifi: Option<AutoWifi<'static, MEMBERS>> = None;
     #[cfg(not(feature = "wifi-auto"))]
     let tcp_stack: Option<Stack<'static>> = None;
+    #[cfg(feature = "bluetooth-auto")]
+    let ble_identity = match crate::bluetooth_auto::load_or_create_ble_identity() {
+        Ok(identity) => Some(identity),
+        Err(error) => {
+            log::error!("BLE identity is unavailable: {error}");
+            None
+        }
+    };
 
     #[cfg(feature = "esp-now")]
     let espnow_status: &'static EmbassyInterfaceStatus = mk_static!(
@@ -185,7 +193,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             node.activate_fleet(WIFI_FLEET_SLOT, WIFI_FLEET_ID);
         }
         #[cfg(feature = "bluetooth-auto")]
-        if radio_mode == RadioMode::Ble {
+        if radio_mode == RadioMode::Ble && ble_identity.is_some() {
             node.activate_fleet(BLE_FLEET_SLOT, BLE_FLEET_ID);
         }
         log_heap_footprint("post-construction (engine columns boxed into PSRAM)");
@@ -276,19 +284,20 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let wifi_sec_data_buf: &'static mut [u8] =
         alloc::vec![0u8; wifi_auto_contract::HARDWARE_MTU].leak();
     #[cfg(feature = "bluetooth-auto")]
-    let ble_fleet: Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP> = {
-        let (in_producer, out_consumer) =
-            iface_halves[BLE_FLEET_SLOT].take().expect("ble fleet half");
-        Fleet::new(
-            FleetWire {
-                inbound: in_producer,
-                outbound: out_consumer,
-                notify: NOTIFY.sender(),
-                outbound_wake: &BLE_OUTBOUND_WAKE,
-            },
-            LIFECYCLE.sender(),
-        )
-    };
+    let ble_fleet: Option<Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP>> =
+        ble_identity.map(|_| {
+            let (in_producer, out_consumer) =
+                iface_halves[BLE_FLEET_SLOT].take().expect("ble fleet half");
+            Fleet::new(
+                FleetWire {
+                    inbound: in_producer,
+                    outbound: out_consumer,
+                    notify: NOTIFY.sender(),
+                    outbound_wake: &BLE_OUTBOUND_WAKE,
+                },
+                LIFECYCLE.sender(),
+            )
+        });
 
     let button = Input::new(b.button, InputConfig::default().with_pull(Pull::Up));
     spawner.spawn(button_task(button).expect("button task fits"));
@@ -617,11 +626,22 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     #[cfg(all(feature = "bluetooth-auto", not(feature = "wifi-auto")))]
     {
         let _ = (wifi, tcp, has_wifi);
-        join(
-            crate::bluetooth_auto::run(ble_connector, mac_octets, ble_fleet, &BLE_SHARED),
-            render,
-        )
-        .await;
+        let ble_run = async {
+            match (ble_identity, ble_fleet) {
+                (Some(identity), Some(fleet)) => {
+                    crate::bluetooth_auto::run(
+                        ble_connector,
+                        mac_octets,
+                        identity,
+                        fleet,
+                        &BLE_SHARED,
+                    )
+                    .await;
+                }
+                _ => core::future::pending().await,
+            }
+        };
+        join(ble_run, render).await;
     }
     #[cfg(all(feature = "wifi-auto", not(feature = "bluetooth-auto")))]
     {
@@ -677,8 +697,21 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 )
                 .expect("ble connector");
                 log_heap_footprint("post-ble-connector (core 0)");
-                let ble_run =
-                    crate::bluetooth_auto::run(ble_connector, mac_octets, ble_fleet, &BLE_SHARED);
+                let ble_run = async {
+                    match (ble_identity, ble_fleet) {
+                        (Some(identity), Some(fleet)) => {
+                            crate::bluetooth_auto::run(
+                                ble_connector,
+                                mac_octets,
+                                identity,
+                                fleet,
+                                &BLE_SHARED,
+                            )
+                            .await;
+                        }
+                        _ => core::future::pending().await,
+                    }
+                };
                 match (wifi, tcp) {
                     (Some(wifi), Some((tcp, tcp_seam))) => {
                         join(

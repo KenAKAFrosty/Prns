@@ -4,23 +4,32 @@ use prns_runtime::interfaces::{
     ConfiguredInterfacePolicy, EffectiveInterfacePolicy, InterfaceId, InterfaceKind,
     InterfaceStatus, ReportsStatus,
 };
-use prns_runtime::runtime::{
-    ephemeral_ble_identity, Attachable, Fleet, InterfaceSupervisor, PrnsNodeHandle,
-};
+use prns_runtime::runtime::{Attachable, Fleet, InterfaceSupervisor, PrnsNodeHandle};
 
 use super::BluetoothAutoStatus;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct AutoBle;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AutoBle {
+    identity: BleIdentity,
+}
 
 pub struct ConfiguredAutoBle {
+    identity: BleIdentity,
     policy: EffectiveInterfacePolicy,
 }
 
 impl AutoBle {
     #[must_use]
-    pub fn with_policy(policy: EffectiveInterfacePolicy) -> ConfiguredAutoBle {
-        ConfiguredAutoBle { policy }
+    pub const fn new(identity: BleIdentity) -> Self {
+        Self { identity }
+    }
+
+    #[must_use]
+    pub fn with_policy(
+        identity: BleIdentity,
+        policy: EffectiveInterfacePolicy,
+    ) -> ConfiguredAutoBle {
+        ConfiguredAutoBle { identity, policy }
     }
 }
 
@@ -45,6 +54,7 @@ impl Attachable for AutoBle {
     fn attach_to(self, handle: &PrnsNodeHandle) -> AttachedBle {
         attach_platform_bluetooth(
             handle,
+            self.identity,
             prns_runtime::interfaces::bluetooth_auto::defaults_for_bitrate(
                 prns_runtime::interfaces::bluetooth_auto::BLE_BITRATE_GUESS_BPS,
             )
@@ -61,6 +71,7 @@ impl Attachable for AutoBle {
     ) -> AttachedBle {
         attach_platform_bluetooth(
             handle,
+            self.identity,
             prns_runtime::interfaces::bluetooth_auto::defaults_for_bitrate(
                 prns_runtime::interfaces::bluetooth_auto::BLE_BITRATE_GUESS_BPS,
             )
@@ -74,7 +85,7 @@ impl Attachable for ConfiguredAutoBle {
     type Attached = AttachedBle;
 
     fn attach_to(self, handle: &PrnsNodeHandle) -> AttachedBle {
-        attach_platform_bluetooth(handle, self.policy, None)
+        attach_platform_bluetooth(handle, self.identity, self.policy, None)
     }
 
     fn attach_to_with_ifac(
@@ -83,18 +94,24 @@ impl Attachable for ConfiguredAutoBle {
         ifac: IfacContext,
         network_name: Option<String>,
     ) -> AttachedBle {
-        attach_platform_bluetooth(handle, self.policy, Some((ifac, network_name)))
+        attach_platform_bluetooth(
+            handle,
+            self.identity,
+            self.policy,
+            Some((ifac, network_name)),
+        )
     }
 }
 
 fn attach_platform_bluetooth(
     handle: &PrnsNodeHandle,
+    ble_identity: BleIdentity,
     policy: EffectiveInterfacePolicy,
     ifac: Option<(IfacContext, Option<String>)>,
 ) -> AttachedBle {
     let status = BluetoothAutoStatus::new();
     let bluetooth = PlatformBluetooth {
-        ble_identity: ephemeral_ble_identity(),
+        ble_identity,
         policy,
         status: status.clone(),
     };
@@ -343,7 +360,9 @@ mod tests {
             interfaces: Manual,
             on_event: |_event, _state: &()| {},
         });
-        let attached = node.handle().attach(AutoBle);
+        let attached = node
+            .handle()
+            .attach(AutoBle::new(BleIdentity::new([0x31; 16])));
 
         assert!(node
             .handle()

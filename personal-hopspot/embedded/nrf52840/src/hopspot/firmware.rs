@@ -28,9 +28,7 @@ use personal_rns::engine::{
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::IdentitySigner;
-use personal_rns::interfaces::bluetooth_auto::{
-    BleIdentity, Endpoint, LinkCapabilities, Nrf52Host, BLE_HW_MTU,
-};
+use personal_rns::interfaces::bluetooth_auto::{Endpoint, LinkCapabilities, Nrf52Host, BLE_HW_MTU};
 use personal_rns::interfaces::lora::{channel_tag, DEFAULT_915_PROFILE};
 use personal_rns::interfaces::usb_auto::{WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID};
 use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus};
@@ -127,20 +125,24 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
     // validated first-light ordering. Constructing the engine afterward is fine — the SD's own
     // high-priority interrupts keep the radio alive across the synchronous build.
     let sd = Softdevice::enable(&softdevice_config());
-    let ble_identity =
-        BleIdentity::from_radio_address(&nrf_softdevice::ble::get_address(sd).bytes());
     static SERVER: StaticCell<Server> = StaticCell::new();
     let server: &'static Server = SERVER.init(Server::new(sd).unwrap());
-    super::bluetooth_auto::set_columba_identity(server, ble_identity);
     static L2CAP: StaticCell<l2cap::L2cap<L2capPacket>> = StaticCell::new();
     let l2cap: &'static l2cap::L2cap<L2capPacket> = L2CAP.init(l2cap::L2cap::init(sd));
+    let sd: &'static Softdevice = sd;
     spawner.spawn(softdevice_task(sd, vbus).expect("softdevice task fits"));
+    let ble_identity = super::ble_identity::load_or_create(sd).await.ok();
+    if let Some(identity) = ble_identity {
+        super::bluetooth_auto::set_columba_identity(server, identity);
+    }
     // The connection-slot pool: one worker per slot, parked until handed a connection. Pre-fill
     // the free list so the acceptor can advertise; seed the single central-radio permit.
-    let _ = HUB.central_token.try_send(());
-    for idx in 0..POOL {
-        let _ = HUB.free.try_send(idx);
-        spawner.spawn(serve_slot(idx, sd, l2cap, server, &HUB).expect("serve slot fits"));
+    if ble_identity.is_some() {
+        let _ = HUB.central_token.try_send(());
+        for idx in 0..POOL {
+            let _ = HUB.free.try_send(idx);
+            spawner.spawn(serve_slot(idx, sd, l2cap, server, &HUB).expect("serve slot fits"));
+        }
     }
 
     let mut radio_spim_config = spim::Config::default();
@@ -281,7 +283,9 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
         )
     });
     node.activate(LORA_SLOT, lora.descriptor());
-    node.activate_fleet(BLE_FLEET_SLOT, FLEET_ID);
+    if ble_identity.is_some() {
+        node.activate_fleet(BLE_FLEET_SLOT, FLEET_ID);
+    }
     let (lora_in_producer, lora_out_consumer) =
         iface_halves[LORA_SLOT].take().expect("lora slot half");
     let lora_seam = EmbassyInterfaceSeam::new(
@@ -325,16 +329,18 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
     );
 
     let backend = NrfBleBackend::new(&HUB);
-    let supervisor = BluetoothAuto::new(
-        backend,
-        ble_identity,
-        Endpoint::Nrf52(Nrf52Host::Nrf52),
-        LinkCapabilities {
-            l2cap: None,
-            link_mtu: BLE_HW_MTU as u16,
-        },
-        &BLE_SHARED,
-    );
+    let supervisor = ble_identity.map(|identity| {
+        BluetoothAuto::new(
+            backend,
+            identity,
+            Endpoint::Nrf52(Nrf52Host::Nrf52),
+            LinkCapabilities {
+                l2cap: None,
+                link_mtu: BLE_HW_MTU as u16,
+            },
+            &BLE_SHARED,
+        )
+    });
 
     let button = Input::new(p.P1_10, Pull::Up);
     let frontlight = Output::new(p.P1_11, Level::Low, OutputDrive::Standard);
@@ -523,7 +529,14 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
         input::drive_button(button),
         input::drive_frontlight(frontlight),
     );
-    let ble_plane = join3(acceptor(sd, &HUB), scanner(sd, &HUB), supervisor.run(fleet));
+    let ble_plane = async move {
+        match supervisor {
+            Some(supervisor) => {
+                join3(acceptor(sd, &HUB), scanner(sd, &HUB), supervisor.run(fleet)).await;
+            }
+            None => core::future::pending().await,
+        }
+    };
     let mesh = join3(
         node.run_reactor_with_interface_store(&INTERFACE_STORE),
         lora.run(lora_seam),
