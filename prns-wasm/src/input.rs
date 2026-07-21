@@ -148,6 +148,7 @@ pub(crate) fn parse_interface_kind(kind: &str) -> Result<InterfaceKind, JsValue>
         "rnode" | "RNode" => Ok(InterfaceKind::Rnode),
         "bluetooth-auto" | "ble-auto" => Ok(InterfaceKind::BluetoothAuto),
         "bluetooth-peer" | "ble-peer" => Ok(InterfaceKind::BluetoothPeer),
+        "auto-wifi" => Ok(InterfaceKind::AutoWifi),
         "websocket-client" | "websocket" => Ok(InterfaceKind::WebSocketClient),
         "websocket-server" => Ok(InterfaceKind::WebSocketServer),
         "websocket-server-peer" => Ok(InterfaceKind::WebSocketServerPeer),
@@ -155,5 +156,18 @@ pub(crate) fn parse_interface_kind(kind: &str) -> Result<InterfaceKind, JsValue>
         "kiss" => Ok(InterfaceKind::Kiss),
         "pipe" => Ok(InterfaceKind::Pipe),
         _ => Err(JsValue::from_str("unsupported interface kind")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auto_wifi_crosses_the_wasm_interface_kind_boundary() {
+        assert!(matches!(
+            parse_interface_kind("auto-wifi"),
+            Ok(InterfaceKind::AutoWifi)
+        ));
     }
 }

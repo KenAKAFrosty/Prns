@@ -2942,6 +2942,7 @@ function parseRuntimeInterfaceKind(value: string): RuntimeInterfaceKind {
     value === "rnode" ||
     value === "bluetooth-auto" ||
     value === "bluetooth-peer" ||
+    value === "auto-wifi" ||
     value === "websocket-client" ||
     value === "websocket-server" ||
     value === "websocket-server-peer" ||
