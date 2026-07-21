@@ -11,10 +11,11 @@ mod toolchain;
 mod ui;
 mod wifi;
 
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use clap::Parser;
+use clap::{error::ErrorKind, Parser};
 use prns_flash_manifest::{
     board_catalog, BoardCatalog, BoardCatalogEntry, ProvisioningAction, Transport,
 };
@@ -28,7 +29,12 @@ use release::{prepare_candidate_target, prepare_published_target, PreparedTarget
 use wifi::WifiOptions;
 
 fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let arguments = std::env::args_os().collect::<Vec<_>>();
+    let json_requested = requests_json_output(&arguments);
+    let cli = match Cli::try_parse_from(&arguments) {
+        Ok(cli) => cli,
+        Err(error) => return report_parse_error(error, json_requested),
+    };
     let reporter = if cli.json_mode() {
         Reporter::json_lines()
     } else {
@@ -40,6 +46,40 @@ fn main() -> ExitCode {
             reporter.error(&error);
             error.exit_code()
         }
+    }
+}
+
+fn requests_json_output(arguments: &[OsString]) -> bool {
+    arguments.iter().skip(1).any(|argument| {
+        argument == OsStr::new("--json")
+            || argument
+                .to_str()
+                .is_some_and(|argument| argument.starts_with("--json="))
+    })
+}
+
+fn report_parse_error(error: clap::Error, json_requested: bool) -> ExitCode {
+    if matches!(
+        error.kind(),
+        ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
+    ) {
+        let code = error.exit_code();
+        let _ = error.print();
+        return ExitCode::from(u8::try_from(code).unwrap_or(2));
+    }
+
+    if json_requested {
+        // Clap's rendered error can repeat arbitrary argv values. Never include
+        // it in machine output: a misspelled credential option must not turn a
+        // secret into a diagnostic. Emit one stable terminal schema-1 event.
+        Reporter::json_lines().error(&AppError::usage(
+            "invalid command-line arguments; run `hopspot-flash --help` for valid options",
+        ));
+        ExitCode::from(2)
+    } else {
+        let code = error.exit_code();
+        let _ = error.print();
+        ExitCode::from(u8::try_from(code).unwrap_or(2))
     }
 }
 
@@ -375,6 +415,24 @@ struct DoctorOutput<'a> {
     requested_port: Option<&'a str>,
     serial_ports: Vec<PortDiagnostic>,
     techo_mounts: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    check: Option<DoctorCheck>,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "transport")]
+enum DoctorCheck {
+    #[serde(rename = "esp-serial")]
+    EspSerial {
+        port: String,
+        detected_chip: String,
+        flash_size: u32,
+        same_chip_board_ambiguity: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
+    },
+    #[serde(rename = "uf2-mass-storage")]
+    Uf2MassStorage { mount: String },
 }
 
 fn doctor(
@@ -383,10 +441,60 @@ fn doctor(
     requested_port: Option<&str>,
     json: bool,
 ) -> Result<(), AppError> {
-    if let Some(slug) = board_slug {
-        let _ = find_board(catalog, slug)?;
+    let board = board_slug
+        .map(|slug| find_board(catalog, slug))
+        .transpose()?;
+    if board.is_some_and(|board| board.transport == Transport::Uf2MassStorage)
+        && requested_port.is_some()
+    {
+        return Err(AppError::usage(
+            "--port applies only to ESP serial boards; T-Echo uses the TECHOBOOT drive",
+        ));
     }
-    let ports = esp::diagnostic_ports()?
+    if board.is_some() {
+        esp::begin_cancellable_operation()?;
+    }
+    let detected_ports = if board.is_some_and(|board| board.transport == Transport::Uf2MassStorage)
+    {
+        Vec::new()
+    } else {
+        esp::diagnostic_ports()?
+    };
+    let detected_mounts = techo::detect_mounts();
+    let check = match board {
+        Some(board) if board.transport == Transport::EspSerial => {
+            if !json {
+                println!(
+                    "Running a non-writing identity preflight for {}…",
+                    board.display_name
+                );
+            }
+            let report = esp::doctor(board, detected_ports.clone(), requested_port)?;
+            let ambiguous_peer = ambiguous_esp_identity_peer(catalog, board);
+            let same_chip_board_ambiguity = ambiguous_peer.is_some();
+            let note = ambiguous_peer.map(|peer| {
+                format!(
+                    "This identity check cannot distinguish {} from {} because they share the same detectable chip and flash capacity; physically confirm the selected board.",
+                    board.display_name, peer.display_name
+                )
+            });
+            Some(DoctorCheck::EspSerial {
+                port: report.port_name,
+                detected_chip: report.detected_chip,
+                flash_size: report.flash_size,
+                same_chip_board_ambiguity,
+                note,
+            })
+        }
+        Some(_board) => {
+            let mount = techo::doctor_mount_from(detected_mounts.clone())?;
+            Some(DoctorCheck::Uf2MassStorage {
+                mount: mount.display().to_string(),
+            })
+        }
+        None => None,
+    };
+    let ports = detected_ports
         .into_iter()
         .map(|port| PortDiagnostic {
             name: port.port_name,
@@ -398,7 +506,7 @@ fn doctor(
             },
         })
         .collect::<Vec<_>>();
-    let mounts = techo::detect_mounts()
+    let mounts = detected_mounts
         .iter()
         .map(|path| path.display().to_string())
         .collect::<Vec<_>>();
@@ -410,6 +518,7 @@ fn doctor(
         requested_port,
         serial_ports: ports,
         techo_mounts: mounts,
+        check,
     };
     if json {
         println!("{}", json_line(&output)?);
@@ -436,8 +545,42 @@ fn doctor(
         for mount in &output.techo_mounts {
             println!("  {mount}");
         }
+        match &output.check {
+            Some(DoctorCheck::EspSerial {
+                port,
+                detected_chip,
+                flash_size,
+                note,
+                ..
+            }) => {
+                println!("non-writing ESP preflight: passed");
+                println!("  port: {port}");
+                println!("  detected chip: {detected_chip}");
+                println!("  detected flash: {flash_size} bytes");
+                if let Some(note) = note {
+                    println!("  board confirmation: {note}");
+                }
+            }
+            Some(DoctorCheck::Uf2MassStorage { mount }) => {
+                println!("non-writing UF2 preflight: passed");
+                println!("  identifiable TECHOBOOT mount: {mount}");
+            }
+            None => {}
+        }
     }
     Ok(())
+}
+
+fn ambiguous_esp_identity_peer<'a>(
+    catalog: &'a BoardCatalog,
+    board: &BoardCatalogEntry,
+) -> Option<&'a BoardCatalogEntry> {
+    catalog.boards.iter().find(|candidate| {
+        candidate.slug != board.slug
+            && candidate.transport == Transport::EspSerial
+            && candidate.expected_chip == board.expected_chip
+            && candidate.flash_size == board.flash_size
+    })
 }
 
 fn json_line<T: Serialize>(value: &T) -> Result<String, AppError> {
@@ -506,4 +649,65 @@ fn repo_root() -> Result<PathBuf, AppError> {
                 manifest_dir.display()
             ))
         })
+}
+
+#[cfg(test)]
+mod doctor_tests {
+    use super::*;
+
+    #[test]
+    fn t_echo_doctor_rejects_serial_port_without_touching_devices() {
+        let catalog = board_catalog().expect("catalog");
+        assert!(matches!(
+            doctor(&catalog, Some("t-echo"), Some("unused-port"), true),
+            Err(AppError::Usage(message)) if message.contains("TECHOBOOT")
+        ));
+    }
+
+    #[test]
+    fn esp_doctor_json_exposes_same_chip_ambiguity() {
+        let encoded = json_line(&DoctorOutput {
+            schema: 1,
+            event: "doctor",
+            phase: "complete",
+            board: Some("heltec-v4"),
+            requested_port: Some("fake-port"),
+            serial_ports: vec![PortDiagnostic {
+                name: "fake-port".to_string(),
+                kind: "usb",
+            }],
+            techo_mounts: Vec::new(),
+            check: Some(DoctorCheck::EspSerial {
+                port: "fake-port".to_string(),
+                detected_chip: "esp32s3".to_string(),
+                flash_size: 8 * 1024 * 1024,
+                same_chip_board_ambiguity: true,
+                note: Some("cannot distinguish these two board models".to_string()),
+            }),
+        })
+        .expect("doctor output serializes");
+        assert_eq!(
+            encoded,
+            r#"{"schema":1,"event":"doctor","phase":"complete","board":"heltec-v4","requested_port":"fake-port","serial_ports":[{"name":"fake-port","kind":"usb"}],"techo_mounts":[],"check":{"transport":"esp-serial","port":"fake-port","detected_chip":"esp32s3","flash_size":8388608,"same_chip_board_ambiguity":true,"note":"cannot distinguish these two board models"}}"#
+        );
+    }
+
+    #[test]
+    fn same_chip_ambiguity_is_derived_from_the_board_catalog() {
+        let catalog = board_catalog().expect("catalog");
+        assert!(
+            ambiguous_esp_identity_peer(&catalog, catalog.board("heltec-v4").expect("Heltec"))
+                .is_some()
+        );
+        assert!(ambiguous_esp_identity_peer(
+            &catalog,
+            catalog.board("t-beam-supreme").expect("T-Beam")
+        )
+        .is_some());
+        assert!(ambiguous_esp_identity_peer(
+            &catalog,
+            catalog.board("xiao-esp32-c6").expect("XIAO")
+        )
+        .is_none());
+    }
 }

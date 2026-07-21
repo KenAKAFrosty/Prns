@@ -1,19 +1,23 @@
-use std::borrow::Cow;
 use std::io::{self, Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use espflash::connection::{Connection, ResetAfterOperation, ResetBeforeOperation};
-use espflash::flasher::{Flasher, SpiAttachParams};
-use espflash::image_format::Segment;
-use espflash::target::{Chip, ProgressCallbacks};
+use espflash::connection::{ResetAfterOperation, ResetBeforeOperation};
+use espflash::target::Chip;
 use prns_flash_manifest::{provisioning_image, BoardCatalogEntry, ProvisioningAction};
-use serialport::{FlowControl, SerialPortInfo, SerialPortType, UsbPortInfo};
+use serialport::{SerialPortInfo, SerialPortType};
 
 use crate::error::AppError;
 use crate::events::{Phase, Reporter};
 use crate::release::PreparedPart;
+
+mod session;
+
+use session::{
+    ChipSelection, DeviceIdentity, EspSession, EspflashSession, SessionError, SessionMode,
+    SparsePart,
+};
 
 static CANCELLED: AtomicBool = AtomicBool::new(false);
 static CANCEL_HANDLER: OnceLock<Result<(), String>> = OnceLock::new();
@@ -48,130 +52,23 @@ pub(crate) fn flash(
     reporter: Reporter,
 ) -> Result<(), AppError> {
     let selected = select_port(port_name)?;
-    let chip_name = board
-        .expected_chip
-        .as_deref()
-        .ok_or_else(|| AppError::usage("ESP board is missing expected-chip metadata"))?;
-    let chip = chip_name.parse::<Chip>().map_err(|error| {
-        AppError::trust(format!("invalid expected chip {chip_name:?}: {error}"))
-    })?;
-    let build = match &board.build {
-        prns_flash_manifest::BoardBuild::Esp(build) => build,
-        prns_flash_manifest::BoardBuild::Uf2(_) => {
-            return Err(AppError::usage("UF2 board cannot use the ESP engine"));
-        }
-    };
+    let expected = expected_device(board)?;
+    let plan = sparse_plan(board, parts, provisioning)?;
+    let total = plan.iter().map(|part| part.bytes.len() as u64).sum::<u64>();
 
     reporter.phase(
         Phase::RequestingPort,
         Some(&board.slug),
         &format!("Opening {}…", selected.port_name),
     );
-    let serial = serialport::new(&selected.port_name, 115_200)
-        .flow_control(FlowControl::None)
-        .timeout(Duration::from_secs(3))
-        .open_native()
-        .map_err(|error| {
-            AppError::preflight(format!(
-                "could not open serial port {}: {error}",
-                selected.port_name
-            ))
-        })?;
-    let usb = usb_info(&selected);
-    let connection = Connection::new(
-        serial,
-        usb,
-        after_reset(&build.after_reset)?,
-        before_reset(&build.before_reset)?,
-        921_600,
-    );
-    reporter.phase(
-        Phase::Connecting,
-        Some(&board.slug),
-        "Connecting to the Espressif bootloader…",
-    );
-    let mut flasher = Flasher::connect(connection, true, true, false, Some(chip), Some(921_600))
-        .map_err(|error| {
-            AppError::preflight(format!("could not connect to {chip_name}: {error}"))
-        })?;
-    let detected_chip = flasher.chip();
-    if flasher.secure_download_mode() {
-        return Err(AppError::preflight(
-            "secure download mode prevents the required device-side verification",
-        ));
-    }
-    let detected_flash_size = flasher
-        .flash_detect()
-        .map_err(|error| AppError::preflight(format!("could not detect flash capacity: {error}")))?
-        .map(|detected| detected.size());
-    validate_device_identity(chip, detected_chip, board.flash_size, detected_flash_size)?;
-    if cancelled() {
-        return Err(AppError::Cancelled);
-    }
-
-    let mut owned = parts
-        .iter()
-        .map(|part| {
-            let offset = part.descriptor.offset.ok_or_else(|| {
-                AppError::trust(format!("ESP part {:?} has no offset", part.descriptor.path))
-            })?;
-            Ok((offset, part.bytes.clone()))
-        })
-        .collect::<Result<Vec<_>, AppError>>()?;
-    if let Some(config) =
-        provisioning_image(provisioning).map_err(|error| AppError::usage(error.to_string()))?
-    {
-        let slot = board
-            .provisioning
-            .as_ref()
-            .ok_or_else(|| AppError::usage("this board has no provisioning slot"))?;
-        owned.push((slot.offset, config));
-    }
-    owned.sort_by_key(|(offset, _)| *offset);
-    let total = owned.iter().map(|(_, bytes)| bytes.len() as u64).sum();
-    reporter.phase(
-        Phase::Writing,
-        Some(&board.slug),
-        &format!("Writing and verifying {total} bytes without a full-chip erase…"),
-    );
-    let mut progress = FlashProgress {
-        reporter,
-        board: &board.slug,
-        completed_bytes: 0,
-        part_bytes: 0,
-        part_blocks: 0,
-        operation_total: total,
-    };
-    let mut target = chip.flash_target(SpiAttachParams::default(), true, true, false);
-    target
-        .begin(flasher.connection())
-        .map_err(|error| AppError::flash(format!("could not begin sparse flash: {error}")))?;
-    for (offset, bytes) in &owned {
-        if cancelled() {
-            return Err(AppError::Cancelled);
-        }
-        progress.part_bytes = bytes.len() as u64;
-        target
-            .write_segment(
-                flasher.connection(),
-                Segment {
-                    addr: *offset,
-                    data: Cow::Borrowed(bytes.as_slice()),
-                },
-                &mut progress,
-            )
-            .map_err(map_part_error)?;
-        if cancelled() {
-            return Err(AppError::Cancelled);
-        }
-    }
-    target.finish(flasher.connection(), true).map_err(|error| {
-        AppError::flash(format!("final reset failed after verification: {error}"))
-    })?;
-    drop(flasher);
+    let mut session = real_session(board, selected, SessionMode::Flash)?;
+    run_flash_session(&mut session, expected, &plan, reporter, &cancelled)?;
 
     if monitor {
-        monitor_port(&selected.port_name, reporter)?;
+        monitor_port(session.port_name(), reporter)?;
+    }
+    if cancelled() {
+        return Err(AppError::Cancelled);
     }
     reporter.success(
         &board.slug,
@@ -181,6 +78,224 @@ pub(crate) fn flash(
         ),
     );
     Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DoctorReport {
+    pub(crate) port_name: String,
+    pub(crate) detected_chip: String,
+    pub(crate) flash_size: u32,
+}
+
+pub(crate) fn doctor(
+    board: &BoardCatalogEntry,
+    ports: Vec<SerialPortInfo>,
+    port_name: Option<&str>,
+) -> Result<DoctorReport, AppError> {
+    let selected = select_port_from(ports, port_name)?;
+    let selected_name = selected.port_name.clone();
+    let expected = expected_device(board)?;
+    // Doctor uses the ROM loader directly. It neither writes flash nor uploads
+    // the RAM flashing stub used by the actual compressed flash operation.
+    let mut session = real_session(board, selected, SessionMode::Inspect)?;
+    let identity = run_doctor_session(&mut session, expected, &cancelled)?;
+    if cancelled() {
+        return Err(AppError::Cancelled);
+    }
+    Ok(DoctorReport {
+        port_name: selected_name,
+        detected_chip: identity.chip.to_string(),
+        flash_size: identity.flash_size.ok_or_else(|| {
+            AppError::preflight("the device did not report a verifiable flash capacity")
+        })?,
+    })
+}
+
+#[derive(Clone, Copy)]
+struct ExpectedDevice<'a> {
+    board_slug: &'a str,
+    chip: Chip,
+    flash_size: Option<u32>,
+}
+
+fn expected_device(board: &BoardCatalogEntry) -> Result<ExpectedDevice<'_>, AppError> {
+    let chip_name = board
+        .expected_chip
+        .as_deref()
+        .ok_or_else(|| AppError::trust("ESP board is missing expected-chip metadata"))?;
+    let chip = chip_name.parse::<Chip>().map_err(|error| {
+        AppError::trust(format!("invalid expected chip {chip_name:?}: {error}"))
+    })?;
+    if !matches!(board.build, prns_flash_manifest::BoardBuild::Esp(_)) {
+        return Err(AppError::usage("UF2 board cannot use the ESP engine"));
+    }
+    Ok(ExpectedDevice {
+        board_slug: &board.slug,
+        chip,
+        flash_size: board.flash_size,
+    })
+}
+
+fn real_session(
+    board: &BoardCatalogEntry,
+    selected: SerialPortInfo,
+    mode: SessionMode,
+) -> Result<EspflashSession, AppError> {
+    let build = match &board.build {
+        prns_flash_manifest::BoardBuild::Esp(build) => build,
+        prns_flash_manifest::BoardBuild::Uf2(_) => {
+            return Err(AppError::usage("UF2 board cannot use the ESP engine"));
+        }
+    };
+    Ok(EspflashSession::new(
+        selected,
+        after_reset(&build.after_reset)?,
+        before_reset(&build.before_reset)?,
+        mode,
+    ))
+}
+
+fn sparse_plan(
+    board: &BoardCatalogEntry,
+    parts: &[PreparedPart],
+    provisioning: &ProvisioningAction,
+) -> Result<Vec<SparsePart>, AppError> {
+    let mut plan = parts
+        .iter()
+        .map(|part| {
+            let offset = part.descriptor.offset.ok_or_else(|| {
+                AppError::trust(format!("ESP part {:?} has no offset", part.descriptor.path))
+            })?;
+            Ok(SparsePart {
+                offset,
+                bytes: part.bytes.clone(),
+            })
+        })
+        .collect::<Result<Vec<_>, AppError>>()?;
+    if let Some(config) =
+        provisioning_image(provisioning).map_err(|error| AppError::usage(error.to_string()))?
+    {
+        let slot = board
+            .provisioning
+            .as_ref()
+            .ok_or_else(|| AppError::usage("this board has no provisioning slot"))?;
+        plan.push(SparsePart {
+            offset: slot.offset,
+            bytes: config,
+        });
+    }
+    plan.sort_by_key(|part| part.offset);
+    if plan.is_empty() {
+        return Err(AppError::trust("ESP sparse flash plan is empty"));
+    }
+    Ok(plan)
+}
+
+fn run_flash_session(
+    session: &mut dyn EspSession,
+    expected: ExpectedDevice<'_>,
+    plan: &[SparsePart],
+    reporter: Reporter,
+    is_cancelled: &dyn Fn() -> bool,
+) -> Result<DeviceIdentity, AppError> {
+    let result = (|| {
+        reporter.phase(
+            Phase::Connecting,
+            Some(expected.board_slug),
+            "Connecting to the Espressif bootloader…",
+        );
+        session
+            .connect(ChipSelection::Expected(expected.chip))
+            .map_err(map_preflight_session_error)?;
+        let identity = session.identity().map_err(map_preflight_session_error)?;
+        let flash_capacity = identity
+            .flash_size
+            .map(|size| format!("{size} bytes of flash"))
+            .unwrap_or_else(|| "an unreported flash capacity".to_string());
+        reporter.phase(
+            Phase::VerifyingTarget,
+            Some(expected.board_slug),
+            &format!("Detected {} with {flash_capacity}.", identity.chip),
+        );
+        validate_device_identity(expected.chip, expected.flash_size, identity)?;
+        if is_cancelled() {
+            return Err(AppError::Cancelled);
+        }
+        let total = plan.iter().map(|part| part.bytes.len() as u64).sum::<u64>();
+        reporter.phase(
+            Phase::Writing,
+            Some(expected.board_slug),
+            &format!("Writing and verifying {total} bytes without a full-chip erase…"),
+        );
+        session
+            .write_and_verify(plan, expected.board_slug, reporter, is_cancelled)
+            .map_err(map_flash_session_error)?;
+        if is_cancelled() {
+            return Err(AppError::Cancelled);
+        }
+        reporter.phase(
+            Phase::Resetting,
+            Some(expected.board_slug),
+            "Every sparse part verified; resetting the device…",
+        );
+        session.reset().map_err(map_flash_session_error)?;
+        if is_cancelled() {
+            return Err(AppError::Cancelled);
+        }
+        Ok(identity)
+    })();
+    session.disconnect();
+    result
+}
+
+fn run_doctor_session(
+    session: &mut dyn EspSession,
+    expected: ExpectedDevice<'_>,
+    is_cancelled: &dyn Fn() -> bool,
+) -> Result<DeviceIdentity, AppError> {
+    let mut connected = false;
+    let inspection = (|| {
+        session
+            .connect(ChipSelection::Detect)
+            .map_err(map_preflight_session_error)?;
+        connected = true;
+        let identity = session.identity().map_err(map_preflight_session_error)?;
+        validate_device_identity(expected.chip, expected.flash_size, identity)?;
+        if is_cancelled() {
+            return Err(AppError::Cancelled);
+        }
+        Ok(identity)
+    })();
+    let reset = if connected {
+        session.reset().map_err(map_preflight_session_error)
+    } else {
+        Ok(())
+    };
+    session.disconnect();
+    inspection.and_then(|identity| {
+        reset?;
+        if is_cancelled() {
+            return Err(AppError::Cancelled);
+        }
+        Ok(identity)
+    })
+}
+
+fn map_preflight_session_error(error: SessionError) -> AppError {
+    match error {
+        SessionError::Cancelled => AppError::Cancelled,
+        error => AppError::preflight(error.to_string()),
+    }
+}
+
+fn map_flash_session_error(error: SessionError) -> AppError {
+    match error {
+        SessionError::Connect(_) | SessionError::Identity(_) => {
+            AppError::preflight(error.to_string())
+        }
+        SessionError::Cancelled => AppError::Cancelled,
+        error => AppError::flash(error.to_string()),
+    }
 }
 
 pub(crate) fn diagnostic_ports() -> Result<Vec<SerialPortInfo>, AppError> {
@@ -226,16 +341,21 @@ fn select_port_from(
 
 fn validate_device_identity(
     expected_chip: Chip,
-    detected_chip: Chip,
     expected_flash_size: Option<u32>,
-    detected_flash_size: Option<u32>,
+    identity: DeviceIdentity,
 ) -> Result<(), AppError> {
-    if detected_chip != expected_chip {
+    if identity.chip != expected_chip {
         return Err(AppError::preflight(format!(
-            "wrong chip: expected {expected_chip}, detected {detected_chip}"
+            "wrong chip: expected {expected_chip}, detected {}",
+            identity.chip
         )));
     }
-    match (expected_flash_size, detected_flash_size) {
+    if identity.secure_download_mode {
+        return Err(AppError::preflight(
+            "secure download mode prevents the required device-side verification",
+        ));
+    }
+    match (expected_flash_size, identity.flash_size) {
         (Some(expected), Some(detected)) if expected == detected => Ok(()),
         (Some(expected), Some(detected)) => Err(AppError::preflight(format!(
             "flash capacity mismatch: board catalog requires {expected} bytes, device reports {detected} bytes"
@@ -246,15 +366,6 @@ fn validate_device_identity(
         _ => Err(AppError::trust(
             "ESP board catalog is missing its flash capacity",
         )),
-    }
-}
-
-fn map_part_error(error: espflash::Error) -> AppError {
-    match error {
-        espflash::Error::VerifyFailed | espflash::Error::DigestMismatch(_, _) => {
-            AppError::flash(format!("device-side flash verification failed: {error}"))
-        }
-        _ => AppError::flash(format!("ESP part write failed: {error}")),
     }
 }
 
@@ -271,19 +382,6 @@ fn is_likely_device_port(port: &SerialPortInfo) -> bool {
             && name.strip_prefix("com").is_some_and(|number| {
                 !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit())
             }))
-}
-
-fn usb_info(port: &SerialPortInfo) -> UsbPortInfo {
-    match &port.port_type {
-        SerialPortType::UsbPort(info) => info.clone(),
-        _ => UsbPortInfo {
-            vid: 0,
-            pid: 0,
-            serial_number: None,
-            manufacturer: None,
-            product: None,
-        },
-    }
 }
 
 fn before_reset(value: &str) -> Result<ResetBeforeOperation, AppError> {
@@ -307,108 +405,255 @@ fn after_reset(value: &str) -> Result<ResetAfterOperation, AppError> {
 }
 
 fn monitor_port(port_name: &str, reporter: Reporter) -> Result<(), AppError> {
-    CANCELLED.store(false, Ordering::SeqCst);
+    if cancelled() {
+        return Err(AppError::Cancelled);
+    }
     reporter.phase(
         Phase::Monitor,
         None,
         "Serial monitor active at 115200 baud; press Ctrl-C to close it.",
     );
-    let mut port = None;
-    for _ in 0..20 {
-        match serialport::new(port_name, 115_200)
-            .timeout(Duration::from_millis(250))
-            .open()
-        {
-            Ok(opened) => {
-                port = Some(opened);
-                break;
-            }
-            Err(_) => std::thread::sleep(Duration::from_millis(250)),
-        }
-    }
-    let mut port = port.ok_or_else(|| {
-        AppError::preflight(format!("could not reopen {port_name} for monitoring"))
-    })?;
+    let mut port = reopen_monitor_port(
+        port_name,
+        &cancelled,
+        || {
+            serialport::new(port_name, 115_200)
+                .timeout(Duration::from_millis(250))
+                .open()
+                .ok()
+        },
+        || std::thread::sleep(Duration::from_millis(250)),
+    )?;
+    stream_monitor(&mut *port, &cancelled, |bytes| {
+        io::stdout()
+            .write_all(bytes)
+            .and_then(|_| io::stdout().flush())
+    })
+}
+
+fn stream_monitor<R: Read + ?Sized>(
+    port: &mut R,
+    is_cancelled: &dyn Fn() -> bool,
+    mut write_output: impl FnMut(&[u8]) -> io::Result<()>,
+) -> Result<(), AppError> {
     let mut buffer = [0u8; 1024];
-    while !CANCELLED.load(Ordering::SeqCst) {
+    loop {
+        if is_cancelled() {
+            return Err(AppError::Cancelled);
+        }
         match port.read(&mut buffer) {
             Ok(0) => {}
             Ok(count) => {
-                io::stdout()
-                    .write_all(&buffer[..count])
-                    .and_then(|_| io::stdout().flush())
-                    .map_err(|error| {
-                        AppError::preflight(format!("monitor output failed: {error}"))
-                    })?;
+                write_output(&buffer[..count]).map_err(|error| {
+                    AppError::preflight(format!("monitor output failed: {error}"))
+                })?;
+                if is_cancelled() {
+                    return Err(AppError::Cancelled);
+                }
             }
             Err(error) if error.kind() == io::ErrorKind::TimedOut => {}
             Err(error) => {
+                if is_cancelled() {
+                    return Err(AppError::Cancelled);
+                }
                 return Err(AppError::preflight(format!(
                     "serial monitor disconnected: {error}"
                 )));
             }
         }
     }
-    Ok(())
 }
 
-struct FlashProgress<'a> {
-    reporter: Reporter,
-    board: &'a str,
-    completed_bytes: u64,
-    part_bytes: u64,
-    part_blocks: u64,
-    operation_total: u64,
-}
-
-impl ProgressCallbacks for FlashProgress<'_> {
-    fn init(&mut self, _addr: u32, total: usize) {
-        self.part_blocks = total as u64;
+fn reopen_monitor_port<T>(
+    port_name: &str,
+    is_cancelled: &dyn Fn() -> bool,
+    mut open: impl FnMut() -> Option<T>,
+    mut wait: impl FnMut(),
+) -> Result<T, AppError> {
+    for _ in 0..20 {
+        if is_cancelled() {
+            return Err(AppError::Cancelled);
+        }
+        if let Some(port) = open() {
+            if is_cancelled() {
+                return Err(AppError::Cancelled);
+            }
+            return Ok(port);
+        }
+        if is_cancelled() {
+            return Err(AppError::Cancelled);
+        }
+        wait();
     }
-
-    fn update(&mut self, current: usize) {
-        let part_current = if self.part_blocks == 0 {
-            0
-        } else {
-            self.part_bytes
-                .saturating_mul(current as u64)
-                .checked_div(self.part_blocks)
-                .unwrap_or_default()
-        };
-        self.reporter.progress(
-            Phase::Writing,
-            Some(self.board),
-            self.completed_bytes
-                .saturating_add(part_current)
-                .min(self.operation_total),
-            self.operation_total,
-        );
-    }
-
-    fn verifying(&mut self) {
-        self.reporter.phase(
-            Phase::VerifyingFlash,
-            Some(self.board),
-            "Verifying bytes on the device…",
-        );
-    }
-
-    fn finish(&mut self, _skipped: bool) {
-        // An already-matching segment is complete too; count it so total progress
-        // remains monotonic and reaches 100% when espflash skips a write.
-        self.completed_bytes = self.completed_bytes.saturating_add(self.part_bytes);
-        self.reporter.progress(
-            Phase::Writing,
-            Some(self.board),
-            self.completed_bytes.min(self.operation_total),
-            self.operation_total,
-        );
+    if is_cancelled() {
+        Err(AppError::Cancelled)
+    } else {
+        Err(AppError::preflight(format!(
+            "could not reopen {port_name} for monitoring"
+        )))
     }
 }
 
 #[cfg(test)]
 mod port_tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
     use super::*;
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum InjectFailure {
+        None,
+        Connect,
+        WrongChip,
+        Write(usize),
+        Verify(usize),
+        Cancel(usize),
+        DeviceLoss(usize),
+        Reset,
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    enum FakeCall {
+        Connect(ChipSelection),
+        Identity,
+        Write(usize),
+        Verify(usize),
+        CancelBoundary(usize),
+        Reset,
+        Disconnect,
+    }
+
+    struct FakeSession {
+        calls: Vec<FakeCall>,
+        failure: InjectFailure,
+        identity: DeviceIdentity,
+        cancel_on_reset: Option<Rc<Cell<bool>>>,
+    }
+
+    impl FakeSession {
+        fn new(failure: InjectFailure) -> Self {
+            Self {
+                calls: Vec::new(),
+                failure,
+                identity: matching_identity(),
+                cancel_on_reset: None,
+            }
+        }
+
+        fn cancelling_during_reset(signal: Rc<Cell<bool>>) -> Self {
+            Self {
+                cancel_on_reset: Some(signal),
+                ..Self::new(InjectFailure::None)
+            }
+        }
+    }
+
+    impl EspSession for FakeSession {
+        fn connect(&mut self, chip: ChipSelection) -> Result<(), SessionError> {
+            self.calls.push(FakeCall::Connect(chip));
+            if self.failure == InjectFailure::Connect {
+                Err(SessionError::Connect(
+                    "injected connect failure".to_string(),
+                ))
+            } else {
+                Ok(())
+            }
+        }
+
+        fn identity(&mut self) -> Result<DeviceIdentity, SessionError> {
+            self.calls.push(FakeCall::Identity);
+            if self.failure == InjectFailure::WrongChip {
+                Ok(DeviceIdentity {
+                    chip: Chip::Esp32c6,
+                    ..self.identity
+                })
+            } else {
+                Ok(self.identity)
+            }
+        }
+
+        fn write_and_verify(
+            &mut self,
+            parts: &[SparsePart],
+            _board_slug: &str,
+            _reporter: Reporter,
+            _is_cancelled: &dyn Fn() -> bool,
+        ) -> Result<(), SessionError> {
+            for (index, _) in parts.iter().enumerate() {
+                if self.failure == InjectFailure::Cancel(index) {
+                    self.calls.push(FakeCall::CancelBoundary(index));
+                    return Err(SessionError::Cancelled);
+                }
+                self.calls.push(FakeCall::Write(index));
+                match self.failure {
+                    InjectFailure::Write(failed) if failed == index => {
+                        return Err(SessionError::Write("injected write failure".to_string()));
+                    }
+                    InjectFailure::DeviceLoss(failed) if failed == index => {
+                        return Err(SessionError::DeviceLost("injected disconnect".to_string()));
+                    }
+                    _ => {}
+                }
+                self.calls.push(FakeCall::Verify(index));
+                if self.failure == InjectFailure::Verify(index) {
+                    return Err(SessionError::Verify(
+                        "injected verification mismatch".to_string(),
+                    ));
+                }
+            }
+            Ok(())
+        }
+
+        fn reset(&mut self) -> Result<(), SessionError> {
+            self.calls.push(FakeCall::Reset);
+            if let Some(signal) = &self.cancel_on_reset {
+                signal.set(true);
+            }
+            if self.failure == InjectFailure::Reset {
+                Err(SessionError::Reset("injected reset failure".to_string()))
+            } else {
+                Ok(())
+            }
+        }
+
+        fn disconnect(&mut self) {
+            self.calls.push(FakeCall::Disconnect);
+        }
+    }
+
+    fn matching_identity() -> DeviceIdentity {
+        DeviceIdentity {
+            chip: Chip::Esp32s3,
+            flash_size: Some(8 * 1024 * 1024),
+            secure_download_mode: false,
+        }
+    }
+
+    fn expected() -> ExpectedDevice<'static> {
+        ExpectedDevice {
+            board_slug: "heltec-v4",
+            chip: Chip::Esp32s3,
+            flash_size: Some(8 * 1024 * 1024),
+        }
+    }
+
+    fn sparse_test_plan() -> Vec<SparsePart> {
+        vec![
+            SparsePart {
+                offset: 0,
+                bytes: vec![1],
+            },
+            SparsePart {
+                offset: 0x8000,
+                bytes: vec![2],
+            },
+            SparsePart {
+                offset: 0x10000,
+                bytes: vec![3],
+            },
+        ]
+    }
 
     fn port(name: &str, port_type: SerialPortType) -> SerialPortInfo {
         SerialPortInfo {
@@ -456,29 +701,259 @@ mod port_tests {
         assert!(matches!(
             validate_device_identity(
                 Chip::Esp32s3,
-                Chip::Esp32c6,
                 Some(8 * 1024 * 1024),
-                Some(4 * 1024 * 1024),
+                DeviceIdentity {
+                    chip: Chip::Esp32c6,
+                    flash_size: Some(4 * 1024 * 1024),
+                    secure_download_mode: false,
+                },
             ),
             Err(AppError::Preflight(_))
         ));
         assert!(matches!(
-            validate_device_identity(Chip::Esp32s3, Chip::Esp32s3, Some(8 * 1024 * 1024), None),
+            validate_device_identity(
+                Chip::Esp32s3,
+                Some(8 * 1024 * 1024),
+                DeviceIdentity {
+                    flash_size: None,
+                    ..matching_identity()
+                },
+            ),
+            Err(AppError::Preflight(_))
+        ));
+        assert!(matches!(
+            validate_device_identity(
+                Chip::Esp32s3,
+                Some(8 * 1024 * 1024),
+                DeviceIdentity {
+                    secure_download_mode: true,
+                    ..matching_identity()
+                },
+            ),
             Err(AppError::Preflight(_))
         ));
     }
 
     #[test]
-    fn verification_and_write_failures_are_distinguished() {
-        let verification = map_part_error(espflash::Error::VerifyFailed);
-        let write = map_part_error(espflash::Error::FlashConnect);
+    fn successful_flash_verifies_every_part_before_reset_and_disconnect() {
+        let mut session = FakeSession::new(InjectFailure::None);
+        run_flash_session(
+            &mut session,
+            expected(),
+            &sparse_test_plan(),
+            Reporter::human(),
+            &|| false,
+        )
+        .expect("fake flash succeeds");
+        assert_eq!(
+            session.calls,
+            vec![
+                FakeCall::Connect(ChipSelection::Expected(Chip::Esp32s3)),
+                FakeCall::Identity,
+                FakeCall::Write(0),
+                FakeCall::Verify(0),
+                FakeCall::Write(1),
+                FakeCall::Verify(1),
+                FakeCall::Write(2),
+                FakeCall::Verify(2),
+                FakeCall::Reset,
+                FakeCall::Disconnect,
+            ]
+        );
+    }
+
+    #[test]
+    fn every_flash_failure_disconnects_without_an_unsafe_reset() {
+        let cases = [
+            (InjectFailure::Connect, "preflight"),
+            (InjectFailure::WrongChip, "preflight"),
+            (InjectFailure::Write(0), "flash"),
+            (InjectFailure::Verify(0), "flash"),
+            (InjectFailure::Cancel(1), "cancel"),
+            (InjectFailure::DeviceLoss(0), "flash"),
+        ];
+        for (failure, category) in cases {
+            let mut session = FakeSession::new(failure);
+            let result = run_flash_session(
+                &mut session,
+                expected(),
+                &sparse_test_plan(),
+                Reporter::human(),
+                &|| false,
+            );
+            match category {
+                "preflight" => assert!(matches!(result, Err(AppError::Preflight(_)))),
+                "flash" => assert!(matches!(result, Err(AppError::Flash(_)))),
+                "cancel" => assert!(matches!(result, Err(AppError::Cancelled))),
+                _ => unreachable!(),
+            }
+            assert_eq!(session.calls.last(), Some(&FakeCall::Disconnect));
+            assert_eq!(
+                session
+                    .calls
+                    .iter()
+                    .filter(|call| matches!(call, FakeCall::Disconnect))
+                    .count(),
+                1
+            );
+            assert!(!session.calls.contains(&FakeCall::Reset));
+        }
+    }
+
+    #[test]
+    fn reset_failure_is_terminal_and_still_disconnects_once() {
+        let mut session = FakeSession::new(InjectFailure::Reset);
+        let result = run_flash_session(
+            &mut session,
+            expected(),
+            &sparse_test_plan(),
+            Reporter::human(),
+            &|| false,
+        );
         assert!(matches!(
-            verification,
-            AppError::Flash(message) if message.contains("verification")
+            result,
+            Err(AppError::Flash(message)) if message.contains("reset")
         ));
+        assert_eq!(
+            session.calls[session.calls.len() - 2..],
+            [FakeCall::Reset, FakeCall::Disconnect]
+        );
+    }
+
+    #[test]
+    fn cancellation_during_final_flash_reset_never_reports_success() {
+        let cancellation = Rc::new(Cell::new(false));
+        let mut session = FakeSession::cancelling_during_reset(Rc::clone(&cancellation));
+        let result = run_flash_session(
+            &mut session,
+            expected(),
+            &sparse_test_plan(),
+            Reporter::human(),
+            &|| cancellation.get(),
+        );
+
+        assert!(matches!(result, Err(AppError::Cancelled)));
+        assert_eq!(
+            session.calls[session.calls.len() - 2..],
+            [FakeCall::Reset, FakeCall::Disconnect]
+        );
+    }
+
+    #[test]
+    fn retry_always_restarts_the_complete_sparse_plan() {
+        let plan = sparse_test_plan();
+        let mut failed = FakeSession::new(InjectFailure::Verify(1));
+        assert!(
+            run_flash_session(&mut failed, expected(), &plan, Reporter::human(), &|| false,)
+                .is_err()
+        );
+
+        let mut retry = FakeSession::new(InjectFailure::None);
+        run_flash_session(&mut retry, expected(), &plan, Reporter::human(), &|| false)
+            .expect("full retry succeeds");
+        assert_eq!(retry.calls.get(2), Some(&FakeCall::Write(0)));
+        assert_eq!(
+            retry
+                .calls
+                .iter()
+                .filter(|call| matches!(call, FakeCall::Write(_)))
+                .count(),
+            plan.len()
+        );
+    }
+
+    #[test]
+    fn doctor_is_non_writing_and_restores_then_disconnects_the_session() {
+        let mut successful = FakeSession::new(InjectFailure::None);
+        run_doctor_session(&mut successful, expected(), &|| false)
+            .expect("doctor preflight succeeds");
+        assert_eq!(
+            successful.calls,
+            vec![
+                FakeCall::Connect(ChipSelection::Detect),
+                FakeCall::Identity,
+                FakeCall::Reset,
+                FakeCall::Disconnect,
+            ]
+        );
+
+        let mut wrong_chip = FakeSession::new(InjectFailure::WrongChip);
         assert!(matches!(
-            write,
-            AppError::Flash(message) if message.contains("write")
+            run_doctor_session(&mut wrong_chip, expected(), &|| false),
+            Err(AppError::Preflight(_))
         ));
+        assert_eq!(
+            wrong_chip.calls,
+            vec![
+                FakeCall::Connect(ChipSelection::Detect),
+                FakeCall::Identity,
+                FakeCall::Reset,
+                FakeCall::Disconnect,
+            ]
+        );
+    }
+
+    #[test]
+    fn cancellation_during_doctor_reset_is_not_reported_as_success() {
+        let cancellation = Rc::new(Cell::new(false));
+        let mut session = FakeSession::cancelling_during_reset(Rc::clone(&cancellation));
+        let result = run_doctor_session(&mut session, expected(), &|| cancellation.get());
+
+        assert!(matches!(result, Err(AppError::Cancelled)));
+        assert_eq!(
+            session.calls,
+            vec![
+                FakeCall::Connect(ChipSelection::Detect),
+                FakeCall::Identity,
+                FakeCall::Reset,
+                FakeCall::Disconnect,
+            ]
+        );
+    }
+
+    #[test]
+    fn monitor_reopen_stops_on_cancellation_instead_of_falling_through() {
+        let cancellation = Cell::new(false);
+        let attempts = Cell::new(0_u8);
+        let result = reopen_monitor_port(
+            "fake-port",
+            &|| cancellation.get(),
+            || {
+                attempts.set(attempts.get() + 1);
+                None::<()>
+            },
+            || cancellation.set(true),
+        );
+
+        assert!(matches!(result, Err(AppError::Cancelled)));
+        assert_eq!(attempts.get(), 1);
+    }
+
+    #[test]
+    fn monitor_read_cancellation_is_exit_130_not_success() {
+        struct CancelOnRead {
+            cancellation: Rc<Cell<bool>>,
+            reads: Rc<Cell<u8>>,
+        }
+
+        impl Read for CancelOnRead {
+            fn read(&mut self, _buffer: &mut [u8]) -> io::Result<usize> {
+                self.reads.set(self.reads.get() + 1);
+                self.cancellation.set(true);
+                Err(io::Error::new(io::ErrorKind::TimedOut, "injected timeout"))
+            }
+        }
+
+        let cancellation = Rc::new(Cell::new(false));
+        let reads = Rc::new(Cell::new(0_u8));
+        let mut port = CancelOnRead {
+            cancellation: Rc::clone(&cancellation),
+            reads: Rc::clone(&reads),
+        };
+        let result = stream_monitor(&mut port, &|| cancellation.get(), |_| Ok(()));
+
+        assert!(matches!(result, Err(AppError::Cancelled)));
+        assert_eq!(reads.get(), 1);
+        assert_eq!(AppError::Cancelled.code(), 130);
     }
 }

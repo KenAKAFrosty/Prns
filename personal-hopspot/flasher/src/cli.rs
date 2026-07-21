@@ -22,11 +22,11 @@ pub(crate) enum CommandMode {
         #[arg(long)]
         json: bool,
     },
-    /// Inspect connected serial devices or a board's readiness.
+    /// List devices, or run a non-writing identity/mount preflight for BOARD.
     Doctor {
-        /// Optional board slug.
+        /// Optional board slug; when present, a real non-writing preflight is required.
         board: Option<String>,
-        /// Explicit serial port to inspect.
+        /// Explicit serial port for an ESP board preflight.
         #[arg(long, value_name = "PORT")]
         port: Option<String>,
         /// Emit stable JSON diagnostics.

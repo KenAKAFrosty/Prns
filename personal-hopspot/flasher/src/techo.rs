@@ -1,6 +1,6 @@
 use std::env;
 use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -42,6 +42,9 @@ pub(crate) fn flash(
         "Waiting for TECHOBOOT to disappear as the device reboots…",
     );
     wait_for_reboot(&mount, REBOOT_TIMEOUT, Duration::from_millis(200))?;
+    if crate::esp::cancelled() {
+        return Err(AppError::Cancelled);
+    }
     reporter.success(
         &board.slug,
         "Verified UF2 delivered and the T-Echo bootloader drive rebooted.",
@@ -115,9 +118,9 @@ fn select_mount(
         [] => Err(AppError::preflight(
             "TECHOBOOT is not mounted; double-tap RESET and wait for the drive",
         )),
-        [mount] => Ok(mount.clone()),
+        [mount] => validate_mount(mount),
         _ => Err(AppError::preflight(format!(
-            "multiple UF2 bootloader drives were found ({}); use --mount",
+            "multiple identifiable T-Echo UF2 bootloader drives were found ({}); disconnect or unmount the extras, then retry",
             candidates
                 .iter()
                 .map(|path| path.display().to_string())
@@ -161,6 +164,10 @@ pub(crate) fn detect_mounts() -> Vec<PathBuf> {
     candidates
 }
 
+pub(crate) fn doctor_mount_from(candidates: Vec<PathBuf>) -> Result<PathBuf, AppError> {
+    select_mount(candidates, None)
+}
+
 fn scan_root(root: &Path, depth: usize, candidates: &mut Vec<PathBuf>) {
     if depth == 0 {
         return;
@@ -188,7 +195,7 @@ fn validate_mount(path: &Path) -> Result<PathBuf, AppError> {
         Ok(path.to_path_buf())
     } else {
         Err(AppError::preflight(format!(
-            "{} is not an identifiable TECHOBOOT drive",
+            "{} does not contain a T-Echo Board-ID in INFO_UF2.TXT",
             path.display()
         )))
     }
@@ -198,23 +205,35 @@ fn is_techo_mount(path: &Path) -> bool {
     if !path.is_dir() {
         return false;
     }
-    if path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.eq_ignore_ascii_case("TECHOBOOT"))
-    {
-        return true;
-    }
-    let info_path = path.join("INFO_UF2.TXT");
-    let Ok(mut file) = File::open(info_path) else {
+    let Ok(info) = fs::read_to_string(path.join("INFO_UF2.TXT")) else {
         return false;
     };
-    let mut info = String::new();
-    if file.read_to_string(&mut info).is_err() {
-        return false;
-    }
-    let lower = info.to_ascii_lowercase();
-    lower.contains("t-echo") || lower.contains("techo")
+    info.lines().any(|line| {
+        let Some((field, value)) = line.split_once(':') else {
+            return false;
+        };
+        let field = field
+            .chars()
+            .filter(|character| character.is_ascii_alphanumeric())
+            .map(|character| character.to_ascii_lowercase())
+            .collect::<String>();
+        if field != "boardid" {
+            return false;
+        }
+
+        // LilyGO's bootloader identifies this board as
+        // `nRF52840-TEcho-v1`. Accept later hardware revisions while keeping
+        // the model portion exact; a generic UF2 drive or a coincidental mount
+        // label is not sufficient identity.
+        let board_id = value.trim().to_ascii_lowercase().replace('_', "-");
+        let Some(revision) = board_id.strip_prefix("nrf52840-techo-v") else {
+            return false;
+        };
+        !revision.is_empty()
+            && revision
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || character == '.')
+    })
 }
 
 #[cfg(test)]
@@ -239,24 +258,72 @@ mod tests {
     fn uf2_info_identifies_a_fake_mount() {
         let mount = temporary_mount("mount");
         fs::create_dir(&mount).expect("create mount");
-        fs::write(mount.join("INFO_UF2.TXT"), "Board-ID: LilyGO T-Echo\n").expect("write info");
+        fs::write(
+            mount.join("INFO_UF2.TXT"),
+            "UF2 Bootloader 0.6.1\nModel: LilyGo T-Echo\nBoard-ID: nRF52840-TEcho-v1\n",
+        )
+        .expect("write info");
         assert_eq!(
-            select_mount(vec![mount.clone()], None).expect("select fake mount"),
+            doctor_mount_from(vec![mount.clone()]).expect("doctor fake mount"),
             mount
+        );
+        assert_eq!(
+            fs::read_dir(&mount).expect("read fake mount").count(),
+            1,
+            "doctor must not copy or alter UF2 files"
         );
         fs::remove_dir_all(&mount).expect("remove fake mount");
     }
 
     #[test]
+    fn mount_label_or_generic_uf2_info_cannot_impersonate_a_t_echo() {
+        let labelled = temporary_mount("TECHOBOOT").join("TECHOBOOT");
+        fs::create_dir_all(&labelled).expect("create labelled mount");
+        assert!(validate_mount(&labelled).is_err());
+        fs::write(
+            labelled.join("INFO_UF2.TXT"),
+            "Model: LilyGo T-Echo\nBoard-ID: nRF52840-Feather-revD\n",
+        )
+        .expect("write generic UF2 identity");
+        assert!(validate_mount(&labelled).is_err());
+        fs::remove_dir_all(labelled.parent().expect("temporary parent"))
+            .expect("remove labelled mount");
+    }
+
+    #[test]
+    fn board_id_spelling_and_later_revisions_are_supported() {
+        let mount = temporary_mount("board-id-variant");
+        fs::create_dir(&mount).expect("create mount");
+        fs::write(
+            mount.join("INFO_UF2.TXT"),
+            "Board ID: nRF52840_TEcho_v2.1\n",
+        )
+        .expect("write identity");
+        assert_eq!(validate_mount(&mount).expect("T-Echo identity"), mount);
+        fs::remove_dir_all(&mount).expect("remove mount");
+    }
+
+    #[test]
     fn zero_and_multiple_mounts_are_explicit_failures() {
         assert!(matches!(
-            select_mount(Vec::new(), None),
+            doctor_mount_from(Vec::new()),
             Err(AppError::Preflight(_))
         ));
-        assert!(matches!(
-            select_mount(vec![PathBuf::from("a"), PathBuf::from("b")], None),
-            Err(AppError::Preflight(_))
-        ));
+        let first = temporary_mount("multiple-a");
+        let second = temporary_mount("multiple-b");
+        for mount in [&first, &second] {
+            fs::create_dir(mount).expect("create mount");
+            fs::write(mount.join("INFO_UF2.TXT"), "Board-ID: nRF52840-TEcho-v1\n")
+                .expect("write identity");
+        }
+        let error = doctor_mount_from(vec![first.clone(), second.clone()])
+            .expect_err("multiple mounts must be explicit");
+        assert!(matches!(error, AppError::Preflight(_)));
+        let message = error.to_string();
+        assert!(message.contains("disconnect or unmount"));
+        assert!(!message.contains("--mount"));
+        fs::remove_dir_all(first).expect("remove first mount");
+        fs::remove_dir_all(second).expect("remove second mount");
     }
 
     #[test]
