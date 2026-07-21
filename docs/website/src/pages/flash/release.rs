@@ -1,13 +1,13 @@
 use dioxus::prelude::*;
 use prns_flash_manifest::{
-    board_catalog, pinned_key_id, pinned_key_is_configured, provisioning_image, sha256_hex,
-    verify_minisign, ChannelDescriptor, FlashManifest, ProvisioningAction, ReleaseChannel,
-    TargetManifest, WifiCredentials, PINNED_MINISIGN_PUBLIC_KEY,
+    board_catalog, provisioning_image, sha256_hex, verify_minisign, ChannelDescriptor,
+    FlashManifest, ProvisioningAction, ReleaseChannel, TargetManifest, WifiCredentials,
 };
 use serde::Deserialize;
 
 use super::bridge::{self, BridgeProvisioning, BridgeRequest};
 use super::model::{part_kind, FlasherState, PartDetails, ReleaseDetails, WifiAction};
+use super::trust;
 
 const RELEASE_CHANNEL: &str = env!("PRNS_BUILD_CHANNEL");
 
@@ -55,7 +55,11 @@ pub(super) async fn prepare_release(
     ssid: String,
     password: String,
     mut state: FlasherState,
+    generation: u64,
 ) {
+    if !state.preparation_is_current(generation) {
+        return;
+    }
     bridge::clear_prepared();
     state.phase.set("validating_manifest".to_string());
     state
@@ -64,12 +68,22 @@ pub(super) async fn prepare_release(
     state.progress_current.set(0);
     state.progress_total.set(0);
 
-    let result = async {
-        let acquired = acquire_release(board_slug, selected_action, ssid, password).await?;
-        bridge::prepare(acquired.request, state).await?;
-        Ok::<ReleaseDetails, String>(acquired.details)
+    let acquired = acquire_release(board_slug, selected_action, ssid, password).await;
+    if !state.preparation_is_current(generation) {
+        return;
     }
-    .await;
+    let result = match acquired {
+        Ok(acquired) => match bridge::prepare(acquired.request, state.clone(), generation).await {
+            Ok(()) => Ok(acquired.details),
+            Err(bridge::PreparationError::Stale) => return,
+            Err(bridge::PreparationError::Failed(message)) => Err(message),
+        },
+        Err(message) => Err(message),
+    };
+    if !state.preparation_is_current(generation) {
+        return;
+    }
+    state.preparation_active.set(false);
 
     match result {
         Ok(details) => {
@@ -96,7 +110,7 @@ async fn acquire_release(
     ssid: String,
     password: String,
 ) -> Result<AcquiredRelease, String> {
-    if !pinned_key_is_configured() {
+    if !trust::key_is_configured() {
         return Err("Release signing custody is not configured.".to_string());
     }
     let channel_script = FETCH_CHANNEL_SCRIPT.replace("__PRNS_RELEASE_CHANNEL__", RELEASE_CHANNEL);
@@ -108,7 +122,7 @@ async fn acquire_release(
     verify_minisign(
         channel_documents.descriptor.as_bytes(),
         &channel_documents.signature,
-        PINNED_MINISIGN_PUBLIC_KEY,
+        trust::PUBLIC_KEY,
     )
     .map_err(|error| error.to_string())?;
     let descriptor = ChannelDescriptor::from_json(
@@ -116,6 +130,7 @@ async fn acquire_release(
         configured_release_channel(),
     )
     .map_err(|error| error.to_string())?;
+    require_exact_manifest_url(&descriptor.version, &descriptor.manifest_url)?;
 
     let mut manifest_eval = document::eval(FETCH_MANIFEST_SCRIPT);
     manifest_eval
@@ -131,13 +146,13 @@ async fn acquire_release(
     verify_minisign(
         documents.manifest.as_bytes(),
         &documents.signature,
-        PINNED_MINISIGN_PUBLIC_KEY,
+        trust::PUBLIC_KEY,
     )
     .map_err(|error| error.to_string())?;
     let catalog = board_catalog().map_err(|error| error.to_string())?;
     let manifest = FlashManifest::from_json(documents.manifest.as_bytes(), &catalog)
         .map_err(|error| error.to_string())?;
-    let expected_key_id = pinned_key_id()
+    let expected_key_id = trust::key_id()
         .ok_or_else(|| "The pinned release key has no canonical key ID.".to_string())?;
     if !manifest
         .signing
@@ -176,6 +191,16 @@ async fn acquire_release(
             .collect(),
     };
     Ok(AcquiredRelease { request, details })
+}
+
+fn require_exact_manifest_url(version: &str, manifest_url: &str) -> Result<(), String> {
+    let expected = format!("https://reticulum.rs/releases/{version}/flash-manifest.json");
+    if manifest_url != expected || manifest_url.contains('%') {
+        return Err(
+            "The signed channel does not name an exact immutable manifest URL.".to_string(),
+        );
+    }
+    Ok(())
 }
 
 fn bridge_provisioning(
@@ -218,5 +243,27 @@ fn configured_release_channel() -> ReleaseChannel {
         "stable" => ReleaseChannel::Stable,
         "preview" => ReleaseChannel::Preview,
         _ => panic!("unsupported compiled release channel"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::require_exact_manifest_url;
+
+    #[test]
+    fn manifest_url_must_be_exact_and_normalized() {
+        assert!(require_exact_manifest_url(
+            "0.2.6",
+            "https://reticulum.rs/releases/0.2.6/flash-manifest.json"
+        )
+        .is_ok());
+        for malformed in [
+            "https://reticulum.rs/releases/0.2.5/../0.2.6/flash-manifest.json",
+            "https://reticulum.rs/releases/%30.2.6/flash-manifest.json",
+            "https://reticulum.rs/releases/0.2.6//flash-manifest.json",
+            "https://example.test/releases/0.2.6/flash-manifest.json",
+        ] {
+            assert!(require_exact_manifest_url("0.2.6", malformed).is_err());
+        }
     }
 }

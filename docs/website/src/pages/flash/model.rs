@@ -1,4 +1,9 @@
-use dioxus::prelude::Signal;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
+
+use dioxus::prelude::{Signal, WritableExt};
 use prns_flash_manifest::FlashPartKind;
 
 use crate::platforms::{BoardTarget, PreparationProfile};
@@ -35,16 +40,38 @@ pub(super) struct PartDetails {
     pub(super) sha256: String,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(super) struct FlasherState {
     pub(super) phase: Signal<String>,
     pub(super) status: Signal<String>,
     pub(super) progress_current: Signal<u64>,
     pub(super) progress_total: Signal<u64>,
+    pub(super) preparation_active: Signal<bool>,
+    pub(super) preparation_generation: Arc<AtomicU64>,
     pub(super) prepared: Signal<bool>,
     pub(super) release: Signal<Option<ReleaseDetails>>,
     pub(super) ssid: Signal<String>,
     pub(super) password: Signal<String>,
+}
+
+impl FlasherState {
+    pub(super) fn begin_preparation(&mut self) -> u64 {
+        let generation = self
+            .preparation_generation
+            .fetch_add(1, Ordering::SeqCst)
+            .wrapping_add(1);
+        self.preparation_active.set(true);
+        generation
+    }
+
+    pub(super) fn invalidate_preparation(&mut self) {
+        self.preparation_generation.fetch_add(1, Ordering::SeqCst);
+        self.preparation_active.set(false);
+    }
+
+    pub(super) fn preparation_is_current(&self, generation: u64) -> bool {
+        self.preparation_generation.load(Ordering::SeqCst) == generation
+    }
 }
 
 pub(super) struct PreparationGuide {

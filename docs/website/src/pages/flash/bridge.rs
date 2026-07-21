@@ -85,9 +85,7 @@ impl BridgeRequest {
         manifest_url: &str,
         provisioning: Option<BridgeProvisioning>,
     ) -> Result<Self, String> {
-        let (base_url, _) = manifest_url
-            .rsplit_once('/')
-            .ok_or_else(|| "The immutable manifest URL has no release directory.".to_string())?;
+        let base_url = same_origin_release_base(manifest_url)?;
         Ok(Self {
             schema: contract::schema(),
             board_slug: target.board_slug.to_string(),
@@ -103,17 +101,63 @@ impl BridgeRequest {
             parts: target
                 .parts
                 .iter()
-                .map(|part| BridgePart {
-                    kind: part_kind(part.kind),
-                    path: part.path.to_string(),
-                    url: format!("{base_url}/{}", part.path),
-                    offset: part.offset,
-                    size: part.size,
-                    sha256: part.sha256.to_string(),
+                .map(|part| {
+                    Ok(BridgePart {
+                        kind: part_kind(part.kind),
+                        path: part.path.to_string(),
+                        url: immutable_part_url(base_url, &part.path)?,
+                        offset: part.offset,
+                        size: part.size,
+                        sha256: part.sha256.to_string(),
+                    })
                 })
-                .collect(),
+                .collect::<Result<Vec<_>, String>>()?,
         })
     }
+}
+
+fn same_origin_release_base(manifest_url: &str) -> Result<&str, String> {
+    let path = manifest_url
+        .strip_prefix("https://reticulum.rs")
+        .ok_or_else(|| "The immutable manifest URL has an unexpected origin.".to_string())?;
+    let base = path
+        .strip_suffix("/flash-manifest.json")
+        .ok_or_else(|| "The immutable manifest URL has no release directory.".to_string())?;
+    let version = base
+        .strip_prefix("/releases/")
+        .ok_or_else(|| "The immutable manifest URL is not a release manifest path.".to_string())?;
+    if version.is_empty()
+        || version.eq_ignore_ascii_case("next")
+        || !version
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'+'))
+        || manifest_url != format!("https://reticulum.rs/releases/{version}/flash-manifest.json")
+    {
+        return Err("The immutable manifest URL is not a release manifest path.".to_string());
+    }
+    Ok(base)
+}
+
+fn immutable_part_url(base_url: &str, part_path: &str) -> Result<String, String> {
+    if part_path.is_empty()
+        || part_path.contains(['%', '\\', '?', '#'])
+        || part_path.split('/').any(|component| {
+            component.is_empty()
+                || matches!(component, "." | "..")
+                || !component.bytes().all(|byte| {
+                    byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_' | b'+')
+                })
+        })
+    {
+        return Err("A firmware artifact path is not immutable and normalized.".to_string());
+    }
+    let version = base_url
+        .strip_prefix("/releases/")
+        .ok_or_else(|| "The immutable release base is invalid.".to_string())?;
+    if version.contains('/') {
+        return Err("The immutable release base is invalid.".to_string());
+    }
+    Ok(format!("{base_url}/{part_path}"))
 }
 
 impl BridgeEvent {
@@ -135,29 +179,46 @@ pub(super) fn clear_prepared() {
     document::eval("window.__prnsFlash?.clearPrepared();");
 }
 
-pub(super) fn cancel() {
-    document::eval("window.__prnsFlash?.cancel();");
+pub(super) enum PreparationError {
+    Stale,
+    Failed(String),
 }
 
-pub(super) async fn prepare(request: BridgeRequest, mut state: FlasherState) -> Result<(), String> {
+pub(super) async fn prepare(
+    request: BridgeRequest,
+    mut state: FlasherState,
+    generation: u64,
+) -> Result<(), PreparationError> {
+    if !state.preparation_is_current(generation) {
+        return Err(PreparationError::Stale);
+    }
     let mut bridge = document::eval(PREPARE_SCRIPT);
-    bridge
-        .send(request)
-        .map_err(|_| "Could not start the local flasher engine.".to_string())?;
+    bridge.send(request).map_err(|_| {
+        PreparationError::Failed("Could not start the local flasher engine.".to_string())
+    })?;
     loop {
-        let event = bridge
-            .recv::<BridgeEvent>()
-            .await
-            .map_err(|_| "The local flasher engine stopped unexpectedly.".to_string())?
-            .validate()?;
+        let event = match bridge.recv::<BridgeEvent>().await {
+            Ok(event) => event.validate().map_err(PreparationError::Failed)?,
+            Err(_) if !state.preparation_is_current(generation) => {
+                return Err(PreparationError::Stale)
+            }
+            Err(_) => {
+                return Err(PreparationError::Failed(
+                    "The local flasher engine stopped unexpectedly.".to_string(),
+                ))
+            }
+        };
+        if !state.preparation_is_current(generation) {
+            return Err(PreparationError::Stale);
+        }
         let terminal = apply_event(&event, &mut state);
         if terminal {
             if event.phase == "ready" {
                 return Ok(());
             }
-            return Err(event
-                .message
-                .unwrap_or_else(|| "Release preparation failed safely.".to_string()));
+            return Err(PreparationError::Failed(event.message.unwrap_or_else(
+                || "Release preparation failed safely.".to_string(),
+            )));
         }
     }
 }
@@ -351,5 +412,39 @@ mod tests {
             bytes: None,
         };
         assert!(event.validate().is_err());
+    }
+
+    #[test]
+    fn artifact_urls_stay_on_the_served_candidate_origin() {
+        assert_eq!(
+            same_origin_release_base("https://reticulum.rs/releases/0.2.6/flash-manifest.json"),
+            Ok("/releases/0.2.6")
+        );
+        assert!(same_origin_release_base(
+            "https://example.test/releases/0.2.6/flash-manifest.json"
+        )
+        .is_err());
+        for malformed in [
+            "https://reticulum.rs/releases/0.2.6/../0.2.7/flash-manifest.json",
+            "https://reticulum.rs/releases/%2e%2e/flash-manifest.json",
+            "https://reticulum.rs/releases/0.2.6//flash-manifest.json",
+        ] {
+            assert!(same_origin_release_base(malformed).is_err(), "{malformed}");
+        }
+        assert_eq!(
+            immutable_part_url(
+                "/releases/0.2.6",
+                "firmware/hopspot/heltec-v4/0.2.6/application.bin"
+            ),
+            Ok("/releases/0.2.6/firmware/hopspot/heltec-v4/0.2.6/application.bin".to_string())
+        );
+        for malformed in [
+            "firmware/%2e%2e/application.bin",
+            "firmware/%252e%252e/application.bin",
+            "firmware/../application.bin",
+            "firmware//application.bin",
+        ] {
+            assert!(immutable_part_url("/releases/0.2.6", malformed).is_err());
+        }
     }
 }

@@ -1,5 +1,9 @@
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
+
 use dioxus::prelude::*;
-use prns_flash_manifest::pinned_key_is_configured;
 
 use crate::components::PlatformChip;
 use crate::platforms::{BoardTarget, PreparationProfile};
@@ -12,11 +16,12 @@ use super::model::{
     WifiAction,
 };
 use super::release;
+use super::trust;
 
 #[component]
 pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
     let embedded = embedded_docs_mode();
-    let key_ready = pinned_key_is_configured();
+    let key_ready = trust::key_is_configured();
     let is_esp = matches!(
         target.slug,
         "heltec-v4" | "t-beam-supreme" | "xiao-esp32-c6"
@@ -32,6 +37,8 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
     let mut status = use_signal(|| "Confirm the exact board to begin.".to_string());
     let progress_current = use_signal(|| 0_u64);
     let progress_total = use_signal(|| 0_u64);
+    let preparation_active = use_signal(|| false);
+    let preparation_generation = use_hook(|| Arc::new(AtomicU64::new(0)));
     let mut prepared = use_signal(|| false);
     let mut release_details = use_signal(|| None::<ReleaseDetails>);
     let mut web_serial = use_signal(|| None::<bool>);
@@ -40,13 +47,19 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
         status,
         progress_current,
         progress_total,
+        preparation_active,
+        preparation_generation: Arc::clone(&preparation_generation),
         prepared,
         release: release_details,
         ssid,
         password,
     };
 
-    use_drop(bridge::clear_prepared);
+    let drop_generation = Arc::clone(&preparation_generation);
+    use_drop(move || {
+        drop_generation.fetch_add(1, Ordering::SeqCst);
+        bridge::clear_prepared();
+    });
 
     use_effect(move || {
         if is_esp && !embedded {
@@ -58,7 +71,8 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
         }
     });
 
-    let busy = bridge::is_busy(&phase());
+    let busy = preparation_active() || bridge::is_busy(&phase());
+    let device_operation_active = busy && !preparation_active();
     let browser_blocked = is_esp && web_serial() == Some(false);
     let can_prepare = confirmed() && !busy && !embedded && key_ready && !browser_blocked;
     let can_flash = prepared() && !busy;
@@ -70,6 +84,7 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
 
     rsx! {
         section { class: "flash-flasher-panel",
+            BrowserTestFixtureMarker {}
             div { class: "flash-flasher-panel__main",
                 p { class: "text-xs font-semibold tracking-[0.2em] uppercase text-accent",
                     "Selected target"
@@ -103,12 +118,22 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                     input {
                         r#type: "checkbox",
                         checked: confirmed(),
-                        onchange: move |event| {
-                            confirmed.set(event.checked());
-                            ssid.set(String::new());
-                            password.set(String::new());
-                            prepared.set(false);
-                            bridge::clear_prepared();
+                        disabled: device_operation_active,
+                        onchange: {
+                            let event_state = state.clone();
+                            move |event| {
+                                let checked = event.checked();
+                                confirmed.set(checked);
+                                invalidate_preparation(
+                                    event_state.clone(),
+                                    if checked {
+                                        "Board confirmed. Prepare and verify the signed release."
+                                    } else {
+                                        "Board confirmation changed. Confirm the exact board before preparing."
+                                    },
+                                    true,
+                                );
+                            }
                         },
                     }
                     span {
@@ -144,12 +169,17 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                                         name: "wifi-action",
                                         value: value.wire(),
                                         checked: wifi_action() == value,
-                                        onchange: move |_| {
-                                            wifi_action.set(value);
-                                            ssid.set(String::new());
-                                            password.set(String::new());
-                                            prepared.set(false);
-                                            bridge::clear_prepared();
+                                        disabled: device_operation_active,
+                                        onchange: {
+                                            let event_state = state.clone();
+                                            move |_| {
+                                                wifi_action.set(value);
+                                                invalidate_preparation(
+                                                    event_state.clone(),
+                                                    "Configuration choice changed. Prepare and verify the release again.",
+                                                    true,
+                                                );
+                                            }
                                         },
                                     }
                                     "{label}"
@@ -164,10 +194,17 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                                         value: ssid(),
                                         maxlength: "32",
                                         autocomplete: "off",
-                                        oninput: move |event| {
-                                            ssid.set(event.value());
-                                            prepared.set(false);
-                                            bridge::clear_prepared();
+                                        disabled: device_operation_active,
+                                        oninput: {
+                                            let event_state = state.clone();
+                                            move |event| {
+                                                ssid.set(event.value());
+                                                invalidate_preparation(
+                                                    event_state.clone(),
+                                                    "Configuration changed. Prepare and verify the release again.",
+                                                    false,
+                                                );
+                                            }
                                         },
                                     }
                                 }
@@ -178,10 +215,17 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                                         value: password(),
                                         maxlength: "64",
                                         autocomplete: "new-password",
-                                        oninput: move |event| {
-                                            password.set(event.value());
-                                            prepared.set(false);
-                                            bridge::clear_prepared();
+                                        disabled: device_operation_active,
+                                        oninput: {
+                                            let event_state = state.clone();
+                                            move |event| {
+                                                password.set(event.value());
+                                                invalidate_preparation(
+                                                    event_state.clone(),
+                                                    "Configuration changed. Prepare and verify the release again.",
+                                                    false,
+                                                );
+                                            }
                                         },
                                     }
                                 }
@@ -270,23 +314,29 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                     r#type: "button",
                     class: "flash-primary-action",
                     disabled: !can_prepare,
-                    onclick: move |_| {
-                        let target_slug = target.slug.to_string();
-                        let selected_action = wifi_action();
-                        let selected_ssid = ssid();
-                        let selected_password = password();
-                        prepared.set(false);
-                        release_details.set(None);
-                        spawn(async move {
-                            release::prepare_release(
-                                target_slug,
-                                selected_action,
-                                selected_ssid,
-                                selected_password,
-                                state,
-                            )
-                            .await;
-                        });
+                    onclick: {
+                        let event_state = state.clone();
+                        move |_| {
+                            let target_slug = target.slug.to_string();
+                            let selected_action = wifi_action();
+                            let selected_ssid = ssid();
+                            let selected_password = password();
+                            let mut preparation_state = event_state.clone();
+                            let generation = preparation_state.begin_preparation();
+                            prepared.set(false);
+                            release_details.set(None);
+                            spawn(async move {
+                                release::prepare_release(
+                                    target_slug,
+                                    selected_action,
+                                    selected_ssid,
+                                    selected_password,
+                                    preparation_state,
+                                    generation,
+                                )
+                                .await;
+                            });
+                        }
                     },
                     if prepared() { "Re-verify release" } else { "Prepare and verify release" }
                 }
@@ -294,10 +344,14 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                     r#type: "button",
                     class: "flash-primary-action",
                     disabled: !can_flash,
-                    onclick: move |_| {
-                        spawn(async move {
-                            bridge::run_flash(state).await;
-                        });
+                    onclick: {
+                        let event_state = state.clone();
+                        move |_| {
+                            let flash_state = event_state.clone();
+                            spawn(async move {
+                                bridge::run_flash(flash_state).await;
+                            });
+                        }
                     },
                     "{action_label}"
                 }
@@ -305,11 +359,23 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                     button {
                         r#type: "button",
                         class: "rounded-lg border border-line px-4 py-3 text-sm font-semibold text-soft",
-                        onclick: move |_| {
-                            bridge::cancel();
-                            ssid.set(String::new());
-                            password.set(String::new());
-                            status.set("Cancellation requested; an active write will finish its safe operation before stopping.".to_string());
+                        onclick: {
+                            let event_state = state.clone();
+                            move |_| {
+                                let was_preparing = preparation_active();
+                                invalidate_preparation(
+                                    event_state.clone(),
+                                    if was_preparing {
+                                        "Release preparation cancelled. Review the selection before retrying."
+                                    } else {
+                                        "Cancellation requested; an active write will finish its safe operation before stopping."
+                                    },
+                                    true,
+                                );
+                                if !was_preparing {
+                                    status.set("Cancellation requested; an active write will finish its safe operation before stopping.".to_string());
+                                }
+                            }
                         },
                         "Cancel safely"
                     }
@@ -317,6 +383,41 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
             }
         }
     }
+}
+
+fn invalidate_preparation(mut state: FlasherState, message: &str, clear_credentials: bool) {
+    let was_preparing = (state.preparation_active)();
+    state.invalidate_preparation();
+    state.prepared.set(false);
+    state.release.set(None);
+    state.progress_current.set(0);
+    state.progress_total.set(0);
+    if was_preparing || !bridge::is_busy(&(state.phase)()) {
+        state.phase.set("idle".to_string());
+    }
+    state.status.set(message.to_string());
+    if clear_credentials {
+        state.ssid.set(String::new());
+        state.password.set(String::new());
+    }
+    bridge::clear_prepared();
+}
+
+#[cfg(feature = "browser-test-fixture")]
+#[component]
+fn BrowserTestFixtureMarker() -> Element {
+    rsx! {
+        span {
+            hidden: true,
+            "data-prns-browser-test-fixture": trust::BROWSER_TEST_MARKER,
+        }
+    }
+}
+
+#[cfg(not(feature = "browser-test-fixture"))]
+#[component]
+fn BrowserTestFixtureMarker() -> Element {
+    rsx! {}
 }
 
 #[component]

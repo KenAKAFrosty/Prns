@@ -13,6 +13,8 @@ import { BRIDGE_SCHEMA, validateBridgeEvent } from "./contract.js";
 let prepared = null;
 let active = false;
 let cancelRequested = false;
+let preparationGeneration = 0;
+let preparingRequest = null;
 let DefaultLoader = null;
 let DefaultTransport = null;
 
@@ -37,6 +39,9 @@ export async function prepare(request, emit = () => {}, dependencies = {}) {
       false,
     );
   }
+  const generation = ++preparationGeneration;
+  discardPreparingRequest();
+  preparingRequest = request;
   discardPrepared();
   cancelRequested = false;
   const fetchImpl = dependencies.fetchImpl ?? globalThis.fetch;
@@ -45,17 +50,17 @@ export async function prepare(request, emit = () => {}, dependencies = {}) {
     validateRequest(request);
     if (request.transport === "esp-serial" && dependencies.loadEsptool !== false) {
       const module = await import("esptool-js");
+      requireCurrentPreparation(generation);
       DefaultLoader = module.ESPLoader;
       DefaultTransport = module.Transport;
     }
+    requireCurrentPreparation(generation);
     emitEvent(emit, { phase: "validating_manifest" });
     const files = [];
     let completed = 0;
     const total = request.parts.reduce((sum, part) => sum + part.size, 0);
     for (const part of request.parts) {
-      if (cancelRequested) {
-        throw new FlashBridgeError("cancelled", "Preparation was cancelled before device access.");
-      }
+      requireCurrentPreparation(generation);
       emitEvent(emit, {
         phase: "downloading",
         part: part.kind,
@@ -69,14 +74,17 @@ export async function prepare(request, emit = () => {}, dependencies = {}) {
         credentials: "omit",
         redirect: "error",
       });
+      requireCurrentPreparation(generation);
       if (!response.ok) {
         throw new FlashBridgeError("artifact_fetch", "A signed firmware part could not be downloaded.");
       }
       const bytes = new Uint8Array(await response.arrayBuffer());
+      requireCurrentPreparation(generation);
       if (bytes.length !== part.size) {
         throw new FlashBridgeError("artifact_size_mismatch", "A firmware part has the wrong byte length.");
       }
       const actual = await sha256Hex(bytes, cryptoImpl);
+      requireCurrentPreparation(generation);
       if (actual !== part.sha256) {
         throw new FlashBridgeError("artifact_hash_mismatch", "A firmware part failed SHA-256 verification.");
       }
@@ -92,6 +100,7 @@ export async function prepare(request, emit = () => {}, dependencies = {}) {
       });
     }
 
+    requireCurrentPreparation(generation);
     const config = provisioningImage(request.provisioning);
     if (config) {
       files.push({
@@ -104,6 +113,7 @@ export async function prepare(request, emit = () => {}, dependencies = {}) {
         bytes: config,
       });
     }
+    requireCurrentPreparation(generation);
     prepared = {
       boardSlug: request.boardSlug,
       displayName: request.displayName,
@@ -125,13 +135,15 @@ export async function prepare(request, emit = () => {}, dependencies = {}) {
     return { ready: true };
   } catch (error) {
     const failure = safeFailure(error);
-    discardPrepared();
+    if (generation === preparationGeneration) {
+      discardPrepared();
+    }
     emitEvent(emit, { phase: failure.code === "cancelled" ? "cancelled" : "failed", ...failure });
     throw error;
   } finally {
-    if (request?.provisioning) {
-      request.provisioning.password = "";
-      request.provisioning.ssid = "";
+    clearProvisioning(request);
+    if (preparingRequest === request) {
+      preparingRequest = null;
     }
   }
 }
@@ -255,13 +267,17 @@ export async function flash(emit = () => {}, dependencies = {}) {
           flashSize: flashSizeValue(prepared.flashSize),
           eraseAll: false,
           compress: true,
-          reportProgress(_fileIndex, written) {
+          reportProgress(_fileIndex, written, compressedTotal) {
+            const ratio = Number.isFinite(written) && Number.isFinite(compressedTotal) && compressedTotal > 0
+              ? Math.min(1, Math.max(0, written / compressedTotal))
+              : 0;
+            const logicalPartBytes = Math.floor(file.bytes.length * ratio);
             emitEvent(emit, {
               phase: "writing",
               part: file.kind,
               partIndex: index,
               partCount: prepared.files.length,
-              current: Math.min(total, completed + written),
+              current: Math.min(total, completed + logicalPartBytes),
               total,
             });
           },
@@ -274,6 +290,14 @@ export async function flash(emit = () => {}, dependencies = {}) {
         throw new FlashBridgeError("write_failure", `Writing ${file.kind} failed.`, { cause: error });
       }
       completed += file.bytes.length;
+      emitEvent(emit, {
+        phase: "writing",
+        part: file.kind,
+        partIndex: index,
+        partCount: prepared.files.length,
+        current: completed,
+        total,
+      });
       if (cancelRequested) {
         throw new FlashBridgeError("cancelled", "Flashing stopped at a verified part boundary.");
       }
@@ -319,13 +343,23 @@ function throwEarlyFailure(emit, error, discard = true) {
 }
 
 export function cancel() {
+  preparationGeneration += 1;
+  discardPreparingRequest();
   cancelRequested = true;
 }
 
 export function clearPrepared() {
+  preparationGeneration += 1;
+  discardPreparingRequest();
   cancelRequested = active;
   if (!active) {
     discardPrepared();
+  }
+}
+
+function requireCurrentPreparation(generation) {
+  if (generation !== preparationGeneration) {
+    throw new FlashBridgeError("cancelled", "Preparation was cancelled before device access.");
   }
 }
 
@@ -402,9 +436,23 @@ function discardPrepared() {
   prepared = null;
 }
 
+function clearProvisioning(request) {
+  if (request?.provisioning) {
+    request.provisioning.password = "";
+    request.provisioning.ssid = "";
+  }
+}
+
+function discardPreparingRequest() {
+  clearProvisioning(preparingRequest);
+  preparingRequest = null;
+}
+
 export const testing = {
   prepared: () => prepared,
   reset() {
+    preparationGeneration += 1;
+    discardPreparingRequest();
     discardPrepared();
     active = false;
     cancelRequested = false;

@@ -2,6 +2,7 @@ mod bridge;
 mod contract;
 mod model;
 mod release;
+mod trust;
 mod view;
 
 use dioxus::prelude::*;
@@ -48,7 +49,7 @@ fn FlashExperience(selected_slug: Option<String>) -> Element {
 
         if let Some(target) = selected_target {
             if target.is_flashable() {
-                GuidedFlasher { target }
+                GuidedFlasher { key: "{target.slug}", target }
             } else {
                 UnavailablePanel {}
             }

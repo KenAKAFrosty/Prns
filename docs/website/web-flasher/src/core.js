@@ -8,6 +8,8 @@ export const CONFIG_SSID_MAX_BYTES = 32;
 export const CONFIG_PASSWORD_MAX_BYTES = 64;
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
+const VERSION_PATTERN = /^[A-Za-z0-9.+-]+$/;
+const PATH_COMPONENT_PATTERN = /^[A-Za-z0-9._+-]+$/;
 const ESP_PARTS = ["bootloader", "partition-table", "application"];
 
 export class FlashBridgeError extends Error {
@@ -39,6 +41,7 @@ export function validateRequest(request) {
     if (!part || typeof part.url !== "string" || typeof part.path !== "string") {
       throw new FlashBridgeError("invalid_request", "A firmware part has no immutable path.");
     }
+    validateArtifactLocation(part);
     if (!Number.isSafeInteger(part.size) || part.size <= 0 || !SHA256_PATTERN.test(part.sha256 ?? "")) {
       throw new FlashBridgeError("invalid_request", "A firmware part has invalid size or SHA-256 metadata.");
     }
@@ -92,6 +95,34 @@ export function validateRequest(request) {
     }
   }
   return request;
+}
+
+function validateArtifactLocation(part) {
+  if (
+    part.path.length === 0 ||
+    part.path.includes("%") ||
+    part.path.includes("\\") ||
+    part.path.includes("?") ||
+    part.path.includes("#") ||
+    part.path.split("/").some((component) =>
+      !component || component === "." || component === ".." || !PATH_COMPONENT_PATTERN.test(component))
+  ) {
+    throw new FlashBridgeError("invalid_request", "A firmware artifact path is not normalized.");
+  }
+  const match = /^\/releases\/([^/]+)\/(.+)$/.exec(part.url);
+  if (!match || !VERSION_PATTERN.test(match[1]) || match[1].toLowerCase() === "next" || match[2] !== part.path) {
+    throw new FlashBridgeError("invalid_request", "A firmware artifact URL is not immutable.");
+  }
+  const resolved = new URL(part.url, "https://reticulum.rs");
+  if (
+    resolved.origin !== "https://reticulum.rs" ||
+    resolved.pathname !== part.url ||
+    resolved.search ||
+    resolved.hash ||
+    resolved.href !== `https://reticulum.rs${part.url}`
+  ) {
+    throw new FlashBridgeError("invalid_request", "A firmware artifact URL is not normalized.");
+  }
 }
 
 export function provisioningImage(provisioning) {

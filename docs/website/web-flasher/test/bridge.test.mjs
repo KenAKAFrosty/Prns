@@ -29,9 +29,9 @@ function request() {
       afterReset: "watchdog-reset",
       provisioning: { action: "configure", offset: 0xd000, size: 0x1000, ssid: "local", password: "private" },
       parts: [
-        { kind: "bootloader", path: "a", url: "https://example.test/a", offset: 0, size: 4, sha256: sha(payloads[0]) },
-        { kind: "partition-table", path: "b", url: "https://example.test/b", offset: 0x8000, size: 4, sha256: sha(payloads[1]) },
-        { kind: "application", path: "c", url: "https://example.test/c", offset: 0x10000, size: 4, sha256: sha(payloads[2]) },
+        { kind: "bootloader", path: "firmware/hopspot/heltec-v4/0.2.6/a.bin", url: "/releases/0.2.6/firmware/hopspot/heltec-v4/0.2.6/a.bin", offset: 0, size: 4, sha256: sha(payloads[0]) },
+        { kind: "partition-table", path: "firmware/hopspot/heltec-v4/0.2.6/b.bin", url: "/releases/0.2.6/firmware/hopspot/heltec-v4/0.2.6/b.bin", offset: 0x8000, size: 4, sha256: sha(payloads[1]) },
+        { kind: "application", path: "firmware/hopspot/heltec-v4/0.2.6/c.bin", url: "/releases/0.2.6/firmware/hopspot/heltec-v4/0.2.6/c.bin", offset: 0x10000, size: 4, sha256: sha(payloads[2]) },
       ],
     },
   };
@@ -65,6 +65,48 @@ test("prepare verifies every artifact and never sends credentials", async () => 
   clearPrepared();
   assert.equal(testing.prepared(), null);
   assert.equal(configurationBytes.every((byte) => byte === 0), true);
+});
+
+test("a stale delayed preparation cannot replace or clear the newer verified plan", async () => {
+  const first = request();
+  const second = request();
+  second.value.boardSlug = "newer-board";
+  let releaseFirstFetch;
+  let markFirstFetchStarted;
+  const firstFetchStarted = new Promise((resolve) => { markFirstFetchStarted = resolve; });
+  const firstFetchGate = new Promise((resolve) => { releaseFirstFetch = resolve; });
+  let firstIndex = 0;
+  const stale = prepare(first.value, () => {}, {
+    loadEsptool: false,
+    cryptoImpl: webcrypto,
+    fetchImpl: async () => {
+      markFirstFetchStarted();
+      await firstFetchGate;
+      const data = first.payloads[firstIndex++];
+      return { ok: true, arrayBuffer: async () => data.buffer.slice(0) };
+    },
+  });
+  await firstFetchStarted;
+  clearPrepared();
+  assert.equal(first.value.provisioning.ssid, "");
+  assert.equal(first.value.provisioning.password, "");
+
+  let secondIndex = 0;
+  await prepare(second.value, () => {}, {
+    loadEsptool: false,
+    cryptoImpl: webcrypto,
+    fetchImpl: async () => {
+      const data = second.payloads[secondIndex++];
+      return { ok: true, arrayBuffer: async () => data.buffer.slice(0) };
+    },
+  });
+  assert.equal(testing.prepared().boardSlug, "newer-board");
+
+  releaseFirstFetch();
+  await assert.rejects(stale, /cancelled/i);
+  assert.equal(testing.prepared().boardSlug, "newer-board");
+  assert.equal(first.value.provisioning.ssid, "");
+  assert.equal(first.value.provisioning.password, "");
 });
 
 test("throwing preparation event consumers cannot retain provisioning bytes", async () => {
@@ -183,6 +225,103 @@ test("successful flash requires MD5 callback and cleans up", async () => {
   assert.equal(events.at(-1).phase, "success");
   assert.equal(testing.prepared(), null);
   assert.equal(configurationBytes.every((byte) => byte === 0), true);
+});
+
+test("compressed write progress is scaled to logical manifest bytes", async () => {
+  const { value, payloads } = request();
+  value.provisioning.action = "preserve";
+  let fetchIndex = 0;
+  await prepare(value, () => {}, {
+    loadEsptool: false,
+    cryptoImpl: webcrypto,
+    fetchImpl: async () => {
+      const data = payloads[fetchIndex++];
+      return { ok: true, arrayBuffer: async () => data.buffer.slice(0) };
+    },
+  });
+  class FakeTransport {
+    setDeviceLostCallback() {}
+    async disconnect() {}
+  }
+  class FakeLoader {
+    async main() { return "ESP32-S3"; }
+    async detectFlashSize() { return "8MB"; }
+    async writeFlash(options) {
+      options.reportProgress(0, 5, 10);
+    }
+    async after() {}
+  }
+  const events = [];
+  await flash((event) => events.push(event), {
+    environment: { isSecureContext: true, addEventListener() {}, removeEventListener() {} },
+    serial: { requestPort: async () => ({}) },
+    TransportImpl: FakeTransport,
+    LoaderImpl: FakeLoader,
+  });
+
+  const halfBootloader = events.find(
+    (event) => event.phase === "writing" && event.part === "bootloader" && event.current === 2,
+  );
+  assert.ok(halfBootloader, "5/10 compressed bytes must map to 2/4 logical bootloader bytes");
+  assert.equal(halfBootloader.total, 12);
+  assert.equal(events.at(-1).phase, "success");
+  assert.equal(events.at(-1).current, 12);
+});
+
+test("active writes install and remove the navigation guard", async () => {
+  await prepareDefault();
+  let navigationGuard;
+  let releaseWrite;
+  let writeStarted;
+  let writes = 0;
+  const writing = new Promise((resolve) => { writeStarted = resolve; });
+  class FakeTransport {
+    setDeviceLostCallback() {}
+    async disconnect() {}
+  }
+  class FakeLoader {
+    async main() { return "ESP32-S3"; }
+    async detectFlashSize() { return "8MB"; }
+    async writeFlash() {
+      writes += 1;
+      if (writes > 1) return;
+      writeStarted();
+      await new Promise((resolve) => { releaseWrite = resolve; });
+    }
+    async after() {}
+  }
+  const testEnvironment = {
+    isSecureContext: true,
+    addEventListener(name, listener) {
+      assert.equal(name, "beforeunload");
+      navigationGuard = listener;
+    },
+    removeEventListener(name, listener) {
+      assert.equal(name, "beforeunload");
+      assert.equal(listener, navigationGuard);
+      navigationGuard = undefined;
+    },
+  };
+
+  const operation = flash(() => {}, {
+    environment: testEnvironment,
+    serial: { requestPort: async () => ({}) },
+    TransportImpl: FakeTransport,
+    LoaderImpl: FakeLoader,
+  });
+  await writing;
+  let prevented = false;
+  const event = {
+    preventDefault() { prevented = true; },
+    returnValue: undefined,
+  };
+  navigationGuard(event);
+  assert.equal(prevented, true);
+  assert.equal(event.returnValue, "");
+
+  releaseWrite();
+  await operation;
+  assert.equal(navigationGuard, undefined);
 });
 
 async function prepareDefault() {
@@ -382,8 +521,8 @@ test("UF2 completion reports delivery guidance without claiming device verificat
     provisioning: null,
     parts: [{
       kind: "uf2",
-      path: "t-echo.uf2",
-      url: "https://example.test/t-echo.uf2",
+      path: "firmware/hopspot/t-echo/0.2.6/t-echo.uf2",
+      url: "/releases/0.2.6/firmware/hopspot/t-echo/0.2.6/t-echo.uf2",
       offset: null,
       size: payload.length,
       sha256: sha(payload),
