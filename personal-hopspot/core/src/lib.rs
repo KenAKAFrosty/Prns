@@ -7,12 +7,10 @@ mod screen;
 pub use battery::{BatteryGauge, BatteryPercent, BatterySource, BatteryState, NoBattery};
 pub use screen::{
     card_label, draw_with_state, draw_with_state_at, draw_with_state_footer_at,
-    draw_with_state_footer_details_at, liveness_from_connection, push_interface_menu_info,
-    push_named_peer_row, push_supervisor_peer_rows, splash, tcp_card_label, AccessPointState, Card,
+    draw_with_state_footer_details_at, splash, tcp_card_label, AccessPointState, Card,
     CardActivityTracker, CardKind, CardLabel, DisplayPowerControl, InputEvent,
-    InterfaceMenuDetailKind, InterfaceMenuDetailRow, InterfaceMenuDetailRows,
-    InterfaceMenuDetailText, Liveness, SupervisorPeerMenuStatus, UiAction, UiConfiguration,
-    UiFooter, UiNotice, UiState,
+    InterfaceMenuDetails, Liveness, UiAction, UiConfiguration, UiFooter, UiNotice, UiState,
+    WifiNetworkStatus,
 };
 
 use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceSnapshot, Membership};
@@ -23,7 +21,7 @@ use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceSnapshot, 
 pub const COALESCE_MS: u64 = 33;
 
 fn liveness(connection: ConnectionState) -> Liveness {
-    liveness_from_connection(connection)
+    screen::liveness_from_connection(connection)
 }
 
 fn interface_kind_shows_supervisor_peers(id: InterfaceId) -> bool {
@@ -89,11 +87,8 @@ pub fn snapshots_to_cards<const N: usize>(
     cards
 }
 
-/// Append peer detail rows for the selected supervisor card from the same snapshot set that built
-/// the card stack. Non-supervisor cards leave `rows` unchanged; supervisor interface kinds get a
-/// `Peers 0` row even when no members are currently connected.
-pub fn push_snapshot_supervisor_peer_rows(
-    rows: &mut InterfaceMenuDetailRows,
+fn push_snapshot_supervisor_peer_rows(
+    details: &mut InterfaceMenuDetails,
     selected_card: Option<&Card>,
     snapshots: &[InterfaceSnapshot],
 ) -> usize {
@@ -111,27 +106,41 @@ pub fn push_snapshot_supervisor_peer_rows(
     }
     let peers = snapshots.iter().filter_map(|snapshot| {
         if let Membership::FleetMember { supervisor_id } = snapshot.membership {
-            (supervisor_id == card.id).then_some(SupervisorPeerMenuStatus {
-                id: snapshot.id,
-                liveness: liveness(snapshot.connection),
-            })
+            (supervisor_id == card.id).then_some((snapshot.id, liveness(snapshot.connection)))
         } else {
             None
         }
     });
-    screen::push_supervisor_peer_rows(rows, peers)
+    details.push_supervisor_peers(peers)
 }
 
-/// Build the standard selected-interface detail rows from snapshots. Faces with no board-specific
-/// details can pass this straight to the renderer; faces with extra rows can append via
-/// [`push_snapshot_supervisor_peer_rows`].
 pub fn snapshots_to_interface_menu_details(
     selected_card: Option<&Card>,
     snapshots: &[InterfaceSnapshot],
-) -> InterfaceMenuDetailRows {
-    let mut rows = InterfaceMenuDetailRows::new();
-    let _ = push_snapshot_supervisor_peer_rows(&mut rows, selected_card, snapshots);
-    rows
+) -> InterfaceMenuDetails {
+    let mut details = InterfaceMenuDetails::empty();
+    let _ = push_snapshot_supervisor_peer_rows(&mut details, selected_card, snapshots);
+    details
+}
+
+pub fn wifi_interface_menu_details(
+    status: WifiNetworkStatus<'_>,
+    selected_card: Option<&Card>,
+    snapshots: &[InterfaceSnapshot],
+) -> InterfaceMenuDetails {
+    let mut details = InterfaceMenuDetails::empty();
+    details.push_info("STA", status.station_ssid.unwrap_or("None"));
+    details.push_info("AP", status.access_point_ssid.unwrap_or("None"));
+    let _ = push_snapshot_supervisor_peer_rows(&mut details, selected_card, snapshots);
+    details
+}
+
+pub fn usb_interface_menu_details(connection: ConnectionState) -> InterfaceMenuDetails {
+    let mut details = InterfaceMenuDetails::empty();
+    let liveness = liveness(connection);
+    let peer = (liveness == Liveness::Live).then_some(liveness);
+    let _ = details.push_named_peer("USB", peer);
+    details
 }
 
 #[cfg(test)]
@@ -211,11 +220,11 @@ mod tests {
             last_activity_secs: None,
         };
 
-        let rows = snapshots_to_interface_menu_details(Some(&card), &[supervisor, member]);
+        let details = snapshots_to_interface_menu_details(Some(&card), &[supervisor, member]);
+        let rows = details.as_slice();
 
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].text(), "Peers 1");
-        assert_eq!(rows[1].kind(), InterfaceMenuDetailKind::Peer);
         assert_eq!(rows[1].text(), "P abcd Live");
     }
 
@@ -257,9 +266,53 @@ mod tests {
             last_activity_secs: None,
         };
 
-        let rows = snapshots_to_interface_menu_details(Some(&card), &[]);
+        let details = snapshots_to_interface_menu_details(Some(&card), &[]);
+        let rows = details.as_slice();
 
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].text(), "Peers 0");
+    }
+
+    #[test]
+    fn wifi_details_render_absent_networks_and_supervisor_peers() {
+        let supervisor_id = InterfaceId::new([InterfaceKind::AutoWifi as u8, 0, 0, 0, 0, 0, 0, 0]);
+        let member_id =
+            InterfaceId::new([InterfaceKind::WifiPeer as u8, 0x12, 0x34, 0, 0, 0, 0, 0]);
+        let mut supervisor = snapshot(InterfaceKind::AutoWifi);
+        supervisor.id = supervisor_id;
+        let mut member = snapshot(InterfaceKind::WifiPeer);
+        member.id = member_id;
+        member.membership = Membership::FleetMember { supervisor_id };
+        let cards: heapless::Vec<Card, 1> = snapshots_to_cards(&[supervisor, member], |id| {
+            (id == supervisor_id).then_some((CardKind::Wifi, card_label("WiFi/LAN")))
+        });
+
+        let details = wifi_interface_menu_details(
+            WifiNetworkStatus {
+                station_ssid: None,
+                access_point_ssid: Some("Hopspot-EW53"),
+            },
+            cards.first(),
+            &[supervisor, member],
+        );
+        let rows = details.as_slice();
+
+        assert_eq!(rows.len(), 4);
+        assert_eq!(rows[0].text(), "STA None");
+        assert_eq!(rows[1].text(), "AP Hopspot-EW53");
+        assert_eq!(rows[2].text(), "Peers 1");
+        assert_eq!(rows[3].text(), "P 1234 Live");
+    }
+
+    #[test]
+    fn usb_details_distinguish_connected_and_absent_peers() {
+        let connected = usb_interface_menu_details(ConnectionState::Connected);
+        let disconnected = usb_interface_menu_details(ConnectionState::Disconnected);
+
+        assert_eq!(connected.as_slice().len(), 2);
+        assert_eq!(connected.as_slice()[0].text(), "Peers 1");
+        assert_eq!(connected.as_slice()[1].text(), "P USB Live");
+        assert_eq!(disconnected.as_slice().len(), 1);
+        assert_eq!(disconnected.as_slice()[0].text(), "Peers 0");
     }
 }

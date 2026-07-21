@@ -51,21 +51,19 @@ fn activity_tracker_stamps_age_when_a_card_changes() {
 
 #[test]
 fn supervisor_peer_rows_format_count_and_compact_peer_statuses() {
-    let mut rows = InterfaceMenuDetailRows::new();
-    push_interface_menu_info(&mut rows, "AP", "Hopspot-EW53");
-    let count = push_supervisor_peer_rows(
-        &mut rows,
-        [
-            SupervisorPeerMenuStatus {
-                id: InterfaceId::new([0, 0xab, 0xcd, 0, 0, 0, 0, 0]),
-                liveness: Liveness::Live,
-            },
-            SupervisorPeerMenuStatus {
-                id: InterfaceId::new([0, 0x12, 0x34, 0, 0, 0, 0, 0]),
-                liveness: Liveness::Dormant,
-            },
-        ],
-    );
+    let mut details = InterfaceMenuDetails::empty();
+    details.push_info("AP", "Hopspot-EW53");
+    let count = details.push_supervisor_peers([
+        (
+            InterfaceId::new([0, 0xab, 0xcd, 0, 0, 0, 0, 0]),
+            Liveness::Live,
+        ),
+        (
+            InterfaceId::new([0, 0x12, 0x34, 0, 0, 0, 0, 0]),
+            Liveness::Dormant,
+        ),
+    ]);
+    let rows = details.as_slice();
 
     assert_eq!(count, 2);
     assert_eq!(rows[0].text(), "AP Hopspot-EW53");
@@ -77,16 +75,18 @@ fn supervisor_peer_rows_format_count_and_compact_peer_statuses() {
 
 #[test]
 fn named_peer_rows_format_single_link_interfaces() {
-    let mut rows = InterfaceMenuDetailRows::new();
-    let count = push_named_peer_row(&mut rows, "USB", Some(Liveness::Live));
+    let mut details = InterfaceMenuDetails::empty();
+    let count = details.push_named_peer("USB", Some(Liveness::Live));
+    let rows = details.as_slice();
 
     assert_eq!(count, 1);
     assert_eq!(rows[0].text(), "Peers 1");
     assert_eq!(rows[1].text(), "P USB Live");
     assert_eq!(rows[1].kind(), InterfaceMenuDetailKind::Peer);
 
-    rows.clear();
-    let count = push_named_peer_row(&mut rows, "USB", None);
+    let mut details = InterfaceMenuDetails::empty();
+    let count = details.push_named_peer("USB", None);
+    let rows = details.as_slice();
     assert_eq!(count, 0);
     assert_eq!(rows[0].text(), "Peers 0");
 }

@@ -281,18 +281,15 @@ fn interface_menu_draws_detail_rows_below_actions() {
     let mut display = PanelDisplay::new();
     let mut card = test_card("WiFi/LAN");
     card.kind = CardKind::Wifi;
-    let mut rows = InterfaceMenuDetailRows::new();
-    push_interface_menu_info(&mut rows, "STA", "None");
-    push_interface_menu_info(&mut rows, "AP", "Hopspot-EW53");
-    let _ = push_supervisor_peer_rows(
-        &mut rows,
-        [SupervisorPeerMenuStatus {
-            id: InterfaceId::new([0, 0xab, 0xcd, 0, 0, 0, 0, 0]),
-            liveness: Liveness::Live,
-        }],
-    );
+    let mut details = InterfaceMenuDetails::empty();
+    details.push_info("STA", "None");
+    details.push_info("AP", "Hopspot-EW53");
+    let _ = details.push_supervisor_peers([(
+        InterfaceId::new([0, 0xab, 0xcd, 0, 0, 0, 0, 0]),
+        Liveness::Live,
+    )]);
 
-    draw_interface_menu(&mut display, &card, POWER_MENU_ITEM, &rows);
+    draw_interface_menu(&mut display, &card, POWER_MENU_ITEM, details.as_slice());
 
     let detail_top = MENU_ITEM_TOP + POWER_ONLY_MENU_ITEMS.len() as i32 * MENU_ITEM_STEP + 1;
     assert!(

@@ -135,29 +135,25 @@ pub(super) fn build_interface_menu_details(
     usb: &EmbassyInterfaceStatus,
     wifi_config: &HopspotWifiConfig,
     ap_ssid: Option<&str>,
-) -> screen::InterfaceMenuDetailRows {
-    let mut rows = screen::InterfaceMenuDetailRows::new();
+) -> screen::InterfaceMenuDetails {
     match selected_card.map(|card| card.kind()) {
         Some(screen::CardKind::Wifi) => {
-            let station_ssid =
-                if wifi_config.has_station() && WIFI_STATION_JOINED.load(Ordering::Relaxed) {
-                    wifi_config.ssid.as_str()
-                } else {
-                    "None"
-                };
-            screen::push_interface_menu_info(&mut rows, "STA", station_ssid);
-            screen::push_interface_menu_info(&mut rows, "AP", ap_ssid.unwrap_or("None"));
-            let _ = screen::push_snapshot_supervisor_peer_rows(&mut rows, selected_card, snapshots);
+            let station_ssid = (wifi_config.has_station()
+                && WIFI_STATION_JOINED.load(Ordering::Relaxed))
+            .then_some(wifi_config.ssid.as_str());
+            screen::wifi_interface_menu_details(
+                screen::WifiNetworkStatus {
+                    station_ssid,
+                    access_point_ssid: ap_ssid,
+                },
+                selected_card,
+                snapshots,
+            )
         }
-        Some(screen::CardKind::Usb) => {
-            let liveness = screen::liveness_from_connection(usb.connection());
-            let peer = (liveness == screen::Liveness::Live).then_some(liveness);
-            let _ = screen::push_named_peer_row(&mut rows, "USB", peer);
-        }
+        Some(screen::CardKind::Usb) => screen::usb_interface_menu_details(usb.connection()),
         Some(screen::CardKind::Ble) => {
-            let _ = screen::push_snapshot_supervisor_peer_rows(&mut rows, selected_card, snapshots);
+            screen::snapshots_to_interface_menu_details(selected_card, snapshots)
         }
-        _ => {}
+        _ => screen::InterfaceMenuDetails::empty(),
     }
-    rows
 }

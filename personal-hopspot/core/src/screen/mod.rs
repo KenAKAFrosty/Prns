@@ -5,13 +5,11 @@ mod model;
 mod render;
 mod state;
 
-pub(crate) use model::sort_cards_for_display;
 pub use model::{
-    card_label, liveness_from_connection, push_interface_menu_info, push_named_peer_row,
-    push_supervisor_peer_rows, tcp_card_label, Card, CardActivityTracker, CardKind, CardLabel,
-    InterfaceMenuDetailKind, InterfaceMenuDetailRow, InterfaceMenuDetailRows,
-    InterfaceMenuDetailText, Liveness, SupervisorPeerMenuStatus, UiFooter,
+    card_label, tcp_card_label, Card, CardActivityTracker, CardKind, CardLabel,
+    InterfaceMenuDetails, Liveness, UiFooter, WifiNetworkStatus,
 };
+pub(crate) use model::{liveness_from_connection, sort_cards_for_display};
 pub use render::{
     draw_with_state, draw_with_state_at, draw_with_state_footer_at,
     draw_with_state_footer_details_at, splash,

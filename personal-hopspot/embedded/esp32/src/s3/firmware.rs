@@ -398,7 +398,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 menu_ap_ssid,
             );
             #[cfg(not(feature = "wifi-auto"))]
-            let interface_menu_details = screen::InterfaceMenuDetailRows::new();
+            let interface_menu_details = screen::InterfaceMenuDetails::empty();
             ui_state.sync_card_count_with_footer(card_count, has_site_footer);
             if notice_until_ms.is_some_and(|until| now_ms >= until) {
                 ui_state.clear_notice();

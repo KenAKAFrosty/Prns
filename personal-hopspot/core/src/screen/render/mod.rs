@@ -14,7 +14,7 @@ use embedded_graphics::text::{Baseline, Text};
 use crate::battery::BatteryState;
 
 use super::limits::build_limit_rows;
-use super::model::{Card, InterfaceMenuDetailRow, UiFooter};
+use super::model::{Card, InterfaceMenuDetails, UiFooter};
 use super::state::{focus_item_count_with_footer, visible_start_for, UiMode, UiState};
 use cards::{draw_card_peek, draw_card_with_selection, draw_footer, draw_global_row};
 use glyphs::draw_title_bar;
@@ -52,7 +52,16 @@ pub fn draw_with_state_footer_at<D: DrawTarget<Color = BinaryColor>>(
     footer: Option<UiFooter<'_>>,
     animation_ms: u64,
 ) {
-    draw_with_state_footer_details_at(display, cards, battery, state, footer, &[], animation_ms);
+    let interface_menu_details = InterfaceMenuDetails::empty();
+    draw_with_state_footer_details_at(
+        display,
+        cards,
+        battery,
+        state,
+        footer,
+        &interface_menu_details,
+        animation_ms,
+    );
 }
 
 pub fn draw_with_state_footer_details_at<D: DrawTarget<Color = BinaryColor>>(
@@ -61,7 +70,7 @@ pub fn draw_with_state_footer_details_at<D: DrawTarget<Color = BinaryColor>>(
     battery: BatteryState,
     state: &UiState,
     footer: Option<UiFooter<'_>>,
-    interface_menu_details: &[InterfaceMenuDetailRow],
+    interface_menu_details: &InterfaceMenuDetails,
     animation_ms: u64,
 ) {
     let _ = display.clear(BinaryColor::Off);
@@ -104,7 +113,7 @@ pub fn draw_with_state_footer_details_at<D: DrawTarget<Color = BinaryColor>>(
                 display,
                 &cards[selected_card],
                 selected_item,
-                interface_menu_details,
+                interface_menu_details.as_slice(),
             );
             return;
         }

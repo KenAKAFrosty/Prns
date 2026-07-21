@@ -13,6 +13,7 @@ use personal_rns::storage::{DisplayedStorageLimits, StorageCapacity};
 use crate::battery::{BatteryPercent, BatteryState};
 
 use super::limits::{build_limit_rows, LimitValue};
+use super::model::InterfaceMenuDetailKind;
 use super::render::cards::draw_card_with_selection;
 use super::render::glyphs::{
     draw_battery, draw_clock, draw_interface_icon, draw_lightning, draw_link, draw_person,
@@ -38,11 +39,9 @@ use super::state::{
     POWER_MENU_ITEM, POWER_ONLY_MENU_ITEMS, RADIO_MENU_ITEM_NO_DISPLAY, SLEEP_MENU_ITEM,
 };
 use super::{
-    card_label, draw_with_state, draw_with_state_footer_at, push_interface_menu_info,
-    push_named_peer_row, push_supervisor_peer_rows, sort_cards_for_display, AccessPointState, Card,
-    CardActivityTracker, CardKind, DisplayPowerControl, InputEvent, InterfaceMenuDetailKind,
-    InterfaceMenuDetailRows, Liveness, SupervisorPeerMenuStatus, UiAction, UiConfiguration,
-    UiFooter, UiState,
+    card_label, draw_with_state, draw_with_state_footer_at, sort_cards_for_display,
+    AccessPointState, Card, CardActivityTracker, CardKind, DisplayPowerControl, InputEvent,
+    InterfaceMenuDetails, Liveness, UiAction, UiConfiguration, UiFooter, UiState,
 };
 
 const TEST_WIDTH: usize = WIDTH as usize;

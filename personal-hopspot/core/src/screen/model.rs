@@ -32,7 +32,7 @@ impl Liveness {
 }
 
 #[must_use]
-pub const fn liveness_from_connection(connection: ConnectionState) -> Liveness {
+pub(crate) const fn liveness_from_connection(connection: ConnectionState) -> Liveness {
     match connection {
         ConnectionState::Connected | ConnectionState::Degraded => Liveness::Live,
         ConnectionState::Failed | ConnectionState::Unknown => Liveness::Failed,
@@ -60,40 +60,41 @@ pub fn card_label(text: &str) -> CardLabel {
 
 const INTERFACE_MENU_DETAIL_TEXT_CAP: usize = 16;
 const INTERFACE_MENU_DETAIL_ROWS_CAP: usize = 8;
-pub type InterfaceMenuDetailText = HString<INTERFACE_MENU_DETAIL_TEXT_CAP>;
-pub type InterfaceMenuDetailRows = HVec<InterfaceMenuDetailRow, INTERFACE_MENU_DETAIL_ROWS_CAP>;
+type InterfaceMenuDetailText = HString<INTERFACE_MENU_DETAIL_TEXT_CAP>;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum InterfaceMenuDetailKind {
+pub(crate) enum InterfaceMenuDetailKind {
     Info,
     Peer,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub struct InterfaceMenuDetailRow {
+pub(crate) struct InterfaceMenuDetailRow {
     text: InterfaceMenuDetailText,
     kind: InterfaceMenuDetailKind,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct SupervisorPeerMenuStatus {
-    pub id: InterfaceId,
-    pub liveness: Liveness,
+pub struct InterfaceMenuDetails {
+    rows: HVec<InterfaceMenuDetailRow, INTERFACE_MENU_DETAIL_ROWS_CAP>,
+}
+
+pub struct WifiNetworkStatus<'a> {
+    pub station_ssid: Option<&'a str>,
+    pub access_point_ssid: Option<&'a str>,
 }
 
 impl InterfaceMenuDetailRow {
     #[must_use]
-    pub fn text(&self) -> &str {
+    pub(crate) fn text(&self) -> &str {
         self.text.as_str()
     }
 
     #[must_use]
-    pub const fn kind(&self) -> InterfaceMenuDetailKind {
+    pub(crate) const fn kind(&self) -> InterfaceMenuDetailKind {
         self.kind
     }
 
-    #[must_use]
-    pub fn from_text(kind: InterfaceMenuDetailKind, text: &str) -> Self {
+    fn from_text(kind: InterfaceMenuDetailKind, text: &str) -> Self {
         let mut row = Self {
             text: InterfaceMenuDetailText::new(),
             kind,
@@ -102,8 +103,7 @@ impl InterfaceMenuDetailRow {
         row
     }
 
-    #[must_use]
-    pub fn info(label: &str, value: &str) -> Self {
+    fn info(label: &str, value: &str) -> Self {
         let mut row = Self {
             text: InterfaceMenuDetailText::new(),
             kind: InterfaceMenuDetailKind::Info,
@@ -115,67 +115,74 @@ impl InterfaceMenuDetailRow {
     }
 }
 
-pub fn push_interface_menu_info(rows: &mut InterfaceMenuDetailRows, label: &str, value: &str) {
-    let _ = rows.push(InterfaceMenuDetailRow::info(label, value));
-}
+impl InterfaceMenuDetails {
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self { rows: HVec::new() }
+    }
 
-pub fn push_supervisor_peer_rows<I>(rows: &mut InterfaceMenuDetailRows, peers: I) -> usize
-where
-    I: IntoIterator<Item = SupervisorPeerMenuStatus>,
-{
-    let count_index = rows.len();
-    let _ = rows.push(InterfaceMenuDetailRow::from_text(
-        InterfaceMenuDetailKind::Info,
-        "Peers 0",
-    ));
-    let mut count = 0usize;
-    for peer in peers {
-        count = count.saturating_add(1);
-        let mut text = InterfaceMenuDetailText::new();
-        let bytes = peer.id.as_bytes();
-        let _ = write!(
-            text,
-            "P {:02x}{:02x} {}",
-            bytes[1],
-            bytes[2],
-            liveness_short_label(peer.liveness)
-        );
-        let _ = rows.push(InterfaceMenuDetailRow {
-            text,
-            kind: InterfaceMenuDetailKind::Peer,
-        });
+    pub(crate) fn as_slice(&self) -> &[InterfaceMenuDetailRow] {
+        self.rows.as_slice()
     }
-    if let Some(row) = rows.get_mut(count_index) {
-        row.text.clear();
-        let _ = write!(row.text, "Peers {count}");
-    }
-    count
-}
 
-pub fn push_named_peer_row(
-    rows: &mut InterfaceMenuDetailRows,
-    label: &str,
-    liveness: Option<Liveness>,
-) -> usize {
-    let count = usize::from(liveness.is_some());
-    let mut count_text = InterfaceMenuDetailText::new();
-    let _ = write!(count_text, "Peers {count}");
-    let _ = rows.push(InterfaceMenuDetailRow {
-        text: count_text,
-        kind: InterfaceMenuDetailKind::Info,
-    });
-    if let Some(liveness) = liveness {
-        let mut text = InterfaceMenuDetailText::new();
-        let _ = text.push_str("P ");
-        push_truncated(&mut text, label);
-        let _ = text.push(' ');
-        let _ = text.push_str(liveness_short_label(liveness));
-        let _ = rows.push(InterfaceMenuDetailRow {
-            text,
-            kind: InterfaceMenuDetailKind::Peer,
-        });
+    pub(crate) fn push_info(&mut self, label: &str, value: &str) {
+        let _ = self.rows.push(InterfaceMenuDetailRow::info(label, value));
     }
-    count
+
+    pub(crate) fn push_supervisor_peers<I>(&mut self, peers: I) -> usize
+    where
+        I: IntoIterator<Item = (InterfaceId, Liveness)>,
+    {
+        let count_index = self.rows.len();
+        let _ = self.rows.push(InterfaceMenuDetailRow::from_text(
+            InterfaceMenuDetailKind::Info,
+            "Peers 0",
+        ));
+        let mut count = 0usize;
+        for (id, liveness) in peers {
+            count = count.saturating_add(1);
+            let mut text = InterfaceMenuDetailText::new();
+            let bytes = id.as_bytes();
+            let _ = write!(
+                text,
+                "P {:02x}{:02x} {}",
+                bytes[1],
+                bytes[2],
+                liveness_short_label(liveness)
+            );
+            let _ = self.rows.push(InterfaceMenuDetailRow {
+                text,
+                kind: InterfaceMenuDetailKind::Peer,
+            });
+        }
+        if let Some(row) = self.rows.get_mut(count_index) {
+            row.text.clear();
+            let _ = write!(row.text, "Peers {count}");
+        }
+        count
+    }
+
+    pub(crate) fn push_named_peer(&mut self, label: &str, liveness: Option<Liveness>) -> usize {
+        let count = usize::from(liveness.is_some());
+        let mut count_text = InterfaceMenuDetailText::new();
+        let _ = write!(count_text, "Peers {count}");
+        let _ = self.rows.push(InterfaceMenuDetailRow {
+            text: count_text,
+            kind: InterfaceMenuDetailKind::Info,
+        });
+        if let Some(liveness) = liveness {
+            let mut text = InterfaceMenuDetailText::new();
+            let _ = text.push_str("P ");
+            push_truncated(&mut text, label);
+            let _ = text.push(' ');
+            let _ = text.push_str(liveness_short_label(liveness));
+            let _ = self.rows.push(InterfaceMenuDetailRow {
+                text,
+                kind: InterfaceMenuDetailKind::Peer,
+            });
+        }
+        count
+    }
 }
 
 fn push_truncated<const N: usize>(text: &mut HString<N>, value: &str) {
