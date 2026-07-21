@@ -231,6 +231,17 @@ fn persisted_rns_runtime_metadata_is_one_safe_cleanup() {
         .diagnostics()
         .iter()
         .all(|diagnostic| diagnostic.source() == "/tmp/rns/config"));
+    let message_for = |key: &str| {
+        report
+            .diagnostics()
+            .iter()
+            .find(|diagnostic| diagnostic.path().ends_with(key))
+            .map(|diagnostic| diagnostic.message())
+            .unwrap_or_else(|| panic!("missing diagnostic for {key}"))
+    };
+    assert!(message_for("name").contains("section heading"));
+    assert!(message_for("selected_interface_mode").contains("\"mode\" setting"));
+    assert!(message_for("configured_bitrate").contains("\"bitrate\" setting"));
     let edit = report
         .safe_edit()
         .unwrap_or_else(|| panic!("missing safe metadata cleanup"));
@@ -317,6 +328,10 @@ fn auto_setting_catalog_exposes_runtime_relevant_values_and_effective_defaults()
         .iter()
         .find(|spec| spec.key().as_str() == "bitrate")
         .unwrap_or_else(|| panic!("missing bitrate setting"));
+    let outgoing = specs
+        .iter()
+        .find(|spec| spec.key().as_str() == "outgoing")
+        .unwrap_or_else(|| panic!("missing outgoing setting"));
 
     assert_eq!(data_port.effective_value(planned).as_deref(), Some("42671"));
     assert_eq!(
@@ -324,6 +339,7 @@ fn auto_setting_catalog_exposes_runtime_relevant_values_and_effective_defaults()
         Some("1000000000")
     );
     assert_eq!(bitrate.format_value("1000000000"), "1,000,000,000 bps");
+    assert_eq!(outgoing.label(), "Outgoing traffic allowed");
     assert!(data_port.description().contains("packet traffic"));
 }
 

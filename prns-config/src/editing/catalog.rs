@@ -95,6 +95,7 @@ impl InterfaceSettingSpec {
 
     pub fn label(self) -> String {
         match self.key.as_str() {
+            interface_key::OUTGOING => "Outgoing traffic allowed".to_string(),
             interface_key::IFAC_SIZE => "IFAC size".to_string(),
             interface_key::ID_CALLSIGN => "ID callsign".to_string(),
             interface_key::ID_INTERVAL => "ID interval".to_string(),
