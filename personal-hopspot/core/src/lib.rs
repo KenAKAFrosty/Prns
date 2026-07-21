@@ -9,7 +9,7 @@ pub use screen::{
     card_label, draw_with_state, draw_with_state_at, draw_with_state_footer_at,
     draw_with_state_footer_details_at, splash, tcp_card_label, AccessPointState, Card,
     CardActivityTracker, CardKind, CardLabel, DisplayPowerControl, InputEvent,
-    InterfaceMenuDetails, Liveness, UiAction, UiConfiguration, UiFooter, UiNotice, UiState,
+    InterfaceMenuDetails, Liveness, LocalDocsAccess, UiAction, UiConfiguration, UiNotice, UiState,
     WifiNetworkStatus,
 };
 

@@ -5,7 +5,7 @@ use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
 use embedded_graphics::text::{Baseline, Text};
 
-use crate::screen::{Card, CardKind, Liveness, UiFooter};
+use crate::screen::{Card, CardKind, Liveness, LocalDocsAccess};
 
 use super::glyphs::{
     draw_arrow, draw_clock, draw_global_icon, draw_interface_icon, draw_lightning, draw_link,
@@ -223,47 +223,41 @@ fn draw_card_peek_to<D: DrawTarget<Color = BinaryColor>>(
 pub(super) fn draw_footer<D: DrawTarget<Color = BinaryColor>>(
     display: &mut D,
     top: i32,
-    footer: UiFooter<'_>,
+    local_docs: &LocalDocsAccess<'_>,
     selected: bool,
 ) {
     draw_footer_line(
         display,
-        footer.line1,
+        "WifiAP",
         top,
         &FONT_6X10,
         FONT_6X10_CHAR_W,
         selected,
     );
-    if let Some(line2) = footer.line2 {
-        draw_footer_line(
-            display,
-            line2,
-            top + FOOTER_SECOND_LINE_OFFSET,
-            &FONT_5X8,
-            FONT_5X8_CHAR_W,
-            selected,
-        );
-    }
-    if let Some(line3) = footer.line3 {
-        draw_footer_line(
-            display,
-            line3,
-            top + FOOTER_THIRD_LINE_OFFSET,
-            &FONT_6X10,
-            FONT_6X10_CHAR_W,
-            selected,
-        );
-    }
-    if let Some(line4) = footer.line4 {
-        draw_footer_line(
-            display,
-            line4,
-            top + FOOTER_FOURTH_LINE_OFFSET,
-            &FONT_5X8,
-            FONT_5X8_CHAR_W,
-            selected,
-        );
-    }
+    draw_footer_line(
+        display,
+        local_docs.wifi_ssid,
+        top + FOOTER_SECOND_LINE_OFFSET,
+        &FONT_5X8,
+        FONT_5X8_CHAR_W,
+        selected,
+    );
+    draw_footer_line(
+        display,
+        "docs @",
+        top + FOOTER_THIRD_LINE_OFFSET,
+        &FONT_6X10,
+        FONT_6X10_CHAR_W,
+        selected,
+    );
+    draw_footer_line(
+        display,
+        local_docs.docs_host,
+        top + FOOTER_FOURTH_LINE_OFFSET,
+        &FONT_5X8,
+        FONT_5X8_CHAR_W,
+        selected,
+    );
 }
 
 fn draw_footer_line<D: DrawTarget<Color = BinaryColor>>(

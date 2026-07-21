@@ -41,7 +41,7 @@ use super::state::{
 use super::{
     card_label, draw_with_state, draw_with_state_footer_at, sort_cards_for_display,
     AccessPointState, Card, CardActivityTracker, CardKind, DisplayPowerControl, InputEvent,
-    InterfaceMenuDetails, Liveness, UiAction, UiConfiguration, UiFooter, UiState,
+    InterfaceMenuDetails, Liveness, LocalDocsAccess, UiAction, UiConfiguration, UiState,
 };
 
 const TEST_WIDTH: usize = WIDTH as usize;

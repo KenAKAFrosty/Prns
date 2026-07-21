@@ -79,10 +79,13 @@ fn draw_with_state_renders_selected_global_row() {
 }
 
 #[test]
-fn draw_with_state_footer_scrolls_after_the_last_card() {
+fn draw_with_state_local_docs_scrolls_after_the_last_card() {
     let cards = [test_card("USB"), test_card("BLE"), test_card("WiFi")];
     let mut state = test_ui_state();
-    let footer = UiFooter::new("Docs", Some("127.0.0.1"));
+    let local_docs = LocalDocsAccess {
+        wifi_ssid: "Hopspot-EW53",
+        docs_host: "127.0.0.1",
+    };
     for _ in 0..4 {
         state.handle_input_with_footer(
             InputEvent::ShortPress,
@@ -101,7 +104,7 @@ fn draw_with_state_footer_scrolls_after_the_last_card() {
         &cards,
         BatteryState::Unknown,
         &state,
-        Some(footer),
+        Some(&local_docs),
         0,
     );
     assert!(has_on_pixel(
@@ -112,15 +115,13 @@ fn draw_with_state_footer_scrolls_after_the_last_card() {
 }
 
 #[test]
-fn draw_with_state_footer_can_show_softap_docs_details() {
+fn draw_with_state_local_docs_shows_access_details() {
     let cards = [test_card("USB"), test_card("BLE"), test_card("WiFi")];
     let mut state = test_ui_state();
-    let footer = UiFooter::with_lines(
-        "WifiAP",
-        Some("Hopspot-EW53"),
-        Some("docs @"),
-        Some("192.168.4.1"),
-    );
+    let local_docs = LocalDocsAccess {
+        wifi_ssid: "Hopspot-EW53",
+        docs_host: "192.168.4.1",
+    };
     for _ in 0..4 {
         state.handle_input_with_footer(
             InputEvent::ShortPress,
@@ -136,7 +137,7 @@ fn draw_with_state_footer_can_show_softap_docs_details() {
         &cards,
         BatteryState::Unknown,
         &state,
-        Some(footer),
+        Some(&local_docs),
         0,
     );
     assert!(has_on_pixel(

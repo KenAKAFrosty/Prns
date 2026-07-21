@@ -339,19 +339,17 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         let mut battery_state = screen::BatteryState::Unknown;
         let mut battery_gauge = screen::BatteryGauge::lipo();
         #[cfg(feature = "wifi-auto")]
-        let ap_footer_ssid = (radio_mode == RadioMode::AccessPoint).then(ap_ssid);
+        let active_ap_ssid = (radio_mode == RadioMode::AccessPoint).then(ap_ssid);
         #[cfg(feature = "wifi-auto")]
-        let site_footer = ap_footer_ssid.as_deref().map(|ssid| {
-            screen::UiFooter::with_lines(
-                "WifiAP",
-                Some(ssid),
-                Some("docs @"),
-                Some(CAPTIVE_PORTAL_HOST),
-            )
-        });
+        let local_docs = active_ap_ssid
+            .as_deref()
+            .map(|wifi_ssid| screen::LocalDocsAccess {
+                wifi_ssid,
+                docs_host: CAPTIVE_PORTAL_HOST,
+            });
         #[cfg(not(feature = "wifi-auto"))]
-        let site_footer = None;
-        let has_site_footer = site_footer.is_some();
+        let local_docs = None;
+        let has_local_docs = local_docs.is_some();
         let mut ticks_to_battery: u8 = 0;
         let mut activity = screen::CardActivityTracker::<8>::new();
         let mut notice_until_ms: Option<u64> = None;
@@ -386,7 +384,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             activity.update(&mut cards, activity_secs);
             let card_count = cards.len();
             #[cfg(feature = "wifi-auto")]
-            let menu_ap_ssid = ap_footer_ssid.as_deref();
+            let menu_ap_ssid = active_ap_ssid.as_deref();
             #[cfg(feature = "wifi-auto")]
             let interface_menu_details = build_interface_menu_details(
                 ui_state
@@ -399,7 +397,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             );
             #[cfg(not(feature = "wifi-auto"))]
             let interface_menu_details = screen::InterfaceMenuDetails::empty();
-            ui_state.sync_card_count_with_footer(card_count, has_site_footer);
+            ui_state.sync_card_count_with_footer(card_count, has_local_docs);
             if notice_until_ms.is_some_and(|until| now_ms >= until) {
                 ui_state.clear_notice();
                 notice_until_ms = None;
@@ -425,7 +423,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                     &cards,
                     battery_state,
                     &ui_state,
-                    site_footer,
+                    local_docs.as_ref(),
                     &interface_menu_details,
                     now_ms,
                 );
@@ -469,7 +467,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                     match ui_state.handle_input_with_footer(
                         event,
                         card_count,
-                        has_site_footer,
+                        has_local_docs,
                         selected_kind,
                     ) {
                         screen::UiAction::OledOff => {

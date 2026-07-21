@@ -365,36 +365,7 @@ impl<const N: usize> Default for CardActivityTracker<N> {
     }
 }
 
-/// A small free-form note drawn below the interface card stack.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct UiFooter<'a> {
-    pub(in crate::screen) line1: &'a str,
-    pub(in crate::screen) line2: Option<&'a str>,
-    pub(in crate::screen) line3: Option<&'a str>,
-    pub(in crate::screen) line4: Option<&'a str>,
-}
-
-impl<'a> UiFooter<'a> {
-    pub const fn new(line1: &'a str, line2: Option<&'a str>) -> Self {
-        Self {
-            line1,
-            line2,
-            line3: None,
-            line4: None,
-        }
-    }
-
-    pub const fn with_lines(
-        line1: &'a str,
-        line2: Option<&'a str>,
-        line3: Option<&'a str>,
-        line4: Option<&'a str>,
-    ) -> Self {
-        Self {
-            line1,
-            line2,
-            line3,
-            line4,
-        }
-    }
+pub struct LocalDocsAccess<'a> {
+    pub wifi_ssid: &'a str,
+    pub docs_host: &'a str,
 }

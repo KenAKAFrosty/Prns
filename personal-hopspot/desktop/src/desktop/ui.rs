@@ -669,7 +669,7 @@ pub(super) fn run_window(handles: WindowHandles) {
     let mut interface_changes = query_handle.interface_store().subscribe();
     let mut cards: HVec<Card, 16> = HVec::new();
     let mut activity = screen::CardActivityTracker::<16>::new();
-    let has_site_footer = false;
+    let has_local_docs = false;
     let activity_started = Instant::now();
     let mut needs_redraw = true;
     let mut last_redraw = Instant::now();
@@ -722,7 +722,7 @@ pub(super) fn run_window(handles: WindowHandles) {
                         PressSource::Key,
                         Instant::now(),
                         cards.len(),
-                        has_site_footer,
+                        has_local_docs,
                         selected_kind,
                         &mut ui_state,
                     );
@@ -747,7 +747,7 @@ pub(super) fn run_window(handles: WindowHandles) {
                         PressSource::Mouse,
                         Instant::now(),
                         cards.len(),
-                        has_site_footer,
+                        has_local_docs,
                         selected_kind,
                         &mut ui_state,
                     );
@@ -773,7 +773,7 @@ pub(super) fn run_window(handles: WindowHandles) {
             &mut active_press,
             Instant::now(),
             cards.len(),
-            has_site_footer,
+            has_local_docs,
             selected_kind,
             &mut ui_state,
         );
@@ -841,7 +841,7 @@ pub(super) fn run_window(handles: WindowHandles) {
                 .as_secs()
                 .min(u64::from(u32::MAX)) as u32;
             activity.update(&mut cards, activity_secs);
-            ui_state.sync_card_count_with_footer(cards.len(), has_site_footer);
+            ui_state.sync_card_count_with_footer(cards.len(), has_local_docs);
             let interface_menu_details = screen::snapshots_to_interface_menu_details(
                 ui_state
                     .selected_card(cards.len())

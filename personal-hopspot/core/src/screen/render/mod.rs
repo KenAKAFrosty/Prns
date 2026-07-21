@@ -14,7 +14,7 @@ use embedded_graphics::text::{Baseline, Text};
 use crate::battery::BatteryState;
 
 use super::limits::build_limit_rows;
-use super::model::{Card, InterfaceMenuDetails, UiFooter};
+use super::model::{Card, InterfaceMenuDetails, LocalDocsAccess};
 use super::state::{focus_item_count_with_footer, visible_start_for, UiMode, UiState};
 use cards::{draw_card_peek, draw_card_with_selection, draw_footer, draw_global_row};
 use glyphs::draw_title_bar;
@@ -49,7 +49,7 @@ pub fn draw_with_state_footer_at<D: DrawTarget<Color = BinaryColor>>(
     cards: &[Card],
     battery: BatteryState,
     state: &UiState,
-    footer: Option<UiFooter<'_>>,
+    local_docs: Option<&LocalDocsAccess<'_>>,
     animation_ms: u64,
 ) {
     let interface_menu_details = InterfaceMenuDetails::empty();
@@ -58,7 +58,7 @@ pub fn draw_with_state_footer_at<D: DrawTarget<Color = BinaryColor>>(
         cards,
         battery,
         state,
-        footer,
+        local_docs,
         &interface_menu_details,
         animation_ms,
     );
@@ -69,7 +69,7 @@ pub fn draw_with_state_footer_details_at<D: DrawTarget<Color = BinaryColor>>(
     cards: &[Card],
     battery: BatteryState,
     state: &UiState,
-    footer: Option<UiFooter<'_>>,
+    local_docs: Option<&LocalDocsAccess<'_>>,
     interface_menu_details: &InterfaceMenuDetails,
     animation_ms: u64,
 ) {
@@ -120,7 +120,7 @@ pub fn draw_with_state_footer_details_at<D: DrawTarget<Color = BinaryColor>>(
     }
 
     let selected = state.selected_card(cards.len());
-    let item_count = focus_item_count_with_footer(cards.len(), footer.is_some());
+    let item_count = focus_item_count_with_footer(cards.len(), local_docs.is_some());
     let footer_focus = cards.len() + 1;
     let start = visible_start_for(item_count, state.selected_focus, state.visible_start);
     let mut top = CARD_TOP;
@@ -132,11 +132,11 @@ pub fn draw_with_state_footer_details_at<D: DrawTarget<Color = BinaryColor>>(
     }
     while top < HEIGHT && focus_index < item_count {
         if focus_index == footer_focus {
-            if let Some(footer) = footer {
+            if let Some(local_docs) = local_docs {
                 draw_footer(
                     display,
                     top + 2,
-                    footer,
+                    local_docs,
                     state.selected_focus == footer_focus,
                 );
             }
