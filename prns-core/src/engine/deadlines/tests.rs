@@ -131,7 +131,7 @@ fn a_directed_scheduled_announce_fires_only_to_its_target_interface() {
     };
 
     let target = InterfaceId::new([0xAA; 8]);
-    state.scheduled_announces.schedule_directed(
+    let _ = state.scheduled_announces.schedule_directed(
         accepted.destination,
         InstantMillis(2_000),
         target,
@@ -806,6 +806,14 @@ fn the_cull_journals_an_orphan_as_route_interface_gone() {
         None,
     );
     assert_eq!(engine.route_count(), 1);
+    let destination = DestinationHash::new(
+        bytes_from_hex("16f8a6d3f7d7c5b6f106d293804d7314")
+            .try_into()
+            .unwrap(),
+    );
+    let _ = engine
+        .scheduled_announces
+        .schedule(destination, InstantMillis(9_000), source, 1);
 
     let without_source = [routable_descriptor(InterfaceId::new([0xEE; 8]))];
     let mut journal = std::vec::Vec::new();
@@ -832,11 +840,56 @@ fn the_cull_journals_an_orphan_as_route_interface_gone() {
         "the orphan's removal names its cause",
     );
     assert_eq!(engine.route_count(), 0);
+    assert_eq!(engine.scheduled_announce_count(), 0);
+    assert_eq!(delta.scheduled_announces, crate::engine::WakeSchedule::Idle);
     assert_eq!(
         delta.expired_routes,
         crate::engine::WakeSchedule::Idle,
         "nothing is left to wake for",
     );
+}
+
+#[test]
+fn expiring_a_route_cancels_its_scheduled_announce_and_wake() {
+    let source = InterfaceId::new([0xA1; 8]);
+    let interfaces = [routable_descriptor(source)];
+    let mut engine = EngineState::<TestStorageLayout>::default();
+    let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+    let _ = engine.ingest_packet_with(
+        InboundPacket {
+            arrived_at: InstantMillis(1_000),
+            source_interface: source,
+            bytes: &mut raw,
+        },
+        &mut |_| {},
+        AttachedInterfaces::new(&interfaces),
+        &mut |_| {},
+        None,
+    );
+    let destination = DestinationHash::new(
+        bytes_from_hex("16f8a6d3f7d7c5b6f106d293804d7314")
+            .try_into()
+            .unwrap(),
+    );
+    let _ = engine
+        .scheduled_announces
+        .schedule(destination, InstantMillis(u64::MAX), source, 1);
+    let mut causes = std::vec::Vec::new();
+
+    let delta = engine.cull_expired_routes(
+        InstantMillis(u64::MAX),
+        AttachedInterfaces::new(&interfaces),
+        &mut |reaction| {
+            if let EngineReaction::Journaled(Journaled::RouteRemoved { cause, .. }) = reaction {
+                causes.push(cause);
+            }
+        },
+    );
+
+    assert_eq!(causes, std::vec![RouteRemovalCause::Expired]);
+    assert_eq!(engine.route_count(), 0);
+    assert_eq!(engine.scheduled_announce_count(), 0);
+    assert_eq!(delta.scheduled_announces, WakeSchedule::Idle);
 }
 
 #[test]

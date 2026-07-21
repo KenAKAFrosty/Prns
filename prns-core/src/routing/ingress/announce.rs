@@ -9,7 +9,9 @@ use crate::routing::announce::destination_announce_limit::{
     DestinationAnnounceObservation, DestinationAnnounceVerdict,
 };
 use crate::routing::announce::held::HeldDropCause;
-use crate::routing::announce::schedule::ScheduledAnnounceQueue;
+use crate::routing::announce::schedule::{
+    ScheduleOutcome, ScheduleRejection, ScheduledAnnounceQueue,
+};
 use crate::routing::announce::{
     determine_acceptance, AnnounceAcceptanceDecision, AnnounceAcceptanceInput, AnnounceArrival,
     AnnounceRateAccounting,
@@ -42,6 +44,7 @@ pub struct AcceptedAnnounce {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RebroadcastDecision {
     Scheduled,
+    ScheduleRejected(ScheduleRejection),
     NotATransportNode,
     NoTransportInterfaces,
     TerminalPathResponse,
@@ -101,24 +104,24 @@ impl<S: StorageLayout> EngineState<S> {
                     RebroadcastDecision::TerminalPathResponse,
                 );
             };
-            if from_local_client {
+            let schedule = if from_local_client {
                 self.scheduled_announces.schedule_directed_shared_client(
                     destination,
                     arrival.arrived_at,
                     requesting_interface,
                     arrival.hops,
-                );
+                )
             } else {
                 self.scheduled_announces.schedule_directed(
                     destination,
                     arrival.arrived_at,
                     requesting_interface,
                     arrival.hops,
-                );
-            }
-            return RebroadcastScheduleOutcome::without_rate_accounting(
-                RebroadcastDecision::Scheduled,
-            );
+                )
+            };
+            return RebroadcastScheduleOutcome::without_rate_accounting(rebroadcast_decision(
+                schedule,
+            ));
         }
         if from_local_client {
             if self.transport_id().is_none() {
@@ -134,15 +137,15 @@ impl<S: StorageLayout> EngineState<S> {
                     RebroadcastDecision::NoTransportInterfaces,
                 );
             }
-            self.scheduled_announces.schedule_shared_client(
+            let schedule = self.scheduled_announces.schedule_shared_client(
                 destination,
                 arrival.arrived_at,
                 arrival.receiving_interface,
                 arrival.hops,
             );
-            return RebroadcastScheduleOutcome::without_rate_accounting(
-                RebroadcastDecision::Scheduled,
-            );
+            return RebroadcastScheduleOutcome::without_rate_accounting(rebroadcast_decision(
+                schedule,
+            ));
         }
         if !self.network_transport_enabled() {
             return RebroadcastScheduleOutcome::without_rate_accounting(
@@ -173,14 +176,14 @@ impl<S: StorageLayout> EngineState<S> {
             None => AnnounceRateAccounting::NotApplied,
         };
         let offset = jitter_offset(fill_entropy, DEFAULT_REBROADCAST_JITTER_WINDOW_MS);
-        self.scheduled_announces.schedule(
+        let schedule = self.scheduled_announces.schedule(
             destination,
             InstantMillis(arrival.arrived_at.0.saturating_add(offset)),
             arrival.receiving_interface,
             arrival.hops,
         );
         RebroadcastScheduleOutcome {
-            decision: RebroadcastDecision::Scheduled,
+            decision: rebroadcast_decision(schedule),
             rate_accounting,
         }
     }
@@ -247,6 +250,7 @@ impl<S: StorageLayout> EngineState<S> {
         let warmth = WarmestOf(&self.tunnels, &self.departed_interfaces);
         let dirty = &mut self.dirty_interfaces;
         let destination_identities = &self.destination_identities;
+        let scheduled_announces = &mut self.scheduled_announces;
         let outcome = self.routing_table.upsert_route_with_warmth(
             arrival,
             interfaces,
@@ -255,6 +259,7 @@ impl<S: StorageLayout> EngineState<S> {
                 effects.note_destination_identity_expiry(
                     destination_identities.expiry_at(&removed.destination),
                 );
+                let _ = scheduled_announces.cancel(&removed.destination);
                 dirty.mark(removed.receiving_interface);
                 on_removed(removed);
             },
@@ -293,6 +298,13 @@ impl<S: StorageLayout> EngineState<S> {
                 DropCause::PayloadArenaFull | DropCause::RoutingTableFull,
             ) => AnnounceIngest::Ignored,
         }
+    }
+}
+
+fn rebroadcast_decision(outcome: ScheduleOutcome) -> RebroadcastDecision {
+    match outcome {
+        ScheduleOutcome::Inserted | ScheduleOutcome::Updated => RebroadcastDecision::Scheduled,
+        ScheduleOutcome::Rejected(rejection) => RebroadcastDecision::ScheduleRejected(rejection),
     }
 }
 
@@ -1007,6 +1019,54 @@ mod tests {
         assert_eq!(state.route_count(), 0);
     }
 
+    #[test]
+    fn an_accepted_route_reports_when_rebroadcast_scheduling_is_full() {
+        type TinyStorage = TestFixedStorage<1, 4, 4096, 2, 2, 8, 2, 2, 2, 2, 4, 2>;
+
+        let source = InterfaceId::new([0xA1; 8]);
+        let occupied = DestinationHash::new([0x44; 16]);
+        let mut state = EngineState::<TinyStorage>::default();
+        pin_transport_id(&mut state, TEST_TRANSPORT_ID);
+        assert_eq!(
+            state
+                .scheduled_announces
+                .schedule(occupied, InstantMillis(9_000), source, 7,),
+            ScheduleOutcome::Inserted,
+        );
+        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+
+        let outcome = state.ingest_packet_with(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: source,
+                bytes: &mut raw,
+            },
+            &mut |_| {},
+            AttachedInterfaces::new(&[routable_descriptor(source)]),
+            &mut |_| {},
+            None,
+        );
+
+        let IngestPacketOutcome::Announce(AnnounceIngest::Accepted(accepted)) = outcome else {
+            panic!("the route should still be accepted");
+        };
+        assert_eq!(
+            accepted.rebroadcast,
+            RebroadcastDecision::ScheduleRejected(ScheduleRejection::QueueFull),
+        );
+        assert_eq!(state.route_count(), 1);
+        assert_eq!(state.scheduled_announce_count(), 1);
+        assert_eq!(
+            state
+                .scheduled_announces
+                .iter()
+                .next()
+                .map(|entry| entry.destination),
+            Some(occupied),
+            "the rejected newcomer does not displace the incumbent",
+        );
+    }
+
     fn flood_announce(seed: u8, hops: u8) -> std::vec::Vec<u8> {
         let signer = InMemoryNodeIdentity::from_secret_key_bytes(&[seed.wrapping_add(1); 64]);
         let app = [seed; 4];
@@ -1022,6 +1082,69 @@ mod tests {
         let n = crate::routing::announce::write_announce_wire_packet(&announce, hops, &mut buf)
             .expect("announce serializes");
         buf[..n].to_vec()
+    }
+
+    #[test]
+    fn route_eviction_cancels_the_old_destination_before_scheduling_the_new_one() {
+        type TinyStorage = TestFixedStorage<1, 4, 4096, 2, 2, 8, 2, 2, 2, 2, 4, 2>;
+
+        let first_source = InterfaceId::new([0xA1; 8]);
+        let second_source = InterfaceId::new([0xB2; 8]);
+        let interfaces = [
+            routable_descriptor(first_source),
+            routable_descriptor(second_source),
+        ];
+        let mut state = EngineState::<TinyStorage>::default();
+        pin_transport_id(&mut state, TEST_TRANSPORT_ID);
+        let mut first_wire = flood_announce(0x11, 1);
+        let IngestPacketOutcome::Announce(AnnounceIngest::Accepted(first)) = state
+            .ingest_packet_with(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: first_source,
+                    bytes: &mut first_wire,
+                },
+                &mut |_| {},
+                AttachedInterfaces::new(&interfaces),
+                &mut |_| {},
+                None,
+            )
+        else {
+            panic!("the first route should be accepted");
+        };
+        assert_eq!(first.rebroadcast, RebroadcastDecision::Scheduled);
+
+        let mut removed = std::vec::Vec::new();
+        let mut second_wire = flood_announce(0x22, 1);
+        let IngestPacketOutcome::Announce(AnnounceIngest::Accepted(second)) = state
+            .ingest_packet_with(
+                InboundPacket {
+                    arrived_at: InstantMillis(2_000),
+                    source_interface: second_source,
+                    bytes: &mut second_wire,
+                },
+                &mut |_| {},
+                AttachedInterfaces::new(&interfaces),
+                &mut |route| removed.push(route),
+                None,
+            )
+        else {
+            panic!("the replacement route should be accepted");
+        };
+
+        assert_eq!(second.rebroadcast, RebroadcastDecision::Scheduled);
+        assert_eq!(removed.len(), 1);
+        assert_eq!(removed[0].destination, first.destination);
+        assert_eq!(removed[0].cause, crate::routing::RouteRemovalCause::Evicted);
+        assert_eq!(state.scheduled_announce_count(), 1);
+        assert_eq!(
+            state
+                .scheduled_announces
+                .iter()
+                .next()
+                .map(|entry| entry.destination),
+            Some(second.destination),
+        );
     }
 
     #[test]

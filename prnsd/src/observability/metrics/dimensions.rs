@@ -19,6 +19,9 @@ pub(super) fn announce_source_name(source: AnnounceSourceKind) -> &'static str {
 pub(super) fn announce_ingress_outcome_name(outcome: AnnounceIngressOutcome) -> &'static str {
     match outcome {
         AnnounceIngressOutcome::Accepted => "accepted",
+        AnnounceIngressOutcome::AcceptedScheduleRejectedQueueFull => {
+            "accepted_schedule_rejected_queue_full"
+        }
         AnnounceIngressOutcome::Held => "held",
         AnnounceIngressOutcome::Ignored => "ignored",
         AnnounceIngressOutcome::HeldDroppedInterfaceAtCap => "held_dropped_interface_at_cap",

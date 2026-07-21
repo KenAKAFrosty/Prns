@@ -6,6 +6,7 @@ use crate::crypto::{Ed25519PublicKey, X25519PublicKey};
 use crate::engine::{CommandId, InstantMillis, LinkClosedReason, PacketReceiptDelivered};
 use crate::identity::IdentityHash;
 use crate::interfaces::InterfaceId;
+use crate::routing::announce::schedule::ScheduleRejection;
 use crate::routing::announce::{AnnounceObservation, AnnounceRateAccounting};
 use crate::routing::dedup::PacketHash;
 use crate::routing::delivery::Delivery;
@@ -119,6 +120,10 @@ pub enum IngestPacketOutcome<'p> {
     },
     ScheduledPathResponse {
         destination: DestinationHash,
+    },
+    PathResponseScheduleRejected {
+        destination: DestinationHash,
+        rejection: ScheduleRejection,
     },
     /// RNS `DISCOVER_PATHS_FOR`.
     ForwardRecursivePathRequest {

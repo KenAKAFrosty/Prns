@@ -1,6 +1,7 @@
 use core::num::NonZeroUsize;
 
 use crate::interfaces::AttachedInterfaces;
+use crate::routing::announce::schedule::ScheduledAnnounceQueue;
 use crate::routing::RemovedRoute;
 use crate::storage::{DirtyInterfaceSet, StorageLayout};
 use crate::wire::{DestinationHash, TransportId};
@@ -98,6 +99,7 @@ impl<S: StorageLayout> EngineState<S> {
         let Some(removed) = self.routing_table.drop_route(destination) else {
             return DropRouteEffect(DropRouteEffectState::NotFound);
         };
+        let _ = self.scheduled_announces.cancel(destination);
         self.dirty_interfaces.mark(removed.receiving_interface);
         DropRouteEffect(DropRouteEffectState::Dropped {
             removed,
@@ -112,9 +114,11 @@ impl<S: StorageLayout> EngineState<S> {
         on_removed: &mut impl FnMut(RemovedRoute),
     ) -> DropRoutesViaEffect {
         let dirty = &mut self.dirty_interfaces;
+        let scheduled_announces = &mut self.scheduled_announces;
         let dropped_routes = self
             .routing_table
             .drop_routes_via(transport, &mut |removed| {
+                let _ = scheduled_announces.cancel(&removed.destination);
                 dirty.mark(removed.receiving_interface);
                 on_removed(removed);
             });
@@ -187,32 +191,55 @@ mod tests {
     #[test]
     fn dropping_one_route_returns_its_removal_and_complete_wake_delta() {
         let mut engine = EngineState::<TestStorageLayout>::default();
-        let destination = destination(0x21);
+        let dropped_destination = destination(0x21);
+        let unrelated = destination(0x22);
         add_route(
             &mut engine,
-            destination,
+            dropped_destination,
             NextHop::Direct,
             InstantMillis(1_000),
         );
+        let _ =
+            engine
+                .scheduled_announces
+                .schedule(dropped_destination, InstantMillis(100), SOURCE, 1);
+        let _ = engine
+            .scheduled_announces
+            .schedule(unrelated, InstantMillis(200), SOURCE, 1);
 
-        let effect = engine.drop_route(&destination, AttachedInterfaces::new(&interfaces()));
+        let effect =
+            engine.drop_route(&dropped_destination, AttachedInterfaces::new(&interfaces()));
 
         assert_eq!(effect.outcome(), DropRouteOutcome::Dropped);
         assert_eq!(
             effect.removed_route(),
             Some(RemovedRoute {
-                destination,
+                destination: dropped_destination,
                 receiving_interface: SOURCE,
                 cause: RouteRemovalCause::Dropped,
             }),
         );
         assert_eq!(effect.wake_schedules().expired_routes, WakeSchedule::Idle);
         assert_eq!(
+            effect.wake_schedules().scheduled_announces,
+            WakeSchedule::At(InstantMillis(200)),
+        );
+        assert_eq!(engine.scheduled_announce_count(), 1);
+        assert_eq!(
+            engine
+                .scheduled_announces
+                .iter()
+                .next()
+                .map(|entry| entry.destination),
+            Some(unrelated),
+        );
+        assert_eq!(
             effect.wake_schedules().expired_destination_identities,
             WakeSchedule::Idle,
         );
 
-        let missing = engine.drop_route(&destination, AttachedInterfaces::new(&interfaces()));
+        let missing =
+            engine.drop_route(&dropped_destination, AttachedInterfaces::new(&interfaces()));
         assert_eq!(missing.outcome(), DropRouteOutcome::NotFound);
         assert_eq!(missing.removed_route(), None);
         assert_eq!(missing.wake_schedules(), WakeSchedules::UNCHANGED);
@@ -233,6 +260,14 @@ mod tests {
                 destination(byte),
                 NextHop::Via(transport),
                 learned_at,
+            );
+        }
+        for (byte, due_at) in [(0x21, 100), (0x22, 200), (0x23, 300)] {
+            let _ = engine.scheduled_announces.schedule(
+                destination(byte),
+                InstantMillis(due_at),
+                SOURCE,
+                1,
             );
         }
         let mut removed = std::vec::Vec::new();
@@ -256,6 +291,19 @@ mod tests {
         assert_eq!(
             effect.wake_schedules().expired_routes,
             engine.route_expiry_wake(AttachedInterfaces::new(&interfaces())),
+        );
+        assert_eq!(
+            effect.wake_schedules().scheduled_announces,
+            WakeSchedule::At(InstantMillis(300)),
+        );
+        assert_eq!(engine.scheduled_announce_count(), 1);
+        assert_eq!(
+            engine
+                .scheduled_announces
+                .iter()
+                .next()
+                .map(|entry| entry.destination),
+            Some(destination(0x23)),
         );
 
         let unchanged = engine.drop_routes_via(

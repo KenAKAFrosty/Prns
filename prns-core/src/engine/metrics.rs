@@ -35,11 +35,13 @@ pub enum AnnounceIngressOutcome {
     HeldDroppedPoolFull,
     HeldDroppedArenaFull,
     Blackholed,
+    AcceptedScheduleRejectedQueueFull,
 }
 
 impl AnnounceIngressOutcome {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Accepted,
+        Self::AcceptedScheduleRejectedQueueFull,
         Self::Held,
         Self::Ignored,
         Self::HeldDroppedInterfaceAtCap,
@@ -488,6 +490,16 @@ impl<S: StorageLayout> EngineState<S> {
             AnnounceSourceKind::Network
         };
         let outcome = match ingest {
+            AnnounceIngest::Accepted(accepted)
+                if matches!(
+                    accepted.rebroadcast,
+                    crate::routing::ingress::RebroadcastDecision::ScheduleRejected(
+                        crate::routing::announce::schedule::ScheduleRejection::QueueFull
+                    )
+                ) =>
+            {
+                AnnounceIngressOutcome::AcceptedScheduleRejectedQueueFull
+            }
             AnnounceIngest::Accepted(_) => AnnounceIngressOutcome::Accepted,
             AnnounceIngest::Held => AnnounceIngressOutcome::Held,
             AnnounceIngest::Ignored => AnnounceIngressOutcome::Ignored,
@@ -522,6 +534,37 @@ impl<S: StorageLayout> EngineState<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn accepted_schedule_capacity_rejections_have_their_own_metric_outcome() {
+        let mut state = EngineState::<crate::engine::test_support::TestStorageLayout>::default();
+        let source = InterfaceId::new([0xA1; 8]);
+        state.record_announce_ingress(
+            source,
+            AnnounceIngest::Accepted(crate::routing::ingress::AcceptedAnnounce {
+                destination: crate::wire::DestinationHash::new([0x44; 16]),
+                hops: 3,
+                rebroadcast: crate::routing::ingress::RebroadcastDecision::ScheduleRejected(
+                    crate::routing::announce::schedule::ScheduleRejection::QueueFull,
+                ),
+            }),
+        );
+
+        assert_eq!(
+            state.announce_ingress_counts.get(
+                AnnounceSourceKind::Network,
+                AnnounceIngressOutcome::AcceptedScheduleRejectedQueueFull,
+            ),
+            1,
+        );
+        assert_eq!(
+            state.announce_ingress_counts.get(
+                AnnounceSourceKind::Network,
+                AnnounceIngressOutcome::Accepted
+            ),
+            0,
+        );
+    }
 
     #[test]
     fn every_ignore_reason_has_one_stable_counter() {
@@ -605,7 +648,7 @@ mod tests {
         state.record_announce_ingress(first, AnnounceIngest::Ignored);
         state.record_announce_ingress(second, AnnounceIngest::Ignored);
         state.record_announce_ingress(first, AnnounceIngest::Blackholed);
-        state.scheduled_announces.schedule(
+        let _ = state.scheduled_announces.schedule(
             crate::wire::DestinationHash::new([0x21; 16]),
             crate::units::InstantMillis(100),
             first,
