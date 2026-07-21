@@ -1,7 +1,7 @@
 use prns_core::interfaces::bluetooth_auto::{
     AdvertisingMode, BleBackend, BleEvent, Origin, RadioMode, ScanningMode,
 };
-use prns_core::interfaces::bluetooth_auto::{BleAddress, LinkCapabilities, Psm, ANDROID_MAX_PEERS};
+use prns_core::interfaces::bluetooth_auto::{BleAddress, LinkCapabilities, Psm};
 
 use super::bridge::{AndroidBleBridge, Event};
 use super::link::AndroidBleLink;
@@ -12,14 +12,15 @@ pub struct AndroidBleBackend {
 }
 
 impl AndroidBleBackend {
+    pub const MAX_PEERS: usize = 7;
+
     #[must_use]
     pub fn new(bridge: AndroidBleBridge) -> Self {
         Self { bridge }
     }
 }
 
-impl BleBackend for AndroidBleBackend {
-    const MAX_PEERS: usize = ANDROID_MAX_PEERS;
+impl BleBackend<{ AndroidBleBackend::MAX_PEERS }> for AndroidBleBackend {
     type Error = AndroidBleError;
     type Link = AndroidBleLink;
 

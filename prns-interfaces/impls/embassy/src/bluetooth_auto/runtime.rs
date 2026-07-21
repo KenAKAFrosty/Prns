@@ -245,7 +245,10 @@ pub struct BluetoothAuto<B, const MEMBERS: usize> {
     bitrate: BitrateBps,
 }
 
-impl<B: BleBackend, const MEMBERS: usize> BluetoothAuto<B, MEMBERS> {
+impl<B, const MEMBERS: usize> BluetoothAuto<B, MEMBERS>
+where
+    B: BleBackend<MEMBERS>,
+{
     #[must_use]
     pub fn new(
         backend: B,
@@ -500,7 +503,7 @@ async fn recv_any<L: BleLink, const MEMBERS: usize>(
 }
 
 async fn apply_one<
-    B: BleBackend,
+    B,
     M: RawMutex + 'static,
     const SLOT: usize,
     const NOTIFY: usize,
@@ -512,7 +515,9 @@ async fn apply_one<
     fleet: &mut Fleet<M, SLOT, NOTIFY, LIFECYCLE>,
     backend: &mut B,
     members: &mut [Option<Active<B::Link>>; MEMBERS],
-) {
+) where
+    B: BleBackend<MEMBERS>,
+{
     match action {
         PolicyAction::Dial(address) => backend.dial(address).await,
         PolicyAction::Evict { slot, .. } => {
@@ -535,7 +540,7 @@ async fn apply_one<
 }
 
 async fn apply_radio<
-    B: BleBackend,
+    B,
     M: RawMutex + 'static,
     const SLOT: usize,
     const NOTIFY: usize,
@@ -547,7 +552,9 @@ async fn apply_radio<
     fleet: &mut Fleet<M, SLOT, NOTIFY, LIFECYCLE>,
     backend: &mut B,
     members: &mut [Option<Active<B::Link>>; MEMBERS],
-) {
+) where
+    B: BleBackend<MEMBERS>,
+{
     let actions = ::core::mem::take(pending);
     for action in actions {
         apply_one(action, status, fleet, backend, members).await;
@@ -555,7 +562,7 @@ async fn apply_radio<
 }
 
 async fn disable_members<
-    B: BleBackend,
+    B,
     M: RawMutex + 'static,
     const SLOT: usize,
     const NOTIFY: usize,
@@ -566,7 +573,9 @@ async fn disable_members<
     fleet: &mut Fleet<M, SLOT, NOTIFY, LIFECYCLE>,
     backend: &mut B,
     members: &mut [Option<Active<B::Link>>; MEMBERS],
-) {
+) where
+    B: BleBackend<MEMBERS>,
+{
     let _ = backend.set_advertising(AdvertisingMode::Off).await;
     let _ = backend.set_scanning(ScanningMode::Off).await;
     let mut changed = false;
@@ -587,7 +596,7 @@ async fn disable_members<
 }
 
 async fn close_member<
-    B: BleBackend,
+    B,
     M: RawMutex + 'static,
     const SLOT: usize,
     const NOTIFY: usize,
@@ -601,7 +610,9 @@ async fn close_member<
     fleet: &mut Fleet<M, SLOT, NOTIFY, LIFECYCLE>,
     backend: &mut B,
     members: &mut [Option<Active<B::Link>>; MEMBERS],
-) {
+) where
+    B: BleBackend<MEMBERS>,
+{
     let Some(id) = members[slot].as_ref().map(|member| member.id) else {
         return;
     };
@@ -624,7 +635,7 @@ async fn close_member<
 }
 
 async fn drain_outbound<
-    B: BleBackend,
+    B,
     M: RawMutex + 'static,
     const SLOT: usize,
     const NOTIFY: usize,
@@ -637,7 +648,9 @@ async fn drain_outbound<
     fleet: &mut Fleet<M, SLOT, NOTIFY, LIFECYCLE>,
     backend: &mut B,
     members: &mut [Option<Active<B::Link>>; MEMBERS],
-) {
+) where
+    B: BleBackend<MEMBERS>,
+{
     while let Some((target, frame)) = fleet.try_next_outbound::<{ contract::BLE_HW_MTU }>() {
         if frame.is_empty() {
             continue;
@@ -673,7 +686,7 @@ async fn drain_outbound<
     reason = "embedded serve-loop internals pass the loop's split-borrowed locals; bundling awaits an on-hardware validation pass"
 )]
 async fn deliver_inbound<
-    B: BleBackend,
+    B,
     M: RawMutex + 'static,
     const SLOT: usize,
     const NOTIFY: usize,
@@ -689,7 +702,9 @@ async fn deliver_inbound<
     backend: &mut B,
     members: &mut [Option<Active<B::Link>>; MEMBERS],
     inbufs: &mut [[u8; contract::BLE_HW_MTU]; MEMBERS],
-) {
+) where
+    B: BleBackend<MEMBERS>,
+{
     match received {
         Ok(0) => {}
         Ok(len) => {
@@ -710,7 +725,7 @@ async fn deliver_inbound<
     reason = "embedded serve-loop internals pass the loop's split-borrowed locals; bundling awaits an on-hardware validation pass"
 )]
 async fn settle_into_fleet<
-    B: BleBackend,
+    B,
     M: RawMutex + 'static,
     const SLOT: usize,
     const NOTIFY: usize,
@@ -728,7 +743,9 @@ async fn settle_into_fleet<
     backend: &mut B,
     members: &mut [Option<Active<B::Link>>; MEMBERS],
     inbufs: &mut [[u8; contract::BLE_HW_MTU]; MEMBERS],
-) {
+) where
+    B: BleBackend<MEMBERS>,
+{
     let address = link.address();
     let role = role_for(origin);
     let mut handshake = ::core::pin::pin!(settle(link, role, local));

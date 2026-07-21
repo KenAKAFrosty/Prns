@@ -143,7 +143,6 @@ async fn run_platform_bluetooth(
 ) {
     use super::BluetoothAuto;
     use prns_ffi::bluetooth_auto::macos::MacosBleBackend;
-    use prns_runtime::interfaces::bluetooth_auto::BleBackend;
     use prns_runtime::interfaces::bluetooth_auto::{
         AppleHost, Endpoint, LinkCapabilities, BLE_HW_MTU,
     };
@@ -187,15 +186,14 @@ async fn run_platform_bluetooth(
 ) {
     use super::BluetoothAuto;
     use prns_ffi::bluetooth_auto::macos::MacosBleBackend;
-    use prns_runtime::interfaces::bluetooth_auto::BleBackend;
     use prns_runtime::interfaces::bluetooth_auto::{
-        AppleHost, Endpoint, LinkCapabilities, BLE_HW_MTU, IOS_MAX_PEERS,
+        AppleHost, Endpoint, LinkCapabilities, BLE_HW_MTU,
     };
 
     match MacosBleBackend::new(ble_identity).await {
         Ok(backend) => {
             let psm = backend.psm();
-            let bluetooth = BluetoothAuto::<_, IOS_MAX_PEERS>::with_status(
+            let bluetooth = BluetoothAuto::<_, { MacosBleBackend::MAX_PEERS }>::with_status(
                 backend,
                 ble_identity,
                 Endpoint::CoreBluetooth(AppleHost::Ios),
@@ -231,7 +229,6 @@ async fn run_platform_bluetooth(
 ) {
     use super::BluetoothAuto;
     use prns_ffi::bluetooth_auto::windows::WindowsBleBackend;
-    use prns_runtime::interfaces::bluetooth_auto::BleBackend;
     use prns_runtime::interfaces::bluetooth_auto::{
         Endpoint, LinkCapabilities, WinRtHost, BLE_HW_MTU,
     };
@@ -270,7 +267,6 @@ async fn run_platform_bluetooth(
     policy: EffectiveInterfacePolicy,
 ) {
     use super::{BluerBackend, BluetoothAuto};
-    use prns_runtime::interfaces::bluetooth_auto::BleBackend;
     use prns_runtime::interfaces::bluetooth_auto::{
         BlueZHost, Endpoint, LinkCapabilities, Psm, BLE_HW_MTU,
     };

@@ -12,8 +12,6 @@ use embassy_time::{with_timeout, Duration, Timer};
 use heapless_09::Vec as GattVec;
 use trouble_host::prelude::*;
 
-#[cfg(not(target_arch = "riscv32"))]
-use prns_core::interfaces::bluetooth_auto::ESP32_S3_MAX_PEERS;
 use prns_core::interfaces::bluetooth_auto::{
     columba_connection_role, columba_role_capabilities, contains_service, encode_stream_frame,
     fragments_of, BleAddress, BleIdentity, BleRoleCapabilities, ColumbaConnectionRole, Control,
@@ -27,7 +25,7 @@ use prns_core::interfaces::bluetooth_auto::{
 #[cfg(target_arch = "riscv32")]
 pub const SLOTS: usize = 8;
 #[cfg(not(target_arch = "riscv32"))]
-pub const SLOTS: usize = ESP32_S3_MAX_PEERS;
+pub const SLOTS: usize = EmbeddedBleBackend::MAX_PEERS;
 pub const HCI_COMMAND_SLOTS: usize = 20;
 pub const CONNECTIONS: usize = SLOTS;
 pub const L2CAP_CHANNELS: usize = SLOTS;
@@ -357,6 +355,11 @@ pub struct EmbeddedBleBackend {
 }
 
 impl EmbeddedBleBackend {
+    #[cfg(target_arch = "riscv32")]
+    pub const MAX_PEERS: usize = 20;
+    #[cfg(not(target_arch = "riscv32"))]
+    pub const MAX_PEERS: usize = 2;
+
     fn remember(&mut self, peer: SeenPeer) {
         let target = DialTarget {
             kind: peer.kind,
@@ -400,8 +403,7 @@ impl EmbeddedBleBackend {
     }
 }
 
-impl BleBackend for EmbeddedBleBackend {
-    const MAX_PEERS: usize = SLOTS;
+impl BleBackend<{ EmbeddedBleBackend::MAX_PEERS }> for EmbeddedBleBackend {
     type Error = Closed;
     type Link = EmbeddedBleLink;
 

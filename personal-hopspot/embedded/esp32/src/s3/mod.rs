@@ -64,7 +64,7 @@ use esp_radio::esp_now::{
     EspNow, EspNowManager, EspNowReceiver, EspNowSender, WifiPhyRate, BROADCAST_ADDRESS,
 };
 #[cfg(feature = "bluetooth-auto")]
-use personal_rns::bluetooth_auto::{BluetoothAutoShared, BluetoothAutoStatus};
+use personal_rns::bluetooth_auto::{BluetoothAutoShared, BluetoothAutoStatus, EmbeddedBleBackend};
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
@@ -72,7 +72,6 @@ use personal_rns::engine::{
 use personal_rns::esp_now::EspNowInterface;
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::interfaces::bluetooth_auto::ESP32_S3_MAX_PEERS;
 #[cfg(feature = "wifi-auto")]
 use personal_rns::interfaces::esp_now::core::{
     self as espnow_core, Channel as EspNowChannel, ChannelPolicy,
@@ -289,7 +288,7 @@ static WIFI_SHARED: AutoWifiShared<MEMBERS> = AutoWifiShared::new(WIFI_FLEET_ID)
 /// pooled `ble.rs` backend sizes its slot pool + trouble-host `CONNECTIONS` to this) — 2 since the
 /// reduced embedded MTU ceiling (1472) freed the internal lane RAM to carry a second peer.
 #[cfg(feature = "bluetooth-auto")]
-pub const BLE_MEMBERS: usize = ESP32_S3_MAX_PEERS;
+pub const BLE_MEMBERS: usize = EmbeddedBleBackend::MAX_PEERS;
 #[cfg(feature = "bluetooth-auto")]
 const BLE_FLEET_ID: InterfaceId =
     InterfaceId::new([InterfaceKind::BluetoothAuto as u8, 0, 0, 0, 0, 0, 0, 0]);

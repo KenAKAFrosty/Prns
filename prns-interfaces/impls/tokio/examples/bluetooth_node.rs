@@ -6,7 +6,6 @@ async fn main() {
 
     use personal_rns::engine::RatchetPolicy;
     use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-    use personal_rns::interfaces::bluetooth_auto::BleBackend;
     use personal_rns::interfaces::bluetooth_auto::{
         AppleHost, BleIdentity, Endpoint, LinkCapabilities, BLE_HW_MTU,
     };

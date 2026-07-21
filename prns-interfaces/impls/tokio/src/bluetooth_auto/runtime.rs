@@ -213,7 +213,10 @@ pub struct BluetoothAuto<B, const MAX_PEERS: usize> {
     status: BluetoothAutoStatus,
 }
 
-impl<B: BleBackend, const MAX_PEERS: usize> BluetoothAuto<B, MAX_PEERS> {
+impl<B, const MAX_PEERS: usize> BluetoothAuto<B, MAX_PEERS>
+where
+    B: BleBackend<MAX_PEERS>,
+{
     pub fn new(
         backend: B,
         identity: BleIdentity,
@@ -427,7 +430,7 @@ impl InterfaceStatus for BluetoothAutoStatus {
 
 impl<B, const MAX_PEERS: usize> InterfaceSupervisor for BluetoothAuto<B, MAX_PEERS>
 where
-    B: BleBackend,
+    B: BleBackend<MAX_PEERS>,
     B::Link: 'static,
     <B::Link as BleLink>::Source: Send + 'static,
     <B::Link as BleLink>::Sink: Send + 'static,
@@ -451,7 +454,7 @@ where
         }
         let configured_capabilities = local.capabilities;
         let mut local = local;
-        prepare_radio(&mut backend, &mut local, configured_capabilities).await;
+        prepare_radio::<B, MAX_PEERS>(&mut backend, &mut local, configured_capabilities).await;
         let started = Instant::now();
         let mut manager = ConnectionPolicy::<MAX_PEERS, DIAL_TRACK>::new(local);
         let mut members: HashMap<BleIdentity, TokioMember> = HashMap::new();
@@ -460,7 +463,7 @@ where
         let mut pending: std::vec::Vec<PolicyAction> = std::vec::Vec::new();
         status.mark_up();
         manager.start(&mut |action| pending.push(action));
-        apply_radio(&mut pending, &mut members, &mut backend).await;
+        apply_radio::<B, MAX_PEERS>(&mut pending, &mut members, &mut backend).await;
         loop {
             if !status.is_enabled() {
                 let _ = backend.set_advertising(AdvertisingMode::Off).await;
@@ -474,10 +477,11 @@ where
                 status.set_members(std::vec::Vec::new());
                 let _ = backend.set_radio_mode(RadioMode::Off).await;
                 status.wait_until_enabled().await;
-                prepare_radio(&mut backend, &mut local, configured_capabilities).await;
+                prepare_radio::<B, MAX_PEERS>(&mut backend, &mut local, configured_capabilities)
+                    .await;
                 manager = ConnectionPolicy::<MAX_PEERS, DIAL_TRACK>::new(local);
                 manager.start(&mut |action| pending.push(action));
-                apply_radio(&mut pending, &mut members, &mut backend).await;
+                apply_radio::<B, MAX_PEERS>(&mut pending, &mut members, &mut backend).await;
                 continue;
             }
             let step = tokio::select! {
@@ -493,7 +497,7 @@ where
                     manager.handle(PolicyInput::Sighting { address, now_ms }, &mut |action| {
                         pending.push(action);
                     });
-                    apply_radio(&mut pending, &mut members, &mut backend).await;
+                    apply_radio::<B, MAX_PEERS>(&mut pending, &mut members, &mut backend).await;
                 }
                 Step::Event(BleEvent::LinkReady {
                     link,
@@ -536,7 +540,7 @@ where
                     manager.handle(PolicyInput::DialFailed { address, now_ms }, &mut |action| {
                         pending.push(action);
                     });
-                    apply_radio(&mut pending, &mut members, &mut backend).await;
+                    apply_radio::<B, MAX_PEERS>(&mut pending, &mut members, &mut backend).await;
                 }
                 Step::Handshake(HandshakeDone {
                     address,
@@ -555,7 +559,7 @@ where
                                 },
                                 &mut |action| pending.push(action),
                             );
-                            apply_settle(
+                            apply_settle::<B, MAX_PEERS>(
                                 &mut pending,
                                 link,
                                 &fleet,
@@ -571,7 +575,8 @@ where
                                 PolicyInput::HandshakeFailed { address, origin },
                                 &mut |action| pending.push(action),
                             );
-                            apply_radio(&mut pending, &mut members, &mut backend).await;
+                            apply_radio::<B, MAX_PEERS>(&mut pending, &mut members, &mut backend)
+                                .await;
                         }
                     }
                 }
@@ -587,7 +592,7 @@ where
                     manager.handle(PolicyInput::Closed { identity, address }, &mut |action| {
                         pending.push(action)
                     });
-                    apply_radio(&mut pending, &mut members, &mut backend).await;
+                    apply_radio::<B, MAX_PEERS>(&mut pending, &mut members, &mut backend).await;
                 }
             }
             status.set_members(
@@ -600,8 +605,9 @@ where
     }
 }
 
-impl<B: BleBackend, const MAX_PEERS: usize> prns_core::interfaces::ReportsStatus
-    for BluetoothAuto<B, MAX_PEERS>
+impl<B, const MAX_PEERS: usize> prns_core::interfaces::ReportsStatus for BluetoothAuto<B, MAX_PEERS>
+where
+    B: BleBackend<MAX_PEERS>,
 {
     fn status_view(&self) -> Option<prns_core::interfaces::StatusView> {
         let status = self.status.clone();
@@ -613,22 +619,26 @@ impl<B: BleBackend, const MAX_PEERS: usize> prns_core::interfaces::ReportsStatus
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
-async fn prepare_radio<B: BleBackend>(
+async fn prepare_radio<B, const MAX_PEERS: usize>(
     backend: &mut B,
     local: &mut LocalPeer,
     configured_capabilities: LinkCapabilities,
-) {
+) where
+    B: BleBackend<MAX_PEERS>,
+{
     let _ = backend.set_radio_mode(RadioMode::On).await;
     if let Ok(capabilities) = backend.local_capabilities(configured_capabilities).await {
         local.capabilities = capabilities;
     }
 }
 
-async fn apply_one<B: BleBackend>(
+async fn apply_one<B, const MAX_PEERS: usize>(
     action: PolicyAction,
     members: &mut HashMap<BleIdentity, TokioMember>,
     backend: &mut B,
-) {
+) where
+    B: BleBackend<MAX_PEERS>,
+{
     match action {
         PolicyAction::Dial(address) => backend.dial(address).await,
         PolicyAction::Evict { identity, .. } => {
@@ -647,18 +657,20 @@ async fn apply_one<B: BleBackend>(
     }
 }
 
-async fn apply_radio<B: BleBackend>(
+async fn apply_radio<B, const MAX_PEERS: usize>(
     pending: &mut std::vec::Vec<PolicyAction>,
     members: &mut HashMap<BleIdentity, TokioMember>,
     backend: &mut B,
-) {
+) where
+    B: BleBackend<MAX_PEERS>,
+{
     let actions = std::mem::take(pending);
     for action in actions {
-        apply_one(action, members, backend).await;
+        apply_one::<B, MAX_PEERS>(action, members, backend).await;
     }
 }
 
-async fn apply_settle<B>(
+async fn apply_settle<B, const MAX_PEERS: usize>(
     pending: &mut std::vec::Vec<PolicyAction>,
     link: B::Link,
     fleet: &Fleet,
@@ -667,7 +679,7 @@ async fn apply_settle<B>(
     backend: &mut B,
     policy: EffectiveInterfacePolicy,
 ) where
-    B: BleBackend,
+    B: BleBackend<MAX_PEERS>,
     B::Link: 'static,
     <B::Link as BleLink>::Source: Send + 'static,
     <B::Link as BleLink>::Sink: Send + 'static,
@@ -703,7 +715,7 @@ async fn apply_settle<B>(
                 link = None;
                 backend.on_link_closed(address).await;
             }
-            other => apply_one(other, members, backend).await,
+            other => apply_one::<B, MAX_PEERS>(other, members, backend).await,
         }
     }
 }
@@ -1109,8 +1121,7 @@ mod tests {
         }
     }
 
-    impl BleBackend for LoopbackBleBackend {
-        const MAX_PEERS: usize = 8;
+    impl BleBackend<8> for LoopbackBleBackend {
         type Error = Closed;
         type Link = LoopbackLink;
 

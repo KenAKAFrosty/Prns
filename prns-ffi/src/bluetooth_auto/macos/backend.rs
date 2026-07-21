@@ -15,9 +15,7 @@ use tokio::task::JoinSet;
 use prns_core::interfaces::bluetooth_auto::{
     AdvertisingMode, BleBackend, BleEvent, Origin, ScanningMode,
 };
-use prns_core::interfaces::bluetooth_auto::{
-    BleAddress, BleIdentity, Control, Psm, MACOS_MAX_PEERS,
-};
+use prns_core::interfaces::bluetooth_auto::{BleAddress, BleIdentity, Control, Psm};
 
 use super::central::{CentralDelegate, DialChars, DialCommand, DialSession};
 use super::gatt_link::{ControlPlane, GattLink};
@@ -58,6 +56,11 @@ pub struct MacosBleBackend {
 }
 
 impl MacosBleBackend {
+    #[cfg(target_os = "ios")]
+    pub const MAX_PEERS: usize = 7;
+    #[cfg(target_os = "macos")]
+    pub const MAX_PEERS: usize = 8;
+
     pub async fn new(identity: BleIdentity) -> Result<Self, MacosBleError> {
         let (events_tx, mut events_rx) = tokio_mpsc::unbounded_channel::<Event>();
         let (keepalive, shutdown_rx) = sync_mpsc::channel::<()>();
@@ -179,8 +182,7 @@ impl MacosBleBackend {
     }
 }
 
-impl BleBackend for MacosBleBackend {
-    const MAX_PEERS: usize = MACOS_MAX_PEERS;
+impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
     type Error = MacosBleError;
     type Link = GattLink;
 

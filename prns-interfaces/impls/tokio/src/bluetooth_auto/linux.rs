@@ -31,8 +31,7 @@ use prns_core::interfaces::bluetooth_auto::{
     fragments_of, BleAddress, BleIdentity, BleRoleCapabilities, BleUuid, ColumbaConnectionRole,
     Control, Fragment, L2capPlan, PeerProtocol, Psm, Reassembler, StreamDeframer, BLE_HW_MTU,
     BLE_SERVICE_UUID, COLUMBA_IDENTITY_UUID, COLUMBA_RX_UUID, COLUMBA_TX_UUID, CONTROL_MAX_LEN,
-    FRAGMENT_HEADER_LEN, LINUX_MAX_PEERS, NATIVE_CONTROL_UUID, NATIVE_DATA_UUID,
-    STREAM_FRAME_PREFIX_LEN,
+    FRAGMENT_HEADER_LEN, NATIVE_CONTROL_UUID, NATIVE_DATA_UUID, STREAM_FRAME_PREFIX_LEN,
 };
 use prns_core::interfaces::bluetooth_auto::{
     AdvertisingMode, BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin, RadioMode,
@@ -403,6 +402,8 @@ pub struct BluerBackend {
 }
 
 impl BluerBackend {
+    pub const MAX_PEERS: usize = 8;
+
     pub async fn open(psm: Psm, identity: BleIdentity) -> Result<Self, BluerError> {
         let session = Session::new().await?;
         let adapter = session.default_adapter().await?;
@@ -908,8 +909,7 @@ async fn connect_link(adapter: Adapter, target: Address) -> Result<BluerLink, Bl
     })))
 }
 
-impl BleBackend for BluerBackend {
-    const MAX_PEERS: usize = LINUX_MAX_PEERS;
+impl BleBackend<{ BluerBackend::MAX_PEERS }> for BluerBackend {
     type Error = BluerError;
     type Link = BluerLink;
 
