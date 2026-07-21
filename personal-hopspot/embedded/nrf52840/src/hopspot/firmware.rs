@@ -390,8 +390,11 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
             let now_ms = embassy_time::Instant::now().as_millis();
             let activity_secs = (now_ms / 1000).min(u64::from(u32::MAX)) as u32;
             activity.update(&mut cards, activity_secs);
-            let card_count = cards.len();
-            ui_state.sync_card_count(card_count);
+            let content = hopspot::ScreenContent {
+                cards: &cards,
+                local_docs: None,
+            };
+            ui_state.sync(content);
             if notice_until_ms.is_some_and(|until| now_ms >= until) {
                 ui_state.clear_notice();
                 notice_until_ms = None;
@@ -399,16 +402,15 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
 
             let _ = panel.clear(EpdColor::White);
             let interface_menu_details = hopspot::snapshots_to_interface_menu_details(
-                ui_state.selected_card(&cards),
+                ui_state.selected_card(content.cards),
                 &snapshots,
             );
             hopspot::render(
                 &mut EinkScreen { panel: &mut panel },
                 hopspot::RenderFrame {
-                    cards: &cards,
+                    content,
                     battery,
                     state: &ui_state,
-                    local_docs: None,
                     interface_menu_details: &interface_menu_details,
                     animation_ms: now_ms,
                 },
@@ -434,7 +436,7 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
             .await
             {
                 Either3::First(event) => {
-                    let action = ui_state.handle_input(event, &cards);
+                    let action = ui_state.handle_input(event, content);
                     match action {
                         hopspot::UiAction::Sleep => {
                             ui_state.show_notice(hopspot::UiNotice::Sleeping);
@@ -465,7 +467,7 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
                             }));
                         }
                         hopspot::UiAction::ToggleSelectedInterface => {
-                            if let Some(card) = ui_state.selected_card(&cards) {
+                            if let Some(card) = ui_state.selected_card(content.cards) {
                                 if card.id() == lora_status.id() {
                                     ui_state.show_notice(if lora_status.is_enabled() {
                                         hopspot::UiNotice::TurningOff

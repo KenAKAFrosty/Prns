@@ -4,7 +4,7 @@ use personal_rns::interfaces::lora::{RadioProfile, DEFAULT_915_PROFILE};
 use personal_rns::storage::DisplayedStorageLimits;
 
 use super::limits::storage_limit_page_count;
-use super::model::{Card, CardKind};
+use super::model::{Card, CardKind, ScreenContent};
 use lora::{lora_editor_hold, lora_editor_tap, region_index, LoRaHold, LoRaScreen};
 
 const INITIAL_VISIBLE_FOCUS_ITEMS: usize = 3;
@@ -183,19 +183,6 @@ impl UiState {
         }
     }
 
-    /// The first visible focus item: `0` the global action row, `1..` cards shifted by one.
-    pub fn visible_start(&self, card_count: usize) -> usize {
-        self.visible_start_with_footer(card_count, false)
-    }
-
-    pub fn visible_start_with_footer(&self, card_count: usize, has_footer: bool) -> usize {
-        visible_start_for(
-            focus_item_count_with_footer(card_count, has_footer),
-            self.selected_focus,
-            self.visible_start,
-        )
-    }
-
     pub fn menu_selected_item(&self) -> Option<usize> {
         match self.mode {
             UiMode::GlobalMenu { selected_item } | UiMode::InterfaceMenu { selected_item, .. } => {
@@ -273,12 +260,8 @@ impl UiState {
         }
     }
 
-    pub fn sync_card_count(&mut self, card_count: usize) {
-        self.sync_card_count_with_footer(card_count, false);
-    }
-
-    pub fn sync_card_count_with_footer(&mut self, card_count: usize, has_footer: bool) {
-        let item_count = focus_item_count_with_footer(card_count, has_footer);
+    pub fn sync(&mut self, content: ScreenContent<'_, '_>) {
+        let item_count = focus_item_count(content);
         self.selected_focus = self.selected_focus.min(item_count - 1);
         self.visible_start = visible_start_for(item_count, self.selected_focus, self.visible_start);
 
@@ -289,7 +272,7 @@ impl UiState {
             | UiMode::Sleeping
             | UiMode::LoRaEditor { .. }
             | UiMode::ConfirmRadioSwap { .. } => {}
-            UiMode::InterfaceMenu { .. } if self.selected_card_index(card_count).is_none() => {
+            UiMode::InterfaceMenu { .. } if self.selected_card(content.cards).is_none() => {
                 self.mode = UiMode::Cards;
             }
             UiMode::InterfaceMenu {
@@ -310,20 +293,11 @@ impl UiState {
         }
     }
 
-    pub fn handle_input(&mut self, event: InputEvent, cards: &[Card]) -> UiAction {
-        self.handle_input_with_footer(event, cards, false)
-    }
-
-    pub fn handle_input_with_footer(
-        &mut self,
-        event: InputEvent,
-        cards: &[Card],
-        has_footer: bool,
-    ) -> UiAction {
-        let card_count = cards.len();
+    pub fn handle_input(&mut self, event: InputEvent, content: ScreenContent<'_, '_>) -> UiAction {
+        let card_count = content.cards.len();
         self.notice = None;
-        self.sync_card_count_with_footer(card_count, has_footer);
-        let item_count = focus_item_count_with_footer(card_count, has_footer);
+        self.sync(content);
+        let item_count = focus_item_count(content);
         let action = match (event, self.mode) {
             (InputEvent::ShortPress | InputEvent::LongPress, UiMode::Sleeping) => {
                 self.mode = UiMode::Cards;
@@ -348,12 +322,12 @@ impl UiState {
                 UiAction::None
             }
             (InputEvent::LongPress, UiMode::Cards)
-                if has_footer && self.selected_focus == card_count + 1 =>
+                if content.local_docs.is_some() && self.selected_focus == card_count + 1 =>
             {
                 UiAction::OpenDocs
             }
             (InputEvent::LongPress, UiMode::Cards) => {
-                if let Some(card) = self.selected_card(cards) {
+                if let Some(card) = self.selected_card(content.cards) {
                     self.mode = UiMode::InterfaceMenu {
                         selected_item: 0,
                         kind: card.kind(),
@@ -462,16 +436,13 @@ impl UiState {
                 }
             }
         };
-        self.sync_card_count_with_footer(card_count, has_footer);
+        self.sync(content);
         action
     }
 }
 
-pub(in crate::screen) fn focus_item_count_with_footer(
-    card_count: usize,
-    has_footer: bool,
-) -> usize {
-    card_count + 1 + usize::from(has_footer)
+pub(in crate::screen) fn focus_item_count(content: ScreenContent<'_, '_>) -> usize {
+    content.cards.len() + 1 + usize::from(content.local_docs.is_some())
 }
 
 pub(in crate::screen) fn visible_start_for(

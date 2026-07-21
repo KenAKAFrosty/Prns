@@ -349,7 +349,6 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             });
         #[cfg(not(feature = "wifi-auto"))]
         let local_docs = None;
-        let has_local_docs = local_docs.is_some();
         let mut ticks_to_battery: u8 = 0;
         let mut activity = screen::CardActivityTracker::<8>::new();
         let mut notice_until_ms: Option<u64> = None;
@@ -382,12 +381,15 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             let now_ms = embassy_time::Instant::now().as_millis();
             let activity_secs = (now_ms / 1000).min(u64::from(u32::MAX)) as u32;
             activity.update(&mut cards, activity_secs);
-            let card_count = cards.len();
+            let content = screen::ScreenContent {
+                cards: &cards,
+                local_docs: local_docs.as_ref(),
+            };
             #[cfg(feature = "wifi-auto")]
             let menu_ap_ssid = active_ap_ssid.as_deref();
             #[cfg(feature = "wifi-auto")]
             let interface_menu_details = build_interface_menu_details(
-                ui_state.selected_card(&cards),
+                ui_state.selected_card(content.cards),
                 &snapshots,
                 usb_status,
                 &wifi_config,
@@ -395,7 +397,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             );
             #[cfg(not(feature = "wifi-auto"))]
             let interface_menu_details = screen::InterfaceMenuDetails::empty();
-            ui_state.sync_card_count_with_footer(card_count, has_local_docs);
+            ui_state.sync(content);
             if notice_until_ms.is_some_and(|until| now_ms >= until) {
                 ui_state.clear_notice();
                 notice_until_ms = None;
@@ -419,10 +421,9 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 screen::render(
                     &mut display,
                     screen::RenderFrame {
-                        cards: &cards,
+                        content,
                         battery: battery_state,
                         state: &ui_state,
-                        local_docs: local_docs.as_ref(),
                         interface_menu_details: &interface_menu_details,
                         animation_ms: now_ms,
                     },
@@ -460,7 +461,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                         continue;
                     }
                     oled_off_at_ms = None;
-                    match ui_state.handle_input_with_footer(event, &cards, has_local_docs) {
+                    match ui_state.handle_input(event, content) {
                         screen::UiAction::OledOff => {
                             ui_state.show_notice(screen::UiNotice::OledOff);
                             notice_until_ms = Some(now_ms + NOTICE_MS);
@@ -524,7 +525,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                             }));
                         }
                         screen::UiAction::ToggleSelectedInterface => {
-                            if let Some(card) = ui_state.selected_card(&cards) {
+                            if let Some(card) = ui_state.selected_card(content.cards) {
                                 let mut handled = false;
                                 let mut show_toggle_notice = |enabled: bool| {
                                     ui_state.show_notice(if enabled {

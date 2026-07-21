@@ -24,8 +24,8 @@ use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 use personal_hopspot_core::{
-    self as screen, AccessPointState, Card, DisplayPowerControl, InputEvent, UiAction,
-    UiConfiguration, UiState,
+    self as screen, AccessPointState, Card, DisplayPowerControl, InputEvent, ScreenContent,
+    UiAction, UiConfiguration, UiState,
 };
 
 use super::runtime::{classify, WindowHandles, USB_INTERFACE_ID};
@@ -69,14 +69,13 @@ fn press_start(source: PressSource) -> PressStart {
 fn dispatch_long_press_if_ready(
     active_press: &mut Option<PressStart>,
     now: Instant,
-    cards: &[Card],
-    has_footer: bool,
+    content: ScreenContent<'_, '_>,
     ui_state: &mut UiState,
 ) -> UiAction {
     let Some(press) = active_press.as_mut() else {
         return UiAction::None;
     };
-    if cards.is_empty()
+    if content.cards.is_empty()
         || press.long_press_sent
         || now.duration_since(press.started_at) < LONG_PRESS_THRESHOLD
     {
@@ -84,15 +83,14 @@ fn dispatch_long_press_if_ready(
     }
 
     press.long_press_sent = true;
-    ui_state.handle_input_with_footer(InputEvent::LongPress, cards, has_footer)
+    ui_state.handle_input(InputEvent::LongPress, content)
 }
 
 fn finish_press(
     active_press: &mut Option<PressStart>,
     source: PressSource,
     released_at: Instant,
-    cards: &[Card],
-    has_footer: bool,
+    content: ScreenContent<'_, '_>,
     ui_state: &mut UiState,
 ) -> UiAction {
     let Some(press) = active_press.take() else {
@@ -112,11 +110,11 @@ fn finish_press(
     } else {
         InputEvent::ShortPress
     };
-    ui_state.handle_input_with_footer(event, cards, has_footer)
+    ui_state.handle_input(event, content)
 }
 
-fn selected_card_id(ui_state: &UiState, cards: &[Card]) -> Option<InterfaceId> {
-    ui_state.selected_card(cards).map(|card| card.id())
+fn selected_card_id(ui_state: &UiState, content: ScreenContent<'_, '_>) -> Option<InterfaceId> {
+    ui_state.selected_card(content.cards).map(|card| card.id())
 }
 
 struct LoggedStatus {
@@ -657,11 +655,14 @@ pub(super) fn run_window(handles: WindowHandles) {
     let mut interface_changes = query_handle.interface_store().subscribe();
     let mut cards: HVec<Card, 16> = HVec::new();
     let mut activity = screen::CardActivityTracker::<16>::new();
-    let has_local_docs = false;
     let activity_started = Instant::now();
     let mut needs_redraw = true;
     let mut last_redraw = Instant::now();
     loop {
+        let content = ScreenContent {
+            cards: &cards,
+            local_docs: None,
+        };
         if let Some(tray) = tray.as_mut() {
             for control in tray.drain_controls(window.is_visible()) {
                 match control {
@@ -708,11 +709,10 @@ pub(super) fn run_window(handles: WindowHandles) {
                         &mut active_press,
                         PressSource::Key,
                         Instant::now(),
-                        &cards,
-                        has_local_docs,
+                        content,
                         &mut ui_state,
                     );
-                    let selected = selected_card_id(&ui_state, &cards);
+                    let selected = selected_card_id(&ui_state, content);
                     apply_action(
                         released,
                         selected,
@@ -731,11 +731,10 @@ pub(super) fn run_window(handles: WindowHandles) {
                         &mut active_press,
                         PressSource::Mouse,
                         Instant::now(),
-                        &cards,
-                        has_local_docs,
+                        content,
                         &mut ui_state,
                     );
-                    let selected = selected_card_id(&ui_state, &cards);
+                    let selected = selected_card_id(&ui_state, content);
                     apply_action(
                         released,
                         selected,
@@ -752,14 +751,9 @@ pub(super) fn run_window(handles: WindowHandles) {
         }
 
         let holding = active_press.is_some();
-        let long_press = dispatch_long_press_if_ready(
-            &mut active_press,
-            Instant::now(),
-            &cards,
-            has_local_docs,
-            &mut ui_state,
-        );
-        let selected = selected_card_id(&ui_state, &cards);
+        let long_press =
+            dispatch_long_press_if_ready(&mut active_press, Instant::now(), content, &mut ui_state);
+        let selected = selected_card_id(&ui_state, content);
         apply_action(
             long_press,
             selected,
@@ -823,9 +817,13 @@ pub(super) fn run_window(handles: WindowHandles) {
                 .as_secs()
                 .min(u64::from(u32::MAX)) as u32;
             activity.update(&mut cards, activity_secs);
-            ui_state.sync_card_count_with_footer(cards.len(), has_local_docs);
+            let content = ScreenContent {
+                cards: &cards,
+                local_docs: None,
+            };
+            ui_state.sync(content);
             let interface_menu_details = screen::snapshots_to_interface_menu_details(
-                ui_state.selected_card(&cards),
+                ui_state.selected_card(content.cards),
                 &snapshots,
             );
             let battery = screen::BatteryGauge::lipo().sample(&mut screen::NoBattery);
@@ -836,10 +834,9 @@ pub(super) fn run_window(handles: WindowHandles) {
             screen::render(
                 &mut display,
                 screen::RenderFrame {
-                    cards: &cards,
+                    content,
                     battery,
                     state: &ui_state,
-                    local_docs: None,
                     interface_menu_details: &interface_menu_details,
                     animation_ms,
                 },
@@ -876,6 +873,13 @@ mod tests {
         )
     }
 
+    fn test_content(cards: &[Card]) -> ScreenContent<'_, 'static> {
+        ScreenContent {
+            cards,
+            local_docs: None,
+        }
+    }
+
     #[test]
     fn release_before_threshold_is_short_press() {
         let started_at = Instant::now();
@@ -886,13 +890,13 @@ mod tests {
         });
         let mut ui_state = ui_state();
         let cards = test_cards();
+        let content = test_content(&cards);
 
         finish_press(
             &mut active_press,
             PressSource::Key,
             started_at + LONG_PRESS_THRESHOLD - Duration::from_millis(1),
-            &cards,
-            false,
+            content,
             &mut ui_state,
         );
 
@@ -911,12 +915,12 @@ mod tests {
         });
         let mut ui_state = ui_state();
         let cards = test_cards();
+        let content = test_content(&cards);
 
         dispatch_long_press_if_ready(
             &mut active_press,
             started_at + LONG_PRESS_THRESHOLD,
-            &cards,
-            false,
+            content,
             &mut ui_state,
         );
 
@@ -934,20 +938,19 @@ mod tests {
         });
         let mut ui_state = ui_state();
         let cards = test_cards();
+        let content = test_content(&cards);
 
         dispatch_long_press_if_ready(
             &mut active_press,
             started_at + LONG_PRESS_THRESHOLD,
-            &cards,
-            false,
+            content,
             &mut ui_state,
         );
         finish_press(
             &mut active_press,
             PressSource::Key,
             started_at + LONG_PRESS_THRESHOLD + Duration::from_millis(1),
-            &cards,
-            false,
+            content,
             &mut ui_state,
         );
 
@@ -965,13 +968,13 @@ mod tests {
         });
         let mut ui_state = ui_state();
         let cards = test_cards();
+        let content = test_content(&cards);
 
         finish_press(
             &mut active_press,
             PressSource::Key,
             started_at + LONG_PRESS_THRESHOLD,
-            &cards,
-            false,
+            content,
             &mut ui_state,
         );
 

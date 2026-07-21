@@ -8,7 +8,8 @@ pub use battery::{BatteryGauge, BatteryPercent, BatterySource, BatteryState, NoB
 pub use screen::{
     card_label, render, splash, tcp_card_label, AccessPointState, Card, CardActivityTracker,
     CardKind, CardLabel, DisplayPowerControl, InputEvent, InterfaceMenuDetails, Liveness,
-    LocalDocsAccess, RenderFrame, UiAction, UiConfiguration, UiNotice, UiState, WifiNetworkStatus,
+    LocalDocsAccess, RenderFrame, ScreenContent, UiAction, UiConfiguration, UiNotice, UiState,
+    WifiNetworkStatus,
 };
 
 use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceSnapshot, Membership};

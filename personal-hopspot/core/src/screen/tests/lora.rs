@@ -15,7 +15,7 @@ fn lora_working_profile(state: &UiState) -> RadioProfile {
 }
 
 fn input(state: &mut UiState, event: InputEvent) -> UiAction {
-    state.handle_input(event, &test_cards::<1>(CardKind::LoRa))
+    state.handle_input(event, test_content(&test_cards::<1>(CardKind::LoRa)))
 }
 
 fn tap(state: &mut UiState, times: usize) {

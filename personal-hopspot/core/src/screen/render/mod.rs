@@ -14,8 +14,8 @@ use embedded_graphics::text::{Baseline, Text};
 use crate::battery::BatteryState;
 
 use super::limits::build_limit_rows;
-use super::model::{Card, InterfaceMenuDetails, LocalDocsAccess};
-use super::state::{focus_item_count_with_footer, visible_start_for, UiMode, UiState};
+use super::model::{InterfaceMenuDetails, ScreenContent};
+use super::state::{focus_item_count, visible_start_for, UiMode, UiState};
 use cards::{draw_card_peek, draw_card_with_selection, draw_footer, draw_global_row};
 use glyphs::draw_title_bar;
 use layout::*;
@@ -26,23 +26,23 @@ use menus::{
 };
 
 pub struct RenderFrame<'frame, 'docs> {
-    pub cards: &'frame [Card],
+    pub content: ScreenContent<'frame, 'docs>,
     pub battery: BatteryState,
     pub state: &'frame UiState,
-    pub local_docs: Option<&'frame LocalDocsAccess<'docs>>,
     pub interface_menu_details: &'frame InterfaceMenuDetails,
     pub animation_ms: u64,
 }
 
 pub fn render<D: DrawTarget<Color = BinaryColor>>(display: &mut D, frame: RenderFrame<'_, '_>) {
     let RenderFrame {
-        cards,
+        content,
         battery,
         state,
-        local_docs,
         interface_menu_details,
         animation_ms,
     } = frame;
+    let cards = content.cards;
+    let local_docs = content.local_docs;
     let _ = display.clear(BinaryColor::Off);
     draw_title_bar(display, battery, animation_ms);
 
@@ -90,7 +90,7 @@ pub fn render<D: DrawTarget<Color = BinaryColor>>(display: &mut D, frame: Render
     }
 
     let selected = state.selected_card_index(cards.len());
-    let item_count = focus_item_count_with_footer(cards.len(), local_docs.is_some());
+    let item_count = focus_item_count(content);
     let footer_focus = cards.len() + 1;
     let start = visible_start_for(item_count, state.selected_focus, state.visible_start);
     let mut top = CARD_TOP;

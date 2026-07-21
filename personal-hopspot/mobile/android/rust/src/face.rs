@@ -2,7 +2,7 @@ use heapless::Vec as HVec;
 use personal_hopspot_core::{
     render, snapshots_to_cards, snapshots_to_interface_menu_details, splash, AccessPointState,
     BatteryState, Card, CardActivityTracker, DisplayPowerControl, InputEvent, RenderFrame,
-    UiAction, UiConfiguration, UiNotice, UiState,
+    ScreenContent, UiAction, UiConfiguration, UiNotice, UiState,
 };
 use personal_rns::interfaces::{InterfaceSnapshot, InterfaceStatus};
 use personal_rns::storage::{GrowableHeap, StorageLayout};
@@ -58,10 +58,14 @@ impl HopspotFace {
 
     pub fn post_input(&mut self, event: InputEvent) -> UiAction {
         let cards = self.build_cards();
-        let action = self.state.handle_input(event, &cards);
+        let content = ScreenContent {
+            cards: &cards,
+            local_docs: None,
+        };
+        let action = self.state.handle_input(event, content);
         match action {
             UiAction::ToggleSelectedInterface => {
-                if let Some(card) = self.state.selected_card(&cards) {
+                if let Some(card) = self.state.selected_card(content.cards) {
                     let id = card.id();
                     let turning_on = card.liveness() == personal_hopspot_core::Liveness::Disabled;
                     self.show_notice(if turning_on {
@@ -116,7 +120,11 @@ impl HopspotFace {
         snapshots: &[InterfaceSnapshot],
         out_rgba: &mut [u8],
     ) {
-        self.state.sync_card_count(cards.len());
+        let content = ScreenContent {
+            cards,
+            local_docs: None,
+        };
+        self.state.sync(content);
         if self
             .notice_started
             .is_some_and(|started| started.elapsed() >= NOTICE_TIMEOUT)
@@ -133,15 +141,16 @@ impl HopspotFace {
                 .elapsed()
                 .as_millis()
                 .min(u128::from(u64::MAX)) as u64;
-            let interface_menu_details =
-                snapshots_to_interface_menu_details(self.state.selected_card(cards), snapshots);
+            let interface_menu_details = snapshots_to_interface_menu_details(
+                self.state.selected_card(content.cards),
+                snapshots,
+            );
             render(
                 &mut self.framebuffer,
                 RenderFrame {
-                    cards,
+                    content,
                     battery: self.battery,
                     state: &self.state,
-                    local_docs: None,
                     interface_menu_details: &interface_menu_details,
                     animation_ms,
                 },
@@ -245,7 +254,13 @@ mod tests {
         let mut after = fresh_buffer();
 
         face.render_cards(&cards, &[], &mut before);
-        let _ = face.state.handle_input(InputEvent::ShortPress, &cards);
+        let _ = face.state.handle_input(
+            InputEvent::ShortPress,
+            ScreenContent {
+                cards: &cards,
+                local_docs: None,
+            },
+        );
         face.render_cards(&cards, &[], &mut after);
 
         assert_ne!(before, after);
@@ -259,7 +274,13 @@ mod tests {
         let mut after = fresh_buffer();
 
         face.render_cards(&cards, &[], &mut before);
-        let _ = face.state.handle_input(InputEvent::LongPress, &cards);
+        let _ = face.state.handle_input(
+            InputEvent::LongPress,
+            ScreenContent {
+                cards: &cards,
+                local_docs: None,
+            },
+        );
         face.render_cards(&cards, &[], &mut after);
 
         assert_ne!(before, after);

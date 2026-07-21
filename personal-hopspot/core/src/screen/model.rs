@@ -369,3 +369,9 @@ pub struct LocalDocsAccess<'a> {
     pub wifi_ssid: &'a str,
     pub docs_host: &'a str,
 }
+
+#[derive(Clone, Copy)]
+pub struct ScreenContent<'content, 'docs> {
+    pub cards: &'content [Card],
+    pub local_docs: Option<&'content LocalDocsAccess<'docs>>,
+}

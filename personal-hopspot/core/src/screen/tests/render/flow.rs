@@ -6,8 +6,9 @@ fn render_marks_selected_card_below_global_row() {
     display.set_allow_overdraw(true);
     display.set_allow_out_of_bounds_drawing(true);
     let cards = [test_card("A"), test_card("B")];
+    let content = test_content(&cards);
     let mut state = test_ui_state();
-    state.handle_input(InputEvent::ShortPress, &cards);
+    state.handle_input(InputEvent::ShortPress, content);
 
     render_with_state(&mut display, &cards, BatteryState::Unknown, &state);
 
@@ -15,7 +16,7 @@ fn render_marks_selected_card_below_global_row() {
     assert!(state
         .selected_card(&cards)
         .is_some_and(|selected| core::ptr::eq(selected, &cards[0])));
-    assert_eq!(state.visible_start(cards.len()), 0);
+    assert_eq!(state.visible_start, 0);
     assert_eq!(
         display.get_pixel(Point::new(NAME_BACKING_X, selected_top + NAME_BACKING_Y)),
         Some(BinaryColor::On)
@@ -88,12 +89,16 @@ fn render_scrolls_local_docs_after_the_last_card() {
         wifi_ssid: "Hopspot-EW53",
         docs_host: "127.0.0.1",
     };
+    let content = ScreenContent {
+        cards: &cards,
+        local_docs: Some(&local_docs),
+    };
     for _ in 0..4 {
-        state.handle_input_with_footer(InputEvent::ShortPress, &cards, true);
+        state.handle_input(InputEvent::ShortPress, content);
     }
 
     assert!(state.selected_card(&cards).is_none());
-    assert_eq!(state.visible_start_with_footer(cards.len(), true), 3);
+    assert_eq!(state.visible_start, 3);
 
     let mut display = PanelDisplay::new();
     render_with_local_docs(
@@ -118,8 +123,12 @@ fn render_shows_local_docs_access_details() {
         wifi_ssid: "Hopspot-EW53",
         docs_host: "192.168.4.1",
     };
+    let content = ScreenContent {
+        cards: &cards,
+        local_docs: Some(&local_docs),
+    };
     for _ in 0..4 {
-        state.handle_input_with_footer(InputEvent::ShortPress, &cards, true);
+        state.handle_input(InputEvent::ShortPress, content);
     }
 
     let mut display = PanelDisplay::new();
@@ -141,10 +150,18 @@ fn render_shows_local_docs_access_details() {
 #[test]
 fn footer_focus_long_press_opens_docs() {
     let cards = [test_card("USB")];
+    let local_docs = LocalDocsAccess {
+        wifi_ssid: "Hopspot-EW53",
+        docs_host: "192.168.4.1",
+    };
+    let content = ScreenContent {
+        cards: &cards,
+        local_docs: Some(&local_docs),
+    };
     let mut state = test_ui_state();
 
     assert_eq!(
-        state.handle_input_with_footer(InputEvent::ShortPress, &cards, true),
+        state.handle_input(InputEvent::ShortPress, content),
         UiAction::None
     );
     assert!(state
@@ -152,13 +169,13 @@ fn footer_focus_long_press_opens_docs() {
         .is_some_and(|selected| core::ptr::eq(selected, &cards[0])));
 
     assert_eq!(
-        state.handle_input_with_footer(InputEvent::ShortPress, &cards, true),
+        state.handle_input(InputEvent::ShortPress, content),
         UiAction::None
     );
     assert!(state.selected_card(&cards).is_none());
 
     assert_eq!(
-        state.handle_input_with_footer(InputEvent::LongPress, &cards, true),
+        state.handle_input(InputEvent::LongPress, content),
         UiAction::OpenDocs
     );
 }
@@ -169,17 +186,18 @@ fn render_scrolls_global_row_out_of_card_window() {
     display.set_allow_overdraw(true);
     display.set_allow_out_of_bounds_drawing(true);
     let cards = [test_card("A"), test_card("B"), test_card("C")];
+    let content = test_content(&cards);
     let mut state = test_ui_state();
-    state.handle_input(InputEvent::ShortPress, &cards);
-    state.handle_input(InputEvent::ShortPress, &cards);
-    state.handle_input(InputEvent::ShortPress, &cards);
+    state.handle_input(InputEvent::ShortPress, content);
+    state.handle_input(InputEvent::ShortPress, content);
+    state.handle_input(InputEvent::ShortPress, content);
 
     render_with_state(&mut display, &cards, BatteryState::Unknown, &state);
 
     assert!(state
         .selected_card(&cards)
         .is_some_and(|selected| core::ptr::eq(selected, &cards[2])));
-    assert_eq!(state.visible_start(cards.len()), 2);
+    assert_eq!(state.visible_start, 2);
     assert_eq!(
         display.get_pixel(Point::new(0, CARD_TOP)),
         Some(BinaryColor::On)
@@ -196,8 +214,9 @@ fn render_shows_global_menu() {
     display.set_allow_overdraw(true);
     display.set_allow_out_of_bounds_drawing(true);
     let cards = [test_card("USB")];
+    let content = test_content(&cards);
     let mut state = test_ui_state();
-    state.handle_input(InputEvent::LongPress, &cards);
+    state.handle_input(InputEvent::LongPress, content);
 
     render_with_state(&mut display, &cards, BatteryState::Unknown, &state);
 
@@ -241,10 +260,11 @@ fn render_shows_selected_interface_menu() {
             last_activity_secs: None,
         },
     ];
+    let content = test_content(&cards);
     let mut state = test_ui_state();
-    state.handle_input(InputEvent::ShortPress, &cards);
-    state.handle_input(InputEvent::ShortPress, &cards);
-    state.handle_input(InputEvent::LongPress, &cards);
+    state.handle_input(InputEvent::ShortPress, content);
+    state.handle_input(InputEvent::ShortPress, content);
+    state.handle_input(InputEvent::LongPress, content);
 
     render_with_state(&mut display, &cards, BatteryState::Unknown, &state);
 

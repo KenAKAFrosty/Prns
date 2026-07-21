@@ -7,7 +7,7 @@ mod state;
 
 pub use model::{
     card_label, tcp_card_label, Card, CardActivityTracker, CardKind, CardLabel,
-    InterfaceMenuDetails, Liveness, LocalDocsAccess, WifiNetworkStatus,
+    InterfaceMenuDetails, Liveness, LocalDocsAccess, ScreenContent, WifiNetworkStatus,
 };
 pub(crate) use model::{liveness_from_connection, sort_cards_for_display};
 pub use render::{render, splash, RenderFrame};

@@ -41,7 +41,7 @@ use super::state::{
 use super::{
     card_label, render as render_screen, sort_cards_for_display, AccessPointState, Card,
     CardActivityTracker, CardKind, DisplayPowerControl, InputEvent, InterfaceMenuDetails, Liveness,
-    LocalDocsAccess, RenderFrame, UiAction, UiConfiguration, UiState,
+    LocalDocsAccess, RenderFrame, ScreenContent, UiAction, UiConfiguration, UiState,
 };
 
 const TEST_WIDTH: usize = WIDTH as usize;
@@ -99,10 +99,9 @@ fn render_with_state<D: DrawTarget<Color = BinaryColor>>(
     render_screen(
         display,
         RenderFrame {
-            cards,
+            content: test_content(cards),
             battery,
             state,
-            local_docs: None,
             interface_menu_details: &interface_menu_details,
             animation_ms: 0,
         },
@@ -120,10 +119,12 @@ fn render_with_local_docs<D: DrawTarget<Color = BinaryColor>>(
     render_screen(
         display,
         RenderFrame {
-            cards,
+            content: ScreenContent {
+                cards,
+                local_docs: Some(local_docs),
+            },
             battery,
             state,
-            local_docs: Some(local_docs),
             interface_menu_details: &interface_menu_details,
             animation_ms: 0,
         },
@@ -152,6 +153,13 @@ fn test_cards<const N: usize>(kind: CardKind) -> [Card; N] {
         card.kind = kind;
         card
     })
+}
+
+fn test_content(cards: &[Card]) -> ScreenContent<'_, 'static> {
+    ScreenContent {
+        cards,
+        local_docs: None,
+    }
 }
 
 fn test_ui_state() -> UiState {
