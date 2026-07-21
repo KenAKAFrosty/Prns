@@ -1,4 +1,8 @@
 use std::collections::HashMap;
+#[cfg(target_os = "linux")]
+use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(target_os = "linux")]
+use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
 use embedded_graphics::pixelcolor::BinaryColor;
@@ -14,7 +18,9 @@ use personal_rns::storage::{GrowableHeap, StorageLayout};
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::PixelFormatEnum;
+#[cfg(not(target_os = "linux"))]
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
+#[cfg(not(target_os = "linux"))]
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 use personal_hopspot_core::{self as screen, Card, CardKind, InputEvent, UiAction, UiState};
@@ -127,6 +133,7 @@ enum DesktopControl {
     Quit,
 }
 
+#[cfg(not(target_os = "linux"))]
 struct TrayController {
     icon: TrayIcon,
     window_item: MenuItem,
@@ -135,11 +142,9 @@ struct TrayController {
     window_open: bool,
 }
 
+#[cfg(not(target_os = "linux"))]
 impl TrayController {
     fn new(window_open: bool) -> Result<Self, String> {
-        #[cfg(target_os = "linux")]
-        gtk::init().map_err(|error| format!("gtk init failed: {error}"))?;
-
         let window_item = MenuItem::with_id(
             "hopspot-window",
             if window_open {
@@ -183,7 +188,6 @@ impl TrayController {
 
     fn drain_controls(&mut self, window_open: bool) -> Vec<DesktopControl> {
         self.set_window_open(window_open);
-        pump_tray_platform_events();
 
         let mut controls = Vec::new();
         while let Ok(event) = MenuEvent::receiver().try_recv() {
@@ -221,16 +225,120 @@ impl TrayController {
 }
 
 #[cfg(target_os = "linux")]
-fn pump_tray_platform_events() {
-    while gtk::events_pending() {
-        gtk::main_iteration_do(false);
+struct LinuxTray {
+    controls: mpsc::Sender<DesktopControl>,
+    window_open: Arc<AtomicBool>,
+}
+
+#[cfg(target_os = "linux")]
+impl ksni::Tray for LinuxTray {
+    fn id(&self) -> String {
+        "personal-hopspot".into()
+    }
+
+    fn title(&self) -> String {
+        "Personal Hopspot".into()
+    }
+
+    fn activate(&mut self, _x: i32, _y: i32) {
+        let _ = self.controls.send(DesktopControl::ShowWindow);
+    }
+
+    fn icon_pixmap(&self) -> Vec<ksni::Icon> {
+        let (rgba, size) = hopspot_tray_rgba();
+        let mut argb = Vec::with_capacity(rgba.len());
+        for pixel in rgba.chunks_exact(4) {
+            argb.extend_from_slice(&[pixel[3], pixel[0], pixel[1], pixel[2]]);
+        }
+        vec![ksni::Icon {
+            width: size as i32,
+            height: size as i32,
+            data: argb,
+        }]
+    }
+
+    fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
+        use ksni::menu::StandardItem;
+
+        vec![
+            StandardItem {
+                label: if self.window_open.load(Ordering::Relaxed) {
+                    "Hide Hopspot".into()
+                } else {
+                    "Open Hopspot".into()
+                },
+                activate: Box::new(|tray| {
+                    let control = if tray.window_open.load(Ordering::Relaxed) {
+                        DesktopControl::HideWindow
+                    } else {
+                        DesktopControl::ShowWindow
+                    };
+                    let _ = tray.controls.send(control);
+                }),
+                ..Default::default()
+            }
+            .into(),
+            StandardItem {
+                label: "Announce Now".into(),
+                activate: Box::new(|tray| {
+                    let _ = tray.controls.send(DesktopControl::Announce);
+                }),
+                ..Default::default()
+            }
+            .into(),
+            ksni::MenuItem::Separator,
+            StandardItem {
+                label: "Quit Hopspot".into(),
+                activate: Box::new(|tray| {
+                    let _ = tray.controls.send(DesktopControl::Quit);
+                }),
+                ..Default::default()
+            }
+            .into(),
+        ]
+    }
+}
+
+#[cfg(target_os = "linux")]
+struct TrayController {
+    _handle: ksni::blocking::Handle<LinuxTray>,
+    controls: mpsc::Receiver<DesktopControl>,
+    window_open: Arc<AtomicBool>,
+}
+
+#[cfg(target_os = "linux")]
+impl TrayController {
+    fn new(window_open: bool) -> Result<Self, String> {
+        use ksni::blocking::TrayMethods;
+
+        let (sender, controls) = mpsc::channel();
+        let window_open = Arc::new(AtomicBool::new(window_open));
+        let handle = LinuxTray {
+            controls: sender,
+            window_open: window_open.clone(),
+        }
+        .spawn()
+        .map_err(|error| format!("StatusNotifier tray start failed: {error}"))?;
+        Ok(Self {
+            _handle: handle,
+            controls,
+            window_open,
+        })
+    }
+
+    fn drain_controls(&mut self, window_open: bool) -> Vec<DesktopControl> {
+        self.window_open.store(window_open, Ordering::Relaxed);
+        self.controls.try_iter().collect()
     }
 }
 
 #[cfg(not(target_os = "linux"))]
-fn pump_tray_platform_events() {}
-
 fn hopspot_tray_icon() -> Result<Icon, String> {
+    let (rgba, size) = hopspot_tray_rgba();
+    Icon::from_rgba(rgba, size, size).map_err(|error| format!("tray icon pixels invalid: {error}"))
+}
+
+fn hopspot_tray_rgba() -> (Vec<u8>, u32) {
     const SIZE: u32 = 32;
     let mut rgba = vec![0u8; (SIZE * SIZE * 4) as usize];
     let center = (SIZE as f32 - 1.0) / 2.0;
@@ -253,7 +361,7 @@ fn hopspot_tray_icon() -> Result<Icon, String> {
             }
         }
     }
-    Icon::from_rgba(rgba, SIZE, SIZE).map_err(|error| format!("tray icon pixels invalid: {error}"))
+    (rgba, SIZE)
 }
 
 struct HopspotWindow {

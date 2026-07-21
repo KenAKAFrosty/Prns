@@ -11,6 +11,7 @@
 		ABCDEF0123456789ABCD0018 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABCDEF0123456789ABCD0012 /* ContentView.swift */; };
 		ABCDEF0123456789ABCD0019 /* HopspotBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABCDEF0123456789ABCD0013 /* HopspotBridge.swift */; };
 		ABCDEF0123456789ABCD001A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = ABCDEF0123456789ABCD0014 /* Assets.xcassets */; };
+		ABCDEF0123456789ABCD001B /* THIRD_PARTY_NOTICES.md in Resources */ = {isa = PBXBuildFile; fileRef = ABCDEF0123456789ABCD001C /* THIRD_PARTY_NOTICES.md */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -21,6 +22,7 @@
 		ABCDEF0123456789ABCD0014 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		ABCDEF0123456789ABCD0015 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		ABCDEF0123456789ABCD0016 /* PersonalHopspot-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "PersonalHopspot-Bridging-Header.h"; sourceTree = "<group>"; };
+		ABCDEF0123456789ABCD001C /* THIRD_PARTY_NOTICES.md */ = {isa = PBXFileReference; lastKnownFileType = text; path = ../../../../../THIRD_PARTY_NOTICES.md; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -59,6 +61,7 @@
 				ABCDEF0123456789ABCD0016 /* PersonalHopspot-Bridging-Header.h */,
 				ABCDEF0123456789ABCD0014 /* Assets.xcassets */,
 				ABCDEF0123456789ABCD0015 /* Info.plist */,
+				ABCDEF0123456789ABCD001C /* THIRD_PARTY_NOTICES.md */,
 			);
 			path = PersonalHopspot;
 			sourceTree = "<group>";
@@ -123,6 +126,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				ABCDEF0123456789ABCD001A /* Assets.xcassets in Resources */,
+				ABCDEF0123456789ABCD001B /* THIRD_PARTY_NOTICES.md in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

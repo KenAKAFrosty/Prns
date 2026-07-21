@@ -54,6 +54,20 @@ jobs:
         with:
           shared-key: hardening-geiger
       - run: cargo install cargo-geiger --version 0.13.0 --locked
-      - run: bash scripts/geiger.sh --entrypoints
-      - run: bash scripts/geiger.sh --inventory
+      - name: compiler boundary evidence
+        run: |
+          mkdir -p hardening-logs
+          bash scripts/geiger.sh --entrypoints 2>&1 | tee hardening-logs/geiger-entrypoints.log
+      - name: supplemental dependency inventory
+        id: geiger_inventory
+        run: bash scripts/geiger.sh --inventory > hardening-logs/geiger-inventory.log 2>&1
         continue-on-error: true
+      - name: report incomplete Geiger parsing
+        if: steps.geiger_inventory.outcome == 'failure'
+        run: echo '::warning::cargo-geiger dependency inventory was incomplete; inspect the uploaded parser log. This is not a green security gate.'
+      - name: upload Geiger evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cargo-geiger-evidence
+          path: hardening-logs/*.log

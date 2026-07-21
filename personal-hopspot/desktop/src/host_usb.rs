@@ -21,7 +21,7 @@ use personal_rns::tcp::tune;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
 
-use crate::host_serial::{open_host_serial, HostSerial};
+use personal_rns::serial::{open_host_serial, scan_usb_serial_ports, HostSerial};
 
 const GOOGLE_VENDOR_ID: u16 = 0x18D1;
 const AOA_PRODUCT_ACCESSORY: u16 = 0x2D00;
@@ -178,11 +178,10 @@ fn malformed_target() -> io::Error {
 }
 
 pub fn scan_usb_auto_targets() -> Vec<String> {
-    let mut targets: Vec<String> = serialport::available_ports()
+    let mut targets: Vec<String> = scan_usb_serial_ports()
         .unwrap_or_default()
         .into_iter()
-        .filter(|info| matches!(info.port_type, serialport::SerialPortType::UsbPort(_)))
-        .map(|info| UsbAutoTarget::Cdc(info.port_name).encode())
+        .map(|path| UsbAutoTarget::Cdc(path).encode())
         .collect();
     if let Some(target) = configured_usbmux_target() {
         targets.push(UsbAutoTarget::UsbMuxTcp { target }.encode());

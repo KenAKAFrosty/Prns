@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 pub mod configobj;
 pub mod diagnostic;
 pub mod discovery;

@@ -1,8 +1,8 @@
 mod host;
 
 pub use host::{
-    open_host_serial, open_host_serial_with_settings, HostSerial, HostSerialDataBits,
-    HostSerialLineSettings, HostSerialParity, HostSerialStopBits,
+    open_host_serial, open_host_serial_with_settings, scan_usb_serial_ports, HostSerial,
+    HostSerialDataBits, HostSerialLineSettings, HostSerialParity, HostSerialStopBits,
 };
 
 use std::future::Future;
@@ -22,7 +22,7 @@ use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
 use prns_runtime::reactor::throughput::ThroughputLedger;
 
 /// A serial interface that owns its medium's whole lifecycle: `open` yields a fresh async
-/// byte stream (the consumer supplies it, e.g. a reopened `tokio_serial::SerialStream`), and
+/// byte stream (the consumer supplies it, e.g. a reopened [`HostSerial`]), and
 /// the interface reconnects on its own — serve a connection until it drops, wait for the reconnect delay,
 /// reopen. A single never-dropping stream is just a factory that yields once.
 pub struct SerialInterface<Open> {

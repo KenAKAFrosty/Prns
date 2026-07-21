@@ -79,7 +79,7 @@ fn probe(dir: PathBuf, exists: &impl Fn(&Path) -> bool) -> DiscoveredConfig {
 
 pub fn discover(override_dir: Option<&Path>) -> Result<DiscoveredConfig, DiscoveryError> {
     let exists = |path: &Path| path.is_file();
-    let dir = resolve_dir(override_dir, system_config_dir(), dirs::home_dir(), &exists)?;
+    let dir = resolve_dir(override_dir, system_config_dir(), home::home_dir(), &exists)?;
     Ok(probe(dir, &exists))
 }
 

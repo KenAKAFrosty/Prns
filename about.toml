@@ -1,0 +1,31 @@
+accepted = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+    "CC0-1.0",
+    "0BSD",
+    "bzip2-1.0.6",
+]
+ignore-dev-dependencies = true
+ignore-build-dependencies = false
+
+[ksni]
+accepted = ["Unlicense"]
+
+[nrf-softdevice-s140]
+accepted = ["LicenseRef-Nordic-SoftDevice"]
+
+[nrf-softdevice-s140.clarify]
+license = "LicenseRef-Nordic-SoftDevice"
+override-git-commit = "47d6121c6e823120e8b883a7ac75f44ce7daa3aa"
+
+[[nrf-softdevice-s140.clarify.files]]
+path = "LICENSE-NORDIC"
+license = "LicenseRef-Nordic-SoftDevice"
+checksum = "3f8a5738383719bbcd5975da82923797d707daa9507245d8c820e2b1df55c5c5"

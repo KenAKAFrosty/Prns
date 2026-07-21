@@ -73,6 +73,9 @@ struct L2capPool {
     free: [AtomicBool; L2CAP_POOL],
 }
 
+// SAFETY: A slot is handed out only after its AtomicBool changes true -> false with AcqRel, and it
+// returns to the pool only when its unique L2capPacket is dropped. No two threads can access the
+// same UnsafeCell while it is claimed.
 unsafe impl Sync for L2capPool {}
 
 static L2CAP_POOL_STORE: L2capPool = L2capPool {
@@ -108,6 +111,8 @@ pub(super) struct L2capPacket {
 impl L2capPacket {
     fn from_frame(frame: &[u8]) -> Option<Self> {
         let ptr = L2CAP_POOL_STORE.claim()?;
+        // SAFETY: `claim` uniquely reserves this entire fixed-size pool slot until `L2capPacket`
+        // releases it, and the pointer is aligned and valid for exactly L2CAP_MTU bytes.
         let buf = unsafe { core::slice::from_raw_parts_mut(ptr.as_ptr(), L2CAP_MTU) };
         match encode_stream_frame(frame, buf) {
             Some(len) => Some(Self { ptr, len }),
@@ -119,6 +124,8 @@ impl L2capPacket {
     }
 
     fn bytes(&self) -> &[u8] {
+        // SAFETY: `self` owns the claimed pool slot and `len` was produced by the bounded encoder
+        // (or the L2CAP implementation under the from_raw_parts contract), so it is within the slot.
         unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
     }
 }
@@ -136,6 +143,10 @@ impl l2cap::Packet for L2capPacket {
         parts
     }
 
+    /// # Safety
+    ///
+    /// `ptr` must be a uniquely claimed slot from `L2CAP_POOL_STORE`, and `len` must not exceed
+    /// `L2CAP_MTU`. Ownership transfers to the returned packet, which releases the slot on drop.
     unsafe fn from_raw_parts(ptr: NonNull<u8>, len: usize) -> Self {
         Self { ptr, len }
     }
@@ -263,6 +274,8 @@ pub(super) fn softdevice_config() -> nrf_softdevice::Config {
 
 pub(super) fn usb_vbus_present() -> bool {
     let mut status = 0u32;
+    // SAFETY: `status` is a live, aligned u32 out-parameter for the duration of the synchronous
+    // SoftDevice SVC; the SoftDevice has been enabled before this backend is queried.
     (unsafe { raw::sd_power_usbregstatus_get(&mut status) }) == raw::NRF_SUCCESS
         && status & 0x1 != 0
 }
@@ -1090,6 +1103,8 @@ pub(super) async fn scanner(sd: &'static Softdevice, hub: &'static BleHub) -> ! 
             if report.data.len == 0 {
                 return None;
             }
+            // SAFETY: The SoftDevice scan callback owns `report` for this invocation and guarantees
+            // `p_data` addresses `len` initialized bytes; the slice does not escape the callback.
             let data = unsafe {
                 core::slice::from_raw_parts(report.data.p_data, report.data.len as usize)
             };

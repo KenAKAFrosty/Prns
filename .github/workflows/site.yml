@@ -122,10 +122,10 @@ jobs:
       - name: Build hosted flash artifacts
         if: env.SITE_BUILD_MODE == 'full'
         run: |
-          cargo run -p hopspot-flash -- build t-echo --out-root docs/website/public
-          cargo run -p hopspot-flash -- build heltec-v4 --out-root docs/website/public
-          cargo run -p hopspot-flash -- build t-beam-supreme --out-root docs/website/public
-          cargo run -p hopspot-flash -- build xiao-esp32-c6 --out-root docs/website/public
+          cargo run --locked -p hopspot-flash -- build t-echo --out-root docs/website/public
+          cargo run --locked -p hopspot-flash -- build heltec-v4 --out-root docs/website/public
+          cargo run --locked -p hopspot-flash -- build t-beam-supreme --out-root docs/website/public
+          cargo run --locked -p hopspot-flash -- build xiao-esp32-c6 --out-root docs/website/public
 
       - name: Build site (web SPA)
         if: env.SITE_BUILD_MODE == 'full'
@@ -136,7 +136,7 @@ jobs:
 
       - name: Build workspace rustdoc
         if: env.SITE_BUILD_MODE == 'full'
-        run: cargo doc --no-deps --workspace
+        run: cargo doc --locked --no-deps --workspace
         env:
           RUSTDOCFLAGS: "-D warnings"
 
@@ -157,6 +157,8 @@ jobs:
           HTML
           # CNAME ensures the custom domain survives every publish.
           cp docs/website/public/CNAME "$DIST/CNAME"
+          # Hosted firmware and the web distribution carry the checked release notice bundle.
+          cp THIRD_PARTY_NOTICES.md "$DIST/THIRD_PARTY_NOTICES.md"
           echo "Dist contents:"
           ls -la "$DIST"
 

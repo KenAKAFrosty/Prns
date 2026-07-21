@@ -31,6 +31,6 @@ else
 fi
 
 echo "[docs] intra-doc links (personal-rns)"
-cargo doc -p personal-rns --no-deps --document-private-items --quiet
+cargo doc --locked -p personal-rns --no-deps --document-private-items --quiet
 
 echo "FMT_DOC_CHECK_GATE_OK"

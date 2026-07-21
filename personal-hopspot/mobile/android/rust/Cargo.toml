@@ -2,6 +2,7 @@
 name = "personal-hopspot-android"
 version = "0.1.0"
 edition = "2021"
+license = "MIT OR Apache-2.0"
 publish = false
 description = "Personal Hopspot Android face: a JNI + DrawTarget bridge that renders the shared Hopspot screen into an Android bitmap and feeds taps back as single-button input."
 
@@ -35,3 +36,9 @@ codegen-units = 1
 lto = "fat"
 opt-level = "s"
 strip = true
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "deny"

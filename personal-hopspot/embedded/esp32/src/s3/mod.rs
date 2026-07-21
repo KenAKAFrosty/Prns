@@ -362,6 +362,8 @@ const DCACHE_FREE_BASE: usize = 0x3FCF_0000;
 const DCACHE_FREE_LEN: usize = 32 * 1024;
 
 pub(crate) fn reclaim_dcache_region() {
+    // SAFETY: On this PSRAM-enabled ESP32-S3 layout, 0x3FCF0000..0x3FCF8000 is the documented
+    // unused DCache address window. This boot-only function runs once before any allocations.
     unsafe {
         esp_alloc::HEAP.add_region(esp_alloc::HeapRegion::new(
             DCACHE_FREE_BASE as *mut u8,
@@ -502,6 +504,8 @@ fn boot_radio_mode(station_configured: bool) -> RadioMode {
     let _ = station_configured;
     #[cfg(feature = "wifi-auto")]
     {
+        // SAFETY: Boot reads the aligned RTC-fast persistent word before concurrent tasks start;
+        // volatile semantics are not required because reset is the only cross-execution boundary.
         let flag = unsafe { core::ptr::addr_of!(RADIO_MODE_FLAG).read() };
         if flag == RADIO_MODE_AP {
             return RadioMode::AccessPoint;
@@ -520,6 +524,8 @@ fn request_radio_mode(mode: RadioMode) -> ! {
         RadioMode::AccessPoint => RADIO_MODE_AP,
         RadioMode::Ble => RADIO_MODE_BLE,
     };
+    // SAFETY: This is the sole write to the aligned RTC-fast word, immediately before a software
+    // reset; no other task can observe or concurrently access the mutable static.
     unsafe { core::ptr::addr_of_mut!(RADIO_MODE_FLAG).write(flag) };
     esp_hal::system::software_reset();
 }

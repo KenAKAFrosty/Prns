@@ -66,18 +66,24 @@ impl GattWriter {
                     peripheral,
                     characteristic,
                     ..
-                } => unsafe {
-                    peripheral.0.writeValue_forCharacteristic_type(
-                        &data,
-                        &characteristic.0,
-                        CBCharacteristicWriteType::WithoutResponse,
-                    );
-                },
+                } => {
+                    // SAFETY: the characteristic belongs to this retained peripheral and the
+                    // NSData remains live for the synchronous CoreBluetooth message.
+                    unsafe {
+                        peripheral.0.writeValue_forCharacteristic_type(
+                            &data,
+                            &characteristic.0,
+                            CBCharacteristicWriteType::WithoutResponse,
+                        );
+                    }
+                }
                 GattWriter::Listener {
                     manager,
                     characteristic,
                     ..
                 } => {
+                    // SAFETY: the retained mutable characteristic was published by this retained
+                    // manager; CoreBluetooth copies or retains the NSData during the call.
                     let sent = unsafe {
                         manager
                             .0
@@ -137,6 +143,8 @@ impl BleLink for GattLink {
             return Ok(());
         };
         let data = NSData::with_bytes(identity.as_bytes());
+        // SAFETY: the characteristic was discovered on this retained peripheral, and NSData stays
+        // alive for the duration of the synchronous CoreBluetooth write message.
         unsafe {
             peripheral.0.writeValue_forCharacteristic_type(
                 &data,
@@ -157,6 +165,8 @@ impl BleLink for GattLink {
                 characteristic,
                 ..
             } => {
+                // SAFETY: the retained characteristic was published by this manager and the
+                // notification data remains live throughout the synchronous message.
                 let sent = unsafe {
                     manager
                         .0
@@ -185,6 +195,8 @@ impl BleLink for GattLink {
                 characteristic,
                 ..
             } => {
+                // SAFETY: this retained CoreBluetooth peripheral is accessed only through the
+                // manager's serialized callbacks and exposes this immutable negotiated property.
                 let max = unsafe {
                     peripheral
                         .0
@@ -201,6 +213,8 @@ impl BleLink for GattLink {
                         self.address.octets()
                     );
                 }
+                // SAFETY: the characteristic belongs to this retained peripheral and `data` is
+                // valid for the full synchronous Objective-C message.
                 unsafe {
                     peripheral.0.writeValue_forCharacteristic_type(
                         &data,
@@ -333,6 +347,8 @@ fn gatt_writer(control: &ControlPlane) -> Option<GattWriter> {
         } => Some(GattWriter::Central {
             peripheral: SendPeripheral(peripheral.0.clone()),
             characteristic: SendCharacteristicRef(data_characteristic.0.clone()),
+            // SAFETY: this retained peripheral owns the discovered characteristic and querying its
+            // negotiated maximum does not outlive or mutate either object.
             fragment_mtu: unsafe {
                 peripheral
                     .0
@@ -398,6 +414,8 @@ impl L2capWriteHalf {
         let ptr = self.pump_ptr;
         self.queue.exec_async(move || {
             let ptr = ptr;
+            // SAFETY: PumpHandle keeps this Box-backed pointer alive and all dereferences plus final
+            // destruction are serialized on this same dispatch queue.
             flush(unsafe { &*ptr.0 });
         });
         Ok(())

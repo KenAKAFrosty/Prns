@@ -39,16 +39,24 @@ pub(super) struct StreamPump {
 
 #[derive(Clone, Copy)]
 pub(super) struct PumpPtr(pub(super) *const StreamPump);
+// SAFETY: PumpPtr is only dereferenced by jobs on the owning serial dispatch queue, and PumpHandle
+// schedules destruction on that same queue after all cloned handles have been dropped.
 unsafe impl Send for PumpPtr {}
 
 struct SendStreamPtr(*mut StreamPump);
+// SAFETY: ownership of this pointer is transferred exactly once to the owning serial dispatch
+// queue, where it is reconstructed into the original Box and freed.
 unsafe impl Send for SendStreamPtr {}
 
 pub(super) struct PumpHandle {
     ptr: *mut StreamPump,
     queue: DispatchRetained<DispatchQueue>,
 }
+// SAFETY: the handle never directly accesses the pointee; Drop transfers the final raw pointer to
+// the owning serial dispatch queue, so moving the handle between threads cannot race the pump.
 unsafe impl Send for PumpHandle {}
+// SAFETY: shared references only clone/hold the dispatch queue and pointer. All pointee access and
+// final destruction are serialized on that queue.
 unsafe impl Sync for PumpHandle {}
 
 impl Drop for PumpHandle {
@@ -56,6 +64,9 @@ impl Drop for PumpHandle {
         let raw = SendStreamPtr(self.ptr);
         self.queue.exec_async(move || {
             let raw = raw;
+            // SAFETY: this is the unique pointer produced by Box::into_raw in `wire_l2cap`. The
+            // queue owns all stream callbacks; removing both clients before closing the streams
+            // guarantees no callback can access the pump after Box::from_raw frees it.
             unsafe {
                 let pump = &*raw.0;
                 let cf_in = &*(Retained::as_ptr(&pump.input) as *const CFReadStream);
@@ -82,6 +93,8 @@ pub(super) fn flush(pump: &StreamPump) {
             let (front, _) = out.pending.as_slices();
             (front.as_ptr() as *mut u8, front.len())
         };
+        // SAFETY: `front` is non-empty and points into `out.pending`, whose mutex guard remains held
+        // for the call, so the non-null buffer is valid for exactly `len` bytes.
         let written = unsafe {
             pump.output
                 .write_maxLength(NonNull::new_unchecked(ptr), len)
@@ -106,10 +119,14 @@ unsafe extern "C-unwind" fn read_cb(
     event: CFStreamEventType,
     info: *mut c_void,
 ) {
+    // SAFETY: `wire_l2cap` registers `info` as its Box-backed StreamPump and unregisters the client
+    // callbacks on the same serial queue before freeing the allocation.
     let pump = unsafe { &*(info as *const StreamPump) };
     if (event.0 & CFStreamEventType::HasBytesAvailable.0) != 0 {
         let mut buf = [0u8; READ_CHUNK];
         while pump.input.hasBytesAvailable() {
+            // SAFETY: `buf.as_mut_ptr()` is non-null and valid for READ_CHUNK writable bytes for the
+            // duration of the synchronous NSInputStream read.
             let read = unsafe {
                 pump.input
                     .read_maxLength(NonNull::new_unchecked(buf.as_mut_ptr()), READ_CHUNK)
@@ -145,6 +162,8 @@ unsafe extern "C-unwind" fn write_cb(
     event: CFStreamEventType,
     info: *mut c_void,
 ) {
+    // SAFETY: `wire_l2cap` registers `info` as its Box-backed StreamPump and unregisters the client
+    // callbacks on the same serial queue before freeing the allocation.
     let pump = unsafe { &*(info as *const StreamPump) };
     if (event.0 & CFStreamEventType::CanAcceptBytes.0) != 0 {
         flush(pump);
@@ -164,7 +183,10 @@ pub(super) fn wire_l2cap(
     channel: &CBL2CAPChannel,
     queue: &DispatchRetained<DispatchQueue>,
 ) -> Option<DataPlane> {
+    // SAFETY: CoreBluetooth supplied a live retained channel, and its stream accessors return
+    // retained objects whose runtime types match the generated bindings.
     let input = unsafe { channel.inputStream() }?;
+    // SAFETY: as above, the live channel owns a correctly typed output stream.
     let output = unsafe { channel.outputStream() }?;
     let (inbound_tx, inbound_rx) = tokio_mpsc::channel::<Box<[u8]>>(16);
     let outbound = Arc::new(Mutex::new(Outbound {
@@ -178,6 +200,9 @@ pub(super) fn wire_l2cap(
         outbound: outbound.clone(),
         _channel: channel.retain(),
     }));
+    // SAFETY: `pump` is a live Box allocation kept by PumpHandle. NSInputStream/NSOutputStream are
+    // toll-free bridged to the corresponding CFStream types. The client context pointer stays live
+    // until PumpHandle unregisters both callbacks on this same serial queue before freeing it.
     unsafe {
         let pump_ref = &*pump;
         let cf_in = &*(Retained::as_ptr(&pump_ref.input) as *const CFReadStream);

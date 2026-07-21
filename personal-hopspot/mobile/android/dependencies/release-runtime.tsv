@@ -1,0 +1,5 @@
+# Exact releaseRuntimeClasspath baseline. Coordinate<TAB>SPDX expression.
+androidx.annotation:annotation:1.5.0	Apache-2.0
+com.github.mik3y:usb-serial-for-android:3.7.0	MIT
+org.jetbrains:annotations:13.0	Apache-2.0
+org.jetbrains.kotlin:kotlin-stdlib:2.0.20	Apache-2.0

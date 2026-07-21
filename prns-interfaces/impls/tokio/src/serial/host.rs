@@ -1,24 +1,24 @@
-//! Host serial transport for the serial-family interfaces (serial, KISS, AX.25-KISS, RNode):
-//! the one seam that knows how a serial port is opened on each platform.
+//! Host serial transport for the serial-family interfaces (serial, KISS, AX.25-KISS, RNode).
 //!
-//! Off Windows this is tokio-serial's async stream. On Windows it is a blocking-open + threaded
-//! bridge, because mio-serial's `open_native_async` opens, closes, and re-opens the port in
-//! overlapped mode, and that second open races the USB re-enumeration an ESP32-native-USB RNode
-//! performs when the open toggles DTR, surfacing phantom EOFs. serialport's blocking `open()`
-//! does a single `CreateFile` (and never reads settings back, so it also tolerates the
-//! 1.5-stop-bit CDC line coding); we bridge its blocking reads/writes over channels.
+//! This is the single reviewed seam that opens serial ports and discovers USB CDC devices. The
+//! concrete transport remains private so callers cannot grow dependencies on a platform crate.
 
 use std::io;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
-#[cfg(not(windows))]
-use tokio_serial::SerialPortBuilderExt;
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
-/// The concrete serial stream the host interfaces run over: tokio-serial's async stream off Windows,
-/// and the blocking-bridge stream on Windows.
-#[cfg(not(windows))]
-pub type HostSerial = tokio_serial::SerialStream;
-#[cfg(windows)]
-pub type HostSerial = windows_bridge::ThreadedSerial;
+/// A Prns-owned asynchronous serial stream.
+///
+/// The inner platform transport is deliberately opaque. This keeps the public API stable while
+/// Unix uses `serial2-tokio` and Windows uses the single-open bridge in `prns-ffi`.
+pub struct HostSerial {
+    #[cfg(not(windows))]
+    inner: serial2_tokio::SerialPort,
+    #[cfg(windows)]
+    inner: windows_bridge::ThreadedSerial,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostSerialDataBits {
@@ -90,55 +90,128 @@ impl HostSerialLineSettings {
     }
 }
 
-/// Open `path` at `baud` (8N1) as an async stream for a serial-family interface, using the reliable
-/// transport for the platform. Called by each serial-family interface's open factory.
-#[cfg(not(windows))]
+/// Open `path` at `baud` (8N1) using the reliable transport for the platform.
 pub fn open_host_serial(path: &str, baud: u32) -> io::Result<HostSerial> {
     open_host_serial_with_settings(path, HostSerialLineSettings::eight_n_one(baud))
 }
 
+/// Open `path` with explicit line settings using the reliable transport for the platform.
 #[cfg(not(windows))]
 pub fn open_host_serial_with_settings(
     path: &str,
     settings: HostSerialLineSettings,
 ) -> io::Result<HostSerial> {
-    serial_builder(path, settings)
-        .open_native_async()
-        .map_err(io::Error::other)
-}
+    use serial2_tokio::{CharSize, Parity, SerialPort, StopBits};
 
-#[cfg(windows)]
-pub fn open_host_serial(path: &str, baud: u32) -> io::Result<HostSerial> {
-    open_host_serial_with_settings(path, HostSerialLineSettings::eight_n_one(baud))
-}
-
-#[cfg(windows)]
-pub fn open_host_serial_with_settings(
-    path: &str,
-    settings: HostSerialLineSettings,
-) -> io::Result<HostSerial> {
-    windows_bridge::open(path, settings)
-}
-
-fn serial_builder(path: &str, settings: HostSerialLineSettings) -> tokio_serial::SerialPortBuilder {
-    use tokio_serial::{DataBits, Parity, StopBits};
-
-    tokio_serial::new(path, settings.baud)
-        .data_bits(match settings.data_bits {
-            HostSerialDataBits::Five => DataBits::Five,
-            HostSerialDataBits::Six => DataBits::Six,
-            HostSerialDataBits::Seven => DataBits::Seven,
-            HostSerialDataBits::Eight => DataBits::Eight,
-        })
-        .parity(match settings.parity {
+    let inner = SerialPort::open(path, |mut port: serial2_tokio::Settings| {
+        port.set_raw();
+        port.set_baud_rate(settings.baud)?;
+        port.set_char_size(match settings.data_bits {
+            HostSerialDataBits::Five => CharSize::Bits5,
+            HostSerialDataBits::Six => CharSize::Bits6,
+            HostSerialDataBits::Seven => CharSize::Bits7,
+            HostSerialDataBits::Eight => CharSize::Bits8,
+        });
+        port.set_parity(match settings.parity {
             HostSerialParity::None => Parity::None,
             HostSerialParity::Even => Parity::Even,
             HostSerialParity::Odd => Parity::Odd,
-        })
-        .stop_bits(match settings.stop_bits {
+        });
+        port.set_stop_bits(match settings.stop_bits {
             HostSerialStopBits::One => StopBits::One,
             HostSerialStopBits::Two => StopBits::Two,
-        })
+        });
+        Ok(port)
+    })?;
+    Ok(HostSerial { inner })
+}
+
+#[cfg(windows)]
+pub fn open_host_serial_with_settings(
+    path: &str,
+    settings: HostSerialLineSettings,
+) -> io::Result<HostSerial> {
+    windows_bridge::open(path, settings).map(|inner| HostSerial { inner })
+}
+
+impl AsyncRead for HostSerial {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().inner).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for HostSerial {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.get_mut().inner).poll_write(cx, buf)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().inner).poll_shutdown(cx)
+    }
+}
+
+/// Return only USB-backed serial device paths, sorted and deduplicated.
+///
+/// Linux uses sysfs ancestry rather than probing every TTY. macOS and Windows delegate native
+/// enumeration to `prns-ffi`. Unrelated serial ports are never returned.
+pub fn scan_usb_serial_ports() -> io::Result<Vec<String>> {
+    #[cfg(target_os = "linux")]
+    {
+        scan_linux_usb_serial_ports(std::path::Path::new("/sys"), std::path::Path::new("/dev"))
+    }
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    {
+        prns_ffi::usb_serial::available_ports()
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        Ok(Vec::new())
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn scan_linux_usb_serial_ports(
+    sys_root: &std::path::Path,
+    dev_root: &std::path::Path,
+) -> io::Result<Vec<String>> {
+    let tty_root = sys_root.join("class/tty");
+    let entries = match std::fs::read_dir(&tty_root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error),
+    };
+    let mut ports = Vec::new();
+    for entry in entries {
+        let entry = entry?;
+        let Ok(device) = entry.path().join("device").canonicalize() else {
+            continue;
+        };
+        let usb_backed = device.ancestors().any(|ancestor| {
+            ancestor.join("idVendor").is_file() && ancestor.join("idProduct").is_file()
+        });
+        if !usb_backed {
+            continue;
+        }
+        let path = dev_root.join(entry.file_name());
+        if path.exists() {
+            ports.push(path.to_string_lossy().into_owned());
+        }
+    }
+    ports.sort();
+    ports.dedup();
+    Ok(ports)
 }
 
 #[cfg(windows)]
@@ -146,28 +219,12 @@ mod windows_bridge {
     use std::io::{self, Read, Write};
     use std::pin::Pin;
     use std::task::{Context, Poll};
-    use std::time::Duration;
 
     use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
     use tokio::sync::mpsc;
-    use tokio_serial::SerialPort;
 
-    /// How long a blocking read waits for data before returning so the I/O thread can service pending
-    /// writes and notice a closed channel. serialport reports an idle read as `TimedOut`.
-    const READ_POLL: Duration = Duration::from_millis(20);
-    /// The blocking read scratch size.
     const READ_CHUNK: usize = 512;
 
-    /// A blocking serial port driven on one worker thread and presented to the reactor as an async
-    /// stream. The thread interleaves reads and writes on a single handle: each pass it drains any
-    /// queued writes, then does one bounded blocking read. Received bytes arrive over `inbound`;
-    /// outbound bytes are queued on `outbound`.
-    ///
-    /// Both channels are unbounded *on purpose*. A bounded inbound channel is wrong here: during the
-    /// bring-up settle the reactor is not reading yet, so a bounded channel fills with the device's
-    /// idle telemetry and then either blocks the I/O thread — starving the detect/config writes it
-    /// must still service — or drops chunks, losing the config echoes the validation read-back needs.
-    /// Unbounded never blocks and never drops; the reactor drains it continuously, so it stays small.
     pub struct ThreadedSerial {
         inbound: mpsc::UnboundedReceiver<io::Result<Vec<u8>>>,
         outbound: mpsc::UnboundedSender<Vec<u8>>,
@@ -176,13 +233,26 @@ mod windows_bridge {
         eof: bool,
     }
 
-    /// Open `path` at `baud` with serialport's blocking `open` — a single `CreateFile`, no settings
-    /// read-back, no overlapped re-open — and spawn the I/O thread that bridges it to the channels.
     pub fn open(path: &str, settings: super::HostSerialLineSettings) -> io::Result<ThreadedSerial> {
-        let port = super::serial_builder(path, settings)
-            .timeout(READ_POLL)
-            .open()
-            .map_err(io::Error::other)?;
+        let port = prns_ffi::serial::open(
+            path,
+            settings.baud(),
+            match settings.data_bits() {
+                super::HostSerialDataBits::Five => 5,
+                super::HostSerialDataBits::Six => 6,
+                super::HostSerialDataBits::Seven => 7,
+                super::HostSerialDataBits::Eight => 8,
+            },
+            match settings.parity() {
+                super::HostSerialParity::None => prns_ffi::serial::Parity::None,
+                super::HostSerialParity::Even => prns_ffi::serial::Parity::Even,
+                super::HostSerialParity::Odd => prns_ffi::serial::Parity::Odd,
+            },
+            match settings.stop_bits() {
+                super::HostSerialStopBits::One => prns_ffi::serial::StopBits::One,
+                super::HostSerialStopBits::Two => prns_ffi::serial::StopBits::Two,
+            },
+        )?;
         let (in_tx, in_rx) = mpsc::unbounded_channel::<io::Result<Vec<u8>>>();
         let (out_tx, out_rx) = mpsc::unbounded_channel::<Vec<u8>>();
         std::thread::spawn(move || io_loop(port, in_tx, out_rx));
@@ -195,16 +265,13 @@ mod windows_bridge {
         })
     }
 
-    /// The single I/O thread: drain queued writes, then one blocking read, forever — until either
-    /// channel closes (the reactor dropped the stream) or the port errors.
     fn io_loop(
-        mut port: Box<dyn SerialPort>,
+        mut port: prns_ffi::serial::WindowsSerial,
         in_tx: mpsc::UnboundedSender<io::Result<Vec<u8>>>,
         mut out_rx: mpsc::UnboundedReceiver<Vec<u8>>,
     ) {
         let mut buf = [0u8; READ_CHUNK];
         loop {
-            // Service every pending write before the next read so outbound is never starved.
             loop {
                 match out_rx.try_recv() {
                     Ok(data) => {
@@ -240,7 +307,6 @@ mod windows_bridge {
             buf: &mut ReadBuf<'_>,
         ) -> Poll<io::Result<()>> {
             let this = self.get_mut();
-            // Deliver any bytes left over from the previous chunk first.
             if this.offset < this.chunk.len() {
                 let take = (this.chunk.len() - this.offset).min(buf.remaining());
                 buf.put_slice(&this.chunk[this.offset..this.offset + take]);
@@ -248,7 +314,7 @@ mod windows_bridge {
                 return Poll::Ready(Ok(()));
             }
             if this.eof {
-                return Poll::Ready(Ok(())); // a 0-byte read signals EOF
+                return Poll::Ready(Ok(()));
             }
             match this.inbound.poll_recv(cx) {
                 Poll::Ready(Some(Ok(chunk))) => {
@@ -262,7 +328,7 @@ mod windows_bridge {
                 Poll::Ready(Some(Err(error))) => Poll::Ready(Err(error)),
                 Poll::Ready(None) => {
                     this.eof = true;
-                    Poll::Ready(Ok(())) // the I/O thread ended — end of stream
+                    Poll::Ready(Ok(()))
                 }
                 Poll::Pending => Poll::Pending,
             }
@@ -282,11 +348,64 @@ mod windows_bridge {
         }
 
         fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-            Poll::Ready(Ok(())) // the I/O thread flushes after each write
+            Poll::Ready(Ok(()))
         }
 
         fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
             Poll::Ready(Ok(()))
         }
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::scan_linux_usb_serial_ports;
+    use std::fs;
+
+    #[test]
+    fn linux_scan_returns_only_usb_backed_ttys() {
+        let fixture = tempfile::tempdir().unwrap();
+        let sys = fixture.path().join("sys");
+        let dev = fixture.path().join("dev");
+        let usb = sys.join("devices/usb1/1-1");
+        let platform = sys.join("devices/platform/serial0");
+        let tty = sys.join("class/tty");
+        fs::create_dir_all(&usb).unwrap();
+        fs::create_dir_all(&platform).unwrap();
+        fs::create_dir_all(&tty).unwrap();
+        fs::create_dir_all(&dev).unwrap();
+        fs::write(usb.join("idVendor"), "303a").unwrap();
+        fs::write(usb.join("idProduct"), "1001").unwrap();
+        fs::create_dir_all(tty.join("ttyACM0")).unwrap();
+        fs::create_dir_all(tty.join("ttyS0")).unwrap();
+        std::os::unix::fs::symlink(&usb, tty.join("ttyACM0/device")).unwrap();
+        std::os::unix::fs::symlink(&platform, tty.join("ttyS0/device")).unwrap();
+        fs::write(dev.join("ttyACM0"), []).unwrap();
+        fs::write(dev.join("ttyS0"), []).unwrap();
+
+        let ports = scan_linux_usb_serial_ports(&sys, &dev).unwrap();
+        assert_eq!(ports, vec![dev.join("ttyACM0").to_string_lossy()]);
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod io_tests {
+    use super::HostSerial;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[tokio::test]
+    async fn opaque_serial_stream_round_trips_over_a_pty() {
+        let (inner, mut peer) = serial2_tokio::SerialPort::pair().unwrap();
+        let mut host = HostSerial { inner };
+
+        host.write_all(b"host-to-peer").await.unwrap();
+        let mut from_host = [0; 12];
+        peer.read_exact(&mut from_host).await.unwrap();
+        assert_eq!(&from_host, b"host-to-peer");
+
+        peer.write_all(b"peer-to-host").await.unwrap();
+        let mut from_peer = [0; 12];
+        host.read_exact(&mut from_peer).await.unwrap();
+        assert_eq!(&from_peer, b"peer-to-host");
     }
 }

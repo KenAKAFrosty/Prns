@@ -13,7 +13,7 @@ publish = false
 
 [dependencies]
 prns-core = { path = "../prns-core", default-features = false, features = ["interface-discovery", "std"] }
-dirs = "6"
+home = "0.5.12"
 shlex = "1"
 tempfile = "3.27"
 

@@ -2,6 +2,7 @@
 name = "personal-hopspot-desktop"
 version = "0.1.0"
 edition = "2021"
+license = "MIT OR Apache-2.0"
 publish = false
 description = "Personal Hopspot desktop face: the Linux/macOS/Windows debug window over the Prns engine."
 
@@ -20,33 +21,26 @@ personal-hopspot-core = { path = "../core", default-features = false }
 embedded-graphics = "0.8"
 heapless = { version = "0.8", default-features = false }
 embedded-graphics-simulator = "0.8.0"
-personal-rns = { path = "../../personal-rns", default-features = false, features = ["tokio-host", "tcp", "usb", "wifi-auto", "shared-instance", "bluetooth-auto", "log", "tracing"] }
+personal-rns = { path = "../../personal-rns", default-features = false, features = ["tokio-host", "tcp", "serial", "usb", "wifi-auto", "shared-instance", "bluetooth-auto", "log", "tracing"] }
 sdl2 = "0.38"
 # OS CSPRNG for the node identity (mirrors rnsd's load_identity_secret_key).
-# The async runtime + async USB-serial transport the reactor's USB-auto host rides. serialport
-# supplies the CDC enumeration (available_ports) the host's discovery scans; tokio-serial wraps
-# each opened port as an async stream. Default features on for the udev/IOKit enumeration backend.
+# The async runtime the reactor's USB-auto host rides. Serial opening and USB-only discovery are
+# supplied by personal-rns so the daemon/library and desktop share one reviewed platform boundary.
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util"] }
-tokio-serial = { version = "5" }
-serialport = { version = "4" }
 tracing-log = "0.2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["ansi", "env-filter", "fmt", "registry"] }
-tray-icon = { version = "0.21.3", default-features = false }
 nusb = { version = "0.2.4", features = ["tokio"] }
+
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+tray-icon = { version = "0.21.3", default-features = false }
 
 # Linux hot-plug: udev fires a uevent the instant a serial device is plugged, so the host rescans
 # immediately instead of waiting on its fallback timer. tokio-udev exposes the monitor as an async
 # event stream; tokio-stream gives it `.next()`. macOS leans on the fallback timer. The BlueR BLE
 # backend arrives through prns-interfaces-tokio's `ble` feature (its Linux target table).
 [target.'cfg(target_os = "linux")'.dependencies]
-# gtk3 is here only to host the Linux system tray (tray-icon -> libappindicator). It is the last-ever
-# gtk3 binding (unmaintained) and hard-pins glib ^0.18, which carries GHSA-wrw7-89jp-8q8g: an
-# unsoundness in glib::VariantStrIter's Iterator/DoubleEndedIterator impls. We never touch
-# VariantStrIter (or any GVariant string array) -- gtk serves only to init the tray and pump its event
-# loop -- so the flaw is not reachable here. The fix (glib 0.20) exists only in the gtk4 generation,
-# which dropped the system-tray StatusIcon, so there is no upgrade path while the tray rides on gtk3.
-gtk = "0.18"
+ksni = { version = "0.3.6", default-features = false, features = ["blocking"] }
 tokio-udev = "0.9"
 tokio-stream = "0.1"
 

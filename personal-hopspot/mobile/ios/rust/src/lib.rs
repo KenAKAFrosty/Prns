@@ -33,7 +33,9 @@ pub unsafe extern "C" fn hopspot_free(handle: *mut HopspotFace) {
     if handle.is_null() {
         return;
     }
-    drop(Box::from_raw(handle));
+    // SAFETY: the caller contract guarantees this is the unique live pointer returned by
+    // `hopspot_init`; the null case was handled above and this consumes it exactly once.
+    drop(unsafe { Box::from_raw(handle) });
 }
 
 /// # Safety
@@ -41,7 +43,9 @@ pub unsafe extern "C" fn hopspot_free(handle: *mut HopspotFace) {
 /// used concurrently with another call on the same handle.
 #[no_mangle]
 pub unsafe extern "C" fn hopspot_post_input(handle: *mut HopspotFace, code: i32) -> i32 {
-    let Some(face) = handle.as_mut() else {
+    // SAFETY: the caller contract guarantees either null or unique access to a live HopspotFace for
+    // this call; `as_mut` handles null without dereferencing it.
+    let Some(face) = (unsafe { handle.as_mut() }) else {
         return ACTION_NONE;
     };
     let event = match code {
@@ -77,7 +81,9 @@ pub unsafe extern "C" fn hopspot_set_battery(
     percent: i32,
     charging: bool,
 ) {
-    let Some(face) = handle.as_mut() else {
+    // SAFETY: the caller contract guarantees either null or unique access to a live HopspotFace for
+    // this call; `as_mut` handles null without dereferencing it.
+    let Some(face) = (unsafe { handle.as_mut() }) else {
         return;
     };
     let pct = percent.clamp(0, 100) as u8;
@@ -94,13 +100,17 @@ pub unsafe extern "C" fn hopspot_set_battery(
 /// describe one writable allocation that outlives the call and is not aliased.
 #[no_mangle]
 pub unsafe extern "C" fn hopspot_render(handle: *mut HopspotFace, ptr: *mut u8, len: usize) {
-    let Some(face) = handle.as_mut() else {
+    // SAFETY: the caller contract guarantees either null or unique access to a live HopspotFace for
+    // this call; `as_mut` handles null without dereferencing it.
+    let Some(face) = (unsafe { handle.as_mut() }) else {
         return;
     };
     if ptr.is_null() || len < RGBA_BYTES {
         return;
     }
-    let out = core::slice::from_raw_parts_mut(ptr, len);
+    // SAFETY: null and minimum size were checked above; the caller contract guarantees `ptr..len`
+    // is one writable, unaliased allocation that remains live for the duration of this call.
+    let out = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
     face.render(out);
 }
 

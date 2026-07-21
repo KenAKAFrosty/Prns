@@ -23,4 +23,4 @@ case "${PLATFORM_NAME:-}" in
 esac
 
 rustup target add "${TRIPLE}" >/dev/null 2>&1 || true
-cargo build --release --target "${TRIPLE}" --manifest-path "${MANIFEST_DIR}/Cargo.toml"
+cargo build --release --locked --target "${TRIPLE}" --manifest-path "${MANIFEST_DIR}/Cargo.toml"

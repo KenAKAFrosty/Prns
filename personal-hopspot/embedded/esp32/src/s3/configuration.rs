@@ -29,6 +29,8 @@ pub(super) fn hopspot_wifi_config() -> HopspotWifiConfig {
 #[cfg(feature = "wifi-auto")]
 fn read_hopspot_config_slot() -> Option<HopspotWifiConfig> {
     let mut words = [0u32; HOPSPOT_CONFIG_READ_WORDS];
+    // SAFETY: `words` is aligned writable storage of the exact byte length passed to the ROM, and
+    // HOPSPOT_CONFIG_OFFSET names the reserved read-only provisioning slot in the partition layout.
     let read = unsafe {
         esp_rom_spiflash_read(
             HOPSPOT_CONFIG_OFFSET,
@@ -39,6 +41,8 @@ fn read_hopspot_config_slot() -> Option<HopspotWifiConfig> {
     if read != 0 {
         return None;
     }
+    // SAFETY: u8 has alignment 1 and this slice covers exactly the initialized `words` allocation;
+    // its lifetime is bounded by `words` and the parser does not retain it.
     let bytes = unsafe {
         core::slice::from_raw_parts(
             words.as_ptr() as *const u8,

@@ -9,7 +9,7 @@ FAMILY="0xADA52840"
 VOLUME="/Volumes/TECHOBOOT"
 
 cd "$CRATE"
-cargo build --release
+cargo build --release --locked
 
 HOST_TRIPLE="$(rustc -vV | sed -n 's/host: //p')"
 OBJCOPY="$(rustc --print sysroot)/lib/rustlib/$HOST_TRIPLE/bin/llvm-objcopy"

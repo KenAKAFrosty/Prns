@@ -8,7 +8,7 @@ cd "$(dirname "$0")/.."
 
 for target in aarch64-linux-android x86_64-linux-android; do
   echo "[android] core -> ${target}"
-  cargo build -p personal-rns --target "${target}"
+  cargo build --locked -p personal-rns --target "${target}"
 done
 
 echo "ANDROID_BUILD_GATE_OK"
