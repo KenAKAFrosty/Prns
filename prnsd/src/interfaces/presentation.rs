@@ -200,13 +200,20 @@ impl Presentation {
         }
         if warnings > 0 {
             let suffix = if cleanup == warnings {
-                format!("{cleanup} cleanup {}", plural(cleanup, "item", "items"))
+                format!(
+                    "{cleanup} redundant RNS-generated {}",
+                    plural(cleanup, "field", "fields")
+                )
             } else {
                 count_summary(errors, warnings, cleanup)
             };
             return terminal::paint(
                 format!("✓ Configuration valid · {suffix}"),
-                WARNING,
+                if cleanup == warnings {
+                    ACCENT_STRONG
+                } else {
+                    WARNING
+                },
                 self.styled,
             );
         }
@@ -390,8 +397,8 @@ fn count_summary(errors: usize, warnings: usize, cleanup: usize) -> String {
     }
     if cleanup > 0 {
         parts.push(format!(
-            "{cleanup} cleanup {}",
-            plural(cleanup, "item", "items")
+            "{cleanup} redundant RNS-generated {}",
+            plural(cleanup, "field", "fields")
         ));
     }
     parts.join(" · ")
@@ -429,7 +436,7 @@ mod tests {
         );
 
         assert!(rendered.contains("Interface configuration\n/tmp/config"));
-        assert!(rendered.contains("Configuration valid · 3 cleanup items"));
+        assert!(rendered.contains("Configuration valid · 3 redundant RNS-generated fields"));
         assert!(rendered.contains("Auto / Wi-Fi · AutoInterface · Enabled"));
         assert!(rendered.contains("saved changes not applied"));
         assert!(!rendered.contains("\x1b["));
@@ -448,6 +455,7 @@ mod tests {
         assert!(rendered.contains("\x1b["));
         assert!(rendered.contains("Default Interface"));
         assert!(rendered.contains("selected_interface_mode"));
+        assert!(rendered.contains("the \"mode\" setting is authoritative"));
         assert!(!rendered.contains("warning[persisted_runtime_metadata]"));
     }
 }

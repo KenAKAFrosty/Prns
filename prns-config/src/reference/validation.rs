@@ -2078,15 +2078,30 @@ fn unknown_interface_key(
         key,
         "name" | "selected_interface_mode" | "configured_bitrate"
     ) {
+        let (message, correction) = match key {
+            "name" => (
+                "stock RNS generated a copy of the interface label; the [[section heading]] is authoritative",
+                "remove generated field \"name\"; rename the interface section to change its label",
+            ),
+            "selected_interface_mode" => (
+                "stock RNS generated a numeric mode snapshot; the \"mode\" setting is authoritative",
+                "remove generated field \"selected_interface_mode\"; set \"mode\" to configure interface behavior",
+            ),
+            "configured_bitrate" => (
+                "stock RNS generated a bitrate snapshot; the \"bitrate\" setting is authoritative",
+                "remove generated field \"configured_bitrate\"; set \"bitrate\" to configure an override",
+            ),
+            _ => unreachable!(),
+        };
         return WarningDiagnostic::new(
             WarningCode::PersistedRuntimeMetadata,
             source,
             line,
             path,
             Some(value_text(value)),
-            format!("runtime-only RNS field {key:?} is ignored when loaded from disk"),
+            message,
             None,
-            format!("remove runtime-only field {key:?}"),
+            correction,
         );
     }
     unknown_key(source, line, path, key, value, known)

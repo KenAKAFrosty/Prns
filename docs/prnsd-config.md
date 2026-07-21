@@ -87,10 +87,13 @@ line and remains untouched. Managed startup never prompts or rewrites configurat
 prints the matching repair command.
 
 RNS injects `name`, `selected_interface_mode`, and `configured_bitrate` into its in-memory
-interface dictionaries. NomadNet can persist those runtime-only fields when writing an interface
-back to disk. Prns reports them as cleanup items rather than generic unknown settings; guided
-repair groups them into one explained action, and `repair --safe` removes them. Other unknown keys
-remain conservative guided repairs and are preserved by default.
+interface dictionaries. They are generated copies, not independent configuration inputs: the
+`[[interface heading]]` supplies the label, `mode` supplies the interface mode, and `bitrate`
+supplies an explicit bitrate override. NomadNet can persist the generated fields when writing an
+interface back to disk. Prns reports them as redundant RNS-generated fields rather than implying
+that the authoritative settings are ignored; guided repair groups them into one explained action,
+and `repair --safe` removes them. Other unknown keys remain conservative guided repairs and are
+preserved by default.
 
 `prnsd interfaces apply` sends only the managed generation, a request identifier, and the expected
 SHA-256 digest through the private control directory. The daemon re-reads its active config path,
