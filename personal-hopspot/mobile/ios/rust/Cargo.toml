@@ -2,6 +2,7 @@
 name = "personal-hopspot-ios"
 version = "0.1.0"
 edition = "2021"
+license = "MIT OR Apache-2.0"
 publish = false
 description = "Personal Hopspot iOS face: a C-ABI + DrawTarget bridge that renders the shared Hopspot screen into an iOS RGBA buffer and feeds taps back as single-button input."
 
@@ -31,3 +32,9 @@ prns-ffi = { path = "../../../../prns-ffi" }
 [profile.release]
 codegen-units = 1
 opt-level = "s"
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "deny"

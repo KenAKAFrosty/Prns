@@ -27,11 +27,15 @@ pub type EngineStorageType = riscv::C6Storage;
 pub struct PsramAlloc;
 
 #[cfg(target_arch = "xtensa")]
+// SAFETY: Every operation is forwarded unchanged to esp-alloc's ExternalMemory allocator. This ZST
+// neither creates a second heap nor changes pointer/layout provenance.
 unsafe impl Allocator for PsramAlloc {
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
         esp_alloc::ExternalMemory.allocate(layout)
     }
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
+        // SAFETY: The Allocator contract requires callers to return the same pointer/layout pair
+        // produced by this allocator; forwarding preserves that contract and provenance.
         unsafe { esp_alloc::ExternalMemory.deallocate(ptr, layout) }
     }
 }

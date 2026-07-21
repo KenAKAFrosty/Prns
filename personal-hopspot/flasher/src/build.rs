@@ -48,8 +48,9 @@ pub(crate) fn build_t_echo(repo: &Path, out_root: &Path) -> AppResult<BuildOutpu
         .env_remove("RUSTUP_TOOLCHAIN")
         .arg("build")
         .arg("--release")
+        .arg("--locked")
         .current_dir(&crate_dir);
-    run_status(&mut cargo, "cargo build --release")?;
+    run_status(&mut cargo, "cargo build --release --locked")?;
 
     let host_triple = rust_host_triple()?;
     let sysroot = capture_stdout(Command::new("rustc").arg("--print").arg("sysroot"), "rustc")?;
@@ -74,6 +75,7 @@ pub(crate) fn build_t_echo(repo: &Path, out_root: &Path) -> AppResult<BuildOutpu
         .map_err(|err| format!("failed to create {}: {err}", work_dir.display()))?;
     fs::create_dir_all(&board_out)
         .map_err(|err| format!("failed to create {}: {err}", board_out.display()))?;
+    copy_notice_sidecar(repo, &board_out)?;
 
     let elf = crate_dir
         .join("target")
@@ -133,6 +135,7 @@ fn build_esp_board(
         .join("latest");
     fs::create_dir_all(&board_out)
         .map_err(|err| format!("failed to create {}: {err}", board_out.display()))?;
+    copy_notice_sidecar(repo, &board_out)?;
 
     let artifact = board_out.join(spec.artifact);
     let metadata = board_out.join(format!("{}.json", spec.artifact));
@@ -207,6 +210,7 @@ pub(crate) fn build_esp_firmware(
         .env_remove("RUSTUP_TOOLCHAIN")
         .arg("build")
         .arg("--release")
+        .arg("--locked")
         .arg("--package")
         .arg(spec.package)
         .arg("--bin")
@@ -220,7 +224,7 @@ pub(crate) fn build_esp_firmware(
         ui::print_key_value("xtensa gcc", &linker.display().to_string());
     }
     let build_label = format!(
-        "cargo build --release --package {} --bin {} --target {} -Zbuild-std=core,alloc",
+        "cargo build --release --locked --package {} --bin {} --target {} -Zbuild-std=core,alloc",
         spec.package, spec.binary, spec.target
     );
     run_status(&mut cargo, &build_label)?;
@@ -316,6 +320,19 @@ fn write_metadata(path: &Path, sha256: &str, size: u64, firmware_package: &str) 
         family = T_ECHO_FAMILY,
     );
     fs::write(path, json).map_err(|err| format!("failed to write {}: {err}", path.display()))
+}
+
+fn copy_notice_sidecar(repo: &Path, board_out: &Path) -> AppResult<()> {
+    let source = repo.join("THIRD_PARTY_NOTICES.md");
+    let destination = board_out.join("THIRD_PARTY_NOTICES.md");
+    fs::copy(&source, &destination).map_err(|error| {
+        format!(
+            "failed to copy release notices from {} to {}: {error}",
+            source.display(),
+            destination.display()
+        )
+    })?;
+    Ok(())
 }
 
 fn write_esp_metadata(

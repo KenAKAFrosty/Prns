@@ -23,7 +23,7 @@ unsafe extern "system" fn on_interface_change(
     {
         crate::diagnostic_log::debug!("serial-port interface change, poking rescan");
         // SAFETY: context points to the process-lifetime Box<Sink> leaked by watch_serial_hotplug.
-        let sink = &*(context as *const Sink);
+        let sink = unsafe { &*(context as *const Sink) };
         sink();
     }
     0

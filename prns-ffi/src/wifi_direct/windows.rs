@@ -170,6 +170,9 @@ fn publisher_thread(
     command_rx: sync_mpsc::Receiver<Command>,
     ready_tx: oneshot::Sender<Result<(), WindowsWifiDirectError>>,
 ) {
+    // SAFETY: CoIncrementMTAUsage takes no input pointers and has no caller-side memory-safety
+    // preconditions. We intentionally retain its process-wide MTA reference for the lifetime of
+    // this service, including any later publisher restart, so WinRT remains available.
     let _mta = match unsafe { CoIncrementMTAUsage() } {
         Ok(cookie) => cookie,
         Err(error) => {

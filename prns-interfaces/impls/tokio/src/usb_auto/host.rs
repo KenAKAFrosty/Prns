@@ -9,7 +9,7 @@ use prns_runtime::runtime::{Attachable, AttachedInterface, PrnsNodeHandle};
 use tokio::sync::Notify;
 
 use super::UsbAutoHost;
-use crate::serial::open_host_serial;
+use crate::serial::{open_host_serial, scan_usb_serial_ports};
 
 pub const DEFAULT_USB_AUTO_ID: InterfaceId = InterfaceId::new([0xD0; 8]);
 pub const DEFAULT_USB_BAUD: u32 = 115_200;
@@ -55,12 +55,7 @@ impl AutoUsb {
 }
 
 fn scan_cdc_targets() -> Vec<String> {
-    serialport::available_ports()
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|info| matches!(info.port_type, serialport::SerialPortType::UsbPort(_)))
-        .map(|info| info.port_name)
-        .collect()
+    scan_usb_serial_ports().unwrap_or_default()
 }
 
 impl Attachable for AutoUsb {

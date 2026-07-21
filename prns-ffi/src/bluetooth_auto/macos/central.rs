@@ -47,6 +47,8 @@ pub(super) struct DialCommand {
     pub(super) peripheral: Retained<CBPeripheral>,
     pub(super) session: DialSession,
 }
+// SAFETY: every retained CoreBluetooth object in the command is transferred to and consumed on
+// the single serial CoreBluetooth dispatch queue; the embedded session is Send.
 unsafe impl Send for DialCommand {}
 
 pub(super) struct CentralDelegateIvars {
@@ -66,6 +68,8 @@ define_class!(
     unsafe impl CBCentralManagerDelegate for CentralDelegate {
         #[unsafe(method(centralManagerDidUpdateState:))]
         fn did_update_state(&self, central: &CBCentralManager) {
+            // SAFETY: CoreBluetooth supplied this live manager to its delegate on the configured
+            // serial dispatch queue.
             if unsafe { central.state() } == CBManagerState::PoweredOn {
                 let _ = self.ivars().events.send(Event::Powered);
                 start_scan(central);
@@ -78,13 +82,17 @@ define_class!(
             _central: &CBCentralManager,
             dict: &NSDictionary<NSString, AnyObject>,
         ) {
+            // SAFETY: CoreBluetooth exports this NSString constant with process lifetime.
             let key: &NSString = unsafe { CBCentralManagerRestoredStatePeripheralsKey };
             let Some(restored) = dict.objectForKey(key) else {
                 return;
             };
+            // SAFETY: CoreBluetooth documents this restoration dictionary value as an NSArray of
+            // CBPeripheral objects; `restored` retains the array for the duration of the borrow.
             let peripherals: &NSArray<CBPeripheral> =
                 unsafe { &*(Retained::as_ptr(&restored) as *const NSArray<CBPeripheral>) };
             for peripheral in peripherals.iter() {
+                // SAFETY: array iteration yields a live CBPeripheral retained by the array.
                 let identifier = unsafe { peripheral.identifier() };
                 let token = uuid_token(&identifier);
                 crate::diagnostic_log::debug!(
@@ -107,6 +115,8 @@ define_class!(
             _advertisement_data: &NSDictionary<NSString, AnyObject>,
             rssi: &NSNumber,
         ) {
+            // SAFETY: CoreBluetooth supplied this live peripheral to its delegate on the manager
+            // queue, so querying immutable framework state is valid.
             if unsafe { peripheral.state() } != CBPeripheralState::Disconnected {
                 return;
             }
@@ -116,6 +126,7 @@ define_class!(
             } else {
                 i8::try_from(dbm).ok()
             };
+            // SAFETY: the delegate callback guarantees that `peripheral` is a live CBPeripheral.
             let identifier = unsafe { peripheral.identifier() };
             let token = uuid_token(&identifier);
             if let Ok(mut map) = self.ivars().peripherals.lock() {
@@ -134,6 +145,8 @@ define_class!(
             );
             let uuid = service_uuid();
             let services = NSArray::from_slice(&[&*uuid]);
+            // SAFETY: `peripheral` is live for this callback and `services` is a correctly typed,
+            // retained NSArray for the duration of the Objective-C message.
             unsafe { peripheral.discoverServices(Some(&services)) };
         }
 
@@ -168,6 +181,8 @@ define_class!(
                 self.ivars().session.borrow_mut().take();
                 return;
             }
+            // SAFETY: the callback occurs only after CoreBluetooth completed service discovery;
+            // the peripheral retains the returned service array.
             let service = unsafe { peripheral.services() }.and_then(|s| s.iter().next());
             let Some(service) = service else {
                 crate::diagnostic_log::warn!(
@@ -176,6 +191,8 @@ define_class!(
                 self.ivars().session.borrow_mut().take();
                 return;
             };
+            // SAFETY: `service` belongs to this live peripheral and both are retained throughout
+            // the discovery message.
             unsafe { peripheral.discoverCharacteristics_forService(None, &service) };
         }
 
@@ -193,6 +210,8 @@ define_class!(
                 self.ivars().session.borrow_mut().take();
                 return;
             }
+            // SAFETY: this delegate callback follows characteristic discovery and CoreBluetooth
+            // retains the characteristic collection on the live service.
             let Some(characteristics) = (unsafe { service.characteristics() }) else {
                 crate::diagnostic_log::warn!(
                     "bluetooth: no characteristics on Prns service — dropping dial"
@@ -211,6 +230,8 @@ define_class!(
             let mut columba_tx = None;
             let mut columba_identity = None;
             for characteristic in characteristics.iter() {
+                // SAFETY: the characteristic is retained by the framework collection during this
+                // iteration and UUID is a CoreBluetooth-owned immutable property.
                 let uuid = unsafe { characteristic.UUID() };
                 if cbuuid_eq(&uuid, &control_id) {
                     control = Some(characteristic);
@@ -232,11 +253,15 @@ define_class!(
                     if let Some(session) = self.ivars().session.borrow_mut().as_mut() {
                         session.data_char = Some(SendCharacteristicRef(data.retain()));
                     }
+                    // SAFETY: this characteristic was discovered on `peripheral`; both remain live
+                    // through the subscription message on the serial manager queue.
                     unsafe { peripheral.setNotifyValue_forCharacteristic(true, data) };
                 }
                 crate::diagnostic_log::debug!(
                     "bluetooth: native control characteristic found, subscribing"
                 );
+                // SAFETY: `control` was discovered on `peripheral` and both objects are retained
+                // throughout this queue-confined subscription call.
                 unsafe { peripheral.setNotifyValue_forCharacteristic(true, &control) };
                 return;
             }
@@ -253,6 +278,8 @@ define_class!(
                 session.columba_write = Some(SendCharacteristicRef(rx.retain()));
                 session.columba_notify = Some(SendCharacteristicRef(tx.retain()));
             }
+            // SAFETY: the identity and transmit characteristics were discovered on this retained
+            // peripheral, and both messages execute on its CoreBluetooth dispatch queue.
             unsafe {
                 peripheral.readValueForCharacteristic(&identity);
                 peripheral.setNotifyValue_forCharacteristic(true, &tx);
@@ -271,6 +298,7 @@ define_class!(
                 self.ivars().session.borrow_mut().take();
                 return;
             }
+            // SAFETY: CoreBluetooth supplied a live characteristic to this delegate callback.
             let subscribed_uuid = unsafe { characteristic.UUID() };
             if cbuuid_eq(&subscribed_uuid, &control_uuid()) {
                 let mut session = self.ivars().session.borrow_mut();
@@ -315,9 +343,12 @@ define_class!(
             characteristic: &CBCharacteristic,
             _error: Option<&NSError>,
         ) {
+            // SAFETY: CoreBluetooth supplied a live characteristic whose value is retained for the
+            // duration of this value-update callback.
             let Some(value) = (unsafe { characteristic.value() }) else {
                 return;
             };
+            // SAFETY: CoreBluetooth supplied a live characteristic to this delegate callback.
             let updated_uuid = unsafe { characteristic.UUID() };
             if cbuuid_eq(&updated_uuid, &data_uuid())
                 || cbuuid_eq(&updated_uuid, &columba_tx_uuid())
@@ -365,6 +396,8 @@ impl CentralDelegate {
             restored,
             session: RefCell::new(None),
         });
+        // SAFETY: `this` is a freshly allocated CentralDelegate with fully initialized ivars;
+        // forwarding to NSObject's designated initializer preserves its allocation identity.
         unsafe { msg_send![super(this), init] }
     }
 

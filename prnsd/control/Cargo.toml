@@ -10,7 +10,7 @@ publish = false
 description = "Cross-platform process lifecycle control for prnsd."
 
 [dependencies]
-dirs = "6"
+home = "0.5.12"
 tempfile = "3.27"
 sha2 = "0.10"
 

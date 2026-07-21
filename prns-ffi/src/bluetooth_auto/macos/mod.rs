@@ -1,5 +1,3 @@
-#![allow(clippy::undocumented_unsafe_blocks)]
-
 mod backend;
 mod central;
 mod data_plane;
@@ -37,9 +35,18 @@ pub use gatt_link::{GattSink, GattSource};
 type PeripheralTable = Arc<Mutex<HashMap<[u8; 6], (SendPeripheral, Option<i8>)>>>;
 type RestoredPeripherals = Arc<Mutex<VecDeque<[u8; 6]>>>;
 
+#[cfg(target_os = "ios")]
+const CENTRAL_RESTORE_IDENTIFIER: &str = "com.personal.prns.ble.central";
+#[cfg(target_os = "ios")]
+const PERIPHERAL_RESTORE_IDENTIFIER: &str = "com.personal.prns.ble.peripheral";
+
 fn cbuuid(uuid: BleUuid) -> Retained<CBUUID> {
     match uuid {
+        // SAFETY: NSData owns the exact UUID bytes for the duration of the initializer, and the
+        // generated CoreBluetooth binding returns a retained CBUUID.
         BleUuid::Bit128(bytes) => unsafe { CBUUID::UUIDWithData(&NSData::with_bytes(&bytes)) },
+        // SAFETY: NSData owns the exact big-endian UUID bytes for the duration of the initializer,
+        // and the generated CoreBluetooth binding returns a retained CBUUID.
         BleUuid::Bit16(short) => unsafe {
             CBUUID::UUIDWithData(&NSData::with_bytes(&short.to_be_bytes()))
         },
@@ -71,12 +78,19 @@ fn columba_identity_uuid() -> Retained<CBUUID> {
 }
 
 fn cbuuid_eq(a: &CBUUID, b: &CBUUID) -> bool {
-    unsafe { a.data() }.to_vec() == unsafe { b.data() }.to_vec()
+    // SAFETY: both arguments are live retained CBUUID objects and `data` returns retained immutable
+    // NSData instances whose bytes are copied immediately.
+    let a = unsafe { a.data() }.to_vec();
+    // SAFETY: as above, `b` is a live CBUUID and the returned immutable data is copied immediately.
+    let b = unsafe { b.data() }.to_vec();
+    a == b
 }
 
 fn advertisement_data(services: &NSArray<CBUUID>) -> Retained<NSDictionary<NSString, AnyObject>> {
+    // SAFETY: CoreBluetooth exports this NSString constant with process lifetime.
     let uuids_key: &NSString = unsafe { CBAdvertisementDataServiceUUIDsKey };
     let uuids_value: &AnyObject = services;
+    // SAFETY: CoreBluetooth exports this NSString constant with process lifetime.
     let name_key: &NSString = unsafe { CBAdvertisementDataLocalNameKey };
     let name = NSString::from_str("Prns");
     let name_ref: &NSString = &name;
@@ -85,6 +99,7 @@ fn advertisement_data(services: &NSArray<CBUUID>) -> Retained<NSDictionary<NSStr
 }
 
 fn scan_options() -> Retained<NSDictionary<NSString, AnyObject>> {
+    // SAFETY: CoreBluetooth exports this NSString constant with process lifetime.
     let duplicates_key: &NSString = unsafe { CBCentralManagerScanOptionAllowDuplicatesKey };
     let duplicates = NSNumber::new_bool(true);
     let duplicates_value: &AnyObject = &duplicates;
@@ -94,6 +109,7 @@ fn scan_options() -> Retained<NSDictionary<NSString, AnyObject>> {
 #[cfg(target_os = "ios")]
 fn central_manager_options() -> Retained<NSDictionary<NSString, AnyObject>> {
     use objc2_core_bluetooth::CBCentralManagerOptionRestoreIdentifierKey;
+    // SAFETY: CoreBluetooth exports this NSString constant with process lifetime.
     let key: &NSString = unsafe { CBCentralManagerOptionRestoreIdentifierKey };
     let value = NSString::from_str(CENTRAL_RESTORE_IDENTIFIER);
     let value_ref: &NSString = &value;
@@ -104,6 +120,7 @@ fn central_manager_options() -> Retained<NSDictionary<NSString, AnyObject>> {
 #[cfg(target_os = "ios")]
 fn peripheral_manager_options() -> Retained<NSDictionary<NSString, AnyObject>> {
     use objc2_core_bluetooth::CBPeripheralManagerOptionRestoreIdentifierKey;
+    // SAFETY: CoreBluetooth exports this NSString constant with process lifetime.
     let key: &NSString = unsafe { CBPeripheralManagerOptionRestoreIdentifierKey };
     let value = NSString::from_str(PERIPHERAL_RESTORE_IDENTIFIER);
     let value_ref: &NSString = &value;
@@ -115,11 +132,15 @@ fn start_scan(central: &CBCentralManager) {
     let uuid = service_uuid();
     let services = NSArray::from_slice(&[&*uuid]);
     let options = scan_options();
+    // SAFETY: `central` is a live manager used on its serial queue, and both retained collection
+    // arguments remain alive for the synchronous Objective-C message.
     unsafe { central.scanForPeripheralsWithServices_options(Some(&services), Some(&options)) };
 }
 
 fn uuid_token(uuid: &NSUUID) -> [u8; 6] {
     let mut raw = [0u8; 16];
+    // SAFETY: NSUUID guarantees `getUUIDBytes:` writes exactly 16 bytes; `raw` is a writable
+    // 16-byte buffer and remains live for the synchronous message.
     unsafe {
         let _: () = msg_send![uuid, getUUIDBytes: raw.as_mut_ptr()];
     }
@@ -129,24 +150,38 @@ fn uuid_token(uuid: &NSUUID) -> [u8; 6] {
 }
 
 struct SendPeripheralManager(Retained<CBPeripheralManager>);
+// SAFETY: this wrapper is only transferred into jobs on the manager's serial dispatch queue; the
+// retained Objective-C object is never concurrently messaged by Prns.
 unsafe impl Send for SendPeripheralManager {}
 
 struct SendCharacteristic(Retained<CBMutableCharacteristic>);
+// SAFETY: this wrapper is only transferred with its owning manager onto the serial CoreBluetooth
+// dispatch queue, where all characteristic messages are serialized.
 unsafe impl Send for SendCharacteristic {}
 
 struct SendPeripheral(Retained<CBPeripheral>);
+// SAFETY: this wrapper is only transferred into jobs on the central manager's serial dispatch
+// queue; Prns does not concurrently message the retained peripheral.
 unsafe impl Send for SendPeripheral {}
 
 struct SendCharacteristicRef(Retained<CBCharacteristic>);
+// SAFETY: this wrapper moves only with its owning peripheral to the serial CoreBluetooth dispatch
+// queue, so Prns never concurrently messages the retained characteristic.
 unsafe impl Send for SendCharacteristicRef {}
 
 struct SendCentralManager(Retained<CBCentralManager>);
+// SAFETY: the retained manager is moved only into work submitted to its own serial dispatch queue,
+// and all Prns messages to it are queue-confined.
 unsafe impl Send for SendCentralManager {}
 
 struct SendCentralDelegate(Retained<CentralDelegate>);
+// SAFETY: the retained delegate's RefCell-backed state is accessed only by the serial CoreBluetooth
+// dispatch queue before and after transfer.
 unsafe impl Send for SendCentralDelegate {}
 
 struct SendPeripheralDelegate(Retained<PeripheralDelegate>);
+// SAFETY: the retained delegate's RefCell-backed state is accessed only by the serial CoreBluetooth
+// dispatch queue before and after transfer.
 unsafe impl Send for SendPeripheralDelegate {}
 
 enum Event {

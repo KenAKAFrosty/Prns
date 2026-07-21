@@ -17,13 +17,13 @@ fi
 echo "[android] JNI -> arm64-v8a"
 (
   cd "${rust_dir}"
-  cargo ndk -t arm64-v8a -o ../app/src/main/jniLibs build --release
+  cargo ndk -t arm64-v8a -o ../app/src/main/jniLibs build --release --locked
 )
 
 echo "[android] JNI -> armeabi-v7a"
 (
   cd "${rust_dir}"
-  cargo ndk -t armeabi-v7a -P 21 -o ../app/src/main/jniLibs build --release
+  cargo ndk -t armeabi-v7a -P 21 -o ../app/src/main/jniLibs build --release --locked
 )
 
 echo "[android] assemble debug APK"
@@ -85,6 +85,10 @@ apk_listing="$("${listing_cmd[@]}")"
 }
 [[ "${apk_listing}" == *'lib/armeabi-v7a/libpersonal_hopspot_android.so'* ]] || {
   echo "APK is missing the armeabi-v7a JNI library" >&2
+  exit 1
+}
+[[ "${apk_listing}" == *'assets/THIRD_PARTY_NOTICES.md'* ]] || {
+  echo "APK is missing the checked third-party notice bundle" >&2
   exit 1
 }
 

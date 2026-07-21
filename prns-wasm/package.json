@@ -1,12 +1,13 @@
 {
   "name": "@personal-rns/prns",
   "version": "0.1.0",
+  "license": "MIT OR Apache-2.0",
   "private": true,
   "type": "module",
   "main": "./ts/index.ts",
   "types": "./ts/index.ts",
   "scripts": {
-    "build:wasm": "cargo build --target wasm32-unknown-unknown && wasm-bindgen target/wasm32-unknown-unknown/debug/prns_wasm.wasm --target web --out-dir smoke/pkg",
+    "build:wasm": "cargo build --locked --target wasm32-unknown-unknown && wasm-bindgen target/wasm32-unknown-unknown/debug/prns_wasm.wasm --target web --out-dir smoke/pkg",
     "build:browser": "npm run build:wasm && npm run build:smoke",
     "build:smoke": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",

@@ -13,19 +13,19 @@ usage() {
 case "$TARGET" in
     heltec-v4)
         cd "$ROOT"
-        cargo run -p hopspot-flash -- build heltec-v4 --out-root "$OUT_ROOT"
+        cargo run --locked -p hopspot-flash -- build heltec-v4 --out-root "$OUT_ROOT"
         ;;
     t-beam-supreme)
         cd "$ROOT"
-        cargo run -p hopspot-flash -- build t-beam-supreme --out-root "$OUT_ROOT"
+        cargo run --locked -p hopspot-flash -- build t-beam-supreme --out-root "$OUT_ROOT"
         ;;
     xiao-esp32-c6)
         cd "$ROOT"
-        cargo run -p hopspot-flash -- build xiao-esp32-c6 --out-root "$OUT_ROOT"
+        cargo run --locked -p hopspot-flash -- build xiao-esp32-c6 --out-root "$OUT_ROOT"
         ;;
     t-echo)
         cd "$ROOT"
-        cargo run -p hopspot-flash -- build t-echo --out-root "$OUT_ROOT"
+        cargo run --locked -p hopspot-flash -- build t-echo --out-root "$OUT_ROOT"
         ;;
     "")
         usage

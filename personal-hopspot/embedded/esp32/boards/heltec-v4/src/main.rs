@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 #![feature(asm_experimental_arch)]
+#![forbid(unsafe_code)]
 
 use embassy_executor::Spawner;
 

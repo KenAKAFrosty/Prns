@@ -5,9 +5,12 @@ use std::sync::{Arc, Mutex};
 
 use dispatch2::{DispatchQueue, DispatchRetained};
 use objc2::rc::Retained;
-use objc2::runtime::{AnyObject, ProtocolObject};
+#[cfg(not(target_os = "ios"))]
+use objc2::runtime::AnyObject;
+use objc2::runtime::ProtocolObject;
 use objc2::{AnyThread, DefinedClass};
 use objc2_core_bluetooth::{CBCentralManager, CBPeripheralManager};
+#[cfg(not(target_os = "ios"))]
 use objc2_foundation::{NSDictionary, NSString};
 use tokio::sync::{mpsc as tokio_mpsc, oneshot};
 use tokio::task::JoinSet;
@@ -30,10 +33,6 @@ use super::{
 const POWER_ON_TIMEOUT: Duration = Duration::from_secs(10);
 const DIAL_TIMEOUT: Duration = Duration::from_secs(15);
 
-#[cfg(target_os = "ios")]
-const CENTRAL_RESTORE_IDENTIFIER: &str = "com.personal.prns.ble.central";
-#[cfg(target_os = "ios")]
-const PERIPHERAL_RESTORE_IDENTIFIER: &str = "com.personal.prns.ble.peripheral";
 struct Handles {
     central: SendCentralManager,
     central_delegate: SendCentralDelegate,
@@ -81,6 +80,8 @@ impl MacosBleBackend {
             let central_options = Some(central_manager_options());
             #[cfg(not(target_os = "ios"))]
             let central_options: Option<Retained<NSDictionary<NSString, AnyObject>>> = None;
+            // SAFETY: the delegate and dispatch queue are retained for at least as long as the
+            // manager, and every Objective-C argument has the framework-declared type.
             let central: Retained<CBCentralManager> = unsafe {
                 CBCentralManager::initWithDelegate_queue_options(
                     CBCentralManager::alloc(),
@@ -98,6 +99,8 @@ impl MacosBleBackend {
             let peripheral_options: Option<
                 Retained<NSDictionary<NSString, AnyObject>>,
             > = None;
+            // SAFETY: the delegate and dispatch queue are retained for at least as long as the
+            // manager, and every Objective-C argument has the framework-declared type.
             let _peripheral: Retained<CBPeripheralManager> = unsafe {
                 CBPeripheralManager::initWithDelegate_queue_options(
                     CBPeripheralManager::alloc(),
@@ -196,6 +199,7 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
         let central = SendCentralManager(self.central.0.clone());
         self.queue.exec_async(move || {
             let central = central;
+            // SAFETY: the retained central manager is only messaged on its serial dispatch queue.
             unsafe { central.0.stopScan() };
             if enabled {
                 start_scan(&central.0);
@@ -285,12 +289,16 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
         crate::diagnostic_log::debug!("bluetooth: dialing {token:02x?} over LE (central role)");
         self.queue.exec_async(move || {
             let command = command;
+            // SAFETY: both retained Objective-C objects stay alive for the delegate assignment,
+            // which runs on the CoreBluetooth serial dispatch queue.
             unsafe {
                 command
                     .peripheral
                     .setDelegate(Some(ProtocolObject::from_ref(&*command.delegate)));
             }
             *command.delegate.ivars().session.borrow_mut() = Some(command.session);
+            // SAFETY: the retained manager and peripheral are both owned by this queued command,
+            // and CoreBluetooth connection calls are serialized on their dispatch queue.
             unsafe {
                 command
                     .central
@@ -345,6 +353,8 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
                 let delegate = delegate;
                 let peripheral = peripheral;
                 delegate.0.clear_session();
+                // SAFETY: both retained objects remain alive through this call and are messaged
+                // only on the CoreBluetooth serial dispatch queue.
                 unsafe { central.0.cancelPeripheralConnection(&peripheral.0) };
             });
         }

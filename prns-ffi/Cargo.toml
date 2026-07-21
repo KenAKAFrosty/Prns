@@ -44,7 +44,8 @@ log = { version = "0.4", optional = true, default-features = false }
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSNetServices"] }
 objc2-core-bluetooth = "0.3"
-objc2-core-foundation = { version = "0.3", features = ["CFStream", "dispatch2", "CFRunLoop"] }
+objc2-core-foundation = { version = "0.3", features = ["CFStream", "dispatch2", "CFRunLoop", "CFString", "CFDictionary"] }
+objc2-io-kit = { version = "0.3.2", default-features = false, features = ["std", "libc", "serial"] }
 dispatch2 = "0.3"
 
 # The Windows backend rides WinRT (GATT-only): GattServiceProvider for the peripheral/advertise role
@@ -68,15 +69,14 @@ windows = { version = "0.58", features = [
     "Win32_System_Com",
     "Win32_Foundation",
     "Win32_Devices_DeviceAndDriverInstallation",
+    "Win32_Devices_Communication",
 ] }
 
 [dev-dependencies]
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync"] }
 
-# Same panic-free discipline as the engine (an FFI callback that unwinds into Objective-C
-# is undefined behavior), but `undocumented_unsafe_blocks` is deliberately NOT denied: this
-# crate's reason to exist is audited `unsafe`, and the audit is cargo-geiger (surface) + Miri
-# (UB on the pure-Rust unsafe), not per-block prose.
+# Same panic-free discipline as the engine. Native calls live here specifically so every unsafe
+# operation has one reviewed invariant rather than leaking throughout otherwise-safe crates.
 [lints.clippy]
 dbg_macro = "deny"
 todo = "deny"
@@ -85,6 +85,8 @@ unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
 significant_drop_in_scrutinee = "warn"
+undocumented_unsafe_blocks = "deny"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
+unsafe_op_in_unsafe_fn = "deny"

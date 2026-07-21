@@ -7,10 +7,9 @@
 #
 # Install: `cargo install cargo-deny`.  Run: `cargo deny check`.
 
-[graph]
-# Check the whole feature surface, including the embassy/LoRa embedded features, so
-# an embedded-only dependency can't smuggle in a copyleft license unnoticed.
-all-features = true
+# `scripts/deps-audit.sh` supplies each shipped manifest and target explicitly. Keeping feature
+# selection at the release entrypoint avoids impossible all-features unions while still checking
+# every feature enabled by the daemon, apps, firmware board packages, and WASM package.
 
 [licenses]
 version = 2
@@ -29,10 +28,14 @@ allow = [
     "Zlib",
     "CC0-1.0",
     "0BSD",
+    "bzip2-1.0.6",
 ]
 confidence-threshold = 0.93
-# e.g. { allow = ["MPL-2.0"], crate = "some-weak-copyleft-dep" }
-exceptions = []
+# Licenses outside the general permissive set stay scoped to the exact reviewed package.
+exceptions = [
+    { allow = ["Unlicense"], crate = "ksni@0.3.6" },
+    { allow = ["LicenseRef-Nordic-SoftDevice"], crate = "nrf-softdevice-s140@0.1.2" },
+]
 
 # `unescaper` declares the malformed/deprecated SPDX expression "GPL-3.0/MIT". It is
 # genuinely dual-licensed and we take the MIT option, so pin the evaluated license to
@@ -42,15 +45,25 @@ crate = "unescaper"
 expression = "MIT"
 license-files = []
 
+# Nordic distributes the S140 SoftDevice bindings under its hardware-restricted SDK
+# license. Keep the release exception bound to the exact upstream text; a license change
+# invalidates this clarification and fails the audit.
+[[licenses.clarify]]
+crate = "nrf-softdevice-s140@0.1.2"
+expression = "LicenseRef-Nordic-SoftDevice"
+license-files = [
+    { path = "LICENSE-NORDIC", hash = 0xe7401bed },
+]
+
 [advisories]
 version = 2
 # Fail on any dependency that has been yanked; `ignore` is for advisories we've
 # triaged and consciously accept (each entry should carry a comment + RUSTSEC id).
 yanked = "deny"
 # Unmaintained advisories fail the build only when the crate is a DIRECT workspace
-# dependency (actionable by us). Deep-transitive unmaintained crates — e.g. `paste`
-# and `bincode`, pulled in via uniffi / serialport — are noise we can't fix, so this
-# is scoped to "workspace". Real security VULNERABILITIES are always denied,
+# dependency (actionable by us). Deep-transitive unmaintained crates in platform and
+# embedded stacks are not directly actionable here, so this is scoped to "workspace".
+# Real security VULNERABILITIES are always denied,
 # regardless of this setting.
 unmaintained = "workspace"
 ignore = []
@@ -67,3 +80,4 @@ deny = []
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = ["https://github.com/embassy-rs/nrf-softdevice"]

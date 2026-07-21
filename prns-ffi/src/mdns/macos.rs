@@ -1,4 +1,3 @@
-#![allow(clippy::undocumented_unsafe_blocks)]
 #![allow(deprecated)]
 
 use core::cell::RefCell;
@@ -71,6 +70,8 @@ impl AdvertiserDelegate {
         let this = Self::alloc().set_ivars(AdvertiserDelegateIvars {
             ready: RefCell::new(Some(ready)),
         });
+        // SAFETY: `this` is a freshly allocated AdvertiserDelegate with fully initialized ivars;
+        // forwarding to NSObject's designated initializer preserves its allocation identity.
         unsafe { msg_send![super(this), init] }
     }
 }
@@ -111,6 +112,8 @@ define_class!(
 impl ResolveDelegate {
     fn new(sightings: tokio_mpsc::UnboundedSender<SocketAddr>) -> Retained<Self> {
         let this = Self::alloc().set_ivars(ResolveDelegateIvars { sightings });
+        // SAFETY: `this` is a freshly allocated ResolveDelegate with fully initialized ivars;
+        // forwarding to NSObject's designated initializer preserves its allocation identity.
         unsafe { msg_send![super(this), init] }
     }
 }
@@ -137,6 +140,8 @@ define_class!(
         ) {
             let resolver: &ResolveDelegate = &self.ivars().resolver;
             let proto = ProtocolObject::from_ref(resolver);
+            // SAFETY: both the discovered service and retained resolver delegate remain live while
+            // Foundation installs the correctly typed protocol object.
             unsafe { service.setDelegate(Some(proto)) };
             service.resolveWithTimeout(RESOLVE_TIMEOUT);
             self.ivars().resolving.borrow_mut().push(service.retain());
@@ -159,6 +164,8 @@ impl BrowserDelegate {
             resolver,
             resolving: RefCell::new(Vec::new()),
         });
+        // SAFETY: `this` is a freshly allocated BrowserDelegate with fully initialized ivars;
+        // forwarding to NSObject's designated initializer preserves its allocation identity.
         unsafe { msg_send![super(this), init] }
     }
 }
@@ -189,6 +196,8 @@ impl MacosMdnsBackend {
                     &NSString::from_str(""),
                     port,
                 );
+                // SAFETY: the service and retained advertiser delegate live for the entire run-loop
+                // thread, and the protocol object has NSNetServiceDelegate's runtime type.
                 unsafe { service.setDelegate(Some(advertiser_proto)) };
                 service.setIncludesPeerToPeer(true);
                 if let Some(data) = build_txt(&txt) {
@@ -200,6 +209,8 @@ impl MacosMdnsBackend {
                 let browser_delegate = BrowserDelegate::new(resolver);
                 let browser_proto = ProtocolObject::from_ref(&*browser_delegate);
                 let browser = NSNetServiceBrowser::new();
+                // SAFETY: the browser and retained browser delegate live for the entire run-loop
+                // thread, and the protocol object has NSNetServiceBrowserDelegate's runtime type.
                 unsafe { browser.setDelegate(Some(browser_proto)) };
                 browser.setIncludesPeerToPeer(true);
                 browser.searchForServicesOfType_inDomain(

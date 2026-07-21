@@ -153,6 +153,13 @@ green security claim. The compiler's `forbid(unsafe_code)` remains the
 enforcement boundary for safe Prns crates; geiger is inventory and review
 evidence, not a proof of soundness.
 
+The release gate adds a deterministic enforcement layer that does not depend on
+Geiger's parser coverage. `python3 scripts/unsafe-audit.py` resolves each shipped
+graph with locked Cargo metadata, performs a comment/string/raw-string-aware Rust
+token scan, and byte-compares the result with `audits/unsafe-snapshot.json`.
+First-party targets without a compiler forbid or a named, linted exception fail
+before snapshot comparison. See [Public-Release Dependency Audit](release-dependency-audit.md).
+
 ## Instrumentation Boundary
 
 The observability workline is compile-time isolated from the checks in this

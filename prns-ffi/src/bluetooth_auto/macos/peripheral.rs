@@ -55,6 +55,8 @@ define_class!(
     unsafe impl CBPeripheralManagerDelegate for PeripheralDelegate {
         #[unsafe(method(peripheralManagerDidUpdateState:))]
         fn did_update_state(&self, peripheral: &CBPeripheralManager) {
+            // SAFETY: CoreBluetooth supplied this live manager to its delegate on the configured
+            // serial dispatch queue.
             if unsafe { peripheral.state() } == CBManagerState::PoweredOn {
                 *self.ivars().manager.borrow_mut() =
                     Some(SendPeripheralManager(peripheral.retain()));
@@ -77,6 +79,8 @@ define_class!(
                         columba_tx,
                         columba_identity,
                     ]);
+                    // SAFETY: every argument is a retained, correctly typed Objective-C object and
+                    // the generated initializer returns ownership of the new mutable service.
                     let service = unsafe {
                         CBMutableService::initWithType_primary(
                             CBMutableService::alloc(),
@@ -84,10 +88,16 @@ define_class!(
                             true,
                         )
                     };
+                    // SAFETY: all entries are retained CoreBluetooth characteristics and the array
+                    // remains live throughout the synchronous property assignment.
                     unsafe { service.setCharacteristics(Some(&characteristics)) };
+                    // SAFETY: the newly initialized service remains retained while the live manager
+                    // registers it on the serial CoreBluetooth queue.
                     unsafe { peripheral.addService(&service) };
                     *self.ivars().service_published.borrow_mut() = true;
                 }
+                // SAFETY: the live peripheral manager is messaged only from its delegate's serial
+                // dispatch queue; the boolean has the generated selector's declared type.
                 unsafe { peripheral.publishL2CAPChannelWithEncryption(false) };
             }
         }
@@ -99,10 +109,13 @@ define_class!(
             dict: &NSDictionary<NSString, AnyObject>,
         ) {
             *self.ivars().manager.borrow_mut() = Some(SendPeripheralManager(peripheral.retain()));
+            // SAFETY: CoreBluetooth exports this NSString constant with process lifetime.
             let key: &NSString = unsafe { CBPeripheralManagerRestoredStateServicesKey };
             let Some(restored) = dict.objectForKey(key) else {
                 return;
             };
+            // SAFETY: CoreBluetooth documents this restoration value as an NSArray of services;
+            // `restored` retains the array for the duration of this borrow and iteration.
             let services: &NSArray<CBService> =
                 unsafe { &*(Retained::as_ptr(&restored) as *const NSArray<CBService>) };
             let control_id = control_uuid();
@@ -111,15 +124,21 @@ define_class!(
             let columba_tx_id = columba_tx_uuid();
             let columba_identity_id = columba_identity_uuid();
             for service in services.iter() {
+                // SAFETY: the service is retained by the restoration array during this iteration.
                 let service_id = unsafe { service.UUID() };
                 if !cbuuid_eq(&service_id, &service_uuid()) {
                     continue;
                 }
+                // SAFETY: CoreBluetooth owns and retains the restored service's characteristic
+                // collection for the lifetime of the service.
                 let Some(characteristics) = (unsafe { service.characteristics() }) else {
                     continue;
                 };
                 for characteristic in characteristics.iter() {
+                    // SAFETY: the characteristic is retained by the collection while it is used.
                     let uuid = unsafe { characteristic.UUID() };
+                    // SAFETY: restoration returns the mutable characteristics originally published
+                    // by this CBPeripheralManager; the retained object remains live for this cast.
                     let mutable: &CBMutableCharacteristic = unsafe {
                         &*(Retained::as_ptr(&characteristic) as *const CBMutableCharacteristic)
                     };
@@ -160,6 +179,8 @@ define_class!(
             let uuid = service_uuid();
             let services = NSArray::from_slice(&[&*uuid]);
             let data = advertisement_data(&services);
+            // SAFETY: this live manager is called on its serial delegate queue, and the retained
+            // advertisement dictionary stays alive for the synchronous message.
             unsafe { peripheral.startAdvertising(Some(&data)) };
         }
 
@@ -227,13 +248,19 @@ define_class!(
             requests: &NSArray<CBATTRequest>,
         ) {
             for request in requests.iter() {
+                // SAFETY: CoreBluetooth supplied this retained request for the duration of the
+                // delegate callback; its optional value has the binding-declared NSData type.
                 let Some(value) = (unsafe { request.value() }) else {
+                    // SAFETY: the request belongs to this live manager callback and may be answered
+                    // exactly once before the callback returns.
                     unsafe {
                         peripheral.respondToRequest_withResult(&request, CBATTError::Success)
                     };
                     continue;
                 };
+                // SAFETY: the request is live during this callback and retains its characteristic.
                 let characteristic = unsafe { request.characteristic() };
+                // SAFETY: the returned characteristic is live and its UUID is immutable.
                 let written_uuid = unsafe { characteristic.UUID() };
                 let bytes = value.to_vec();
                 if cbuuid_eq(&written_uuid, &data_uuid()) {
@@ -243,6 +270,8 @@ define_class!(
                             let _ = tx.try_send(Box::from(bytes.as_slice()));
                         }
                     }
+                    // SAFETY: the request belongs to this live manager callback and is answered
+                    // exactly once on this branch.
                     unsafe {
                         peripheral.respondToRequest_withResult(&request, CBATTError::Success)
                     };
@@ -255,9 +284,12 @@ define_class!(
                         peer_identity.copy_from_slice(&bytes);
                         let (tx, rx) = tokio_mpsc::channel::<Control>(8);
                         let (data_tx, data_rx) = tokio_mpsc::channel::<Box<[u8]>>(16);
+                        // SAFETY: the live request retains the CBCentral that issued it.
                         let central = unsafe { request.central() };
+                        // SAFETY: this is an immutable property query on the live requesting central.
                         let gatt_mtu = unsafe { central.maximumUpdateValueLength() }
                             .clamp(FRAGMENT_HEADER_LEN + 1, BLE_HW_MTU);
+                        // SAFETY: the live requesting central owns a retained immutable identifier.
                         let identifier = unsafe { central.identifier() };
                         let address = BleAddress::new(uuid_token(&identifier));
                         *self.ivars().active_address.borrow_mut() = Some(*address.octets());
@@ -295,6 +327,8 @@ define_class!(
                             let _ = tx.try_send(Box::from(bytes.as_slice()));
                         }
                     }
+                    // SAFETY: the request belongs to this live manager callback and is answered
+                    // exactly once on this branch.
                     unsafe {
                         peripheral.respondToRequest_withResult(&request, CBATTError::Success)
                     };
@@ -305,9 +339,12 @@ define_class!(
                     if active.is_none() {
                         let (tx, rx) = tokio_mpsc::channel::<Control>(8);
                         let (data_tx, data_rx) = tokio_mpsc::channel::<Box<[u8]>>(16);
+                        // SAFETY: the live request retains the CBCentral that issued it.
                         let central = unsafe { request.central() };
+                        // SAFETY: this is an immutable property query on the live requesting central.
                         let gatt_mtu = unsafe { central.maximumUpdateValueLength() }
                             .clamp(FRAGMENT_HEADER_LEN + 1, BLE_HW_MTU);
+                        // SAFETY: the live requesting central owns a retained immutable identifier.
                         let identifier = unsafe { central.identifier() };
                         let address = BleAddress::new(uuid_token(&identifier));
                         *self.ivars().active_address.borrow_mut() = Some(*address.octets());
@@ -346,6 +383,8 @@ define_class!(
                         }
                     }
                 }
+                // SAFETY: this is the sole response for this request on the fall-through branch,
+                // sent while both the request and manager remain live in their delegate callback.
                 unsafe { peripheral.respondToRequest_withResult(&request, CBATTError::Success) };
             }
         }
@@ -357,7 +396,9 @@ define_class!(
             central: &CBCentral,
             characteristic: &CBCharacteristic,
         ) {
+            // SAFETY: CoreBluetooth supplied both live objects for the duration of this callback.
             let identifier = unsafe { central.identifier() };
+            // SAFETY: the supplied characteristic is live and its UUID is immutable.
             let uuid = unsafe { characteristic.UUID() };
             let protocol = if cbuuid_eq(&uuid, &columba_tx_uuid()) {
                 PeerProtocol::Columba
@@ -377,8 +418,10 @@ define_class!(
             central: &CBCentral,
             characteristic: &CBCharacteristic,
         ) {
+            // SAFETY: CoreBluetooth supplied this live central for the duration of the callback.
             let identifier = unsafe { central.identifier() };
             let token = uuid_token(&identifier);
+            // SAFETY: the supplied characteristic is live and its UUID is immutable.
             let uuid = unsafe { characteristic.UUID() };
             let unsubscribed_protocol = if cbuuid_eq(&uuid, &control_uuid()) {
                 Some(PeerProtocol::Native)
@@ -420,6 +463,8 @@ impl PeripheralDelegate {
         let data_plane_properties = CBCharacteristicProperties::Write
             | CBCharacteristicProperties::WriteWithoutResponse
             | CBCharacteristicProperties::Notify;
+        // SAFETY: all initializer arguments are retained and correctly typed; the generated binding
+        // returns ownership of a newly allocated mutable characteristic.
         let characteristic = unsafe {
             CBMutableCharacteristic::initWithType_properties_value_permissions(
                 CBMutableCharacteristic::alloc(),
@@ -429,6 +474,8 @@ impl PeripheralDelegate {
                 CBAttributePermissions::Writeable,
             )
         };
+        // SAFETY: all initializer arguments are retained and correctly typed; the generated binding
+        // returns ownership of a newly allocated mutable characteristic.
         let data_characteristic = unsafe {
             CBMutableCharacteristic::initWithType_properties_value_permissions(
                 CBMutableCharacteristic::alloc(),
@@ -438,6 +485,8 @@ impl PeripheralDelegate {
                 CBAttributePermissions::Writeable,
             )
         };
+        // SAFETY: all initializer arguments are retained and correctly typed; the generated binding
+        // returns ownership of a newly allocated mutable characteristic.
         let columba_rx_characteristic = unsafe {
             CBMutableCharacteristic::initWithType_properties_value_permissions(
                 CBMutableCharacteristic::alloc(),
@@ -448,6 +497,8 @@ impl PeripheralDelegate {
                 CBAttributePermissions::Writeable,
             )
         };
+        // SAFETY: all initializer arguments are retained and correctly typed; the generated binding
+        // returns ownership of a newly allocated mutable characteristic.
         let columba_tx_characteristic = unsafe {
             CBMutableCharacteristic::initWithType_properties_value_permissions(
                 CBMutableCharacteristic::alloc(),
@@ -458,6 +509,8 @@ impl PeripheralDelegate {
             )
         };
         let identity_value = NSData::with_bytes(identity.as_bytes());
+        // SAFETY: the immutable identity NSData and all initializer arguments stay live for the
+        // call; the generated binding returns ownership of the new mutable characteristic.
         let columba_identity_characteristic = unsafe {
             CBMutableCharacteristic::initWithType_properties_value_permissions(
                 CBMutableCharacteristic::alloc(),
@@ -483,6 +536,8 @@ impl PeripheralDelegate {
             data_inbound: RefCell::new(None),
             pending: RefCell::new(PendingL2cap::default()),
         });
+        // SAFETY: `this` is a freshly allocated PeripheralDelegate with fully initialized ivars;
+        // forwarding to NSObject's designated initializer preserves its allocation identity.
         unsafe { msg_send![super(this), init] }
     }
 
@@ -514,8 +569,11 @@ impl PeripheralDelegate {
                 let uuid = service_uuid();
                 let services = NSArray::from_slice(&[&*uuid]);
                 let data = advertisement_data(&services);
+                // SAFETY: the retained manager is messaged on its serial dispatch queue and the
+                // advertisement dictionary remains live for the synchronous call.
                 unsafe { manager.startAdvertising(Some(&data)) };
             } else {
+                // SAFETY: the retained manager is messaged only on its serial dispatch queue.
                 unsafe { manager.stopAdvertising() };
                 crate::diagnostic_log::debug!(
                     "bluetooth: advertising stopped — at connection capacity"

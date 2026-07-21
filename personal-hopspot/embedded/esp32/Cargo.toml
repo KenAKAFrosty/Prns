@@ -2,6 +2,7 @@
 name = "personal-hopspot-esp32"
 version = "0.1.0"
 edition = "2021"
+license = "MIT OR Apache-2.0"
 publish = false
 description = "Personal Hopspot ESP32 firmware: the Heltec V4 and T-Beam Supreme (ESP32-S3) and the headless XIAO (ESP32-C6) faces."
 
@@ -94,3 +95,9 @@ incremental = false
 lto = "fat"
 opt-level = "s"
 overflow-checks = false
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "deny"
