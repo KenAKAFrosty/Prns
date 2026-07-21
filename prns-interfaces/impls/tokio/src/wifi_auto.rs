@@ -28,12 +28,9 @@ use prns_runtime::runtime::{AttachedInterface, Fleet, InterfaceSupervisor};
 const BEACON_INTERVAL: Duration = Duration::from_millis(1600);
 const UNICAST_REPEER_EVERY: u32 = 3;
 const RENDEZVOUS_RECONNECT: ReconnectPolicy = ReconnectPolicy::STANDARD;
-/// Beacon cycles between attempts to reclaim the rendezvous port when another local node holds it.
-/// Three cycles of [`BEACON_INTERVAL`] (~5s) — brisk enough to take over promptly once the holder
-/// exits and frees the port, without calling bind() every beacon.
+/// Reclaim the rendezvous port every three beacon cycles without attempting a bind on every beacon.
 const REBIND_BEACON_CYCLES: u32 = 3;
-/// Per-peer UDP demux backlog. Full means the peer's interface task is behind, so new datagrams are
-/// dropped rather than letting one noisy peer grow process memory.
+/// A full peer lane drops new datagrams rather than allowing one peer to grow process memory.
 const PEER_INBOUND_DEPTH: usize = 32;
 
 pub struct AutoWifiPeer {
@@ -47,8 +44,7 @@ pub struct AutoWifiPeer {
 }
 
 impl AutoWifiPeer {
-    /// The member's id is derived from its peer's link-local address — EUI-64-stable to the peer's
-    /// MAC, so the same device reconnecting (even on a fresh socket) rebinds the routes it owned.
+    /// EUI-64 keeps the id stable across a peer reconnect so it rebinds its routes.
     pub fn new(
         socket: Arc<UdpSocket>,
         peer: SocketAddrV6,
@@ -153,10 +149,6 @@ impl Interface for AutoWifiPeer {
     }
 }
 
-/// The RNS WiFi/LAN `AutoInterface` as an [`InterfaceSupervisor`]: it owns the multicast
-/// discovery sockets and the single shared data socket, beacons its peering token, validates
-/// inbound beacons, and stands up an [`AutoWifiPeer`] member per confirmed peer, demuxing
-/// inbound datagrams back to each member by source. Attach with `handle.supervise(AutoWifi::new())`.
 pub struct AutoWifi {
     policy: EffectiveInterfacePolicy,
     settings: AutoWifiSettings,
@@ -336,7 +328,6 @@ impl AutoWifi {
         Self::with_policy(contract::configured_policy(Default::default()))
     }
 
-    /// Declare a known pipe instead of the default wifi LAN bitrate; sets the members' announce pacing.
     #[must_use]
     pub fn with_bitrate(bitrate: BitrateBps) -> Self {
         Self::with_policy(contract::policy_for_bitrate(bitrate))
@@ -361,21 +352,13 @@ impl AutoWifi {
         }
     }
 
-    /// Add Bonjour/mDNS as a second, concurrent discovery channel: each resolved rendezvous
-    /// endpoint arriving on `sightings` is dialed as a [`TcpClientInterface`] to the same
-    /// [`contract::TCP_RENDEZVOUS_PORT`] the multicast star and gateway fold use, deduped by
-    /// target. This is what lets a peer that cannot run raw multicast (iOS, exempt from the
-    /// entitlement only for standard Bonjour) still be reached; the platform backend feeds the channel from outside, keeping this supervisor `forbid-unsafe`.
+    /// Bonjour supplies discovery on platforms that cannot run raw multicast; sightings are deduplicated by rendezvous endpoint.
     #[must_use]
     pub fn with_mdns(mut self, sightings: UnboundedReceiver<SocketAddr>) -> Self {
         self.mdns = Some(sightings);
         self
     }
 
-    /// A clone of this supervisor's aggregate live-status handle: connection (Offline with no NIC,
-    /// Dormant when up with no peers, Live with peers), summed traffic, and peer count, plus a
-    /// snapshot of each member's own status through [`members`](AutoWifiStatus::members). Call before
-    /// [`supervise`](prns_runtime::runtime::PrnsNodeHandle::supervise) consumes the supervisor.
     #[must_use]
     pub fn status(&self) -> AutoWifiStatus {
         self.status.clone()
@@ -388,11 +371,6 @@ impl Default for AutoWifi {
     }
 }
 
-/// The WiFi/LAN auto-interface's aggregate live status, an [`InterfaceStatus`] over the whole
-/// supervisor: one "WiFi" card whose connection is Offline (no NIC) / Dormant (up, no peers) /
-/// Live (peers), and whose bytes and rates are the sum across the fleet. Link and destination
-/// counts are engine figures summed by the face, not carried here. Each member keeps its own
-/// [`TokioInterfaceStatus`], exposed through [`members`](Self::members) for per-peer cards.
 #[derive(Clone)]
 pub struct AutoWifiStatus {
     shared: Arc<AutoWifiShared>,
@@ -445,7 +423,6 @@ impl AutoWifiStatus {
         });
     }
 
-    /// Whether WiFi-auto should be discovering and carrying peers.
     #[must_use]
     pub fn is_enabled(&self) -> bool {
         *self.shared.enabled.borrow()
@@ -473,8 +450,6 @@ impl AutoWifiStatus {
         }
     }
 
-    /// A snapshot of each confirmed peer's own live status, for rendering the members as ordinary
-    /// interface cards. Cheap: each handle is an `Arc` clone.
     #[must_use]
     pub fn members(&self) -> std::vec::Vec<TokioInterfaceStatus> {
         match self.shared.members.lock() {
@@ -527,11 +502,7 @@ impl InterfaceSupervisor for AutoWifi {
     }
 
     async fn run(self, fleet: Fleet) {
-        // Auto-wifi runs on *every* non-virtual link-local interface present (RNS's
-        // AutoInterface is inherently multi-interface): one socket set joins the group on every
-        // interface, each interface gets its own brain (its own link-local, so its own peering
-        // token), and inbound datagrams demux by source scope id. The multicast plane is
-        // best-effort: a platform that cannot stand it up (iOS) still runs the rendezvous, gateway, and mDNS planes.
+        // RNS AutoInterface is multi-interface: each eligible link-local NIC owns its token and peer table, and inbound datagrams demultiplex by source scope. Multicast is best-effort so rendezvous, gateway, and mDNS still run when it is unavailable.
         let settings = self.settings;
         let mut nics = link_local_nics(&settings.devices);
         let sockets = if nics.is_empty() {
@@ -704,22 +675,13 @@ struct AttachedStatus {
 }
 
 struct Supervisor {
-    /// One protocol brain per interface, keyed by its NIC index — each holds that interface's own
-    /// link-local (so its own peering token) and peer table. Inbound datagrams demux here by the
-    /// source address's scope id (the interface they arrived on). Empty when the multicast plane did
-    /// not come up (iOS), so the supervisor is rendezvous- and mDNS-only.
     brains: HashMap<u32, contract::HeapAutoInterfaceProtocol>,
     members: HashMap<Ipv6Addr, PeerMember>,
     gateways: HashMap<u32, GatewayDial>,
-    /// One TCP dial per mDNS-discovered peer rendezvous, keyed by target so a repeated sighting never
-    /// stacks a second dial. Holds the dial's live status for the aggregate; the dial itself is a
-    /// fleet member, so disabling WiFi-auto can tear it down with the rest of the umbrella.
     mdns_dials: HashMap<SocketAddr, AttachedStatus>,
     accepted: std::vec::Vec<AttachedStatus>,
     prefixes: std::vec::Vec<LocalPrefix>,
     fleet: Fleet,
-    /// The shared UDP data socket each multicast-discovered member transmits on; `None` when the
-    /// multicast plane is absent, which is exactly when no member is ever spawned.
     data: Option<Arc<UdpSocket>>,
     policy: EffectiveInterfacePolicy,
     settings: AutoWifiSettings,
@@ -815,10 +777,6 @@ impl Supervisor {
         self.status.publish(0, 0, 0, std::vec::Vec::new());
     }
 
-    /// Dial a peer's rendezvous endpoint surfaced by Bonjour/mDNS, reusing the gateway fold's
-    /// [`TcpClientInterface`] so an mDNS-found peer becomes an ordinary fleet member. Deduped by
-    /// target so a repeated sighting never stacks a second dial, and self-skipping so we never dial
-    /// our own advertised rendezvous even if the backend surfaces it.
     fn dial_mdns_sighting(&mut self, target: SocketAddr) {
         if !self.settings.prns_rendezvous_enabled()
             || is_own_address(target.ip(), &self.prefixes)
@@ -1016,10 +974,7 @@ struct Sockets {
     data: Arc<UdpSocket>,
 }
 
-/// Every non-virtual link-local interface the node should run auto-wifi on, deduplicated by
-/// index; loopback and known virtual/tunnel interfaces (utun, awdl, bridge, docker) are
-/// excluded. The per-scope probe gives the kernel's own send-source link-local for that
-/// interface, so the token we beacon matches what a peer recomputes from the datagram source.
+/// The per-scope probe obtains the kernel's send-source link-local address so the beacon token matches what peers recompute from the datagram source.
 fn link_local_nics(devices: &AutoWifiDevicePolicy) -> std::vec::Vec<Nic> {
     let Ok(ifaces) = if_addrs::get_if_addrs() else {
         return std::vec::Vec::new();
@@ -1027,11 +982,7 @@ fn link_local_nics(devices: &AutoWifiDevicePolicy) -> std::vec::Vec<Nic> {
     let mut nics = std::vec::Vec::new();
     let mut seen: HashSet<u32> = HashSet::new();
     for iface in ifaces {
-        // Don't require an if_addrs *V6 entry*: some platforms only surface a NIC's global addresses
-        // there, never its link-local — so an AP-only interface (just a link-local + a private v4,
-        // e.g. `ap0`) would never qualify. The per-scope probe below is the real test of link-local
-        // capability, and dedup-by-index means each interface is considered once regardless of how
-        // many addresses it carries.
+        // Some platforms omit a NIC's link-local address from if_addrs, so the per-scope probe is authoritative and each interface is considered once by index.
         if !devices.allows(&iface.name, iface.is_loopback()) {
             continue;
         }
@@ -1079,9 +1030,6 @@ fn is_local_peer(peer: IpAddr, prefixes: &[LocalPrefix]) -> bool {
             .any(|prefix| same_subnet(peer, prefix.addr, prefix.netmask))
 }
 
-/// Whether `ip` is one of this host's own interface addresses (or loopback) — the self-dial guard for
-/// mDNS sightings, since Bonjour browses surface our own advertised service back to us and dialing it
-/// would loop the rendezvous onto itself.
 fn is_own_address(ip: IpAddr, prefixes: &[LocalPrefix]) -> bool {
     ip.is_loopback() || prefixes.iter().any(|prefix| prefix.addr == ip)
 }
@@ -1107,9 +1055,7 @@ fn gateway_for(ifaces: &[netdev::Interface], index: u32) -> Option<IpAddr> {
         .and_then(gateway_addr)
 }
 
-/// Dial the loopback rendezvous when another node on this host already holds the port, so its star
-/// carries our traffic too — we bridge through the local core rather than going dark. `None` when we
-/// hold the port ourselves; we are the core then, not a client of it.
+/// A node that cannot claim the local rendezvous port joins its current holder over loopback.
 fn bounce_to_local_core(
     rendezvous: &Option<TcpListener>,
     fleet: &Fleet,
@@ -1126,9 +1072,6 @@ fn bounce_to_local_core(
     )))
 }
 
-/// Accept on the rendezvous listener when there is one, otherwise stay pending forever — so the
-/// supervisor's `select!` carries a TCP-accept arm whether or not the port could be bound (a second
-/// node on the host, a platform that refused it), without a separate code path.
 async fn accept_maybe(listener: &Option<TcpListener>) -> io::Result<(TcpStream, SocketAddr)> {
     match listener {
         Some(listener) => listener.accept().await,
@@ -1136,9 +1079,6 @@ async fn accept_maybe(listener: &Option<TcpListener>) -> io::Result<(TcpStream, 
     }
 }
 
-/// Receive on a multicast socket when the multicast plane is up, otherwise stay pending forever — so
-/// the discovery/unicast/data arms are present whether or not multicast could be stood up, mirroring
-/// [`accept_maybe`]. A receive error yields `None`, which the arm ignores.
 async fn recv_maybe(socket: Option<&UdpSocket>, buf: &mut [u8]) -> Option<(usize, SocketAddr)> {
     match socket {
         Some(socket) => socket.recv_from(buf).await.ok(),
@@ -1146,8 +1086,6 @@ async fn recv_maybe(socket: Option<&UdpSocket>, buf: &mut [u8]) -> Option<(usize
     }
 }
 
-/// Take the next Bonjour/mDNS sighting when the channel is present, otherwise stay pending forever.
-/// `None` once the backend's sender is dropped, which the caller uses to retire the arm.
 async fn next_mdns(sightings: Option<&mut UnboundedReceiver<SocketAddr>>) -> Option<SocketAddr> {
     match sightings {
         Some(sightings) => sightings.recv().await,
@@ -1155,9 +1093,7 @@ async fn next_mdns(sightings: Option<&mut UnboundedReceiver<SocketAddr>>) -> Opt
     }
 }
 
-/// The default-gateway address an interface routes through — IPv4 preferred (a hotspot hands out a v4
-/// gateway), else IPv6. `None` when the NIC has no default route (a hosted AP, a link-local-only
-/// segment), so a host's own AP interface is skipped.
+/// Prefer an IPv4 default gateway, then IPv6; a hosted AP with no default route is skipped.
 fn gateway_addr(iface: &netdev::Interface) -> Option<IpAddr> {
     let gateway = iface.gateway.as_ref()?;
     gateway
@@ -1198,14 +1134,11 @@ fn open_sockets(nics: &[Nic], settings: &AutoWifiSettings) -> io::Result<Sockets
     })
 }
 
-/// One discovery socket that joins the multicast group on *every* interface, so it both hears the
-/// group on all of them and (via scoped sends) beacons across all of them. Sends always carry an
-/// explicit scope, so no default multicast interface is set.
+/// Joins every eligible interface and sends with an explicit scope rather than a default multicast interface.
 fn discovery_socket(nics: &[Nic], settings: &AutoWifiSettings) -> io::Result<UdpSocket> {
     let socket = reusable_socket2(settings.discovery_port)?;
     let discovery_group = settings.discovery_group();
-    // Best-effort per interface: a join that fails (an interface that can't do multicast) is skipped,
-    // never fatal — one bad interface must not take auto-wifi down on every other one.
+    // A failed multicast join is skipped so one interface cannot take AutoWifi down on every other interface.
     let joined = nics
         .iter()
         .filter(|nic| {
@@ -1705,8 +1638,6 @@ mod tests {
         );
     }
 
-    /// A hand-driven seam, as in the UDP tests: captures every `next_inbound`, supplies
-    /// `next_outbound` from a grant lane the test fills.
     struct MockSeam {
         inbound: mpsc::UnboundedSender<std::vec::Vec<u8>>,
         sink: std::vec::Vec<u8>,
@@ -1747,13 +1678,11 @@ mod tests {
     async fn frames_ride_the_shared_socket_out_and_the_demux_channel_in() {
         let loopback = SocketAddr::from((Ipv6Addr::LOCALHOST, 0));
 
-        // The peer this member talks to: a plain socket the test owns, standing in for the far node.
         let peer = UdpSocket::bind(loopback)
             .await
             .expect("binds the test peer");
         let peer_addr = v6(peer.local_addr().expect("the peer address is known"));
 
-        // The supervisor's single shared data socket, here owned by the test.
         let shared = Arc::new(
             UdpSocket::bind(loopback)
                 .await
@@ -1778,8 +1707,6 @@ mod tests {
         };
         tokio::spawn(member.run(seam));
 
-        // Inbound: the supervisor would demux a datagram from this peer to the member's channel; the
-        // test plays the supervisor and pushes one directly. The member hands it up the seam whole.
         let payload = [0x7Eu8, 0x01, 0x7D, 0x02, 0x7E];
         demux_tx
             .try_send(payload.to_vec())
@@ -1790,7 +1717,6 @@ mod tests {
             .expect("the member task is alive");
         assert_eq!(received, payload, "raw bytes, exactly as demuxed");
 
-        // Outbound: the seam yields a frame; it leaves the shared socket bound for the peer.
         let out_payload = [0xAAu8, 0x7E, 0xBB];
         out_tx
             .try_grant()

@@ -23,10 +23,9 @@ use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::usb_auto::device_descriptor;
 use personal_rns::interfaces::{ConnectionState, InterfaceId};
-use personal_rns::reactor::embassy::timebase::EmbassyTimebase;
 use personal_rns::reactor::embassy::{
     EmbassyGrantConsumer, EmbassyGrantProducer, EmbassyHost, EmbassyInterfaceSeam,
-    EmbassyInterfaceStatus, InterfaceLifecycle, PooledEgress,
+    EmbassyInterfaceStatus, EmbassyTimebase, InterfaceLifecycle, PooledEgress,
 };
 use personal_rns::reactor::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
 use personal_rns::runtime::{
@@ -40,11 +39,13 @@ use crate::storage::{C6Storage, EngineStorageType};
 use embassy_sync::signal::Signal;
 use embassy_sync::zerocopy_channel;
 #[cfg(feature = "bluetooth-auto")]
-use personal_rns::bluetooth_auto::{BluetoothAutoShared, EmbeddedBleBackend};
+use personal_rns::bluetooth_auto::BluetoothAutoShared;
 use personal_rns::interfaces::InterfaceKind;
 use personal_rns::reactor::embassy::embassy_grant_lane;
 use personal_rns::reactor::grant::FrameSlot;
 use personal_rns::runtime::{Fleet, FleetWire};
+#[cfg(feature = "bluetooth-auto")]
+use prns_interfaces_embassy::bluetooth_auto::EmbeddedBleBackend;
 use static_cell::ConstStaticCell;
 
 #[cfg(feature = "esp-now")]

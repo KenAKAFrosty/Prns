@@ -18,19 +18,11 @@ use prns_core::interfaces::{
 use prns_runtime::reactor::grant::FrameTarget;
 use prns_runtime::runtime::EmbassyFleet as Fleet;
 
-/// How often the supervisor multicasts its peering token, matching the tokio cadence.
 const BEACON_INTERVAL: Duration = Duration::from_millis(1600);
-/// Hard ceiling on any single UDP `send_to` in the run loop. A multicast/unicast send normally
-/// completes in microseconds, but under WiFi+BLE coex the radio can stall the WiFi netif's TX so the
-/// socket buffer fills and `send_to` blocks indefinitely — which would freeze the whole supervisor
-/// (no beacons, no RX) the moment a BLE link goes active. UDP discovery/data is lossy by design, so a
-/// send that can't complete in this window is dropped and the loop carries on rather than wedging.
+/// WiFi and BLE coexistence can stall a full WiFi TX buffer indefinitely, so lossy UDP sends are bounded rather than freezing beacons and receive handling.
 const SEND_TIMEOUT: Duration = Duration::from_millis(300);
 
-/// One confirmed peer's live status on the no_std host: a settable id (the slot reused for
-/// successive peers carries each peer's medium-derived id, so the card shows the *peer*, not the
-/// slot), plus connection and byte counters as lock-free atomics. The id rides a critical-section
-/// cell so a cross-core reader (the render task) sees it coherently; the counters are true `u64`.
+/// The reusable slot's peer id uses a critical-section cell so cross-core readers see it coherently.
 pub struct WifiMemberStatus {
     id: CriticalSectionMutex<Cell<InterfaceId>>,
     connection: AtomicU8,
@@ -92,8 +84,6 @@ impl InterfaceStatus for WifiMemberStatus {
     }
 }
 
-/// The supervisor's shared live state, parked by the board in a `static` so the render task reads it
-/// lock-free across cores: the aggregate counters and a fixed `WifiMemberStatus` per member slot.
 pub struct AutoWifiShared<const MEMBERS: usize> {
     id: InterfaceId,
     enabled: AtomicBool,
@@ -104,9 +94,6 @@ pub struct AutoWifiShared<const MEMBERS: usize> {
 }
 
 impl<const MEMBERS: usize> AutoWifiShared<MEMBERS> {
-    /// The supervisor's shared state, every slot free — `const`, so it lives in a `static`. `id` is
-    /// the aggregate WiFi card's id; the board passes the same id the supervisor mints from
-    /// [`contract::GROUP_ID`].
     #[must_use]
     pub const fn new(id: InterfaceId) -> Self {
         Self {
@@ -120,17 +107,12 @@ impl<const MEMBERS: usize> AutoWifiShared<MEMBERS> {
     }
 }
 
-/// The WiFi/LAN auto-interface's aggregate live status: one "WiFi" card whose connection is
-/// Disconnected (no peers) or Connected (peers), with the per-peer members exposed through
-/// [`members`](Self::members) for the face to render beside it. `Copy` — a `&'static` borrow of the
-/// board's shared state.
 #[derive(Clone, Copy)]
 pub struct AutoWifiStatus<const MEMBERS: usize> {
     shared: &'static AutoWifiShared<MEMBERS>,
 }
 
 impl<const MEMBERS: usize> AutoWifiStatus<MEMBERS> {
-    /// Wrap the board's shared state. The supervisor and the render task each hold one of these.
     #[must_use]
     pub fn new(shared: &'static AutoWifiShared<MEMBERS>) -> Self {
         Self { shared }
@@ -211,8 +193,6 @@ impl<const MEMBERS: usize> AutoWifiStatus<MEMBERS> {
         self.shared.peers.store(count as u32, Ordering::Relaxed);
     }
 
-    /// Each confirmed peer's own live status, for rendering the members as ordinary interface cards.
-    /// Only the occupied slots, so the face gets one card per real peer.
     pub fn members(&self) -> impl Iterator<Item = &'static WifiMemberStatus> {
         self.shared
             .members
@@ -253,10 +233,6 @@ impl<const MEMBERS: usize> InterfaceStatus for AutoWifiStatus<MEMBERS> {
     }
 }
 
-/// The RNS WiFi/LAN `AutoInterface` as an embassy supervisor: the board hands it the WiFi `stack`,
-/// two UDP sockets (their `static` buffers the board's), the board's WiFi `mac` (the EUI-64
-/// link-local the brain hashes over, which the board's IPv6 config must match), and the shared
-/// status. Driven by `node.run(join(.., wifi.run(fleet)))`.
 pub struct AutoWifi<'a, const MEMBERS: usize> {
     stack: Stack<'a>,
     discovery: UdpSocket<'a>,
@@ -264,30 +240,19 @@ pub struct AutoWifi<'a, const MEMBERS: usize> {
     brain: contract::FixedAutoInterfaceProtocol<MEMBERS>,
     status: AutoWifiStatus<MEMBERS>,
     bitrate: BitrateBps,
-    /// An optional second netif folded into the SAME umbrella (one card, one fleet): the SoftAP
-    /// segment. When present, the supervisor beacons + listens on both stacks, and each peer is
-    /// served back over the socket of the segment it was discovered on.
     secondary_stack: Option<Stack<'a>>,
     secondary_discovery: Option<UdpSocket<'a>>,
     secondary_data: Option<UdpSocket<'a>>,
-    /// The peering token for the SECONDARY segment, hashed over ITS own link-local — not the primary's.
-    /// The token is bound to the source address ([`contract::peering_token`]); a receiver validates it
-    /// against the address the beacon arrived from. The two segments have different link-locals, so
-    /// reusing the primary token on the secondary makes every secondary beacon fail validation (a
-    /// station-to-station peer never forms). Computed from the secondary's MAC in `with_secondary_netif`.
+    /// Must be derived from the secondary link-local address because peers validate the token against the beacon source.
     secondary_token: Option<[u8; 32]>,
 }
 
 impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
-    /// The aggregate id every supervisor mints from [`contract::GROUP_ID`] — the board passes the same
-    /// id to [`AutoWifiShared::new`] so the card and the supervisor agree.
     #[must_use]
     pub fn aggregate_id() -> InterfaceId {
         InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, contract::GROUP_ID)
     }
 
-    /// Build the supervisor over the board's stack, sockets, and WiFi MAC, reporting into `shared`.
-    /// Clamps the wifi LAN pipe to the board's 2.4 GHz radio ceiling for the members' announce pacing.
     #[must_use]
     pub fn new(
         stack: Stack<'a>,
@@ -311,9 +276,6 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
         }
     }
 
-    /// Fold a second netif (its stack + the two UDP sockets bound on it) into this same supervisor,
-    /// so the SoftAP segment rides the one WiFi-auto umbrella rather than a separate fleet/card. The
-    /// supervisor beacons + listens on both segments and serves each peer back over its own segment.
     #[must_use]
     pub fn with_secondary_netif(
         mut self,
@@ -330,22 +292,11 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
         self
     }
 
-    /// A copy of this supervisor's aggregate status handle, for the render task. Call before
-    /// [`run`](Self::run) consumes the supervisor.
     #[must_use]
     pub fn status(&self) -> AutoWifiStatus<MEMBERS> {
         self.status
     }
 
-    /// Drive the auto-interface forever: bind the sockets, join the multicast group, then race
-    /// discovery, inbound data (demuxed to each member by source), the beacon timer, and every
-    /// member's outbound lane. A confirmed beacon stands a peer up on a free slot through `fleet`; a
-    /// stale peer is torn back down. `M`/`SLOT`/`NOTIFY`/`LIFECYCLE` come from the node's pool.
-    ///
-    /// The `IpAddress::Ipv6` matches are irrefutable under a `proto-ipv6`-only stack (the board's
-    /// config) yet stay refutable in general, so a future dual-stack build still type-checks. The
-    /// fleet is built with exactly `MEMBERS` wires, so taking slot `0..MEMBERS` once each never
-    /// misses.
     #[allow(irrefutable_let_patterns, clippy::expect_used)]
     pub async fn run<M, const SLOT: usize, const NOTIFY: usize, const LIFECYCLE: usize>(
         mut self,
@@ -355,8 +306,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
     ) where
         M: RawMutex + 'static,
     {
-        // Wait for the link and our IPv6 config before binding — beaconing into a down link is
-        // pointless, and a multicast join can fail before the interface is up.
+        // Wait for link and IPv6 configuration because a multicast join can fail before the interface is up.
         self.stack.wait_config_up().await;
         let primary_ok = self
             .discovery
@@ -375,14 +325,13 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
             return;
         }
 
-        // Fold the SoftAP segment into the same umbrella: bind + join the group on its stack too. If
-        // it can't come up, drop it and run the primary segment alone — never wedge the station.
+        // A secondary netif is best-effort so its failure cannot wedge the primary station segment.
         let secondary_ok = if let (Some(stack), Some(discovery), Some(data)) = (
             self.secondary_stack.as_ref(),
             self.secondary_discovery.as_mut(),
             self.secondary_data.as_mut(),
         ) {
-            // Bounded so a SoftAP netif that never configures can't wedge the station umbrella.
+            // Bound secondary configuration so a stalled SoftAP cannot wedge the primary segment.
             embassy_time::with_timeout(Duration::from_secs(10), stack.wait_config_up())
                 .await
                 .is_ok()
@@ -409,8 +358,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
         let mut peer_on_secondary: [bool; MEMBERS] = [false; MEMBERS];
 
         let token = *self.brain.our_peering_token().as_bytes();
-        // The secondary segment beacons a token over ITS own link-local; falling back to the primary
-        // token would bind it to the wrong source address and the peer would reject every beacon.
+        // Never send the primary token over the secondary link-local address; peers would reject every beacon.
         let secondary_token = self.secondary_token;
         let mut beacon = Ticker::every(BEACON_INTERVAL);
         let mut now_ms: u64 = 0;
@@ -608,8 +556,6 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
     }
 }
 
-/// Receive on an optional secondary socket, or stay pending forever when there is none — so the run
-/// loop's select keeps the same shape whether or not the SoftAP segment is folded in.
 async fn recv_or_pending(
     socket: &Option<UdpSocket<'_>>,
     buf: &mut [u8],

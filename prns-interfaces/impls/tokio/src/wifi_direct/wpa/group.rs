@@ -7,8 +7,7 @@ use prns_core::interfaces::wifi_direct::{DataPlanePlan, GroupRole, SegmentAddres
 const LINK_LOCAL_WAIT_ROUNDS: u32 = 50;
 const LINK_LOCAL_WAIT_STEP: Duration = Duration::from_millis(100);
 
-/// The address the group owner claims on the P2P group netdev, matching the convention a native Android group owner uses (192.168.49.1).
-/// A joining phone runs DHCP expecting the owner here, so every owner (wpa or native) serves clients at this address rather than an IPv6 link-local the phone cannot reach.
+/// Android clients expect a WiFi Direct group owner at `192.168.49.1` after DHCP.
 const GO_ADDRESS: Ipv4Addr = Ipv4Addr::new(192, 168, 49, 1);
 const GO_ADDRESS_WAIT_ROUNDS: u32 = 60;
 const GO_ADDRESS_WAIT_STEP: Duration = Duration::from_millis(100);

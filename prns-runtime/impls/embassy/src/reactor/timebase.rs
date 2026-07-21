@@ -1,5 +1,3 @@
-//! Maps Embassy's per-boot clock onto the engine's logical [`InstantMillis`] timeline.
-
 use embassy_time::Instant as EmbassyInstant;
 
 use crate::engine::InstantMillis;

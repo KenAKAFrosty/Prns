@@ -1,8 +1,3 @@
-//! The reference's TCP socket discipline and connection timings under tokio, shared by the
-//! [`client`](super::client) and [`server`](super::server) bodies: Nagle off so a Reticulum frame
-//! hits the wire when it is written, the keepalive probe schedule that declares a silent peer dead,
-//! and the connect wait (`TCPClientInterface.INITIAL_CONNECT_TIMEOUT`).
-
 #[cfg(feature = "tcp")]
 use crate::reconnect::ReconnectPolicy;
 #[cfg(feature = "tcp")]
@@ -14,12 +9,9 @@ use std::time::Duration;
 use socket2::{SockRef, TcpKeepalive};
 use tokio::net::TcpStream;
 
-/// How long one connect attempt gets (`TCPClientInterface.INITIAL_CONNECT_TIMEOUT`).
 #[cfg(feature = "tcp")]
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
-/// The reference's keepalive discipline: probe after 5s idle, every 2s, and a peer that
-/// misses 12 probes — or leaves writes unacknowledged for 24s — is declared dead, so the
-/// stream drops and the reconnect loop takes over.
+/// Match the reference keepalive discipline: probe after 5 seconds idle and every 2 seconds thereafter, with 12 missed probes or 24 seconds of unacknowledged writes declaring the peer dead.
 #[cfg(feature = "tcp")]
 const TCP_PROBE_AFTER: Duration = Duration::from_secs(5);
 #[cfg(feature = "tcp")]
@@ -119,10 +111,7 @@ fn select_address(
     preferred.copied().or_else(|| addresses.first().copied())
 }
 
-/// The reference's socket discipline, best-effort: Nagle off (a Reticulum frame should hit
-/// the wire when it's written, not pool behind the ACK clock) and the keepalive probes
-/// above. A socket that refuses an option still carries frames, so refusals don't fail the
-/// connection.
+/// Socket tuning is best-effort because a socket that refuses an option can still carry frames.
 #[cfg(feature = "tcp")]
 pub fn tune(stream: &TcpStream) {
     tune_for_tunnel(stream, TcpTunnelMode::Direct);

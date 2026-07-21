@@ -3,7 +3,6 @@ use crate::interfaces::InterfaceDescriptor;
 
 pub const MAX_WIRE_FRAME_LEN: usize = crate::routing::links::MAX_LINK_MTU + IFAC_MAX_SIZE;
 
-/// 1472 (wire 1536): every embedded radio fits under it (ESP-NOW 1406, BLE 500, LoRa ~250, WiFi Auto 1196);
 pub const EMBEDDED_MAX_LINK_MTU: usize = 1_472;
 pub const EMBEDDED_MAX_WIRE_FRAME_LEN: usize = EMBEDDED_MAX_LINK_MTU + IFAC_MAX_SIZE;
 

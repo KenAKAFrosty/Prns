@@ -1,22 +1,8 @@
-//! The reference implementation calls this HDLC framing, but the
-//! behavior here is specifically HDLC-like octet-stuffed framing: frame
-//! delimiters and escapes live at the byte level. It is not KISS
-//! framing, and it is not bit-synchronous HDLC.
-//!
-//! Reference RNS serial framing:
-//! <https://github.com/markqvist/Reticulum/blob/1.3.5/RNS/Interfaces/SerialInterface.py#L38-L48>
-//!
-//! Reference escape handling:
-//! <https://github.com/markqvist/Reticulum/blob/1.3.5/RNS/Interfaces/SerialInterface.py#L180-L186>
-
 use super::{FrameBuffer, FrameSink};
 
 pub const FLAG: u8 = 0x7E;
 pub const ESC: u8 = 0x7D;
-/// XOR mask applied after [`ESC`] to recover the original byte (and
-/// applied at encode time to produce the escaped byte). Chosen so the
-/// escaped form of `FLAG` (`0x5E`) and `ESC` (`0x5D`) can never collide
-/// with another `FLAG` or `ESC` in the byte stream.
+/// XOR mask applied after [`ESC`] to recover the original byte and at encode time to produce the escaped byte. The escaped form of `FLAG` (`0x5E`) and `ESC` (`0x5D`) can never collide with another `FLAG` or `ESC` in the byte stream.
 pub const ESC_MASK: u8 = 0x20;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,16 +107,7 @@ pub enum DecodeError {
     FrameTooBig,
 }
 
-/// The stream-scanning half of the decode: delimiter and escape state only, writing each
-/// frame's payload into the caller's [`FrameSink`] so the bytes land once in whatever storage
-/// carries them onward.
-/// The scanner can be plugged into an already-running byte stream: bytes
-/// that arrive with no frame open are taken as the body of a frame whose
-/// opening `FLAG` was missed, so they close at the next `FLAG` as one
-/// (typically undecodable, discarded) frame and the scanner realigns from
-/// there. This self-heal matters because RNS's `FLAG data FLAG FLAG data
-/// FLAG` layout would otherwise let a mid-frame join lock the decoder a
-/// half-frame out of phase permanently.
+/// Bytes that arrive with no frame open are taken as the body of a frame whose opening `FLAG` was missed, so they close at the next `FLAG` as one typically undecodable frame and the scanner realigns. RNS's `FLAG data FLAG FLAG data FLAG` layout would otherwise let a mid-frame join lock the decoder a half-frame out of phase permanently.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RnsSerialScanner {
     in_frame: bool,
@@ -156,12 +133,7 @@ impl RnsSerialScanner {
         self.saw_escape = false;
     }
 
-    /// The next complete frame at or after `*offset` in `input`, its payload left in `sink`,
-    /// advancing `offset` past the bytes consumed. `Ok(Some(len))` is the payload length now in
-    /// the sink (`0` is a delimiter-only keepalive); `Ok(None)` means the chunk is exhausted
-    /// mid-frame, with the partial payload accumulated in the sink to be continued by the next
-    /// chunk. A frame past the sink's capacity is discarded whole ([`DecodeError::FrameTooBig`],
-    /// sink cleared) and scanning realigns at the next `FLAG`.
+    /// The next complete frame at or after `*offset` in `input`, its payload left in `sink`, advancing `offset` past the bytes consumed. `Ok(Some(len))` is the payload length now in the sink (`0` is a delimiter-only keepalive); `Ok(None)` means the chunk is exhausted mid-frame, with the partial payload accumulated in the sink to be continued by the next chunk. A frame past the sink's capacity is discarded whole ([`DecodeError::FrameTooBig`], sink cleared) and scanning realigns at the next `FLAG`.
     pub fn next_frame_into(
         &mut self,
         input: &[u8],
@@ -212,10 +184,7 @@ impl RnsSerialScanner {
         }
 
         if !self.in_frame {
-            // Bytes with no frame open mean we joined mid-frame (a reconnect, a half-written
-            // FIFO). Dropping them can lock the decoder a half-frame out of phase permanently
-            // against RNS's FLAG data FLAG FLAG data FLAG layout, so open a frame implicitly:
-            // it fails to decode at the next FLAG, is discarded, and we are realigned.
+            // Bytes with no frame open mean we joined mid-frame. Dropping them can lock the decoder a half-frame out of phase permanently against RNS's FLAG data FLAG FLAG data FLAG layout, so open a frame implicitly; it fails to decode at the next FLAG, is discarded, and we are realigned.
             sink.clear();
             self.in_frame = true;
             self.saw_escape = false;
@@ -246,8 +215,6 @@ impl RnsSerialScanner {
     }
 }
 
-/// [`RnsSerialScanner`] paired with its own `FrameBuffer`, for callers that consume each
-/// frame in place — the embedded serve loops and the byte-at-a-time [`feed`](Self::feed) path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RnsSerialDecoder<const FRAME_CAP: usize> {
     scanner: RnsSerialScanner,

@@ -13,11 +13,6 @@ default-members = [
     "prns-runtime/core",
     "personal-hopspot/core",
 ]
-# Root-excluded workspaces build standalone via their own manifests and carry their own
-# CI jobs (feature-configs), keeping the default members the portable engine surface: a
-# member's host features (tokio, CoreBluetooth) would unify into the default build and
-# break the std-only invariant. `prns-ffi` is the sharpest case: the one crate allowed
-# `unsafe` (platform FFI backends), audited with cargo-geiger + Miri.
 exclude = [
     "prnsd",
     "prns-ffi",
@@ -30,9 +25,6 @@ exclude = [
 ]
 resolver = "3"
 
-# Shared identity for every member crate. Members inherit these with
-# `<field>.workspace = true` so the repository, license, edition, and MSRV
-# are declared once. Per-crate `name`, `version`, and `description` stay local.
 [workspace.package]
 edition = "2021"
 license = "MIT OR Apache-2.0"

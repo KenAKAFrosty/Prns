@@ -14,14 +14,6 @@ use prns_runtime::reactor::driver::TokioInterfaceStatus;
 use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
 use prns_runtime::reactor::throughput::ThroughputLedger;
 
-/// One end of an RNS UDP pair (`UDPInterface` parity): bind the local address up front —
-/// so the bound port is readable and a bind refusal surfaces here — and forward every
-/// outbound frame to the fixed `peer`, exactly as the reference forwards to its
-/// configured `forward_ip:forward_port`. Datagrams arriving on the bound port are taken
-/// as whole wire frames regardless of source (reference parity: its handler never
-/// inspects the sender). Connectionless, so there is no reconnect machinery to mirror;
-/// `bitrate` is the host's claim about its pipe and sets the declared hardware MTU
-/// through the reference's tier table, datagram-clamped.
 pub struct UdpInterface {
     id: InterfaceId,
     socket: UdpSocket,
@@ -93,9 +85,6 @@ impl UdpInterface {
         Self::assemble(None, socket, UdpSocketFlow::SendOnly { peer }, policy)
     }
 
-    /// Bind with a caller-chosen id instead of one derived from the forward target — for advanced
-    /// setups that drive the reactor by hand and must pin the interface to a routing key their own
-    /// wiring references. Ordinary nodes call [`bind`](Self::bind).
     pub async fn bind_with_id(
         id: InterfaceId,
         local: impl tokio::net::ToSocketAddrs,
@@ -157,9 +146,6 @@ impl UdpInterface {
         })
     }
 
-    /// This interface's id: derived from its forward target by [`bind`](Self::bind), or the one
-    /// handed to [`bind_with_id`](Self::bind_with_id). For the app that wants to name it (an
-    /// [`AnnounceTarget::Interface`](prns_core::engine::AnnounceTarget), a log line).
     #[must_use]
     pub fn id(&self) -> InterfaceId {
         self.id
@@ -169,8 +155,6 @@ impl UdpInterface {
         self.socket.local_addr()
     }
 
-    /// A clone of this interface's live-status handle for the app to read on its own render
-    /// cadence. Call before [`run`](Interface::run) consumes the interface.
     #[must_use]
     pub fn status(&self) -> TokioInterfaceStatus {
         self.status.clone()
@@ -280,8 +264,6 @@ mod tests {
 
     const TEST_FRAME_CAP: usize = 2_048;
 
-    /// A hand-driven seam, as in the TCP tests: captures every `next_inbound`, supplies
-    /// `next_outbound` from a grant lane the test fills.
     struct MockSeam {
         inbound: UnboundedSender<std::vec::Vec<u8>>,
         sink: std::vec::Vec<u8>,
@@ -332,7 +314,6 @@ mod tests {
         };
         tokio::spawn(interface.run(seam));
 
-        // Inbound: one datagram is one frame, byte-for-byte — no framing to strip.
         let payload = [0x7Eu8, 0x01, 0x7D, 0x02, 0x7E];
         far.send_to(&payload, near_addr)
             .await
@@ -343,7 +324,6 @@ mod tests {
             .expect("the interface task is alive");
         assert_eq!(received, payload, "raw bytes, exactly as sent");
 
-        // Outbound: the seam yields a frame; it arrives at the fixed peer as one datagram.
         let out_payload = [0xAAu8, 0x7E, 0xBB];
         out_tx
             .try_grant()

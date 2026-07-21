@@ -6,9 +6,7 @@ use crate::interfaces::{
 };
 
 pub const READ_BUF_LEN: usize = 256;
-/// RNS `PipeInterface.BITRATE_GUESS` — a local subprocess pipe, generously a megabit for tiering.
 pub const PIPE_BITRATE_BPS: BitrateBps = BitrateBps::guess(1_000_000);
-/// RNS `PipeInterface.HW_MTU`.
 pub const PIPE_HW_MTU: usize = 1_064;
 pub const PIPE_FRAME_LEN: usize = PIPE_HW_MTU + crate::interfaces::IFAC_MAX_SIZE;
 pub const FRAMED_LEN: usize = rns_serial_framing::max_encoded_len(PIPE_FRAME_LEN);

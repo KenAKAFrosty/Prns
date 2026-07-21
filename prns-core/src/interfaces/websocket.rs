@@ -6,11 +6,8 @@ use crate::interfaces::{
 };
 use crate::routing::links::MAX_LINK_MTU;
 
-/// A conservative default for hosts that do not know their real pipe speed. It mirrors the modern
-/// TCP default because WebSocket rides the same routed-IP substrate.
 pub const WEBSOCKET_BITRATE_ESTIMATE: BitrateBps = TRAVERSED_NETWORK_BITRATE_ESTIMATE;
 
-/// The largest payload this interface can carry in a single WebSocket binary message.
 pub const WEBSOCKET_HW_MTU_CAP: usize = MAX_LINK_MTU;
 pub const FRAME_CAP: usize = MAX_LINK_MTU + IFAC_MAX_SIZE;
 

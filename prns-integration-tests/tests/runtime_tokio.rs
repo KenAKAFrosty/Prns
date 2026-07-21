@@ -1,10 +1,3 @@
-//! The revived high-level runtime, end to end: nodes each stood up by `PrnsNode::new` and driven by
-//! `prns.run()`, talking across a real TCP loopback. A announces (pure app policy, driven through the
-//! command handle); the other side hears it through the curated `PrnsEvent` lane. The listening end
-//! is the `TcpServer` supervisor, which stands up a distinct engine interface per client that
-//! connects — so the multi-client test asserts two clients land as two separate members. An
-//! integration test so it builds against the public API and skips the lib's `#[cfg(test)]` modules.
-
 use core::time::Duration;
 
 use personal_rns::engine::{
@@ -30,9 +23,6 @@ fn secret(byte: u8) -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
     Zeroizing::new([byte; IDENTITY_SECRET_KEY_LEN])
 }
 
-/// A minimal interface supervisor that stands up exactly one TCP-client member dialing `addr`, holds
-/// the member handle, then parks for life, standing in for a real discovery loop. Tearing the
-/// supervisor down must cascade to the member.
 struct DialOnce {
     addr: String,
 }
@@ -111,7 +101,6 @@ async fn two_nodes_stand_up_and_one_hears_the_others_announce() {
         },
     });
 
-    // The handle is `Send`, so A's announce ticker rides its own task beside the `run` loops.
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_millis(200));
         loop {
@@ -129,8 +118,6 @@ async fn two_nodes_stand_up_and_one_hears_the_others_announce() {
         }
     });
 
-    // `run` is `!Send` (it owns the reactor), so both nodes are driven on this task, racing the
-    // assertion. Whichever resolves first wins; the loops never return on their own.
     let heard = tokio::select! {
         biased;
         heard = tokio::time::timeout(Duration::from_secs(5), heard_rx.recv()) => heard
@@ -168,7 +155,6 @@ async fn an_interface_added_through_the_handle_carries_traffic_until_torn_down()
     let commands_a = node_a.handle();
     let _server_sup = commands_a.supervise(server);
 
-    // Node B is born with NO interface; it gets one at runtime through its handle.
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_b = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
@@ -234,7 +220,6 @@ async fn an_interface_added_through_the_handle_carries_traffic_until_torn_down()
                 "A's server-spawned member registers centrally too — fleet members, not just one-to-one wires"
             );
 
-            // Tear the interface down; B should fall silent once the wire is gone.
             attached.teardown();
             tokio::time::sleep(Duration::from_millis(300)).await;
             while heard_rx.try_recv().is_ok() {}
@@ -273,7 +258,6 @@ async fn a_supervisor_spawns_a_member_and_tearing_the_supervisor_down_cascades_t
     let commands_a = node_a.handle();
     let _server_sup = commands_a.supervise(server);
 
-    // Node B starts wireless; a supervisor stands up its member at runtime.
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_b = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
@@ -318,7 +302,6 @@ async fn a_supervisor_spawns_a_member_and_tearing_the_supervisor_down_cascades_t
                 .expect("the announce channel stays open");
             assert_eq!(heard, dest_a, "B heard A through the member the supervisor spawned");
 
-            // Tear the *supervisor* down; the driver cascades the stop to its member, so B falls silent.
             supervisor.teardown();
             tokio::time::sleep(Duration::from_millis(300)).await;
             while heard_rx.try_recv().is_ok() {}
@@ -334,10 +317,6 @@ async fn a_supervisor_spawns_a_member_and_tearing_the_supervisor_down_cascades_t
     }
 }
 
-/// The multi-client capstone: one `TcpServer` supervisor, two independent client nodes each dialing
-/// it and announcing its own destination. The server must stand up a *distinct* member per client and
-/// hear each announce on its own member — proving the fan-out the reference's spawned-child model
-/// gives, not one connection masking the next.
 #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
 async fn the_server_stands_up_a_distinct_member_per_client_and_hears_each_on_its_own() {
     let single_a = single(secret(0xA1));
@@ -349,7 +328,6 @@ async fn the_server_stands_up_a_distinct_member_per_client_and_hears_each_on_its
         .destination_hash()
         .expect("the test destination name is valid");
 
-    // The server node reports each announce it hears with the member interface it arrived on.
     let server = TcpServer::bind("127.0.0.1:0", BITRATE)
         .await
         .expect("server binds");
@@ -426,8 +404,6 @@ async fn the_server_stands_up_a_distinct_member_per_client_and_hears_each_on_its
     tokio::select! {
         biased;
         () = async {
-            // The member each client's announce first arrived on; collect until both are heard.
-            // (DestinationHash is Eq but not Hash, so two slots, not a map.)
             let mut member_a: Option<InterfaceId> = None;
             let mut member_b: Option<InterfaceId> = None;
             while member_a.is_none() || member_b.is_none() {

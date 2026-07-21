@@ -12,7 +12,6 @@ pub const MAX_FRAMED_BYTES: usize = rns_serial_framing::max_encoded_len(MAX_MESS
 pub const READ_CHUNK_BYTES: usize = MAX_FRAMED_BYTES;
 pub const MAGIC: [u8; 4] = *b"Prns";
 pub const PROTOCOL_VERSION: u8 = 2;
-/// Shared VID/PID/AOA identity strings every Prns USB Auto device presents.
 pub const WEBUSB_VENDOR_ID: u16 = 0x1209;
 pub const WEBUSB_PRODUCT_ID: u16 = 0x0001;
 pub const ANDROID_ACCESSORY_MANUFACTURER: &str = "Personal";
@@ -234,8 +233,6 @@ pub enum HostInbound<'a> {
     Ignore,
 }
 
-/// Classify one decoded message from the host's point of view: a peer's `Hello` is answered
-/// with our `HelloAck`, its `HelloAck` confirms the link, `Data` is the payload, malformed frames drop.
 pub fn host_react(message: Result<Message<'_>, MalformedMessage>) -> HostInbound<'_> {
     match message {
         Ok(Message::Hello(_)) => HostInbound::AnswerHandshake,
@@ -310,7 +307,6 @@ mod tests {
     fn payload_roundtrip(message: Message<'_>) -> Message<'static> {
         let mut buf = [0u8; MAX_MESSAGE_BYTES];
         let n = message.write_payload(&mut buf).expect("write");
-        // Re-parse from an owned copy so the returned borrow can outlive `buf`.
         let owned: std::vec::Vec<u8> = buf[..n].to_vec();
         match decode_message(&owned).expect("decode") {
             Message::Hello(capabilities) => Message::Hello(capabilities),
@@ -509,11 +505,6 @@ mod tests {
 
     #[test]
     fn a_full_transport_stamped_announce_survives_the_streaming_decoder() {
-        // A 238-byte wire packet (a transport-stamped rebroadcast: HEADER_2 + a
-        // 16-byte transport id + a ratcheted lxmf announce) — every byte value
-        // present, including FLAG/ESC that must escape — is exactly the frame the
-        // live rig saw written but never decoded. If this round-trips, the serial
-        // layer is innocent.
         let mut packet = [0u8; 238];
         for (i, slot) in packet.iter_mut().enumerate() {
             *slot = (i * 7 + 3) as u8;

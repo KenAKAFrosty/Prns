@@ -6,7 +6,6 @@ use ::embassy_usb::driver::{
 use ::embassy_usb::types::StringIndex;
 use ::embassy_usb::{msos, Builder, Handler};
 
-/// Full-speed USB bulk endpoint packet size.
 pub const WEBUSB_AUTO_PACKET_SIZE: u16 = 64;
 
 #[derive(Debug)]

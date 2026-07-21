@@ -21,9 +21,7 @@ use prns_runtime::reactor::driver::TokioInterfaceStatus;
 use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
 use prns_runtime::reactor::throughput::ThroughputLedger;
 
-/// How long to wait after opening the port before writing the TNC config, mirroring RNS
-/// `configure_device`'s `sleep(2.0)` — a real TNC needs a moment to boot before it will accept
-/// config, and bytes written into that window are lost. Tests pass `Duration::ZERO`.
+/// A real TNC needs the RNS two-second boot window before it will accept configuration bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TncConfigureDelay(Duration);
 
@@ -42,11 +40,6 @@ impl TncConfigureDelay {
 pub const DEFAULT_TNC_CONFIGURE_DELAY: TncConfigureDelay =
     TncConfigureDelay::new(Duration::from_secs(2));
 
-/// A KISS TNC interface (RNS `KISSInterface` parity): RNS packets framed as KISS over a serial
-/// link. Like the serial interface it owns its medium's whole lifecycle — `open` yields a fresh
-/// async byte stream, and the interface reconnects on its own — but on each connection it first
-/// settles, writes the TNC config frames (preamble, TX-tail, persistence, slot time, ready), and
-/// only then serves frames. A single never-dropping stream is just a factory that yields once.
 pub struct KissInterface<Open> {
     id: InterfaceId,
     open: Open,
@@ -70,9 +63,7 @@ pub struct KissSettings<'a> {
 }
 
 impl<Open> KissInterface<Open> {
-    /// Build with RNS's default TNC timing and config-settle delay. `channel_tag` names *which*
-    /// serial device this is (the port name or a stable device id), exactly as for the serial
-    /// interface — the same device across a reopen should pass the same bytes so its routes survive.
+    /// A reopened device must retain its `channel_tag`, and concurrent devices must have distinct tags.
     #[must_use]
     pub fn new(open: Open, reconnect_policy: ReconnectPolicy, channel_tag: &[u8]) -> Self {
         Self::with_settings(
@@ -84,8 +75,6 @@ impl<Open> KissInterface<Open> {
         )
     }
 
-    /// Build with explicit TNC timing and a custom config-settle delay — the daemon supplies the
-    /// configured knobs, and tests pass `Duration::ZERO` to skip the real TNC boot wait.
     #[must_use]
     pub fn with_settings(
         open: Open,
@@ -149,15 +138,11 @@ impl<Open> KissInterface<Open> {
         }
     }
 
-    /// This interface's id, derived from its device `channel_tag`, for the app that wants to name
-    /// it (an [`AnnounceTarget::Interface`](prns_core::engine::AnnounceTarget), a log line).
     #[must_use]
     pub fn id(&self) -> InterfaceId {
         self.id
     }
 
-    /// A clone of this interface's live-status handle for the app to read on its own render
-    /// cadence. Call before [`run`](Interface::run) consumes the interface.
     #[must_use]
     pub fn status(&self) -> TokioInterfaceStatus {
         self.status.clone()
@@ -186,10 +171,6 @@ impl<const FRAME_CAP: usize, const READ_LEN: usize, const FRAMED_LEN: usize>
     }
 }
 
-/// Write the TNC config sequence onto a freshly opened link — the four-byte KISS command frames
-/// RNS `configure_device` sends before the link carries traffic. Returns the stream's IO error so
-/// the run loop can treat a TNC that vanished mid-config as a dropped connection and reconnect.
-/// Shared with the AX.25-KISS interface, whose TNC setup is identical.
 pub(crate) async fn configure_tnc<S: AsyncWrite + Unpin>(
     stream: &mut S,
     tnc: &TncConfig,
@@ -408,8 +389,7 @@ where
                 if !self.configure_delay.duration().is_zero() {
                     tokio::time::sleep(self.configure_delay.duration()).await;
                 }
-                // A TNC that drops while being configured is just a dropped connection: skip serving
-                // and fall through to the reconnect wait, exactly as a mid-serve drop would.
+                // A configuration write failure follows the same reconnect path as a mid-serve drop.
                 if configure_tnc(&mut stream, &self.tnc).await.is_ok() {
                     let connected_at = tokio::time::Instant::now();
                     self.status.set_connection(ConnectionState::Connected);
@@ -460,8 +440,6 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::sync::mpsc::{self, UnboundedSender};
 
-    /// A hand-driven seam: it captures every `next_inbound` and supplies `next_outbound` from a
-    /// grant lane the test fills — so the interface's framing can be exercised in isolation.
     struct MockSeam {
         inbound: UnboundedSender<std::vec::Vec<u8>>,
         sink: std::vec::Vec<u8>,
@@ -508,8 +486,6 @@ mod tests {
 
     #[tokio::test]
     async fn configures_the_tnc_then_frames_and_deframes_kiss_across_a_real_async_stream() {
-        // A duplex stands in for the serial wire: the factory yields its end once, then refuses
-        // (the reconnect loop just retries harmlessly until the test drops the task).
         let (interface_wire, mut test_wire) = tokio::io::duplex(1024);
         let mut wire = Some(interface_wire);
         let open = move || {
@@ -525,7 +501,6 @@ mod tests {
             outbound: out_rx,
         };
 
-        // settle = ZERO so the test does not wait the real two-second TNC boot delay.
         let interface = KissInterface::with_settings(
             open,
             ReconnectPolicy::STANDARD,
@@ -536,7 +511,6 @@ mod tests {
         let status = interface.status();
         tokio::spawn(interface.run(seam));
 
-        // On connect the interface writes the TNC config sequence before it serves anything.
         let mut config = [0u8; 20];
         tokio::time::timeout(Duration::from_secs(2), test_wire.read_exact(&mut config))
             .await
@@ -568,8 +542,6 @@ mod tests {
             ]
         );
 
-        // Inbound: a KISS data frame (FEND/FESC in the payload exercise the escaping) crosses the
-        // wire and lands deframed at the seam.
         let payload = [0x01u8, 0x02, FEND, FESC, 0x03];
         let mut framed = [0u8; 32];
         let n = kiss_framing::encode(&payload, &mut framed).expect("encodes the payload");
@@ -586,8 +558,6 @@ mod tests {
             "the interface deframes inbound KISS frames"
         );
 
-        // Outbound: the seam yields a frame; the interface frames it onto the wire as a KISS data
-        // frame; the test reads it back and deframes to the original.
         let out_payload = [0xAAu8, FEND, 0xBB];
         out_tx
             .try_grant()
@@ -616,7 +586,6 @@ mod tests {
             "the interface frames outbound packets"
         );
 
-        // The interface's live status reflects what crossed — the connection and bytes both ways.
         tokio::time::timeout(Duration::from_secs(2), async {
             loop {
                 if status.connection() == ConnectionState::Connected

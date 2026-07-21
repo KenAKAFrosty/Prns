@@ -1,6 +1,3 @@
-//! Zero-config USB Auto for a std host: the library scan (USB CDC serial ports) and open
-//! (the platform serial opener) behind one shopping-list type.
-
 use std::sync::Arc;
 
 use prns_runtime::interfaces::IfacContext;
@@ -14,10 +11,6 @@ use crate::serial::{open_host_serial, scan_usb_serial_ports};
 pub const DEFAULT_USB_AUTO_ID: InterfaceId = InterfaceId::new([0xD0; 8]);
 pub const DEFAULT_USB_BAUD: u32 = 115_200;
 
-/// USB Auto with everything defaulted: discover USB CDC serial ports and speak the
-/// usb-auto handshake to whichever carry a Prns node. Discovery rides the host's fallback
-/// scan timer; a platform hot-plug watcher can poke [`rescan_signal`](Self::rescan_signal)
-/// to make plug-in instant.
 pub struct AutoUsb {
     baud: u32,
     policy: EffectiveInterfacePolicy,

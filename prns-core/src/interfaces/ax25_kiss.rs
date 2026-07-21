@@ -6,40 +6,26 @@ use crate::interfaces::{
 };
 
 pub const READ_BUF_LEN: usize = 256;
-/// RNS `AX25KISSInterface.BITRATE_GUESS` — a 1200-baud TNC link, the conservative default for tiering.
 pub const AX25_BITRATE_BPS: BitrateBps = BitrateBps::guess(1_200);
-/// RNS `AX25KISSInterface.HW_MTU` — the Reticulum payload an AX.25 frame carries, before its header.
 pub const AX25_HW_MTU: usize = 564;
-/// RNS `AX25.HEADER_SIZE` — dest address (7) + source address (7) + control (1) + PID (1).
 pub const AX25_HEADER_SIZE: usize = 16;
-/// The deframer's payload ceiling: the AX.25 header plus the Reticulum payload (and access tag) a
-/// single KISS frame carries on this link.
 pub const AX25_FRAME_LEN: usize = AX25_HEADER_SIZE + AX25_HW_MTU + crate::interfaces::IFAC_MAX_SIZE;
 pub const FRAMED_LEN: usize = kiss_framing::max_encoded_len(AX25_FRAME_LEN);
 pub type Decoder = KissDecoder<AX25_FRAME_LEN>;
 
-/// The fixed AX.25 destination RNS addresses every frame to: callsign `APZRNS`, SSID 0.
 const DEST_CALL: [u8; 6] = *b"APZRNS";
 const DEST_SSID: u8 = 0;
-/// AX.25 control field for an Unnumbered Information frame.
 const CTRL_UI: u8 = 0x03;
-/// AX.25 protocol id: no layer 3.
 const PID_NOLAYER3: u8 = 0xF0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ax25AddressError {
-    /// A callsign must be 3 to 6 characters.
     CallsignLength,
-    /// A callsign must be ASCII.
     CallsignNotAscii,
-    /// An SSID must be 0 to 15.
     SsidOutOfRange,
 }
 
-/// Encode one AX.25 address field (6 callsign bytes + an SSID byte) into `out`. Each callsign
-/// character is shifted left one bit; positions past the callsign are padded with `0x20`, matching
-/// RNS. `ssid_byte` is the already-composed SSID octet (the caller sets the command/reserved bits
-/// and the end-of-address bit). `call` is assumed uppercase ASCII, 1..=6 bytes.
+/// Each callsign character is shifted left one bit and unused positions are padded with `0x20`, matching RNS. `ssid_byte` is already composed with the command, reserved, and end-of-address bits.
 fn write_address(out: &mut [u8], call: &[u8], ssid_byte: u8) {
     for (i, slot) in out[..6].iter_mut().enumerate() {
         *slot = match call.get(i) {
@@ -50,10 +36,7 @@ fn write_address(out: &mut [u8], call: &[u8], ssid_byte: u8) {
     out[6] = ssid_byte;
 }
 
-/// Build the 16-byte AX.25 UI header RNS prepends to every packet: the fixed `APZRNS-0` destination,
-/// the configured source `callsign`/`ssid`, control = UI (`0x03`), PID = no-layer-3 (`0xF0`). The
-/// callsign is uppercased; a short one is padded to six characters. The source SSID octet carries
-/// the end-of-address bit (`0x01`); the destination octet does not.
+/// RNS addresses every packet to `APZRNS-0`; only the source SSID octet carries the end-of-address bit.
 pub fn build_header(callsign: &str, ssid: u8) -> Result<[u8; AX25_HEADER_SIZE], Ax25AddressError> {
     if ssid > 15 {
         return Err(Ax25AddressError::SsidOutOfRange);
@@ -72,10 +55,7 @@ pub fn build_header(callsign: &str, ssid: u8) -> Result<[u8; AX25_HEADER_SIZE], 
     let src = &src[..raw.len()];
 
     let mut header = [0u8; AX25_HEADER_SIZE];
-    // Destination address (bytes 0..7): command/reserved bits `0x60`, no end-of-address bit.
     write_address(&mut header[0..7], &DEST_CALL, 0x60 | (DEST_SSID << 1));
-    // Source address (bytes 7..14): same `0x60` plus the end-of-address bit `0x01` on this, the
-    // last address field.
     write_address(&mut header[7..14], src, 0x60 | (ssid << 1) | 0x01);
     header[14] = CTRL_UI;
     header[15] = PID_NOLAYER3;
@@ -111,9 +91,7 @@ mod tests {
     #[test]
     fn the_fixed_destination_is_apzrns_with_no_end_of_address_bit() {
         let header = build_header("N0CALL", 0).unwrap();
-        // APZRNS, each character shifted left one bit.
         assert_eq!(&header[..6], &[0x82, 0xA0, 0xB4, 0xA4, 0x9C, 0xA6]);
-        // Destination SSID octet: 0x60, SSID 0, end-of-address bit clear.
         assert_eq!(header[6], 0x60);
     }
 
@@ -121,7 +99,6 @@ mod tests {
     fn a_six_character_source_callsign_encodes_with_the_end_of_address_bit() {
         let header = build_header("N0CALL", 0).unwrap();
         assert_eq!(&header[7..13], &[0x9C, 0x60, 0x86, 0x82, 0x98, 0x98]);
-        // Source SSID octet: 0x60, SSID 0, end-of-address bit set (0x01).
         assert_eq!(header[13], 0x61);
         assert_eq!(header[14], CTRL_UI);
         assert_eq!(header[15], PID_NOLAYER3);
@@ -131,7 +108,6 @@ mod tests {
     fn a_short_callsign_is_padded_and_the_ssid_is_shifted_in() {
         let header = build_header("ABC", 5).unwrap();
         assert_eq!(&header[7..13], &[0x82, 0x84, 0x86, 0x20, 0x20, 0x20]);
-        // 0x60 | (5 << 1) | 0x01 = 0x6B.
         assert_eq!(header[13], 0x6B);
     }
 
@@ -160,7 +136,6 @@ mod tests {
             build_header("TOOLONG", 0),
             Err(Ax25AddressError::CallsignLength)
         );
-        // "N0Å" is four bytes (Å is two), so it clears the length gate and trips the ASCII check.
         assert_eq!(
             build_header("N0Å", 0),
             Err(Ax25AddressError::CallsignNotAscii)

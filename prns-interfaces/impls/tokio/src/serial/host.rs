@@ -1,18 +1,9 @@
-//! Host serial transport for the serial-family interfaces (serial, KISS, AX.25-KISS, RNode).
-//!
-//! This is the single reviewed seam that opens serial ports and discovers USB CDC devices. The
-//! concrete transport remains private so callers cannot grow dependencies on a platform crate.
-
 use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
-/// A Prns-owned asynchronous serial stream.
-///
-/// The inner platform transport is deliberately opaque. This keeps the public API stable while
-/// Unix uses `serial2-tokio` and Windows uses the single-open bridge in `prns-ffi`.
 pub struct HostSerial {
     #[cfg(not(windows))]
     inner: serial2_tokio::SerialPort,
@@ -90,7 +81,6 @@ impl HostSerialLineSettings {
     }
 }
 
-/// Open `path` at `baud` (8N1) using the reliable transport for the platform.
 pub fn open_host_serial(path: &str, baud: u32) -> io::Result<HostSerial> {
     open_host_serial_with_settings(path, HostSerialLineSettings::eight_n_one(baud))
 }
@@ -224,7 +214,6 @@ mod windows_bridge {
     use tokio::sync::mpsc;
 
     const READ_CHUNK: usize = 512;
-
     pub struct ThreadedSerial {
         inbound: mpsc::UnboundedReceiver<io::Result<Vec<u8>>>,
         outbound: mpsc::UnboundedSender<Vec<u8>>,

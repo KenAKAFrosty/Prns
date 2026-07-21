@@ -72,8 +72,7 @@ impl InterfaceCommonPolicy {
     };
 }
 
-/// RNS 1.3.5 RNodeInterface `airtime_limit_short`/`airtime_limit_long`, enforced
-/// host-side instead of by radio firmware.
+/// RNS 1.3.5 RNodeInterface `airtime_limit_short` and `airtime_limit_long`, enforced host-side instead of by radio firmware.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AirtimeDutyCycle {
     pub limit_short_per_mille: Option<u16>,
@@ -91,10 +90,7 @@ impl AirtimeDutyCycle {
     }
 }
 
-/// Per-interface announce rebroadcast rate policy; RNS 1.3.5's
-/// `announce_rate_target`/`announce_rate_grace`/`announce_rate_penalty`
-/// (seconds widened to milliseconds here). `None` leaves rate limiting off,
-/// which is also the reference default for an interface that never sets a target.
+/// RNS 1.3.5 `announce_rate_target`, `announce_rate_grace`, and `announce_rate_penalty`, with seconds widened to milliseconds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AnnounceRateLimit {
     pub target_ms: u64,
@@ -102,9 +98,7 @@ pub struct AnnounceRateLimit {
     pub penalty_ms: u64,
 }
 
-/// Per-interface announce egress pacing (RNS 1.3.5's `Interface.announce_cap`)
-/// against the interface's bitrate. Where [`AnnounceRateLimit`] punishes one
-/// chatty destination, this paces all announce egress on a link.
+/// RNS 1.3.5 `Interface.announce_cap` paces all announce egress on a link; [`AnnounceRateLimit`] applies to one destination.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnnounceBandwidthCap {
     Unlimited,

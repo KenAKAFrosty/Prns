@@ -421,12 +421,7 @@ where
     }
 }
 
-/// Run the handshake to a settled peer with the role its origin dictates (a dialed link opens with
-/// `Hello`, an accepted one listens and replies `Welcome`), returning the handshook link itself, or
-/// `None` if it aborts or times out. The L2CAP upgrade is deliberately *not* done here: with two
-/// boards dial-racing, both connections handshake but only one survives the keeper-duel, so the CoC is
-/// opened later in [`settle_into_fleet`] on the admitted link alone — the rejected connection never
-/// burns a (radio-contending) L2CAP setup window it was always going to lose.
+/// L2CAP upgrade waits until [`settle_into_fleet`] admits the keeper so a rejected dial-race connection never consumes a radio-contending setup window.
 async fn settle<L: BleLink>(
     mut link: L,
     role: HandshakeRole,

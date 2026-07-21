@@ -1,11 +1,3 @@
-//! The typed request router, end to end over real TCP: a responder stood up by `PrnsNode::new` with a
-//! one-route set answers a live request from an initiator. The handler *computes* its answer (it
-//! echoes the request bytes and appends a suffix, assembling them straight into the grant), so this
-//! exercises the whole dogfood path — `run` drives the reactor and the runner together, a
-//! `RequestReceived` is forked to the runner, the route's `handle` fills the grant and returns
-//! `Ok(())`, and the auto-upgrading respond carries the bytes back to the initiator. An integration
-//! test, so it builds against the public API.
-
 use core::time::Duration;
 
 use personal_rns::engine::{
@@ -34,23 +26,19 @@ fn secret(byte: u8) -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
     Zeroizing::new([byte; IDENTITY_SECRET_KEY_LEN])
 }
 
-/// The responder's app state — nothing to hold; the answer is computed from the request.
 struct Responder;
 
-/// One route: echo the request bytes back with a suffix, assembled into the grant — `write` then a
-/// terminal `respond` that seals with `Ok(())`.
 struct Echo;
 impl RequestRoute<Responder> for Echo {
     const PATH: &'static str = QUERY_PATH;
     const POLICY: RoutePolicy = RoutePolicy::AllowAll;
     async fn handle(mut cx: RequestContext<'_, Responder>) -> Result<(), Decline> {
         let asked = cx.data;
-        cx.write(asked);
+        let _ = cx.write(asked);
         cx.respond(b"-pong")
     }
 }
 
-/// The split rung's route: a five-byte ask, an answer that outgrows a single resource segment.
 struct Fat;
 impl RequestRoute<Responder> for Fat {
     const PATH: &'static str = "/test/fat";
@@ -64,7 +52,6 @@ fn fat_body() -> std::vec::Vec<u8> {
     b"the response outgrows a single segment ".repeat(30_000)
 }
 
-/// What the initiator pulls out of the curated event lane.
 enum Heard {
     Destination(DestinationHash),
     Settled(CommandId, Settlement),
@@ -88,7 +75,6 @@ async fn a_request_router_answers_a_live_request_over_tcp() {
         .destination_hash()
         .expect("the test destination name is valid");
 
-    // Responder node: a TCP server plus the route-backed Single it answers requests on.
     let server = TcpServer::bind("127.0.0.1:0", BITRATE)
         .await
         .expect("server binds");
@@ -206,8 +192,6 @@ async fn a_request_router_answers_a_live_request_over_tcp() {
         }
     };
 
-    // Both nodes' `run` loops are `!Send` and never return, so they're driven on this task and raced
-    // against the initiator's conversation; assert on whichever the timeout resolves.
     tokio::select! {
         biased;
         answer = tokio::time::timeout(Duration::from_secs(10), conversation) => {
@@ -219,12 +203,6 @@ async fn a_request_router_answers_a_live_request_over_tcp() {
     }
 }
 
-/// `request().await` auto-negotiating up, end to end over real TCP: the same Echo responder, but the
-/// initiator drives the high-level `request` verb and exercises *both* rungs on one link — a small
-/// payload that rides a single packet, and one too fat for the MDU that auto-promotes to a resource
-/// in *both* directions (a request resource out, a response resource back). Proves the consumer
-/// surface, the reactor's packet-vs-resource decision, and the response demux together — a consumer
-/// never meets a size limit and the answer comes back with its round trip.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn request_auto_negotiates_both_rungs_over_tcp() {
     let responder_dest = PreConfiguredDestination::Single {
@@ -275,8 +253,6 @@ async fn request_auto_negotiates_both_rungs_over_tcp() {
         }
     });
 
-    // The initiator's event lane carries only the announce it needs to find the responder;
-    // `establish_link` and `request` return their own results (the demux suppresses them here).
     let client = TcpClientInterface::new(addr, BITRATE, ReconnectPolicy::STANDARD);
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_b = PrnsNode::new(PrnsNodeRecipe {
@@ -318,7 +294,6 @@ async fn request_auto_negotiates_both_rungs_over_tcp() {
             .await
             .expect("the link establishes");
 
-        // Packet rung: a small request rides a single packet.
         let (small, _rtt) = handle
             .request(link_id, RequestPathHash::of(QUERY_PATH), b"ping")
             .await
@@ -329,7 +304,6 @@ async fn request_auto_negotiates_both_rungs_over_tcp() {
             "the packet rung round-trips through request()",
         );
 
-        // Resource rung: a request too fat for a packet auto-promotes both ways.
         let big = std::vec![0x5au8; 2000];
         let (large, _rtt) = handle
             .request(link_id, RequestPathHash::of(QUERY_PATH), &big)
@@ -353,11 +327,6 @@ async fn request_auto_negotiates_both_rungs_over_tcp() {
     }
 }
 
-/// The split rung, end to end over real TCP: a five-byte request whose answer is bigger than one
-/// resource segment (`MAX_EFFICIENT_SIZE`), so the responder chains it across segments and the
-/// initiator's `request().await` still returns the whole body — the receive gate admits every
-/// response segment past the default `AcceptNone` strategy, the segments re-assemble host-side in
-/// arrival order, and the pending request settles at final assembly instead of timing out.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_split_response_answers_a_small_request_over_tcp() {
     let responder_dest = PreConfiguredDestination::Single {

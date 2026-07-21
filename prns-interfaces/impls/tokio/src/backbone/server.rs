@@ -1,8 +1,3 @@
-//! The listening end of a Backbone link (`BackboneInterface` parity): bind a port and stand up
-//! a distinct engine interface per client, the way the reference spawns a child
-//! `BackboneClientInterface` per accepted socket. Structurally identical to the TCP server,
-//! since Backbone is TCP on the wire; only the interface kinds and effective policy are Backbone's own.
-
 use std::io;
 use std::net::SocketAddr;
 use std::vec::Vec;
@@ -24,10 +19,6 @@ use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
 use prns_runtime::reactor::throughput::ThroughputLedger;
 use prns_runtime::runtime::{Fleet, InterfaceSupervisor};
 
-/// One client connected to our Backbone listener: the server-spawned side of a Backbone pair,
-/// a distinct engine interface over an already-accepted stream speaking the same HDLC framing.
-/// The supervisor stands one up per connection and drops it when the stream closes; this end
-/// never reconnects (parity: the reference's spawned interface tears down on close).
 pub struct BackboneServerConnection<S> {
     id: InterfaceId,
     channel_tag: Vec<u8>,
@@ -37,10 +28,6 @@ pub struct BackboneServerConnection<S> {
 }
 
 impl<S> BackboneServerConnection<S> {
-    /// Wrap an accepted connection. `channel_tag` uniquely tags this connection within the
-    /// server-peer medium — the peer's `ip:port`. The supervisor owes its uniqueness across
-    /// concurrent clients (distinct source ports give distinct tags); the attach path rejects a live
-    /// collision loudly.
     #[must_use]
     pub fn new(channel_tag: Vec<u8>, stream: S, bitrate: BitrateBps) -> Self {
         Self::with_policy(channel_tag, stream, backbone::policy_for_bitrate(bitrate))
@@ -58,15 +45,11 @@ impl<S> BackboneServerConnection<S> {
         }
     }
 
-    /// This interface's id, minted from the channel tag. The supervisor lets the reactor cull it when
-    /// the connection drops (the run future ends), so it never holds the id itself.
     #[must_use]
     pub fn id(&self) -> InterfaceId {
         self.id
     }
 
-    /// A clone of this member's live-status handle, for a face to render the connected peer beside the
-    /// listener. Call before [`run`](Interface::run) consumes the interface.
     #[must_use]
     pub fn status(&self) -> TokioInterfaceStatus {
         self.status.clone()
@@ -120,11 +103,6 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for BackboneServerConnection<S
     }
 }
 
-/// The listening end of a Backbone pair (`BackboneInterface` parity): a supervisor over
-/// per-connection members, each a distinct engine interface. It owns no wire of its own (the
-/// reference's `process_outgoing` is a no-op; the members carry the traffic); teardown
-/// cascades. `bitrate` sets each member's declared MTU through the reference's tier table;
-/// claim honestly ([`backbone::BACKBONE_BITRATE_ESTIMATE`] when genuinely unknown).
 pub struct BackboneServer {
     listener: TcpListener,
     policy: EffectiveInterfacePolicy,
@@ -152,16 +130,11 @@ impl BackboneServer {
         })
     }
 
-    /// This supervisor's id — `BackboneServer`-kind, derived from its bound address. The members it
-    /// stands up are `BackboneServerPeer`-kind, a distinct id each. For the app that names the
-    /// listener card.
     #[must_use]
     pub fn id(&self) -> InterfaceId {
         InterfaceId::from_channel_tag(InterfaceKind::BackboneServer, &self.channel_tag)
     }
 
-    /// The address the listener bound — with the OS-assigned port resolved, for a face to show and a
-    /// connector to dial.
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
         self.listener.local_addr()
     }
@@ -222,8 +195,6 @@ mod tests {
     use tokio::net::TcpStream;
     use tokio::sync::mpsc::{self, UnboundedSender};
 
-    /// A hand-driven seam: it captures every `next_inbound` and supplies `next_outbound` from a grant
-    /// lane the test fills — so a member's framing can be exercised in isolation.
     struct MockSeam {
         inbound: UnboundedSender<std::vec::Vec<u8>>,
         sink: std::vec::Vec<u8>,
@@ -323,7 +294,6 @@ mod tests {
             outbound: out_rx,
         };
 
-        // The server side: accept one connection and serve it as a member.
         tokio::spawn(async move {
             let (stream, peer) = listener.accept().await.expect("the listener accepts");
             BackboneServerConnection::new(
@@ -337,8 +307,6 @@ mod tests {
 
         let mut client = TcpStream::connect(addr).await.expect("the client connects");
 
-        // Inbound: a framed payload (FLAG/ESC exercise the escaping) crosses the real socket and lands
-        // deframed at the seam.
         let payload = [0x01u8, 0x02, FLAG, ESC, 0x03];
         write_framed(&mut client, &payload).await;
         let received = tokio::time::timeout(Duration::from_secs(2), in_rx.recv())
@@ -347,7 +315,6 @@ mod tests {
             .expect("the member task is alive");
         assert_eq!(received, payload);
 
-        // Outbound: the seam yields a frame; it leaves the socket framed.
         let out_payload = [0xAAu8, FLAG, 0xBB];
         out_tx
             .try_grant()

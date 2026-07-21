@@ -260,10 +260,6 @@ struct OpenHandle {
     task: JoinHandle<()>,
 }
 
-/// Everything the running supervisor holds for the live data planes. Aware is many-to-one on the
-/// device but one-member-per-peer up here: `members` holds the admitted framed links, `opens` the
-/// in-flight dial/accept task for a peer whose keeper path has been chosen but not yet linked, and
-/// `endpoints` the address each settled NDP handed back so an `OpenDataPlane` can find its target.
 #[derive(Default)]
 struct DataPlane {
     members: HashMap<InterfaceId, TokioMember>,
@@ -274,10 +270,7 @@ struct DataPlane {
 }
 
 impl DataPlane {
-    // Tears the member and any in-flight open for a peer, but leaves the settled endpoints alone: a
-    // keeper swap emits CloseDataPlane immediately before the OpenDataPlane that reuses the surviving
-    // path's endpoint, so wiping them here would strand the responder's listener. Endpoints retire on
-    // their own DataPathDown (per role) or on a full teardown.
+    // Keep settled endpoints through a keeper swap because the following OpenDataPlane reuses the survivor's endpoint; DataPathDown or full teardown retires them.
     fn close_peer(&mut self, peer: RendezvousToken) {
         if let Some(handle) = self.opens.remove(&peer) {
             handle.task.abort();
@@ -593,10 +586,6 @@ mod tests {
         );
     }
 
-    // A minimal Aware fabric over channels: each node announces the peer once, and an initiator's
-    // request sends a Setup across so the peer surfaces an NdpRequested (its responder half). Every
-    // requested path settles a loopback endpoint on a shared port, so the keeper duel plays out and
-    // the survivor forms a real TCP link.
     enum Fabric {
         Setup,
     }

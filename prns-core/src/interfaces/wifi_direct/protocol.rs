@@ -1,5 +1,4 @@
-/// Distinct from wifi_auto's TCP_RENDEZVOUS_PORT (42699), which AutoWifi binds on 0.0.0.0 — both
-/// listeners must coexist on one host.
+/// Distinct from WiFi Auto's rendezvous port so both listeners can coexist.
 pub const WIFI_DIRECT_RENDEZVOUS_PORT: u16 = 42_717;
 
 pub const WIFI_DIRECT_BEACON_PORT: u16 = 42_718;
@@ -59,10 +58,7 @@ pub enum HostRole {
     Tiebreak,
 }
 
-/// Which side brings up the group. A native (Android/iOS) peer can join a
-/// wpa-hosted group, but a wpa client cannot reliably join a native GO, so a
-/// mixed pair is always hosted by the Supplicant; a matched pair falls to an
-/// address tiebreak.
+/// A native peer can join a supplicant-hosted group, but a supplicant client cannot reliably join a native group owner, so the supplicant hosts mixed pairs.
 #[must_use]
 pub fn host_role(mine: Platform, peer: Platform) -> HostRole {
     match (mine, peer) {

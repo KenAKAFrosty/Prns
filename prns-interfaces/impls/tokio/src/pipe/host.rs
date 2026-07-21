@@ -1,8 +1,3 @@
-//! The subprocess transport for the pipe interface: spawn the configured command and hand the
-//! reactor a single async byte stream over its stdout/stdin. This is the daemon's side of
-//! `PipeInterface`, exactly as `tokio_serial` is for the serial interface — the core library owns
-//! the protocol and the framing, the daemon owns the OS pipe.
-
 use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -10,20 +5,14 @@ use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, Join, ReadBuf};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 
-/// A spawned subprocess presented as one `AsyncRead + AsyncWrite` stream: reads come from the
-/// child's stdout, writes go to its stdin. It owns the [`Child`] with kill-on-drop, so when the
-/// interface's serve loop drops the stream (the pipe closed, or a respawn), the subprocess is killed
-/// rather than left orphaned — matching RNS, which `kill()`s the process when its pipe ends.
+/// Owns the child with kill-on-drop so a closed or respawned pipe cannot orphan its subprocess.
 pub struct PipeStream {
-    /// Held solely to keep the subprocess alive and kill it on drop; never read directly.
     #[allow(dead_code)]
     child: Child,
     io: Join<ChildStdout, ChildStdin>,
 }
 
-// `PipeStream` is `Unpin` — `Child`, `ChildStdout`, `ChildStdin`, and `Join` are all `Unpin` — so the
-// poll methods project to the inner `io` with a safe `Pin::new`, honoring the crate's
-// `forbid(unsafe_code)`.
+// `PipeStream` and every inner field are `Unpin`, so the poll methods can project with safe `Pin::new`.
 impl AsyncRead for PipeStream {
     fn poll_read(
         self: Pin<&mut Self>,
@@ -52,9 +41,6 @@ impl AsyncWrite for PipeStream {
     }
 }
 
-/// Spawn `argv` (program followed by its arguments) with piped stdin/stdout and present it as a
-/// [`PipeStream`]. The `PipeInterface` open factory calls this once per connection; a spawn failure
-/// is an `io::Error` the interface treats as a closed pipe and retries after its respawn delay.
 pub async fn spawn(argv: &[String]) -> io::Result<PipeStream> {
     let (program, args) = argv
         .split_first()

@@ -47,20 +47,16 @@ const GATT_FRAGMENT_PAYLOAD: usize = 120;
 #[cfg(not(target_arch = "riscv32"))]
 const GATT_FRAGMENT_PAYLOAD: usize = 180;
 
-/// Pace the GATT data fragments so a multi-fragment frame does not blast the controller's TX queue
-/// back-to-back: the controller gets a moment to put each fragment on air before the next is queued.
+/// Gives the controller time to put each GATT fragment on air before queuing the next.
 #[cfg(target_arch = "riscv32")]
 const NOTIFY_PACING: Duration = Duration::from_millis(30);
 #[cfg(not(target_arch = "riscv32"))]
 const NOTIFY_PACING: Duration = Duration::from_millis(15);
 const NOTIFY_TIMEOUT: Duration = Duration::from_secs(2);
-/// A dial scans for its whitelisted peer before connecting; `connect` with a zero scan timeout scans
-/// forever, so bound it — on timeout the connect errors, the slot frees, and the brain backs off.
+/// A bounded connect scan frees the slot and lets policy back off when a whitelisted peer is absent.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(6);
 const GATT_SETUP_TIMEOUT: Duration = Duration::from_secs(6);
-/// Scan aggressively while connecting (≈80% duty) so a dial latches a peer that advertises sparsely —
-/// the dual-role boards spend most of each cycle scanning/serving and advertise only in short windows,
-/// so a wide connect scan is what catches them. Mirrors the nRF central's connect-scan tuning.
+/// A wide connect scan catches dual-role peers that advertise only in short windows.
 #[cfg(target_arch = "riscv32")]
 const CONNECT_SCAN_INTERVAL: Duration = Duration::from_millis(200);
 #[cfg(target_arch = "riscv32")]
@@ -78,10 +74,7 @@ const IDLE_SCAN_INTERVAL: Duration = Duration::from_secs(1);
 #[cfg(not(target_arch = "riscv32"))]
 const IDLE_SCAN_WINDOW: Duration = Duration::from_millis(50);
 
-/// The radio time-shares advertising (peripheral) and scanning (central) in alternating windows rather
-/// than running both at once — keeping one serve frame per active role off the deepest path and
-/// sidestepping any controller limit on simultaneous advertise+scan. Two boards alternating overlap
-/// within a cycle, so discovery converges; a `Dial` decided during an off-window is buffered.
+/// Advertising and scanning alternate to avoid simultaneous-role controller limits; dial decisions made during an off-window remain buffered.
 const ADV_WINDOW: Duration = Duration::from_millis(600);
 #[cfg(target_arch = "riscv32")]
 const SCAN_WINDOW: Duration = Duration::from_millis(300);
@@ -90,9 +83,7 @@ const SCAN_WINDOW: Duration = Duration::from_millis(600);
 #[cfg(target_arch = "riscv32")]
 const DISCOVERY_TURN_REST: Duration = Duration::from_millis(20);
 
-/// Per-slot bridge channel depths. Control is lockstep (handshake), so a shallow lane suffices. The
-/// C6 keeps data queues intentionally shallow so BLE producers feel backpressure quickly instead of
-/// building long per-peer bursts that can crowd the USB/engine scheduler.
+/// Shallow per-slot lanes apply backpressure before BLE bursts crowd the USB and engine scheduler.
 #[cfg(target_arch = "riscv32")]
 const CTRL_DEPTH: usize = 2;
 #[cfg(not(target_arch = "riscv32"))]
@@ -103,11 +94,7 @@ const DATA_DEPTH: usize = 1;
 const DATA_DEPTH: usize = 4;
 const SIGHTING_DEPTH: usize = SLOTS * 2;
 
-/// The L2CAP CoC fast lane the data plane upgrades to once a peer's caps + the arrangement table agree
-/// (board↔board, board↔nRF/Linux/Android). The PSM matches every other backend; one SDU carries exactly
-/// one length-prefixed stream frame (`encode_stream_frame`), so the SDU buffer is the link ceiling plus
-/// the 2-byte prefix and no reassembler is needed on the message-oriented channel. Credits/MPS are kept
-/// modest so two live channels' RX reservation fits the shared `DefaultPacketPool` alongside GATT + TX.
+/// One L2CAP SDU carries one length-prefixed stream frame; modest credits and MPS keep two RX reservations inside the packet pool alongside GATT and TX.
 pub const L2CAP_PSM: u16 = 0x0080;
 const L2CAP_SDU_LEN: usize = STREAM_FRAME_PREFIX_LEN + BLE_HW_MTU;
 #[cfg(target_arch = "riscv32")]
@@ -123,8 +110,7 @@ const L2CAP_SETUP_RETRY: Duration = Duration::from_millis(150);
 const PHY_UPDATE_TIMEOUT: Duration = Duration::from_secs(2);
 #[cfg(target_arch = "riscv32")]
 const CONN_PARAM_UPDATE_TIMEOUT: Duration = Duration::from_secs(2);
-/// Recently-scanned peers, kept so [`dial`](EmbeddedBleBackend::dial) (which the brain calls with only
-/// the 6 address bytes) can recover the full `(AddrKind, BdAddr)` the central must whitelist to connect.
+/// Retains the address kind needed to whitelist a peer when policy identifies it by six address bytes.
 const SEEN_CAP: usize = SLOTS * 2;
 const FRAME_CAP: usize = BLE_HW_MTU;
 
@@ -869,9 +855,7 @@ async fn serve_peripheral<T: TroubleTransport>(
         }
     };
 
-    // Box the data-plane future onto the heap (PSRAM via esp-alloc on the S3): its L2CAP state machine
-    // would otherwise inflate the main-task future arena (`.bss`), and that arena sits below the core-0
-    // stack, so every byte it grows steals a byte of stack the deep GATT-client serve path needs.
+    // Heap allocation keeps the L2CAP state machine out of the main-task future arena, which otherwise steals core-0 stack space.
     let data_lane = alloc::boxed::Box::pin(async move {
         let plan = slot.data_plane.wait().await;
         crate::diagnostic_log::debug!("ble: plan (accepted) = {plan:?}");
@@ -927,13 +911,7 @@ async fn serve_peripheral<T: TroubleTransport>(
     let _ = select4(inbound, control_outbound, data_lane, slot.link_dead.wait()).await;
 }
 
-/// Serve one dialed central connection over its slot (the central twin of [`serve_peripheral`]):
-/// discover the peer's Reticulum service control/data characteristics, subscribe to their
-/// notifications, signal `dialed` so the supervisor settles the link as `Dialed`, then pump it until it
-/// drops. The GATT client carries trouble-host's `Notification<512>` pubsub (~1.3 KiB); the peripheral
-/// side's equivalent (`AttributeServer`) is a `static`, but the client is per-dial, so it is boxed onto
-/// the heap (esp-alloc falls through to PSRAM on the S3) to keep this frame shallow. On a discovery
-/// failure the peer is reported `dial_failed` so the brain backs off.
+/// The per-dial GATT client is boxed because its notification pubsub would otherwise inflate the task frame; a discovery failure reports `dial_failed` so policy can back off.
 async fn serve_central<T: TroubleTransport>(
     idx: usize,
     hub: &'static BleHub,
@@ -1018,7 +996,7 @@ async fn serve_central<T: TroubleTransport>(
                 ))
             }
         };
-        // Discovery needs the client's rx task running (ATT responses ride it), so race the two.
+        // ATT responses require the client's receive task to run during discovery.
         match select(discover, client.task()).await {
             Either::First(Some(parts)) => Some(parts),
             _ => None,
@@ -1107,8 +1085,7 @@ async fn serve_central<T: TroubleTransport>(
         }
     };
 
-    // Boxed onto the heap (PSRAM on the S3) so the L2CAP state machine stays out of the main-task
-    // future arena (`.bss`), which sits directly below the core-0 stack — see the peripheral path.
+    // Heap allocation keeps the L2CAP state machine out of the main-task future arena and preserves core-0 stack space.
     let data_lane = alloc::boxed::Box::pin(async {
         let plan = slot.data_plane.wait().await;
         crate::diagnostic_log::debug!("ble: plan (dialed) = {plan:?}");

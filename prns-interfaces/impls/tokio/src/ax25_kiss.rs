@@ -21,19 +21,10 @@ use prns_runtime::reactor::driver::TokioInterfaceStatus;
 use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
 use prns_runtime::reactor::throughput::ThroughputLedger;
 
-/// The seam adapter that turns the plain KISS link into an AX.25-KISS one: it sits between the
-/// reactor's seam and the shared serve loop, wrapping each outbound packet in the interface's fixed
-/// AX.25 UI header and stripping that header off each inbound frame. Because the wrap is a constant
-/// prefix and the strip is a constant length, the KISS framing and serve loop underneath carry it
-/// unchanged — AX.25 is just a header on the payload, not a different wire framing.
 struct Ax25Seam<S> {
     inner: S,
     header: [u8; AX25_HEADER_SIZE],
-    /// Inbound frames deframe into this scratch so the AX.25 header can be stripped before the
-    /// payload crosses the inner seam. Allocated once and reused; cleared per frame.
     inbound: std::vec::Vec<u8>,
-    /// Scratch holding `header ++ packet` for the borrow `next_outbound` lends the serve loop.
-    /// Allocated once and reused; cleared per frame.
     outbound: std::vec::Vec<u8>,
 }
 
@@ -47,8 +38,7 @@ impl<S: InterfaceSeam> InterfaceSeam for Ax25Seam<S> {
     }
 
     async fn commit_inbound(&mut self) {
-        // Strip the AX.25 header; a frame with no payload past it (or none at all) is dropped, as
-        // RNS does (`process_incoming` only delivers when `len(data) > HEADER_SIZE`).
+        // Match RNS's strict `len(data) > HEADER_SIZE` delivery condition.
         if self.inbound.len() > AX25_HEADER_SIZE {
             self.inner
                 .next_inbound(&self.inbound[AX25_HEADER_SIZE..])
@@ -74,12 +64,6 @@ impl<S: InterfaceSeam> InterfaceSeam for Ax25Seam<S> {
     }
 }
 
-/// An AX.25-KISS interface (RNS `AX25KISSInterface` parity): Reticulum packets wrapped in an AX.25
-/// UI frame and carried as KISS over a serial TNC. It is the [`KissInterface`] mechanics — open,
-/// settle, write the TNC config, serve — with one addition: every packet is wrapped in the fixed
-/// AX.25 header built from the configured callsign/SSID, and that header is stripped on receive.
-///
-/// [`KissInterface`]: crate::kiss::KissInterface
 pub struct Ax25KissInterface<Open> {
     id: InterfaceId,
     open: Open,
@@ -104,9 +88,6 @@ pub struct Ax25KissSettings<'a> {
 }
 
 impl<Open> Ax25KissInterface<Open> {
-    /// Build with RNS's default TNC timing and config-settle delay. Fails if `callsign`/`ssid` is
-    /// not a valid AX.25 address (3–6 ASCII chars, SSID 0–15). `channel_tag` names *which* serial
-    /// device this is, exactly as for the serial and KISS interfaces.
     pub fn new(
         open: Open,
         reconnect_policy: ReconnectPolicy,
@@ -125,9 +106,6 @@ impl<Open> Ax25KissInterface<Open> {
         )
     }
 
-    /// Build with explicit TNC timing and a custom config-settle delay — the daemon supplies the
-    /// configured knobs, and tests pass `Duration::ZERO` to skip the real TNC boot wait. Fails if
-    /// the callsign/SSID is not a valid AX.25 address.
     pub fn with_settings(
         open: Open,
         reconnect_policy: ReconnectPolicy,
@@ -174,14 +152,11 @@ impl<Open> Ax25KissInterface<Open> {
         })
     }
 
-    /// This interface's id, derived from its device `channel_tag`.
     #[must_use]
     pub fn id(&self) -> InterfaceId {
         self.id
     }
 
-    /// A clone of this interface's live-status handle for the app to read on its own render cadence.
-    /// Call before [`run`](Interface::run) consumes the interface.
     #[must_use]
     pub fn status(&self) -> TokioInterfaceStatus {
         self.status.clone()
@@ -211,7 +186,6 @@ where
         let mut throughput = ThroughputLedger::new();
         let started = tokio::time::Instant::now();
         let mut control = KissTransmissionControl::new(self.flow_control, None);
-        // The adapter owns the seam and persists across reconnects, carrying its reusable scratch.
         let mut seam = Ax25Seam {
             inner: seam,
             header: self.header,
@@ -311,7 +285,6 @@ mod tests {
         }
     }
 
-    /// KISS-frame an already-assembled body (`header ++ payload`) onto the wire.
     async fn write_kiss(wire: &mut tokio::io::DuplexStream, body: &[u8]) {
         let mut framed = std::vec![0u8; kiss_framing::max_encoded_len(body.len())];
         let n = kiss_framing::encode(body, &mut framed).expect("encodes the body");
@@ -369,7 +342,6 @@ mod tests {
         let status = interface.status();
         tokio::spawn(interface.run(seam));
 
-        // The TNC config sequence is written first — the same five frames KISS sends.
         let mut config = [0u8; 20];
         tokio::time::timeout(Duration::from_secs(2), test_wire.read_exact(&mut config))
             .await
@@ -401,8 +373,6 @@ mod tests {
             ]
         );
 
-        // Inbound: a KISS frame whose body is `header ++ payload` lands at the seam with the AX.25
-        // header stripped — only the payload. FEND/FESC in the payload exercise KISS escaping.
         let payload = [0x01u8, 0x02, FEND, FESC, 0x03];
         let mut body = header.to_vec();
         body.extend_from_slice(&payload);
@@ -413,8 +383,6 @@ mod tests {
             .expect("the interface task is alive");
         assert_eq!(received, payload, "the AX.25 header is stripped inbound");
 
-        // Outbound: the seam yields a packet; it leaves the wire as a KISS frame whose body is the
-        // interface's AX.25 header followed by the packet.
         let out_payload = [0xAAu8, FEND, 0xBB];
         out_tx
             .try_grant()
@@ -449,7 +417,6 @@ mod tests {
             "with the packet after the header"
         );
 
-        // Live status reflects the connection and bytes both ways.
         tokio::time::timeout(Duration::from_secs(2), async {
             loop {
                 if status.connection() == ConnectionState::Connected

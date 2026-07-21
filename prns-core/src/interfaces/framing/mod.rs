@@ -1,11 +1,3 @@
-//! Byte-level framing codecs shared by the byte-stream interfaces. Each codec turns the RNS
-//! packet boundary into a self-delimiting frame on the wire and back:
-//!
-//! - [`rns_serial_framing`]: HDLC-like octet-stuffing (`0x7E` flag), what `SerialInterface`
-//!   and a plain TCP interface speak.
-//! - [`kiss_framing`]: KISS TNC framing (`0xC0` FEND), what `KISSInterface`,
-//!   `AX25KISSInterface`, and an `RNodeInterface`'s host link speak.
-
 pub mod kiss_framing;
 pub mod rns_serial_framing;
 
@@ -17,12 +9,7 @@ pub enum FrameSinkError {
     Full,
 }
 
-/// Where a streaming deframer writes the frame it is decoding, so the bytes land once in the
-/// storage that will carry them onward — an interface seam's granted slot on a host, a
-/// `FrameBuffer` inside the self-buffered decoders.
-/// Writes are all-or-nothing: a `push` or `extend_from_slice` that would exceed the sink's
-/// capacity appends nothing and returns [`FrameSinkError::Full`], so a rejected frame never
-/// leaves a partial tail behind.
+/// Writes are all-or-nothing: a `push` or `extend_from_slice` that would exceed the sink's capacity appends nothing and returns [`FrameSinkError::Full`], so a rejected frame never leaves a partial tail behind.
 pub trait FrameSink {
     fn clear(&mut self);
     fn frame_len(&self) -> usize;
@@ -31,7 +18,6 @@ pub trait FrameSink {
     fn extend_from_slice(&mut self, run: &[u8]) -> Result<(), FrameSinkError>;
 }
 
-/// Uncapped sink for tests and adapters that re-frame in their own scratch before forwarding.
 #[cfg(feature = "std")]
 impl FrameSink for std::vec::Vec<u8> {
     fn clear(&mut self) {
@@ -57,10 +43,7 @@ impl FrameSink for std::vec::Vec<u8> {
     }
 }
 
-/// The fixed-capacity buffer a streaming decoder fills with one frame's payload. `std` hosts
-/// keep a heap `Vec` (capped on push/extend) for its optimized bulk copy; no_std targets keep
-/// an inline `heapless::Vec`. The `FRAME_CAP` const is the hard ceiling either way — a frame
-/// that would exceed it is rejected by the caller, never silently grown.
+/// The `FRAME_CAP` const is the hard ceiling on both `std` and `no_std`; a frame that would exceed it is rejected, never silently grown.
 #[cfg(feature = "std")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FrameBuffer<const FRAME_CAP: usize> {

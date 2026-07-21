@@ -6,51 +6,32 @@ use crate::interfaces::lora::SpreadingFactor;
 use crate::interfaces::rnode::policy::{nominal_bitrate_bps, RNODE_HW_MTU};
 use crate::interfaces::{PacketPhyStats, RssiDbm, SnrQuarterDb};
 
-/// RNS `RNodeInterface.HW_MTU` — the device's on-air payload ceiling and the read loop's data-frame
-/// bound (`len(data_buffer) < self.HW_MTU`).
+/// RNS `RNodeInterface.HW_MTU`, including the reference read loop's strict data-frame bound.
 pub const READ_BUF_LEN: usize = 256;
-/// The deframer's payload ceiling: the hardware MTU plus the access tag a frame may carry.
 pub const RNODE_FRAME_LEN: usize = RNODE_HW_MTU + crate::interfaces::IFAC_MAX_SIZE;
-/// The outbound scratch ceiling: a full frame, KISS-escaped worst case.
 pub const FRAMED_LEN: usize = kiss_framing::max_encoded_len(RNODE_FRAME_LEN);
 pub type CommandDecoder = KissCommandDecoder<RNODE_FRAME_LEN>;
 
-// The RNode KISS command bytes. These share the framing of the KISS TNC commands but a *different*
-// command namespace (here `0x01` is FREQUENCY, not the TNC's TX-delay), so they live with the RNode
-// interface rather than in `kiss_framing`. Reference: `RNodeInterface.KISS`.
-/// A frame carrying a Reticulum packet — the only command whose body reaches the stack.
+// RNode shares KISS framing but has a different command namespace; `0x01` is frequency here, not TNC TX-delay.
 pub const CMD_DATA: u8 = 0x00;
-/// Set/echo the radio centre frequency (4-byte big-endian Hz).
 pub const CMD_FREQUENCY: u8 = 0x01;
-/// Set/echo the radio bandwidth (4-byte big-endian Hz).
 pub const CMD_BANDWIDTH: u8 = 0x02;
-/// Set/echo the radio TX power (one signed-magnitude dBm byte).
 pub const CMD_TXPOWER: u8 = 0x03;
-/// Set/echo the spreading factor (one byte).
 pub const CMD_SF: u8 = 0x04;
-/// Set/echo the coding rate denominator (one byte, `5..=8` for 4/5..4/8).
 pub const CMD_CR: u8 = 0x05;
-/// Set/echo the radio power state ([`RADIO_STATE_ON`]/[`RADIO_STATE_OFF`]).
 pub const CMD_RADIO_STATE: u8 = 0x06;
-/// Hardware-detect handshake: the host sends [`DETECT_REQ`], a real RNode answers [`DETECT_RESP`].
 pub const CMD_DETECT: u8 = 0x08;
-/// Short-term airtime lock (2-byte big-endian, `int(percent * 100)`).
 pub const CMD_ST_ALOCK: u8 = 0x0B;
-/// Long-term airtime lock (2-byte big-endian, `int(percent * 100)`).
 pub const CMD_LT_ALOCK: u8 = 0x0C;
 pub const CMD_STAT_RSSI: u8 = 0x23;
 pub const CMD_STAT_SNR: u8 = 0x24;
-/// Firmware version response (`major`, `minor`).
 pub const CMD_FW_VERSION: u8 = 0x50;
 pub const CMD_RESET: u8 = 0x55;
 pub const CMD_ERROR: u8 = 0x90;
 pub const CMD_PLATFORM: u8 = 0x48;
-/// MCU type response (queried during detect; consumed, not acted on in v1).
 pub const CMD_MCU: u8 = 0x49;
 
-/// Detect query payload byte the host sends under [`CMD_DETECT`].
 pub const DETECT_REQ: u8 = 0x73;
-/// Detect response payload byte a genuine RNode answers with.
 pub const DETECT_RESP: u8 = 0x46;
 
 pub const ERROR_INIT_RADIO: u8 = 0x01;
@@ -58,21 +39,16 @@ pub const ERROR_TX_FAILED: u8 = 0x02;
 pub const ERROR_EEPROM_LOCKED: u8 = 0x03;
 pub const RESET_RESP: u8 = 0xf8;
 
-/// Radio powered down.
 pub const RADIO_STATE_OFF: u8 = 0x00;
-/// Radio powered up and ready to carry traffic — the state bring-up drives the device to.
 pub const RADIO_STATE_ON: u8 = 0x01;
 
-/// RNS `RNodeInterface.REQUIRED_FW_VER_MAJ`/`_MIN`: the minimum firmware RNS demands. RNS panics
-/// below this; we warn and carry on (firmware enforcement is deferred from v1).
+/// RNS panics below this firmware version; the host interface warns and continues.
 pub const REQUIRED_FW_VER_MAJ: u8 = 1;
 pub const REQUIRED_FW_VER_MIN: u8 = 52;
 
 const RSSI_OFFSET: i16 = 157;
 
-// Construction-time radio limits: the RNode/SX127x-SX126x operating envelope. RNS does not
-// range-check (it relies on device echo-back validation), but a config outside these bounds
-// is certainly a typo the device would reject, so we fail fast with a precise error.
+// RNS relies on device echo-back validation, but values outside this radio envelope are rejected before narrowing or transmission.
 pub const FREQUENCY_HZ_MIN: u64 = 137_000_000;
 pub const FREQUENCY_HZ_MAX: u64 = 3_000_000_000;
 pub const BANDWIDTH_HZ_MIN: u32 = 7_800;
@@ -85,15 +61,9 @@ pub const CODING_RATE_MIN: u8 = 5;
 pub const CODING_RATE_MAX: u8 = 8;
 pub const AIRTIME_LIMIT_CENTI_PERCENT_MAX: u16 = 10_000;
 
-/// The largest KISS frame [`push_command`] ever emits: a four-byte radio value, every byte escaped.
 const FRAME_SCRATCH: usize = kiss_framing::max_encoded_len(4);
 
-/// The on-air bitrate of a LoRa link, RNS `updateBitrate`:
-/// `sf * ((4/cr) / (2^sf / (bw/1000))) * 1000`, which reduces to `(sf * 4 * bw) / (cr * 2^sf)`.
-/// Returns 0 for a degenerate `sf`/`cr` of zero (validation rules those out for a real config).
-/// A radio configuration past construction-time range validation, ready to write to a device.
-/// Frequency and bandwidth are whole Hz, TX power dBm, coding rate the `4/n` denominator; the
-/// airtime locks stay pre-scaled as RNS's wire `int(percent * 100)` so encode is integer-only.
+/// Frequency and bandwidth are whole Hz, TX power is dBm, coding rate is the `4/n` denominator, and airtime locks remain pre-scaled as RNS's wire `int(percent * 100)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RadioConfig {
     frequency_hz: u32,
@@ -116,7 +86,6 @@ pub struct RadioConfigInput {
     pub airtime_limit_long_centi_percent: Option<u16>,
 }
 
-/// The rejected field carries the out-of-range value the operator gave.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RadioConfigError {
     Frequency(u64),
@@ -129,9 +98,7 @@ pub enum RadioConfigError {
 }
 
 impl RadioConfig {
-    /// Validate raw planner values into a `RadioConfig`, or report the first out-of-range
-    /// field. Frequency arrives as `u64` (a stock RNS `frequency` can exceed `u32` Hz) and TX
-    /// power as `i16` (a negative typo is caught, not wrapped); airtime locks arrive pre-scaled.
+    /// Frequency arrives as `u64` so it is validated before narrowing; TX power arrives as `i16` so a negative value is rejected rather than wrapped.
     pub fn new(input: RadioConfigInput) -> Result<Self, RadioConfigError> {
         let RadioConfigInput {
             frequency_hz,
@@ -213,16 +180,12 @@ impl RadioConfig {
         self.airtime_limit_long_centi_percent
     }
 
-    /// The on-air bitrate the descriptor and airtime ledger reason from; after bring-up the
-    /// device reports the same parameters back, so this matches what RNS computes.
     #[must_use]
     pub const fn nominal_bitrate_bps(&self) -> u32 {
         nominal_bitrate_bps(self.spreading_factor, self.coding_rate, self.bandwidth_hz)
     }
 
-    /// The radio-config command stream RNS `initRadio` writes after detect: frequency, bandwidth, TX
-    /// power, spreading factor, coding rate, the optional airtime locks, then radio state ON — each a
-    /// KISS frame under its command byte, in this exact order.
+    /// Emits the exact RNS `initRadio` order: frequency, bandwidth, TX power, spreading factor, coding rate, optional airtime locks, then radio state on.
     #[must_use]
     pub fn init_command_bytes(&self) -> Vec<u8> {
         let mut out = Vec::new();
@@ -272,8 +235,6 @@ impl PacketPhyState {
     }
 }
 
-/// Encode `payload` under `command` as a KISS frame appended to `out`. The buffer is sized to
-/// the framing's worst case, so a too-small buffer drops the frame rather than panicking.
 fn push_command(out: &mut Vec<u8>, command: u8, payload: &[u8]) {
     let mut scratch = [0u8; FRAME_SCRATCH];
     if let Ok(n) = kiss_framing::encode_with_command(command, payload, &mut scratch) {
@@ -281,8 +242,7 @@ fn push_command(out: &mut Vec<u8>, command: u8, payload: &[u8]) {
     }
 }
 
-/// The batched hardware-detect query RNS `detect` writes: detect request, then firmware,
-/// platform, and MCU queries, each its own single-`FEND`-separated frame; the thirteen bytes contain no delimiter.
+/// The batched RNS hardware-detect query: detect request, firmware, platform, and MCU.
 #[must_use]
 pub const fn detect_frames() -> [u8; 13] {
     [
@@ -314,8 +274,6 @@ pub fn encode_data_frame(
     kiss_framing::encode_with_command(CMD_DATA, payload, output)
 }
 
-/// What the device reported during bring-up: the async rendering of RNS `readLoop`'s side
-/// effects. The serve loop feeds each decoded `(command, payload)` to [`apply`](Self::apply).
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct DeviceReport {
     pub detected: bool,
@@ -330,9 +288,6 @@ pub struct DeviceReport {
 }
 
 impl DeviceReport {
-    /// Fold one decoded device frame into the report, mirroring RNS `readLoop`: frequency and
-    /// bandwidth are the first four payload bytes big-endian, the firmware version two bytes,
-    /// scalar radio parameters one byte. Unmodeled commands are consumed and ignored.
     pub fn apply(&mut self, command: u8, payload: &[u8]) {
         match command {
             CMD_DETECT => {
@@ -378,7 +333,6 @@ impl DeviceReport {
         }
     }
 
-    /// Whether every validated parameter has been reported: the read-back window can stop early.
     #[must_use]
     pub fn all_radio_params_present(&self) -> bool {
         self.r_frequency.is_some()
@@ -388,10 +342,7 @@ impl DeviceReport {
             && self.r_state.is_some()
     }
 
-    /// RNS `validateRadioState`: the device-reported parameters must match the configuration —
-    /// frequency within 100 Hz, bandwidth/TX-power/spreading-factor exact, and the radio powered on.
-    /// As in RNS, a frequency that was never reported is not itself a mismatch, but a missing
-    /// bandwidth/power/SF/state is (a `None` never equals the configured value).
+    /// RNS permits a missing frequency report but otherwise requires frequency within 100 Hz, exact bandwidth, TX power and spreading factor, and the radio powered on.
     #[must_use]
     pub fn radio_validated(&self, config: &RadioConfig) -> bool {
         if let Some(reported) = self.r_frequency {
@@ -405,8 +356,7 @@ impl DeviceReport {
             && self.r_state == Some(RADIO_STATE_ON)
     }
 
-    /// Whether the reported firmware meets RNS's minimum, or `None` if the device never reported a
-    /// version. RNS panics when this is false; the host interface only warns.
+    /// RNS panics on an old reported firmware; the host interface only warns.
     #[must_use]
     pub fn firmware_ok(&self) -> Option<bool> {
         let (maj, min) = (self.fw_maj?, self.fw_min?);
@@ -424,8 +374,6 @@ impl DeviceReport {
     }
 }
 
-/// The first four bytes of `payload` big-endian, matching RNS `b0<<24 | b1<<16 | b2<<8 | b3`;
-/// `None` if fewer than four bytes have arrived.
 fn be_u32(payload: &[u8]) -> Option<u32> {
     if payload.len() >= 4 {
         Some(u32::from_be_bytes([
@@ -474,9 +422,7 @@ mod tests {
 
     #[test]
     fn the_bitrate_matches_the_reference_formula() {
-        // sf8 / cr4-5 / bw125k is the canonical RNode default: 3125 bps.
         assert_eq!(nominal_bitrate_bps(8, 5, 125_000), 3125);
-        // sf7 / cr4-5 / bw500k, the fast end.
         assert_eq!(nominal_bitrate_bps(7, 5, 500_000), 21875);
         assert_eq!(sample_radio().nominal_bitrate_bps(), 3125);
     }
@@ -566,7 +512,6 @@ mod tests {
 
     #[test]
     fn the_airtime_locks_slot_in_before_the_radio_state_when_configured() {
-        // 1.5% and 5.0% pre-scaled to centi-percent (150, 500) as the planner hands them over.
         let radio = RadioConfig::new(RadioConfigInput {
             airtime_limit_short_centi_percent: Some(150),
             airtime_limit_long_centi_percent: Some(500),
@@ -574,7 +519,6 @@ mod tests {
         })
         .expect("valid config");
         let decoded = decode_commands(&radio.init_command_bytes());
-        // Each two-byte big-endian, sitting after CR and before the radio state.
         assert_eq!(decoded[5], (CMD_ST_ALOCK, 150u16.to_be_bytes().to_vec()));
         assert_eq!(decoded[6], (CMD_LT_ALOCK, 500u16.to_be_bytes().to_vec()));
         assert_eq!(decoded[7].0, CMD_RADIO_STATE);

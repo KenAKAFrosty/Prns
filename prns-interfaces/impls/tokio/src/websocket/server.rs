@@ -22,8 +22,6 @@ use prns_runtime::runtime::{Fleet, InterfaceSupervisor};
 const WEBSOCKET_HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const MAX_PENDING_HANDSHAKES: usize = 64;
 
-/// One peer accepted by a [`WebSocketServer`]. A peer is a distinct engine interface over an
-/// already-upgraded WebSocket stream, and it carries one RNS wire frame per binary message.
 pub struct WebSocketServerConnection<S> {
     id: InterfaceId,
     channel_tag: Vec<u8>,
@@ -100,9 +98,6 @@ impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> Interface
     }
 }
 
-/// A plain `ws://` listener that upgrades accepted TCP connections and stands up one
-/// [`WebSocketServerConnection`] per peer. Use an HTTP/TLS reverse proxy when the public edge needs
-/// `wss://`; the Prns wire inside each WebSocket message stays the same.
 pub struct WebSocketServer {
     listener: TcpListener,
     policy: EffectiveInterfacePolicy,

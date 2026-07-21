@@ -17,9 +17,6 @@ use prns_runtime::reactor::throughput::ThroughputLedger;
 
 const WEBSOCKET_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// The initiating end of a Prns WebSocket pair. It dials `target` (`ws://host:port/path`),
-/// upgrades to WebSocket, then carries one RNS wire frame per binary message. The target is kept as
-/// the channel tag so reconnects preserve the same interface id.
 pub struct WebSocketClientInterface {
     id: InterfaceId,
     target: String,
@@ -50,8 +47,6 @@ impl WebSocketClientInterface {
         Self::with_id_and_policy(id, target, policy, reconnect_policy)
     }
 
-    /// Build with a caller-chosen id instead of one derived from the dial target. Ordinary nodes
-    /// should call [`new`](Self::new).
     #[must_use]
     pub fn new_with_id(
         id: InterfaceId,

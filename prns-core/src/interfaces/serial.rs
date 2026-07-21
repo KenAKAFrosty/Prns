@@ -6,7 +6,6 @@ use crate::interfaces::{
 };
 
 pub const READ_BUF_LEN: usize = 256;
-/// CDC-ACM behind a USB bridge: nominal line rate, conservative for tiering.
 pub const SERIAL_BITRATE_BPS: BitrateBps = BitrateBps::guess(1_000_000);
 pub const SERIAL_HW_MTU: usize = 1_024;
 pub const SERIAL_FRAME_LEN: usize = SERIAL_HW_MTU + crate::interfaces::IFAC_MAX_SIZE;

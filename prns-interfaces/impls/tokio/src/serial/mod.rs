@@ -21,10 +21,6 @@ use prns_runtime::reactor::driver::TokioInterfaceStatus;
 use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
 use prns_runtime::reactor::throughput::ThroughputLedger;
 
-/// A serial interface that owns its medium's whole lifecycle: `open` yields a fresh async
-/// byte stream (the consumer supplies it, e.g. a reopened [`HostSerial`]), and
-/// the interface reconnects on its own — serve a connection until it drops, wait for the reconnect delay,
-/// reopen. A single never-dropping stream is just a factory that yields once.
 pub struct SerialInterface<Open> {
     id: InterfaceId,
     open: Open,
@@ -35,10 +31,7 @@ pub struct SerialInterface<Open> {
 }
 
 impl<Open> SerialInterface<Open> {
-    /// `channel_tag` names *which* serial device this is — the port name or a stable
-    /// device id the caller knows (the `open` closure that yields the stream hides it from
-    /// us). Two distinct serial channels must pass distinct bytes; the same device across a
-    /// reopen should pass the same, so its routes survive the reconnect.
+    /// A reopened device must retain its `channel_tag`, and concurrent devices must have distinct tags.
     #[must_use]
     pub fn new(open: Open, reconnect_policy: ReconnectPolicy, channel_tag: &[u8]) -> Self {
         Self::with_policy(
@@ -68,15 +61,11 @@ impl<Open> SerialInterface<Open> {
         }
     }
 
-    /// This interface's id, derived from its device `channel_tag`, for the app that wants
-    /// to name it (an [`AnnounceTarget::Interface`](prns_core::engine::AnnounceTarget), a log line).
     #[must_use]
     pub fn id(&self) -> InterfaceId {
         self.id
     }
 
-    /// A clone of this interface's live-status handle for the app to read on its own render
-    /// cadence. Call before [`run`](Interface::run) consumes the interface.
     #[must_use]
     pub fn status(&self) -> TokioInterfaceStatus {
         self.status.clone()
@@ -168,8 +157,6 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::sync::mpsc::{self, UnboundedSender};
 
-    /// A hand-driven seam: it captures every `next_inbound` and supplies `next_outbound` from a
-    /// grant lane the test fills — so the interface's framing can be exercised in isolation.
     struct MockSeam {
         inbound: UnboundedSender<std::vec::Vec<u8>>,
         sink: std::vec::Vec<u8>,
@@ -201,8 +188,6 @@ mod tests {
 
     #[tokio::test]
     async fn frames_outbound_and_deframes_inbound_across_a_real_async_stream() {
-        // A duplex stands in for the serial wire: the factory yields its end once, then refuses
-        // (the reconnect loop just retries harmlessly until the test drops the task).
         let (interface_wire, mut test_wire) = tokio::io::duplex(1024);
         let mut wire = Some(interface_wire);
         let open = move || {
@@ -222,8 +207,6 @@ mod tests {
         let status = interface.status();
         tokio::spawn(interface.run(seam));
 
-        // Inbound: the test writes a framed payload (FLAG/ESC bytes exercise the escaping) onto
-        // the wire; the interface deframes it and hands the original across the seam.
         let payload = [0x01u8, 0x02, FLAG, ESC, 0x03];
         let mut framed = [0u8; 32];
         let n = rns_serial_framing::encode(&payload, &mut framed).expect("encodes the payload");
@@ -241,8 +224,6 @@ mod tests {
             "the interface deframes inbound bytes for the seam"
         );
 
-        // Outbound: the seam yields a frame; the interface frames it onto the wire; the test
-        // reads it back and deframes to the original.
         let out_payload = [0xAAu8, FLAG, 0xBB];
         out_tx
             .try_grant()
@@ -271,8 +252,6 @@ mod tests {
             "the interface frames outbound packets onto the wire"
         );
 
-        // The interface's live status reflects what crossed — readable by the app directly,
-        // never through the engine. `serve` updates it concurrently, so poll to the window.
         tokio::time::timeout(Duration::from_secs(2), async {
             loop {
                 if status.connection() == ConnectionState::Connected
