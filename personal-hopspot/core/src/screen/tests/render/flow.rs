@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn draw_with_state_marks_selected_card_below_global_row() {
+fn render_marks_selected_card_below_global_row() {
     let mut display = MockDisplay::new();
     display.set_allow_overdraw(true);
     display.set_allow_out_of_bounds_drawing(true);
@@ -9,7 +9,7 @@ fn draw_with_state_marks_selected_card_below_global_row() {
     let mut state = test_ui_state();
     state.handle_input(InputEvent::ShortPress, cards.len(), Some(CardKind::Usb));
 
-    draw_with_state(&mut display, &cards, BatteryState::Unknown, &state);
+    render_with_state(&mut display, &cards, BatteryState::Unknown, &state);
 
     let selected_top = FIRST_CARD_WITH_GLOBAL_TOP;
     assert_eq!(state.selected_card(cards.len()), Some(0));
@@ -32,14 +32,14 @@ fn draw_with_state_marks_selected_card_below_global_row() {
 }
 
 #[test]
-fn draw_with_state_renders_selected_global_row() {
+fn render_shows_selected_global_row() {
     let mut display = MockDisplay::new();
     display.set_allow_overdraw(true);
     display.set_allow_out_of_bounds_drawing(true);
     let cards = [test_card("USB")];
     let state = test_ui_state();
 
-    draw_with_state(&mut display, &cards, BatteryState::Unknown, &state);
+    render_with_state(&mut display, &cards, BatteryState::Unknown, &state);
 
     assert!(state.global_selected());
     assert_eq!(
@@ -79,7 +79,7 @@ fn draw_with_state_renders_selected_global_row() {
 }
 
 #[test]
-fn draw_with_state_local_docs_scrolls_after_the_last_card() {
+fn render_scrolls_local_docs_after_the_last_card() {
     let cards = [test_card("USB"), test_card("BLE"), test_card("WiFi")];
     let mut state = test_ui_state();
     let local_docs = LocalDocsAccess {
@@ -99,13 +99,12 @@ fn draw_with_state_local_docs_scrolls_after_the_last_card() {
     assert_eq!(state.visible_start_with_footer(cards.len(), true), 3);
 
     let mut display = PanelDisplay::new();
-    draw_with_state_footer_at(
+    render_with_local_docs(
         &mut display,
         &cards,
         BatteryState::Unknown,
         &state,
-        Some(&local_docs),
-        0,
+        &local_docs,
     );
     assert!(has_on_pixel(
         &display,
@@ -115,7 +114,7 @@ fn draw_with_state_local_docs_scrolls_after_the_last_card() {
 }
 
 #[test]
-fn draw_with_state_local_docs_shows_access_details() {
+fn render_shows_local_docs_access_details() {
     let cards = [test_card("USB"), test_card("BLE"), test_card("WiFi")];
     let mut state = test_ui_state();
     let local_docs = LocalDocsAccess {
@@ -132,13 +131,12 @@ fn draw_with_state_local_docs_shows_access_details() {
     }
 
     let mut display = PanelDisplay::new();
-    draw_with_state_footer_at(
+    render_with_local_docs(
         &mut display,
         &cards,
         BatteryState::Unknown,
         &state,
-        Some(&local_docs),
-        0,
+        &local_docs,
     );
     assert!(has_on_pixel(
         &display,
@@ -171,7 +169,7 @@ fn footer_focus_long_press_opens_docs() {
 }
 
 #[test]
-fn draw_with_state_scrolls_global_row_out_of_card_window() {
+fn render_scrolls_global_row_out_of_card_window() {
     let mut display = MockDisplay::new();
     display.set_allow_overdraw(true);
     display.set_allow_out_of_bounds_drawing(true);
@@ -181,7 +179,7 @@ fn draw_with_state_scrolls_global_row_out_of_card_window() {
     state.handle_input(InputEvent::ShortPress, cards.len(), Some(CardKind::Usb));
     state.handle_input(InputEvent::ShortPress, cards.len(), Some(CardKind::Usb));
 
-    draw_with_state(&mut display, &cards, BatteryState::Unknown, &state);
+    render_with_state(&mut display, &cards, BatteryState::Unknown, &state);
 
     assert_eq!(state.selected_card(cards.len()), Some(2));
     assert_eq!(state.visible_start(cards.len()), 2);
@@ -196,7 +194,7 @@ fn draw_with_state_scrolls_global_row_out_of_card_window() {
 }
 
 #[test]
-fn draw_with_state_renders_global_menu() {
+fn render_shows_global_menu() {
     let mut display = MockDisplay::new();
     display.set_allow_overdraw(true);
     display.set_allow_out_of_bounds_drawing(true);
@@ -204,7 +202,7 @@ fn draw_with_state_renders_global_menu() {
     let mut state = test_ui_state();
     state.handle_input(InputEvent::LongPress, cards.len(), Some(CardKind::Usb));
 
-    draw_with_state(&mut display, &cards, BatteryState::Unknown, &state);
+    render_with_state(&mut display, &cards, BatteryState::Unknown, &state);
 
     assert_eq!(state.global_menu_selected_item(), Some(0));
     assert_eq!(
@@ -226,7 +224,7 @@ fn draw_with_state_renders_global_menu() {
 }
 
 #[test]
-fn draw_with_state_renders_selected_interface_menu() {
+fn render_shows_selected_interface_menu() {
     let mut display = MockDisplay::new();
     display.set_allow_overdraw(true);
     display.set_allow_out_of_bounds_drawing(true);
@@ -251,7 +249,7 @@ fn draw_with_state_renders_selected_interface_menu() {
     state.handle_input(InputEvent::ShortPress, cards.len(), Some(CardKind::Usb));
     state.handle_input(InputEvent::LongPress, cards.len(), Some(CardKind::Usb));
 
-    draw_with_state(&mut display, &cards, BatteryState::Unknown, &state);
+    render_with_state(&mut display, &cards, BatteryState::Unknown, &state);
 
     assert_eq!(state.selected_card(cards.len()), Some(1));
     assert_eq!(state.interface_menu_selected_item(), Some(0));

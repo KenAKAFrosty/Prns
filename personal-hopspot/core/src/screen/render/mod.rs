@@ -25,54 +25,24 @@ use menus::{
     draw_sleeping,
 };
 
-pub fn draw_with_state<D: DrawTarget<Color = BinaryColor>>(
-    display: &mut D,
-    cards: &[Card],
-    battery: BatteryState,
-    state: &UiState,
-) {
-    draw_with_state_at(display, cards, battery, state, 0);
+pub struct RenderFrame<'frame, 'docs> {
+    pub cards: &'frame [Card],
+    pub battery: BatteryState,
+    pub state: &'frame UiState,
+    pub local_docs: Option<&'frame LocalDocsAccess<'docs>>,
+    pub interface_menu_details: &'frame InterfaceMenuDetails,
+    pub animation_ms: u64,
 }
 
-pub fn draw_with_state_at<D: DrawTarget<Color = BinaryColor>>(
-    display: &mut D,
-    cards: &[Card],
-    battery: BatteryState,
-    state: &UiState,
-    animation_ms: u64,
-) {
-    draw_with_state_footer_at(display, cards, battery, state, None, animation_ms);
-}
-
-pub fn draw_with_state_footer_at<D: DrawTarget<Color = BinaryColor>>(
-    display: &mut D,
-    cards: &[Card],
-    battery: BatteryState,
-    state: &UiState,
-    local_docs: Option<&LocalDocsAccess<'_>>,
-    animation_ms: u64,
-) {
-    let interface_menu_details = InterfaceMenuDetails::empty();
-    draw_with_state_footer_details_at(
-        display,
+pub fn render<D: DrawTarget<Color = BinaryColor>>(display: &mut D, frame: RenderFrame<'_, '_>) {
+    let RenderFrame {
         cards,
         battery,
         state,
         local_docs,
-        &interface_menu_details,
+        interface_menu_details,
         animation_ms,
-    );
-}
-
-pub fn draw_with_state_footer_details_at<D: DrawTarget<Color = BinaryColor>>(
-    display: &mut D,
-    cards: &[Card],
-    battery: BatteryState,
-    state: &UiState,
-    local_docs: Option<&LocalDocsAccess<'_>>,
-    interface_menu_details: &InterfaceMenuDetails,
-    animation_ms: u64,
-) {
+    } = frame;
     let _ = display.clear(BinaryColor::Off);
     draw_title_bar(display, battery, animation_ms);
 
@@ -154,7 +124,6 @@ pub fn draw_with_state_footer_details_at<D: DrawTarget<Color = BinaryColor>>(
     }
 }
 
-/// A boot/connecting splash: title bar + a centered status line.
 pub fn splash<D: DrawTarget<Color = BinaryColor>>(display: &mut D, status: &str) {
     let _ = display.clear(BinaryColor::Off);
     draw_title_bar(display, BatteryState::Unknown, 0);

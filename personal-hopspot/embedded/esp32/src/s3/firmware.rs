@@ -418,14 +418,16 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 }
             }
             if oled_ok && oled_awake {
-                screen::draw_with_state_footer_details_at(
+                screen::render(
                     &mut display,
-                    &cards,
-                    battery_state,
-                    &ui_state,
-                    local_docs.as_ref(),
-                    &interface_menu_details,
-                    now_ms,
+                    screen::RenderFrame {
+                        cards: &cards,
+                        battery: battery_state,
+                        state: &ui_state,
+                        local_docs: local_docs.as_ref(),
+                        interface_menu_details: &interface_menu_details,
+                        animation_ms: now_ms,
+                    },
                 );
                 B::flush(&mut display);
             }

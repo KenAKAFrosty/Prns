@@ -1,8 +1,8 @@
 use heapless::Vec as HVec;
 use personal_hopspot_core::{
-    draw_with_state_footer_details_at, snapshots_to_cards, snapshots_to_interface_menu_details,
-    splash, AccessPointState, BatteryState, Card, CardActivityTracker, DisplayPowerControl,
-    InputEvent, UiAction, UiConfiguration, UiNotice, UiState,
+    render, snapshots_to_cards, snapshots_to_interface_menu_details, splash, AccessPointState,
+    BatteryState, Card, CardActivityTracker, DisplayPowerControl, InputEvent, RenderFrame,
+    UiAction, UiConfiguration, UiNotice, UiState,
 };
 use personal_rns::interfaces::{InterfaceSnapshot, InterfaceStatus};
 use personal_rns::storage::{GrowableHeap, StorageLayout};
@@ -152,14 +152,16 @@ impl HopspotFace {
                     .and_then(|index| cards.get(index)),
                 snapshots,
             );
-            draw_with_state_footer_details_at(
+            render(
                 &mut self.framebuffer,
-                cards,
-                self.battery,
-                &self.state,
-                None,
-                &interface_menu_details,
-                animation_ms,
+                RenderFrame {
+                    cards,
+                    battery: self.battery,
+                    state: &self.state,
+                    local_docs: None,
+                    interface_menu_details: &interface_menu_details,
+                    animation_ms,
+                },
             );
         }
         self.framebuffer.expand_rgba(out_rgba);

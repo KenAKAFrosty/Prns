@@ -10,10 +10,7 @@ pub use model::{
     InterfaceMenuDetails, Liveness, LocalDocsAccess, WifiNetworkStatus,
 };
 pub(crate) use model::{liveness_from_connection, sort_cards_for_display};
-pub use render::{
-    draw_with_state, draw_with_state_at, draw_with_state_footer_at,
-    draw_with_state_footer_details_at, splash,
-};
+pub use render::{render, splash, RenderFrame};
 pub use state::{
     AccessPointState, DisplayPowerControl, InputEvent, UiAction, UiConfiguration, UiNotice, UiState,
 };

@@ -404,14 +404,16 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
                     .and_then(|index| cards.get(index)),
                 &snapshots,
             );
-            hopspot::draw_with_state_footer_details_at(
+            hopspot::render(
                 &mut EinkScreen { panel: &mut panel },
-                &cards,
-                battery,
-                &ui_state,
-                None,
-                &interface_menu_details,
-                now_ms,
+                hopspot::RenderFrame {
+                    cards: &cards,
+                    battery,
+                    state: &ui_state,
+                    local_docs: None,
+                    interface_menu_details: &interface_menu_details,
+                    animation_ms: now_ms,
+                },
             );
             let hash = frame_hash(panel.buffer());
             if !have_displayed || hash != displayed_hash {

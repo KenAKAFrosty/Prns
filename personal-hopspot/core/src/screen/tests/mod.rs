@@ -39,9 +39,9 @@ use super::state::{
     POWER_MENU_ITEM, POWER_ONLY_MENU_ITEMS, RADIO_MENU_ITEM_NO_DISPLAY, SLEEP_MENU_ITEM,
 };
 use super::{
-    card_label, draw_with_state, draw_with_state_footer_at, sort_cards_for_display,
-    AccessPointState, Card, CardActivityTracker, CardKind, DisplayPowerControl, InputEvent,
-    InterfaceMenuDetails, Liveness, LocalDocsAccess, UiAction, UiConfiguration, UiState,
+    card_label, render as render_screen, sort_cards_for_display, AccessPointState, Card,
+    CardActivityTracker, CardKind, DisplayPowerControl, InputEvent, InterfaceMenuDetails, Liveness,
+    LocalDocsAccess, RenderFrame, UiAction, UiConfiguration, UiState,
 };
 
 const TEST_WIDTH: usize = WIDTH as usize;
@@ -87,6 +87,47 @@ impl OriginDimensions for PanelDisplay {
     fn size(&self) -> Size {
         Size::new(WIDTH as u32, HEIGHT as u32)
     }
+}
+
+fn render_with_state<D: DrawTarget<Color = BinaryColor>>(
+    display: &mut D,
+    cards: &[Card],
+    battery: BatteryState,
+    state: &UiState,
+) {
+    let interface_menu_details = InterfaceMenuDetails::empty();
+    render_screen(
+        display,
+        RenderFrame {
+            cards,
+            battery,
+            state,
+            local_docs: None,
+            interface_menu_details: &interface_menu_details,
+            animation_ms: 0,
+        },
+    );
+}
+
+fn render_with_local_docs<D: DrawTarget<Color = BinaryColor>>(
+    display: &mut D,
+    cards: &[Card],
+    battery: BatteryState,
+    state: &UiState,
+    local_docs: &LocalDocsAccess<'_>,
+) {
+    let interface_menu_details = InterfaceMenuDetails::empty();
+    render_screen(
+        display,
+        RenderFrame {
+            cards,
+            battery,
+            state,
+            local_docs: Some(local_docs),
+            interface_menu_details: &interface_menu_details,
+            animation_ms: 0,
+        },
+    );
 }
 
 fn test_card(label: &'static str) -> Card {

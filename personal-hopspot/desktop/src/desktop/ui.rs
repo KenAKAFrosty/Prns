@@ -853,14 +853,16 @@ pub(super) fn run_window(handles: WindowHandles) {
                 .elapsed()
                 .as_millis()
                 .min(u128::from(u64::MAX)) as u64;
-            screen::draw_with_state_footer_details_at(
+            screen::render(
                 &mut display,
-                &cards,
-                battery,
-                &ui_state,
-                None,
-                &interface_menu_details,
-                animation_ms,
+                screen::RenderFrame {
+                    cards: &cards,
+                    battery,
+                    state: &ui_state,
+                    local_docs: None,
+                    interface_menu_details: &interface_menu_details,
+                    animation_ms,
+                },
             );
             window.update(&display);
             needs_redraw = false;

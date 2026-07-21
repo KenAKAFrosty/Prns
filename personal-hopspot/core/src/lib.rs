@@ -6,11 +6,9 @@ mod screen;
 
 pub use battery::{BatteryGauge, BatteryPercent, BatterySource, BatteryState, NoBattery};
 pub use screen::{
-    card_label, draw_with_state, draw_with_state_at, draw_with_state_footer_at,
-    draw_with_state_footer_details_at, splash, tcp_card_label, AccessPointState, Card,
-    CardActivityTracker, CardKind, CardLabel, DisplayPowerControl, InputEvent,
-    InterfaceMenuDetails, Liveness, LocalDocsAccess, UiAction, UiConfiguration, UiNotice, UiState,
-    WifiNetworkStatus,
+    card_label, render, splash, tcp_card_label, AccessPointState, Card, CardActivityTracker,
+    CardKind, CardLabel, DisplayPowerControl, InputEvent, InterfaceMenuDetails, Liveness,
+    LocalDocsAccess, RenderFrame, UiAction, UiConfiguration, UiNotice, UiState, WifiNetworkStatus,
 };
 
 use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceSnapshot, Membership};
