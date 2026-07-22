@@ -1,0 +1,15 @@
+{
+  "implementation": "RNS 1.4.0 (compiled)",
+  "slug": "rns-1.4.0-compiled",
+  "aliases": ["reference", "rns"],
+  "language": "Python",
+  "crypto_backend": "PyCA cryptography / OpenSSL",
+  "role": "reference",
+  "repo": "https://github.com/markqvist/Reticulum",
+  "pinned_ref": "1.4.0",
+  "license": "Reticulum License",
+  "notes": "RNS 1.4.0 loaded through the benchmark-local Cython object cache; runs are rejected unless RNS.compiled is true and native extension modules are loaded.",
+  "participant": {
+    "command": ["{reference_python}", "-u", "{benchmark_dir}/reference/compiled_reference.py", "{benchmark_dir}/reference/participant_node.py"]
+  }
+}

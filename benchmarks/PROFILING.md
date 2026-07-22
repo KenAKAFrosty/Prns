@@ -1,8 +1,8 @@
 # Profiling the engine microscope
 
-Six complementary tools for profiling the **pure-Prns** paths — the Rust engine
-under `benches/engine_cycle.rs` and the scenario binaries (`scenario_node`,
-`shaped_pipe`). These profile our own code; they have nothing to do with the
+Five complementary tools for profiling the **pure-Prns** paths — the Rust engine
+under `benches/engine_cycle.rs` and the `participant_node` scenario binary.
+These profile our own code; they have nothing to do with the
 reference-implementation scenarios. Pick by the question you're asking:
 
 | Tool | Question | Determinism | Install |
@@ -12,7 +12,6 @@ reference-implementation scenarios. Pick by the question you're asking:
 | **samply** | Let me explore the call tree / timeline interactively | sampled | `cargo install samply` |
 | **iai-callgrind** | Exactly how many instructions / cache hits / branches per function, reproducibly? | deterministic | `cargo install iai-callgrind-runner` + `valgrind` |
 | **dhat** | How many heap allocations / bytes per operation? Which call sites? | deterministic | built in (dev-dep) |
-| **perf stat** | What does the real silicon do under load? (IPC, branch/LLC miss) | HW counters | `perf` (linux-tools) |
 
 All commands run from `benchmarks/`.
 
@@ -53,10 +52,6 @@ Sampling profiler with a rich call-tree + timeline UI. On Linux it uses
 needed**.
 
 ```sh
-# a scenario binary (stable path)
-cargo build --release --bin shaped_pipe
-samply record -- ./target/release/shaped_pipe <args>
-
 # the Criterion microscope (build first, then point samply at the binary)
 cargo bench --bench engine_cycle --no-run
 samply record -- "$(ls -t target/release/deps/engine_cycle-* | grep -vE '\.d$' | head -1)" \
@@ -124,27 +119,3 @@ Both invariants are gated under `tests/` (`forward_path_alloc`,
 `dedup_rotation_alloc`): a per-packet-allocation regression turns the
 handful-of-blocks figure into one-block-per-packet and trips the assertion. Use
 these to hold a **no-per-packet-allocation** line on the hot paths as they grow.
-
-## 5. perf stat — real-hardware counters under load
-
-iai's cache+branch numbers are a deterministic *model* of an isolated hot loop.
-`perf stat` is the real silicon, on the whole process, under real tokio+TCP load —
-the macro complement. `perf_stat_chain.sh` runs the 6-hop chain firehose and
-counts a trunk (pure-forwarding) node for a window:
-
-```sh
-./perf_stat_chain.sh        # 15s window (arg overrides), no sudo if perf_event_paranoid <= -1
-```
-
-It reports cycles / instructions / branches / branch-misses / cache-refs /
-cache-misses; derive **IPC**, **branch-miss %**, **LLC-miss %**. (Finds the trunk
-by exact comm + `/proc/cmdline` — `pgrep -af` would match a bash subshell whose
-argv merely contains the string, and every counter reads `<not counted>`. On
-hybrid Intel the trunk is taskset-pinned to P-cores, so it counts `cpu_core/`
-events explicitly.)
-
-Finding (~20k pkt/s trunk): **IPC ≈ 1.18, branch-miss ≈ 1.9%, LLC-miss ≈ 10%**.
-Read against iai (the forward hot loop is ~100% L1-resident with clean branches),
-the LLC traffic is the **async/kernel floor** — socket/skb/mpsc memory, not our
-forward compute. The headroom is in the I/O architecture (batch-per-wake,
-UDP/io_uring), not micro-edits to the engine.

@@ -389,10 +389,12 @@ def validate_manifest(manifest: dict, check_tools: bool = False) -> list[str]:
         errors.append(f"stale validation asset exemptions: {sorted(stale_exemptions)!r}")
 
     errors.extend(validate_triage())
-    if (ROOT / "benchmarks/reference/requirements.txt").read_text().strip() != "rns==1.4.0":
-        errors.append("benchmarks/reference/requirements.txt must pin rns==1.4.0")
-    if (ROOT / "benchmarks/reference/rpc-requirements.txt").read_text().strip() != "rns==1.4.0":
-        errors.append("benchmarks/reference/rpc-requirements.txt must pin rns==1.4.0")
+    requirements = (ROOT / "benchmarks/reference/requirements.txt").read_text().strip()
+    lock = (ROOT / "benchmarks/reference/requirements.lock").read_text().splitlines()
+    if requirements != "-r requirements.lock":
+        errors.append("benchmarks/reference/requirements.txt must load requirements.lock")
+    if "rns==1.4.0" not in lock:
+        errors.append("benchmarks/reference/requirements.lock must pin rns==1.4.0")
 
     required_commands = {suite["command"][0] for suite in suites.values() if suite.get("command")}
     for command in sorted(required_commands):
@@ -826,7 +828,6 @@ def cleanup_paths(manifest: dict) -> list[Path]:
             "personal-hopspot/mobile/android/app/build",
             "personal-hopspot/mobile/android/app/src/main/jniLibs",
             "benchmarks/reference/.venv",
-            "benchmarks/reference/.rpc-venv",
             ".venv-rns-1.4.0",
         )
     )

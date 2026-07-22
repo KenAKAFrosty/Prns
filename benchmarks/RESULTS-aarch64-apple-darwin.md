@@ -2,133 +2,69 @@
 
 [← All hosts](RESULTS.md)
 
-## Machine
+## Machine and method
 
-- **CPU** — Apple M4
-- **Cores** — 10 physical / 10 logical
-- **Memory** — 16.0 GiB
-- **OS** — macOS 26.4
-- **Kernel** — 25.4.0
+Apple M4; 10 physical / 10 logical; 16.0 GiB; macOS 26.4.
 
-## link-firehose-small-payload (v2)
+Release binaries run over loopback for 30 seconds per sample, three samples per cell. Tables show median throughput and latency; memory is the maximum peak RSS. Energy is optional: it is metered processor energy minus a fresh idle baseline (macOS CPU Power; Linux RAPL package) and appears only when all three samples are positive. Packet/request energy is per delivery; resource energy is normalized per application MiB. Initiator/responder energy is the combined package measurement attributed by each role's CPU-time share. A check means every sample satisfied the scenario's accounting rule.
 
-One link saturated with windowed small single-packet sends for a fixed wall-time - the same data shape as single-firehose carried by the other mechanism: a session key amortizes the per-message crypto that singles pay per packet, while ProveAll still proves every delivery. The contrast between the two firehoses is the measurement.
+## At a glance
 
-Each row is one live pairing — the initiator drives a windowed firehose at the responder over loopback, and every figure is the protocol's own: delivery proven by receipt, latency from the proofs, energy bracketed around the run. Conformant pairings rank first, ordered by energy per delivered message — a cheap-but-broken run never tops the table; energy needs `sudo` for the power counters and renders pending without it. Numbers compare within a host, never across.
+| Scenario | Prns | Reference | Prns / reference |
+|---|---:|---:|---:|
+| Single-packet throughput | 39.7k/s | 1.9k/s | 20.39× |
+| Link-message throughput | — | — | — |
+| Request/response | — | — | — |
+| Maximum resource segment | 274.30 MB/s | 99.17 MB/s | 2.77× |
+| 64 MiB resource stream | 459.25 MB/s | 121.37 MB/s | 3.78× |
 
-| Initiator → Responder | Conformance | Throughput | Goodput | RTT p50 / p99 | Peak RSS init / resp | Energy / msg |
-|------------------------|-------------|-----------:|--------:|--------------:|---------------------:|-------------:|
-| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 2,270,427 / 2,270,427 | 75.7k msg/s | 18.2 MB/s | 0 / 1 ms | 24.0 / 58.7 MiB | _pending_ |
-| Prns → RNS 1.3.5 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 262,189 / 262,189 | 8.7k msg/s | 2.1 MB/s | 2 / 2 ms | 8.5 / 113.7 MiB | _pending_ |
-| RNS 1.3.5 _(ref)_ → RNS 1.3.5 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 141,769 / 142,131 · 362 timed out | 4.7k msg/s | 1.1 MB/s | 1 / 2 ms | 85.9 / 79.0 MiB | _pending_ |
-| RNS 1.3.5 _(ref)_ → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 116,865 / 117,260 · 395 timed out | 3.8k msg/s | 916 kB/s | 0 / 1 ms | 81.0 / 11.7 MiB | _pending_ |
+A dash means no current three-sample release evidence is published for that scenario.
 
-**Implementations.**
+## Detailed results
 
-- **Prns** — Rust, ed25519-dalek 2.2 · [https://github.com/KenAKAFrosty/Prns](https://github.com/KenAKAFrosty/Prns)
-- **RNS 1.3.5** — Python, PyCA cryptography / OpenSSL · [https://github.com/markqvist/Reticulum](https://github.com/markqvist/Reticulum) @ `1.3.5` · Reticulum License
+### Packets
 
-## request-response (v1)
+#### Single-packet throughput (v2)
 
-Windowed RPC round trips over one link - the network's most common interactive pattern (page fetches, queries, telemetry): each request a varied size, each naming a varied response size it wants back, the handler answering through the engine-gated allow list. Latency is the product; requests per second the capacity.
+Sustained proved delivery of varied-size one-shot packets over TCP.
 
-Each row is one live pairing — the initiator drives a windowed firehose at the responder over loopback, and every figure is the protocol's own: delivery proven by receipt, latency from the proofs, energy bracketed around the run. Conformant pairings rank first, ordered by energy per delivered message — a cheap-but-broken run never tops the table; energy needs `sudo` for the power counters and renders pending without it. Numbers compare within a host, never across.
+| Subject | Conformance | Rate | Goodput | RTT p50 / p99 | Peak RSS (i / r) | Energy / delivery (i / r) |
+|---|---:|---:|---:|---:|---:|---:|
+| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 3576046/3576046 · 3/3 samples | 39.7k/s | 8.73 MB/s | <1.00 / 1.00 ms | i 16.8 MiB / r 48.7 MiB | i 0.24 mJ / r 0.18 mJ |
+| Prns → RNS 1.4.0 (compiled) | <img src="assets/check.svg" width="14" alt="conformant" /> 373203/373203 · 3/3 samples | 4.2k/s | 918.8 kB/s | 4.00 / 4.00 ms | i 5.5 MiB / r 230.0 MiB | i 1.47 mJ / r 1.20 mJ |
+| RNS 1.4.0 (compiled) → RNS 1.4.0 (compiled) | <img src="assets/check.svg" width="14" alt="conformant" /> 151430/151430 · 3/3 samples | 1.9k/s | 428.7 kB/s | 1.00 / 17.00 ms | i 202.2 MiB / r 208.4 MiB | i 3.08 mJ / r 1.43 mJ |
+| RNS 1.4.0 (compiled) → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 168054/168054 · 3/3 samples | 1.9k/s | 420.0 kB/s | <1.00 / 19.00 ms | i 203.1 MiB / r 8.0 MiB | i 2.91 mJ / r 1.62 mJ |
 
-| Initiator → Responder | Conformance | Throughput | Goodput | RTT p50 / p99 | Peak RSS init / resp | Energy / msg |
-|------------------------|-------------|-----------:|--------:|--------------:|---------------------:|-------------:|
-| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 1,967,352 / 1,967,352 | 65.6k msg/s | _pending_ | 0 / 1 ms | 84.4 / 59.3 MiB | _pending_ |
-| RNS 1.3.5 _(ref)_ → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 331,263 / 331,295 · 32 raced | 11.0k msg/s | _pending_ | 0 / 0 ms | 152.5 / 30.9 MiB | _pending_ |
-| Prns → RNS 1.3.5 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 280,257 / 280,257 | 9.3k msg/s | _pending_ | 0 / 1 ms | 33.4 / 127.2 MiB | _pending_ |
-| RNS 1.3.5 _(ref)_ → RNS 1.3.5 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 264,910 / 264,916 · 6 raced | 8.8k msg/s | _pending_ | 0 / 1 ms | 138.4 / 117.9 MiB | _pending_ |
+### Resources
 
-**Implementations.**
+#### 64 MiB resource stream (v2)
 
-- **Prns** — Rust, ed25519-dalek 2.2 · [https://github.com/KenAKAFrosty/Prns](https://github.com/KenAKAFrosty/Prns)
-- **RNS 1.3.5** — Python, PyCA cryptography / OpenSSL · [https://github.com/markqvist/Reticulum](https://github.com/markqvist/Reticulum) @ `1.3.5` · Reticulum License
+Stream a 64 MiB incompressible resource with compression disabled.
 
-## resource-bulk (v1)
+| Subject | Conformance | Rate | Goodput | RTT p50 / p99 | Peak RSS (i / r) | Energy / MiB (i / r) |
+|---|---:|---:|---:|---:|---:|---:|
+| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 618/618 · 3/3 samples | 7/s | 459.25 MB/s | 145.00 / 163.00 ms | i 48.5 MiB / r 40.4 MiB | i 8.00 mJ/MiB / r 7.60 mJ/MiB |
+| Prns → RNS 1.4.0 (compiled) | <img src="assets/check.svg" width="14" alt="conformant" /> 180/180 · 3/3 samples | 2/s | 133.31 MB/s | 491.00 / 630.00 ms | i 18.1 MiB / r 416.3 MiB | i 9.63 mJ/MiB / r 32.61 mJ/MiB |
+| RNS 1.4.0 (compiled) → RNS 1.4.0 (compiled) | <img src="assets/check.svg" width="14" alt="conformant" /> 164/164 · 3/3 samples | 2/s | 121.37 MB/s | 542.00 / 612.00 ms | i 344.2 MiB / r 411.4 MiB | i 21.32 mJ/MiB / r 33.15 mJ/MiB |
+| RNS 1.4.0 (compiled) → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 21/21 · 3/3 samples | 0.22/s | 15.02 MB/s | 4349.00 / 5129.00 ms | i 279.1 MiB / r 9.5 MiB | i 13.76 mJ/MiB / r 4.82 mJ/MiB |
 
-_The manifest has since moved to v2; every figure below was measured under v1._
+#### Maximum resource segment (v1)
 
-A single large resource transferred whole, over and over, for a fixed wall-time - the multi-segment bulk mechanism. Each logical transfer is 64 MiB sliced into MAX_EFFICIENT_SIZE segments, sent one at a time and proved before the next, so the engine and the host each hold a single segment while the receiver appends the stream to disk-sized totals. Against resource-transfer (one segment) this measures whether the per-byte rate holds past the single-segment ceiling and whether peak memory stays flat at one segment regardless of total size. Compression is off on BOTH stacks (the reference harness has always passed auto_compress=False), so this row is the pure transport rate; the codec-engaged posture is resource-bulk-compressed.
+Repeated transfer of one maximum-efficient resource segment.
 
-Each row is one live pairing — the initiator drives a windowed firehose at the responder over loopback, and every figure is the protocol's own: delivery proven by receipt, latency from the proofs, energy bracketed around the run. Conformant pairings rank first, ordered by energy per delivered message — a cheap-but-broken run never tops the table; energy needs `sudo` for the power counters and renders pending without it. Numbers compare within a host, never across.
+| Subject | Conformance | Rate | Goodput | RTT p50 / p99 | Peak RSS (i / r) | Energy / MiB (i / r) |
+|---|---:|---:|---:|---:|---:|---:|
+| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 23544/23544 · 3/3 samples | 262/s | 274.30 MB/s | 3.00 / 4.00 ms | i 40.5 MiB / r 40.0 MiB | i 7.95 mJ/MiB / r 7.85 mJ/MiB |
+| RNS 1.4.0 (compiled) → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 15341/15341 · 3/3 samples | 170/s | 178.50 MB/s | 6.00 / 6.00 ms | i 727.4 MiB / r 10.0 MiB | i 20.37 mJ/MiB / r 11.05 mJ/MiB |
+| Prns → RNS 1.4.0 (compiled) | <img src="assets/check.svg" width="14" alt="conformant" /> 9525/9525 · 3/3 samples | 108/s | 112.76 MB/s | 9.00 / 12.00 ms | i 11.0 MiB / r 301.5 MiB | i 8.81 mJ/MiB / r 31.54 mJ/MiB |
+| RNS 1.4.0 (compiled) → RNS 1.4.0 (compiled) | <img src="assets/check.svg" width="14" alt="conformant" /> 8501/8501 · 3/3 samples | 95/s | 99.17 MB/s | 11.00 / 12.00 ms | i 503.7 MiB / r 289.7 MiB | i 21.39 mJ/MiB / r 35.79 mJ/MiB |
 
-| Initiator → Responder | Conformance | Throughput | Goodput | RTT p50 / p99 | Peak RSS init / resp | Energy / msg |
-|------------------------|-------------|-----------:|--------:|--------------:|---------------------:|-------------:|
-| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 135 / 135 | 4 msg/s | 300.3 MB/s | 222 / 238 ms | 137.0 / 135.9 MiB | _pending_ |
-| RNS 1.3.5 _(ref)_ → RNS 1.3.5 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 55 / 55 | 2 msg/s | 122.2 MB/s | 536 / 825 ms | 197.0 / 256.0 MiB | _pending_ |
-| Prns → RNS 1.3.5 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 51 / 51 | 2 msg/s | 113.8 MB/s | 587 / 626 ms | 10.2 / 231.3 MiB | _pending_ |
-| RNS 1.3.5 _(ref)_ → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 8 / 8 | 0 msg/s | 17.0 MB/s | 3970 / 4285 ms | 131.4 / 7.2 MiB | _pending_ |
+## Implementation legend
 
-> _The RNS 1.3.5 → Prns row is reference-sender-bound, not engine-bound. RNS prepares each segment lazily on a background thread and naps in 50 ms quanta (`Resource.py`: `while self.next_segment == None: time.sleep(0.05)`) while our receiver — which proves a segment in ~5 ms — waits, so the RNS sender sits idle ~80% of the run. The figure measures CPython's segment-prep pipelining, not the Prns receiver; the receiver's own rate is the Prns → Prns row._
+- **Prns** — Rust, ed25519-dalek 2.2.
 
-**Implementations.**
+- **RNS 1.4.0 (compiled)** — Python, PyCA cryptography / OpenSSL; reference.
 
-- **Prns** — Rust, ed25519-dalek 2.2 · [https://github.com/KenAKAFrosty/Prns](https://github.com/KenAKAFrosty/Prns)
-- **RNS 1.3.5** — Python, PyCA cryptography / OpenSSL · [https://github.com/markqvist/Reticulum](https://github.com/markqvist/Reticulum) @ `1.3.5` · Reticulum License
+## Metric legend
 
-## resource-transfer (v1)
-
-Sequential maximum-size resource transfers over one link for a fixed wall-time - the bulk mechanism: one sealed stream sliced into parts, pulled by the receiver inside its AIMD window, proved whole by hash. Goodput counts settled transfers' payload bytes; the protocol itself hash-verifies every byte that arrives.
-
-Each row is one live pairing — the initiator drives a windowed firehose at the responder over loopback, and every figure is the protocol's own: delivery proven by receipt, latency from the proofs, energy bracketed around the run. Conformant pairings rank first, ordered by energy per delivered message — a cheap-but-broken run never tops the table; energy needs `sudo` for the power counters and renders pending without it. Numbers compare within a host, never across.
-
-| Initiator → Responder | Conformance | Throughput | Goodput | RTT p50 / p99 | Peak RSS init / resp | Energy / msg |
-|------------------------|-------------|-----------:|--------:|--------------:|---------------------:|-------------:|
-| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 8,602 / 8,602 | 287 msg/s | 300.7 MB/s | 3 / 3 ms | 72.9 / 71.6 MiB | _pending_ |
-| RNS 1.3.5 _(ref)_ → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 5,266 / 5,266 | 176 msg/s | 184.0 MB/s | 6 / 6 ms | 591.5 / 7.8 MiB | _pending_ |
-| Prns → RNS 1.3.5 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 3,256 / 3,256 | 109 msg/s | 113.8 MB/s | 9 / 9 ms | 10.3 / 147.6 MiB | _pending_ |
-| RNS 1.3.5 _(ref)_ → RNS 1.3.5 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 2,774 / 2,774 | 92 msg/s | 97.0 MB/s | 11 / 12 ms | 350.1 / 138.9 MiB | _pending_ |
-
-**Implementations.**
-
-- **Prns** — Rust, ed25519-dalek 2.2 · [https://github.com/KenAKAFrosty/Prns](https://github.com/KenAKAFrosty/Prns)
-- **RNS 1.3.5** — Python, PyCA cryptography / OpenSSL · [https://github.com/markqvist/Reticulum](https://github.com/markqvist/Reticulum) @ `1.3.5` · Reticulum License
-
-## single-firehose (v2)
-
-A ProveAll destination saturated with windowed SINGLE packets for a fixed wall-time: sustained one-shot message throughput, goodput, and settlement latency from the protocol's own proofs. No link - singles are the protocol's native shape for high-volume small one-shots, each proof carrying the RTT.
-
-Each row is one live pairing — the initiator drives a windowed firehose at the responder over loopback, and every figure is the protocol's own: delivery proven by receipt, latency from the proofs, energy bracketed around the run. Conformant pairings rank first, ordered by energy per delivered message — a cheap-but-broken run never tops the table; energy needs `sudo` for the power counters and renders pending without it. Numbers compare within a host, never across.
-
-| Initiator → Responder | Conformance | Throughput | Goodput | RTT p50 / p99 | Peak RSS init / resp | Energy / msg |
-|------------------------|-------------|-----------:|--------:|--------------:|---------------------:|-------------:|
-| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 1,174,314 / 1,174,314 | 39.1k msg/s | 8.6 MB/s | 0 / 1 ms | 15.3 / 60.6 MiB | _pending_ |
-| Prns → RNS 1.3.5 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 125,015 / 125,015 | 4.2k msg/s | 917 kB/s | 4 / 4 ms | 5.4 / 76.6 MiB | _pending_ |
-| RNS 1.3.5 _(ref)_ → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 45,953 / 45,953 | 1.5k msg/s | 337 kB/s | 2 / 16 ms | 50.1 / 7.4 MiB | _pending_ |
-| RNS 1.3.5 _(ref)_ → RNS 1.3.5 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 43,584 / 43,584 | 1.5k msg/s | 320 kB/s | 2 / 19 ms | 49.8 / 56.0 MiB | _pending_ |
-
-**Implementations.**
-
-- **Prns** — Rust, ed25519-dalek 2.2 · [https://github.com/KenAKAFrosty/Prns](https://github.com/KenAKAFrosty/Prns)
-- **RNS 1.3.5** — Python, PyCA cryptography / OpenSSL · [https://github.com/markqvist/Reticulum](https://github.com/markqvist/Reticulum) @ `1.3.5` · Reticulum License
-
-## single-firehose-256 (v2)
-
-The single-firehose at a deep window (256 in flight): a ProveAll destination saturated with windowed SINGLE packets for a fixed wall-time. The deep variant surfaces what shallow windows hide - whether inbound decrypt/verify serialize on the reactor or parallelize off it.
-
-Each row is one live pairing — the initiator drives a windowed firehose at the responder over loopback, and every figure is the protocol's own: delivery proven by receipt, latency from the proofs, energy bracketed around the run. Conformant pairings rank first, ordered by energy per delivered message — a cheap-but-broken run never tops the table; energy needs `sudo` for the power counters and renders pending without it. Numbers compare within a host, never across.
-
-| Initiator → Responder | Conformance | Throughput | Goodput | RTT p50 / p99 | Peak RSS init / resp | Energy / msg |
-|------------------------|-------------|-----------:|--------:|--------------:|---------------------:|-------------:|
-| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 1,334,377 / 1,334,377 | 44.5k msg/s | 9.8 MB/s | 3 / 6 ms | 17.1 / 60.3 MiB | _pending_ |
-| Prns → RNS 1.3.5 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 125,155 / 125,155 | 4.2k msg/s | 916 kB/s | 61 / 64 ms | 5.9 / 76.4 MiB | _pending_ |
-| RNS 1.3.5 _(ref)_ → RNS 1.3.5 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 37,047 / 37,047 | 1.2k msg/s | 271 kB/s | 2 / 157 ms | 49.6 / 51.2 MiB | _pending_ |
-| RNS 1.3.5 _(ref)_ → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 33,483 / 33,483 | 1.1k msg/s | 246 kB/s | 2 / 654 ms | 49.5 / 7.1 MiB | _pending_ |
-
-**Implementations.**
-
-- **Prns** — Rust, ed25519-dalek 2.2 · [https://github.com/KenAKAFrosty/Prns](https://github.com/KenAKAFrosty/Prns)
-- **RNS 1.3.5** — Python, PyCA cryptography / OpenSSL · [https://github.com/markqvist/Reticulum](https://github.com/markqvist/Reticulum) @ `1.3.5` · Reticulum License
-
----
-
-- _Conformance_ — every sent message accounted for, shown as `delivered / sent`. Extra suffixes call out messages that timed out or landed in a scenario-declared `raced` bucket, such as the RNS 1.3.5 request-response send-before-register loopback race.
-- _Throughput_ — delivered messages per second, initiator-bound.
-- _Goodput_ — delivered application payload per second (framing excluded).
-- _RTT_ — settlement latency from the protocol's own proofs, p50 / p99.
-- _Peak RSS_ — peak resident set size (the physical RAM a process holds), initiator / responder, reaped from outside so a contestant can't under-report it.
-- _Energy / msg_ — (package energy − idle baseline) ÷ delivered: the joules per delivered message. The power counters are package-domain, so this is the *combined* cost of both roles on the SoC; only the diagonal (a self-pair) is a single impl. The `i … / r …` split apportions it to initiator vs responder by their CPU-time share — the honest cross-platform proxy (Linux RAPL has no per-process counter), exact only insofar as power tracks CPU time. Needs `sudo` for the power counters; renders pending without.
-
-Regenerate: `sudo env "PATH=$PATH" ./run.sh` (root, for the power counters), then `cargo run --bin render_results`.
+Conformance is clean samples and exact delivered/sent accounting. Rows are ordered by median throughput, never by memory or energy. Rate is median settled operations per second. Goodput is median application bytes per second. RTT is median p50/p99 settlement latency. Peak RSS shows the largest initiator (`i`) and responder (`r`) process peaks across samples. Energy shows optional initiator/responder attribution of median net processor energy and appears only with three positive-baseline samples: per delivery for packets/requests, per application MiB for resources.

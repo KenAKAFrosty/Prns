@@ -3,13 +3,14 @@ name = "personal-reticulum-suite-benchmarks"
 version = "0.0.0"
 publish = false
 edition = "2021"
+autobins = false
 
 # Standalone, like `validation/fuzz/`: an empty `[workspace]` detaches this from the root so
 # the engine `--workspace` gates never pull in dev tooling, and it can
 # move at its own pace. Builds via its own manifest.
 [workspace]
 
-# Builds scenario_node on the fixed embedded layout (Esp32S3) instead of the default
+# Builds participant_node on the fixed embedded layout (Esp32S3) instead of the default
 # unbounded GrowableHeap — lets the suite measure the on-device storage profile on-host.
 [features]
 fixed-storage = ["personal-rns/external-alloc", "dep:allocator-api2"]
@@ -22,22 +23,22 @@ path = "src/lib.rs"
 bench = false
 
 [dependencies]
-personal-rns = { path = "../personal-rns", features = ["tokio-host", "tcp", "udp", "shared-instance"] }
+personal-rns = { path = "../personal-rns", features = ["tokio-host", "tcp"] }
 allocator-api2 = { version = "0.3", optional = true }
 dhat = { version = "0.3", optional = true }
 # The result substrate is JSON rows (the cross-implementation schema); the energy drivers
 # emit them and `render_results` reads them back to render RESULTS.md.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# The live-scenario participation binary rides the real tokio reactor over real TCP
-# (`scenario_node`); the orchestrator stays std (process spawn + line protocol).
+# The live-scenario participation binary rides the real tokio reactor over real TCP;
+# the benchmark runner owns process lifecycle and the line protocol.
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util"] }
-# Fresh per-run identities for the scenario nodes (the corpus bins keep fixed ones).
+# Fresh per-run identities for the participant nodes (the corpus bins keep fixed ones).
 getrandom = "0.2"
 # Cross-platform host spec gathering for `describe_host` (CPU model, cores, RAM, OS) —
 # the per-host reproducibility descriptor that sits beside each host's result rows.
 sysinfo = { version = "0.33", default-features = false, features = ["system"] }
-# Platform sampling for the live orchestrator: macOS reaps each role with `wait4` for its
+# Platform sampling for the live runner: macOS reaps each role with `wait4` for its
 # peak RSS + CPU rusage (no /proc), and gates the powermetrics energy path on `geteuid`.
 # Linux keeps reading /proc, so the dep only carries weight off-Linux.
 libc = "0.2"
@@ -62,49 +63,20 @@ name = "describe_host"
 path = "src/bin/describe_host.rs"
 bench = false
 
-# --- Live scenarios: the pairing harness (one node binary, one orchestrator) ---
+# --- Release harness: one participant, one runner, and required helpers ---
 [[bin]]
-name = "scenario_node"
-path = "src/bin/scenario_node/main.rs"
+name = "participant_node"
+path = "src/bin/participant_node/main.rs"
 bench = false
 
 [[bin]]
-name = "orchestrate"
-path = "src/bin/orchestrate/main.rs"
+name = "benchmark_runner"
+path = "src/bin/benchmark_runner/main.rs"
 bench = false
 
 [[bin]]
 name = "render_results"
 path = "src/bin/render_results.rs"
-bench = false
-
-[[bin]]
-name = "resource_profile"
-path = "src/bin/resource_profile.rs"
-bench = false
-
-[[bin]]
-name = "wake_scan_profile"
-path = "src/bin/wake_scan_profile.rs"
-bench = false
-
-[[bin]]
-name = "route_expiry_profile"
-path = "src/bin/route_expiry_profile.rs"
-bench = false
-
-# --- Matchup: the shared-instance conformance grid (host + two app clients, our impl outside
-# the measured boundary) — stands up the cell and reports the conformance verdict ---
-[[bin]]
-name = "matchup"
-path = "src/bin/matchup.rs"
-bench = false
-
-# The Prns side of a shared-instance Matchup: a transport host that holds the local bus so app
-# clients meet through our engine. Stood up by the runner for the Prns-host cells.
-[[bin]]
-name = "matchup_host"
-path = "src/bin/matchup_host.rs"
 bench = false
 
 # --- Microscope: drive the engine directly, no I/O — the control baseline for crypto work ---

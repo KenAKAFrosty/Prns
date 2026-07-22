@@ -1,7 +1,10 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub const RESULT_SCHEMA_VERSION: u32 = 2;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct DeviceId(pub Uuid);
 
@@ -21,7 +24,7 @@ impl SubmitterId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Axis {
     Conformance,
@@ -85,11 +88,42 @@ impl Comparability {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "path", rename_all = "kebab-case")]
+pub enum Subject {
+    Direct {
+        initiator: String,
+        responder: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        relay: Option<String>,
+    },
+}
+
+impl Subject {
+    pub fn file_slug(&self) -> String {
+        match self {
+            Self::Direct {
+                initiator,
+                responder,
+                relay: None,
+            } => format!("{initiator}--{responder}"),
+            Self::Direct {
+                initiator,
+                responder,
+                relay: Some(relay),
+            } => format!("{initiator}--{relay}--{responder}"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResultRow {
+    pub schema_version: u32,
+    pub run_id: String,
+    pub sample_index: u32,
     pub scenario: String,
     pub scenario_version: u32,
-    pub implementation: String,
+    pub subject: Subject,
     pub commit: String,
     pub toolchain: String,
     pub host: String,
@@ -101,6 +135,8 @@ pub struct ResultRow {
     pub device_id: Option<DeviceId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub submitter_id: Option<SubmitterId>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub provenance: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -129,13 +165,20 @@ pub struct HostDescriptor {
 pub enum ImplementationRole {
     Reference,
     Ours,
-    External,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParticipantDescriptor {
+    /// Executable and fixed arguments. Placeholders are expanded by the runner.
+    pub command: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImplementationDescriptor {
     pub implementation: String,
     pub slug: String,
+    #[serde(default)]
+    pub aliases: Vec<String>,
     pub language: String,
     pub crypto_backend: String,
     pub role: ImplementationRole,
@@ -149,4 +192,6 @@ pub struct ImplementationDescriptor {
     pub maturity: Option<String>,
     #[serde(default)]
     pub notes: Option<String>,
+    #[serde(default)]
+    pub participant: Option<ParticipantDescriptor>,
 }

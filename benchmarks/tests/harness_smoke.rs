@@ -3,10 +3,10 @@ use std::process::{Command, Stdio};
 
 #[test]
 fn a_short_firehose_run_settles_clean_end_to_end() {
-    let manifest = benchmarks::scenario_dir("single-firehose").join("manifest.json");
+    let manifest = benchmarks::scenario_dir("single-packet-throughput").join("manifest.json");
     let manifest = manifest.to_str().expect("utf8 path");
 
-    let mut responder = Command::new(env!("CARGO_BIN_EXE_scenario_node"))
+    let mut responder = Command::new(env!("CARGO_BIN_EXE_participant_node"))
         .args([manifest, "responder", "127.0.0.1:0", "500"])
         .stdout(Stdio::piped())
         .spawn()
@@ -23,7 +23,7 @@ fn a_short_firehose_run_settles_clean_end_to_end() {
         .expect("READY carries the bound addr")
         .to_string();
 
-    let initiator = Command::new(env!("CARGO_BIN_EXE_scenario_node"))
+    let initiator = Command::new(env!("CARGO_BIN_EXE_participant_node"))
         .args([manifest, "initiator", &addr, "500"])
         .output()
         .expect("run initiator");

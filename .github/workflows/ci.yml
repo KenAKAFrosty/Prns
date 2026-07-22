@@ -411,7 +411,7 @@ jobs:
       - name: install the reference RNS (rns==1.4.0)
         run: uv venv /tmp/rns && uv pip install --python /tmp/rns/bin/python -r benchmarks/reference/requirements.txt
       - name: install the control-RPC reference RNS (rns==1.4.0)
-        run: uv venv /tmp/rns-rpc && uv pip install --python /tmp/rns-rpc/bin/python -r benchmarks/reference/rpc-requirements.txt
+        run: uv venv /tmp/rns-rpc && uv pip install --python /tmp/rns-rpc/bin/python -r benchmarks/reference/requirements.txt
       - name: PR deterministic oracle lane
         run: python3 validation/run.py run --domain oracles --tier pr --expected-sha "$GITHUB_SHA"
         env:

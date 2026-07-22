@@ -219,6 +219,20 @@ mod macos {
             0.0
         }
     }
+
+    #[cfg(test)]
+    mod tests {
+        use super::cpu_power_mw;
+
+        #[test]
+        fn reads_cpu_power_without_counting_combined_power() {
+            assert_eq!(cpu_power_mw("CPU Power: 1086 mW"), Some(1086.0));
+            assert_eq!(
+                cpu_power_mw("Combined Power (CPU + GPU + ANE): 1086 mW"),
+                None
+            );
+        }
+    }
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]

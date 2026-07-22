@@ -13,10 +13,6 @@ const HOST_PAGES: &[(&str, &str)] = &[
         "aarch64-apple-darwin",
         include_str!("../../../../benchmarks/RESULTS-aarch64-apple-darwin.md"),
     ),
-    (
-        "x86_64-unknown-linux-gnu",
-        include_str!("../../../../benchmarks/RESULTS-x86_64-unknown-linux-gnu.md"),
-    ),
 ];
 
 #[component]
@@ -45,10 +41,10 @@ pub fn BenchmarksPage() -> Element {
                     "What we measure"
                 }
                 ul { class: "mt-3 flex flex-col gap-2 text-sm text-soft leading-relaxed",
-                    li { "Throughput: announces per second through the engine." }
-                    li { "Energy: joules per announce — the price a battery/solar node pays." }
-                    li { "Memory: peak footprint and allocation count (the core makes none)." }
-                    li { "Binary size: what the engine costs on a constrained target." }
+                    li { "Conformance: every operation accounted for at both ends." }
+                    li { "Throughput and latency: delivered work and proof-backed round trips." }
+                    li { "Memory: initiator and responder peak resident set size." }
+                    li { "Energy: optional net processor energy, split by role when measurable." }
                 }
             }
             div { class: "rounded-card border border-line/60 bg-layer/40 p-5",
@@ -56,10 +52,10 @@ pub fn BenchmarksPage() -> Element {
                     "How we measure"
                 }
                 ul { class: "mt-3 flex flex-col gap-2 text-sm text-soft leading-relaxed",
-                    li { "A deterministic harness in the repo, runnable on any machine." }
-                    li { "Compared against the RNS reference where the comparison is fair." }
-                    li { "Run on the hardware it claims, down to the microcontroller." }
-                    li { "Reported with the commit and toolchain, so a number reproduces." }
+                    li { "Three 30-second release samples per published cell." }
+                    li { "The same four Prns/reference directional pairings for every scenario." }
+                    li { "Compared with a verified Cython-compiled RNS 1.4.0 reference." }
+                    li { "Stamped with machine, commit, toolchain, and reference provenance." }
                 }
             }
         }
@@ -132,18 +128,12 @@ mod tests {
         let md = index_markup();
 
         assert!(md.contains("](/benchmarks/aarch64-apple-darwin)"));
-        assert!(md.contains("](/benchmarks/x86_64-unknown-linux-gnu)"));
         assert!(!md.contains("](RESULTS-aarch64-apple-darwin.md)"));
-        assert!(!md.contains("](RESULTS-x86_64-unknown-linux-gnu.md)"));
     }
 
     #[test]
     fn includes_each_measured_host_page() {
-        assert!(HOST_PAGES
-            .iter()
-            .any(|(slug, _)| *slug == "aarch64-apple-darwin"));
-        assert!(HOST_PAGES
-            .iter()
-            .any(|(slug, _)| *slug == "x86_64-unknown-linux-gnu"));
+        assert_eq!(HOST_PAGES.len(), 1);
+        assert_eq!(HOST_PAGES[0].0, "aarch64-apple-darwin");
     }
 }

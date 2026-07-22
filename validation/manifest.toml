@@ -14,15 +14,13 @@ version = "1.4.0"
 [interpreters.rpc]
 environment = "RPC_SMOKE_PYTHON"
 venv = "validation/.venv/rns-rpc-1.4.0"
-requirements = "benchmarks/reference/rpc-requirements.txt"
+requirements = "benchmarks/reference/requirements.txt"
 version = "1.4.0"
 
 [registry]
 cargo_manifests = [
     "Cargo.toml",
     "benchmarks/Cargo.toml",
-    "benchmarks/external/leviculum/interop/Cargo.toml",
-    "benchmarks/external/lxmf-rs/interop/Cargo.toml",
     "docs/command/Cargo.toml",
     "docs/website/Cargo.toml",
     "personal-hopspot/core/Cargo.toml",
@@ -57,8 +55,6 @@ cargo_manifests = [
 format_manifests = [
     "Cargo.toml",
     "benchmarks/Cargo.toml",
-    "benchmarks/external/leviculum/interop/Cargo.toml",
-    "benchmarks/external/lxmf-rs/interop/Cargo.toml",
     "docs/website/Cargo.toml",
     "personal-hopspot/desktop/Cargo.toml",
     "personal-hopspot/embedded/esp32/Cargo.toml",
@@ -384,19 +380,6 @@ timeout_seconds = 1800
 command = ["bash", "validation/platforms/wifi-direct-hwsim-smoke.sh"]
 inputs = ["validation/platforms/wifi-direct-hwsim-smoke.sh"]
 artifacts = "validation-artifacts/results/wifi-direct-hwsim"
-
-[[suite]]
-id = "matchup-loopback"
-domain = "interop"
-group = "benchmark-baseline"
-tiers = ["scheduled"]
-platform = "linux"
-toolchain = "stable"
-interpreter = "smoke"
-timeout_seconds = 1200
-command = ["bash", "validation/interop/cases/matchup-loopback-smoke.sh"]
-inputs = ["validation/interop/cases/matchup-loopback-smoke.sh", "benchmarks/reference/scenario_node.py"]
-artifacts = "validation-artifacts/results/matchup-loopback"
 
 [[suite]]
 id = "wasm-casework"

@@ -2,7 +2,7 @@
 set -eu
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
-PYTHON="${RPC_SMOKE_PYTHON:-$ROOT/benchmarks/reference/.rpc-venv/bin/python}"
+PYTHON="${RPC_SMOKE_PYTHON:-$ROOT/validation/.venv/rns-rpc-1.4.0/bin/python}"
 RNX="$(dirname "$PYTHON")/rnx"
 ORACLE="$ROOT/validation/interop/peers/rns_rnx_oracle.py"
 BIN="$ROOT/prnsd/target/debug/prnsd"
