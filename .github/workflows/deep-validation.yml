@@ -4,17 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       fuzz_seconds:
-        description: "Seconds per fuzz target"
+        description: Seconds per fuzz target
         default: "30"
         required: true
-      run_mutants:
-        description: "Run the full cargo-mutants lane"
-        default: false
-        type: boolean
-      run_android:
-        description: "Run the Android foreground-service runtime smoke"
-        default: false
-        type: boolean
   schedule:
     - cron: "17 9 * * *"
 
@@ -26,50 +18,172 @@ env:
   RUSTFLAGS: "-D warnings"
 
 jobs:
-  deep-validation:
-    runs-on: ubuntu-latest
+  inventory:
+    runs-on: ubuntu-24.04
+    outputs:
+      kani: ${{ steps.matrix.outputs.kani }}
+      fuzz: ${{ steps.matrix.outputs.fuzz }}
+      oracles: ${{ steps.matrix.outputs.oracles }}
+      interop: ${{ steps.matrix.outputs.interop }}
+      hardening: ${{ steps.matrix.outputs.hardening }}
+      tier: ${{ steps.matrix.outputs.tier }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          submodules: false
+      - id: matrix
+        env:
+          VALIDATION_TIER: ${{ github.event_name == 'schedule' && 'scheduled' || 'release' }}
+        run: |
+          python3 validation/run.py verify
+          echo "tier=$VALIDATION_TIER" >> "$GITHUB_OUTPUT"
+          echo "kani=$(python3 validation/run.py matrix --domain kani --tier "$VALIDATION_TIER")" >> "$GITHUB_OUTPUT"
+          echo "fuzz=$(python3 validation/run.py matrix --domain fuzz --tier "$VALIDATION_TIER")" >> "$GITHUB_OUTPUT"
+          echo "oracles=$(python3 validation/run.py matrix --domain oracles --tier "$VALIDATION_TIER")" >> "$GITHUB_OUTPUT"
+          echo "interop=$(python3 validation/run.py matrix --domain interop --tier "$VALIDATION_TIER")" >> "$GITHUB_OUTPUT"
+          echo "hardening=$(python3 validation/run.py matrix --domain hardening --tier "$VALIDATION_TIER")" >> "$GITHUB_OUTPUT"
+
+  kani:
+    needs: inventory
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.inventory.outputs.kani) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
-          toolchain: stable
+          shared-key: deep-kani-${{ matrix.group }}
+      - run: cargo install kani-verifier --version 0.67.0 --locked
+      - run: cargo kani setup
+      - run: python3 validation/run.py run --suite "${{ matrix.id }}" --expected-sha "$GITHUB_SHA"
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: deep-${{ matrix.id }}-${{ github.run_id }}
+          path: validation-artifacts/results/${{ matrix.id }}/**
+
+  fuzz:
+    needs: inventory
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.inventory.outputs.fuzz) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           toolchain: nightly
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
-      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
-      - name: install reference RNS 1.4.0
-        run: uv venv /tmp/rns && uv pip install --python /tmp/rns/bin/python -r benchmarks/reference/requirements.txt
-      - name: install control-RPC reference RNS 1.4.0
-        run: uv venv /tmp/rns-rpc && uv pip install --python /tmp/rns-rpc/bin/python -r benchmarks/reference/rpc-requirements.txt
-      - name: install deep validation tools
-        run: |
-          cargo install cargo-fuzz --locked
-          cargo install cargo-mutants --locked
-          cargo install kani-verifier --locked
-          cargo kani setup
-      - name: deep validation
-        run: bash scripts/deep-validation.sh
-        env:
-          SMOKE_PYTHON: /tmp/rns/bin/python
-          RPC_SMOKE_PYTHON: /tmp/rns-rpc/bin/python
-          PRNS_DEEP_FUZZ_SECONDS: ${{ github.event_name == 'schedule' && '120' || inputs.fuzz_seconds }}
-          PRNS_DEEP_MUTANTS: ${{ (github.event_name == 'schedule' || inputs.run_mutants) && '1' || '0' }}
-          PRNS_DEEP_ANDROID: ${{ inputs.run_android && '1' || '0' }}
-      - name: collect artifact manifest
-        if: always()
-        run: bash scripts/collect-validation-artifacts.sh
-      - name: upload validation artifacts
-        if: always()
+        with:
+          shared-key: deep-fuzz
+      - run: cargo install cargo-fuzz --version 0.13.1 --locked
+      - run: python3 validation/run.py run --suite "${{ matrix.id }}" --expected-sha "$GITHUB_SHA" --fuzz-seconds "${{ github.event_name == 'schedule' && '120' || inputs.fuzz_seconds }}"
+      - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: deep-validation-${{ github.run_id }}
-          retention-days: 30
-          if-no-files-found: ignore
+          name: deep-${{ matrix.id }}-${{ github.run_id }}
           path: |
-            validation-artifacts/**
-            fuzz/artifacts/**
-            fuzz/corpus/**
-            mutants.out*/**
+            validation-artifacts/results/${{ matrix.id }}/**
+            validation-artifacts/fuzz/**
+            validation-artifacts/fuzz-corpus/**
+
+  oracles:
+    needs: inventory
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.inventory.outputs.oracles) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+      - run: python3 validation/run.py prepare-oracles
+      - run: python3 validation/run.py run --suite "${{ matrix.id }}" --expected-sha "$GITHUB_SHA"
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: deep-${{ matrix.id }}-${{ github.run_id }}
+          path: validation-artifacts/results/${{ matrix.id }}/**
+
+  interop:
+    needs: inventory
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.inventory.outputs.interop) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+      - run: python3 validation/run.py prepare-oracles
+      - run: python3 validation/run.py run --suite "${{ matrix.id }}" --expected-sha "$GITHUB_SHA"
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: deep-${{ matrix.id }}-${{ github.run_id }}
+          path: validation-artifacts/results/${{ matrix.id }}/**
+
+  hardening:
+    needs: inventory
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.inventory.outputs.hardening) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: nightly
+          components: miri,rust-src,llvm-tools-preview
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: deep-${{ matrix.id }}
+      - run: python3 validation/run.py run --suite "${{ matrix.id }}" --expected-sha "$GITHUB_SHA"
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: deep-${{ matrix.id }}-${{ github.run_id }}
+          path: validation-artifacts/results/${{ matrix.id }}/**
+
+  mutation:
+    needs: inventory
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: deep-mutation
+      - run: cargo install cargo-mutants --version 27.1.0 --locked
+      - run: python3 validation/run.py run --suite mutation-analysis --expected-sha "$GITHUB_SHA"
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: deep-mutation-analysis-${{ github.run_id }}
+          path: validation-artifacts/**
+
+  deep-validation:
+    name: Deep validation
+    if: always()
+    needs: [kani, fuzz, oracles, interop, hardening, mutation]
+    runs-on: ubuntu-24.04
+    env:
+      KANI_RESULT: ${{ needs.kani.result }}
+      FUZZ_RESULT: ${{ needs.fuzz.result }}
+      ORACLES_RESULT: ${{ needs.oracles.result }}
+      INTEROP_RESULT: ${{ needs.interop.result }}
+      HARDENING_RESULT: ${{ needs.hardening.result }}
+      MUTATION_RESULT: ${{ needs.mutation.result }}
+    steps:
+      - run: |
+          for result in "$KANI_RESULT" "$FUZZ_RESULT" "$ORACLES_RESULT" "$INTEROP_RESULT" "$HARDENING_RESULT" "$MUTATION_RESULT"; do
+            test "$result" = success
+          done

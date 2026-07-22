@@ -22,7 +22,7 @@
         <h1>Put a real browser node on your local mesh.</h1>
         <p class="lede">
           This deliberately small playground runs the shared Rust engine in
-          WebAssembly and lets you opt into Auto Wi-Fi or USB Auto when you are
+          WebAssembly and lets you opt into Auto Wi-Fi or Auto USB when you are
           ready.
         </p>
         <div class="scope-note">
@@ -82,8 +82,7 @@
               <span class="transport-mark">LAN</span>
             </div>
             <p class="panel-copy">
-              Probes the local daemon and nearby private-LAN gateways.
-              Make sure at least one other native Prns daemon is running on the local network.
+              Probes for Prns daemons on this machine and your LAN; make sure at least one other native Prns daemon is running.
               Your browser may ask for Local Network Access once.
             </p>
             <div class="button-row">
@@ -103,7 +102,7 @@
             <div class="panel-heading">
               <div>
                 <p class="panel-kicker">Cable transport</p>
-                <h2>USB Auto</h2>
+                <h2>Auto USB</h2>
               </div>
               <span class="transport-mark">USB</span>
             </div>
@@ -151,7 +150,7 @@
           <article class="panel activity-panel">
             <div class="panel-heading">
               <div>
-                <p class="panel-kicker">Observable outcomes</p>
+                <p class="panel-kicker">Recent Event Logs</p>
                 <h2>Activity</h2>
               </div>
               <button id="clear-activity" class="quiet" type="button">

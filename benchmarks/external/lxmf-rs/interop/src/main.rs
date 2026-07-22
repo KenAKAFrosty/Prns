@@ -24,9 +24,9 @@ use rand_core::OsRng;
 use rns_core::identity::PrivateIdentity;
 use rns_transport::destination::link::{LinkEvent, LinkStatus};
 use rns_transport::destination::{DestinationDesc, DestinationName};
+use rns_transport::identity_bridge::to_transport_private_identity;
 use rns_transport::iface::tcp_client::TcpClient;
 use rns_transport::iface::tcp_server::TcpServer;
-use rns_transport::identity_bridge::to_transport_private_identity;
 use rns_transport::transport::{Transport, TransportConfig};
 use tokio::sync::broadcast::error::RecvError;
 use tokio::time::{sleep, timeout};
@@ -112,13 +112,14 @@ async fn responder(app: &str, aspect: &str) {
     let port = free_port();
     let (mut transport, identity) = build_transport("lxmf-bench-responder");
     let iface_manager = transport.iface_manager();
-    transport
-        .iface_manager()
-        .lock()
-        .await
-        .spawn(TcpServer::new(format!("127.0.0.1:{port}"), iface_manager), TcpServer::spawn);
+    transport.iface_manager().lock().await.spawn(
+        TcpServer::new(format!("127.0.0.1:{port}"), iface_manager),
+        TcpServer::spawn,
+    );
 
-    let destination = transport.add_destination(identity, DestinationName::new(app, aspect)).await;
+    let destination = transport
+        .add_destination(identity, DestinationName::new(app, aspect))
+        .await;
 
     println!("READY role=responder addr=127.0.0.1:{port}");
     use std::io::Write;
@@ -218,7 +219,11 @@ async fn wait_for_first_announce(transport: &Transport, dur: Duration) -> Option
 
 async fn initiator(_app: &str, _aspect: &str, addr: &str, profile: &Profile) {
     let (transport, _identity) = build_transport("lxmf-bench-initiator");
-    transport.iface_manager().lock().await.spawn(TcpClient::new(addr.to_string()), TcpClient::spawn);
+    transport
+        .iface_manager()
+        .lock()
+        .await
+        .spawn(TcpClient::new(addr.to_string()), TcpClient::spawn);
 
     println!("READY role=initiator");
     use std::io::Write;
@@ -244,7 +249,9 @@ async fn initiator(_app: &str, _aspect: &str, addr: &str, profile: &Profile) {
         }
         loop {
             match link_events.recv().await {
-                Ok(ev) if ev.id == link_id && matches!(ev.event, LinkEvent::Activated) => return true,
+                Ok(ev) if ev.id == link_id && matches!(ev.event, LinkEvent::Activated) => {
+                    return true
+                }
                 Ok(_) => {}
                 Err(RecvError::Lagged(_)) => {}
                 Err(RecvError::Closed) => return false,
@@ -262,7 +269,11 @@ async fn initiator(_app: &str, _aspect: &str, addr: &str, profile: &Profile) {
 
     sleep(Duration::from_millis(150)).await;
 
-    let mut sizes = SizeSequence { state: profile.seed, min: profile.min, max: profile.max };
+    let mut sizes = SizeSequence {
+        state: profile.seed,
+        min: profile.min,
+        max: profile.max,
+    };
     let mut sent = 0u64;
     let mut sent_bytes = 0u64;
     let started = Instant::now();
@@ -277,7 +288,9 @@ async fn initiator(_app: &str, _aspect: &str, addr: &str, profile: &Profile) {
             break;
         }
         let size = (sizes.next_len() as usize).min(MAX_LINK_PAYLOAD);
-        transport.send_to_out_links(&dest_hash, &scratch[..size]).await;
+        transport
+            .send_to_out_links(&dest_hash, &scratch[..size])
+            .await;
         sent += 1;
         sent_bytes += size as u64;
         if sent % 64 == 0 {

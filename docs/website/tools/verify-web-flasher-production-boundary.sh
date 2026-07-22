@@ -32,7 +32,7 @@ if rg -n '^default[[:space:]]*=.*browser-test-fixture' "$website/Cargo.toml"; th
     exit 1
 fi
 if rg -n 'dx build.*browser-test-fixture|--features[^[:cntrl:]]*browser-test-fixture' \
-    "$workspace/scripts/build-flasher-candidate.sh" "$workspace/.github/workflows"; then
+    "$workspace/tools/release/build-flasher-candidate.sh" "$workspace/.github/workflows"; then
     echo "a production build command enables browser-test-fixture" >&2
     exit 1
 fi

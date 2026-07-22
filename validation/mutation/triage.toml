@@ -1,0 +1,5 @@
+schema = 1
+
+# A surviving or timed-out mutant may be accepted only with a stable fingerprint,
+# a concrete equivalence or environmental reason, a reviewer, and an expiry date.
+# Empty means every current survivor must be fixed or explicitly reviewed.

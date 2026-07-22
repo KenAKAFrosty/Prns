@@ -96,7 +96,7 @@ jobs:
             *) exit 2 ;;
           esac
       - name: Install exact Minisign verifier
-        run: scripts/install-release-minisign.sh "${RUNNER_TEMP}/prns-release-bin"
+        run: ./tools/prns release toolchain minisign install -- "${RUNNER_TEMP}/prns-release-bin"
       - name: Download and verify every target release custody asset
         id: target
         env:
@@ -119,7 +119,7 @@ jobs:
           test "$(jq -r '.targetCommitish' target/rollback-release.json)" = \
             "$(jq -r '.release.source_commit' "$record")"
           bundle="$assets/prns-flasher-candidate-v${TARGET_VERSION}-signed.tar.gz"
-          python3 scripts/extract-flasher-candidate.py "$bundle" "$candidate"
+          ./tools/prns release candidate extract -- "$bundle" "$candidate"
           acceptance_commit="$(jq -r '.acceptance.source_commit' "$record")"
           review_name="$(jq -r '.public_review.evidence.name' "$record")"
           review_evidence="$assets/$review_name"
@@ -137,7 +137,7 @@ jobs:
           test "$(jq -s 'length' target/rollback-review-job-pages.json)" -eq 1
           jq -s '.[0]' target/rollback-review-job-pages.json \
             > target/rollback-review-job.json
-          python3 scripts/verify-historical-flasher-release.py \
+          ./tools/prns release historical verify -- \
             --candidate "$candidate" \
             --candidate-run "$assets/prns-flasher-candidate-run-v${TARGET_VERSION}.json" \
             --signed-bundle "$bundle" \
@@ -170,7 +170,7 @@ jobs:
               --deny-self-hosted-runners
           done < <(jq -r '[.targets[].parts[].path] | unique[]' "$candidate/flash-manifest.json")
 
-          python3 scripts/flasher-rollback.py stage \
+          ./tools/prns release rollback -- stage \
             --candidate "$candidate" \
             --release-record "$record" \
             --release-record-sha256 "$TARGET_RELEASE_RECORD_SHA256" \
@@ -199,7 +199,7 @@ jobs:
             https://reticulum.rs/releases/channels/stable.json.minisig
           "$PRNS_MINISIGN_BIN" -Vm target/live-before/stable.json \
             -x target/live-before/stable.json.minisig -p release/keys/minisign.pub
-          live_state="$(python3 scripts/flasher-rollback.py live-state \
+          live_state="$(./tools/prns release rollback -- live-state \
               --descriptor target/live-before/stable.json \
               --mode "$ROLLBACK_MODE" \
               --target-version "$TARGET_VERSION" \
@@ -234,7 +234,7 @@ jobs:
             > target/dry-run-job-pages.json
           test "$(jq -s 'length' target/dry-run-job-pages.json)" -eq 1
           jq -s '.[0]' target/dry-run-job-pages.json > target/dry-run-job.json
-          python3 scripts/flasher-rollback.py validate-record \
+          ./tools/prns release rollback -- validate-record \
             --record target/dry-run/rollback-dry-run.json \
             --run-json target/dry-run-workflow.json \
             --job-json target/dry-run-job.json \
@@ -271,7 +271,7 @@ jobs:
             --jq '.jobs[] | select(.name == "Verify and stage complete prior website") | .id')"
           test "$(printf '%s\n' "$stage_job_ids" | sed '/^$/d' | wc -l | tr -d ' ')" = 1
           [[ "$stage_job_ids" =~ ^[1-9][0-9]*$ ]]
-          python3 scripts/flasher-rollback.py record \
+          ./tools/prns release rollback -- record \
             --stage-identity target/rollback-stage.json \
             --expected-live-version "$EXPECTED_LIVE_VERSION" \
             --expected-live-manifest-sha256 "$EXPECTED_LIVE_MANIFEST_SHA256" \
@@ -325,7 +325,7 @@ jobs:
           name: flasher-rollback-stage-${{ github.run_id }}-attempt-${{ github.run_attempt }}
           path: target/rollback-stage
       - name: Install exact Minisign verifier
-        run: scripts/install-release-minisign.sh "${RUNNER_TEMP}/prns-release-bin"
+        run: ./tools/prns release toolchain minisign install -- "${RUNNER_TEMP}/prns-release-bin"
       - name: Recheck the verified target asset inventory before deployment
         env:
           GH_TOKEN: ${{ github.token }}
@@ -349,7 +349,7 @@ jobs:
             https://reticulum.rs/releases/channels/stable.json.minisig
           "$PRNS_MINISIGN_BIN" -Vm target/live-final-cas/stable.json \
             -x target/live-final-cas/stable.json.minisig -p release/keys/minisign.pub
-          python3 scripts/flasher-rollback.py live-state \
+          ./tools/prns release rollback -- live-state \
             --descriptor target/live-final-cas/stable.json \
             --mode deploy \
             --target-version "$TARGET_VERSION" \
@@ -374,7 +374,7 @@ jobs:
             "$site/releases/channels/stable.json.minisig"
           "$PRNS_MINISIGN_BIN" -Vm target/live-restored/stable.json \
             -x target/live-restored/stable.json.minisig -p release/keys/minisign.pub
-          python3 scripts/flasher-rollback.py cas \
+          ./tools/prns release rollback -- cas \
             --descriptor target/live-restored/stable.json \
             --version "$TARGET_VERSION" \
             --manifest-sha256 "$TARGET_MANIFEST_SHA256"
@@ -390,7 +390,7 @@ jobs:
           test "$(sha256sum target/live-restored/flash-manifest.json | awk '{print $1}')" = \
             "$TARGET_MANIFEST_SHA256"
           for attempt in {1..12}; do
-            if python3 scripts/flasher-rollback.py verify-live-website \
+            if ./tools/prns release rollback -- verify-live-website \
               --stage-identity target/rollback-stage/rollback-stage.json \
               --site-url "$site"; then
               break

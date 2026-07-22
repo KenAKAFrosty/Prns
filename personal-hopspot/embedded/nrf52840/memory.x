@@ -1,6 +1,6 @@
 /* The app links above the factory Adafruit UF2 bootloader's S140 v7.3.0 SoftDevice:
    FLASH starts at 0x27000 (the SoftDevice occupies the low region) and RAM above the
-   SoftDevice's reservation. The UF2 --base in scripts/techo-flash.sh MUST equal this
+   SoftDevice's reservation. The UF2 --base in the device.techo.flash task MUST equal this
    FLASH ORIGIN.
 
    The RAM reservation grows with the connection config (conn_count = BLE_MEMBERS + 2 and

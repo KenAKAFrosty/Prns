@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://staypersonal.dev/prns/validation-evidence-v1.schema.json",
+  "title": "Prns validation suite evidence",
+  "type": "object",
+  "required": [
+    "schema",
+    "suite",
+    "domain",
+    "commit",
+    "platform",
+    "required_platform",
+    "worktree_clean",
+    "command",
+    "tool_versions",
+    "started_at",
+    "finished_at",
+    "duration_seconds",
+    "status",
+    "exit_code",
+    "timed_out",
+    "spawn_error"
+  ],
+  "properties": {
+    "schema": { "const": 1 },
+    "suite": { "type": "string", "minLength": 1 },
+    "domain": { "type": "string", "minLength": 1 },
+    "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "platform": { "type": "string", "minLength": 1 },
+    "required_platform": { "type": "string", "minLength": 1 },
+    "worktree_clean": { "type": "boolean" },
+    "command": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+    "tool_versions": { "type": "object", "minProperties": 1 },
+    "started_at": { "type": "string", "format": "date-time" },
+    "finished_at": { "type": "string", "format": "date-time" },
+    "duration_seconds": { "type": "number", "minimum": 0 },
+    "status": { "enum": ["passed", "failed"] },
+    "exit_code": { "type": ["integer", "null"] },
+    "timed_out": { "type": "boolean" },
+    "spawn_error": { "type": ["string", "null"] }
+  },
+  "additionalProperties": false
+}

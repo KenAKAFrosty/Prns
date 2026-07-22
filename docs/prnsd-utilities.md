@@ -75,8 +75,8 @@ pinned to the RNS 1.4.0 security release, whose utility wire semantics remain co
 Where a utility has two roles, the tests exercise both directions:
 
 ```sh
-python3 scripts/oracles.py --full
+python3 validation/run.py run --domain interop --tier release
 ```
 
-`python3 scripts/oracles.py --list` reads the authoritative manifest and shows
+`python3 validation/run.py list --domain interop` reads the authoritative manifest and shows
 the utility cases currently included in that lane.

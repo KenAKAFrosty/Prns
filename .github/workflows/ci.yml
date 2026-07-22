@@ -30,12 +30,8 @@ jobs:
         with:
           components: rustfmt
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
-      - name: fmt + doc gate (scripts/fmt-check.sh, all workspaces)
-        run: bash scripts/fmt-check.sh
-      - name: validation docs drift guard
-        run: bash scripts/validation-doc-drift.sh
-      - name: comment census gate
-        run: bash scripts/comment-census.sh
+      - name: registry, format, and documentation gate
+        run: bash validation/hygiene/fmt-docs.sh
 
   clippy:
     runs-on: ubuntu-latest
@@ -77,6 +73,8 @@ jobs:
           components: clippy
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+      - name: Install Linux desktop link dependency
+        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
       # The tokio interface crate: every host interface family above the engine's tokio-host bind,
       # linted/tested/doc'd as the standalone workspace consumers actually build. --all-features is
       # honest here — the per-OS BLE backends live in target tables, so Linux gets BlueR and never
@@ -125,12 +123,12 @@ jobs:
         working-directory: prns-interfaces/impls/embassy
       # The cross-crate capstones: engine + runtime binds + real interface impls over live loopback
       # sockets, public API only (the tests that used to live inside personal-rns/tests).
-      - name: clippy — prns-integration-tests
+      - name: clippy — validation integration capstones
         run: cargo clippy --all-targets --locked -- -D warnings
-        working-directory: prns-integration-tests
-      - name: test — prns-integration-tests
-        run: cargo test --locked
-        working-directory: prns-integration-tests
+        working-directory: validation/integration
+      - name: test — validation integration capstones
+        run: cargo test --locked -- --test-threads=1
+        working-directory: validation/integration
       - name: clippy — prns-runtime-embassy
         run: cargo clippy --all-targets --locked -- -D warnings
         working-directory: prns-runtime/impls/embassy
@@ -149,6 +147,9 @@ jobs:
       # multi-segment and link-guard variants slipped through). This lints and compiles it.
       - name: clippy — hopspot desktop face
         run: cargo clippy --all-targets --locked -- -D warnings
+        working-directory: personal-hopspot/desktop
+      - name: build — hopspot desktop face
+        run: cargo build --locked
         working-directory: personal-hopspot/desktop
       - name: clippy — prns-config
         run: cargo clippy --all-targets --locked -- -D warnings
@@ -225,7 +226,7 @@ jobs:
           npm run test:production-boundary
       - name: Production engine and lock audit
         run: |
-          python3 scripts/npm-production-audit.py
+          python3 validation/security/npm-production-audit.py
           if rg -i 'esp-web-install-button|unpkg\.com|esp-web-tools|playwright|axe-core' docs/website/target/hosted-assets/prns-flash.js; then exit 1; fi
           git diff --exit-code -- docs/website/public/assets/tailwind.css
 
@@ -237,19 +238,11 @@ jobs:
         with:
           persist-credentials: false
       - name: Immutable actions and exact production tools
-        run: python3 scripts/validate-release-workflows.py
+        run: python3 validation/release/workflow-contracts.py
       - name: Release custody, reproducibility, and acceptance tests
-        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
-      - name: Release shell syntax
-        run: |
-          bash -n \
-            scripts/build-flasher-candidate.sh \
-            scripts/install-release-esp-toolchain.sh \
-            scripts/install-release-minisign.sh \
-            scripts/sign-flasher-candidate.sh \
-            scripts/sign-flasher-document.sh \
-            scripts/verify-flasher-candidate.sh \
-            scripts/verify-flasher-release.sh
+        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tools/tests -p 'test_*.py' -v
+      - name: Tool task registry and implementation syntax
+        run: ./tools/prns verify
 
   msrv:
     # The declared MSRV (workspace `rust-version`) must actually build. Pinned to the
@@ -288,7 +281,7 @@ jobs:
         with:
           targets: riscv32imac-unknown-none-elf, thumbv7em-none-eabihf
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
-      - run: bash scripts/no-std-esp-build.sh
+      - run: bash validation/platforms/no-std-esp-build.sh
       - name: prns-interfaces-embassy — cross-build (ESP32-C6 / riscv32imac)
         run: cargo build --locked --target riscv32imac-unknown-none-elf --features "tcp,wifi,lora,esp-now,ble,usb"
         working-directory: prns-interfaces/impls/embassy
@@ -331,7 +324,7 @@ jobs:
         run: ./gradlew :app:verifyReleaseRuntimeDependencies
         working-directory: personal-hopspot/mobile/android
       - name: foreground service shared-instance smoke
-        run: bash scripts/android-service-smoke.sh
+        run: bash validation/platforms/android-service-smoke.sh
 
   macos-ble:
     runs-on: macos-latest
@@ -348,6 +341,9 @@ jobs:
             prns-ffi
             prns-interfaces/impls/tokio
             personal-hopspot/mobile/ios/rust
+            personal-hopspot/desktop
+      - name: Install macOS desktop link dependency
+        run: brew install sdl2
       - name: clippy — prns-ffi (CoreBluetooth backend)
         run: cargo clippy --all-features --all-targets --locked -- -D warnings
         working-directory: prns-ffi
@@ -357,6 +353,12 @@ jobs:
       - name: clippy — hopspot iOS face crate
         run: cargo clippy --all-targets --locked -- -D warnings
         working-directory: personal-hopspot/mobile/ios/rust
+      - name: build — hopspot iOS face crate
+        run: cargo build --release --locked
+        working-directory: personal-hopspot/mobile/ios/rust
+      - name: build — hopspot desktop face (macOS)
+        run: cargo build --locked
+        working-directory: personal-hopspot/desktop
 
   windows-desktop:
     # The Hopspot desktop face is the cross-platform proving ground, and nothing else in CI builds on
@@ -410,8 +412,13 @@ jobs:
         run: uv venv /tmp/rns && uv pip install --python /tmp/rns/bin/python -r benchmarks/reference/requirements.txt
       - name: install the control-RPC reference RNS (rns==1.4.0)
         run: uv venv /tmp/rns-rpc && uv pip install --python /tmp/rns-rpc/bin/python -r benchmarks/reference/rpc-requirements.txt
-      - name: PR oracle lane
-        run: python3 scripts/oracles.py --pr
+      - name: PR deterministic oracle lane
+        run: python3 validation/run.py run --domain oracles --tier pr --expected-sha "$GITHUB_SHA"
+        env:
+          SMOKE_PYTHON: /tmp/rns/bin/python
+          RPC_SMOKE_PYTHON: /tmp/rns-rpc/bin/python
+      - name: PR live interop lane
+        run: python3 validation/run.py run --domain interop --tier pr --expected-sha "$GITHUB_SHA"
         env:
           SMOKE_PYTHON: /tmp/rns/bin/python
           RPC_SMOKE_PYTHON: /tmp/rns-rpc/bin/python
@@ -422,7 +429,7 @@ jobs:
           name: pr-oracles-${{ github.run_id }}
           retention-days: 14
           if-no-files-found: ignore
-          path: validation-artifacts/oracles/**
+          path: validation-artifacts/results/**
 
   deny:
     # Locked release graph matrix: zero-copyleft licenses, RustSec, sources, unsafe drift, notices.
@@ -450,11 +457,11 @@ jobs:
           cargo install cargo-deny --version 0.19.8 --locked
           cargo install cargo-about --version 0.9.1 --locked --features cli
       - name: complete release dependency audit
-        run: bash scripts/deps-audit.sh
+        run: bash validation/security/deps-audit.sh
       - name: reject dirty generated release notices
         run: git diff --exit-code -- THIRD_PARTY_NOTICES.md
       - name: record exact release audit commit
-        run: bash scripts/write-release-audit-evidence.sh
+        run: ./tools/prns release audit-evidence write
       - name: upload release audit evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -478,6 +485,10 @@ jobs:
       - release-workflow-contracts
       - msrv
       - no-std-embedded
+      - android-service
+      - macos-ble
+      - windows-desktop
+      - local-interop
       - deny
     runs-on: ubuntu-24.04
     env:
@@ -489,6 +500,10 @@ jobs:
       WORKFLOWS_RESULT: ${{ needs.release-workflow-contracts.result }}
       MSRV_RESULT: ${{ needs.msrv.result }}
       EMBEDDED_RESULT: ${{ needs.no-std-embedded.result }}
+      ANDROID_RESULT: ${{ needs.android-service.result }}
+      APPLE_RESULT: ${{ needs.macos-ble.result }}
+      WINDOWS_RESULT: ${{ needs.windows-desktop.result }}
+      INTEROP_RESULT: ${{ needs.local-interop.result }}
       DENY_RESULT: ${{ needs.deny.result }}
     steps:
       - name: Require every release-critical lane
@@ -502,6 +517,10 @@ jobs:
             "$WORKFLOWS_RESULT" \
             "$MSRV_RESULT" \
             "$EMBEDDED_RESULT" \
+            "$ANDROID_RESULT" \
+            "$APPLE_RESULT" \
+            "$WINDOWS_RESULT" \
+            "$INTEROP_RESULT" \
             "$DENY_RESULT"; do
             test "$result" = "success"
           done

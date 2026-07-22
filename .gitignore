@@ -2,6 +2,8 @@
 # Nested build output — ignored regardless of where a crate/app dir lives or moves to
 **/target/
 **/build/
+!tools/build/
+!tools/build/**
 **/node_modules/
 **/dist/
 **/pkg/
@@ -27,6 +29,7 @@ benchmarks/reference/.venv/
 benchmarks/reference/.rpc-venv/
 # Dedicated venv for the rns 1.4.0 reference (oracle tests)
 /.venv-rns-1.4.0/
+/validation/.venv/
 **/__pycache__/
 # cargo-mutants run artifacts (mutants.out + the rotated mutants.out.old)
 /mutants.out*/

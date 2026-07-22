@@ -129,10 +129,10 @@ jobs:
         env:
           ACCEPTANCE_SOURCE: ${{ steps.acceptance.outputs.source }}
         run: |
-          python3 scripts/extract-flasher-candidate.py \
+          ./tools/prns release candidate extract -- \
             "target/release/prns-flasher-candidate-v${RELEASE_VERSION}-signed.tar.gz" \
             target/candidate
-          python3 scripts/extract-flasher-candidate.py \
+          ./tools/prns release candidate extract -- \
             "target/release/qualification-evidence-v${RELEASE_VERSION}.tar.gz" \
             target/qualification-evidence
           acceptance="target/release/acceptance-v${RELEASE_VERSION}.json"
@@ -142,7 +142,7 @@ jobs:
             cp "$ACCEPTANCE_SOURCE" "$acceptance"
           fi
       - name: Install exact Minisign and Rust verification tools
-        run: scripts/install-release-minisign.sh "${RUNNER_TEMP}/prns-release-bin"
+        run: ./tools/prns release toolchain minisign install -- "${RUNNER_TEMP}/prns-release-bin"
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           toolchain: 1.96.0
@@ -151,7 +151,7 @@ jobs:
           PRNS_MINISIGN_BIN: ${{ runner.temp }}/prns-release-bin/minisign
         run: |
           test "$(cat VERSION)" = "$RELEASE_VERSION"
-          scripts/verify-flasher-candidate.sh target/candidate
+          ./tools/prns release candidate verify -- target/candidate
           published_at="$(jq -r '.publishedAt' target/release/prerelease.json)"
           source_commit="$(jq -r '.release.commit' target/candidate/flash-manifest.json)"
           test "$(jq -r '.targetCommitish' target/release/prerelease.json)" = "$source_commit"
@@ -199,7 +199,7 @@ jobs:
             "target/release/prns-flasher-attestation-v${RELEASE_VERSION}.metadata.json")"
           signed_bundle="target/release/prns-flasher-candidate-v${RELEASE_VERSION}-signed.tar.gz"
           mapfile -t evidence_files < <(
-            python3 scripts/flasher-public-review.py discover \
+            ./tools/prns release public-review -- discover \
               --evidence-directory target/release \
               --repository "$GITHUB_REPOSITORY" \
               --version "$RELEASE_VERSION" \
@@ -228,7 +228,7 @@ jobs:
             fi
             jq -s '.[0]' target/release/public-review-job-pages.json \
               > target/release/public-review-job.json
-            if python3 scripts/flasher-public-review.py verify \
+            if ./tools/prns release public-review -- verify \
               --evidence "$evidence" \
               --release-json target/release/prerelease.json \
               --run-json target/release/public-review-run.json \
@@ -261,7 +261,7 @@ jobs:
             "$PRNS_MINISIGN_BIN" -Vm "$acceptance" -x "$acceptance.minisig" \
               -p release/keys/minisign.pub
           else
-            scripts/sign-flasher-document.sh "$acceptance" "$secret_key"
+            ./tools/prns release document sign -- "$acceptance" "$secret_key"
           fi
           record="target/release/release-record-v${RELEASE_VERSION}.json"
           published_at="$(jq -r '.publishedAt' target/release/prerelease.json)"
@@ -279,23 +279,23 @@ jobs:
             --repository "$GITHUB_REPOSITORY"
           )
           if [[ -f "$record" ]]; then
-            python3 scripts/flasher-release-record.py verify \
+            ./tools/prns release record -- verify \
               "${record_arguments[@]}" --release-record "$record"
           else
-            python3 scripts/flasher-release-record.py create \
+            ./tools/prns release record -- create \
               "${record_arguments[@]}" --output "$record"
           fi
           if [[ -f "$record.minisig" ]]; then
             "$PRNS_MINISIGN_BIN" -Vm "$record" -x "$record.minisig" \
               -p release/keys/minisign.pub
           else
-            scripts/sign-flasher-document.sh "$record" "$secret_key"
+            ./tools/prns release document sign -- "$record" "$secret_key"
           fi
       - name: Reverify the final signed evidence envelope
         env:
           PRNS_MINISIGN_BIN: ${{ runner.temp }}/prns-release-bin/minisign
         run: |
-          scripts/verify-flasher-release.sh \
+          ./tools/prns release verify -- \
             --candidate target/candidate \
             --candidate-run "target/release/prns-flasher-candidate-run-v${RELEASE_VERSION}.json" \
             --signed-bundle "target/release/prns-flasher-candidate-v${RELEASE_VERSION}-signed.tar.gz" \

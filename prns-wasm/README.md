@@ -47,7 +47,7 @@ It is deliberately a transport demonstration rather than a messaging client.
 Build it and stage its static assets into the documentation site:
 
 ```sh
-npm --prefix prns-wasm run stage:docs
+./tools/prns build wasm-docs stage
 ```
 
 Serve the documentation public directory from the repo root:
@@ -74,7 +74,7 @@ Auto vendor interface. Without it, Chrome can show the device picker but
 Install the narrow Prns WebUSB rule:
 
 ```sh
-./scripts/install-prns-webusb-udev.sh
+./tools/prns device webusb install
 ```
 
 Then unplug and replug the device, restart Chrome if it had already failed, and

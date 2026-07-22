@@ -22,7 +22,7 @@ exclude = [
     "prns-runtime/impls/embassy",
     "prns-interfaces/impls/tokio",
     "prns-interfaces/impls/embassy",
-    "prns-integration-tests",
+    "validation/integration",
 ]
 resolver = "3"
 

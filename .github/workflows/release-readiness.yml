@@ -1,0 +1,175 @@
+name: release-readiness
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: Full 40-character candidate commit SHA
+        required: true
+        type: string
+      fuzz_seconds:
+        description: Seconds per fuzz target
+        default: "120"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-readiness-${{ inputs.commit_sha }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  inventory:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.inventory.outputs.matrix }}
+      commit: ${{ steps.inventory.outputs.commit }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.commit_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - id: inventory
+        env:
+          REQUESTED_SHA: ${{ inputs.commit_sha }}
+        run: |
+          [[ "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          python3 validation/run.py verify
+          echo "commit=$REQUESTED_SHA" >> "$GITHUB_OUTPUT"
+          echo "matrix=$(python3 validation/run.py matrix --tier release)" >> "$GITHUB_OUTPUT"
+
+  qualify:
+    needs: inventory
+    name: ${{ matrix.id }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 260
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.inventory.outputs.matrix) }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.inventory.outputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.96.0
+          components: clippy,rustfmt,llvm-tools-preview
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: release-readiness-${{ matrix.id }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24.18.0"
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+      - name: Prepare nightly validation toolchain
+        if: matrix.toolchain == 'nightly' || matrix.toolchain == 'kani'
+        run: rustup toolchain install nightly --profile minimal
+      - name: Prepare embedded targets
+        if: matrix.group == 'embedded'
+        run: rustup target add riscv32imac-unknown-none-elf thumbv7em-none-eabihf
+      - name: Prepare Linux desktop link dependency
+        if: matrix.group == 'linux-host'
+        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
+      - name: Prepare macOS desktop link dependency
+        if: matrix.group == 'apple'
+        run: brew install sdl2
+      - name: Prepare WASM target and dependencies
+        if: matrix.group == 'wasm' || matrix.group == 'linux-host'
+        run: |
+          rustup target add wasm32-unknown-unknown
+          if [[ "${{ matrix.group }}" == wasm ]]; then
+            cargo install wasm-bindgen-cli --version 0.2.126 --locked
+            npm --prefix prns-wasm ci --ignore-scripts --no-audit --no-fund
+          fi
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
+        if: matrix.group == 'android'
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        if: matrix.group == 'android'
+      - name: Prepare Android build tools
+        if: matrix.group == 'android'
+        run: |
+          sdkmanager "platforms;android-34" "build-tools;34.0.0" "ndk;27.2.12479018"
+          cargo install cargo-ndk --locked --version 4.1.2
+      - uses: cargo-bins/cargo-binstall@57726869e28f4038a847ec56e5fdd9142fded110
+        if: matrix.group == 'web'
+        with:
+          version: "1.21.0"
+      - name: Prepare exact web tool
+        if: matrix.group == 'web'
+        run: cargo binstall --no-confirm --force dioxus-cli@0.7.5
+      - name: Prepare exact ESP release toolchain
+        if: matrix.group == 'esp'
+        run: |
+          ./tools/prns release toolchain esp install -- "${RUNNER_TEMP}/prns-esp-tools"
+          rustup override set --path personal-hopspot/embedded/nrf52840 1.96.0
+      - name: Prepare pinned stock RNS
+        if: matrix.domain == 'oracles' || matrix.domain == 'interop'
+        run: python3 validation/run.py prepare-oracles
+      - name: Prepare pinned cargo-fuzz
+        if: matrix.domain == 'fuzz'
+        run: cargo install cargo-fuzz --version 0.13.1 --locked
+      - name: Prepare pinned Kani
+        if: matrix.domain == 'kani'
+        run: |
+          cargo install kani-verifier --version 0.67.0 --locked
+          cargo kani setup
+      - name: Prepare pinned cargo-mutants
+        if: matrix.domain == 'mutation'
+        run: cargo install cargo-mutants --version 27.1.0 --locked
+      - name: Prepare dependency audit tools
+        if: matrix.id == 'dependency-audit'
+        run: |
+          cargo install cargo-deny --version 0.19.8 --locked
+          cargo install cargo-about --version 0.9.1 --locked --features cli
+      - name: Run exact-SHA suite
+        env:
+          PRNS_ANDROID_DEVICE: ${{ matrix.platform == 'android-device' && '1' || '0' }}
+        run: python3 validation/run.py run --suite "${{ matrix.id }}" --expected-sha "${{ needs.inventory.outputs.commit }}" --fuzz-seconds "${{ inputs.fuzz_seconds }}"
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-readiness-${{ matrix.id }}-${{ github.run_id }}
+          if-no-files-found: error
+          retention-days: 90
+          path: validation-artifacts/**
+
+  aggregate:
+    if: always()
+    needs: [inventory, qualify]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.inventory.outputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: release-readiness-*-${{ github.run_id }}
+          path: validation-artifacts
+          merge-multiple: true
+      - name: Aggregate complete exact-SHA evidence
+        run: python3 validation/run.py aggregate --tier release --expected-sha "${{ needs.inventory.outputs.commit }}"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-readiness-manifest-${{ needs.inventory.outputs.commit }}
+          if-no-files-found: error
+          retention-days: 180
+          path: validation-artifacts/release-manifest.json

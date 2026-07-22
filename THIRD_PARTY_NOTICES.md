@@ -1,7 +1,7 @@
 # Third-Party Notices
 
 This checked bundle covers the shipped Rust, JavaScript, and Android release graphs.
-It was generated with `cargo-about 0.9.1` by `scripts/generate-third-party-notices.py`.
+It was generated with `cargo-about 0.9.1` by `./tools/prns repo notices generate`.
 Entries are deduplicated by SPDX identifier and exact notice text.
 
 ## Release graphs

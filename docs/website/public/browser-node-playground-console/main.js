@@ -467,6 +467,8 @@ function usbClosableSession(state) {
     }
 }
 function wasmModule() {
+    // wasm-bindgen exposes byte newtypes as Uint8Array; this is the one boundary
+    // where the SDK's branded views are attached to those generated bindings.
     return {
         PrnsRuntime: wasm.PrnsRuntime,
         UsbAutoDecoder: wasm.UsbAutoDecoder,

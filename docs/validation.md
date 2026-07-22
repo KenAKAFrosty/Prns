@@ -1,470 +1,187 @@
-# Validation Lanes
+# Validation and release readiness
 
-## Reference Target
+Prns keeps tests close to the code that owns their assertions. Unit tests,
+property tests, compile-fail documentation, and private Kani proof bodies stay in
+their crate. The `validation/` tree is the control plane for suites that cross a
+crate, process, toolchain, platform, or implementation boundary.
 
-Wire, transport, daemon configuration, management destinations, interface
-discovery, and both shared-instance planes target Reticulum `1.4.0` / RNS `1.4.0`.
-Both oracle installs run `rns==1.4.0`, pinned in
-`benchmarks/reference/requirements.txt` and
-`benchmarks/reference/rpc-requirements.txt`. The control channel also retains
-full protocol compatibility with the pickle payloads used through RNS `1.3.3`;
-RNS `1.3.4` and later use MessagePack. This compatibility lane does not change
-the primary RNS `1.4.0` parity target.
+## One executable inventory
 
-Interface-mode semantics include `internal` mode, recursive path-request
-forwarding, internal-announcement controls, and discovery-mode preservation.
+`validation/manifest.toml` is the machine-readable inventory. It assigns every
+suite an ID, domain, tier, platform, toolchain, command, timeout, input set, and
+artifact location. Cargo manifests still own test targets, Cargo-fuzz still owns
+fuzz targets, and Rust source still owns Kani harnesses; the validation registry
+discovers those native definitions and rejects drift instead of copying their
+assertion inventories.
 
-The normal workspace tests stay the first pass:
+The dependency-free operator interface is:
 
-```sh
-cargo test --workspace
+```console
+python3 validation/run.py verify
+python3 validation/run.py verify --check-tools
+python3 validation/run.py list
+python3 validation/run.py list --domain interop --tier release
+python3 validation/run.py matrix --domain kani --tier release
+python3 validation/run.py run --suite integration-capstones
+python3 validation/run.py run --domain oracles --tier pr
 ```
 
-The extra lanes below are intentionally small. They set the pattern for deeper
-coverage without making every local edit pay the full proof, fuzzing, and
-mutation-testing cost.
+`verify` fails on duplicate or malformed suites, missing commands and inputs,
+unregistered Cargo workspaces, Kani proofs, fuzz targets, interop peers, smoke
+scripts, stale exemptions, invalid tool pins, or malformed mutation triage. Use
+`verify --check-tools` when the pinned deep-validation tools are expected to be
+installed locally.
 
-## Python Oracle Lanes
+A successful verification narrates what it proved instead of returning only an
+opaque success token. Counts come from the live manifest and native source
+discovery, so the output also gives an operator a quick orientation:
 
-The machine-readable inventory in `oracles/manifest.json` is the single source
-of truth for each oracle's interpreter seam, command, tier, timeout, inputs, and
-evidence location. Inspect the current inventory without executing it:
-
-```sh
-python3 scripts/oracles.py --list
+```text
+[verify] Suite policy: 81 total suites (34 pull-request, 78 release, 79 scheduled); IDs, tiers, platforms, toolchains, commands, timeouts, and artifact paths are valid.
+[verify] Cargo ownership: 34 manifests are registered, valid, and repository-owned; 21 unique workspace roots own formatting.
+[verify] Native discovery: 18 Kani proofs and 8 fuzz targets exactly match their source owners.
+[verify] Asset ownership: 57 oracle/interop/smoke assets are registered; 1 documented exemption is current; nothing is orphaned.
+VALIDATION_REGISTRY_OK
 ```
 
-The PR lane runs deterministic Python comparisons and the established live
-interop set. The full lane adds every utility and deep live scenario:
+The explanatory lines are for people; the final token remains a stable hook for
+automation. Commands whose stdout is a data interface, such as `matrix` JSON and
+`list` TSV, send their explanatory summary to stderr so existing consumers can
+parse stdout unchanged.
 
-```sh
-SMOKE_PYTHON=/path/to/rns-python RPC_SMOKE_PYTHON=/path/to/rpc-rns-python python3 scripts/oracles.py --pr
-SMOKE_PYTHON=/path/to/rns-python RPC_SMOKE_PYTHON=/path/to/rpc-rns-python python3 scripts/oracles.py --full
+Documentation is intentionally not configuration. Commands shown here are
+examples; the manifest remains authoritative.
+
+## Layout and ownership
+
+- `validation/integration/` is the public-API, cross-crate capstone workspace.
+- `validation/fuzz/` owns fuzz targets, seed corpora, and reproducer artifacts.
+- `validation/oracles/` owns deterministic Rust-versus-stock-RNS comparisons.
+- `validation/interop/` owns live stock-RNS peers and process-level smoke cases.
+- `validation/hardening/` owns sanitizer, Miri, coverage, and unsafe-code tooling.
+- `validation/mutation/` owns cargo-mutants configuration and reviewed survivor
+  triage.
+
+Release-tooling tests live under `tools/tests/`. Product-specific platform and
+WASM tests remain with the product they exercise. Private RPC codec tests and
+Kani harnesses remain source-local, where they can exercise private behavior;
+the registry only supplies focused execution commands.
+
+## Tiers
+
+The `pr` (pull-request) tier is deterministic and bounded. It covers registry
+integrity, normal tests and lints, release contracts, product build lanes,
+deterministic stock-RNS comparisons, and essential interop.
+
+The `release` tier adds every proof, every bounded fuzz target, full oracle and
+utility interop coverage, sanitizers, Miri, mutation analysis, and the remaining
+shipping-platform evidence. A release result is acceptable only when all
+required results are bound to the exact candidate commit.
+
+The `scheduled` tier is allowed to spend longer on fuzzing, diagnostics,
+coverage, unsafe inventory, and hardware/network simulations. Scheduled evidence
+is useful for maintenance but cannot substitute for exact-SHA release evidence.
+
+## Stock-RNS environments
+
+Ordinary `cargo test` never searches for or silently uses a local Python
+environment. Oracle and live interop suites require explicit interpreters that
+contain the centrally pinned RNS version. Prepare reproducible local
+environments with:
+
+```console
+python3 validation/run.py prepare-oracles
+python3 validation/run.py run --domain oracles --tier pr
+python3 validation/run.py run --domain interop --tier pr
 ```
 
-Both seams must resolve to executable interpreters in an oracle lane. Local
-developer runs may omit a seam only when its corresponding pinned reference
-venv exists. Each case runs in its own process group under an outer timeout and
-retains its exit metadata, stdout, and stderr below
-`validation-artifacts/oracles/<case>/`.
+The runner sets `SMOKE_PYTHON` and `RPC_SMOKE_PYTHON` for each registered suite
+after verifying `RNS.__version__`. CI may provide those variables directly, but
+the same version check still applies.
 
-The lane split is intentionally top-down; `--list` remains the exact roster:
+## Evidence
 
-| Coverage layer | PR lane | Full lane |
-| --- | --- | --- |
-| Configuration | ConfigObj tree, scalar coercion, and RNode transport selection | PR coverage plus the stock Prns-interface skip contract |
-| Protocol and crypto | Packet boundaries, identity and token crypto, and the complete 21-operation RPC codec | Same deterministic corpus |
-| Live recovery | The required shared-instance, management, probe, blackhole, RNode, transit, IFAC, inverse-instance, and TCP-server set | Same required live set |
-| Utility interoperability | Not run | Manifest-registered RNID local/network, RNSTATUS, RNPATH, RNPROBE, RNCP, and RNX cases |
+Every invocation writes versioned evidence beneath
+`validation-artifacts/results/<suite-id>/`:
 
-The deterministic cases print their seed and failing input on divergence. They
-cover malformed configuration nesting and values; every packet flag, hop,
-truncation, minimum, and MTU edge; signature and token lengths plus wrong-key,
-corruption, and truncation rejection; and canonical and mutated MessagePack RPC
-payloads plus CPython short/wide frame headers. Accepted packets and requests
-must re-encode byte-identically, crypto failures expose no partial plaintext,
-and malformed RPC input must return a typed error without panicking.
+- `stdout.log` and `stderr.log` preserve the complete process output.
+- `result.json` records schema version, suite and domain, exact commit SHA,
+  resolved command, host platform, tool versions, timestamps, duration, exit
+  state, timeout state, and spawn errors.
 
-The hostile live cases prove recovery rather than rejection alone. Wrong RPC
-keys, malformed frames, unauthorized management identities, missing or wrong
-IFAC credentials, interrupted or cancelled resources, and invalid RNode reports
-are each followed by a valid stock peer. The follow-up must complete without
-stale listener, link, resource, or staging state.
+Set `PRNS_VALIDATION_ARTIFACTS` to use another evidence root. A release
+qualification job combines downloaded results only after checking their schema,
+status, suite coverage, and commit binding:
 
-## Drift Guard
-
-The validation docs name executable targets, so they get their own cheap drift
-guard. It checks the active RNS pin, documented fuzz targets, documented Kani
-harnesses, and mutation-lane paths against the repo:
-
-```sh
-bash scripts/validation-doc-drift.sh
+```console
+python3 validation/run.py aggregate \
+  --tier release \
+  --expected-sha 0123456789abcdef0123456789abcdef01234567
 ```
 
-## Deep Validation
+Missing, failed, skipped, or differently bound suites make aggregation fail.
 
-For release hardening or architecture changes, run the operator lane. It layers
-the drift guard, focused tests, local/tcp feature tests, the 1.4.0 local RPC
-oracle, mutation file-list sanity, Kani proofs, cargo-fuzz checks, and a
-validation artifact manifest into one entrypoint:
+## Deep tools
 
-```sh
-bash scripts/deep-validation.sh
+The exact validated cargo-fuzz, cargo-mutants, and Kani versions live in
+`validation/manifest.toml`. CI installs those exact versions. Local operators can
+check them with `verify --check-tools` before starting a long run.
+
+Kani proofs are discovered from `#[kani::proof]` in `prns-core/src`. They are
+classified by subsystem in the manifest and become isolated matrix entries.
+
+Fuzz targets are discovered from `validation/fuzz/Cargo.toml`. The runner gives
+each target a bounded runtime, a distinct evidence/reproducer directory, and a
+writable corpus copied beneath `validation-artifacts/`. Checked-in seed corpora
+remain immutable source and are never selected by cleanup.
+
+Miri and each sanitizer run as separate suites so one failure does not hide the
+rest of the hardening matrix. The helper implementations remain under
+`validation/hardening/`, but operators should invoke their registered suite IDs
+through the runner when release evidence is required.
+
+## Mutation triage
+
+`validation/mutation/config.toml` defines the mutation surface. The mutation
+runner emits cargo-mutants results, fingerprints each missed or timed-out mutant
+from stable semantic fields, and compares them with
+`validation/mutation/triage.toml`.
+
+Every accepted survivor must have a lowercase SHA-256 fingerprint, a concrete
+reason, a reviewer, and an expiry date. New, changed, timed-out, stale, or expired
+entries fail the lane. An accepted cargo-mutants nonzero exit is therefore never
+an unreviewed blanket waiver: the checked-in triage must exactly match the
+current unresolved set and the baseline must have succeeded.
+
+## CI and release qualification
+
+`.github/workflows/ci.yml` runs the bounded product lanes and exposes one
+fail-closed aggregate. Every shipping lane is a dependency of that aggregate;
+GitHub's `skipped` result is not green.
+
+`.github/workflows/deep-validation.yml` runs Kani, fuzzing, full oracle/interop,
+mutation, sanitizer, and Miri jobs independently with `fail-fast: false`.
+
+`.github/workflows/release-readiness.yml` is manually dispatched with a full
+commit SHA. It checks out that exact object, records evidence in each platform
+job, downloads all results, and creates a single release manifest only when the
+entire release tier passed for that SHA.
+
+Hosted acceptance still depends on an enabled Actions account with no billing or
+spend-limit failure. A locally green tree cannot replace hosted platform and
+exact-SHA evidence.
+
+## Cleanup
+
+Cleanup is dry-run-first:
+
+```console
+python3 validation/run.py cleanup
+python3 validation/run.py cleanup --apply
 ```
 
-Use `--quick` for a cheap local shape check, and `--mutants` or `--android` when
-you intentionally want the full mutation lane or attached-device Android
-foreground-service runtime smoke folded in.
-
-The manual GitHub workflow can run the same lane on demand. A scheduled nightly
-run exercises the long-form fuzz/Kani/mutation surface and uploads the retained
-evidence: fuzz crash artifacts, fuzz corpora, mutation output, and a manifest
-under `validation-artifacts/`.
-
-## Memory, Leak, and Race Sanitizers
-
-The hardening lane instruments the standard library and the Prns test builds on
-Linux x86_64 with nightly Rust. It covers `prns-core`, the Tokio-host runtime,
-the cross-crate integration suite, and every Tokio interface feature:
-
-```sh
-bash scripts/sanitizers.sh address
-bash scripts/sanitizers.sh leak
-bash scripts/sanitizers.sh thread
-bash scripts/sanitizers.sh all
-```
-
-AddressSanitizer checks executed native code for invalid memory access;
-LeakSanitizer reports allocations that become unreachable; ThreadSanitizer
-checks executed synchronization for data races. The builds use an explicit
-`x86_64-unknown-linux-gnu` target and `-Zbuild-std`, so Rust's standard library
-is instrumented along with the project. `-Copt-level=2` with debug information
-keeps symbols while avoiding debug-only dilation of protocol tests with real
-wall-clock deadlines. The lane runs library and integration-test targets;
-rustdoc does not inherit the sanitizer instrumentation, and linking its
-uninstrumented doctest crate to the instrumented standard library is rejected
-as an ABI mismatch.
-
-Tests are serialized at the harness boundary to remove unrelated cross-test
-noise; Tokio runtimes and worker threads inside each test remain concurrent.
-
-AddressSanitizer runs with its bundled leak detector disabled because the
-standalone leak lane owns that signal. ThreadSanitizer has one narrow dependency
-suppression in `scripts/tsan-suppressions.txt` for Tokio's
-`runtime::io::scheduled_io::ScheduledIo`. Rust's sanitizer currently lacks the
-`fcntl(F_DUPFD_CLOEXEC)` interceptor Tokio needs, which produces the same
-initialization report upstream; the lane prints suppression match counts and
-still fails on every unsuppressed report. Track the upstream limitation in
-[`rust-lang/rust#130037`](https://github.com/rust-lang/rust/issues/130037).
-
-These flags affect only the hardening test build. They add no code, dependency,
-or runtime cost to normal host or embedded artifacts. The workflow runs each
-sanitizer as a separate weekly and manually dispatchable job so one failure
-does not hide the other two reports.
-
-## Miri
-
-The default Miri lane is a curated, isolated 95-test pass over parser and wire
-boundaries, fixed-capacity indexed storage, resource tables, Bluetooth framing,
-streaming token open, identity crypto, and streamed resources:
-
-```sh
-bash scripts/miri.sh
-bash scripts/miri.sh --quick
-bash scripts/miri.sh --full
-bash scripts/miri.sh --stacked wire::tests
-bash scripts/miri.sh --tree identity::in_memory::tests
-```
-
-The quick lane uses Miri's default Stacked Borrows model where the dependency
-stack accepts it and Tree Borrows for the in-place RustCrypto paths. At present,
-the default model rejects an `inout` AES/CBC aliasing pattern while the same
-tests pass under Tree Borrows; keeping the split visible avoids globally
-weakening the model or disguising the dependency boundary. `--full` runs all
-`prns-core` tests under Tree Borrows, while `--stacked` and `--tree` make either
-model available for a focused filter or a deliberate full run.
-
-Host isolation remains enabled. Property tests keep 32 generated cases but
-disable on-disk failure persistence, because that persistence asks Miri for the
-host working directory. Miri validates only paths the selected tests execute;
-it complements rather than replaces Kani proofs or native sanitizer coverage.
-Like the sanitizers, it changes no production artifact.
-
-## Unsafe Dependency Inventory
-
-Install the pinned audit tool and run the source-entrypoint and dependency
-views separately:
-
-```sh
-cargo install cargo-geiger --version 0.13.0 --locked
-bash scripts/geiger.sh --entrypoints
-bash scripts/geiger.sh --inventory
-bash scripts/geiger.sh --all
-```
-
-The entrypoint view makes the intended boundary visible: the engine, runtime,
-facade, and Tokio interfaces forbid unsafe code, while `prns-ffi` is the
-deliberately quarantined platform-FFI exception. The inventory view enumerates
-transitive unsafe exposure in crypto, allocation, OS, and runtime dependencies.
-It scans the default facade, all Tokio interface features, and the host-visible
-FFI graph independently; the facade's mutually exclusive runtime and keyring
-features make one global `--all-features` graph invalid.
-
-`cargo-geiger` 0.13.0 currently emits package-source matching warnings and has
-parser failures on sources in this graph, including `nb 0.1.3` and
-`signal-hook-registry 1.4.8`. Its full inventory can therefore be incomplete
-and exit nonzero after producing a useful partial report. The weekly workflow
-preserves that advisory report but does not turn incompleteness into a false
-green security claim. The compiler's `forbid(unsafe_code)` remains the
-enforcement boundary for safe Prns crates; geiger is inventory and review
-evidence, not a proof of soundness.
-
-The release gate adds a deterministic enforcement layer that does not depend on
-Geiger's parser coverage. `python3 scripts/unsafe-audit.py` resolves each shipped
-graph with locked Cargo metadata, performs a comment/string/raw-string-aware Rust
-token scan, and byte-compares the result with `audits/unsafe-snapshot.json`.
-First-party targets without a compiler forbid or a named, linted exception fail
-before snapshot comparison. See [Public-Release Dependency Audit](release-dependency-audit.md).
-
-## Instrumentation Boundary
-
-The observability workline is compile-time isolated from the checks in this
-hardening lane. Tokio hosts can opt into structured tracing and fixed runtime
-counters, while Embassy and `no_std` builds retain their existing engine and
-hot-loop boundary. The signal policy, feature graph, exporter bounds, privacy
-rules, and local demonstration live in [Observability](observability.md).
-
-## Property Tests
-
-Property tests live beside the modules they exercise and run with the ordinary
-`personal-rns` test suite:
-
-```sh
-cargo test -p personal-rns
-```
-
-Current seed coverage:
-
-- `wire`: arbitrary typed packet headers must write and parse back to the same
-  value.
-- `interfaces::packet::ifac`: arbitrary open-header payloads, across every accepted
-  IFAC size and rejection boundary, must mask and unmask back to the original
-  packet under the same access context.
-- `interfaces::rns_serial_framing`: arbitrary payloads must round-trip through
-  the RNS reference-compatible byte-stuffed serial framing, including arbitrary
-  stream chunk boundaries.
-
-## Kani Proofs
-
-Kani harnesses are gated behind `cfg(kani)`, so normal builds do not compile
-them. Run the focused proofs with:
-
-```sh
-cargo kani -p prns-core --harness hops_above_pathfinder_m_always_reject_before_any_other_gate
-cargo kani -p prns-core --harness an_upstream_app_destination_rejects_when_hops_are_in_range
-cargo kani -p prns-core --harness reemit_announce_exact_buffer_serializes_header_and_payload_length
-cargo kani -p prns-core --harness reemit_announce_short_buffer_rejects_before_a_full_packet_is_written
-cargo kani -p prns-core --harness decoded_signalling_bytes_always_land_in_range
-cargo kani -p prns-core --harness signalling_bytes_round_trip_for_every_in_range_mtu_and_mode
-cargo kani -p prns-core --harness keepalive_for_any_rtt_stays_inside_the_reference_clamp
-cargo kani -p prns-core --harness stale_is_exactly_twice_any_clamped_keepalive
-cargo kani -p prns-core --harness the_grace_never_dips_below_the_stale_grace_floor
-cargo kani -p prns-core --harness fleet_member_and_supervisor_kinds_are_inverses
-cargo kani -p prns-core --harness fleet_supervisor_discriminants_fit_the_fan_mask
-cargo kani -p prns-core --harness proof_plaintext_round_trips_for_any_hash_pair
-cargo kani -p prns-core --harness cancel_plaintext_round_trips_for_any_resource_hash
-cargo kani -p prns-core --harness an_anchored_radio_never_retunes_and_never_seeks
-cargo kani -p prns-core --harness a_free_radio_never_stays
-cargo kani -p prns-core --harness two_radios_that_have_learned_each_other_always_converge
-cargo kani -p prns-core --harness a_channel_that_cannot_host_a_group_always_yields_incompatible
-cargo kani -p prns-core --harness path_request_parse_never_panics_for_any_wire_payload
-```
-
-Current proof coverage:
-
-- `announce::acceptance`: max-hop rejection wins before later gates, and
-  upstream app destinations reject once hops are in range.
-- `engine::egress`: a re-emitted announce with an exact buffer always produces
-  a well-formed transport announce packet carrying the via transport id, and a
-  one-byte-short buffer rejects before claiming a full packet was written.
-- `links::handshake`: any three signalling bytes decode to an in-range MTU and
-  mode bits, and every in-range MTU/mode pair survives the encode/decode round
-  trip.
-- `links::maintenance`: any RTT yields a keepalive inside the reference clamp
-  `[5_000, 360_000]`, and staleness is exactly twice that keepalive with no
-  overflow; the timeout grace never drops under the stale-grace floor.
-- `interfaces::identity::kind`: every fleet supervisor/member kind pair is a two-way
-  inverse, including the Android/local `LocalServer` -> `LocalClient` lane, and
-  every supervisor discriminant fits the u128 announce-fan mask shift.
-- `links::resources::control`: resource proof and cancel plaintexts round-trip
-  for any 32-byte resource/proof hash pair.
-
-## Android Foreground Service Smoke
-
-The Android face must package a foreground `PrnsService` that owns the local
-shared-instance server and exposes a signature-protected bind action for other
-apps on the device. The package smoke builds both shipped JNI ABIs, assembles
-the debug APK, verifies the service contract in the merged manifest, and
-confirms both native libraries are packaged:
-
-```sh
-bash scripts/android-service-smoke.sh
-```
-
-The runtime smoke requires an attached Android device or emulator. It installs
-the debug APK plus a same-signature instrumentation probe, starts the foreground
-service from that separate test package, sends HOME to background the app,
-binds through `org.personal.hopspot.action.BIND_PRNS_CLIENT`, and asserts the
-client-facing status bundle reports the local shared-instance ports plus the
-production health shape: foreground state, instance role, RPC port, service and
-runtime uptime, bound-client count, interface totals, route/link totals, traffic
-totals, and live transfer rates.
-
-```sh
-bash scripts/android-runtime-smoke.sh
-```
-
-The stable `MSG_STATUS` Bundle keys are:
-
-`state`, `running`, `foreground`, `instance_role`, `local_port`, `rpc_port`,
-`rpc_key_hex`, `service_uptime_ms`, `runtime_uptime_ms`, `client_count`,
-`interface_count`, `online_interface_count`, `local_client_count`,
-`route_count`, `link_count`, `transported_link_count`, `rx_bytes`, `tx_bytes`,
-`rx_bps`, `tx_bps`, and optionally `last_error`.
-
-The same-signature client binding contract is documented in
-[`docs/android-shared-instance-client.md`](android-shared-instance-client.md).
-
-## RNS 1.4.0 Daemon Oracles
-
-The shared-instance, management-service, and host-interface promises are checked against stock
-RNS `1.4.0` semantics at the client API boundary through the pinned RNS `1.4.0` security release. Prepare their dedicated reference
-environment without changing the broader 1.4.0 target:
-
-```sh
-uv venv benchmarks/reference/.rpc-venv
-uv pip install --python benchmarks/reference/.rpc-venv/bin/python -r benchmarks/reference/rpc-requirements.txt
-```
-
-Then run the complete oracle inventory:
-
-```sh
-python3 scripts/oracles.py --full
-```
-
-The first smoke stands up a Prns-owned shared instance, lets a stock RNS client
-join it, and calls Reticulum's own `get_*` methods. Those methods issue msgpack
-control-RPC requests in 1.4.0 and decode msgpack replies. The second authenticates
-to `rnstransport.remote.management` and exercises the stock status, path, and
-rate request forms. The third sends an ordinary packet to `rnstransport.probe`
-and requires a cryptographically valid delivery proof. The fourth runs both directions of the
-blackhole exchange: stock RNS fetches Prnsd's published aggregate, then Prnsd fetches and persists a
-stock RNS source list. The fifth uses the compatible RNode command constants in a Python TCP device
-oracle and verifies Prnsd's detect, radio configuration, report validation, and idle keepalive bytes.
-
-The compatibility codec accepts and returns the complete pickle control-RPC
-payload set used through RNS `1.3.3`, while RNS `1.3.4` and later use the
-MessagePack codec. Requests from either dialect reach the same typed runtime
-operations, and replies are encoded in the request's dialect. The active oracle
-tracks the RNS `1.4.0` MessagePack contract; an explicit RNS `1.3.3`
-compatibility smoke proves the legacy dialect in both directions. The current
-oracle covers all 21 operations:
-
-- Live-shaped reads: interface stats, link count, path table, rate table,
-  next-hop hash/name, first-hop timeout, and packet RSSI/SNR/Q.
-- Management reads: blackholed identity table and `is_blackholed`.
-- Conservative management writes: unknown path drops, all-via drops, announce
-  queue drops, identity blackhole/unblackhole, destination retain/use/unretain,
-  and identity retain. These return typed no-op values until backed by real
-  engine state, so stock clients do not fault and Prns does not claim fake
-  mutation.
-
-## IFAC TCP Interop Oracle
-
-The protected TCP lane puts a Prns TCP client and a pinned RNS `1.4.0` TCP
-server exercising the `1.4.0` data-plane contract on the same named IFAC network with a 16-byte access code. Two stock RNS
-applications then establish links through that protected interface and transfer
-one-megabyte resources in both directions, crossing the mask counter wrap and
-the broadcast MTU boundary:
-
-This case is registered in the full inventory and remains part of the established
-PR live set.
-
-## Fuzzing
-
-The cargo-fuzz package is isolated under `fuzz/` so it stays out of the normal
-workspace build. Use a nightly toolchain:
-
-```sh
-cargo +nightly fuzz check
-cargo +nightly fuzz run wire_announce_parse -- -max_total_time=30
-cargo +nightly fuzz run egress_reemit_round_trip -- -max_total_time=30
-cargo +nightly fuzz run link_handshake_parse -- -max_total_time=30
-cargo +nightly fuzz run engine_ingest_never_panics -- -max_total_time=30
-cargo +nightly fuzz run config_configobj_parse -- -max_total_time=30
-cargo +nightly fuzz run config_reference_parse -- -max_total_time=30
-cargo +nightly fuzz run resource_plaintexts_parse -- -max_total_time=30
-cargo +nightly fuzz run shared_instance_rpc_request_msgpack -- -max_total_time=30
-```
-
-Current targets:
-
-- `wire_announce_parse`: arbitrary bytes enter the wire parser; any parsed
-  header is re-encoded, and announce-shaped payloads are passed through announce
-  validation. The corpus includes a real RNS announce vector as a hex seed.
-- `egress_reemit_round_trip`: fuzzed hop counts, via transport ids, targets, and
-  output slack exercise re-emitted real announces. Serialization must preserve
-  the announce payload, produce the expected transport header carrying the via,
-  retain the engine-named target interface, and reject one-byte-short buffers.
-- `link_handshake_parse`: arbitrary bytes enter the three link establishment
-  parsers an open network can reach - `parse_link_request` (unsigned, so every
-  byte is attacker-controlled), `validate_link_proof` against a fixed responder
-  key, and `parse_link_rtt` against a fixed link key. The corpus seeds are the
-  handshake vectors minted with RNS 1.3.5 and revalidated with RNS 1.4.0.
-- `engine_ingest_never_panics`: the deterministic core's whole inbound edge.
-  Each input drives a sequence of 16-bit-length-prefixed frames, absolute and
-  saturating logical-time changes, interface departures and reattachments, and
-  scheduled-deadline firings on a two-interface engine with a registered
-  destination and request handler. Cross-packet and cross-lifecycle state is
-  retained throughout; the engine must never panic on any operation or inbound
-  byte sequence, and reactions are deliberately discarded.
-- `config_configobj_parse` / `config_reference_parse`: arbitrary config bytes
-  enter the in-tree and reference-style parsers so parser drift does not hide
-  behind the ordinary happy-path config fixtures.
-- `resource_plaintexts_parse`: arbitrary resource advertisement, hashmap
-  update, part-request, proof, and cancel plaintexts enter the exposed parsers.
-  Any parsed, writable shape is serialized and parsed again to pin the codec
-  boundary without requiring production behavior changes.
-- `shared_instance_rpc_request_msgpack`: arbitrary bytes enter the private RNS
-  1.4.0 request decoder; malformed, contradictory, truncated, and unknown
-  messages must return a typed error without panicking.
-
-## Mutation Testing
-
-`cargo-mutants` reads `.cargo/mutants.toml` from the source-tree root. The
-checked-in config runs `personal-rns` with the `local tcp` host feature surface
-because the lane includes the shared-instance RPC shim. It narrows mutation to
-contract-heavy surfaces: wire parsing, IFAC masking, RNS serial framing, local
-shared-instance RPC encoding/dispatch, interface capabilities and runtime
-interface storage, typed inbound/egress edges, app commands, engine reactions,
-scheduled/tick work, announce defaults, announce IDs, announce acceptance,
-held-announce caches, scheduled-announce queues, link handshake framing, link
-maintenance math, the request/response codec, resource-control plaintexts,
-delivery receipts, and Ed25519 signing:
-
-```sh
-cargo mutants --list-files
-cargo mutants
-```
-
-For full runs, prefer the triage wrapper; it preserves `mutants.out` and prints
-the missed/timeout/unviable counts with the first survivor names:
-
-```sh
-bash scripts/mutation-triage.sh
-```
-
-Treat survivors as review prompts, not automatic failures, until the team has
-triaged enough runs to decide which mutants are equivalent and which are true
-coverage gaps. The Links-era triage worked exactly this way: a first run over
-the link surfaces left 45 survivors, which resolved into boundary tests (every
-wire writer now has an exact-fit/one-byte-short pair), per-gate malformed
-vectors for the request/response parsers, an active-link MDU test for the
-commanded send/respond paths, a reference-minted vector for the pre-signalling
-link proof older peers send, and a handful of genuine equivalents — some
-excluded with justification, some made unrepresentable by hoisting a shared
-length const or dropping a guard already subsumed by the saturating cast.
-
-## Local Build Cleanup
-
-Standalone UI, fuzz, Android, and embedded host builds keep their own ignored
-artifact trees. Use the dry run first when local discovery or disk usage gets
-noisy:
-
-```sh
-sh scripts/clean-local-builds.sh
-sh scripts/clean-local-builds.sh --apply
-```
-
-The script only targets ignored build outputs and prints what it sees before
-removing anything.
+The candidate set comes from registered Cargo workspace targets plus explicit
+web, Android, fuzz, mutation, oracle-environment, Python-cache, and validation
+outputs. The command refuses paths outside the repository and does not select
+editor configuration, credentials, runtime identity/state, fuzz corpora, or
+other source-owned data.

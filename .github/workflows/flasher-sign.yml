@@ -75,7 +75,7 @@ jobs:
       - name: Extract the exact candidate without links or path escapes
         env:
           UNSIGNED_BUNDLE: ${{ steps.unsigned.outputs.bundle }}
-        run: python3 scripts/extract-flasher-candidate.py "$UNSIGNED_BUNDLE" target/candidate
+        run: ./tools/prns release candidate extract -- "$UNSIGNED_BUNDLE" target/candidate
       - name: Verify candidate workflow provenance
         id: candidate
         env:
@@ -83,14 +83,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${CANDIDATE_RUN_ID}" > "${RUNNER_TEMP}/candidate-run.json"
-          python3 scripts/validate-flasher-candidate-run.py \
+          ./tools/prns release candidate-run validate -- \
             --run-json "${RUNNER_TEMP}/candidate-run.json" \
             --manifest target/candidate/flash-manifest.json \
             --expected-run-id "$CANDIDATE_RUN_ID" \
             --repository "$GITHUB_REPOSITORY" \
             --default-branch "$DEFAULT_BRANCH" \
             --output target/candidate-run.json
-          python3 scripts/validate-unsigned-flasher-candidate.py target/candidate \
+          ./tools/prns release candidate validate-unsigned -- target/candidate \
             --expected-commit "$(jq -r '.source_commit' target/candidate-run.json)" \
             --repository-version VERSION \
             --pinned-key release/keys/minisign.pub \
@@ -102,7 +102,7 @@ jobs:
           echo "version=$(jq -r '.version' target/candidate-identity.json)" >> "$GITHUB_OUTPUT"
           echo "source_commit=$source_commit" >> "$GITHUB_OUTPUT"
       - name: Install exact release signing tool
-        run: scripts/install-release-minisign.sh "${RUNNER_TEMP}/prns-release-bin"
+        run: ./tools/prns release toolchain minisign install -- "${RUNNER_TEMP}/prns-release-bin"
       - name: Install exact Rust candidate verifier toolchain
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
@@ -118,11 +118,11 @@ jobs:
           trap 'rm -f "$secret_key"' EXIT HUP INT TERM
           printf '%s' "$PRNS_MINISIGN_SECRET_KEY_B64" | base64 --decode > "$secret_key"
           test -s "$secret_key"
-          scripts/sign-flasher-candidate.sh target/candidate "$secret_key"
+          ./tools/prns release candidate sign -- target/candidate "$secret_key"
       - name: Verify every signed candidate invariant
         env:
           PRNS_MINISIGN_BIN: ${{ runner.temp }}/prns-release-bin/minisign
-        run: scripts/verify-flasher-candidate.sh target/candidate
+        run: ./tools/prns release candidate verify -- target/candidate
       - name: Package deterministic signed candidate
         id: signed
         env:
@@ -131,7 +131,7 @@ jobs:
           mkdir -p target/release
           bundle="target/release/prns-flasher-candidate-v${CANDIDATE_VERSION}-signed.tar.gz"
           candidate_run="target/release/prns-flasher-candidate-run-v${CANDIDATE_VERSION}.json"
-          python3 scripts/package-flasher-candidate.py target/candidate "$bundle"
+          ./tools/prns release candidate package -- target/candidate "$bundle"
           cp target/candidate-run.json "$candidate_run"
           echo "bundle=$bundle" >> "$GITHUB_OUTPUT"
           echo "sha256=$(sha256sum "$bundle" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
@@ -147,7 +147,7 @@ jobs:
           while IFS= read -r relative; do
             subjects+=(--subject "$relative" "target/candidate/$relative")
           done < <(jq -r '[.targets[].parts[].path] | unique[]' target/candidate/flash-manifest.json)
-          python3 scripts/write-flasher-attestation-checksums.py \
+          ./tools/prns release attestation checksums -- \
             "${subjects[@]}" \
             --output target/release/attestation-subjects.sha256
       - name: Attest the signed bundle, CLI archives, and sparse firmware payloads
@@ -179,7 +179,7 @@ jobs:
             required+=(--required-subject "$relative" "target/candidate/$relative")
           done
           test "$((${#required[@]} / 3))" -eq "$((6 + ${#firmware_paths[@]}))"
-          python3 scripts/record-flasher-attestation.py \
+          ./tools/prns release attestation record -- \
             --bundle "$attestation_bundle" \
             "${required[@]}" \
             --repository "$GITHUB_REPOSITORY" \
@@ -376,7 +376,7 @@ jobs:
           test "$(jq -s 'length' target/public-review/job.json)" -eq 1
           completed_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
           evidence_name="public-review-v${RELEASE_VERSION}-run-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}.json"
-          python3 scripts/flasher-public-review.py create \
+          ./tools/prns release public-review -- create \
             --release-json target/public-review/release.json \
             --run-json target/public-review/run.json \
             --job-json target/public-review/job.json \

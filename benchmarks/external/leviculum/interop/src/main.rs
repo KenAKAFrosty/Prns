@@ -95,10 +95,7 @@ impl SizeSequence {
 
 fn free_port() -> u16 {
     match TcpListener::bind("127.0.0.1:0") {
-        Ok(l) => l
-            .local_addr()
-            .map(|a| a.port())
-            .unwrap_or(45000),
+        Ok(l) => l.local_addr().map(|a| a.port()).unwrap_or(45000),
         Err(_) => 45000,
     }
 }
@@ -229,7 +226,10 @@ async fn responder(m: Manifest) {
 
     let mut idle = tokio::time::interval(Duration::from_millis(200));
     let report = |delivered: u64, payload_bytes: u64| {
-        println!("RESULT delivered={} payload_bytes={}", delivered, payload_bytes);
+        println!(
+            "RESULT delivered={} payload_bytes={}",
+            delivered, payload_bytes
+        );
     };
 
     loop {
@@ -499,7 +499,16 @@ async fn initiator(m: Manifest, addr: &str, duration: Duration) {
     let mut in_flight: usize = 0;
 
     for _ in 0..window {
-        if send_single(&node, &dest_hash, &mut sizes, &scratch, &mut sent, &mut pending).await {
+        if send_single(
+            &node,
+            &dest_hash,
+            &mut sizes,
+            &scratch,
+            &mut sent,
+            &mut pending,
+        )
+        .await
+        {
             in_flight += 1;
         }
     }
@@ -526,7 +535,12 @@ async fn initiator(m: Manifest, addr: &str, duration: Duration) {
                         rtts.push(send_time.elapsed().as_millis() as u64);
                         if Instant::now() < deadline {
                             if send_single(
-                                &node, &dest_hash, &mut sizes, &scratch, &mut sent, &mut pending,
+                                &node,
+                                &dest_hash,
+                                &mut sizes,
+                                &scratch,
+                                &mut sent,
+                                &mut pending,
                             )
                             .await
                             {
@@ -541,7 +555,12 @@ async fn initiator(m: Manifest, addr: &str, duration: Duration) {
                         timeouts += 1;
                         if Instant::now() < deadline {
                             if send_single(
-                                &node, &dest_hash, &mut sizes, &scratch, &mut sent, &mut pending,
+                                &node,
+                                &dest_hash,
+                                &mut sizes,
+                                &scratch,
+                                &mut sent,
+                                &mut pending,
                             )
                             .await
                             {

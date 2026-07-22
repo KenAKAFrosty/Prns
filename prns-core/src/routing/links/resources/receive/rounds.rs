@@ -97,34 +97,35 @@ impl<S: StorageLayout> EngineState<S> {
         let mut iv = [0u8; 16];
         fill_entropy(&mut iv);
         let mut request_wire_len = 0u64;
-        let mut fill = |slot: &mut [u8]| -> Option<usize> {
-            let mut plaintext = [0u8; 1 + MAP_HASH_LEN + 32 + WINDOW_MAX * MAP_HASH_LEN];
-            let plaintext_len = write_part_request_plaintext(
-                hash,
-                exhausted.then_some(&last_known),
-                &requested[..requested_count * MAP_HASH_LEN],
-                &mut plaintext,
-            )
-            .ok()?;
-            let wire_len = write_link_packet(
-                link_id,
-                key,
-                mtu,
-                WireContext::ResourceRequest,
-                &plaintext[..plaintext_len],
-                &iv,
-                slot,
-            )
-            .ok()?;
-            request_wire_len = wire_len as u64;
-            Some(wire_len)
-        };
-        sink(EngineReaction::Directive(Directive::EmitFrame {
-            target: fire_on,
-            size_hint: link_data_frame_ceiling(LINK_MDU),
-            fill: &mut fill,
-        }));
-        drop(fill);
+        {
+            let mut fill = |slot: &mut [u8]| -> Option<usize> {
+                let mut plaintext = [0u8; 1 + MAP_HASH_LEN + 32 + WINDOW_MAX * MAP_HASH_LEN];
+                let plaintext_len = write_part_request_plaintext(
+                    hash,
+                    exhausted.then_some(&last_known),
+                    &requested[..requested_count * MAP_HASH_LEN],
+                    &mut plaintext,
+                )
+                .ok()?;
+                let wire_len = write_link_packet(
+                    link_id,
+                    key,
+                    mtu,
+                    WireContext::ResourceRequest,
+                    &plaintext[..plaintext_len],
+                    &iv,
+                    slot,
+                )
+                .ok()?;
+                request_wire_len = wire_len as u64;
+                Some(wire_len)
+            };
+            sink(EngineReaction::Directive(Directive::EmitFrame {
+                target: fire_on,
+                size_hint: link_data_frame_ceiling(LINK_MDU),
+                fill: &mut fill,
+            }));
+        }
         if request_wire_len > 0 {
             self.links.note_outbound(link_id, now);
         }

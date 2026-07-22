@@ -274,26 +274,27 @@ impl<S: StorageLayout> EngineState<S> {
         let mut reject_plaintext = [0u8; RESOURCE_HASH_LEN];
         if write_cancel_plaintext(hash, &mut reject_plaintext).is_ok() {
             let mut wrote = false;
-            let mut fill = |slot: &mut [u8]| -> Option<usize> {
-                let wire_len = write_link_packet(
-                    link_id,
-                    key,
-                    mtu,
-                    WireContext::ResourceReceiverCancel,
-                    &reject_plaintext,
-                    &reject_iv,
-                    slot,
-                )
-                .ok()?;
-                wrote = true;
-                Some(wire_len)
-            };
-            sink(EngineReaction::Directive(Directive::EmitFrame {
-                target: fire_on,
-                size_hint: link_data_frame_ceiling(RESOURCE_HASH_LEN),
-                fill: &mut fill,
-            }));
-            drop(fill);
+            {
+                let mut fill = |slot: &mut [u8]| -> Option<usize> {
+                    let wire_len = write_link_packet(
+                        link_id,
+                        key,
+                        mtu,
+                        WireContext::ResourceReceiverCancel,
+                        &reject_plaintext,
+                        &reject_iv,
+                        slot,
+                    )
+                    .ok()?;
+                    wrote = true;
+                    Some(wire_len)
+                };
+                sink(EngineReaction::Directive(Directive::EmitFrame {
+                    target: fire_on,
+                    size_hint: link_data_frame_ceiling(RESOURCE_HASH_LEN),
+                    fill: &mut fill,
+                }));
+            }
             if wrote {
                 self.links.note_outbound(link_id, now);
             }

@@ -54,7 +54,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install exact Minisign verifier
-        run: scripts/install-release-minisign.sh "${RUNNER_TEMP}/prns-release-bin"
+        run: ./tools/prns release toolchain minisign install -- "${RUNNER_TEMP}/prns-release-bin"
       - name: Refuse to overwrite any live signed stable channel
         id: custody
         env:
@@ -72,7 +72,7 @@ jobs:
             --output target/live-site-custody/stable.json \
             "https://reticulum.rs/releases/channels/stable.json?custody=${cache_key}"
           set +e
-          python3 scripts/flasher-website-history.py probe-stable \
+          ./tools/prns release website-history -- probe-stable \
             --descriptor target/live-site-custody/stable.json
           probe_status="$?"
           set -e

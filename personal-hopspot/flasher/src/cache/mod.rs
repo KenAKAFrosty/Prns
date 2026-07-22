@@ -24,7 +24,7 @@ const MAX_ARTIFACT_BYTES: u64 = 64 * 1024 * 1024;
 // Release payloads are currently far smaller than 512 MiB. This leaves headroom for
 // platform archives while rejecting unexpectedly large untrusted files before hashing.
 const MAX_CANDIDATE_FILE_BYTES: u64 = 512 * 1024 * 1024;
-// Keep this aligned with scripts/extract-flasher-candidate.py's extraction ceiling.
+// Keep this aligned with the release.candidate.extract task's extraction ceiling.
 const MAX_CANDIDATE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_CANDIDATE_ENTRIES: usize = 200_000;
 const MAX_CANDIDATE_DEPTH: usize = 64;
