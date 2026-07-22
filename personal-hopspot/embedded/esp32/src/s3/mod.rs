@@ -55,7 +55,7 @@ use esp_radio::wifi::sta::StationConfig;
 #[cfg(feature = "wifi-auto")]
 use esp_radio::wifi::{
     Config as WifiConfig, ControllerConfig, Interface as WifiStaDevice, PowerSaveMode,
-    WifiController,
+    WifiController, WifiError,
 };
 
 #[cfg(feature = "wifi-auto")]
