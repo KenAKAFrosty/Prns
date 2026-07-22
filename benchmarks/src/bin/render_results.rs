@@ -96,7 +96,12 @@ fn render_host(
     render_machine_and_method(&mut out, host);
 
     let aggregates = aggregate(rows);
-    render_headline(&mut out, &aggregates, implementations);
+    render_headline(
+        &mut out,
+        &aggregates,
+        implementations,
+        qualification_complete(&aggregates),
+    );
 
     let mut grouped: BTreeMap<String, Vec<(Manifest, Vec<&Aggregate>)>> = BTreeMap::new();
     let mut by_scenario: BTreeMap<String, Vec<&Aggregate>> = BTreeMap::new();
@@ -128,10 +133,7 @@ fn render_host(
 
 fn render_qualification(out: &mut String, rows: &[ResultRow]) {
     let aggregates = aggregate(rows);
-    let complete = aggregates.len() == 20
-        && aggregates
-            .iter()
-            .all(|item| item.samples == 3 && item.conformant() == Some(true));
+    let complete = qualification_complete(&aggregates);
     let commits = rows
         .iter()
         .map(|row| row.commit.as_str())
@@ -165,6 +167,13 @@ fn render_qualification(out: &mut String, rows: &[ResultRow]) {
         aggregates.len(),
         if clean { "clean" } else { "dirty or unknown" }
     );
+}
+
+fn qualification_complete(aggregates: &[Aggregate]) -> bool {
+    aggregates.len() == 20
+        && aggregates
+            .iter()
+            .all(|item| item.samples == 3 && item.conformant() == Some(true))
 }
 
 fn render_machine_and_method(out: &mut String, host: &str) {
@@ -296,6 +305,7 @@ fn render_headline(
     out: &mut String,
     aggregates: &[Aggregate],
     implementations: &[ImplementationDescriptor],
+    qualification_complete: bool,
 ) {
     out.push_str("\n## At a glance\n\n| Scenario | Prns | Reference | Prns / reference |\n|---|---:|---:|---:|\n");
     for scenario in load_catalog().expect("validated benchmark catalog") {
@@ -308,6 +318,12 @@ fn render_headline(
             .find_map(|implementation| diagonal(aggregates, scenario, &implementation.slug));
         let ours_value = ours.and_then(|row| primary_value(row, &manifest));
         let reference_value = reference.and_then(|row| primary_value(row, &manifest));
+        assert!(
+            !qualification_complete || (ours_value.is_some() && reference_value.is_some()),
+            "complete suite lacks the manifest-owned primary metric {} for {}",
+            manifest.primary_metric,
+            scenario,
+        );
         let ratio = match (ours_value, reference_value) {
             (Some(ours), Some(reference)) if reference != 0.0 => {
                 format!("{:.2}×", ours / reference)
@@ -898,5 +914,25 @@ mod tests {
             1
         );
         assert!(!output.contains("Each row is one live pairing"));
+    }
+
+    #[test]
+    fn request_headline_reads_its_manifest_owned_rate() {
+        let mut request_rows = Vec::new();
+        for sample in 0..3 {
+            let mut rate = row(
+                sample,
+                Axis::Throughput,
+                "requests_per_sec",
+                Some(6_000.0 + f64::from(sample)),
+            );
+            rate.scenario = "request-response".into();
+            request_rows.push(rate);
+        }
+        let aggregates = aggregate(&request_rows);
+        assert_eq!(
+            primary_value(&aggregates[0], &Manifest::load("request-response")),
+            Some(6_001.0),
+        );
     }
 }

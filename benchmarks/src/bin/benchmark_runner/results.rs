@@ -22,6 +22,13 @@ fn command_line(program: &str, args: &[&str]) -> Option<String> {
         .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
+fn rate_metric(scenario: benchmarks::ScenarioId) -> &'static str {
+    match scenario {
+        benchmarks::ScenarioId::RequestResponse => "requests_per_sec",
+        _ => "delivered_per_sec",
+    }
+}
+
 pub(super) struct RunStamp {
     pub(super) host: String,
     pub(super) commit: String,
@@ -275,6 +282,7 @@ pub(super) fn file_results(
         .or_else(|| field(result, "requests_per_sec"))
         .or_else(|| field(result, "cycles_per_sec"))
         .or_else(|| elapsed_seconds.map(|seconds| delivered / seconds));
+    let rate_metric = rate_metric(args.scenario);
     let rtt_p50_ms = field(result, "rtt_p50_ms").or_else(|| field(result, "transfer_p50_ms"));
     let rtt_p99_ms = field(result, "rtt_p99_ms").or_else(|| field(result, "transfer_p99_ms"));
     let application_payload_bytes = field(result, "payload_bytes").or_else(|| {
@@ -344,7 +352,7 @@ pub(super) fn file_results(
         ),
         row(
             Axis::Throughput,
-            "delivered_per_sec",
+            rate_metric,
             delivered_per_sec.filter(|_| !died && perf_valid),
             "msgs/s",
         ),
@@ -560,8 +568,17 @@ pub(super) fn file_results(
 
 #[cfg(test)]
 mod tests {
-    use super::{scenario_conforms, Conformance};
-    use benchmarks::ConformanceRule;
+    use super::{rate_metric, scenario_conforms, Conformance};
+    use benchmarks::{ConformanceRule, ScenarioId};
+
+    #[test]
+    fn request_results_keep_the_manifest_owned_primary_metric() {
+        assert_eq!(rate_metric(ScenarioId::RequestResponse), "requests_per_sec");
+        assert_eq!(
+            rate_metric(ScenarioId::SinglePacketThroughput),
+            "delivered_per_sec"
+        );
+    }
 
     #[test]
     fn strict_link_accounting_requires_every_wire_send() {
