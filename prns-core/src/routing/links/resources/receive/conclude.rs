@@ -8,7 +8,7 @@ use crate::routing::delivery::receipts::{ReceiptTable, Receipts};
 use crate::routing::links::data::link_raw_frame_ceiling;
 use crate::routing::links::data::write_link_raw_packet;
 use crate::routing::links::request::{
-    parse_request_plaintext, request_response_timeout_ms, RequestId,
+    parse_request_plaintext, parse_response_plaintext, request_response_timeout_ms, RequestId,
 };
 use crate::routing::links::resources::assemble_incoming::{
     open_transfer, verify_and_prove, OpenTransferError,
@@ -510,6 +510,19 @@ struct AssembledSingleSegment<'a> {
     data: &'a [u8],
 }
 
+/// Stock RNS resource responses carry the same msgpack `[request_id, data]` envelope as packet
+/// responses. Accept data that is not a valid envelope as the former Prns raw-body form for wire
+/// continuity, but a valid envelope must name the request advertised by the resource.
+fn response_application_data(request_id: RequestId, data: &[u8]) -> Option<&[u8]> {
+    if data.first() != Some(&0x92) {
+        return Some(data);
+    }
+    match parse_response_plaintext(data) {
+        Ok((enclosed, body)) => (enclosed == request_id).then_some(body),
+        Err(_) => Some(data),
+    }
+}
+
 /// Correlated deliveries (a request or a settled response) carry no metadata lane because the reference's request/response machinery never reads it. A block on those transfers therefore strips and drops.
 fn deliver_single_segment<C: ReceiptTable>(
     receipts: &mut Receipts<C>,
@@ -531,6 +544,9 @@ fn deliver_single_segment<C: ReceiptTable>(
 
     match correlation {
         ResourceCorrelation::Response(id) => {
+            let Some(data) = response_application_data(id, data) else {
+                return;
+            };
             if let Some(proven) = receipts.settle_by_request_id(id) {
                 sink(EngineReaction::Journaled(Journaled::ResponseReceived {
                     command_id: proven.command_id,
@@ -641,6 +657,14 @@ fn deliver_split_segment<C: ReceiptTable>(
     };
     match answers {
         Some((command_id, request_id)) => {
+            let data = if segment_index == 1 {
+                let Some(data) = response_application_data(request_id, data) else {
+                    return;
+                };
+                data
+            } else {
+                data
+            };
             sink(EngineReaction::Journaled(
                 Journaled::ResponseSegmentReceived {
                     command_id,
@@ -770,6 +794,30 @@ mod seam_tests {
 
     fn case1_plaintext() -> std::vec::Vec<u8> {
         b"reticulum resources ride the link ".repeat(40)
+    }
+
+    #[test]
+    fn response_resources_strip_only_a_matching_valid_stock_envelope() {
+        use crate::routing::links::request::write_response_plaintext;
+
+        let request_id = RequestId([0x41; 16]);
+        let mut packed = [0u8; 64];
+        let len = write_response_plaintext(&request_id, b"answer", &mut packed).unwrap();
+        assert_eq!(
+            response_application_data(request_id, &packed[..len]),
+            Some(&b"answer"[..])
+        );
+        assert_eq!(
+            response_application_data(RequestId([0x42; 16]), &packed[..len]),
+            None,
+            "a stock envelope cannot settle another request",
+        );
+        let former_raw_body = b"\x92not-a-valid-response-envelope";
+        assert_eq!(
+            response_application_data(request_id, former_raw_body),
+            Some(&former_raw_body[..]),
+            "a legacy raw body remains data even when its first byte resembles msgpack",
+        );
     }
 
     #[test]

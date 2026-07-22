@@ -1,25 +1,32 @@
 {
   "name": "request-response",
-  "version": 2,
+  "version": 8,
+  "order": 3,
   "title": "Request/response",
   "category": "Requests",
-  "summary": "Windowed request/reply round trips over one established link.",
+  "summary": "Four concurrent small requests with asynchronous 1–4 KiB resource responses over four pre-established links.",
   "primary_metric": "requests_per_sec",
   "headline": true,
   "notes": [],
-  "description": "Windowed request/reply round trips over one link - the network's most common interactive pattern (page fetches, queries, telemetry). Each varied-size request names a varied response size. Requests per second is the primary comparison; fractional-millisecond p50 and p99 wall-clock RTT remain visible beside it.",
+  "description": "Four concurrent request/reply round trips use four pre-established links at the manifest-owned standard 500-byte RNS MTU. Deterministic 32–128 byte requests remain below the link MDU, while deterministic 1–4 KiB responses unambiguously use the documented asynchronous resource-response path on both stacks. That preserves realistic small requests and gives each requester time to register its public receipt before the response resource can complete, without sleeps, blocking handlers, private queue inspection, reference mutation, or latency shims. Requests per second is the primary comparison; fractional-millisecond p50 and p99 wall-clock RTT run from request issue through complete response settlement.",
   "roles": [
     "responder",
     "initiator"
   ],
   "profile": {
     "mechanism": "request",
-    "request_min": 16,
-    "request_max": 300,
-    "response_min": 32,
-    "response_max": 350,
+    "request_min": 32,
+    "request_max": 128,
+    "response_min": 1024,
+    "response_max": 4096,
     "window": 4,
-    "duration_ms": 30000
+    "request_links": 4,
+    "link_mtu": 500,
+    "duration_ms": 30000,
+    "drain_timeout_ms": 30000,
+    "size_seed": 6840346605343539201,
+    "payload_shape": "dense"
   },
-  "conformance": "sent == delivered + timeouts + raced; every response carries exactly the byte count its request named. Any implementation-local loopback race is counted explicitly instead of disappearing from accounting."
+  "conformance_rule": "exact-request",
+  "conformance": "Exactly four request lanes remain occupied at a 500-byte link MTU; sent == delivered == served, expected_response_bytes == response_bytes == served_response_bytes, and timeouts == raced == 0."
 }

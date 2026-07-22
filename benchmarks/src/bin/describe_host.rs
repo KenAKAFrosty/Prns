@@ -1,6 +1,9 @@
+use std::path::Path;
 use std::process::Command;
 
-use benchmarks::{load_host, load_or_create_submitter_id, write_host, DeviceId, HostDescriptor};
+use benchmarks::{
+    load_host, load_or_create_submitter_id, results_dir, write_host, DeviceId, HostDescriptor,
+};
 use sysinfo::System;
 
 fn main() {
@@ -10,6 +13,7 @@ fn main() {
     // not change its identity, or its older figures stop joining to it.
     let device_id = load_host(&host)
         .and_then(|existing| existing.device_id)
+        .or_else(|| canonical_device_id(&host))
         .unwrap_or_else(DeviceId::generate);
     let submitter_id = load_or_create_submitter_id();
 
@@ -39,7 +43,10 @@ fn main() {
     };
     write_host(&descriptor);
 
-    println!("described host `{host}` -> results/{host}/host.json");
+    println!(
+        "described host `{host}` -> {}",
+        results_dir().join(&host).join("host.json").display()
+    );
     println!(
         "  cpu     {}",
         descriptor.cpu_model.as_deref().unwrap_or("unknown")
@@ -75,6 +82,14 @@ fn main() {
         "  submitter {} (this checkout — .submitter.json, gitignored)",
         submitter_id.0
     );
+}
+
+fn canonical_device_id(host: &str) -> Option<DeviceId> {
+    let root = std::env::var_os("BENCHMARK_CANONICAL_RESULTS_DIR")?;
+    let path = Path::new(&root).join(host).join("host.json");
+    serde_json::from_str::<HostDescriptor>(&std::fs::read_to_string(path).ok()?)
+        .ok()?
+        .device_id
 }
 
 fn describe_profile(d: &HostDescriptor) -> String {

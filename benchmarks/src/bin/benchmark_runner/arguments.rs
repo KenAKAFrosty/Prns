@@ -1,5 +1,5 @@
 pub(super) struct Args {
-    pub(super) scenario: String,
+    pub(super) scenario: benchmarks::ScenarioId,
     pub(super) initiator: String,
     pub(super) responder: String,
     pub(super) duration_ms: Option<u64>,
@@ -15,6 +15,8 @@ pub(super) struct SuiteArgs {
     pub(super) dry_run: bool,
     pub(super) smoke: bool,
     pub(super) only_cells: Option<std::collections::BTreeSet<usize>>,
+    pub(super) output: Option<std::path::PathBuf>,
+    pub(super) suite_id: Option<String>,
 }
 
 pub(super) enum RunnerCommand {
@@ -22,7 +24,7 @@ pub(super) enum RunnerCommand {
     Suite(SuiteArgs),
 }
 
-const USAGE: &str = "usage:\n  benchmark_runner run <scenario> [--initiator personal-rns] [--responder rns-1.4.0-compiled] [options]\n  benchmark_runner suite release [--samples 3] [--duration-ms 30000] [--only-cells 7,9,10] [--dry-run|--smoke]";
+const USAGE: &str = "usage:\n  benchmark_runner run <scenario> [--initiator personal-rns] [--responder rns-1.4.0-compiled] [options]\n  benchmark_runner suite release [--samples 3] [--duration-ms 30000] [--output DIR] [--suite-id ID] [--only-cells 7,9,10] [--dry-run|--smoke]";
 
 pub(super) fn parse_args() -> RunnerCommand {
     let mut arguments = std::env::args().skip(1);
@@ -35,7 +37,11 @@ pub(super) fn parse_args() -> RunnerCommand {
 
 fn parse_run(values: Vec<String>) -> RunnerCommand {
     let mut values = values.into_iter();
-    let scenario = values.next().unwrap_or_else(|| panic!("{USAGE}"));
+    let scenario = values
+        .next()
+        .unwrap_or_else(|| panic!("{USAGE}"))
+        .parse()
+        .unwrap_or_else(|error| panic!("{error}\n{USAGE}"));
     let mut args = Args {
         scenario,
         initiator: "personal-rns".into(),
@@ -89,6 +95,8 @@ fn parse_suite(values: Vec<String>) -> RunnerCommand {
         dry_run: false,
         smoke: false,
         only_cells: None,
+        output: None,
+        suite_id: None,
     };
     while let Some(flag) = values.next() {
         match flag.as_str() {
@@ -127,6 +135,14 @@ fn parse_suite(values: Vec<String>) -> RunnerCommand {
                     "cell numbers are one-based"
                 );
                 args.only_cells = Some(cells);
+            }
+            "--output" => {
+                args.output = Some(std::path::PathBuf::from(
+                    values.next().expect("--output needs a directory"),
+                ));
+            }
+            "--suite-id" => {
+                args.suite_id = Some(values.next().expect("--suite-id needs an identifier"));
             }
             other => panic!("unknown suite option {other}\n{USAGE}"),
         }

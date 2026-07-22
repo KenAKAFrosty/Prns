@@ -1,6 +1,7 @@
 {
   "name": "link-message-throughput",
   "version": 3,
+  "order": 2,
   "title": "Link-message throughput",
   "category": "Links",
   "summary": "Sustained delivery of small messages over one established link.",
@@ -16,8 +17,11 @@
     "mechanism": "link",
     "window": 16,
     "duration_ms": 30000,
+    "drain_timeout_ms": 30000,
     "payload_min": 60,
-    "payload_max": 420
+    "payload_max": 420,
+    "size_seed": 6840346605343539201
   },
-  "conformance": "sent == delivered + timeouts. A locally culled receipt is explicit backpressure rather than a wire send or timeout; it contracts the active window instead of triggering another immediate send."
+  "conformance_rule": "exact-link",
+  "conformance": "attempted == sent + locally_culled, sent == responder_delivered, payload bytes match exactly, and wire timeouts are zero. Final reference receipts that lose their proof only after traffic stops remain explicit as receipt_unproved; they count as delivered only when the responder independently confirms the exact message and byte totals."
 }

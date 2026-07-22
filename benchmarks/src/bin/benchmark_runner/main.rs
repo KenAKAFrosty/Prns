@@ -10,16 +10,51 @@ use std::process::{Child, Command, Stdio};
 use std::sync::mpsc as std_mpsc;
 use std::time::Duration;
 
-use benchmarks::scenario_dir;
 use benchmarks::{
-    energy_unavailable_hint, load_host, load_or_create_submitter_id, write_rows, Axis, DeviceId,
-    PowerMeter, ResultRow, Subject, SubmitterId, RESULT_SCHEMA_VERSION,
+    energy_unavailable_hint, load_host, load_manifest, load_or_create_submitter_id, scenario_dir,
+    write_rows, Axis, ConformanceRule, DeviceId, PowerMeter, ResultRow, ScenarioManifest, Subject,
+    SubmitterId, RESULT_SCHEMA_VERSION,
 };
 
 use arguments::{parse_args, Args, RunnerCommand};
 use implementation::{implementation, Implementation};
 use process::{await_line, spawn_role};
 use results::{file_results, CollectedRun};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MeasurementPhase {
+    Startup,
+    Linked,
+    Measuring,
+    Draining,
+    Complete,
+}
+
+struct PhaseTracker(MeasurementPhase);
+
+impl PhaseTracker {
+    fn new() -> Self {
+        Self(MeasurementPhase::Startup)
+    }
+
+    fn advance(&mut self, next: MeasurementPhase) -> Result<(), String> {
+        let valid = matches!(
+            (self.0, next),
+            (MeasurementPhase::Startup, MeasurementPhase::Linked)
+                | (MeasurementPhase::Linked, MeasurementPhase::Measuring)
+                | (MeasurementPhase::Measuring, MeasurementPhase::Draining)
+                | (MeasurementPhase::Draining, MeasurementPhase::Complete)
+        );
+        if !valid {
+            return Err(format!(
+                "invalid measurement phase transition {:?} -> {next:?}",
+                self.0
+            ));
+        }
+        self.0 = next;
+        Ok(())
+    }
+}
 
 fn main() {
     match parse_args() {
@@ -37,16 +72,15 @@ fn run(args: Args) {
 }
 
 fn run_direct(args: &Args) {
-    let manifest = scenario_dir(&args.scenario).join("manifest.json");
+    let manifest = scenario_dir(args.scenario.as_str()).join("manifest.json");
     assert!(manifest.exists(), "no manifest at {}", manifest.display());
-    let manifest_json: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&manifest).expect("reads the manifest"))
-            .expect("parses the manifest");
-    run_interop(args, &manifest_json, &manifest);
+    let manifest_data = load_manifest(args.scenario).expect("validated scenario manifest");
+    run_interop(args, &manifest_data, &manifest);
 }
 
-fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::path::Path) {
-    let version = manifest_json["version"].as_u64().unwrap_or(1) as u32;
+fn run_interop(args: &Args, manifest_data: &ScenarioManifest, manifest: &std::path::Path) {
+    let mut phase = PhaseTracker::new();
+    let version = manifest_data.version;
 
     let initiator_impl = implementation(&args.initiator);
     let responder_impl = implementation(&args.responder);
@@ -70,13 +104,17 @@ fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::p
     let meter = PowerMeter::detect();
     if meter.is_none() {
         println!("{}", energy_unavailable_hint());
+        if std::env::var_os("BENCHMARK_REQUIRE_ENERGY").as_deref()
+            == Some(std::ffi::OsStr::new("1"))
+        {
+            eprintln!("FAIL energy-required: no usable platform energy meter was detected");
+            std::process::exit(2);
+        }
     }
     let idle_watts = meter
         .as_ref()
         .map(|m| m.idle_watts(Duration::from_millis(1500)));
-    let bracket = meter.as_ref().map(|m| m.start());
-
-    let responder = spawn_role(
+    let mut responder = spawn_role(
         interop_command(&responder_impl),
         manifest,
         "responder",
@@ -90,28 +128,49 @@ fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::p
         .expect("responder READY carries addr")
         .to_string();
 
-    let initiator = spawn_role(
+    let mut initiator = spawn_role(
         interop_command(&initiator_impl),
         manifest,
         "initiator",
         &addr,
         args,
     );
+    await_line(&initiator, "MEASURE_READY", Duration::from_secs(30));
+    phase
+        .advance(MeasurementPhase::Linked)
+        .expect("participants reached the measurement barrier");
+    initiator.mark_measurement_start();
+    responder.mark_measurement_start();
+    let bracket = meter.as_ref().map(|meter| meter.start());
+    phase
+        .advance(MeasurementPhase::Measuring)
+        .expect("measurement starts only after link establishment");
+    initiator.start_measurement();
+
     let scenario_duration_ms = args
         .duration_ms
-        .or_else(|| manifest_json["profile"]["duration_ms"].as_u64())
-        .unwrap_or(10_000);
-    let window = Duration::from_millis(scenario_duration_ms + 30_000);
-    let result = await_line(&initiator, "RESULT", window);
+        .unwrap_or(manifest_data.profile.duration_ms);
+    let drain_timeout_ms = manifest_data.profile.drain_timeout_ms;
+    let window = Duration::from_millis(scenario_duration_ms + drain_timeout_ms + 30_000);
+    await_line(&initiator, "MEASURE_DONE", window);
+    initiator.mark_measurement_end();
+    responder.mark_measurement_end();
+    let energy = bracket.map(|bracket| bracket.finish());
+    phase
+        .advance(MeasurementPhase::Draining)
+        .expect("initiator stopped issuing and drained every outstanding operation");
+    let result = await_line(&initiator, "RESULT", Duration::from_secs(30));
     let responder_result = await_line(&responder, "RESULT", Duration::from_secs(10));
-    let energy = bracket.map(|b| b.finish());
-
+    phase
+        .advance(MeasurementPhase::Complete)
+        .expect("both roles reported complete results");
     let initiator_metrics = initiator.finalize();
     let responder_metrics = responder.finalize();
 
-    file_results(
+    let conformant = file_results(
         args,
         version,
+        manifest_data.conformance_rule,
         subject,
         &pairing_label,
         CollectedRun {
@@ -125,4 +184,27 @@ fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::p
             relay: None,
         },
     );
+    if !conformant {
+        std::process::exit(2);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MeasurementPhase, PhaseTracker};
+
+    #[test]
+    fn measurement_barrier_has_one_valid_phase_order() {
+        let mut phases = PhaseTracker::new();
+        for next in [
+            MeasurementPhase::Linked,
+            MeasurementPhase::Measuring,
+            MeasurementPhase::Draining,
+            MeasurementPhase::Complete,
+        ] {
+            phases.advance(next).expect("valid phase");
+        }
+        assert_eq!(phases.0, MeasurementPhase::Complete);
+        assert!(phases.advance(MeasurementPhase::Measuring).is_err());
+    }
 }

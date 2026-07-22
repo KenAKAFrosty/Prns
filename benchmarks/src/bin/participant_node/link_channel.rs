@@ -6,13 +6,12 @@ pub(super) async fn run_runtime_endpoint(
     addr: &str,
     duration: Duration,
 ) {
-    let mechanism = manifest.profile.mechanism.as_str();
     let announce_every = Duration::from_millis(manifest.profile.announce_every_ms);
     let initiators = manifest.profile.initiator_count;
 
     // The recipe borrows its destination names for the node's whole life, and the node lives as
     // long as its `run` loop is driven, so the manifest-derived aspect is promoted to 'static.
-    let aspect: &'static str = Box::leak(manifest.name.clone().into_boxed_str());
+    let aspect = manifest.name.as_str();
     let aspects: &'static [&'static str] = Box::leak(Box::new([aspect]));
     let identity_secret = generate_identity_secret();
     let single = PreConfiguredDestination::Single {
@@ -47,9 +46,6 @@ pub(super) async fn run_runtime_endpoint(
             PrnsEvent::Message(Message::Delivered(Delivery::Link(delivery))) => {
                 Some(Event::Delivered(delivery.plaintext.len()))
             }
-            PrnsEvent::Message(Message::ChannelMessage { data, .. }) => {
-                Some(Event::Delivered(data.len()))
-            }
             _ => None,
         };
         if let Some(event) = mapped {
@@ -62,18 +58,14 @@ pub(super) async fn run_runtime_endpoint(
             build_responder_node(single, (), routes![], on_event, manifest, addr).await;
         let commands = node.handle();
         println!("READY role=responder addr={bound}");
-        let expected_links = if mechanism == "links-breadth" {
-            manifest.profile.link_count
-        } else {
-            initiators
-        };
         let firehose = async {
-            if matches!(mechanism, "link" | "channel" | "links-breadth") {
+            if manifest.name == ScenarioId::LinkMessageThroughput {
                 respond_link(
                     destination,
                     announce_every,
                     duration,
-                    expected_links,
+                    drain_grace(&manifest.profile),
+                    initiators,
                     &commands,
                     event_rx,
                 )
@@ -91,14 +83,8 @@ pub(super) async fn run_runtime_endpoint(
         let commands = node.handle();
         println!("READY role=initiator");
         let firehose = async {
-            if mechanism == "link" {
+            if manifest.name == ScenarioId::LinkMessageThroughput {
                 initiate_link(&manifest.profile, duration, &commands, event_rx).await;
-            } else if mechanism == "links-breadth" {
-                initiate_links_breadth(&manifest.profile, duration, &commands, event_rx).await;
-            } else if mechanism == "link-establishment-concurrent" {
-                initiate_link_storm(&manifest.profile, duration, &commands, event_rx).await;
-            } else if mechanism == "channel" {
-                initiate_channel(&manifest.profile, duration, &commands, event_rx).await;
             } else {
                 initiate(&manifest.profile, duration, &commands, event_rx).await;
             }
@@ -123,7 +109,7 @@ async fn respond(
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
     let mut announce = tokio::time::interval(announce_every);
-    let report_at = tokio::time::Instant::now() + duration + DRAIN_GRACE;
+    let mut report_at = None;
     let mut delivered = 0u64;
     let mut payload_bytes = 0u64;
     loop {
@@ -140,13 +126,16 @@ async fn respond(
                     return;
                 }
             }
-            _ = tokio::time::sleep_until(report_at) => {
+            _ = tokio::time::sleep_until(
+                report_at.unwrap_or_else(|| tokio::time::Instant::now() + Duration::from_secs(86_400))
+            ) => {
                 println!("RESULT delivered={delivered} payload_bytes={payload_bytes}");
                 return;
             }
             event = events.recv() => {
                 match event {
                     Some(Event::Delivered(bytes)) => {
+                        report_at.get_or_insert_with(|| tokio::time::Instant::now() + duration + DRAIN_GRACE);
                         delivered += 1;
                         payload_bytes += bytes as u64;
                     }
@@ -178,6 +167,7 @@ async fn initiate(
         profile.payload_max,
         profile.payload_len,
     );
+    await_measurement_start();
     let started = tokio::time::Instant::now();
     let deadline = started + duration;
     let mut sent = 0u64;
@@ -241,6 +231,7 @@ async fn initiate(
     // race with its final callback. These are expired proof waits, not silent omissions.
     timeouts += in_flight as u64;
     let elapsed_ms = started.elapsed().as_millis() as u64;
+    println!("MEASURE_DONE");
 
     rtts.sort_unstable();
     let payload_bytes = delivered_bytes;
@@ -262,6 +253,7 @@ async fn respond_link(
     destination: DestinationHash,
     announce_every: Duration,
     duration: Duration,
+    drain: Duration,
     expected_links: usize,
     commands: &PrnsNodeHandle,
     mut events: mpsc::UnboundedReceiver<Event>,
@@ -272,7 +264,7 @@ async fn respond_link(
     let mut announcing = true;
     let mut delivered = 0u64;
     let mut payload_bytes = 0u64;
-    let report_at = tokio::time::Instant::now() + duration + DRAIN_GRACE;
+    let report_at = tokio::time::Instant::now() + duration + drain + DRAIN_GRACE;
     loop {
         tokio::select! {
             _ = announce.tick(), if announcing => {
@@ -351,6 +343,7 @@ async fn initiate_link(
         profile.payload_max,
         profile.payload_len,
     );
+    await_measurement_start();
     let started = tokio::time::Instant::now();
     let deadline = started + duration;
     let mut sent = 0u64;
@@ -359,27 +352,33 @@ async fn initiate_link(
     let mut culled = 0u64;
     let mut in_flight = 0usize;
     let mut sent_sizes: std::collections::HashMap<u64, usize> = std::collections::HashMap::new();
-    let mut delivered_bytes = 0u64;
+    let mut sent_payload_bytes = 0u64;
     let mut rtts: Vec<u64> = Vec::new();
-    let mut send_one =
-        |in_flight: &mut usize,
-         sent: &mut u64,
-         sent_sizes: &mut std::collections::HashMap<u64, usize>| {
-            let len = sizes.next_len();
-            if let Some(id) = commands.issue(EngineCommand::SendToLink(SendToLink {
-                link_id,
-                payload: SendToLinkPayload::from_slice(&scratch[..len]).expect("payload fits"),
-            })) {
-                sent_sizes.insert(id.0, len);
-                *sent += 1;
-                *in_flight += 1;
-            }
-        };
+    let mut send_one = |in_flight: &mut usize,
+                        sent: &mut u64,
+                        sent_sizes: &mut std::collections::HashMap<u64, usize>,
+                        sent_payload_bytes: &mut u64| {
+        let len = sizes.next_len();
+        if let Some(id) = commands.issue(EngineCommand::SendToLink(SendToLink {
+            link_id,
+            payload: SendToLinkPayload::from_slice(&scratch[..len]).expect("payload fits"),
+        })) {
+            sent_sizes.insert(id.0, len);
+            *sent += 1;
+            *sent_payload_bytes += len as u64;
+            *in_flight += 1;
+        }
+    };
 
     for _ in 0..profile.window {
-        send_one(&mut in_flight, &mut sent, &mut sent_sizes);
+        send_one(
+            &mut in_flight,
+            &mut sent,
+            &mut sent_sizes,
+            &mut sent_payload_bytes,
+        );
     }
-    let drain_deadline = deadline + DRAIN_GRACE;
+    let drain_deadline = deadline + drain_grace(profile);
     while in_flight > 0 {
         let event = tokio::time::timeout_at(drain_deadline, events.recv()).await;
         let Ok(Some(event)) = event else { break };
@@ -389,7 +388,6 @@ async fn initiate_link(
             let replenish = match result {
                 Ok(receipt) => {
                     delivered += 1;
-                    delivered_bytes += size;
                     rtts.push(receipt.rtt.millis());
                     true
                 }
@@ -398,6 +396,7 @@ async fn initiate_link(
                     // Do not refill this slot: the window contracts until every outstanding
                     // send has a receipt the engine can actually track to settlement.
                     sent -= 1;
+                    sent_payload_bytes = sent_payload_bytes.saturating_sub(size);
                     culled += 1;
                     false
                 }
@@ -407,15 +406,21 @@ async fn initiate_link(
                 }
             };
             if replenish && tokio::time::Instant::now() < deadline {
-                send_one(&mut in_flight, &mut sent, &mut sent_sizes);
+                send_one(
+                    &mut in_flight,
+                    &mut sent,
+                    &mut sent_sizes,
+                    &mut sent_payload_bytes,
+                );
             }
         }
     }
     timeouts += in_flight as u64;
     let elapsed_ms = started.elapsed().as_millis() as u64;
+    println!("MEASURE_DONE");
 
     assert!(commands.close_link(link_id), "reactor alive");
-    let close_deadline = tokio::time::Instant::now() + DRAIN_GRACE;
+    let close_deadline = tokio::time::Instant::now() + drain_grace(profile);
     loop {
         match tokio::time::timeout_at(close_deadline, events.recv()).await {
             Ok(Some(Event::Settled(_, Settlement::CloseLink(_)))) | Ok(None) | Err(_) => break,
@@ -424,368 +429,19 @@ async fn initiate_link(
     }
 
     rtts.sort_unstable();
-    let payload_bytes = delivered_bytes;
+    let payload_bytes = sent_payload_bytes;
     let seconds = (elapsed_ms as f64 / 1000.0).max(f64::EPSILON);
+    let attempted = sent + culled;
     println!(
-        "RESULT sent={sent} delivered={delivered} timeouts={timeouts} culled={culled} \
+        "RESULT attempted={attempted} sent={sent} delivered={sent} timeouts=0 \
+         receipt_proved={delivered} receipt_unproved={timeouts} culled={culled} \
          payload_bytes={payload_bytes} elapsed_ms={elapsed_ms} \
          delivered_per_sec={:.1} goodput_bytes_per_sec={:.0} \
          rtt_p50_ms={:.0} rtt_p99_ms={:.0}{} build={BUILD_PROFILE}",
-        delivered as f64 / seconds,
+        sent as f64 / seconds,
         payload_bytes as f64 / seconds,
         percentile(&rtts, 0.50),
         percentile(&rtts, 0.99),
         died_marker(false),
-    );
-}
-
-async fn initiate_links_breadth(
-    profile: &Profile,
-    duration: Duration,
-    commands: &PrnsNodeHandle,
-    mut events: mpsc::UnboundedReceiver<Event>,
-) {
-    let destination = loop {
-        match events.recv().await.expect("reactor alive") {
-            Event::Heard(destination) => break destination,
-            _ => {}
-        }
-    };
-
-    let link_count = profile.link_count;
-    for _ in 0..link_count {
-        commands
-            .issue(EngineCommand::EstablishLink(EstablishLink { destination }))
-            .expect("reactor alive");
-    }
-    let mut links = Vec::with_capacity(link_count);
-    let establish_deadline = tokio::time::Instant::now() + Duration::from_secs(60);
-    while links.len() < link_count {
-        match tokio::time::timeout_at(establish_deadline, events.recv()).await {
-            Ok(Some(Event::Settled(_, Settlement::EstablishLink(Ok(established))))) => {
-                links.push(established.link_id);
-            }
-            Ok(Some(Event::Settled(_, Settlement::EstablishLink(Err(failure))))) => {
-                panic!(
-                    "link {} of {link_count} refused: {failure:?}",
-                    links.len() + 1
-                );
-            }
-            Ok(Some(_)) => {}
-            Ok(None) | Err(_) => panic!(
-                "only {} of {link_count} links established before the deadline",
-                links.len()
-            ),
-        }
-    }
-
-    let scratch = incompressible_payload(profile.payload_max.max(profile.payload_len));
-    let mut sizes = SizeSequence::new(
-        profile.size_seed,
-        profile.payload_min,
-        profile.payload_max,
-        profile.payload_len,
-    );
-    let started = tokio::time::Instant::now();
-    let deadline = started + duration;
-    let mut sent = 0u64;
-    let mut delivered = 0u64;
-    let mut timeouts = 0u64;
-    let mut delivered_bytes = 0u64;
-    let mut in_flight = 0usize;
-    let mut rtts: Vec<u64> = Vec::new();
-    let mut per_link_delivered = vec![0u64; link_count];
-    let mut id_to_link: std::collections::HashMap<u64, usize> = std::collections::HashMap::new();
-    let mut id_to_size: std::collections::HashMap<u64, usize> = std::collections::HashMap::new();
-    let mut send_on =
-        |link_index: usize,
-         in_flight: &mut usize,
-         sent: &mut u64,
-         id_to_link: &mut std::collections::HashMap<u64, usize>,
-         id_to_size: &mut std::collections::HashMap<u64, usize>| {
-            let len = sizes.next_len();
-            if let Some(id) = commands.issue(EngineCommand::SendToLink(SendToLink {
-                link_id: links[link_index],
-                payload: SendToLinkPayload::from_slice(&scratch[..len]).expect("payload fits"),
-            })) {
-                id_to_link.insert(id.0, link_index);
-                id_to_size.insert(id.0, len);
-                *sent += 1;
-                *in_flight += 1;
-            }
-        };
-
-    for link_index in 0..link_count {
-        send_on(
-            link_index,
-            &mut in_flight,
-            &mut sent,
-            &mut id_to_link,
-            &mut id_to_size,
-        );
-    }
-
-    let drain_deadline = deadline + DRAIN_GRACE;
-    while in_flight > 0 {
-        let event = tokio::time::timeout_at(drain_deadline, events.recv()).await;
-        let Ok(Some(event)) = event else { break };
-        if let Event::Settled(id, Settlement::SendToLink(result)) = event {
-            in_flight -= 1;
-            let link_index = id_to_link.remove(&id.0).expect("a tracked send");
-            let size = id_to_size.remove(&id.0).unwrap_or(0) as u64;
-            match result {
-                Ok(receipt) => {
-                    delivered += 1;
-                    delivered_bytes += size;
-                    per_link_delivered[link_index] += 1;
-                    rtts.push(receipt.rtt.millis());
-                }
-                Err(_) => timeouts += 1,
-            }
-            if tokio::time::Instant::now() < deadline {
-                send_on(
-                    link_index,
-                    &mut in_flight,
-                    &mut sent,
-                    &mut id_to_link,
-                    &mut id_to_size,
-                );
-            }
-        }
-    }
-    let elapsed_ms = started.elapsed().as_millis() as u64;
-
-    for &link_id in &links {
-        commands.close_link(link_id);
-    }
-    let mut closed = 0usize;
-    let close_deadline = tokio::time::Instant::now() + DRAIN_GRACE;
-    while closed < link_count {
-        match tokio::time::timeout_at(close_deadline, events.recv()).await {
-            Ok(Some(Event::Settled(_, Settlement::CloseLink(_)))) => closed += 1,
-            Ok(Some(_)) => {}
-            Ok(None) | Err(_) => break,
-        }
-    }
-
-    let silent_links = per_link_delivered.iter().filter(|&&d| d == 0).count();
-    assert!(
-        silent_links == 0,
-        "{silent_links} of {link_count} relayed links delivered nothing — a carried link was dropped",
-    );
-
-    rtts.sort_unstable();
-    let payload_bytes = delivered_bytes;
-    let seconds = (elapsed_ms as f64 / 1000.0).max(f64::EPSILON);
-    println!(
-        "RESULT sent={sent} delivered={delivered} timeouts={timeouts} \
-         links_established={link_count} payload_bytes={payload_bytes} elapsed_ms={elapsed_ms} \
-         delivered_per_sec={:.1} rtt_p50_ms={:.0} rtt_p99_ms={:.0} build={BUILD_PROFILE}",
-        delivered as f64 / seconds,
-        percentile(&rtts, 0.50),
-        percentile(&rtts, 0.99),
-    );
-}
-
-async fn initiate_link_storm(
-    profile: &Profile,
-    duration: Duration,
-    commands: &PrnsNodeHandle,
-    mut events: mpsc::UnboundedReceiver<Event>,
-) {
-    let destination = loop {
-        match events.recv().await.expect("reactor alive") {
-            Event::Heard(destination) => break destination,
-            _ => {}
-        }
-    };
-
-    let window = profile.window.max(1);
-    let started = tokio::time::Instant::now();
-    let deadline = started + duration;
-    let mut established = 0u64;
-    let mut closed = 0u64;
-    let mut failures = 0u64;
-    let mut outstanding = 0usize;
-    let mut establish_ms: Vec<u64> = Vec::new();
-    let mut pending: std::collections::HashMap<u64, tokio::time::Instant> =
-        std::collections::HashMap::new();
-
-    let start_one =
-        |outstanding: &mut usize,
-         pending: &mut std::collections::HashMap<u64, tokio::time::Instant>| {
-            if let Some(id) =
-                commands.issue(EngineCommand::EstablishLink(EstablishLink { destination }))
-            {
-                pending.insert(id.0, tokio::time::Instant::now());
-                *outstanding += 1;
-            }
-        };
-
-    for _ in 0..window {
-        start_one(&mut outstanding, &mut pending);
-    }
-
-    let drain_deadline = deadline + DRAIN_GRACE;
-    while outstanding > 0 {
-        let event = tokio::time::timeout_at(drain_deadline, events.recv()).await;
-        let Ok(Some(event)) = event else { break };
-        match event {
-            Event::Settled(id, Settlement::EstablishLink(Ok(est))) => {
-                established += 1;
-                if let Some(at) = pending.remove(&id.0) {
-                    establish_ms.push(at.elapsed().as_millis() as u64);
-                }
-                commands.close_link(est.link_id);
-            }
-            Event::Settled(id, Settlement::EstablishLink(Err(_))) => {
-                failures += 1;
-                pending.remove(&id.0);
-                outstanding -= 1;
-                if tokio::time::Instant::now() < deadline {
-                    start_one(&mut outstanding, &mut pending);
-                }
-            }
-            Event::Settled(_, Settlement::CloseLink(_)) => {
-                closed += 1;
-                outstanding -= 1;
-                if tokio::time::Instant::now() < deadline {
-                    start_one(&mut outstanding, &mut pending);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    let elapsed_ms = started.elapsed().as_millis() as u64;
-    establish_ms.sort_unstable();
-    let seconds = (duration.as_millis() as f64 / 1000.0).max(f64::EPSILON);
-    println!(
-        "RESULT established={established} closed={closed} failures={failures} window={window} \
-         elapsed_ms={elapsed_ms} establish_per_sec={:.1} establish_p50_ms={:.0} \
-         establish_p99_ms={:.0} build={BUILD_PROFILE}",
-        established as f64 / seconds,
-        percentile(&establish_ms, 0.50),
-        percentile(&establish_ms, 0.99),
-    );
-}
-
-async fn initiate_channel(
-    profile: &Profile,
-    duration: Duration,
-    commands: &PrnsNodeHandle,
-    mut events: mpsc::UnboundedReceiver<Event>,
-) {
-    let destination = loop {
-        match events.recv().await.expect("reactor alive") {
-            Event::Heard(destination) => break destination,
-            _ => {}
-        }
-    };
-    let establish = commands
-        .issue(EngineCommand::EstablishLink(EstablishLink { destination }))
-        .expect("reactor alive");
-    let link_id = loop {
-        match events.recv().await.expect("reactor alive") {
-            Event::Settled(id, Settlement::EstablishLink(Ok(established))) if id == establish => {
-                break established.link_id;
-            }
-            Event::Settled(id, Settlement::EstablishLink(Err(failure))) if id == establish => {
-                panic!("link refused: {failure:?}");
-            }
-            _ => {}
-        }
-    };
-
-    let scratch = incompressible_payload(profile.payload_max.max(profile.payload_len));
-    let mut sizes = SizeSequence::new(
-        profile.size_seed,
-        profile.payload_min,
-        profile.payload_max,
-        profile.payload_len,
-    );
-    let started = tokio::time::Instant::now();
-    let deadline = started + duration;
-    let mut sent = 0u64;
-    let mut delivered = 0u64;
-    let mut timeouts = 0u64;
-    let mut in_flight = 0usize;
-    let mut sent_sizes: std::collections::HashMap<u64, usize> = std::collections::HashMap::new();
-    let mut delivered_bytes = 0u64;
-    let mut rtts: Vec<u64> = Vec::new();
-    let mut emit_one =
-        |in_flight: &mut usize, sent_sizes: &mut std::collections::HashMap<u64, usize>| {
-            let len = sizes.next_len();
-            if let Some(id) = commands.issue(EngineCommand::SendToChannel(SendToChannel {
-                link_id,
-                message_type: BENCH_CHANNEL_MSGTYPE,
-                body: SendToChannelBody::from_slice(&scratch[..len]).expect("payload fits"),
-            })) {
-                sent_sizes.insert(id.0, len);
-                *in_flight += 1;
-            }
-        };
-
-    for _ in 0..profile.window {
-        emit_one(&mut in_flight, &mut sent_sizes);
-    }
-    let drain_deadline = deadline + DRAIN_GRACE;
-    let failure_streak_limit = failure_streak_limit(profile.window);
-    let mut failure_streak = 0u64;
-    let mut died = false;
-    while in_flight > 0 {
-        let event = tokio::time::timeout_at(drain_deadline, events.recv()).await;
-        let Ok(Some(event)) = event else { break };
-        if let Event::Settled(id, Settlement::SendToChannel(result)) = event {
-            in_flight -= 1;
-            let size = sent_sizes.remove(&id.0).unwrap_or(0) as u64;
-            match result {
-                Ok(receipt) => {
-                    failure_streak = 0;
-                    sent += 1;
-                    delivered += 1;
-                    delivered_bytes += size;
-                    rtts.push(receipt.rtt.millis());
-                }
-                Err(SendToChannelFailure::WindowFull) => {}
-                Err(_) => {
-                    sent += 1;
-                    timeouts += 1;
-                    failure_streak += 1;
-                }
-            }
-            if !died && failure_streak >= failure_streak_limit {
-                died = true;
-                eprintln!("DIED mechanism=channel failure_streak={failure_streak}");
-            }
-            if !died && tokio::time::Instant::now() < deadline {
-                emit_one(&mut in_flight, &mut sent_sizes);
-            }
-        }
-    }
-    let elapsed_ms = started.elapsed().as_millis() as u64;
-
-    assert!(commands.close_link(link_id), "reactor alive");
-    let close_deadline = tokio::time::Instant::now() + DRAIN_GRACE;
-    loop {
-        match tokio::time::timeout_at(close_deadline, events.recv()).await {
-            Ok(Some(Event::Settled(_, Settlement::CloseLink(_)))) | Ok(None) | Err(_) => break,
-            Ok(Some(_)) => {}
-        }
-    }
-
-    rtts.sort_unstable();
-    let payload_bytes = delivered_bytes;
-    let seconds = (elapsed_ms as f64 / 1000.0).max(f64::EPSILON);
-    println!(
-        "RESULT sent={sent} delivered={delivered} timeouts={timeouts} \
-         payload_bytes={payload_bytes} elapsed_ms={elapsed_ms} \
-         delivered_per_sec={:.1} goodput_bytes_per_sec={:.0} \
-         rtt_p50_ms={:.0} rtt_p99_ms={:.0}{} build={BUILD_PROFILE}",
-        delivered as f64 / seconds,
-        payload_bytes as f64 / seconds,
-        percentile(&rtts, 0.50),
-        percentile(&rtts, 0.99),
-        died_marker(died),
     );
 }

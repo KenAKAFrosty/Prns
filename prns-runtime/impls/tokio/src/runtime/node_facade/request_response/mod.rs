@@ -7,7 +7,7 @@ use crate::reactor::driver::{
     HostCommand, HostResourcePayload, RequestAnyHostCommand, RespondAnyHostCommand,
 };
 use crate::routing::links::data::LINK_MDU;
-use crate::routing::links::request::RESPONSE_WIRE_OVERHEAD;
+use crate::routing::links::request::{write_response_plaintext, RESPONSE_WIRE_OVERHEAD};
 use crate::routing::links::resources::MAX_EFFICIENT_SIZE;
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
@@ -95,6 +95,16 @@ impl PrnsNodeHandle {
         if self.commands.is_closed() {
             return None;
         }
+        let packed_capacity = RESPONSE_WIRE_OVERHEAD.checked_add(data.len().max(1))?;
+        let mut packed = std::vec![0u8; packed_capacity];
+        let packed_len = write_response_plaintext(
+            &responder.request_id,
+            data.as_slice(),
+            packed.as_mut_slice(),
+        )
+        .ok()?;
+        packed.truncate(packed_len);
+        let data = HostResourcePayload::from(packed);
         if data.len() > MAX_EFFICIENT_SIZE {
             let handle = self.clone();
             let link_id = responder.link_id;

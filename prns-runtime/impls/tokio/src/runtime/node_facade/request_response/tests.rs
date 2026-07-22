@@ -3,7 +3,7 @@ use tokio::sync::mpsc::{self, UnboundedReceiver};
 use crate::engine::RequestResponseTimeout;
 use crate::reactor::compression;
 use crate::reactor::driver::HostCommand;
-use crate::routing::links::request::RequestId;
+use crate::routing::links::request::{parse_response_plaintext, RequestId};
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::runtime::request_router::RespondToken;
@@ -97,12 +97,16 @@ async fn a_large_response_carries_a_bz2_candidate() {
     let Some(HostCommand::RespondAny(respond)) = command_rx.recv().await else {
         panic!("expected a RespondAny command");
     };
+    let (enclosed_request, enclosed_body) =
+        parse_response_plaintext(respond.data.as_slice()).expect("stock RNS response envelope");
+    assert_eq!(enclosed_request, token.request_id);
+    assert_eq!(enclosed_body, body);
     assert_eq!(
         respond
             .compressed_candidate
             .as_ref()
             .map(|candidate| candidate.as_slice().to_vec()),
-        compression::compress_if_smaller(&body),
+        compression::compress_if_smaller(respond.data.as_slice()),
         "a response past the packet ceiling rides a bz2 candidate matching the codec",
     );
     assert!(respond.compressed_candidate.is_some(), "a run compresses");

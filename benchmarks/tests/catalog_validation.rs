@@ -2,16 +2,10 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use benchmarks::{load_all_rows, load_implementations, Subject, RESULT_SCHEMA_VERSION};
-
-const SCENARIOS: [&str; 5] = [
-    "single-packet-throughput",
-    "link-message-throughput",
-    "request-response",
-    "resource-max-segment",
-    "resource-64mib-stream",
-];
-const IMPLEMENTATIONS: [&str; 2] = ["personal-rns", "rns-1.4.0-compiled"];
+use benchmarks::{
+    load_all_rows, load_catalog, load_implementations, Subject, IMPLEMENTATIONS,
+    RESULT_SCHEMA_VERSION,
+};
 type HostScenario = (String, String);
 type PairingSample = (String, String, u32);
 
@@ -55,7 +49,11 @@ fn scenario_directories_and_manifests_are_unique_and_complete() {
     }
     assert_eq!(
         slugs,
-        SCENARIOS.into_iter().map(str::to_string).collect(),
+        load_catalog()
+            .expect("typed catalog")
+            .into_iter()
+            .map(|manifest| manifest.name.as_str().to_string())
+            .collect(),
         "the public suite is deliberately limited to five core scenarios"
     );
 }
@@ -152,21 +150,32 @@ fn every_published_host_has_the_complete_four_way_three_sample_matrix() {
         ));
     }
     assert!(!cells.is_empty(), "at least one host publishes results");
-    for ((host, scenario), observed) in cells {
-        let expected = IMPLEMENTATIONS
-            .iter()
-            .flat_map(|initiator| {
-                IMPLEMENTATIONS.iter().flat_map(move |responder| {
-                    (0..3).map(move |sample| {
-                        ((*initiator).to_string(), (*responder).to_string(), sample)
+    let hosts = cells
+        .keys()
+        .map(|(host, _)| host.clone())
+        .collect::<BTreeSet<_>>();
+    for host in hosts {
+        for manifest in load_catalog().expect("typed catalog") {
+            let scenario = manifest.name.as_str().to_string();
+            let observed = cells
+                .get(&(host.clone(), scenario.clone()))
+                .cloned()
+                .unwrap_or_default();
+            let expected = IMPLEMENTATIONS
+                .iter()
+                .flat_map(|initiator| {
+                    IMPLEMENTATIONS.iter().flat_map(move |responder| {
+                        (0..3).map(move |sample| {
+                            ((*initiator).to_string(), (*responder).to_string(), sample)
+                        })
                     })
                 })
-            })
-            .collect::<BTreeSet<_>>();
-        assert_eq!(
-            observed, expected,
-            "{host}/{scenario} must publish all four pairings with three samples"
-        );
+                .collect::<BTreeSet<_>>();
+            assert_eq!(
+                observed, expected,
+                "{host}/{scenario} must publish all four pairings with three samples"
+            );
+        }
     }
 }
 

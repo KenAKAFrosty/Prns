@@ -1,7 +1,6 @@
 {
   "implementation": "RNS 1.4.0 (compiled)",
   "slug": "rns-1.4.0-compiled",
-  "aliases": ["reference", "rns"],
   "language": "Python",
   "crypto_backend": "PyCA cryptography / OpenSSL",
   "role": "reference",

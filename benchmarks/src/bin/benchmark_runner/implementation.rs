@@ -80,9 +80,7 @@ pub(super) fn implementation(name: &str) -> Implementation {
         .join("|");
     let descriptor = descriptors
         .into_iter()
-        .find(|descriptor| {
-            descriptor.slug == name || descriptor.aliases.iter().any(|alias| alias == name)
-        })
+        .find(|descriptor| descriptor.slug == name)
         .unwrap_or_else(|| panic!("unknown implementation {name:?} ({known})"));
     Implementation { descriptor }
 }
@@ -92,11 +90,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn descriptors_drive_commands_and_aliases() {
-        let ours = implementation("self");
+    fn descriptors_drive_exact_public_commands() {
+        let ours = implementation("personal-rns");
         assert_eq!(ours.slug(), "personal-rns");
         assert!(ours.interop_command().is_some());
-        let reference = implementation("reference");
+        let reference = implementation("rns-1.4.0-compiled");
         assert_eq!(reference.slug(), "rns-1.4.0-compiled");
         assert!(reference.interop_command().is_some());
     }

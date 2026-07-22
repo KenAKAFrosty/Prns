@@ -177,8 +177,6 @@ pub struct ParticipantDescriptor {
 pub struct ImplementationDescriptor {
     pub implementation: String,
     pub slug: String,
-    #[serde(default)]
-    pub aliases: Vec<String>,
     pub language: String,
     pub crypto_backend: String,
     pub role: ImplementationRole,

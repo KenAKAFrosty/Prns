@@ -1,6 +1,7 @@
 {
   "name": "single-packet-throughput",
   "version": 2,
+  "order": 1,
   "title": "Single-packet throughput",
   "category": "Packets",
   "summary": "Sustained proved delivery of varied-size one-shot packets over TCP.",
@@ -16,8 +17,11 @@
     "mechanism": "single",
     "window": 16,
     "duration_ms": 30000,
+    "drain_timeout_ms": 30000,
     "payload_min": 60,
-    "payload_max": 380
+    "payload_max": 380,
+    "size_seed": 6840346605343539201
   },
-  "conformance": "sent == delivered + timeouts, and a healthy pair settles zero timeouts"
+  "conformance_rule": "exact-single",
+  "conformance": "Every sent packet is proved and independently seen by the responder: sent == delivered == responder_delivered, with zero timeouts, races, or local culls."
 }

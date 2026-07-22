@@ -30,6 +30,7 @@ dhat = { version = "0.3", optional = true }
 # emit them and `render_results` reads them back to render RESULTS.md.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 # The live-scenario participation binary rides the real tokio reactor over real TCP;
 # the benchmark runner owns process lifecycle and the line protocol.
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util"] }
@@ -46,6 +47,9 @@ libc = "0.2"
 # every row, so figures from different machines/people can be joined later (the `host` triple
 # is only a class — two M4s share it).
 uuid = { version = "1", features = ["v4", "serde"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
 
 [dev-dependencies]
 # Timing harness for the engine microscope (lean: no plotters/rayon).
@@ -72,6 +76,11 @@ bench = false
 [[bin]]
 name = "benchmark_runner"
 path = "src/bin/benchmark_runner/main.rs"
+bench = false
+
+[[bin]]
+name = "benchmark_cli"
+path = "src/bin/benchmark_cli.rs"
 bench = false
 
 [[bin]]

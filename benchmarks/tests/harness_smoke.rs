@@ -1,4 +1,4 @@
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 
 #[test]
@@ -23,13 +23,27 @@ fn a_short_firehose_run_settles_clean_end_to_end() {
         .expect("READY carries the bound addr")
         .to_string();
 
-    let initiator = Command::new(env!("CARGO_BIN_EXE_participant_node"))
+    let mut initiator = Command::new(env!("CARGO_BIN_EXE_participant_node"))
         .args([manifest, "initiator", &addr, "500"])
-        .output()
-        .expect("run initiator");
-    let stdout = String::from_utf8_lossy(&initiator.stdout);
-    let result = stdout
-        .lines()
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("spawn initiator");
+    let mut initiator_lines = BufReader::new(initiator.stdout.take().expect("piped")).lines();
+    initiator_lines
+        .by_ref()
+        .map_while(Result::ok)
+        .find(|line| line == "MEASURE_READY")
+        .expect("initiator reaches the measurement barrier");
+    initiator
+        .stdin
+        .as_mut()
+        .expect("piped")
+        .write_all(b"START\n")
+        .expect("release measurement barrier");
+    let result = initiator_lines
+        .by_ref()
+        .map_while(Result::ok)
         .find(|line| line.starts_with("RESULT"))
         .expect("initiator reports RESULT");
 
@@ -57,6 +71,7 @@ fn a_short_firehose_run_settles_clean_end_to_end() {
         .find(|line| line.starts_with("RESULT"))
         .expect("responder reports RESULT");
     let _ = responder.wait();
+    let _ = initiator.wait();
     assert!(
         responder_result.contains(&format!("delivered={}", field("delivered"))),
         "both ends agree: {responder_result} vs {result}",

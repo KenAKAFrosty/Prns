@@ -13,9 +13,33 @@ mod linux {
     use std::path::PathBuf;
     use std::time::Instant;
 
-    pub fn unavailable_hint() -> &'static str {
-        "ENERGY unavailable: RAPL counters are root-locked — \
-         `sudo chmod o+r /sys/class/powercap/intel-rapl*/energy_uj` opens them until reboot"
+    fn rapl_domains() -> Vec<(PathBuf, PathBuf)> {
+        let mut domains = std::fs::read_dir("/sys/class/powercap")
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .map(|path| (path.join("energy_uj"), path.join("max_energy_range_uj")))
+            .filter(|(energy, range)| energy.exists() && range.exists())
+            .collect::<Vec<_>>();
+        domains.sort();
+        domains
+    }
+
+    pub fn unavailable_hint() -> String {
+        let paths = rapl_domains()
+            .into_iter()
+            .map(|(energy, _)| energy.display().to_string())
+            .collect::<Vec<_>>();
+        if paths.is_empty() {
+            return "ENERGY unavailable: no RAPL energy_uj counters were exposed under /sys/class/powercap"
+                .into();
+        }
+        format!(
+            "ENERGY unavailable: detected unreadable counters {}; grant this user temporary read access with `sudo chmod o+r {}`",
+            paths.join(", "),
+            paths.join(" ")
+        )
     }
 
     /// One readable RAPL domain (we meter `package-0`: every core, cache, and memory
@@ -34,18 +58,20 @@ mod linux {
 
     impl PowerMeter {
         pub fn detect() -> Option<Self> {
-            let base = PathBuf::from("/sys/class/powercap/intel-rapl:0");
-            let energy_path = base.join("energy_uj");
-            std::fs::read_to_string(&energy_path).ok()?;
-            let max_range_uj = std::fs::read_to_string(base.join("max_energy_range_uj"))
-                .ok()?
-                .trim()
-                .parse()
-                .ok()?;
-            Some(Self {
-                energy_path,
-                max_range_uj,
-            })
+            rapl_domains()
+                .into_iter()
+                .find_map(|(energy_path, range_path)| {
+                    std::fs::read_to_string(&energy_path).ok()?;
+                    let max_range_uj = std::fs::read_to_string(range_path)
+                        .ok()?
+                        .trim()
+                        .parse()
+                        .ok()?;
+                    Some(Self {
+                        energy_path,
+                        max_range_uj,
+                    })
+                })
         }
 
         fn read_uj(&self) -> u64 {
@@ -106,13 +132,14 @@ mod macos {
     /// while keeping enough samples in a ~10 s firehose for a steady average.
     const SAMPLE_MS: u64 = 200;
 
-    pub fn unavailable_hint() -> &'static str {
-        "ENERGY unavailable: macOS power counters need root — re-run the orchestrator under \
-         `sudo` to include the energy axis (powermetrics, the same sampler as energy/measure.sh)"
+    pub fn unavailable_hint() -> String {
+        "ENERGY unavailable: macOS power counters need authorization — run \
+         `cargo benchmark --energy`; only powermetrics is launched through sudo"
+            .into()
     }
 
     pub struct PowerMeter {
-        _private: (),
+        via_sudo: bool,
     }
 
     pub struct EnergyBracket {
@@ -123,15 +150,31 @@ mod macos {
     }
 
     impl PowerMeter {
-        /// `powermetrics` reads privileged SMC counters, so effective-root is the gate — the
-        /// honest macOS mirror of RAPL being root-locked on Linux.
+        /// The frontend authorizes sudo once, then marks only the powermetrics subprocess for
+        /// privilege. Cargo, Python, caches, participants, and result files stay user-owned.
         pub fn detect() -> Option<Self> {
-            (unsafe { libc::geteuid() } == 0).then_some(Self { _private: () })
+            if unsafe { libc::geteuid() } == 0 {
+                return Some(Self { via_sudo: false });
+            }
+            (std::env::var_os("BENCHMARK_POWER_VIA_SUDO").as_deref()
+                == Some(std::ffi::OsStr::new("1")))
+            .then_some(Self { via_sudo: true })
+        }
+
+        fn command(&self) -> Command {
+            if self.via_sudo {
+                let mut command = Command::new("sudo");
+                command.args(["-n", "powermetrics"]);
+                command
+            } else {
+                Command::new("powermetrics")
+            }
         }
 
         pub fn idle_watts(&self, window: Duration) -> f64 {
             let samples = (window.as_millis() as u64 / SAMPLE_MS).max(1);
-            let output = Command::new("powermetrics")
+            let output = self
+                .command()
                 .args([
                     "--samplers",
                     "cpu_power",
@@ -156,7 +199,8 @@ mod macos {
 
         pub fn start(&self) -> EnergyBracket {
             let acc = Arc::new(Mutex::new((0.0f64, 0u64)));
-            let mut child = Command::new("powermetrics")
+            let mut child = self
+                .command()
                 .args(["--samplers", "cpu_power", "-i", &SAMPLE_MS.to_string()])
                 .stdout(Stdio::piped())
                 .stderr(Stdio::null())
@@ -239,8 +283,12 @@ mod macos {
 mod unsupported {
     use super::Duration;
 
-    pub fn unavailable_hint() -> &'static str {
-        "ENERGY unavailable: no power-counter backend for this platform"
+    pub fn unavailable_hint() -> String {
+        if cfg!(windows) {
+            "ENERGY unsupported on Windows; throughput, RTT, conformance, and initiator/responder peak working-set evidence remain available".into()
+        } else {
+            "ENERGY unavailable: no power-counter backend for this platform".into()
+        }
     }
 
     pub struct PowerMeter {

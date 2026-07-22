@@ -4,6 +4,12 @@ use std::{fs::File, io::Write};
 use super::results_dir;
 use super::schema::ResultRow;
 
+#[derive(serde::Deserialize)]
+struct CurrentSuite {
+    schema: u32,
+    path: PathBuf,
+}
+
 pub fn write_rows(host: &str, scenario: &str, impl_slug: &str, rows: &[ResultRow]) {
     write_rows_at(&results_dir(), host, scenario, impl_slug, rows);
 }
@@ -116,10 +122,47 @@ fn commit_temp(temp: &Path, path: &Path) -> std::io::Result<()> {
 
 pub fn load_all_rows() -> Vec<ResultRow> {
     let mut rows = Vec::new();
-    for jsonl in jsonl_files(&results_dir()) {
+    for jsonl in selected_jsonl_files(&results_dir()) {
         rows.extend(load_rows_from(&jsonl));
     }
     rows
+}
+
+/// Select one immutable suite per published host. A local run has no `current.json`, so its
+/// host/scenario tree remains directly readable by the same renderer.
+fn selected_jsonl_files(root: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let mut files = Vec::new();
+    for entry in entries.flatten() {
+        let host = entry.path();
+        if !host.is_dir() || host.file_name().and_then(|name| name.to_str()) == Some("logs") {
+            continue;
+        }
+        let pointer = host.join("current.json");
+        if pointer.is_file() {
+            let current: CurrentSuite = serde_json::from_str(
+                &std::fs::read_to_string(&pointer)
+                    .unwrap_or_else(|error| panic!("read {}: {error}", pointer.display())),
+            )
+            .unwrap_or_else(|error| panic!("parse {}: {error}", pointer.display()));
+            assert_eq!(current.schema, 1, "unsupported current-suite schema");
+            assert!(
+                !current.path.is_absolute()
+                    && current
+                        .path
+                        .components()
+                        .all(|component| matches!(component, std::path::Component::Normal(_))),
+                "current-suite path must stay beneath its host directory"
+            );
+            files.extend(jsonl_files(&host.join(current.path)));
+        } else {
+            files.extend(jsonl_files(&host));
+        }
+    }
+    files.sort();
+    files
 }
 
 fn load_rows_from(jsonl: &Path) -> Vec<ResultRow> {

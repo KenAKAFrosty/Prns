@@ -12,20 +12,23 @@ mod resource;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::{sync::Arc, time::Duration};
 
+use benchmarks::{
+    deterministic_payload, ScenarioId, ScenarioManifest as Manifest, SizeSequence,
+    WorkloadProfile as Profile,
+};
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, EstablishLink,
-    RatchetPolicy, SendRequest, SendRequestData, SendSinglePacket, SendSinglePacketPayload,
-    SendToChannel, SendToChannelBody, SendToChannelFailure, SendToLink, SendToLinkFailure,
-    SendToLinkPayload, Settlement,
+    RatchetPolicy, RequestResponseTimeout, SendSinglePacket, SendSinglePacketPayload, SendToLink,
+    SendToLinkFailure, SendToLinkPayload, Settlement,
 };
 use personal_rns::interfaces::{
-    tcp, BitrateBps, InterfaceDescriptor, InterfaceId, InterfaceKind, ReportsStatus,
+    tcp, ConfiguredInterfacePolicy, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId,
+    InterfaceKind, MtuPolicy, ReportsStatus,
 };
 use personal_rns::reactor::interface_seam::{Interface, InterfaceSeam};
 use personal_rns::reactor::reconnect::ReconnectPolicy;
 use personal_rns::routes;
 use personal_rns::routing::delivery::Delivery;
-use personal_rns::routing::links::channel::MessageType;
 use personal_rns::routing::links::resources::{ResourceStrategy, MAX_EFFICIENT_SIZE};
 use personal_rns::routing::request_handlers::RequestPathHash;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
@@ -41,6 +44,7 @@ type NodeStorage = personal_rns::storage::Esp32S3<allocator_api2::alloc::Global>
 #[cfg(not(feature = "fixed-storage"))]
 use personal_rns::storage::GrowableHeap as NodeStorage;
 use personal_rns::tcp::{tune, TcpClientInterface, TcpServerConnection};
+use personal_rns::units::DurationMillis;
 use personal_rns::wire::DestinationHash;
 use tokio::io::AsyncRead;
 use tokio::sync::mpsc;
@@ -59,20 +63,20 @@ const BUILD_PROFILE: &str = if cfg!(debug_assertions) {
 struct BenchTcpListener {
     id: InterfaceId,
     listener: tokio::net::TcpListener,
-    bitrate: BitrateBps,
+    policy: EffectiveInterfacePolicy,
 }
 
 impl BenchTcpListener {
     async fn bind_with_id(
         id: InterfaceId,
         addr: impl tokio::net::ToSocketAddrs,
-        bitrate: BitrateBps,
+        policy: EffectiveInterfacePolicy,
     ) -> std::io::Result<Self> {
         let listener = tokio::net::TcpListener::bind(addr).await?;
         Ok(Self {
             id,
             listener,
-            bitrate,
+            policy,
         })
     }
 
@@ -86,7 +90,7 @@ impl Interface for BenchTcpListener {
     const KIND: InterfaceKind = InterfaceKind::TcpServerPeer;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        tcp::descriptor(self.id, tcp::policy_for_bitrate(self.bitrate))
+        tcp::descriptor(self.id, self.policy)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -98,7 +102,7 @@ impl Interface for BenchTcpListener {
             return;
         };
         tune(&stream);
-        TcpServerConnection::new(peer.to_string().into_bytes(), stream, self.bitrate)
+        TcpServerConnection::with_policy(peer.to_string().into_bytes(), stream, self.policy)
             .run(seam)
             .await;
     }
@@ -112,51 +116,13 @@ fn fanin_listener_id(index: usize) -> InterfaceId {
     InterfaceId::new(id)
 }
 const DRAIN_GRACE: Duration = Duration::from_secs(5);
-const BENCH_CHANNEL_MSGTYPE: MessageType = MessageType(0x0042);
 
-#[derive(serde::Deserialize)]
-struct Manifest {
-    name: String,
-    profile: Profile,
-}
-
-#[derive(serde::Deserialize)]
-struct Profile {
-    mechanism: String,
-    #[serde(default)]
-    payload_len: usize,
-    #[serde(default)]
-    payload_min: usize,
-    #[serde(default)]
-    payload_max: usize,
-    #[serde(default)]
-    request_min: usize,
-    #[serde(default)]
-    request_max: usize,
-    #[serde(default)]
-    response_min: usize,
-    #[serde(default)]
-    response_max: usize,
-    window: usize,
-    duration_ms: u64,
-    #[serde(default = "default_announce_every_ms")]
-    announce_every_ms: u64,
-    #[serde(default = "default_initiator_count")]
-    initiator_count: usize,
-    #[serde(default = "default_link_count")]
-    link_count: usize,
-    #[serde(default = "default_size_seed")]
-    size_seed: u64,
-    #[serde(default = "default_compression")]
-    compression: String,
-    #[serde(default = "default_payload_shape")]
-    payload_shape: String,
-    #[serde(default)]
-    reconnect_at_ms: u64,
-}
-
-fn default_size_seed() -> u64 {
-    0x5EED_CAFE_F00D_0001
+fn benchmark_tcp_policy(profile: &Profile) -> EffectiveInterfacePolicy {
+    tcp::configured_policy(ConfiguredInterfacePolicy {
+        bitrate: Some(tcp::TCP_BITRATE_ESTIMATE),
+        mtu: (profile.link_mtu > 0).then(|| MtuPolicy::fixed(profile.link_mtu)),
+        ..ConfiguredInterfacePolicy::default()
+    })
 }
 
 /// The manifest's compression posture for resource sends. `"off"` is the matrix's
@@ -170,14 +136,6 @@ fn segment_compression(profile: &Profile) -> SegmentCompression {
     }
 }
 
-fn default_compression() -> String {
-    "off".into()
-}
-
-fn default_payload_shape() -> String {
-    "dense".into()
-}
-
 fn responder_resource_strategy(profile: &Profile) -> ResourceStrategy {
     ResourceStrategy::Accept {
         max_uncompressed_len: 128 * 1024 * 1024,
@@ -188,54 +146,12 @@ fn responder_resource_strategy(profile: &Profile) -> ResourceStrategy {
     }
 }
 
-fn default_announce_every_ms() -> u64 {
-    500
-}
-
-fn default_initiator_count() -> usize {
-    1
-}
-
-fn default_link_count() -> usize {
-    256
-}
-
-struct SizeSequence {
-    state: u64,
-    min: usize,
-    max: usize,
-}
-
-impl SizeSequence {
-    fn new(seed: u64, min: usize, max: usize, fixed: usize) -> Self {
-        let (min, max) = if max > 0 { (min, max) } else { (fixed, fixed) };
-        Self {
-            state: seed,
-            min,
-            max,
-        }
-    }
-
-    fn next_len(&mut self) -> usize {
-        self.next_in(self.min, self.max)
-    }
-
-    fn next_in(&mut self, min: usize, max: usize) -> usize {
-        self.state ^= self.state << 13;
-        self.state ^= self.state >> 7;
-        self.state ^= self.state << 17;
-        let span = (max - min + 1) as u64;
-        min + (self.state % span) as usize
-    }
-}
-
 enum Event {
     Heard(DestinationHash),
     Settled(CommandId, Settlement),
     Delivered(usize),
     LinkUp,
     ResourceIn(usize),
-    Response(usize),
     Closed,
 }
 
@@ -265,16 +181,11 @@ fn msgpack_bin_payload(framed: &[u8]) -> &[u8] {
 }
 
 fn incompressible_payload(len: usize) -> Vec<u8> {
-    let mut state = 0x9E37_79B9_7F4A_7C15u64;
-    let mut data = Vec::with_capacity(len);
-    while data.len() < len {
-        state ^= state << 13;
-        state ^= state >> 7;
-        state ^= state << 17;
-        data.extend_from_slice(&state.to_le_bytes());
-    }
-    data.truncate(len);
-    data
+    deterministic_payload(len)
+}
+
+fn drain_grace(profile: &Profile) -> Duration {
+    Duration::from_millis(profile.drain_timeout_ms)
 }
 
 /// Lowercase-hex text over the same stream: four bits of entropy per byte, so every
@@ -299,6 +210,22 @@ fn scenario_payload(profile: &Profile, len: usize) -> Vec<u8> {
         "compressible" => compressible_payload(len),
         other => panic!("unknown payload shape {other:?} (expected \"dense\" or \"compressible\")"),
     }
+}
+
+fn await_measurement_start() {
+    use std::io::BufRead as _;
+
+    println!("MEASURE_READY");
+    let mut command = String::new();
+    std::io::stdin()
+        .lock()
+        .read_line(&mut command)
+        .expect("read measurement command");
+    assert_eq!(
+        command.trim(),
+        "START",
+        "expected START measurement command"
+    );
 }
 
 fn percentile(sorted: &[u64], p: f64) -> f64 {
@@ -379,25 +306,17 @@ async fn scenario_main() {
             .expect("parse manifest");
     let duration = Duration::from_millis(duration_override.unwrap_or(manifest.profile.duration_ms));
 
-    if matches!(
-        manifest.profile.mechanism.as_str(),
-        "single" | "link" | "channel" | "links-breadth" | "link-establishment-concurrent"
-    ) {
-        run_runtime_endpoint(&manifest, &role, &addr, duration).await;
-        return;
+    match manifest.name {
+        ScenarioId::SinglePacketThroughput | ScenarioId::LinkMessageThroughput => {
+            run_runtime_endpoint(&manifest, &role, &addr, duration).await;
+        }
+        ScenarioId::RequestResponse => {
+            run_request_endpoint(&manifest, &role, &addr, duration).await;
+        }
+        ScenarioId::ResourceMaxSegment | ScenarioId::Resource64mibStream => {
+            run_resource_endpoint(&manifest, &role, &addr, duration).await;
+        }
     }
-    if manifest.profile.mechanism == "resource" {
-        run_resource_endpoint(&manifest, &role, &addr, duration).await;
-        return;
-    }
-    if manifest.profile.mechanism == "request" {
-        run_request_endpoint(&manifest, &role, &addr, duration).await;
-        return;
-    }
-    panic!(
-        "mechanism {:?} role {:?} has no benchmark_runner endpoint",
-        manifest.profile.mechanism, role
-    );
 }
 
 use link_channel::run_runtime_endpoint;
@@ -416,19 +335,17 @@ where
     R: RouteSet<St>,
     F: FnMut(PrnsEvent<'_>, &St),
 {
-    let primary = BenchTcpListener::bind_with_id(TCP_INTERFACE_ID, addr, tcp::TCP_BITRATE_ESTIMATE)
+    let tcp_policy = benchmark_tcp_policy(&manifest.profile);
+    let primary = BenchTcpListener::bind_with_id(TCP_INTERFACE_ID, addr, tcp_policy)
         .await
         .expect("binds the scenario port");
     let mut addresses = primary.local_addr().expect("bound address").to_string();
     let mut servers = vec![primary];
     for index in 0..manifest.profile.initiator_count.saturating_sub(1) {
-        let extra = BenchTcpListener::bind_with_id(
-            fanin_listener_id(index),
-            "127.0.0.1:0",
-            tcp::TCP_BITRATE_ESTIMATE,
-        )
-        .await
-        .expect("binds an extra listener");
+        let extra =
+            BenchTcpListener::bind_with_id(fanin_listener_id(index), "127.0.0.1:0", tcp_policy)
+                .await
+                .expect("binds an extra listener");
         addresses.push('+');
         addresses.push_str(&extra.local_addr().expect("bound address").to_string());
         servers.push(extra);
@@ -452,16 +369,16 @@ where
 async fn build_initiator_node<F>(
     single: PreConfiguredDestination<'static>,
     on_event: F,
-    _manifest: &Manifest,
+    manifest: &Manifest,
     addr: &str,
 ) -> PrnsNode<(), (), F, NodeStorage>
 where
     F: FnMut(PrnsEvent<'_>, &()),
 {
-    let client = TcpClientInterface::new_with_id(
+    let client = TcpClientInterface::with_id_and_policy(
         TCP_INTERFACE_ID,
         addr.to_string(),
-        tcp::TCP_BITRATE_ESTIMATE,
+        benchmark_tcp_policy(&manifest.profile),
         ReconnectPolicy::STANDARD,
     );
     PrnsNode::new(PrnsNodeRecipe {

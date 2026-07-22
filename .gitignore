@@ -27,6 +27,7 @@ dhat-heap.json
 benchmarks/target/
 benchmarks/reference/.venv/
 benchmarks/reference/.object-cache/
+benchmarks/.benchmark-runs/
 # Dedicated venv for the rns 1.4.0 reference (oracle tests)
 /.venv-rns-1.4.0/
 /validation/.venv/

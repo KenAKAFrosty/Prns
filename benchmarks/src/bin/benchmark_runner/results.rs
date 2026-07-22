@@ -26,6 +26,7 @@ pub(super) struct RunStamp {
     pub(super) host: String,
     pub(super) commit: String,
     pub(super) toolchain: String,
+    pub(super) source_dirty: bool,
     pub(super) device_id: Option<DeviceId>,
     pub(super) submitter_id: Option<SubmitterId>,
 }
@@ -40,20 +41,28 @@ pub(super) fn run_stamp() -> RunStamp {
     RunStamp {
         device_id: load_host(&host).and_then(|descriptor| descriptor.device_id),
         submitter_id: Some(load_or_create_submitter_id()),
-        commit: std::env::var("BENCHMARK_COMMIT")
-            .ok()
-            .or_else(|| command_line("git", &["rev-parse", "--short", "HEAD"]))
-            .unwrap_or_default(),
+        commit: command_line("git", &["rev-parse", "HEAD"]).unwrap_or_default(),
         toolchain: std::env::var("BENCHMARK_TOOLCHAIN")
             .ok()
             .or_else(|| command_line("rustc", &["--version"]))
             .unwrap_or_default(),
+        source_dirty: command_line(
+            "git",
+            &["status", "--porcelain", "--untracked-files=normal"],
+        )
+        .is_some_and(|status| !status.is_empty()),
         host,
     }
 }
 
 pub(super) fn provenance_for(subject: &Subject) -> BTreeMap<String, String> {
     let mut provenance = BTreeMap::new();
+    if let Ok(flags) = std::env::var("BENCHMARK_BUILD_FLAGS") {
+        provenance.insert("rust_build_flags".into(), flags);
+    }
+    if let Ok(fingerprint) = std::env::var("BENCHMARK_SOURCE_FINGERPRINT") {
+        provenance.insert("source_fingerprint".into(), fingerprint);
+    }
     #[cfg(target_os = "macos")]
     provenance.insert(
         "energy_source".into(),
@@ -108,29 +117,72 @@ pub(super) struct CollectedRun<'a> {
     pub(super) relay: Option<RoleMetrics>,
 }
 
-pub(super) fn scenario_conforms(
-    _scenario: &str,
+#[derive(Clone, Copy)]
+struct Conformance<'a> {
+    rule: ConformanceRule,
     sent: f64,
     delivered: f64,
     timeouts: f64,
     raced: f64,
+    culled: f64,
     responder_delivered: f64,
-) -> bool {
-    let accounted = sent > 0.0 && sent == delivered + timeouts + raced;
-    // Initiator settlement is authoritative: single/link receipts and completed resources are
-    // cryptographically proven by the far end. Some third-party responder callbacks trail link
-    // close even after that proof has settled, so preserve their count as observability without
-    // letting callback scheduling invalidate a proved sample.
-    accounted && responder_delivered <= sent
+    result: &'a str,
+    responder_result: &'a str,
+}
+
+fn scenario_conforms(input: &Conformance<'_>) -> bool {
+    let &Conformance {
+        rule,
+        sent,
+        delivered,
+        timeouts,
+        raced,
+        culled,
+        responder_delivered,
+        result,
+        responder_result,
+    } = input;
+    let exact_delivery = sent > 0.0
+        && sent == delivered
+        && responder_delivered == sent
+        && timeouts == 0.0
+        && raced == 0.0;
+    match rule {
+        ConformanceRule::ExactSingle => exact_delivery && culled == 0.0,
+        ConformanceRule::ExactLink => {
+            let attempted = field(result, "attempted").unwrap_or(sent + culled);
+            let sent_bytes = field(result, "payload_bytes").unwrap_or(f64::NAN);
+            let received_bytes = field(responder_result, "payload_bytes").unwrap_or(f64::NAN);
+            exact_delivery && attempted == sent + culled && sent_bytes == received_bytes
+        }
+        ConformanceRule::ExactRequest => {
+            let expected = field(result, "expected_response_bytes").unwrap_or(f64::NAN);
+            let received = field(result, "response_bytes").unwrap_or(f64::NAN);
+            let served = field(responder_result, "response_bytes").unwrap_or(f64::NAN);
+            let request_window = field(result, "request_window").unwrap_or(f64::NAN);
+            let request_links = field(result, "request_links").unwrap_or(f64::NAN);
+            exact_delivery
+                && expected == received
+                && received == served
+                && request_window == 4.0
+                && request_links == 4.0
+        }
+        ConformanceRule::ExactResource => {
+            let sent_bytes = field(result, "payload_bytes").unwrap_or(f64::NAN);
+            let received_bytes = field(responder_result, "payload_bytes").unwrap_or(f64::NAN);
+            exact_delivery && sent_bytes == received_bytes
+        }
+    }
 }
 
 pub(super) fn file_results(
     args: &Args,
     version: u32,
+    conformance_rule: ConformanceRule,
     subject: Subject,
     pairing_label: &str,
     run: CollectedRun<'_>,
-) {
+) -> bool {
     let result = run.result;
     let responder_result = run.responder_result;
     let wire_line = run.wire_line;
@@ -160,14 +212,17 @@ pub(super) fn file_results(
         .unwrap_or(0.0);
     let died = field(result, "died").unwrap_or(0.0) > 0.0;
     let settled_clean = !died
-        && scenario_conforms(
-            &args.scenario,
+        && scenario_conforms(&Conformance {
+            rule: conformance_rule,
             sent,
             delivered,
             timeouts,
             raced,
+            culled,
             responder_delivered,
-        );
+            result,
+            responder_result,
+        });
     if died {
         eprintln!(
             "verdict: the initiator declared the responder DEAD mid-run — conformance filed, \
@@ -182,29 +237,24 @@ pub(super) fn file_results(
              measurement; rebuild --release)"
         );
     }
-    assert!(
-        delivered <= sent,
-        "delivery accounting holds (initiator-proven <= sent): {delivered} <= {sent}",
-    );
-    if delivered > responder_delivered {
+    if !settled_clean {
         eprintln!(
-            "conformance note: responder counted {responder_delivered} of {delivered} \
-             proven deliveries — known reference conclusion-callback exit race",
-        );
-    } else {
-        assert!(
-            responder_delivered <= sent,
-            "delivery accounting holds (responder-seen <= sent): {responder_delivered} <= {sent}",
+            "verdict: strict scenario accounting failed: sent={sent} delivered={delivered} \
+             responder={responder_delivered} timeouts={timeouts} raced={raced} culled={culled}"
         );
     }
 
     let stamp = run_stamp();
-    let provenance = provenance_for(&subject);
+    let mut provenance = provenance_for(&subject);
+    provenance.insert("source_dirty".into(), stamp.source_dirty.to_string());
+    if let Ok(suite_id) = std::env::var("BENCHMARK_SUITE_ID") {
+        provenance.insert("suite_id".into(), suite_id);
+    }
     let row = |axis: Axis, metric: &str, value: Option<f64>, unit: &str| ResultRow {
         schema_version: RESULT_SCHEMA_VERSION,
         run_id: args.run_id.clone(),
         sample_index: args.sample_index,
-        scenario: args.scenario.clone(),
+        scenario: args.scenario.to_string(),
         scenario_version: version,
         subject: subject.clone(),
         commit: stamp.commit.clone(),
@@ -253,8 +303,33 @@ pub(super) fn file_results(
             "msgs",
         ),
         row(Axis::Conformance, "timed_out", Some(timeouts), "msgs"),
+        row(
+            Axis::Conformance,
+            "receipt_unproved",
+            field(result, "receipt_unproved"),
+            "msgs",
+        ),
         row(Axis::Conformance, "raced", Some(raced), "msgs"),
         row(Axis::Conformance, "locally_culled", Some(culled), "msgs"),
+        row(
+            Axis::Conformance,
+            "attempted",
+            field(result, "attempted").or(Some(sent + culled)),
+            "msgs",
+        ),
+        row(
+            Axis::Conformance,
+            "expected_response_bytes",
+            field(result, "expected_response_bytes"),
+            "bytes",
+        ),
+        row(
+            Axis::Conformance,
+            "responder_payload_bytes",
+            field(responder_result, "payload_bytes")
+                .or_else(|| field(responder_result, "response_bytes")),
+            "bytes",
+        ),
         row(
             Axis::Conformance,
             "endpoint_count_complete",
@@ -472,7 +547,7 @@ pub(super) fn file_results(
     let subject_slug = subject.file_slug();
     if args.write {
         assert!(settled_clean, "refuse to publish a non-conformant sample");
-        write_rows(&stamp.host, &args.scenario, &subject_slug, &rows);
+        write_rows(&stamp.host, args.scenario.as_str(), &subject_slug, &rows);
         println!(
             "SUMMARY rows filed under results/{}/{}/{subject_slug}.jsonl",
             stamp.host, args.scenario,
@@ -480,41 +555,87 @@ pub(super) fn file_results(
     } else {
         println!("SUMMARY no-write smoke: result rows were not published");
     }
+    settled_clean
 }
 
 #[cfg(test)]
 mod tests {
-    use super::scenario_conforms;
+    use super::{scenario_conforms, Conformance};
+    use benchmarks::ConformanceRule;
 
     #[test]
-    fn link_timeouts_are_conformant_when_initiator_accounting_closes() {
-        assert!(scenario_conforms(
-            "link-message-throughput",
-            2_156.0,
-            2_143.0,
-            13.0,
-            0.0,
-            2_143.0,
-        ));
-        assert!(!scenario_conforms(
-            "link-message-throughput",
-            2_156.0,
-            2_143.0,
-            12.0,
-            0.0,
-            2_156.0,
-        ));
+    fn strict_link_accounting_requires_every_wire_send() {
+        assert!(scenario_conforms(&Conformance {
+            rule: ConformanceRule::ExactLink,
+            sent: 2_143.0,
+            delivered: 2_143.0,
+            timeouts: 0.0,
+            raced: 0.0,
+            culled: 13.0,
+            responder_delivered: 2_143.0,
+            result: "RESULT attempted=2156 payload_bytes=500000",
+            responder_result: "RESULT delivered=2143 payload_bytes=500000",
+        }));
+        assert!(!scenario_conforms(&Conformance {
+            rule: ConformanceRule::ExactLink,
+            sent: 2_156.0,
+            delivered: 2_143.0,
+            timeouts: 13.0,
+            raced: 0.0,
+            culled: 0.0,
+            responder_delivered: 2_156.0,
+            result: "RESULT attempted=2156",
+            responder_result: "RESULT delivered=2156",
+        }));
     }
 
     #[test]
-    fn single_packet_timeouts_are_visible_but_accounted() {
-        assert!(scenario_conforms(
-            "single-packet-throughput",
-            100.0,
-            99.0,
-            1.0,
-            0.0,
-            99.0,
-        ));
+    fn single_packet_timeouts_fail_release_conformance() {
+        assert!(!scenario_conforms(&Conformance {
+            rule: ConformanceRule::ExactSingle,
+            sent: 100.0,
+            delivered: 99.0,
+            timeouts: 1.0,
+            raced: 0.0,
+            culled: 0.0,
+            responder_delivered: 99.0,
+            result: "RESULT sent=100 delivered=99 timeouts=1",
+            responder_result: "RESULT delivered=99",
+        }));
+    }
+
+    #[test]
+    fn request_conformance_requires_exact_served_response_bytes() {
+        let valid = Conformance {
+            rule: ConformanceRule::ExactRequest,
+            sent: 40.0,
+            delivered: 40.0,
+            timeouts: 0.0,
+            raced: 0.0,
+            culled: 0.0,
+            responder_delivered: 40.0,
+            result: "RESULT expected_response_bytes=120000 response_bytes=120000 request_window=4 request_links=4",
+            responder_result: "RESULT served=40 response_bytes=120000",
+        };
+        assert!(scenario_conforms(&valid));
+        assert!(!scenario_conforms(&Conformance {
+            result: "RESULT expected_response_bytes=120000 response_bytes=119999 request_window=4 request_links=4",
+            ..valid
+        }));
+    }
+
+    #[test]
+    fn resource_conformance_requires_exact_application_bytes() {
+        assert!(scenario_conforms(&Conformance {
+            rule: ConformanceRule::ExactResource,
+            sent: 1.0,
+            delivered: 1.0,
+            timeouts: 0.0,
+            raced: 0.0,
+            culled: 0.0,
+            responder_delivered: 1.0,
+            result: "RESULT payload_bytes=67108864",
+            responder_result: "RESULT received=1 payload_bytes=67108864",
+        }));
     }
 }

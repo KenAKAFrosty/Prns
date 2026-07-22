@@ -9,3 +9,4 @@ RUST_MIN_STACK = "268435456"
 [alias]
 prnsd = "run --quiet --manifest-path prnsd/Cargo.toml -p prnsd-command --"
 observability = "run --quiet --manifest-path prnsd/Cargo.toml -p prns-observability-runner --"
+benchmark = "run --quiet --release --manifest-path benchmarks/Cargo.toml --bin benchmark_cli --"

@@ -6,7 +6,7 @@ pub(super) async fn run_resource_endpoint(
     addr: &str,
     duration: Duration,
 ) {
-    let aspect: &'static str = Box::leak(manifest.name.clone().into_boxed_str());
+    let aspect = manifest.name.as_str();
     let aspects: &'static [&'static str] = Box::leak(Box::new([aspect]));
     let announce_every = Duration::from_millis(manifest.profile.announce_every_ms);
     let initiators = manifest.profile.initiator_count;
@@ -60,6 +60,7 @@ pub(super) async fn run_resource_endpoint(
             destination,
             announce_every,
             duration,
+            drain_grace(&manifest.profile),
             initiators,
             &commands,
             event_rx,
@@ -89,6 +90,7 @@ pub(super) async fn respond_resource_runtime(
     destination: DestinationHash,
     announce_every: Duration,
     duration: Duration,
+    drain: Duration,
     initiator_count: usize,
     commands: &PrnsNodeHandle,
     mut events: mpsc::UnboundedReceiver<Event>,
@@ -97,7 +99,7 @@ pub(super) async fn respond_resource_runtime(
     let mut closed_links = 0usize;
     let mut announce = tokio::time::interval(announce_every);
     let mut announcing = true;
-    let report_at = tokio::time::Instant::now() + duration + DRAIN_GRACE;
+    let report_at = tokio::time::Instant::now() + duration + drain + DRAIN_GRACE;
     let mut received = 0u64;
     let mut payload_bytes = 0u64;
     loop {
@@ -207,6 +209,7 @@ pub(super) async fn initiate_resource_runtime(
         profile.payload_max,
         profile.payload_len,
     );
+    await_measurement_start();
     let started = tokio::time::Instant::now();
     let deadline = started + duration;
     let mut sent = 0u64;
@@ -236,6 +239,7 @@ pub(super) async fn initiate_resource_runtime(
         }
     }
     let elapsed_ms = started.elapsed().as_millis().max(1) as u64;
+    println!("MEASURE_DONE");
     commands.close_link(link_id);
     transfer_ms.sort_unstable();
     let seconds = (elapsed_ms as f64 / 1000.0).max(f64::EPSILON);
