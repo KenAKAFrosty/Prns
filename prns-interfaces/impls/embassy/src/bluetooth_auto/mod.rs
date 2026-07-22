@@ -1,4 +1,5 @@
 pub mod connection_slots;
+#[cfg(feature = "bluetooth-auto-trouble")]
 mod frame_pool;
 mod runtime;
 

@@ -94,6 +94,7 @@ const DISCOVERY_TURN_REST: Duration = Duration::from_millis(20);
 const CONTROL_QUEUE_DEPTH: usize = 2;
 const FRAME_QUEUE_DEPTH: usize = 2;
 const FRAME_POOL_CAPACITY: usize = PEER_CAPACITY;
+const FRAME_POOL_WAITERS: usize = PEER_CAPACITY + 1;
 const SIGHTING_DEPTH: usize = PEER_CAPACITY * 2;
 const RADIO_WAITERS: usize = 2;
 
@@ -123,8 +124,9 @@ type BleSlotLink = ConnectionSlotLinkLease<BridgeMutex>;
 type BleSlotSource = ConnectionSlotSourceLease<BridgeMutex>;
 type BleSlotSink = ConnectionSlotSinkLease<BridgeMutex>;
 type BleReadySlot = ReadyConnectionSlot<BridgeMutex>;
-type BleFramePool = SharedFramePool<BridgeMutex, FRAME_CAP, FRAME_POOL_CAPACITY>;
-type BleFrameLease = FrameLease<BridgeMutex, FRAME_CAP, FRAME_POOL_CAPACITY>;
+type BleFramePool =
+    SharedFramePool<BridgeMutex, FRAME_CAP, FRAME_POOL_CAPACITY, FRAME_POOL_WAITERS>;
+type BleFrameLease = FrameLease<BridgeMutex, FRAME_CAP, FRAME_POOL_CAPACITY, FRAME_POOL_WAITERS>;
 pub trait TroubleTransport: Transport<Error: From<FromHciBytesError>> {}
 impl<T: Transport<Error: From<FromHciBytesError>>> TroubleTransport for T {}
 pub type TroubleController<T> = ExternalController<T, HCI_COMMAND_CAPACITY>;
@@ -575,7 +577,11 @@ impl BleSink for EmbeddedBleSink {
 
     async fn send_frame(&mut self, frame: &[u8]) -> Result<(), Closed> {
         let lease = match select(self.frames.lease(), self.slot.wait_for_close()).await {
-            Either::First(lease) => lease,
+            Either::First(Ok(lease)) => lease,
+            Either::First(Err(error)) => {
+                crate::diagnostic_log::warn!("ble frame lease failed: {error:?}");
+                return Err(Closed);
+            }
             Either::Second(()) => return Err(Closed),
         };
         lease.fill(frame).await.map_err(|_| Closed)?;
@@ -711,8 +717,13 @@ fn try_queue_inbound_frame(
     queue: &Sender<'static, BridgeMutex, BleFrameLease, FRAME_QUEUE_DEPTH>,
     frame: &[u8],
 ) {
-    let Some(lease) = pool.try_lease() else {
-        return;
+    let lease = match pool.try_lease() {
+        Ok(Some(lease)) => lease,
+        Ok(None) => return,
+        Err(error) => {
+            crate::diagnostic_log::warn!("ble callback frame lease failed: {error:?}");
+            return;
+        }
     };
     if lease.try_fill(frame).is_ok() {
         let _ = queue.try_send(lease);
@@ -755,7 +766,13 @@ async fn l2cap_pump<T: TroubleTransport>(
             if body.len() < len {
                 continue;
             }
-            let frame = inbound_frames.lease().await;
+            let frame = match inbound_frames.lease().await {
+                Ok(frame) => frame,
+                Err(error) => {
+                    crate::diagnostic_log::warn!("ble L2CAP frame lease failed: {error:?}");
+                    break;
+                }
+            };
             if frame.fill(&body[..len]).await.is_ok() {
                 data_in_tx.send(frame).await;
             }
@@ -1262,7 +1279,12 @@ pub async fn acceptor<T: TroubleTransport>(
             continue;
         }
         let lease = match select(hub.connection_slots.acquire(), hub.advertise.wait()).await {
-            Either::First(lease) => lease,
+            Either::First(Ok(lease)) => lease,
+            Either::First(Err(error)) => {
+                crate::diagnostic_log::warn!("ble connection slot acquisition failed: {error:?}");
+                Timer::after(Duration::from_millis(500)).await;
+                continue;
+            }
             Either::Second(state) => {
                 enabled = state;
                 continue;
@@ -1362,11 +1384,22 @@ pub async fn dialer<T: TroubleTransport>(
         };
         central = scanner.into_inner();
         if let Some(target) = target {
-            let Some(lease) = hub.connection_slots.try_acquire() else {
-                drop(radio);
-                #[cfg(target_arch = "riscv32")]
-                Timer::after(DISCOVERY_TURN_REST).await;
-                continue;
+            let lease = match hub.connection_slots.try_acquire() {
+                Ok(Some(lease)) => lease,
+                Ok(None) => {
+                    drop(radio);
+                    #[cfg(target_arch = "riscv32")]
+                    Timer::after(DISCOVERY_TURN_REST).await;
+                    continue;
+                }
+                Err(error) => {
+                    crate::diagnostic_log::warn!("ble connection slot claim failed: {error:?}");
+                    let _ = hub.dial_failed.try_send(target.addr.into_inner());
+                    drop(radio);
+                    #[cfg(target_arch = "riscv32")]
+                    Timer::after(DISCOVERY_TURN_REST).await;
+                    continue;
+                }
             };
             let idx = lease.index();
             let bd = target.addr;

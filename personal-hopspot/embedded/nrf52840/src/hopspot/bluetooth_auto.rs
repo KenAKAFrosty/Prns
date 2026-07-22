@@ -529,8 +529,13 @@ impl BleBackend<{ NrfBleBackend::MAX_PEERS }> for NrfBleBackend {
         let Some(addr) = self.resolve(address) else {
             return;
         };
-        let Some(slot) = self.hub.connection_slots.try_acquire() else {
-            return;
+        let slot = match self.hub.connection_slots.try_acquire() {
+            Ok(Some(slot)) => slot,
+            Ok(None) => return,
+            Err(_) => {
+                let _ = self.hub.dial_failed.try_send(addr.bytes());
+                return;
+            }
         };
         let index = slot.index();
         let _ = self.hub.assign[index].try_send(SlotJob::Dial {
@@ -1069,7 +1074,13 @@ pub(super) async fn acceptor(sd: &'static Softdevice, hub: &'static BleHub) -> !
             enabled = hub.advertise.wait().await;
             continue;
         }
-        let slot = hub.connection_slots.acquire().await;
+        let slot = match hub.connection_slots.acquire().await {
+            Ok(slot) => slot,
+            Err(_) => {
+                Timer::after(Duration::from_millis(500)).await;
+                continue;
+            }
+        };
         let index = slot.index();
 
         let mut adv_buf = [0u8; 31];

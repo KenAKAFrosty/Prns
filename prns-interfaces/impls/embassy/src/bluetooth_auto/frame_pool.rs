@@ -1,18 +1,21 @@
 use core::cell::Cell;
 use core::marker::PhantomData;
 
-use embassy_futures::yield_now;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::mutex::{Mutex, MutexGuard};
 use embassy_sync::semaphore::{FairSemaphore, Semaphore, SemaphoreReleaser};
 use heapless::Vec as FrameBytes;
 use portable_atomic::{AtomicBool, Ordering};
 
-type Availability<M, const CAPACITY: usize> = FairSemaphore<M, CAPACITY>;
+type Availability<M, const WAITERS: usize> = FairSemaphore<M, WAITERS>;
 
-pub(super) struct SharedFramePool<M: RawMutex + 'static, const FRAME: usize, const CAPACITY: usize>
-{
-    availability: Availability<M, CAPACITY>,
+pub(super) struct SharedFramePool<
+    M: RawMutex + 'static,
+    const FRAME: usize,
+    const CAPACITY: usize,
+    const WAITERS: usize,
+> {
+    availability: Availability<M, WAITERS>,
     slots: [FrameSlot<M, FRAME>; CAPACITY],
 }
 
@@ -30,44 +33,57 @@ impl<M: RawMutex + 'static, const FRAME: usize> FrameSlot<M, FRAME> {
     }
 }
 
-impl<M: RawMutex + 'static, const FRAME: usize, const CAPACITY: usize>
-    SharedFramePool<M, FRAME, CAPACITY>
+impl<M: RawMutex + 'static, const FRAME: usize, const CAPACITY: usize, const WAITERS: usize>
+    SharedFramePool<M, FRAME, CAPACITY, WAITERS>
 {
     #[must_use]
     pub const fn new() -> Self {
         assert!(CAPACITY > 0);
         assert!(CAPACITY <= u8::MAX as usize + 1);
+        assert!(WAITERS > 0);
         Self {
             availability: FairSemaphore::new(CAPACITY),
             slots: [const { FrameSlot::new() }; CAPACITY],
         }
     }
 
-    pub async fn lease(&'static self) -> FrameLease<M, FRAME, CAPACITY> {
-        loop {
-            let permit = match self.availability.acquire(1).await {
-                Ok(permit) => permit,
-                Err(_) => {
-                    yield_now().await;
-                    continue;
-                }
-            };
-            if let Some(lease) = self.claim(permit) {
-                return lease;
-            }
-            yield_now().await;
-        }
+    pub async fn lease(
+        &'static self,
+    ) -> Result<FrameLease<M, FRAME, CAPACITY, WAITERS>, FramePoolError> {
+        let permit = self
+            .availability
+            .acquire(1)
+            .await
+            .map_err(|_| FramePoolError::WaitQueueFull)?;
+        let lease = self
+            .claim(permit)
+            .ok_or(FramePoolError::PermitWithoutAvailableSlot)?;
+        lease.lock().await.clear();
+        Ok(lease)
     }
 
-    pub fn try_lease(&'static self) -> Option<FrameLease<M, FRAME, CAPACITY>> {
-        let permit = self.availability.try_acquire(1)?;
-        self.claim(permit)
+    pub fn try_lease(
+        &'static self,
+    ) -> Result<Option<FrameLease<M, FRAME, CAPACITY, WAITERS>>, FramePoolError> {
+        let Some(permit) = self.availability.try_acquire(1) else {
+            return Ok(None);
+        };
+        let lease = self
+            .claim(permit)
+            .ok_or(FramePoolError::PermitWithoutAvailableSlot)?;
+        lease
+            .slot()
+            .frame
+            .try_lock()
+            .map_err(|_| FramePoolError::SlotBusy)?
+            .clear();
+        Ok(Some(lease))
     }
 
     fn claim(
         &'static self,
-        permit: SemaphoreReleaser<'static, Availability<M, CAPACITY>>,
-    ) -> Option<FrameLease<M, FRAME, CAPACITY>> {
+        permit: SemaphoreReleaser<'static, Availability<M, WAITERS>>,
+    ) -> Option<FrameLease<M, FRAME, CAPACITY, WAITERS>> {
         for index in 0..CAPACITY {
             if self.slots[index]
                 .claimed
@@ -86,8 +102,8 @@ impl<M: RawMutex + 'static, const FRAME: usize, const CAPACITY: usize>
     }
 }
 
-impl<M: RawMutex + 'static, const FRAME: usize, const CAPACITY: usize> Default
-    for SharedFramePool<M, FRAME, CAPACITY>
+impl<M: RawMutex + 'static, const FRAME: usize, const CAPACITY: usize, const WAITERS: usize> Default
+    for SharedFramePool<M, FRAME, CAPACITY, WAITERS>
 {
     fn default() -> Self {
         Self::new()
@@ -95,14 +111,19 @@ impl<M: RawMutex + 'static, const FRAME: usize, const CAPACITY: usize> Default
 }
 
 #[must_use]
-pub(super) struct FrameLease<M: RawMutex + 'static, const FRAME: usize, const CAPACITY: usize> {
-    pool: &'static SharedFramePool<M, FRAME, CAPACITY>,
+pub(super) struct FrameLease<
+    M: RawMutex + 'static,
+    const FRAME: usize,
+    const CAPACITY: usize,
+    const WAITERS: usize,
+> {
+    pool: &'static SharedFramePool<M, FRAME, CAPACITY, WAITERS>,
     index: u8,
     not_sync: PhantomData<Cell<()>>,
 }
 
-impl<M: RawMutex + 'static, const FRAME: usize, const CAPACITY: usize>
-    FrameLease<M, FRAME, CAPACITY>
+impl<M: RawMutex + 'static, const FRAME: usize, const CAPACITY: usize, const WAITERS: usize>
+    FrameLease<M, FRAME, CAPACITY, WAITERS>
 {
     fn slot(&self) -> &FrameSlot<M, FRAME> {
         &self.pool.slots[usize::from(self.index)]
@@ -151,8 +172,8 @@ impl<M: RawMutex + 'static, const FRAME: usize, const CAPACITY: usize>
     }
 }
 
-impl<M: RawMutex + 'static, const FRAME: usize, const CAPACITY: usize> Drop
-    for FrameLease<M, FRAME, CAPACITY>
+impl<M: RawMutex + 'static, const FRAME: usize, const CAPACITY: usize, const WAITERS: usize> Drop
+    for FrameLease<M, FRAME, CAPACITY, WAITERS>
 {
     fn drop(&mut self) {
         self.slot().claimed.store(false, Ordering::Release);
@@ -164,54 +185,100 @@ impl<M: RawMutex + 'static, const FRAME: usize, const CAPACITY: usize> Drop
 pub(super) enum FramePoolError {
     FrameTooLarge { len: usize, capacity: usize },
     SlotBusy,
+    WaitQueueFull,
+    PermitWithoutAvailableSlot,
 }
 
 #[cfg(test)]
 mod tests {
+    use core::future::ready;
+
     use embassy_futures::block_on;
+    use embassy_futures::select::{select, select3, Either, Either3};
     use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 
     use super::{FramePoolError, SharedFramePool};
 
     #[test]
     fn leases_are_exclusive_and_release_on_drop() {
-        static POOL: SharedFramePool<CriticalSectionRawMutex, 8, 2> = SharedFramePool::new();
+        static POOL: SharedFramePool<CriticalSectionRawMutex, 8, 2, 2> = SharedFramePool::new();
 
-        let first = POOL.try_lease();
-        let second = POOL.try_lease();
+        let first = POOL.try_lease().ok().flatten();
+        let second = POOL.try_lease().ok().flatten();
         assert!(first.is_some());
         assert!(second.is_some());
-        assert!(POOL.try_lease().is_none());
+        assert_eq!(POOL.try_lease().map(|lease| lease.is_none()), Ok(true));
 
         drop(first);
-        assert!(POOL.try_lease().is_some());
+        let replacement = POOL.try_lease().ok().flatten();
+        assert!(replacement.is_some());
+        assert_eq!(POOL.try_lease().map(|lease| lease.is_none()), Ok(true));
     }
 
     #[test]
     fn frames_are_bounded_and_reused() {
-        static POOL: SharedFramePool<CriticalSectionRawMutex, 4, 1> = SharedFramePool::new();
+        static POOL: SharedFramePool<CriticalSectionRawMutex, 4, 1, 1> = SharedFramePool::new();
 
         block_on(async {
             let lease = POOL.lease().await;
-            assert_eq!(lease.fill(b"prns").await, Ok(()));
-            {
-                let frame = lease.lock().await;
-                assert_eq!(frame.as_slice(), b"prns");
-                assert_eq!(lease.try_fill(b"rns"), Err(FramePoolError::SlotBusy));
-            }
-            assert_eq!(
-                lease.fill(b"large").await,
-                Err(FramePoolError::FrameTooLarge {
-                    len: 5,
-                    capacity: 4,
-                })
-            );
-            drop(lease);
+            assert!(lease.is_ok());
+            if let Ok(lease) = lease {
+                assert_eq!(lease.fill(b"prns").await, Ok(()));
+                {
+                    let frame = lease.lock().await;
+                    assert_eq!(frame.as_slice(), b"prns");
+                    assert_eq!(lease.try_fill(b"rns"), Err(FramePoolError::SlotBusy));
+                }
+                assert_eq!(
+                    lease.fill(b"large").await,
+                    Err(FramePoolError::FrameTooLarge {
+                        len: 5,
+                        capacity: 4,
+                    })
+                );
+                drop(lease);
 
-            let reused = POOL.lease().await;
-            assert_eq!(reused.fill(b"rns").await, Ok(()));
-            let frame = reused.lock().await;
-            assert_eq!(frame.as_slice(), b"rns");
+                let reused = POOL.lease().await;
+                assert!(reused.is_ok());
+                if let Ok(reused) = reused {
+                    assert!(reused.lock().await.is_empty());
+                    assert_eq!(reused.fill(b"rns").await, Ok(()));
+                    let frame = reused.lock().await;
+                    assert_eq!(frame.as_slice(), b"rns");
+                }
+            }
         });
+    }
+
+    #[test]
+    fn cancelled_lease_leaves_capacity_available() {
+        static POOL: SharedFramePool<CriticalSectionRawMutex, 4, 1, 2> = SharedFramePool::new();
+
+        let held = POOL.try_lease().ok().flatten();
+        assert!(held.is_some());
+        block_on(async {
+            assert!(matches!(
+                select(POOL.lease(), ready(())).await,
+                Either::Second(())
+            ));
+        });
+        drop(held);
+        assert_eq!(POOL.try_lease().map(|lease| lease.is_some()), Ok(true));
+    }
+
+    #[test]
+    fn wait_queue_saturation_is_explicit() {
+        static POOL: SharedFramePool<CriticalSectionRawMutex, 4, 1, 2> = SharedFramePool::new();
+
+        let held = POOL.try_lease().ok().flatten();
+        assert!(held.is_some());
+        block_on(async {
+            assert!(matches!(
+                select3(POOL.lease(), POOL.lease(), POOL.lease()).await,
+                Either3::Third(Err(FramePoolError::WaitQueueFull))
+            ));
+        });
+        drop(held);
+        assert_eq!(POOL.try_lease().map(|lease| lease.is_some()), Ok(true));
     }
 }
