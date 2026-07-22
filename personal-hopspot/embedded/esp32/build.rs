@@ -9,6 +9,7 @@ use flate2::Compression;
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    track_git_head();
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
     let build_commit_short = git_commit_short();
@@ -319,6 +320,34 @@ fn git_commit_short() -> String {
         })
         .or_else(|| git_output(&["rev-parse", "--short=12", "HEAD"]))
         .unwrap_or_else(|| "unknown".to_string())
+}
+
+fn track_git_head() {
+    let mut paths = Vec::new();
+    if let Some(path) = git_path("HEAD") {
+        paths.push(path);
+    }
+    if let Some(reference) = git_output(&["symbolic-ref", "-q", "HEAD"]) {
+        if let Some(path) = git_path(&reference) {
+            paths.push(path);
+        }
+        if let Some(path) = git_path("packed-refs") {
+            paths.push(path);
+        }
+    }
+    for path in paths {
+        println!("cargo:rerun-if-changed={}", path.display());
+    }
+}
+
+fn git_path(name: &str) -> Option<PathBuf> {
+    let path = PathBuf::from(git_output(&["rev-parse", "--git-path", name])?);
+    if path.is_absolute() {
+        return Some(path);
+    }
+    git_output(&["rev-parse", "--show-toplevel"])
+        .map(PathBuf::from)
+        .map(|root| root.join(path))
 }
 
 fn git_output(args: &[&str]) -> Option<String> {

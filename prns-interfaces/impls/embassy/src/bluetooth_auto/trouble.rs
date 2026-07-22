@@ -12,7 +12,6 @@ use embassy_sync::signal::Signal;
 use embassy_sync_07::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::{with_timeout, Duration, Timer};
 use heapless_09::Vec as GattVec;
-use portable_atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use trouble_host::prelude::*;
 
 use prns_core::interfaces::bluetooth_auto::{
@@ -305,79 +304,6 @@ impl SlotChannels {
     }
 }
 
-#[repr(u8)]
-enum BleTaskPhase {
-    Disabled,
-    WaitingForSlot,
-    WaitingForRadio,
-    Starting,
-    Active,
-    Connecting,
-    Dispatching,
-    BackingOff,
-}
-
-struct BleDiagnostics {
-    advertising_requested: AtomicBool,
-    scanning_requested: AtomicBool,
-    acceptor_phase: AtomicU8,
-    dialer_phase: AtomicU8,
-    active_slots: AtomicU8,
-    last_progress_ms: AtomicU64,
-    advertising_windows: AtomicU32,
-    advertising_failures: AtomicU32,
-    accepted_connections: AtomicU32,
-    accept_failures: AtomicU32,
-    scanning_windows: AtomicU32,
-    scanning_failures: AtomicU32,
-    dial_attempts: AtomicU32,
-    dialed_connections: AtomicU32,
-    dial_failures: AtomicU32,
-    host_failures: AtomicU32,
-}
-
-impl BleDiagnostics {
-    const fn new() -> Self {
-        Self {
-            advertising_requested: AtomicBool::new(false),
-            scanning_requested: AtomicBool::new(false),
-            acceptor_phase: AtomicU8::new(BleTaskPhase::Disabled as u8),
-            dialer_phase: AtomicU8::new(BleTaskPhase::Disabled as u8),
-            active_slots: AtomicU8::new(0),
-            last_progress_ms: AtomicU64::new(0),
-            advertising_windows: AtomicU32::new(0),
-            advertising_failures: AtomicU32::new(0),
-            accepted_connections: AtomicU32::new(0),
-            accept_failures: AtomicU32::new(0),
-            scanning_windows: AtomicU32::new(0),
-            scanning_failures: AtomicU32::new(0),
-            dial_attempts: AtomicU32::new(0),
-            dialed_connections: AtomicU32::new(0),
-            dial_failures: AtomicU32::new(0),
-            host_failures: AtomicU32::new(0),
-        }
-    }
-
-    fn touch(&self) {
-        self.last_progress_ms
-            .store(embassy_time::Instant::now().as_millis(), Ordering::Relaxed);
-    }
-
-    fn set_acceptor_phase(&self, phase: BleTaskPhase) {
-        self.acceptor_phase.store(phase as u8, Ordering::Relaxed);
-        self.touch();
-    }
-
-    fn set_dialer_phase(&self, phase: BleTaskPhase) {
-        self.dialer_phase.store(phase as u8, Ordering::Relaxed);
-        self.touch();
-    }
-
-    fn increment(counter: &AtomicU32) {
-        counter.fetch_add(1, Ordering::Relaxed);
-    }
-}
-
 pub struct BleHub {
     slots: [SlotChannels; PEER_CAPACITY],
     connection_slots: BleSlotPool,
@@ -392,7 +318,6 @@ pub struct BleHub {
     advertise: Signal<BridgeMutex, bool>,
     scan_enabled: Signal<BridgeMutex, bool>,
     local_address: BlockingMutex<BridgeMutex, Cell<[u8; 6]>>,
-    diagnostics: BleDiagnostics,
 }
 
 impl BleHub {
@@ -411,7 +336,6 @@ impl BleHub {
             advertise: Signal::new(),
             scan_enabled: Signal::new(),
             local_address: BlockingMutex::new(Cell::new([0; 6])),
-            diagnostics: BleDiagnostics::new(),
         }
     }
 
@@ -487,21 +411,11 @@ impl BleBackend<PEER_CAPACITY> for EmbeddedBleBackend {
     type Link = EmbeddedBleLink;
 
     async fn set_advertising(&mut self, mode: AdvertisingMode) -> Result<(), Closed> {
-        self.hub
-            .diagnostics
-            .advertising_requested
-            .store(mode.is_on(), Ordering::Relaxed);
-        self.hub.diagnostics.touch();
         self.hub.advertise.signal(mode.is_on());
         Ok(())
     }
 
     async fn set_scanning(&mut self, mode: ScanningMode) -> Result<(), Closed> {
-        self.hub
-            .diagnostics
-            .scanning_requested
-            .store(mode.is_on(), Ordering::Relaxed);
-        self.hub.diagnostics.touch();
         self.hub.scan_enabled.signal(mode.is_on());
         Ok(())
     }
@@ -1333,8 +1247,6 @@ pub async fn serve_slot<T: TroubleTransport>(
                 serve_central(hub, stack, link, &worker, connection, uuids).await;
             }
         }
-        hub.diagnostics.active_slots.fetch_sub(1, Ordering::Relaxed);
-        hub.diagnostics.touch();
     }
 }
 
@@ -1344,29 +1256,20 @@ pub async fn acceptor<T: TroubleTransport>(
     adv_data: &[u8],
 ) {
     let mut enabled = false;
-    hub.diagnostics.set_acceptor_phase(BleTaskPhase::Disabled);
     loop {
         if !enabled {
             enabled = hub.advertise.wait().await;
             continue;
         }
-        hub.diagnostics
-            .set_acceptor_phase(BleTaskPhase::WaitingForSlot);
         let lease = match select(hub.connection_slots.acquire(), hub.advertise.wait()).await {
             Either::First(lease) => lease,
             Either::Second(state) => {
                 enabled = state;
-                if !enabled {
-                    hub.diagnostics.set_acceptor_phase(BleTaskPhase::Disabled);
-                }
                 continue;
             }
         };
         let idx = lease.index();
-        hub.diagnostics
-            .set_acceptor_phase(BleTaskPhase::WaitingForRadio);
         let radio = hub.acquire_radio().await;
-        hub.diagnostics.set_acceptor_phase(BleTaskPhase::Starting);
         let advertiser = match peripheral
             .advertise(
                 &advertisement_parameters(),
@@ -1379,16 +1282,12 @@ pub async fn acceptor<T: TroubleTransport>(
         {
             Ok(advertiser) => advertiser,
             Err(error) => {
-                BleDiagnostics::increment(&hub.diagnostics.advertising_failures);
-                hub.diagnostics.set_acceptor_phase(BleTaskPhase::BackingOff);
                 crate::diagnostic_log::warn!("ble advertise failed: {error:?}");
                 drop(radio);
                 Timer::after(Duration::from_millis(500)).await;
                 continue;
             }
         };
-        BleDiagnostics::increment(&hub.diagnostics.advertising_windows);
-        hub.diagnostics.set_acceptor_phase(BleTaskPhase::Active);
         match select3(
             advertiser.accept(),
             Timer::after(ADV_WINDOW),
@@ -1397,21 +1296,12 @@ pub async fn acceptor<T: TroubleTransport>(
         .await
         {
             Either3::First(Ok(connection)) => {
-                if hub.assign[idx]
-                    .try_send(SlotJob::Accept {
-                        connection,
-                        slot: lease,
-                    })
-                    .is_err()
-                {
-                    BleDiagnostics::increment(&hub.diagnostics.accept_failures);
-                } else {
-                    hub.diagnostics.active_slots.fetch_add(1, Ordering::Relaxed);
-                    BleDiagnostics::increment(&hub.diagnostics.accepted_connections);
-                }
+                let _ = hub.assign[idx].try_send(SlotJob::Accept {
+                    connection,
+                    slot: lease,
+                });
             }
             Either3::First(Err(error)) => {
-                BleDiagnostics::increment(&hub.diagnostics.accept_failures);
                 crate::diagnostic_log::warn!("ble accept failed: {error:?}");
             }
             Either3::Second(()) => {}
@@ -1419,8 +1309,6 @@ pub async fn acceptor<T: TroubleTransport>(
                 enabled = state;
             }
         }
-        hub.diagnostics
-            .set_acceptor_phase(BleTaskPhase::Dispatching);
         drop(radio);
         #[cfg(target_arch = "riscv32")]
         Timer::after(DISCOVERY_TURN_REST).await;
@@ -1432,16 +1320,12 @@ pub async fn dialer<T: TroubleTransport>(
     mut central: Central<'static, TroubleController<T>, DefaultPacketPool>,
 ) {
     let mut enabled = false;
-    hub.diagnostics.set_dialer_phase(BleTaskPhase::Disabled);
     loop {
         if !enabled {
             enabled = hub.scan_enabled.wait().await;
             continue;
         }
-        hub.diagnostics
-            .set_dialer_phase(BleTaskPhase::WaitingForRadio);
         let radio = hub.acquire_radio().await;
-        hub.diagnostics.set_dialer_phase(BleTaskPhase::Starting);
         let mut scanner = Scanner::new(central);
         let target = {
             match scanner
@@ -1454,8 +1338,6 @@ pub async fn dialer<T: TroubleTransport>(
                 .await
             {
                 Ok(_session) => {
-                    BleDiagnostics::increment(&hub.diagnostics.scanning_windows);
-                    hub.diagnostics.set_dialer_phase(BleTaskPhase::Active);
                     match select3(
                         hub.dial_request.receive(),
                         Timer::after(SCAN_WINDOW),
@@ -1467,16 +1349,11 @@ pub async fn dialer<T: TroubleTransport>(
                         Either3::Second(()) => None,
                         Either3::Third(state) => {
                             enabled = state;
-                            if !enabled {
-                                hub.diagnostics.set_dialer_phase(BleTaskPhase::Disabled);
-                            }
                             None
                         }
                     }
                 }
                 Err(error) => {
-                    BleDiagnostics::increment(&hub.diagnostics.scanning_failures);
-                    hub.diagnostics.set_dialer_phase(BleTaskPhase::BackingOff);
                     crate::diagnostic_log::warn!("ble scan failed: {error:?}");
                     Timer::after(Duration::from_millis(500)).await;
                     None
@@ -1486,7 +1363,6 @@ pub async fn dialer<T: TroubleTransport>(
         central = scanner.into_inner();
         if let Some(target) = target {
             let Some(lease) = hub.connection_slots.try_acquire() else {
-                hub.diagnostics.set_dialer_phase(BleTaskPhase::Dispatching);
                 drop(radio);
                 #[cfg(target_arch = "riscv32")]
                 Timer::after(DISCOVERY_TURN_REST).await;
@@ -1506,30 +1382,18 @@ pub async fn dialer<T: TroubleTransport>(
             config.scan_config.timeout = CONNECT_TIMEOUT;
             config.scan_config.interval = CONNECT_SCAN_INTERVAL;
             config.scan_config.window = CONNECT_SCAN_WINDOW;
-            BleDiagnostics::increment(&hub.diagnostics.dial_attempts);
-            hub.diagnostics.set_dialer_phase(BleTaskPhase::Connecting);
             match central.connect(&config).await {
                 Ok(connection) => {
-                    if hub.assign[idx]
-                        .try_send(SlotJob::Dial {
-                            connection,
-                            slot: lease,
-                        })
-                        .is_err()
-                    {
-                        BleDiagnostics::increment(&hub.diagnostics.dial_failures);
-                    } else {
-                        hub.diagnostics.active_slots.fetch_add(1, Ordering::Relaxed);
-                        BleDiagnostics::increment(&hub.diagnostics.dialed_connections);
-                    }
+                    let _ = hub.assign[idx].try_send(SlotJob::Dial {
+                        connection,
+                        slot: lease,
+                    });
                 }
                 Err(_) => {
-                    BleDiagnostics::increment(&hub.diagnostics.dial_failures);
                     let _ = hub.dial_failed.try_send(bd.into_inner());
                 }
             }
         }
-        hub.diagnostics.set_dialer_phase(BleTaskPhase::Dispatching);
         drop(radio);
         #[cfg(target_arch = "riscv32")]
         Timer::after(DISCOVERY_TURN_REST).await;
@@ -1546,8 +1410,6 @@ pub async fn host_runner<T: TroubleTransport>(
     };
     loop {
         if let Err(error) = runner.run_with_handler(&funnel).await {
-            BleDiagnostics::increment(&hub.diagnostics.host_failures);
-            hub.diagnostics.touch();
             crate::diagnostic_log::warn!("ble host runner exited: {error:?}");
             Timer::after(Duration::from_millis(100)).await;
         }

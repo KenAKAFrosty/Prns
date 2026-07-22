@@ -1280,7 +1280,7 @@ dependencies = [
 
 [[package]]
 name = "personal-rns"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "cfg-if",
  "prns-core",
@@ -1352,7 +1352,7 @@ checksum = "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391"
 
 [[package]]
 name = "prns-core"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "aes",
  "cbc",
@@ -1387,7 +1387,7 @@ dependencies = [
 
 [[package]]
 name = "prns-interfaces-embassy"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "embassy-futures",
  "embassy-net",
@@ -1402,7 +1402,7 @@ dependencies = [
 
 [[package]]
 name = "prns-interfaces-tokio"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "bluer",
  "cfg-if",
@@ -1419,7 +1419,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "cfg-if",
  "heapless 0.8.0",
@@ -1428,7 +1428,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime-embassy"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "embassy-futures",
  "embassy-sync",
@@ -1437,11 +1437,12 @@ dependencies = [
  "portable-atomic",
  "prns-core",
  "prns-runtime",
+ "static_cell",
 ]
 
 [[package]]
 name = "prns-runtime-tokio"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "bzip2",
  "futures-util",
@@ -1639,6 +1640,15 @@ name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
+
+[[package]]
+name = "static_cell"
+version = "2.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0530892bb4fa575ee0da4b86f86c667132a94b74bb72160f58ee5a4afec74c23"
+dependencies = [
+ "portable-atomic",
+]
 
 [[package]]
 name = "strsim"

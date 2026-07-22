@@ -1,5 +1,8 @@
 pub mod boards;
 
+#[cfg(feature = "wifi-auto")]
+use alloc::string::{String, ToString};
+use core::fmt::Write as _;
 use esp_backtrace as _;
 use esp_bootloader_esp_idf::esp_app_desc;
 use esp_hal::clock::CpuClock;
@@ -13,11 +16,6 @@ use esp_hal::spi::master::Spi;
 use esp_hal::system::Stack as CpuStack;
 use esp_hal::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx, UsbSerialJtagTx};
 use esp_hal::Async;
-use esp_println::println;
-
-#[cfg(feature = "wifi-auto")]
-use alloc::string::{String, ToString};
-use core::fmt::Write as _;
 
 use embassy_executor::Spawner;
 use embassy_futures::join::join;
@@ -286,14 +284,6 @@ fn hardware_entropy(bytes: &mut [u8]) {
 }
 
 fn ignore_events(_event: PrnsEvent<'_>, _state: &()) {}
-
-/// Print the allocator's per-region high-water footprint over the boot log: `External` is the
-/// mapped PSRAM (and the engine's boxed columns), `Internal` the 56 KiB SRAM heap. Safe only
-/// before the USB interface claims the USB-serial-JTAG: a construction-time probe, never run-loop.
-fn log_heap_footprint(label: &str) {
-    println!("[mem] {label}");
-    println!("{}", esp_alloc::HEAP.stats());
-}
 
 const DCACHE_FREE_BASE: usize = 0x3FCF_0000;
 const DCACHE_FREE_LEN: usize = 32 * 1024;
