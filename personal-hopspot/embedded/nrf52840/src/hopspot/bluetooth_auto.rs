@@ -43,6 +43,7 @@ const SIGHTING_DEPTH: usize = 4;
 const SEEN_CAP: usize = 8;
 const GATT_FRAGMENT_PAYLOAD: usize = 180;
 const GATT_REASSEMBLY_CAP: usize = 600;
+const GATT_ATTRIBUTE_TABLE_BYTES: u32 = 3072;
 const NOTIFY_PACING: Duration = Duration::from_millis(15);
 const SIGHTING_PACING: Duration = Duration::from_millis(200);
 const SCAN_ERROR_BACKOFF: Duration = Duration::from_millis(500);
@@ -251,6 +252,9 @@ pub(super) fn softdevice_config() -> nrf_softdevice::Config {
             event_length: 6,
         }),
         conn_gatt: Some(raw::ble_gatt_conn_cfg_t { att_mtu: 247 }),
+        gatts_attr_tab_size: Some(raw::ble_gatts_cfg_attr_tab_size_t {
+            attr_tab_size: GATT_ATTRIBUTE_TABLE_BYTES,
+        }),
         conn_l2cap: Some(raw::ble_l2cap_conn_cfg_t {
             ch_count: 1,
             rx_mps: L2CAP_MPS,
