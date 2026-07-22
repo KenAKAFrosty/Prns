@@ -36,7 +36,7 @@ use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceKind, Inte
 use personal_rns::lora::LoRaInterface;
 use personal_rns::radios::sx126x::{BoardConfig, Sx126x, TcxoVoltage};
 use personal_rns::reactor::embassy::{EmbassyHost, EmbassyInterfaceStatus};
-use personal_rns::reactor::interface_seam::{Interface, EMBEDDED_MAX_WIRE_FRAME_LEN};
+use personal_rns::reactor::interface_seam::Interface;
 use personal_rns::runtime::{
     Fleet, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe,
     RequestHandlerRegistration,
@@ -208,7 +208,7 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
         core::sync::atomic::Ordering::Relaxed,
     );
 
-    let mut reactor_pool = REACTOR_POOL.try_take().expect("reactor pool is available");
+    let mut reactor_lanes = ReactorLanes::new();
     let lora_profile = DEFAULT_915_PROFILE;
     let lora_id = InterfaceId::from_channel_tag(InterfaceKind::LoRa, &channel_tag(&lora_profile));
     static LORA_STATUS: StaticCell<EmbassyInterfaceStatus> = StaticCell::new();
@@ -231,20 +231,20 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
     ));
     let usb_dev = UsbAutoDevice::new(USB_INTERFACE_ID, usb_rx, usb_tx, usb_status, || true);
 
-    let lora_lane = reactor_pool
-        .claim_interface::<LORA_SLOT>(lora.descriptor())
+    let lora_lane = reactor_lanes
+        .claim_interface(&LORA_REACTOR_LANE, lora.descriptor())
         .expect("LoRa lane is available");
     let ble_supervisor_lane = ble_identity.as_ref().map(|_| {
-        reactor_pool
-            .claim_supervisor::<BLE_SUPERVISOR_SLOT>(BLE_SUPERVISOR_ID, &OUTBOUND_WAKE)
+        reactor_lanes
+            .claim_supervisor(&BLE_REACTOR_LANE, BLE_SUPERVISOR_ID, &OUTBOUND_WAKE)
             .expect("Bluetooth supervisor lane is available")
     });
-    let usb_lane = reactor_pool
-        .claim_interface::<USB_SLOT>(usb_dev.descriptor())
+    let usb_lane = reactor_lanes
+        .claim_interface(&USB_REACTOR_LANE, usb_dev.descriptor())
         .expect("USB lane is available");
 
     let handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
-    let reactor_wiring = reactor_pool.into_reactor_wiring(
+    let reactor_wiring = reactor_lanes.into_reactor_wiring(
         NOTIFY.receiver(),
         COMMANDS.receiver(),
         LIFECYCLE.receiver(),
@@ -296,13 +296,8 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
                 },
                 &BLE_SHARED,
             );
-            let fleet: Fleet<
-                Mtx,
-                EMBEDDED_MAX_WIRE_FRAME_LEN,
-                BLE_HW_MTU,
-                NOTIFY_CAP,
-                LIFECYCLE_CAP,
-            > = lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender());
+            let fleet: Fleet<Mtx, BLE_HW_MTU, NOTIFY_CAP, LIFECYCLE_CAP> =
+                lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender());
             (supervisor, fleet)
         });
 

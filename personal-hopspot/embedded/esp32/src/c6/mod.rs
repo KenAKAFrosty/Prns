@@ -28,7 +28,7 @@ use personal_rns::reactor::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
 use personal_rns::runtime::{
     minimum_interface_store_capacity, minimum_reactor_notification_capacity, CompletionPool,
     EmbassyInterfaceStore, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle,
-    PrnsNodeRecipe, RequestHandlerRegistration, StaticReactorPool,
+    PrnsNodeRecipe, ReactorLaneSet, RequestHandlerRegistration, StaticReactorLane,
 };
 use personal_rns::usb_auto::UsbAutoDevice;
 
@@ -40,7 +40,7 @@ use personal_rns::bluetooth_auto::BluetoothAutoShared;
 use personal_rns::interfaces::InterfaceKind;
 use personal_rns::runtime::Fleet;
 #[cfg(feature = "bluetooth-auto")]
-use prns_interfaces_embassy::bluetooth_auto::EmbeddedBleBackend;
+use prns_interfaces_embassy::bluetooth_auto::PEER_CAPACITY as EMBEDDED_BLE_PEER_CAPACITY;
 
 #[cfg(feature = "esp-now")]
 use esp_radio::esp_now::{
@@ -52,7 +52,7 @@ use esp_radio::wifi::ControllerConfig;
 use personal_rns::esp_now::EspNowInterface;
 #[cfg(feature = "esp-now")]
 use personal_rns::interfaces::esp_now::{
-    self as espnow_core, Channel as EspNowChannel, ChannelPolicy,
+    self as espnow_core, Channel as EspNowChannel, ChannelPolicy, ESP_NOW_V2_AIR_MTU,
 };
 use personal_rns::reactor::interface_seam::Interface;
 
@@ -66,11 +66,10 @@ const BLE_LANE: usize = cfg!(feature = "bluetooth-auto") as usize;
 const LANE_COUNT: usize = USB_LANE + ESPNOW_LANE + BLE_LANE;
 const LANE_DEPTH: usize = 1;
 #[cfg(feature = "bluetooth-auto")]
-pub const BLE_MEMBERS: usize = EmbeddedBleBackend::MAX_PEERS;
+pub const BLE_PEER_CAPACITY: usize = EMBEDDED_BLE_PEER_CAPACITY;
 #[cfg(not(feature = "bluetooth-auto"))]
-pub const BLE_MEMBERS: usize = 0;
-pub const BLE_CONTROLLER_CONNECTIONS: usize = 8;
-const INTERFACE_CAPACITY: usize = LANE_COUNT + BLE_LANE * BLE_MEMBERS + 1;
+pub const BLE_PEER_CAPACITY: usize = 0;
+const INTERFACE_CAPACITY: usize = LANE_COUNT + BLE_LANE * BLE_PEER_CAPACITY + 1;
 pub const NOTIFY_CAP: usize = minimum_reactor_notification_capacity(LANE_COUNT, LANE_DEPTH);
 const COMMANDS_CAP: usize = 8;
 pub const LIFECYCLE_CAP: usize = 32;
@@ -98,16 +97,11 @@ fn c6_ble_config() -> esp_radio::ble::Config {
     esp_radio::ble::Config::default()
         .with_task_priority(0)
         .with_task_stack_size(4096)
-        .with_max_connections(BLE_CONTROLLER_CONNECTIONS as u16)
+        .with_max_connections(BLE_PEER_CAPACITY as u16)
         .with_default_tx_power(esp_radio::ble::TxPower::P20)
 }
 
-const USB_SLOT: usize = 0;
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"hopsp-c6");
-#[cfg(feature = "esp-now")]
-const ESPNOW_SLOT: usize = USB_LANE;
-#[cfg(feature = "bluetooth-auto")]
-const BLE_SUPERVISOR_SLOT: usize = USB_LANE + ESPNOW_LANE;
 #[cfg(feature = "bluetooth-auto")]
 const BLE_SUPERVISOR_ID: InterfaceId =
     InterfaceId::new([InterfaceKind::BluetoothAuto as u8, 0, 0, 0, 0, 0, 0, 0]);
@@ -121,7 +115,7 @@ type InterfaceStore = EmbassyInterfaceStore<
     PACKET_PHY_INDEX_BUCKETS,
 >;
 #[cfg(feature = "bluetooth-auto")]
-type C6BleFleet = Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, BLE_HW_MTU, NOTIFY_CAP, LIFECYCLE_CAP>;
+type C6BleFleet = Fleet<Mtx, BLE_HW_MTU, NOTIFY_CAP, LIFECYCLE_CAP>;
 type Node = PrnsNode<
     (),
     (),
@@ -129,7 +123,6 @@ type Node = PrnsNode<
     EngineStorageType,
     EmbassyHost<fn(&mut [u8])>,
     Mtx,
-    EMBEDDED_MAX_WIRE_FRAME_LEN,
     LANE_COUNT,
     INTERFACE_CAPACITY,
     NOTIFY_CAP,
@@ -137,18 +130,25 @@ type Node = PrnsNode<
     LIFECYCLE_CAP,
     COMPLETIONS_CAP,
 >;
+type ReactorLanes = ReactorLaneSet<Mtx, LANE_COUNT, NOTIFY_CAP>;
 
 static NOTIFY: Channel<Mtx, InterfaceId, NOTIFY_CAP> = Channel::new();
 static COMMANDS: Channel<Mtx, IssuedCommand, COMMANDS_CAP> = Channel::new();
 static LIFECYCLE: Channel<Mtx, InterfaceLifecycle, LIFECYCLE_CAP> = Channel::new();
 static COMPLETION: CompletionPool<Mtx, COMPLETIONS_CAP> = CompletionPool::new();
 static INTERFACE_STORE: InterfaceStore = EmbassyInterfaceStore::new();
-static REACTOR_POOL: StaticReactorPool<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, LANE_DEPTH, LANE_COUNT> =
-    StaticReactorPool::new();
+static USB_REACTOR_LANE: StaticReactorLane<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, LANE_DEPTH> =
+    StaticReactorLane::new();
+#[cfg(feature = "esp-now")]
+static ESPNOW_REACTOR_LANE: StaticReactorLane<Mtx, ESP_NOW_V2_AIR_MTU, LANE_DEPTH> =
+    StaticReactorLane::new();
+#[cfg(feature = "bluetooth-auto")]
+static BLE_REACTOR_LANE: StaticReactorLane<Mtx, BLE_HW_MTU, LANE_DEPTH> = StaticReactorLane::new();
 static USB_STATUS: EmbassyInterfaceStatus =
     EmbassyInterfaceStatus::new(USB_INTERFACE_ID, ConnectionState::Initializing);
 #[cfg(feature = "bluetooth-auto")]
-static BLE_SHARED: BluetoothAutoShared<BLE_MEMBERS> = BluetoothAutoShared::new(BLE_SUPERVISOR_ID);
+static BLE_SHARED: BluetoothAutoShared<BLE_PEER_CAPACITY> =
+    BluetoothAutoShared::new(BLE_SUPERVISOR_ID);
 #[cfg(feature = "bluetooth-auto")]
 static BLE_OUTBOUND_WAKE: Signal<Mtx, ()> = Signal::new();
 
@@ -210,7 +210,7 @@ async fn ble_task(
     mac: [u8; 6],
     identity: BleIdentity,
     fleet: C6BleFleet,
-    shared: &'static BluetoothAutoShared<BLE_MEMBERS>,
+    shared: &'static BluetoothAutoShared<BLE_PEER_CAPACITY>,
 ) {
     Timer::after(BLE_START_DELAY).await;
     let connector =

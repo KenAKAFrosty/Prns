@@ -9,9 +9,8 @@ use static_cell::StaticCell;
 
 use crate::engine::{IssuedCommand, Journaled, MAX_SEND_REQUEST_DATA_LEN};
 use crate::interfaces::{InterfaceDescriptor, InterfaceId, InterfaceIfac};
-use crate::reactor::driver::{
-    run_pooled, EmbassyGrantConsumer, InterfaceLifecycle, PooledEgress, PooledWiring,
-};
+use crate::reactor::driver::{run_pooled, InterfaceLifecycle, PooledEgress, PooledWiring};
+use crate::reactor::grant::ReactorLaneReader;
 use crate::reactor::Host;
 use crate::storage::StorageLayout;
 
@@ -25,10 +24,8 @@ use super::command_handle::PrnsNodeHandle;
 use prns_runtime::runtime::placement::assemble_node_in_place;
 use prns_runtime::runtime::{assemble_node, AssembledNode};
 
-/// Reactor-side endpoints for a board-owned static interface pool.
 pub struct ReactorWiring<
     M,
-    const FRAME: usize,
     const LANE_COUNT: usize,
     const NOTIFY: usize,
     const COMMANDS: usize,
@@ -37,51 +34,16 @@ pub struct ReactorWiring<
 > where
     M: RawMutex + 'static,
 {
-    inbound: HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, M, FRAME>), LANE_COUNT>,
-    egress: PooledEgress<M, FRAME, LANE_COUNT>,
-    initial: HeaplessVec<InterfaceDescriptor, LANE_COUNT>,
-    ifacs: HeaplessVec<InterfaceIfac, LANE_COUNT>,
-    notify: Receiver<'static, M, InterfaceId, NOTIFY>,
-    commands: Receiver<'static, M, IssuedCommand, COMMANDS>,
-    lifecycle: Receiver<'static, M, InterfaceLifecycle, LIFECYCLE>,
-    handle: PrnsNodeHandle<'static, M, COMMANDS, COMPLETIONS>,
+    pub(super) inbound: HeaplessVec<(InterfaceId, &'static mut dyn ReactorLaneReader), LANE_COUNT>,
+    pub(super) egress: PooledEgress<LANE_COUNT>,
+    pub(super) initial: HeaplessVec<InterfaceDescriptor, LANE_COUNT>,
+    pub(super) ifacs: HeaplessVec<InterfaceIfac, LANE_COUNT>,
+    pub(super) notify: Receiver<'static, M, InterfaceId, NOTIFY>,
+    pub(super) commands: Receiver<'static, M, IssuedCommand, COMMANDS>,
+    pub(super) lifecycle: Receiver<'static, M, InterfaceLifecycle, LIFECYCLE>,
+    pub(super) handle: PrnsNodeHandle<'static, M, COMMANDS, COMPLETIONS>,
 }
 
-impl<
-        M: RawMutex + 'static,
-        const FRAME: usize,
-        const LANE_COUNT: usize,
-        const NOTIFY: usize,
-        const COMMANDS: usize,
-        const LIFECYCLE: usize,
-        const COMPLETIONS: usize,
-    > ReactorWiring<M, FRAME, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>
-{
-    #[must_use]
-    pub(super) fn new(
-        inbound: HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, M, FRAME>), LANE_COUNT>,
-        egress: PooledEgress<M, FRAME, LANE_COUNT>,
-        initial: HeaplessVec<InterfaceDescriptor, LANE_COUNT>,
-        ifacs: HeaplessVec<InterfaceIfac, LANE_COUNT>,
-        notify: Receiver<'static, M, InterfaceId, NOTIFY>,
-        commands: Receiver<'static, M, IssuedCommand, COMMANDS>,
-        lifecycle: Receiver<'static, M, InterfaceLifecycle, LIFECYCLE>,
-        handle: PrnsNodeHandle<'static, M, COMMANDS, COMPLETIONS>,
-    ) -> Self {
-        Self {
-            inbound,
-            egress,
-            initial,
-            ifacs,
-            notify,
-            commands,
-            lifecycle,
-            handle,
-        }
-    }
-}
-
-/// An Embassy node over a board-owned static interface pool.
 pub struct PrnsNode<
     St,
     R,
@@ -89,7 +51,6 @@ pub struct PrnsNode<
     S,
     H,
     M,
-    const FRAME: usize,
     const LANE_COUNT: usize,
     const INTERFACE_CAPACITY: usize,
     const NOTIFY: usize,
@@ -103,8 +64,8 @@ pub struct PrnsNode<
     M: RawMutex + 'static,
 {
     node: AssembledNode<St, R, F, S>,
-    inbound: HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, M, FRAME>), LANE_COUNT>,
-    egress: PooledEgress<M, FRAME, LANE_COUNT>,
+    inbound: HeaplessVec<(InterfaceId, &'static mut dyn ReactorLaneReader), LANE_COUNT>,
+    egress: PooledEgress<LANE_COUNT>,
     notify: Receiver<'static, M, InterfaceId, NOTIFY>,
     commands: Receiver<'static, M, IssuedCommand, COMMANDS>,
     lifecycle: Receiver<'static, M, InterfaceLifecycle, LIFECYCLE>,
@@ -140,7 +101,6 @@ impl<
         S,
         H,
         M,
-        const FRAME: usize,
         const LANE_COUNT: usize,
         const INTERFACE_CAPACITY: usize,
         const NOTIFY: usize,
@@ -155,7 +115,6 @@ impl<
         S,
         H,
         M,
-        FRAME,
         LANE_COUNT,
         INTERFACE_CAPACITY,
         NOTIFY,
@@ -174,7 +133,7 @@ where
 {
     pub fn new<'d, D>(
         recipe: PrnsNodeRecipe<D, St, R, F, Manual, S>,
-        wiring: ReactorWiring<M, FRAME, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
+        wiring: ReactorWiring<M, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
         host: H,
     ) -> Self
     where
@@ -191,7 +150,6 @@ impl<
         S,
         H,
         M,
-        const FRAME: usize,
         const LANE_COUNT: usize,
         const INTERFACE_CAPACITY: usize,
         const NOTIFY: usize,
@@ -208,7 +166,6 @@ impl<
         S,
         H,
         M,
-        FRAME,
         LANE_COUNT,
         INTERFACE_CAPACITY,
         NOTIFY,
@@ -228,12 +185,13 @@ where
     #[expect(
         unsafe_code,
         clippy::undocumented_unsafe_blocks,
+        clippy::mut_from_ref,
         reason = "every PrnsNode field is initialized before the slot is exposed"
     )]
     pub fn init_static<'d, D>(
         cell: &'static StaticCell<Self>,
         recipe: PrnsNodeRecipe<D, St, R, F, Manual, S>,
-        wiring: ReactorWiring<M, FRAME, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
+        wiring: ReactorWiring<M, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
         host: H,
     ) -> &'static mut Self
     where
@@ -282,7 +240,7 @@ where
 
     pub fn new_with_request_capacity<'d, D>(
         recipe: PrnsNodeRecipe<D, St, R, F, Manual, S>,
-        wiring: ReactorWiring<M, FRAME, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
+        wiring: ReactorWiring<M, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
         host: H,
         _capacity: RequestRoutingCapacity<ROUTED_REQUESTS, ROUTED_REQUEST_BYTES>,
     ) -> Self
@@ -294,7 +252,7 @@ where
 
     fn build<'d, D>(
         recipe: PrnsNodeRecipe<D, St, R, F, Manual, S>,
-        wiring: ReactorWiring<M, FRAME, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
+        wiring: ReactorWiring<M, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
         host: H,
     ) -> Self
     where

@@ -15,15 +15,13 @@ use crate::engine::test_support::{
 use crate::engine::{EngineState, IssuedCommand, Journaled};
 use crate::interfaces::InterfaceIfac;
 use crate::interfaces::{InterfaceDescriptor, InterfaceId};
-use crate::reactor::grant::GrantProducer;
+use crate::reactor::grant::{GrantProducer, ReactorLaneReader};
 use crate::reactor::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
 use crate::runtime::NoInterfaceInspectionStore;
 use crate::storage::GrowableHeap;
 
 use super::super::test_support::{descriptor, WATCHDOG};
-use super::super::{
-    leaked_grant_lane, EmbassyGrantConsumer, EmbassyGrantProducer, EmbassyHost, PooledEgress,
-};
+use super::super::{leaked_grant_lane, EmbassyHost, PooledEgress};
 use super::{run_pooled, InterfaceLifecycle, PooledWiring};
 
 #[test]
@@ -40,29 +38,19 @@ fn a_pooled_ifac_slot_added_at_runtime_opens_inbound_then_frees_on_remove() {
     let commands: Channel<CriticalSectionRawMutex, IssuedCommand, 2> = Channel::new();
     let lifecycle: Channel<CriticalSectionRawMutex, InterfaceLifecycle, 2> = Channel::new();
 
-    const SLOT: usize = EMBEDDED_MAX_WIRE_FRAME_LEN;
-    let (mut source_in_tx, source_in_rx) = leaked_grant_lane::<SLOT>(2);
-    let (source_out_tx, _source_out_rx) = leaked_grant_lane::<SLOT>(2);
+    const FRAME: usize = EMBEDDED_MAX_WIRE_FRAME_LEN;
+    let (mut source_in_tx, source_in_rx) = leaked_grant_lane::<FRAME>(2);
+    let (source_out_tx, _source_out_rx) = leaked_grant_lane::<FRAME>(2);
 
-    let mut inbound: HeaplessVec<
-        (
-            InterfaceId,
-            EmbassyGrantConsumer<'static, CriticalSectionRawMutex, SLOT>,
-        ),
-        1,
-    > = HeaplessVec::new();
-    let _ = inbound.push((source, source_in_rx));
-    let mut egress_lanes: HeaplessVec<
-        (
-            InterfaceId,
-            EmbassyGrantProducer<'static, CriticalSectionRawMutex, SLOT>,
-        ),
-        1,
-    > = HeaplessVec::new();
-    let _ = egress_lanes.push((source, source_out_tx));
+    let mut inbound: HeaplessVec<(InterfaceId, &'static mut dyn ReactorLaneReader), 1> =
+        HeaplessVec::new();
+    let _ = inbound.push((
+        source,
+        std::boxed::Box::leak(std::boxed::Box::new(source_in_rx)),
+    ));
 
     let raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
-    let mut masked = [0u8; SLOT];
+    let mut masked = [0u8; FRAME];
     let masked_len = network.mask_outbound(&raw, &mut masked).unwrap();
 
     let heard: Rc<RefCell<usize>> = Rc::new(RefCell::new(0));
@@ -91,7 +79,11 @@ fn a_pooled_ifac_slot_added_at_runtime_opens_inbound_then_frees_on_remove() {
         | Journaled::LinkInterfaceMismatch { .. } => {}
     };
 
-    let mut egress = PooledEgress::new(egress_lanes);
+    let mut egress: PooledEgress<1> = PooledEgress::new();
+    let _ = egress.push(
+        source,
+        std::boxed::Box::leak(std::boxed::Box::new(source_out_tx)),
+    );
     let mut host = EmbassyHost::new(|bytes: &mut [u8]| bytes.fill(0));
     let count = block_on(async {
         let mut descriptors: HeaplessVec<InterfaceDescriptor, 1> = HeaplessVec::new();
@@ -170,26 +162,16 @@ fn a_pooled_slot_retagged_at_runtime_carries_traffic_under_the_new_id() {
     let commands: Channel<CriticalSectionRawMutex, IssuedCommand, 2> = Channel::new();
     let lifecycle: Channel<CriticalSectionRawMutex, InterfaceLifecycle, 2> = Channel::new();
 
-    const SLOT: usize = EMBEDDED_MAX_WIRE_FRAME_LEN;
-    let (mut source_in_tx, source_in_rx) = leaked_grant_lane::<SLOT>(2);
-    let (source_out_tx, _source_out_rx) = leaked_grant_lane::<SLOT>(2);
+    const FRAME: usize = EMBEDDED_MAX_WIRE_FRAME_LEN;
+    let (mut source_in_tx, source_in_rx) = leaked_grant_lane::<FRAME>(2);
+    let (source_out_tx, _source_out_rx) = leaked_grant_lane::<FRAME>(2);
 
-    let mut inbound: HeaplessVec<
-        (
-            InterfaceId,
-            EmbassyGrantConsumer<'static, CriticalSectionRawMutex, SLOT>,
-        ),
-        1,
-    > = HeaplessVec::new();
-    let _ = inbound.push((old_id, source_in_rx));
-    let mut egress_lanes: HeaplessVec<
-        (
-            InterfaceId,
-            EmbassyGrantProducer<'static, CriticalSectionRawMutex, SLOT>,
-        ),
-        1,
-    > = HeaplessVec::new();
-    let _ = egress_lanes.push((old_id, source_out_tx));
+    let mut inbound: HeaplessVec<(InterfaceId, &'static mut dyn ReactorLaneReader), 1> =
+        HeaplessVec::new();
+    let _ = inbound.push((
+        old_id,
+        std::boxed::Box::leak(std::boxed::Box::new(source_in_rx)),
+    ));
 
     let raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
 
@@ -219,7 +201,11 @@ fn a_pooled_slot_retagged_at_runtime_carries_traffic_under_the_new_id() {
         | Journaled::LinkInterfaceMismatch { .. } => {}
     };
 
-    let mut egress = PooledEgress::new(egress_lanes);
+    let mut egress: PooledEgress<1> = PooledEgress::new();
+    let _ = egress.push(
+        old_id,
+        std::boxed::Box::leak(std::boxed::Box::new(source_out_tx)),
+    );
     let mut host = EmbassyHost::new(|bytes: &mut [u8]| bytes.fill(0));
     let count = block_on(async {
         let mut descriptors: HeaplessVec<InterfaceDescriptor, 1> = HeaplessVec::new();

@@ -14,7 +14,7 @@ use crate::engine::test_support::{
 use crate::engine::{EngineState, IssuedCommand, Journaled};
 use crate::interfaces::InterfaceIfac;
 use crate::interfaces::{AttachedInterfaces, InterfaceDescriptor, InterfaceId};
-use crate::reactor::grant::{AnyGrantConsumer, AnyGrantProducer, GrantConsumer, GrantProducer};
+use crate::reactor::grant::{GrantConsumer, GrantProducer, ReactorLaneReader, ReactorLaneWriter};
 use crate::reactor::interface_seam::{Interface, InterfaceSeam, EMBEDDED_MAX_WIRE_FRAME_LEN};
 use crate::wire::{PacketType, WirePacketHeader};
 
@@ -138,10 +138,10 @@ fn an_ifac_frame_crosses_the_seam_and_leaves_masked_through_the_peer() {
     };
 
     let outcome = block_on(async {
-        let mut egress_lanes: [(InterfaceId, &mut dyn AnyGrantProducer); 2] =
+        let mut egress_lanes: [(InterfaceId, &mut dyn ReactorLaneWriter); 2] =
             [(source, &mut source_out_tx), (peer, &mut peer_out_tx)];
         let egress = EmbassyEgress::new(&mut egress_lanes);
-        let mut inbound_lanes: [(InterfaceId, &mut dyn AnyGrantConsumer); 2] =
+        let mut inbound_lanes: [(InterfaceId, &mut dyn ReactorLaneReader); 2] =
             [(source, &mut source_in_rx), (peer, &mut peer_in_rx)];
 
         let reactor = run(
@@ -201,7 +201,7 @@ fn an_ifac_frame_crosses_the_seam_and_leaves_masked_through_the_peer() {
                 if *heard.borrow() >= 1 {
                     if let Some(slot) = peer_wire_out_rx.try_peek() {
                         let rebroadcast = slot.frame().to_vec();
-                        peer_wire_out_rx.release();
+                        GrantConsumer::release(&mut peer_wire_out_rx);
                         break rebroadcast;
                     }
                 }

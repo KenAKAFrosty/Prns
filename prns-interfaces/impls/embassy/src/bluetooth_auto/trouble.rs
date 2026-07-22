@@ -30,14 +30,13 @@ use super::connection_slots::{
     ConnectionSlotPool, ConnectionSlotSinkLease, ConnectionSlotSourceLease,
     ConnectionSlotWorkerLease, ReadyConnectionSlot, ReadyConnectionSlotParts,
 };
+use super::frame_pool::{FrameLease, SharedFramePool};
 
 #[cfg(target_arch = "riscv32")]
-pub const SLOTS: usize = 8;
+pub const PEER_CAPACITY: usize = 8;
 #[cfg(not(target_arch = "riscv32"))]
-pub const SLOTS: usize = EmbeddedBleBackend::MAX_PEERS;
-pub const HCI_COMMAND_SLOTS: usize = 20;
-pub const CONNECTIONS: usize = SLOTS;
-pub const L2CAP_CHANNELS: usize = SLOTS;
+pub const PEER_CAPACITY: usize = 4;
+const HCI_COMMAND_CAPACITY: usize = 20;
 const ATTRIBUTE_TABLE: usize = 32;
 const CCCD_TABLE: usize = 4;
 pub const GATT_VALUE_CAP: usize = 244;
@@ -93,15 +92,10 @@ const SCAN_WINDOW: Duration = Duration::from_millis(600);
 const DISCOVERY_TURN_REST: Duration = Duration::from_millis(20);
 
 /// Shallow per-slot lanes apply backpressure before BLE bursts crowd the USB and engine scheduler.
-#[cfg(target_arch = "riscv32")]
-const CTRL_DEPTH: usize = 2;
-#[cfg(not(target_arch = "riscv32"))]
-const CTRL_DEPTH: usize = 4;
-#[cfg(target_arch = "riscv32")]
-const DATA_DEPTH: usize = 1;
-#[cfg(not(target_arch = "riscv32"))]
-const DATA_DEPTH: usize = 4;
-const SIGHTING_DEPTH: usize = SLOTS * 2;
+const CONTROL_QUEUE_DEPTH: usize = 2;
+const FRAME_QUEUE_DEPTH: usize = 2;
+const FRAME_POOL_CAPACITY: usize = PEER_CAPACITY;
+const SIGHTING_DEPTH: usize = PEER_CAPACITY * 2;
 const RADIO_WAITERS: usize = 2;
 
 /// One L2CAP SDU carries one length-prefixed stream frame; modest credits and MPS keep two RX reservations inside the packet pool alongside GATT and TX.
@@ -111,32 +105,30 @@ const L2CAP_SDU_LEN: usize = STREAM_FRAME_PREFIX_LEN + BLE_HW_MTU;
 const L2CAP_MPS: u16 = 185;
 #[cfg(not(target_arch = "riscv32"))]
 const L2CAP_MPS: u16 = 247;
-#[cfg(target_arch = "riscv32")]
 const L2CAP_CREDITS: u16 = 1;
-#[cfg(not(target_arch = "riscv32"))]
-const L2CAP_CREDITS: u16 = 2;
 const L2CAP_HANDSHAKE_WINDOW: Duration = Duration::from_secs(5);
 const L2CAP_SETUP_RETRY: Duration = Duration::from_millis(150);
 const PHY_UPDATE_TIMEOUT: Duration = Duration::from_secs(2);
 #[cfg(target_arch = "riscv32")]
 const CONN_PARAM_UPDATE_TIMEOUT: Duration = Duration::from_secs(2);
 /// Retains the address kind needed to whitelist a peer when policy identifies it by six address bytes.
-const SEEN_CAP: usize = SLOTS * 2;
+const SEEN_CAP: usize = PEER_CAPACITY * 2;
 const FRAME_CAP: usize = BLE_HW_MTU;
 
-type FrameBytes = heapless::Vec<u8, FRAME_CAP>;
 type RadioArbiter = FairSemaphore<BridgeMutex, RADIO_WAITERS>;
 type RadioPermit<'a> = SemaphoreReleaser<'a, RadioArbiter>;
-type BleSlotPool = ConnectionSlotPool<BridgeMutex, SLOTS>;
+type BleSlotPool = ConnectionSlotPool<BridgeMutex, PEER_CAPACITY>;
 type BleSlotLease = ConnectionSlotLease<BridgeMutex>;
 type BleSlotWorker = ConnectionSlotWorkerLease<BridgeMutex>;
 type BleSlotLink = ConnectionSlotLinkLease<BridgeMutex>;
 type BleSlotSource = ConnectionSlotSourceLease<BridgeMutex>;
 type BleSlotSink = ConnectionSlotSinkLease<BridgeMutex>;
 type BleReadySlot = ReadyConnectionSlot<BridgeMutex>;
+type BleFramePool = SharedFramePool<BridgeMutex, FRAME_CAP, FRAME_POOL_CAPACITY>;
+type BleFrameLease = FrameLease<BridgeMutex, FRAME_CAP, FRAME_POOL_CAPACITY>;
 pub trait TroubleTransport: Transport<Error: From<FromHciBytesError>> {}
 impl<T: Transport<Error: From<FromHciBytesError>>> TroubleTransport for T {}
-pub type TroubleController<T> = ExternalController<T, HCI_COMMAND_SLOTS>;
+pub type TroubleController<T> = ExternalController<T, HCI_COMMAND_CAPACITY>;
 pub type TroubleStack<T> = Stack<'static, TroubleController<T>, DefaultPacketPool>;
 pub type GattServer = AttributeServer<
     'static,
@@ -144,7 +136,7 @@ pub type GattServer = AttributeServer<
     DefaultPacketPool,
     ATTRIBUTE_TABLE,
     CCCD_TABLE,
-    CONNECTIONS,
+    PEER_CAPACITY,
 >;
 pub type GattCharacteristic = Characteristic<GattVec<u8, GATT_VALUE_CAP>>;
 pub type ReticulumAttributeTable = AttributeTable<'static, NoopRawMutex, ATTRIBUTE_TABLE>;
@@ -239,10 +231,10 @@ enum SlotJob {
 }
 
 struct SlotChannels {
-    control_in: Channel<BridgeMutex, Control, CTRL_DEPTH>,
-    control_out: Channel<BridgeMutex, Control, CTRL_DEPTH>,
-    data_in: Channel<BridgeMutex, FrameBytes, DATA_DEPTH>,
-    data_out: Channel<BridgeMutex, FrameBytes, DATA_DEPTH>,
+    control_in: Channel<BridgeMutex, Control, CONTROL_QUEUE_DEPTH>,
+    control_out: Channel<BridgeMutex, Control, CONTROL_QUEUE_DEPTH>,
+    data_in: Channel<BridgeMutex, BleFrameLease, FRAME_QUEUE_DEPTH>,
+    data_out: Channel<BridgeMutex, BleFrameLease, FRAME_QUEUE_DEPTH>,
     identity_in: Channel<BridgeMutex, BleIdentity, 1>,
     identity_out: Channel<BridgeMutex, BleIdentity, 1>,
     data_plane: Signal<BridgeMutex, L2capPlan>,
@@ -291,7 +283,11 @@ impl SlotChannels {
         self.identity_out.clear();
     }
 
-    fn link(&'static self, slot: BleSlotLink) -> EmbeddedBleLink {
+    fn link(
+        &'static self,
+        slot: BleSlotLink,
+        outbound_frames: &'static BleFramePool,
+    ) -> EmbeddedBleLink {
         EmbeddedBleLink {
             peer_protocol: self.peer_protocol(),
             control_in: self.control_in.receiver(),
@@ -303,6 +299,7 @@ impl SlotChannels {
             data_plane: &self.data_plane,
             plan: L2capPlan::None,
             address: self.addr(),
+            outbound_frames,
             slot,
         }
     }
@@ -382,13 +379,15 @@ impl BleDiagnostics {
 }
 
 pub struct BleHub {
-    slots: [SlotChannels; SLOTS],
+    slots: [SlotChannels; PEER_CAPACITY],
     connection_slots: BleSlotPool,
-    assign: [Channel<BridgeMutex, SlotJob, 1>; SLOTS],
-    ready: Channel<BridgeMutex, BleReadySlot, SLOTS>,
-    dial_failed: Channel<BridgeMutex, [u8; 6], SLOTS>,
+    assign: [Channel<BridgeMutex, SlotJob, 1>; PEER_CAPACITY],
+    ready: Channel<BridgeMutex, BleReadySlot, PEER_CAPACITY>,
+    dial_failed: Channel<BridgeMutex, [u8; 6], PEER_CAPACITY>,
     sightings: Channel<BridgeMutex, SeenPeer, SIGHTING_DEPTH>,
-    dial_request: Channel<BridgeMutex, DialTarget, SLOTS>,
+    dial_request: Channel<BridgeMutex, DialTarget, PEER_CAPACITY>,
+    inbound_frames: BleFramePool,
+    outbound_frames: BleFramePool,
     radio: RadioArbiter,
     advertise: Signal<BridgeMutex, bool>,
     scan_enabled: Signal<BridgeMutex, bool>,
@@ -399,13 +398,15 @@ pub struct BleHub {
 impl BleHub {
     pub const fn new() -> Self {
         Self {
-            slots: [const { SlotChannels::new() }; SLOTS],
+            slots: [const { SlotChannels::new() }; PEER_CAPACITY],
             connection_slots: ConnectionSlotPool::new(),
-            assign: [const { Channel::new() }; SLOTS],
+            assign: [const { Channel::new() }; PEER_CAPACITY],
             ready: Channel::new(),
             dial_failed: Channel::new(),
             sightings: Channel::new(),
             dial_request: Channel::new(),
+            inbound_frames: SharedFramePool::new(),
+            outbound_frames: SharedFramePool::new(),
             radio: FairSemaphore::new(1),
             advertise: Signal::new(),
             scan_enabled: Signal::new(),
@@ -447,19 +448,14 @@ impl Default for BleHub {
 
 pub struct EmbeddedBleBackend {
     hub: &'static BleHub,
-    ready: Receiver<'static, BridgeMutex, BleReadySlot, SLOTS>,
-    dial_failed: Receiver<'static, BridgeMutex, [u8; 6], SLOTS>,
+    ready: Receiver<'static, BridgeMutex, BleReadySlot, PEER_CAPACITY>,
+    dial_failed: Receiver<'static, BridgeMutex, [u8; 6], PEER_CAPACITY>,
     sightings: Receiver<'static, BridgeMutex, SeenPeer, SIGHTING_DEPTH>,
-    dial_request: Sender<'static, BridgeMutex, DialTarget, SLOTS>,
+    dial_request: Sender<'static, BridgeMutex, DialTarget, PEER_CAPACITY>,
     seen: heapless::Vec<DialTarget, SEEN_CAP>,
 }
 
 impl EmbeddedBleBackend {
-    #[cfg(target_arch = "riscv32")]
-    pub const MAX_PEERS: usize = 20;
-    #[cfg(not(target_arch = "riscv32"))]
-    pub const MAX_PEERS: usize = 2;
-
     fn remember(&mut self, peer: SeenPeer) {
         let target = DialTarget {
             kind: peer.kind,
@@ -486,7 +482,7 @@ impl EmbeddedBleBackend {
     }
 }
 
-impl BleBackend<{ EmbeddedBleBackend::MAX_PEERS }> for EmbeddedBleBackend {
+impl BleBackend<PEER_CAPACITY> for EmbeddedBleBackend {
     type Error = Closed;
     type Link = EmbeddedBleLink;
 
@@ -522,9 +518,11 @@ impl BleBackend<{ EmbeddedBleBackend::MAX_PEERS }> for EmbeddedBleBackend {
                 let ReadyConnectionSlotParts { origin, link } = ready.into_parts();
                 let index = link.index();
                 match origin {
-                    Origin::Accepted => BleEvent::Inbound(self.hub.slots[index].link(link)),
+                    Origin::Accepted => BleEvent::Inbound(
+                        self.hub.slots[index].link(link, &self.hub.outbound_frames),
+                    ),
                     Origin::Dialed => BleEvent::LinkReady {
-                        link: self.hub.slots[index].link(link),
+                        link: self.hub.slots[index].link(link, &self.hub.outbound_frames),
                         origin: Origin::Dialed,
                         peer_rssi: None,
                     },
@@ -552,15 +550,16 @@ impl BleBackend<{ EmbeddedBleBackend::MAX_PEERS }> for EmbeddedBleBackend {
 
 pub struct EmbeddedBleLink {
     peer_protocol: PeerProtocol,
-    control_in: Receiver<'static, BridgeMutex, Control, CTRL_DEPTH>,
-    control_out: Sender<'static, BridgeMutex, Control, CTRL_DEPTH>,
-    data_in: Receiver<'static, BridgeMutex, FrameBytes, DATA_DEPTH>,
-    data_out: Sender<'static, BridgeMutex, FrameBytes, DATA_DEPTH>,
+    control_in: Receiver<'static, BridgeMutex, Control, CONTROL_QUEUE_DEPTH>,
+    control_out: Sender<'static, BridgeMutex, Control, CONTROL_QUEUE_DEPTH>,
+    data_in: Receiver<'static, BridgeMutex, BleFrameLease, FRAME_QUEUE_DEPTH>,
+    data_out: Sender<'static, BridgeMutex, BleFrameLease, FRAME_QUEUE_DEPTH>,
     identity_in: Receiver<'static, BridgeMutex, BleIdentity, 1>,
     identity_out: Sender<'static, BridgeMutex, BleIdentity, 1>,
     data_plane: &'static Signal<BridgeMutex, L2capPlan>,
     plan: L2capPlan,
     address: [u8; 6],
+    outbound_frames: &'static BleFramePool,
     slot: BleSlotLink,
 }
 
@@ -623,6 +622,7 @@ impl BleLink for EmbeddedBleLink {
             },
             EmbeddedBleSink {
                 data_out: self.data_out,
+                frames: self.outbound_frames,
                 slot: sink_slot,
             },
         )
@@ -630,7 +630,7 @@ impl BleLink for EmbeddedBleLink {
 }
 
 pub struct EmbeddedBleSource {
-    data_in: Receiver<'static, BridgeMutex, FrameBytes, DATA_DEPTH>,
+    data_in: Receiver<'static, BridgeMutex, BleFrameLease, FRAME_QUEUE_DEPTH>,
     slot: BleSlotSource,
 }
 
@@ -640,6 +640,7 @@ impl BleSource for EmbeddedBleSource {
     async fn recv_frame(&mut self, out: &mut [u8]) -> Result<usize, Closed> {
         match select(self.data_in.receive(), self.slot.wait_for_close()).await {
             Either::First(frame) => {
+                let frame = frame.lock().await;
                 let len = frame.len().min(out.len());
                 out[..len].copy_from_slice(&frame[..len]);
                 Ok(len)
@@ -650,7 +651,8 @@ impl BleSource for EmbeddedBleSource {
 }
 
 pub struct EmbeddedBleSink {
-    data_out: Sender<'static, BridgeMutex, FrameBytes, DATA_DEPTH>,
+    data_out: Sender<'static, BridgeMutex, BleFrameLease, FRAME_QUEUE_DEPTH>,
+    frames: &'static BleFramePool,
     slot: BleSlotSink,
 }
 
@@ -658,9 +660,12 @@ impl BleSink for EmbeddedBleSink {
     type Error = Closed;
 
     async fn send_frame(&mut self, frame: &[u8]) -> Result<(), Closed> {
-        let mut bytes = FrameBytes::new();
-        bytes.extend_from_slice(frame).map_err(|_| Closed)?;
-        match select(self.data_out.send(bytes), self.slot.wait_for_close()).await {
+        let lease = match select(self.frames.lease(), self.slot.wait_for_close()).await {
+            Either::First(lease) => lease,
+            Either::Second(()) => return Err(Closed),
+        };
+        lease.fill(frame).await.map_err(|_| Closed)?;
+        match select(self.data_out.send(lease), self.slot.wait_for_close()).await {
             Either::First(()) => Ok(()),
             Either::Second(()) => Err(Closed),
         }
@@ -787,17 +792,32 @@ fn l2cap_config() -> L2capChannelConfig {
     }
 }
 
+fn try_queue_inbound_frame(
+    pool: &'static BleFramePool,
+    queue: &Sender<'static, BridgeMutex, BleFrameLease, FRAME_QUEUE_DEPTH>,
+    frame: &[u8],
+) {
+    let Some(lease) = pool.try_lease() else {
+        return;
+    };
+    if lease.try_fill(frame).is_ok() {
+        let _ = queue.try_send(lease);
+    }
+}
+
 async fn l2cap_pump<T: TroubleTransport>(
     stack: &'static TroubleStack<T>,
     channel: L2capChannel<'static, DefaultPacketPool>,
-    data_out_rx: Receiver<'static, BridgeMutex, FrameBytes, DATA_DEPTH>,
-    data_in_tx: Sender<'static, BridgeMutex, FrameBytes, DATA_DEPTH>,
+    inbound_frames: &'static BleFramePool,
+    data_out_rx: Receiver<'static, BridgeMutex, BleFrameLease, FRAME_QUEUE_DEPTH>,
+    data_in_tx: Sender<'static, BridgeMutex, BleFrameLease, FRAME_QUEUE_DEPTH>,
 ) {
     let (mut writer, mut reader) = channel.split();
     let outbound = async {
         let mut tx = alloc::boxed::Box::new([0u8; L2CAP_SDU_LEN]);
         loop {
             let frame = data_out_rx.receive().await;
+            let frame = frame.lock().await;
             let Some(len) = encode_stream_frame(&frame, tx.as_mut()) else {
                 continue;
             };
@@ -821,9 +841,9 @@ async fn l2cap_pump<T: TroubleTransport>(
             if body.len() < len {
                 continue;
             }
-            let mut bytes = FrameBytes::new();
-            if bytes.extend_from_slice(&body[..len]).is_ok() {
-                data_in_tx.send(bytes).await;
+            let frame = inbound_frames.lease().await;
+            if frame.fill(&body[..len]).await.is_ok() {
+                data_in_tx.send(frame).await;
             }
         }
     };
@@ -932,10 +952,11 @@ async fn serve_peripheral<T: TroubleTransport>(
                         {
                             if let Some(fragment) = Fragment::decode(write.data()) {
                                 if let Some(frame) = reassembler.absorb(&fragment) {
-                                    let mut bytes = FrameBytes::new();
-                                    if bytes.extend_from_slice(frame).is_ok() {
-                                        let _ = data_in_tx.try_send(bytes);
-                                    }
+                                    try_queue_inbound_frame(
+                                        &hub.inbound_frames,
+                                        &data_in_tx,
+                                        frame,
+                                    );
                                 }
                             }
                         }
@@ -990,10 +1011,11 @@ async fn serve_peripheral<T: TroubleTransport>(
         match channel {
             Some(channel) => {
                 crate::diagnostic_log::debug!("ble: L2CAP up (accepted)");
-                l2cap_pump(stack, channel, data_out_rx, data_in_tx).await;
+                l2cap_pump(stack, channel, &hub.inbound_frames, data_out_rx, data_in_tx).await;
             }
             None => loop {
                 let frame = data_out_rx.receive().await;
+                let frame = frame.lock().await;
                 let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
                 for fragment in fragments_of(&frame, GATT_FRAGMENT_PAYLOAD) {
                     let Some(len) = fragment.encode(&mut buf) else {
@@ -1155,10 +1177,7 @@ async fn serve_central<T: TroubleTransport>(
                     Either::Second(notification) => {
                         if let Some(fragment) = Fragment::decode(notification.as_ref()) {
                             if let Some(frame) = reassembler.absorb(&fragment) {
-                                let mut bytes = FrameBytes::new();
-                                if bytes.extend_from_slice(frame).is_ok() {
-                                    let _ = data_in_tx.try_send(bytes);
-                                }
+                                try_queue_inbound_frame(&hub.inbound_frames, &data_in_tx, frame);
                             }
                         }
                     }
@@ -1168,10 +1187,7 @@ async fn serve_central<T: TroubleTransport>(
                 let notification = data_listener.next().await;
                 if let Some(fragment) = Fragment::decode(notification.as_ref()) {
                     if let Some(frame) = reassembler.absorb(&fragment) {
-                        let mut bytes = FrameBytes::new();
-                        if bytes.extend_from_slice(frame).is_ok() {
-                            let _ = data_in_tx.try_send(bytes);
-                        }
+                        try_queue_inbound_frame(&hub.inbound_frames, &data_in_tx, frame);
                     }
                 }
             },
@@ -1231,10 +1247,18 @@ async fn serve_central<T: TroubleTransport>(
         match channel {
             Some(channel) => {
                 crate::diagnostic_log::debug!("ble: L2CAP up (opened)");
-                l2cap_pump(stack, channel, data_out_rx, data_in_tx_l2cap).await;
+                l2cap_pump(
+                    stack,
+                    channel,
+                    &hub.inbound_frames,
+                    data_out_rx,
+                    data_in_tx_l2cap,
+                )
+                .await;
             }
             None => loop {
                 let frame = data_out_rx.receive().await;
+                let frame = frame.lock().await;
                 let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
                 for fragment in fragments_of(&frame, GATT_FRAGMENT_PAYLOAD) {
                     let Some(len) = fragment.encode(&mut buf) else {

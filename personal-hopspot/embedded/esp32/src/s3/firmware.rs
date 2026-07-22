@@ -32,7 +32,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let mut mac_octets = [0u8; 6];
     mac_octets.copy_from_slice(&mac.as_bytes()[..6]);
 
-    let mut reactor_pool = REACTOR_POOL.try_take().expect("reactor pool is available");
+    let mut reactor_lanes = ReactorLanes::new();
 
     #[cfg(feature = "lora")]
     let lora_radio = b.lora_radio;
@@ -127,39 +127,39 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let tcp_cfg = tcp_built.as_ref().map(|(t, _, _)| t.descriptor());
     let has_wifi = wifi.is_some();
 
-    let usb_lane = reactor_pool
-        .claim_interface::<USB_SLOT>(device_descriptor(usb_id))
+    let usb_lane = reactor_lanes
+        .claim_interface(&USB_REACTOR_LANE, device_descriptor(usb_id))
         .expect("USB lane is available");
     let tcp_lane = tcp_cfg.map(|descriptor| {
-        reactor_pool
-            .claim_interface::<TCP_SLOT>(descriptor)
+        reactor_lanes
+            .claim_interface(&TCP_REACTOR_LANE, descriptor)
             .expect("TCP lane is available")
     });
     #[cfg(feature = "wifi-auto")]
     let wifi_supervisor_lane = has_wifi.then(|| {
-        reactor_pool
-            .claim_supervisor::<WIFI_SUPERVISOR_SLOT>(WIFI_SUPERVISOR_ID, &OUTBOUND_WAKE)
+        reactor_lanes
+            .claim_supervisor(&WIFI_REACTOR_LANE, WIFI_SUPERVISOR_ID, &OUTBOUND_WAKE)
             .expect("WiFi supervisor lane is available")
     });
     #[cfg(feature = "lora")]
-    let lora_lane = reactor_pool
-        .claim_interface::<LORA_SLOT>(lora_cfg)
+    let lora_lane = reactor_lanes
+        .claim_interface(&LORA_REACTOR_LANE, lora_cfg)
         .expect("LoRa lane is available");
     #[cfg(feature = "bluetooth-auto")]
     let ble_supervisor_lane = (radio_mode == RadioMode::Ble && ble_identity.is_some()).then(|| {
-        reactor_pool
-            .claim_supervisor::<BLE_SUPERVISOR_SLOT>(BLE_SUPERVISOR_ID, &BLE_OUTBOUND_WAKE)
+        reactor_lanes
+            .claim_supervisor(&BLE_REACTOR_LANE, BLE_SUPERVISOR_ID, &BLE_OUTBOUND_WAKE)
             .expect("Bluetooth supervisor lane is available")
     });
     #[cfg(feature = "esp-now")]
     let espnow_lane = espnow_cfg.map(|descriptor| {
-        reactor_pool
-            .claim_interface::<ESPNOW_SLOT>(descriptor)
+        reactor_lanes
+            .claim_interface(&ESPNOW_REACTOR_LANE, descriptor)
             .expect("ESP-NOW lane is available")
     });
 
     let handle: Handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
-    let reactor_wiring = reactor_pool.into_reactor_wiring(
+    let reactor_wiring = reactor_lanes.into_reactor_wiring(
         NOTIFY.receiver(),
         COMMANDS.receiver(),
         LIFECYCLE.receiver(),
@@ -202,13 +202,8 @@ pub(super) async fn run_core<B: Esp32S3Board>(
 
     #[cfg(feature = "wifi-auto")]
     let wifi = wifi.zip(wifi_supervisor_lane).map(|(interface, lane)| {
-        let fleet: Fleet<
-            Mtx,
-            EMBEDDED_MAX_WIRE_FRAME_LEN,
-            { wifi_auto_contract::HARDWARE_MTU },
-            NOTIFY_CAP,
-            LIFECYCLE_CAP,
-        > = lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender());
+        let fleet: Fleet<Mtx, { wifi_auto_contract::HARDWARE_MTU }, NOTIFY_CAP, LIFECYCLE_CAP> =
+            lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender());
         (interface, fleet)
     });
     // The WiFi-auto run loop's two MTU receive buffers live on the heap (the D-cache donation),
@@ -548,7 +543,9 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     // reclaim ~4 KiB internal SRAM toward the full radio stack + SoftAP fit.
     let ble_connector = esp_radio::ble::controller::BleConnector::new(
         b.bt,
-        esp_radio::ble::Config::default().with_task_stack_size(4096),
+        esp_radio::ble::Config::default()
+            .with_task_stack_size(4096)
+            .with_max_connections(BLE_PEER_CAPACITY as u8),
     )
     .expect("ble connector");
 
@@ -613,7 +610,9 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 log_heap_footprint("pre-ble-connector (core 0)");
                 let ble_connector = esp_radio::ble::controller::BleConnector::new(
                     b.bt,
-                    esp_radio::ble::Config::default().with_task_stack_size(4096),
+                    esp_radio::ble::Config::default()
+                        .with_task_stack_size(4096)
+                        .with_max_connections(BLE_PEER_CAPACITY as u8),
                 )
                 .expect("ble connector");
                 log_heap_footprint("post-ble-connector (core 0)");

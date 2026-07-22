@@ -1,4 +1,4 @@
-use super::super::{CompletionPool, Fleet, StaticReactorPool};
+use super::super::{CompletionPool, Fleet, ReactorLaneSet, StaticReactorLane};
 use super::*;
 use crate::engine::test_support::{bytes_from_hex, RNS_1_4_0_ANNOUNCE};
 use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
@@ -51,22 +51,22 @@ fn a_recipe_node_hears_an_ifac_announce_a_supervisor_stands_a_peer_up_for() {
     let lifecycle: &'static Channel<Mtx, InterfaceLifecycle, 4> = leak(Channel::new());
     let completion: &'static CompletionPool<Mtx, 4> = leak(CompletionPool::new());
 
-    static POOL: StaticReactorPool<Mtx, FRAME, 4, 1> = StaticReactorPool::new();
-    let mut pool = POOL.try_take().unwrap();
+    static LANE: StaticReactorLane<Mtx, FRAME, 4> = StaticReactorLane::new();
+    let mut lanes: ReactorLaneSet<Mtx, 1, 4> = ReactorLaneSet::new();
     let supervisor = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, b"test-supervisor");
     let network = IfacContext::derive(Some("fleet-net"), Some("secret"), IfacSize::NARROW).unwrap();
-    let supervisor_lane = pool
-        .claim_supervisor_with_ifac::<0>(supervisor, network.clone(), leak(Signal::new()))
+    let supervisor_lane = lanes
+        .claim_supervisor_with_ifac(&LANE, supervisor, network.clone(), leak(Signal::new()))
         .unwrap();
 
     let handle = PrnsNodeHandle::new(commands.sender(), completion);
-    let reactor_wiring = pool.into_reactor_wiring(
+    let reactor_wiring = lanes.into_reactor_wiring(
         notify.receiver(),
         commands.receiver(),
         lifecycle.receiver(),
         handle,
     );
-    let fleet: Fleet<Mtx, FRAME, FRAME, 4, 4> =
+    let fleet: Fleet<Mtx, FRAME, 4, 4> =
         supervisor_lane.into_fleet(notify.sender(), lifecycle.sender());
 
     let heard: Rc<RefCell<usize>> = Rc::new(RefCell::new(0));
@@ -88,7 +88,7 @@ fn a_recipe_node_hears_an_ifac_announce_a_supervisor_stands_a_peer_up_for() {
         },
     };
 
-    let node: PrnsNode<_, _, _, _, _, _, FRAME, 1, 1, 4, 4, 4, 4> = PrnsNode::new(
+    let node: PrnsNode<_, _, _, _, _, _, 1, 1, 4, 4, 4, 4> = PrnsNode::new(
         recipe,
         reactor_wiring,
         EmbassyHost::new(|bytes: &mut [u8]| bytes.fill(0)),

@@ -1,4 +1,5 @@
 pub mod connection_slots;
+mod frame_pool;
 mod runtime;
 
 #[cfg(feature = "bluetooth-auto-trouble")]
@@ -12,6 +13,5 @@ pub use trouble::{
     dialer, host_runner, reticulum_attribute_table, serve_slot, service_uuid, BleHub, Closed,
     EmbeddedBleBackend, EmbeddedBleLink, EmbeddedBleSink, EmbeddedBleSource, GattCharacteristic,
     GattServer, ReticulumAttributeTable, ReticulumGattCharacteristics, ReticulumGattUuids,
-    TroubleController, TroubleStack, TroubleTransport, CONNECTIONS, GATT_VALUE_CAP,
-    HCI_COMMAND_SLOTS, L2CAP_CHANNELS, L2CAP_PSM, SLOTS,
+    TroubleController, TroubleStack, TroubleTransport, GATT_VALUE_CAP, L2CAP_PSM, PEER_CAPACITY,
 };

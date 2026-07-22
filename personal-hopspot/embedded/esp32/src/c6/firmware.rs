@@ -51,23 +51,23 @@ pub async fn run(spawner: Spawner) {
     #[cfg(feature = "bluetooth-auto")]
     let ble_identity = Some(ble_bootstrap.into_identity());
 
-    let mut reactor_pool = REACTOR_POOL.try_take().expect("reactor pool is available");
-    let usb_lane = reactor_pool
-        .claim_interface::<USB_SLOT>(device_descriptor(USB_INTERFACE_ID))
+    let mut reactor_lanes = ReactorLanes::new();
+    let usb_lane = reactor_lanes
+        .claim_interface(&USB_REACTOR_LANE, device_descriptor(USB_INTERFACE_ID))
         .expect("USB lane is available");
     #[cfg(feature = "esp-now")]
-    let espnow_lane = reactor_pool
-        .claim_interface::<ESPNOW_SLOT>(espnow.descriptor())
+    let espnow_lane = reactor_lanes
+        .claim_interface(&ESPNOW_REACTOR_LANE, espnow.descriptor())
         .expect("ESP-NOW lane is available");
     #[cfg(feature = "bluetooth-auto")]
     let ble_supervisor_lane = ble_identity.as_ref().map(|_| {
-        reactor_pool
-            .claim_supervisor::<BLE_SUPERVISOR_SLOT>(BLE_SUPERVISOR_ID, &BLE_OUTBOUND_WAKE)
+        reactor_lanes
+            .claim_supervisor(&BLE_REACTOR_LANE, BLE_SUPERVISOR_ID, &BLE_OUTBOUND_WAKE)
             .expect("Bluetooth supervisor lane is available")
     });
 
     let handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
-    let reactor_wiring = reactor_pool.into_reactor_wiring(
+    let reactor_wiring = reactor_lanes.into_reactor_wiring(
         NOTIFY.receiver(),
         COMMANDS.receiver(),
         LIFECYCLE.receiver(),

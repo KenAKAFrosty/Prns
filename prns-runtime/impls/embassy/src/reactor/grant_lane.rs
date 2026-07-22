@@ -2,10 +2,9 @@ use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::signal::Signal;
 use embassy_sync::zerocopy_channel;
 
-use crate::engine::FanTarget;
-use crate::interfaces::{InterfaceId, PacketPhyStats};
+use crate::interfaces::PacketPhyStats;
 use crate::reactor::grant::{
-    AnyGrantConsumer, AnyGrantProducer, FrameSlot, FrameTarget, GrantConsumer, GrantProducer,
+    FrameSlot, FrameTarget, GrantConsumer, GrantProducer, ReactorLaneReader, ReactorLaneWriter,
 };
 
 /// Splits caller-owned storage into a zero-copy frame lane.
@@ -67,27 +66,20 @@ impl<M: RawMutex, const FRAME: usize> GrantProducer<FRAME> for EmbassyGrantProdu
     }
 }
 
-impl<M: RawMutex, const FRAME: usize> AnyGrantProducer for EmbassyGrantProducer<'_, M, FRAME> {
-    fn try_fill_frame_for(&mut self, interface_id: InterfaceId, frame: &[u8]) -> bool {
+impl<M: RawMutex + Sync, const FRAME: usize> ReactorLaneWriter
+    for EmbassyGrantProducer<'_, M, FRAME>
+{
+    fn try_write(&mut self, target: FrameTarget, frame: &[u8]) -> bool {
         if frame.len() > FRAME {
             return false;
         }
         let Some(slot) = GrantProducer::try_grant(self) else {
             return false;
         };
-        slot.fill_for(interface_id, frame);
-        GrantProducer::commit(self);
-        true
-    }
-
-    fn try_fill_frame_fan(&mut self, fan: FanTarget, frame: &[u8]) -> bool {
-        if frame.len() > FRAME {
-            return false;
+        match target {
+            FrameTarget::Direct(interface_id) => slot.fill_for(interface_id, frame),
+            FrameTarget::Fan(fan) => slot.fill_for_fan(fan, frame),
         }
-        let Some(slot) = GrantProducer::try_grant(self) else {
-            return false;
-        };
-        slot.fill_for_fan(fan, frame);
         GrantProducer::commit(self);
         true
     }
@@ -121,15 +113,17 @@ impl<M: RawMutex, const FRAME: usize> GrantConsumer<FRAME> for EmbassyGrantConsu
     }
 }
 
-impl<M: RawMutex, const FRAME: usize> AnyGrantConsumer for EmbassyGrantConsumer<'_, M, FRAME> {
-    fn try_peek_frame(&mut self) -> Option<(FrameTarget, PacketPhyStats, &mut [u8])> {
+impl<M: RawMutex + Sync, const FRAME: usize> ReactorLaneReader
+    for EmbassyGrantConsumer<'_, M, FRAME>
+{
+    fn try_read(&mut self) -> Option<(FrameTarget, PacketPhyStats, &mut [u8])> {
         let slot = GrantConsumer::try_peek(self)?;
         let target = slot.target;
         let packet_phy = slot.packet_phy;
         Some((target, packet_phy, slot.frame_mut()))
     }
 
-    fn release_frame(&mut self) {
+    fn release(&mut self) {
         GrantConsumer::release(self);
     }
 }

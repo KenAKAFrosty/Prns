@@ -9,7 +9,7 @@ use crate::engine::{
 };
 use crate::interfaces::InterfaceIfac;
 use crate::interfaces::{AttachedInterfaces, InboundPacket, InterfaceDescriptor, InterfaceId};
-use crate::reactor::grant::{AnyGrantConsumer, FrameTarget};
+use crate::reactor::grant::{FrameTarget, ReactorLaneReader};
 use crate::reactor::interface_seam::{EMBEDDED_MAX_LINK_MTU, EMBEDDED_MAX_WIRE_FRAME_LEN};
 use crate::reactor::kernel::{fire_due_reason, merge_wake_schedules_delta};
 use crate::reactor::timers::{wait_for_due_reason, wait_for_pacer};
@@ -18,7 +18,6 @@ use crate::routing::links::resources::ResourceOffer;
 use crate::runtime::InterfaceInspectionStore;
 use crate::storage::{DirtyInterfaceSet, StorageLayout};
 
-use super::super::grant_lane::EmbassyGrantConsumer;
 use super::egress::{
     flush_due_pacers, ifac_for, owns_dedicated_lane, route_reaction, soonest_pacer_release,
     InterfacePacer, PooledEgress,
@@ -52,7 +51,6 @@ fn clamp_to_embedded_ceiling(mut descriptor: InterfaceDescriptor) -> InterfaceDe
 pub struct PooledWiring<
     'run,
     M: RawMutex + 'static,
-    const FRAME: usize,
     const LANE_COUNT: usize,
     const INTERFACE_CAPACITY: usize,
     const NOTIFY: usize,
@@ -62,8 +60,8 @@ pub struct PooledWiring<
     pub descriptors: &'run mut HeaplessVec<InterfaceDescriptor, INTERFACE_CAPACITY>,
     pub ifacs: &'run mut HeaplessVec<InterfaceIfac, LANE_COUNT>,
     pub inbound:
-        &'run mut HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, M, FRAME>), LANE_COUNT>,
-    pub egress: &'run mut PooledEgress<M, FRAME, LANE_COUNT>,
+        &'run mut HeaplessVec<(InterfaceId, &'static mut dyn ReactorLaneReader), LANE_COUNT>,
+    pub egress: &'run mut PooledEgress<LANE_COUNT>,
     pub notify: Receiver<'run, M, InterfaceId, NOTIFY>,
     pub commands: Receiver<'run, M, IssuedCommand, COMMANDS>,
     pub lifecycle: Receiver<'run, M, InterfaceLifecycle, LIFECYCLE>,
@@ -75,7 +73,6 @@ pub(crate) async fn run_pooled<
     H,
     M,
     Store,
-    const FRAME: usize,
     const LANE_COUNT: usize,
     const INTERFACE_CAPACITY: usize,
     const NOTIFY: usize,
@@ -84,7 +81,7 @@ pub(crate) async fn run_pooled<
 >(
     engine: &mut EngineState<S>,
     host: &mut H,
-    wiring: PooledWiring<'_, M, FRAME, LANE_COUNT, INTERFACE_CAPACITY, NOTIFY, COMMANDS, LIFECYCLE>,
+    wiring: PooledWiring<'_, M, LANE_COUNT, INTERFACE_CAPACITY, NOTIFY, COMMANDS, LIFECYCLE>,
     mut on_journaled: impl FnMut(Journaled<'_>),
     deciders: AppDeciders<impl FnMut(&ProofRequest) -> bool, impl FnMut(&ResourceOffer) -> bool>,
     store: &Store,
@@ -132,9 +129,9 @@ pub(crate) async fn run_pooled<
             Either5::First(_) => {
                 while notify.try_receive().is_ok() {}
                 for (lane_id, lane) in inbound.iter_mut() {
-                    while let Some((target, packet_phy, frame)) = lane.try_peek_frame() {
+                    while let Some((target, packet_phy, frame)) = lane.try_read() {
                         let FrameTarget::Direct(source) = target else {
-                            lane.release_frame();
+                            lane.release();
                             continue;
                         };
                         let mut unmasked = [0u8; EMBEDDED_MAX_WIRE_FRAME_LEN];
@@ -143,7 +140,7 @@ pub(crate) async fn run_pooled<
                                 let Some(clean_len) =
                                     entry.context.unmask_inbound(frame, &mut unmasked)
                                 else {
-                                    lane.release_frame();
+                                    lane.release();
                                     continue;
                                 };
                                 &mut unmasked[..clean_len]
@@ -177,7 +174,7 @@ pub(crate) async fn run_pooled<
                                 },
                             },
                         );
-                        lane.release_frame();
+                        lane.release();
                         merge_wake_schedules_delta(
                             &mut wake_schedules,
                             delta,

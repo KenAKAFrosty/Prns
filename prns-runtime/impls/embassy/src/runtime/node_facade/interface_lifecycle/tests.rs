@@ -1,8 +1,8 @@
-use super::{Fleet, FleetWire, InboundDeliveryError, OutboundFrameError};
+use super::{Fleet, FleetWire, InboundDeliveryError};
 use crate::engine::FanTarget;
 use crate::interfaces::InterfaceId;
 use crate::reactor::driver::{leaked_grant_lane, InterfaceLifecycle};
-use crate::reactor::grant::{AnyGrantProducer, FrameTarget};
+use crate::reactor::grant::{FrameTarget, ReactorLaneWriter};
 use crate::reactor::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
 use embassy_futures::{block_on, join::join};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -23,7 +23,7 @@ fn next_outbound_releases_the_copied_grant_so_the_depth_one_lane_refills() {
     let (mut outbound_tx, outbound) = leaked_grant_lane::<FRAME>(1);
     let notify: &'static Channel<Mtx, InterfaceId, 1> = leak(Channel::new());
     let lifecycle: &'static Channel<Mtx, InterfaceLifecycle, 1> = leak(Channel::new());
-    let mut fleet: Fleet<Mtx, FRAME, FRAME, 1, 1> = Fleet::new(
+    let mut fleet: Fleet<Mtx, FRAME, 1, 1> = Fleet::new(
         FleetWire {
             inbound,
             outbound,
@@ -33,16 +33,16 @@ fn next_outbound_releases_the_copied_grant_so_the_depth_one_lane_refills() {
         lifecycle.sender(),
     );
 
-    assert!(outbound_tx.try_fill_frame_fan(FanTarget::All, b"one"));
-    let frame = block_on(fleet.next_outbound()).unwrap();
+    assert!(outbound_tx.try_write(FrameTarget::Fan(FanTarget::All), b"one"));
+    let frame = block_on(fleet.next_outbound());
     assert_eq!(frame.target(), FrameTarget::Fan(FanTarget::All));
     assert_eq!(frame.bytes(), b"one");
 
     assert!(
-        outbound_tx.try_fill_frame_fan(FanTarget::All, b"two"),
+        outbound_tx.try_write(FrameTarget::Fan(FanTarget::All), b"two"),
         "the depth-1 lane must accept the next frame the instant next_outbound copied the last"
     );
-    let frame = block_on(fleet.next_outbound()).unwrap();
+    let frame = block_on(fleet.next_outbound());
     assert_eq!(frame.target(), FrameTarget::Fan(FanTarget::All));
     assert_eq!(frame.bytes(), b"two");
 }
@@ -55,7 +55,7 @@ fn an_outbound_commit_wakes_the_supervisor_and_try_next_outbound_drains() {
     outbound_tx.set_outbound_wake(wake);
     let notify: &'static Channel<Mtx, InterfaceId, 1> = leak(Channel::new());
     let lifecycle: &'static Channel<Mtx, InterfaceLifecycle, 1> = leak(Channel::new());
-    let mut fleet: Fleet<Mtx, FRAME, FRAME, 1, 1> = Fleet::new(
+    let mut fleet: Fleet<Mtx, FRAME, 1, 1> = Fleet::new(
         FleetWire {
             inbound,
             outbound,
@@ -66,11 +66,11 @@ fn an_outbound_commit_wakes_the_supervisor_and_try_next_outbound_drains() {
     );
 
     assert!(
-        fleet.try_next_outbound().unwrap().is_none(),
+        fleet.try_next_outbound().is_none(),
         "an empty lane drains to nothing"
     );
 
-    assert!(outbound_tx.try_fill_frame_fan(FanTarget::All, b"hi"));
+    assert!(outbound_tx.try_write(FrameTarget::Fan(FanTarget::All), b"hi"));
     block_on(with_timeout(
         Duration::from_millis(50),
         fleet.outbound_ready(),
@@ -79,12 +79,11 @@ fn an_outbound_commit_wakes_the_supervisor_and_try_next_outbound_drains() {
 
     let frame = fleet
         .try_next_outbound()
-        .unwrap()
         .expect("the committed frame drains after the wake");
     assert_eq!(frame.target(), FrameTarget::Fan(FanTarget::All));
     assert_eq!(frame.bytes(), b"hi");
     assert!(
-        fleet.try_next_outbound().unwrap().is_none(),
+        fleet.try_next_outbound().is_none(),
         "the depth-1 lane is empty once drained"
     );
 }
@@ -95,7 +94,7 @@ fn deregistration_waits_for_lifecycle_lane_capacity() {
     let (_outbound_tx, outbound) = leaked_grant_lane::<FRAME>(1);
     let notify: &'static Channel<Mtx, InterfaceId, 1> = leak(Channel::new());
     let lifecycle: &'static Channel<Mtx, InterfaceLifecycle, 1> = leak(Channel::new());
-    let fleet: Fleet<Mtx, FRAME, FRAME, 1, 1> = Fleet::new(
+    let fleet: Fleet<Mtx, FRAME, 1, 1> = Fleet::new(
         FleetWire {
             inbound,
             outbound,
@@ -129,7 +128,7 @@ fn inbound_delivery_distinguishes_oversized_frames_from_a_full_lane() {
     let (_outbound_tx, outbound) = leaked_grant_lane::<8>(1);
     let notify: &'static Channel<Mtx, InterfaceId, 1> = leak(Channel::new());
     let lifecycle: &'static Channel<Mtx, InterfaceLifecycle, 1> = leak(Channel::new());
-    let mut fleet: Fleet<Mtx, 8, 8, 1, 1> = Fleet::new(
+    let mut fleet: Fleet<Mtx, 8, 1, 1> = Fleet::new(
         FleetWire {
             inbound,
             outbound,
@@ -155,12 +154,12 @@ fn inbound_delivery_distinguishes_oversized_frames_from_a_full_lane() {
 }
 
 #[test]
-fn outbound_delivery_reports_a_transport_capacity_mismatch_and_releases_the_lane() {
+fn outbound_capacity_is_enforced_before_a_frame_reaches_the_fleet() {
     let (inbound, _inbound_rx) = leaked_grant_lane::<8>(1);
     let (mut outbound_tx, outbound) = leaked_grant_lane::<8>(1);
     let notify: &'static Channel<Mtx, InterfaceId, 1> = leak(Channel::new());
     let lifecycle: &'static Channel<Mtx, InterfaceLifecycle, 1> = leak(Channel::new());
-    let mut fleet: Fleet<Mtx, 8, 4, 1, 1> = Fleet::new(
+    let mut fleet: Fleet<Mtx, 8, 1, 1> = Fleet::new(
         FleetWire {
             inbound,
             outbound,
@@ -170,14 +169,8 @@ fn outbound_delivery_reports_a_transport_capacity_mismatch_and_releases_the_lane
         lifecycle.sender(),
     );
 
-    assert!(outbound_tx.try_fill_frame_fan(FanTarget::All, b"too big"));
-    assert_eq!(
-        fleet.try_next_outbound(),
-        Err(OutboundFrameError::FrameTooLarge {
-            len: 7,
-            capacity: 4,
-        })
-    );
-    assert!(outbound_tx.try_fill_frame_fan(FanTarget::All, b"fits"));
-    assert_eq!(fleet.try_next_outbound().unwrap().unwrap().bytes(), b"fits");
+    assert!(!outbound_tx.try_write(FrameTarget::Fan(FanTarget::All), b"too large"));
+    assert!(fleet.try_next_outbound().is_none());
+    assert!(outbound_tx.try_write(FrameTarget::Fan(FanTarget::All), b"fits"));
+    assert_eq!(fleet.try_next_outbound().unwrap().bytes(), b"fits");
 }
