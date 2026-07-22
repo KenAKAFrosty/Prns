@@ -24,4 +24,4 @@ ESP32 firmware, from `embedded/esp32/` with the board on USB:
 
 T-Echo firmware:
 
-    scripts/techo-flash.sh
+    ./tools/prns device techo flash

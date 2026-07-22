@@ -13,7 +13,7 @@ inspection.
 Build and stage the page into the documentation site's public assets:
 
 ```sh
-npm --prefix prns-wasm run stage:docs
+./tools/prns build wasm-docs stage
 ```
 
 Serve the documentation public directory from the repository root:

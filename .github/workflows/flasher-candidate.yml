@@ -79,7 +79,7 @@ jobs:
             *) exit 2 ;;
           esac
       - name: Install exact Minisign verifier
-        run: scripts/install-release-minisign.sh "${RUNNER_TEMP}/prns-release-bin"
+        run: ./tools/prns release toolchain minisign install -- "${RUNNER_TEMP}/prns-release-bin"
       - name: Prepare explicit bootstrap or verified retained history
         env:
           GH_TOKEN: ${{ github.token }}
@@ -103,7 +103,7 @@ jobs:
             curl --fail --location --retry 5 --retry-all-errors \
               --output target/bootstrap-live/stable.json \
               https://reticulum.rs/releases/channels/stable.json
-            if python3 scripts/flasher-website-history.py probe-stable \
+            if ./tools/prns release website-history -- probe-stable \
               --descriptor target/bootstrap-live/stable.json; then
               echo "bootstrap is forbidden while a canonical stable descriptor is published" >&2
               exit 4
@@ -112,7 +112,7 @@ jobs:
               test "$probe_status" -eq 1
               cmp target/bootstrap-live/stable.json docs/website/coming-soon/index.html
             fi
-            python3 scripts/flasher-website-history.py bootstrap \
+            ./tools/prns release website-history -- bootstrap \
               --output target/release-history
           else
             assets="target/history-assets"
@@ -132,7 +132,7 @@ jobs:
             test "$(jq -r '.targetCommitish' target/history-release.json)" = \
               "$(jq -r '.release.source_commit' "$record")"
             bundle="$assets/prns-flasher-candidate-v${HISTORY_VERSION}-signed.tar.gz"
-            python3 scripts/extract-flasher-candidate.py "$bundle" "$candidate"
+            ./tools/prns release candidate extract -- "$bundle" "$candidate"
             acceptance_commit="$(jq -r '.acceptance.source_commit' "$record")"
             review_name="$(jq -r '.public_review.evidence.name' "$record")"
             review_evidence="$assets/$review_name"
@@ -150,7 +150,7 @@ jobs:
             test "$(jq -s 'length' target/history-review-job-pages.json)" -eq 1
             jq -s '.[0]' target/history-review-job-pages.json \
               > target/history-review-job.json
-            python3 scripts/verify-historical-flasher-release.py \
+            ./tools/prns release historical verify -- \
               --candidate "$candidate" \
               --candidate-run "$assets/prns-flasher-candidate-run-v${HISTORY_VERSION}.json" \
               --signed-bundle "$bundle" \
@@ -193,12 +193,12 @@ jobs:
               https://reticulum.rs/releases/channels/stable.json.minisig
             "$PRNS_MINISIGN_BIN" -Vm "$live/stable.json" \
               -x "$live/stable.json.minisig" -p release/keys/minisign.pub
-            python3 scripts/flasher-website-history.py probe-stable \
+            ./tools/prns release website-history -- probe-stable \
               --descriptor "$live/stable.json"
             test "$(jq -r '.version' "$live/stable.json")" = "$HISTORY_VERSION"
             test "$(jq -r '.manifest_sha256' "$live/stable.json")" = \
               "$(sha256sum "$candidate/flash-manifest.json" | awk '{print $1}')"
-            python3 scripts/flasher-website-history.py retain \
+            ./tools/prns release website-history -- retain \
               --candidate "$candidate" \
               --release-record "$record" \
               --output target/release-history
@@ -206,7 +206,7 @@ jobs:
       - name: Package the one history input consumed by both builds
         id: package
         run: |
-          python3 scripts/package-flasher-candidate.py \
+          ./tools/prns release candidate package -- \
             target/release-history target/flasher-release-history.tar.gz
           checksum="$(sha256sum target/flasher-release-history.tar.gz | awk '{print $1}')"
           echo "sha256=$checksum" >> "$GITHUB_OUTPUT"
@@ -268,7 +268,7 @@ jobs:
       - name: Build standalone CLI from locked dependencies
         run: cargo build --release --locked -p hopspot-flash --target ${{ matrix.platform.target }}
       - name: Package deterministic archive
-        run: python scripts/package-hopspot-flash.py --binary "${{ matrix.platform.binary }}" --target "${{ matrix.platform.target }}" --out-dir target/flasher-cli
+        run: ./tools/prns release cli package -- --binary "${{ matrix.platform.binary }}" --target "${{ matrix.platform.target }}" --out-dir target/flasher-cli
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: flasher-cli-${{ matrix.build_pass }}-${{ matrix.platform.target }}
@@ -299,7 +299,7 @@ jobs:
           archive="target/history-input/flasher-release-history.tar.gz"
           test "$(sha256sum "$archive" | awk '{print $1}')" = \
             "$EXPECTED_HISTORY_SHA256"
-          python3 scripts/extract-flasher-candidate.py \
+          ./tools/prns release candidate extract -- \
             "$archive" target/release-history
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
@@ -307,7 +307,7 @@ jobs:
           targets: thumbv7em-none-eabihf,riscv32imac-unknown-none-elf
           components: llvm-tools-preview
       - name: Install checksum-pinned ESP compiler and tools
-        run: scripts/install-release-esp-toolchain.sh "${RUNNER_TEMP}/prns-esp-tools"
+        run: ./tools/prns release toolchain esp install -- "${RUNNER_TEMP}/prns-esp-tools"
       - name: Force the non-ESP embedded build to production Rust
         run: rustup override set --path personal-hopspot/embedded/nrf52840 1.96.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
@@ -352,7 +352,7 @@ jobs:
           RELEASE_KEY_ID: ${{ inputs.key_id }}
           SOURCE_COMMIT: ${{ github.sha }}
           PRNS_RELEASE_HISTORY: ${{ github.workspace }}/target/release-history
-        run: scripts/build-flasher-candidate.sh target/flasher-candidate "$RELEASE_CHANNEL" "$RELEASE_KEY_ID" "$SOURCE_COMMIT"
+        run: ./tools/prns release candidate build -- target/flasher-candidate "$RELEASE_CHANNEL" "$RELEASE_KEY_ID" "$SOURCE_COMMIT"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: flasher-core-candidate-${{ matrix.build_pass }}
@@ -392,11 +392,11 @@ jobs:
           cargo install cargo-deny --version 0.19.8 --locked
           cargo install cargo-about --version 0.9.1 --locked --features cli
       - name: Audit every release dependency graph
-        run: scripts/deps-audit.sh
+        run: validation/security/deps-audit.sh
       - name: Reject dirty generated notices
         run: git diff --exit-code -- THIRD_PARTY_NOTICES.md
       - name: Record deterministic audit evidence
-        run: scripts/write-release-audit-evidence.sh target/release-audit-evidence.md
+        run: ./tools/prns release audit-evidence write -- target/release-audit-evidence.md
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: flasher-audit-evidence-${{ matrix.build_pass }}
@@ -433,9 +433,9 @@ jobs:
           RELEASE_CHANNEL: ${{ inputs.channel }}
           RELEASE_KEY_ID: ${{ inputs.key_id }}
           SOURCE_COMMIT: ${{ github.sha }}
-        run: python3 scripts/finalize-flasher-candidate.py target/candidate --channel "$RELEASE_CHANNEL" --commit "$SOURCE_COMMIT" --key-id "$RELEASE_KEY_ID"
+        run: ./tools/prns release candidate finalize -- target/candidate --channel "$RELEASE_CHANNEL" --commit "$SOURCE_COMMIT" --key-id "$RELEASE_KEY_ID"
       - name: Create deterministic precomparison archive
-        run: python3 scripts/package-flasher-candidate.py target/candidate "target/prns-flasher-candidate-v$(cat VERSION)-precomparison.tar.gz"
+        run: ./tools/prns release candidate package -- target/candidate "target/prns-flasher-candidate-v$(cat VERSION)-precomparison.tar.gz"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: flasher-assembled-${{ matrix.build_pass }}
@@ -462,7 +462,7 @@ jobs:
       - name: Compare every payload and deterministic archive byte
         run: |
           mkdir -p target/release
-          python3 scripts/compare-flasher-candidates.py \
+          ./tools/prns release candidate compare -- \
             --primary "target/repro/primary/prns-flasher-candidate-v$(cat VERSION)-precomparison.tar.gz" \
             --reproduction "target/repro/reproduction/prns-flasher-candidate-v$(cat VERSION)-precomparison.tar.gz" \
             --output "target/release/prns-flasher-candidate-v$(cat VERSION)-unsigned.tar.gz" \
@@ -471,10 +471,10 @@ jobs:
         env:
           SOURCE_COMMIT: ${{ github.sha }}
         run: |
-          python3 scripts/extract-flasher-candidate.py \
+          ./tools/prns release candidate extract -- \
             "target/release/prns-flasher-candidate-v$(cat VERSION)-unsigned.tar.gz" \
             target/verified-candidate
-          python3 scripts/validate-unsigned-flasher-candidate.py target/verified-candidate \
+          ./tools/prns release candidate validate-unsigned -- target/verified-candidate \
             --expected-commit "$SOURCE_COMMIT" \
             --repository-version VERSION \
             --pinned-key release/keys/minisign.pub \

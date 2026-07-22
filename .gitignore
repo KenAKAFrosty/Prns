@@ -2,6 +2,8 @@
 # Nested build output — ignored regardless of where a crate/app dir lives or moves to
 **/target/
 **/build/
+!tools/build/
+!tools/build/**
 **/node_modules/
 **/dist/
 **/pkg/

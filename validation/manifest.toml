@@ -105,14 +105,25 @@ inputs = ["validation/run.py", "validation/tests/test_runner.py"]
 artifacts = "validation-artifacts/results/validation-self-tests"
 
 [[suite]]
+id = "tool-registry"
+domain = "hygiene"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "python"
+timeout_seconds = 120
+command = ["./tools/prns", "verify"]
+inputs = ["tools/prns", "tools/tasks.toml", "tools/README.md", ".githooks/pre-push"]
+artifacts = "validation-artifacts/results/tool-registry"
+
+[[suite]]
 id = "format-docs"
 domain = "hygiene"
 tiers = ["pr", "release", "scheduled"]
 platform = "any"
 toolchain = "stable"
 timeout_seconds = 1200
-command = ["bash", "scripts/fmt-check.sh"]
-inputs = ["scripts/fmt-check.sh", "validation/manifest.toml"]
+command = ["bash", "validation/hygiene/fmt-docs.sh"]
+inputs = ["validation/hygiene/fmt-docs.sh", "validation/manifest.toml"]
 artifacts = "validation-artifacts/results/format-docs"
 
 [[suite]]
@@ -122,8 +133,8 @@ tiers = ["release", "scheduled"]
 platform = "linux"
 toolchain = "stable"
 timeout_seconds = 3600
-command = ["bash", "scripts/deps-audit.sh"]
-inputs = ["scripts/deps-audit.sh", "deny.toml", "about.toml"]
+command = ["bash", "validation/security/deps-audit.sh"]
+inputs = ["validation/security/deps-audit.sh", "deny.toml", "about.toml"]
 artifacts = "validation-artifacts/results/dependency-audit"
 
 [[suite]]
@@ -190,8 +201,8 @@ tiers = ["pr", "release", "scheduled"]
 platform = "any"
 toolchain = "python"
 timeout_seconds = 600
-command = ["python3", "-m", "unittest", "discover", "-s", "scripts/tests", "-p", "test_*.py", "-v"]
-inputs = ["scripts/tests", "scripts/validate-release-workflows.py"]
+command = ["python3", "-m", "unittest", "discover", "-s", "tools/tests", "-p", "test_*.py", "-v"]
+inputs = ["tools/tests", "tools/release", "validation/release/workflow-contracts.py"]
 artifacts = "validation-artifacts/results/release-contracts"
 
 [[suite]]
@@ -274,8 +285,8 @@ tiers = ["pr", "release", "scheduled"]
 platform = "linux"
 toolchain = "stable"
 timeout_seconds = 2400
-command = ["bash", "scripts/android-service-smoke.sh"]
-inputs = ["scripts/android-service-smoke.sh"]
+command = ["bash", "validation/platforms/android-service-smoke.sh"]
+inputs = ["validation/platforms/android-service-smoke.sh"]
 artifacts = "validation-artifacts/results/android-service"
 
 [[suite]]
@@ -299,7 +310,7 @@ platform = "linux"
 toolchain = "stable"
 timeout_seconds = 3600
 command = ["bash", "validation/platforms/embedded.sh"]
-inputs = ["validation/platforms/embedded.sh", "scripts/no-std-esp-build.sh"]
+inputs = ["validation/platforms/embedded.sh", "validation/platforms/no-std-esp-build.sh"]
 artifacts = "validation-artifacts/results/embedded-builds"
 
 [[suite]]
@@ -311,7 +322,7 @@ platform = "linux"
 toolchain = "esp"
 timeout_seconds = 7200
 command = ["bash", "validation/platforms/shipping-firmware.sh"]
-inputs = ["validation/platforms/shipping-firmware.sh", "scripts/build-flash-artifact.sh", "scripts/install-release-esp-toolchain.sh"]
+inputs = ["validation/platforms/shipping-firmware.sh", "tools/release/build-flash-artifact.sh", "tools/release/install-release-esp-toolchain.sh"]
 artifacts = "validation-artifacts/results/shipping-firmware"
 
 [[suite]]
@@ -358,8 +369,8 @@ tiers = ["release"]
 platform = "android-device"
 toolchain = "stable"
 timeout_seconds = 2400
-command = ["bash", "scripts/android-runtime-smoke.sh"]
-inputs = ["scripts/android-runtime-smoke.sh", "scripts/android-service-smoke.sh"]
+command = ["bash", "validation/platforms/android-runtime-smoke.sh"]
+inputs = ["validation/platforms/android-runtime-smoke.sh", "validation/platforms/android-service-smoke.sh"]
 artifacts = "validation-artifacts/results/android-runtime-device"
 
 [[suite]]
@@ -370,8 +381,8 @@ tiers = ["release", "scheduled"]
 platform = "linux"
 toolchain = "stable"
 timeout_seconds = 1800
-command = ["bash", "scripts/wifi-direct-hwsim-smoke.sh"]
-inputs = ["scripts/wifi-direct-hwsim-smoke.sh"]
+command = ["bash", "validation/platforms/wifi-direct-hwsim-smoke.sh"]
+inputs = ["validation/platforms/wifi-direct-hwsim-smoke.sh"]
 artifacts = "validation-artifacts/results/wifi-direct-hwsim"
 
 [[suite]]
@@ -383,8 +394,8 @@ platform = "linux"
 toolchain = "stable"
 interpreter = "smoke"
 timeout_seconds = 1200
-command = ["bash", "scripts/matchup-loopback-smoke.sh"]
-inputs = ["scripts/matchup-loopback-smoke.sh", "benchmarks/reference/scenario_node.py"]
+command = ["bash", "validation/interop/cases/matchup-loopback-smoke.sh"]
+inputs = ["validation/interop/cases/matchup-loopback-smoke.sh", "benchmarks/reference/scenario_node.py"]
 artifacts = "validation-artifacts/results/matchup-loopback"
 
 [[suite]]
@@ -408,7 +419,11 @@ platform = "any"
 toolchain = "node"
 timeout_seconds = 1200
 command = ["npm", "--prefix", "prns-wasm", "run", "check:events"]
-inputs = ["prns-wasm/package.json", "prns-wasm/smoke/event-smoke.ts"]
+inputs = [
+  "prns-wasm/package.json",
+  "prns-wasm/smoke/event-smoke.ts",
+  "tools/build/stage-wasm-docs-browser-playground.sh",
+]
 artifacts = "validation-artifacts/results/wasm-events"
 
 [[suite]]

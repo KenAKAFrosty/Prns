@@ -670,6 +670,8 @@ function usbClosableSession(state: UsbState): UsbAutoSession | undefined {
 }
 
 function wasmModule(): PrnsWasmModule {
+  // wasm-bindgen exposes byte newtypes as Uint8Array; this is the one boundary
+  // where the SDK's branded views are attached to those generated bindings.
   return {
     PrnsRuntime: wasm.PrnsRuntime,
     UsbAutoDecoder: wasm.UsbAutoDecoder,
@@ -694,7 +696,7 @@ function wasmModule(): PrnsWasmModule {
     usbAutoHostHelloFrame: wasm.usbAutoHostHelloFrame,
     usbAutoHostHelloAckFrame: wasm.usbAutoHostHelloAckFrame,
     usbAutoDataFrame: wasm.usbAutoDataFrame,
-  };
+  } as unknown as PrnsWasmModule;
 }
 
 function webUsbAvailable(): boolean {

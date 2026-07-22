@@ -37,7 +37,7 @@ opaque success token. Counts come from the live manifest and native source
 discovery, so the output also gives an operator a quick orientation:
 
 ```text
-[verify] Suite policy: 80 total suites (33 pull-request, 77 release, 78 scheduled); IDs, tiers, platforms, toolchains, commands, timeouts, and artifact paths are valid.
+[verify] Suite policy: 81 total suites (34 pull-request, 78 release, 79 scheduled); IDs, tiers, platforms, toolchains, commands, timeouts, and artifact paths are valid.
 [verify] Cargo ownership: 34 manifests are registered, valid, and repository-owned; 21 unique workspace roots own formatting.
 [verify] Native discovery: 18 Kani proofs and 8 fuzz targets exactly match their source owners.
 [verify] Asset ownership: 57 oracle/interop/smoke assets are registered; 1 documented exemption is current; nothing is orphaned.
@@ -62,8 +62,8 @@ examples; the manifest remains authoritative.
 - `validation/mutation/` owns cargo-mutants configuration and reviewed survivor
   triage.
 
-Release-script tests remain under `scripts/tests/`. Product-specific platform
-and WASM tests remain with the product they exercise. Private RPC codec tests and
+Release-tooling tests live under `tools/tests/`. Product-specific platform and
+WASM tests remain with the product they exercise. Private RPC codec tests and
 Kani harnesses remain source-local, where they can exercise private behavior;
 the registry only supplies focused execution commands.
 

@@ -2,6 +2,7 @@
   "extends": "../../tsconfig.json",
   "compilerOptions": {
     "rootDir": "../..",
+    "rootDirs": [".", "../../target/browser-playground"],
     "outDir": "../../target/browser-playground",
     "declaration": false,
     "declarationMap": false

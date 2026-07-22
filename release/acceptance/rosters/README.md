@@ -12,7 +12,7 @@ instructions. Do not claim readiness that has not been confirmed with that teste
 Validate the roster against the exact candidate source identity:
 
 ```sh
-python3 scripts/validate-flasher-tester-roster.py \
+./tools/prns release tester-roster validate -- \
   --roster release/acceptance/rosters/VERSION.json \
   --version VERSION
 ```

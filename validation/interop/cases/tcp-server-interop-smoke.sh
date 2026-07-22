@@ -15,7 +15,7 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
-source "$ROOT/scripts/lib/cargo-artifacts.sh"
+source "$ROOT/validation/interop/lib/cargo-artifacts.sh"
 HOST="$(cargo_debug_example "$ROOT/prns-interfaces/impls/tokio/Cargo.toml" tcp_server_host)"
 VENV_PY="${SMOKE_PYTHON:-$ROOT/benchmarks/reference/.venv/bin/python}"
 CLIENT="$ROOT/validation/interop/peers/rns_tcp_client_peer.py"

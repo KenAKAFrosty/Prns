@@ -1,0 +1,442 @@
+schema = 1
+
+[[task]]
+id = "build.android"
+summary = "Cross-compile the Personal RNS core for Android device and emulator targets."
+domain = "build"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci"]
+entrypoint = ["bash", "tools/build/android.sh"]
+requires = ["bash", "cargo"]
+
+[[task]]
+id = "build.wasm-docs.stage"
+summary = "Build and stage the browser transport playground into the documentation site."
+domain = "build"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci"]
+entrypoint = ["bash", "tools/build/stage-wasm-docs-browser-playground.sh"]
+requires = ["bash", "cargo", "npm", "wasm-bindgen"]
+setup = "cargo install wasm-bindgen-cli --version 0.2.126 --locked"
+
+[[task]]
+id = "device.techo.flash"
+summary = "Build T-Echo firmware, create a UF2 image, and copy it to the mounted bootloader."
+domain = "device"
+effect = "device-write"
+platforms = ["macos"]
+audience = ["developer", "operator"]
+entrypoint = ["bash", "tools/device/techo-flash.sh"]
+requires = ["bash", "cargo", "python3", "rustc"]
+
+[[task]]
+id = "device.uf2.convert"
+summary = "Convert a raw firmware binary into a UF2 image."
+domain = "device"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci"]
+entrypoint = ["python3", "tools/device/bin2uf2.py"]
+requires = ["python3"]
+
+[[task]]
+id = "device.webusb.install"
+summary = "Install the Linux udev rule granting local access to Prns WebUSB devices."
+domain = "device"
+effect = "host-write"
+platforms = ["linux"]
+audience = ["developer", "operator"]
+entrypoint = ["bash", "tools/device/install-prns-webusb-udev.sh"]
+requires = ["bash", "sudo", "udevadm"]
+
+[[task]]
+id = "repo.notices.generate"
+summary = "Regenerate the repository's locked third-party notice document."
+domain = "repo"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "release"]
+entrypoint = ["python3", "tools/repo/generate-third-party-notices.py"]
+requires = ["cargo", "npm", "python3"]
+
+[[task]]
+id = "repo.web.serve"
+summary = "Serve a static single-page application with index fallback for local inspection."
+domain = "repo"
+effect = "network-listen"
+platforms = ["any"]
+audience = ["developer"]
+entrypoint = ["python3", "tools/repo/serve-static-spa.py"]
+requires = ["python3"]
+
+[[task]]
+id = "release.firmware.build"
+summary = "Build one shipping board's deterministic flash artifact."
+domain = "release"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci", "release"]
+entrypoint = ["bash", "tools/release/build-flash-artifact.sh"]
+requires = ["bash", "cargo"]
+
+[[task]]
+id = "release.candidate.build"
+summary = "Build the unsigned reproducible firmware, website, documentation, and manifest candidate."
+domain = "release"
+effect = "workspace-write"
+platforms = ["linux", "macos"]
+audience = ["ci", "release"]
+entrypoint = ["bash", "tools/release/build-flasher-candidate.sh"]
+requires = ["bash", "cargo", "dx", "git", "npm", "python3", "rg"]
+
+[[task]]
+id = "release.candidate.compare"
+summary = "Compare independently built candidates and emit reproducibility evidence."
+domain = "release"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["ci", "release"]
+entrypoint = ["python3", "tools/release/compare-flasher-candidates.py"]
+requires = ["python3"]
+
+[[task]]
+id = "release.acceptance.create"
+summary = "Create a release acceptance scaffold bound to the candidate manifest."
+domain = "release"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["operator", "release"]
+entrypoint = ["python3", "tools/release/create-flasher-acceptance.py"]
+requires = ["python3"]
+
+[[task]]
+id = "release.candidate.extract"
+summary = "Safely extract a packaged flasher candidate into a new destination."
+domain = "release"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["ci", "operator", "release"]
+entrypoint = ["python3", "tools/release/extract-flasher-candidate.py"]
+requires = ["python3"]
+
+[[task]]
+id = "release.candidate.finalize"
+summary = "Finalize an assembled candidate and write its release metadata and sparse-size evidence."
+domain = "release"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["ci", "release"]
+entrypoint = ["python3", "tools/release/finalize-flasher-candidate.py"]
+requires = ["git", "python3"]
+
+[[task]]
+id = "release.public-review"
+summary = "Create, discover, or verify immutable protected public-review evidence."
+domain = "release"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["ci", "release"]
+entrypoint = ["python3", "tools/release/flasher-public-review.py"]
+requires = ["python3"]
+
+[[task]]
+id = "release.record"
+summary = "Create or verify the signed release custody record."
+domain = "release"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["ci", "release"]
+entrypoint = ["python3", "tools/release/flasher-release-record.py"]
+requires = ["python3"]
+
+[[task]]
+id = "release.rollback"
+summary = "Stage, validate, record, or compare-and-swap a release rollback plan."
+domain = "release"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["ci", "operator", "release"]
+entrypoint = ["python3", "tools/release/flasher-rollback.py"]
+requires = ["python3"]
+
+[[task]]
+id = "release.website-history"
+summary = "Bootstrap, retain, apply, probe, or validate signed website history."
+domain = "release"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["ci", "release"]
+entrypoint = ["python3", "tools/release/flasher-website-history.py"]
+requires = ["python3"]
+
+[[task]]
+id = "release.toolchain.esp.install"
+summary = "Install the exact Linux ESP release toolchain into an isolated destination."
+domain = "release"
+effect = "host-write"
+platforms = ["linux"]
+audience = ["ci", "release"]
+entrypoint = ["bash", "tools/release/install-release-esp-toolchain.sh"]
+requires = ["bash", "curl", "python3", "rustup"]
+
+[[task]]
+id = "release.toolchain.minisign.install"
+summary = "Install the pinned Minisign binary into an isolated destination."
+domain = "release"
+effect = "host-write"
+platforms = ["linux", "macos"]
+audience = ["ci", "release"]
+entrypoint = ["bash", "tools/release/install-release-minisign.sh"]
+requires = ["bash", "curl"]
+
+[[task]]
+id = "release.candidate.package"
+summary = "Create a deterministic archive from a complete flasher candidate."
+domain = "release"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["ci", "release"]
+entrypoint = ["python3", "tools/release/package-flasher-candidate.py"]
+requires = ["python3"]
+
+[[task]]
+id = "release.qualification.package"
+summary = "Package immutable qualification evidence for release finalization."
+domain = "release"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["ci", "operator", "release"]
+entrypoint = ["python3", "tools/release/package-flasher-qualification-evidence.py"]
+requires = ["python3"]
+
+[[task]]
+id = "release.cli.package"
+summary = "Package one hopspot-flash binary for a release target."
+domain = "release"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["ci", "release"]
+entrypoint = ["python3", "tools/release/package-hopspot-flash.py"]
+requires = ["python3"]
+
+[[task]]
+id = "release.attestation.record"
+summary = "Create release attestation metadata bound to exact subject checksums."
+domain = "release"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["ci", "release"]
+entrypoint = ["python3", "tools/release/record-flasher-attestation.py"]
+requires = ["python3"]
+
+[[task]]
+id = "release.candidate.serve"
+summary = "Serve a candidate locally with qualification-safe response headers."
+domain = "release"
+effect = "network-listen"
+platforms = ["any"]
+audience = ["operator", "release"]
+entrypoint = ["python3", "tools/release/serve-flasher-candidate.py"]
+requires = ["python3"]
+
+[[task]]
+id = "release.candidate.sign"
+summary = "Sign every canonical flasher candidate subject with the release secret key."
+domain = "release"
+effect = "secret-bearing"
+platforms = ["linux", "macos"]
+audience = ["ci", "release"]
+entrypoint = ["bash", "tools/release/sign-flasher-candidate.sh"]
+requires = ["bash", "minisign"]
+
+[[task]]
+id = "release.document.sign"
+summary = "Sign one release custody document with the release secret key."
+domain = "release"
+effect = "secret-bearing"
+platforms = ["linux", "macos"]
+audience = ["ci", "release"]
+entrypoint = ["bash", "tools/release/sign-flasher-document.sh"]
+requires = ["bash", "minisign"]
+
+[[task]]
+id = "release.notices.stage"
+summary = "Copy canonical third-party notices into a distribution directory."
+domain = "release"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci", "release"]
+entrypoint = ["bash", "tools/release/stage-release-notices.sh"]
+requires = ["bash"]
+
+[[task]]
+id = "release.acceptance.validate"
+summary = "Validate signed physical qualification and its complete evidence set."
+domain = "release"
+effect = "read-only"
+platforms = ["any"]
+audience = ["ci", "operator", "release"]
+entrypoint = ["python3", "tools/release/validate-flasher-acceptance.py"]
+requires = ["python3"]
+
+[[task]]
+id = "release.candidate-run.validate"
+summary = "Validate the workflow identity and custody metadata for a candidate build run."
+domain = "release"
+effect = "read-only"
+platforms = ["any"]
+audience = ["ci", "release"]
+entrypoint = ["python3", "tools/release/validate-flasher-candidate-run.py"]
+requires = ["python3"]
+
+[[task]]
+id = "release.prerelease.validate"
+summary = "Validate that a public prerelease still matches the exact signed candidate."
+domain = "release"
+effect = "read-only"
+platforms = ["any"]
+audience = ["ci", "release"]
+entrypoint = ["python3", "tools/release/validate-flasher-prerelease.py"]
+requires = ["python3"]
+
+[[task]]
+id = "release.tester-roster.validate"
+summary = "Validate that a version's tester roster covers every shipping target."
+domain = "release"
+effect = "read-only"
+platforms = ["any"]
+audience = ["ci", "operator", "release"]
+entrypoint = ["python3", "tools/release/validate-flasher-tester-roster.py"]
+requires = ["python3"]
+
+[[task]]
+id = "release.candidate.validate-unsigned"
+summary = "Validate an unsigned candidate's completeness, provenance, and reproducibility evidence."
+domain = "release"
+effect = "read-only"
+platforms = ["any"]
+audience = ["ci", "release"]
+entrypoint = ["python3", "tools/release/validate-unsigned-flasher-candidate.py"]
+requires = ["python3"]
+
+[[task]]
+id = "release.candidate-files.verify"
+summary = "Verify the candidate's bounded file inventory and archive-safe paths."
+domain = "release"
+effect = "read-only"
+platforms = ["any"]
+audience = ["ci", "operator", "release"]
+entrypoint = ["python3", "tools/release/verify-flasher-candidate-files.py"]
+requires = ["python3"]
+
+[[task]]
+id = "release.candidate.verify"
+summary = "Verify a signed candidate and optional physical qualification evidence."
+domain = "release"
+effect = "read-only"
+platforms = ["any"]
+audience = ["ci", "operator", "release"]
+entrypoint = ["bash", "tools/release/verify-flasher-candidate.sh"]
+requires = ["bash", "cargo", "python3"]
+
+[[task]]
+id = "release.assets.verify"
+summary = "Verify the complete remote release asset inventory against signed custody metadata."
+domain = "release"
+effect = "read-only"
+platforms = ["any"]
+audience = ["ci", "release"]
+entrypoint = ["python3", "tools/release/verify-flasher-release-assets.py"]
+requires = ["python3"]
+
+[[task]]
+id = "release.verify"
+summary = "Verify the complete candidate, acceptance, public review, and signed release record."
+domain = "release"
+effect = "read-only"
+platforms = ["any"]
+audience = ["ci", "operator", "release"]
+entrypoint = ["bash", "tools/release/verify-flasher-release.sh"]
+requires = ["bash", "python3"]
+
+[[task]]
+id = "release.historical.verify"
+summary = "Verify a historical candidate with its immutable bundled qualification verifier."
+domain = "release"
+effect = "read-only"
+platforms = ["any"]
+audience = ["ci", "release"]
+entrypoint = ["python3", "tools/release/verify-historical-flasher-release.py"]
+requires = ["python3"]
+
+[[task]]
+id = "release.attestation.checksums"
+summary = "Write canonical SHA-256 checksums for release attestation subjects."
+domain = "release"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["ci", "release"]
+entrypoint = ["python3", "tools/release/write-flasher-attestation-checksums.py"]
+requires = ["python3"]
+
+[[task]]
+id = "release.metadata.write"
+summary = "Write exact tool and source metadata for a reproducible candidate build."
+domain = "release"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["ci", "release"]
+entrypoint = ["python3", "tools/release/write-flasher-build-metadata.py"]
+requires = ["cargo", "dx", "git", "node", "npm", "python3", "rustc"]
+
+[[task]]
+id = "release.audit-evidence.write"
+summary = "Write dependency, notice, and unsafe-inventory hashes for release custody."
+domain = "release"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["ci", "release"]
+entrypoint = ["bash", "tools/release/write-release-audit-evidence.sh"]
+requires = ["bash", "git", "shasum"]
+
+[[internal]]
+path = "tools/release/flasher_acceptance_contract.py"
+reason = "Shared acceptance schema and scaffold implementation used by release commands and bundled qualification tools."
+
+[[internal]]
+path = "tools/release/flasher_build_metadata.py"
+reason = "Shared reproducible build metadata implementation."
+
+[[internal]]
+path = "tools/release/flasher_candidate_output.py"
+reason = "Internal output-path safety helper invoked by candidate construction."
+
+[[internal]]
+path = "tools/release/flasher_public_review.py"
+reason = "Shared immutable public-review evidence implementation."
+
+[[internal]]
+path = "tools/release/flasher_release_evidence.py"
+reason = "Shared release evidence hashing and subject inventory implementation."
+
+[[internal]]
+path = "tools/release/flasher_reproducibility.py"
+reason = "Shared deterministic candidate comparison implementation."
+
+[[internal]]
+path = "tools/release/flasher_rollback.py"
+reason = "Shared rollback state, record, and compare-and-swap implementation."
+
+[[internal]]
+path = "tools/release/flasher_sparse_sizes.py"
+reason = "Shared sparse firmware size analysis implementation."
+
+[[internal]]
+path = "tools/release/flasher_tester_roster.py"
+reason = "Shared tester roster schema and coverage implementation."
+
+[[internal]]
+path = "tools/release/flasher_website_history.py"
+reason = "Shared signed website history implementation."

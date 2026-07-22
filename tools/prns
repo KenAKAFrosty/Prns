@@ -1,0 +1,442 @@
+#!/usr/bin/env python3
+"""Self-explanatory operator interface for repository tooling."""
+
+from __future__ import annotations
+
+import argparse
+import ast
+import os
+import platform as host_platform
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - repository Python includes tomllib
+    import tomli as tomllib
+
+
+ROOT = Path(__file__).resolve().parent.parent
+MANIFEST_PATH = ROOT / "tools" / "tasks.toml"
+DOMAIN_ROOTS = tuple(ROOT / "tools" / name for name in ("build", "device", "release", "repo"))
+VALID_EFFECTS = {
+    "read-only",
+    "workspace-write",
+    "host-write",
+    "device-write",
+    "secret-bearing",
+    "network-listen",
+    "external-write",
+}
+VALID_PLATFORMS = {"any", "linux", "macos", "windows"}
+VALID_AUDIENCES = {"developer", "operator", "ci", "release"}
+ID_PATTERN = re.compile(r"[a-z0-9]+(?:[.-][a-z0-9]+)*$")
+INTERNAL_CALL_PATTERN = re.compile(r"(?:^|[\s\"'])\.?/?tools/(?:build|device|release|repo)/")
+LEGACY_CALL_PATTERN = re.compile(r"(?:^|[\s\"'])(?:\./)?scripts/")
+
+
+class ToolingError(RuntimeError):
+    pass
+
+
+def load_manifest(path: Path = MANIFEST_PATH) -> dict:
+    try:
+        manifest = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        raise ToolingError(f"cannot load {path.relative_to(ROOT)}: {error}") from error
+    if manifest.get("schema") != 1:
+        raise ToolingError("tool task manifest schema must be 1")
+    return manifest
+
+
+def task_map(manifest: dict) -> dict[str, dict]:
+    tasks: dict[str, dict] = {}
+    for task in manifest.get("task", []):
+        identifier = task.get("id")
+        if not isinstance(identifier, str) or not ID_PATTERN.fullmatch(identifier):
+            raise ToolingError(f"invalid task id {identifier!r}")
+        if identifier in tasks:
+            raise ToolingError(f"duplicate task id {identifier}")
+        tasks[identifier] = task
+    return tasks
+
+
+def implementation_inventory() -> set[str]:
+    inventory = set()
+    for root in DOMAIN_ROOTS:
+        if not root.is_dir():
+            continue
+        for path in root.rglob("*"):
+            if path.is_file():
+                inventory.add(path.relative_to(ROOT).as_posix())
+    return inventory
+
+
+def scattered_script_inventory() -> set[str]:
+    result = subprocess.run(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise ToolingError(f"cannot inventory repository files: {result.stderr.strip()}")
+    return {
+        relative
+        for relative in result.stdout.splitlines()
+        if "scripts" in Path(relative).parts
+        and Path(relative).suffix in {".py", ".sh"}
+        and (ROOT / relative).is_file()
+    }
+
+
+def native_platform() -> str:
+    name = host_platform.system().lower()
+    return {"darwin": "macos"}.get(name, name)
+
+
+def validate_manifest(manifest: dict, *, check_callers: bool = True) -> list[str]:
+    errors: list[str] = []
+    try:
+        tasks = task_map(manifest)
+    except ToolingError as error:
+        return [str(error)]
+
+    registered: set[str] = set()
+    for identifier, task in tasks.items():
+        location = f"task {identifier}"
+        summary = task.get("summary")
+        if not isinstance(summary, str) or not summary.strip():
+            errors.append(f"{location} needs a summary")
+        if task.get("domain") != identifier.split(".", maxsplit=1)[0]:
+            errors.append(f"{location} domain must match its first ID segment")
+        if task.get("effect") not in VALID_EFFECTS:
+            errors.append(f"{location} has invalid effect {task.get('effect')!r}")
+        platforms = task.get("platforms")
+        if not isinstance(platforms, list) or not platforms or set(platforms) - VALID_PLATFORMS:
+            errors.append(f"{location} platforms must contain only {sorted(VALID_PLATFORMS)}")
+        audiences = task.get("audience")
+        if not isinstance(audiences, list) or not audiences or set(audiences) - VALID_AUDIENCES:
+            errors.append(f"{location} audience must contain only {sorted(VALID_AUDIENCES)}")
+        command = task.get("entrypoint")
+        if not isinstance(command, list) or not command or not all(
+            isinstance(part, str) and part for part in command
+        ):
+            errors.append(f"{location} needs a non-empty entrypoint array")
+            continue
+        entrypoints = [
+            part
+            for part in command
+            if any(part.startswith(f"tools/{domain}/") for domain in ("build", "device", "release", "repo"))
+        ]
+        if len(entrypoints) != 1:
+            errors.append(f"{location} must name exactly one tool implementation")
+        else:
+            path = entrypoints[0]
+            registered.add(path)
+            if Path(path).parts[1] != task.get("domain"):
+                errors.append(f"{location} implementation must live in its domain directory")
+            if not (ROOT / path).is_file():
+                errors.append(f"{location} implementation is missing: {path}")
+        requires = task.get("requires", [])
+        if not isinstance(requires, list) or not all(
+            isinstance(command, str) and command for command in requires
+        ):
+            errors.append(f"{location} requires must be a string array")
+        setup = task.get("setup")
+        if setup is not None and (not isinstance(setup, str) or not setup.strip()):
+            errors.append(f"{location} setup must be a non-empty string when provided")
+
+    internal: set[str] = set()
+    for index, entry in enumerate(manifest.get("internal", [])):
+        location = f"internal[{index}]"
+        path = entry.get("path")
+        reason = entry.get("reason")
+        if not isinstance(path, str) or not path or not (ROOT / path).is_file():
+            errors.append(f"{location} has an invalid or missing path: {path!r}")
+            continue
+        if not isinstance(reason, str) or not reason.strip():
+            errors.append(f"{location} needs a reason")
+        if path in internal:
+            errors.append(f"duplicate internal implementation {path}")
+        internal.add(path)
+
+    overlap = registered & internal
+    if overlap:
+        errors.append(f"implementations cannot be both public and internal: {sorted(overlap)!r}")
+    inventory = implementation_inventory()
+    unclassified = inventory - registered - internal
+    stale = (registered | internal) - inventory
+    if unclassified:
+        errors.append(f"unclassified tool implementations: {sorted(unclassified)!r}")
+    if stale:
+        errors.append(f"stale tool implementation entries: {sorted(stale)!r}")
+
+    for relative in sorted(inventory):
+        path = ROOT / relative
+        if path.suffix == ".py":
+            try:
+                ast.parse(path.read_text(encoding="utf-8"), filename=relative)
+            except (OSError, SyntaxError) as error:
+                errors.append(f"invalid Python syntax in {relative}: {error}")
+        elif path.suffix == ".sh":
+            result = subprocess.run(
+                ["bash", "-n", str(path)],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode != 0:
+                errors.append(f"invalid shell syntax in {relative}: {result.stderr.strip()}")
+
+    legacy = []
+    scripts = ROOT / "scripts"
+    if scripts.exists():
+        legacy = sorted(
+            path.relative_to(ROOT).as_posix()
+            for path in scripts.rglob("*")
+            if path.is_file() and path.suffix in {".py", ".sh"}
+        )
+    if legacy:
+        errors.append(f"legacy scripts remain outside the task control plane: {legacy!r}")
+    try:
+        scattered = sorted(scattered_script_inventory())
+    except ToolingError as error:
+        errors.append(str(error))
+    else:
+        if scattered:
+            errors.append(
+                "script implementations remain in scattered component directories: "
+                f"{scattered!r}"
+            )
+
+    hook = ROOT / ".githooks" / "pre-push"
+    if not hook.is_file() or not os.access(hook, os.X_OK):
+        errors.append(".githooks/pre-push must exist and be executable")
+
+    if check_callers:
+        for workflow in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
+            for line_number, line in enumerate(
+                workflow.read_text(encoding="utf-8").splitlines(), start=1
+            ):
+                if INTERNAL_CALL_PATTERN.search(line):
+                    errors.append(
+                        f"{workflow.relative_to(ROOT)}:{line_number} calls an internal tool path; "
+                        "use ./tools/prns"
+                    )
+                if LEGACY_CALL_PATTERN.search(line):
+                    errors.append(
+                        f"{workflow.relative_to(ROOT)}:{line_number} calls the retired root "
+                        "scripts directory; use ./tools/prns or validation/run.py"
+                    )
+    return errors
+
+
+def select_tasks(
+    manifest: dict,
+    *,
+    domain: str | None = None,
+    effect: str | None = None,
+    audience: str | None = None,
+) -> list[dict]:
+    tasks = list(task_map(manifest).values())
+    if domain:
+        tasks = [task for task in tasks if task["domain"] == domain]
+    if effect:
+        tasks = [task for task in tasks if task["effect"] == effect]
+    if audience:
+        tasks = [task for task in tasks if audience in task["audience"]]
+    return sorted(tasks, key=lambda task: task["id"])
+
+
+def explain(task: dict) -> None:
+    print(f"Task: {task['id']}")
+    print(f"Purpose: {task['summary']}")
+    print(f"Effect: {task['effect']}")
+    print(f"Audience: {', '.join(task['audience'])}")
+    print(f"Platforms: {', '.join(task['platforms'])}")
+    requires = task.get("requires", [])
+    print(f"Requires: {', '.join(requires) if requires else 'no additional commands declared'}")
+    if task.get("setup"):
+        print(f"Setup: {task['setup']}")
+    print(f"Entrypoint: {shlex.join(task['entrypoint'])}")
+
+
+def doctor(tasks: list[dict]) -> bool:
+    host = native_platform()
+    ok = True
+    supported = [task for task in tasks if "any" in task["platforms"] or host in task["platforms"]]
+    requirements = sorted(
+        {command for task in supported for command in task.get("requires", [])}
+    )
+    unsupported = sorted(task["id"] for task in tasks if task not in supported)
+    print(
+        f"[doctor] host={host}; tasks={len(tasks)}; applicable={len(supported)}; "
+        f"declared commands={len(requirements)}."
+    )
+    missing: set[str] = set()
+    for command in requirements:
+        path = shutil.which(command)
+        if path:
+            print(f"[doctor] ready: {command} -> {path}")
+        else:
+            print(f"[doctor] missing: {command}", file=sys.stderr)
+            missing.add(command)
+            ok = False
+    for task in supported:
+        if missing.intersection(task.get("requires", [])) and task.get("setup"):
+            print(f"[doctor] setup {task['id']}: {task['setup']}", file=sys.stderr)
+    if unsupported:
+        print(
+            f"[doctor] not applicable on this host: {', '.join(unsupported)}",
+            file=sys.stderr,
+        )
+    print("TOOLING_DOCTOR_OK" if ok else "TOOLING_DOCTOR_FAILED")
+    return ok
+
+
+def run_task(task: dict, arguments: list[str]) -> int:
+    host = native_platform()
+    if "any" not in task["platforms"] and host not in task["platforms"]:
+        raise ToolingError(
+            f"task {task['id']} supports {task['platforms']}, not host platform {host}"
+        )
+    command = [*task["entrypoint"], *arguments]
+    print(
+        f"[tool] task={task['id']} effect={task['effect']} platform={host}; "
+        f"{task['summary']}",
+        file=sys.stderr,
+    )
+    print(f"[tool] command: {shlex.join(command)}", file=sys.stderr)
+    environment = os.environ.copy()
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    return subprocess.run(command, cwd=ROOT, env=environment, check=False).returncode
+
+
+def resolve_hierarchical(tasks: dict[str, dict], arguments: list[str]) -> tuple[dict, list[str]]:
+    for length in range(len(arguments), 0, -1):
+        identifier = ".".join(arguments[:length])
+        if identifier in tasks:
+            remainder = arguments[length:]
+            if remainder[:1] == ["--"]:
+                remainder = remainder[1:]
+            return tasks[identifier], remainder
+    raise ToolingError(
+        f"unknown task path {' '.join(arguments)!r}; run `./tools/prns list`"
+    )
+
+
+def print_help() -> None:
+    print(
+        """usage: ./tools/prns COMMAND
+
+Supported commands:
+  list [--domain NAME] [--effect NAME] [--audience NAME]
+  explain TASK_ID
+  doctor [TASK_ID|DOMAIN]
+  verify
+  run TASK_ID [-- TASK_ARGUMENTS...]
+  DOMAIN TASK... [-- TASK_ARGUMENTS...]
+
+Examples:
+  ./tools/prns list --domain release
+  ./tools/prns explain release.candidate.build
+  ./tools/prns doctor release
+  ./tools/prns release candidate verify -- target/candidate
+"""
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    try:
+        manifest = load_manifest()
+        tasks = task_map(manifest)
+        if not arguments or arguments[0] in {"-h", "--help", "help"}:
+            print_help()
+            return 0
+        command = arguments.pop(0)
+        if command == "verify":
+            errors = validate_manifest(manifest)
+            if errors:
+                raise ToolingError("\n".join(errors))
+            effects = sorted({task["effect"] for task in tasks.values()})
+            print(
+                f"[tools] Registry: {len(tasks)} supported tasks across "
+                f"{len({task['domain'] for task in tasks.values()})} domains; IDs, summaries, "
+                "platforms, audiences, effects, entrypoints, and requirements are valid."
+            )
+            print(
+                f"[tools] Safety: effects are classified as {', '.join(effects)}; "
+                "dangerous behavior is visible before execution."
+            )
+            print(
+                f"[tools] Ownership: {len(implementation_inventory())} implementations are "
+                "publicly registered or explicitly internal; no legacy scripts or CI bypasses remain."
+            )
+            print("TOOLING_REGISTRY_OK")
+            return 0
+        if command == "list":
+            parser = argparse.ArgumentParser(prog="./tools/prns list")
+            parser.add_argument("--domain")
+            parser.add_argument("--effect", choices=sorted(VALID_EFFECTS))
+            parser.add_argument("--audience", choices=sorted(VALID_AUDIENCES))
+            options = parser.parse_args(arguments)
+            selected = select_tasks(
+                manifest,
+                domain=options.domain,
+                effect=options.effect,
+                audience=options.audience,
+            )
+            print(
+                f"[tools] {len(selected)} tasks selected; columns expose purpose and side effects.",
+                file=sys.stderr,
+            )
+            print("id\tdomain\teffect\tplatforms\tsummary")
+            for task in selected:
+                print(
+                    f"{task['id']}\t{task['domain']}\t{task['effect']}\t"
+                    f"{','.join(task['platforms'])}\t{task['summary']}"
+                )
+            return 0
+        if command == "explain":
+            if len(arguments) != 1 or arguments[0] not in tasks:
+                raise ToolingError("explain requires one registered task ID")
+            explain(tasks[arguments[0]])
+            return 0
+        if command == "doctor":
+            if len(arguments) > 1:
+                raise ToolingError("doctor accepts at most one task ID or domain")
+            if not arguments:
+                selected = list(tasks.values())
+            elif arguments[0] in tasks:
+                selected = [tasks[arguments[0]]]
+            else:
+                selected = [task for task in tasks.values() if task["domain"] == arguments[0]]
+                if not selected:
+                    raise ToolingError(f"unknown task or domain {arguments[0]!r}")
+            return 0 if doctor(selected) else 1
+        if command == "run":
+            if not arguments:
+                raise ToolingError("run requires a registered task ID")
+            identifier = arguments.pop(0)
+            if identifier not in tasks:
+                raise ToolingError(f"unknown task {identifier!r}")
+            if arguments[:1] == ["--"]:
+                arguments = arguments[1:]
+            return run_task(tasks[identifier], arguments)
+        task, task_arguments = resolve_hierarchical(tasks, [command, *arguments])
+        return run_task(task, task_arguments)
+    except ToolingError as error:
+        print(f"TOOLING_ERROR: {error}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

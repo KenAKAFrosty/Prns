@@ -20,7 +20,7 @@ commit and hashes of the checked baselines.
 | Hosted website | `docs/website/Cargo.toml` / `package-lock.json` | Rust/WASM plus bundled browser JavaScript |
 | Standalone flasher | `personal-hopspot/flasher/Cargo.toml` | macOS arm64/x86_64, Linux arm64/x86_64, Windows x86_64 |
 
-`scripts/deps-audit.sh` runs this matrix with `--locked`, excludes non-shipped development
+`validation/security/deps-audit.sh` runs this matrix with `--locked`, excludes non-shipped development
 dependencies, and checks advisories, licenses, sources, and bans with cargo-deny 0.19.8.
 
 ## Resolved release blockers
@@ -54,7 +54,7 @@ one of these reviewed boundaries:
 - `personal-hopspot-esp32`: ROM calls, reserved-memory registration, and persistent RTC state.
 
 Each exception denies `unsafe_op_in_unsafe_fn` and undocumented unsafe blocks. The deterministic
-`scripts/unsafe-audit.py` combines locked Cargo metadata with a nested-comment/string/raw-string-
+`validation/security/unsafe-audit.py` combines locked Cargo metadata with a nested-comment/string/raw-string-
 aware Rust token scan. `audits/unsafe-snapshot.json` records package version, source, enabled
 features, graph membership, and unsafe token classes; unexplained drift fails CI.
 

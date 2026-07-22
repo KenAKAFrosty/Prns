@@ -27,7 +27,7 @@ const WEBSOCKET_CONNECTING = 0;
 const WEBSOCKET_OPEN = 1;
 const INTERFACE_OUTBOUND_QUEUE_DEPTH = 64;
 let nextBrowserUsbAutoTag = 0;
-const LINUX_WEBUSB_SETUP_HINT = "On Linux, run ./scripts/install-prns-webusb-udev.sh from the Prns repo root, " +
+const LINUX_WEBUSB_SETUP_HINT = "On Linux, run ./tools/prns device webusb install from the Prns repo root, " +
     "then unplug/replug the device and restart the browser. If this is Snap Chromium, " +
     "also run sudo snap connect chromium:raw-usb or use a non-Snap Chrome/Chromium build.";
 export class BrowserLocalStorageIdentityStore {

@@ -13,7 +13,7 @@
     "build:playground:wasm": "cargo build --locked --target wasm32-unknown-unknown && wasm-bindgen target/wasm32-unknown-unknown/debug/prns_wasm.wasm --target web --out-dir target/browser-playground/pkg",
     "build:playground:ts": "tsc -p examples/browser-playground/tsconfig.json",
     "build:smoke": "tsc -p tsconfig.json",
-    "stage:docs": "./scripts/stage-docs-browser-playground.sh",
+    "stage:docs": "../tools/prns build wasm-docs stage",
     "check": "tsc -p tsconfig.json --noEmit",
     "check:casework": "npm run build:smoke && node smoke/dist/smoke/casework-smoke.js",
     "check:events": "npm run build:smoke && npm run stage:docs && node smoke/dist/smoke/event-smoke.js",

@@ -31,7 +31,7 @@ jobs:
           components: rustfmt
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
       - name: registry, format, and documentation gate
-        run: bash scripts/fmt-check.sh
+        run: bash validation/hygiene/fmt-docs.sh
 
   clippy:
     runs-on: ubuntu-latest
@@ -226,7 +226,7 @@ jobs:
           npm run test:production-boundary
       - name: Production engine and lock audit
         run: |
-          python3 scripts/npm-production-audit.py
+          python3 validation/security/npm-production-audit.py
           if rg -i 'esp-web-install-button|unpkg\.com|esp-web-tools|playwright|axe-core' docs/website/target/hosted-assets/prns-flash.js; then exit 1; fi
           git diff --exit-code -- docs/website/public/assets/tailwind.css
 
@@ -238,19 +238,11 @@ jobs:
         with:
           persist-credentials: false
       - name: Immutable actions and exact production tools
-        run: python3 scripts/validate-release-workflows.py
+        run: python3 validation/release/workflow-contracts.py
       - name: Release custody, reproducibility, and acceptance tests
-        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
-      - name: Release shell syntax
-        run: |
-          bash -n \
-            scripts/build-flasher-candidate.sh \
-            scripts/install-release-esp-toolchain.sh \
-            scripts/install-release-minisign.sh \
-            scripts/sign-flasher-candidate.sh \
-            scripts/sign-flasher-document.sh \
-            scripts/verify-flasher-candidate.sh \
-            scripts/verify-flasher-release.sh
+        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tools/tests -p 'test_*.py' -v
+      - name: Tool task registry and implementation syntax
+        run: ./tools/prns verify
 
   msrv:
     # The declared MSRV (workspace `rust-version`) must actually build. Pinned to the
@@ -289,7 +281,7 @@ jobs:
         with:
           targets: riscv32imac-unknown-none-elf, thumbv7em-none-eabihf
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
-      - run: bash scripts/no-std-esp-build.sh
+      - run: bash validation/platforms/no-std-esp-build.sh
       - name: prns-interfaces-embassy — cross-build (ESP32-C6 / riscv32imac)
         run: cargo build --locked --target riscv32imac-unknown-none-elf --features "tcp,wifi,lora,esp-now,ble,usb"
         working-directory: prns-interfaces/impls/embassy
@@ -332,7 +324,7 @@ jobs:
         run: ./gradlew :app:verifyReleaseRuntimeDependencies
         working-directory: personal-hopspot/mobile/android
       - name: foreground service shared-instance smoke
-        run: bash scripts/android-service-smoke.sh
+        run: bash validation/platforms/android-service-smoke.sh
 
   macos-ble:
     runs-on: macos-latest
@@ -465,11 +457,11 @@ jobs:
           cargo install cargo-deny --version 0.19.8 --locked
           cargo install cargo-about --version 0.9.1 --locked --features cli
       - name: complete release dependency audit
-        run: bash scripts/deps-audit.sh
+        run: bash validation/security/deps-audit.sh
       - name: reject dirty generated release notices
         run: git diff --exit-code -- THIRD_PARTY_NOTICES.md
       - name: record exact release audit commit
-        run: bash scripts/write-release-audit-evidence.sh
+        run: ./tools/prns release audit-evidence write
       - name: upload release audit evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

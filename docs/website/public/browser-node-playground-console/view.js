@@ -61,7 +61,7 @@ export class PlaygroundView {
             case "Ready":
                 setStatus(this.elements.usbState, "Ready", "active");
                 this.elements.usbDetail.textContent =
-                    "Choose Connect USB when hardware is attached";
+                    "Choose Connect USB when a Hopspot is attached";
                 return;
             case "Unavailable":
                 setStatus(this.elements.usbState, "Unavailable", "failed");

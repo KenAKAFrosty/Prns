@@ -7,7 +7,7 @@
 #
 # Install: `cargo install cargo-deny`.  Run: `cargo deny check`.
 
-# `scripts/deps-audit.sh` supplies each shipped manifest and target explicitly. Keeping feature
+# `validation/security/deps-audit.sh` supplies each shipped manifest and target explicitly. Keeping feature
 # selection at the release entrypoint avoids impossible all-features unions while still checking
 # every feature enabled by the daemon, apps, firmware board packages, and WASM package.
 

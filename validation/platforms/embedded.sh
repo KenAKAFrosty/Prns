@@ -4,7 +4,7 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$root"
 
-bash scripts/no-std-esp-build.sh
+bash validation/platforms/no-std-esp-build.sh
 cargo build \
     --manifest-path prns-interfaces/impls/embassy/Cargo.toml \
     --locked \

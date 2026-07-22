@@ -1,5 +1,5 @@
 {
-  "generator": "scripts/unsafe-audit.py",
+  "generator": "validation/security/unsafe-audit.py",
   "graphs": [
     {
       "manifest": "Cargo.toml",

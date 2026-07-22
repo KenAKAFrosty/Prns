@@ -91,7 +91,10 @@ jobs:
         if: matrix.group == 'wasm' || matrix.group == 'linux-host'
         run: |
           rustup target add wasm32-unknown-unknown
-          if [[ "${{ matrix.group }}" == wasm ]]; then npm --prefix prns-wasm ci --ignore-scripts --no-audit --no-fund; fi
+          if [[ "${{ matrix.group }}" == wasm ]]; then
+            cargo install wasm-bindgen-cli --version 0.2.126 --locked
+            npm --prefix prns-wasm ci --ignore-scripts --no-audit --no-fund
+          fi
       - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
         if: matrix.group == 'android'
         with:
@@ -114,7 +117,7 @@ jobs:
       - name: Prepare exact ESP release toolchain
         if: matrix.group == 'esp'
         run: |
-          scripts/install-release-esp-toolchain.sh "${RUNNER_TEMP}/prns-esp-tools"
+          ./tools/prns release toolchain esp install -- "${RUNNER_TEMP}/prns-esp-tools"
           rustup override set --path personal-hopspot/embedded/nrf52840 1.96.0
       - name: Prepare pinned stock RNS
         if: matrix.domain == 'oracles' || matrix.domain == 'interop'
