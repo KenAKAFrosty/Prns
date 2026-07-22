@@ -21,6 +21,6 @@
    Going higher needs cutting the runtime crypto/connect stack, or a larger-RAM part. */
 MEMORY
 {
-  FLASH : ORIGIN = 0x00027000, LENGTH = 0xC5000
+  FLASH : ORIGIN = 0x00027000, LENGTH = 0xC4000
   RAM   : ORIGIN = 0x2000E000, LENGTH = 0x32000
 }

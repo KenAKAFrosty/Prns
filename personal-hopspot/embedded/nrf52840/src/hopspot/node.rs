@@ -6,7 +6,6 @@ use embassy_sync::zerocopy_channel;
 use heapless::Vec as HVec;
 
 use personal_rns::engine::IssuedCommand;
-use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::InterfaceId;
 use personal_rns::lora::LoRaControl;
 use personal_rns::reactor::embassy::{
@@ -105,10 +104,3 @@ pub(super) fn seeded_entropy(bytes: &mut [u8]) {
 }
 
 pub(super) fn ignore_events(_event: PrnsEvent<'_>, _state: &()) {}
-
-pub(super) fn techo_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
-    let mut key = Zeroizing::new([0u8; IDENTITY_SECRET_KEY_LEN]);
-    key[..32].fill(0x33);
-    key[32..].fill(0x44);
-    key
-}

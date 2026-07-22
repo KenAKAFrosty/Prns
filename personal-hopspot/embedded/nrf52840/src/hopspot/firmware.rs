@@ -3,6 +3,8 @@ use embassy_futures::join::{join3, join5};
 use embassy_futures::select::{select3, Either3};
 use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
 use embassy_nrf::interrupt::{self, InterruptExt, Priority};
+use embassy_nrf::nvmc::Nvmc;
+use embassy_nrf::rng::Rng;
 use embassy_nrf::saadc::{self, ChannelConfig, Config as SaadcConfig, Gain, Reference, Saadc};
 use embassy_nrf::spim::{self, Spim};
 use embassy_nrf::usb::vbus_detect::SoftwareVbusDetect;
@@ -73,6 +75,19 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
     nrf_config.time_interrupt_priority = Priority::P2;
     let p = embassy_nrf::init(nrf_config);
 
+    let (node_bootstrap, ble_bootstrap) = {
+        let mut nvmc = Nvmc::new(p.NVMC);
+        let mut rng = Rng::new_blocking(p.RNG);
+        let mut fill_entropy = |bytes: &mut [u8]| rng.blocking_fill_bytes(bytes);
+        let node_bootstrap = super::identity::bootstrap_node_identity(&mut nvmc, &mut fill_entropy);
+        let ble_bootstrap = super::identity::bootstrap_ble_identity(&mut nvmc, &mut fill_entropy);
+        (node_bootstrap, ble_bootstrap)
+    };
+    let identity_startup_notice =
+        super::identity::startup_notice(node_bootstrap.persistence(), ble_bootstrap.persistence());
+    let node_identity = node_bootstrap.into_identity();
+    let ble_identity = Some(ble_bootstrap.into_identity());
+
     let _eink_rail = Output::new(p.P0_12, Level::High, OutputDrive::Standard);
     let mut led = Output::new(p.P1_01, Level::High, OutputDrive::Standard);
 
@@ -131,7 +146,6 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
     let l2cap: &'static l2cap::L2cap<L2capPacket> = L2CAP.init(l2cap::L2cap::init(sd));
     let sd: &'static Softdevice = sd;
     spawner.spawn(softdevice_task(sd, vbus).expect("softdevice task fits"));
-    let ble_identity = super::ble_identity::load_or_create(sd).await.ok();
     if let Some(identity) = ble_identity {
         super::bluetooth_auto::set_columba_identity(server, identity);
     }
@@ -186,12 +200,9 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
     let mut panel = Display1in54::default();
     let eink = crate::ssd1681::Ssd1681::new(eink_spi, eink_busy, eink_dc, eink_rst, Delay).ok();
 
-    // Self-identity: the same fixture keypair the LoRa-only build uses, so the board keeps one
-    // destination across builds.
-    let secret_key = techo_secret_key();
-    let transport_secret = secret_key.clone();
+    let transport_secret = node_identity.transport_secret();
     let self_destination = {
-        let signer = InMemoryNodeIdentity::from_secret_key_bytes(&secret_key);
+        let signer = InMemoryNodeIdentity::from_secret_key_bytes(node_identity.secret());
         let name = personal_rns::routing::announce::expand_name("lxmf", &["delivery"])
             .expect("valid name");
         personal_rns::routing::announce::derive_destination_hash(&signer.identity_hash(), &name)
@@ -264,7 +275,7 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
                         personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
                     app_name: "lxmf",
                     aspects: &["delivery"],
-                    identity: secret_key,
+                    identity: node_identity.into_destination_secret(),
                     announce_app_data: ANNOUNCE_APP_DATA,
                     proof: personal_rns::routing::ProofStrategy::ProveAll,
                     link_requests: personal_rns::routing::LinkRequestPolicy::AcceptAll,
@@ -372,12 +383,16 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
             display_power_control: hopspot::DisplayPowerControl::Unavailable,
             access_point: hopspot::AccessPointState::Unsupported,
         });
+        if let Some(notice) = identity_startup_notice {
+            ui_state.show_notice(notice);
+        }
         let mut working_lora_profile = DEFAULT_915_PROFILE;
         let mut since_full = 0u32;
         let mut displayed_hash = 0u64;
         let mut have_displayed = false;
         let mut activity = hopspot::CardActivityTracker::<{ MEMBERS + 4 }>::new();
-        let mut notice_until_ms: Option<u64> = None;
+        let mut notice_until_ms =
+            identity_startup_notice.map(|_| embassy_time::Instant::now().as_millis() + 5_000);
         let mut battery_gauge = hopspot::BatteryGauge::lipo();
         loop {
             let mut adc = [0i16; 1];

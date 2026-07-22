@@ -5,10 +5,14 @@
 extern crate std;
 
 mod battery;
+mod flash_identity;
 mod identity;
 mod screen;
 
 pub use battery::{BatteryGauge, BatteryPercent, BatterySource, BatteryState, NoBattery};
+pub use flash_identity::{
+    bootstrap_flash_ble_identity, bootstrap_flash_node_identity, FlashIdentityError,
+};
 #[cfg(feature = "host")]
 pub use identity::{
     generate_host_ble_identity, generate_host_node_identity, load_host_ble_identity,

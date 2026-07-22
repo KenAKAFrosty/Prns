@@ -2325,6 +2325,7 @@ name = "personal-hopspot-core"
 version = "0.1.0"
 dependencies = [
  "embedded-graphics",
+ "embedded-storage",
  "heapless 0.8.0",
  "personal-rns",
 ]

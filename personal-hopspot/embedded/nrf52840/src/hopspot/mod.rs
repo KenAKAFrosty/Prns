@@ -1,7 +1,7 @@
-mod ble_identity;
 mod bluetooth_auto;
 mod display;
 mod firmware;
+mod identity;
 mod input;
 mod node;
 

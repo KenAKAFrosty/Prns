@@ -1479,6 +1479,7 @@ name = "personal-hopspot-core"
 version = "0.1.0"
 dependencies = [
  "embedded-graphics",
+ "embedded-storage",
  "heapless 0.8.0",
  "personal-rns",
 ]
@@ -1545,6 +1546,7 @@ dependencies = [
  "cfg-if",
  "crc32fast",
  "ed25519-dalek",
+ "embedded-storage",
  "heapless 0.8.0",
  "hkdf",
  "hmac",
@@ -1999,7 +2001,6 @@ dependencies = [
  "embedded-hal 1.0.0",
  "embedded-hal-bus",
  "embedded-io-async 0.6.1",
- "embedded-storage-async",
  "epd-waveshare",
  "heapless 0.8.0",
  "heapless 0.9.3",

@@ -609,6 +609,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "embedded-storage"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a21dea9854beb860f3062d10228ce9b976da520a73474aed3171ec276bc0c032"
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1255,6 +1261,7 @@ name = "personal-hopspot-core"
 version = "0.1.0"
 dependencies = [
  "embedded-graphics",
+ "embedded-storage",
  "heapless 0.8.0",
  "personal-rns",
 ]
@@ -1352,6 +1359,7 @@ dependencies = [
  "cfg-if",
  "crc32fast",
  "ed25519-dalek",
+ "embedded-storage",
  "heapless 0.8.0",
  "hkdf",
  "hmac",
