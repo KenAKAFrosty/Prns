@@ -1,13 +1,7 @@
-#[cfg(target_arch = "xtensa")]
-use core::array;
-
 use alloc::boxed::Box;
 
-#[cfg(target_arch = "riscv32")]
 use embassy_executor::Spawner;
 use embassy_futures::join::join;
-#[cfg(target_arch = "xtensa")]
-use embassy_futures::join::join_array;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex as BridgeMutex;
 use esp_radio::ble::controller::BleConnector;
 use personal_rns::bluetooth_auto::{BluetoothAuto, BluetoothAutoShared};
@@ -17,7 +11,6 @@ use personal_rns::interfaces::bluetooth_auto::{
 };
 use personal_rns::reactor::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
 use personal_rns::runtime::Fleet;
-#[cfg(target_arch = "riscv32")]
 use prns_interfaces_embassy::bluetooth_auto::GattCharacteristic;
 use prns_interfaces_embassy::bluetooth_auto::{
     self, acceptor, dialer, host_runner, serve_slot, BleHub, GattServer,
@@ -32,7 +25,13 @@ use crate::c6::{BLE_CONTROLLER_CONNECTIONS, BLE_MEMBERS, LIFECYCLE_CAP, NOTIFY_C
 #[cfg(target_arch = "xtensa")]
 use crate::s3::{BLE_MEMBERS, LIFECYCLE_CAP, NOTIFY_CAP};
 
-type BleFleet = Fleet<BridgeMutex, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP>;
+type BleFleet = Fleet<
+    BridgeMutex,
+    EMBEDDED_MAX_WIRE_FRAME_LEN,
+    BLE_HW_MTU,
+    NOTIFY_CAP,
+    LIFECYCLE_CAP,
+>;
 type Transport = BleConnector<'static>;
 type HostStack = TroubleStack<Transport>;
 
@@ -52,9 +51,7 @@ const _: () = assert!(
     "C6 serve_slot_task pool_size must equal bluetooth_auto::SLOTS"
 );
 
-#[cfg(target_arch = "riscv32")]
-#[embassy_executor::task(pool_size = 8)]
-async fn serve_slot_task(
+async fn serve_owned_slot(
     idx: usize,
     hub: &'static BleHub,
     stack: &'static HostStack,
@@ -96,7 +93,30 @@ async fn serve_slot_task(
     .await
 }
 
+#[cfg(target_arch = "xtensa")]
+#[embassy_executor::task(pool_size = 2)]
+async fn serve_slot_task(
+    idx: usize,
+    hub: &'static BleHub,
+    stack: &'static HostStack,
+    server: &'static GattServer,
+    gatt: ReticulumGattOwned,
+) {
+    serve_owned_slot(idx, hub, stack, server, gatt).await
+}
+
 #[cfg(target_arch = "riscv32")]
+#[embassy_executor::task(pool_size = 8)]
+async fn serve_slot_task(
+    idx: usize,
+    hub: &'static BleHub,
+    stack: &'static HostStack,
+    server: &'static GattServer,
+    gatt: ReticulumGattOwned,
+) {
+    serve_owned_slot(idx, hub, stack, server, gatt).await
+}
+
 struct ReticulumGattOwned {
     control: GattCharacteristic,
     data: GattCharacteristic,
@@ -116,7 +136,7 @@ pub async fn run(
     ble_identity: BleIdentity,
     fleet: BleFleet,
     shared: &'static BluetoothAutoShared<BLE_MEMBERS>,
-    #[cfg(target_arch = "riscv32")] spawner: Spawner,
+    spawner: Spawner,
 ) {
     let controller = TroubleController::<Transport>::new(connector);
     static RESOURCES: StaticCell<HostResources<DefaultPacketPool, CONNECTIONS, L2CAP_CHANNELS>> =
@@ -185,7 +205,6 @@ pub async fn run(
         shared,
     );
 
-    #[cfg(target_arch = "riscv32")]
     for idx in 0..SLOTS {
         spawner.spawn(
             serve_slot_task(
@@ -211,37 +230,10 @@ pub async fn run(
     }
 
     let host = host_runner(hub, runner);
-
-    #[cfg(target_arch = "xtensa")]
-    let workers = join_array::<_, SLOTS>(array::from_fn::<_, SLOTS, _>(|idx| {
-        serve_slot(
-            idx,
-            hub,
-            stack,
-            server,
-            ReticulumGattCharacteristics {
-                control: &control,
-                data: &data,
-                columba_rx: &columba_rx,
-                columba_tx: &columba_tx,
-            },
-            ReticulumGattUuids {
-                service: &service_uuid,
-                control: &control_uuid,
-                data: &data_uuid,
-                columba_rx: &columba_rx_uuid,
-                columba_tx: &columba_tx_uuid,
-                columba_identity: &columba_identity_uuid,
-            },
-        )
-    }));
     let radio = join(
         acceptor(hub, &mut peripheral, &adv_data[..adv_len]),
         dialer(hub, central),
     );
-    #[cfg(target_arch = "riscv32")]
     let plane = join(radio, supervisor.run(fleet));
-    #[cfg(target_arch = "xtensa")]
-    let plane = join(radio, join(workers, supervisor.run(fleet)));
     join(host, plane).await;
 }

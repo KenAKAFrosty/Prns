@@ -1,4 +1,4 @@
-use super::{Fleet, FleetWire, InboundDeliveryError};
+use super::{Fleet, FleetWire, InboundDeliveryError, OutboundFrameError};
 use crate::engine::FanTarget;
 use crate::interfaces::InterfaceId;
 use crate::reactor::driver::{leaked_grant_lane, InterfaceLifecycle};
@@ -23,7 +23,7 @@ fn next_outbound_releases_the_copied_grant_so_the_depth_one_lane_refills() {
     let (mut outbound_tx, outbound) = leaked_grant_lane::<FRAME>(1);
     let notify: &'static Channel<Mtx, InterfaceId, 1> = leak(Channel::new());
     let lifecycle: &'static Channel<Mtx, InterfaceLifecycle, 1> = leak(Channel::new());
-    let mut fleet: Fleet<Mtx, FRAME, 1, 1> = Fleet::new(
+    let mut fleet: Fleet<Mtx, FRAME, FRAME, 1, 1> = Fleet::new(
         FleetWire {
             inbound,
             outbound,
@@ -34,7 +34,7 @@ fn next_outbound_releases_the_copied_grant_so_the_depth_one_lane_refills() {
     );
 
     assert!(outbound_tx.try_fill_frame_fan(FanTarget::All, b"one"));
-    let frame = block_on(fleet.next_outbound());
+    let frame = block_on(fleet.next_outbound()).unwrap();
     assert_eq!(frame.target(), FrameTarget::Fan(FanTarget::All));
     assert_eq!(frame.bytes(), b"one");
 
@@ -42,7 +42,7 @@ fn next_outbound_releases_the_copied_grant_so_the_depth_one_lane_refills() {
         outbound_tx.try_fill_frame_fan(FanTarget::All, b"two"),
         "the depth-1 lane must accept the next frame the instant next_outbound copied the last"
     );
-    let frame = block_on(fleet.next_outbound());
+    let frame = block_on(fleet.next_outbound()).unwrap();
     assert_eq!(frame.target(), FrameTarget::Fan(FanTarget::All));
     assert_eq!(frame.bytes(), b"two");
 }
@@ -55,7 +55,7 @@ fn an_outbound_commit_wakes_the_supervisor_and_try_next_outbound_drains() {
     outbound_tx.set_outbound_wake(wake);
     let notify: &'static Channel<Mtx, InterfaceId, 1> = leak(Channel::new());
     let lifecycle: &'static Channel<Mtx, InterfaceLifecycle, 1> = leak(Channel::new());
-    let mut fleet: Fleet<Mtx, FRAME, 1, 1> = Fleet::new(
+    let mut fleet: Fleet<Mtx, FRAME, FRAME, 1, 1> = Fleet::new(
         FleetWire {
             inbound,
             outbound,
@@ -66,7 +66,7 @@ fn an_outbound_commit_wakes_the_supervisor_and_try_next_outbound_drains() {
     );
 
     assert!(
-        fleet.try_next_outbound().is_none(),
+        fleet.try_next_outbound().unwrap().is_none(),
         "an empty lane drains to nothing"
     );
 
@@ -79,11 +79,12 @@ fn an_outbound_commit_wakes_the_supervisor_and_try_next_outbound_drains() {
 
     let frame = fleet
         .try_next_outbound()
+        .unwrap()
         .expect("the committed frame drains after the wake");
     assert_eq!(frame.target(), FrameTarget::Fan(FanTarget::All));
     assert_eq!(frame.bytes(), b"hi");
     assert!(
-        fleet.try_next_outbound().is_none(),
+        fleet.try_next_outbound().unwrap().is_none(),
         "the depth-1 lane is empty once drained"
     );
 }
@@ -94,7 +95,7 @@ fn deregistration_waits_for_lifecycle_lane_capacity() {
     let (_outbound_tx, outbound) = leaked_grant_lane::<FRAME>(1);
     let notify: &'static Channel<Mtx, InterfaceId, 1> = leak(Channel::new());
     let lifecycle: &'static Channel<Mtx, InterfaceLifecycle, 1> = leak(Channel::new());
-    let fleet: Fleet<Mtx, FRAME, 1, 1> = Fleet::new(
+    let fleet: Fleet<Mtx, FRAME, FRAME, 1, 1> = Fleet::new(
         FleetWire {
             inbound,
             outbound,
@@ -128,7 +129,7 @@ fn inbound_delivery_distinguishes_oversized_frames_from_a_full_lane() {
     let (_outbound_tx, outbound) = leaked_grant_lane::<8>(1);
     let notify: &'static Channel<Mtx, InterfaceId, 1> = leak(Channel::new());
     let lifecycle: &'static Channel<Mtx, InterfaceLifecycle, 1> = leak(Channel::new());
-    let mut fleet: Fleet<Mtx, 8, 1, 1> = Fleet::new(
+    let mut fleet: Fleet<Mtx, 8, 8, 1, 1> = Fleet::new(
         FleetWire {
             inbound,
             outbound,
@@ -151,4 +152,32 @@ fn inbound_delivery_distinguishes_oversized_frames_from_a_full_lane() {
         fleet.try_deliver_inbound(member, b"blocked"),
         Err(InboundDeliveryError::LaneFull)
     );
+}
+
+#[test]
+fn outbound_delivery_reports_a_transport_capacity_mismatch_and_releases_the_lane() {
+    let (inbound, _inbound_rx) = leaked_grant_lane::<8>(1);
+    let (mut outbound_tx, outbound) = leaked_grant_lane::<8>(1);
+    let notify: &'static Channel<Mtx, InterfaceId, 1> = leak(Channel::new());
+    let lifecycle: &'static Channel<Mtx, InterfaceLifecycle, 1> = leak(Channel::new());
+    let mut fleet: Fleet<Mtx, 8, 4, 1, 1> = Fleet::new(
+        FleetWire {
+            inbound,
+            outbound,
+            notify: notify.sender(),
+            outbound_wake: leak(Signal::new()),
+        },
+        lifecycle.sender(),
+    );
+
+    assert!(outbound_tx.try_fill_frame_fan(FanTarget::All, b"too big"));
+    assert_eq!(
+        fleet.try_next_outbound(),
+        Err(OutboundFrameError::FrameTooLarge {
+            len: 7,
+            capacity: 4,
+        })
+    );
+    assert!(outbound_tx.try_fill_frame_fan(FanTarget::All, b"fits"));
+    assert_eq!(fleet.try_next_outbound().unwrap().unwrap().bytes(), b"fits");
 }

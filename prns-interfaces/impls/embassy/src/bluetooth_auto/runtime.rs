@@ -276,7 +276,7 @@ where
 
     pub async fn run<M, const SLOT: usize, const NOTIFY: usize, const LIFECYCLE: usize>(
         self,
-        mut fleet: Fleet<M, SLOT, NOTIFY, LIFECYCLE>,
+        mut fleet: Fleet<M, SLOT, { contract::BLE_HW_MTU }, NOTIFY, LIFECYCLE>,
     ) where
         M: RawMutex + 'static,
     {
@@ -507,7 +507,7 @@ async fn apply_one<
 >(
     action: PolicyAction,
     status: &BluetoothAutoStatus<MEMBERS>,
-    fleet: &mut Fleet<M, SLOT, NOTIFY, LIFECYCLE>,
+    fleet: &mut Fleet<M, SLOT, { contract::BLE_HW_MTU }, NOTIFY, LIFECYCLE>,
     backend: &mut B,
     members: &mut [Option<Active<B::Link>>; MEMBERS],
 ) where
@@ -544,7 +544,7 @@ async fn apply_radio<
 >(
     pending: &mut heapless::Vec<PolicyAction, ACTION_CAP>,
     status: &BluetoothAutoStatus<MEMBERS>,
-    fleet: &mut Fleet<M, SLOT, NOTIFY, LIFECYCLE>,
+    fleet: &mut Fleet<M, SLOT, { contract::BLE_HW_MTU }, NOTIFY, LIFECYCLE>,
     backend: &mut B,
     members: &mut [Option<Active<B::Link>>; MEMBERS],
 ) where
@@ -565,7 +565,7 @@ async fn disable_members<
     const MEMBERS: usize,
 >(
     status: &BluetoothAutoStatus<MEMBERS>,
-    fleet: &mut Fleet<M, SLOT, NOTIFY, LIFECYCLE>,
+    fleet: &mut Fleet<M, SLOT, { contract::BLE_HW_MTU }, NOTIFY, LIFECYCLE>,
     backend: &mut B,
     members: &mut [Option<Active<B::Link>>; MEMBERS],
 ) where
@@ -602,7 +602,7 @@ async fn close_member<
     manager: &mut ConnectionPolicy<MEMBERS, DIAL_TRACK>,
     pending: &mut heapless::Vec<PolicyAction, ACTION_CAP>,
     status: &BluetoothAutoStatus<MEMBERS>,
-    fleet: &mut Fleet<M, SLOT, NOTIFY, LIFECYCLE>,
+    fleet: &mut Fleet<M, SLOT, { contract::BLE_HW_MTU }, NOTIFY, LIFECYCLE>,
     backend: &mut B,
     members: &mut [Option<Active<B::Link>>; MEMBERS],
 ) where
@@ -640,13 +640,21 @@ async fn drain_outbound<
     manager: &mut ConnectionPolicy<MEMBERS, DIAL_TRACK>,
     pending: &mut heapless::Vec<PolicyAction, ACTION_CAP>,
     status: &BluetoothAutoStatus<MEMBERS>,
-    fleet: &mut Fleet<M, SLOT, NOTIFY, LIFECYCLE>,
+    fleet: &mut Fleet<M, SLOT, { contract::BLE_HW_MTU }, NOTIFY, LIFECYCLE>,
     backend: &mut B,
     members: &mut [Option<Active<B::Link>>; MEMBERS],
 ) where
     B: BleBackend<MEMBERS>,
 {
-    while let Some(frame) = fleet.try_next_outbound() {
+    loop {
+        let frame = match fleet.try_next_outbound() {
+            Ok(Some(frame)) => frame,
+            Ok(None) => break,
+            Err(error) => {
+                crate::diagnostic_log::warn!("bluetooth-auto: outbound frame rejected: {error:?}");
+                continue;
+            }
+        };
         if frame.is_empty() {
             continue;
         }
@@ -693,7 +701,7 @@ async fn deliver_inbound<
     manager: &mut ConnectionPolicy<MEMBERS, DIAL_TRACK>,
     pending: &mut heapless::Vec<PolicyAction, ACTION_CAP>,
     status: &BluetoothAutoStatus<MEMBERS>,
-    fleet: &mut Fleet<M, SLOT, NOTIFY, LIFECYCLE>,
+    fleet: &mut Fleet<M, SLOT, { contract::BLE_HW_MTU }, NOTIFY, LIFECYCLE>,
     backend: &mut B,
     members: &mut [Option<Active<B::Link>>; MEMBERS],
     inbufs: &mut [[u8; contract::BLE_HW_MTU]; MEMBERS],
@@ -737,7 +745,7 @@ async fn settle_into_fleet<
     manager: &mut ConnectionPolicy<MEMBERS, DIAL_TRACK>,
     pending: &mut heapless::Vec<PolicyAction, ACTION_CAP>,
     status: &BluetoothAutoStatus<MEMBERS>,
-    fleet: &mut Fleet<M, SLOT, NOTIFY, LIFECYCLE>,
+    fleet: &mut Fleet<M, SLOT, { contract::BLE_HW_MTU }, NOTIFY, LIFECYCLE>,
     backend: &mut B,
     members: &mut [Option<Active<B::Link>>; MEMBERS],
     inbufs: &mut [[u8; contract::BLE_HW_MTU]; MEMBERS],

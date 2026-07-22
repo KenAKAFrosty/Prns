@@ -94,7 +94,7 @@ fn a_pooled_ifac_slot_added_at_runtime_opens_inbound_then_frees_on_remove() {
     let mut egress = PooledEgress::new(egress_lanes);
     let mut host = EmbassyHost::new(|bytes: &mut [u8]| bytes.fill(0));
     let count = block_on(async {
-        let initial: HeaplessVec<InterfaceDescriptor, 1> = HeaplessVec::new();
+        let mut descriptors: HeaplessVec<InterfaceDescriptor, 1> = HeaplessVec::new();
         let mut ifacs: HeaplessVec<InterfaceIfac, 1> = HeaplessVec::new();
         let _ = ifacs.push(InterfaceIfac {
             id: source,
@@ -104,7 +104,7 @@ fn a_pooled_ifac_slot_added_at_runtime_opens_inbound_then_frees_on_remove() {
             &mut engine,
             &mut host,
             PooledWiring {
-                initial: &initial,
+                descriptors: &mut descriptors,
                 inbound: &mut inbound,
                 egress: &mut egress,
                 notify: notify.receiver(),
@@ -222,13 +222,13 @@ fn a_pooled_slot_retagged_at_runtime_carries_traffic_under_the_new_id() {
     let mut egress = PooledEgress::new(egress_lanes);
     let mut host = EmbassyHost::new(|bytes: &mut [u8]| bytes.fill(0));
     let count = block_on(async {
-        let initial: HeaplessVec<InterfaceDescriptor, 1> = HeaplessVec::new();
+        let mut descriptors: HeaplessVec<InterfaceDescriptor, 1> = HeaplessVec::new();
         let mut ifacs: HeaplessVec<InterfaceIfac, 1> = HeaplessVec::new();
         let reactor = run_pooled(
             &mut engine,
             &mut host,
             PooledWiring {
-                initial: &initial,
+                descriptors: &mut descriptors,
                 inbound: &mut inbound,
                 egress: &mut egress,
                 notify: notify.receiver(),

@@ -7,7 +7,7 @@ use portable_atomic::{AtomicBool, Ordering};
 use static_cell::{ConstStaticCell, StaticCell};
 
 use crate::engine::IssuedCommand;
-use crate::interfaces::{IfacContext, InterfaceDescriptor, InterfaceId};
+use crate::interfaces::{IfacContext, InterfaceDescriptor, InterfaceId, InterfaceIfac};
 use crate::reactor::driver::{
     embassy_grant_lane, EmbassyGrantConsumer, EmbassyGrantProducer, EmbassyInterfaceSeam,
     InterfaceLifecycle, PooledEgress,
@@ -31,25 +31,6 @@ pub enum PoolTakeError {
 #[derive(Debug, PartialEq, Eq)]
 pub enum LaneClaimError {
     AlreadyClaimed { slot: usize },
-}
-
-pub(super) enum LaneTarget {
-    Interface(InterfaceDescriptor),
-    Supervisor(InterfaceId),
-}
-
-impl LaneTarget {
-    fn id(&self) -> InterfaceId {
-        match self {
-            Self::Interface(descriptor) => descriptor.id,
-            Self::Supervisor(id) => *id,
-        }
-    }
-}
-
-pub(super) struct LaneConfiguration {
-    pub(super) target: LaneTarget,
-    pub(super) ifac: Option<IfacContext>,
 }
 
 pub struct StaticReactorPool<
@@ -117,7 +98,8 @@ impl<M: RawMutex + 'static, const FRAME: usize, const DEPTH: usize, const LANE_C
             inbound,
             egress: PooledEgress::new(egress),
             lanes,
-            configurations: core::array::from_fn(|_| None),
+            initial: HeaplessVec::new(),
+            ifacs: HeaplessVec::new(),
         })
     }
 }
@@ -134,7 +116,8 @@ pub struct ReactorPool<M: RawMutex + 'static, const FRAME: usize, const LANE_COU
     inbound: HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, M, FRAME>), LANE_COUNT>,
     egress: PooledEgress<M, FRAME, LANE_COUNT>,
     lanes: [Option<InterfaceLane<M, FRAME>>; LANE_COUNT],
-    configurations: [Option<LaneConfiguration>; LANE_COUNT],
+    initial: HeaplessVec<InterfaceDescriptor, LANE_COUNT>,
+    ifacs: HeaplessVec<InterfaceIfac, LANE_COUNT>,
 }
 
 impl<M: RawMutex + 'static, const FRAME: usize, const LANE_COUNT: usize>
@@ -144,10 +127,11 @@ impl<M: RawMutex + 'static, const FRAME: usize, const LANE_COUNT: usize>
         &mut self,
         descriptor: InterfaceDescriptor,
     ) -> Result<InterfaceLane<M, FRAME>, LaneClaimError> {
-        self.claim::<SLOT>(LaneConfiguration {
-            target: LaneTarget::Interface(descriptor),
-            ifac: None,
-        })
+        let lane = self.claim::<SLOT>(descriptor.id)?;
+        if self.initial.push(descriptor).is_err() {
+            unreachable!()
+        }
+        Ok(lane)
     }
 
     pub fn claim_interface_with_ifac<const SLOT: usize>(
@@ -155,10 +139,21 @@ impl<M: RawMutex + 'static, const FRAME: usize, const LANE_COUNT: usize>
         descriptor: InterfaceDescriptor,
         context: IfacContext,
     ) -> Result<InterfaceLane<M, FRAME>, LaneClaimError> {
-        self.claim::<SLOT>(LaneConfiguration {
-            target: LaneTarget::Interface(descriptor),
-            ifac: Some(context),
-        })
+        let lane = self.claim::<SLOT>(descriptor.id)?;
+        if self.initial.push(descriptor).is_err() {
+            unreachable!()
+        }
+        if self
+            .ifacs
+            .push(InterfaceIfac {
+                id: descriptor.id,
+                context,
+            })
+            .is_err()
+        {
+            unreachable!()
+        }
+        Ok(lane)
     }
 
     pub fn claim_supervisor<const SLOT: usize>(
@@ -166,7 +161,7 @@ impl<M: RawMutex + 'static, const FRAME: usize, const LANE_COUNT: usize>
         supervisor: InterfaceId,
         outbound_wake: &'static Signal<M, ()>,
     ) -> Result<SupervisorLane<M, FRAME>, LaneClaimError> {
-        self.claim_supervisor_configuration::<SLOT>(supervisor, None, outbound_wake)
+        self.claim_supervisor_configuration::<SLOT>(supervisor, outbound_wake)
     }
 
     pub fn claim_supervisor_with_ifac<const SLOT: usize>(
@@ -175,13 +170,23 @@ impl<M: RawMutex + 'static, const FRAME: usize, const LANE_COUNT: usize>
         context: IfacContext,
         outbound_wake: &'static Signal<M, ()>,
     ) -> Result<SupervisorLane<M, FRAME>, LaneClaimError> {
-        self.claim_supervisor_configuration::<SLOT>(supervisor, Some(context), outbound_wake)
+        let lane = self.claim_supervisor_configuration::<SLOT>(supervisor, outbound_wake)?;
+        if self
+            .ifacs
+            .push(InterfaceIfac {
+                id: supervisor,
+                context,
+            })
+            .is_err()
+        {
+            unreachable!()
+        }
+        Ok(lane)
     }
 
     fn claim_supervisor_configuration<const SLOT: usize>(
         &mut self,
         supervisor: InterfaceId,
-        ifac: Option<IfacContext>,
         outbound_wake: &'static Signal<M, ()>,
     ) -> Result<SupervisorLane<M, FRAME>, LaneClaimError> {
         const { assert!(SLOT < LANE_COUNT) };
@@ -192,10 +197,7 @@ impl<M: RawMutex + 'static, const FRAME: usize, const LANE_COUNT: usize>
             unreachable!()
         };
         producer.set_outbound_wake(outbound_wake);
-        let lane = self.claim::<SLOT>(LaneConfiguration {
-            target: LaneTarget::Supervisor(supervisor),
-            ifac,
-        })?;
+        let lane = self.claim::<SLOT>(supervisor)?;
         Ok(SupervisorLane {
             lane,
             outbound_wake,
@@ -204,17 +206,15 @@ impl<M: RawMutex + 'static, const FRAME: usize, const LANE_COUNT: usize>
 
     fn claim<const SLOT: usize>(
         &mut self,
-        configuration: LaneConfiguration,
+        id: InterfaceId,
     ) -> Result<InterfaceLane<M, FRAME>, LaneClaimError> {
         const { assert!(SLOT < LANE_COUNT) };
         let Some(mut lane) = self.lanes[SLOT].take() else {
             return Err(LaneClaimError::AlreadyClaimed { slot: SLOT });
         };
-        let id = configuration.target.id();
         lane.id = id;
         self.inbound[SLOT].0 = id;
         self.egress.activate(SLOT, id);
-        self.configurations[SLOT] = Some(configuration);
         Ok(lane)
     }
 
@@ -233,7 +233,8 @@ impl<M: RawMutex + 'static, const FRAME: usize, const LANE_COUNT: usize>
         ReactorWiring::new(
             self.inbound,
             self.egress,
-            self.configurations,
+            self.initial,
+            self.ifacs,
             notify,
             commands,
             lifecycle,
@@ -264,11 +265,15 @@ pub struct SupervisorLane<M: RawMutex + 'static, const FRAME: usize> {
 }
 
 impl<M: RawMutex + 'static, const FRAME: usize> SupervisorLane<M, FRAME> {
-    pub fn into_fleet<const NOTIFY: usize, const LIFECYCLE: usize>(
+    pub fn into_fleet<
+        const OUTBOUND_CAPACITY: usize,
+        const NOTIFY: usize,
+        const LIFECYCLE: usize,
+    >(
         self,
         notify: Sender<'static, M, InterfaceId, NOTIFY>,
         lifecycle: Sender<'static, M, InterfaceLifecycle, LIFECYCLE>,
-    ) -> Fleet<M, FRAME, NOTIFY, LIFECYCLE> {
+    ) -> Fleet<M, FRAME, OUTBOUND_CAPACITY, NOTIFY, LIFECYCLE> {
         Fleet::new(
             FleetWire {
                 inbound: self.lane.inbound,

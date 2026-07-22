@@ -300,7 +300,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
     #[allow(irrefutable_let_patterns, clippy::expect_used)]
     pub async fn run<M, const SLOT: usize, const NOTIFY: usize, const LIFECYCLE: usize>(
         mut self,
-        mut fleet: Fleet<M, SLOT, NOTIFY, LIFECYCLE>,
+        mut fleet: Fleet<M, SLOT, { contract::HARDWARE_MTU }, NOTIFY, LIFECYCLE>,
         data_buf: &mut [u8],
         sec_data_buf: &mut [u8],
     ) where
@@ -480,7 +480,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                     )
                     .await;
                 }
-                Either::First(Either4::Fourth(outbound)) => {
+                Either::First(Either4::Fourth(Ok(outbound))) => {
                     if !outbound.is_empty() {
                         for slot in 0..MEMBERS {
                             let Some(peer) = peers[slot] else { continue };
@@ -515,6 +515,9 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                             }
                         }
                     }
+                }
+                Either::First(Either4::Fourth(Err(error))) => {
+                    crate::diagnostic_log::warn!("wifi-auto: outbound frame rejected: {error:?}");
                 }
                 Either::Second(Either3::First(received)) => {
                     if let Ok((len, meta)) = received {
@@ -582,7 +585,7 @@ async fn ingest_beacon<
     ids: &mut [InterfaceId; MEMBERS],
     peer_on_secondary: &mut [bool; MEMBERS],
     status: &AutoWifiStatus<MEMBERS>,
-    fleet: &Fleet<M, SLOT, NOTIFY, LIFECYCLE>,
+    fleet: &Fleet<M, SLOT, { contract::HARDWARE_MTU }, NOTIFY, LIFECYCLE>,
     bitrate: BitrateBps,
     src: Ipv6Addr,
     bytes: &[u8],
@@ -625,7 +628,7 @@ fn route_inbound<
     const NOTIFY: usize,
     const LIFECYCLE: usize,
 >(
-    fleet: &mut Fleet<M, SLOT, NOTIFY, LIFECYCLE>,
+    fleet: &mut Fleet<M, SLOT, { contract::HARDWARE_MTU }, NOTIFY, LIFECYCLE>,
     peers: &[Option<Ipv6Addr>; MEMBERS],
     ids: &[InterfaceId; MEMBERS],
     status: &AutoWifiStatus<MEMBERS>,
@@ -654,7 +657,7 @@ async fn clear_members<
     ids: &[InterfaceId; MEMBERS],
     peer_on_secondary: &mut [bool; MEMBERS],
     status: &AutoWifiStatus<MEMBERS>,
-    fleet: &Fleet<M, SLOT, NOTIFY, LIFECYCLE>,
+    fleet: &Fleet<M, SLOT, { contract::HARDWARE_MTU }, NOTIFY, LIFECYCLE>,
 ) {
     let mut changed = false;
     for slot in 0..MEMBERS {
@@ -684,7 +687,7 @@ async fn retire_stale<
     ids: &[InterfaceId; MEMBERS],
     peer_on_secondary: &mut [bool; MEMBERS],
     status: &AutoWifiStatus<MEMBERS>,
-    fleet: &Fleet<M, SLOT, NOTIFY, LIFECYCLE>,
+    fleet: &Fleet<M, SLOT, { contract::HARDWARE_MTU }, NOTIFY, LIFECYCLE>,
     now_ms: u64,
 ) {
     if brain.prune_stale_peers(now_ms) == 0 {

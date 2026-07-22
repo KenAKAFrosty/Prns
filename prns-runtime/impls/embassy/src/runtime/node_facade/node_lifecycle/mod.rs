@@ -20,7 +20,6 @@ use super::super::{
     PreConfiguredDestination, PrnsEvent, PrnsNodeRecipe,
 };
 use super::command_handle::PrnsNodeHandle;
-use super::reactor_pool::{LaneConfiguration, LaneTarget};
 use prns_runtime::runtime::{assemble_node, AssembledNode};
 
 /// Reactor-side endpoints for a board-owned static interface pool.
@@ -37,7 +36,8 @@ pub struct ReactorWiring<
 {
     inbound: HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, M, FRAME>), LANE_COUNT>,
     egress: PooledEgress<M, FRAME, LANE_COUNT>,
-    configurations: [Option<LaneConfiguration>; LANE_COUNT],
+    initial: HeaplessVec<InterfaceDescriptor, LANE_COUNT>,
+    ifacs: HeaplessVec<InterfaceIfac, LANE_COUNT>,
     notify: Receiver<'static, M, InterfaceId, NOTIFY>,
     commands: Receiver<'static, M, IssuedCommand, COMMANDS>,
     lifecycle: Receiver<'static, M, InterfaceLifecycle, LIFECYCLE>,
@@ -58,7 +58,8 @@ impl<
     pub(super) fn new(
         inbound: HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, M, FRAME>), LANE_COUNT>,
         egress: PooledEgress<M, FRAME, LANE_COUNT>,
-        configurations: [Option<LaneConfiguration>; LANE_COUNT],
+        initial: HeaplessVec<InterfaceDescriptor, LANE_COUNT>,
+        ifacs: HeaplessVec<InterfaceIfac, LANE_COUNT>,
         notify: Receiver<'static, M, InterfaceId, NOTIFY>,
         commands: Receiver<'static, M, IssuedCommand, COMMANDS>,
         lifecycle: Receiver<'static, M, InterfaceLifecycle, LIFECYCLE>,
@@ -67,7 +68,8 @@ impl<
         Self {
             inbound,
             egress,
-            configurations,
+            initial,
+            ifacs,
             notify,
             commands,
             lifecycle,
@@ -105,7 +107,7 @@ pub struct PrnsNode<
     lifecycle: Receiver<'static, M, InterfaceLifecycle, LIFECYCLE>,
     handle: PrnsNodeHandle<'static, M, COMMANDS, COMPLETIONS>,
     host: H,
-    initial: HeaplessVec<InterfaceDescriptor, INTERFACE_CAPACITY>,
+    descriptors: HeaplessVec<InterfaceDescriptor, INTERFACE_CAPACITY>,
     ifacs: HeaplessVec<InterfaceIfac, LANE_COUNT>,
 }
 
@@ -247,18 +249,10 @@ where
             );
         }
         let (node, Manual) = assemble_node(recipe);
-        let mut initial = HeaplessVec::new();
-        let mut ifacs = HeaplessVec::new();
-        for configuration in wiring.configurations.into_iter().flatten() {
-            let id = match configuration.target {
-                LaneTarget::Interface(descriptor) => {
-                    assert!(initial.push(descriptor).is_ok());
-                    descriptor.id
-                }
-                LaneTarget::Supervisor(id) => id,
-            };
-            if let Some(context) = configuration.ifac {
-                assert!(ifacs.push(InterfaceIfac { id, context }).is_ok());
+        let mut descriptors = HeaplessVec::new();
+        for descriptor in wiring.initial {
+            if descriptors.push(descriptor).is_err() {
+                unreachable!()
             }
         }
 
@@ -271,8 +265,8 @@ where
             lifecycle: wiring.lifecycle,
             handle: wiring.handle,
             host,
-            initial,
-            ifacs,
+            descriptors,
+            ifacs: wiring.ifacs,
         }
     }
 
@@ -320,7 +314,7 @@ where
             lifecycle,
             handle,
             mut host,
-            initial,
+            mut descriptors,
             mut ifacs,
         } = self;
         let AssembledNode {
@@ -336,7 +330,7 @@ where
             &mut engine,
             &mut host,
             PooledWiring {
-                initial: &initial,
+                descriptors: &mut descriptors,
                 ifacs: &mut ifacs,
                 inbound: &mut inbound,
                 egress: &mut egress,
@@ -405,7 +399,7 @@ where
             lifecycle,
             handle,
             host,
-            initial,
+            descriptors,
             ifacs,
         } = self;
         let AssembledNode {
@@ -421,7 +415,7 @@ where
             engine,
             host,
             PooledWiring {
-                initial: &*initial,
+                descriptors,
                 ifacs,
                 inbound,
                 egress,

@@ -59,7 +59,7 @@ pub struct PooledWiring<
     const COMMANDS: usize,
     const LIFECYCLE: usize,
 > {
-    pub initial: &'run HeaplessVec<InterfaceDescriptor, INTERFACE_CAPACITY>,
+    pub descriptors: &'run mut HeaplessVec<InterfaceDescriptor, INTERFACE_CAPACITY>,
     pub ifacs: &'run mut HeaplessVec<InterfaceIfac, LANE_COUNT>,
     pub inbound:
         &'run mut HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, M, FRAME>), LANE_COUNT>,
@@ -99,7 +99,7 @@ pub(crate) async fn run_pooled<
         mut should_accept_resource,
     } = deciders;
     let PooledWiring {
-        initial,
+        descriptors,
         ifacs,
         inbound,
         egress,
@@ -107,17 +107,15 @@ pub(crate) async fn run_pooled<
         commands,
         lifecycle,
     } = wiring;
-    let mut descriptors: HeaplessVec<InterfaceDescriptor, INTERFACE_CAPACITY> = HeaplessVec::new();
     let mut pacers: HeaplessVec<InterfacePacer, LANE_COUNT> = HeaplessVec::new();
-    for descriptor in initial {
-        let descriptor = clamp_to_embedded_ceiling(*descriptor);
+    for descriptor in descriptors.iter_mut() {
+        *descriptor = clamp_to_embedded_ceiling(*descriptor);
         engine.interface_attached(descriptor.id, host.now());
-        let _ = descriptors.push(descriptor);
         if owns_dedicated_lane(inbound, descriptor.id) {
-            let _ = pacers.push(InterfacePacer::from_descriptor(descriptor.id, &descriptor));
+            let _ = pacers.push(InterfacePacer::from_descriptor(descriptor.id, descriptor));
         }
     }
-    let mut wake_schedules = engine.wake_schedules(AttachedInterfaces::new(&descriptors));
+    let mut wake_schedules = engine.wake_schedules(AttachedInterfaces::new(&*descriptors));
     loop {
         let wake = wake_schedules.soonest(host.now());
         let pacer_wake = soonest_pacer_release(&pacers);
@@ -162,7 +160,7 @@ pub(crate) async fn run_pooled<
                         let delta = engine.ingest_classified_into(
                             packet,
                             IngestIo {
-                                interfaces: AttachedInterfaces::new(&descriptors),
+                                interfaces: AttachedInterfaces::new(&*descriptors),
                                 now,
                                 fill_entropy: &mut |entropy| host.fill_entropy(entropy),
                                 should_prove: &mut should_prove,
@@ -184,7 +182,7 @@ pub(crate) async fn run_pooled<
                             &mut wake_schedules,
                             delta,
                             &*engine,
-                            AttachedInterfaces::new(&descriptors),
+                            AttachedInterfaces::new(&*descriptors),
                         );
                     }
                 }
@@ -193,7 +191,7 @@ pub(crate) async fn run_pooled<
                 let now = host.now();
                 let delta = engine.ingest_command_into(
                     issued,
-                    AttachedInterfaces::new(&descriptors),
+                    AttachedInterfaces::new(&*descriptors),
                     now,
                     &mut |entropy| host.fill_entropy(entropy),
                     &mut |reaction| {
@@ -211,7 +209,7 @@ pub(crate) async fn run_pooled<
                     &mut wake_schedules,
                     delta,
                     &*engine,
-                    AttachedInterfaces::new(&descriptors),
+                    AttachedInterfaces::new(&*descriptors),
                 );
             }
             Either5::Third(reason) => {
@@ -220,7 +218,7 @@ pub(crate) async fn run_pooled<
                     &mut *engine,
                     reason,
                     now,
-                    AttachedInterfaces::new(&descriptors),
+                    AttachedInterfaces::new(&*descriptors),
                     &mut |bytes| host.fill_entropy(bytes),
                     &mut |reaction| {
                         route_reaction(
@@ -237,7 +235,7 @@ pub(crate) async fn run_pooled<
                     &mut wake_schedules,
                     delta,
                     &*engine,
-                    AttachedInterfaces::new(&descriptors),
+                    AttachedInterfaces::new(&*descriptors),
                 );
             }
             Either5::Fourth(()) => {
@@ -256,7 +254,7 @@ pub(crate) async fn run_pooled<
                             let _ = pacers.push(InterfacePacer::from_descriptor(id, &descriptor));
                         }
                         wake_schedules =
-                            engine.wake_schedules(AttachedInterfaces::new(&descriptors));
+                            engine.wake_schedules(AttachedInterfaces::new(&*descriptors));
                     }
                     #[cfg(feature = "log")]
                     log::info!(
@@ -286,7 +284,7 @@ pub(crate) async fn run_pooled<
                     }
                     engine.cull_expired_routes(
                         now,
-                        AttachedInterfaces::new(&descriptors),
+                        AttachedInterfaces::new(&*descriptors),
                         &mut |reaction| {
                             route_reaction(
                                 reaction,
@@ -298,7 +296,7 @@ pub(crate) async fn run_pooled<
                             )
                         },
                     );
-                    wake_schedules = engine.wake_schedules(AttachedInterfaces::new(&descriptors));
+                    wake_schedules = engine.wake_schedules(AttachedInterfaces::new(&*descriptors));
                 }
                 InterfaceLifecycle::Retag {
                     old_id,
@@ -323,7 +321,7 @@ pub(crate) async fn run_pooled<
                             pacers[pos] = InterfacePacer::from_descriptor(new_id, &descriptor);
                         }
                         wake_schedules =
-                            engine.wake_schedules(AttachedInterfaces::new(&descriptors));
+                            engine.wake_schedules(AttachedInterfaces::new(&*descriptors));
                     }
                 }
             },

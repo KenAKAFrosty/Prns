@@ -66,7 +66,7 @@ fn a_recipe_node_hears_an_ifac_announce_a_supervisor_stands_a_peer_up_for() {
         lifecycle.receiver(),
         handle,
     );
-    let fleet: Fleet<Mtx, FRAME, 4, 4> =
+    let fleet: Fleet<Mtx, FRAME, FRAME, 4, 4> =
         supervisor_lane.into_fleet(notify.sender(), lifecycle.sender());
 
     let heard: Rc<RefCell<usize>> = Rc::new(RefCell::new(0));

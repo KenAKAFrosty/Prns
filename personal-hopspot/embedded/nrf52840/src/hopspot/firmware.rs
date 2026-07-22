@@ -298,8 +298,13 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
                 },
                 &BLE_SHARED,
             );
-            let fleet: Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP> =
-                lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender());
+            let fleet: Fleet<
+                Mtx,
+                EMBEDDED_MAX_WIRE_FRAME_LEN,
+                BLE_HW_MTU,
+                NOTIFY_CAP,
+                LIFECYCLE_CAP,
+            > = lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender());
             (supervisor, fleet)
         });
 

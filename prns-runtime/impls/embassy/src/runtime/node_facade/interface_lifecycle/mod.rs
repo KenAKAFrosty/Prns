@@ -12,14 +12,19 @@ pub enum InboundDeliveryError {
     LaneFull,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutboundFrameError {
+    FrameTooLarge { len: usize, capacity: usize },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OutboundFrame<const FRAME: usize> {
+pub struct OutboundFrame<const OUTBOUND_CAPACITY: usize> {
     target: FrameTarget,
-    bytes: [u8; FRAME],
+    bytes: [u8; OUTBOUND_CAPACITY],
     len: usize,
 }
 
-impl<const FRAME: usize> OutboundFrame<FRAME> {
+impl<const OUTBOUND_CAPACITY: usize> OutboundFrame<OUTBOUND_CAPACITY> {
     #[must_use]
     pub fn target(&self) -> FrameTarget {
         self.target
@@ -51,6 +56,7 @@ pub(super) struct FleetWire<M: RawMutex + 'static, const FRAME: usize, const NOT
 pub struct Fleet<
     M: RawMutex + 'static,
     const FRAME: usize,
+    const OUTBOUND_CAPACITY: usize,
     const NOTIFY: usize,
     const LIFECYCLE: usize,
 > {
@@ -58,14 +64,20 @@ pub struct Fleet<
     lifecycle: Sender<'static, M, InterfaceLifecycle, LIFECYCLE>,
 }
 
-impl<M: RawMutex + 'static, const FRAME: usize, const NOTIFY: usize, const LIFECYCLE: usize>
-    Fleet<M, FRAME, NOTIFY, LIFECYCLE>
+impl<
+        M: RawMutex + 'static,
+        const FRAME: usize,
+        const OUTBOUND_CAPACITY: usize,
+        const NOTIFY: usize,
+        const LIFECYCLE: usize,
+    > Fleet<M, FRAME, OUTBOUND_CAPACITY, NOTIFY, LIFECYCLE>
 {
     #[must_use]
     pub(super) fn new(
         wire: FleetWire<M, FRAME, NOTIFY>,
         lifecycle: Sender<'static, M, InterfaceLifecycle, LIFECYCLE>,
     ) -> Self {
+        const { assert!(OUTBOUND_CAPACITY <= FRAME) };
         Self { wire, lifecycle }
     }
 
@@ -101,14 +113,24 @@ impl<M: RawMutex + 'static, const FRAME: usize, const NOTIFY: usize, const LIFEC
         Ok(())
     }
 
-    pub async fn next_outbound(&mut self) -> OutboundFrame<FRAME> {
+    pub async fn next_outbound(
+        &mut self,
+    ) -> Result<OutboundFrame<OUTBOUND_CAPACITY>, OutboundFrameError> {
         self.wire.outbound.release();
         let slot = self.wire.outbound.peek().await;
         let target = slot.target;
-        let bytes = slot.bytes;
         let len = slot.len;
+        if len > OUTBOUND_CAPACITY {
+            self.wire.outbound.release();
+            return Err(OutboundFrameError::FrameTooLarge {
+                len,
+                capacity: OUTBOUND_CAPACITY,
+            });
+        }
+        let mut bytes = [0; OUTBOUND_CAPACITY];
+        bytes[..len].copy_from_slice(slot.frame());
         self.wire.outbound.release();
-        OutboundFrame { target, bytes, len }
+        Ok(OutboundFrame { target, bytes, len })
     }
 
     /// Waits for a shared-lane commit; drain with [`try_next_outbound`](Self::try_next_outbound) after waking.
@@ -116,13 +138,25 @@ impl<M: RawMutex + 'static, const FRAME: usize, const NOTIFY: usize, const LIFEC
         self.wire.outbound_wake.wait().await;
     }
 
-    pub fn try_next_outbound(&mut self) -> Option<OutboundFrame<FRAME>> {
-        let slot = self.wire.outbound.try_peek()?;
+    pub fn try_next_outbound(
+        &mut self,
+    ) -> Result<Option<OutboundFrame<OUTBOUND_CAPACITY>>, OutboundFrameError> {
+        let Some(slot) = self.wire.outbound.try_peek() else {
+            return Ok(None);
+        };
         let target = slot.target;
-        let bytes = slot.bytes;
         let len = slot.len;
+        if len > OUTBOUND_CAPACITY {
+            self.wire.outbound.release();
+            return Err(OutboundFrameError::FrameTooLarge {
+                len,
+                capacity: OUTBOUND_CAPACITY,
+            });
+        }
+        let mut bytes = [0; OUTBOUND_CAPACITY];
+        bytes[..len].copy_from_slice(slot.frame());
         self.wire.outbound.release();
-        Some(OutboundFrame { target, bytes, len })
+        Ok(Some(OutboundFrame { target, bytes, len }))
     }
 }
 

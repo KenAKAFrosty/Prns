@@ -19,7 +19,7 @@ use static_cell::StaticCell;
 
 use personal_rns::engine::{InstantMillis, IssuedCommand, RatchetPolicy};
 #[cfg(feature = "bluetooth-auto")]
-use personal_rns::interfaces::bluetooth_auto::BleIdentity;
+use personal_rns::interfaces::bluetooth_auto::{BleIdentity, BLE_HW_MTU};
 use personal_rns::interfaces::usb_auto::device_descriptor;
 use personal_rns::interfaces::{ConnectionState, InterfaceId};
 use personal_rns::reactor::embassy::{
@@ -121,7 +121,8 @@ type InterfaceStore = EmbassyInterfaceStore<
     PACKET_PHY_INDEX_BUCKETS,
 >;
 #[cfg(feature = "bluetooth-auto")]
-type C6BleFleet = Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP>;
+type C6BleFleet =
+    Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, BLE_HW_MTU, NOTIFY_CAP, LIFECYCLE_CAP>;
 type Node = PrnsNode<
     (),
     (),

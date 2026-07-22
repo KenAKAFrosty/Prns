@@ -211,8 +211,13 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let wifi = wifi
         .zip(wifi_supervisor_lane)
         .map(|(interface, lane)| {
-            let fleet: Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP> =
-                lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender());
+            let fleet: Fleet<
+                Mtx,
+                EMBEDDED_MAX_WIRE_FRAME_LEN,
+                { wifi_auto_contract::HARDWARE_MTU },
+                NOTIFY_CAP,
+                LIFECYCLE_CAP,
+            > = lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender());
             (interface, fleet)
         });
     // The WiFi-auto run loop's two MTU receive buffers live on the heap (the D-cache donation),
@@ -228,8 +233,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let ble = ble_identity
         .zip(ble_supervisor_lane)
         .map(|(identity, lane)| {
-            let fleet: Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP> =
-                lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender());
+            let fleet: S3BleFleet = lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender());
             (identity, fleet)
         });
 
@@ -560,22 +564,19 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     #[cfg(all(feature = "bluetooth-auto", not(feature = "wifi-auto")))]
     {
         let _ = (wifi, tcp, has_wifi);
-        let ble_run = async {
-            match ble {
-                Some((identity, fleet)) => {
-                    crate::bluetooth_auto::run(
-                        ble_connector,
-                        mac_octets,
-                        identity,
-                        fleet,
-                        &BLE_SHARED,
-                    )
-                    .await;
-                }
-                None => core::future::pending().await,
-            }
-        };
-        join(ble_run, render).await;
+        if let Some((identity, fleet)) = ble {
+            spawner.spawn(
+                ble_task(
+                    spawner,
+                    ble_connector,
+                    mac_octets,
+                    identity,
+                    fleet,
+                )
+                .expect("Bluetooth task fits"),
+            );
+        }
+        render.await;
     }
     #[cfg(all(feature = "wifi-auto", not(feature = "bluetooth-auto")))]
     {
@@ -631,25 +632,22 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 )
                 .expect("ble connector");
                 log_heap_footprint("post-ble-connector (core 0)");
-                let ble_run = async {
-                    match ble {
-                        Some((identity, fleet)) => {
-                            crate::bluetooth_auto::run(
-                                ble_connector,
-                                mac_octets,
-                                identity,
-                                fleet,
-                                &BLE_SHARED,
-                            )
-                            .await;
-                        }
-                        None => core::future::pending().await,
-                    }
-                };
+                if let Some((identity, fleet)) = ble {
+                    spawner.spawn(
+                        ble_task(
+                            spawner,
+                            ble_connector,
+                            mac_octets,
+                            identity,
+                            fleet,
+                        )
+                        .expect("Bluetooth task fits"),
+                    );
+                }
                 match (wifi, tcp) {
                     (Some((wifi, wifi_fleet)), Some((tcp, tcp_seam))) => {
                         join(
-                            join(join(join(ble_run, lora_run), espnow_run), tcp.run(tcp_seam)),
+                            join(join(lora_run, espnow_run), tcp.run(tcp_seam)),
                             join(
                                 wifi.run(wifi_fleet, wifi_data_buf, wifi_sec_data_buf),
                                 render,
@@ -659,7 +657,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                     }
                     (Some((wifi, wifi_fleet)), None) => {
                         join(
-                            join(join(ble_run, lora_run), espnow_run),
+                            join(lora_run, espnow_run),
                             join(
                                 wifi.run(wifi_fleet, wifi_data_buf, wifi_sec_data_buf),
                                 render,
@@ -668,7 +666,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                         .await;
                     }
                     (None, _) => {
-                        join(join(join(ble_run, lora_run), espnow_run), render).await;
+                        join(join(lora_run, espnow_run), render).await;
                     }
                 }
             }
@@ -711,4 +709,16 @@ pub(super) async fn run_core<B: Esp32S3Board>(
 async fn reactor_core(node: &'static mut S3Node) {
     node.run_reactor_with_interface_store(&INTERFACE_STORE)
         .await
+}
+
+#[cfg(feature = "bluetooth-auto")]
+#[embassy_executor::task]
+async fn ble_task(
+    spawner: Spawner,
+    connector: esp_radio::ble::controller::BleConnector<'static>,
+    mac: [u8; 6],
+    identity: BleIdentity,
+    fleet: S3BleFleet,
+) {
+    crate::bluetooth_auto::run(connector, mac, identity, fleet, &BLE_SHARED, spawner).await
 }
