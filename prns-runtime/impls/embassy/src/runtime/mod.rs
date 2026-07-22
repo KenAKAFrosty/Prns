@@ -9,5 +9,5 @@ pub(crate) use interface_store::{InterfaceInspectionStore, NoInterfaceInspection
 pub use node_facade::Fleet as EmbassyFleet;
 pub use node_facade::{
     CompletionPool, Fleet, InterfaceLane, LaneClaimError, PoolTakeError, PrnsNode, PrnsNodeHandle,
-    ReactorPlumbing, RequestRoutingCapacity, StaticReactorPool, SupervisorLane,
+    ReactorWiring, RequestRoutingCapacity, StaticReactorPool, SupervisorLane,
 };

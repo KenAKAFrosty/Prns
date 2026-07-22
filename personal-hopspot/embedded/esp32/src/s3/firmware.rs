@@ -165,7 +165,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     });
 
     let handle: Handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
-    let plumbing = reactor_pool.into_plumbing(
+    let reactor_wiring = reactor_pool.into_reactor_wiring(
         NOTIFY.receiver(),
         COMMANDS.receiver(),
         LIFECYCLE.receiver(),
@@ -176,7 +176,8 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let core1_stack = mk_static!(CpuStack<CORE1_STACK_BYTES>, CpuStack::new());
     esp_rtos::start_second_core(b.cpu_ctrl, b.sw_int1, core1_stack, move || {
         static NODE: StaticCell<S3Node> = StaticCell::new();
-        let node: &'static mut S3Node = NODE.init_with(|| PrnsNode::new(recipe, plumbing, host));
+        let node: &'static mut S3Node =
+            NODE.init_with(|| PrnsNode::new(recipe, reactor_wiring, host));
         log_heap_footprint("post-construction (engine columns boxed into PSRAM)");
 
         static EXECUTOR: StaticCell<esp_rtos::embassy::Executor> = StaticCell::new();
@@ -207,10 +208,13 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     });
 
     #[cfg(feature = "wifi-auto")]
-    let wifi_fleet: Option<
-        Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP>,
-    > = wifi_supervisor_lane
-        .map(|lane| lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender()));
+    let wifi = wifi
+        .zip(wifi_supervisor_lane)
+        .map(|(interface, lane)| {
+            let fleet: Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP> =
+                lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender());
+            (interface, fleet)
+        });
     // The WiFi-auto run loop's two MTU receive buffers live on the heap (the D-cache donation),
     // not on the bounded `#[esp_rtos::main]` stack that run()'s future rides; the alloc-free
     // embassy AutoWifi just borrows them. Leaked: they live for the program's whole life anyway.
@@ -221,14 +225,18 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let wifi_sec_data_buf: &'static mut [u8] =
         alloc::vec![0u8; wifi_auto_contract::HARDWARE_MTU].leak();
     #[cfg(feature = "bluetooth-auto")]
-    let ble_fleet: Option<Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP>> =
-        ble_supervisor_lane
-            .map(|lane| lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender()));
+    let ble = ble_identity
+        .zip(ble_supervisor_lane)
+        .map(|(identity, lane)| {
+            let fleet: Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP> =
+                lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender());
+            (identity, fleet)
+        });
 
     let button = Input::new(b.button, InputConfig::default().with_pull(Pull::Up));
     spawner.spawn(button_task(button).expect("button task fits"));
 
-    let wifi_status = wifi.as_ref().map(AutoWifi::status);
+    let wifi_status = wifi.as_ref().map(|(interface, _)| interface.status());
     let wifi_id = wifi_status.as_ref().map(|status| {
         use personal_rns::interfaces::InterfaceStatus;
         status.id()
@@ -553,8 +561,8 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     {
         let _ = (wifi, tcp, has_wifi);
         let ble_run = async {
-            match (ble_identity, ble_fleet) {
-                (Some(identity), Some(fleet)) => {
+            match ble {
+                Some((identity, fleet)) => {
                     crate::bluetooth_auto::run(
                         ble_connector,
                         mac_octets,
@@ -564,7 +572,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                     )
                     .await;
                 }
-                _ => core::future::pending().await,
+                None => core::future::pending().await,
             }
         };
         join(ble_run, render).await;
@@ -578,16 +586,12 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             }
         };
         match (wifi, tcp) {
-            (Some(wifi), Some((tcp, tcp_seam))) => {
+            (Some((wifi, wifi_fleet)), Some((tcp, tcp_seam))) => {
                 join(
                     join(
                         join(lora_run, espnow_run),
                         join(
-                            wifi.run(
-                                wifi_fleet.expect("WiFi fleet exists"),
-                                wifi_data_buf,
-                                wifi_sec_data_buf,
-                            ),
+                            wifi.run(wifi_fleet, wifi_data_buf, wifi_sec_data_buf),
                             tcp.run(tcp_seam),
                         ),
                     ),
@@ -595,15 +599,11 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 )
                 .await;
             }
-            (Some(wifi), None) => {
+            (Some((wifi, wifi_fleet)), None) => {
                 join(
                     join(
                         join(lora_run, espnow_run),
-                        wifi.run(
-                            wifi_fleet.expect("WiFi fleet exists"),
-                            wifi_data_buf,
-                            wifi_sec_data_buf,
-                        ),
+                        wifi.run(wifi_fleet, wifi_data_buf, wifi_sec_data_buf),
                     ),
                     render,
                 )
@@ -632,8 +632,8 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 .expect("ble connector");
                 log_heap_footprint("post-ble-connector (core 0)");
                 let ble_run = async {
-                    match (ble_identity, ble_fleet) {
-                        (Some(identity), Some(fleet)) => {
+                    match ble {
+                        Some((identity, fleet)) => {
                             crate::bluetooth_auto::run(
                                 ble_connector,
                                 mac_octets,
@@ -643,33 +643,25 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                             )
                             .await;
                         }
-                        _ => core::future::pending().await,
+                        None => core::future::pending().await,
                     }
                 };
                 match (wifi, tcp) {
-                    (Some(wifi), Some((tcp, tcp_seam))) => {
+                    (Some((wifi, wifi_fleet)), Some((tcp, tcp_seam))) => {
                         join(
                             join(join(join(ble_run, lora_run), espnow_run), tcp.run(tcp_seam)),
                             join(
-                                wifi.run(
-                                    wifi_fleet.expect("WiFi fleet exists"),
-                                    wifi_data_buf,
-                                    wifi_sec_data_buf,
-                                ),
+                                wifi.run(wifi_fleet, wifi_data_buf, wifi_sec_data_buf),
                                 render,
                             ),
                         )
                         .await;
                     }
-                    (Some(wifi), None) => {
+                    (Some((wifi, wifi_fleet)), None) => {
                         join(
                             join(join(ble_run, lora_run), espnow_run),
                             join(
-                                wifi.run(
-                                    wifi_fleet.expect("WiFi fleet exists"),
-                                    wifi_data_buf,
-                                    wifi_sec_data_buf,
-                                ),
+                                wifi.run(wifi_fleet, wifi_data_buf, wifi_sec_data_buf),
                                 render,
                             ),
                         )
@@ -681,18 +673,14 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 }
             }
             RadioMode::AccessPoint => {
-                let _ = (b.bt, ble_fleet);
+                let _ = (b.bt, ble);
                 match (wifi, tcp) {
-                    (Some(wifi), Some((tcp, tcp_seam))) => {
+                    (Some((wifi, wifi_fleet)), Some((tcp, tcp_seam))) => {
                         join(
                             join(
                                 join(lora_run, espnow_run),
                                 join(
-                                    wifi.run(
-                                        wifi_fleet.expect("WiFi fleet exists"),
-                                        wifi_data_buf,
-                                        wifi_sec_data_buf,
-                                    ),
+                                    wifi.run(wifi_fleet, wifi_data_buf, wifi_sec_data_buf),
                                     tcp.run(tcp_seam),
                                 ),
                             ),
@@ -700,15 +688,11 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                         )
                         .await;
                     }
-                    (Some(wifi), None) => {
+                    (Some((wifi, wifi_fleet)), None) => {
                         join(
                             join(
                                 join(lora_run, espnow_run),
-                                wifi.run(
-                                    wifi_fleet.expect("WiFi fleet exists"),
-                                    wifi_data_buf,
-                                    wifi_sec_data_buf,
-                                ),
+                                wifi.run(wifi_fleet, wifi_data_buf, wifi_sec_data_buf),
                             ),
                             render,
                         )

@@ -52,39 +52,39 @@ fn clamp_to_embedded_ceiling(mut descriptor: InterfaceDescriptor) -> InterfaceDe
 pub struct PooledWiring<
     'run,
     M: RawMutex + 'static,
-    const SLOT: usize,
-    const LANES: usize,
-    const MAX_IFACES: usize,
+    const FRAME: usize,
+    const LANE_COUNT: usize,
+    const INTERFACE_CAPACITY: usize,
     const NOTIFY: usize,
     const COMMANDS: usize,
     const LIFECYCLE: usize,
 > {
-    pub initial: &'run HeaplessVec<InterfaceDescriptor, MAX_IFACES>,
-    pub ifacs: &'run mut HeaplessVec<InterfaceIfac, LANES>,
+    pub initial: &'run HeaplessVec<InterfaceDescriptor, INTERFACE_CAPACITY>,
+    pub ifacs: &'run mut HeaplessVec<InterfaceIfac, LANE_COUNT>,
     pub inbound:
-        &'run mut HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, M, SLOT>), LANES>,
-    pub egress: &'run mut PooledEgress<M, SLOT, LANES>,
+        &'run mut HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, M, FRAME>), LANE_COUNT>,
+    pub egress: &'run mut PooledEgress<M, FRAME, LANE_COUNT>,
     pub notify: Receiver<'run, M, InterfaceId, NOTIFY>,
     pub commands: Receiver<'run, M, IssuedCommand, COMMANDS>,
     pub lifecycle: Receiver<'run, M, InterfaceLifecycle, LIFECYCLE>,
 }
 
-/// Runs a mutable descriptor set over a fixed lane pool; `LANES` bounds pacers.
+/// Runs a mutable descriptor set over a fixed lane pool; `LANE_COUNT` bounds pacers.
 pub(crate) async fn run_pooled<
     S,
     H,
     M,
     Store,
-    const SLOT: usize,
-    const LANES: usize,
-    const MAX_IFACES: usize,
+    const FRAME: usize,
+    const LANE_COUNT: usize,
+    const INTERFACE_CAPACITY: usize,
     const NOTIFY: usize,
     const COMMANDS: usize,
     const LIFECYCLE: usize,
 >(
     engine: &mut EngineState<S>,
     host: &mut H,
-    wiring: PooledWiring<'_, M, SLOT, LANES, MAX_IFACES, NOTIFY, COMMANDS, LIFECYCLE>,
+    wiring: PooledWiring<'_, M, FRAME, LANE_COUNT, INTERFACE_CAPACITY, NOTIFY, COMMANDS, LIFECYCLE>,
     mut on_journaled: impl FnMut(Journaled<'_>),
     deciders: AppDeciders<impl FnMut(&ProofRequest) -> bool, impl FnMut(&ResourceOffer) -> bool>,
     store: &Store,
@@ -107,8 +107,8 @@ pub(crate) async fn run_pooled<
         commands,
         lifecycle,
     } = wiring;
-    let mut descriptors: HeaplessVec<InterfaceDescriptor, MAX_IFACES> = HeaplessVec::new();
-    let mut pacers: HeaplessVec<InterfacePacer, LANES> = HeaplessVec::new();
+    let mut descriptors: HeaplessVec<InterfaceDescriptor, INTERFACE_CAPACITY> = HeaplessVec::new();
+    let mut pacers: HeaplessVec<InterfacePacer, LANE_COUNT> = HeaplessVec::new();
     for descriptor in initial {
         let descriptor = clamp_to_embedded_ceiling(*descriptor);
         engine.interface_attached(descriptor.id, host.now());

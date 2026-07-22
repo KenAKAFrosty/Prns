@@ -157,12 +157,12 @@ const TCP_BITRATE_BPS: BitrateBps = BitrateBps::guess(65_000_000);
 /// One TCP socket's smoltcp rx/tx buffer — sized for the board's frames, DRAM-frugal over throughput.
 const TCP_SOCKET_BUF: usize = 1_024;
 
-const IFACES: usize =
+const LANE_COUNT: usize =
     4 + cfg!(feature = "bluetooth-auto") as usize + cfg!(feature = "esp-now") as usize;
 const MEMBERS: usize = 24;
 /// The engine-interface (descriptor + pacer) pool: the fixed interfaces plus the WiFi members.
-/// Decoupled from the lane count `IFACES` on purpose: a member costs descriptors, not buffers.
-const MAX_IFACES: usize = 3 + MEMBERS + cfg!(feature = "esp-now") as usize;
+/// Decoupled from `LANE_COUNT` on purpose: a member costs descriptors, not buffers.
+const INTERFACE_CAPACITY: usize = 3 + MEMBERS + cfg!(feature = "esp-now") as usize;
 const WIFI_SUPERVISOR_ID: InterfaceId =
     InterfaceId::new([InterfaceKind::AutoWifi as u8, 0, 0, 0, 0, 0, 0, 0]);
 const WIFI_SUPERVISOR_SLOT: usize = 2;
@@ -216,8 +216,8 @@ type S3Node = PrnsNode<
     EmbassyHost<fn(&mut [u8])>,
     Mtx,
     EMBEDDED_MAX_WIRE_FRAME_LEN,
-    IFACES,
-    MAX_IFACES,
+    LANE_COUNT,
+    INTERFACE_CAPACITY,
     NOTIFY_CAP,
     COMMANDS_CAP,
     LIFECYCLE_CAP,
@@ -256,8 +256,12 @@ const BLE_SUPERVISOR_ID: InterfaceId =
 #[cfg(feature = "bluetooth-auto")]
 static BLE_SHARED: BluetoothAutoShared<BLE_MEMBERS> = BluetoothAutoShared::new(BLE_SUPERVISOR_ID);
 static LORA_CONTROL: LoRaControl = LoRaControl::new();
-static REACTOR_POOL: StaticReactorPool<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, LANE_DEPTH, IFACES> =
-    StaticReactorPool::new();
+static REACTOR_POOL: StaticReactorPool<
+    Mtx,
+    EMBEDDED_MAX_WIRE_FRAME_LEN,
+    LANE_DEPTH,
+    LANE_COUNT,
+> = StaticReactorPool::new();
 
 static NOTIFY: Channel<Mtx, InterfaceId, NOTIFY_CAP> = Channel::new();
 static COMMANDS: Channel<Mtx, personal_rns::engine::IssuedCommand, COMMANDS_CAP> = Channel::new();

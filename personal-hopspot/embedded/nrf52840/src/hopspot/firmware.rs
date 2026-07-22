@@ -236,15 +236,17 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
     let lora_lane = reactor_pool
         .claim_interface::<LORA_SLOT>(lora.descriptor())
         .expect("LoRa lane is available");
-    let ble_supervisor_lane = reactor_pool
-        .claim_supervisor::<BLE_SUPERVISOR_SLOT>(BLE_SUPERVISOR_ID, &OUTBOUND_WAKE)
-        .expect("Bluetooth supervisor lane is available");
+    let ble_supervisor_lane = ble_identity.as_ref().map(|_| {
+        reactor_pool
+            .claim_supervisor::<BLE_SUPERVISOR_SLOT>(BLE_SUPERVISOR_ID, &OUTBOUND_WAKE)
+            .expect("Bluetooth supervisor lane is available")
+    });
     let usb_lane = reactor_pool
         .claim_interface::<USB_SLOT>(usb_dev.descriptor())
         .expect("USB lane is available");
 
     let handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
-    let plumbing = reactor_pool.into_plumbing(
+    let reactor_wiring = reactor_pool.into_reactor_wiring(
         NOTIFY.receiver(),
         COMMANDS.receiver(),
         LIFECYCLE.receiver(),
@@ -274,30 +276,32 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
                 interfaces: personal_rns::runtime::Manual,
                 on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
             },
-            plumbing,
+            reactor_wiring,
             host,
         )
     });
     let lora_seam = lora_lane.into_seam(NOTIFY.sender(), seeded_entropy);
 
-    let fleet: Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP> =
-        ble_supervisor_lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender());
-
     let usb_seam = usb_lane.into_seam(NOTIFY.sender(), seeded_entropy);
 
     let backend = NrfBleBackend::new(&HUB);
-    let supervisor = ble_identity.map(|identity| {
-        BluetoothAuto::new(
-            backend,
-            identity,
-            Endpoint::Nrf52(Nrf52Host::Nrf52),
-            LinkCapabilities {
-                l2cap: None,
-                link_mtu: BLE_HW_MTU as u16,
-            },
-            &BLE_SHARED,
-        )
-    });
+    let bluetooth = ble_identity
+        .zip(ble_supervisor_lane)
+        .map(|(identity, lane)| {
+            let supervisor = BluetoothAuto::new(
+                backend,
+                identity,
+                Endpoint::Nrf52(Nrf52Host::Nrf52),
+                LinkCapabilities {
+                    l2cap: None,
+                    link_mtu: BLE_HW_MTU as u16,
+                },
+                &BLE_SHARED,
+            );
+            let fleet: Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP> =
+                lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender());
+            (supervisor, fleet)
+        });
 
     let button = Input::new(p.P1_10, Pull::Up);
     let frontlight = Output::new(p.P1_11, Level::Low, OutputDrive::Standard);
@@ -490,8 +494,8 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
         input::drive_frontlight(frontlight),
     );
     let ble_plane = async move {
-        match supervisor {
-            Some(supervisor) => {
+        match bluetooth {
+            Some((supervisor, fleet)) => {
                 join3(acceptor(sd, &HUB), scanner(sd, &HUB), supervisor.run(fleet)).await;
             }
             None => core::future::pending().await,

@@ -25,13 +25,13 @@ use super::super::{
 };
 use super::{run, ReactorWiring};
 
-struct EmbassyLoopbackInterface<'a, M: RawMutex, const SLOT: usize> {
+struct EmbassyLoopbackInterface<'a, M: RawMutex, const FRAME: usize> {
     descriptor: InterfaceDescriptor,
-    wire_in: EmbassyGrantConsumer<'a, M, SLOT>,
-    wire_out: EmbassyGrantProducer<'a, M, SLOT>,
+    wire_in: EmbassyGrantConsumer<'a, M, FRAME>,
+    wire_out: EmbassyGrantProducer<'a, M, FRAME>,
 }
 
-impl<M: RawMutex, const SLOT: usize> Interface for EmbassyLoopbackInterface<'_, M, SLOT> {
+impl<M: RawMutex, const FRAME: usize> Interface for EmbassyLoopbackInterface<'_, M, FRAME> {
     const HW_MTU: usize = crate::wire::BROADCAST_MTU;
     const KIND: crate::interfaces::InterfaceKind = crate::interfaces::InterfaceKind::Loopback;
 

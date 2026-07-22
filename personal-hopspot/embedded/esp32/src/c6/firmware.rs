@@ -60,12 +60,14 @@ pub async fn run(spawner: Spawner) {
         .claim_interface::<ESPNOW_SLOT>(espnow.descriptor())
         .expect("ESP-NOW lane is available");
     #[cfg(feature = "bluetooth-auto")]
-    let ble_supervisor_lane = reactor_pool
-        .claim_supervisor::<BLE_SUPERVISOR_SLOT>(BLE_SUPERVISOR_ID, &BLE_OUTBOUND_WAKE)
-        .expect("Bluetooth supervisor lane is available");
+    let ble_supervisor_lane = ble_identity.as_ref().map(|_| {
+        reactor_pool
+            .claim_supervisor::<BLE_SUPERVISOR_SLOT>(BLE_SUPERVISOR_ID, &BLE_OUTBOUND_WAKE)
+            .expect("Bluetooth supervisor lane is available")
+    });
 
     let handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
-    let plumbing = reactor_pool.into_plumbing(
+    let reactor_wiring = reactor_pool.into_reactor_wiring(
         NOTIFY.receiver(),
         COMMANDS.receiver(),
         LIFECYCLE.receiver(),
@@ -79,8 +81,10 @@ pub async fn run(spawner: Spawner) {
     let espnow_seam = espnow_lane.into_seam(NOTIFY.sender(), hardware_entropy);
 
     #[cfg(feature = "bluetooth-auto")]
-    let ble_fleet: Option<C6BleFleet> =
-        ble_identity.map(|_| ble_supervisor_lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender()));
+    let ble = ble_identity.zip(ble_supervisor_lane).map(|(identity, lane)| {
+        let fleet: C6BleFleet = lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender());
+        (identity, fleet)
+    });
     let host = EmbassyHost::new_with_timebase(timebase, hardware_entropy as fn(&mut [u8]));
 
     static NODE: StaticCell<Node> = StaticCell::new();
@@ -105,12 +109,12 @@ pub async fn run(spawner: Spawner) {
             interfaces: personal_rns::runtime::Manual,
             on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
         },
-        plumbing,
+        reactor_wiring,
         host,
     ));
     #[cfg(all(feature = "bluetooth-auto", feature = "esp-now"))]
     {
-        if let (Some(identity), Some(fleet)) = (ble_identity, ble_fleet) {
+        if let Some((identity, fleet)) = ble {
             spawner.spawn(
                 ble_task(spawner, p.BT, mac_octets, identity, fleet, &BLE_SHARED)
                     .expect("ble task fits"),
@@ -132,7 +136,7 @@ pub async fn run(spawner: Spawner) {
     }
     #[cfg(all(feature = "bluetooth-auto", not(feature = "esp-now")))]
     {
-        if let (Some(identity), Some(fleet)) = (ble_identity, ble_fleet) {
+        if let Some((identity, fleet)) = ble {
             spawner.spawn(
                 ble_task(spawner, p.BT, mac_octets, identity, fleet, &BLE_SHARED)
                     .expect("ble task fits"),

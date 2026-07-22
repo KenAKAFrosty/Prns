@@ -16,7 +16,7 @@ use crate::reactor::grant::FrameSlot;
 
 use super::command_handle::PrnsNodeHandle;
 use super::interface_lifecycle::{Fleet, FleetWire};
-use super::node_lifecycle::ReactorPlumbing;
+use super::node_lifecycle::ReactorWiring;
 
 const UNCLAIMED_LANE_ID: InterfaceId = InterfaceId::new([0xff; 8]);
 
@@ -56,32 +56,32 @@ pub struct StaticReactorPool<
     M: RawMutex + 'static,
     const FRAME: usize,
     const DEPTH: usize,
-    const LANES: usize,
+    const LANE_COUNT: usize,
 > {
     taken: AtomicBool,
-    inbound_buffers: [ConstStaticCell<LaneBuffer<FRAME, DEPTH>>; LANES],
-    inbound_channels: [StaticCell<LaneChannel<M, FRAME>>; LANES],
-    outbound_buffers: [ConstStaticCell<LaneBuffer<FRAME, DEPTH>>; LANES],
-    outbound_channels: [StaticCell<LaneChannel<M, FRAME>>; LANES],
+    inbound_buffers: [ConstStaticCell<LaneBuffer<FRAME, DEPTH>>; LANE_COUNT],
+    inbound_channels: [StaticCell<LaneChannel<M, FRAME>>; LANE_COUNT],
+    outbound_buffers: [ConstStaticCell<LaneBuffer<FRAME, DEPTH>>; LANE_COUNT],
+    outbound_channels: [StaticCell<LaneChannel<M, FRAME>>; LANE_COUNT],
 }
 
-impl<M: RawMutex + 'static, const FRAME: usize, const DEPTH: usize, const LANES: usize>
-    StaticReactorPool<M, FRAME, DEPTH, LANES>
+impl<M: RawMutex + 'static, const FRAME: usize, const DEPTH: usize, const LANE_COUNT: usize>
+    StaticReactorPool<M, FRAME, DEPTH, LANE_COUNT>
 {
     #[must_use]
     pub const fn new() -> Self {
         Self {
             taken: AtomicBool::new(false),
             inbound_buffers: [const { ConstStaticCell::new([const { FrameSlot::empty() }; DEPTH]) };
-                LANES],
-            inbound_channels: [const { StaticCell::new() }; LANES],
+                LANE_COUNT],
+            inbound_channels: [const { StaticCell::new() }; LANE_COUNT],
             outbound_buffers: [const { ConstStaticCell::new([const { FrameSlot::empty() }; DEPTH]) };
-                LANES],
-            outbound_channels: [const { StaticCell::new() }; LANES],
+                LANE_COUNT],
+            outbound_channels: [const { StaticCell::new() }; LANE_COUNT],
         }
     }
 
-    pub fn try_take(&'static self) -> Result<ReactorPool<M, FRAME, LANES>, PoolTakeError> {
+    pub fn try_take(&'static self) -> Result<ReactorPool<M, FRAME, LANE_COUNT>, PoolTakeError> {
         if self
             .taken
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -122,22 +122,24 @@ impl<M: RawMutex + 'static, const FRAME: usize, const DEPTH: usize, const LANES:
     }
 }
 
-impl<M: RawMutex + 'static, const FRAME: usize, const DEPTH: usize, const LANES: usize> Default
-    for StaticReactorPool<M, FRAME, DEPTH, LANES>
+impl<M: RawMutex + 'static, const FRAME: usize, const DEPTH: usize, const LANE_COUNT: usize> Default
+    for StaticReactorPool<M, FRAME, DEPTH, LANE_COUNT>
 {
     fn default() -> Self {
         Self::new()
     }
 }
 
-pub struct ReactorPool<M: RawMutex + 'static, const FRAME: usize, const LANES: usize> {
-    inbound: HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, M, FRAME>), LANES>,
-    egress: PooledEgress<M, FRAME, LANES>,
-    lanes: [Option<InterfaceLane<M, FRAME>>; LANES],
-    configurations: [Option<LaneConfiguration>; LANES],
+pub struct ReactorPool<M: RawMutex + 'static, const FRAME: usize, const LANE_COUNT: usize> {
+    inbound: HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, M, FRAME>), LANE_COUNT>,
+    egress: PooledEgress<M, FRAME, LANE_COUNT>,
+    lanes: [Option<InterfaceLane<M, FRAME>>; LANE_COUNT],
+    configurations: [Option<LaneConfiguration>; LANE_COUNT],
 }
 
-impl<M: RawMutex + 'static, const FRAME: usize, const LANES: usize> ReactorPool<M, FRAME, LANES> {
+impl<M: RawMutex + 'static, const FRAME: usize, const LANE_COUNT: usize>
+    ReactorPool<M, FRAME, LANE_COUNT>
+{
     pub fn claim_interface<const SLOT: usize>(
         &mut self,
         descriptor: InterfaceDescriptor,
@@ -182,7 +184,7 @@ impl<M: RawMutex + 'static, const FRAME: usize, const LANES: usize> ReactorPool<
         ifac: Option<IfacContext>,
         outbound_wake: &'static Signal<M, ()>,
     ) -> Result<SupervisorLane<M, FRAME>, LaneClaimError> {
-        const { assert!(SLOT < LANES) };
+        const { assert!(SLOT < LANE_COUNT) };
         if self.lanes[SLOT].is_none() {
             return Err(LaneClaimError::AlreadyClaimed { slot: SLOT });
         }
@@ -202,7 +204,7 @@ impl<M: RawMutex + 'static, const FRAME: usize, const LANES: usize> ReactorPool<
         &mut self,
         configuration: LaneConfiguration,
     ) -> Result<InterfaceLane<M, FRAME>, LaneClaimError> {
-        const { assert!(SLOT < LANES) };
+        const { assert!(SLOT < LANE_COUNT) };
         let Some(mut lane) = self.lanes[SLOT].take() else {
             return Err(LaneClaimError::AlreadyClaimed { slot: SLOT });
         };
@@ -214,7 +216,7 @@ impl<M: RawMutex + 'static, const FRAME: usize, const LANES: usize> ReactorPool<
         Ok(lane)
     }
 
-    pub fn into_plumbing<
+    pub fn into_reactor_wiring<
         const NOTIFY: usize,
         const COMMANDS: usize,
         const LIFECYCLE: usize,
@@ -225,8 +227,8 @@ impl<M: RawMutex + 'static, const FRAME: usize, const LANES: usize> ReactorPool<
         commands: Receiver<'static, M, IssuedCommand, COMMANDS>,
         lifecycle: Receiver<'static, M, InterfaceLifecycle, LIFECYCLE>,
         handle: PrnsNodeHandle<'static, M, COMMANDS, COMPLETIONS>,
-    ) -> ReactorPlumbing<M, FRAME, LANES, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS> {
-        ReactorPlumbing::new(
+    ) -> ReactorWiring<M, FRAME, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS> {
+        ReactorWiring::new(
             self.inbound,
             self.egress,
             self.configurations,

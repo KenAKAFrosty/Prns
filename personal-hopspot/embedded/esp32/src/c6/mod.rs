@@ -64,13 +64,12 @@ const USB_LANE: usize = 1;
 const ESPNOW_LANE: usize = cfg!(feature = "esp-now") as usize;
 const BLE_LANE: usize = cfg!(feature = "bluetooth-auto") as usize;
 const LANE_COUNT: usize = USB_LANE + ESPNOW_LANE + BLE_LANE;
-const IFACES: usize = if LANE_COUNT == 0 { 1 } else { LANE_COUNT };
 #[cfg(feature = "bluetooth-auto")]
 pub const BLE_MEMBERS: usize = EmbeddedBleBackend::MAX_PEERS;
 #[cfg(not(feature = "bluetooth-auto"))]
 pub const BLE_MEMBERS: usize = 0;
 pub const BLE_CONTROLLER_CONNECTIONS: usize = 8;
-const MAX_IFACES: usize = IFACES + BLE_LANE * BLE_MEMBERS + 1;
+const INTERFACE_CAPACITY: usize = LANE_COUNT + BLE_LANE * BLE_MEMBERS + 1;
 pub const NOTIFY_CAP: usize = 32;
 const COMMANDS_CAP: usize = 8;
 pub const LIFECYCLE_CAP: usize = 32;
@@ -131,8 +130,8 @@ type Node = PrnsNode<
     EmbassyHost<fn(&mut [u8])>,
     Mtx,
     EMBEDDED_MAX_WIRE_FRAME_LEN,
-    IFACES,
-    MAX_IFACES,
+    LANE_COUNT,
+    INTERFACE_CAPACITY,
     NOTIFY_CAP,
     COMMANDS_CAP,
     LIFECYCLE_CAP,
@@ -144,8 +143,12 @@ static COMMANDS: Channel<Mtx, IssuedCommand, COMMANDS_CAP> = Channel::new();
 static LIFECYCLE: Channel<Mtx, InterfaceLifecycle, LIFECYCLE_CAP> = Channel::new();
 static COMPLETION: CompletionPool<Mtx, COMPLETIONS_CAP> = CompletionPool::new();
 static INTERFACE_STORE: InterfaceStore = EmbassyInterfaceStore::new();
-static REACTOR_POOL: StaticReactorPool<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, LANE_DEPTH, IFACES> =
-    StaticReactorPool::new();
+static REACTOR_POOL: StaticReactorPool<
+    Mtx,
+    EMBEDDED_MAX_WIRE_FRAME_LEN,
+    LANE_DEPTH,
+    LANE_COUNT,
+> = StaticReactorPool::new();
 static USB_STATUS: EmbassyInterfaceStatus =
     EmbassyInterfaceStatus::new(USB_INTERFACE_ID, ConnectionState::Initializing);
 #[cfg(feature = "bluetooth-auto")]

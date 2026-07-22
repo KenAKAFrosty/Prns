@@ -15,8 +15,8 @@ use personal_rns::storage::{StorageCapacity, StorageLayout};
 
 use super::bluetooth_auto;
 
-pub(super) const IFACES: usize = 3;
-const MAX_IFACES: usize = 2 + bluetooth_auto::MEMBERS;
+pub(super) const LANE_COUNT: usize = 3;
+const INTERFACE_CAPACITY: usize = 2 + bluetooth_auto::MEMBERS;
 pub(super) const LORA_SLOT: usize = 0;
 pub(super) const BLE_SUPERVISOR_SLOT: usize = 1;
 pub(super) const USB_SLOT: usize = 2;
@@ -53,8 +53,8 @@ pub(super) type Node = PrnsNode<
     EmbassyHost<fn(&mut [u8])>,
     Mtx,
     EMBEDDED_MAX_WIRE_FRAME_LEN,
-    IFACES,
-    MAX_IFACES,
+    LANE_COUNT,
+    INTERFACE_CAPACITY,
     NOTIFY_CAP,
     COMMANDS_CAP,
     LIFECYCLE_CAP,
@@ -71,7 +71,7 @@ pub(super) static REACTOR_POOL: StaticReactorPool<
     Mtx,
     EMBEDDED_MAX_WIRE_FRAME_LEN,
     LANE_DEPTH,
-    IFACES,
+    LANE_COUNT,
 > = StaticReactorPool::new();
 pub(super) static ENTROPY_STATE: AtomicU32 = AtomicU32::new(0x9e37_79b9);
 

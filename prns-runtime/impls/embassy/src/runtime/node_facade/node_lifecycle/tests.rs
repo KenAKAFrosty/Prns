@@ -19,7 +19,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 type Mtx = CriticalSectionRawMutex;
-const SLOT: usize = EMBEDDED_MAX_WIRE_FRAME_LEN;
+const FRAME: usize = EMBEDDED_MAX_WIRE_FRAME_LEN;
 
 fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
     InterfaceDescriptor {
@@ -51,7 +51,7 @@ fn a_recipe_node_hears_an_ifac_announce_a_supervisor_stands_a_peer_up_for() {
     let lifecycle: &'static Channel<Mtx, InterfaceLifecycle, 4> = leak(Channel::new());
     let completion: &'static CompletionPool<Mtx, 4> = leak(CompletionPool::new());
 
-    static POOL: StaticReactorPool<Mtx, SLOT, 4, 1> = StaticReactorPool::new();
+    static POOL: StaticReactorPool<Mtx, FRAME, 4, 1> = StaticReactorPool::new();
     let mut pool = POOL.try_take().unwrap();
     let supervisor = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, b"test-supervisor");
     let network = IfacContext::derive(Some("fleet-net"), Some("secret"), IfacSize::NARROW).unwrap();
@@ -60,13 +60,13 @@ fn a_recipe_node_hears_an_ifac_announce_a_supervisor_stands_a_peer_up_for() {
         .unwrap();
 
     let handle = PrnsNodeHandle::new(commands.sender(), completion);
-    let plumbing = pool.into_plumbing(
+    let reactor_wiring = pool.into_reactor_wiring(
         notify.receiver(),
         commands.receiver(),
         lifecycle.receiver(),
         handle,
     );
-    let fleet: Fleet<Mtx, SLOT, 4, 4> =
+    let fleet: Fleet<Mtx, FRAME, 4, 4> =
         supervisor_lane.into_fleet(notify.sender(), lifecycle.sender());
 
     let heard: Rc<RefCell<usize>> = Rc::new(RefCell::new(0));
@@ -88,14 +88,14 @@ fn a_recipe_node_hears_an_ifac_announce_a_supervisor_stands_a_peer_up_for() {
         },
     };
 
-    let node: PrnsNode<_, _, _, _, _, _, SLOT, 1, 1, 4, 4, 4, 4> = PrnsNode::new(
+    let node: PrnsNode<_, _, _, _, _, _, FRAME, 1, 1, 4, 4, 4, 4> = PrnsNode::new(
         recipe,
-        plumbing,
+        reactor_wiring,
         EmbassyHost::new(|bytes: &mut [u8]| bytes.fill(0)),
     );
 
     let raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
-    let mut masked = [0u8; SLOT];
+    let mut masked = [0u8; FRAME];
     let masked_len = network.mask_outbound(&raw, &mut masked).unwrap();
     let peer = InterfaceId::from_channel_tag(InterfaceKind::WifiPeer, b"test-peer-medium");
 

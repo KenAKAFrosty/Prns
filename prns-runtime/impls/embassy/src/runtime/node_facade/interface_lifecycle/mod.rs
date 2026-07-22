@@ -7,29 +7,29 @@ use crate::interfaces::{InterfaceDescriptor, InterfaceId};
 use crate::reactor::driver::{EmbassyGrantConsumer, EmbassyGrantProducer, InterfaceLifecycle};
 use crate::reactor::grant::{FrameTarget, GrantConsumer, GrantProducer};
 
-pub(super) struct FleetWire<M: RawMutex + 'static, const SLOT: usize, const NOTIFY: usize> {
-    pub(super) inbound: EmbassyGrantProducer<'static, M, SLOT>,
-    pub(super) outbound: EmbassyGrantConsumer<'static, M, SLOT>,
+pub(super) struct FleetWire<M: RawMutex + 'static, const FRAME: usize, const NOTIFY: usize> {
+    pub(super) inbound: EmbassyGrantProducer<'static, M, FRAME>,
+    pub(super) outbound: EmbassyGrantConsumer<'static, M, FRAME>,
     pub(super) notify: Sender<'static, M, InterfaceId, NOTIFY>,
     pub(super) outbound_wake: &'static Signal<M, ()>,
 }
 
 pub struct Fleet<
     M: RawMutex + 'static,
-    const SLOT: usize,
+    const FRAME: usize,
     const NOTIFY: usize,
     const LIFECYCLE: usize,
 > {
-    wire: FleetWire<M, SLOT, NOTIFY>,
+    wire: FleetWire<M, FRAME, NOTIFY>,
     lifecycle: Sender<'static, M, InterfaceLifecycle, LIFECYCLE>,
 }
 
-impl<M: RawMutex + 'static, const SLOT: usize, const NOTIFY: usize, const LIFECYCLE: usize>
-    Fleet<M, SLOT, NOTIFY, LIFECYCLE>
+impl<M: RawMutex + 'static, const FRAME: usize, const NOTIFY: usize, const LIFECYCLE: usize>
+    Fleet<M, FRAME, NOTIFY, LIFECYCLE>
 {
     #[must_use]
     pub(super) fn new(
-        wire: FleetWire<M, SLOT, NOTIFY>,
+        wire: FleetWire<M, FRAME, NOTIFY>,
         lifecycle: Sender<'static, M, InterfaceLifecycle, LIFECYCLE>,
     ) -> Self {
         Self { wire, lifecycle }

@@ -9,11 +9,11 @@ use crate::reactor::grant::{
 };
 
 /// Splits caller-owned storage into a zero-copy frame lane.
-pub fn embassy_grant_lane<'a, M: RawMutex, const SLOT: usize>(
-    channel: &'a mut zerocopy_channel::Channel<'a, M, FrameSlot<SLOT>>,
+pub fn embassy_grant_lane<'a, M: RawMutex, const FRAME: usize>(
+    channel: &'a mut zerocopy_channel::Channel<'a, M, FrameSlot<FRAME>>,
 ) -> (
-    EmbassyGrantProducer<'a, M, SLOT>,
-    EmbassyGrantConsumer<'a, M, SLOT>,
+    EmbassyGrantProducer<'a, M, FRAME>,
+    EmbassyGrantConsumer<'a, M, FRAME>,
 ) {
     let (sender, receiver) = channel.split();
     (
@@ -29,27 +29,27 @@ pub fn embassy_grant_lane<'a, M: RawMutex, const SLOT: usize>(
     )
 }
 
-pub struct EmbassyGrantProducer<'a, M: RawMutex, const SLOT: usize> {
-    sender: zerocopy_channel::Sender<'a, M, FrameSlot<SLOT>>,
+pub struct EmbassyGrantProducer<'a, M: RawMutex, const FRAME: usize> {
+    sender: zerocopy_channel::Sender<'a, M, FrameSlot<FRAME>>,
     granted: bool,
     wake: Option<&'a Signal<M, ()>>,
 }
 
-impl<'a, M: RawMutex, const SLOT: usize> EmbassyGrantProducer<'a, M, SLOT> {
+impl<'a, M: RawMutex, const FRAME: usize> EmbassyGrantProducer<'a, M, FRAME> {
     pub fn set_outbound_wake(&mut self, wake: &'a Signal<M, ()>) {
         self.wake = Some(wake);
     }
 }
 
-impl<M: RawMutex, const SLOT: usize> GrantProducer<SLOT> for EmbassyGrantProducer<'_, M, SLOT> {
-    fn try_grant(&mut self) -> Option<&mut FrameSlot<SLOT>> {
+impl<M: RawMutex, const FRAME: usize> GrantProducer<FRAME> for EmbassyGrantProducer<'_, M, FRAME> {
+    fn try_grant(&mut self) -> Option<&mut FrameSlot<FRAME>> {
         let granted = &mut self.granted;
         let slot = self.sender.try_send()?;
         *granted = true;
         Some(slot)
     }
 
-    async fn grant(&mut self) -> &mut FrameSlot<SLOT> {
+    async fn grant(&mut self) -> &mut FrameSlot<FRAME> {
         let granted = &mut self.granted;
         let slot = self.sender.send().await;
         *granted = true;
@@ -67,9 +67,9 @@ impl<M: RawMutex, const SLOT: usize> GrantProducer<SLOT> for EmbassyGrantProduce
     }
 }
 
-impl<M: RawMutex, const SLOT: usize> AnyGrantProducer for EmbassyGrantProducer<'_, M, SLOT> {
+impl<M: RawMutex, const FRAME: usize> AnyGrantProducer for EmbassyGrantProducer<'_, M, FRAME> {
     fn try_fill_frame_for(&mut self, interface_id: InterfaceId, frame: &[u8]) -> bool {
-        if frame.len() > SLOT {
+        if frame.len() > FRAME {
             return false;
         }
         let Some(slot) = GrantProducer::try_grant(self) else {
@@ -81,7 +81,7 @@ impl<M: RawMutex, const SLOT: usize> AnyGrantProducer for EmbassyGrantProducer<'
     }
 
     fn try_fill_frame_fan(&mut self, fan: FanTarget, frame: &[u8]) -> bool {
-        if frame.len() > SLOT {
+        if frame.len() > FRAME {
             return false;
         }
         let Some(slot) = GrantProducer::try_grant(self) else {
@@ -93,20 +93,20 @@ impl<M: RawMutex, const SLOT: usize> AnyGrantProducer for EmbassyGrantProducer<'
     }
 }
 
-pub struct EmbassyGrantConsumer<'a, M: RawMutex, const SLOT: usize> {
-    receiver: zerocopy_channel::Receiver<'a, M, FrameSlot<SLOT>>,
+pub struct EmbassyGrantConsumer<'a, M: RawMutex, const FRAME: usize> {
+    receiver: zerocopy_channel::Receiver<'a, M, FrameSlot<FRAME>>,
     peeked: bool,
 }
 
-impl<M: RawMutex, const SLOT: usize> GrantConsumer<SLOT> for EmbassyGrantConsumer<'_, M, SLOT> {
-    fn try_peek(&mut self) -> Option<&mut FrameSlot<SLOT>> {
+impl<M: RawMutex, const FRAME: usize> GrantConsumer<FRAME> for EmbassyGrantConsumer<'_, M, FRAME> {
+    fn try_peek(&mut self) -> Option<&mut FrameSlot<FRAME>> {
         let peeked = &mut self.peeked;
         let slot = self.receiver.try_receive()?;
         *peeked = true;
         Some(slot)
     }
 
-    async fn peek(&mut self) -> &mut FrameSlot<SLOT> {
+    async fn peek(&mut self) -> &mut FrameSlot<FRAME> {
         let peeked = &mut self.peeked;
         let slot = self.receiver.receive().await;
         *peeked = true;
@@ -121,7 +121,7 @@ impl<M: RawMutex, const SLOT: usize> GrantConsumer<SLOT> for EmbassyGrantConsume
     }
 }
 
-impl<M: RawMutex, const SLOT: usize> AnyGrantConsumer for EmbassyGrantConsumer<'_, M, SLOT> {
+impl<M: RawMutex, const FRAME: usize> AnyGrantConsumer for EmbassyGrantConsumer<'_, M, FRAME> {
     fn try_peek_frame(&mut self) -> Option<(FrameTarget, PacketPhyStats, &mut [u8])> {
         let slot = GrantConsumer::try_peek(self)?;
         let target = slot.target;
@@ -136,13 +136,21 @@ impl<M: RawMutex, const SLOT: usize> AnyGrantConsumer for EmbassyGrantConsumer<'
 
 /// A heap-backed grant lane for host-side tests of Embassy interfaces.
 #[cfg(any(test, feature = "std"))]
-pub fn leaked_grant_lane<const SLOT: usize>(
+pub fn leaked_grant_lane<const FRAME: usize>(
     depth: usize,
 ) -> (
-    EmbassyGrantProducer<'static, embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex, SLOT>,
-    EmbassyGrantConsumer<'static, embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex, SLOT>,
+    EmbassyGrantProducer<
+        'static,
+        embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+        FRAME,
+    >,
+    EmbassyGrantConsumer<
+        'static,
+        embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+        FRAME,
+    >,
 ) {
-    let slots: std::vec::Vec<FrameSlot<SLOT>> = (0..depth).map(|_| FrameSlot::empty()).collect();
+    let slots: std::vec::Vec<FrameSlot<FRAME>> = (0..depth).map(|_| FrameSlot::empty()).collect();
     let channel = std::boxed::Box::leak(std::boxed::Box::new(zerocopy_channel::Channel::new(
         std::boxed::Box::leak(slots.into_boxed_slice()),
     )));

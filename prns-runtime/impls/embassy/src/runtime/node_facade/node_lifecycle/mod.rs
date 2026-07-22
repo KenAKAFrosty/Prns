@@ -24,10 +24,10 @@ use super::reactor_pool::{LaneConfiguration, LaneTarget};
 use prns_runtime::runtime::{assemble_node, AssembledNode};
 
 /// Reactor-side endpoints for a board-owned static interface pool.
-pub struct ReactorPlumbing<
+pub struct ReactorWiring<
     M,
-    const SLOT: usize,
-    const IFACES: usize,
+    const FRAME: usize,
+    const LANE_COUNT: usize,
     const NOTIFY: usize,
     const COMMANDS: usize,
     const LIFECYCLE: usize,
@@ -35,9 +35,9 @@ pub struct ReactorPlumbing<
 > where
     M: RawMutex + 'static,
 {
-    inbound: HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, M, SLOT>), IFACES>,
-    egress: PooledEgress<M, SLOT, IFACES>,
-    configurations: [Option<LaneConfiguration>; IFACES],
+    inbound: HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, M, FRAME>), LANE_COUNT>,
+    egress: PooledEgress<M, FRAME, LANE_COUNT>,
+    configurations: [Option<LaneConfiguration>; LANE_COUNT],
     notify: Receiver<'static, M, InterfaceId, NOTIFY>,
     commands: Receiver<'static, M, IssuedCommand, COMMANDS>,
     lifecycle: Receiver<'static, M, InterfaceLifecycle, LIFECYCLE>,
@@ -46,19 +46,19 @@ pub struct ReactorPlumbing<
 
 impl<
         M: RawMutex + 'static,
-        const SLOT: usize,
-        const IFACES: usize,
+        const FRAME: usize,
+        const LANE_COUNT: usize,
         const NOTIFY: usize,
         const COMMANDS: usize,
         const LIFECYCLE: usize,
         const COMPLETIONS: usize,
-    > ReactorPlumbing<M, SLOT, IFACES, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>
+    > ReactorWiring<M, FRAME, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>
 {
     #[must_use]
     pub(super) fn new(
-        inbound: HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, M, SLOT>), IFACES>,
-        egress: PooledEgress<M, SLOT, IFACES>,
-        configurations: [Option<LaneConfiguration>; IFACES],
+        inbound: HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, M, FRAME>), LANE_COUNT>,
+        egress: PooledEgress<M, FRAME, LANE_COUNT>,
+        configurations: [Option<LaneConfiguration>; LANE_COUNT],
         notify: Receiver<'static, M, InterfaceId, NOTIFY>,
         commands: Receiver<'static, M, IssuedCommand, COMMANDS>,
         lifecycle: Receiver<'static, M, InterfaceLifecycle, LIFECYCLE>,
@@ -84,9 +84,9 @@ pub struct PrnsNode<
     S,
     H,
     M,
-    const SLOT: usize,
-    const IFACES: usize,
-    const MAX_IFACES: usize,
+    const FRAME: usize,
+    const LANE_COUNT: usize,
+    const INTERFACE_CAPACITY: usize,
     const NOTIFY: usize,
     const COMMANDS: usize,
     const LIFECYCLE: usize,
@@ -98,15 +98,15 @@ pub struct PrnsNode<
     M: RawMutex + 'static,
 {
     node: AssembledNode<St, R, F, S>,
-    inbound: HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, M, SLOT>), IFACES>,
-    egress: PooledEgress<M, SLOT, IFACES>,
+    inbound: HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, M, FRAME>), LANE_COUNT>,
+    egress: PooledEgress<M, FRAME, LANE_COUNT>,
     notify: Receiver<'static, M, InterfaceId, NOTIFY>,
     commands: Receiver<'static, M, IssuedCommand, COMMANDS>,
     lifecycle: Receiver<'static, M, InterfaceLifecycle, LIFECYCLE>,
     handle: PrnsNodeHandle<'static, M, COMMANDS, COMPLETIONS>,
     host: H,
-    initial: HeaplessVec<InterfaceDescriptor, MAX_IFACES>,
-    ifacs: HeaplessVec<InterfaceIfac, IFACES>,
+    initial: HeaplessVec<InterfaceDescriptor, INTERFACE_CAPACITY>,
+    ifacs: HeaplessVec<InterfaceIfac, LANE_COUNT>,
 }
 
 pub struct RequestRoutingCapacity<const REQUESTS: usize, const REQUEST_BYTES: usize>;
@@ -135,9 +135,9 @@ impl<
         S,
         H,
         M,
-        const SLOT: usize,
-        const IFACES: usize,
-        const MAX_IFACES: usize,
+        const FRAME: usize,
+        const LANE_COUNT: usize,
+        const INTERFACE_CAPACITY: usize,
         const NOTIFY: usize,
         const COMMANDS: usize,
         const LIFECYCLE: usize,
@@ -150,9 +150,9 @@ impl<
         S,
         H,
         M,
-        SLOT,
-        IFACES,
-        MAX_IFACES,
+        FRAME,
+        LANE_COUNT,
+        INTERFACE_CAPACITY,
         NOTIFY,
         COMMANDS,
         LIFECYCLE,
@@ -169,13 +169,13 @@ where
 {
     pub fn new<'d, D>(
         recipe: PrnsNodeRecipe<D, St, R, F, Manual, S>,
-        plumbing: ReactorPlumbing<M, SLOT, IFACES, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
+        wiring: ReactorWiring<M, FRAME, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
         host: H,
     ) -> Self
     where
         D: IntoIterator<Item = PreConfiguredDestination<'d>>,
     {
-        Self::build(recipe, plumbing, host)
+        Self::build(recipe, wiring, host)
     }
 }
 
@@ -186,9 +186,9 @@ impl<
         S,
         H,
         M,
-        const SLOT: usize,
-        const IFACES: usize,
-        const MAX_IFACES: usize,
+        const FRAME: usize,
+        const LANE_COUNT: usize,
+        const INTERFACE_CAPACITY: usize,
         const NOTIFY: usize,
         const COMMANDS: usize,
         const LIFECYCLE: usize,
@@ -203,9 +203,9 @@ impl<
         S,
         H,
         M,
-        SLOT,
-        IFACES,
-        MAX_IFACES,
+        FRAME,
+        LANE_COUNT,
+        INTERFACE_CAPACITY,
         NOTIFY,
         COMMANDS,
         LIFECYCLE,
@@ -222,19 +222,19 @@ where
 {
     pub fn new_with_request_capacity<'d, D>(
         recipe: PrnsNodeRecipe<D, St, R, F, Manual, S>,
-        plumbing: ReactorPlumbing<M, SLOT, IFACES, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
+        wiring: ReactorWiring<M, FRAME, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
         host: H,
         _capacity: RequestRoutingCapacity<ROUTED_REQUESTS, ROUTED_REQUEST_BYTES>,
     ) -> Self
     where
         D: IntoIterator<Item = PreConfiguredDestination<'d>>,
     {
-        Self::build(recipe, plumbing, host)
+        Self::build(recipe, wiring, host)
     }
 
     fn build<'d, D>(
         recipe: PrnsNodeRecipe<D, St, R, F, Manual, S>,
-        plumbing: ReactorPlumbing<M, SLOT, IFACES, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
+        wiring: ReactorWiring<M, FRAME, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
         host: H,
     ) -> Self
     where
@@ -242,14 +242,14 @@ where
     {
         const {
             assert!(
-                MAX_IFACES >= IFACES,
-                "PrnsNode MAX_IFACES must cover every reactor lane"
+                INTERFACE_CAPACITY >= LANE_COUNT,
+                "PrnsNode INTERFACE_CAPACITY must cover every reactor lane"
             );
         }
         let (node, Manual) = assemble_node(recipe);
         let mut initial = HeaplessVec::new();
         let mut ifacs = HeaplessVec::new();
-        for configuration in plumbing.configurations.into_iter().flatten() {
+        for configuration in wiring.configurations.into_iter().flatten() {
             let id = match configuration.target {
                 LaneTarget::Interface(descriptor) => {
                     assert!(initial.push(descriptor).is_ok());
@@ -264,12 +264,12 @@ where
 
         PrnsNode {
             node,
-            inbound: plumbing.inbound,
-            egress: plumbing.egress,
-            notify: plumbing.notify,
-            commands: plumbing.commands,
-            lifecycle: plumbing.lifecycle,
-            handle: plumbing.handle,
+            inbound: wiring.inbound,
+            egress: wiring.egress,
+            notify: wiring.notify,
+            commands: wiring.commands,
+            lifecycle: wiring.lifecycle,
+            handle: wiring.handle,
             host,
             initial,
             ifacs,
@@ -300,8 +300,8 @@ where
     {
         const {
             assert!(
-                INTERFACES >= MAX_IFACES,
-                "EmbassyInterfaceStore INTERFACES must cover PrnsNode MAX_IFACES"
+                INTERFACES >= INTERFACE_CAPACITY,
+                "EmbassyInterfaceStore INTERFACES must cover PrnsNode INTERFACE_CAPACITY"
             );
         }
         self.run_with_inspection_store(store, drive).await;
@@ -385,8 +385,8 @@ where
     {
         const {
             assert!(
-                INTERFACES >= MAX_IFACES,
-                "EmbassyInterfaceStore INTERFACES must cover PrnsNode MAX_IFACES"
+                INTERFACES >= INTERFACE_CAPACITY,
+                "EmbassyInterfaceStore INTERFACES must cover PrnsNode INTERFACE_CAPACITY"
             );
         }
         self.run_reactor_with_inspection_store(store).await;

@@ -267,14 +267,17 @@ pub(super) fn soonest_pacer_release(pacers: &[InterfacePacer]) -> Option<Instant
 }
 
 /// Dynamic egress over a fixed, uniformly sized lane pool tagged by interface or fleet supervisor.
-pub struct PooledEgress<M: RawMutex + 'static, const SLOT: usize, const N: usize> {
-    pub(super) lanes: HeaplessVec<(InterfaceId, EmbassyGrantProducer<'static, M, SLOT>), N>,
+pub struct PooledEgress<M: RawMutex + 'static, const FRAME: usize, const LANE_COUNT: usize> {
+    pub(super) lanes:
+        HeaplessVec<(InterfaceId, EmbassyGrantProducer<'static, M, FRAME>), LANE_COUNT>,
 }
 
-impl<M: RawMutex + 'static, const SLOT: usize, const N: usize> PooledEgress<M, SLOT, N> {
+impl<M: RawMutex + 'static, const FRAME: usize, const LANE_COUNT: usize>
+    PooledEgress<M, FRAME, LANE_COUNT>
+{
     #[must_use]
     pub fn new(
-        lanes: HeaplessVec<(InterfaceId, EmbassyGrantProducer<'static, M, SLOT>), N>,
+        lanes: HeaplessVec<(InterfaceId, EmbassyGrantProducer<'static, M, FRAME>), LANE_COUNT>,
     ) -> Self {
         Self { lanes }
     }
@@ -288,7 +291,7 @@ impl<M: RawMutex + 'static, const SLOT: usize, const N: usize> PooledEgress<M, S
     pub(crate) fn producer_mut(
         &mut self,
         slot: usize,
-    ) -> Option<&mut EmbassyGrantProducer<'static, M, SLOT>> {
+    ) -> Option<&mut EmbassyGrantProducer<'static, M, FRAME>> {
         self.lanes.get_mut(slot).map(|entry| &mut entry.1)
     }
 
@@ -301,8 +304,8 @@ impl<M: RawMutex + 'static, const SLOT: usize, const N: usize> PooledEgress<M, S
     }
 }
 
-impl<M: RawMutex + 'static, const SLOT: usize, const N: usize> ReactorEgress
-    for PooledEgress<M, SLOT, N>
+impl<M: RawMutex + 'static, const FRAME: usize, const LANE_COUNT: usize> ReactorEgress
+    for PooledEgress<M, FRAME, LANE_COUNT>
 {
     fn enqueue(&mut self, target: InterfaceId, bytes: &[u8]) {
         for (id, producer) in self.lanes.iter_mut() {
