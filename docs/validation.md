@@ -37,7 +37,7 @@ opaque success token. Counts come from the live manifest and native source
 discovery, so the output also gives an operator a quick orientation:
 
 ```text
-[verify] Suite policy: 80 total suites (33 PR, 77 release, 78 scheduled); IDs, tiers, platforms, toolchains, commands, timeouts, and artifact paths are valid.
+[verify] Suite policy: 80 total suites (33 pull-request, 77 release, 78 scheduled); IDs, tiers, platforms, toolchains, commands, timeouts, and artifact paths are valid.
 [verify] Cargo ownership: 34 manifests are registered, valid, and repository-owned; 21 unique workspace roots own formatting.
 [verify] Native discovery: 18 Kani proofs and 8 fuzz targets exactly match their source owners.
 [verify] Asset ownership: 57 oracle/interop/smoke assets are registered; 1 documented exemption is current; nothing is orphaned.
@@ -69,9 +69,9 @@ the registry only supplies focused execution commands.
 
 ## Tiers
 
-The `pr` tier is deterministic and bounded. It covers registry integrity, normal
-tests and lints, release contracts, product build lanes, deterministic stock-RNS
-comparisons, and essential interop.
+The `pr` (pull-request) tier is deterministic and bounded. It covers registry
+integrity, normal tests and lints, release contracts, product build lanes,
+deterministic stock-RNS comparisons, and essential interop.
 
 The `release` tier adds every proof, every bounded fuzz target, full oracle and
 utility interop coverage, sanitizers, Miri, mutation analysis, and the remaining

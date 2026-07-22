@@ -434,7 +434,7 @@ def verification_report(manifest: dict, check_tools: bool) -> list[str]:
     )
     lines = [
         "[verify] Suite policy: "
-        f"{len(suites)} total suites ({tiers['pr']} PR, {tiers['release']} release, "
+        f"{len(suites)} total suites ({tiers['pr']} pull-request, {tiers['release']} release, "
         f"{tiers['scheduled']} scheduled); IDs, tiers, platforms, toolchains, commands, "
         "timeouts, and artifact paths are valid.",
         "[verify] Declared inputs: "

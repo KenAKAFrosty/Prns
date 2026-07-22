@@ -140,6 +140,7 @@ expires = "yesterday"
             self.assertIn(guarantee, report)
         self.assertIn(f"{len(self.manifest['kani'])} Kani proofs", report)
         self.assertIn(f"{len(self.manifest['fuzz_target'])} fuzz targets", report)
+        self.assertIn("pull-request", report)
 
     def test_cleanup_never_selects_corpora_or_runtime_state(self) -> None:
         selected = {path.relative_to(runner.ROOT).as_posix() for path in runner.cleanup_paths(self.manifest)}
