@@ -65,6 +65,7 @@ pub(super) async fn run_runtime_endpoint(
         let commands = node.handle();
         println!("READY role=responder addr={bound}");
         let firehose = async {
+            await_startup_go().await;
             if manifest.name == ScenarioId::LinkMessageThroughput {
                 respond_link(
                     destination,

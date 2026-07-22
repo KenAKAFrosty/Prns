@@ -71,6 +71,13 @@ pub(super) fn spawn_role(
 }
 
 impl RoleProcess {
+    pub(super) fn start_startup(&mut self) {
+        self.stdin
+            .write_all(b"STARTUP\n")
+            .expect("send startup command");
+        self.stdin.flush().expect("flush startup command");
+    }
+
     pub(super) fn mark_measurement_start(&mut self) {
         self.measurement_cpu_start = self.current_cpu_seconds();
     }

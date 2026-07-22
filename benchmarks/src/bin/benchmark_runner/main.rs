@@ -24,6 +24,7 @@ use results::{file_results, CollectedRun};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MeasurementPhase {
     Startup,
+    ParticipantsReady,
     Linked,
     Measuring,
     Draining,
@@ -40,8 +41,13 @@ impl PhaseTracker {
     fn advance(&mut self, next: MeasurementPhase) -> Result<(), String> {
         let valid = matches!(
             (self.0, next),
-            (MeasurementPhase::Startup, MeasurementPhase::Linked)
-                | (MeasurementPhase::Linked, MeasurementPhase::Measuring)
+            (
+                MeasurementPhase::Startup,
+                MeasurementPhase::ParticipantsReady
+            ) | (
+                MeasurementPhase::ParticipantsReady,
+                MeasurementPhase::Linked
+            ) | (MeasurementPhase::Linked, MeasurementPhase::Measuring)
                 | (MeasurementPhase::Measuring, MeasurementPhase::Draining)
                 | (MeasurementPhase::Draining, MeasurementPhase::Complete)
         );
@@ -135,6 +141,12 @@ fn run_interop(args: &Args, manifest_data: &ScenarioManifest, manifest: &std::pa
         &addr,
         args,
     );
+    await_line(&initiator, "READY", Duration::from_secs(30));
+    phase
+        .advance(MeasurementPhase::ParticipantsReady)
+        .expect("both participant processes initialized");
+    println!("STARTUP_ATTEMPT stage=participant-readiness attempt=1 result=pass");
+    responder.start_startup();
     await_line(&initiator, "MEASURE_READY", Duration::from_secs(30));
     await_line(&responder, "MEASURE_READY", Duration::from_secs(30));
     phase
@@ -225,6 +237,7 @@ mod tests {
     fn measurement_barrier_has_one_valid_phase_order() {
         let mut phases = PhaseTracker::new();
         for next in [
+            MeasurementPhase::ParticipantsReady,
             MeasurementPhase::Linked,
             MeasurementPhase::Measuring,
             MeasurementPhase::Draining,

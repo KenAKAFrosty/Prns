@@ -1,6 +1,6 @@
 {
   "name": "single-packet-throughput",
-  "version": 3,
+  "version": 4,
   "order": 1,
   "title": "Single-packet throughput",
   "category": "Packets",

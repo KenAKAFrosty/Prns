@@ -93,15 +93,19 @@ pub(super) async fn run_request_endpoint(
         .await;
         let commands = node.handle();
         println!("READY role=responder addr={bound}");
-        let firehose = respond_request_runtime(
-            destination,
-            announce_every,
-            request_links,
-            &served,
-            &response_bytes,
-            &commands,
-            event_rx,
-        );
+        let firehose = async {
+            await_startup_go().await;
+            respond_request_runtime(
+                destination,
+                announce_every,
+                request_links,
+                &served,
+                &response_bytes,
+                &commands,
+                event_rx,
+            )
+            .await;
+        };
         tokio::select! {
             result = node.run() => unreachable!("the responder's run loop returned: {result:?}"),
             () = firehose => {}

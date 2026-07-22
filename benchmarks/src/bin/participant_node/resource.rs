@@ -52,6 +52,18 @@ pub(super) async fn run_resource_endpoint(
                 link_id,
                 bytes: total_size as usize,
             }),
+            PrnsEvent::Diagnostic(Diagnostic::ResourceFailed {
+                link_id,
+                hash,
+                cause,
+            }) => {
+                eprintln!(
+                    "RESOURCE_FAILURE kind=protocol role=responder link_id={:?} hash={:?} cause={cause:?}",
+                    link_id.as_bytes(),
+                    hash.as_bytes(),
+                );
+                None
+            }
             PrnsEvent::Message(Message::Delivered(Delivery::Link(delivery))) => {
                 parse_resource_ack(delivery.plaintext).map(Event::ResourceAck)
             }
@@ -63,21 +75,25 @@ pub(super) async fn run_resource_endpoint(
     };
 
     if role == "responder" {
-        let collection_target = collection_target_receiver();
         let (node, bound) =
             build_responder_node(single, (), routes![], on_event, manifest, addr).await;
         let commands = node.handle();
         println!("READY role=responder addr={bound}");
-        let firehose = respond_resource_runtime(
-            destination,
-            announce_every,
-            duration,
-            drain_grace(&manifest.profile),
-            initiators,
-            &commands,
-            event_rx,
-            collection_target,
-        );
+        let firehose = async {
+            await_startup_go().await;
+            let collection_target = collection_target_receiver();
+            respond_resource_runtime(
+                destination,
+                announce_every,
+                duration,
+                drain_grace(&manifest.profile),
+                initiators,
+                &commands,
+                event_rx,
+                collection_target,
+            )
+            .await;
+        };
         tokio::select! {
             result = node.run() => unreachable!("the responder's run loop returned: {result:?}"),
             () = firehose => {}
@@ -242,6 +258,8 @@ pub(super) async fn initiate_resource_runtime(
     let mut sent = 0u64;
     let mut settled = 0u64;
     let mut failures = 0u64;
+    let mut protocol_failures = 0u64;
+    let mut ack_timeouts = 0u64;
     let mut payload_bytes = 0u64;
     let mut transfer_ms: Vec<u64> = Vec::new();
     while tokio::time::Instant::now() < deadline {
@@ -263,8 +281,12 @@ pub(super) async fn initiate_resource_runtime(
                 transfer_ms.push(transfer_started.elapsed().as_millis() as u64);
                 true
             }
-            Err(_) => {
+            Err(error) => {
                 failures += 1;
+                protocol_failures += 1;
+                eprintln!(
+                    "RESOURCE_FAILURE kind=protocol role=initiator sequence={sent} error={error:?}"
+                );
                 false
             }
         };
@@ -281,6 +303,11 @@ pub(super) async fn initiate_resource_runtime(
         };
         if !acknowledged {
             failures += 1;
+            ack_timeouts += 1;
+            eprintln!(
+                "RESOURCE_FAILURE kind=application-ack-timeout role=initiator sequence={sent} wait_ms={}",
+                drain_grace(profile).as_millis(),
+            );
             break;
         }
     }
@@ -290,6 +317,7 @@ pub(super) async fn initiate_resource_runtime(
     let seconds = (elapsed_ms as f64 / 1000.0).max(f64::EPSILON);
     println!(
         "RESULT sent={sent} settled={settled} failures={failures} \
+         protocol_failures={protocol_failures} ack_timeouts={ack_timeouts} \
          payload_bytes={payload_bytes} elapsed_ms={elapsed_ms} \
          goodput_bytes_per_sec={:.0} goodput_mbits_per_sec={:.2} \
          transfer_p50_ms={:.0} transfer_p99_ms={:.0} build={BUILD_PROFILE}",

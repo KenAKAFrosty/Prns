@@ -24,7 +24,7 @@ This executes all 20 cells in three counterbalanced rounds. Cells run one at a t
 cargo benchmark --resume RUN_ID
 ```
 
-The suite checkpoint is installed before the first cell and refreshed atomically after every cell. Resume keeps only exact, conformant samples from the same source SHA, tracked/untracked source fingerprint, and release profile. An unchanged dirty local worktree can resume safely; any source edit invalidates it. Measurement failures are never retried invisibly.
+The suite checkpoint is installed before the first cell and refreshed atomically after every cell. Resume keeps only exact, conformant samples from the same source SHA, tracked/untracked source fingerprint, and release profile. An unchanged dirty local worktree can resume safely; any source edit invalidates it. A child that exits before `MEASURE_DONE` may receive up to three explicit startup attempts; every attempt and failure is printed, logged, and counted in suite evidence. Once measurement starts, a sample is never retried.
 
 Maintainers publish a complete suite from a clean exact commit with:
 
@@ -66,6 +66,6 @@ A release suite is accepted only with 20/20 cells, samples `{0,1,2}`, one full 4
 
 ## Evidence meaning
 
-Participant startup, imports, identity creation, link establishment, and link arming occur before the measurement barrier. Both roles must explicitly report `MEASURE_READY`; only then does the runner start CPU/energy collection and release the initiator. After the deadline, outstanding protocol and application-acknowledgement work drains and the initiator emits `MEASURE_DONE`; package energy and role CPU stop there, before link teardown or reporting grace sleeps. Peak role memory remains full-process peak RSS/working set. Request RTT is wall time from issue through complete response settlement and retains fractional milliseconds.
+Participant startup, imports, identity creation, link establishment, and link arming occur before the measurement barrier. The responder remains silent until both processes report `READY`; the runner then records the startup attempt and releases announcements. This avoids sending into a reference TCP interface while it is still constructing. Both roles must subsequently report `MEASURE_READY`; only then does the runner start CPU/energy collection and release the initiator. After the deadline, outstanding protocol and application-acknowledgement work drains and the initiator emits `MEASURE_DONE`; package energy and role CPU stop there, before link teardown or reporting grace sleeps. Peak role memory remains full-process peak RSS/working set. Request RTT is wall time from issue through complete response settlement and retains fractional milliseconds.
 
 Each suite records command lines, start/finish times, exit states, startup and measurement attempt counts, stdout/stderr logs, host/toolchain/reference proof, the exact source fingerprint, schedule order, and result-file hashes. Generated Markdown is read-only. Raw local runs are ignored; only `cargo benchmark --publish` promotes complete exact-SHA evidence and regenerates the tracked views.

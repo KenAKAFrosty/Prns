@@ -89,6 +89,15 @@ struct SampleExecution {
     failure: Option<String>,
 }
 
+fn retryable_startup_failure(
+    successful: bool,
+    measurement_started: bool,
+    attempt: u32,
+    max_attempts: u32,
+) -> bool {
+    !successful && !measurement_started && attempt < max_attempts
+}
+
 impl SampleExecution {
     fn resumed(previous: Option<&EvidenceSample>) -> Self {
         if let Some(previous) = previous {
@@ -490,6 +499,7 @@ fn run_sample(
     output: &Path,
     log_relative: &str,
 ) -> Result<SampleExecution, String> {
+    const MAX_STARTUP_ATTEMPTS: u32 = 3;
     let mut command = Command::new(std::env::current_exe().map_err(|error| error.to_string())?);
     command
         .arg("run")
@@ -521,32 +531,69 @@ fn run_sample(
         if args.smoke { " --smoke" } else { "" }
     );
     let started_unix_ms = unix_ms();
-    let child = command.output().map_err(|error| error.to_string())?;
+    let mut combined_stdout = String::new();
+    let mut combined_stderr = String::new();
+    let mut attempts = 0u32;
+    let (exit_code, failure) = loop {
+        attempts += 1;
+        let child = command.output().map_err(|error| error.to_string())?;
+        let stdout = String::from_utf8_lossy(&child.stdout);
+        let stderr = String::from_utf8_lossy(&child.stderr);
+        let measured = stdout.lines().any(|line| line.contains("MEASURE_DONE"));
+        let successful = child.status.success();
+        let retry_startup =
+            retryable_startup_failure(successful, measured, attempts, MAX_STARTUP_ATTEMPTS);
+        let stage = if measured {
+            "measurement"
+        } else {
+            "sample-bootstrap"
+        };
+        let result = if successful { "pass" } else { "fail" };
+        let attempt_line = if measured {
+            format!("MEASUREMENT_ATTEMPT stage={stage} attempt={attempts} result={result}\n")
+        } else {
+            format!("STARTUP_ATTEMPT stage={stage} attempt={attempts} result={result}\n")
+        };
+        print!("{stdout}{attempt_line}");
+        eprint!("{stderr}");
+        combined_stdout.push_str(&format!("ATTEMPT {attempts}\n{stdout}{attempt_line}"));
+        combined_stderr.push_str(&format!("ATTEMPT {attempts}\n{stderr}"));
+        if retry_startup {
+            println!(
+                "STARTUP_RETRY next_attempt={} reason=child-exited-before-measurement",
+                attempts + 1
+            );
+            combined_stdout.push_str(&format!(
+                "STARTUP_RETRY next_attempt={} reason=child-exited-before-measurement\n",
+                attempts + 1
+            ));
+            continue;
+        }
+        break (
+            child.status.code(),
+            (!successful).then(|| format!("child exited {}", child.status)),
+        );
+    };
     let finished_unix_ms = unix_ms();
-    let stdout = String::from_utf8_lossy(&child.stdout);
-    let stderr = String::from_utf8_lossy(&child.stderr);
-    let log = format!("STDOUT\n{stdout}\nSTDERR\n{stderr}");
+    let log = format!("STDOUT\n{combined_stdout}\nSTDERR\n{combined_stderr}");
     std::fs::write(output.join(log_relative), log).map_err(|error| error.to_string())?;
-    print!("{stdout}");
-    eprint!("{stderr}");
-    let startup_attempts = stdout
+    let startup_attempts = combined_stdout
         .lines()
         .filter(|line| line.contains("STARTUP_ATTEMPT"))
         .count() as u32;
-    let startup_failures = stdout
+    let startup_failures = combined_stdout
         .lines()
         .filter(|line| line.contains("STARTUP_ATTEMPT") && line.contains("result=fail"))
         .count() as u32;
-    let failure = (!child.status.success()).then(|| format!("child exited {}", child.status));
     Ok(SampleExecution {
         status: if failure.is_some() { "fail" } else { "pass" },
-        attempts: 1,
+        attempts,
         startup_attempts,
         startup_failures,
         command: command_text,
         started_unix_ms: Some(started_unix_ms),
         finished_unix_ms: Some(finished_unix_ms),
-        exit_code: child.status.code(),
+        exit_code,
         failure,
     })
 }
@@ -842,6 +889,15 @@ fn fail(reason: &str) -> ! {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_pre_measurement_failures_are_retryable() {
+        assert!(retryable_startup_failure(false, false, 1, 3));
+        assert!(retryable_startup_failure(false, false, 2, 3));
+        assert!(!retryable_startup_failure(false, false, 3, 3));
+        assert!(!retryable_startup_failure(false, true, 1, 3));
+        assert!(!retryable_startup_failure(true, false, 1, 3));
+    }
 
     fn temporary(label: &str) -> PathBuf {
         std::env::temp_dir().join(format!("prns-suite-{label}-{}", uuid::Uuid::new_v4()))

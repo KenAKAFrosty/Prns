@@ -67,6 +67,15 @@ def await_measurement_start():
         sys.exit(f"expected START measurement command, received {command!r}")
 
 
+def await_startup_go():
+    """Keep the responder silent until the runner confirms both process-local
+    interfaces finished initialization. This avoids sending an announce into a
+    reference TCP client while its constructor is still installing IFAC state."""
+    command = sys.stdin.readline().strip()
+    if command != "STARTUP":
+        sys.exit(f"expected STARTUP command, received {command!r}")
+
+
 def read_collection_target():
     fields = sys.stdin.readline().strip().split()
     if len(fields) != 3 or fields[0] != "COLLECT":
@@ -172,6 +181,7 @@ def respond(name, block, ready_addr, _profile):
     state["last_delivery"] = None
     destination.set_packet_callback(on_packet)
     print(f"READY role=responder addr={ready_addr}", flush=True)
+    await_startup_go()
     print("MEASURE_READY", flush=True)
     while True:
         if state["delivered"] == 0:
@@ -313,6 +323,7 @@ def respond_link(name, block, ready_addr, _profile):
 
     destination.set_link_established_callback(on_link)
     print(f"READY role=responder addr={ready_addr}", flush=True)
+    await_startup_go()
     while not done.is_set():
         if links["up"] < INITIATOR_COUNT:
             destination.announce()
@@ -474,6 +485,7 @@ def respond_resource(name, block, ready_addr, profile):
 
     destination.set_link_established_callback(on_link)
     print(f"READY role=responder addr={ready_addr}", flush=True)
+    await_startup_go()
 
     collection = {"target": None}
 
@@ -559,7 +571,14 @@ def initiate_resource(name, block, profile, duration):
     scratch = resource_payload(
         profile, max(profile.get("payload_max", 0), profile.get("payload_len", 0))
     )
-    state = {"sent": 0, "settled": 0, "failures": 0, "settled_bytes": 0}
+    state = {
+        "sent": 0,
+        "settled": 0,
+        "protocol_failures": 0,
+        "participant_timeouts": 0,
+        "ack_timeouts": 0,
+        "settled_bytes": 0,
+    }
     transfer_ms = []
     await_measurement_start()
     started = time.monotonic()
@@ -570,6 +589,7 @@ def initiate_resource(name, block, profile, duration):
 
         def callback(resource):
             outcome["status"] = resource.status
+            outcome["resource"] = resource
             concluded.set()
 
         state["sent"] += 1
@@ -577,21 +597,59 @@ def initiate_resource(name, block, profile, duration):
         transfer_started = time.monotonic()
         RNS.Resource(scratch[:size], link, auto_compress=auto_compress_from(profile), callback=callback)
         if not concluded.wait(120):
-            state["failures"] += 1
+            state["participant_timeouts"] += 1
+            print(
+                f"RESOURCE_FAILURE kind=participant-timeout sequence={state['sent']} "
+                "wait_ms=120000",
+                file=sys.stderr,
+                flush=True,
+            )
             break
         if outcome["status"] == RNS.Resource.COMPLETE:
             state["settled"] += 1
             state["settled_bytes"] += size
             transfer_ms.append((time.monotonic() - transfer_started) * 1000.0)
         else:
-            state["failures"] += 1
+            state["protocol_failures"] += 1
+            failed_resource = outcome["resource"]
+            status_names = {
+                RNS.Resource.NONE: "NONE",
+                RNS.Resource.QUEUED: "QUEUED",
+                RNS.Resource.ADVERTISED: "ADVERTISED",
+                RNS.Resource.TRANSFERRING: "TRANSFERRING",
+                RNS.Resource.AWAITING_PROOF: "AWAITING_PROOF",
+                RNS.Resource.ASSEMBLING: "ASSEMBLING",
+                RNS.Resource.COMPLETE: "COMPLETE",
+                RNS.Resource.FAILED: "FAILED",
+                RNS.Resource.CORRUPT: "CORRUPT",
+                RNS.Resource.REJECTED: "REJECTED",
+            }
+            resource_hash = getattr(failed_resource, "hash", b"")
+            print(
+                f"RESOURCE_FAILURE kind=protocol sequence={state['sent']} "
+                f"status={outcome['status']} "
+                f"status_name={status_names.get(outcome['status'], 'UNKNOWN')} "
+                f"retries_left={getattr(failed_resource, 'retries_left', 'unknown')} "
+                f"max_retries={getattr(failed_resource, 'max_retries', 'unknown')} "
+                f"hash={resource_hash.hex() if resource_hash else 'unknown'}",
+                file=sys.stderr,
+                flush=True,
+            )
             break
         ack_deadline = time.monotonic() + profile.get("drain_timeout_ms", 30_000) / 1000.0
         with acknowledgement_changed:
             while acknowledgements["sequence"] < state["sent"]:
                 left = ack_deadline - time.monotonic()
                 if left <= 0:
-                    state["failures"] += 1
+                    state["ack_timeouts"] += 1
+                    print(
+                        f"RESOURCE_FAILURE kind=application-ack-timeout "
+                        f"sequence={state['sent']} "
+                        f"last_ack={acknowledgements['sequence']} "
+                        f"wait_ms={profile.get('drain_timeout_ms', 30_000)}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
                     break
                 acknowledgement_changed.wait(left)
             if acknowledgements["sequence"] < state["sent"]:
@@ -606,10 +664,17 @@ def initiate_resource(name, block, profile, duration):
         else float("nan")
     )
     payload_bytes = state["settled_bytes"]
+    failures = (
+        state["protocol_failures"]
+        + state["participant_timeouts"]
+        + state["ack_timeouts"]
+    )
     seconds = max(elapsed_ms / 1000.0, 1e-9)
     print(
         f"RESULT sent={state['sent']} settled={state['settled']} "
-        f"failures={state['failures']} payload_bytes={payload_bytes} "
+        f"failures={failures} protocol_failures={state['protocol_failures']} "
+        f"participant_timeouts={state['participant_timeouts']} "
+        f"ack_timeouts={state['ack_timeouts']} payload_bytes={payload_bytes} "
         f"elapsed_ms={elapsed_ms} "
         f"goodput_bytes_per_sec={payload_bytes / seconds:.0f} "
         f"goodput_mbits_per_sec={payload_bytes * 8.0 / seconds / 1e6:.2f} "
@@ -666,6 +731,7 @@ def respond_request(name, block, ready_addr, profile):
 
     destination.set_link_established_callback(on_link)
     print(f"READY role=responder addr={ready_addr}", flush=True)
+    await_startup_go()
     while not done.is_set():
         if links["up"] < INITIATOR_COUNT:
             destination.announce()

@@ -249,6 +249,25 @@ async fn await_measurement_start() {
     .expect("measurement gate task");
 }
 
+async fn await_startup_go() {
+    tokio::task::spawn_blocking(|| {
+        use std::io::BufRead as _;
+
+        let mut command = String::new();
+        std::io::stdin()
+            .lock()
+            .read_line(&mut command)
+            .expect("read startup command");
+        assert_eq!(
+            command.trim(),
+            "STARTUP",
+            "expected STARTUP command after both participants report ready"
+        );
+    })
+    .await
+    .expect("startup gate task");
+}
+
 fn collection_target_receiver() -> tokio::sync::oneshot::Receiver<(u64, u64)> {
     let (send, receive) = tokio::sync::oneshot::channel();
     std::thread::spawn(move || {

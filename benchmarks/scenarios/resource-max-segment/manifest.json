@@ -1,6 +1,6 @@
 {
   "name": "resource-max-segment",
-  "version": 6,
+  "version": 7,
   "order": 4,
   "title": "Maximum resource segment",
   "category": "Resources",
