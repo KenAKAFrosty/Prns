@@ -10,10 +10,9 @@ use embassy_nrf::spim::{self, Spim};
 use embassy_nrf::usb::vbus_detect::SoftwareVbusDetect;
 use embassy_nrf::usb::Driver;
 use embassy_nrf::{bind_interrupts, config, peripherals, usb};
-use embassy_sync::zerocopy_channel;
 use embassy_time::{Delay, Duration, Timer};
 use embassy_usb::{Builder, Config as UsbConfig};
-use static_cell::{ConstStaticCell, StaticCell};
+use static_cell::StaticCell;
 
 use embedded_graphics::prelude::*;
 use embedded_hal_bus::spi::ExclusiveDevice;
@@ -36,14 +35,11 @@ use personal_rns::interfaces::usb_auto::{WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID};
 use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus};
 use personal_rns::lora::LoRaInterface;
 use personal_rns::radios::sx126x::{BoardConfig, Sx126x, TcxoVoltage};
-use personal_rns::reactor::embassy::{
-    embassy_grant_lane, EmbassyGrantConsumer, EmbassyGrantProducer, EmbassyHost,
-    EmbassyInterfaceSeam, EmbassyInterfaceStatus, PooledEgress,
-};
+use personal_rns::reactor::embassy::{EmbassyHost, EmbassyInterfaceStatus};
 use personal_rns::reactor::interface_seam::{Interface, EMBEDDED_MAX_WIRE_FRAME_LEN};
 use personal_rns::runtime::{
-    Fleet, FleetWire, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle,
-    PrnsNodeRecipe, ReactorPlumbing, RequestHandlerRegistration,
+    Fleet, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe,
+    RequestHandlerRegistration,
 };
 use personal_rns::storage::StorageLayout;
 use personal_rns::usb_auto::UsbAutoDevice;
@@ -214,33 +210,16 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
         core::sync::atomic::Ordering::Relaxed,
     );
 
-    // The reactor's slot pool: LoRa on slot 0, the BLE fleet's one shared lane on slot 1. The fleet
-    // slot's egress producer carries the outbound wake so a committed frame rouses the supervisor.
-    static IN_BUF: [ConstStaticCell<LaneBuf>; IFACES] =
-        [const { ConstStaticCell::new([EMPTY_SLOT; LANE_DEPTH]) }; IFACES];
-    static IN_CH: [StaticCell<LaneChannel>; IFACES] = [const { StaticCell::new() }; IFACES];
-    static OUT_BUF: [ConstStaticCell<LaneBuf>; IFACES] =
-        [const { ConstStaticCell::new([EMPTY_SLOT; LANE_DEPTH]) }; IFACES];
-    static OUT_CH: [StaticCell<LaneChannel>; IFACES] = [const { StaticCell::new() }; IFACES];
-
-    let mut inbound: ReactorInbound = heapless::Vec::new();
-    let mut egress_lanes: ReactorEgressLanes = heapless::Vec::new();
-    let mut iface_halves: [Option<(
-        EmbassyGrantProducer<'static, Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN>,
-        EmbassyGrantConsumer<'static, Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN>,
-    )>; IFACES] = [const { None }; IFACES];
-    for slot in 0..IFACES {
-        let in_ch = IN_CH[slot].init(zerocopy_channel::Channel::new(IN_BUF[slot].take()));
-        let (in_producer, in_consumer) = embassy_grant_lane(in_ch);
-        let out_ch = OUT_CH[slot].init(zerocopy_channel::Channel::new(OUT_BUF[slot].take()));
-        let (mut out_producer, out_consumer) = embassy_grant_lane(out_ch);
-        if slot == BLE_SUPERVISOR_SLOT {
-            out_producer.set_outbound_wake(&OUTBOUND_WAKE);
-        }
-        let _ = inbound.push((FREE_SLOT, in_consumer));
-        let _ = egress_lanes.push((FREE_SLOT, out_producer));
-        iface_halves[slot] = Some((in_producer, out_consumer));
-    }
+    let mut reactor_pool = REACTOR_POOL.try_take().expect("reactor pool is available");
+    let lora_lane = reactor_pool
+        .take_interface::<LORA_SLOT>()
+        .expect("LoRa lane is available");
+    let ble_supervisor_lane = reactor_pool
+        .take_supervisor::<BLE_SUPERVISOR_SLOT>(&OUTBOUND_WAKE)
+        .expect("Bluetooth supervisor lane is available");
+    let usb_lane = reactor_pool
+        .take_interface::<USB_SLOT>()
+        .expect("USB lane is available");
 
     let lora_profile = DEFAULT_915_PROFILE;
     let lora_id = InterfaceId::from_channel_tag(InterfaceKind::LoRa, &channel_tag(&lora_profile));
@@ -257,9 +236,7 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
     );
 
     let handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
-    let plumbing = ReactorPlumbing::new(
-        inbound,
-        PooledEgress::new(egress_lanes),
+    let plumbing = reactor_pool.into_plumbing(
         NOTIFY.receiver(),
         COMMANDS.receiver(),
         LIFECYCLE.receiver(),
@@ -300,28 +277,10 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
         node.activate_supervisor(BLE_SUPERVISOR_SLOT, BLE_SUPERVISOR_ID)
             .expect("Bluetooth supervisor activation fits the declared topology");
     }
-    let (lora_in_producer, lora_out_consumer) =
-        iface_halves[LORA_SLOT].take().expect("lora slot half");
-    let lora_seam = EmbassyInterfaceSeam::new(
-        lora_id,
-        lora_in_producer,
-        NOTIFY.sender(),
-        lora_out_consumer,
-        seeded_entropy,
-    );
+    let lora_seam = lora_lane.into_seam(lora_id, NOTIFY.sender(), seeded_entropy);
 
-    let (ble_in_producer, ble_out_consumer) = iface_halves[BLE_SUPERVISOR_SLOT]
-        .take()
-        .expect("Bluetooth supervisor lane");
-    let fleet: Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP> = Fleet::new(
-        FleetWire {
-            inbound: ble_in_producer,
-            outbound: ble_out_consumer,
-            notify: NOTIFY.sender(),
-            outbound_wake: &OUTBOUND_WAKE,
-        },
-        LIFECYCLE.sender(),
-    );
+    let fleet: Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP> =
+        ble_supervisor_lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender());
 
     // The browser-facing USB-auto Reticulum interface is vendor-specific bulk, not CDC ACM. CDC is
     // claimed by OS serial drivers on desktop hosts; a vendor interface gives WebUSB a clean endpoint
@@ -335,14 +294,7 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
     let usb_dev = UsbAutoDevice::new(USB_INTERFACE_ID, usb_rx, usb_tx, usb_status, || true);
     node.activate(USB_SLOT, usb_dev.descriptor())
         .expect("USB activation fits the declared topology");
-    let (usb_in_producer, usb_out_consumer) = iface_halves[USB_SLOT].take().expect("usb slot half");
-    let usb_seam = EmbassyInterfaceSeam::new(
-        USB_INTERFACE_ID,
-        usb_in_producer,
-        NOTIFY.sender(),
-        usb_out_consumer,
-        seeded_entropy,
-    );
+    let usb_seam = usb_lane.into_seam(USB_INTERFACE_ID, NOTIFY.sender(), seeded_entropy);
 
     let backend = NrfBleBackend::new(&HUB);
     let supervisor = ble_identity.map(|identity| {

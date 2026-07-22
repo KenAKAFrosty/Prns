@@ -7,11 +7,11 @@ use crate::interfaces::{InterfaceDescriptor, InterfaceId};
 use crate::reactor::driver::{EmbassyGrantConsumer, EmbassyGrantProducer, InterfaceLifecycle};
 use crate::reactor::grant::{FrameTarget, GrantConsumer, GrantProducer};
 
-pub struct FleetWire<M: RawMutex + 'static, const SLOT: usize, const NOTIFY: usize> {
-    pub inbound: EmbassyGrantProducer<'static, M, SLOT>,
-    pub outbound: EmbassyGrantConsumer<'static, M, SLOT>,
-    pub notify: Sender<'static, M, InterfaceId, NOTIFY>,
-    pub outbound_wake: &'static Signal<M, ()>,
+pub(super) struct FleetWire<M: RawMutex + 'static, const SLOT: usize, const NOTIFY: usize> {
+    pub(super) inbound: EmbassyGrantProducer<'static, M, SLOT>,
+    pub(super) outbound: EmbassyGrantConsumer<'static, M, SLOT>,
+    pub(super) notify: Sender<'static, M, InterfaceId, NOTIFY>,
+    pub(super) outbound_wake: &'static Signal<M, ()>,
 }
 
 pub struct Fleet<
@@ -28,7 +28,7 @@ impl<M: RawMutex + 'static, const SLOT: usize, const NOTIFY: usize, const LIFECY
     Fleet<M, SLOT, NOTIFY, LIFECYCLE>
 {
     #[must_use]
-    pub fn new(
+    pub(super) fn new(
         wire: FleetWire<M, SLOT, NOTIFY>,
         lifecycle: Sender<'static, M, InterfaceLifecycle, LIFECYCLE>,
     ) -> Self {

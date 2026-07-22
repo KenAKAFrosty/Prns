@@ -3,6 +3,8 @@ use super::captive_portal::station_wifi_mode;
 #[cfg(feature = "wifi-auto")]
 use super::captive_portal::{build_ap_netif, dhcp_server_task, dns_server_task, http_server_task};
 use super::*;
+#[cfg(feature = "wifi-auto")]
+use static_cell::ConstStaticCell;
 
 pub(super) fn build_tcp(
     stack: Stack<'static>,

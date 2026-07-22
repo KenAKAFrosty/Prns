@@ -51,84 +51,36 @@ pub async fn run(spawner: Spawner) {
     #[cfg(feature = "bluetooth-auto")]
     let ble_identity = Some(ble_bootstrap.into_identity());
 
-    let mut inbound: ReactorInbound = HVec::new();
-    let mut egress_lanes: ReactorEgressLanes = HVec::new();
-
-    let usb_seam = {
-        static IN_BUF: ConstStaticCell<LaneBuf> = ConstStaticCell::new([EMPTY_SLOT; LANE_DEPTH]);
-        static IN_CH: StaticCell<LaneChannel> = StaticCell::new();
-        static OUT_BUF: ConstStaticCell<LaneBuf> = ConstStaticCell::new([EMPTY_SLOT; LANE_DEPTH]);
-        static OUT_CH: StaticCell<LaneChannel> = StaticCell::new();
-        let in_ch = IN_CH.init(zerocopy_channel::Channel::new(IN_BUF.take()));
-        let (in_producer, in_consumer) = embassy_grant_lane(in_ch);
-        let out_ch = OUT_CH.init(zerocopy_channel::Channel::new(OUT_BUF.take()));
-        let (out_producer, out_consumer) = embassy_grant_lane(out_ch);
-        let _ = inbound.push((FREE_SLOT, in_consumer));
-        let _ = egress_lanes.push((FREE_SLOT, out_producer));
-        EmbassyInterfaceSeam::new(
-            USB_INTERFACE_ID,
-            in_producer,
-            NOTIFY.sender(),
-            out_consumer,
-            hardware_entropy,
-        )
-    };
-    spawner.spawn(usb_device_task(usb_rx, usb_tx, usb_seam).expect("usb device task fits"));
-
+    let mut reactor_pool = REACTOR_POOL.try_take().expect("reactor pool is available");
+    let usb_lane = reactor_pool
+        .take_interface::<USB_SLOT>()
+        .expect("USB lane is available");
     #[cfg(feature = "esp-now")]
-    let espnow_seam = {
-        static IN_BUF: ConstStaticCell<LaneBuf> = ConstStaticCell::new([EMPTY_SLOT; LANE_DEPTH]);
-        static IN_CH: StaticCell<LaneChannel> = StaticCell::new();
-        static OUT_BUF: ConstStaticCell<LaneBuf> = ConstStaticCell::new([EMPTY_SLOT; LANE_DEPTH]);
-        static OUT_CH: StaticCell<LaneChannel> = StaticCell::new();
-        let in_ch = IN_CH.init(zerocopy_channel::Channel::new(IN_BUF.take()));
-        let (in_producer, in_consumer) = embassy_grant_lane(in_ch);
-        let out_ch = OUT_CH.init(zerocopy_channel::Channel::new(OUT_BUF.take()));
-        let (out_producer, out_consumer) = embassy_grant_lane(out_ch);
-        let _ = inbound.push((FREE_SLOT, in_consumer));
-        let _ = egress_lanes.push((FREE_SLOT, out_producer));
-        EmbassyInterfaceSeam::new(
-            espnow.id(),
-            in_producer,
-            NOTIFY.sender(),
-            out_consumer,
-            hardware_entropy,
-        )
-    };
-
+    let espnow_lane = reactor_pool
+        .take_interface::<ESPNOW_SLOT>()
+        .expect("ESP-NOW lane is available");
     #[cfg(feature = "bluetooth-auto")]
-    let ble_fleet: Option<C6BleFleet> = ble_identity.map(|_| {
-        static IN_BUF: ConstStaticCell<LaneBuf> = ConstStaticCell::new([EMPTY_SLOT; LANE_DEPTH]);
-        static IN_CH: StaticCell<LaneChannel> = StaticCell::new();
-        static OUT_BUF: ConstStaticCell<LaneBuf> = ConstStaticCell::new([EMPTY_SLOT; LANE_DEPTH]);
-        static OUT_CH: StaticCell<LaneChannel> = StaticCell::new();
-        let in_ch = IN_CH.init(zerocopy_channel::Channel::new(IN_BUF.take()));
-        let (in_producer, in_consumer) = embassy_grant_lane(in_ch);
-        let out_ch = OUT_CH.init(zerocopy_channel::Channel::new(OUT_BUF.take()));
-        let (mut out_producer, out_consumer) = embassy_grant_lane(out_ch);
-        out_producer.set_outbound_wake(&BLE_OUTBOUND_WAKE);
-        let _ = inbound.push((FREE_SLOT, in_consumer));
-        let _ = egress_lanes.push((FREE_SLOT, out_producer));
-        Fleet::new(
-            FleetWire {
-                inbound: in_producer,
-                outbound: out_consumer,
-                notify: NOTIFY.sender(),
-                outbound_wake: &BLE_OUTBOUND_WAKE,
-            },
-            LIFECYCLE.sender(),
-        )
-    });
+    let ble_supervisor_lane = reactor_pool
+        .take_supervisor::<BLE_SUPERVISOR_SLOT>(&BLE_OUTBOUND_WAKE)
+        .expect("Bluetooth supervisor lane is available");
 
     let handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
-    let plumbing = ReactorPlumbing::new(
-        inbound,
-        PooledEgress::new(egress_lanes),
+    let plumbing = reactor_pool.into_plumbing(
         NOTIFY.receiver(),
         COMMANDS.receiver(),
         LIFECYCLE.receiver(),
         handle,
     );
+
+    let usb_seam = usb_lane.into_seam(USB_INTERFACE_ID, NOTIFY.sender(), hardware_entropy);
+    spawner.spawn(usb_device_task(usb_rx, usb_tx, usb_seam).expect("usb device task fits"));
+
+    #[cfg(feature = "esp-now")]
+    let espnow_seam = espnow_lane.into_seam(espnow.id(), NOTIFY.sender(), hardware_entropy);
+
+    #[cfg(feature = "bluetooth-auto")]
+    let ble_fleet: Option<C6BleFleet> =
+        ble_identity.map(|_| ble_supervisor_lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender()));
     let host = EmbassyHost::new_with_timebase(timebase, hardware_entropy as fn(&mut [u8]));
 
     static NODE: StaticCell<Node> = StaticCell::new();

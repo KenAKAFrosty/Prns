@@ -35,28 +35,29 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let mut mac_octets = [0u8; 6];
     mac_octets.copy_from_slice(&mac.as_bytes()[..6]);
 
-    let mut inbound: ReactorInbound = HVec::new();
-    let mut egress_lanes: ReactorEgressLanes = HVec::new();
-    let mut iface_halves: [Option<(
-        EmbassyGrantProducer<'static, Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN>,
-        EmbassyGrantConsumer<'static, Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN>,
-    )>; IFACES] = [const { None }; IFACES];
-    for slot in 0..IFACES {
-        let in_ch = IN_CH[slot].init(zerocopy_channel::Channel::new(IN_BUF[slot].take()));
-        let (in_producer, in_consumer) = embassy_grant_lane(in_ch);
-        let out_ch = OUT_CH[slot].init(zerocopy_channel::Channel::new(OUT_BUF[slot].take()));
-        let (mut out_producer, out_consumer) = embassy_grant_lane(out_ch);
-        if slot == WIFI_SUPERVISOR_SLOT {
-            out_producer.set_outbound_wake(&OUTBOUND_WAKE);
-        }
-        #[cfg(feature = "bluetooth-auto")]
-        if slot == BLE_SUPERVISOR_SLOT {
-            out_producer.set_outbound_wake(&BLE_OUTBOUND_WAKE);
-        }
-        let _ = inbound.push((FREE_SLOT, in_consumer));
-        let _ = egress_lanes.push((FREE_SLOT, out_producer));
-        iface_halves[slot] = Some((in_producer, out_consumer));
-    }
+    let mut reactor_pool = REACTOR_POOL.try_take().expect("reactor pool is available");
+    let usb_lane = reactor_pool
+        .take_interface::<USB_SLOT>()
+        .expect("USB lane is available");
+    let tcp_lane = reactor_pool
+        .take_interface::<TCP_SLOT>()
+        .expect("TCP lane is available");
+    #[cfg(feature = "wifi-auto")]
+    let wifi_supervisor_lane = reactor_pool
+        .take_supervisor::<WIFI_SUPERVISOR_SLOT>(&OUTBOUND_WAKE)
+        .expect("WiFi supervisor lane is available");
+    #[cfg(feature = "lora")]
+    let lora_lane = reactor_pool
+        .take_interface::<LORA_SLOT>()
+        .expect("LoRa lane is available");
+    #[cfg(feature = "bluetooth-auto")]
+    let ble_supervisor_lane = reactor_pool
+        .take_supervisor::<BLE_SUPERVISOR_SLOT>(&BLE_OUTBOUND_WAKE)
+        .expect("Bluetooth supervisor lane is available");
+    #[cfg(feature = "esp-now")]
+    let espnow_lane = reactor_pool
+        .take_interface::<ESPNOW_SLOT>()
+        .expect("ESP-NOW lane is available");
 
     #[cfg(feature = "lora")]
     let lora_radio = b.lora_radio;
@@ -124,9 +125,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let tcp_id = tcp_built.as_ref().map(|(_, _, id)| *id);
 
     let handle: Handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
-    let plumbing = ReactorPlumbing::new(
-        inbound,
-        PooledEgress::new(egress_lanes),
+    let plumbing = reactor_pool.into_plumbing(
         NOTIFY.receiver(),
         COMMANDS.receiver(),
         LIFECYCLE.receiver(),
@@ -203,74 +202,28 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             })
     });
 
-    let usb_seam = {
-        let (in_producer, out_consumer) = iface_halves[USB_SLOT].take().expect("usb slot half");
-        EmbassyInterfaceSeam::new(
-            usb_id,
-            in_producer,
-            NOTIFY.sender(),
-            out_consumer,
-            hardware_entropy,
-        )
-    };
+    let usb_seam = usb_lane.into_seam(usb_id, NOTIFY.sender(), hardware_entropy);
     spawner.spawn(
         usb_device_task(usb_rx, usb_tx, usb_seam, usb_id, usb_status).expect("usb task fits"),
     );
 
     #[cfg(feature = "lora")]
-    let lora_seam = {
-        let (lora_in_producer, lora_out_consumer) =
-            iface_halves[LORA_SLOT].take().expect("lora slot half");
-        EmbassyInterfaceSeam::new(
-            lora_id,
-            lora_in_producer,
-            NOTIFY.sender(),
-            lora_out_consumer,
-            hardware_entropy,
-        )
-    };
+    let lora_seam = lora_lane.into_seam(lora_id, NOTIFY.sender(), hardware_entropy);
 
     #[cfg(feature = "esp-now")]
     let espnow = espnow.map(|interface| {
-        let (in_producer, out_consumer) =
-            iface_halves[ESPNOW_SLOT].take().expect("espnow slot half");
-        let seam = EmbassyInterfaceSeam::new(
-            interface.id(),
-            in_producer,
-            NOTIFY.sender(),
-            out_consumer,
-            hardware_entropy,
-        );
+        let seam = espnow_lane.into_seam(interface.id(), NOTIFY.sender(), hardware_entropy);
         (interface, seam)
     });
 
     let tcp = tcp_built.map(|(tcp, _, _)| {
-        let (in_producer, out_consumer) = iface_halves[TCP_SLOT].take().expect("tcp slot half");
-        let seam = EmbassyInterfaceSeam::new(
-            tcp.id(),
-            in_producer,
-            NOTIFY.sender(),
-            out_consumer,
-            hardware_entropy,
-        );
+        let seam = tcp_lane.into_seam(tcp.id(), NOTIFY.sender(), hardware_entropy);
         (tcp, seam)
     });
 
     #[cfg(feature = "wifi-auto")]
-    let wifi_fleet: Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP> = {
-        let (in_producer, out_consumer) = iface_halves[WIFI_SUPERVISOR_SLOT]
-            .take()
-            .expect("wifi fleet half");
-        Fleet::new(
-            FleetWire {
-                inbound: in_producer,
-                outbound: out_consumer,
-                notify: NOTIFY.sender(),
-                outbound_wake: &OUTBOUND_WAKE,
-            },
-            LIFECYCLE.sender(),
-        )
-    };
+    let wifi_fleet: Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP> =
+        wifi_supervisor_lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender());
     // The WiFi-auto run loop's two MTU receive buffers live on the heap (the D-cache donation),
     // not on the bounded `#[esp_rtos::main]` stack that run()'s future rides; the alloc-free
     // embassy AutoWifi just borrows them. Leaked: they live for the program's whole life anyway.
@@ -282,20 +235,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         alloc::vec![0u8; wifi_auto_contract::HARDWARE_MTU].leak();
     #[cfg(feature = "bluetooth-auto")]
     let ble_fleet: Option<Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP>> =
-        ble_identity.map(|_| {
-            let (in_producer, out_consumer) = iface_halves[BLE_SUPERVISOR_SLOT]
-                .take()
-                .expect("Bluetooth supervisor lane");
-            Fleet::new(
-                FleetWire {
-                    inbound: in_producer,
-                    outbound: out_consumer,
-                    notify: NOTIFY.sender(),
-                    outbound_wake: &BLE_OUTBOUND_WAKE,
-                },
-                LIFECYCLE.sender(),
-            )
-        });
+        ble_identity.map(|_| ble_supervisor_lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender()));
 
     let button = Input::new(b.button, InputConfig::default().with_pull(Pull::Up));
     spawner.spawn(button_task(button).expect("button task fits"));
@@ -771,9 +711,6 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     }
 }
 
-/// Core 1: run only the engine reactor over the slot pool. The node was built on core 0 and lives in
-/// a `static`; core 1 borrows it by `&'static mut`, so only a pointer crosses the core boundary (the
-/// engine never moves) and this core needs just a small per-poll stack for the ingest crypto.
 #[embassy_executor::task]
 async fn reactor_core(node: &'static mut S3Node) {
     node.run_reactor_with_interface_store(&INTERFACE_STORE)

@@ -24,29 +24,24 @@ use personal_rns::interfaces::bluetooth_auto::BleIdentity;
 use personal_rns::interfaces::usb_auto::device_descriptor;
 use personal_rns::interfaces::{ConnectionState, InterfaceId};
 use personal_rns::reactor::embassy::{
-    EmbassyGrantConsumer, EmbassyGrantProducer, EmbassyHost, EmbassyInterfaceSeam,
-    EmbassyInterfaceStatus, EmbassyTimebase, InterfaceLifecycle, PooledEgress,
+    EmbassyHost, EmbassyInterfaceSeam, EmbassyInterfaceStatus, EmbassyTimebase, InterfaceLifecycle,
 };
 use personal_rns::reactor::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
 use personal_rns::runtime::{
     CompletionPool, EmbassyInterfaceStore, PreConfiguredDestination, PrnsEvent, PrnsNode,
-    PrnsNodeHandle, PrnsNodeRecipe, ReactorPlumbing, RequestHandlerRegistration,
+    PrnsNodeHandle, PrnsNodeRecipe, RequestHandlerRegistration, StaticReactorPool,
 };
 use personal_rns::usb_auto::UsbAutoDevice;
 
 use crate::storage::{C6Storage, EngineStorageType};
 
 use embassy_sync::signal::Signal;
-use embassy_sync::zerocopy_channel;
 #[cfg(feature = "bluetooth-auto")]
 use personal_rns::bluetooth_auto::BluetoothAutoShared;
 use personal_rns::interfaces::InterfaceKind;
-use personal_rns::reactor::embassy::embassy_grant_lane;
-use personal_rns::reactor::grant::FrameSlot;
-use personal_rns::runtime::{Fleet, FleetWire};
+use personal_rns::runtime::Fleet;
 #[cfg(feature = "bluetooth-auto")]
 use prns_interfaces_embassy::bluetooth_auto::EmbeddedBleBackend;
-use static_cell::ConstStaticCell;
 
 #[cfg(feature = "esp-now")]
 use esp_radio::esp_now::{
@@ -120,22 +115,6 @@ const BLE_SUPERVISOR_ID: InterfaceId =
     InterfaceId::new([InterfaceKind::BluetoothAuto as u8, 0, 0, 0, 0, 0, 0, 0]);
 
 type Mtx = CriticalSectionRawMutex;
-type ReactorInbound = HVec<
-    (
-        InterfaceId,
-        EmbassyGrantConsumer<'static, Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN>,
-    ),
-    IFACES,
->;
-type ReactorEgressLanes = HVec<
-    (
-        InterfaceId,
-        EmbassyGrantProducer<'static, Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN>,
-    ),
-    IFACES,
->;
-type LaneBuf = [FrameSlot<EMBEDDED_MAX_WIRE_FRAME_LEN>; LANE_DEPTH];
-type LaneChannel = zerocopy_channel::Channel<'static, Mtx, FrameSlot<EMBEDDED_MAX_WIRE_FRAME_LEN>>;
 type UsbSeam = EmbassyInterfaceSeam<'static, Mtx, NOTIFY_CAP, EMBEDDED_MAX_WIRE_FRAME_LEN>;
 type InterfaceStore = EmbassyInterfaceStore<
     Mtx,
@@ -161,14 +140,13 @@ type Node = PrnsNode<
     COMPLETIONS_CAP,
 >;
 
-const EMPTY_SLOT: FrameSlot<EMBEDDED_MAX_WIRE_FRAME_LEN> = FrameSlot::empty();
-const FREE_SLOT: InterfaceId = InterfaceId::new([0xff; 8]);
-
 static NOTIFY: Channel<Mtx, InterfaceId, NOTIFY_CAP> = Channel::new();
 static COMMANDS: Channel<Mtx, IssuedCommand, COMMANDS_CAP> = Channel::new();
 static LIFECYCLE: Channel<Mtx, InterfaceLifecycle, LIFECYCLE_CAP> = Channel::new();
 static COMPLETION: CompletionPool<Mtx, COMPLETIONS_CAP> = CompletionPool::new();
 static INTERFACE_STORE: InterfaceStore = EmbassyInterfaceStore::new();
+static REACTOR_POOL: StaticReactorPool<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, LANE_DEPTH, IFACES> =
+    StaticReactorPool::new();
 static USB_STATUS: EmbassyInterfaceStatus =
     EmbassyInterfaceStatus::new(USB_INTERFACE_ID, ConnectionState::Initializing);
 #[cfg(feature = "bluetooth-auto")]

@@ -1,4 +1,4 @@
-use super::super::{CompletionPool, Fleet, FleetWire};
+use super::super::{CompletionPool, Fleet, StaticReactorPool};
 use super::*;
 use crate::engine::test_support::{bytes_from_hex, RNS_1_4_0_ANNOUNCE};
 use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
@@ -6,7 +6,7 @@ use crate::interfaces::{
     AnnounceBandwidthCap, BitrateBps, EgressCapability, IngressCapability, InterfaceCapabilities,
     InterfaceKind, InterfaceMode, TransportCapability,
 };
-use crate::reactor::driver::{leaked_grant_lane, EmbassyGrantProducer, EmbassyHost};
+use crate::reactor::driver::{leaked_grant_lane, EmbassyHost};
 use crate::reactor::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
 use crate::runtime::Diagnostic;
 use crate::storage::GrowableHeap;
@@ -194,36 +194,19 @@ fn a_recipe_node_hears_an_ifac_announce_a_supervisor_stands_a_peer_up_for() {
     let lifecycle: &'static Channel<Mtx, InterfaceLifecycle, 4> = leak(Channel::new());
     let completion: &'static CompletionPool<Mtx, 4> = leak(CompletionPool::new());
 
-    let (in_producer, in_consumer) = leaked_grant_lane::<SLOT>(4);
-    let (out_producer, out_consumer) = leaked_grant_lane::<SLOT>(4);
-
-    let free = InterfaceId::new([0xff; 8]);
-    let mut inbound: HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, Mtx, SLOT>), 1> =
-        HeaplessVec::new();
-    let _ = inbound.push((free, in_consumer));
-    let mut egress_lanes: HeaplessVec<(InterfaceId, EmbassyGrantProducer<'static, Mtx, SLOT>), 1> =
-        HeaplessVec::new();
-    let _ = egress_lanes.push((free, out_producer));
+    static POOL: StaticReactorPool<Mtx, SLOT, 4, 1> = StaticReactorPool::new();
+    let mut pool = POOL.try_take().unwrap();
+    let supervisor_lane = pool.take_supervisor::<0>(leak(Signal::new())).unwrap();
 
     let handle = PrnsNodeHandle::new(commands.sender(), completion);
-    let plumbing = ReactorPlumbing::new(
-        inbound,
-        PooledEgress::new(egress_lanes),
+    let plumbing = pool.into_plumbing(
         notify.receiver(),
         commands.receiver(),
         lifecycle.receiver(),
         handle,
     );
-
-    let fleet: Fleet<Mtx, SLOT, 4, 4> = Fleet::new(
-        FleetWire {
-            inbound: in_producer,
-            outbound: out_consumer,
-            notify: notify.sender(),
-            outbound_wake: leak(Signal::new()),
-        },
-        lifecycle.sender(),
-    );
+    let fleet: Fleet<Mtx, SLOT, 4, 4> =
+        supervisor_lane.into_fleet(notify.sender(), lifecycle.sender());
 
     let heard: Rc<RefCell<usize>> = Rc::new(RefCell::new(0));
     let heard_sink = heard.clone();

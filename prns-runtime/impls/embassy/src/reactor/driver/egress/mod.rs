@@ -289,6 +289,13 @@ impl<M: RawMutex + 'static, const SLOT: usize, const N: usize> PooledEgress<M, S
         slot < self.lanes.len()
     }
 
+    pub(crate) fn producer_mut(
+        &mut self,
+        slot: usize,
+    ) -> Option<&mut EmbassyGrantProducer<'static, M, SLOT>> {
+        self.lanes.get_mut(slot).map(|entry| &mut entry.1)
+    }
+
     pub(crate) fn retag(&mut self, old_id: InterfaceId, new_id: InterfaceId) {
         for (id, _) in self.lanes.iter_mut() {
             if *id == old_id {

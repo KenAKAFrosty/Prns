@@ -54,7 +54,7 @@ impl<
     > ReactorPlumbing<M, SLOT, IFACES, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>
 {
     #[must_use]
-    pub fn new(
+    pub(super) fn new(
         inbound: HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, M, SLOT>), IFACES>,
         egress: PooledEgress<M, SLOT, IFACES>,
         notify: Receiver<'static, M, InterfaceId, NOTIFY>,

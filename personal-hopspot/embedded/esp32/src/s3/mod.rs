@@ -34,7 +34,6 @@ use embassy_net::{IpAddress, Ipv4Address, Ipv4Cidr, StaticConfigV4};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
-use embassy_sync::zerocopy_channel;
 #[cfg(feature = "wifi-auto")]
 use embassy_time::with_timeout;
 use embassy_time::{Delay, Duration, Ticker, Timer};
@@ -45,7 +44,7 @@ use heapless::Vec as HVec;
 #[cfg(feature = "wifi-auto")]
 use portable_atomic::AtomicBool;
 use portable_atomic::{AtomicU64, Ordering};
-use static_cell::{ConstStaticCell, StaticCell};
+use static_cell::StaticCell;
 
 #[cfg(feature = "wifi-auto")]
 use esp_radio::wifi::ap::AccessPointConfig;
@@ -87,16 +86,13 @@ use personal_rns::interfaces::{
 use personal_rns::lora::{LoRaControl, LoRaInterface};
 use personal_rns::radios::sx126x::Sx126x;
 use personal_rns::reactor::embassy::{
-    embassy_grant_lane, EmbassyGrantConsumer, EmbassyGrantProducer, EmbassyHost,
-    EmbassyInterfaceSeam, EmbassyInterfaceStatus, EmbassyTimebase, InterfaceLifecycle,
-    PooledEgress,
+    EmbassyHost, EmbassyInterfaceSeam, EmbassyInterfaceStatus, EmbassyTimebase, InterfaceLifecycle,
 };
-use personal_rns::reactor::grant::FrameSlot;
 use personal_rns::reactor::interface_seam::{Interface, EMBEDDED_MAX_WIRE_FRAME_LEN};
 use personal_rns::reactor::reconnect::ReconnectPolicy;
 use personal_rns::runtime::{
-    CompletionPool, EmbassyInterfaceStore, Fleet, FleetWire, PreConfiguredDestination, PrnsEvent,
-    PrnsNode, PrnsNodeHandle, PrnsNodeRecipe, ReactorPlumbing, RequestHandlerRegistration,
+    CompletionPool, EmbassyInterfaceStore, Fleet, PreConfiguredDestination, PrnsEvent, PrnsNode,
+    PrnsNodeHandle, PrnsNodeRecipe, RequestHandlerRegistration, StaticReactorPool,
 };
 use personal_rns::storage::StorageLayout;
 use personal_rns::tcp::TcpClient;
@@ -161,33 +157,21 @@ const TCP_BITRATE_BPS: BitrateBps = BitrateBps::guess(65_000_000);
 /// One TCP socket's smoltcp rx/tx buffer — sized for the board's frames, DRAM-frugal over throughput.
 const TCP_SOCKET_BUF: usize = 1_024;
 
-/// One lane per top-level driver: USB (slot 0), the TCP client (slot 1), the WiFi supervisor's one
-/// shared fleet lane (slot 2), and the LoRa SX1262 (slot 3). WiFi members do NOT each take a lane —
-/// they share slot 2. Under `ble` the BLE fleet takes the next slot; under `esp-now` the
-/// ESP-NOW broadcast carrier (which rides the same WiFi radio) takes another.
 const IFACES: usize =
     4 + cfg!(feature = "bluetooth-auto") as usize + cfg!(feature = "esp-now") as usize;
-/// The WiFi fleet's member budget: a peer costs a descriptor + status slot, never a lane buffer.
 const MEMBERS: usize = 24;
 /// The engine-interface (descriptor + pacer) pool: the fixed interfaces plus the WiFi members.
 /// Decoupled from the lane count `IFACES` on purpose: a member costs descriptors, not buffers.
 const MAX_IFACES: usize = 3 + MEMBERS + cfg!(feature = "esp-now") as usize;
-/// The WiFi supervisor's fleet lane (slot 2) key: an `AutoWifi`-kind id, so every `WifiPeer` child
-/// routes to this one lane by the kind byte (`lane_serves`). Also the WiFi card's aggregate id.
 const WIFI_SUPERVISOR_ID: InterfaceId =
     InterfaceId::new([InterfaceKind::AutoWifi as u8, 0, 0, 0, 0, 0, 0, 0]);
 const WIFI_SUPERVISOR_SLOT: usize = 2;
 const LANE_DEPTH: usize = 1;
 const USB_SLOT: usize = 0;
-/// Slot 1: the always-on TCP client wire, so the WiFi members never claim it.
 const TCP_SLOT: usize = 1;
 const LORA_SLOT: usize = 3;
-/// The BLE fleet's pool slot (after LoRa), present only under `ble`. Distinct from the WiFi
-/// slot so both supervisors run at once when WiFi and BLE coexist.
 #[cfg(feature = "bluetooth-auto")]
 const BLE_SUPERVISOR_SLOT: usize = 4;
-/// The ESP-NOW broadcast carrier's pool slot, after the BLE fleet when it is present. A 1:1 interface
-/// like LoRa (not a fleet); present under `esp-now`.
 #[cfg(feature = "esp-now")]
 const ESPNOW_SLOT: usize = 4 + cfg!(feature = "bluetooth-auto") as usize;
 pub const NOTIFY_CAP: usize = 16;
@@ -214,22 +198,6 @@ const BUTTON_LONG_PRESS: Duration = Duration::from_millis(500);
 const BUTTON_DEBOUNCE: Duration = Duration::from_millis(25);
 
 type Mtx = CriticalSectionRawMutex;
-type LaneBuf = [FrameSlot<EMBEDDED_MAX_WIRE_FRAME_LEN>; LANE_DEPTH];
-type LaneChannel = zerocopy_channel::Channel<'static, Mtx, FrameSlot<EMBEDDED_MAX_WIRE_FRAME_LEN>>;
-type ReactorInbound = HVec<
-    (
-        InterfaceId,
-        EmbassyGrantConsumer<'static, Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN>,
-    ),
-    IFACES,
->;
-type ReactorEgressLanes = HVec<
-    (
-        InterfaceId,
-        EmbassyGrantProducer<'static, Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN>,
-    ),
-    IFACES,
->;
 type Handle = PrnsNodeHandle<'static, Mtx, COMMANDS_CAP, COMPLETIONS_CAP>;
 type UsbSeam = EmbassyInterfaceSeam<'static, Mtx, NOTIFY_CAP, EMBEDDED_MAX_WIRE_FRAME_LEN>;
 type InterfaceStore = EmbassyInterfaceStore<
@@ -255,10 +223,6 @@ type S3Node = PrnsNode<
     LIFECYCLE_CAP,
     COMPLETIONS_CAP,
 >;
-const EMPTY_SLOT: FrameSlot<EMBEDDED_MAX_WIRE_FRAME_LEN> = FrameSlot::empty();
-/// The free-slot id a pool slot carries until an interface occupies it (never a real medium id).
-const FREE_SLOT: InterfaceId = InterfaceId::new([0xff; 8]);
-
 macro_rules! mk_static {
     ($t:ty, $val:expr) => {{
         static CELL: StaticCell<$t> = StaticCell::new();
@@ -282,13 +246,8 @@ use connectivity::{build_wifi, espnow_channel_policy, EspNowAdapter};
 use display::build_interface_menu_details;
 use display::{build_cards, build_snapshots, button_task};
 
-/// The WiFi supervisor's shared aggregate + per-peer status (written + read on core 0).
 static WIFI_SHARED: AutoWifiShared<MEMBERS> = AutoWifiShared::new(WIFI_SUPERVISOR_ID);
 
-/// Under `ble` the BLE supervisor reuses the (WiFi-free) fleet slot 2, keyed by its own kind
-/// so `BluetoothPeer` members route to it. The radio carries `BLE_MEMBERS` concurrent connections (the
-/// pooled `ble.rs` backend sizes its slot pool + trouble-host `CONNECTIONS` to this) — 2 since the
-/// reduced embedded MTU ceiling (1472) freed the internal lane RAM to carry a second peer.
 #[cfg(feature = "bluetooth-auto")]
 pub const BLE_MEMBERS: usize = EmbeddedBleBackend::MAX_PEERS;
 #[cfg(feature = "bluetooth-auto")]
@@ -297,25 +256,13 @@ const BLE_SUPERVISOR_ID: InterfaceId =
 #[cfg(feature = "bluetooth-auto")]
 static BLE_SHARED: BluetoothAutoShared<BLE_MEMBERS> = BluetoothAutoShared::new(BLE_SUPERVISOR_ID);
 static LORA_CONTROL: LoRaControl = LoRaControl::new();
+static REACTOR_POOL: StaticReactorPool<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, LANE_DEPTH, IFACES> =
+    StaticReactorPool::new();
 
-/// The reactor's pool: one inbound + one outbound grant ring per slot, split at boot into the
-/// reactor side (core 1's plumbing) and the interface side (core 0's USB seam / fleet wires).
-static IN_BUF: [ConstStaticCell<LaneBuf>; IFACES] =
-    [const { ConstStaticCell::new([EMPTY_SLOT; LANE_DEPTH]) }; IFACES];
-static IN_CH: [StaticCell<LaneChannel>; IFACES] = [const { StaticCell::new() }; IFACES];
-static OUT_BUF: [ConstStaticCell<LaneBuf>; IFACES] =
-    [const { ConstStaticCell::new([EMPTY_SLOT; LANE_DEPTH]) }; IFACES];
-static OUT_CH: [StaticCell<LaneChannel>; IFACES] = [const { StaticCell::new() }; IFACES];
-
-/// The reactor↔interface channels (cross-core via `CriticalSectionRawMutex`).
 static NOTIFY: Channel<Mtx, InterfaceId, NOTIFY_CAP> = Channel::new();
 static COMMANDS: Channel<Mtx, personal_rns::engine::IssuedCommand, COMMANDS_CAP> = Channel::new();
 static LIFECYCLE: Channel<Mtx, InterfaceLifecycle, LIFECYCLE_CAP> = Channel::new();
-/// The reactor's outbound-commit wake for the fleet lane: the egress (core 1) signals it on every
-/// commit so the supervisor's drain is roused across the core boundary (the outbound mirror of `NOTIFY`).
 static OUTBOUND_WAKE: Signal<Mtx, ()> = Signal::new();
-/// The BLE fleet's own outbound-commit wake (slot 4), so the BLE supervisor is roused only by its own
-/// egress and not spuriously by WiFi commits when the two fleets coexist.
 #[cfg(feature = "bluetooth-auto")]
 static BLE_OUTBOUND_WAKE: Signal<Mtx, ()> = Signal::new();
 static COMPLETION: CompletionPool<Mtx, COMPLETIONS_CAP> = CompletionPool::new();
@@ -336,7 +283,6 @@ fn hardware_entropy(bytes: &mut [u8]) {
     Rng::new().read(bytes);
 }
 
-/// The recipe's event sink — a fn (not a closure) so the node type stays nameable.
 fn ignore_events(_event: PrnsEvent<'_>, _state: &()) {}
 
 /// Print the allocator's per-region high-water footprint over the boot log: `External` is the
