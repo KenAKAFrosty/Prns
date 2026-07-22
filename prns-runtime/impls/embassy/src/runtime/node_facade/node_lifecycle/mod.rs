@@ -1,16 +1,16 @@
 use core::future::Future;
+use core::mem::MaybeUninit;
 
 use embassy_futures::join::join;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::{Channel, Receiver};
 use heapless::Vec as HeaplessVec;
+use static_cell::StaticCell;
 
 use crate::engine::{IssuedCommand, Journaled, MAX_SEND_REQUEST_DATA_LEN};
-use crate::interfaces::{IfacContext, InterfaceIfac};
-use crate::interfaces::{InterfaceDescriptor, InterfaceId};
-use crate::reactor::driver::{
-    run_pooled, EmbassyGrantConsumer, InterfaceLifecycle, PooledEgress, PooledWiring,
-};
+use crate::interfaces::{InterfaceDescriptor, InterfaceId, InterfaceIfac};
+use crate::reactor::driver::{run_pooled, InterfaceLifecycle, PooledEgress, PooledWiring};
+use crate::reactor::grant::ReactorLaneReader;
 use crate::reactor::Host;
 use crate::storage::StorageLayout;
 
@@ -21,13 +21,12 @@ use super::super::{
     PreConfiguredDestination, PrnsEvent, PrnsNodeRecipe,
 };
 use super::command_handle::PrnsNodeHandle;
+use prns_runtime::runtime::placement::assemble_node_in_place;
 use prns_runtime::runtime::{assemble_node, AssembledNode};
 
-/// Reactor-side endpoints for a board-owned static interface pool.
-pub struct ReactorPlumbing<
+pub struct ReactorWiring<
     M,
-    const SLOT: usize,
-    const IFACES: usize,
+    const LANE_COUNT: usize,
     const NOTIFY: usize,
     const COMMANDS: usize,
     const LIFECYCLE: usize,
@@ -35,45 +34,16 @@ pub struct ReactorPlumbing<
 > where
     M: RawMutex + 'static,
 {
-    inbound: HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, M, SLOT>), IFACES>,
-    egress: PooledEgress<M, SLOT, IFACES>,
-    notify: Receiver<'static, M, InterfaceId, NOTIFY>,
-    commands: Receiver<'static, M, IssuedCommand, COMMANDS>,
-    lifecycle: Receiver<'static, M, InterfaceLifecycle, LIFECYCLE>,
-    handle: PrnsNodeHandle<'static, M, COMMANDS, COMPLETIONS>,
+    pub(super) inbound: HeaplessVec<(InterfaceId, &'static mut dyn ReactorLaneReader), LANE_COUNT>,
+    pub(super) egress: PooledEgress<LANE_COUNT>,
+    pub(super) initial: HeaplessVec<InterfaceDescriptor, LANE_COUNT>,
+    pub(super) ifacs: HeaplessVec<InterfaceIfac, LANE_COUNT>,
+    pub(super) notify: Receiver<'static, M, InterfaceId, NOTIFY>,
+    pub(super) commands: Receiver<'static, M, IssuedCommand, COMMANDS>,
+    pub(super) lifecycle: Receiver<'static, M, InterfaceLifecycle, LIFECYCLE>,
+    pub(super) handle: PrnsNodeHandle<'static, M, COMMANDS, COMPLETIONS>,
 }
 
-impl<
-        M: RawMutex + 'static,
-        const SLOT: usize,
-        const IFACES: usize,
-        const NOTIFY: usize,
-        const COMMANDS: usize,
-        const LIFECYCLE: usize,
-        const COMPLETIONS: usize,
-    > ReactorPlumbing<M, SLOT, IFACES, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>
-{
-    #[must_use]
-    pub fn new(
-        inbound: HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, M, SLOT>), IFACES>,
-        egress: PooledEgress<M, SLOT, IFACES>,
-        notify: Receiver<'static, M, InterfaceId, NOTIFY>,
-        commands: Receiver<'static, M, IssuedCommand, COMMANDS>,
-        lifecycle: Receiver<'static, M, InterfaceLifecycle, LIFECYCLE>,
-        handle: PrnsNodeHandle<'static, M, COMMANDS, COMPLETIONS>,
-    ) -> Self {
-        Self {
-            inbound,
-            egress,
-            notify,
-            commands,
-            lifecycle,
-            handle,
-        }
-    }
-}
-
-/// An Embassy node over a board-owned static interface pool.
 pub struct PrnsNode<
     St,
     R,
@@ -81,9 +51,8 @@ pub struct PrnsNode<
     S,
     H,
     M,
-    const SLOT: usize,
-    const IFACES: usize,
-    const MAX_IFACES: usize,
+    const LANE_COUNT: usize,
+    const INTERFACE_CAPACITY: usize,
     const NOTIFY: usize,
     const COMMANDS: usize,
     const LIFECYCLE: usize,
@@ -95,15 +64,15 @@ pub struct PrnsNode<
     M: RawMutex + 'static,
 {
     node: AssembledNode<St, R, F, S>,
-    inbound: HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, M, SLOT>), IFACES>,
-    egress: PooledEgress<M, SLOT, IFACES>,
+    inbound: HeaplessVec<(InterfaceId, &'static mut dyn ReactorLaneReader), LANE_COUNT>,
+    egress: PooledEgress<LANE_COUNT>,
     notify: Receiver<'static, M, InterfaceId, NOTIFY>,
     commands: Receiver<'static, M, IssuedCommand, COMMANDS>,
     lifecycle: Receiver<'static, M, InterfaceLifecycle, LIFECYCLE>,
     handle: PrnsNodeHandle<'static, M, COMMANDS, COMPLETIONS>,
     host: H,
-    initial: HeaplessVec<InterfaceDescriptor, MAX_IFACES>,
-    ifacs: HeaplessVec<InterfaceIfac, IFACES>,
+    descriptors: HeaplessVec<InterfaceDescriptor, INTERFACE_CAPACITY>,
+    ifacs: HeaplessVec<InterfaceIfac, LANE_COUNT>,
 }
 
 pub struct RequestRoutingCapacity<const REQUESTS: usize, const REQUEST_BYTES: usize>;
@@ -132,9 +101,8 @@ impl<
         S,
         H,
         M,
-        const SLOT: usize,
-        const IFACES: usize,
-        const MAX_IFACES: usize,
+        const LANE_COUNT: usize,
+        const INTERFACE_CAPACITY: usize,
         const NOTIFY: usize,
         const COMMANDS: usize,
         const LIFECYCLE: usize,
@@ -147,9 +115,8 @@ impl<
         S,
         H,
         M,
-        SLOT,
-        IFACES,
-        MAX_IFACES,
+        LANE_COUNT,
+        INTERFACE_CAPACITY,
         NOTIFY,
         COMMANDS,
         LIFECYCLE,
@@ -166,14 +133,13 @@ where
 {
     pub fn new<'d, D>(
         recipe: PrnsNodeRecipe<D, St, R, F, Manual, S>,
-        plumbing: ReactorPlumbing<M, SLOT, IFACES, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
+        wiring: ReactorWiring<M, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
         host: H,
-        initial: HeaplessVec<InterfaceDescriptor, MAX_IFACES>,
     ) -> Self
     where
         D: IntoIterator<Item = PreConfiguredDestination<'d>>,
     {
-        Self::build(recipe, plumbing, host, initial)
+        Self::build(recipe, wiring, host)
     }
 }
 
@@ -184,9 +150,8 @@ impl<
         S,
         H,
         M,
-        const SLOT: usize,
-        const IFACES: usize,
-        const MAX_IFACES: usize,
+        const LANE_COUNT: usize,
+        const INTERFACE_CAPACITY: usize,
         const NOTIFY: usize,
         const COMMANDS: usize,
         const LIFECYCLE: usize,
@@ -201,9 +166,8 @@ impl<
         S,
         H,
         M,
-        SLOT,
-        IFACES,
-        MAX_IFACES,
+        LANE_COUNT,
+        INTERFACE_CAPACITY,
         NOTIFY,
         COMMANDS,
         LIFECYCLE,
@@ -218,137 +182,113 @@ where
     H: Host,
     M: RawMutex + 'static,
 {
+    #[expect(
+        unsafe_code,
+        clippy::undocumented_unsafe_blocks,
+        clippy::mut_from_ref,
+        reason = "every PrnsNode field is initialized before the slot is exposed"
+    )]
+    pub fn init_static<'d, D>(
+        cell: &'static StaticCell<Self>,
+        recipe: PrnsNodeRecipe<D, St, R, F, Manual, S>,
+        wiring: ReactorWiring<M, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
+        host: H,
+    ) -> &'static mut Self
+    where
+        D: IntoIterator<Item = PreConfiguredDestination<'d>>,
+    {
+        const {
+            assert!(
+                INTERFACE_CAPACITY >= LANE_COUNT,
+                "PrnsNode INTERFACE_CAPACITY must cover every reactor lane"
+            );
+        }
+        let slot = cell.uninit();
+        let ReactorWiring {
+            inbound,
+            egress,
+            initial,
+            ifacs,
+            notify,
+            commands,
+            lifecycle,
+            handle,
+        } = wiring;
+        let node = slot.as_mut_ptr();
+        unsafe {
+            let assembled = &mut *core::ptr::addr_of_mut!((*node).node)
+                .cast::<MaybeUninit<AssembledNode<St, R, F, S>>>();
+            let (_, Manual) = assemble_node_in_place(assembled, recipe);
+            core::ptr::addr_of_mut!((*node).inbound).write(inbound);
+            core::ptr::addr_of_mut!((*node).egress).write(egress);
+            core::ptr::addr_of_mut!((*node).notify).write(notify);
+            core::ptr::addr_of_mut!((*node).commands).write(commands);
+            core::ptr::addr_of_mut!((*node).lifecycle).write(lifecycle);
+            core::ptr::addr_of_mut!((*node).handle).write(handle);
+            core::ptr::addr_of_mut!((*node).host).write(host);
+            core::ptr::addr_of_mut!((*node).descriptors).write(HeaplessVec::new());
+            core::ptr::addr_of_mut!((*node).ifacs).write(ifacs);
+        }
+        let node = unsafe { slot.assume_init_mut() };
+        for descriptor in initial {
+            if node.descriptors.push(descriptor).is_err() {
+                unreachable!()
+            }
+        }
+        node
+    }
+
     pub fn new_with_request_capacity<'d, D>(
         recipe: PrnsNodeRecipe<D, St, R, F, Manual, S>,
-        plumbing: ReactorPlumbing<M, SLOT, IFACES, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
+        wiring: ReactorWiring<M, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
         host: H,
-        initial: HeaplessVec<InterfaceDescriptor, MAX_IFACES>,
         _capacity: RequestRoutingCapacity<ROUTED_REQUESTS, ROUTED_REQUEST_BYTES>,
     ) -> Self
     where
         D: IntoIterator<Item = PreConfiguredDestination<'d>>,
     {
-        Self::build(recipe, plumbing, host, initial)
+        Self::build(recipe, wiring, host)
     }
 
     fn build<'d, D>(
         recipe: PrnsNodeRecipe<D, St, R, F, Manual, S>,
-        plumbing: ReactorPlumbing<M, SLOT, IFACES, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
+        wiring: ReactorWiring<M, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
         host: H,
-        initial: HeaplessVec<InterfaceDescriptor, MAX_IFACES>,
     ) -> Self
     where
         D: IntoIterator<Item = PreConfiguredDestination<'d>>,
     {
+        const {
+            assert!(
+                INTERFACE_CAPACITY >= LANE_COUNT,
+                "PrnsNode INTERFACE_CAPACITY must cover every reactor lane"
+            );
+        }
         let (node, Manual) = assemble_node(recipe);
+        let mut descriptors = HeaplessVec::new();
+        for descriptor in wiring.initial {
+            if descriptors.push(descriptor).is_err() {
+                unreachable!()
+            }
+        }
 
         PrnsNode {
             node,
-            inbound: plumbing.inbound,
-            egress: plumbing.egress,
-            notify: plumbing.notify,
-            commands: plumbing.commands,
-            lifecycle: plumbing.lifecycle,
-            handle: plumbing.handle,
+            inbound: wiring.inbound,
+            egress: wiring.egress,
+            notify: wiring.notify,
+            commands: wiring.commands,
+            lifecycle: wiring.lifecycle,
+            handle: wiring.handle,
             host,
-            initial,
-            ifacs: HeaplessVec::new(),
+            descriptors,
+            ifacs: wiring.ifacs,
         }
     }
 
     #[must_use]
     pub fn handle(&self) -> PrnsNodeHandle<'static, M, COMMANDS, COMPLETIONS> {
         self.handle
-    }
-
-    pub fn activate(&mut self, slot: usize, descriptor: InterfaceDescriptor) {
-        let _ = self.activate_access(slot, descriptor, None);
-    }
-
-    pub fn activate_with_ifac(
-        &mut self,
-        slot: usize,
-        descriptor: InterfaceDescriptor,
-        context: IfacContext,
-    ) -> bool {
-        self.activate_access(slot, descriptor, Some(context))
-    }
-
-    fn activate_access(
-        &mut self,
-        slot: usize,
-        descriptor: InterfaceDescriptor,
-        context: Option<IfacContext>,
-    ) -> bool {
-        if let Some(entry) = self.inbound.get_mut(slot) {
-            let old_id = entry.0;
-            if let Some(position) = self.ifacs.iter().position(|ifac| ifac.id == old_id) {
-                let _ = self.ifacs.swap_remove(position);
-            }
-            if let Some(context) = context {
-                if self
-                    .ifacs
-                    .push(InterfaceIfac {
-                        id: descriptor.id,
-                        context,
-                    })
-                    .is_err()
-                {
-                    return false;
-                }
-            }
-            entry.0 = descriptor.id;
-            self.egress.activate(slot, descriptor.id);
-            let _ = self.initial.push(descriptor);
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Assigns one pool lane to a supervisor without adding an engine interface.
-    pub fn activate_fleet(&mut self, slot: usize, supervisor: InterfaceId) {
-        let _ = self.activate_fleet_access(slot, supervisor, None);
-    }
-
-    pub fn activate_fleet_with_ifac(
-        &mut self,
-        slot: usize,
-        supervisor: InterfaceId,
-        context: IfacContext,
-    ) -> bool {
-        self.activate_fleet_access(slot, supervisor, Some(context))
-    }
-
-    fn activate_fleet_access(
-        &mut self,
-        slot: usize,
-        supervisor: InterfaceId,
-        context: Option<IfacContext>,
-    ) -> bool {
-        if let Some(entry) = self.inbound.get_mut(slot) {
-            let old_id = entry.0;
-            if let Some(position) = self.ifacs.iter().position(|ifac| ifac.id == old_id) {
-                let _ = self.ifacs.swap_remove(position);
-            }
-            if let Some(context) = context {
-                if self
-                    .ifacs
-                    .push(InterfaceIfac {
-                        id: supervisor,
-                        context,
-                    })
-                    .is_err()
-                {
-                    return false;
-                }
-            }
-            entry.0 = supervisor;
-            self.egress.activate(slot, supervisor);
-            true
-        } else {
-            false
-        }
     }
 
     /// Runs the reactor with the caller's interface and supervisor tasks.
@@ -370,8 +310,8 @@ where
     {
         const {
             assert!(
-                INTERFACES >= MAX_IFACES,
-                "EmbassyInterfaceStore INTERFACES must cover PrnsNode MAX_IFACES"
+                INTERFACES >= INTERFACE_CAPACITY,
+                "EmbassyInterfaceStore INTERFACES must cover PrnsNode INTERFACE_CAPACITY"
             );
         }
         self.run_with_inspection_store(store, drive).await;
@@ -390,7 +330,7 @@ where
             lifecycle,
             handle,
             mut host,
-            initial,
+            mut descriptors,
             mut ifacs,
         } = self;
         let AssembledNode {
@@ -406,7 +346,7 @@ where
             &mut engine,
             &mut host,
             PooledWiring {
-                initial: &initial,
+                descriptors: &mut descriptors,
                 ifacs: &mut ifacs,
                 inbound: &mut inbound,
                 egress: &mut egress,
@@ -455,8 +395,8 @@ where
     {
         const {
             assert!(
-                INTERFACES >= MAX_IFACES,
-                "EmbassyInterfaceStore INTERFACES must cover PrnsNode MAX_IFACES"
+                INTERFACES >= INTERFACE_CAPACITY,
+                "EmbassyInterfaceStore INTERFACES must cover PrnsNode INTERFACE_CAPACITY"
             );
         }
         self.run_reactor_with_inspection_store(store).await;
@@ -475,7 +415,7 @@ where
             lifecycle,
             handle,
             host,
-            initial,
+            descriptors,
             ifacs,
         } = self;
         let AssembledNode {
@@ -491,7 +431,7 @@ where
             engine,
             host,
             PooledWiring {
-                initial: &*initial,
+                descriptors,
                 ifacs,
                 inbound,
                 egress,

@@ -3,6 +3,8 @@ use super::captive_portal::station_wifi_mode;
 #[cfg(feature = "wifi-auto")]
 use super::captive_portal::{build_ap_netif, dhcp_server_task, dns_server_task, http_server_task};
 use super::*;
+#[cfg(feature = "wifi-auto")]
+use static_cell::ConstStaticCell;
 
 pub(super) fn build_tcp(
     stack: Stack<'static>,
@@ -308,6 +310,15 @@ pub(super) async fn net_task(mut runner: Runner<'static, WifiStaDevice<'static>>
 }
 
 #[cfg(feature = "wifi-auto")]
+const WIFI_LINK_CHECK_INTERVAL: Duration = Duration::from_secs(2);
+#[cfg(feature = "wifi-auto")]
+const WIFI_RETRY_DELAY: Duration = Duration::from_secs(2);
+#[cfg(feature = "wifi-auto")]
+const WIFI_SCAN_TIMEOUT: Duration = Duration::from_secs(10);
+#[cfg(feature = "wifi-auto")]
+const WIFI_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+
+#[cfg(feature = "wifi-auto")]
 /// A mesh (e.g. eero) hands the same SSID out on many BSSIDs across its nodes and bands and bridges
 /// multicast between them unreliably, so a station left to roam can land on a node that never
 /// receives the discovery group. To avoid that, this scans first and pins to the strongest BSSID
@@ -335,48 +346,84 @@ async fn wifi_connect_task(
         }
         if controller.is_connected() {
             WIFI_STATION_JOINED.store(true, Ordering::Relaxed);
-            let _ = embassy_futures::select::select(
-                Timer::after(Duration::from_secs(2)),
+            match select3(
+                controller.wait_for_disconnect_async(),
                 status.wait_until_radio_disabled(),
+                Timer::after(WIFI_LINK_CHECK_INTERVAL),
             )
-            .await;
+            .await
+            {
+                Either3::First(Ok(disconnected)) => {
+                    log::warn!(
+                        "wifi: station disconnected ({:?}, rssi {})",
+                        disconnected.reason,
+                        disconnected.rssi
+                    );
+                }
+                Either3::First(Err(error)) => {
+                    log::warn!("wifi: disconnect monitor failed: {error:?}");
+                }
+                Either3::Second(()) => {
+                    let _ = controller.disconnect_async().await;
+                }
+                Either3::Third(()) => continue,
+            }
+            WIFI_STATION_JOINED.store(false, Ordering::Relaxed);
             continue;
         }
         WIFI_STATION_JOINED.store(false, Ordering::Relaxed);
         let mut station = base.clone();
         let scan = embassy_futures::select::select(
-            controller.scan_async(&ScanConfig::default()),
+            with_timeout(
+                WIFI_SCAN_TIMEOUT,
+                controller.scan_async(&ScanConfig::default()),
+            ),
             status.wait_until_radio_disabled(),
         )
         .await;
-        if let embassy_futures::select::Either::First(Ok(networks)) = scan {
-            let mut best: Option<([u8; 6], u8, i8)> = None;
-            for ap in &networks {
-                if ap.ssid.as_str() == config.ssid.as_str()
-                    && best.is_none_or(|(_, _, rssi)| ap.signal_strength > rssi)
-                {
-                    best = Some((ap.bssid, ap.channel, ap.signal_strength));
+        match scan {
+            embassy_futures::select::Either::First(Ok(Ok(networks))) => {
+                let mut best: Option<([u8; 6], u8, i8)> = None;
+                for ap in &networks {
+                    if ap.ssid.as_str() == config.ssid.as_str()
+                        && best.is_none_or(|(_, _, rssi)| ap.signal_strength > rssi)
+                    {
+                        best = Some((ap.bssid, ap.channel, ap.signal_strength));
+                    }
+                }
+                if let Some((bssid, channel, rssi)) = best {
+                    log::info!(
+                        "wifi: pinned to BSSID {:02x?} channel {} (rssi {})",
+                        bssid,
+                        channel,
+                        rssi
+                    );
+                    station = base.clone().with_bssid(bssid).with_channel(channel);
+                } else {
+                    log::warn!("wifi: configured network absent from scan");
                 }
             }
-            if let Some((bssid, channel, rssi)) = best {
-                log::info!(
-                    "wifi: pinned to BSSID {:02x?} channel {} (rssi {})",
-                    bssid,
-                    channel,
-                    rssi
-                );
-                station = base.clone().with_bssid(bssid).with_channel(channel);
+            embassy_futures::select::Either::First(Ok(Err(error))) => {
+                log::warn!("wifi: scan failed: {error:?}");
+                Timer::after(WIFI_RETRY_DELAY).await;
+                continue;
+            }
+            embassy_futures::select::Either::First(Err(_)) => {
+                log::warn!("wifi: scan timed out");
+                Timer::after(WIFI_RETRY_DELAY).await;
+                continue;
+            }
+            embassy_futures::select::Either::Second(()) => {
+                continue;
             }
         }
         if !status.is_enabled() {
             continue;
         }
-        if controller
-            .set_config(&station_wifi_mode(station, ap_enabled))
-            .is_err()
-        {
+        if let Err(error) = controller.set_config(&station_wifi_mode(station, ap_enabled)) {
+            log::warn!("wifi: station configuration failed: {error:?}");
             let _ = embassy_futures::select::select(
-                Timer::after(Duration::from_secs(2)),
+                Timer::after(WIFI_RETRY_DELAY),
                 status.wait_until_radio_disabled(),
             )
             .await;
@@ -386,19 +433,43 @@ async fn wifi_connect_task(
             continue;
         }
         let connected = embassy_futures::select::select(
-            controller.connect_async(),
+            with_timeout(WIFI_CONNECT_TIMEOUT, controller.connect_async()),
             status.wait_until_radio_disabled(),
         )
         .await;
         match connected {
-            embassy_futures::select::Either::First(Ok(_)) => {
+            embassy_futures::select::Either::First(Ok(Ok(connected))) => {
                 WIFI_STATION_JOINED.store(true, Ordering::Relaxed);
-                let _ = controller.set_power_saving(PowerSaveMode::Minimum);
+                log::info!(
+                    "wifi: station connected to BSSID {:02x?} channel {}",
+                    connected.bssid,
+                    connected.channel
+                );
+                if let Err(error) = controller.set_power_saving(PowerSaveMode::None) {
+                    log::warn!("wifi: power-save configuration failed: {error:?}");
+                }
+            }
+            embassy_futures::select::Either::First(Ok(Err(error))) => {
+                WIFI_STATION_JOINED.store(false, Ordering::Relaxed);
+                match error {
+                    WifiError::Disconnected(disconnected) => log::warn!(
+                        "wifi: station connection failed ({:?}, rssi {})",
+                        disconnected.reason,
+                        disconnected.rssi
+                    ),
+                    other => log::warn!("wifi: station connection failed: {other:?}"),
+                }
+                let _ = embassy_futures::select::select(
+                    Timer::after(WIFI_RETRY_DELAY),
+                    status.wait_until_radio_disabled(),
+                )
+                .await;
             }
             embassy_futures::select::Either::First(Err(_)) => {
                 WIFI_STATION_JOINED.store(false, Ordering::Relaxed);
+                log::warn!("wifi: station connection timed out");
                 let _ = embassy_futures::select::select(
-                    Timer::after(Duration::from_secs(2)),
+                    Timer::after(WIFI_RETRY_DELAY),
                     status.wait_until_radio_disabled(),
                 )
                 .await;

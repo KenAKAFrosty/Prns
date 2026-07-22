@@ -820,6 +820,7 @@ dependencies = [
  "portable-atomic",
  "prns-core",
  "prns-runtime",
+ "static_cell",
 ]
 
 [[package]]

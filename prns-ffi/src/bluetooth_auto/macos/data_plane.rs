@@ -16,6 +16,8 @@ use tokio::sync::{mpsc as tokio_mpsc, oneshot};
 
 use prns_core::interfaces::bluetooth_auto::{BLE_HW_MTU, STREAM_FRAME_PREFIX_LEN};
 
+use super::{core_bluetooth_peer_id, CoreBluetoothPeerId};
+
 pub(super) const L2CAP_SDU_LEN: usize = STREAM_FRAME_PREFIX_LEN + BLE_HW_MTU;
 const READ_CHUNK: usize = L2CAP_SDU_LEN;
 const READ_EVENTS: CFOptionFlags = CFStreamEventType::HasBytesAvailable.0
@@ -182,12 +184,17 @@ unsafe extern "C-unwind" fn write_cb(
 pub(super) fn wire_l2cap(
     channel: &CBL2CAPChannel,
     queue: &DispatchRetained<DispatchQueue>,
-) -> Option<DataPlane> {
-    // SAFETY: CoreBluetooth supplied a live retained channel, and its stream accessors return
-    // retained objects whose runtime types match the generated bindings.
-    let input = unsafe { channel.inputStream() }?;
-    // SAFETY: as above, the live channel owns a correctly typed output stream.
-    let output = unsafe { channel.outputStream() }?;
+) -> Option<(CoreBluetoothPeerId, DataPlane)> {
+    // SAFETY: CoreBluetooth supplied a live retained channel, and its accessors return retained
+    // objects whose runtime types match the generated bindings.
+    let (peer_id, input, output) = unsafe {
+        let peer = channel.peer()?;
+        (
+            core_bluetooth_peer_id(&peer),
+            channel.inputStream()?,
+            channel.outputStream()?,
+        )
+    };
     let (inbound_tx, inbound_rx) = tokio_mpsc::channel::<Box<[u8]>>(16);
     let outbound = Arc::new(Mutex::new(Outbound {
         pending: VecDeque::new(),
@@ -221,16 +228,19 @@ pub(super) fn wire_l2cap(
         pump_ref.input.open();
         pump_ref.output.open();
     }
-    Some(DataPlane {
-        inbound_rx,
-        outbound,
-        queue: queue.clone(),
-        pump_ptr: PumpPtr(pump),
-        pump: Arc::new(PumpHandle {
-            ptr: pump,
+    Some((
+        peer_id,
+        DataPlane {
+            inbound_rx,
+            outbound,
             queue: queue.clone(),
-        }),
-    })
+            pump_ptr: PumpPtr(pump),
+            pump: Arc::new(PumpHandle {
+                ptr: pump,
+                queue: queue.clone(),
+            }),
+        },
+    ))
 }
 
 pub(super) struct DataPlane {
@@ -270,10 +280,5 @@ impl PendingL2cap {
             }
             None => self.waiters.push_back(tx),
         }
-    }
-
-    pub(super) fn clear(&mut self) {
-        self.waiters.clear();
-        self.ready.clear();
     }
 }

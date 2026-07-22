@@ -1,4 +1,5 @@
 use core::marker::PhantomData;
+use core::mem::MaybeUninit;
 
 use crate::engine::EngineState;
 use crate::engine::RatchetPolicy;
@@ -165,30 +166,79 @@ where
         on_event,
     } = recipe;
 
-    let mut engine = EngineState::<S>::default();
+    let mut node = AssembledNode {
+        engine: EngineState::<S>::default(),
+        state: app_state,
+        on_event,
+        routes: PhantomData,
+    };
+    configure_assembled_node(&mut node, pre_configured_destinations, transport_identity);
+    (node, interfaces)
+}
+
+#[expect(
+    unsafe_code,
+    clippy::undocumented_unsafe_blocks,
+    reason = "every AssembledNode field is initialized before the slot is exposed"
+)]
+pub fn assemble_node_in_place<'a, 'slot, D, St, R, F, I, S>(
+    slot: &'slot mut MaybeUninit<AssembledNode<St, R, F, S>>,
+    recipe: PrnsNodeRecipe<D, St, R, F, I, S>,
+) -> (&'slot mut AssembledNode<St, R, F, S>, I)
+where
+    D: IntoIterator<Item = PreConfiguredDestination<'a>>,
+    R: RouteSet<St>,
+    F: FnMut(PrnsEvent<'_>, &St),
+    S: StorageLayout,
+{
+    let PrnsNodeRecipe {
+        transport_identity,
+        pre_configured_destinations,
+        app_state,
+        storage: _,
+        routes: _,
+        interfaces,
+        on_event,
+    } = recipe;
+    let node = slot.as_mut_ptr();
+    unsafe {
+        let engine =
+            &mut *core::ptr::addr_of_mut!((*node).engine).cast::<MaybeUninit<EngineState<S>>>();
+        EngineState::init_in_place(engine);
+        core::ptr::addr_of_mut!((*node).state).write(app_state);
+        core::ptr::addr_of_mut!((*node).on_event).write(on_event);
+        core::ptr::addr_of_mut!((*node).routes).write(PhantomData);
+    }
+    let node = unsafe { slot.assume_init_mut() };
+    configure_assembled_node(node, pre_configured_destinations, transport_identity);
+    (node, interfaces)
+}
+
+#[allow(clippy::expect_used)]
+fn configure_assembled_node<'a, D, St, R, F, S>(
+    node: &mut AssembledNode<St, R, F, S>,
+    pre_configured_destinations: D,
+    transport_identity: Option<Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>>,
+) where
+    D: IntoIterator<Item = PreConfiguredDestination<'a>>,
+    R: RouteSet<St>,
+    F: FnMut(PrnsEvent<'_>, &St),
+    S: StorageLayout,
+{
     for destination in pre_configured_destinations {
-        configure_preconfigured_destination::<St, R, S>(&mut engine, destination)
+        configure_preconfigured_destination::<St, R, S>(&mut node.engine, destination)
             .expect("recipe destination is valid and fits the store");
     }
 
     if let Some(secret) = transport_identity {
-        let identity = engine
+        let identity = node
+            .engine
             .hold_identity(secret)
             .expect("the transport identity fits the held-identity store");
-        engine
+        node.engine
             .set_transport_identity(&identity)
             .expect("the transport identity was just held");
     }
-
-    (
-        AssembledNode {
-            engine,
-            state: app_state,
-            on_event,
-            routes: PhantomData,
-        },
-        interfaces,
-    )
 }
 
 #[cfg(test)]
@@ -197,6 +247,7 @@ mod tests {
     use crate::identity::IdentityHash;
     use crate::routing::request_handlers::RequestPathHash;
     use crate::runtime::request_router::{Decline, RequestContext, RoutePolicy};
+    use crate::runtime::Manual;
     use crate::storage::TestFixedStorage;
 
     type Storage = TestFixedStorage<4, 4, 128, 4, 4, 4, 2, 2, 2, 2, 2, 2>;
@@ -255,5 +306,30 @@ mod tests {
             engine.allow_requester(&destination, "/test", IdentityHash::new([0x22; 16])),
             Err(RequestHandlerError::NoSuchHandler)
         );
+    }
+
+    #[test]
+    fn in_place_assembly_initializes_and_configures_the_node() {
+        let mut slot = MaybeUninit::uninit();
+        let storage: Storage = TestFixedStorage;
+        let (node, Manual) = assemble_node_in_place(
+            &mut slot,
+            PrnsNodeRecipe {
+                transport_identity: Some(Zeroizing::new([0x33; IDENTITY_SECRET_KEY_LEN])),
+                pre_configured_destinations: [PreConfiguredDestination::Plain {
+                    app_name: "test",
+                    aspects: &["plain"],
+                }],
+                app_state: (),
+                storage,
+                routes: Routes,
+                interfaces: Manual,
+                on_event: |_, _| {},
+            },
+        );
+
+        assert!(node.engine.network_transport_enabled());
+        assert_eq!(node.engine.held_identity_hashes().len(), 1);
+        assert_eq!(node.engine.upstream_app_destinations().count(), 1);
     }
 }

@@ -8,7 +8,7 @@ use objc2::rc::Retained;
 #[cfg(not(target_os = "ios"))]
 use objc2::runtime::AnyObject;
 use objc2::runtime::ProtocolObject;
-use objc2::{AnyThread, DefinedClass};
+use objc2::AnyThread;
 use objc2_core_bluetooth::{CBCentralManager, CBPeripheralManager};
 #[cfg(not(target_os = "ios"))]
 use objc2_foundation::{NSDictionary, NSString};
@@ -20,7 +20,7 @@ use prns_core::interfaces::bluetooth_auto::{
 };
 use prns_core::interfaces::bluetooth_auto::{BleAddress, BleIdentity, Control, Psm};
 
-use super::central::{CentralDelegate, DialChars, DialCommand, DialSession};
+use super::central::{CentralDelegate, CentralPeerSession, DialCommand, DialCompletion};
 use super::gatt_link::{ControlPlane, GattLink};
 use super::peripheral::PeripheralDelegate;
 #[cfg(target_os = "ios")]
@@ -33,11 +33,27 @@ use super::{
 const POWER_ON_TIMEOUT: Duration = Duration::from_secs(10);
 const DIAL_TIMEOUT: Duration = Duration::from_secs(15);
 
+fn cancel_connection(central: &SendCentralManager, peripheral: &SendPeripheral) {
+    // SAFETY: both retained objects remain alive through this call and are messaged only on the
+    // CoreBluetooth serial dispatch queue.
+    unsafe { central.0.cancelPeripheralConnection(&peripheral.0) };
+}
+
 struct Handles {
     central: SendCentralManager,
     central_delegate: SendCentralDelegate,
     peripheral_delegate: SendPeripheralDelegate,
     queue: DispatchRetained<DispatchQueue>,
+}
+
+enum DialTaskOutcome {
+    Ready {
+        link: GattLink,
+        peer_rssi: Option<i8>,
+    },
+    Failed {
+        address: BleAddress,
+    },
 }
 
 pub struct MacosBleBackend {
@@ -50,7 +66,7 @@ pub struct MacosBleBackend {
     peripheral_delegate: SendPeripheralDelegate,
     peripherals: PeripheralTable,
     restored: RestoredPeripherals,
-    dials: JoinSet<Option<(GattLink, Option<i8>)>>,
+    dials: JoinSet<DialTaskOutcome>,
     queue: DispatchRetained<DispatchQueue>,
 }
 
@@ -215,14 +231,14 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
 
     async fn next_event(&mut self) -> BleEvent<GattLink> {
         loop {
-            if let Some(token) = self
+            if let Some(peer_id) = self
                 .restored
                 .lock()
                 .ok()
                 .and_then(|mut queue| queue.pop_front())
             {
                 return BleEvent::Sighting {
-                    address: BleAddress::new(token),
+                    address: peer_id.address(),
                     rssi: None,
                 };
             }
@@ -241,12 +257,18 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
                     None => core::future::pending().await,
                 },
                 Some(done) = self.dials.join_next(), if pending_dials => {
-                    if let Ok(Some((link, peer_rssi))) = done {
-                        return BleEvent::LinkReady {
-                            link,
-                            origin: Origin::Dialed,
-                            peer_rssi,
-                        };
+                    match done {
+                        Ok(DialTaskOutcome::Ready { link, peer_rssi }) => {
+                            return BleEvent::LinkReady {
+                                link,
+                                origin: Origin::Dialed,
+                                peer_rssi,
+                            };
+                        }
+                        Ok(DialTaskOutcome::Failed { address }) => {
+                            return BleEvent::DialFailed { address };
+                        }
+                        Err(_) => continue,
                     }
                 }
             }
@@ -255,36 +277,27 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
 
     async fn dial(&mut self, address: BleAddress) {
         let token = *address.octets();
-        let Some((peripheral, peer_rssi)) = self
-            .peripherals
-            .lock()
-            .ok()
-            .and_then(|map| map.get(&token).map(|(p, rssi)| (p.0.clone(), *rssi)))
-        else {
+        let Some((peer_id, peripheral, peer_rssi)) = self.peripherals.lock().ok().and_then(|map| {
+            map.iter()
+                .find(|(peer_id, _)| peer_id.address().octets() == &token)
+                .map(|(peer_id, (peripheral, rssi))| (*peer_id, peripheral.0.clone(), *rssi))
+        }) else {
             crate::diagnostic_log::warn!(
                 "bluetooth: dial to {token:02x?} — peripheral not yet sighted"
             );
+            self.dials
+                .spawn(async move { DialTaskOutcome::Failed { address } });
             return;
         };
         let (control_tx, control_rx) = tokio_mpsc::channel::<Control>(8);
-        let (result_tx, result_rx) = oneshot::channel::<DialChars>();
+        let (completion_tx, completion_rx) = oneshot::channel::<DialCompletion>();
         let (data_inbound_tx, data_inbound_rx) = tokio_mpsc::channel::<Box<[u8]>>(16);
         let command = DialCommand {
             central: self.central.0.clone(),
             delegate: self.central_delegate.0.clone(),
             peripheral: peripheral.clone(),
-            session: DialSession {
-                address,
-                control_tx,
-                result_tx: Some(result_tx),
-                data_tx: data_inbound_tx,
-                data_char: None,
-                peer_protocol: None,
-                columba_write: None,
-                columba_notify: None,
-                peer_identity: None,
-                columba_notify_ready: false,
-            },
+            peer_id,
+            session: CentralPeerSession::new(address, control_tx, completion_tx, data_inbound_tx),
         };
         crate::diagnostic_log::debug!("bluetooth: dialing {token:02x?} over LE (central role)");
         self.queue.exec_async(move || {
@@ -296,7 +309,12 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
                     .peripheral
                     .setDelegate(Some(ProtocolObject::from_ref(&*command.delegate)));
             }
-            *command.delegate.ivars().session.borrow_mut() = Some(command.session);
+            if !command
+                .delegate
+                .begin_session(command.peer_id, command.session)
+            {
+                return;
+            }
             // SAFETY: the retained manager and peripheral are both owned by this queued command,
             // and CoreBluetooth connection calls are serialized on their dispatch queue.
             unsafe {
@@ -307,21 +325,35 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
         });
         let send_peripheral = SendPeripheral(peripheral);
         let send_peripheral_manager = SendPeripheralDelegate(self.peripheral_delegate.0.clone());
+        let central = SendCentralManager(self.central.0.clone());
+        let delegate = SendCentralDelegate(self.central_delegate.0.clone());
+        let queue = self.queue.clone();
         self.dials.spawn(async move {
-            let chars = match tokio::time::timeout(DIAL_TIMEOUT, result_rx).await {
-                Ok(Ok(chars)) => chars,
-                _ => {
+            let chars = match tokio::time::timeout(DIAL_TIMEOUT, completion_rx).await {
+                Ok(Ok(DialCompletion::Ready(chars))) => chars,
+                Ok(Ok(DialCompletion::Rejected)) => {
+                    return DialTaskOutcome::Failed { address };
+                }
+                Ok(Ok(DialCompletion::Failed)) | Ok(Err(_)) | Err(_) => {
                     crate::diagnostic_log::warn!(
                         "bluetooth: dial to {token:02x?} did not reach control-ready"
                     );
-                    return None;
+                    queue.exec_async(move || {
+                        let central = central;
+                        let delegate = delegate;
+                        let peripheral = send_peripheral;
+                        delegate.0.remove_session(peer_id);
+                        cancel_connection(&central, &peripheral);
+                    });
+                    return DialTaskOutcome::Failed { address };
                 }
             };
-            Some((
-                GattLink {
+            DialTaskOutcome::Ready {
+                link: GattLink {
                     peer_protocol: chars.peer_protocol,
                     peer_identity: chars.peer_identity,
                     control: ControlPlane::Central {
+                        peer_id,
                         peripheral: send_peripheral,
                         characteristic: chars.control,
                         data_characteristic: chars.data,
@@ -333,18 +365,17 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
                     l2cap_pending: None,
                 },
                 peer_rssi,
-            ))
+            }
         });
     }
 
     async fn on_link_closed(&mut self, address: BleAddress) {
         let token = *address.octets();
-        if let Some(peripheral) = self
-            .peripherals
-            .lock()
-            .ok()
-            .and_then(|map| map.get(&token).map(|(p, _)| p.0.clone()))
-        {
+        if let Some((peer_id, peripheral)) = self.peripherals.lock().ok().and_then(|map| {
+            map.iter()
+                .find(|(peer_id, _)| peer_id.address().octets() == &token)
+                .map(|(peer_id, (peripheral, _))| (*peer_id, peripheral.0.clone()))
+        }) {
             let peripheral = SendPeripheral(peripheral);
             let central = SendCentralManager(self.central.0.clone());
             let delegate = SendCentralDelegate(self.central_delegate.0.clone());
@@ -352,12 +383,10 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
                 let central = central;
                 let delegate = delegate;
                 let peripheral = peripheral;
-                delegate.0.clear_session();
-                // SAFETY: both retained objects remain alive through this call and are messaged
-                // only on the CoreBluetooth serial dispatch queue.
-                unsafe { central.0.cancelPeripheralConnection(&peripheral.0) };
+                delegate.0.remove_session(peer_id);
+                cancel_connection(&central, &peripheral);
             });
         }
-        self.peripheral_delegate.0.clear_active(token);
+        self.peripheral_delegate.0.clear_peer(address);
     }
 }

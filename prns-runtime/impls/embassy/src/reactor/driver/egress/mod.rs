@@ -1,17 +1,14 @@
-use embassy_sync::blocking_mutex::raw::RawMutex;
 use heapless::Vec as HeaplessVec;
 
 use crate::engine::{EngineReaction, FanTarget, InstantMillis, Journaled};
 use crate::interfaces::InterfaceIfac;
 use crate::interfaces::{InterfaceDescriptor, InterfaceId, InterfaceKind};
 use crate::reactor::announce_pacer::{AnnouncePacer, FixedPacerQueue};
-use crate::reactor::grant::AnyGrantProducer;
+use crate::reactor::grant::{FrameTarget, ReactorLaneWriter};
 use crate::reactor::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
 use crate::reactor::kernel::{
     route_reaction as route_engine_reaction, AnnounceDirective, DirectiveEgress,
 };
-
-use super::EmbassyGrantProducer;
 
 fn lane_serves(lane_key: InterfaceId, target: InterfaceId) -> bool {
     if lane_key == target {
@@ -37,12 +34,12 @@ pub trait ReactorEgress {
 
 /// Fixed-set egress with erased slot sizes, allowing heterogeneous lanes in one borrowed slice without allocation.
 pub struct EmbassyEgress<'a> {
-    lanes: &'a mut [(InterfaceId, &'a mut dyn AnyGrantProducer)],
+    lanes: &'a mut [(InterfaceId, &'a mut dyn ReactorLaneWriter)],
 }
 
 impl<'a> EmbassyEgress<'a> {
     #[must_use]
-    pub fn new(lanes: &'a mut [(InterfaceId, &'a mut dyn AnyGrantProducer)]) -> Self {
+    pub fn new(lanes: &'a mut [(InterfaceId, &'a mut dyn ReactorLaneWriter)]) -> Self {
         Self { lanes }
     }
 }
@@ -51,7 +48,7 @@ impl ReactorEgress for EmbassyEgress<'_> {
     fn enqueue(&mut self, target: InterfaceId, bytes: &[u8]) {
         for (id, producer) in self.lanes.iter_mut() {
             if lane_serves(*id, target) {
-                let _ = producer.try_fill_frame_for(target, bytes);
+                let _ = producer.try_write(FrameTarget::Direct(target), bytes);
                 return;
             }
         }
@@ -60,7 +57,7 @@ impl ReactorEgress for EmbassyEgress<'_> {
     fn enqueue_broadcast(&mut self, supervisor: InterfaceKind, fan: FanTarget, bytes: &[u8]) {
         for (id, producer) in self.lanes.iter_mut() {
             if id.kind() == Some(supervisor) {
-                let _ = producer.try_fill_frame_fan(fan, bytes);
+                let _ = producer.try_write(FrameTarget::Fan(fan), bytes);
                 return;
             }
         }
@@ -266,23 +263,26 @@ pub(super) fn soonest_pacer_release(pacers: &[InterfacePacer]) -> Option<Instant
         .min_by_key(|deadline| deadline.0)
 }
 
-/// Dynamic egress over a fixed, uniformly sized lane pool tagged by interface or fleet supervisor.
-pub struct PooledEgress<M: RawMutex + 'static, const SLOT: usize, const N: usize> {
-    pub(super) lanes: HeaplessVec<(InterfaceId, EmbassyGrantProducer<'static, M, SLOT>), N>,
+pub struct PooledEgress<const LANE_COUNT: usize> {
+    pub(crate) lanes: HeaplessVec<(InterfaceId, &'static mut dyn ReactorLaneWriter), LANE_COUNT>,
 }
 
-impl<M: RawMutex + 'static, const SLOT: usize, const N: usize> PooledEgress<M, SLOT, N> {
+impl<const LANE_COUNT: usize> PooledEgress<LANE_COUNT> {
     #[must_use]
-    pub fn new(
-        lanes: HeaplessVec<(InterfaceId, EmbassyGrantProducer<'static, M, SLOT>), N>,
-    ) -> Self {
-        Self { lanes }
+    pub fn new() -> Self {
+        Self {
+            lanes: HeaplessVec::new(),
+        }
     }
 
-    pub(crate) fn activate(&mut self, slot: usize, id: InterfaceId) {
-        if let Some(entry) = self.lanes.get_mut(slot) {
-            entry.0 = id;
-        }
+    pub(crate) fn push(
+        &mut self,
+        id: InterfaceId,
+        producer: &'static mut dyn ReactorLaneWriter,
+    ) -> Result<(), &'static mut dyn ReactorLaneWriter> {
+        self.lanes
+            .push((id, producer))
+            .map_err(|(_, producer)| producer)
     }
 
     pub(crate) fn retag(&mut self, old_id: InterfaceId, new_id: InterfaceId) {
@@ -294,13 +294,11 @@ impl<M: RawMutex + 'static, const SLOT: usize, const N: usize> PooledEgress<M, S
     }
 }
 
-impl<M: RawMutex + 'static, const SLOT: usize, const N: usize> ReactorEgress
-    for PooledEgress<M, SLOT, N>
-{
+impl<const LANE_COUNT: usize> ReactorEgress for PooledEgress<LANE_COUNT> {
     fn enqueue(&mut self, target: InterfaceId, bytes: &[u8]) {
         for (id, producer) in self.lanes.iter_mut() {
             if lane_serves(*id, target) {
-                let _ = producer.try_fill_frame_for(target, bytes);
+                let _ = producer.try_write(FrameTarget::Direct(target), bytes);
                 return;
             }
         }
@@ -309,7 +307,7 @@ impl<M: RawMutex + 'static, const SLOT: usize, const N: usize> ReactorEgress
     fn enqueue_broadcast(&mut self, supervisor: InterfaceKind, fan: FanTarget, bytes: &[u8]) {
         for (id, producer) in self.lanes.iter_mut() {
             if id.kind() == Some(supervisor) {
-                let _ = producer.try_fill_frame_fan(fan, bytes);
+                let _ = producer.try_write(FrameTarget::Fan(fan), bytes);
                 return;
             }
         }
@@ -327,6 +325,12 @@ impl<M: RawMutex + 'static, const SLOT: usize, const N: usize> ReactorEgress
             .iter()
             .map(|(id, _)| *id)
             .find(|id| id.kind() == Some(supervisor))
+    }
+}
+
+impl<const LANE_COUNT: usize> Default for PooledEgress<LANE_COUNT> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

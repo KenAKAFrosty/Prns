@@ -7,23 +7,23 @@ use crate::reactor::interface_seam::InterfaceSeam;
 
 use super::{EmbassyGrantConsumer, EmbassyGrantProducer};
 
-pub struct EmbassyInterfaceSeam<'a, M: RawMutex, const NOTIFY: usize, const SLOT: usize> {
+pub struct EmbassyInterfaceSeam<'a, M: RawMutex, const NOTIFY: usize, const FRAME: usize> {
     id: InterfaceId,
-    inbound: EmbassyGrantProducer<'a, M, SLOT>,
+    inbound: EmbassyGrantProducer<'a, M, FRAME>,
     notify: Sender<'a, M, InterfaceId, NOTIFY>,
-    outbound: EmbassyGrantConsumer<'a, M, SLOT>,
+    outbound: EmbassyGrantConsumer<'a, M, FRAME>,
     fill_entropy: fn(&mut [u8]),
 }
 
-impl<'a, M: RawMutex, const NOTIFY: usize, const SLOT: usize>
-    EmbassyInterfaceSeam<'a, M, NOTIFY, SLOT>
+impl<'a, M: RawMutex, const NOTIFY: usize, const FRAME: usize>
+    EmbassyInterfaceSeam<'a, M, NOTIFY, FRAME>
 {
     #[must_use]
     pub fn new(
         id: InterfaceId,
-        inbound: EmbassyGrantProducer<'a, M, SLOT>,
+        inbound: EmbassyGrantProducer<'a, M, FRAME>,
         notify: Sender<'a, M, InterfaceId, NOTIFY>,
-        outbound: EmbassyGrantConsumer<'a, M, SLOT>,
+        outbound: EmbassyGrantConsumer<'a, M, FRAME>,
         fill_entropy: fn(&mut [u8]),
     ) -> Self {
         Self {
@@ -36,8 +36,8 @@ impl<'a, M: RawMutex, const NOTIFY: usize, const SLOT: usize>
     }
 }
 
-impl<M: RawMutex, const NOTIFY: usize, const SLOT: usize> InterfaceSeam
-    for EmbassyInterfaceSeam<'_, M, NOTIFY, SLOT>
+impl<M: RawMutex, const NOTIFY: usize, const FRAME: usize> InterfaceSeam
+    for EmbassyInterfaceSeam<'_, M, NOTIFY, FRAME>
 {
     fn fill_entropy(&mut self, bytes: &mut [u8]) {
         (self.fill_entropy)(bytes);

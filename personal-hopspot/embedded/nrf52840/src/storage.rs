@@ -44,8 +44,10 @@ impl TechoStorage {
     const TRACKED_DESTINATIONS: usize = 8;
     const UPSTREAM_APP_DESTINATIONS: usize = 2;
     const LINKS: usize = 2;
-    const BLACKHOLED_IDENTITIES: usize = 8;
-    const BLACKHOLE_REASON_BYTES: usize = 64;
+    const BLACKHOLED_IDENTITIES: usize = 0;
+    const BLACKHOLE_REASON_BYTES: usize = 0;
+    const HELD_ANNOUNCES: usize = 16;
+    const HELD_ANNOUNCE_APP_DATA_BYTES: usize = Self::HELD_ANNOUNCES * 64;
     const RESOURCE_TRANSFER_BYTES: usize = 1024;
     const CHANNEL_REORDER_DEPTH: usize = 2;
     const LINK_MTU: usize = 1024;
@@ -71,7 +73,7 @@ impl StorageLayout for TechoStorage {
         blackhole_reason_bytes: StorageCapacity::Fixed(Self::BLACKHOLE_REASON_BYTES),
         reverse_routes: StorageCapacity::Fixed(4),
         pending_path_requests: StorageCapacity::Fixed(4),
-        held_announces: StorageCapacity::Fixed(32),
+        held_announces: StorageCapacity::Fixed(Self::HELD_ANNOUNCES),
         ratchets_per_destination: StorageCapacity::Fixed(4),
     };
 
@@ -104,8 +106,9 @@ impl StorageLayout for TechoStorage {
     type InterfacePathRequestLimits = FixedInterfacePathRequestLimitTable<4>;
     type InterfaceAnnounceLimits = FixedInterfaceAnnounceLimitTable<4>;
     type DirtyInterfaces = heapless::Vec<personal_rns::interfaces::InterfaceId, 4>;
-    type HeldAnnounces = FixedHeldAnnounceTable<32>;
-    type HeldAnnounceAppData = PackedAppDataArena<2048, 32>;
+    type HeldAnnounces = FixedHeldAnnounceTable<{ Self::HELD_ANNOUNCES }>;
+    type HeldAnnounceAppData =
+        PackedAppDataArena<{ Self::HELD_ANNOUNCE_APP_DATA_BYTES }, { Self::HELD_ANNOUNCES }>;
     type DestinationAnnounceLimits =
         FixedDestinationAnnounceLimitTable<{ Self::TRACKED_DESTINATIONS }>;
     type GroupKeys = FixedGroupKeyTable<{ Self::UPSTREAM_APP_DESTINATIONS }>;

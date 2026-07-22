@@ -2,34 +2,31 @@ use core::sync::atomic::{AtomicU32, Ordering};
 
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
-use embassy_sync::zerocopy_channel;
-use heapless::Vec as HVec;
 
 use personal_rns::engine::IssuedCommand;
+use personal_rns::interfaces::bluetooth_auto::BLE_HW_MTU;
+use personal_rns::interfaces::lora::LORA_MAX_PAYLOAD;
 use personal_rns::interfaces::InterfaceId;
 use personal_rns::lora::LoRaControl;
-use personal_rns::reactor::embassy::{
-    EmbassyGrantConsumer, EmbassyGrantProducer, EmbassyHost, InterfaceLifecycle,
-};
-use personal_rns::reactor::grant::FrameSlot;
+use personal_rns::reactor::embassy::{EmbassyHost, InterfaceLifecycle};
 use personal_rns::reactor::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
-use personal_rns::runtime::{CompletionPool, EmbassyInterfaceStore, PrnsEvent, PrnsNode};
+use personal_rns::runtime::{
+    minimum_interface_store_capacity, minimum_reactor_notification_capacity, CompletionPool,
+    EmbassyInterfaceStore, PrnsEvent, PrnsNode, ReactorLaneSet, StaticReactorLane,
+};
 use personal_rns::storage::{StorageCapacity, StorageLayout};
 
 use super::bluetooth_auto;
 
-pub(super) const IFACES: usize = 3;
-const MAX_IFACES: usize = 2 + bluetooth_auto::MEMBERS;
-pub(super) const LORA_SLOT: usize = 0;
-pub(super) const BLE_FLEET_SLOT: usize = 1;
-pub(super) const USB_SLOT: usize = 2;
-pub(super) const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"techousb");
-pub(super) const NOTIFY_CAP: usize = 16;
-const COMMANDS_CAP: usize = 8;
-pub(super) const LIFECYCLE_CAP: usize = 16;
-const COMPLETIONS_CAP: usize = 4;
+pub(super) const LANE_COUNT: usize = 3;
 pub(super) const LANE_DEPTH: usize = 1;
-const INTERFACE_STORE_CAP: usize = 16;
+const INTERFACE_CAPACITY: usize = 2 + bluetooth_auto::MEMBERS;
+pub(super) const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"techousb");
+pub(super) const NOTIFY_CAP: usize = minimum_reactor_notification_capacity(LANE_COUNT, LANE_DEPTH);
+const COMMANDS_CAP: usize = 4;
+pub(super) const LIFECYCLE_CAP: usize = bluetooth_auto::MEMBERS;
+const COMPLETIONS_CAP: usize = 4;
+const INTERFACE_STORE_CAP: usize = minimum_interface_store_capacity(INTERFACE_CAPACITY);
 const PACKET_PHY_RETENTION_CAPACITY: usize =
     match <EngineStorageType as StorageLayout>::LIMITS.packet_hashes {
         StorageCapacity::Fixed(capacity) => capacity,
@@ -42,23 +39,6 @@ pub(super) const ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x17Personal Hopspot T-Ech
 
 pub(super) type Mtx = CriticalSectionRawMutex;
 type EngineStorageType = crate::storage::TechoStorage;
-pub(super) type LaneBuf = [FrameSlot<EMBEDDED_MAX_WIRE_FRAME_LEN>; LANE_DEPTH];
-pub(super) type LaneChannel =
-    zerocopy_channel::Channel<'static, Mtx, FrameSlot<EMBEDDED_MAX_WIRE_FRAME_LEN>>;
-pub(super) type ReactorInbound = HVec<
-    (
-        InterfaceId,
-        EmbassyGrantConsumer<'static, Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN>,
-    ),
-    IFACES,
->;
-pub(super) type ReactorEgressLanes = HVec<
-    (
-        InterfaceId,
-        EmbassyGrantProducer<'static, Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN>,
-    ),
-    IFACES,
->;
 type InterfaceStore = EmbassyInterfaceStore<
     Mtx,
     INTERFACE_STORE_CAP,
@@ -72,17 +52,14 @@ pub(super) type Node = PrnsNode<
     EngineStorageType,
     EmbassyHost<fn(&mut [u8])>,
     Mtx,
-    EMBEDDED_MAX_WIRE_FRAME_LEN,
-    IFACES,
-    MAX_IFACES,
+    LANE_COUNT,
+    INTERFACE_CAPACITY,
     NOTIFY_CAP,
     COMMANDS_CAP,
     LIFECYCLE_CAP,
     COMPLETIONS_CAP,
 >;
-
-pub(super) const EMPTY_SLOT: FrameSlot<EMBEDDED_MAX_WIRE_FRAME_LEN> = FrameSlot::empty();
-pub(super) const FREE_SLOT: InterfaceId = InterfaceId::new([0xff; 8]);
+pub(super) type ReactorLanes = ReactorLaneSet<Mtx, LANE_COUNT, NOTIFY_CAP>;
 
 pub(super) static LORA_CONTROL: LoRaControl = LoRaControl::new();
 pub(super) static NOTIFY: Channel<Mtx, InterfaceId, NOTIFY_CAP> = Channel::new();
@@ -90,6 +67,16 @@ pub(super) static COMMANDS: Channel<Mtx, IssuedCommand, COMMANDS_CAP> = Channel:
 pub(super) static LIFECYCLE: Channel<Mtx, InterfaceLifecycle, LIFECYCLE_CAP> = Channel::new();
 pub(super) static COMPLETION: CompletionPool<Mtx, COMPLETIONS_CAP> = CompletionPool::new();
 pub(super) static INTERFACE_STORE: InterfaceStore = EmbassyInterfaceStore::new();
+pub(super) static LORA_REACTOR_LANE: StaticReactorLane<Mtx, LORA_MAX_PAYLOAD, LANE_DEPTH> =
+    StaticReactorLane::new();
+pub(super) static BLE_REACTOR_LANE: StaticReactorLane<Mtx, BLE_HW_MTU, LANE_DEPTH> =
+    StaticReactorLane::new();
+pub(super) static USB_REACTOR_LANE: StaticReactorLane<
+    Mtx,
+    EMBEDDED_MAX_WIRE_FRAME_LEN,
+    LANE_DEPTH,
+> = StaticReactorLane::new();
+
 pub(super) static ENTROPY_STATE: AtomicU32 = AtomicU32::new(0x9e37_79b9);
 
 pub(super) fn seeded_entropy(bytes: &mut [u8]) {

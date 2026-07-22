@@ -43,6 +43,11 @@ pub use node::{
     RequestHandlerRegistration,
 };
 
+#[doc(hidden)]
+pub mod placement {
+    pub use super::node::assemble_node_in_place;
+}
+
 cfg_if::cfg_if! {
     if #[cfg(feature = "runtime-metrics")] {
         mod metrics;

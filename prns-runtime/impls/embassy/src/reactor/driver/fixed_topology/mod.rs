@@ -8,7 +8,7 @@ use crate::engine::{
 };
 use crate::interfaces::InterfaceIfac;
 use crate::interfaces::{AttachedInterfaces, InboundPacket, InterfaceId};
-use crate::reactor::grant::{AnyGrantConsumer, FrameTarget};
+use crate::reactor::grant::{FrameTarget, ReactorLaneReader};
 use crate::reactor::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
 use crate::reactor::kernel::{fire_due_reason, merge_wake_schedules_delta};
 use crate::reactor::timers::{wait_for_due_reason, wait_for_pacer};
@@ -29,7 +29,7 @@ pub struct ReactorWiring<'run, 'lane, M: RawMutex, const NOTIFY: usize, const CO
     pub ifacs: &'run [InterfaceIfac],
     /// A doorbell rather than a frame count: one receive drains every lane, a full channel means a sweep is pending, and a frame committed during a sweep either joins it or rings again.
     pub notify: Receiver<'run, M, InterfaceId, NOTIFY>,
-    pub inbound_lanes: &'run mut [(InterfaceId, &'lane mut dyn AnyGrantConsumer)],
+    pub inbound_lanes: &'run mut [(InterfaceId, &'lane mut dyn ReactorLaneReader)],
     pub commands: Receiver<'run, M, IssuedCommand, COMMANDS>,
     pub egress: EmbassyEgress<'run>,
 }
@@ -161,9 +161,9 @@ async fn run_inner<S, H, M, P, A, Store, const NOTIFY: usize, const COMMANDS: us
             Either4::First(_) => {
                 while notify.try_receive().is_ok() {}
                 for (lane_id, lane) in inbound_lanes.iter_mut() {
-                    while let Some((target, packet_phy, frame)) = lane.try_peek_frame() {
+                    while let Some((target, packet_phy, frame)) = lane.try_read() {
                         let FrameTarget::Direct(source) = target else {
-                            lane.release_frame();
+                            lane.release();
                             continue;
                         };
                         let mut unmasked = [0u8; EMBEDDED_MAX_WIRE_FRAME_LEN];
@@ -172,7 +172,7 @@ async fn run_inner<S, H, M, P, A, Store, const NOTIFY: usize, const COMMANDS: us
                                 let Some(clean_len) =
                                     entry.context.unmask_inbound(frame, &mut unmasked)
                                 else {
-                                    lane.release_frame();
+                                    lane.release();
                                     continue;
                                 };
                                 &mut unmasked[..clean_len]
@@ -206,7 +206,7 @@ async fn run_inner<S, H, M, P, A, Store, const NOTIFY: usize, const COMMANDS: us
                                 },
                             },
                         );
-                        lane.release_frame();
+                        lane.release();
                         merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, interfaces);
                     }
                 }

@@ -1,4 +1,4 @@
-use super::super::{CompletionPool, Fleet, FleetWire};
+use super::super::{CompletionPool, Fleet, ReactorLaneSet, StaticReactorLane};
 use super::*;
 use crate::engine::test_support::{bytes_from_hex, RNS_1_4_0_ANNOUNCE};
 use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
@@ -6,7 +6,7 @@ use crate::interfaces::{
     AnnounceBandwidthCap, BitrateBps, EgressCapability, IngressCapability, InterfaceCapabilities,
     InterfaceKind, InterfaceMode, TransportCapability,
 };
-use crate::reactor::driver::{leaked_grant_lane, EmbassyGrantProducer, EmbassyHost};
+use crate::reactor::driver::EmbassyHost;
 use crate::reactor::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
 use crate::runtime::Diagnostic;
 use crate::storage::GrowableHeap;
@@ -19,7 +19,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 type Mtx = CriticalSectionRawMutex;
-const SLOT: usize = EMBEDDED_MAX_WIRE_FRAME_LEN;
+const FRAME: usize = EMBEDDED_MAX_WIRE_FRAME_LEN;
 
 fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
     InterfaceDescriptor {
@@ -51,36 +51,23 @@ fn a_recipe_node_hears_an_ifac_announce_a_supervisor_stands_a_peer_up_for() {
     let lifecycle: &'static Channel<Mtx, InterfaceLifecycle, 4> = leak(Channel::new());
     let completion: &'static CompletionPool<Mtx, 4> = leak(CompletionPool::new());
 
-    let (in_producer, in_consumer) = leaked_grant_lane::<SLOT>(4);
-    let (out_producer, out_consumer) = leaked_grant_lane::<SLOT>(4);
-
-    let free = InterfaceId::new([0xff; 8]);
-    let mut inbound: HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, Mtx, SLOT>), 1> =
-        HeaplessVec::new();
-    let _ = inbound.push((free, in_consumer));
-    let mut egress_lanes: HeaplessVec<(InterfaceId, EmbassyGrantProducer<'static, Mtx, SLOT>), 1> =
-        HeaplessVec::new();
-    let _ = egress_lanes.push((free, out_producer));
+    static LANE: StaticReactorLane<Mtx, FRAME, 4> = StaticReactorLane::new();
+    let mut lanes: ReactorLaneSet<Mtx, 1, 4> = ReactorLaneSet::new();
+    let supervisor = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, b"test-supervisor");
+    let network = IfacContext::derive(Some("fleet-net"), Some("secret"), IfacSize::NARROW).unwrap();
+    let supervisor_lane = lanes
+        .claim_supervisor_with_ifac(&LANE, supervisor, network.clone(), leak(Signal::new()))
+        .unwrap();
 
     let handle = PrnsNodeHandle::new(commands.sender(), completion);
-    let plumbing = ReactorPlumbing::new(
-        inbound,
-        PooledEgress::new(egress_lanes),
+    let reactor_wiring = lanes.into_reactor_wiring(
         notify.receiver(),
         commands.receiver(),
         lifecycle.receiver(),
         handle,
     );
-
-    let fleet: Fleet<Mtx, SLOT, 4, 4> = Fleet::new(
-        FleetWire {
-            inbound: in_producer,
-            outbound: out_consumer,
-            notify: notify.sender(),
-            outbound_wake: leak(Signal::new()),
-        },
-        lifecycle.sender(),
-    );
+    let fleet: Fleet<Mtx, FRAME, 4, 4> =
+        supervisor_lane.into_fleet(notify.sender(), lifecycle.sender());
 
     let heard: Rc<RefCell<usize>> = Rc::new(RefCell::new(0));
     let heard_sink = heard.clone();
@@ -101,18 +88,14 @@ fn a_recipe_node_hears_an_ifac_announce_a_supervisor_stands_a_peer_up_for() {
         },
     };
 
-    let mut node = PrnsNode::new(
+    let node: PrnsNode<_, _, _, _, _, _, 1, 1, 4, 4, 4, 4> = PrnsNode::new(
         recipe,
-        plumbing,
+        reactor_wiring,
         EmbassyHost::new(|bytes: &mut [u8]| bytes.fill(0)),
-        HeaplessVec::<InterfaceDescriptor, 1>::new(),
     );
-    let supervisor = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, b"test-supervisor");
-    let network = IfacContext::derive(Some("fleet-net"), Some("secret"), IfacSize::NARROW).unwrap();
-    assert!(node.activate_fleet_with_ifac(0, supervisor, network.clone()));
 
     let raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
-    let mut masked = [0u8; SLOT];
+    let mut masked = [0u8; FRAME];
     let masked_len = network.mask_outbound(&raw, &mut masked).unwrap();
     let peer = InterfaceId::from_channel_tag(InterfaceKind::WifiPeer, b"test-peer-medium");
 
@@ -121,10 +104,9 @@ fn a_recipe_node_hears_an_ifac_announce_a_supervisor_stands_a_peer_up_for() {
         fleet.register_member(descriptor(peer)).await;
         Timer::after(Duration::from_millis(40)).await;
 
-        assert!(
-            fleet.deliver_inbound(peer, &masked[..masked_len]),
-            "the shared lane carries the peer's frame"
-        );
+        fleet
+            .try_deliver_inbound(peer, &masked[..masked_len])
+            .expect("the shared lane carries the peer's frame");
         Timer::after(Duration::from_millis(80)).await;
 
         fleet.deregister_member(peer).await;

@@ -1,4 +1,5 @@
 use core::cell::RefCell;
+use std::collections::HashMap;
 
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
@@ -16,9 +17,9 @@ use tokio::sync::{mpsc as tokio_mpsc, oneshot};
 use prns_core::interfaces::bluetooth_auto::{BleAddress, BleIdentity, Control, PeerProtocol};
 
 use super::{
-    cbuuid_eq, columba_identity_uuid, columba_rx_uuid, columba_tx_uuid, control_uuid, data_uuid,
-    service_uuid, start_scan, uuid_token, Event, PeripheralTable, RestoredPeripherals,
-    SendCharacteristicRef, SendPeripheral,
+    cbuuid_eq, columba_identity_uuid, columba_rx_uuid, columba_tx_uuid, control_uuid,
+    core_bluetooth_peer_id, data_uuid, service_uuid, start_scan, CoreBluetoothPeerId, Event,
+    PeripheralTable, RestoredPeripherals, SendCharacteristicRef, SendPeripheral,
 };
 
 pub(super) struct DialChars {
@@ -28,24 +29,171 @@ pub(super) struct DialChars {
     pub(super) data: Option<SendCharacteristicRef>,
 }
 
-pub(super) struct DialSession {
-    pub(super) address: BleAddress,
-    pub(super) control_tx: tokio_mpsc::Sender<Control>,
-    pub(super) result_tx: Option<oneshot::Sender<DialChars>>,
-    pub(super) data_tx: tokio_mpsc::Sender<Box<[u8]>>,
-    pub(super) data_char: Option<SendCharacteristicRef>,
-    pub(super) peer_protocol: Option<PeerProtocol>,
-    pub(super) columba_write: Option<SendCharacteristicRef>,
-    pub(super) columba_notify: Option<SendCharacteristicRef>,
-    pub(super) peer_identity: Option<BleIdentity>,
-    pub(super) columba_notify_ready: bool,
+pub(super) enum DialCompletion {
+    Ready(DialChars),
+    Failed,
+    Rejected,
+}
+
+enum ColumbaReadiness {
+    AwaitingIdentityAndSubscription,
+    Subscribed,
+    Identified(BleIdentity),
+}
+
+enum CentralProfile {
+    Discovering,
+    Native {
+        data: Option<SendCharacteristicRef>,
+    },
+    Columba {
+        write: SendCharacteristicRef,
+        notify: SendCharacteristicRef,
+        readiness: ColumbaReadiness,
+    },
+    Ready,
+}
+
+pub(super) struct CentralPeerSession {
+    address: BleAddress,
+    control_tx: tokio_mpsc::Sender<Control>,
+    completion_tx: Option<oneshot::Sender<DialCompletion>>,
+    data_tx: tokio_mpsc::Sender<Box<[u8]>>,
+    profile: CentralProfile,
+}
+
+impl CentralPeerSession {
+    pub(super) fn new(
+        address: BleAddress,
+        control_tx: tokio_mpsc::Sender<Control>,
+        completion_tx: oneshot::Sender<DialCompletion>,
+        data_tx: tokio_mpsc::Sender<Box<[u8]>>,
+    ) -> Self {
+        Self {
+            address,
+            control_tx,
+            completion_tx: Some(completion_tx),
+            data_tx,
+            profile: CentralProfile::Discovering,
+        }
+    }
+
+    fn select_native(&mut self, data: Option<SendCharacteristicRef>) {
+        self.profile = CentralProfile::Native { data };
+    }
+
+    fn select_columba(&mut self, write: SendCharacteristicRef, notify: SendCharacteristicRef) {
+        self.profile = CentralProfile::Columba {
+            write,
+            notify,
+            readiness: ColumbaReadiness::AwaitingIdentityAndSubscription,
+        };
+    }
+
+    fn native_ready(&mut self, control: SendCharacteristicRef) {
+        let profile = core::mem::replace(&mut self.profile, CentralProfile::Ready);
+        let CentralProfile::Native { data } = profile else {
+            self.profile = profile;
+            return;
+        };
+        self.complete(DialChars {
+            peer_protocol: PeerProtocol::Native,
+            peer_identity: None,
+            control,
+            data,
+        });
+    }
+
+    fn columba_identity(&mut self, identity: BleIdentity) {
+        let profile = core::mem::replace(&mut self.profile, CentralProfile::Ready);
+        let CentralProfile::Columba {
+            write,
+            notify,
+            readiness,
+        } = profile
+        else {
+            self.profile = profile;
+            return;
+        };
+        match readiness {
+            ColumbaReadiness::AwaitingIdentityAndSubscription | ColumbaReadiness::Identified(_) => {
+                self.profile = CentralProfile::Columba {
+                    write,
+                    notify,
+                    readiness: ColumbaReadiness::Identified(identity),
+                };
+            }
+            ColumbaReadiness::Subscribed => {
+                self.complete_columba(write, notify, identity);
+            }
+        }
+    }
+
+    fn columba_subscribed(&mut self) {
+        let profile = core::mem::replace(&mut self.profile, CentralProfile::Ready);
+        let CentralProfile::Columba {
+            write,
+            notify,
+            readiness,
+        } = profile
+        else {
+            self.profile = profile;
+            return;
+        };
+        match readiness {
+            ColumbaReadiness::AwaitingIdentityAndSubscription | ColumbaReadiness::Subscribed => {
+                self.profile = CentralProfile::Columba {
+                    write,
+                    notify,
+                    readiness: ColumbaReadiness::Subscribed,
+                };
+            }
+            ColumbaReadiness::Identified(identity) => {
+                self.complete_columba(write, notify, identity);
+            }
+        }
+    }
+
+    fn complete_columba(
+        &mut self,
+        write: SendCharacteristicRef,
+        _notify: SendCharacteristicRef,
+        identity: BleIdentity,
+    ) {
+        self.complete(DialChars {
+            peer_protocol: PeerProtocol::Columba,
+            peer_identity: Some(identity),
+            data: Some(SendCharacteristicRef(write.0.clone())),
+            control: write,
+        });
+    }
+
+    fn complete(&mut self, chars: DialChars) {
+        self.profile = CentralProfile::Ready;
+        if let Some(completion_tx) = self.completion_tx.take() {
+            let _ = completion_tx.send(DialCompletion::Ready(chars));
+        }
+    }
+
+    fn fail(mut self) {
+        if let Some(completion_tx) = self.completion_tx.take() {
+            let _ = completion_tx.send(DialCompletion::Failed);
+        }
+    }
+
+    fn reject(mut self) {
+        if let Some(completion_tx) = self.completion_tx.take() {
+            let _ = completion_tx.send(DialCompletion::Rejected);
+        }
+    }
 }
 
 pub(super) struct DialCommand {
     pub(super) central: Retained<CBCentralManager>,
     pub(super) delegate: Retained<CentralDelegate>,
     pub(super) peripheral: Retained<CBPeripheral>,
-    pub(super) session: DialSession,
+    pub(super) peer_id: CoreBluetoothPeerId,
+    pub(super) session: CentralPeerSession,
 }
 // SAFETY: every retained CoreBluetooth object in the command is transferred to and consumed on
 // the single serial CoreBluetooth dispatch queue; the embedded session is Send.
@@ -55,7 +203,7 @@ pub(super) struct CentralDelegateIvars {
     events: tokio_mpsc::UnboundedSender<Event>,
     peripherals: PeripheralTable,
     restored: RestoredPeripherals,
-    pub(super) session: RefCell<Option<DialSession>>,
+    sessions: RefCell<HashMap<CoreBluetoothPeerId, CentralPeerSession>>,
 }
 
 define_class!(
@@ -92,17 +240,17 @@ define_class!(
             let peripherals: &NSArray<CBPeripheral> =
                 unsafe { &*(Retained::as_ptr(&restored) as *const NSArray<CBPeripheral>) };
             for peripheral in peripherals.iter() {
-                // SAFETY: array iteration yields a live CBPeripheral retained by the array.
-                let identifier = unsafe { peripheral.identifier() };
-                let token = uuid_token(&identifier);
+                let peer_id = core_bluetooth_peer_id(&peripheral);
+                let address = peer_id.address();
                 crate::diagnostic_log::debug!(
-                    "bluetooth: restored peripheral {token:02x?} from a background relaunch — re-adopting"
+                    "bluetooth: restored peripheral {:02x?} from a background relaunch — re-adopting",
+                    address.octets()
                 );
                 if let Ok(mut map) = self.ivars().peripherals.lock() {
-                    map.insert(token, (SendPeripheral(peripheral.retain()), None));
+                    map.insert(peer_id, (SendPeripheral(peripheral.retain()), None));
                 }
                 if let Ok(mut queue) = self.ivars().restored.lock() {
-                    queue.push_back(token);
+                    queue.push_back(peer_id);
                 }
             }
         }
@@ -126,20 +274,20 @@ define_class!(
             } else {
                 i8::try_from(dbm).ok()
             };
-            // SAFETY: the delegate callback guarantees that `peripheral` is a live CBPeripheral.
-            let identifier = unsafe { peripheral.identifier() };
-            let token = uuid_token(&identifier);
+            let peer_id = core_bluetooth_peer_id(peripheral);
+            let address = peer_id.address();
             if let Ok(mut map) = self.ivars().peripherals.lock() {
-                map.insert(token, (SendPeripheral(peripheral.retain()), rssi));
+                map.insert(peer_id, (SendPeripheral(peripheral.retain()), rssi));
             }
-            let _ = self.ivars().events.send(Event::Sighting {
-                address: BleAddress::new(token),
-                rssi,
-            });
+            let _ = self.ivars().events.send(Event::Sighting { address, rssi });
         }
 
         #[unsafe(method(centralManager:didConnectPeripheral:))]
         fn did_connect(&self, _central: &CBCentralManager, peripheral: &CBPeripheral) {
+            let peer_id = core_bluetooth_peer_id(peripheral);
+            if !self.ivars().sessions.borrow().contains_key(&peer_id) {
+                return;
+            }
             crate::diagnostic_log::debug!(
                 "bluetooth: dial connected over LE, discovering Prns service"
             );
@@ -154,31 +302,32 @@ define_class!(
         fn did_fail_to_connect(
             &self,
             _central: &CBCentralManager,
-            _peripheral: &CBPeripheral,
+            peripheral: &CBPeripheral,
             error: Option<&NSError>,
         ) {
             crate::diagnostic_log::warn!("bluetooth: dial connect FAILED: {error:?}");
-            self.ivars().session.borrow_mut().take();
+            self.fail_peer(core_bluetooth_peer_id(peripheral));
         }
 
         #[unsafe(method(centralManager:didDisconnectPeripheral:error:))]
         fn did_disconnect(
             &self,
             _central: &CBCentralManager,
-            _peripheral: &CBPeripheral,
+            peripheral: &CBPeripheral,
             error: Option<&NSError>,
         ) {
             crate::diagnostic_log::warn!("bluetooth: dialed peripheral disconnected: {error:?}");
-            self.ivars().session.borrow_mut().take();
+            self.fail_peer(core_bluetooth_peer_id(peripheral));
         }
     }
 
     unsafe impl CBPeripheralDelegate for CentralDelegate {
         #[unsafe(method(peripheral:didDiscoverServices:))]
         fn did_discover_services(&self, peripheral: &CBPeripheral, error: Option<&NSError>) {
+            let peer_id = core_bluetooth_peer_id(peripheral);
             if let Some(error) = error {
                 crate::diagnostic_log::warn!("bluetooth: service discovery FAILED: {error:?}");
-                self.ivars().session.borrow_mut().take();
+                self.fail_peer(peer_id);
                 return;
             }
             // SAFETY: the callback occurs only after CoreBluetooth completed service discovery;
@@ -188,7 +337,7 @@ define_class!(
                 crate::diagnostic_log::warn!(
                     "bluetooth: no Prns service on peripheral — dropping dial"
                 );
-                self.ivars().session.borrow_mut().take();
+                self.fail_peer(peer_id);
                 return;
             };
             // SAFETY: `service` belongs to this live peripheral and both are retained throughout
@@ -203,11 +352,12 @@ define_class!(
             service: &CBService,
             error: Option<&NSError>,
         ) {
+            let peer_id = core_bluetooth_peer_id(peripheral);
             if let Some(error) = error {
                 crate::diagnostic_log::warn!(
                     "bluetooth: characteristic discovery FAILED: {error:?}"
                 );
-                self.ivars().session.borrow_mut().take();
+                self.fail_peer(peer_id);
                 return;
             }
             // SAFETY: this delegate callback follows characteristic discovery and CoreBluetooth
@@ -216,7 +366,7 @@ define_class!(
                 crate::diagnostic_log::warn!(
                     "bluetooth: no characteristics on Prns service — dropping dial"
                 );
-                self.ivars().session.borrow_mut().take();
+                self.fail_peer(peer_id);
                 return;
             };
             let control_id = control_uuid();
@@ -246,16 +396,22 @@ define_class!(
                 }
             }
             if let Some(control) = control {
-                if let Some(session) = self.ivars().session.borrow_mut().as_mut() {
-                    session.peer_protocol = Some(PeerProtocol::Native);
-                }
-                if let Some(data) = &data {
-                    if let Some(session) = self.ivars().session.borrow_mut().as_mut() {
-                        session.data_char = Some(SendCharacteristicRef(data.retain()));
-                    }
+                let data_ref = data
+                    .as_ref()
+                    .map(|data| SendCharacteristicRef(data.retain()));
+                let Some(()) = self
+                    .ivars()
+                    .sessions
+                    .borrow_mut()
+                    .get_mut(&peer_id)
+                    .map(|session| session.select_native(data_ref))
+                else {
+                    return;
+                };
+                if let Some(data) = data {
                     // SAFETY: this characteristic was discovered on `peripheral`; both remain live
                     // through the subscription message on the serial manager queue.
-                    unsafe { peripheral.setNotifyValue_forCharacteristic(true, data) };
+                    unsafe { peripheral.setNotifyValue_forCharacteristic(true, &data) };
                 }
                 crate::diagnostic_log::debug!(
                     "bluetooth: native control characteristic found, subscribing"
@@ -270,14 +426,23 @@ define_class!(
                 crate::diagnostic_log::warn!(
                     "bluetooth: peer exposes neither a complete native nor Columba profile"
                 );
-                self.ivars().session.borrow_mut().take();
+                self.fail_peer(peer_id);
                 return;
             };
-            if let Some(session) = self.ivars().session.borrow_mut().as_mut() {
-                session.peer_protocol = Some(PeerProtocol::Columba);
-                session.columba_write = Some(SendCharacteristicRef(rx.retain()));
-                session.columba_notify = Some(SendCharacteristicRef(tx.retain()));
-            }
+            let Some(()) = self
+                .ivars()
+                .sessions
+                .borrow_mut()
+                .get_mut(&peer_id)
+                .map(|session| {
+                    session.select_columba(
+                        SendCharacteristicRef(rx.retain()),
+                        SendCharacteristicRef(tx.retain()),
+                    );
+                })
+            else {
+                return;
+            };
             // SAFETY: the identity and transmit characteristics were discovered on this retained
             // peripheral, and both messages execute on its CoreBluetooth dispatch queue.
             unsafe {
@@ -289,60 +454,57 @@ define_class!(
         #[unsafe(method(peripheral:didUpdateNotificationStateForCharacteristic:error:))]
         fn did_update_notification_state(
             &self,
-            _peripheral: &CBPeripheral,
+            peripheral: &CBPeripheral,
             characteristic: &CBCharacteristic,
             error: Option<&NSError>,
         ) {
+            let peer_id = core_bluetooth_peer_id(peripheral);
             if let Some(error) = error {
                 crate::diagnostic_log::warn!("bluetooth: subscribe FAILED: {error:?}");
-                self.ivars().session.borrow_mut().take();
+                self.fail_peer(peer_id);
                 return;
             }
             // SAFETY: CoreBluetooth supplied a live characteristic to this delegate callback.
             let subscribed_uuid = unsafe { characteristic.UUID() };
             if cbuuid_eq(&subscribed_uuid, &control_uuid()) {
-                let mut session = self.ivars().session.borrow_mut();
-                let Some(session) = session.as_mut() else {
+                let mut sessions = self.ivars().sessions.borrow_mut();
+                let Some(session) = sessions.get_mut(&peer_id) else {
                     return;
                 };
-                if let Some(result_tx) = session.result_tx.take() {
-                    crate::diagnostic_log::debug!(
-                        "bluetooth: {:02x?} subscribed — native control ready",
-                        session.address.octets()
-                    );
-                    let _ = result_tx.send(DialChars {
-                        peer_protocol: PeerProtocol::Native,
-                        peer_identity: None,
-                        control: SendCharacteristicRef(characteristic.retain()),
-                        data: session.data_char.take(),
-                    });
-                }
+                crate::diagnostic_log::debug!(
+                    "bluetooth: {:02x?} subscribed — native control ready",
+                    session.address.octets()
+                );
+                session.native_ready(SendCharacteristicRef(characteristic.retain()));
                 return;
             }
             if !cbuuid_eq(&subscribed_uuid, &columba_tx_uuid()) {
                 return;
             }
-            let mut session = self.ivars().session.borrow_mut();
-            let Some(session) = session.as_mut() else {
+            let mut sessions = self.ivars().sessions.borrow_mut();
+            let Some(session) = sessions.get_mut(&peer_id) else {
                 return;
             };
-            session.columba_notify_ready = true;
-            if let Some((result_tx, chars)) = take_columba_result(session) {
-                crate::diagnostic_log::debug!(
-                    "bluetooth: {:02x?} subscribed — Columba data path ready",
-                    session.address.octets()
-                );
-                let _ = result_tx.send(chars);
-            }
+            crate::diagnostic_log::debug!(
+                "bluetooth: {:02x?} subscribed — Columba data path ready",
+                session.address.octets()
+            );
+            session.columba_subscribed();
         }
 
         #[unsafe(method(peripheral:didUpdateValueForCharacteristic:error:))]
         fn did_update_value(
             &self,
-            _peripheral: &CBPeripheral,
+            peripheral: &CBPeripheral,
             characteristic: &CBCharacteristic,
-            _error: Option<&NSError>,
+            error: Option<&NSError>,
         ) {
+            let peer_id = core_bluetooth_peer_id(peripheral);
+            if let Some(error) = error {
+                crate::diagnostic_log::warn!("bluetooth: characteristic update FAILED: {error:?}");
+                self.fail_peer(peer_id);
+                return;
+            }
             // SAFETY: CoreBluetooth supplied a live characteristic whose value is retained for the
             // duration of this value-update callback.
             let Some(value) = (unsafe { characteristic.value() }) else {
@@ -353,7 +515,7 @@ define_class!(
             if cbuuid_eq(&updated_uuid, &data_uuid())
                 || cbuuid_eq(&updated_uuid, &columba_tx_uuid())
             {
-                if let Some(session) = self.ivars().session.borrow().as_ref() {
+                if let Some(session) = self.ivars().sessions.borrow().get(&peer_id) {
                     let _ = session.data_tx.try_send(Box::from(&value.to_vec()[..]));
                 }
                 return;
@@ -361,23 +523,20 @@ define_class!(
             if cbuuid_eq(&updated_uuid, &columba_identity_uuid()) {
                 let bytes = value.to_vec();
                 let Ok(identity) = <[u8; 16]>::try_from(bytes.as_slice()) else {
-                    self.ivars().session.borrow_mut().take();
+                    self.fail_peer(peer_id);
                     return;
                 };
-                let mut session = self.ivars().session.borrow_mut();
-                let Some(session) = session.as_mut() else {
+                let mut sessions = self.ivars().sessions.borrow_mut();
+                let Some(session) = sessions.get_mut(&peer_id) else {
                     return;
                 };
-                session.peer_identity = Some(BleIdentity::new(identity));
-                if let Some((result_tx, chars)) = take_columba_result(session) {
-                    let _ = result_tx.send(chars);
-                }
+                session.columba_identity(BleIdentity::new(identity));
                 return;
             }
             let Some(control) = Control::decode(&value.to_vec()) else {
                 return;
             };
-            if let Some(session) = self.ivars().session.borrow().as_ref() {
+            if let Some(session) = self.ivars().sessions.borrow().get(&peer_id) {
                 let _ = session.control_tx.try_send(control);
             }
         }
@@ -394,35 +553,33 @@ impl CentralDelegate {
             events,
             peripherals,
             restored,
-            session: RefCell::new(None),
+            sessions: RefCell::new(HashMap::new()),
         });
         // SAFETY: `this` is a freshly allocated CentralDelegate with fully initialized ivars;
         // forwarding to NSObject's designated initializer preserves its allocation identity.
         unsafe { msg_send![super(this), init] }
     }
 
-    pub(super) fn clear_session(&self) {
-        self.ivars().session.borrow_mut().take();
+    pub(super) fn begin_session(
+        &self,
+        peer_id: CoreBluetoothPeerId,
+        session: CentralPeerSession,
+    ) -> bool {
+        if self.ivars().sessions.borrow().contains_key(&peer_id) {
+            session.reject();
+            return false;
+        }
+        self.ivars().sessions.borrow_mut().insert(peer_id, session);
+        true
     }
-}
 
-fn take_columba_result(
-    session: &mut DialSession,
-) -> Option<(oneshot::Sender<DialChars>, DialChars)> {
-    if session.peer_protocol != Some(PeerProtocol::Columba) || !session.columba_notify_ready {
-        return None;
+    pub(super) fn remove_session(&self, peer_id: CoreBluetoothPeerId) {
+        if let Some(session) = self.ivars().sessions.borrow_mut().remove(&peer_id) {
+            session.fail();
+        }
     }
-    let peer_identity = session.peer_identity?;
-    let control = session.columba_write.take()?;
-    session.columba_notify.take()?;
-    let result_tx = session.result_tx.take()?;
-    Some((
-        result_tx,
-        DialChars {
-            peer_protocol: PeerProtocol::Columba,
-            peer_identity: Some(peer_identity),
-            data: Some(SendCharacteristicRef(control.0.clone())),
-            control,
-        },
-    ))
+
+    fn fail_peer(&self, peer_id: CoreBluetoothPeerId) {
+        self.remove_session(peer_id);
+    }
 }

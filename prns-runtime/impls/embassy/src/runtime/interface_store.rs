@@ -13,6 +13,12 @@ use prns_runtime::runtime::packet_phy_retention::{
     fixed_packet_phy_retention, FixedPacketPhyRetention,
 };
 
+#[must_use]
+pub const fn minimum_interface_store_capacity(interface_capacity: usize) -> usize {
+    assert!(interface_capacity > 0);
+    interface_capacity.next_power_of_two()
+}
+
 pub(crate) trait InterfaceInspectionStore: Sync {
     const RETAINS_COUNTS: bool;
     const RETAINS_PACKET_PHY: bool;
@@ -147,6 +153,13 @@ mod tests {
     use crate::interfaces::{RssiDbm, INTERFACE_ID_LEN};
     use crate::routing::dedup::dedup_index_buckets;
     use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+
+    #[test]
+    fn interface_store_capacity_covers_the_interface_ceiling_with_a_power_of_two() {
+        assert_eq!(minimum_interface_store_capacity(1), 1);
+        assert_eq!(minimum_interface_store_capacity(7), 8);
+        assert_eq!(minimum_interface_store_capacity(24), 32);
+    }
 
     #[test]
     fn fixed_store_reads_interface_counts_and_packet_phy() {

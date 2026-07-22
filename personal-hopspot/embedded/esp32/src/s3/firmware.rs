@@ -7,9 +7,6 @@ pub(crate) async fn run<B: Esp32S3Board>(spawner: Spawner) {
     run_core::<B>(spawner, bringup).await;
 }
 
-/// Platform run on core 0: the self-identity crypto, the radios + WiFi/TCP, and the I/O
-/// run-loops + screen. The engine is built *and* owned by core 1 (the construction transient,
-/// then the reactor, on its own stack), so core 0 never touches the node. Never returns.
 #[allow(clippy::too_many_lines)]
 pub(super) async fn run_core<B: Esp32S3Board>(
     spawner: Spawner,
@@ -35,28 +32,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let mut mac_octets = [0u8; 6];
     mac_octets.copy_from_slice(&mac.as_bytes()[..6]);
 
-    let mut inbound: ReactorInbound = HVec::new();
-    let mut egress_lanes: ReactorEgressLanes = HVec::new();
-    let mut iface_halves: [Option<(
-        EmbassyGrantProducer<'static, Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN>,
-        EmbassyGrantConsumer<'static, Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN>,
-    )>; IFACES] = [const { None }; IFACES];
-    for slot in 0..IFACES {
-        let in_ch = IN_CH[slot].init(zerocopy_channel::Channel::new(IN_BUF[slot].take()));
-        let (in_producer, in_consumer) = embassy_grant_lane(in_ch);
-        let out_ch = OUT_CH[slot].init(zerocopy_channel::Channel::new(OUT_BUF[slot].take()));
-        let (mut out_producer, out_consumer) = embassy_grant_lane(out_ch);
-        if slot == WIFI_FLEET_SLOT {
-            out_producer.set_outbound_wake(&OUTBOUND_WAKE);
-        }
-        #[cfg(feature = "bluetooth-auto")]
-        if slot == BLE_FLEET_SLOT {
-            out_producer.set_outbound_wake(&BLE_OUTBOUND_WAKE);
-        }
-        let _ = inbound.push((FREE_SLOT, in_consumer));
-        let _ = egress_lanes.push((FREE_SLOT, out_producer));
-        iface_halves[slot] = Some((in_producer, out_consumer));
-    }
+    let mut reactor_lanes = ReactorLanes::new();
 
     #[cfg(feature = "lora")]
     let lora_radio = b.lora_radio;
@@ -123,17 +99,6 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let tcp_status = tcp_built.as_ref().map(|(_, status, _)| *status);
     let tcp_id = tcp_built.as_ref().map(|(_, _, id)| *id);
 
-    let handle: Handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
-    let plumbing = ReactorPlumbing::new(
-        inbound,
-        PooledEgress::new(egress_lanes),
-        NOTIFY.receiver(),
-        COMMANDS.receiver(),
-        LIFECYCLE.receiver(),
-        handle,
-    );
-    let host = EmbassyHost::new_with_timebase(b.timebase, hardware_entropy as fn(&mut [u8]));
-
     let recipe = PrnsNodeRecipe {
         transport_identity: Some(transport_secret),
         pre_configured_destinations: [PreConfiguredDestination::Single {
@@ -162,109 +127,85 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let tcp_cfg = tcp_built.as_ref().map(|(t, _, _)| t.descriptor());
     let has_wifi = wifi.is_some();
 
-    // The engine is built and run on core 1: its stack carries the dalek-heavy construction
-    // transient, then the reactor reuses that space (see `CORE1_STACK_BYTES`).
+    let usb_lane = reactor_lanes
+        .claim_interface(&USB_REACTOR_LANE, device_descriptor(usb_id))
+        .expect("USB lane is available");
+    let tcp_lane = tcp_cfg.map(|descriptor| {
+        reactor_lanes
+            .claim_interface(&TCP_REACTOR_LANE, descriptor)
+            .expect("TCP lane is available")
+    });
+    #[cfg(feature = "wifi-auto")]
+    let wifi_supervisor_lane = has_wifi.then(|| {
+        reactor_lanes
+            .claim_supervisor(&WIFI_REACTOR_LANE, WIFI_SUPERVISOR_ID, &OUTBOUND_WAKE)
+            .expect("WiFi supervisor lane is available")
+    });
+    #[cfg(feature = "lora")]
+    let lora_lane = reactor_lanes
+        .claim_interface(&LORA_REACTOR_LANE, lora_cfg)
+        .expect("LoRa lane is available");
+    #[cfg(feature = "bluetooth-auto")]
+    let ble_supervisor_lane = (radio_mode == RadioMode::Ble && ble_identity.is_some()).then(|| {
+        reactor_lanes
+            .claim_supervisor(&BLE_REACTOR_LANE, BLE_SUPERVISOR_ID, &BLE_OUTBOUND_WAKE)
+            .expect("Bluetooth supervisor lane is available")
+    });
+    #[cfg(feature = "esp-now")]
+    let espnow_lane = espnow_cfg.map(|descriptor| {
+        reactor_lanes
+            .claim_interface(&ESPNOW_REACTOR_LANE, descriptor)
+            .expect("ESP-NOW lane is available")
+    });
+
+    let handle: Handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
+    let reactor_wiring = reactor_lanes.into_reactor_wiring(
+        NOTIFY.receiver(),
+        COMMANDS.receiver(),
+        LIFECYCLE.receiver(),
+        handle,
+    );
+    let host = EmbassyHost::new_with_timebase(b.timebase, hardware_entropy as fn(&mut [u8]));
+
     let core1_stack = mk_static!(CpuStack<CORE1_STACK_BYTES>, CpuStack::new());
     esp_rtos::start_second_core(b.cpu_ctrl, b.sw_int1, core1_stack, move || {
         static NODE: StaticCell<S3Node> = StaticCell::new();
-        let node: &'static mut S3Node =
-            NODE.init_with(|| PrnsNode::new(recipe, plumbing, host, HVec::new()));
-        node.activate(USB_SLOT, device_descriptor(usb_id));
-        if let Some(cfg) = tcp_cfg {
-            node.activate(TCP_SLOT, cfg);
-        }
-        #[cfg(feature = "lora")]
-        node.activate(LORA_SLOT, lora_cfg);
-        #[cfg(feature = "esp-now")]
-        if let Some(cfg) = espnow_cfg {
-            node.activate(ESPNOW_SLOT, cfg);
-        }
-        #[cfg(feature = "wifi-auto")]
-        if has_wifi {
-            node.activate_fleet(WIFI_FLEET_SLOT, WIFI_FLEET_ID);
-        }
-        #[cfg(feature = "bluetooth-auto")]
-        if radio_mode == RadioMode::Ble && ble_identity.is_some() {
-            node.activate_fleet(BLE_FLEET_SLOT, BLE_FLEET_ID);
-        }
+        let node: &'static mut S3Node = PrnsNode::init_static(&NODE, recipe, reactor_wiring, host);
         log_heap_footprint("post-construction (engine columns boxed into PSRAM)");
 
         static EXECUTOR: StaticCell<esp_rtos::embassy::Executor> = StaticCell::new();
         EXECUTOR
             .init(esp_rtos::embassy::Executor::new())
             .run(|spawner| {
-                spawner.spawn(reactor_core(node).expect("reactor task fits"));
+                spawner.spawn(reactor_task(node).expect("reactor task fits"));
             })
     });
 
-    let usb_seam = {
-        let (in_producer, out_consumer) = iface_halves[USB_SLOT].take().expect("usb slot half");
-        EmbassyInterfaceSeam::new(
-            usb_id,
-            in_producer,
-            NOTIFY.sender(),
-            out_consumer,
-            hardware_entropy,
-        )
-    };
+    let usb_seam = usb_lane.into_seam(NOTIFY.sender(), hardware_entropy);
     spawner.spawn(
         usb_device_task(usb_rx, usb_tx, usb_seam, usb_id, usb_status).expect("usb task fits"),
     );
 
     #[cfg(feature = "lora")]
-    let lora_seam = {
-        let (lora_in_producer, lora_out_consumer) =
-            iface_halves[LORA_SLOT].take().expect("lora slot half");
-        EmbassyInterfaceSeam::new(
-            lora_id,
-            lora_in_producer,
-            NOTIFY.sender(),
-            lora_out_consumer,
-            hardware_entropy,
-        )
-    };
+    let lora_seam = lora_lane.into_seam(NOTIFY.sender(), hardware_entropy);
 
     #[cfg(feature = "esp-now")]
-    let espnow = espnow.map(|interface| {
-        let (in_producer, out_consumer) =
-            iface_halves[ESPNOW_SLOT].take().expect("espnow slot half");
-        let seam = EmbassyInterfaceSeam::new(
-            interface.id(),
-            in_producer,
-            NOTIFY.sender(),
-            out_consumer,
-            hardware_entropy,
-        );
+    let espnow = espnow.zip(espnow_lane).map(|(interface, lane)| {
+        let seam = lane.into_seam(NOTIFY.sender(), hardware_entropy);
         (interface, seam)
     });
 
-    let tcp = tcp_built.map(|(tcp, _, _)| {
-        let (in_producer, out_consumer) = iface_halves[TCP_SLOT].take().expect("tcp slot half");
-        let seam = EmbassyInterfaceSeam::new(
-            tcp.id(),
-            in_producer,
-            NOTIFY.sender(),
-            out_consumer,
-            hardware_entropy,
-        );
+    let tcp = tcp_built.zip(tcp_lane).map(|((tcp, _, _), lane)| {
+        let seam = lane.into_seam(NOTIFY.sender(), hardware_entropy);
         (tcp, seam)
     });
 
     #[cfg(feature = "wifi-auto")]
-    let wifi_fleet: Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP> = {
-        let (in_producer, out_consumer) = iface_halves[WIFI_FLEET_SLOT]
-            .take()
-            .expect("wifi fleet half");
-        Fleet::new(
-            FleetWire {
-                inbound: in_producer,
-                outbound: out_consumer,
-                notify: NOTIFY.sender(),
-                outbound_wake: &OUTBOUND_WAKE,
-            },
-            LIFECYCLE.sender(),
-        )
-    };
+    let wifi = wifi.zip(wifi_supervisor_lane).map(|(interface, lane)| {
+        let fleet: Fleet<Mtx, { wifi_auto_contract::HARDWARE_MTU }, NOTIFY_CAP, LIFECYCLE_CAP> =
+            lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender());
+        (interface, fleet)
+    });
     // The WiFi-auto run loop's two MTU receive buffers live on the heap (the D-cache donation),
     // not on the bounded `#[esp_rtos::main]` stack that run()'s future rides; the alloc-free
     // embassy AutoWifi just borrows them. Leaked: they live for the program's whole life anyway.
@@ -275,25 +216,17 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let wifi_sec_data_buf: &'static mut [u8] =
         alloc::vec![0u8; wifi_auto_contract::HARDWARE_MTU].leak();
     #[cfg(feature = "bluetooth-auto")]
-    let ble_fleet: Option<Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP>> =
-        ble_identity.map(|_| {
-            let (in_producer, out_consumer) =
-                iface_halves[BLE_FLEET_SLOT].take().expect("ble fleet half");
-            Fleet::new(
-                FleetWire {
-                    inbound: in_producer,
-                    outbound: out_consumer,
-                    notify: NOTIFY.sender(),
-                    outbound_wake: &BLE_OUTBOUND_WAKE,
-                },
-                LIFECYCLE.sender(),
-            )
+    let ble = ble_identity
+        .zip(ble_supervisor_lane)
+        .map(|(identity, lane)| {
+            let fleet: S3BleFleet = lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender());
+            (identity, fleet)
         });
 
     let button = Input::new(b.button, InputConfig::default().with_pull(Pull::Up));
     spawner.spawn(button_task(button).expect("button task fits"));
 
-    let wifi_status = wifi.as_ref().map(AutoWifi::status);
+    let wifi_status = wifi.as_ref().map(|(interface, _)| interface.status());
     let wifi_id = wifi_status.as_ref().map(|status| {
         use personal_rns::interfaces::InterfaceStatus;
         status.id()
@@ -570,7 +503,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                     }
                                 }
                                 #[cfg(feature = "bluetooth-auto")]
-                                if !handled && card.id() == BLE_FLEET_ID {
+                                if !handled && card.id() == BLE_SUPERVISOR_ID {
                                     let status = BluetoothAutoStatus::new(&BLE_SHARED);
                                     show_toggle_notice(status.is_enabled());
                                     status.toggle_enabled();
@@ -610,29 +543,22 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     // reclaim ~4 KiB internal SRAM toward the full radio stack + SoftAP fit.
     let ble_connector = esp_radio::ble::controller::BleConnector::new(
         b.bt,
-        esp_radio::ble::Config::default().with_task_stack_size(4096),
+        esp_radio::ble::Config::default()
+            .with_task_stack_size(4096)
+            .with_max_connections(BLE_PEER_CAPACITY as u8),
     )
     .expect("ble connector");
 
     #[cfg(all(feature = "bluetooth-auto", not(feature = "wifi-auto")))]
     {
         let _ = (wifi, tcp, has_wifi);
-        let ble_run = async {
-            match (ble_identity, ble_fleet) {
-                (Some(identity), Some(fleet)) => {
-                    crate::bluetooth_auto::run(
-                        ble_connector,
-                        mac_octets,
-                        identity,
-                        fleet,
-                        &BLE_SHARED,
-                    )
-                    .await;
-                }
-                _ => core::future::pending().await,
-            }
-        };
-        join(ble_run, render).await;
+        if let Some((identity, fleet)) = ble {
+            spawner.spawn(
+                ble_task(spawner, ble_connector, mac_octets, identity, fleet)
+                    .expect("Bluetooth task fits"),
+            );
+        }
+        render.await;
     }
     #[cfg(all(feature = "wifi-auto", not(feature = "bluetooth-auto")))]
     {
@@ -643,7 +569,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             }
         };
         match (wifi, tcp) {
-            (Some(wifi), Some((tcp, tcp_seam))) => {
+            (Some((wifi, wifi_fleet)), Some((tcp, tcp_seam))) => {
                 join(
                     join(
                         join(lora_run, espnow_run),
@@ -656,7 +582,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 )
                 .await;
             }
-            (Some(wifi), None) => {
+            (Some((wifi, wifi_fleet)), None) => {
                 join(
                     join(
                         join(lora_run, espnow_run),
@@ -684,29 +610,22 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 log_heap_footprint("pre-ble-connector (core 0)");
                 let ble_connector = esp_radio::ble::controller::BleConnector::new(
                     b.bt,
-                    esp_radio::ble::Config::default().with_task_stack_size(4096),
+                    esp_radio::ble::Config::default()
+                        .with_task_stack_size(4096)
+                        .with_max_connections(BLE_PEER_CAPACITY as u8),
                 )
                 .expect("ble connector");
                 log_heap_footprint("post-ble-connector (core 0)");
-                let ble_run = async {
-                    match (ble_identity, ble_fleet) {
-                        (Some(identity), Some(fleet)) => {
-                            crate::bluetooth_auto::run(
-                                ble_connector,
-                                mac_octets,
-                                identity,
-                                fleet,
-                                &BLE_SHARED,
-                            )
-                            .await;
-                        }
-                        _ => core::future::pending().await,
-                    }
-                };
+                if let Some((identity, fleet)) = ble {
+                    spawner.spawn(
+                        ble_task(spawner, ble_connector, mac_octets, identity, fleet)
+                            .expect("Bluetooth task fits"),
+                    );
+                }
                 match (wifi, tcp) {
-                    (Some(wifi), Some((tcp, tcp_seam))) => {
+                    (Some((wifi, wifi_fleet)), Some((tcp, tcp_seam))) => {
                         join(
-                            join(join(join(ble_run, lora_run), espnow_run), tcp.run(tcp_seam)),
+                            join(join(lora_run, espnow_run), tcp.run(tcp_seam)),
                             join(
                                 wifi.run(wifi_fleet, wifi_data_buf, wifi_sec_data_buf),
                                 render,
@@ -714,9 +633,9 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                         )
                         .await;
                     }
-                    (Some(wifi), None) => {
+                    (Some((wifi, wifi_fleet)), None) => {
                         join(
-                            join(join(ble_run, lora_run), espnow_run),
+                            join(lora_run, espnow_run),
                             join(
                                 wifi.run(wifi_fleet, wifi_data_buf, wifi_sec_data_buf),
                                 render,
@@ -725,14 +644,14 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                         .await;
                     }
                     (None, _) => {
-                        join(join(join(ble_run, lora_run), espnow_run), render).await;
+                        join(join(lora_run, espnow_run), render).await;
                     }
                 }
             }
             RadioMode::AccessPoint => {
-                let _ = (b.bt, ble_fleet);
+                let _ = (b.bt, ble);
                 match (wifi, tcp) {
-                    (Some(wifi), Some((tcp, tcp_seam))) => {
+                    (Some((wifi, wifi_fleet)), Some((tcp, tcp_seam))) => {
                         join(
                             join(
                                 join(lora_run, espnow_run),
@@ -745,7 +664,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                         )
                         .await;
                     }
-                    (Some(wifi), None) => {
+                    (Some((wifi, wifi_fleet)), None) => {
                         join(
                             join(
                                 join(lora_run, espnow_run),
@@ -764,11 +683,20 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     }
 }
 
-/// Core 1: run only the engine reactor over the slot pool. The node was built on core 0 and lives in
-/// a `static`; core 1 borrows it by `&'static mut`, so only a pointer crosses the core boundary (the
-/// engine never moves) and this core needs just a small per-poll stack for the ingest crypto.
 #[embassy_executor::task]
-async fn reactor_core(node: &'static mut S3Node) {
+async fn reactor_task(node: &'static mut S3Node) {
     node.run_reactor_with_interface_store(&INTERFACE_STORE)
         .await
+}
+
+#[cfg(feature = "bluetooth-auto")]
+#[embassy_executor::task]
+async fn ble_task(
+    spawner: Spawner,
+    connector: esp_radio::ble::controller::BleConnector<'static>,
+    mac: [u8; 6],
+    identity: BleIdentity,
+    fleet: S3BleFleet,
+) {
+    crate::bluetooth_auto::run(connector, mac, identity, fleet, &BLE_SHARED, spawner).await
 }

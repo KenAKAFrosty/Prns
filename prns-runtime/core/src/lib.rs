@@ -1,5 +1,5 @@
 #![cfg_attr(not(any(feature = "std", test)), no_std)]
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 #![doc = "Runtime-neutral Personal Reticulum node contracts and reactor kernel"]
 #![deny(rustdoc::broken_intra_doc_links)]
 

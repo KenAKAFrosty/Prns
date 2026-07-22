@@ -11,11 +11,11 @@ use super::EmbassyInterfaceSeam;
 
 #[test]
 fn packet_phy_crosses_the_embassy_ingress_seam_with_its_frame() {
-    const SLOT: usize = 64;
+    const FRAME: usize = 64;
 
     let interface = InterfaceId::new([0xA1; 8]);
-    let (inbound, mut reactor_inbound) = leaked_grant_lane::<SLOT>(1);
-    let (_reactor_outbound, outbound) = leaked_grant_lane::<SLOT>(1);
+    let (inbound, mut reactor_inbound) = leaked_grant_lane::<FRAME>(1);
+    let (_reactor_outbound, outbound) = leaked_grant_lane::<FRAME>(1);
     let notify = Channel::<CriticalSectionRawMutex, InterfaceId, 1>::new();
     let packet_phy = PacketPhyStats {
         rssi: Some(crate::interfaces::RssiDbm::new(-87)),

@@ -9,19 +9,19 @@ pub enum FrameTarget {
     Fan(FanTarget),
 }
 
-pub struct FrameSlot<const SLOT: usize> {
+pub struct FrameSlot<const FRAME: usize> {
     pub target: FrameTarget,
     pub len: usize,
-    pub bytes: [u8; SLOT],
+    pub bytes: [u8; FRAME],
     pub packet_phy: PacketPhyStats,
 }
 
-impl<const SLOT: usize> FrameSlot<SLOT> {
+impl<const FRAME: usize> FrameSlot<FRAME> {
     pub const fn empty() -> Self {
         Self {
             target: FrameTarget::Direct(InterfaceId::new([0u8; INTERFACE_ID_LEN])),
             len: 0,
-            bytes: [0u8; SLOT],
+            bytes: [0u8; FRAME],
             packet_phy: PacketPhyStats {
                 rssi: None,
                 snr: None,
@@ -33,11 +33,11 @@ impl<const SLOT: usize> FrameSlot<SLOT> {
     fn fill(&mut self, frame: &[u8]) {
         self.packet_phy = PacketPhyStats::default();
         debug_assert!(
-            frame.len() <= SLOT,
-            "a {}-byte frame cannot fit this {SLOT}-byte slot",
+            frame.len() <= FRAME,
+            "a {}-byte frame cannot fit this {FRAME}-byte slot",
             frame.len()
         );
-        let len = frame.len().min(SLOT);
+        let len = frame.len().min(FRAME);
         self.bytes[..len].copy_from_slice(&frame[..len]);
         self.len = len;
     }
@@ -63,7 +63,7 @@ impl<const SLOT: usize> FrameSlot<SLOT> {
 }
 
 /// As a [`FrameSink`] the slot is a streaming deframer's destination: `len` is the accumulation cursor, and the committer stamps `target` when the frame is done.
-impl<const SLOT: usize> FrameSink for FrameSlot<SLOT> {
+impl<const FRAME: usize> FrameSink for FrameSlot<FRAME> {
     fn clear(&mut self) {
         self.len = 0;
         self.packet_phy = PacketPhyStats::default();
@@ -74,11 +74,11 @@ impl<const SLOT: usize> FrameSink for FrameSlot<SLOT> {
     }
 
     fn free_capacity(&self) -> usize {
-        SLOT.saturating_sub(self.len)
+        FRAME.saturating_sub(self.len)
     }
 
     fn push(&mut self, byte: u8) -> Result<(), FrameSinkError> {
-        if self.len >= SLOT {
+        if self.len >= FRAME {
             return Err(FrameSinkError::Full);
         }
         self.bytes[self.len] = byte;
@@ -87,7 +87,7 @@ impl<const SLOT: usize> FrameSink for FrameSlot<SLOT> {
     }
 
     fn extend_from_slice(&mut self, run: &[u8]) -> Result<(), FrameSinkError> {
-        if run.len() > SLOT.saturating_sub(self.len) {
+        if run.len() > FRAME.saturating_sub(self.len) {
             return Err(FrameSinkError::Full);
         }
         self.bytes[self.len..self.len + run.len()].copy_from_slice(run);
@@ -97,25 +97,24 @@ impl<const SLOT: usize> FrameSink for FrameSlot<SLOT> {
 }
 
 #[allow(async_fn_in_trait)]
-pub trait GrantProducer<const SLOT: usize> {
-    fn try_grant(&mut self) -> Option<&mut FrameSlot<SLOT>>;
-    async fn grant(&mut self) -> &mut FrameSlot<SLOT>;
+pub trait GrantProducer<const FRAME: usize> {
+    fn try_grant(&mut self) -> Option<&mut FrameSlot<FRAME>>;
+    async fn grant(&mut self) -> &mut FrameSlot<FRAME>;
     fn commit(&mut self);
 }
 
 #[allow(async_fn_in_trait)]
-pub trait GrantConsumer<const SLOT: usize> {
-    fn try_peek(&mut self) -> Option<&mut FrameSlot<SLOT>>;
-    async fn peek(&mut self) -> &mut FrameSlot<SLOT>;
+pub trait GrantConsumer<const FRAME: usize> {
+    fn try_peek(&mut self) -> Option<&mut FrameSlot<FRAME>>;
+    async fn peek(&mut self) -> &mut FrameSlot<FRAME>;
     fn release(&mut self);
 }
 
-pub trait AnyGrantConsumer {
-    fn try_peek_frame(&mut self) -> Option<(FrameTarget, PacketPhyStats, &mut [u8])>;
-    fn release_frame(&mut self);
+pub trait ReactorLaneReader: Send {
+    fn try_read(&mut self) -> Option<(FrameTarget, PacketPhyStats, &mut [u8])>;
+    fn release(&mut self);
 }
 
-pub trait AnyGrantProducer {
-    fn try_fill_frame_for(&mut self, interface_id: InterfaceId, frame: &[u8]) -> bool;
-    fn try_fill_frame_fan(&mut self, fan: FanTarget, frame: &[u8]) -> bool;
+pub trait ReactorLaneWriter: Send {
+    fn try_write(&mut self, target: FrameTarget, frame: &[u8]) -> bool;
 }

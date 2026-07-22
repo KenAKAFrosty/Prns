@@ -5,5 +5,5 @@ pub use prns_interfaces_tokio::bluetooth_auto::{
 
 #[cfg(all(feature = "embassy-host", not(feature = "tokio-host")))]
 pub use prns_interfaces_embassy::bluetooth_auto::{
-    BluetoothAuto, BluetoothAutoShared, BluetoothAutoStatus, BluetoothMemberStatus,
+    connection_slots, BluetoothAuto, BluetoothAutoShared, BluetoothAutoStatus, BluetoothMemberStatus,
 };
