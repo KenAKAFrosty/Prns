@@ -68,7 +68,7 @@ samply record -- "$(ls -t target/release/deps/engine_cycle-* | grep -vE '\.d$' |
 CI-trackable regression detection):
 
 ```sh
-cargo bench --bench engine_cycle_iai
+cargo bench --features callgrind --bench engine_cycle_iai
 ```
 
 It prints instructions / cache hits / estimated cycles per primitive, and on

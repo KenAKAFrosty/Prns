@@ -8,6 +8,7 @@ fn a_short_firehose_run_settles_clean_end_to_end() {
 
     let mut responder = Command::new(env!("CARGO_BIN_EXE_participant_node"))
         .args([manifest, "responder", "127.0.0.1:0", "500"])
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
         .expect("spawn responder");
@@ -30,6 +31,23 @@ fn a_short_firehose_run_settles_clean_end_to_end() {
         .spawn()
         .expect("spawn initiator");
     let mut initiator_lines = BufReader::new(initiator.stdout.take().expect("piped")).lines();
+    initiator_lines
+        .by_ref()
+        .map_while(Result::ok)
+        .find(|line| line.starts_with("READY"))
+        .expect("initiator reports READY");
+
+    responder
+        .stdin
+        .as_mut()
+        .expect("piped")
+        .write_all(b"STARTUP\n")
+        .expect("release responder startup gate");
+    responder_lines
+        .by_ref()
+        .map_while(Result::ok)
+        .find(|line| line == "MEASURE_READY")
+        .expect("responder reaches the measurement barrier");
     initiator_lines
         .by_ref()
         .map_while(Result::ok)
