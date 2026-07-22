@@ -15,10 +15,10 @@ use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2_core_bluetooth::{
     CBAdvertisementDataLocalNameKey, CBAdvertisementDataServiceUUIDsKey, CBCentralManager,
-    CBCentralManagerScanOptionAllowDuplicatesKey, CBCharacteristic, CBMutableCharacteristic,
-    CBPeripheral, CBPeripheralManager, CBUUID,
+    CBCentralManagerScanOptionAllowDuplicatesKey, CBCharacteristic, CBPeer, CBPeripheral,
+    CBPeripheralManager, CBUUID,
 };
-use objc2_foundation::{NSArray, NSData, NSDictionary, NSNumber, NSString, NSUUID};
+use objc2_foundation::{NSArray, NSData, NSDictionary, NSNumber, NSString};
 
 use prns_core::interfaces::bluetooth_auto::{
     BleAddress, BleUuid, BLE_SERVICE_UUID, COLUMBA_IDENTITY_UUID, COLUMBA_RX_UUID, COLUMBA_TX_UUID,
@@ -32,8 +32,19 @@ use peripheral::PeripheralDelegate;
 pub use backend::MacosBleBackend;
 pub use gatt_link::{GattSink, GattSource};
 
-type PeripheralTable = Arc<Mutex<HashMap<[u8; 6], (SendPeripheral, Option<i8>)>>>;
-type RestoredPeripherals = Arc<Mutex<VecDeque<[u8; 6]>>>;
+type PeripheralTable = Arc<Mutex<HashMap<CoreBluetoothPeerId, (SendPeripheral, Option<i8>)>>>;
+type RestoredPeripherals = Arc<Mutex<VecDeque<CoreBluetoothPeerId>>>;
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct CoreBluetoothPeerId([u8; 16]);
+
+impl CoreBluetoothPeerId {
+    fn address(self) -> BleAddress {
+        let mut bytes = [0u8; 6];
+        bytes.copy_from_slice(&self.0[..6]);
+        BleAddress::new(bytes)
+    }
+}
 
 #[cfg(target_os = "ios")]
 const CENTRAL_RESTORE_IDENTIFIER: &str = "com.personal.prns.ble.central";
@@ -137,27 +148,21 @@ fn start_scan(central: &CBCentralManager) {
     unsafe { central.scanForPeripheralsWithServices_options(Some(&services), Some(&options)) };
 }
 
-fn uuid_token(uuid: &NSUUID) -> [u8; 6] {
+fn core_bluetooth_peer_id(peer: &CBPeer) -> CoreBluetoothPeerId {
     let mut raw = [0u8; 16];
-    // SAFETY: NSUUID guarantees `getUUIDBytes:` writes exactly 16 bytes; `raw` is a writable
-    // 16-byte buffer and remains live for the synchronous message.
+    // SAFETY: CoreBluetooth supplied a live peer, and NSUUID guarantees `getUUIDBytes:` writes
+    // exactly 16 bytes into the live writable buffer.
     unsafe {
-        let _: () = msg_send![uuid, getUUIDBytes: raw.as_mut_ptr()];
+        let uuid = peer.identifier();
+        let _: () = msg_send![&*uuid, getUUIDBytes: raw.as_mut_ptr()];
     }
-    let mut token = [0u8; 6];
-    token.copy_from_slice(&raw[..6]);
-    token
+    CoreBluetoothPeerId(raw)
 }
 
 struct SendPeripheralManager(Retained<CBPeripheralManager>);
 // SAFETY: this wrapper is only transferred into jobs on the manager's serial dispatch queue; the
 // retained Objective-C object is never concurrently messaged by Prns.
 unsafe impl Send for SendPeripheralManager {}
-
-struct SendCharacteristic(Retained<CBMutableCharacteristic>);
-// SAFETY: this wrapper is only transferred with its owning manager onto the serial CoreBluetooth
-// dispatch queue, where all characteristic messages are serialized.
-unsafe impl Send for SendCharacteristic {}
 
 struct SendPeripheral(Retained<CBPeripheral>);
 // SAFETY: this wrapper is only transferred into jobs on the central manager's serial dispatch
