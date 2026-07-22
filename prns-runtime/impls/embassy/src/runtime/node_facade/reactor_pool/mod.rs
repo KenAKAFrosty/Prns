@@ -188,7 +188,9 @@ impl<M: RawMutex + 'static, const FRAME: usize, const LANE_COUNT: usize>
         if self.lanes[SLOT].is_none() {
             return Err(LaneClaimError::AlreadyClaimed { slot: SLOT });
         }
-        let producer = self.egress.producer_mut(SLOT).expect("lane storage exists");
+        let Some(producer) = self.egress.producer_mut(SLOT) else {
+            unreachable!()
+        };
         producer.set_outbound_wake(outbound_wake);
         let lane = self.claim::<SLOT>(LaneConfiguration {
             target: LaneTarget::Supervisor(supervisor),

@@ -382,7 +382,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                     self.discovery.recv_from(&mut discovery_buf),
                     self.data.recv_from(&mut data_buf[..]),
                     beacon.next(),
-                    fleet.next_outbound::<{ contract::HARDWARE_MTU }>(),
+                    fleet.next_outbound(),
                 ),
                 select3(
                     recv_or_pending(&self.secondary_discovery, &mut sec_discovery_buf),
@@ -480,11 +480,11 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                     )
                     .await;
                 }
-                Either::First(Either4::Fourth((target, frame))) => {
-                    if !frame.is_empty() {
+                Either::First(Either4::Fourth(outbound)) => {
+                    if !outbound.is_empty() {
                         for slot in 0..MEMBERS {
                             let Some(peer) = peers[slot] else { continue };
-                            let selected = match target {
+                            let selected = match outbound.target() {
                                 FrameTarget::Direct(id) => ids[slot] == id,
                                 FrameTarget::Fan(FanTarget::Only(id)) => ids[slot] == id,
                                 FrameTarget::Fan(FanTarget::All) => true,
@@ -503,14 +503,14 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                                     with_timeout(
                                         SEND_TIMEOUT,
                                         socket.send_to(
-                                            &frame,
+                                            outbound.bytes(),
                                             (IpAddress::Ipv6(peer), contract::DEFAULT_DATA_PORT),
                                         ),
                                     )
                                     .await,
                                     Ok(Ok(()))
                                 ) {
-                                    self.status.member(slot).add_tx(frame.len() as u64);
+                                    self.status.member(slot).add_tx(outbound.len() as u64);
                                 }
                             }
                         }
@@ -638,7 +638,7 @@ fn route_inbound<
     let Some(slot) = peers.iter().position(|peer| *peer == Some(src)) else {
         return;
     };
-    if fleet.deliver_inbound(ids[slot], bytes) {
+    if fleet.try_deliver_inbound(ids[slot], bytes).is_ok() {
         status.member(slot).add_rx(bytes.len() as u64);
     }
 }

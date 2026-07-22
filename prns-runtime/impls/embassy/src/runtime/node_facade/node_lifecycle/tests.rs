@@ -104,10 +104,9 @@ fn a_recipe_node_hears_an_ifac_announce_a_supervisor_stands_a_peer_up_for() {
         fleet.register_member(descriptor(peer)).await;
         Timer::after(Duration::from_millis(40)).await;
 
-        assert!(
-            fleet.deliver_inbound(peer, &masked[..masked_len]),
-            "the shared lane carries the peer's frame"
-        );
+        fleet
+            .try_deliver_inbound(peer, &masked[..masked_len])
+            .expect("the shared lane carries the peer's frame");
         Timer::after(Duration::from_millis(80)).await;
 
         fleet.deregister_member(peer).await;

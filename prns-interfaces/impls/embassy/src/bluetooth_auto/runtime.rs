@@ -646,13 +646,13 @@ async fn drain_outbound<
 ) where
     B: BleBackend<MEMBERS>,
 {
-    while let Some((target, frame)) = fleet.try_next_outbound::<{ contract::BLE_HW_MTU }>() {
+    while let Some(frame) = fleet.try_next_outbound() {
         if frame.is_empty() {
             continue;
         }
         for slot in 0..MEMBERS {
             let selected = match members[slot].as_ref() {
-                Some(member) => match target {
+                Some(member) => match frame.target() {
                     FrameTarget::Direct(id) => member.id == id,
                     FrameTarget::Fan(FanTarget::Only(id)) => member.id == id,
                     FrameTarget::Fan(FanTarget::All) => true,
@@ -664,7 +664,7 @@ async fn drain_outbound<
                 continue;
             }
             let sent = match members[slot].as_mut() {
-                Some(member) => member.sink.send_frame(&frame).await.is_ok(),
+                Some(member) => member.sink.send_frame(frame.bytes()).await.is_ok(),
                 None => false,
             };
             if sent {
@@ -704,7 +704,10 @@ async fn deliver_inbound<
         Ok(0) => {}
         Ok(len) => {
             if let Some(member) = members[index].as_ref() {
-                if fleet.deliver_inbound(member.id, &inbufs[index][..len]) {
+                if fleet
+                    .try_deliver_inbound(member.id, &inbufs[index][..len])
+                    .is_ok()
+                {
                     status.member(member.slot).add_rx(len as u64);
                 }
             }

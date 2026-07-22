@@ -53,14 +53,14 @@ pub use prns_runtime_tokio::runtime::ProcessCommands;
 
 #[cfg(all(feature = "embassy-host", not(feature = "tokio-host")))]
 pub use prns_runtime_embassy::runtime::{
-    CompletionPool, EmbassyFleet, EmbassyInterfaceStore, Fleet, InterfaceLane, LaneClaimError,
-    PoolTakeError, PrnsNode, PrnsNodeHandle, ReactorWiring, RequestRoutingCapacity,
-    StaticReactorPool, SupervisorLane,
+    CompletionPool, EmbassyFleet, EmbassyInterfaceStore, Fleet, InboundDeliveryError,
+    InterfaceLane, LaneClaimError, OutboundFrame, PoolTakeError, PrnsNode, PrnsNodeHandle,
+    ReactorWiring, RequestRoutingCapacity, StaticReactorPool, SupervisorLane,
 };
 
 #[cfg(all(feature = "embassy-host", feature = "tokio-host"))]
 pub use prns_runtime_embassy::runtime::{
-    CompletionPool, EmbassyFleet, EmbassyInterfaceStore, InterfaceLane, LaneClaimError,
-    PoolTakeError, PrnsNode as EmbassyPrnsNode, PrnsNodeHandle as EmbassyPrnsNodeHandle,
-    ReactorWiring, StaticReactorPool, SupervisorLane,
+    CompletionPool, EmbassyFleet, EmbassyInterfaceStore, InboundDeliveryError, InterfaceLane,
+    LaneClaimError, OutboundFrame, PoolTakeError, PrnsNode as EmbassyPrnsNode,
+    PrnsNodeHandle as EmbassyPrnsNodeHandle, ReactorWiring, StaticReactorPool, SupervisorLane,
 };

@@ -8,6 +8,7 @@ pub use interface_store::EmbassyInterfaceStore;
 pub(crate) use interface_store::{InterfaceInspectionStore, NoInterfaceInspectionStore};
 pub use node_facade::Fleet as EmbassyFleet;
 pub use node_facade::{
-    CompletionPool, Fleet, InterfaceLane, LaneClaimError, PoolTakeError, PrnsNode, PrnsNodeHandle,
-    ReactorWiring, RequestRoutingCapacity, StaticReactorPool, SupervisorLane,
+    CompletionPool, Fleet, InboundDeliveryError, InterfaceLane, LaneClaimError, OutboundFrame,
+    PoolTakeError, PrnsNode, PrnsNodeHandle, ReactorWiring, RequestRoutingCapacity,
+    StaticReactorPool, SupervisorLane,
 };
