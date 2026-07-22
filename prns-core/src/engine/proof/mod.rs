@@ -125,10 +125,13 @@ impl<S: StorageLayout> EngineState<S> {
                         id: receipt.command_id,
                         delivered,
                     },
-                    ReceiptKind::SendToLink => ProofIngest::SendToLinkDelivered {
-                        id: receipt.command_id,
-                        delivered,
-                    },
+                    ReceiptKind::SendToLink(link_id) => {
+                        self.links.note_inbound(&link_id, arrived_at);
+                        ProofIngest::SendToLinkDelivered {
+                            id: receipt.command_id,
+                            delivered,
+                        }
+                    }
                     ReceiptKind::SendRequest => ProofIngest::Ignored,
                 }
             }
@@ -182,10 +185,13 @@ impl<S: StorageLayout> EngineState<S> {
                 id: resolved.proven.command_id,
                 delivered,
             },
-            ReceiptKind::SendToLink => ProofIngest::SendToLinkDelivered {
-                id: resolved.proven.command_id,
-                delivered,
-            },
+            ReceiptKind::SendToLink(link_id) => {
+                self.links.note_inbound(&link_id, arrived_at);
+                ProofIngest::SendToLinkDelivered {
+                    id: resolved.proven.command_id,
+                    delivered,
+                }
+            }
             ReceiptKind::SendRequest => return None,
         };
         Some(DeferredProof {

@@ -189,7 +189,7 @@ impl<S: StorageLayout> EngineState<S> {
         let culled = self.receipts.track(OutstandingReceipt {
             packet_hash,
             command_id: id,
-            kind: ReceiptKind::SendToLink,
+            kind: ReceiptKind::SendToLink(send.link_id),
             peer_signing_key: IdentitySigningPublicKey::new(peer_signing),
             sent_at: now,
             timeout_at: InstantMillis(now.0.saturating_add(traffic_timeout_ms)),

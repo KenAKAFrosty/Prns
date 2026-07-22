@@ -30,6 +30,7 @@ pub(super) async fn run_runtime_endpoint(
         .expect("the bench destination name is valid");
 
     let (event_tx, event_rx) = mpsc::unbounded_channel::<Event>();
+    let event_role = role.to_owned();
     let on_event = move |event: PrnsEvent<'_>, _state: &()| {
         let mapped = match event {
             PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) => {
@@ -39,7 +40,12 @@ pub(super) async fn run_runtime_endpoint(
                 Some(Event::Settled(id, settlement))
             }
             PrnsEvent::Diagnostic(Diagnostic::LinkEstablished(_)) => Some(Event::LinkUp),
-            PrnsEvent::Diagnostic(Diagnostic::LinkClosed { .. }) => Some(Event::Closed),
+            PrnsEvent::Diagnostic(Diagnostic::LinkClosed { reason, .. }) => {
+                if reason != LinkClosedReason::PeerClosed {
+                    eprintln!("DIED role={event_role} mechanism=link reason={reason:?}");
+                }
+                Some(Event::Closed)
+            }
             PrnsEvent::Message(Message::Delivered(Delivery::Single(delivery))) => {
                 Some(Event::Delivered(delivery.plaintext.len()))
             }
@@ -350,6 +356,8 @@ async fn initiate_link(
     let mut delivered = 0u64;
     let mut timeouts = 0u64;
     let mut culled = 0u64;
+    let mut rejected = 0u64;
+    let mut write_failed = 0u64;
     let mut in_flight = 0usize;
     let mut sent_sizes: std::collections::HashMap<u64, usize> = std::collections::HashMap::new();
     let mut sent_payload_bytes = 0u64;
@@ -400,9 +408,24 @@ async fn initiate_link(
                     culled += 1;
                     false
                 }
-                Err(_) => {
+                Err(SendToLinkFailure::Timeout) => {
                     timeouts += 1;
-                    true
+                    false
+                }
+                Err(SendToLinkFailure::Rejected(reason)) => {
+                    if rejected == 0 {
+                        eprintln!("DIED mechanism=link rejection={reason:?}");
+                    }
+                    sent -= 1;
+                    sent_payload_bytes = sent_payload_bytes.saturating_sub(size);
+                    rejected += 1;
+                    false
+                }
+                Err(SendToLinkFailure::WriteFailed(_)) => {
+                    sent -= 1;
+                    sent_payload_bytes = sent_payload_bytes.saturating_sub(size);
+                    write_failed += 1;
+                    false
                 }
             };
             if replenish && tokio::time::Instant::now() < deadline {
@@ -431,14 +454,15 @@ async fn initiate_link(
     rtts.sort_unstable();
     let payload_bytes = sent_payload_bytes;
     let seconds = (elapsed_ms as f64 / 1000.0).max(f64::EPSILON);
-    let attempted = sent + culled;
+    let attempted = sent + culled + rejected + write_failed;
     println!(
-        "RESULT attempted={attempted} sent={sent} delivered={sent} timeouts=0 \
+        "RESULT attempted={attempted} sent={sent} delivered={delivered} timeouts={timeouts} \
          receipt_proved={delivered} receipt_unproved={timeouts} culled={culled} \
+         rejected={rejected} write_failed={write_failed} \
          payload_bytes={payload_bytes} elapsed_ms={elapsed_ms} \
          delivered_per_sec={:.1} goodput_bytes_per_sec={:.0} \
          rtt_p50_ms={:.0} rtt_p99_ms={:.0}{} build={BUILD_PROFILE}",
-        sent as f64 / seconds,
+        delivered as f64 / seconds,
         payload_bytes as f64 / seconds,
         percentile(&rtts, 0.50),
         percentile(&rtts, 0.99),

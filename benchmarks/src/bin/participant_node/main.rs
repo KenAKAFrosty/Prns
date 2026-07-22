@@ -18,8 +18,8 @@ use benchmarks::{
 };
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, EstablishLink,
-    RatchetPolicy, RequestResponseTimeout, SendSinglePacket, SendSinglePacketPayload, SendToLink,
-    SendToLinkFailure, SendToLinkPayload, Settlement,
+    LinkClosedReason, RatchetPolicy, RequestResponseTimeout, SendSinglePacket,
+    SendSinglePacketPayload, SendToLink, SendToLinkFailure, SendToLinkPayload, Settlement,
 };
 use personal_rns::interfaces::{
     tcp, ConfiguredInterfacePolicy, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId,

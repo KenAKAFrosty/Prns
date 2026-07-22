@@ -4,13 +4,14 @@ use crate::engine::InstantMillis;
 use crate::identity::IdentitySigningPublicKey;
 use crate::routing::dedup::PacketHash;
 use crate::routing::links::request::RequestId;
+use crate::routing::links::LinkId;
 use crate::wire::DestinationHash;
 
 /// One table for every send kind, as RNS 1.4.0 keeps every `PacketReceipt` in the one `Transport.receipts` list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReceiptKind {
     SendSinglePacket,
-    SendToLink,
+    SendToLink(LinkId),
     SendRequest,
 }
 

@@ -384,11 +384,11 @@ impl<S: StorageLayout> EngineState<S> {
                         delivered,
                     });
                 }
-                let outcome = self.settle_receipt_proof(payload, packet_hash, arrived_at);
-                if matches!(outcome, ProofIngest::SendToLinkDelivered { .. }) {
-                    self.links.note_inbound(&link_id, arrived_at);
-                }
-                IngestPacketOutcome::Proof(outcome)
+                IngestPacketOutcome::Proof(self.settle_receipt_proof(
+                    payload,
+                    packet_hash,
+                    arrived_at,
+                ))
             }
 
             Ingress::LinkRequest {

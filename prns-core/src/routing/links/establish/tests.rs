@@ -1204,6 +1204,19 @@ fn a_prove_all_responder_proves_link_data_the_reference_way() {
         initiator.receipts.is_empty(),
         "settlement removes the receipt — a replayed proof finds nothing",
     );
+    let Some(LinkPhase::Active { last_inbound, .. }) = initiator.links.phase_for(&link_id) else {
+        panic!("the proven link remains active");
+    };
+    assert_eq!(
+        *last_inbound,
+        InstantMillis(2_200),
+        "a delivery proof is inbound link traffic and refreshes its liveness clock",
+    );
+    assert_eq!(
+        initiator.links.pop_stale(InstantMillis(17_199)),
+        None,
+        "the link cannot expire on the pre-proof liveness deadline",
+    );
 }
 
 #[test]
