@@ -28,6 +28,7 @@ use crate::routing::warmth::{DepartedInterfaces, Departure};
 use crate::routing::RoutingTable;
 use crate::storage::{DirtyInterfaceSet, StorageLayout};
 use crate::wire::TransportId;
+use core::mem::MaybeUninit;
 use zeroize::Zeroizing;
 
 #[cfg(feature = "runtime-metrics")]
@@ -207,8 +208,6 @@ pub struct EngineState<S: StorageLayout> {
     pub(crate) departed_interfaces: DepartedInterfaces<S::DepartedInterfaces>,
 }
 
-//Hand-written because derive(Default) would put a spurious S: Default bound on the layout parameter.
-//Only the column types it names need defaults, not the layout marker itself.
 impl<S: StorageLayout> Default for EngineState<S> {
     fn default() -> Self {
         Self {
@@ -260,6 +259,89 @@ impl<S: StorageLayout> Default for EngineState<S> {
             channels: Default::default(),
             dirty_interfaces: Default::default(),
             departed_interfaces: DepartedInterfaces::default(),
+        }
+    }
+}
+
+impl<S: StorageLayout> EngineState<S> {
+    #[expect(
+        unsafe_code,
+        clippy::undocumented_unsafe_blocks,
+        reason = "each field is written exactly once before returning the initialized value"
+    )]
+    #[doc(hidden)]
+    pub fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
+        let state = slot.as_mut_ptr();
+        macro_rules! write {
+            ($field:ident, $value:expr) => {
+                core::ptr::addr_of_mut!((*state).$field).write($value)
+            };
+        }
+        unsafe {
+            write!(ingested_packet_count, 0);
+            write!(ingested_command_count, 0);
+            #[cfg(feature = "runtime-metrics")]
+            write!(ignored_packet_counts, Default::default());
+            #[cfg(feature = "runtime-metrics")]
+            write!(announce_ingress_counts, Default::default());
+            #[cfg(feature = "runtime-metrics")]
+            write!(announce_accepted_interface_counts, Default::default());
+            #[cfg(feature = "runtime-metrics")]
+            write!(announce_command_counts, Default::default());
+            #[cfg(feature = "runtime-metrics")]
+            write!(announce_interface_metrics, Vec::new());
+            #[cfg(feature = "runtime-metrics")]
+            write!(interface_metric_groups, Vec::new());
+            write!(routing_table, Default::default());
+            write!(destination_identities, DestinationIdentities::default());
+            write!(scheduled_announces, Default::default());
+            write!(
+                upstream_app_destinations,
+                UpstreamAppDestinations::default()
+            );
+            write!(packet_hash_history, Default::default());
+            write!(identity_blackholes, IdentityBlackholes::default());
+            write!(held_identities, HeldIdentities::default());
+            write!(transport, TransportState::default());
+            write!(protocol, EngineProtocolPolicy::default());
+            write!(self_ratchets, SelfRatchets::default());
+            write!(receipts, Receipts::default());
+            write!(reverse_routes, ReverseRoutes::default());
+            write!(pending_path_requests, PendingPathRequests::default());
+            write!(recent_path_requests, RecentPathRequests::default());
+            write!(seen_path_requests, SeenPathRequests::default());
+            write!(tunnels, Tunnels::default());
+            write!(recursive_path_requests, RecursivePathRequests::default());
+            write!(
+                interface_path_request_limits,
+                InterfacePathRequestLimits::default()
+            );
+            write!(
+                egress_path_request_limits,
+                InterfacePathRequestLimits::default()
+            );
+            write!(
+                interface_announce_limits,
+                InterfaceAnnounceLimits::default()
+            );
+            write!(held_announces, HeldAnnounces::default());
+            write!(
+                destination_announce_limits,
+                DestinationAnnounceLimits::default()
+            );
+            write!(group_keys, GroupKeys::default());
+            write!(request_handlers, RequestHandlers::default());
+            write!(transported_links, TransportedLinks::default());
+            write!(links, Links::default());
+            write!(outgoing_resources, OutgoingResources::default());
+            write!(incoming_resources, IncomingResources::default());
+            write!(resource_open_lane, ResourceOpenLane::default());
+            write!(incoming_assemblies, IncomingAssemblies::default());
+            write!(outgoing_assemblies, OutgoingAssemblies::default());
+            write!(channels, Default::default());
+            write!(dirty_interfaces, Default::default());
+            write!(departed_interfaces, DepartedInterfaces::default());
+            slot.assume_init_mut()
         }
     }
 }

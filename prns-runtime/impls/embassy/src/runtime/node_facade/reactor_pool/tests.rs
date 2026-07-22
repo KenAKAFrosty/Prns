@@ -28,6 +28,13 @@ fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
 }
 
 #[test]
+fn notification_capacity_covers_every_buffered_frame() {
+    assert_eq!(minimum_reactor_notification_capacity(1, 1), 1);
+    assert_eq!(minimum_reactor_notification_capacity(3, 1), 3);
+    assert_eq!(minimum_reactor_notification_capacity(4, 2), 8);
+}
+
+#[test]
 fn static_pool_storage_can_only_be_taken_once() {
     static POOL: StaticReactorPool<Mtx, FRAME, DEPTH, 1> = StaticReactorPool::new();
     assert!(POOL.try_take().is_ok());

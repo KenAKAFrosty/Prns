@@ -64,8 +64,6 @@ use esp_radio::esp_now::{
 };
 #[cfg(feature = "bluetooth-auto")]
 use personal_rns::bluetooth_auto::{BluetoothAutoShared, BluetoothAutoStatus};
-#[cfg(feature = "bluetooth-auto")]
-use personal_rns::interfaces::bluetooth_auto::{BleIdentity, BLE_HW_MTU};
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
@@ -73,6 +71,8 @@ use personal_rns::engine::{
 use personal_rns::esp_now::EspNowInterface;
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::IdentitySigner;
+#[cfg(feature = "bluetooth-auto")]
+use personal_rns::interfaces::bluetooth_auto::{BleIdentity, BLE_HW_MTU};
 #[cfg(feature = "wifi-auto")]
 use personal_rns::interfaces::esp_now::{
     self as espnow_core, Channel as EspNowChannel, ChannelPolicy,
@@ -93,8 +93,9 @@ use personal_rns::reactor::embassy::{
 use personal_rns::reactor::interface_seam::{Interface, EMBEDDED_MAX_WIRE_FRAME_LEN};
 use personal_rns::reactor::reconnect::ReconnectPolicy;
 use personal_rns::runtime::{
-    CompletionPool, EmbassyInterfaceStore, Fleet, PreConfiguredDestination, PrnsEvent, PrnsNode,
-    PrnsNodeHandle, PrnsNodeRecipe, RequestHandlerRegistration, StaticReactorPool,
+    minimum_interface_store_capacity, minimum_reactor_notification_capacity, CompletionPool,
+    EmbassyInterfaceStore, Fleet, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle,
+    PrnsNodeRecipe, RequestHandlerRegistration, StaticReactorPool,
 };
 use personal_rns::storage::StorageLayout;
 use personal_rns::tcp::TcpClient;
@@ -176,19 +177,11 @@ const LORA_SLOT: usize = 3;
 const BLE_SUPERVISOR_SLOT: usize = 4;
 #[cfg(feature = "esp-now")]
 const ESPNOW_SLOT: usize = 4 + cfg!(feature = "bluetooth-auto") as usize;
-pub const NOTIFY_CAP: usize = 16;
+pub const NOTIFY_CAP: usize = minimum_reactor_notification_capacity(LANE_COUNT, LANE_DEPTH);
 const COMMANDS_CAP: usize = 8;
 pub const LIFECYCLE_CAP: usize = 8;
 const COMPLETIONS_CAP: usize = 4;
 
-/// Core 1's stack carries *both* the one-time engine *construction* (the big, dalek-heavy transient)
-/// and the per-poll ingest crypto the reactor runs afterward. The construction transient is the higher
-/// *one-shot* peak, but the live reactor's ingress path (`Ingress::classify` under real traffic) is
-/// itself deep, so this is load-bearing under load, not padding: trimming it to 74 KiB to fund core 0
-/// booted (construction fit) but overflowed core 1 once live RF traffic hit the reactor. 84 KiB was the
-/// peripheral build's floor; dual-role BLE pushed core 0 over the internal-SRAM ceiling, so this is
-/// trimmed to 80 KiB (6 KiB above the measured-overflowing 74 KiB) to fund the core-0 stack, then
-/// soak-tested under live RF. Do not trim further without re-soaking — the reactor floor is near here.
 const CORE1_STACK_BYTES: usize = 80 * 1024;
 
 const RENDER_INTERVAL: Duration = Duration::from_millis(500);
@@ -203,8 +196,7 @@ type Mtx = CriticalSectionRawMutex;
 type Handle = PrnsNodeHandle<'static, Mtx, COMMANDS_CAP, COMPLETIONS_CAP>;
 type UsbSeam = EmbassyInterfaceSeam<'static, Mtx, NOTIFY_CAP, EMBEDDED_MAX_WIRE_FRAME_LEN>;
 #[cfg(feature = "bluetooth-auto")]
-type S3BleFleet =
-    Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, BLE_HW_MTU, NOTIFY_CAP, LIFECYCLE_CAP>;
+type S3BleFleet = Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, BLE_HW_MTU, NOTIFY_CAP, LIFECYCLE_CAP>;
 type InterfaceStore = EmbassyInterfaceStore<
     Mtx,
     INTERFACE_STORE_CAP,
@@ -261,12 +253,8 @@ const BLE_SUPERVISOR_ID: InterfaceId =
 #[cfg(feature = "bluetooth-auto")]
 static BLE_SHARED: BluetoothAutoShared<BLE_MEMBERS> = BluetoothAutoShared::new(BLE_SUPERVISOR_ID);
 static LORA_CONTROL: LoRaControl = LoRaControl::new();
-static REACTOR_POOL: StaticReactorPool<
-    Mtx,
-    EMBEDDED_MAX_WIRE_FRAME_LEN,
-    LANE_DEPTH,
-    LANE_COUNT,
-> = StaticReactorPool::new();
+static REACTOR_POOL: StaticReactorPool<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, LANE_DEPTH, LANE_COUNT> =
+    StaticReactorPool::new();
 
 static NOTIFY: Channel<Mtx, InterfaceId, NOTIFY_CAP> = Channel::new();
 static COMMANDS: Channel<Mtx, personal_rns::engine::IssuedCommand, COMMANDS_CAP> = Channel::new();
@@ -280,7 +268,7 @@ static BUTTON_EVENTS: Channel<Mtx, screen::InputEvent, 4> = Channel::new();
 /// a `CriticalSectionRawMutex` store so the `&'static` shared across cores stays `Sync`. Capacity is a
 /// power of two above the interface ceiling, so a live interface's counts never get dropped.
 static INTERFACE_STORE: InterfaceStore = EmbassyInterfaceStore::new();
-const INTERFACE_STORE_CAP: usize = 32;
+const INTERFACE_STORE_CAP: usize = minimum_interface_store_capacity(INTERFACE_CAPACITY);
 const PACKET_PHY_RETENTION_CAPACITY: usize = 32;
 const PACKET_PHY_INDEX_BUCKETS: usize =
     personal_rns::routing::dedup::dedup_index_buckets(PACKET_PHY_RETENTION_CAPACITY);

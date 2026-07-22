@@ -81,14 +81,17 @@ pub async fn run(spawner: Spawner) {
     let espnow_seam = espnow_lane.into_seam(NOTIFY.sender(), hardware_entropy);
 
     #[cfg(feature = "bluetooth-auto")]
-    let ble = ble_identity.zip(ble_supervisor_lane).map(|(identity, lane)| {
-        let fleet: C6BleFleet = lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender());
-        (identity, fleet)
-    });
+    let ble = ble_identity
+        .zip(ble_supervisor_lane)
+        .map(|(identity, lane)| {
+            let fleet: C6BleFleet = lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender());
+            (identity, fleet)
+        });
     let host = EmbassyHost::new_with_timebase(timebase, hardware_entropy as fn(&mut [u8]));
 
     static NODE: StaticCell<Node> = StaticCell::new();
-    let node: &'static mut Node = NODE.init(PrnsNode::new(
+    let node: &'static mut Node = PrnsNode::init_static(
+        &NODE,
         PrnsNodeRecipe {
             transport_identity: Some(transport_secret),
             pre_configured_destinations: [PreConfiguredDestination::Single {
@@ -111,41 +114,17 @@ pub async fn run(spawner: Spawner) {
         },
         reactor_wiring,
         host,
-    ));
-    #[cfg(all(feature = "bluetooth-auto", feature = "esp-now"))]
-    {
-        if let Some((identity, fleet)) = ble {
-            spawner.spawn(
-                ble_task(spawner, p.BT, mac_octets, identity, fleet, &BLE_SHARED)
-                    .expect("ble task fits"),
-            );
-        }
-        join(
-            node.run_reactor_with_interface_store(&INTERFACE_STORE),
-            espnow.run(espnow_seam),
-        )
-        .await;
+    );
+    spawner.spawn(reactor_task(node).expect("reactor task fits"));
+    #[cfg(feature = "bluetooth-auto")]
+    if let Some((identity, fleet)) = ble {
+        spawner.spawn(
+            ble_task(spawner, p.BT, mac_octets, identity, fleet, &BLE_SHARED)
+                .expect("ble task fits"),
+        );
     }
-    #[cfg(all(feature = "esp-now", not(feature = "bluetooth-auto")))]
-    {
-        join(
-            node.run_reactor_with_interface_store(&INTERFACE_STORE),
-            espnow.run(espnow_seam),
-        )
-        .await;
-    }
-    #[cfg(all(feature = "bluetooth-auto", not(feature = "esp-now")))]
-    {
-        if let Some((identity, fleet)) = ble {
-            spawner.spawn(
-                ble_task(spawner, p.BT, mac_octets, identity, fleet, &BLE_SHARED)
-                    .expect("ble task fits"),
-            );
-        }
-        node.run_reactor_with_interface_store(&INTERFACE_STORE)
-            .await;
-    }
-    #[cfg(not(any(feature = "bluetooth-auto", feature = "esp-now")))]
-    node.run_reactor_with_interface_store(&INTERFACE_STORE)
-        .await;
+    #[cfg(feature = "esp-now")]
+    espnow.run(espnow_seam).await;
+    #[cfg(not(feature = "esp-now"))]
+    core::future::pending().await
 }

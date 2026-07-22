@@ -1,9 +1,11 @@
 use core::future::Future;
+use core::mem::MaybeUninit;
 
 use embassy_futures::join::join;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::{Channel, Receiver};
 use heapless::Vec as HeaplessVec;
+use static_cell::StaticCell;
 
 use crate::engine::{IssuedCommand, Journaled, MAX_SEND_REQUEST_DATA_LEN};
 use crate::interfaces::{InterfaceDescriptor, InterfaceId, InterfaceIfac};
@@ -20,6 +22,7 @@ use super::super::{
     PreConfiguredDestination, PrnsEvent, PrnsNodeRecipe,
 };
 use super::command_handle::PrnsNodeHandle;
+use prns_runtime::runtime::placement::assemble_node_in_place;
 use prns_runtime::runtime::{assemble_node, AssembledNode};
 
 /// Reactor-side endpoints for a board-owned static interface pool.
@@ -222,6 +225,61 @@ where
     H: Host,
     M: RawMutex + 'static,
 {
+    #[expect(
+        unsafe_code,
+        clippy::undocumented_unsafe_blocks,
+        reason = "every PrnsNode field is initialized before the slot is exposed"
+    )]
+    pub fn init_static<'d, D>(
+        cell: &'static StaticCell<Self>,
+        recipe: PrnsNodeRecipe<D, St, R, F, Manual, S>,
+        wiring: ReactorWiring<M, FRAME, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
+        host: H,
+    ) -> &'static mut Self
+    where
+        D: IntoIterator<Item = PreConfiguredDestination<'d>>,
+    {
+        const {
+            assert!(
+                INTERFACE_CAPACITY >= LANE_COUNT,
+                "PrnsNode INTERFACE_CAPACITY must cover every reactor lane"
+            );
+        }
+        let slot = cell.uninit();
+        let ReactorWiring {
+            inbound,
+            egress,
+            initial,
+            ifacs,
+            notify,
+            commands,
+            lifecycle,
+            handle,
+        } = wiring;
+        let node = slot.as_mut_ptr();
+        unsafe {
+            let assembled = &mut *core::ptr::addr_of_mut!((*node).node)
+                .cast::<MaybeUninit<AssembledNode<St, R, F, S>>>();
+            let (_, Manual) = assemble_node_in_place(assembled, recipe);
+            core::ptr::addr_of_mut!((*node).inbound).write(inbound);
+            core::ptr::addr_of_mut!((*node).egress).write(egress);
+            core::ptr::addr_of_mut!((*node).notify).write(notify);
+            core::ptr::addr_of_mut!((*node).commands).write(commands);
+            core::ptr::addr_of_mut!((*node).lifecycle).write(lifecycle);
+            core::ptr::addr_of_mut!((*node).handle).write(handle);
+            core::ptr::addr_of_mut!((*node).host).write(host);
+            core::ptr::addr_of_mut!((*node).descriptors).write(HeaplessVec::new());
+            core::ptr::addr_of_mut!((*node).ifacs).write(ifacs);
+        }
+        let node = unsafe { slot.assume_init_mut() };
+        for descriptor in initial {
+            if node.descriptors.push(descriptor).is_err() {
+                unreachable!()
+            }
+        }
+        node
+    }
+
     pub fn new_with_request_capacity<'d, D>(
         recipe: PrnsNodeRecipe<D, St, R, F, Manual, S>,
         wiring: ReactorWiring<M, FRAME, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,

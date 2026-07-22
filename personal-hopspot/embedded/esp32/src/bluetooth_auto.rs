@@ -25,13 +25,8 @@ use crate::c6::{BLE_CONTROLLER_CONNECTIONS, BLE_MEMBERS, LIFECYCLE_CAP, NOTIFY_C
 #[cfg(target_arch = "xtensa")]
 use crate::s3::{BLE_MEMBERS, LIFECYCLE_CAP, NOTIFY_CAP};
 
-type BleFleet = Fleet<
-    BridgeMutex,
-    EMBEDDED_MAX_WIRE_FRAME_LEN,
-    BLE_HW_MTU,
-    NOTIFY_CAP,
-    LIFECYCLE_CAP,
->;
+type BleFleet =
+    Fleet<BridgeMutex, EMBEDDED_MAX_WIRE_FRAME_LEN, BLE_HW_MTU, NOTIFY_CAP, LIFECYCLE_CAP>;
 type Transport = BleConnector<'static>;
 type HostStack = TroubleStack<Transport>;
 

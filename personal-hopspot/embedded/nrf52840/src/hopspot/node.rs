@@ -9,24 +9,25 @@ use personal_rns::lora::LoRaControl;
 use personal_rns::reactor::embassy::{EmbassyHost, InterfaceLifecycle};
 use personal_rns::reactor::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
 use personal_rns::runtime::{
-    CompletionPool, EmbassyInterfaceStore, PrnsEvent, PrnsNode, StaticReactorPool,
+    minimum_interface_store_capacity, minimum_reactor_notification_capacity, CompletionPool,
+    EmbassyInterfaceStore, PrnsEvent, PrnsNode, StaticReactorPool,
 };
 use personal_rns::storage::{StorageCapacity, StorageLayout};
 
 use super::bluetooth_auto;
 
 pub(super) const LANE_COUNT: usize = 3;
+pub(super) const LANE_DEPTH: usize = 1;
 const INTERFACE_CAPACITY: usize = 2 + bluetooth_auto::MEMBERS;
 pub(super) const LORA_SLOT: usize = 0;
 pub(super) const BLE_SUPERVISOR_SLOT: usize = 1;
 pub(super) const USB_SLOT: usize = 2;
 pub(super) const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"techousb");
-pub(super) const NOTIFY_CAP: usize = 16;
-const COMMANDS_CAP: usize = 8;
-pub(super) const LIFECYCLE_CAP: usize = 16;
+pub(super) const NOTIFY_CAP: usize = minimum_reactor_notification_capacity(LANE_COUNT, LANE_DEPTH);
+const COMMANDS_CAP: usize = 4;
+pub(super) const LIFECYCLE_CAP: usize = bluetooth_auto::MEMBERS;
 const COMPLETIONS_CAP: usize = 4;
-pub(super) const LANE_DEPTH: usize = 1;
-const INTERFACE_STORE_CAP: usize = 16;
+const INTERFACE_STORE_CAP: usize = minimum_interface_store_capacity(INTERFACE_CAPACITY);
 const PACKET_PHY_RETENTION_CAPACITY: usize =
     match <EngineStorageType as StorageLayout>::LIMITS.packet_hashes {
         StorageCapacity::Fixed(capacity) => capacity,

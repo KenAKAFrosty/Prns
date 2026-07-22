@@ -18,8 +18,6 @@ resolver = "2"
 path = "src/lib.rs"
 
 [features]
-# These are interface capabilities, not firmware profiles. Each board package below this workspace
-# selects its complete supported set; the target crate rejects hand-assembled partial board images.
 default = []
 bluetooth-auto = ["dep:trouble-host", "dep:prns-interfaces-embassy", "esp-radio/ble", "esp-radio/coex", "esp-rtos/esp-radio", "personal-rns/bluetooth-auto"]
 wifi-auto = ["esp-radio/wifi", "esp-radio/coex", "esp-rtos/esp-radio", "personal-rns/wifi-auto"]
@@ -42,7 +40,6 @@ allocator-api2 = { version = "0.3", default-features = false, features = ["alloc
 embedded-hal = "1"
 embedded-hal-bus = { version = "0.3", features = ["async"] }
 esp-radio = { version = "0.18", default-features = false, features = ["esp32s3", "unstable", "esp-alloc"] }
-# The board's share of the trouble-host BLE stack: concrete transport types and packet-pool sizing.
 trouble-host = { version = "0.6.0", optional = true, default-features = false, features = ["default-packet-pool-size-8"] }
 embassy-net = { version = "0.9.1", default-features = false, features = ["proto-ipv4", "proto-ipv6", "dhcpv4", "medium-ethernet", "multicast", "tcp", "udp"] }
 static_cell = "2"
@@ -61,8 +58,7 @@ embassy-time = { version = "0.5", default-features = false }
 embassy-sync = { version = "0.8", default-features = false }
 embassy-futures = { version = "0.1", default-features = false }
 
-# Seeed XIAO ESP32-C6 (riscv32, single-core, no PSRAM): the esp stack pinned to the esp32c6 chip.
-# Its explicit board package selects only USB Auto, ESP-NOW, and BLE.
+# Seeed XIAO ESP32-C6 (riscv32, single-core, no PSRAM)
 [target.'cfg(target_arch = "riscv32")'.dependencies]
 personal-rns = { path = "../../../personal-rns", default-features = false, features = ["embassy-host", "flash", "log"] }
 prns-interfaces-embassy = { path = "../../../prns-interfaces/impls/embassy", optional = true, default-features = false, features = ["bluetooth-auto-trouble"] }

@@ -20,6 +20,15 @@ use super::node_lifecycle::ReactorWiring;
 
 const UNCLAIMED_LANE_ID: InterfaceId = InterfaceId::new([0xff; 8]);
 
+#[must_use]
+pub const fn minimum_reactor_notification_capacity(lane_count: usize, lane_depth: usize) -> usize {
+    assert!(lane_count > 0);
+    assert!(lane_depth > 0);
+    lane_count
+        .checked_mul(lane_depth)
+        .expect("reactor notification capacity overflow")
+}
+
 type LaneBuffer<const FRAME: usize, const DEPTH: usize> = [FrameSlot<FRAME>; DEPTH];
 type LaneChannel<M, const FRAME: usize> = zerocopy_channel::Channel<'static, M, FrameSlot<FRAME>>;
 
@@ -62,7 +71,9 @@ impl<M: RawMutex + 'static, const FRAME: usize, const DEPTH: usize, const LANE_C
         }
     }
 
-    pub fn try_take(&'static self) -> Result<ReactorPool<M, FRAME, LANE_COUNT>, PoolTakeError> {
+    pub fn try_take(
+        &'static self,
+    ) -> Result<ReactorPool<M, FRAME, DEPTH, LANE_COUNT>, PoolTakeError> {
         if self
             .taken
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -112,7 +123,12 @@ impl<M: RawMutex + 'static, const FRAME: usize, const DEPTH: usize, const LANE_C
     }
 }
 
-pub struct ReactorPool<M: RawMutex + 'static, const FRAME: usize, const LANE_COUNT: usize> {
+pub struct ReactorPool<
+    M: RawMutex + 'static,
+    const FRAME: usize,
+    const DEPTH: usize,
+    const LANE_COUNT: usize,
+> {
     inbound: HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, M, FRAME>), LANE_COUNT>,
     egress: PooledEgress<M, FRAME, LANE_COUNT>,
     lanes: [Option<InterfaceLane<M, FRAME>>; LANE_COUNT],
@@ -120,8 +136,8 @@ pub struct ReactorPool<M: RawMutex + 'static, const FRAME: usize, const LANE_COU
     ifacs: HeaplessVec<InterfaceIfac, LANE_COUNT>,
 }
 
-impl<M: RawMutex + 'static, const FRAME: usize, const LANE_COUNT: usize>
-    ReactorPool<M, FRAME, LANE_COUNT>
+impl<M: RawMutex + 'static, const FRAME: usize, const DEPTH: usize, const LANE_COUNT: usize>
+    ReactorPool<M, FRAME, DEPTH, LANE_COUNT>
 {
     pub fn claim_interface<const SLOT: usize>(
         &mut self,
@@ -230,6 +246,12 @@ impl<M: RawMutex + 'static, const FRAME: usize, const LANE_COUNT: usize>
         lifecycle: Receiver<'static, M, InterfaceLifecycle, LIFECYCLE>,
         handle: PrnsNodeHandle<'static, M, COMMANDS, COMPLETIONS>,
     ) -> ReactorWiring<M, FRAME, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS> {
+        const {
+            assert!(
+                NOTIFY >= minimum_reactor_notification_capacity(LANE_COUNT, DEPTH),
+                "reactor notification capacity must cover every buffered inbound frame"
+            )
+        };
         ReactorWiring::new(
             self.inbound,
             self.egress,

@@ -4,11 +4,11 @@ mod request_runner;
 
 pub use prns_runtime::runtime::*;
 
-pub use interface_store::EmbassyInterfaceStore;
+pub use interface_store::{minimum_interface_store_capacity, EmbassyInterfaceStore};
 pub(crate) use interface_store::{InterfaceInspectionStore, NoInterfaceInspectionStore};
 pub use node_facade::Fleet as EmbassyFleet;
 pub use node_facade::{
-    CompletionPool, Fleet, InboundDeliveryError, InterfaceLane, LaneClaimError, OutboundFrame,
-    OutboundFrameError, PoolTakeError, PrnsNode, PrnsNodeHandle, ReactorWiring,
-    RequestRoutingCapacity, StaticReactorPool, SupervisorLane,
+    minimum_reactor_notification_capacity, CompletionPool, Fleet, InboundDeliveryError,
+    InterfaceLane, LaneClaimError, OutboundFrame, OutboundFrameError, PoolTakeError, PrnsNode,
+    PrnsNodeHandle, ReactorWiring, RequestRoutingCapacity, StaticReactorPool, SupervisorLane,
 };

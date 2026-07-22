@@ -7,5 +7,6 @@ pub use command_handle::{CompletionPool, PrnsNodeHandle};
 pub use interface_lifecycle::{Fleet, InboundDeliveryError, OutboundFrame, OutboundFrameError};
 pub use node_lifecycle::{PrnsNode, ReactorWiring, RequestRoutingCapacity};
 pub use reactor_pool::{
-    InterfaceLane, LaneClaimError, PoolTakeError, StaticReactorPool, SupervisorLane,
+    minimum_reactor_notification_capacity, InterfaceLane, LaneClaimError, PoolTakeError,
+    StaticReactorPool, SupervisorLane,
 };

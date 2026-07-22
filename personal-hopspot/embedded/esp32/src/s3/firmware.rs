@@ -7,9 +7,6 @@ pub(crate) async fn run<B: Esp32S3Board>(spawner: Spawner) {
     run_core::<B>(spawner, bringup).await;
 }
 
-/// Platform run on core 0: the self-identity crypto, the radios + WiFi/TCP, and the I/O
-/// run-loops + screen. The engine is built *and* owned by core 1 (the construction transient,
-/// then the reactor, on its own stack), so core 0 never touches the node. Never returns.
 #[allow(clippy::too_many_lines)]
 pub(super) async fn run_core<B: Esp32S3Board>(
     spawner: Spawner,
@@ -151,10 +148,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     #[cfg(feature = "bluetooth-auto")]
     let ble_supervisor_lane = (radio_mode == RadioMode::Ble && ble_identity.is_some()).then(|| {
         reactor_pool
-            .claim_supervisor::<BLE_SUPERVISOR_SLOT>(
-                BLE_SUPERVISOR_ID,
-                &BLE_OUTBOUND_WAKE,
-            )
+            .claim_supervisor::<BLE_SUPERVISOR_SLOT>(BLE_SUPERVISOR_ID, &BLE_OUTBOUND_WAKE)
             .expect("Bluetooth supervisor lane is available")
     });
     #[cfg(feature = "esp-now")]
@@ -176,15 +170,14 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let core1_stack = mk_static!(CpuStack<CORE1_STACK_BYTES>, CpuStack::new());
     esp_rtos::start_second_core(b.cpu_ctrl, b.sw_int1, core1_stack, move || {
         static NODE: StaticCell<S3Node> = StaticCell::new();
-        let node: &'static mut S3Node =
-            NODE.init_with(|| PrnsNode::new(recipe, reactor_wiring, host));
+        let node: &'static mut S3Node = PrnsNode::init_static(&NODE, recipe, reactor_wiring, host);
         log_heap_footprint("post-construction (engine columns boxed into PSRAM)");
 
         static EXECUTOR: StaticCell<esp_rtos::embassy::Executor> = StaticCell::new();
         EXECUTOR
             .init(esp_rtos::embassy::Executor::new())
             .run(|spawner| {
-                spawner.spawn(reactor_core(node).expect("reactor task fits"));
+                spawner.spawn(reactor_task(node).expect("reactor task fits"));
             })
     });
 
@@ -208,18 +201,16 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     });
 
     #[cfg(feature = "wifi-auto")]
-    let wifi = wifi
-        .zip(wifi_supervisor_lane)
-        .map(|(interface, lane)| {
-            let fleet: Fleet<
-                Mtx,
-                EMBEDDED_MAX_WIRE_FRAME_LEN,
-                { wifi_auto_contract::HARDWARE_MTU },
-                NOTIFY_CAP,
-                LIFECYCLE_CAP,
-            > = lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender());
-            (interface, fleet)
-        });
+    let wifi = wifi.zip(wifi_supervisor_lane).map(|(interface, lane)| {
+        let fleet: Fleet<
+            Mtx,
+            EMBEDDED_MAX_WIRE_FRAME_LEN,
+            { wifi_auto_contract::HARDWARE_MTU },
+            NOTIFY_CAP,
+            LIFECYCLE_CAP,
+        > = lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender());
+        (interface, fleet)
+    });
     // The WiFi-auto run loop's two MTU receive buffers live on the heap (the D-cache donation),
     // not on the bounded `#[esp_rtos::main]` stack that run()'s future rides; the alloc-free
     // embassy AutoWifi just borrows them. Leaked: they live for the program's whole life anyway.
@@ -566,14 +557,8 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         let _ = (wifi, tcp, has_wifi);
         if let Some((identity, fleet)) = ble {
             spawner.spawn(
-                ble_task(
-                    spawner,
-                    ble_connector,
-                    mac_octets,
-                    identity,
-                    fleet,
-                )
-                .expect("Bluetooth task fits"),
+                ble_task(spawner, ble_connector, mac_octets, identity, fleet)
+                    .expect("Bluetooth task fits"),
             );
         }
         render.await;
@@ -634,14 +619,8 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 log_heap_footprint("post-ble-connector (core 0)");
                 if let Some((identity, fleet)) = ble {
                     spawner.spawn(
-                        ble_task(
-                            spawner,
-                            ble_connector,
-                            mac_octets,
-                            identity,
-                            fleet,
-                        )
-                        .expect("Bluetooth task fits"),
+                        ble_task(spawner, ble_connector, mac_octets, identity, fleet)
+                            .expect("Bluetooth task fits"),
                     );
                 }
                 match (wifi, tcp) {
@@ -706,7 +685,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
 }
 
 #[embassy_executor::task]
-async fn reactor_core(node: &'static mut S3Node) {
+async fn reactor_task(node: &'static mut S3Node) {
     node.run_reactor_with_interface_store(&INTERFACE_STORE)
         .await
 }

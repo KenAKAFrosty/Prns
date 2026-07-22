@@ -1,5 +1,5 @@
 use embassy_executor::Spawner;
-use embassy_futures::join::{join3, join5};
+use embassy_futures::join::{join, join3, join5};
 use embassy_futures::select::{select3, Either3};
 use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
 use embassy_nrf::interrupt::{self, InterruptExt, Priority};
@@ -64,6 +64,12 @@ bind_interrupts!(struct Irqs {
     TWISPI0 => spim::InterruptHandler<peripherals::TWISPI0>;
     SAADC => saadc::InterruptHandler;
 });
+
+#[embassy_executor::task]
+async fn reactor_task(node: &'static mut Node) {
+    node.run_reactor_with_interface_store(&INTERFACE_STORE)
+        .await
+}
 
 #[allow(clippy::too_many_lines)]
 pub(crate) async fn run(spawner: Spawner) -> ! {
@@ -132,10 +138,6 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
     bat_channel.gain = Gain::GAIN1_5;
     let saadc = Saadc::new(p.SAADC, Irqs, SaadcConfig::default(), [bat_channel]);
 
-    // The SoftDevice owns the radio + CLOCK/POWER, and feeds the USB vbus detector over its SoC
-    // events; bring it up here (before the dalek-heavy engine construction) so its boot matches the
-    // validated first-light ordering. Constructing the engine afterward is fine — the SD's own
-    // high-priority interrupts keep the radio alive across the synchronous build.
     let sd = Softdevice::enable(&softdevice_config());
     static SERVER: StaticCell<Server> = StaticCell::new();
     let server: &'static Server = SERVER.init(Server::new(sd).unwrap());
@@ -146,8 +148,6 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
     if let Some(identity) = ble_identity {
         super::bluetooth_auto::set_columba_identity(server, identity);
     }
-    // The connection-slot pool: one worker per slot, parked until handed a connection. Pre-fill
-    // the free list so the acceptor can advertise; seed the single central-radio permit.
     if ble_identity.is_some() {
         let _ = HUB.central_token.try_send(());
         for idx in 0..POOL {
@@ -254,32 +254,32 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
     );
     let host = EmbassyHost::new(seeded_entropy as fn(&mut [u8]));
     static NODE: StaticCell<Node> = StaticCell::new();
-    let node: &'static mut Node = NODE.init_with(|| {
-        PrnsNode::new(
-            PrnsNodeRecipe {
-                transport_identity: Some(transport_secret),
-                pre_configured_destinations: [PreConfiguredDestination::Single {
-                    resource_strategy:
-                        personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
-                    app_name: "lxmf",
-                    aspects: &["delivery"],
-                    identity: node_identity.into_destination_secret(),
-                    announce_app_data: ANNOUNCE_APP_DATA,
-                    proof: personal_rns::routing::ProofStrategy::ProveAll,
-                    link_requests: personal_rns::routing::LinkRequestPolicy::AcceptAll,
-                    ratchet: RatchetPolicy::Ratcheted,
-                    request_handlers: RequestHandlerRegistration::None,
-                }],
-                app_state: (),
-                storage: crate::storage::TechoStorage,
-                routes: personal_rns::routes![],
-                interfaces: personal_rns::runtime::Manual,
-                on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
-            },
-            reactor_wiring,
-            host,
-        )
-    });
+    let node: &'static mut Node = PrnsNode::init_static(
+        &NODE,
+        PrnsNodeRecipe {
+            transport_identity: Some(transport_secret),
+            pre_configured_destinations: [PreConfiguredDestination::Single {
+                resource_strategy:
+                    personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
+                app_name: "lxmf",
+                aspects: &["delivery"],
+                identity: node_identity.into_destination_secret(),
+                announce_app_data: ANNOUNCE_APP_DATA,
+                proof: personal_rns::routing::ProofStrategy::ProveAll,
+                link_requests: personal_rns::routing::LinkRequestPolicy::AcceptAll,
+                ratchet: RatchetPolicy::Ratcheted,
+                request_handlers: RequestHandlerRegistration::None,
+            }],
+            app_state: (),
+            storage: crate::storage::TechoStorage,
+            routes: personal_rns::routes![],
+            interfaces: personal_rns::runtime::Manual,
+            on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
+        },
+        reactor_wiring,
+        host,
+    );
+    spawner.spawn(reactor_task(node).expect("reactor task fits"));
     let lora_seam = lora_lane.into_seam(NOTIFY.sender(), seeded_entropy);
 
     let usb_seam = usb_lane.into_seam(NOTIFY.sender(), seeded_entropy);
@@ -506,11 +506,7 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
             None => core::future::pending().await,
         }
     };
-    let mesh = join3(
-        node.run_reactor_with_interface_store(&INTERFACE_STORE),
-        lora.run(lora_seam),
-        render,
-    );
+    let mesh = join(lora.run(lora_seam), render);
     join3(io, ble_plane, mesh).await;
     core::future::pending().await
 }
