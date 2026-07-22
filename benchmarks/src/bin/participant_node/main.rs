@@ -228,6 +228,48 @@ fn await_measurement_start() {
     );
 }
 
+fn collection_target_receiver() -> tokio::sync::oneshot::Receiver<(u64, u64)> {
+    let (send, receive) = tokio::sync::oneshot::channel();
+    std::thread::spawn(move || {
+        use std::io::BufRead as _;
+
+        let mut command = String::new();
+        std::io::stdin()
+            .lock()
+            .read_line(&mut command)
+            .expect("read collection target");
+        let mut fields = command.split_whitespace();
+        assert_eq!(fields.next(), Some("COLLECT"), "collection command");
+        let transfers = fields
+            .next()
+            .expect("collection transfer target")
+            .parse::<u64>()
+            .expect("numeric collection transfer target");
+        let bytes = fields
+            .next()
+            .expect("collection byte target")
+            .parse::<u64>()
+            .expect("numeric collection byte target");
+        assert!(
+            fields.next().is_none(),
+            "collection command has two targets"
+        );
+        let _ = send.send((transfers, bytes));
+    });
+    receive
+}
+
+fn await_collection_release() {
+    use std::io::BufRead as _;
+
+    let mut command = String::new();
+    std::io::stdin()
+        .lock()
+        .read_line(&mut command)
+        .expect("read collection release");
+    assert_eq!(command.trim(), "COLLECTED", "collection release command");
+}
+
 fn percentile(sorted: &[u64], p: f64) -> f64 {
     if sorted.is_empty() {
         return f64::NAN;

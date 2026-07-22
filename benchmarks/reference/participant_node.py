@@ -50,6 +50,19 @@ def await_measurement_start():
         sys.exit(f"expected START measurement command, received {command!r}")
 
 
+def read_collection_target():
+    fields = sys.stdin.readline().strip().split()
+    if len(fields) != 3 or fields[0] != "COLLECT":
+        sys.exit(f"expected COLLECT count bytes command, received {fields!r}")
+    return int(fields[1]), int(fields[2])
+
+
+def await_collection_release():
+    command = sys.stdin.readline().strip()
+    if command != "COLLECTED":
+        sys.exit(f"expected COLLECTED release command, received {command!r}")
+
+
 def sizes_from(profile, lo_key, hi_key, fixed_key, seed_xor=0):
     return SizeSequence(
         profile.get("size_seed", DEFAULT_SIZE_SEED) ^ seed_xor,
@@ -392,10 +405,10 @@ def initiate_link(name, block, profile, duration):
     os._exit(0)
 
 
-def respond_resource(name, block, ready_addr, _profile):
+def respond_resource(name, block, ready_addr, profile):
     """The accepting end of the bulk mechanism: ACCEPT_ALL on every inbound
-    link, count each hash-proved transfer at its conclusion, report when the
-    initiator tears the link down."""
+    link, count each hash-proved transfer at its application conclusion, and
+    report only when the runner's exact collection target has arrived."""
     start_reticulum(block)
     identity = RNS.Identity()
     destination = RNS.Destination(
@@ -404,37 +417,55 @@ def respond_resource(name, block, ready_addr, _profile):
     destination.set_proof_strategy(RNS.Destination.PROVE_ALL)
 
     state = {"received": 0, "payload_bytes": 0}
-    done = threading.Event()
+    state_changed = threading.Condition()
 
     def on_concluded(resource):
         if resource.status == RNS.Resource.COMPLETE:
-            state["received"] += 1
             data = resource.data.read()
-            state["payload_bytes"] += len(data)
+            with state_changed:
+                state["received"] += 1
+                state["payload_bytes"] += len(data)
+                state_changed.notify_all()
 
-    links = {"up": 0, "closed": 0}
+    links = {"up": 0}
     links_lock = threading.Lock()
-
-    def on_closed(_link):
-        with links_lock:
-            links["closed"] += 1
-        if links["closed"] >= INITIATOR_COUNT:
-            done.set()
 
     def on_link(link):
         with links_lock:
             links["up"] += 1
         link.set_resource_strategy(RNS.Link.ACCEPT_ALL)
         link.set_resource_concluded_callback(on_concluded)
-        link.set_link_closed_callback(on_closed)
 
     destination.set_link_established_callback(on_link)
     print(f"READY role=responder addr={ready_addr}", flush=True)
-    while not done.is_set():
-        if links["up"] < INITIATOR_COUNT:
-            destination.announce()
-        done.wait(ANNOUNCE_EVERY)
-    time.sleep(0.5)
+
+    collection = {"target": None}
+
+    def read_target():
+        target = read_collection_target()
+        with state_changed:
+            collection["target"] = target
+            state_changed.notify_all()
+
+    threading.Thread(target=read_target, daemon=True).start()
+    while links["up"] < INITIATOR_COUNT:
+        destination.announce()
+        time.sleep(ANNOUNCE_EVERY)
+
+    deadline = None
+    with state_changed:
+        while True:
+            if collection["target"] is None:
+                state_changed.wait(ANNOUNCE_EVERY)
+                continue
+            if deadline is None:
+                deadline = time.monotonic() + profile.get("drain_timeout_ms", 30_000) / 1000.0
+            if collection["target"] == (state["received"], state["payload_bytes"]):
+                break
+            left = deadline - time.monotonic()
+            if left <= 0:
+                break
+            state_changed.wait(min(left, ANNOUNCE_EVERY))
     print(
         f"RESULT received={state['received']} payload_bytes={state['payload_bytes']}",
         flush=True,
@@ -502,8 +533,6 @@ def initiate_resource(name, block, profile, duration):
             state["failures"] += 1
     elapsed_ms = int((time.monotonic() - started) * 1000)
     print("MEASURE_DONE", flush=True)
-    link.teardown()
-    time.sleep(0.5)
 
     transfer_ms = sorted(transfer_ms)
     pct = lambda p: (
@@ -522,6 +551,8 @@ def initiate_resource(name, block, profile, duration):
         f"transfer_p50_ms={pct(0.50):.0f} transfer_p99_ms={pct(0.99):.0f}",
         flush=True,
     )
+    await_collection_release()
+    link.teardown()
     os._exit(0)
 
 

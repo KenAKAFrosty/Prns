@@ -1,6 +1,6 @@
 {
   "name": "resource-64mib-stream",
-  "version": 2,
+  "version": 3,
   "order": 5,
   "title": "64 MiB resource stream",
   "category": "Resources",

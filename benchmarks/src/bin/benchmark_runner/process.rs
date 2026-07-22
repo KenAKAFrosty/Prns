@@ -82,6 +82,18 @@ impl RoleProcess {
         self.stdin.flush().expect("flush measurement command");
     }
 
+    pub(super) fn set_collection_target(&mut self, transfers: u64, bytes: u64) {
+        writeln!(self.stdin, "COLLECT {transfers} {bytes}").expect("send collection target");
+        self.stdin.flush().expect("flush collection target");
+    }
+
+    pub(super) fn release_collection(&mut self) {
+        self.stdin
+            .write_all(b"COLLECTED\n")
+            .expect("send collection release");
+        self.stdin.flush().expect("flush collection release");
+    }
+
     pub(super) fn mark_measurement_end(&mut self) {
         self.measurement_cpu_end = Some(self.current_cpu_seconds());
     }

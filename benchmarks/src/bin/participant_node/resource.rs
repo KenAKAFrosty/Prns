@@ -52,6 +52,7 @@ pub(super) async fn run_resource_endpoint(
     };
 
     if role == "responder" {
+        let collection_target = collection_target_receiver();
         let (node, bound) =
             build_responder_node(single, (), routes![], on_event, manifest, addr).await;
         let commands = node.handle();
@@ -64,6 +65,7 @@ pub(super) async fn run_resource_endpoint(
             initiators,
             &commands,
             event_rx,
+            collection_target,
         );
         tokio::select! {
             result = node.run() => unreachable!("the responder's run loop returned: {result:?}"),
@@ -94,14 +96,15 @@ pub(super) async fn respond_resource_runtime(
     initiator_count: usize,
     commands: &PrnsNodeHandle,
     mut events: mpsc::UnboundedReceiver<Event>,
+    mut collection_target: tokio::sync::oneshot::Receiver<(u64, u64)>,
 ) {
     let mut links_up = 0usize;
-    let mut closed_links = 0usize;
     let mut announce = tokio::time::interval(announce_every);
     let mut announcing = true;
     let report_at = tokio::time::Instant::now() + duration + drain + DRAIN_GRACE;
     let mut received = 0u64;
     let mut payload_bytes = 0u64;
+    let mut target = None;
     loop {
         tokio::select! {
             _ = announce.tick(), if announcing => {
@@ -120,6 +123,9 @@ pub(super) async fn respond_resource_runtime(
                 println!("RESULT received={received} payload_bytes={payload_bytes}");
                 return;
             }
+            requested = &mut collection_target, if target.is_none() => {
+                target = Some(requested.expect("runner supplied collection target"));
+            }
             event = events.recv() => {
                 match event {
                     Some(Event::LinkUp) => {
@@ -132,16 +138,15 @@ pub(super) async fn respond_resource_runtime(
                         received += 1;
                         payload_bytes += bytes as u64;
                     }
-                    Some(Event::Closed) if closed_links + 1 < initiator_count => {
-                        closed_links += 1;
-                    }
-                    Some(Event::Closed) | None => {
-                        println!("RESULT received={received} payload_bytes={payload_bytes}");
-                        return;
-                    }
+                    Some(Event::Closed) => {}
+                    None => return,
                     Some(_) => {}
                 }
             }
+        }
+        if target == Some((received, payload_bytes)) {
+            println!("RESULT received={received} payload_bytes={payload_bytes}");
+            return;
         }
     }
 }
@@ -240,7 +245,6 @@ pub(super) async fn initiate_resource_runtime(
     }
     let elapsed_ms = started.elapsed().as_millis().max(1) as u64;
     println!("MEASURE_DONE");
-    commands.close_link(link_id);
     transfer_ms.sort_unstable();
     let seconds = (elapsed_ms as f64 / 1000.0).max(f64::EPSILON);
     println!(
@@ -253,4 +257,8 @@ pub(super) async fn initiate_resource_runtime(
         percentile(&transfer_ms, 0.50),
         percentile(&transfer_ms, 0.99),
     );
+    tokio::task::spawn_blocking(await_collection_release)
+        .await
+        .expect("collection release task");
+    commands.close_link(link_id);
 }

@@ -160,7 +160,25 @@ fn run_interop(args: &Args, manifest_data: &ScenarioManifest, manifest: &std::pa
         .advance(MeasurementPhase::Draining)
         .expect("initiator stopped issuing and drained every outstanding operation");
     let result = await_line(&initiator, "RESULT", Duration::from_secs(30));
-    let responder_result = await_line(&responder, "RESULT", Duration::from_secs(10));
+    let resource_collection = manifest_data.conformance_rule == ConformanceRule::ExactResource;
+    if resource_collection {
+        responder.set_collection_target(
+            result_metric(&result, "settled"),
+            result_metric(&result, "payload_bytes"),
+        );
+    }
+    let responder_result = await_line(
+        &responder,
+        "RESULT",
+        if resource_collection {
+            Duration::from_millis(drain_timeout_ms + 10_000)
+        } else {
+            Duration::from_secs(10)
+        },
+    );
+    if resource_collection {
+        initiator.release_collection();
+    }
     phase
         .advance(MeasurementPhase::Complete)
         .expect("both roles reported complete results");
@@ -189,9 +207,18 @@ fn run_interop(args: &Args, manifest_data: &ScenarioManifest, manifest: &std::pa
     }
 }
 
+fn result_metric(line: &str, key: &str) -> u64 {
+    let prefix = format!("{key}=");
+    line.split_whitespace()
+        .find_map(|field| field.strip_prefix(&prefix))
+        .unwrap_or_else(|| panic!("RESULT is missing {key}: {line}"))
+        .parse::<u64>()
+        .unwrap_or_else(|error| panic!("RESULT has invalid {key}: {error}"))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{MeasurementPhase, PhaseTracker};
+    use super::{result_metric, MeasurementPhase, PhaseTracker};
 
     #[test]
     fn measurement_barrier_has_one_valid_phase_order() {
@@ -206,5 +233,12 @@ mod tests {
         }
         assert_eq!(phases.0, MeasurementPhase::Complete);
         assert!(phases.advance(MeasurementPhase::Measuring).is_err());
+    }
+
+    #[test]
+    fn collection_targets_are_taken_from_typed_result_fields() {
+        let result = "RESULT sent=4 settled=4 payload_bytes=268435456 failures=0";
+        assert_eq!(result_metric(result, "settled"), 4);
+        assert_eq!(result_metric(result, "payload_bytes"), 268_435_456);
     }
 }
