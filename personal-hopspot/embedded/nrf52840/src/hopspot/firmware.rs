@@ -51,7 +51,8 @@ use personal_rns::usb_auto::{WebUsbAutoClass, WebUsbAutoState, WEBUSB_AUTO_PACKE
 
 use super::bluetooth_auto::{
     acceptor, scanner, serve_slot, softdevice_config, softdevice_task, usb_vbus_present,
-    L2capPacket, NrfBleBackend, Server, BLE_SHARED, FLEET_ID, HUB, MEMBERS, OUTBOUND_WAKE, POOL,
+    L2capPacket, NrfBleBackend, Server, BLE_SHARED, BLE_SUPERVISOR_ID, HUB, MEMBERS, OUTBOUND_WAKE,
+    POOL,
 };
 use super::display::{build_cards, build_snapshots, frame_hash, EinkScreen};
 use super::input;
@@ -233,7 +234,7 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
         let (in_producer, in_consumer) = embassy_grant_lane(in_ch);
         let out_ch = OUT_CH[slot].init(zerocopy_channel::Channel::new(OUT_BUF[slot].take()));
         let (mut out_producer, out_consumer) = embassy_grant_lane(out_ch);
-        if slot == BLE_FLEET_SLOT {
+        if slot == BLE_SUPERVISOR_SLOT {
             out_producer.set_outbound_wake(&OUTBOUND_WAKE);
         }
         let _ = inbound.push((FREE_SLOT, in_consumer));
@@ -293,9 +294,11 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
             heapless::Vec::new(),
         )
     });
-    node.activate(LORA_SLOT, lora.descriptor());
+    node.activate(LORA_SLOT, lora.descriptor())
+        .expect("LoRa activation fits the declared topology");
     if ble_identity.is_some() {
-        node.activate_fleet(BLE_FLEET_SLOT, FLEET_ID);
+        node.activate_supervisor(BLE_SUPERVISOR_SLOT, BLE_SUPERVISOR_ID)
+            .expect("Bluetooth supervisor activation fits the declared topology");
     }
     let (lora_in_producer, lora_out_consumer) =
         iface_halves[LORA_SLOT].take().expect("lora slot half");
@@ -307,8 +310,9 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
         seeded_entropy,
     );
 
-    let (ble_in_producer, ble_out_consumer) =
-        iface_halves[BLE_FLEET_SLOT].take().expect("ble fleet half");
+    let (ble_in_producer, ble_out_consumer) = iface_halves[BLE_SUPERVISOR_SLOT]
+        .take()
+        .expect("Bluetooth supervisor lane");
     let fleet: Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP> = Fleet::new(
         FleetWire {
             inbound: ble_in_producer,
@@ -329,7 +333,8 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
         ConnectionState::Initializing,
     ));
     let usb_dev = UsbAutoDevice::new(USB_INTERFACE_ID, usb_rx, usb_tx, usb_status, || true);
-    node.activate(USB_SLOT, usb_dev.descriptor());
+    node.activate(USB_SLOT, usb_dev.descriptor())
+        .expect("USB activation fits the declared topology");
     let (usb_in_producer, usb_out_consumer) = iface_halves[USB_SLOT].take().expect("usb slot half");
     let usb_seam = EmbassyInterfaceSeam::new(
         USB_INTERFACE_ID,
@@ -501,7 +506,7 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
                                     notice_until_ms =
                                         Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
                                     usb_status.toggle_enabled();
-                                } else if card.id() == FLEET_ID {
+                                } else if card.id() == BLE_SUPERVISOR_ID {
                                     let status = BluetoothAutoStatus::new(&BLE_SHARED);
                                     ui_state.show_notice(if status.is_enabled() {
                                         hopspot::UiNotice::TurningOff

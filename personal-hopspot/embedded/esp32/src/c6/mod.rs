@@ -114,9 +114,9 @@ const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"hopsp-c6");
 #[cfg(feature = "esp-now")]
 const ESPNOW_SLOT: usize = USB_LANE;
 #[cfg(feature = "bluetooth-auto")]
-const BLE_FLEET_SLOT: usize = USB_LANE + ESPNOW_LANE;
+const BLE_SUPERVISOR_SLOT: usize = USB_LANE + ESPNOW_LANE;
 #[cfg(feature = "bluetooth-auto")]
-const BLE_FLEET_ID: InterfaceId =
+const BLE_SUPERVISOR_ID: InterfaceId =
     InterfaceId::new([InterfaceKind::BluetoothAuto as u8, 0, 0, 0, 0, 0, 0, 0]);
 
 type Mtx = CriticalSectionRawMutex;
@@ -172,7 +172,7 @@ static INTERFACE_STORE: InterfaceStore = EmbassyInterfaceStore::new();
 static USB_STATUS: EmbassyInterfaceStatus =
     EmbassyInterfaceStatus::new(USB_INTERFACE_ID, ConnectionState::Initializing);
 #[cfg(feature = "bluetooth-auto")]
-static BLE_SHARED: BluetoothAutoShared<BLE_MEMBERS> = BluetoothAutoShared::new(BLE_FLEET_ID);
+static BLE_SHARED: BluetoothAutoShared<BLE_MEMBERS> = BluetoothAutoShared::new(BLE_SUPERVISOR_ID);
 #[cfg(feature = "bluetooth-auto")]
 static BLE_OUTBOUND_WAKE: Signal<Mtx, ()> = Signal::new();
 

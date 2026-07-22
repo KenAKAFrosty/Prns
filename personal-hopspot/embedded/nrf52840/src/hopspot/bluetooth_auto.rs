@@ -31,7 +31,7 @@ type FrameBytes = heapless09::Vec<u8, BLE_HW_MTU>;
 type GattValue = heapless09::Vec<u8, 244>;
 
 pub(super) const MEMBERS: usize = NrfBleBackend::MAX_PEERS;
-pub(super) const FLEET_ID: InterfaceId =
+pub(super) const BLE_SUPERVISOR_ID: InterfaceId =
     InterfaceId::new([InterfaceKind::BluetoothAuto as u8, 0, 0, 0, 0, 0, 0, 0]);
 
 pub(super) const POOL: usize = MEMBERS + 2;
@@ -160,7 +160,8 @@ impl Drop for L2capPacket {
 
 pub(super) static OUTBOUND_WAKE: Signal<Mtx, ()> = Signal::new();
 
-pub(super) static BLE_SHARED: BluetoothAutoShared<MEMBERS> = BluetoothAutoShared::new(FLEET_ID);
+pub(super) static BLE_SHARED: BluetoothAutoShared<MEMBERS> =
+    BluetoothAutoShared::new(BLE_SUPERVISOR_ID);
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Closed;

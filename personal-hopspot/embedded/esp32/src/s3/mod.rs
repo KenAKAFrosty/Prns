@@ -174,9 +174,9 @@ const MEMBERS: usize = 24;
 const MAX_IFACES: usize = 3 + MEMBERS + cfg!(feature = "esp-now") as usize;
 /// The WiFi supervisor's fleet lane (slot 2) key: an `AutoWifi`-kind id, so every `WifiPeer` child
 /// routes to this one lane by the kind byte (`lane_serves`). Also the WiFi card's aggregate id.
-const WIFI_FLEET_ID: InterfaceId =
+const WIFI_SUPERVISOR_ID: InterfaceId =
     InterfaceId::new([InterfaceKind::AutoWifi as u8, 0, 0, 0, 0, 0, 0, 0]);
-const WIFI_FLEET_SLOT: usize = 2;
+const WIFI_SUPERVISOR_SLOT: usize = 2;
 const LANE_DEPTH: usize = 1;
 const USB_SLOT: usize = 0;
 /// Slot 1: the always-on TCP client wire, so the WiFi members never claim it.
@@ -185,7 +185,7 @@ const LORA_SLOT: usize = 3;
 /// The BLE fleet's pool slot (after LoRa), present only under `ble`. Distinct from the WiFi
 /// slot so both supervisors run at once when WiFi and BLE coexist.
 #[cfg(feature = "bluetooth-auto")]
-const BLE_FLEET_SLOT: usize = 4;
+const BLE_SUPERVISOR_SLOT: usize = 4;
 /// The ESP-NOW broadcast carrier's pool slot, after the BLE fleet when it is present. A 1:1 interface
 /// like LoRa (not a fleet); present under `esp-now`.
 #[cfg(feature = "esp-now")]
@@ -283,7 +283,7 @@ use display::build_interface_menu_details;
 use display::{build_cards, build_snapshots, button_task};
 
 /// The WiFi supervisor's shared aggregate + per-peer status (written + read on core 0).
-static WIFI_SHARED: AutoWifiShared<MEMBERS> = AutoWifiShared::new(WIFI_FLEET_ID);
+static WIFI_SHARED: AutoWifiShared<MEMBERS> = AutoWifiShared::new(WIFI_SUPERVISOR_ID);
 
 /// Under `ble` the BLE supervisor reuses the (WiFi-free) fleet slot 2, keyed by its own kind
 /// so `BluetoothPeer` members route to it. The radio carries `BLE_MEMBERS` concurrent connections (the
@@ -292,10 +292,10 @@ static WIFI_SHARED: AutoWifiShared<MEMBERS> = AutoWifiShared::new(WIFI_FLEET_ID)
 #[cfg(feature = "bluetooth-auto")]
 pub const BLE_MEMBERS: usize = EmbeddedBleBackend::MAX_PEERS;
 #[cfg(feature = "bluetooth-auto")]
-const BLE_FLEET_ID: InterfaceId =
+const BLE_SUPERVISOR_ID: InterfaceId =
     InterfaceId::new([InterfaceKind::BluetoothAuto as u8, 0, 0, 0, 0, 0, 0, 0]);
 #[cfg(feature = "bluetooth-auto")]
-static BLE_SHARED: BluetoothAutoShared<BLE_MEMBERS> = BluetoothAutoShared::new(BLE_FLEET_ID);
+static BLE_SHARED: BluetoothAutoShared<BLE_MEMBERS> = BluetoothAutoShared::new(BLE_SUPERVISOR_ID);
 static LORA_CONTROL: LoRaControl = LoRaControl::new();
 
 /// The reactor's pool: one inbound + one outbound grant ring per slot, split at boot into the

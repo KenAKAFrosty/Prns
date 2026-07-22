@@ -285,6 +285,10 @@ impl<M: RawMutex + 'static, const SLOT: usize, const N: usize> PooledEgress<M, S
         }
     }
 
+    pub(crate) fn has_slot(&self, slot: usize) -> bool {
+        slot < self.lanes.len()
+    }
+
     pub(crate) fn retag(&mut self, old_id: InterfaceId, new_id: InterfaceId) {
         for (id, _) in self.lanes.iter_mut() {
             if *id == old_id {

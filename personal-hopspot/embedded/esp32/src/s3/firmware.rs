@@ -46,11 +46,11 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         let (in_producer, in_consumer) = embassy_grant_lane(in_ch);
         let out_ch = OUT_CH[slot].init(zerocopy_channel::Channel::new(OUT_BUF[slot].take()));
         let (mut out_producer, out_consumer) = embassy_grant_lane(out_ch);
-        if slot == WIFI_FLEET_SLOT {
+        if slot == WIFI_SUPERVISOR_SLOT {
             out_producer.set_outbound_wake(&OUTBOUND_WAKE);
         }
         #[cfg(feature = "bluetooth-auto")]
-        if slot == BLE_FLEET_SLOT {
+        if slot == BLE_SUPERVISOR_SLOT {
             out_producer.set_outbound_wake(&BLE_OUTBOUND_WAKE);
         }
         let _ = inbound.push((FREE_SLOT, in_consumer));
@@ -169,23 +169,29 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         static NODE: StaticCell<S3Node> = StaticCell::new();
         let node: &'static mut S3Node =
             NODE.init_with(|| PrnsNode::new(recipe, plumbing, host, HVec::new()));
-        node.activate(USB_SLOT, device_descriptor(usb_id));
+        node.activate(USB_SLOT, device_descriptor(usb_id))
+            .expect("USB activation fits the declared topology");
         if let Some(cfg) = tcp_cfg {
-            node.activate(TCP_SLOT, cfg);
+            node.activate(TCP_SLOT, cfg)
+                .expect("TCP activation fits the declared topology");
         }
         #[cfg(feature = "lora")]
-        node.activate(LORA_SLOT, lora_cfg);
+        node.activate(LORA_SLOT, lora_cfg)
+            .expect("LoRa activation fits the declared topology");
         #[cfg(feature = "esp-now")]
         if let Some(cfg) = espnow_cfg {
-            node.activate(ESPNOW_SLOT, cfg);
+            node.activate(ESPNOW_SLOT, cfg)
+                .expect("ESP-NOW activation fits the declared topology");
         }
         #[cfg(feature = "wifi-auto")]
         if has_wifi {
-            node.activate_fleet(WIFI_FLEET_SLOT, WIFI_FLEET_ID);
+            node.activate_supervisor(WIFI_SUPERVISOR_SLOT, WIFI_SUPERVISOR_ID)
+                .expect("WiFi supervisor activation fits the declared topology");
         }
         #[cfg(feature = "bluetooth-auto")]
         if radio_mode == RadioMode::Ble && ble_identity.is_some() {
-            node.activate_fleet(BLE_FLEET_SLOT, BLE_FLEET_ID);
+            node.activate_supervisor(BLE_SUPERVISOR_SLOT, BLE_SUPERVISOR_ID)
+                .expect("Bluetooth supervisor activation fits the declared topology");
         }
         log_heap_footprint("post-construction (engine columns boxed into PSRAM)");
 
@@ -252,7 +258,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
 
     #[cfg(feature = "wifi-auto")]
     let wifi_fleet: Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP> = {
-        let (in_producer, out_consumer) = iface_halves[WIFI_FLEET_SLOT]
+        let (in_producer, out_consumer) = iface_halves[WIFI_SUPERVISOR_SLOT]
             .take()
             .expect("wifi fleet half");
         Fleet::new(
@@ -277,8 +283,9 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     #[cfg(feature = "bluetooth-auto")]
     let ble_fleet: Option<Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP>> =
         ble_identity.map(|_| {
-            let (in_producer, out_consumer) =
-                iface_halves[BLE_FLEET_SLOT].take().expect("ble fleet half");
+            let (in_producer, out_consumer) = iface_halves[BLE_SUPERVISOR_SLOT]
+                .take()
+                .expect("Bluetooth supervisor lane");
             Fleet::new(
                 FleetWire {
                     inbound: in_producer,
@@ -570,7 +577,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                     }
                                 }
                                 #[cfg(feature = "bluetooth-auto")]
-                                if !handled && card.id() == BLE_FLEET_ID {
+                                if !handled && card.id() == BLE_SUPERVISOR_ID {
                                     let status = BluetoothAutoStatus::new(&BLE_SHARED);
                                     show_toggle_notice(status.is_enabled());
                                     status.toggle_enabled();

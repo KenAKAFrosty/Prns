@@ -157,12 +157,15 @@ pub async fn run(spawner: Spawner) {
         host,
         HVec::new(),
     ));
-    node.activate(USB_SLOT, device_descriptor(USB_INTERFACE_ID));
+    node.activate(USB_SLOT, device_descriptor(USB_INTERFACE_ID))
+        .expect("USB activation fits the declared topology");
     #[cfg(feature = "esp-now")]
-    node.activate(ESPNOW_SLOT, espnow.descriptor());
+    node.activate(ESPNOW_SLOT, espnow.descriptor())
+        .expect("ESP-NOW activation fits the declared topology");
     #[cfg(feature = "bluetooth-auto")]
     if ble_identity.is_some() {
-        node.activate_fleet(BLE_FLEET_SLOT, BLE_FLEET_ID);
+        node.activate_supervisor(BLE_SUPERVISOR_SLOT, BLE_SUPERVISOR_ID)
+            .expect("Bluetooth supervisor activation fits the declared topology");
     }
     #[cfg(all(feature = "bluetooth-auto", feature = "esp-now"))]
     {

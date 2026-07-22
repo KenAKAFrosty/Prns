@@ -23,7 +23,7 @@ fn classify_card(
         ))
     } else {
         #[cfg(feature = "bluetooth-auto")]
-        if id == BLE_FLEET_ID {
+        if id == BLE_SUPERVISOR_ID {
             return Some((screen::CardKind::Ble, screen::card_label("BLE")));
         }
         let bytes = id.as_bytes();

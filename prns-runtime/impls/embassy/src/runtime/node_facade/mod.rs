@@ -4,4 +4,6 @@ mod node_lifecycle;
 
 pub use command_handle::{CompletionPool, PrnsNodeHandle};
 pub use interface_lifecycle::{Fleet, FleetWire};
-pub use node_lifecycle::{PrnsNode, ReactorPlumbing, RequestRoutingCapacity};
+pub use node_lifecycle::{
+    InterfaceActivationError, PrnsNode, ReactorPlumbing, RequestRoutingCapacity,
+};

@@ -11,7 +11,7 @@ use personal_hopspot_core as hopspot;
 use personal_rns::bluetooth_auto::BluetoothAutoStatus;
 use personal_rns::interfaces::{InterfaceId, InterfaceSnapshot, InterfaceStatus, Membership};
 
-use super::bluetooth_auto::{BLE_SHARED, FLEET_ID, MEMBERS};
+use super::bluetooth_auto::{BLE_SHARED, BLE_SUPERVISOR_ID, MEMBERS};
 use super::node::INTERFACE_STORE;
 
 const PANEL_SIZE: i32 = 200;
@@ -117,7 +117,7 @@ pub(super) fn build_cards(
             Some((hopspot::CardKind::LoRa, hopspot::card_label("LoRa")))
         } else if id == usb_id {
             Some((hopspot::CardKind::Usb, hopspot::card_label("USB")))
-        } else if id == FLEET_ID {
+        } else if id == BLE_SUPERVISOR_ID {
             Some((hopspot::CardKind::Ble, hopspot::card_label("BLE")))
         } else {
             let bytes = id.as_bytes();

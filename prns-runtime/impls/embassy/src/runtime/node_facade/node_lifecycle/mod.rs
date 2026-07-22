@@ -108,6 +108,27 @@ pub struct PrnsNode<
 
 pub struct RequestRoutingCapacity<const REQUESTS: usize, const REQUEST_BYTES: usize>;
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum InterfaceActivationError {
+    LaneUnavailable { slot: usize },
+    InterfaceCapacity,
+    IfacCapacity,
+}
+
+enum LaneActivation {
+    Interface(InterfaceDescriptor),
+    Supervisor(InterfaceId),
+}
+
+impl LaneActivation {
+    fn id(&self) -> InterfaceId {
+        match self {
+            Self::Interface(descriptor) => descriptor.id,
+            Self::Supervisor(id) => *id,
+        }
+    }
+}
+
 impl<const REQUESTS: usize, const REQUEST_BYTES: usize> Default
     for RequestRoutingCapacity<REQUESTS, REQUEST_BYTES>
 {
@@ -261,8 +282,12 @@ where
         self.handle
     }
 
-    pub fn activate(&mut self, slot: usize, descriptor: InterfaceDescriptor) {
-        let _ = self.activate_access(slot, descriptor, None);
+    pub fn activate(
+        &mut self,
+        slot: usize,
+        descriptor: InterfaceDescriptor,
+    ) -> Result<(), InterfaceActivationError> {
+        self.activate_access(slot, LaneActivation::Interface(descriptor), None)
     }
 
     pub fn activate_with_ifac(
@@ -270,85 +295,98 @@ where
         slot: usize,
         descriptor: InterfaceDescriptor,
         context: IfacContext,
-    ) -> bool {
-        self.activate_access(slot, descriptor, Some(context))
+    ) -> Result<(), InterfaceActivationError> {
+        self.activate_access(slot, LaneActivation::Interface(descriptor), Some(context))
     }
 
     fn activate_access(
         &mut self,
         slot: usize,
-        descriptor: InterfaceDescriptor,
-        context: Option<IfacContext>,
-    ) -> bool {
-        if let Some(entry) = self.inbound.get_mut(slot) {
-            let old_id = entry.0;
-            if let Some(position) = self.ifacs.iter().position(|ifac| ifac.id == old_id) {
-                let _ = self.ifacs.swap_remove(position);
+        activation: LaneActivation,
+        mut context: Option<IfacContext>,
+    ) -> Result<(), InterfaceActivationError> {
+        let Some(old_id) = self.inbound.get(slot).map(|entry| entry.0) else {
+            return Err(InterfaceActivationError::LaneUnavailable { slot });
+        };
+        if !self.egress.has_slot(slot) {
+            return Err(InterfaceActivationError::LaneUnavailable { slot });
+        }
+
+        let descriptor_position = self
+            .initial
+            .iter()
+            .position(|descriptor| descriptor.id == old_id);
+        let ifac_position = self.ifacs.iter().position(|ifac| ifac.id == old_id);
+        let needs_descriptor =
+            matches!(&activation, LaneActivation::Interface(_)) && descriptor_position.is_none();
+        let needs_ifac = context.is_some() && ifac_position.is_none();
+
+        if needs_descriptor && self.initial.is_full() {
+            return Err(InterfaceActivationError::InterfaceCapacity);
+        }
+        if needs_ifac && self.ifacs.is_full() {
+            return Err(InterfaceActivationError::IfacCapacity);
+        }
+
+        let id = activation.id();
+        let mut pushed_ifac = false;
+        if ifac_position.is_none() {
+            if let Some(context) = context.take() {
+                if self.ifacs.push(InterfaceIfac { id, context }).is_err() {
+                    return Err(InterfaceActivationError::IfacCapacity);
+                }
+                pushed_ifac = true;
             }
-            if let Some(context) = context {
-                if self
-                    .ifacs
-                    .push(InterfaceIfac {
-                        id: descriptor.id,
-                        context,
-                    })
-                    .is_err()
-                {
-                    return false;
+        }
+
+        match activation {
+            LaneActivation::Interface(descriptor) => match descriptor_position {
+                Some(position) => self.initial[position] = descriptor,
+                None => {
+                    if self.initial.push(descriptor).is_err() {
+                        if pushed_ifac {
+                            let _ = self.ifacs.pop();
+                        }
+                        return Err(InterfaceActivationError::InterfaceCapacity);
+                    }
+                }
+            },
+            LaneActivation::Supervisor(_) => {
+                if let Some(position) = descriptor_position {
+                    let _ = self.initial.swap_remove(position);
                 }
             }
-            entry.0 = descriptor.id;
-            self.egress.activate(slot, descriptor.id);
-            let _ = self.initial.push(descriptor);
-            true
-        } else {
-            false
         }
+
+        if let Some(position) = ifac_position {
+            match context {
+                Some(context) => self.ifacs[position] = InterfaceIfac { id, context },
+                None => {
+                    let _ = self.ifacs.swap_remove(position);
+                }
+            }
+        }
+
+        self.inbound[slot].0 = id;
+        self.egress.activate(slot, id);
+        Ok(())
     }
 
-    /// Assigns one pool lane to a supervisor without adding an engine interface.
-    pub fn activate_fleet(&mut self, slot: usize, supervisor: InterfaceId) {
-        let _ = self.activate_fleet_access(slot, supervisor, None);
+    pub fn activate_supervisor(
+        &mut self,
+        slot: usize,
+        supervisor: InterfaceId,
+    ) -> Result<(), InterfaceActivationError> {
+        self.activate_access(slot, LaneActivation::Supervisor(supervisor), None)
     }
 
-    pub fn activate_fleet_with_ifac(
+    pub fn activate_supervisor_with_ifac(
         &mut self,
         slot: usize,
         supervisor: InterfaceId,
         context: IfacContext,
-    ) -> bool {
-        self.activate_fleet_access(slot, supervisor, Some(context))
-    }
-
-    fn activate_fleet_access(
-        &mut self,
-        slot: usize,
-        supervisor: InterfaceId,
-        context: Option<IfacContext>,
-    ) -> bool {
-        if let Some(entry) = self.inbound.get_mut(slot) {
-            let old_id = entry.0;
-            if let Some(position) = self.ifacs.iter().position(|ifac| ifac.id == old_id) {
-                let _ = self.ifacs.swap_remove(position);
-            }
-            if let Some(context) = context {
-                if self
-                    .ifacs
-                    .push(InterfaceIfac {
-                        id: supervisor,
-                        context,
-                    })
-                    .is_err()
-                {
-                    return false;
-                }
-            }
-            entry.0 = supervisor;
-            self.egress.activate(slot, supervisor);
-            true
-        } else {
-            false
-        }
+    ) -> Result<(), InterfaceActivationError> {
+        self.activate_access(slot, LaneActivation::Supervisor(supervisor), Some(context))
     }
 
     /// Runs the reactor with the caller's interface and supervisor tasks.

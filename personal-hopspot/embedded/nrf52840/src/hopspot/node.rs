@@ -21,7 +21,7 @@ use super::bluetooth_auto;
 pub(super) const IFACES: usize = 3;
 const MAX_IFACES: usize = 2 + bluetooth_auto::MEMBERS;
 pub(super) const LORA_SLOT: usize = 0;
-pub(super) const BLE_FLEET_SLOT: usize = 1;
+pub(super) const BLE_SUPERVISOR_SLOT: usize = 1;
 pub(super) const USB_SLOT: usize = 2;
 pub(super) const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"techousb");
 pub(super) const NOTIFY_CAP: usize = 16;
