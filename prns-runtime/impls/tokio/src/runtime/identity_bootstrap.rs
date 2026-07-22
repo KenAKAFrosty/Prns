@@ -3,7 +3,10 @@ use std::io::{Read, Write};
 use std::path::Path;
 
 use prns_core::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use prns_core::interfaces::bluetooth_auto::BleIdentity;
+use prns_core::interfaces::bluetooth_auto::{
+    decode_persisted_ble_identity, encode_persisted_ble_identity, BleIdentity,
+    PersistedBleIdentityError, PERSISTED_BLE_IDENTITY_LEN,
+};
 use prns_core::interfaces::browser_rendezvous::{
     BrowserRendezvousId, BrowserSelectionSeed, ID_LEN as LOCAL_IDENTITY_LEN,
 };
@@ -29,7 +32,26 @@ pub fn fill_os_entropy(bytes: &mut [u8]) -> Result<(), OsEntropyError> {
 }
 
 pub fn load_or_create_ble_identity(path: &Path) -> Result<BleIdentity, LocalIdentityFileError> {
-    load_or_create_local_identity(path).map(BleIdentity::new)
+    let mut file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return create_ble_identity(path)
+        }
+        Err(error) => return Err(LocalIdentityFileError::Io(error)),
+    };
+    let len = file.metadata().map_err(LocalIdentityFileError::Io)?.len();
+    if len != PERSISTED_BLE_IDENTITY_LEN as u64 {
+        return Err(LocalIdentityFileError::Malformed {
+            len,
+            expected: PERSISTED_BLE_IDENTITY_LEN,
+        });
+    }
+    let mut record = Zeroizing::new([0u8; PERSISTED_BLE_IDENTITY_LEN]);
+    file.read_exact(&mut record[..])
+        .map_err(LocalIdentityFileError::Io)?;
+    decode_persisted_ble_identity(&record)
+        .map_err(LocalIdentityFileError::InvalidBleIdentity)?
+        .ok_or(LocalIdentityFileError::EmptyBleIdentity)
 }
 
 pub fn load_or_create_browser_rendezvous_id(
@@ -59,12 +81,50 @@ fn read_local_identity(
 ) -> Result<[u8; LOCAL_IDENTITY_LEN], LocalIdentityFileError> {
     let len = file.metadata().map_err(LocalIdentityFileError::Io)?.len();
     if len != LOCAL_IDENTITY_LEN as u64 {
-        return Err(LocalIdentityFileError::Malformed { len });
+        return Err(LocalIdentityFileError::Malformed {
+            len,
+            expected: LOCAL_IDENTITY_LEN,
+        });
     }
     let mut bytes = [0u8; LOCAL_IDENTITY_LEN];
     file.read_exact(&mut bytes)
         .map_err(LocalIdentityFileError::Io)?;
     Ok(bytes)
+}
+
+fn create_ble_identity(path: &Path) -> Result<BleIdentity, LocalIdentityFileError> {
+    let mut bytes = [0u8; LOCAL_IDENTITY_LEN];
+    fill_os_entropy(&mut bytes).map_err(LocalIdentityFileError::Entropy)?;
+    let identity = BleIdentity::new(bytes);
+    let record = Zeroizing::new(encode_persisted_ble_identity(identity));
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(LocalIdentityFileError::Io)?;
+    }
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    match options.open(path) {
+        Ok(mut file) => {
+            let stored = file
+                .write_all(&record[..])
+                .and_then(|()| file.sync_all())
+                .map_err(LocalIdentityFileError::Io);
+            if let Err(error) = stored {
+                drop(file);
+                let _ = fs::remove_file(path);
+                return Err(error);
+            }
+            Ok(identity)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            load_or_create_ble_identity(path)
+        }
+        Err(error) => Err(LocalIdentityFileError::Io(error)),
+    }
 }
 
 fn create_local_identity(path: &Path) -> Result<[u8; LOCAL_IDENTITY_LEN], LocalIdentityFileError> {
@@ -129,10 +189,24 @@ fn create_identity_secret(
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
-    let mut file = options.open(path).map_err(IdentitySecretFileError::Io)?;
-    file.write_all(&key[..])
-        .map_err(IdentitySecretFileError::Io)?;
-    Ok(key)
+    match options.open(path) {
+        Ok(mut file) => {
+            let stored = file
+                .write_all(&key[..])
+                .and_then(|()| file.sync_all())
+                .map_err(IdentitySecretFileError::Io);
+            if let Err(error) = stored {
+                drop(file);
+                let _ = fs::remove_file(path);
+                return Err(error);
+            }
+            Ok(key)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            load_or_create_identity_secret(path)
+        }
+        Err(error) => Err(IdentitySecretFileError::Io(error)),
+    }
 }
 
 #[derive(Debug)]
@@ -144,7 +218,9 @@ pub enum IdentitySecretFileError {
 #[derive(Debug)]
 pub enum LocalIdentityFileError {
     Io(std::io::Error),
-    Malformed { len: u64 },
+    Malformed { len: u64, expected: usize },
+    EmptyBleIdentity,
+    InvalidBleIdentity(PersistedBleIdentityError),
     Entropy(OsEntropyError),
 }
 
@@ -184,10 +260,12 @@ impl core::fmt::Display for LocalIdentityFileError {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Io(error) => write!(formatter, "local identity file: {error}"),
-            Self::Malformed { len } => write!(
+            Self::Malformed { len, expected } => write!(
                 formatter,
-                "local identity file holds {len} bytes, not {LOCAL_IDENTITY_LEN}"
+                "local identity file holds {len} bytes, not {expected}"
             ),
+            Self::EmptyBleIdentity => formatter.write_str("BLE identity file is empty"),
+            Self::InvalidBleIdentity(error) => error.fmt(formatter),
             Self::Entropy(error) => error.fmt(formatter),
         }
     }
@@ -197,7 +275,8 @@ impl std::error::Error for LocalIdentityFileError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io(error) => Some(error),
-            Self::Malformed { .. } => None,
+            Self::Malformed { .. } | Self::EmptyBleIdentity => None,
+            Self::InvalidBleIdentity(error) => Some(error),
             Self::Entropy(error) => Some(error),
         }
     }
@@ -299,7 +378,7 @@ mod tests {
 
         assert!(matches!(
             load_or_create_ble_identity(&path),
-            Err(LocalIdentityFileError::Malformed { len })
+            Err(LocalIdentityFileError::Malformed { len, .. })
                 if len == (LOCAL_IDENTITY_LEN - 1) as u64
         ));
         assert_eq!(fs::read(&path).unwrap(), [0u8; LOCAL_IDENTITY_LEN - 1]);

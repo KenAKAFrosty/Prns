@@ -6,12 +6,15 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::Instant;
 
-use personal_hopspot_core::{card_label, CardKind, CardLabel};
+use personal_hopspot_core::{
+    card_label, generate_host_ble_identity, generate_host_node_identity, load_host_ble_identity,
+    load_host_node_identity, CardKind, CardLabel, IdentityPersistence, BLE_IDENTITY_STORAGE,
+    NODE_IDENTITY_STORAGE,
+};
 use personal_rns::bluetooth_auto::{BluetoothAuto, BluetoothAutoStatus};
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
-use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::bluetooth_auto::{
     AndroidHost, Endpoint, LinkCapabilities, BLE_HW_MTU,
 };
@@ -20,8 +23,8 @@ use personal_rns::reactor::tokio::TokioInterfaceStatus;
 use personal_rns::routes;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
-    load_or_create_ble_identity, Manual, PreConfiguredDestination, PrnsNode, PrnsNodeHandle,
-    PrnsNodeRecipe, RequestHandlerRegistration, RuntimeHealth,
+    Manual, PreConfiguredDestination, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe,
+    RequestHandlerRegistration, RuntimeHealth,
 };
 use personal_rns::shared_instance::rns_rpc::{SharedInstanceCredentials, SharedInstanceRpcServer};
 use personal_rns::shared_instance::SharedInstanceServer;
@@ -300,10 +303,20 @@ fn spawn_engine() -> Engine {
     }
 }
 
-fn load_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
-    let mut key = Zeroizing::new([0u8; IDENTITY_SECRET_KEY_LEN]);
-    getrandom::getrandom(&mut *key).expect("OS CSPRNG must provide identity key material");
-    key
+fn log_identity_persistence(
+    identity: &str,
+    persistence: &IdentityPersistence<impl core::fmt::Display>,
+) {
+    match persistence {
+        IdentityPersistence::Loaded => {}
+        IdentityPersistence::Created => log::info!("{identity} identity created"),
+        IdentityPersistence::Recovered(error) => {
+            log::warn!("{identity} identity recovered after corruption: {error}")
+        }
+        IdentityPersistence::Ephemeral(error) => {
+            log::error!("{identity} identity is ephemeral: {error}")
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -322,37 +335,45 @@ fn run_engine(
         .expect("the engine thread builds its tokio runtime");
 
     runtime.block_on(async move {
-        let identity = load_identity_secret_key();
-        let credentials = SharedInstanceCredentials::from_identity_secret(&identity);
-        let rpc_key = credentials.rpc_key().as_bytes().to_vec();
-        let transport_secret = identity.clone();
-        let ble_identity = match STORAGE_DIR.get() {
+        let node_identity = match STORAGE_DIR.get() {
             Some(storage_dir) => {
-                match load_or_create_ble_identity(&storage_dir.join("ble_identity")) {
-                    Ok(identity) => {
-                        ble.set_local_identity(identity);
-                        Some(identity)
-                    }
-                    Err(error) => {
-                        log::error!("BLE identity is unavailable: {error}");
-                        None
-                    }
-                }
+                let bootstrap =
+                    load_host_node_identity(&storage_dir.join(NODE_IDENTITY_STORAGE.as_str()));
+                log_identity_persistence("node", bootstrap.persistence());
+                bootstrap.into_identity()
             }
             None => {
                 log::error!(
-                    "BLE identity is unavailable: Android storage directory was not configured"
+                    "node identity is ephemeral: Android storage directory was not configured"
                 );
-                None
+                generate_host_node_identity()
             }
         };
+        let credentials = SharedInstanceCredentials::from_identity_secret(node_identity.secret());
+        let rpc_key = credentials.rpc_key().as_bytes().to_vec();
+        let transport_secret = node_identity.transport_secret();
+        let ble_identity = match STORAGE_DIR.get() {
+            Some(storage_dir) => {
+                let bootstrap =
+                    load_host_ble_identity(&storage_dir.join(BLE_IDENTITY_STORAGE.as_str()));
+                log_identity_persistence("Bluetooth", bootstrap.persistence());
+                bootstrap.into_identity()
+            }
+            None => {
+                log::error!(
+                    "Bluetooth identity is ephemeral: Android storage directory was not configured"
+                );
+                generate_host_ble_identity()
+            }
+        };
+        ble.set_local_identity(ble_identity);
 
         let hopspot_transport_node_destination = PreConfiguredDestination::Single {
             resource_strategy:
                 personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
             app_name: ANNOUNCE_APP_NAME,
             aspects: ANNOUNCE_ASPECTS,
-            identity,
+            identity: node_identity.into_destination_secret(),
             announce_app_data: ANNOUNCE_APP_DATA,
             proof: ProofStrategy::ProveAll,
             link_requests: LinkRequestPolicy::AcceptAll,
@@ -415,7 +436,7 @@ fn run_engine(
         let wifi_status = wifi.status();
         handle.supervise(wifi);
 
-        if let Some(ble_identity) = ble_identity {
+        {
             let handle = handle.clone();
             tokio::spawn(async move {
                 let bluetooth = BluetoothAuto::<_, { AndroidBleBackend::MAX_PEERS }>::new(

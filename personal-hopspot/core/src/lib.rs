@@ -1,10 +1,23 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
+#[cfg(feature = "host")]
+extern crate std;
+
 mod battery;
+mod identity;
 mod screen;
 
 pub use battery::{BatteryGauge, BatteryPercent, BatterySource, BatteryState, NoBattery};
+#[cfg(feature = "host")]
+pub use identity::{
+    generate_host_ble_identity, generate_host_node_identity, load_host_ble_identity,
+    load_host_node_identity,
+};
+pub use identity::{
+    HopspotNodeIdentity, IdentityBootstrap, IdentityPersistence, IdentityStorageName,
+    BLE_IDENTITY_STORAGE, NODE_IDENTITY_STORAGE,
+};
 pub use screen::{
     card_label, render, splash, tcp_card_label, AccessPointState, Card, CardActivityTracker,
     CardKind, CardLabel, DisplayPowerControl, InputEvent, InterfaceMenuDetails, Liveness,

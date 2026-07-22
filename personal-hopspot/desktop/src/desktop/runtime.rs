@@ -5,7 +5,6 @@ use std::sync::Arc;
 
 use personal_rns::bluetooth_auto::BluetoothAutoStatus;
 use personal_rns::engine::RatchetPolicy;
-use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::shared_instance as instance_core;
 use personal_rns::interfaces::tcp;
 #[cfg(target_os = "macos")]
@@ -16,8 +15,7 @@ use personal_rns::reactor::reconnect::ReconnectPolicy;
 use personal_rns::reactor::tokio::TokioInterfaceStatus;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::shared_instance::rns_rpc::{
-    load_or_seed_rns_rpc_key, reticulum_storage_dir, SharedInstanceCredentials,
-    SharedInstanceRpcServer,
+    reticulum_storage_dir, SharedInstanceCredentials, SharedInstanceRpcServer,
 };
 use personal_rns::shared_instance::SharedInstanceServer;
 use personal_rns::storage::GrowableHeap;
@@ -27,7 +25,10 @@ use personal_rns::wifi_auto::{AutoWifi, AutoWifiStatus};
 use personal_rns::wire::DestinationHash;
 use tokio::sync::Notify;
 
-use personal_hopspot_core::{self as screen, CardKind};
+use personal_hopspot_core::{
+    self as screen, load_host_ble_identity, load_host_node_identity, CardKind, IdentityPersistence,
+    BLE_IDENTITY_STORAGE, NODE_IDENTITY_STORAGE,
+};
 
 use crate::host_usb::{open_usb_auto_target, scan_usb_auto_targets, HostUsb};
 
@@ -40,10 +41,6 @@ const USB_BAUD: u32 = 115_200;
 const ANNOUNCE_APP_NAME: &str = "lxmf";
 const ANNOUNCE_ASPECTS: &[&str] = &["delivery"];
 const ANNOUNCE_APP_DATA: &[u8] = b"Personal Hopspot (Desktop)";
-
-fn load_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
-    personal_rns::runtime::generate_identity_secret()
-}
 
 pub(super) fn classify(
     id: InterfaceId,
@@ -92,12 +89,10 @@ pub(super) struct WindowHandles {
 pub fn run() {
     init_observability();
 
-    let identity_secret_key = load_identity_secret_key();
-
     let (ready_tx, ready_rx) = mpsc::channel::<WindowHandles>();
     std::thread::Builder::new()
         .name("hopspot-node".into())
-        .spawn(move || run_node(ready_tx, identity_secret_key))
+        .spawn(move || run_node(ready_tx))
         .expect("spawn node thread");
 
     let handles = ready_rx
@@ -141,43 +136,47 @@ fn spawn_mdns(port: u16, sightings: tokio::sync::mpsc::UnboundedSender<std::net:
     });
 }
 
-fn run_node(
-    ready_tx: Sender<WindowHandles>,
-    identity_secret_key: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
+fn log_identity_persistence(
+    identity: &str,
+    persistence: &IdentityPersistence<impl core::fmt::Display>,
 ) {
+    match persistence {
+        IdentityPersistence::Loaded => {}
+        IdentityPersistence::Created => tracing::info!(event = "identity_created", identity),
+        IdentityPersistence::Recovered(error) => {
+            tracing::warn!(event = "identity_recovered", identity, %error)
+        }
+        IdentityPersistence::Ephemeral(error) => {
+            tracing::error!(event = "identity_ephemeral", identity, %error)
+        }
+    }
+}
+
+fn run_node(ready_tx: Sender<WindowHandles>) {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .expect("the node thread builds its tokio runtime");
 
     runtime.block_on(async move {
-        let transport_secret = identity_secret_key.clone();
-        let rpc_key = match load_or_seed_rns_rpc_key(&reticulum_storage_dir(), &identity_secret_key)
-        {
-            Ok(rpc_key) => rpc_key,
-            Err(error) => {
-                tracing::error!(event = "rns_rpc_key_load_failed", %error);
-                return;
-            }
-        };
-        let credentials = SharedInstanceCredentials::from_identity_secret(&identity_secret_key)
-            .with_rpc_authentication_key(rpc_key);
-        let ble_identity = match personal_rns::runtime::load_or_create_ble_identity(
-            &reticulum_storage_dir().join("ble_identity"),
-        ) {
-            Ok(identity) => Some(identity),
-            Err(error) => {
-                tracing::error!(event = "ble_identity_load_failed", %error);
-                None
-            }
-        };
+        let storage_dir = reticulum_storage_dir();
+        let node_bootstrap =
+            load_host_node_identity(&storage_dir.join(NODE_IDENTITY_STORAGE.as_str()));
+        log_identity_persistence("node", node_bootstrap.persistence());
+        let node_identity = node_bootstrap.into_identity();
+        let transport_secret = node_identity.transport_secret();
+        let credentials = SharedInstanceCredentials::from_identity_secret(node_identity.secret());
+        let ble_bootstrap =
+            load_host_ble_identity(&storage_dir.join(BLE_IDENTITY_STORAGE.as_str()));
+        log_identity_persistence("bluetooth", ble_bootstrap.persistence());
+        let ble_identity = ble_bootstrap.into_identity();
 
         let hopspot_transport_node_destination = PreConfiguredDestination::Single {
             resource_strategy:
                 personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
             app_name: ANNOUNCE_APP_NAME,
             aspects: ANNOUNCE_ASPECTS,
-            identity: identity_secret_key,
+            identity: node_identity.into_destination_secret(),
             announce_app_data: ANNOUNCE_APP_DATA,
             proof: ProofStrategy::ProveAll,
             link_requests: LinkRequestPolicy::AcceptAll,
@@ -238,8 +237,7 @@ fn run_node(
         }
         handle.supervise(wifi);
 
-        let ble_status =
-            ble_identity.map(|identity| handle.attach(AutoBle::new(identity)).status());
+        let ble_status = Some(handle.attach(AutoBle::new(ble_identity)).status());
 
         handle.supervise(SharedInstanceServer::default());
         tracing::info!(

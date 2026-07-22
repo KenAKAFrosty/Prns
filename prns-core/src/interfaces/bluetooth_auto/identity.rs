@@ -1,4 +1,5 @@
 pub const GROUP_ID: &[u8] = b"bluetooth-auto";
+pub const BLE_IDENTITY_LEN: usize = 16;
 pub const PERSISTED_BLE_IDENTITY_LEN: usize = 40;
 
 const PERSISTED_BLE_IDENTITY_MAGIC: [u8; 8] = *b"PRNSBLE1";
@@ -17,14 +18,14 @@ impl BleAddress {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct BleIdentity([u8; 16]);
+pub struct BleIdentity([u8; BLE_IDENTITY_LEN]);
 
 impl BleIdentity {
-    pub const fn new(bytes: [u8; 16]) -> Self {
+    pub const fn new(bytes: [u8; BLE_IDENTITY_LEN]) -> Self {
         Self(bytes)
     }
 
-    pub const fn as_bytes(&self) -> &[u8; 16] {
+    pub const fn as_bytes(&self) -> &[u8; BLE_IDENTITY_LEN] {
         &self.0
     }
 }
@@ -48,7 +49,7 @@ pub fn decode_persisted_ble_identity(
     if record[..PERSISTED_BLE_IDENTITY_MAGIC.len()] != PERSISTED_BLE_IDENTITY_MAGIC {
         return Err(PersistedBleIdentityError::Magic);
     }
-    let mut identity = [0u8; 16];
+    let mut identity = [0u8; BLE_IDENTITY_LEN];
     identity.copy_from_slice(&record[8..24]);
     if record[24..]
         .iter()

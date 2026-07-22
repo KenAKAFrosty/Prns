@@ -29,7 +29,7 @@ pub use handshake::{
 };
 pub use identity::{
     decode_persisted_ble_identity, encode_persisted_ble_identity, BleAddress, BleIdentity,
-    PersistedBleIdentityError, GROUP_ID, PERSISTED_BLE_IDENTITY_LEN,
+    PersistedBleIdentityError, BLE_IDENTITY_LEN, GROUP_ID, PERSISTED_BLE_IDENTITY_LEN,
 };
 pub use policy::{
     defaults_for_bitrate, descriptor, role_for, ConnectionPolicy, PolicyAction, PolicyInput,

@@ -17,13 +17,12 @@ name = "personal-hopspot-desktop"
 path = "src/main.rs"
 
 [dependencies]
-personal-hopspot-core = { path = "../core", default-features = false }
+personal-hopspot-core = { path = "../core", default-features = false, features = ["host"] }
 embedded-graphics = "0.8"
 heapless = { version = "0.8", default-features = false }
 embedded-graphics-simulator = "0.8.0"
 personal-rns = { path = "../../personal-rns", default-features = false, features = ["tokio-host", "tcp", "serial", "usb", "wifi-auto", "shared-instance", "bluetooth-auto", "log", "tracing"] }
 sdl2 = "0.38"
-# OS CSPRNG for the node identity (mirrors rnsd's load_identity_secret_key).
 # The async runtime the reactor's USB-auto host rides. Serial opening and USB-only discovery are
 # supplied by personal-rns so the daemon/library and desktop share one reviewed platform boundary.
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util"] }

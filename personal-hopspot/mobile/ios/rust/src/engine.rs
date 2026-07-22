@@ -5,13 +5,16 @@ use std::sync::mpsc::{self, Sender};
 use std::sync::OnceLock;
 use std::thread;
 
-use personal_hopspot_core::{card_label, CardKind, CardLabel};
+use personal_hopspot_core::{
+    card_label, generate_host_ble_identity, generate_host_node_identity, load_host_ble_identity,
+    load_host_node_identity, CardKind, CardLabel, IdentityPersistence, BLE_IDENTITY_STORAGE,
+    NODE_IDENTITY_STORAGE,
+};
 use personal_rns::bluetooth_auto::AutoBle;
 use personal_rns::bluetooth_auto::BluetoothAutoStatus;
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
-use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::wifi_auto as wifi_auto_contract;
 use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus};
 use personal_rns::reactor::tokio::TokioInterfaceStatus;
@@ -147,10 +150,20 @@ fn spawn_engine() -> Engine {
     }
 }
 
-fn load_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
-    let mut key = Zeroizing::new([0u8; IDENTITY_SECRET_KEY_LEN]);
-    getrandom::getrandom(&mut *key).expect("OS CSPRNG must provide identity key material");
-    key
+fn log_identity_persistence(
+    identity: &str,
+    persistence: &IdentityPersistence<impl core::fmt::Display>,
+) {
+    match persistence {
+        IdentityPersistence::Loaded => {}
+        IdentityPersistence::Created => println!("{identity} identity created"),
+        IdentityPersistence::Recovered(error) => {
+            eprintln!("{identity} identity recovered after corruption: {error}")
+        }
+        IdentityPersistence::Ephemeral(error) => {
+            eprintln!("{identity} identity is ephemeral: {error}")
+        }
+    }
 }
 
 fn run_engine(ready_tx: Sender<Ready>) {
@@ -160,25 +173,36 @@ fn run_engine(ready_tx: Sender<Ready>) {
         .expect("the engine thread builds its tokio runtime");
 
     runtime.block_on(async move {
-        let secret_key = load_identity_secret_key();
-        let transport_secret = secret_key.clone();
-        let ble_identity = match std::env::var_os("HOME") {
-            Some(home) => {
-                let identity_path = std::path::PathBuf::from(home)
-                    .join(".reticulum")
-                    .join("storage")
-                    .join("ble_identity");
-                match personal_rns::runtime::load_or_create_ble_identity(&identity_path) {
-                    Ok(identity) => Some(identity),
-                    Err(error) => {
-                        eprintln!("BLE identity is unavailable: {error}");
-                        None
-                    }
-                }
+        let storage_dir = std::env::var_os("HOME").map(|home| {
+            std::path::PathBuf::from(home)
+                .join(".reticulum")
+                .join("storage")
+        });
+        let node_identity = match &storage_dir {
+            Some(storage_dir) => {
+                let bootstrap = load_host_node_identity(
+                    &storage_dir.join(NODE_IDENTITY_STORAGE.as_str()),
+                );
+                log_identity_persistence("node", bootstrap.persistence());
+                bootstrap.into_identity()
             }
             None => {
-                eprintln!("BLE identity is unavailable: HOME is not set");
-                None
+                eprintln!("node identity is ephemeral: HOME is not set");
+                generate_host_node_identity()
+            }
+        };
+        let transport_secret = node_identity.transport_secret();
+        let ble_identity = match &storage_dir {
+            Some(storage_dir) => {
+                let bootstrap = load_host_ble_identity(
+                    &storage_dir.join(BLE_IDENTITY_STORAGE.as_str()),
+                );
+                log_identity_persistence("Bluetooth", bootstrap.persistence());
+                bootstrap.into_identity()
+            }
+            None => {
+                eprintln!("Bluetooth identity is ephemeral: HOME is not set");
+                generate_host_ble_identity()
             }
         };
 
@@ -186,7 +210,7 @@ fn run_engine(ready_tx: Sender<Ready>) {
             resource_strategy: ResourceStrategy::AcceptNone,
             app_name: ANNOUNCE_APP_NAME,
             aspects: ANNOUNCE_ASPECTS,
-            identity: secret_key,
+            identity: node_identity.into_destination_secret(),
             announce_app_data: ANNOUNCE_APP_DATA,
             proof: ProofStrategy::ProveAll,
             link_requests: LinkRequestPolicy::AcceptAll,
@@ -232,7 +256,7 @@ fn run_engine(ready_tx: Sender<Ready>) {
         #[cfg(target_os = "ios")]
         spawn_mdns(wifi_auto_contract::TCP_RENDEZVOUS_PORT, mdns_tx);
 
-        let ble_status = ble_identity.map(|identity| handle.attach(AutoBle::new(identity)).status());
+        let ble_status = Some(handle.attach(AutoBle::new(ble_identity)).status());
 
         let _ = ready_tx.send(Ready {
             handle: handle.clone(),

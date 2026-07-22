@@ -1,4 +1,3 @@
-//WIP NEEDS REVIEW
 import CoreGraphics
 import Foundation
 import UIKit

@@ -1,4 +1,3 @@
-//WIP NEEDS REVIEW
 #ifndef HOPSPOT_H
 #define HOPSPOT_H
 
