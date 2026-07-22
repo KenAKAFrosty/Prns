@@ -71,7 +71,7 @@ use personal_rns::engine::{
 #[cfg(feature = "wifi-auto")]
 use personal_rns::esp_now::EspNowInterface;
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
-use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::identity::IdentitySigner;
 #[cfg(feature = "wifi-auto")]
 use personal_rns::interfaces::esp_now::{
     self as espnow_core, Channel as EspNowChannel, ChannelPolicy,
@@ -329,24 +329,11 @@ const PACKET_PHY_RETENTION_CAPACITY: usize = 32;
 const PACKET_PHY_INDEX_BUCKETS: usize =
     personal_rns::routing::dedup::dedup_index_buckets(PACKET_PHY_RETENTION_CAPACITY);
 
-/// The engine's entropy: the hardware TRNG blocks until WiFi RF is live (wifi::new enables it, but
-/// the radio is not associated when the engine starts), so entropy is a board-unique software PRNG
-/// over this `static` state. Acceptable ONLY because this whole identity is a NEVER-ship bring-up
-/// fixture; the long-term fix is to gate the TRNG on RF-up. A fn (not a closure) so the host type
-/// stays nameable for the cross-core move.
-static ENTROPY_STATE: AtomicU64 = AtomicU64::new(0x9e37_79b9_7f4a_7c15);
 #[cfg(feature = "wifi-auto")]
 static WIFI_STATION_JOINED: AtomicBool = AtomicBool::new(false);
 
-fn seeded_entropy(bytes: &mut [u8]) {
-    let mut state = ENTROPY_STATE.load(Ordering::Relaxed);
-    for byte in bytes {
-        state ^= state << 13;
-        state ^= state >> 7;
-        state ^= state << 17;
-        *byte = (state >> 24) as u8;
-    }
-    ENTROPY_STATE.store(state, Ordering::Relaxed);
+fn hardware_entropy(bytes: &mut [u8]) {
+    Rng::new().read(bytes);
 }
 
 /// The recipe's event sink — a fn (not a closure) so the node type stays nameable.

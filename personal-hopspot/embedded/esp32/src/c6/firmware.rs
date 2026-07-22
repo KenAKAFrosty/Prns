@@ -1,6 +1,7 @@
 use super::*;
 
 pub async fn run(spawner: Spawner) {
+    esp_println::logger::init_logger_from_env();
     esp_alloc::heap_allocator!(size: HEAP_BYTES);
 
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
@@ -15,60 +16,6 @@ pub async fn run(spawner: Spawner) {
     rtc.rwdt.disable();
     rtc.swd.disable();
     let timebase = EmbassyTimebase::start_at(InstantMillis(rtc.current_time_us() / 1000));
-
-    let mac = base_mac_address();
-    let secret_key = c6_secret_key(&mac);
-
-    let transport_secret = secret_key.clone();
-    let self_destination = {
-        let signer = InMemoryNodeIdentity::from_secret_key_bytes(&secret_key);
-        let name = personal_rns::routing::announce::expand_name("lxmf", &["delivery"])
-            .expect("valid name");
-        personal_rns::routing::announce::derive_destination_hash(&signer.identity_hash(), &name)
-    };
-    #[cfg(feature = "bluetooth-auto")]
-    let mut mac_octets = [0u8; 6];
-    #[cfg(feature = "bluetooth-auto")]
-    mac_octets.copy_from_slice(&mac.as_bytes()[..6]);
-    #[cfg(feature = "bluetooth-auto")]
-    let ble_identity = match crate::bluetooth_auto::load_or_create_ble_identity() {
-        Ok(identity) => Some(identity),
-        Err(error) => {
-            log::error!("BLE identity is unavailable: {error}");
-            None
-        }
-    };
-
-    let seed = self_destination.as_bytes();
-    ENTROPY_STATE.store(
-        u64::from_le_bytes([
-            seed[0], seed[1], seed[2], seed[3], seed[4], seed[5], seed[6], seed[7],
-        ]) | 1,
-        Ordering::Relaxed,
-    );
-    let mut inbound: ReactorInbound = HVec::new();
-    let mut egress_lanes: ReactorEgressLanes = HVec::new();
-
-    let usb_seam = {
-        static IN_BUF: ConstStaticCell<LaneBuf> = ConstStaticCell::new([EMPTY_SLOT; LANE_DEPTH]);
-        static IN_CH: StaticCell<LaneChannel> = StaticCell::new();
-        static OUT_BUF: ConstStaticCell<LaneBuf> = ConstStaticCell::new([EMPTY_SLOT; LANE_DEPTH]);
-        static OUT_CH: StaticCell<LaneChannel> = StaticCell::new();
-        let in_ch = IN_CH.init(zerocopy_channel::Channel::new(IN_BUF.take()));
-        let (in_producer, in_consumer) = embassy_grant_lane(in_ch);
-        let out_ch = OUT_CH.init(zerocopy_channel::Channel::new(OUT_BUF.take()));
-        let (out_producer, out_consumer) = embassy_grant_lane(out_ch);
-        let _ = inbound.push((FREE_SLOT, in_consumer));
-        let _ = egress_lanes.push((FREE_SLOT, out_producer));
-        EmbassyInterfaceSeam::new(
-            USB_INTERFACE_ID,
-            in_producer,
-            NOTIFY.sender(),
-            out_consumer,
-            seeded_entropy,
-        )
-    };
-    spawner.spawn(usb_device_task(usb_rx, usb_tx, usb_seam).expect("usb device task fits"));
 
     #[cfg(feature = "esp-now")]
     let (_espnow_controller, espnow, _espnow_status) = {
@@ -90,6 +37,44 @@ pub async fn run(spawner: Spawner) {
         (controller, espnow, espnow_status)
     };
 
+    let mac = base_mac_address();
+    let node_bootstrap = crate::identity::bootstrap_node_identity();
+    crate::identity::log_persistence("node", node_bootstrap.persistence());
+    let ble_bootstrap = crate::identity::bootstrap_ble_identity();
+    crate::identity::log_persistence("Bluetooth", ble_bootstrap.persistence());
+    let node_identity = node_bootstrap.into_identity();
+    let transport_secret = node_identity.transport_secret();
+    #[cfg(feature = "bluetooth-auto")]
+    let mut mac_octets = [0u8; 6];
+    #[cfg(feature = "bluetooth-auto")]
+    mac_octets.copy_from_slice(&mac.as_bytes()[..6]);
+    #[cfg(feature = "bluetooth-auto")]
+    let ble_identity = Some(ble_bootstrap.into_identity());
+
+    let mut inbound: ReactorInbound = HVec::new();
+    let mut egress_lanes: ReactorEgressLanes = HVec::new();
+
+    let usb_seam = {
+        static IN_BUF: ConstStaticCell<LaneBuf> = ConstStaticCell::new([EMPTY_SLOT; LANE_DEPTH]);
+        static IN_CH: StaticCell<LaneChannel> = StaticCell::new();
+        static OUT_BUF: ConstStaticCell<LaneBuf> = ConstStaticCell::new([EMPTY_SLOT; LANE_DEPTH]);
+        static OUT_CH: StaticCell<LaneChannel> = StaticCell::new();
+        let in_ch = IN_CH.init(zerocopy_channel::Channel::new(IN_BUF.take()));
+        let (in_producer, in_consumer) = embassy_grant_lane(in_ch);
+        let out_ch = OUT_CH.init(zerocopy_channel::Channel::new(OUT_BUF.take()));
+        let (out_producer, out_consumer) = embassy_grant_lane(out_ch);
+        let _ = inbound.push((FREE_SLOT, in_consumer));
+        let _ = egress_lanes.push((FREE_SLOT, out_producer));
+        EmbassyInterfaceSeam::new(
+            USB_INTERFACE_ID,
+            in_producer,
+            NOTIFY.sender(),
+            out_consumer,
+            hardware_entropy,
+        )
+    };
+    spawner.spawn(usb_device_task(usb_rx, usb_tx, usb_seam).expect("usb device task fits"));
+
     #[cfg(feature = "esp-now")]
     let espnow_seam = {
         static IN_BUF: ConstStaticCell<LaneBuf> = ConstStaticCell::new([EMPTY_SLOT; LANE_DEPTH]);
@@ -107,7 +92,7 @@ pub async fn run(spawner: Spawner) {
             in_producer,
             NOTIFY.sender(),
             out_consumer,
-            seeded_entropy,
+            hardware_entropy,
         )
     };
 
@@ -144,7 +129,7 @@ pub async fn run(spawner: Spawner) {
         LIFECYCLE.receiver(),
         handle,
     );
-    let host = EmbassyHost::new_with_timebase(timebase, seeded_entropy as fn(&mut [u8]));
+    let host = EmbassyHost::new_with_timebase(timebase, hardware_entropy as fn(&mut [u8]));
 
     static NODE: StaticCell<Node> = StaticCell::new();
     let node: &'static mut Node = NODE.init(PrnsNode::new(
@@ -155,7 +140,7 @@ pub async fn run(spawner: Spawner) {
                     personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
                 app_name: "lxmf",
                 aspects: &["delivery"],
-                identity: secret_key,
+                identity: node_identity.into_destination_secret(),
                 announce_app_data: ANNOUNCE_APP_DATA,
                 proof: personal_rns::routing::ProofStrategy::ProveAll,
                 link_requests: personal_rns::routing::LinkRequestPolicy::AcceptAll,

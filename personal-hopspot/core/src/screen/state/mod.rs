@@ -72,6 +72,8 @@ pub enum UiNotice {
     Sleeping,
     Awake,
     Saved,
+    IdentityReset,
+    IdentityUnstable,
 }
 
 impl UiNotice {
@@ -84,6 +86,8 @@ impl UiNotice {
             Self::Sleeping => "Sleeping",
             Self::Awake => "Awake",
             Self::Saved => "Saved",
+            Self::IdentityReset => "Identity Reset",
+            Self::IdentityUnstable => "Identity Unstable",
         }
     }
 }

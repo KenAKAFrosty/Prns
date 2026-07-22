@@ -34,22 +34,6 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let mac = base_mac_address();
     let mut mac_octets = [0u8; 6];
     mac_octets.copy_from_slice(&mac.as_bytes()[..6]);
-    let secret_key = fixture_identity_secret_key(&mac);
-
-    let transport_secret = secret_key.clone();
-    let self_destination = {
-        let signer = InMemoryNodeIdentity::from_secret_key_bytes(&secret_key);
-        let name = personal_rns::routing::announce::expand_name("lxmf", &["delivery"])
-            .expect("valid name");
-        personal_rns::routing::announce::derive_destination_hash(&signer.identity_hash(), &name)
-    };
-    let seed = self_destination.as_bytes();
-    ENTROPY_STATE.store(
-        u64::from_le_bytes([
-            seed[0], seed[1], seed[2], seed[3], seed[4], seed[5], seed[6], seed[7],
-        ]) | 1,
-        Ordering::Relaxed,
-    );
 
     let mut inbound: ReactorInbound = HVec::new();
     let mut egress_lanes: ReactorEgressLanes = HVec::new();
@@ -105,14 +89,21 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let wifi: Option<AutoWifi<'static, MEMBERS>> = None;
     #[cfg(not(feature = "wifi-auto"))]
     let tcp_stack: Option<Stack<'static>> = None;
-    #[cfg(feature = "bluetooth-auto")]
-    let ble_identity = match crate::bluetooth_auto::load_or_create_ble_identity() {
-        Ok(identity) => Some(identity),
-        Err(error) => {
-            log::error!("BLE identity is unavailable: {error}");
-            None
-        }
+    let node_bootstrap = crate::identity::bootstrap_node_identity();
+    crate::identity::log_persistence("node", node_bootstrap.persistence());
+    let ble_bootstrap = crate::identity::bootstrap_ble_identity();
+    crate::identity::log_persistence("Bluetooth", ble_bootstrap.persistence());
+    let identity_startup_notice =
+        crate::identity::startup_notice(node_bootstrap.persistence(), ble_bootstrap.persistence());
+    let node_identity = node_bootstrap.into_identity();
+    let transport_secret = node_identity.transport_secret();
+    let self_destination = {
+        let signer = InMemoryNodeIdentity::from_secret_key_bytes(node_identity.secret());
+        let name = personal_rns::routing::announce::expand_name("lxmf", &["delivery"])
+            .expect("valid name");
+        personal_rns::routing::announce::derive_destination_hash(&signer.identity_hash(), &name)
     };
+    let ble_identity = Some(ble_bootstrap.into_identity());
 
     #[cfg(feature = "esp-now")]
     let espnow_status: &'static EmbassyInterfaceStatus = mk_static!(
@@ -141,7 +132,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         LIFECYCLE.receiver(),
         handle,
     );
-    let host = EmbassyHost::new_with_timebase(b.timebase, seeded_entropy as fn(&mut [u8]));
+    let host = EmbassyHost::new_with_timebase(b.timebase, hardware_entropy as fn(&mut [u8]));
 
     let recipe = PrnsNodeRecipe {
         transport_identity: Some(transport_secret),
@@ -150,7 +141,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
             app_name: "lxmf",
             aspects: &["delivery"],
-            identity: secret_key,
+            identity: node_identity.into_destination_secret(),
             announce_app_data: B::ANNOUNCE_APP_DATA,
             proof: personal_rns::routing::ProofStrategy::ProveAll,
             link_requests: personal_rns::routing::LinkRequestPolicy::AcceptAll,
@@ -213,7 +204,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             in_producer,
             NOTIFY.sender(),
             out_consumer,
-            seeded_entropy,
+            hardware_entropy,
         )
     };
     spawner.spawn(
@@ -229,7 +220,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             lora_in_producer,
             NOTIFY.sender(),
             lora_out_consumer,
-            seeded_entropy,
+            hardware_entropy,
         )
     };
 
@@ -242,7 +233,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             in_producer,
             NOTIFY.sender(),
             out_consumer,
-            seeded_entropy,
+            hardware_entropy,
         );
         (interface, seam)
     });
@@ -254,7 +245,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             in_producer,
             NOTIFY.sender(),
             out_consumer,
-            seeded_entropy,
+            hardware_entropy,
         );
         (tcp, seam)
     });
@@ -335,6 +326,9 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             },
             access_point,
         });
+        if let Some(notice) = identity_startup_notice {
+            ui_state.show_notice(notice);
+        }
         let mut working_lora_profile = DEFAULT_915_PROFILE;
         let mut battery_state = screen::BatteryState::Unknown;
         let mut battery_gauge = screen::BatteryGauge::lipo();
@@ -351,7 +345,8 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         let local_docs = None;
         let mut ticks_to_battery: u8 = 0;
         let mut activity = screen::CardActivityTracker::<8>::new();
-        let mut notice_until_ms: Option<u64> = None;
+        let mut notice_until_ms =
+            identity_startup_notice.map(|_| embassy_time::Instant::now().as_millis() + 5_000);
         let mut oled_awake = true;
         let mut oled_off_at_ms: Option<u64> = None;
         let mut oled_sleep_at_ms: Option<u64> = None;
@@ -776,19 +771,4 @@ pub(super) async fn run_core<B: Esp32S3Board>(
 async fn reactor_core(node: &'static mut S3Node) {
     node.run_reactor_with_interface_store(&INTERFACE_STORE)
         .await
-}
-
-/// A bring-up fixture identity (the oracle X25519 0x22 ‖ Ed25519 0x11 keypair with the board MAC
-/// mixed in so every flashed board is distinct). NEVER ship: predictable from the MAC.
-fn fixture_identity_secret_key(
-    mac: &esp_hal::efuse::MacAddress,
-) -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
-    let mut secret_key = Zeroizing::new([0u8; IDENTITY_SECRET_KEY_LEN]);
-    secret_key[..32].fill(0x22);
-    secret_key[32..].fill(0x11);
-    for (i, byte) in mac.as_bytes().iter().enumerate() {
-        secret_key[i] ^= byte;
-        secret_key[32 + i] ^= byte;
-    }
-    secret_key
 }

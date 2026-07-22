@@ -42,6 +42,16 @@ pub enum IdentityPersistence<E> {
     Ephemeral(E),
 }
 
+impl<E> IdentityPersistence<E> {
+    pub const fn is_recovered(&self) -> bool {
+        matches!(self, Self::Recovered(_))
+    }
+
+    pub const fn is_ephemeral(&self) -> bool {
+        matches!(self, Self::Ephemeral(_))
+    }
+}
+
 pub struct IdentityBootstrap<I, E> {
     identity: I,
     persistence: IdentityPersistence<E>,
@@ -61,6 +71,22 @@ impl<I, E> IdentityBootstrap<I, E> {
 
     pub fn into_identity(self) -> I {
         self.identity
+    }
+
+    pub fn loaded(identity: I) -> Self {
+        Self::new(identity, IdentityPersistence::Loaded)
+    }
+
+    pub fn created(identity: I) -> Self {
+        Self::new(identity, IdentityPersistence::Created)
+    }
+
+    pub fn recovered(identity: I, cause: E) -> Self {
+        Self::new(identity, IdentityPersistence::Recovered(cause))
+    }
+
+    pub fn ephemeral(identity: I, cause: E) -> Self {
+        Self::new(identity, IdentityPersistence::Ephemeral(cause))
     }
 }
 

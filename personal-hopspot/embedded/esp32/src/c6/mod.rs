@@ -1,9 +1,10 @@
 use esp_backtrace as _;
 use esp_bootloader_esp_idf::esp_app_desc;
 use esp_hal::clock::CpuClock;
-use esp_hal::efuse::{base_mac_address, MacAddress};
+use esp_hal::efuse::base_mac_address;
 use esp_hal::interrupt::software::SoftwareInterruptControl;
 use esp_hal::peripherals::{BT, USB_DEVICE};
+use esp_hal::rng::Rng;
 use esp_hal::rtc_cntl::Rtc;
 use esp_hal::timer::timg::TimerGroup;
 use esp_hal::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx, UsbSerialJtagTx};
@@ -15,12 +16,9 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Timer};
 use heapless::Vec as HVec;
-use portable_atomic::{AtomicU64, Ordering};
 use static_cell::StaticCell;
 
 use personal_rns::engine::{InstantMillis, IssuedCommand, RatchetPolicy};
-use personal_rns::identity::in_memory::InMemoryNodeIdentity;
-use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 #[cfg(feature = "bluetooth-auto")]
 use personal_rns::interfaces::bluetooth_auto::BleIdentity;
 use personal_rns::interfaces::usb_auto::device_descriptor;
@@ -171,7 +169,6 @@ static COMMANDS: Channel<Mtx, IssuedCommand, COMMANDS_CAP> = Channel::new();
 static LIFECYCLE: Channel<Mtx, InterfaceLifecycle, LIFECYCLE_CAP> = Channel::new();
 static COMPLETION: CompletionPool<Mtx, COMPLETIONS_CAP> = CompletionPool::new();
 static INTERFACE_STORE: InterfaceStore = EmbassyInterfaceStore::new();
-static ENTROPY_STATE: AtomicU64 = AtomicU64::new(0x9e37_79b9_7f4a_7c15);
 static USB_STATUS: EmbassyInterfaceStatus =
     EmbassyInterfaceStatus::new(USB_INTERFACE_ID, ConnectionState::Initializing);
 #[cfg(feature = "bluetooth-auto")]
@@ -186,29 +183,11 @@ macro_rules! mk_static {
     }};
 }
 
-fn seeded_entropy(bytes: &mut [u8]) {
-    let mut state = ENTROPY_STATE.load(Ordering::Relaxed);
-    for byte in bytes {
-        state ^= state << 13;
-        state ^= state >> 7;
-        state ^= state << 17;
-        *byte = (state >> 24) as u8;
-    }
-    ENTROPY_STATE.store(state, Ordering::Relaxed);
+fn hardware_entropy(bytes: &mut [u8]) {
+    Rng::new().read(bytes);
 }
 
 fn ignore_events(_event: PrnsEvent<'_>, _state: &()) {}
-
-fn c6_secret_key(mac: &MacAddress) -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
-    let mut secret_key = Zeroizing::new([0u8; IDENTITY_SECRET_KEY_LEN]);
-    secret_key[..32].fill(0x22);
-    secret_key[32..].fill(0x11);
-    for (i, byte) in mac.as_bytes().iter().enumerate() {
-        secret_key[i] ^= byte;
-        secret_key[32 + i] ^= byte;
-    }
-    secret_key
-}
 
 #[embassy_executor::task]
 async fn usb_device_task(

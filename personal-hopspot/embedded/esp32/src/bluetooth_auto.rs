@@ -9,16 +9,11 @@ use embassy_futures::join::join;
 #[cfg(target_arch = "xtensa")]
 use embassy_futures::join::join_array;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex as BridgeMutex;
-use esp_hal::rng::Rng;
-use esp_hal::rom::spiflash::{
-    esp_rom_spiflash_read, esp_rom_spiflash_write, ESP_ROM_SPIFLASH_RESULT_OK,
-};
 use esp_radio::ble::controller::BleConnector;
 use personal_rns::bluetooth_auto::{BluetoothAuto, BluetoothAutoShared};
 use personal_rns::interfaces::bluetooth_auto::{
-    decode_persisted_ble_identity, encode_advertisement, encode_persisted_ble_identity,
-    BleIdentity, BleRoleCapabilities, Endpoint, Esp32Host, LinkCapabilities,
-    PersistedBleIdentityError, Psm, BLE_HW_MTU, MAX_ADVERTISEMENT_LEN, PERSISTED_BLE_IDENTITY_LEN,
+    encode_advertisement, BleIdentity, BleRoleCapabilities, Endpoint, Esp32Host, LinkCapabilities,
+    Psm, BLE_HW_MTU, MAX_ADVERTISEMENT_LEN,
 };
 use personal_rns::reactor::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
 use personal_rns::runtime::Fleet;
@@ -40,84 +35,6 @@ use crate::s3::{BLE_MEMBERS, LIFECYCLE_CAP, NOTIFY_CAP};
 type BleFleet = Fleet<BridgeMutex, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP>;
 type Transport = BleConnector<'static>;
 type HostStack = TroubleStack<Transport>;
-
-const BLE_IDENTITY_FLASH_OFFSET: u32 = 0xd000;
-
-#[repr(align(4))]
-struct AlignedIdentityRecord([u8; PERSISTED_BLE_IDENTITY_LEN]);
-
-pub fn load_or_create_ble_identity() -> Result<BleIdentity, EspBleIdentityError> {
-    if let Some(identity) = read_ble_identity()? {
-        return Ok(identity);
-    }
-    let mut bytes = [0u8; 16];
-    Rng::new().read(&mut bytes);
-    let identity = BleIdentity::new(bytes);
-    let record = AlignedIdentityRecord(encode_persisted_ble_identity(identity));
-    write_flash(BLE_IDENTITY_FLASH_OFFSET + 8, &record.0[8..])?;
-    write_flash(BLE_IDENTITY_FLASH_OFFSET, &record.0[..8])?;
-    match read_ble_identity()? {
-        Some(persisted) if persisted == identity => Ok(identity),
-        Some(_) | None => Err(EspBleIdentityError::Verification),
-    }
-}
-
-fn read_ble_identity() -> Result<Option<BleIdentity>, EspBleIdentityError> {
-    let mut record = AlignedIdentityRecord([0u8; PERSISTED_BLE_IDENTITY_LEN]);
-    let result = read_flash(BLE_IDENTITY_FLASH_OFFSET, &mut record.0);
-    if result != ESP_ROM_SPIFLASH_RESULT_OK {
-        return Err(EspBleIdentityError::Read(result));
-    }
-    decode_persisted_ble_identity(&record.0).map_err(EspBleIdentityError::Stored)
-}
-
-#[expect(
-    clippy::undocumented_unsafe_blocks,
-    reason = "the aligned destination is valid for the exact ROM flash read length"
-)]
-fn read_flash(offset: u32, destination: &mut [u8]) -> i32 {
-    unsafe {
-        esp_rom_spiflash_read(
-            offset,
-            destination.as_mut_ptr().cast::<u32>() as *const u32,
-            destination.len() as u32,
-        )
-    }
-}
-
-#[expect(
-    clippy::undocumented_unsafe_blocks,
-    reason = "the aligned source is valid for the exact ROM flash write length"
-)]
-fn write_flash(offset: u32, source: &[u8]) -> Result<(), EspBleIdentityError> {
-    let result = unsafe {
-        esp_rom_spiflash_write(offset, source.as_ptr().cast::<u32>(), source.len() as u32)
-    };
-    if result == ESP_ROM_SPIFLASH_RESULT_OK {
-        Ok(())
-    } else {
-        Err(EspBleIdentityError::Write(result))
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EspBleIdentityError {
-    Read(i32),
-    Write(i32),
-    Stored(PersistedBleIdentityError),
-    Verification,
-}
-
-impl core::fmt::Display for EspBleIdentityError {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::Read(code) => write!(formatter, "BLE identity flash read failed with {code}"),
-            Self::Write(code) => write!(formatter, "BLE identity flash write failed with {code}"),
-            Self::Stored(error) => error.fmt(formatter),
-            Self::Verification => formatter.write_str("BLE identity flash verification failed"),
-        }
-    }
-}
 
 #[cfg(target_arch = "xtensa")]
 const _: () = assert!(
