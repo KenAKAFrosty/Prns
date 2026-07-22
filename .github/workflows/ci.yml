@@ -30,12 +30,8 @@ jobs:
         with:
           components: rustfmt
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
-      - name: fmt + doc gate (scripts/fmt-check.sh, all workspaces)
+      - name: registry, format, and documentation gate
         run: bash scripts/fmt-check.sh
-      - name: validation docs drift guard
-        run: bash scripts/validation-doc-drift.sh
-      - name: comment census gate
-        run: bash scripts/comment-census.sh
 
   clippy:
     runs-on: ubuntu-latest
@@ -77,6 +73,8 @@ jobs:
           components: clippy
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+      - name: Install Linux desktop link dependency
+        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
       # The tokio interface crate: every host interface family above the engine's tokio-host bind,
       # linted/tested/doc'd as the standalone workspace consumers actually build. --all-features is
       # honest here — the per-OS BLE backends live in target tables, so Linux gets BlueR and never
@@ -125,12 +123,12 @@ jobs:
         working-directory: prns-interfaces/impls/embassy
       # The cross-crate capstones: engine + runtime binds + real interface impls over live loopback
       # sockets, public API only (the tests that used to live inside personal-rns/tests).
-      - name: clippy — prns-integration-tests
+      - name: clippy — validation integration capstones
         run: cargo clippy --all-targets --locked -- -D warnings
-        working-directory: prns-integration-tests
-      - name: test — prns-integration-tests
-        run: cargo test --locked
-        working-directory: prns-integration-tests
+        working-directory: validation/integration
+      - name: test — validation integration capstones
+        run: cargo test --locked -- --test-threads=1
+        working-directory: validation/integration
       - name: clippy — prns-runtime-embassy
         run: cargo clippy --all-targets --locked -- -D warnings
         working-directory: prns-runtime/impls/embassy
@@ -149,6 +147,9 @@ jobs:
       # multi-segment and link-guard variants slipped through). This lints and compiles it.
       - name: clippy — hopspot desktop face
         run: cargo clippy --all-targets --locked -- -D warnings
+        working-directory: personal-hopspot/desktop
+      - name: build — hopspot desktop face
+        run: cargo build --locked
         working-directory: personal-hopspot/desktop
       - name: clippy — prns-config
         run: cargo clippy --all-targets --locked -- -D warnings
@@ -348,6 +349,9 @@ jobs:
             prns-ffi
             prns-interfaces/impls/tokio
             personal-hopspot/mobile/ios/rust
+            personal-hopspot/desktop
+      - name: Install macOS desktop link dependency
+        run: brew install sdl2
       - name: clippy — prns-ffi (CoreBluetooth backend)
         run: cargo clippy --all-features --all-targets --locked -- -D warnings
         working-directory: prns-ffi
@@ -357,6 +361,12 @@ jobs:
       - name: clippy — hopspot iOS face crate
         run: cargo clippy --all-targets --locked -- -D warnings
         working-directory: personal-hopspot/mobile/ios/rust
+      - name: build — hopspot iOS face crate
+        run: cargo build --release --locked
+        working-directory: personal-hopspot/mobile/ios/rust
+      - name: build — hopspot desktop face (macOS)
+        run: cargo build --locked
+        working-directory: personal-hopspot/desktop
 
   windows-desktop:
     # The Hopspot desktop face is the cross-platform proving ground, and nothing else in CI builds on
@@ -410,8 +420,13 @@ jobs:
         run: uv venv /tmp/rns && uv pip install --python /tmp/rns/bin/python -r benchmarks/reference/requirements.txt
       - name: install the control-RPC reference RNS (rns==1.4.0)
         run: uv venv /tmp/rns-rpc && uv pip install --python /tmp/rns-rpc/bin/python -r benchmarks/reference/rpc-requirements.txt
-      - name: PR oracle lane
-        run: python3 scripts/oracles.py --pr
+      - name: PR deterministic oracle lane
+        run: python3 validation/run.py run --domain oracles --tier pr --expected-sha "$GITHUB_SHA"
+        env:
+          SMOKE_PYTHON: /tmp/rns/bin/python
+          RPC_SMOKE_PYTHON: /tmp/rns-rpc/bin/python
+      - name: PR live interop lane
+        run: python3 validation/run.py run --domain interop --tier pr --expected-sha "$GITHUB_SHA"
         env:
           SMOKE_PYTHON: /tmp/rns/bin/python
           RPC_SMOKE_PYTHON: /tmp/rns-rpc/bin/python
@@ -422,7 +437,7 @@ jobs:
           name: pr-oracles-${{ github.run_id }}
           retention-days: 14
           if-no-files-found: ignore
-          path: validation-artifacts/oracles/**
+          path: validation-artifacts/results/**
 
   deny:
     # Locked release graph matrix: zero-copyleft licenses, RustSec, sources, unsafe drift, notices.
@@ -478,6 +493,10 @@ jobs:
       - release-workflow-contracts
       - msrv
       - no-std-embedded
+      - android-service
+      - macos-ble
+      - windows-desktop
+      - local-interop
       - deny
     runs-on: ubuntu-24.04
     env:
@@ -489,6 +508,10 @@ jobs:
       WORKFLOWS_RESULT: ${{ needs.release-workflow-contracts.result }}
       MSRV_RESULT: ${{ needs.msrv.result }}
       EMBEDDED_RESULT: ${{ needs.no-std-embedded.result }}
+      ANDROID_RESULT: ${{ needs.android-service.result }}
+      APPLE_RESULT: ${{ needs.macos-ble.result }}
+      WINDOWS_RESULT: ${{ needs.windows-desktop.result }}
+      INTEROP_RESULT: ${{ needs.local-interop.result }}
       DENY_RESULT: ${{ needs.deny.result }}
     steps:
       - name: Require every release-critical lane
@@ -502,6 +525,10 @@ jobs:
             "$WORKFLOWS_RESULT" \
             "$MSRV_RESULT" \
             "$EMBEDDED_RESULT" \
+            "$ANDROID_RESULT" \
+            "$APPLE_RESULT" \
+            "$WINDOWS_RESULT" \
+            "$INTEROP_RESULT" \
             "$DENY_RESULT"; do
             test "$result" = "success"
           done

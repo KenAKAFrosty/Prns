@@ -56,14 +56,8 @@ impl Forward {
                 tcp::policy_for_bitrate(tcp::TCP_BITRATE_ESTIMATE),
             )],
             relay_interfaces: vec![
-                tcp::descriptor(
-                    IF_UP,
-                    tcp::policy_for_bitrate(tcp::TCP_BITRATE_ESTIMATE),
-                ),
-                tcp::descriptor(
-                    IF_DOWN,
-                    tcp::policy_for_bitrate(tcp::TCP_BITRATE_ESTIMATE),
-                ),
+                tcp::descriptor(IF_UP, tcp::policy_for_bitrate(tcp::TCP_BITRATE_ESTIMATE)),
+                tcp::descriptor(IF_DOWN, tcp::policy_for_bitrate(tcp::TCP_BITRATE_ESTIMATE)),
             ],
             down_interfaces: vec![tcp::descriptor(
                 IF_DOWN,

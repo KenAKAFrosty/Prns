@@ -30,7 +30,12 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           shared-key: hardening-${{ matrix.sanitizer }}
-      - run: bash scripts/sanitizers.sh ${{ matrix.sanitizer }}
+      - run: python3 validation/run.py run --suite sanitizer-${{ matrix.sanitizer }} --expected-sha "$GITHUB_SHA"
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: hardening-sanitizer-${{ matrix.sanitizer }}-${{ github.run_id }}
+          path: validation-artifacts/results/sanitizer-${{ matrix.sanitizer }}/**
 
   miri:
     runs-on: ubuntu-latest
@@ -44,7 +49,12 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           shared-key: hardening-miri
-      - run: bash scripts/miri.sh --quick
+      - run: python3 validation/run.py run --suite miri-quick --expected-sha "$GITHUB_SHA"
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: hardening-miri-${{ github.run_id }}
+          path: validation-artifacts/results/miri-quick/**
 
   unsafe-inventory:
     runs-on: ubuntu-latest
@@ -61,10 +71,10 @@ jobs:
       - name: compiler boundary evidence
         run: |
           mkdir -p hardening-logs
-          bash scripts/geiger.sh --entrypoints 2>&1 | tee hardening-logs/geiger-entrypoints.log
+          python3 validation/run.py run --suite unsafe-entrypoints --expected-sha "$GITHUB_SHA" 2>&1 | tee hardening-logs/geiger-entrypoints.log
       - name: supplemental dependency inventory
         id: geiger_inventory
-        run: bash scripts/geiger.sh --inventory > hardening-logs/geiger-inventory.log 2>&1
+        run: bash validation/hardening/geiger.sh --inventory > hardening-logs/geiger-inventory.log 2>&1
         continue-on-error: true
       - name: report incomplete Geiger parsing
         if: steps.geiger_inventory.outcome == 'failure'
@@ -74,4 +84,6 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: cargo-geiger-evidence
-          path: hardening-logs/*.log
+          path: |
+            hardening-logs/*.log
+            validation-artifacts/results/unsafe-entrypoints/**

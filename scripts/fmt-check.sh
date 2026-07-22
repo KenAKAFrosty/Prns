@@ -2,33 +2,24 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-echo "[fmt] root workspace"
-cargo fmt --all -- --check
+python3 validation/run.py verify
 
-for ws in \
-  prns-config \
-  prnsd \
-  prns-ffi \
-  prns-wasm \
-  prns-runtime/impls/tokio \
-  prns-runtime/impls/embassy \
-  prns-interfaces/impls/tokio \
-  prns-interfaces/impls/embassy \
-  prns-integration-tests \
-  personal-hopspot/desktop \
-  personal-hopspot/embedded/nrf52840 \
-  personal-hopspot/mobile/android/rust \
-  personal-hopspot/mobile/ios/rust; do
-  echo "[fmt] ${ws}"
-  (cd "${ws}" && cargo fmt --all -- --check)
-done
-
-if rustup toolchain list | grep -q '^esp'; then
-  echo "[fmt] personal-hopspot/embedded/esp32"
-  (cd personal-hopspot/embedded/esp32 && cargo fmt --all -- --check)
-else
-  echo "[fmt] personal-hopspot/embedded/esp32 — SKIPPED (esp toolchain not installed)"
-fi
+while IFS= read -r manifest; do
+  echo "[fmt] ${manifest}"
+  if [[ "${manifest}" == benchmarks/external/*/interop/Cargo.toml ]]; then
+    # These standalone adapters have path dependencies in ignored, pinned
+    # upstream checkouts. Format the adapter package without rewriting vendor
+    # sources that are patched at build time.
+    package="$(MANIFEST="${manifest}" python3 -c \
+      'import os, tomllib; print(tomllib.load(open(os.environ["MANIFEST"], "rb"))["package"]["name"])')"
+    cargo fmt --manifest-path "${manifest}" --package "${package}" -- --check
+  else
+    cargo fmt --manifest-path "${manifest}" --all -- --check
+  fi
+done < <(
+  python3 -c \
+    'import tomllib; print(*tomllib.load(open("validation/manifest.toml", "rb"))["registry"]["format_manifests"], sep="\n")'
+)
 
 echo "[docs] intra-doc links (personal-rns)"
 cargo doc --locked -p personal-rns --no-deps --document-private-items --quiet

@@ -27,13 +27,10 @@ pub(super) async fn relay_node(manifest: &Manifest) {
         ),
     ];
 
-    let side_a = BenchTcpListener::bind_with_id(
-        TCP_INTERFACE_ID,
-        "127.0.0.1:0",
-        tcp::TCP_BITRATE_ESTIMATE,
-    )
-    .await
-    .expect("binds side a");
+    let side_a =
+        BenchTcpListener::bind_with_id(TCP_INTERFACE_ID, "127.0.0.1:0", tcp::TCP_BITRATE_ESTIMATE)
+            .await
+            .expect("binds side a");
     let addr_a = side_a.local_addr().expect("bound address");
     let side_b = BenchTcpListener::bind_with_id(
         RELAY_SECOND_INTERFACE_ID,
@@ -93,13 +90,10 @@ pub(super) async fn chain_node(upstream: &str) {
         ),
     ];
 
-    let downstream = BenchTcpListener::bind_with_id(
-        TCP_INTERFACE_ID,
-        "127.0.0.1:0",
-        tcp::TCP_BITRATE_ESTIMATE,
-    )
-    .await
-    .expect("binds downstream side");
+    let downstream =
+        BenchTcpListener::bind_with_id(TCP_INTERFACE_ID, "127.0.0.1:0", tcp::TCP_BITRATE_ESTIMATE)
+            .await
+            .expect("binds downstream side");
     let addr = downstream.local_addr().expect("bound address");
     let up = TcpClientInterface::new_with_id(
         RELAY_SECOND_INTERFACE_ID,

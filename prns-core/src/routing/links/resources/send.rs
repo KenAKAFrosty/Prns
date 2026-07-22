@@ -507,37 +507,38 @@ impl<S: StorageLayout> EngineState<S> {
                     fill_entropy(&mut iv);
                     let outgoing = &self.outgoing_resources;
                     let mut wrote = false;
-                    let mut fill = |slot: &mut [u8]| -> Option<usize> {
-                        let names = outgoing.names_flat(index);
-                        let segment_names = &names
-                            [plan.entries_start * MAP_HASH_LEN..plan.entries_end * MAP_HASH_LEN];
-                        let mut plaintext = [0u8; LINK_MDU];
-                        let plaintext_len = write_hashmap_update_plaintext(
-                            hash,
-                            plan.segment,
-                            segment_names,
-                            &mut plaintext,
-                        )
-                        .ok()?;
-                        let wire_len = write_link_packet(
-                            link_id,
-                            key,
-                            mtu,
-                            WireContext::ResourceHashUpdate,
-                            &plaintext[..plaintext_len],
-                            &iv,
-                            slot,
-                        )
-                        .ok()?;
-                        wrote = true;
-                        Some(wire_len)
-                    };
-                    sink(EngineReaction::Directive(Directive::EmitFrame {
-                        target: fire_on,
-                        size_hint: link_data_frame_ceiling(LINK_MDU),
-                        fill: &mut fill,
-                    }));
-                    drop(fill);
+                    {
+                        let mut fill = |slot: &mut [u8]| -> Option<usize> {
+                            let names = outgoing.names_flat(index);
+                            let segment_names = &names[plan.entries_start * MAP_HASH_LEN
+                                ..plan.entries_end * MAP_HASH_LEN];
+                            let mut plaintext = [0u8; LINK_MDU];
+                            let plaintext_len = write_hashmap_update_plaintext(
+                                hash,
+                                plan.segment,
+                                segment_names,
+                                &mut plaintext,
+                            )
+                            .ok()?;
+                            let wire_len = write_link_packet(
+                                link_id,
+                                key,
+                                mtu,
+                                WireContext::ResourceHashUpdate,
+                                &plaintext[..plaintext_len],
+                                &iv,
+                                slot,
+                            )
+                            .ok()?;
+                            wrote = true;
+                            Some(wire_len)
+                        };
+                        sink(EngineReaction::Directive(Directive::EmitFrame {
+                            target: fire_on,
+                            size_hint: link_data_frame_ceiling(LINK_MDU),
+                            fill: &mut fill,
+                        }));
+                    }
                     if wrote {
                         originated_outbound = true;
                     }
@@ -847,26 +848,27 @@ impl<S: StorageLayout> EngineState<S> {
             let mut cancel_plaintext = [0u8; RESOURCE_HASH_LEN];
             if write_cancel_plaintext(hash, &mut cancel_plaintext).is_ok() {
                 let mut wrote = false;
-                let mut fill = |slot: &mut [u8]| -> Option<usize> {
-                    let wire_len = write_link_packet(
-                        link_id,
-                        key,
-                        mtu,
-                        WireContext::ResourceInitiatorCancel,
-                        &cancel_plaintext,
-                        &cancel_iv,
-                        slot,
-                    )
-                    .ok()?;
-                    wrote = true;
-                    Some(wire_len)
-                };
-                sink(EngineReaction::Directive(Directive::EmitFrame {
-                    target: fire_on,
-                    size_hint: link_data_frame_ceiling(RESOURCE_HASH_LEN),
-                    fill: &mut fill,
-                }));
-                drop(fill);
+                {
+                    let mut fill = |slot: &mut [u8]| -> Option<usize> {
+                        let wire_len = write_link_packet(
+                            link_id,
+                            key,
+                            mtu,
+                            WireContext::ResourceInitiatorCancel,
+                            &cancel_plaintext,
+                            &cancel_iv,
+                            slot,
+                        )
+                        .ok()?;
+                        wrote = true;
+                        Some(wire_len)
+                    };
+                    sink(EngineReaction::Directive(Directive::EmitFrame {
+                        target: fire_on,
+                        size_hint: link_data_frame_ceiling(RESOURCE_HASH_LEN),
+                        fill: &mut fill,
+                    }));
+                }
                 if wrote {
                     self.links.note_outbound(link_id, now);
                 }

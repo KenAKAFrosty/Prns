@@ -1,0 +1,18 @@
+# Validation hub
+
+This directory centralizes orchestration and evidence for cross-cutting
+validation without relocating unit, property, or private proof bodies from their
+owning code.
+
+Start with:
+
+```console
+python3 validation/run.py verify
+python3 validation/run.py list
+```
+
+`manifest.toml` is the executable inventory; `run.py` is the dependency-free
+operator and CI interface. See `docs/validation.md` for tiers, evidence,
+mutation-triage policy, stock-RNS setup, and exact-SHA release qualification.
+The synchronized pre-change findings and their dispositions are preserved in
+`BASELINE.md`.

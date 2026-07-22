@@ -2,7 +2,7 @@
 
 The performance harness the website's [Performance page](../docs/website/src/pages/benchmarks.rs)
 promises: *"a deterministic harness in the repo, runnable on any machine."* A standalone
-crate (own `[workspace]`, `publish = false`), mirroring `fuzz/` — so the engine's
+crate (own `[workspace]`, `publish = false`), mirroring `validation/fuzz/` — so the engine's
 `--workspace` gates never pull in `dhat`/`criterion`.
 
 ## The shape

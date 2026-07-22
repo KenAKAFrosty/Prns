@@ -4,7 +4,7 @@ version = "0.0.0"
 publish = false
 edition = "2021"
 
-# Standalone, like `fuzz/`: an empty `[workspace]` detaches this from the root so
+# Standalone, like `validation/fuzz/`: an empty `[workspace]` detaches this from the root so
 # the engine `--workspace` gates never pull in dev tooling, and it can
 # move at its own pace. Builds via its own manifest.
 [workspace]

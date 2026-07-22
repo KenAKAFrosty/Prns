@@ -131,10 +131,7 @@ async fn tunnel_client_side(
         tune(&stream);
         let tag = format!("{peer}#{connection_index}").into_bytes();
         let id = InterfaceId::from_channel_tag(InterfaceKind::TcpServerPeer, &tag);
-        let descriptor = tcp::descriptor(
-            id,
-            tcp::policy_for_bitrate(tcp::TCP_BITRATE_ESTIMATE),
-        );
+        let descriptor = tcp::descriptor(id, tcp::policy_for_bitrate(tcp::TCP_BITRATE_ESTIMATE));
         let (in_tx, in_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, LANE_DEPTH);
         let (out_tx, out_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, LANE_DEPTH);
         let seam = TokioInterfaceSeam::new(id, in_tx, notify_tx.clone(), out_rx);
@@ -151,8 +148,7 @@ async fn tunnel_client_side(
         {
             return;
         }
-        let connection =
-            TcpServerConnection::new(tag, stream, tcp::TCP_BITRATE_ESTIMATE).run(seam);
+        let connection = TcpServerConnection::new(tag, stream, tcp::TCP_BITRATE_ESTIMATE).run(seam);
         let task = tokio::spawn(connection);
         if connection_index == 0 {
             tokio::spawn(async move {

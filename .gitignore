@@ -27,6 +27,7 @@ benchmarks/reference/.venv/
 benchmarks/reference/.rpc-venv/
 # Dedicated venv for the rns 1.4.0 reference (oracle tests)
 /.venv-rns-1.4.0/
+/validation/.venv/
 **/__pycache__/
 # cargo-mutants run artifacts (mutants.out + the rotated mutants.out.old)
 /mutants.out*/

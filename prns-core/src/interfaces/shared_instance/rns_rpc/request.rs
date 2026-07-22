@@ -1259,29 +1259,22 @@ mod tests {
     }
 
     fn reference_python() -> Option<OsString> {
-        if let Some(interpreter) = std::env::var_os("RPC_SMOKE_PYTHON") {
-            assert!(
-                !interpreter.is_empty(),
-                "RPC_SMOKE_PYTHON must name a Python interpreter"
-            );
-            return Some(interpreter);
+        if std::env::var("PRNS_VALIDATION_SUITE").as_deref() != Ok("oracle-rpc-codec") {
+            return None;
         }
-        let fallback = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../benchmarks/reference/.rpc-venv/bin/python");
-        if fallback.is_file() {
-            return Some(fallback.into_os_string());
-        }
+        let interpreter = std::env::var_os("RPC_SMOKE_PYTHON")
+            .expect("the oracle-rpc-codec suite must provide RPC_SMOKE_PYTHON");
         assert!(
-            std::env::var_os("PRNS_ORACLE_REQUIRED").is_none(),
-            "RPC_SMOKE_PYTHON is required for this oracle lane and the developer fallback is missing at {}",
-            fallback.display()
+            !interpreter.is_empty(),
+            "RPC_SMOKE_PYTHON must name a Python interpreter"
         );
-        None
+        Some(interpreter)
     }
 
     fn rpc_oracle() -> Option<serde_json::Value> {
         let python = reference_python()?;
-        let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/oracle/rpc_oracle.py");
+        let script = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../validation/oracles/python/rpc_oracle.py");
         let output = Command::new(python)
             .arg(script)
             .output()
