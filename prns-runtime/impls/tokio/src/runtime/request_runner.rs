@@ -1,8 +1,10 @@
 use std::panic::AssertUnwindSafe;
+use std::sync::{Arc, Weak};
 
 use futures_util::stream::{FuturesUnordered, StreamExt};
 use futures_util::FutureExt;
 use tokio::sync::mpsc;
+use tokio::sync::Mutex;
 
 use crate::engine::InstantMillis;
 use crate::identity::IdentityHash;
@@ -35,13 +37,31 @@ pub(super) async fn run_router<St, R: RouteSet<St>>(
     commands: PrnsNodeHandle,
 ) {
     let mut in_flight = FuturesUnordered::new();
+    let mut response_lanes: std::collections::HashMap<LinkId, Weak<Mutex<()>>> =
+        std::collections::HashMap::new();
     loop {
         let accepting = in_flight.len() < MAX_IN_FLIGHT;
         tokio::select! {
             biased;
             Some(()) = in_flight.next(), if !in_flight.is_empty() => {}
             request = requests.recv(), if accepting => match request {
-                Some(request) => in_flight.push(dispatch_guarded::<St, R>(state, &commands, request)),
+                Some(request) => {
+                    response_lanes.retain(|_, lane| lane.strong_count() > 0);
+                    let response_lane = response_lanes
+                        .get(&request.link_id)
+                        .and_then(Weak::upgrade)
+                        .unwrap_or_else(|| {
+                            let lane = Arc::new(Mutex::new(()));
+                            response_lanes.insert(request.link_id, Arc::downgrade(&lane));
+                            lane
+                        });
+                    in_flight.push(dispatch_guarded::<St, R>(
+                        state,
+                        &commands,
+                        request,
+                        response_lane,
+                    ));
+                }
                 None => break,
             },
         }
@@ -52,9 +72,10 @@ async fn dispatch_guarded<St, R: RouteSet<St>>(
     state: &St,
     commands: &PrnsNodeHandle,
     request: RunnerRequest,
+    response_lane: Arc<Mutex<()>>,
 ) {
     let link_id = request.link_id;
-    if AssertUnwindSafe(dispatch::<St, R>(state, commands, request))
+    if AssertUnwindSafe(dispatch::<St, R>(state, commands, request, response_lane))
         .catch_unwind()
         .await
         .is_err()
@@ -67,7 +88,9 @@ async fn dispatch<St, R: RouteSet<St>>(
     state: &St,
     commands: &PrnsNodeHandle,
     request: RunnerRequest,
+    response_lane: Arc<Mutex<()>>,
 ) {
+    let link_id = request.link_id;
     let inbound = InboundRequest::new(
         request.destination,
         request.link_id,
@@ -81,7 +104,14 @@ async fn dispatch<St, R: RouteSet<St>>(
     let mut body = std::vec::Vec::new();
     match dispatch_request::<St, R>(state, request.path_hash, inbound, &mut body).await {
         Ok(()) => {
-            commands.respond_owned(responder, body);
+            let _response_guard = response_lane.lock().await;
+            if let Err(error) = commands.respond_owned_settled(responder, body).await {
+                eprintln!(
+                    "REQUEST_RESPONSE_FAILURE link_id={:?} error={error}",
+                    link_id.as_bytes()
+                );
+                commands.close_link(link_id);
+            }
         }
         Err(Decline::Ignore) => {}
         Err(Decline::CloseLink) => {
@@ -130,6 +160,7 @@ mod tests {
                 rtt: RttMillis::new(80),
                 data: std::vec::Vec::new(),
             },
+            Arc::new(Mutex::new(())),
         )
         .await;
 

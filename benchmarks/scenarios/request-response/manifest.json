@@ -1,6 +1,6 @@
 {
   "name": "request-response",
-  "version": 10,
+  "version": 11,
   "order": 3,
   "title": "Request/response",
   "category": "Requests",
@@ -8,7 +8,7 @@
   "primary_metric": "requests_per_sec",
   "headline": true,
   "notes": [],
-  "description": "Four concurrent request/reply round trips use four pre-established links at the manifest-owned standard 500-byte RNS MTU. Deterministic 32–128 byte requests remain below the link MDU, while deterministic 1–4 KiB responses unambiguously use the documented asynchronous resource-response path on both stacks. That preserves realistic small requests and gives each requester time to register its public receipt before the response resource can complete, without sleeps, blocking handlers, private queue inspection, reference mutation, or latency shims. Requests per second is the primary comparison; fractional-millisecond p50 and p99 wall-clock RTT run from request issue through complete response settlement.",
+  "description": "Four concurrent request/reply round trips use four pre-established links at the manifest-owned standard 500-byte RNS MTU. Deterministic 32–128 byte requests remain below the link MDU, while deterministic 1–4 KiB responses unambiguously use the documented asynchronous resource-response path on both stacks. Each link holds its response lane through Resource proof settlement before transmitting its next response; the four links remain independently concurrent. That preserves realistic small requests without sleeps, blocking handlers, private queue inspection, reference mutation, or latency shims. Requests per second is the primary comparison; fractional-millisecond p50 and p99 wall-clock RTT run from request issue through complete response settlement.",
   "roles": [
     "responder",
     "initiator"

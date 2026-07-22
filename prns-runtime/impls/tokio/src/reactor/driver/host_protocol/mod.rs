@@ -245,6 +245,9 @@ pub struct RespondAnyHostCommand {
     pub request_id: RequestId,
     pub data: HostResourcePayload,
     pub compressed_candidate: Option<HostResourcePayload>,
+    /// Present when the caller must not issue another response Resource on this
+    /// link until the packet write or Resource proof has settled.
+    pub completion: Option<oneshot::Sender<Settlement>>,
 }
 
 /// Make a request of `path_hash` with `data` of any length: the reactor picks the rung and fires `completion` with the response bytes and the round trip once the answer settles. The payload is host-held like every owned-bytes verb.

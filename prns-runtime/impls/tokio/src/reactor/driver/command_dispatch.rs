@@ -222,7 +222,10 @@ where
                     ),
                 )
             }
-            HostCommand::RespondAny(respond) => {
+            HostCommand::RespondAny(mut respond) => {
+                if let Some(completion) = respond.completion.take() {
+                    journal.register_completion(respond.id, completion);
+                }
                 let data = respond.data.as_slice();
                 let as_packet = engine
                     .response_fits_packet(&respond.link_id, data)

@@ -834,11 +834,13 @@ def initiate_request(name, block, profile, duration):
     lock = threading.Lock()
     settled = threading.Event()
     available_links = deque(links)
+    pending_receipts = {}
     started = None
     deadline = None
 
     def on_response(receipt):
         with lock:
+            pending_receipts.pop(id(receipt), None)
             state["delivered"] += 1
             state["in_flight"] -= 1
             available_links.append(receipt.link)
@@ -848,6 +850,7 @@ def initiate_request(name, block, profile, duration):
 
     def on_failed(receipt):
         with lock:
+            pending_receipts.pop(id(receipt), None)
             state["timeouts"] += 1
             state["in_flight"] -= 1
             available_links.append(receipt.link)
@@ -876,6 +879,7 @@ def initiate_request(name, block, profile, duration):
             state["in_flight"] -= 1
             return
         receipt.sent_at_wall = time.monotonic()
+        pending_receipts[id(receipt)] = receipt
 
     await_measurement_start()
     started = time.monotonic()
@@ -895,6 +899,18 @@ def initiate_request(name, block, profile, duration):
         settled.wait(0.05)
         settled.clear()
     elapsed_ms = int((time.monotonic() - started) * 1000)
+    with lock:
+        pending = len(pending_receipts)
+        receiving = sum(
+            receipt.status == RNS.RequestReceipt.RECEIVING
+            for receipt in pending_receipts.values()
+        )
+        sent_pending = sum(
+            receipt.status in (RNS.RequestReceipt.SENT, RNS.RequestReceipt.DELIVERED)
+            for receipt in pending_receipts.values()
+        )
+        result_state = dict(state)
+        result_state["timeouts"] += pending
     print("MEASURE_DONE", flush=True)
     for link in links:
         link.teardown()
@@ -904,12 +920,13 @@ def initiate_request(name, block, profile, duration):
     pct = lambda p: rtts[min(round((len(rtts) - 1) * p), len(rtts) - 1)] if rtts else float("nan")
     seconds = max(elapsed_ms / 1000.0, 1e-9)
     print(
-        f"RESULT sent={state['sent']} delivered={state['delivered']} "
-        f"timeouts={state['timeouts']} raced=0 "
-        f"request_bytes={state['request_bytes']} "
-        f"response_bytes={state['response_bytes']} "
-        f"expected_response_bytes={state['expected_response_bytes']} elapsed_ms={elapsed_ms} "
-        f"requests_per_sec={state['delivered'] / seconds:.1f} "
+        f"RESULT sent={result_state['sent']} delivered={result_state['delivered']} "
+        f"timeouts={result_state['timeouts']} raced=0 pending={pending} "
+        f"pending_receiving={receiving} pending_sent={sent_pending} "
+        f"request_bytes={result_state['request_bytes']} "
+        f"response_bytes={result_state['response_bytes']} "
+        f"expected_response_bytes={result_state['expected_response_bytes']} elapsed_ms={elapsed_ms} "
+        f"requests_per_sec={result_state['delivered'] / seconds:.1f} "
         f"rtt_p50_ms={pct(0.50):.3f} rtt_p99_ms={pct(0.99):.3f} "
         f"request_window={profile['window']} request_links={len(links)}",
         flush=True,

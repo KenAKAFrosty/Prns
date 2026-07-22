@@ -1,6 +1,7 @@
 use tokio::sync::mpsc::{self, UnboundedReceiver};
 
 use crate::engine::RequestResponseTimeout;
+use crate::engine::Settlement;
 use crate::reactor::compression;
 use crate::reactor::driver::HostCommand;
 use crate::routing::links::request::{parse_response_plaintext, RequestId};
@@ -129,4 +130,31 @@ async fn a_packet_sized_response_skips_compression() {
         respond.compressed_candidate.is_none(),
         "a response that fits a packet never builds a candidate the rung would discard",
     );
+}
+
+#[tokio::test]
+async fn a_settled_resource_response_waits_for_its_proof() {
+    let (handle, mut command_rx) = handle();
+    let token = RespondToken {
+        link_id: LinkId::new([7; 16]),
+        request_id: RequestId([8; 16]),
+        rtt: RttMillis::new(33),
+    };
+    let body = std::vec![0xA5u8; RESPONSE_PACKET_CEILING + 1024];
+    let responding = tokio::spawn(async move { handle.respond_owned_settled(token, body).await });
+
+    let Some(HostCommand::RespondAny(mut response)) = command_rx.recv().await else {
+        panic!("a resource response reaches the host driver");
+    };
+    assert!(
+        !responding.is_finished(),
+        "the route remains occupied until Resource proof settlement"
+    );
+    response
+        .completion
+        .take()
+        .expect("settled response carries completion")
+        .send(Settlement::SendResource(Ok(())))
+        .expect("route awaits completion");
+    assert_eq!(responding.await.unwrap().unwrap(), RttMillis::new(33));
 }
