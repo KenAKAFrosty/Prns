@@ -8,12 +8,10 @@ use crate::routes::Route;
 // page render the same files, so the tables can't drift. The index links to a per-host
 // page; add a line to HOST_PAGES when a new host's results land.
 const INDEX_MD: &str = include_str!("../../../../benchmarks/RESULTS.md");
-const HOST_PAGES: &[(&str, &str)] = &[
-    (
-        "aarch64-apple-darwin",
-        include_str!("../../../../benchmarks/RESULTS-aarch64-apple-darwin.md"),
-    ),
-];
+const HOST_PAGES: &[(&str, &str)] = &[(
+    "aarch64-apple-darwin",
+    include_str!("../../../../benchmarks/RESULTS-aarch64-apple-darwin.md"),
+)];
 
 #[component]
 pub fn BenchmarksPage() -> Element {
