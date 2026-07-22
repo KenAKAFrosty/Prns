@@ -10,6 +10,7 @@ import json
 import os
 import platform as host_platform
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -187,6 +188,18 @@ def tracked_or_untracked_sources() -> list[Path]:
         text=True,
     )
     return [ROOT / line for line in result.stdout.splitlines() if line and (ROOT / line).is_file()]
+
+
+def validation_asset_inventory() -> set[str]:
+    return {
+        path.relative_to(ROOT).as_posix()
+        for path in tracked_or_untracked_sources()
+        if path.name.endswith("-smoke.sh")
+        or ("validation/oracles/python" in path.as_posix() and path.suffix == ".py")
+        or ("validation/oracles/tests" in path.as_posix() and path.suffix == ".rs")
+        or ("validation/interop/peers" in path.as_posix() and path.suffix == ".py")
+        or ("prns-wasm/smoke" in path.as_posix() and path.suffix == ".ts")
+    }
 
 
 def source_cargo_manifests() -> set[str]:
@@ -367,24 +380,7 @@ def validate_manifest(manifest: dict, check_tools: bool = False) -> list[str]:
             errors.append(f"asset exemption {path} needs a reason")
         else:
             exempted.add(path)
-    asset_inventory = {
-        path.relative_to(ROOT).as_posix()
-        for path in tracked_or_untracked_sources()
-        if path.name.endswith("-smoke.sh")
-        or (
-            "validation/oracles/python" in path.as_posix()
-            and path.suffix == ".py"
-        )
-        or (
-            "validation/oracles/tests" in path.as_posix()
-            and path.suffix == ".rs"
-        )
-        or (
-            "validation/interop/peers" in path.as_posix()
-            and path.suffix == ".py"
-        )
-        or ("prns-wasm/smoke" in path.as_posix() and path.suffix == ".ts")
-    }
+    asset_inventory = validation_asset_inventory()
     orphaned = asset_inventory - registered_inputs - exempted
     stale_exemptions = exempted - asset_inventory
     if orphaned:
@@ -405,6 +401,67 @@ def validate_manifest(manifest: dict, check_tools: bool = False) -> list[str]:
     if check_tools:
         errors.extend(validate_tool_versions(manifest))
     return errors
+
+
+def verification_report(manifest: dict, check_tools: bool) -> list[str]:
+    suites = list(suite_map(manifest).values())
+    tiers = {
+        tier: sum(tier in suite["tiers"] for suite in suites) for tier in sorted(VALID_TIERS)
+    }
+    inputs = {
+        path
+        for suite in suites
+        for path in suite.get("inputs", [])
+        if isinstance(path, str)
+    }
+    registry = manifest["registry"]
+    cargo_manifests = registry["cargo_manifests"]
+    format_manifests = registry["format_manifests"]
+    kani = discover_kani_harnesses()
+    fuzz = discover_fuzz_targets(ROOT / "validation" / "fuzz" / "Cargo.toml")
+    assets = validation_asset_inventory()
+    exemptions = registry.get("asset_exemptions", [])
+    triage = load_toml(TRIAGE_PATH).get("accepted", [])
+    commands = sorted({suite["command"][0] for suite in suites})
+    interpreter_versions = sorted(
+        {specification["version"] for specification in manifest.get("interpreters", {}).values()}
+    )
+    exemption_count = len(exemptions)
+    exemption_phrase = (
+        f"{exemption_count} documented exemption is"
+        if exemption_count == 1
+        else f"{exemption_count} documented exemptions are"
+    )
+    lines = [
+        "[verify] Suite policy: "
+        f"{len(suites)} total suites ({tiers['pr']} PR, {tiers['release']} release, "
+        f"{tiers['scheduled']} scheduled); IDs, tiers, platforms, toolchains, commands, "
+        "timeouts, and artifact paths are valid.",
+        "[verify] Declared inputs: "
+        f"{len(inputs)} unique files/directories exist; {len(commands)} required command "
+        "entrypoints are available.",
+        "[verify] Cargo ownership: "
+        f"{len(cargo_manifests)} manifests are registered, valid, and repository-owned; "
+        f"{len(format_manifests)} unique workspace roots own formatting.",
+        "[verify] Native discovery: "
+        f"{len(kani)} Kani proofs and {len(fuzz)} fuzz targets exactly match their source owners.",
+        "[verify] Asset ownership: "
+        f"{len(assets)} oracle/interop/smoke assets are registered; {exemption_phrase} current; "
+        "nothing is orphaned.",
+        "[verify] External references: "
+        f"stock RNS {', '.join(interpreter_versions)} is pinned for every registered interpreter.",
+        "[verify] Mutation policy: "
+        f"{len(triage)} accepted survivor entries; fingerprints, reasons, reviewers, and expiries "
+        "are structurally current.",
+    ]
+    if check_tools:
+        tools = manifest["tools"]
+        lines.append(
+            "[verify] Deep tools: installed versions match "
+            f"cargo-fuzz {tools['cargo_fuzz']}, cargo-mutants {tools['cargo_mutants']}, "
+            f"and Kani {tools['kani']}."
+        )
+    return lines
 
 
 def validate_tool_versions(manifest: dict) -> list[str]:
@@ -590,6 +647,17 @@ def run_suite(manifest: dict, suite: dict, expected_sha: str | None, fuzz_second
     artifact = artifact_root / "results" / suite["id"]
     artifact.mkdir(parents=True, exist_ok=True)
     command = command_for(suite, fuzz_seconds, artifact)
+    try:
+        evidence_location = artifact.relative_to(ROOT).as_posix()
+    except ValueError:
+        evidence_location = artifact.as_posix()
+    print(
+        f"[run] {suite['id']}: domain={suite['domain']} platform={required_platform} "
+        f"toolchain={suite['toolchain']} timeout={suite['timeout_seconds']}s"
+    )
+    print(f"[run] command: {shlex.join(command)}")
+    print(f"[run] evidence: {evidence_location}")
+    sys.stdout.flush()
     environment = os.environ.copy()
     environment["PRNS_VALIDATION_SUITE"] = suite["id"]
     if suite["domain"] == "mutation":
@@ -790,6 +858,11 @@ def cleanup(manifest: dict, apply: bool) -> None:
     if not paths:
         print("VALIDATION_CLEANUP_EMPTY")
         return
+    mode = "apply" if apply else "dry-run"
+    print(
+        f"[cleanup] mode={mode}; {len(paths)} generated output roots selected; "
+        "source corpora, credentials, editor settings, and runtime identity/state are protected."
+    )
     for path in paths:
         relative = path.relative_to(ROOT)
         if apply:
@@ -905,6 +978,11 @@ def aggregate(manifest: dict, expected_sha: str, tier: str, domain: str | None) 
     if not artifact_root.is_absolute():
         artifact_root = ROOT / artifact_root
     required = selected_suites(manifest, [], domain, tier)
+    scope = f"domain={domain}" if domain else "all registered domains"
+    print(
+        f"[aggregate] Requiring {len(required)} {tier}-tier suites from {scope} "
+        f"at exact commit {expected_sha}."
+    )
     results = {}
     errors = []
     for suite in required:
@@ -953,6 +1031,10 @@ def prepare_oracles(manifest: dict) -> None:
         raise ValidationError("uv is required to prepare pinned oracle environments")
     for name, specification in manifest.get("interpreters", {}).items():
         venv = ROOT / specification["venv"]
+        print(
+            f"[oracles] {name}: creating {venv.relative_to(ROOT)} with stock RNS "
+            f"{specification['version']} from {specification['requirements']}."
+        )
         subprocess.run([uv, "venv", "--clear", str(venv)], cwd=ROOT, check=True)
         subprocess.run(
             [
@@ -1007,12 +1089,35 @@ def main() -> int:
             errors = validate_manifest(manifest, check_tools=arguments.check_tools)
             if errors:
                 raise ValidationError("\n".join(errors))
+            for line in verification_report(manifest, arguments.check_tools):
+                print(line)
             print("VALIDATION_REGISTRY_OK")
         elif arguments.command in {"list", "matrix"}:
             suites = selected_suites(manifest, [], arguments.domain, arguments.tier)
             if arguments.command == "matrix":
+                runners = set()
+                for entry in ci_matrix(suites)["include"]:
+                    runner = entry["runner"]
+                    runners.add(" + ".join(runner) if isinstance(runner, list) else runner)
+                print(
+                    f"[matrix] {len(suites)} suites selected; "
+                    f"runners={', '.join(sorted(runners))}; "
+                    "stdout remains CI-ready JSON.",
+                    file=sys.stderr,
+                )
                 print(json.dumps(ci_matrix(suites), sort_keys=True))
             else:
+                filters = []
+                if arguments.domain:
+                    filters.append(f"domain={arguments.domain}")
+                if arguments.tier:
+                    filters.append(f"tier={arguments.tier}")
+                print(
+                    f"[list] {len(suites)} suites selected"
+                    + (f" ({', '.join(filters)})" if filters else "")
+                    + "; columns include the exact registered command.",
+                    file=sys.stderr,
+                )
                 print("id\tdomain\ttiers\tplatform\ttimeout_seconds\tcommand")
                 for suite in suites:
                     print(
@@ -1034,6 +1139,12 @@ def main() -> int:
             suites = selected_suites(manifest, arguments.suite, arguments.domain, arguments.tier)
             if not suites:
                 raise ValidationError("suite selection is empty")
+            custody = f"exact SHA {arguments.expected_sha}" if arguments.expected_sha else "development"
+            suite_label = "suite" if len(suites) == 1 else "suites"
+            print(
+                f"[run] Plan: {len(suites)} {suite_label}, custody={custody}; all selected suites "
+                "will be attempted even if one fails."
+            )
             results = [
                 run_suite(manifest, suite, arguments.expected_sha, arguments.fuzz_seconds)
                 for suite in suites
@@ -1046,9 +1157,18 @@ def main() -> int:
             errors = check_mutation_triage(arguments.results)
             if errors:
                 raise ValidationError("\n".join(errors))
-            print("MUTATION_TRIAGE_OK")
+            unresolved = unresolved_mutants(arguments.results)
+            accepted = load_toml(TRIAGE_PATH).get("accepted", [])
+            print(
+                f"MUTATION_TRIAGE_OK unresolved={len(unresolved)} accepted={len(accepted)}; "
+                "the sets match exactly and every acceptance is reviewed and unexpired."
+            )
         elif arguments.command == "aggregate":
             output = aggregate(manifest, arguments.expected_sha, arguments.tier, arguments.domain)
+            suites = selected_suites(manifest, [], arguments.domain, arguments.tier)
+            print(
+                f"VALIDATION_RELEASE_READY suites={len(suites)} commit={arguments.expected_sha}"
+            )
             print(f"VALIDATION_RELEASE_MANIFEST {output}")
         elif arguments.command == "cleanup":
             cleanup(manifest, arguments.apply)

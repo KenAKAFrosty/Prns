@@ -18,6 +18,7 @@ The dependency-free operator interface is:
 
 ```console
 python3 validation/run.py verify
+python3 validation/run.py verify --check-tools
 python3 validation/run.py list
 python3 validation/run.py list --domain interop --tier release
 python3 validation/run.py matrix --domain kani --tier release
@@ -30,6 +31,23 @@ unregistered Cargo workspaces, Kani proofs, fuzz targets, interop peers, smoke
 scripts, stale exemptions, invalid tool pins, or malformed mutation triage. Use
 `verify --check-tools` when the pinned deep-validation tools are expected to be
 installed locally.
+
+A successful verification narrates what it proved instead of returning only an
+opaque success token. Counts come from the live manifest and native source
+discovery, so the output also gives an operator a quick orientation:
+
+```text
+[verify] Suite policy: 80 total suites (33 PR, 77 release, 78 scheduled); IDs, tiers, platforms, toolchains, commands, timeouts, and artifact paths are valid.
+[verify] Cargo ownership: 34 manifests are registered, valid, and repository-owned; 21 unique workspace roots own formatting.
+[verify] Native discovery: 18 Kani proofs and 8 fuzz targets exactly match their source owners.
+[verify] Asset ownership: 57 oracle/interop/smoke assets are registered; 1 documented exemption is current; nothing is orphaned.
+VALIDATION_REGISTRY_OK
+```
+
+The explanatory lines are for people; the final token remains a stable hook for
+automation. Commands whose stdout is a data interface, such as `matrix` JSON and
+`list` TSV, send their explanatory summary to stderr so existing consumers can
+parse stdout unchanged.
 
 Documentation is intentionally not configuration. Commands shown here are
 examples; the manifest remains authoritative.
