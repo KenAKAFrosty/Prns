@@ -211,16 +211,6 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
     );
 
     let mut reactor_pool = REACTOR_POOL.try_take().expect("reactor pool is available");
-    let lora_lane = reactor_pool
-        .take_interface::<LORA_SLOT>()
-        .expect("LoRa lane is available");
-    let ble_supervisor_lane = reactor_pool
-        .take_supervisor::<BLE_SUPERVISOR_SLOT>(&OUTBOUND_WAKE)
-        .expect("Bluetooth supervisor lane is available");
-    let usb_lane = reactor_pool
-        .take_interface::<USB_SLOT>()
-        .expect("USB lane is available");
-
     let lora_profile = DEFAULT_915_PROFILE;
     let lora_id = InterfaceId::from_channel_tag(InterfaceKind::LoRa, &channel_tag(&lora_profile));
     static LORA_STATUS: StaticCell<EmbassyInterfaceStatus> = StaticCell::new();
@@ -234,6 +224,24 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
         lora_status,
         LIFECYCLE.dyn_sender(),
     );
+
+    let (usb_tx, usb_rx) = class.split();
+    static USB_STATUS: StaticCell<EmbassyInterfaceStatus> = StaticCell::new();
+    let usb_status: &'static EmbassyInterfaceStatus = USB_STATUS.init(EmbassyInterfaceStatus::new(
+        USB_INTERFACE_ID,
+        ConnectionState::Initializing,
+    ));
+    let usb_dev = UsbAutoDevice::new(USB_INTERFACE_ID, usb_rx, usb_tx, usb_status, || true);
+
+    let lora_lane = reactor_pool
+        .claim_interface::<LORA_SLOT>(lora.descriptor())
+        .expect("LoRa lane is available");
+    let ble_supervisor_lane = reactor_pool
+        .claim_supervisor::<BLE_SUPERVISOR_SLOT>(BLE_SUPERVISOR_ID, &OUTBOUND_WAKE)
+        .expect("Bluetooth supervisor lane is available");
+    let usb_lane = reactor_pool
+        .claim_interface::<USB_SLOT>(usb_dev.descriptor())
+        .expect("USB lane is available");
 
     let handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
     let plumbing = reactor_pool.into_plumbing(
@@ -268,33 +276,14 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
             },
             plumbing,
             host,
-            heapless::Vec::new(),
         )
     });
-    node.activate(LORA_SLOT, lora.descriptor())
-        .expect("LoRa activation fits the declared topology");
-    if ble_identity.is_some() {
-        node.activate_supervisor(BLE_SUPERVISOR_SLOT, BLE_SUPERVISOR_ID)
-            .expect("Bluetooth supervisor activation fits the declared topology");
-    }
-    let lora_seam = lora_lane.into_seam(lora_id, NOTIFY.sender(), seeded_entropy);
+    let lora_seam = lora_lane.into_seam(NOTIFY.sender(), seeded_entropy);
 
     let fleet: Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP> =
         ble_supervisor_lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender());
 
-    // The browser-facing USB-auto Reticulum interface is vendor-specific bulk, not CDC ACM. CDC is
-    // claimed by OS serial drivers on desktop hosts; a vendor interface gives WebUSB a clean endpoint
-    // pair to claim while keeping the Prns Hello/HelloAck wire exactly the same.
-    let (usb_tx, usb_rx) = class.split();
-    static USB_STATUS: StaticCell<EmbassyInterfaceStatus> = StaticCell::new();
-    let usb_status: &'static EmbassyInterfaceStatus = USB_STATUS.init(EmbassyInterfaceStatus::new(
-        USB_INTERFACE_ID,
-        ConnectionState::Initializing,
-    ));
-    let usb_dev = UsbAutoDevice::new(USB_INTERFACE_ID, usb_rx, usb_tx, usb_status, || true);
-    node.activate(USB_SLOT, usb_dev.descriptor())
-        .expect("USB activation fits the declared topology");
-    let usb_seam = usb_lane.into_seam(USB_INTERFACE_ID, NOTIFY.sender(), seeded_entropy);
+    let usb_seam = usb_lane.into_seam(NOTIFY.sender(), seeded_entropy);
 
     let backend = NrfBleBackend::new(&HUB);
     let supervisor = ble_identity.map(|identity| {

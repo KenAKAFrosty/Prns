@@ -53,15 +53,15 @@ pub async fn run(spawner: Spawner) {
 
     let mut reactor_pool = REACTOR_POOL.try_take().expect("reactor pool is available");
     let usb_lane = reactor_pool
-        .take_interface::<USB_SLOT>()
+        .claim_interface::<USB_SLOT>(device_descriptor(USB_INTERFACE_ID))
         .expect("USB lane is available");
     #[cfg(feature = "esp-now")]
     let espnow_lane = reactor_pool
-        .take_interface::<ESPNOW_SLOT>()
+        .claim_interface::<ESPNOW_SLOT>(espnow.descriptor())
         .expect("ESP-NOW lane is available");
     #[cfg(feature = "bluetooth-auto")]
     let ble_supervisor_lane = reactor_pool
-        .take_supervisor::<BLE_SUPERVISOR_SLOT>(&BLE_OUTBOUND_WAKE)
+        .claim_supervisor::<BLE_SUPERVISOR_SLOT>(BLE_SUPERVISOR_ID, &BLE_OUTBOUND_WAKE)
         .expect("Bluetooth supervisor lane is available");
 
     let handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
@@ -72,11 +72,11 @@ pub async fn run(spawner: Spawner) {
         handle,
     );
 
-    let usb_seam = usb_lane.into_seam(USB_INTERFACE_ID, NOTIFY.sender(), hardware_entropy);
+    let usb_seam = usb_lane.into_seam(NOTIFY.sender(), hardware_entropy);
     spawner.spawn(usb_device_task(usb_rx, usb_tx, usb_seam).expect("usb device task fits"));
 
     #[cfg(feature = "esp-now")]
-    let espnow_seam = espnow_lane.into_seam(espnow.id(), NOTIFY.sender(), hardware_entropy);
+    let espnow_seam = espnow_lane.into_seam(NOTIFY.sender(), hardware_entropy);
 
     #[cfg(feature = "bluetooth-auto")]
     let ble_fleet: Option<C6BleFleet> =
@@ -107,18 +107,7 @@ pub async fn run(spawner: Spawner) {
         },
         plumbing,
         host,
-        HVec::new(),
     ));
-    node.activate(USB_SLOT, device_descriptor(USB_INTERFACE_ID))
-        .expect("USB activation fits the declared topology");
-    #[cfg(feature = "esp-now")]
-    node.activate(ESPNOW_SLOT, espnow.descriptor())
-        .expect("ESP-NOW activation fits the declared topology");
-    #[cfg(feature = "bluetooth-auto")]
-    if ble_identity.is_some() {
-        node.activate_supervisor(BLE_SUPERVISOR_SLOT, BLE_SUPERVISOR_ID)
-            .expect("Bluetooth supervisor activation fits the declared topology");
-    }
     #[cfg(all(feature = "bluetooth-auto", feature = "esp-now"))]
     {
         if let (Some(identity), Some(fleet)) = (ble_identity, ble_fleet) {

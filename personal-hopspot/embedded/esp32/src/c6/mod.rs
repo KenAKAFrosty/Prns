@@ -15,7 +15,6 @@ use embassy_futures::join::join;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Timer};
-use heapless::Vec as HVec;
 use static_cell::StaticCell;
 
 use personal_rns::engine::{InstantMillis, IssuedCommand, RatchetPolicy};

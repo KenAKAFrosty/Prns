@@ -7,7 +7,7 @@ use portable_atomic::{AtomicBool, Ordering};
 use static_cell::{ConstStaticCell, StaticCell};
 
 use crate::engine::IssuedCommand;
-use crate::interfaces::InterfaceId;
+use crate::interfaces::{IfacContext, InterfaceDescriptor, InterfaceId};
 use crate::reactor::driver::{
     embassy_grant_lane, EmbassyGrantConsumer, EmbassyGrantProducer, EmbassyInterfaceSeam,
     InterfaceLifecycle, PooledEgress,
@@ -24,10 +24,32 @@ type LaneBuffer<const FRAME: usize, const DEPTH: usize> = [FrameSlot<FRAME>; DEP
 type LaneChannel<M, const FRAME: usize> = zerocopy_channel::Channel<'static, M, FrameSlot<FRAME>>;
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum ReactorPoolError {
+pub enum PoolTakeError {
     AlreadyTaken,
-    StorageUnavailable,
-    LaneAlreadyTaken { slot: usize },
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum LaneClaimError {
+    AlreadyClaimed { slot: usize },
+}
+
+pub(super) enum LaneTarget {
+    Interface(InterfaceDescriptor),
+    Supervisor(InterfaceId),
+}
+
+impl LaneTarget {
+    fn id(&self) -> InterfaceId {
+        match self {
+            Self::Interface(descriptor) => descriptor.id,
+            Self::Supervisor(id) => *id,
+        }
+    }
+}
+
+pub(super) struct LaneConfiguration {
+    pub(super) target: LaneTarget,
+    pub(super) ifac: Option<IfacContext>,
 }
 
 pub struct StaticReactorPool<
@@ -59,42 +81,33 @@ impl<M: RawMutex + 'static, const FRAME: usize, const DEPTH: usize, const LANES:
         }
     }
 
-    pub fn try_take(&'static self) -> Result<ReactorPool<M, FRAME, LANES>, ReactorPoolError> {
+    pub fn try_take(&'static self) -> Result<ReactorPool<M, FRAME, LANES>, PoolTakeError> {
         if self
             .taken
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_err()
         {
-            return Err(ReactorPoolError::AlreadyTaken);
+            return Err(PoolTakeError::AlreadyTaken);
         }
 
         let mut inbound = HeaplessVec::new();
         let mut egress = HeaplessVec::new();
         let mut lanes = core::array::from_fn(|_| None);
         for (slot, lane) in lanes.iter_mut().enumerate() {
-            let inbound_buffer = self.inbound_buffers[slot]
-                .try_take()
-                .ok_or(ReactorPoolError::StorageUnavailable)?;
-            let inbound_channel = self.inbound_channels[slot]
-                .try_init(zerocopy_channel::Channel::new(inbound_buffer))
-                .ok_or(ReactorPoolError::StorageUnavailable)?;
+            let inbound_buffer = self.inbound_buffers[slot].take();
+            let inbound_channel =
+                self.inbound_channels[slot].init(zerocopy_channel::Channel::new(inbound_buffer));
             let (interface_inbound, reactor_inbound) = embassy_grant_lane(inbound_channel);
 
-            let outbound_buffer = self.outbound_buffers[slot]
-                .try_take()
-                .ok_or(ReactorPoolError::StorageUnavailable)?;
-            let outbound_channel = self.outbound_channels[slot]
-                .try_init(zerocopy_channel::Channel::new(outbound_buffer))
-                .ok_or(ReactorPoolError::StorageUnavailable)?;
+            let outbound_buffer = self.outbound_buffers[slot].take();
+            let outbound_channel =
+                self.outbound_channels[slot].init(zerocopy_channel::Channel::new(outbound_buffer));
             let (reactor_outbound, interface_outbound) = embassy_grant_lane(outbound_channel);
 
-            if inbound.push((UNCLAIMED_LANE_ID, reactor_inbound)).is_err() {
-                return Err(ReactorPoolError::StorageUnavailable);
-            }
-            if egress.push((UNCLAIMED_LANE_ID, reactor_outbound)).is_err() {
-                return Err(ReactorPoolError::StorageUnavailable);
-            }
+            assert!(inbound.push((UNCLAIMED_LANE_ID, reactor_inbound)).is_ok());
+            assert!(egress.push((UNCLAIMED_LANE_ID, reactor_outbound)).is_ok());
             *lane = Some(InterfaceLane {
+                id: UNCLAIMED_LANE_ID,
                 inbound: interface_inbound,
                 outbound: interface_outbound,
             });
@@ -104,6 +117,7 @@ impl<M: RawMutex + 'static, const FRAME: usize, const DEPTH: usize, const LANES:
             inbound,
             egress: PooledEgress::new(egress),
             lanes,
+            configurations: core::array::from_fn(|_| None),
         })
     }
 }
@@ -120,37 +134,84 @@ pub struct ReactorPool<M: RawMutex + 'static, const FRAME: usize, const LANES: u
     inbound: HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, M, FRAME>), LANES>,
     egress: PooledEgress<M, FRAME, LANES>,
     lanes: [Option<InterfaceLane<M, FRAME>>; LANES],
+    configurations: [Option<LaneConfiguration>; LANES],
 }
 
 impl<M: RawMutex + 'static, const FRAME: usize, const LANES: usize> ReactorPool<M, FRAME, LANES> {
-    pub fn take_interface<const SLOT: usize>(
+    pub fn claim_interface<const SLOT: usize>(
         &mut self,
-    ) -> Result<InterfaceLane<M, FRAME>, ReactorPoolError> {
-        const { assert!(SLOT < LANES) };
-        self.lanes[SLOT]
-            .take()
-            .ok_or(ReactorPoolError::LaneAlreadyTaken { slot: SLOT })
+        descriptor: InterfaceDescriptor,
+    ) -> Result<InterfaceLane<M, FRAME>, LaneClaimError> {
+        self.claim::<SLOT>(LaneConfiguration {
+            target: LaneTarget::Interface(descriptor),
+            ifac: None,
+        })
     }
 
-    pub fn take_supervisor<const SLOT: usize>(
+    pub fn claim_interface_with_ifac<const SLOT: usize>(
         &mut self,
+        descriptor: InterfaceDescriptor,
+        context: IfacContext,
+    ) -> Result<InterfaceLane<M, FRAME>, LaneClaimError> {
+        self.claim::<SLOT>(LaneConfiguration {
+            target: LaneTarget::Interface(descriptor),
+            ifac: Some(context),
+        })
+    }
+
+    pub fn claim_supervisor<const SLOT: usize>(
+        &mut self,
+        supervisor: InterfaceId,
         outbound_wake: &'static Signal<M, ()>,
-    ) -> Result<SupervisorLane<M, FRAME>, ReactorPoolError> {
+    ) -> Result<SupervisorLane<M, FRAME>, LaneClaimError> {
+        self.claim_supervisor_configuration::<SLOT>(supervisor, None, outbound_wake)
+    }
+
+    pub fn claim_supervisor_with_ifac<const SLOT: usize>(
+        &mut self,
+        supervisor: InterfaceId,
+        context: IfacContext,
+        outbound_wake: &'static Signal<M, ()>,
+    ) -> Result<SupervisorLane<M, FRAME>, LaneClaimError> {
+        self.claim_supervisor_configuration::<SLOT>(supervisor, Some(context), outbound_wake)
+    }
+
+    fn claim_supervisor_configuration<const SLOT: usize>(
+        &mut self,
+        supervisor: InterfaceId,
+        ifac: Option<IfacContext>,
+        outbound_wake: &'static Signal<M, ()>,
+    ) -> Result<SupervisorLane<M, FRAME>, LaneClaimError> {
         const { assert!(SLOT < LANES) };
         if self.lanes[SLOT].is_none() {
-            return Err(ReactorPoolError::LaneAlreadyTaken { slot: SLOT });
+            return Err(LaneClaimError::AlreadyClaimed { slot: SLOT });
         }
-        let Some(producer) = self.egress.producer_mut(SLOT) else {
-            return Err(ReactorPoolError::StorageUnavailable);
-        };
+        let producer = self.egress.producer_mut(SLOT).expect("lane storage exists");
         producer.set_outbound_wake(outbound_wake);
-        let lane = self.lanes[SLOT]
-            .take()
-            .ok_or(ReactorPoolError::StorageUnavailable)?;
+        let lane = self.claim::<SLOT>(LaneConfiguration {
+            target: LaneTarget::Supervisor(supervisor),
+            ifac,
+        })?;
         Ok(SupervisorLane {
             lane,
             outbound_wake,
         })
+    }
+
+    fn claim<const SLOT: usize>(
+        &mut self,
+        configuration: LaneConfiguration,
+    ) -> Result<InterfaceLane<M, FRAME>, LaneClaimError> {
+        const { assert!(SLOT < LANES) };
+        let Some(mut lane) = self.lanes[SLOT].take() else {
+            return Err(LaneClaimError::AlreadyClaimed { slot: SLOT });
+        };
+        let id = configuration.target.id();
+        lane.id = id;
+        self.inbound[SLOT].0 = id;
+        self.egress.activate(SLOT, id);
+        self.configurations[SLOT] = Some(configuration);
+        Ok(lane)
     }
 
     pub fn into_plumbing<
@@ -168,6 +229,7 @@ impl<M: RawMutex + 'static, const FRAME: usize, const LANES: usize> ReactorPool<
         ReactorPlumbing::new(
             self.inbound,
             self.egress,
+            self.configurations,
             notify,
             commands,
             lifecycle,
@@ -177,6 +239,7 @@ impl<M: RawMutex + 'static, const FRAME: usize, const LANES: usize> ReactorPool<
 }
 
 pub struct InterfaceLane<M: RawMutex + 'static, const FRAME: usize> {
+    id: InterfaceId,
     inbound: EmbassyGrantProducer<'static, M, FRAME>,
     outbound: EmbassyGrantConsumer<'static, M, FRAME>,
 }
@@ -184,11 +247,10 @@ pub struct InterfaceLane<M: RawMutex + 'static, const FRAME: usize> {
 impl<M: RawMutex + 'static, const FRAME: usize> InterfaceLane<M, FRAME> {
     pub fn into_seam<const NOTIFY: usize>(
         self,
-        id: InterfaceId,
         notify: Sender<'static, M, InterfaceId, NOTIFY>,
         fill_entropy: fn(&mut [u8]),
     ) -> EmbassyInterfaceSeam<'static, M, NOTIFY, FRAME> {
-        EmbassyInterfaceSeam::new(id, self.inbound, notify, self.outbound, fill_entropy)
+        EmbassyInterfaceSeam::new(self.id, self.inbound, notify, self.outbound, fill_entropy)
     }
 }
 

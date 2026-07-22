@@ -36,28 +36,6 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     mac_octets.copy_from_slice(&mac.as_bytes()[..6]);
 
     let mut reactor_pool = REACTOR_POOL.try_take().expect("reactor pool is available");
-    let usb_lane = reactor_pool
-        .take_interface::<USB_SLOT>()
-        .expect("USB lane is available");
-    let tcp_lane = reactor_pool
-        .take_interface::<TCP_SLOT>()
-        .expect("TCP lane is available");
-    #[cfg(feature = "wifi-auto")]
-    let wifi_supervisor_lane = reactor_pool
-        .take_supervisor::<WIFI_SUPERVISOR_SLOT>(&OUTBOUND_WAKE)
-        .expect("WiFi supervisor lane is available");
-    #[cfg(feature = "lora")]
-    let lora_lane = reactor_pool
-        .take_interface::<LORA_SLOT>()
-        .expect("LoRa lane is available");
-    #[cfg(feature = "bluetooth-auto")]
-    let ble_supervisor_lane = reactor_pool
-        .take_supervisor::<BLE_SUPERVISOR_SLOT>(&BLE_OUTBOUND_WAKE)
-        .expect("Bluetooth supervisor lane is available");
-    #[cfg(feature = "esp-now")]
-    let espnow_lane = reactor_pool
-        .take_interface::<ESPNOW_SLOT>()
-        .expect("ESP-NOW lane is available");
 
     #[cfg(feature = "lora")]
     let lora_radio = b.lora_radio;
@@ -124,15 +102,6 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let tcp_status = tcp_built.as_ref().map(|(_, status, _)| *status);
     let tcp_id = tcp_built.as_ref().map(|(_, _, id)| *id);
 
-    let handle: Handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
-    let plumbing = reactor_pool.into_plumbing(
-        NOTIFY.receiver(),
-        COMMANDS.receiver(),
-        LIFECYCLE.receiver(),
-        handle,
-    );
-    let host = EmbassyHost::new_with_timebase(b.timebase, hardware_entropy as fn(&mut [u8]));
-
     let recipe = PrnsNodeRecipe {
         transport_identity: Some(transport_secret),
         pre_configured_destinations: [PreConfiguredDestination::Single {
@@ -161,37 +130,53 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let tcp_cfg = tcp_built.as_ref().map(|(t, _, _)| t.descriptor());
     let has_wifi = wifi.is_some();
 
-    // The engine is built and run on core 1: its stack carries the dalek-heavy construction
-    // transient, then the reactor reuses that space (see `CORE1_STACK_BYTES`).
+    let usb_lane = reactor_pool
+        .claim_interface::<USB_SLOT>(device_descriptor(usb_id))
+        .expect("USB lane is available");
+    let tcp_lane = tcp_cfg.map(|descriptor| {
+        reactor_pool
+            .claim_interface::<TCP_SLOT>(descriptor)
+            .expect("TCP lane is available")
+    });
+    #[cfg(feature = "wifi-auto")]
+    let wifi_supervisor_lane = has_wifi.then(|| {
+        reactor_pool
+            .claim_supervisor::<WIFI_SUPERVISOR_SLOT>(WIFI_SUPERVISOR_ID, &OUTBOUND_WAKE)
+            .expect("WiFi supervisor lane is available")
+    });
+    #[cfg(feature = "lora")]
+    let lora_lane = reactor_pool
+        .claim_interface::<LORA_SLOT>(lora_cfg)
+        .expect("LoRa lane is available");
+    #[cfg(feature = "bluetooth-auto")]
+    let ble_supervisor_lane = (radio_mode == RadioMode::Ble && ble_identity.is_some()).then(|| {
+        reactor_pool
+            .claim_supervisor::<BLE_SUPERVISOR_SLOT>(
+                BLE_SUPERVISOR_ID,
+                &BLE_OUTBOUND_WAKE,
+            )
+            .expect("Bluetooth supervisor lane is available")
+    });
+    #[cfg(feature = "esp-now")]
+    let espnow_lane = espnow_cfg.map(|descriptor| {
+        reactor_pool
+            .claim_interface::<ESPNOW_SLOT>(descriptor)
+            .expect("ESP-NOW lane is available")
+    });
+
+    let handle: Handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
+    let plumbing = reactor_pool.into_plumbing(
+        NOTIFY.receiver(),
+        COMMANDS.receiver(),
+        LIFECYCLE.receiver(),
+        handle,
+    );
+    let host = EmbassyHost::new_with_timebase(b.timebase, hardware_entropy as fn(&mut [u8]));
+
     let core1_stack = mk_static!(CpuStack<CORE1_STACK_BYTES>, CpuStack::new());
     esp_rtos::start_second_core(b.cpu_ctrl, b.sw_int1, core1_stack, move || {
         static NODE: StaticCell<S3Node> = StaticCell::new();
-        let node: &'static mut S3Node =
-            NODE.init_with(|| PrnsNode::new(recipe, plumbing, host, HVec::new()));
-        node.activate(USB_SLOT, device_descriptor(usb_id))
-            .expect("USB activation fits the declared topology");
-        if let Some(cfg) = tcp_cfg {
-            node.activate(TCP_SLOT, cfg)
-                .expect("TCP activation fits the declared topology");
-        }
-        #[cfg(feature = "lora")]
-        node.activate(LORA_SLOT, lora_cfg)
-            .expect("LoRa activation fits the declared topology");
-        #[cfg(feature = "esp-now")]
-        if let Some(cfg) = espnow_cfg {
-            node.activate(ESPNOW_SLOT, cfg)
-                .expect("ESP-NOW activation fits the declared topology");
-        }
-        #[cfg(feature = "wifi-auto")]
-        if has_wifi {
-            node.activate_supervisor(WIFI_SUPERVISOR_SLOT, WIFI_SUPERVISOR_ID)
-                .expect("WiFi supervisor activation fits the declared topology");
-        }
-        #[cfg(feature = "bluetooth-auto")]
-        if radio_mode == RadioMode::Ble && ble_identity.is_some() {
-            node.activate_supervisor(BLE_SUPERVISOR_SLOT, BLE_SUPERVISOR_ID)
-                .expect("Bluetooth supervisor activation fits the declared topology");
-        }
+        let node: &'static mut S3Node = NODE.init_with(|| PrnsNode::new(recipe, plumbing, host));
         log_heap_footprint("post-construction (engine columns boxed into PSRAM)");
 
         static EXECUTOR: StaticCell<esp_rtos::embassy::Executor> = StaticCell::new();
@@ -202,28 +187,30 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             })
     });
 
-    let usb_seam = usb_lane.into_seam(usb_id, NOTIFY.sender(), hardware_entropy);
+    let usb_seam = usb_lane.into_seam(NOTIFY.sender(), hardware_entropy);
     spawner.spawn(
         usb_device_task(usb_rx, usb_tx, usb_seam, usb_id, usb_status).expect("usb task fits"),
     );
 
     #[cfg(feature = "lora")]
-    let lora_seam = lora_lane.into_seam(lora_id, NOTIFY.sender(), hardware_entropy);
+    let lora_seam = lora_lane.into_seam(NOTIFY.sender(), hardware_entropy);
 
     #[cfg(feature = "esp-now")]
-    let espnow = espnow.map(|interface| {
-        let seam = espnow_lane.into_seam(interface.id(), NOTIFY.sender(), hardware_entropy);
+    let espnow = espnow.zip(espnow_lane).map(|(interface, lane)| {
+        let seam = lane.into_seam(NOTIFY.sender(), hardware_entropy);
         (interface, seam)
     });
 
-    let tcp = tcp_built.map(|(tcp, _, _)| {
-        let seam = tcp_lane.into_seam(tcp.id(), NOTIFY.sender(), hardware_entropy);
+    let tcp = tcp_built.zip(tcp_lane).map(|((tcp, _, _), lane)| {
+        let seam = lane.into_seam(NOTIFY.sender(), hardware_entropy);
         (tcp, seam)
     });
 
     #[cfg(feature = "wifi-auto")]
-    let wifi_fleet: Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP> =
-        wifi_supervisor_lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender());
+    let wifi_fleet: Option<
+        Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP>,
+    > = wifi_supervisor_lane
+        .map(|lane| lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender()));
     // The WiFi-auto run loop's two MTU receive buffers live on the heap (the D-cache donation),
     // not on the bounded `#[esp_rtos::main]` stack that run()'s future rides; the alloc-free
     // embassy AutoWifi just borrows them. Leaked: they live for the program's whole life anyway.
@@ -235,7 +222,8 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         alloc::vec![0u8; wifi_auto_contract::HARDWARE_MTU].leak();
     #[cfg(feature = "bluetooth-auto")]
     let ble_fleet: Option<Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP>> =
-        ble_identity.map(|_| ble_supervisor_lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender()));
+        ble_supervisor_lane
+            .map(|lane| lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender()));
 
     let button = Input::new(b.button, InputConfig::default().with_pull(Pull::Up));
     spawner.spawn(button_task(button).expect("button task fits"));
@@ -595,7 +583,11 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                     join(
                         join(lora_run, espnow_run),
                         join(
-                            wifi.run(wifi_fleet, wifi_data_buf, wifi_sec_data_buf),
+                            wifi.run(
+                                wifi_fleet.expect("WiFi fleet exists"),
+                                wifi_data_buf,
+                                wifi_sec_data_buf,
+                            ),
                             tcp.run(tcp_seam),
                         ),
                     ),
@@ -607,7 +599,11 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 join(
                     join(
                         join(lora_run, espnow_run),
-                        wifi.run(wifi_fleet, wifi_data_buf, wifi_sec_data_buf),
+                        wifi.run(
+                            wifi_fleet.expect("WiFi fleet exists"),
+                            wifi_data_buf,
+                            wifi_sec_data_buf,
+                        ),
                     ),
                     render,
                 )
@@ -655,7 +651,11 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                         join(
                             join(join(join(ble_run, lora_run), espnow_run), tcp.run(tcp_seam)),
                             join(
-                                wifi.run(wifi_fleet, wifi_data_buf, wifi_sec_data_buf),
+                                wifi.run(
+                                    wifi_fleet.expect("WiFi fleet exists"),
+                                    wifi_data_buf,
+                                    wifi_sec_data_buf,
+                                ),
                                 render,
                             ),
                         )
@@ -665,7 +665,11 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                         join(
                             join(join(ble_run, lora_run), espnow_run),
                             join(
-                                wifi.run(wifi_fleet, wifi_data_buf, wifi_sec_data_buf),
+                                wifi.run(
+                                    wifi_fleet.expect("WiFi fleet exists"),
+                                    wifi_data_buf,
+                                    wifi_sec_data_buf,
+                                ),
                                 render,
                             ),
                         )
@@ -684,7 +688,11 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                             join(
                                 join(lora_run, espnow_run),
                                 join(
-                                    wifi.run(wifi_fleet, wifi_data_buf, wifi_sec_data_buf),
+                                    wifi.run(
+                                        wifi_fleet.expect("WiFi fleet exists"),
+                                        wifi_data_buf,
+                                        wifi_sec_data_buf,
+                                    ),
                                     tcp.run(tcp_seam),
                                 ),
                             ),
@@ -696,7 +704,11 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                         join(
                             join(
                                 join(lora_run, espnow_run),
-                                wifi.run(wifi_fleet, wifi_data_buf, wifi_sec_data_buf),
+                                wifi.run(
+                                    wifi_fleet.expect("WiFi fleet exists"),
+                                    wifi_data_buf,
+                                    wifi_sec_data_buf,
+                                ),
                             ),
                             render,
                         )

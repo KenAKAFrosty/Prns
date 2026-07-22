@@ -285,10 +285,6 @@ impl<M: RawMutex + 'static, const SLOT: usize, const N: usize> PooledEgress<M, S
         }
     }
 
-    pub(crate) fn has_slot(&self, slot: usize) -> bool {
-        slot < self.lanes.len()
-    }
-
     pub(crate) fn producer_mut(
         &mut self,
         slot: usize,

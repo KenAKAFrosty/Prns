@@ -6,8 +6,7 @@ use embassy_sync::channel::{Channel, Receiver};
 use heapless::Vec as HeaplessVec;
 
 use crate::engine::{IssuedCommand, Journaled, MAX_SEND_REQUEST_DATA_LEN};
-use crate::interfaces::{IfacContext, InterfaceIfac};
-use crate::interfaces::{InterfaceDescriptor, InterfaceId};
+use crate::interfaces::{InterfaceDescriptor, InterfaceId, InterfaceIfac};
 use crate::reactor::driver::{
     run_pooled, EmbassyGrantConsumer, InterfaceLifecycle, PooledEgress, PooledWiring,
 };
@@ -21,6 +20,7 @@ use super::super::{
     PreConfiguredDestination, PrnsEvent, PrnsNodeRecipe,
 };
 use super::command_handle::PrnsNodeHandle;
+use super::reactor_pool::{LaneConfiguration, LaneTarget};
 use prns_runtime::runtime::{assemble_node, AssembledNode};
 
 /// Reactor-side endpoints for a board-owned static interface pool.
@@ -37,6 +37,7 @@ pub struct ReactorPlumbing<
 {
     inbound: HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, M, SLOT>), IFACES>,
     egress: PooledEgress<M, SLOT, IFACES>,
+    configurations: [Option<LaneConfiguration>; IFACES],
     notify: Receiver<'static, M, InterfaceId, NOTIFY>,
     commands: Receiver<'static, M, IssuedCommand, COMMANDS>,
     lifecycle: Receiver<'static, M, InterfaceLifecycle, LIFECYCLE>,
@@ -57,6 +58,7 @@ impl<
     pub(super) fn new(
         inbound: HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, M, SLOT>), IFACES>,
         egress: PooledEgress<M, SLOT, IFACES>,
+        configurations: [Option<LaneConfiguration>; IFACES],
         notify: Receiver<'static, M, InterfaceId, NOTIFY>,
         commands: Receiver<'static, M, IssuedCommand, COMMANDS>,
         lifecycle: Receiver<'static, M, InterfaceLifecycle, LIFECYCLE>,
@@ -65,6 +67,7 @@ impl<
         Self {
             inbound,
             egress,
+            configurations,
             notify,
             commands,
             lifecycle,
@@ -107,27 +110,6 @@ pub struct PrnsNode<
 }
 
 pub struct RequestRoutingCapacity<const REQUESTS: usize, const REQUEST_BYTES: usize>;
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum InterfaceActivationError {
-    LaneUnavailable { slot: usize },
-    InterfaceCapacity,
-    IfacCapacity,
-}
-
-enum LaneActivation {
-    Interface(InterfaceDescriptor),
-    Supervisor(InterfaceId),
-}
-
-impl LaneActivation {
-    fn id(&self) -> InterfaceId {
-        match self {
-            Self::Interface(descriptor) => descriptor.id,
-            Self::Supervisor(id) => *id,
-        }
-    }
-}
 
 impl<const REQUESTS: usize, const REQUEST_BYTES: usize> Default
     for RequestRoutingCapacity<REQUESTS, REQUEST_BYTES>
@@ -189,12 +171,11 @@ where
         recipe: PrnsNodeRecipe<D, St, R, F, Manual, S>,
         plumbing: ReactorPlumbing<M, SLOT, IFACES, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
         host: H,
-        initial: HeaplessVec<InterfaceDescriptor, MAX_IFACES>,
     ) -> Self
     where
         D: IntoIterator<Item = PreConfiguredDestination<'d>>,
     {
-        Self::build(recipe, plumbing, host, initial)
+        Self::build(recipe, plumbing, host)
     }
 }
 
@@ -243,25 +224,43 @@ where
         recipe: PrnsNodeRecipe<D, St, R, F, Manual, S>,
         plumbing: ReactorPlumbing<M, SLOT, IFACES, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
         host: H,
-        initial: HeaplessVec<InterfaceDescriptor, MAX_IFACES>,
         _capacity: RequestRoutingCapacity<ROUTED_REQUESTS, ROUTED_REQUEST_BYTES>,
     ) -> Self
     where
         D: IntoIterator<Item = PreConfiguredDestination<'d>>,
     {
-        Self::build(recipe, plumbing, host, initial)
+        Self::build(recipe, plumbing, host)
     }
 
     fn build<'d, D>(
         recipe: PrnsNodeRecipe<D, St, R, F, Manual, S>,
         plumbing: ReactorPlumbing<M, SLOT, IFACES, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
         host: H,
-        initial: HeaplessVec<InterfaceDescriptor, MAX_IFACES>,
     ) -> Self
     where
         D: IntoIterator<Item = PreConfiguredDestination<'d>>,
     {
+        const {
+            assert!(
+                MAX_IFACES >= IFACES,
+                "PrnsNode MAX_IFACES must cover every reactor lane"
+            );
+        }
         let (node, Manual) = assemble_node(recipe);
+        let mut initial = HeaplessVec::new();
+        let mut ifacs = HeaplessVec::new();
+        for configuration in plumbing.configurations.into_iter().flatten() {
+            let id = match configuration.target {
+                LaneTarget::Interface(descriptor) => {
+                    assert!(initial.push(descriptor).is_ok());
+                    descriptor.id
+                }
+                LaneTarget::Supervisor(id) => id,
+            };
+            if let Some(context) = configuration.ifac {
+                assert!(ifacs.push(InterfaceIfac { id, context }).is_ok());
+            }
+        }
 
         PrnsNode {
             node,
@@ -273,120 +272,13 @@ where
             handle: plumbing.handle,
             host,
             initial,
-            ifacs: HeaplessVec::new(),
+            ifacs,
         }
     }
 
     #[must_use]
     pub fn handle(&self) -> PrnsNodeHandle<'static, M, COMMANDS, COMPLETIONS> {
         self.handle
-    }
-
-    pub fn activate(
-        &mut self,
-        slot: usize,
-        descriptor: InterfaceDescriptor,
-    ) -> Result<(), InterfaceActivationError> {
-        self.activate_access(slot, LaneActivation::Interface(descriptor), None)
-    }
-
-    pub fn activate_with_ifac(
-        &mut self,
-        slot: usize,
-        descriptor: InterfaceDescriptor,
-        context: IfacContext,
-    ) -> Result<(), InterfaceActivationError> {
-        self.activate_access(slot, LaneActivation::Interface(descriptor), Some(context))
-    }
-
-    fn activate_access(
-        &mut self,
-        slot: usize,
-        activation: LaneActivation,
-        mut context: Option<IfacContext>,
-    ) -> Result<(), InterfaceActivationError> {
-        let Some(old_id) = self.inbound.get(slot).map(|entry| entry.0) else {
-            return Err(InterfaceActivationError::LaneUnavailable { slot });
-        };
-        if !self.egress.has_slot(slot) {
-            return Err(InterfaceActivationError::LaneUnavailable { slot });
-        }
-
-        let descriptor_position = self
-            .initial
-            .iter()
-            .position(|descriptor| descriptor.id == old_id);
-        let ifac_position = self.ifacs.iter().position(|ifac| ifac.id == old_id);
-        let needs_descriptor =
-            matches!(&activation, LaneActivation::Interface(_)) && descriptor_position.is_none();
-        let needs_ifac = context.is_some() && ifac_position.is_none();
-
-        if needs_descriptor && self.initial.is_full() {
-            return Err(InterfaceActivationError::InterfaceCapacity);
-        }
-        if needs_ifac && self.ifacs.is_full() {
-            return Err(InterfaceActivationError::IfacCapacity);
-        }
-
-        let id = activation.id();
-        let mut pushed_ifac = false;
-        if ifac_position.is_none() {
-            if let Some(context) = context.take() {
-                if self.ifacs.push(InterfaceIfac { id, context }).is_err() {
-                    return Err(InterfaceActivationError::IfacCapacity);
-                }
-                pushed_ifac = true;
-            }
-        }
-
-        match activation {
-            LaneActivation::Interface(descriptor) => match descriptor_position {
-                Some(position) => self.initial[position] = descriptor,
-                None => {
-                    if self.initial.push(descriptor).is_err() {
-                        if pushed_ifac {
-                            let _ = self.ifacs.pop();
-                        }
-                        return Err(InterfaceActivationError::InterfaceCapacity);
-                    }
-                }
-            },
-            LaneActivation::Supervisor(_) => {
-                if let Some(position) = descriptor_position {
-                    let _ = self.initial.swap_remove(position);
-                }
-            }
-        }
-
-        if let Some(position) = ifac_position {
-            match context {
-                Some(context) => self.ifacs[position] = InterfaceIfac { id, context },
-                None => {
-                    let _ = self.ifacs.swap_remove(position);
-                }
-            }
-        }
-
-        self.inbound[slot].0 = id;
-        self.egress.activate(slot, id);
-        Ok(())
-    }
-
-    pub fn activate_supervisor(
-        &mut self,
-        slot: usize,
-        supervisor: InterfaceId,
-    ) -> Result<(), InterfaceActivationError> {
-        self.activate_access(slot, LaneActivation::Supervisor(supervisor), None)
-    }
-
-    pub fn activate_supervisor_with_ifac(
-        &mut self,
-        slot: usize,
-        supervisor: InterfaceId,
-        context: IfacContext,
-    ) -> Result<(), InterfaceActivationError> {
-        self.activate_access(slot, LaneActivation::Supervisor(supervisor), Some(context))
     }
 
     /// Runs the reactor with the caller's interface and supervisor tasks.
