@@ -1,11 +1,13 @@
 use core::cell::{Cell, UnsafeCell};
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, Ordering};
-use embassy_futures::select::{select, select4, Either, Either4};
+use embassy_futures::select::{select, select3, select4, Either, Either3};
+use embassy_futures::yield_now;
 use embassy_nrf::usb::vbus_detect::SoftwareVbusDetect;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
 use embassy_sync::channel::{Channel, Receiver, Sender};
+use embassy_sync::semaphore::{FairSemaphore, Semaphore, SemaphoreReleaser};
 use embassy_sync::signal::Signal;
 use embassy_time::{with_timeout, Duration, Timer};
 
@@ -14,6 +16,11 @@ use nrf_softdevice::ble::{
 };
 use nrf_softdevice::{raw, SocEvent, Softdevice};
 
+use personal_rns::bluetooth_auto::connection_slots::{
+    ConnectionSlotDataOwners, ConnectionSlotLease, ConnectionSlotLinkLease, ConnectionSlotOwners,
+    ConnectionSlotPool, ConnectionSlotSinkLease, ConnectionSlotSourceLease,
+    ConnectionSlotWorkerLease, ReadyConnectionSlot, ReadyConnectionSlotParts,
+};
 use personal_rns::bluetooth_auto::BluetoothAutoShared;
 use personal_rns::interfaces::bluetooth_auto::{
     columba_connection_role, columba_role_capabilities, contains_service, encode_advertisement,
@@ -41,6 +48,16 @@ const CTRL_DEPTH: usize = 4;
 const DATA_DEPTH: usize = 1;
 const SIGHTING_DEPTH: usize = 4;
 const SEEN_CAP: usize = 8;
+const CENTRAL_RADIO_WAITERS: usize = POOL + 1;
+type CentralRadio = FairSemaphore<Mtx, CENTRAL_RADIO_WAITERS>;
+type CentralRadioPermit<'a> = SemaphoreReleaser<'a, CentralRadio>;
+type BleSlotPool = ConnectionSlotPool<Mtx, POOL>;
+type BleSlotLease = ConnectionSlotLease<Mtx>;
+type BleSlotWorker = ConnectionSlotWorkerLease<Mtx>;
+type BleSlotLink = ConnectionSlotLinkLease<Mtx>;
+type BleSlotSource = ConnectionSlotSourceLease<Mtx>;
+type BleSlotSink = ConnectionSlotSinkLease<Mtx>;
+type BleReadySlot = ReadyConnectionSlot<Mtx>;
 const GATT_FRAGMENT_PAYLOAD: usize = 180;
 const GATT_REASSEMBLY_CAP: usize = 600;
 const GATT_ATTRIBUTE_TABLE_BYTES: u32 = 3072;
@@ -298,7 +315,6 @@ struct LinkChannels {
     data_out: Channel<Mtx, FrameBytes, DATA_DEPTH>,
     identity_in: Channel<Mtx, BleIdentity, 1>,
     identity_out: Channel<Mtx, BleIdentity, 1>,
-    link_dead: Signal<Mtx, ()>,
     data_plane: Signal<Mtx, L2capPlan>,
     profile_ready: Signal<Mtx, PeerProtocol>,
     /// The connected peer's address, stashed by the slot worker the moment the connection lands (from
@@ -319,7 +335,6 @@ impl LinkChannels {
             data_out: Channel::new(),
             identity_in: Channel::new(),
             identity_out: Channel::new(),
-            link_dead: Signal::new(),
             data_plane: Signal::new(),
             profile_ready: Signal::new(),
             address: BlockingMutex::new(Cell::new([0u8; 6])),
@@ -342,7 +357,6 @@ impl LinkChannels {
     }
 
     fn reset(&self) {
-        self.link_dead.reset();
         self.data_plane.reset();
         self.profile_ready.reset();
         self.peer_protocol.lock(|current| current.set(None));
@@ -354,7 +368,7 @@ impl LinkChannels {
         self.identity_out.clear();
     }
 
-    fn link(&'static self) -> NrfBleLink {
+    fn link(&'static self, slot: BleSlotLink) -> NrfBleLink {
         NrfBleLink {
             peer_protocol: self.peer_protocol().unwrap_or(PeerProtocol::Native),
             control_in: self.control_in.receiver(),
@@ -365,29 +379,34 @@ impl LinkChannels {
             identity_out: self.identity_out.sender(),
             data_plane: &self.data_plane,
             plan: L2capPlan::None,
-            fuse: LinkFuse::new(&self.link_dead),
             address: self.address.lock(|address| address.get()),
+            slot,
         }
     }
 }
 
 enum SlotJob {
-    Accept(Connection),
-    Dial(Address),
+    Accept {
+        connection: Connection,
+        slot: BleSlotLease,
+    },
+    Dial {
+        address: Address,
+        slot: BleSlotLease,
+    },
 }
 
 pub(super) struct BleHub {
     slots: [LinkChannels; POOL],
+    connection_slots: BleSlotPool,
     assign: [Channel<Mtx, SlotJob, 1>; POOL],
-    pub(super) free: Channel<Mtx, usize, POOL>,
-    connected: Channel<Mtx, usize, POOL>,
-    dialed: Channel<Mtx, usize, POOL>,
+    ready: Channel<Mtx, BleReadySlot, POOL>,
     dial_failed: Channel<Mtx, [u8; 6], POOL>,
     /// The central-radio permit: a single token both the scanner and each dial must hold while using
     /// the SoftDevice's one scanner. `central::scan` and `central::connect` (which scans to find the
     /// whitelisted peer) cannot run at once — overlapping them fails the connect and can panic the
     /// shared connect portal — so this serializes them: one scan-or-dial on the radio at a time.
-    pub(super) central_token: Channel<Mtx, (), 1>,
+    central_radio: CentralRadio,
     advertise: Signal<Mtx, bool>,
     sightings: Channel<Mtx, SeenPeer, SIGHTING_DEPTH>,
     scan_enabled: Signal<Mtx, bool>,
@@ -397,15 +416,23 @@ impl BleHub {
     const fn new() -> Self {
         Self {
             slots: [const { LinkChannels::new() }; POOL],
+            connection_slots: ConnectionSlotPool::new(),
             assign: [const { Channel::new() }; POOL],
-            free: Channel::new(),
-            connected: Channel::new(),
-            dialed: Channel::new(),
+            ready: Channel::new(),
             dial_failed: Channel::new(),
-            central_token: Channel::new(),
+            central_radio: FairSemaphore::new(1),
             advertise: Signal::new(),
             sightings: Channel::new(),
             scan_enabled: Signal::new(),
+        }
+    }
+
+    async fn acquire_central_radio(&self) -> CentralRadioPermit<'_> {
+        loop {
+            match self.central_radio.acquire(1).await {
+                Ok(permit) => return permit,
+                Err(_) => yield_now().await,
+            }
         }
     }
 }
@@ -413,8 +440,7 @@ impl BleHub {
 pub(super) static HUB: BleHub = BleHub::new();
 
 pub(super) struct NrfBleBackend {
-    connected: Receiver<'static, Mtx, usize, POOL>,
-    dialed: Receiver<'static, Mtx, usize, POOL>,
+    ready: Receiver<'static, Mtx, BleReadySlot, POOL>,
     dial_failed: Receiver<'static, Mtx, [u8; 6], POOL>,
     sightings: Receiver<'static, Mtx, SeenPeer, SIGHTING_DEPTH>,
     seen: heapless::Vec<Address, SEEN_CAP>,
@@ -426,8 +452,7 @@ impl NrfBleBackend {
 
     pub(super) fn new(hub: &'static BleHub) -> Self {
         Self {
-            connected: hub.connected.receiver(),
-            dialed: hub.dialed.receiver(),
+            ready: hub.ready.receiver(),
             dial_failed: hub.dial_failed.receiver(),
             sightings: hub.sightings.receiver(),
             seen: heapless::Vec::new(),
@@ -468,28 +493,33 @@ impl BleBackend<{ NrfBleBackend::MAX_PEERS }> for NrfBleBackend {
     }
 
     async fn next_event(&mut self) -> BleEvent<NrfBleLink> {
-        match select4(
-            self.connected.receive(),
-            self.dialed.receive(),
+        match select3(
+            self.ready.receive(),
             self.sightings.receive(),
             self.dial_failed.receive(),
         )
         .await
         {
-            Either4::First(slot) => BleEvent::Inbound(self.hub.slots[slot].link()),
-            Either4::Second(slot) => BleEvent::LinkReady {
-                link: self.hub.slots[slot].link(),
-                origin: Origin::Dialed,
-                peer_rssi: None,
-            },
-            Either4::Third(peer) => {
+            Either3::First(ready) => {
+                let ReadyConnectionSlotParts { origin, link } = ready.into_parts();
+                let index = link.index();
+                match origin {
+                    Origin::Accepted => BleEvent::Inbound(self.hub.slots[index].link(link)),
+                    Origin::Dialed => BleEvent::LinkReady {
+                        link: self.hub.slots[index].link(link),
+                        origin: Origin::Dialed,
+                        peer_rssi: None,
+                    },
+                }
+            }
+            Either3::Second(peer) => {
                 self.remember(peer.address);
                 BleEvent::Sighting {
                     address: BleAddress::new(peer.address.bytes()),
                     rssi: Some(peer.rssi),
                 }
             }
-            Either4::Fourth(bytes) => BleEvent::DialFailed {
+            Either3::Third(bytes) => BleEvent::DialFailed {
                 address: BleAddress::new(bytes),
             },
         }
@@ -499,39 +529,14 @@ impl BleBackend<{ NrfBleBackend::MAX_PEERS }> for NrfBleBackend {
         let Some(addr) = self.resolve(address) else {
             return;
         };
-        let Ok(idx) = self.hub.free.try_receive() else {
+        let Some(slot) = self.hub.connection_slots.try_acquire() else {
             return;
         };
-        if self.hub.assign[idx].try_send(SlotJob::Dial(addr)).is_err() {
-            let _ = self.hub.free.try_send(idx);
-        }
-    }
-}
-
-struct LinkFuse {
-    dead: &'static Signal<Mtx, ()>,
-    armed: bool,
-}
-
-impl LinkFuse {
-    fn new(dead: &'static Signal<Mtx, ()>) -> Self {
-        Self { dead, armed: true }
-    }
-
-    fn signal(&self) -> &'static Signal<Mtx, ()> {
-        self.dead
-    }
-
-    fn disarm(&mut self) {
-        self.armed = false;
-    }
-}
-
-impl Drop for LinkFuse {
-    fn drop(&mut self) {
-        if self.armed {
-            self.dead.signal(());
-        }
+        let index = slot.index();
+        let _ = self.hub.assign[index].try_send(SlotJob::Dial {
+            address: addr,
+            slot,
+        });
     }
 }
 
@@ -545,8 +550,8 @@ pub(super) struct NrfBleLink {
     identity_out: Sender<'static, Mtx, BleIdentity, 1>,
     data_plane: &'static Signal<Mtx, L2capPlan>,
     plan: L2capPlan,
-    fuse: LinkFuse,
     address: [u8; 6],
+    slot: BleSlotLink,
 }
 
 impl BleLink for NrfBleLink {
@@ -563,28 +568,28 @@ impl BleLink for NrfBleLink {
     }
 
     async fn control_send(&mut self, msg: &Control) -> Result<(), Closed> {
-        match select(self.control_out.send(*msg), self.fuse.signal().wait()).await {
+        match select(self.control_out.send(*msg), self.slot.wait_for_close()).await {
             Either::First(()) => Ok(()),
             Either::Second(()) => Err(Closed),
         }
     }
 
     async fn control_recv(&mut self) -> Result<Control, Closed> {
-        match select(self.control_in.receive(), self.fuse.signal().wait()).await {
+        match select(self.control_in.receive(), self.slot.wait_for_close()).await {
             Either::First(msg) => Ok(msg),
             Either::Second(()) => Err(Closed),
         }
     }
 
     async fn receive_columba_peer_identity(&mut self) -> Result<BleIdentity, Closed> {
-        match select(self.identity_in.receive(), self.fuse.signal().wait()).await {
+        match select(self.identity_in.receive(), self.slot.wait_for_close()).await {
             Either::First(identity) => Ok(identity),
             Either::Second(()) => Err(Closed),
         }
     }
 
     async fn send_columba_identity(&mut self, identity: BleIdentity) -> Result<(), Closed> {
-        match select(self.identity_out.send(identity), self.fuse.signal().wait()).await {
+        match select(self.identity_out.send(identity), self.slot.wait_for_close()).await {
             Either::First(()) => Ok(()),
             Either::Second(()) => Err(Closed),
         }
@@ -595,18 +600,20 @@ impl BleLink for NrfBleLink {
         Ok(())
     }
 
-    fn into_data(mut self) -> (NrfBleSource, NrfBleSink) {
-        let link_dead = self.fuse.signal();
+    fn into_data(self) -> (NrfBleSource, NrfBleSink) {
         self.data_plane.signal(self.plan);
-        self.fuse.disarm();
+        let ConnectionSlotDataOwners {
+            source: source_slot,
+            sink: sink_slot,
+        } = self.slot.into_data();
         (
             NrfBleSource {
                 data_in: self.data_in,
-                link_dead,
+                slot: source_slot,
             },
             NrfBleSink {
                 data_out: self.data_out,
-                link_dead,
+                slot: sink_slot,
             },
         )
     }
@@ -614,14 +621,14 @@ impl BleLink for NrfBleLink {
 
 pub(super) struct NrfBleSource {
     data_in: Receiver<'static, Mtx, FrameBytes, DATA_DEPTH>,
-    link_dead: &'static Signal<Mtx, ()>,
+    slot: BleSlotSource,
 }
 
 impl BleSource for NrfBleSource {
     type Error = Closed;
 
     async fn recv_frame(&mut self, out: &mut [u8]) -> Result<usize, Closed> {
-        match select(self.data_in.receive(), self.link_dead.wait()).await {
+        match select(self.data_in.receive(), self.slot.wait_for_close()).await {
             Either::First(frame) => {
                 let len = frame.len().min(out.len());
                 out[..len].copy_from_slice(&frame[..len]);
@@ -634,7 +641,7 @@ impl BleSource for NrfBleSource {
 
 pub(super) struct NrfBleSink {
     data_out: Sender<'static, Mtx, FrameBytes, DATA_DEPTH>,
-    link_dead: &'static Signal<Mtx, ()>,
+    slot: BleSlotSink,
 }
 
 impl BleSink for NrfBleSink {
@@ -643,16 +650,10 @@ impl BleSink for NrfBleSink {
     async fn send_frame(&mut self, frame: &[u8]) -> Result<(), Closed> {
         let mut bytes = FrameBytes::new();
         bytes.extend_from_slice(frame).map_err(|_| Closed)?;
-        match select(self.data_out.send(bytes), self.link_dead.wait()).await {
+        match select(self.data_out.send(bytes), self.slot.wait_for_close()).await {
             Either::First(()) => Ok(()),
             Either::Second(()) => Err(Closed),
         }
-    }
-}
-
-impl Drop for NrfBleSink {
-    fn drop(&mut self) {
-        self.link_dead.signal(());
     }
 }
 
@@ -707,7 +708,8 @@ async fn serve_peripheral(
     conn: &Connection,
     slot: &'static LinkChannels,
     hub: &'static BleHub,
-    idx: usize,
+    link: BleSlotLink,
+    worker: &BleSlotWorker,
 ) {
     let control_out_rx = slot.control_out.receiver();
     let data_out_rx = slot.data_out.receiver();
@@ -760,7 +762,7 @@ async fn serve_peripheral(
 
     let ready = async {
         let _ = slot.profile_ready.wait().await;
-        hub.connected.send(idx).await;
+        hub.ready.send(link.into_ready(Origin::Accepted)).await;
         core::future::pending::<()>().await;
     };
 
@@ -818,7 +820,7 @@ async fn serve_peripheral(
         select(inbound, ready),
         control_outbound,
         data,
-        slot.link_dead.wait(),
+        worker.wait_for_close(),
     )
     .await;
 }
@@ -827,11 +829,12 @@ async fn serve_central(
     sd: &'static Softdevice,
     l2cap: &'static l2cap::L2cap<L2capPacket>,
     hub: &'static BleHub,
-    idx: usize,
     addr: Address,
     slot: &'static LinkChannels,
+    link: BleSlotLink,
+    worker: &BleSlotWorker,
 ) {
-    hub.central_token.receive().await;
+    let central_radio = hub.acquire_central_radio().await;
     let whitelist = [&addr];
     let mut config = central::ConnectConfig::default();
     config.scan_config.whitelist = Some(&whitelist);
@@ -842,34 +845,33 @@ async fn serve_central(
     let conn = match central::connect(sd, &config).await {
         Ok(conn) => conn,
         Err(_) => {
-            let _ = hub.central_token.try_send(());
             let _ = hub.dial_failed.try_send(addr.bytes());
             return;
         }
     };
     if let Ok(client) = gatt_client::discover::<NativeReticulumClient>(&conn).await {
-        let _ = hub.central_token.try_send(());
-        serve_native_central(l2cap, hub, idx, addr, slot, conn, client).await;
+        drop(central_radio);
+        serve_native_central(l2cap, hub, addr, slot, link, worker, conn, client).await;
         return;
     }
     let client = match gatt_client::discover::<ColumbaReticulumClient>(&conn).await {
         Ok(client) => client,
         Err(_) => {
-            let _ = hub.central_token.try_send(());
             let _ = hub.dial_failed.try_send(addr.bytes());
             return;
         }
     };
-    let _ = hub.central_token.try_send(());
-    serve_columba_central(hub, idx, addr, slot, conn, client).await;
+    drop(central_radio);
+    serve_columba_central(hub, addr, slot, link, worker, conn, client).await;
 }
 
 async fn serve_native_central(
     l2cap: &'static l2cap::L2cap<L2capPacket>,
     hub: &'static BleHub,
-    idx: usize,
     addr: Address,
     slot: &'static LinkChannels,
+    link: BleSlotLink,
+    worker: &BleSlotWorker,
     conn: Connection,
     client: NativeReticulumClient,
 ) {
@@ -877,7 +879,7 @@ async fn serve_native_central(
     let _ = client.data_cccd_write(true).await;
     slot.set_address(addr.bytes());
     slot.set_peer_protocol(PeerProtocol::Native);
-    hub.dialed.send(idx).await;
+    hub.ready.send(link.into_ready(Origin::Dialed)).await;
 
     let control_out_rx = slot.control_out.receiver();
     let data_out_rx = slot.data_out.receiver();
@@ -946,14 +948,15 @@ async fn serve_native_central(
         }
     };
 
-    let _ = select4(inbound, control_outbound, data, slot.link_dead.wait()).await;
+    let _ = select4(inbound, control_outbound, data, worker.wait_for_close()).await;
 }
 
 async fn serve_columba_central(
     hub: &'static BleHub,
-    idx: usize,
     addr: Address,
     slot: &'static LinkChannels,
+    link: BleSlotLink,
+    worker: &BleSlotWorker,
     conn: Connection,
     client: ColumbaReticulumClient,
 ) {
@@ -975,9 +978,9 @@ async fn serve_columba_central(
     slot.set_address(addr.bytes());
     slot.set_peer_protocol(PeerProtocol::Columba);
     let _ = slot.identity_in.try_send(peer_identity);
-    hub.dialed.send(idx).await;
+    hub.ready.send(link.into_ready(Origin::Dialed)).await;
 
-    let identity = match select(slot.identity_out.receive(), slot.link_dead.wait()).await {
+    let identity = match select(slot.identity_out.receive(), worker.wait_for_close()).await {
         Either::First(identity) => identity,
         Either::Second(()) => return,
     };
@@ -1021,7 +1024,7 @@ async fn serve_columba_central(
     let _ = select4(
         inbound,
         data,
-        slot.link_dead.wait(),
+        worker.wait_for_close(),
         core::future::pending::<()>(),
     )
     .await;
@@ -1040,14 +1043,22 @@ pub(super) async fn serve_slot(
         let job = hub.assign[idx].receive().await;
         slot.reset();
         match job {
-            SlotJob::Accept(conn) => {
+            SlotJob::Accept {
+                connection: conn,
+                slot: lease,
+            } => {
+                let ConnectionSlotOwners { worker, link } = lease.activate();
                 slot.set_address(conn.peer_address().bytes());
-                serve_peripheral(l2cap, server, &conn, slot, hub, idx).await;
+                serve_peripheral(l2cap, server, &conn, slot, hub, link, &worker).await;
             }
-            SlotJob::Dial(addr) => serve_central(sd, l2cap, hub, idx, addr, slot).await,
+            SlotJob::Dial {
+                address,
+                slot: lease,
+            } => {
+                let ConnectionSlotOwners { worker, link } = lease.activate();
+                serve_central(sd, l2cap, hub, address, slot, link, &worker).await;
+            }
         }
-        slot.link_dead.signal(());
-        let _ = hub.free.try_send(idx);
     }
 }
 
@@ -1058,7 +1069,8 @@ pub(super) async fn acceptor(sd: &'static Softdevice, hub: &'static BleHub) -> !
             enabled = hub.advertise.wait().await;
             continue;
         }
-        let idx = hub.free.receive().await;
+        let slot = hub.connection_slots.acquire().await;
+        let index = slot.index();
 
         let mut adv_buf = [0u8; 31];
         let adv_len =
@@ -1072,15 +1084,16 @@ pub(super) async fn acceptor(sd: &'static Softdevice, hub: &'static BleHub) -> !
         let advertise = peripheral::advertise_connectable(sd, adv, &adv_config);
         match select(advertise, hub.advertise.wait()).await {
             Either::First(Ok(conn)) => {
-                let _ = hub.assign[idx].try_send(SlotJob::Accept(conn));
+                let _ = hub.assign[index].try_send(SlotJob::Accept {
+                    connection: conn,
+                    slot,
+                });
             }
             Either::First(Err(_)) => {
-                let _ = hub.free.try_send(idx);
                 Timer::after(Duration::from_millis(500)).await;
             }
             Either::Second(new_state) => {
                 enabled = new_state;
-                let _ = hub.free.try_send(idx);
             }
         }
     }
@@ -1095,7 +1108,7 @@ pub(super) async fn scanner(sd: &'static Softdevice, hub: &'static BleHub) -> ! 
             enabled = hub.scan_enabled.wait().await;
             continue;
         }
-        hub.central_token.receive().await;
+        let central_radio = hub.acquire_central_radio().await;
         let config = central::ScanConfig {
             active: false,
             extended: false,
@@ -1132,7 +1145,7 @@ pub(super) async fn scanner(sd: &'static Softdevice, hub: &'static BleHub) -> ! 
             }
         });
         let outcome = select(scan, hub.scan_enabled.wait()).await;
-        let _ = hub.central_token.try_send(());
+        drop(central_radio);
         match outcome {
             Either::First(Ok(peer)) => {
                 let _ = sightings.try_send(peer);

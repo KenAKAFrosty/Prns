@@ -1,3 +1,4 @@
+pub mod connection_slots;
 mod runtime;
 
 #[cfg(feature = "bluetooth-auto-trouble")]

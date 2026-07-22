@@ -149,9 +149,7 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
         super::bluetooth_auto::set_columba_identity(server, identity);
     }
     if ble_identity.is_some() {
-        let _ = HUB.central_token.try_send(());
         for idx in 0..POOL {
-            let _ = HUB.free.try_send(idx);
             spawner.spawn(serve_slot(idx, sd, l2cap, server, &HUB).expect("serve slot fits"));
         }
     }

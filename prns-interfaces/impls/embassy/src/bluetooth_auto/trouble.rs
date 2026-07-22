@@ -2,11 +2,12 @@ use core::cell::Cell;
 
 use bt_hci::transport::Transport;
 use bt_hci::FromHciBytesError;
-use embassy_futures::select::{select, select3, select4, Either, Either3, Either4};
+use embassy_futures::select::{select, select3, select4, Either, Either3};
 use embassy_futures::yield_now;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex as BridgeMutex;
 use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
 use embassy_sync::channel::{Channel, Receiver, Sender};
+use embassy_sync::semaphore::{FairSemaphore, Semaphore, SemaphoreReleaser};
 use embassy_sync::signal::Signal;
 use embassy_sync_07::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::{with_timeout, Duration, Timer};
@@ -22,6 +23,12 @@ use prns_core::interfaces::bluetooth_auto::{
 };
 use prns_core::interfaces::bluetooth_auto::{
     AdvertisingMode, BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin, ScanningMode,
+};
+
+use super::connection_slots::{
+    ConnectionSlotDataOwners, ConnectionSlotLease, ConnectionSlotLinkLease, ConnectionSlotOwners,
+    ConnectionSlotPool, ConnectionSlotSinkLease, ConnectionSlotSourceLease,
+    ConnectionSlotWorkerLease, ReadyConnectionSlot, ReadyConnectionSlotParts,
 };
 
 #[cfg(target_arch = "riscv32")]
@@ -95,6 +102,7 @@ const DATA_DEPTH: usize = 1;
 #[cfg(not(target_arch = "riscv32"))]
 const DATA_DEPTH: usize = 4;
 const SIGHTING_DEPTH: usize = SLOTS * 2;
+const RADIO_WAITERS: usize = 2;
 
 /// One L2CAP SDU carries one length-prefixed stream frame; modest credits and MPS keep two RX reservations inside the packet pool alongside GATT and TX.
 pub const L2CAP_PSM: u16 = 0x0080;
@@ -117,6 +125,15 @@ const SEEN_CAP: usize = SLOTS * 2;
 const FRAME_CAP: usize = BLE_HW_MTU;
 
 type FrameBytes = heapless::Vec<u8, FRAME_CAP>;
+type RadioArbiter = FairSemaphore<BridgeMutex, RADIO_WAITERS>;
+type RadioPermit<'a> = SemaphoreReleaser<'a, RadioArbiter>;
+type BleSlotPool = ConnectionSlotPool<BridgeMutex, SLOTS>;
+type BleSlotLease = ConnectionSlotLease<BridgeMutex>;
+type BleSlotWorker = ConnectionSlotWorkerLease<BridgeMutex>;
+type BleSlotLink = ConnectionSlotLinkLease<BridgeMutex>;
+type BleSlotSource = ConnectionSlotSourceLease<BridgeMutex>;
+type BleSlotSink = ConnectionSlotSinkLease<BridgeMutex>;
+type BleReadySlot = ReadyConnectionSlot<BridgeMutex>;
 pub trait TroubleTransport: Transport<Error: From<FromHciBytesError>> {}
 impl<T: Transport<Error: From<FromHciBytesError>>> TroubleTransport for T {}
 pub type TroubleController<T> = ExternalController<T, HCI_COMMAND_SLOTS>;
@@ -211,8 +228,14 @@ struct DialTarget {
 }
 
 enum SlotJob {
-    Accept(Connection<'static, DefaultPacketPool>),
-    Dial(Connection<'static, DefaultPacketPool>),
+    Accept {
+        connection: Connection<'static, DefaultPacketPool>,
+        slot: BleSlotLease,
+    },
+    Dial {
+        connection: Connection<'static, DefaultPacketPool>,
+        slot: BleSlotLease,
+    },
 }
 
 struct SlotChannels {
@@ -222,7 +245,6 @@ struct SlotChannels {
     data_out: Channel<BridgeMutex, FrameBytes, DATA_DEPTH>,
     identity_in: Channel<BridgeMutex, BleIdentity, 1>,
     identity_out: Channel<BridgeMutex, BleIdentity, 1>,
-    link_dead: Signal<BridgeMutex, ()>,
     data_plane: Signal<BridgeMutex, L2capPlan>,
     peer_addr: BlockingMutex<BridgeMutex, Cell<[u8; 6]>>,
     peer_protocol: BlockingMutex<BridgeMutex, Cell<PeerProtocol>>,
@@ -237,7 +259,6 @@ impl SlotChannels {
             data_out: Channel::new(),
             identity_in: Channel::new(),
             identity_out: Channel::new(),
-            link_dead: Signal::new(),
             data_plane: Signal::new(),
             peer_addr: BlockingMutex::new(Cell::new([0u8; 6])),
             peer_protocol: BlockingMutex::new(Cell::new(PeerProtocol::Native)),
@@ -261,7 +282,6 @@ impl SlotChannels {
     }
 
     fn clear_lanes(&self) {
-        self.link_dead.reset();
         self.data_plane.reset();
         self.control_in.clear();
         self.control_out.clear();
@@ -269,6 +289,22 @@ impl SlotChannels {
         self.data_out.clear();
         self.identity_in.clear();
         self.identity_out.clear();
+    }
+
+    fn link(&'static self, slot: BleSlotLink) -> EmbeddedBleLink {
+        EmbeddedBleLink {
+            peer_protocol: self.peer_protocol(),
+            control_in: self.control_in.receiver(),
+            control_out: self.control_out.sender(),
+            data_in: self.data_in.receiver(),
+            data_out: self.data_out.sender(),
+            identity_in: self.identity_in.receiver(),
+            identity_out: self.identity_out.sender(),
+            data_plane: &self.data_plane,
+            plan: L2capPlan::None,
+            address: self.addr(),
+            slot,
+        }
     }
 }
 
@@ -345,71 +381,11 @@ impl BleDiagnostics {
     }
 }
 
-struct RadioArbiter {
-    available: Channel<BridgeMutex, (), 1>,
-}
-
-impl RadioArbiter {
-    const fn new() -> Self {
-        Self {
-            available: Channel::new(),
-        }
-    }
-
-    fn prime(&self) {
-        let _ = self.available.try_send(());
-    }
-
-    async fn acquire(&self) -> RadioPermit<'_> {
-        self.available.receive().await;
-        RadioPermit {
-            arbiter: self,
-            state: RadioPermitState::Held,
-        }
-    }
-}
-
-#[must_use]
-struct RadioPermit<'a> {
-    arbiter: &'a RadioArbiter,
-    state: RadioPermitState,
-}
-
-enum RadioPermitState {
-    Held,
-    Returned,
-}
-
-impl RadioPermit<'_> {
-    fn release(&mut self) {
-        match core::mem::replace(&mut self.state, RadioPermitState::Returned) {
-            RadioPermitState::Held => {
-                let _ = self.arbiter.available.try_send(());
-            }
-            RadioPermitState::Returned => {}
-        }
-    }
-
-    async fn handoff(mut self) {
-        self.release();
-        yield_now().await;
-        #[cfg(target_arch = "riscv32")]
-        Timer::after(DISCOVERY_TURN_REST).await;
-    }
-}
-
-impl Drop for RadioPermit<'_> {
-    fn drop(&mut self) {
-        self.release();
-    }
-}
-
 pub struct BleHub {
     slots: [SlotChannels; SLOTS],
+    connection_slots: BleSlotPool,
     assign: [Channel<BridgeMutex, SlotJob, 1>; SLOTS],
-    free: Channel<BridgeMutex, usize, SLOTS>,
-    connected: Channel<BridgeMutex, usize, SLOTS>,
-    dialed: Channel<BridgeMutex, usize, SLOTS>,
+    ready: Channel<BridgeMutex, BleReadySlot, SLOTS>,
     dial_failed: Channel<BridgeMutex, [u8; 6], SLOTS>,
     sightings: Channel<BridgeMutex, SeenPeer, SIGHTING_DEPTH>,
     dial_request: Channel<BridgeMutex, DialTarget, SLOTS>,
@@ -424,14 +400,13 @@ impl BleHub {
     pub const fn new() -> Self {
         Self {
             slots: [const { SlotChannels::new() }; SLOTS],
+            connection_slots: ConnectionSlotPool::new(),
             assign: [const { Channel::new() }; SLOTS],
-            free: Channel::new(),
-            connected: Channel::new(),
-            dialed: Channel::new(),
+            ready: Channel::new(),
             dial_failed: Channel::new(),
             sightings: Channel::new(),
             dial_request: Channel::new(),
-            radio: RadioArbiter::new(),
+            radio: FairSemaphore::new(1),
             advertise: Signal::new(),
             scan_enabled: Signal::new(),
             local_address: BlockingMutex::new(Cell::new([0; 6])),
@@ -439,19 +414,23 @@ impl BleHub {
         }
     }
 
-    pub fn prime(&self, local_address: [u8; 6]) {
+    pub fn set_local_address(&self, local_address: [u8; 6]) {
         self.local_address.lock(|cell| cell.set(local_address));
-        for idx in 0..SLOTS {
-            let _ = self.free.try_send(idx);
+    }
+
+    async fn acquire_radio(&self) -> RadioPermit<'_> {
+        loop {
+            match self.radio.acquire(1).await {
+                Ok(permit) => return permit,
+                Err(_) => yield_now().await,
+            }
         }
-        self.radio.prime();
     }
 
     pub fn backend(&'static self) -> EmbeddedBleBackend {
         EmbeddedBleBackend {
             hub: self,
-            connected: self.connected.receiver(),
-            dialed: self.dialed.receiver(),
+            ready: self.ready.receiver(),
             dial_failed: self.dial_failed.receiver(),
             sightings: self.sightings.receiver(),
             dial_request: self.dial_request.sender(),
@@ -468,8 +447,7 @@ impl Default for BleHub {
 
 pub struct EmbeddedBleBackend {
     hub: &'static BleHub,
-    connected: Receiver<'static, BridgeMutex, usize, SLOTS>,
-    dialed: Receiver<'static, BridgeMutex, usize, SLOTS>,
+    ready: Receiver<'static, BridgeMutex, BleReadySlot, SLOTS>,
     dial_failed: Receiver<'static, BridgeMutex, [u8; 6], SLOTS>,
     sightings: Receiver<'static, BridgeMutex, SeenPeer, SIGHTING_DEPTH>,
     dial_request: Sender<'static, BridgeMutex, DialTarget, SLOTS>,
@@ -506,23 +484,6 @@ impl EmbeddedBleBackend {
             .find(|seen| seen.addr.into_inner() == *address.octets())
             .copied()
     }
-
-    fn link(&self, slot: usize) -> EmbeddedBleLink {
-        let s = &self.hub.slots[slot];
-        EmbeddedBleLink {
-            peer_protocol: s.peer_protocol(),
-            control_in: s.control_in.receiver(),
-            control_out: s.control_out.sender(),
-            data_in: s.data_in.receiver(),
-            data_out: s.data_out.sender(),
-            identity_in: s.identity_in.receiver(),
-            identity_out: s.identity_out.sender(),
-            link_dead: &s.link_dead,
-            data_plane: &s.data_plane,
-            plan: L2capPlan::None,
-            address: s.addr(),
-        }
-    }
 }
 
 impl BleBackend<{ EmbeddedBleBackend::MAX_PEERS }> for EmbeddedBleBackend {
@@ -550,28 +511,33 @@ impl BleBackend<{ EmbeddedBleBackend::MAX_PEERS }> for EmbeddedBleBackend {
     }
 
     async fn next_event(&mut self) -> BleEvent<EmbeddedBleLink> {
-        match select4(
-            self.connected.receive(),
-            self.dialed.receive(),
+        match select3(
+            self.ready.receive(),
             self.sightings.receive(),
             self.dial_failed.receive(),
         )
         .await
         {
-            Either4::First(slot) => BleEvent::Inbound(self.link(slot)),
-            Either4::Second(slot) => BleEvent::LinkReady {
-                link: self.link(slot),
-                origin: Origin::Dialed,
-                peer_rssi: None,
-            },
-            Either4::Third(peer) => {
+            Either3::First(ready) => {
+                let ReadyConnectionSlotParts { origin, link } = ready.into_parts();
+                let index = link.index();
+                match origin {
+                    Origin::Accepted => BleEvent::Inbound(self.hub.slots[index].link(link)),
+                    Origin::Dialed => BleEvent::LinkReady {
+                        link: self.hub.slots[index].link(link),
+                        origin: Origin::Dialed,
+                        peer_rssi: None,
+                    },
+                }
+            }
+            Either3::Second(peer) => {
                 self.remember(peer);
                 BleEvent::Sighting {
                     address: BleAddress::new(peer.addr.into_inner()),
                     rssi: Some(peer.rssi),
                 }
             }
-            Either4::Fourth(bytes) => BleEvent::DialFailed {
+            Either3::Third(bytes) => BleEvent::DialFailed {
                 address: BleAddress::new(bytes),
             },
         }
@@ -580,14 +546,6 @@ impl BleBackend<{ EmbeddedBleBackend::MAX_PEERS }> for EmbeddedBleBackend {
     async fn dial(&mut self, address: BleAddress) {
         if let Some(target) = self.resolve(address) {
             let _ = self.dial_request.try_send(target);
-        }
-    }
-
-    async fn on_link_closed(&mut self, address: BleAddress) {
-        for slot in &self.hub.slots {
-            if slot.addr() == *address.octets() {
-                slot.link_dead.signal(());
-            }
         }
     }
 }
@@ -600,10 +558,10 @@ pub struct EmbeddedBleLink {
     data_out: Sender<'static, BridgeMutex, FrameBytes, DATA_DEPTH>,
     identity_in: Receiver<'static, BridgeMutex, BleIdentity, 1>,
     identity_out: Sender<'static, BridgeMutex, BleIdentity, 1>,
-    link_dead: &'static Signal<BridgeMutex, ()>,
     data_plane: &'static Signal<BridgeMutex, L2capPlan>,
     plan: L2capPlan,
     address: [u8; 6],
+    slot: BleSlotLink,
 }
 
 impl BleLink for EmbeddedBleLink {
@@ -620,28 +578,28 @@ impl BleLink for EmbeddedBleLink {
     }
 
     async fn control_send(&mut self, msg: &Control) -> Result<(), Closed> {
-        match select(self.control_out.send(*msg), self.link_dead.wait()).await {
+        match select(self.control_out.send(*msg), self.slot.wait_for_close()).await {
             Either::First(()) => Ok(()),
             Either::Second(()) => Err(Closed),
         }
     }
 
     async fn control_recv(&mut self) -> Result<Control, Closed> {
-        match select(self.control_in.receive(), self.link_dead.wait()).await {
+        match select(self.control_in.receive(), self.slot.wait_for_close()).await {
             Either::First(msg) => Ok(msg),
             Either::Second(()) => Err(Closed),
         }
     }
 
     async fn receive_columba_peer_identity(&mut self) -> Result<BleIdentity, Closed> {
-        match select(self.identity_in.receive(), self.link_dead.wait()).await {
+        match select(self.identity_in.receive(), self.slot.wait_for_close()).await {
             Either::First(identity) => Ok(identity),
             Either::Second(()) => Err(Closed),
         }
     }
 
     async fn send_columba_identity(&mut self, identity: BleIdentity) -> Result<(), Closed> {
-        match select(self.identity_out.send(identity), self.link_dead.wait()).await {
+        match select(self.identity_out.send(identity), self.slot.wait_for_close()).await {
             Either::First(()) => Ok(()),
             Either::Second(()) => Err(Closed),
         }
@@ -654,14 +612,18 @@ impl BleLink for EmbeddedBleLink {
 
     fn into_data(self) -> (EmbeddedBleSource, EmbeddedBleSink) {
         self.data_plane.signal(self.plan);
+        let ConnectionSlotDataOwners {
+            source: source_slot,
+            sink: sink_slot,
+        } = self.slot.into_data();
         (
             EmbeddedBleSource {
                 data_in: self.data_in,
-                link_dead: self.link_dead,
+                slot: source_slot,
             },
             EmbeddedBleSink {
                 data_out: self.data_out,
-                link_dead: self.link_dead,
+                slot: sink_slot,
             },
         )
     }
@@ -669,14 +631,14 @@ impl BleLink for EmbeddedBleLink {
 
 pub struct EmbeddedBleSource {
     data_in: Receiver<'static, BridgeMutex, FrameBytes, DATA_DEPTH>,
-    link_dead: &'static Signal<BridgeMutex, ()>,
+    slot: BleSlotSource,
 }
 
 impl BleSource for EmbeddedBleSource {
     type Error = Closed;
 
     async fn recv_frame(&mut self, out: &mut [u8]) -> Result<usize, Closed> {
-        match select(self.data_in.receive(), self.link_dead.wait()).await {
+        match select(self.data_in.receive(), self.slot.wait_for_close()).await {
             Either::First(frame) => {
                 let len = frame.len().min(out.len());
                 out[..len].copy_from_slice(&frame[..len]);
@@ -689,7 +651,7 @@ impl BleSource for EmbeddedBleSource {
 
 pub struct EmbeddedBleSink {
     data_out: Sender<'static, BridgeMutex, FrameBytes, DATA_DEPTH>,
-    link_dead: &'static Signal<BridgeMutex, ()>,
+    slot: BleSlotSink,
 }
 
 impl BleSink for EmbeddedBleSink {
@@ -698,7 +660,7 @@ impl BleSink for EmbeddedBleSink {
     async fn send_frame(&mut self, frame: &[u8]) -> Result<(), Closed> {
         let mut bytes = FrameBytes::new();
         bytes.extend_from_slice(frame).map_err(|_| Closed)?;
-        match select(self.data_out.send(bytes), self.link_dead.wait()).await {
+        match select(self.data_out.send(bytes), self.slot.wait_for_close()).await {
             Either::First(()) => Ok(()),
             Either::Second(()) => Err(Closed),
         }
@@ -887,10 +849,11 @@ pub struct ReticulumGattUuids<'a> {
 }
 
 async fn serve_peripheral<T: TroubleTransport>(
-    idx: usize,
     hub: &'static BleHub,
     stack: &'static TroubleStack<T>,
     slot: &'static SlotChannels,
+    link: BleSlotLink,
+    worker: &BleSlotWorker,
     connection: &GattConnection<'_, '_, DefaultPacketPool>,
     characteristics: ReticulumGattCharacteristics<'_>,
 ) {
@@ -943,7 +906,7 @@ async fn serve_peripheral<T: TroubleTransport>(
         }
     };
     slot.set_peer_protocol(peer_protocol);
-    hub.connected.send(idx).await;
+    hub.ready.send(link.into_ready(Origin::Accepted)).await;
 
     let control_out_rx = slot.control_out.receiver();
     let data_out_rx = slot.data_out.receiver();
@@ -1054,18 +1017,25 @@ async fn serve_peripheral<T: TroubleTransport>(
         }
     });
 
-    let _ = select4(inbound, control_outbound, data_lane, slot.link_dead.wait()).await;
+    let _ = select4(
+        inbound,
+        control_outbound,
+        data_lane,
+        worker.wait_for_close(),
+    )
+    .await;
 }
 
 /// The per-dial GATT client is boxed because its notification pubsub would otherwise inflate the task frame; a discovery failure reports `dial_failed` so policy can back off.
 async fn serve_central<T: TroubleTransport>(
-    idx: usize,
     hub: &'static BleHub,
     stack: &'static TroubleStack<T>,
+    link: BleSlotLink,
+    worker: &BleSlotWorker,
     connection: Connection<'static, DefaultPacketPool>,
     uuids: ReticulumGattUuids<'_>,
 ) {
-    let slot = &hub.slots[idx];
+    let slot = &hub.slots[link.index()];
     let addr = connection.peer_address().into_inner();
     let fail = || {
         let _ = hub.dial_failed.try_send(addr);
@@ -1171,7 +1141,7 @@ async fn serve_central<T: TroubleTransport>(
     let control_in_tx = slot.control_in.sender();
     let data_in_tx = slot.data_in.sender();
     let data_in_tx_l2cap = slot.data_in.sender();
-    hub.dialed.send(idx).await;
+    hub.ready.send(link.into_ready(Origin::Dialed)).await;
 
     let inbound = async {
         match control_listener {
@@ -1289,7 +1259,7 @@ async fn serve_central<T: TroubleTransport>(
         client.task(),
         inbound,
         select(control_outbound, data_lane),
-        slot.link_dead.wait(),
+        worker.wait_for_close(),
     )
     .await;
 }
@@ -1307,25 +1277,40 @@ pub async fn serve_slot<T: TroubleTransport>(
         let job = hub.assign[idx].receive().await;
         slot.clear_lanes();
         match job {
-            SlotJob::Accept(connection) => {
+            SlotJob::Accept {
+                connection,
+                slot: lease,
+            } => {
+                let ConnectionSlotOwners { worker, link } = lease.activate();
                 slot.set_peer_addr(connection.peer_address().into_inner());
                 match connection.with_attribute_server(server) {
                     Ok(connection) => {
-                        serve_peripheral(idx, hub, stack, slot, &connection, characteristics).await;
+                        serve_peripheral(
+                            hub,
+                            stack,
+                            slot,
+                            link,
+                            &worker,
+                            &connection,
+                            characteristics,
+                        )
+                        .await;
                     }
                     Err(error) => {
                         crate::diagnostic_log::warn!("ble attribute server bind failed: {error:?}")
                     }
                 }
             }
-            SlotJob::Dial(connection) => {
-                serve_central(idx, hub, stack, connection, uuids).await;
+            SlotJob::Dial {
+                connection,
+                slot: lease,
+            } => {
+                let ConnectionSlotOwners { worker, link } = lease.activate();
+                serve_central(hub, stack, link, &worker, connection, uuids).await;
             }
         }
-        slot.link_dead.signal(());
         hub.diagnostics.active_slots.fetch_sub(1, Ordering::Relaxed);
         hub.diagnostics.touch();
-        let _ = hub.free.try_send(idx);
     }
 }
 
@@ -1343,8 +1328,8 @@ pub async fn acceptor<T: TroubleTransport>(
         }
         hub.diagnostics
             .set_acceptor_phase(BleTaskPhase::WaitingForSlot);
-        let idx = match select(hub.free.receive(), hub.advertise.wait()).await {
-            Either::First(idx) => idx,
+        let lease = match select(hub.connection_slots.acquire(), hub.advertise.wait()).await {
+            Either::First(lease) => lease,
             Either::Second(state) => {
                 enabled = state;
                 if !enabled {
@@ -1353,9 +1338,10 @@ pub async fn acceptor<T: TroubleTransport>(
                 continue;
             }
         };
+        let idx = lease.index();
         hub.diagnostics
             .set_acceptor_phase(BleTaskPhase::WaitingForRadio);
-        let radio = hub.radio.acquire().await;
+        let radio = hub.acquire_radio().await;
         hub.diagnostics.set_acceptor_phase(BleTaskPhase::Starting);
         let advertiser = match peripheral
             .advertise(
@@ -1372,8 +1358,7 @@ pub async fn acceptor<T: TroubleTransport>(
                 BleDiagnostics::increment(&hub.diagnostics.advertising_failures);
                 hub.diagnostics.set_acceptor_phase(BleTaskPhase::BackingOff);
                 crate::diagnostic_log::warn!("ble advertise failed: {error:?}");
-                radio.handoff().await;
-                let _ = hub.free.try_send(idx);
+                drop(radio);
                 Timer::after(Duration::from_millis(500)).await;
                 continue;
             }
@@ -1389,11 +1374,13 @@ pub async fn acceptor<T: TroubleTransport>(
         {
             Either3::First(Ok(connection)) => {
                 if hub.assign[idx]
-                    .try_send(SlotJob::Accept(connection))
+                    .try_send(SlotJob::Accept {
+                        connection,
+                        slot: lease,
+                    })
                     .is_err()
                 {
                     BleDiagnostics::increment(&hub.diagnostics.accept_failures);
-                    let _ = hub.free.try_send(idx);
                 } else {
                     hub.diagnostics.active_slots.fetch_add(1, Ordering::Relaxed);
                     BleDiagnostics::increment(&hub.diagnostics.accepted_connections);
@@ -1402,19 +1389,17 @@ pub async fn acceptor<T: TroubleTransport>(
             Either3::First(Err(error)) => {
                 BleDiagnostics::increment(&hub.diagnostics.accept_failures);
                 crate::diagnostic_log::warn!("ble accept failed: {error:?}");
-                let _ = hub.free.try_send(idx);
             }
-            Either3::Second(()) => {
-                let _ = hub.free.try_send(idx);
-            }
+            Either3::Second(()) => {}
             Either3::Third(state) => {
                 enabled = state;
-                let _ = hub.free.try_send(idx);
             }
         }
         hub.diagnostics
             .set_acceptor_phase(BleTaskPhase::Dispatching);
-        radio.handoff().await;
+        drop(radio);
+        #[cfg(target_arch = "riscv32")]
+        Timer::after(DISCOVERY_TURN_REST).await;
     }
 }
 
@@ -1431,7 +1416,7 @@ pub async fn dialer<T: TroubleTransport>(
         }
         hub.diagnostics
             .set_dialer_phase(BleTaskPhase::WaitingForRadio);
-        let radio = hub.radio.acquire().await;
+        let radio = hub.acquire_radio().await;
         hub.diagnostics.set_dialer_phase(BleTaskPhase::Starting);
         let mut scanner = Scanner::new(central);
         let target = {
@@ -1476,11 +1461,14 @@ pub async fn dialer<T: TroubleTransport>(
         };
         central = scanner.into_inner();
         if let Some(target) = target {
-            let Ok(idx) = hub.free.try_receive() else {
+            let Some(lease) = hub.connection_slots.try_acquire() else {
                 hub.diagnostics.set_dialer_phase(BleTaskPhase::Dispatching);
-                radio.handoff().await;
+                drop(radio);
+                #[cfg(target_arch = "riscv32")]
+                Timer::after(DISCOVERY_TURN_REST).await;
                 continue;
             };
+            let idx = lease.index();
             let bd = target.addr;
             let whitelist = [(target.kind, &bd)];
             let mut config = ConnectConfig {
@@ -1498,9 +1486,14 @@ pub async fn dialer<T: TroubleTransport>(
             hub.diagnostics.set_dialer_phase(BleTaskPhase::Connecting);
             match central.connect(&config).await {
                 Ok(connection) => {
-                    if hub.assign[idx].try_send(SlotJob::Dial(connection)).is_err() {
+                    if hub.assign[idx]
+                        .try_send(SlotJob::Dial {
+                            connection,
+                            slot: lease,
+                        })
+                        .is_err()
+                    {
                         BleDiagnostics::increment(&hub.diagnostics.dial_failures);
-                        let _ = hub.free.try_send(idx);
                     } else {
                         hub.diagnostics.active_slots.fetch_add(1, Ordering::Relaxed);
                         BleDiagnostics::increment(&hub.diagnostics.dialed_connections);
@@ -1508,13 +1501,14 @@ pub async fn dialer<T: TroubleTransport>(
                 }
                 Err(_) => {
                     BleDiagnostics::increment(&hub.diagnostics.dial_failures);
-                    let _ = hub.free.try_send(idx);
                     let _ = hub.dial_failed.try_send(bd.into_inner());
                 }
             }
         }
         hub.diagnostics.set_dialer_phase(BleTaskPhase::Dispatching);
-        radio.handoff().await;
+        drop(radio);
+        #[cfg(target_arch = "riscv32")]
+        Timer::after(DISCOVERY_TURN_REST).await;
     }
 }
 

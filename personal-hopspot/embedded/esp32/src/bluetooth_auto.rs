@@ -187,7 +187,7 @@ pub async fn run(
 
     static HUB: StaticCell<BleHub> = StaticCell::new();
     let hub: &'static BleHub = HUB.init(BleHub::new());
-    hub.prime(address);
+    hub.set_local_address(address);
 
     let supervisor = BluetoothAuto::new(
         hub.backend(),
