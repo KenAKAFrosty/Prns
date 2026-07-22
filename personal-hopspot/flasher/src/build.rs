@@ -296,7 +296,7 @@ fn build_uf2(
     let uf2 = output_dir.join("t-echo.uf2");
     run_status(
         Command::new("python3")
-            .arg(repo.join("scripts").join("bin2uf2.py"))
+            .arg(repo.join("tools").join("device").join("bin2uf2.py"))
             .arg(&binary)
             .arg(&uf2)
             .arg(&build.base_address)
