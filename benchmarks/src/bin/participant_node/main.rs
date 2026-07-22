@@ -30,6 +30,7 @@ use personal_rns::reactor::reconnect::ReconnectPolicy;
 use personal_rns::routes;
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::links::resources::{ResourceStrategy, MAX_EFFICIENT_SIZE};
+use personal_rns::routing::links::LinkId;
 use personal_rns::routing::request_handlers::RequestPathHash;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::request_router::{
@@ -151,11 +152,27 @@ enum Event {
     Settled(CommandId, Settlement),
     Delivered(usize),
     LinkUp,
-    ResourceIn(usize),
+    ResourceIn { link_id: LinkId, bytes: usize },
+    ResourceAck(u64),
     Closed,
 }
 
 const REQUEST_PATH: &str = "/bench/query";
+const RESOURCE_ACK_PREFIX: &[u8; 8] = b"PRNSRACK";
+
+fn resource_ack_payload(sequence: u64) -> [u8; 16] {
+    let mut payload = [0u8; 16];
+    payload[..8].copy_from_slice(RESOURCE_ACK_PREFIX);
+    payload[8..].copy_from_slice(&sequence.to_be_bytes());
+    payload
+}
+
+fn parse_resource_ack(payload: &[u8]) -> Option<u64> {
+    if payload.len() != 16 || &payload[..8] != RESOURCE_ACK_PREFIX {
+        return None;
+    }
+    Some(u64::from_be_bytes(payload[8..].try_into().ok()?))
+}
 
 /// The engine's request/response codec carries the app's data as RAW msgpack value bytes. The
 /// reference packs and unpacks its side natively, so this bench frames every payload as a
@@ -212,20 +229,24 @@ fn scenario_payload(profile: &Profile, len: usize) -> Vec<u8> {
     }
 }
 
-fn await_measurement_start() {
-    use std::io::BufRead as _;
+async fn await_measurement_start() {
+    tokio::task::spawn_blocking(|| {
+        use std::io::BufRead as _;
 
-    println!("MEASURE_READY");
-    let mut command = String::new();
-    std::io::stdin()
-        .lock()
-        .read_line(&mut command)
-        .expect("read measurement command");
-    assert_eq!(
-        command.trim(),
-        "START",
-        "expected START measurement command"
-    );
+        println!("MEASURE_READY");
+        let mut command = String::new();
+        std::io::stdin()
+            .lock()
+            .read_line(&mut command)
+            .expect("read measurement command");
+        assert_eq!(
+            command.trim(),
+            "START",
+            "expected START measurement command"
+        );
+    })
+    .await
+    .expect("measurement gate task");
 }
 
 fn collection_target_receiver() -> tokio::sync::oneshot::Receiver<(u64, u64)> {
@@ -450,12 +471,19 @@ fn died_marker(died: bool) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::percentile_f64;
+    use super::{parse_resource_ack, percentile_f64, resource_ack_payload};
 
     #[test]
     fn request_percentiles_preserve_sub_millisecond_precision() {
         let samples = [0.125, 0.250, 0.375];
         assert_eq!(percentile_f64(&samples, 0.50), 0.250);
         assert!(percentile_f64(&samples, 0.50) > 0.0);
+    }
+
+    #[test]
+    fn resource_acknowledgements_are_typed_and_sequence_bound() {
+        let payload = resource_ack_payload(42);
+        assert_eq!(parse_resource_ack(&payload), Some(42));
+        assert_eq!(parse_resource_ack(b"not-a-resource-ack"), None);
     }
 }

@@ -60,10 +60,12 @@ Request/response keeps exactly four operations in flight over four pre-establish
 
 Link-message rows require exact initiator sends, responder deliveries, and application-byte totals. Stock RNS can leave a small tail of packet receipts unproved after all bytes have arrived; those are exposed separately as `receipt_unproved` and never mislabeled as wire loss.
 
+Resource rows are one logical stream: the protocol-owned part/window machinery remains asynchronous inside each resource, and the receiver sends an ordered application acknowledgement before the next logical resource starts. This prevents a transport proof from being mistaken for application delivery and makes sent, settled, received, and byte totals independently exact. The 64 MiB workload repeats the shared deterministic maximum-size block on both participants, so the wire bytes are identical while Prns can exercise its bounded-memory streaming API.
+
 A release suite is accepted only with 20/20 cells, samples `{0,1,2}`, one full 40-character source SHA, one scenario-version set, compiled RNS 1.4.0 proof, and clean scenario-owned accounting. Measurement samples are never silently retried.
 
 ## Evidence meaning
 
-Participant startup, imports, identity creation, link establishment, and link arming occur before the measurement barrier. After the deadline, outstanding protocol work drains and the initiator emits `MEASURE_DONE`; package energy and role CPU stop there, before link teardown or reporting grace sleeps. Peak role memory remains full-process peak RSS/working set. Request RTT is wall time from issue through complete response settlement and retains fractional milliseconds.
+Participant startup, imports, identity creation, link establishment, and link arming occur before the measurement barrier. Both roles must explicitly report `MEASURE_READY`; only then does the runner start CPU/energy collection and release the initiator. After the deadline, outstanding protocol and application-acknowledgement work drains and the initiator emits `MEASURE_DONE`; package energy and role CPU stop there, before link teardown or reporting grace sleeps. Peak role memory remains full-process peak RSS/working set. Request RTT is wall time from issue through complete response settlement and retains fractional milliseconds.
 
 Each suite records command lines, start/finish times, exit states, startup and measurement attempt counts, stdout/stderr logs, host/toolchain/reference proof, the exact source fingerprint, schedule order, and result-file hashes. Generated Markdown is read-only. Raw local runs are ignored; only `cargo benchmark --publish` promotes complete exact-SHA evidence and regenerates the tracked views.

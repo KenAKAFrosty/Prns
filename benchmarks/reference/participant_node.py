@@ -7,6 +7,7 @@ SINGLE packets, measuring from the reference's own packet receipts."""
 
 import json
 import os
+import queue
 import socket
 import sys
 import tempfile
@@ -15,13 +16,22 @@ import time
 from collections import deque
 
 import RNS
-from workload_vectors import DEFAULT_SIZE_SEED, SizeSequence, deterministic_payload
+from workload_vectors import (
+    DEFAULT_SIZE_SEED,
+    SizeSequence,
+    deterministic_payload,
+    repeated_payload,
+)
 
 ANNOUNCE_EVERY = 0.5
 INITIATOR_COUNT = 1
 DRAIN_GRACE = 5.0
 QUIET_AFTER_TRAFFIC = 1.5
 REQUEST_PATH = "/bench/query"
+RESOURCE_ACK_PREFIX = b"PRNSRACK"
+MAX_RESOURCE_BLOCK = 1024 * 1024 - 1
+
+
 def auto_compress_from(profile):
     """The manifest's compression posture: "off" is the transport-only baseline,
     "auto" is RNS's shipping default (auto_compress=True)."""
@@ -41,6 +51,13 @@ def scenario_payload(profile, length):
     if shape == "compressible":
         return deterministic_payload((length + 1) // 2).hex().encode()[:length]
     sys.exit(f"unknown payload shape {shape!r} (expected 'dense' or 'compressible')")
+
+
+def resource_payload(profile, length):
+    """Match Prns's bounded-memory stream: repeat one deterministic maximum
+    resource block for the full logical transfer."""
+    block = scenario_payload(profile, min(length, MAX_RESOURCE_BLOCK))
+    return repeated_payload(block, length)
 
 
 def await_measurement_start():
@@ -155,6 +172,7 @@ def respond(name, block, ready_addr, _profile):
     state["last_delivery"] = None
     destination.set_packet_callback(on_packet)
     print(f"READY role=responder addr={ready_addr}", flush=True)
+    print("MEASURE_READY", flush=True)
     while True:
         if state["delivered"] == 0:
             destination.announce()
@@ -192,7 +210,9 @@ def initiate(name, block, profile, duration):
         heard["identity"], RNS.Destination.OUT, RNS.Destination.SINGLE, "bench", name
     )
     sizes = sizes_from(profile, "payload_min", "payload_max", "payload_len")
-    scratch = scenario_payload(profile, max(profile.get("payload_max", 0), profile.get("payload_len", 0)))
+    scratch = scenario_payload(
+        profile, max(profile.get("payload_max", 0), profile.get("payload_len", 0))
+    )
     state = {"sent": 0, "delivered": 0, "timeouts": 0, "delivered_bytes": 0}
     rtts = []
     await_measurement_start()
@@ -284,10 +304,12 @@ def respond_link(name, block, ready_addr, _profile):
             done.set()
 
     def on_link(link):
-        with links_lock:
-            links["up"] += 1
         link.set_packet_callback(on_packet)
         link.set_link_closed_callback(on_closed)
+        with links_lock:
+            links["up"] += 1
+            if links["up"] == INITIATOR_COUNT:
+                print("MEASURE_READY", flush=True)
 
     destination.set_link_established_callback(on_link)
     print(f"READY role=responder addr={ready_addr}", flush=True)
@@ -330,7 +352,9 @@ def initiate_link(name, block, profile, duration):
         sys.exit("link did not establish")
 
     sizes = sizes_from(profile, "payload_min", "payload_max", "payload_len")
-    scratch = scenario_payload(profile, max(profile.get("payload_max", 0), profile.get("payload_len", 0)))
+    scratch = scenario_payload(
+        profile, max(profile.get("payload_max", 0), profile.get("payload_len", 0))
+    )
     state = {
         "sent": 0,
         "sent_bytes": 0,
@@ -418,6 +442,14 @@ def respond_resource(name, block, ready_addr, profile):
 
     state = {"received": 0, "payload_bytes": 0}
     state_changed = threading.Condition()
+    acknowledgement_queue = queue.SimpleQueue()
+
+    def send_acknowledgements():
+        while True:
+            link, sequence = acknowledgement_queue.get()
+            RNS.Packet(link, RESOURCE_ACK_PREFIX + sequence.to_bytes(8, "big")).send()
+
+    threading.Thread(target=send_acknowledgements, daemon=True).start()
 
     def on_concluded(resource):
         if resource.status == RNS.Resource.COMPLETE:
@@ -425,16 +457,20 @@ def respond_resource(name, block, ready_addr, profile):
             with state_changed:
                 state["received"] += 1
                 state["payload_bytes"] += len(data)
+                sequence = state["received"]
                 state_changed.notify_all()
+            acknowledgement_queue.put((resource.link, sequence))
 
     links = {"up": 0}
     links_lock = threading.Lock()
 
     def on_link(link):
-        with links_lock:
-            links["up"] += 1
         link.set_resource_strategy(RNS.Link.ACCEPT_ALL)
         link.set_resource_concluded_callback(on_concluded)
+        with links_lock:
+            links["up"] += 1
+            if links["up"] == INITIATOR_COUNT:
+                print("MEASURE_READY", flush=True)
 
     destination.set_link_established_callback(on_link)
     print(f"READY role=responder addr={ready_addr}", flush=True)
@@ -460,7 +496,10 @@ def respond_resource(name, block, ready_addr, profile):
                 continue
             if deadline is None:
                 deadline = time.monotonic() + profile.get("drain_timeout_ms", 30_000) / 1000.0
-            if collection["target"] == (state["received"], state["payload_bytes"]):
+            if collection["target"] == (
+                state["received"],
+                state["payload_bytes"],
+            ):
                 break
             left = deadline - time.monotonic()
             if left <= 0:
@@ -503,8 +542,23 @@ def initiate_resource(name, block, profile, duration):
     if not up.wait(30):
         sys.exit("link did not establish")
 
+    acknowledgements = {"sequence": 0}
+    acknowledgement_changed = threading.Condition()
+
+    def on_ack(message, _packet):
+        if len(message) == 16 and message[:8] == RESOURCE_ACK_PREFIX:
+            with acknowledgement_changed:
+                acknowledgements["sequence"] = max(
+                    acknowledgements["sequence"], int.from_bytes(message[8:], "big")
+                )
+                acknowledgement_changed.notify_all()
+
+    link.set_packet_callback(on_ack)
+
     sizes = sizes_from(profile, "payload_min", "payload_max", "payload_len")
-    scratch = scenario_payload(profile, max(profile.get("payload_max", 0), profile.get("payload_len", 0)))
+    scratch = resource_payload(
+        profile, max(profile.get("payload_max", 0), profile.get("payload_len", 0))
+    )
     state = {"sent": 0, "settled": 0, "failures": 0, "settled_bytes": 0}
     transfer_ms = []
     await_measurement_start()
@@ -531,6 +585,17 @@ def initiate_resource(name, block, profile, duration):
             transfer_ms.append((time.monotonic() - transfer_started) * 1000.0)
         else:
             state["failures"] += 1
+            break
+        ack_deadline = time.monotonic() + profile.get("drain_timeout_ms", 30_000) / 1000.0
+        with acknowledgement_changed:
+            while acknowledgements["sequence"] < state["sent"]:
+                left = ack_deadline - time.monotonic()
+                if left <= 0:
+                    state["failures"] += 1
+                    break
+                acknowledgement_changed.wait(left)
+            if acknowledgements["sequence"] < state["sent"]:
+                break
     elapsed_ms = int((time.monotonic() - started) * 1000)
     print("MEASURE_DONE", flush=True)
 
@@ -593,9 +658,11 @@ def respond_request(name, block, ready_addr, profile):
             done.set()
 
     def on_link(link):
+        link.set_link_closed_callback(on_closed)
         with links_lock:
             links["up"] += 1
-        link.set_link_closed_callback(on_closed)
+            if links["up"] == expected_links:
+                print("MEASURE_READY", flush=True)
 
     destination.set_link_established_callback(on_link)
     print(f"READY role=responder addr={ready_addr}", flush=True)

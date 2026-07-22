@@ -136,6 +136,7 @@ fn run_interop(args: &Args, manifest_data: &ScenarioManifest, manifest: &std::pa
         args,
     );
     await_line(&initiator, "MEASURE_READY", Duration::from_secs(30));
+    await_line(&responder, "MEASURE_READY", Duration::from_secs(30));
     phase
         .advance(MeasurementPhase::Linked)
         .expect("participants reached the measurement barrier");

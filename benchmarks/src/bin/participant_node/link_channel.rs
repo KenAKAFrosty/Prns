@@ -114,6 +114,7 @@ async fn respond(
     commands: &PrnsNodeHandle,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
+    println!("MEASURE_READY");
     let mut announce = tokio::time::interval(announce_every);
     let mut report_at = None;
     let mut delivered = 0u64;
@@ -173,7 +174,7 @@ async fn initiate(
         profile.payload_max,
         profile.payload_len,
     );
-    await_measurement_start();
+    await_measurement_start().await;
     let started = tokio::time::Instant::now();
     let deadline = started + duration;
     let mut sent = 0u64;
@@ -265,6 +266,7 @@ async fn respond_link(
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
     let mut links_up = 0usize;
+    let mut measurement_ready = false;
     let mut closed_links = 0usize;
     let mut announce = tokio::time::interval(announce_every);
     let mut announcing = true;
@@ -293,8 +295,10 @@ async fn respond_link(
                 match event {
                     Some(Event::LinkUp) => {
                         links_up += 1;
-                        if links_up >= expected_links {
+                        if links_up >= expected_links && !measurement_ready {
                             announcing = false;
+                            measurement_ready = true;
+                            println!("MEASURE_READY");
                         }
                     }
                     Some(Event::Delivered(bytes)) => {
@@ -349,7 +353,7 @@ async fn initiate_link(
         profile.payload_max,
         profile.payload_len,
     );
-    await_measurement_start();
+    await_measurement_start().await;
     let started = tokio::time::Instant::now();
     let deadline = started + duration;
     let mut sent = 0u64;

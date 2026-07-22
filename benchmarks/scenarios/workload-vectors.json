@@ -5,5 +5,8 @@
   "size_max": 300,
   "sizes": [84, 208, 175, 156, 212, 233, 190, 250],
   "payload_len": 16,
-  "payload_hex": "ad4df30bae771bdc76606e02b9eef064"
+  "payload_hex": "ad4df30bae771bdc76606e02b9eef064",
+  "resource_repeat_block_len": 8,
+  "resource_repeat_len": 24,
+  "resource_repeat_hex": "ad4df30bae771bdcad4df30bae771bdcad4df30bae771bdc"
 }

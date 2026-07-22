@@ -1,6 +1,6 @@
 {
   "name": "resource-64mib-stream",
-  "version": 3,
+  "version": 7,
   "order": 5,
   "title": "64 MiB resource stream",
   "category": "Resources",
@@ -8,7 +8,7 @@
   "primary_metric": "goodput_bytes_per_sec",
   "headline": true,
   "notes": [],
-  "description": "A single large resource transferred whole, over and over, for a fixed wall-time - the multi-segment bulk mechanism. Each logical transfer is 64 MiB sliced into MAX_EFFICIENT_SIZE segments, sent one at a time and proved before the next, so the engine and the host each hold a single segment while the receiver appends the stream to disk-sized totals. Against resource-max-segment (one segment) this measures whether the per-byte rate holds past the single-segment ceiling and whether peak memory stays flat at one segment regardless of total size. Compression is disabled on both stacks, keeping this a direct transport comparison.",
+  "description": "A single large resource transferred whole, over and over, for a fixed wall-time - the multi-segment bulk mechanism. Each logical transfer is 64 MiB sliced into MAX_EFFICIENT_SIZE segments, sent one at a time, hash-proved, and application-acknowledged before another logical transfer begins. The payload repeats one shared deterministic maximum-size block, allowing Prns to stream with bounded memory while both participants transmit identical bytes. Compression is disabled on both stacks.",
   "roles": [
     "responder",
     "initiator"
@@ -23,5 +23,5 @@
     "size_seed": 6840346605343539201
   },
   "conformance_rule": "exact-resource",
-  "conformance": "Every sent stream settles and is received with exact application-byte totals and zero failures; each transfer is a sequence of hash-proved segments assembled by original_hash before the whole is counted."
+  "conformance": "Every sent stream settles, receives its ordered application acknowledgement, and is received with exact application-byte totals and zero failures; each transfer is a sequence of hash-proved segments assembled by original_hash before the whole is counted."
 }

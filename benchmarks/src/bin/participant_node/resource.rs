@@ -38,11 +38,22 @@ pub(super) async fn run_resource_endpoint(
             }
             PrnsEvent::Diagnostic(Diagnostic::LinkEstablished(_)) => Some(Event::LinkUp),
             PrnsEvent::Diagnostic(Diagnostic::LinkClosed { .. }) => Some(Event::Closed),
-            PrnsEvent::Message(Message::Resource { data, .. }) => {
-                Some(Event::ResourceIn(data.len()))
+            PrnsEvent::Message(Message::Resource { link_id, data, .. }) => {
+                Some(Event::ResourceIn {
+                    link_id,
+                    bytes: data.len(),
+                })
             }
-            PrnsEvent::Diagnostic(Diagnostic::ResourceAssembled { total_size, .. }) => {
-                Some(Event::ResourceIn(total_size as usize))
+            PrnsEvent::Diagnostic(Diagnostic::ResourceAssembled {
+                link_id,
+                total_size,
+                ..
+            }) => Some(Event::ResourceIn {
+                link_id,
+                bytes: total_size as usize,
+            }),
+            PrnsEvent::Message(Message::Delivered(Delivery::Link(delivery))) => {
+                parse_resource_ack(delivery.plaintext).map(Event::ResourceAck)
             }
             _ => None,
         };
@@ -99,6 +110,7 @@ pub(super) async fn respond_resource_runtime(
     mut collection_target: tokio::sync::oneshot::Receiver<(u64, u64)>,
 ) {
     let mut links_up = 0usize;
+    let mut measurement_ready = false;
     let mut announce = tokio::time::interval(announce_every);
     let mut announcing = true;
     let report_at = tokio::time::Instant::now() + duration + drain + DRAIN_GRACE;
@@ -130,13 +142,23 @@ pub(super) async fn respond_resource_runtime(
                 match event {
                     Some(Event::LinkUp) => {
                         links_up += 1;
-                        if links_up >= initiator_count {
+                        if links_up >= initiator_count && !measurement_ready {
                             announcing = false;
+                            measurement_ready = true;
+                            println!("MEASURE_READY");
                         }
                     }
-                    Some(Event::ResourceIn(bytes)) => {
+                    Some(Event::ResourceIn { link_id, bytes }) => {
                         received += 1;
                         payload_bytes += bytes as u64;
+                        let ack = resource_ack_payload(received);
+                        commands
+                            .issue(EngineCommand::SendToLink(SendToLink {
+                                link_id,
+                                payload: SendToLinkPayload::from_slice(&ack)
+                                    .expect("resource acknowledgement fits"),
+                            }))
+                            .expect("resource acknowledgement is accepted");
                     }
                     Some(Event::Closed) => {}
                     None => return,
@@ -214,7 +236,7 @@ pub(super) async fn initiate_resource_runtime(
         profile.payload_max,
         profile.payload_len,
     );
-    await_measurement_start();
+    await_measurement_start().await;
     let started = tokio::time::Instant::now();
     let deadline = started + duration;
     let mut sent = 0u64;
@@ -226,7 +248,7 @@ pub(super) async fn initiate_resource_runtime(
         let len = sizes.next_len();
         sent += 1;
         let transfer_started = tokio::time::Instant::now();
-        match commands
+        let settled_clean = match commands
             .send_resource_with_compression(
                 link_id,
                 len as u64,
@@ -239,8 +261,27 @@ pub(super) async fn initiate_resource_runtime(
                 settled += 1;
                 payload_bytes += len as u64;
                 transfer_ms.push(transfer_started.elapsed().as_millis() as u64);
+                true
             }
-            Err(_) => failures += 1,
+            Err(_) => {
+                failures += 1;
+                false
+            }
+        };
+        if !settled_clean {
+            break;
+        }
+        let ack_deadline = tokio::time::Instant::now() + drain_grace(profile);
+        let acknowledged = loop {
+            match tokio::time::timeout_at(ack_deadline, events.recv()).await {
+                Ok(Some(Event::ResourceAck(sequence))) if sequence == sent => break true,
+                Ok(Some(_)) => {}
+                Ok(None) | Err(_) => break false,
+            }
+        };
+        if !acknowledged {
+            failures += 1;
+            break;
         }
     }
     let elapsed_ms = started.elapsed().as_millis().max(1) as u64;

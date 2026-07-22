@@ -392,5 +392,27 @@ mod tests {
                 .collect::<String>(),
             golden["payload_hex"].as_str().expect("payload vector")
         );
+        let block_len = golden["resource_repeat_block_len"]
+            .as_u64()
+            .expect("resource block length") as usize;
+        let stream_len = golden["resource_repeat_len"]
+            .as_u64()
+            .expect("resource stream length") as usize;
+        let block = deterministic_payload(block_len);
+        let resource_stream = block
+            .iter()
+            .copied()
+            .cycle()
+            .take(stream_len)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            resource_stream
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>(),
+            golden["resource_repeat_hex"]
+                .as_str()
+                .expect("resource stream vector")
+        );
     }
 }

@@ -148,6 +148,7 @@ pub(super) async fn respond_request_runtime(
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
     let mut links_up = 0usize;
+    let mut measurement_ready = false;
     let mut closed_links = 0usize;
     let mut announce = tokio::time::interval(announce_every);
     let mut announcing = true;
@@ -169,8 +170,10 @@ pub(super) async fn respond_request_runtime(
                 match event {
                     Some(Event::LinkUp) => {
                         links_up += 1;
-                        if links_up >= initiator_count {
+                        if links_up >= initiator_count && !measurement_ready {
                             announcing = false;
+                            measurement_ready = true;
+                            println!("MEASURE_READY");
                         }
                     }
                     Some(Event::Closed) if closed_links + 1 < initiator_count => {
@@ -261,7 +264,7 @@ pub(super) async fn initiate_request_runtime(
         profile.response_min,
     );
     let path_hash = RequestPathHash::of(REQUEST_PATH);
-    await_measurement_start();
+    await_measurement_start().await;
     let started = tokio::time::Instant::now();
     let deadline = started + duration;
     let timeout = RequestResponseTimeout::Exact(DurationMillis(profile.drain_timeout_ms));

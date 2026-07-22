@@ -45,6 +45,11 @@ def deterministic_payload(length):
     return bytes(data[:length])
 
 
+def repeated_payload(block, length):
+    repeats = (length + len(block) - 1) // len(block)
+    return (block * repeats)[:length]
+
+
 def verify_golden(path):
     golden = json.loads(Path(path).read_text(encoding="utf-8"))
     sizes = SizeSequence(
@@ -52,11 +57,23 @@ def verify_golden(path):
     )
     actual_sizes = [sizes.next_len() for _ in golden["sizes"]]
     actual_payload = deterministic_payload(golden["payload_len"]).hex()
-    if actual_sizes != golden["sizes"] or actual_payload != golden["payload_hex"]:
+    resource_block = deterministic_payload(golden["resource_repeat_block_len"])
+    actual_resource = repeated_payload(
+        resource_block, golden["resource_repeat_len"]
+    ).hex()
+    if (
+        actual_sizes != golden["sizes"]
+        or actual_payload != golden["payload_hex"]
+        or actual_resource != golden["resource_repeat_hex"]
+    ):
         raise SystemExit(
-            f"deterministic workload drift: sizes={actual_sizes}, payload={actual_payload}"
+            f"deterministic workload drift: sizes={actual_sizes}, payload={actual_payload}, "
+            f"resource={actual_resource}"
         )
-    print("WORKLOAD_VECTORS verified Rust/Python golden sizes and payload", flush=True)
+    print(
+        "WORKLOAD_VECTORS verified Rust/Python golden sizes, payload, and resource stream",
+        flush=True,
+    )
 
 
 if __name__ == "__main__":

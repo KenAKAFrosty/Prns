@@ -1,6 +1,6 @@
 {
   "name": "resource-max-segment",
-  "version": 2,
+  "version": 6,
   "order": 4,
   "title": "Maximum resource segment",
   "category": "Resources",
@@ -8,7 +8,7 @@
   "primary_metric": "goodput_bytes_per_sec",
   "headline": true,
   "notes": [],
-  "description": "Sequential maximum-size resource transfers over one link for a fixed wall-time - the bulk mechanism: one sealed stream sliced into parts, pulled by the receiver inside its AIMD window, proved whole by hash. Goodput counts settled transfers' payload bytes; the protocol itself hash-verifies every byte that arrives.",
+  "description": "Sequential maximum-size resource transfers over one link for a fixed wall-time - the bulk mechanism: one sealed stream sliced into parts, pulled by the receiver inside its AIMD window, proved whole by hash, then acknowledged after application delivery before the next logical transfer begins. Goodput counts settled and application-acknowledged payload bytes.",
   "roles": [
     "responder",
     "initiator"
@@ -22,5 +22,5 @@
     "size_seed": 6840346605343539201
   },
   "conformance_rule": "exact-resource",
-  "conformance": "Every sent transfer settles and is received with exact application-byte totals and zero failures; the receiver hash-proves each resource before settlement."
+  "conformance": "Every sent transfer settles, receives its ordered application acknowledgement, and is received with exact application-byte totals and zero failures; the receiver hash-proves each resource before settlement."
 }
