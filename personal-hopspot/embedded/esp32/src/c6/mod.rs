@@ -30,7 +30,7 @@ use personal_rns::runtime::{
     EmbassyInterfaceStore, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle,
     PrnsNodeRecipe, ReactorLaneSet, RequestHandlerRegistration, StaticReactorLane,
 };
-use personal_rns::usb_auto::UsbAutoDevice;
+use personal_rns::usb_auto::{UsbAutoDevice, UsbAutoDeviceInput};
 
 use crate::storage::{C6Storage, EngineStorageType};
 
@@ -188,7 +188,12 @@ async fn usb_device_task(
         last_sof = frame;
         advanced
     };
-    let device = UsbAutoDevice::new(USB_INTERFACE_ID, rx, tx, &USB_STATUS, host_present);
+    let device = UsbAutoDevice::new(UsbAutoDeviceInput {
+        rx,
+        tx,
+        status: &USB_STATUS,
+        host_present,
+    });
     device.run(seam).await
 }
 

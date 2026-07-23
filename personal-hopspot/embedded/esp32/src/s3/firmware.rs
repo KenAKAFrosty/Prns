@@ -36,19 +36,25 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     #[cfg(feature = "lora")]
     let lora_radio = b.lora_radio;
     let lora_profile = DEFAULT_915_PROFILE;
-    let lora_id = InterfaceId::from_channel_tag(InterfaceKind::LoRa, &channel_tag(&lora_profile));
+    let lora_id = LoRaInterface::<
+        ExclusiveDevice<Spi<'static, esp_hal::Async>, Output<'static>, Delay>,
+        Input<'static>,
+        Input<'static>,
+        Output<'static>,
+        Delay,
+    >::interface_id(&lora_profile);
     let lora_status: &'static EmbassyInterfaceStatus = mk_static!(
         EmbassyInterfaceStatus,
         EmbassyInterfaceStatus::new(lora_id, ConnectionState::Initializing)
     );
     #[cfg(feature = "lora")]
-    let lora = LoRaInterface::new(
-        lora_radio,
-        lora_profile,
-        &LORA_CONTROL,
-        lora_status,
-        LIFECYCLE.dyn_sender(),
-    );
+    let lora = LoRaInterface::new(LoRaInterfaceInput {
+        radio: lora_radio,
+        profile: lora_profile,
+        control: &LORA_CONTROL,
+        status: lora_status,
+        lifecycle: LIFECYCLE.dyn_sender(),
+    });
 
     // The WiFi stack carries both the WiFi-auto UDP and the TCP client, so it stands up before the
     // node moves to core 1 — activating the TCP slot is a core-0-only act.
@@ -180,9 +186,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     });
 
     let usb_seam = usb_lane.into_seam(NOTIFY.sender(), hardware_entropy);
-    spawner.spawn(
-        usb_device_task(usb_rx, usb_tx, usb_seam, usb_id, usb_status).expect("usb task fits"),
-    );
+    spawner.spawn(usb_device_task(usb_rx, usb_tx, usb_seam, usb_status).expect("usb task fits"));
 
     #[cfg(feature = "lora")]
     let lora_seam = lora_lane.into_seam(NOTIFY.sender(), hardware_entropy);

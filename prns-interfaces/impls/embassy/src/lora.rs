@@ -248,6 +248,14 @@ where
     true
 }
 
+pub struct LoRaInterfaceInput<'a, SPI, BUSY, DIO1, RST, DLY> {
+    pub radio: Sx126x<SPI, BUSY, DIO1, RST, DLY>,
+    pub profile: RadioProfile,
+    pub control: &'a LoRaControl,
+    pub status: &'a EmbassyInterfaceStatus,
+    pub lifecycle: DynamicSender<'a, InterfaceLifecycle>,
+}
+
 pub struct LoRaInterface<'a, SPI, BUSY, DIO1, RST, DLY> {
     id: InterfaceId,
     radio: Sx126x<SPI, BUSY, DIO1, RST, DLY>,
@@ -256,7 +264,7 @@ pub struct LoRaInterface<'a, SPI, BUSY, DIO1, RST, DLY> {
     tag: HeaplessVec<u8, CHANNEL_TAG_CAP>,
     control: &'a LoRaControl,
     status: &'a EmbassyInterfaceStatus,
-    retag: DynamicSender<'a, InterfaceLifecycle>,
+    lifecycle: DynamicSender<'a, InterfaceLifecycle>,
 }
 
 impl<'a, SPI, BUSY, DIO1, RST, DLY> LoRaInterface<'a, SPI, BUSY, DIO1, RST, DLY> {
@@ -267,15 +275,16 @@ impl<'a, SPI, BUSY, DIO1, RST, DLY> LoRaInterface<'a, SPI, BUSY, DIO1, RST, DLY>
     }
 
     #[must_use]
-    pub fn new(
-        radio: Sx126x<SPI, BUSY, DIO1, RST, DLY>,
-        profile: RadioProfile,
-        control: &'a LoRaControl,
-        status: &'a EmbassyInterfaceStatus,
-        retag: DynamicSender<'a, InterfaceLifecycle>,
-    ) -> Self {
+    pub fn new(input: LoRaInterfaceInput<'a, SPI, BUSY, DIO1, RST, DLY>) -> Self {
+        let LoRaInterfaceInput {
+            radio,
+            profile,
+            control,
+            status,
+            lifecycle,
+        } = input;
         let tag = lora::channel_tag(&profile);
-        let id = InterfaceId::from_channel_tag(InterfaceKind::LoRa, &tag);
+        let id = Self::interface_id(&profile);
         let duty = profile.region.regulatory_duty_cycle();
         Self {
             id,
@@ -285,7 +294,7 @@ impl<'a, SPI, BUSY, DIO1, RST, DLY> LoRaInterface<'a, SPI, BUSY, DIO1, RST, DLY>
             tag,
             control,
             status,
-            retag,
+            lifecycle,
         }
     }
 
@@ -329,7 +338,7 @@ where
             tag: _,
             control,
             status,
-            retag,
+            lifecycle,
         } = self;
         let mut current_id = id;
 
@@ -515,7 +524,7 @@ where
                                     current_id = *new_id;
                                     status.set_id(*new_id);
                                 }
-                                retag.send(message).await;
+                                lifecycle.send(message).await;
                             }
                         }
                         if let Err(e) = radio.arm_rx().await {

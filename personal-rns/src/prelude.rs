@@ -44,7 +44,7 @@ pub use crate::i2p::I2pInterface;
 #[cfg(all(feature = "kiss", feature = "tokio-host"))]
 pub use crate::kiss::KissInterface;
 #[cfg(all(feature = "lora", feature = "embassy-host"))]
-pub use crate::lora::LoRaInterface;
+pub use crate::lora::{LoRaInterface, LoRaInterfaceInput};
 #[cfg(all(feature = "pipe", feature = "tokio-host"))]
 pub use crate::pipe::PipeInterface;
 #[cfg(all(feature = "rnode", feature = "tokio-host"))]
@@ -54,15 +54,15 @@ pub use crate::serial::SerialInterface;
 #[cfg(all(feature = "shared-instance", feature = "tokio-host"))]
 pub use crate::shared_instance::SharedInstanceServer;
 #[cfg(all(feature = "tcp", feature = "embassy-host", not(feature = "tokio-host")))]
-pub use crate::tcp::TcpClient;
+pub use crate::tcp::{TcpClient, TcpClientInput, TcpSocketBuffers};
 #[cfg(all(feature = "tcp", feature = "tokio-host"))]
 pub use crate::tcp::{TcpClientInterface, TcpServer};
 #[cfg(all(feature = "udp", feature = "tokio-host"))]
 pub use crate::udp::UdpInterface;
-#[cfg(all(feature = "usb", feature = "embassy-host"))]
-pub use crate::usb_auto::UsbAutoDevice;
 #[cfg(all(feature = "usb", feature = "tokio-host"))]
 pub use crate::usb_auto::{AutoUsb, UsbAutoHost};
+#[cfg(all(feature = "usb", feature = "embassy-host"))]
+pub use crate::usb_auto::{UsbAutoDevice, UsbAutoDeviceInput};
 #[cfg(all(feature = "weave", feature = "tokio-host"))]
 pub use crate::weave::WeaveInterface;
 #[cfg(all(feature = "websocket", feature = "tokio-host"))]
@@ -72,6 +72,12 @@ pub use crate::websocket::{WebSocketClientInterface, WebSocketServer};
     any(feature = "tokio-host", feature = "embassy-host")
 ))]
 pub use crate::wifi_auto::AutoWifi;
+#[cfg(all(
+    feature = "wifi-auto",
+    feature = "embassy-host",
+    not(feature = "tokio-host")
+))]
+pub use crate::wifi_auto::{AutoWifiSegment, AutoWifiTopology};
 #[cfg(all(feature = "wifi-aware", feature = "tokio-host"))]
 pub use crate::wifi_aware::WifiAwareAuto;
 #[cfg(all(feature = "wifi-direct", feature = "tokio-host"))]

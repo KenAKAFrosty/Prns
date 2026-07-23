@@ -75,7 +75,7 @@ use personal_rns::interfaces::bluetooth_auto::{BleIdentity, BLE_HW_MTU};
 use personal_rns::interfaces::esp_now::{
     self as espnow_core, Channel as EspNowChannel, ChannelPolicy, ESP_NOW_V2_AIR_MTU,
 };
-use personal_rns::interfaces::lora::{channel_tag, DEFAULT_915_PROFILE, LORA_MAX_PAYLOAD};
+use personal_rns::interfaces::lora::{DEFAULT_915_PROFILE, LORA_MAX_PAYLOAD};
 use personal_rns::interfaces::usb_auto::device_descriptor;
 use personal_rns::interfaces::wifi_auto as wifi_auto_contract;
 use personal_rns::interfaces::BitrateBps;
@@ -83,7 +83,7 @@ use personal_rns::interfaces::{
     ConnectionState, InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus, MacAddress,
     Membership,
 };
-use personal_rns::lora::{LoRaControl, LoRaInterface};
+use personal_rns::lora::{LoRaControl, LoRaInterface, LoRaInterfaceInput};
 use personal_rns::radios::sx126x::Sx126x;
 use personal_rns::reactor::embassy::{
     EmbassyHost, EmbassyInterfaceSeam, EmbassyInterfaceStatus, EmbassyTimebase, InterfaceLifecycle,
@@ -96,9 +96,11 @@ use personal_rns::runtime::{
     PrnsNodeRecipe, ReactorLaneSet, RequestHandlerRegistration, StaticReactorLane,
 };
 use personal_rns::storage::StorageLayout;
-use personal_rns::tcp::TcpClient;
-use personal_rns::usb_auto::UsbAutoDevice;
-use personal_rns::wifi_auto::{AutoWifi, AutoWifiShared, AutoWifiStatus};
+use personal_rns::tcp::{TcpClient, TcpClientInput, TcpSocketBuffers};
+use personal_rns::usb_auto::{UsbAutoDevice, UsbAutoDeviceInput};
+use personal_rns::wifi_auto::{
+    AutoWifi, AutoWifiSegment, AutoWifiShared, AutoWifiStatus, AutoWifiTopology,
+};
 #[cfg(feature = "bluetooth-auto")]
 use prns_interfaces_embassy::bluetooth_auto::PEER_CAPACITY as EMBEDDED_BLE_PEER_CAPACITY;
 
@@ -363,7 +365,6 @@ async fn usb_device_task(
     rx: UsbSerialJtagRx<'static, Async>,
     tx: UsbSerialJtagTx<'static, Async>,
     seam: UsbSeam,
-    id: InterfaceId,
     status: &'static EmbassyInterfaceStatus,
 ) {
     let mut last_sof = 0u16;
@@ -377,7 +378,12 @@ async fn usb_device_task(
         last_sof = frame;
         advanced
     };
-    let device = UsbAutoDevice::new(id, rx, tx, status, host_present);
+    let device = UsbAutoDevice::new(UsbAutoDeviceInput {
+        rx,
+        tx,
+        status,
+        host_present,
+    });
     device.run(seam).await
 }
 

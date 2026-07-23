@@ -12,7 +12,9 @@ use embedded_io_async::{Error, ErrorKind, Read, Write};
 use prns_core::interfaces::usb_auto::{
     self as contract, Capabilities, InboundReaction, Message, NodeTag,
 };
-use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
+use prns_core::interfaces::{
+    ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceStatus,
+};
 use prns_runtime::reactor::driver::EmbassyInterfaceStatus;
 use prns_runtime::reactor::interface_seam::{
     Interface, InterfaceSeam, OutboundDisposition, OutboundDropReason,
@@ -137,31 +139,39 @@ enum PresenceVerdict {
     Absent,
 }
 
+pub struct UsbAutoDeviceInput<'a, R, W, P> {
+    pub rx: R,
+    pub tx: W,
+    pub status: &'a EmbassyInterfaceStatus,
+    pub host_present: P,
+}
+
 pub struct UsbAutoDevice<'a, R, W, P> {
     id: InterfaceId,
     rx: R,
     tx: W,
     node_tag: NodeTag,
     status: &'a EmbassyInterfaceStatus,
-    presence: P,
+    host_present: P,
 }
 
 impl<'a, R, W, P> UsbAutoDevice<'a, R, W, P> {
     #[must_use]
-    pub fn new(
-        id: InterfaceId,
-        rx: R,
-        tx: W,
-        status: &'a EmbassyInterfaceStatus,
-        presence: P,
-    ) -> Self {
+    pub fn new(input: UsbAutoDeviceInput<'a, R, W, P>) -> Self {
+        let UsbAutoDeviceInput {
+            rx,
+            tx,
+            status,
+            host_present,
+        } = input;
+        let id = status.id();
         Self {
             id,
             rx,
             tx,
             node_tag: contract::node_tag_for(id),
             status,
-            presence,
+            host_present,
         }
     }
 }
@@ -190,7 +200,7 @@ where
             mut tx,
             node_tag,
             status,
-            mut presence,
+            mut host_present,
         } = self;
         let mut decoder = contract::Decoder::new();
         let mut read_buf = [0u8; contract::READ_CHUNK_BYTES];
@@ -229,7 +239,7 @@ where
                 Either3::First(()) => {}
                 Either3::Second(()) => {
                     presence_probe_at = Instant::now() + PRESENCE_PROBE_INTERVAL;
-                    match presence_verdict(presence(), &mut absent_probes) {
+                    match presence_verdict(host_present(), &mut absent_probes) {
                         PresenceVerdict::Present | PresenceVerdict::SuspectedAbsent => {}
                         PresenceVerdict::Absent => {
                             decoder = contract::Decoder::new();
@@ -686,17 +696,16 @@ mod tests {
         let (mut out_tx, out_rx) = leaked_grant_lane::<DEVICE_SLOT>(1);
 
         block_on(async {
-            let device = UsbAutoDevice::new(
-                device_id(),
-                MockStream {
+            let device = UsbAutoDevice::new(UsbAutoDeviceInput {
+                rx: MockStream {
                     buf: &host_to_device,
                 },
-                MockStream {
+                tx: MockStream {
                     buf: &device_to_host,
                 },
-                &status,
-                || true,
-            );
+                status: &status,
+                host_present: || true,
+            });
             let inner =
                 EmbassyInterfaceSeam::new(device_id(), in_tx, notify.sender(), out_rx, |bytes| {
                     bytes.fill(0)
@@ -775,17 +784,16 @@ mod tests {
         let (mut out_tx, out_rx) = leaked_grant_lane::<DEVICE_SLOT>(1);
 
         block_on(async {
-            let device = UsbAutoDevice::new(
-                device_id(),
-                MockStream {
+            let device = UsbAutoDevice::new(UsbAutoDeviceInput {
+                rx: MockStream {
                     buf: &host_to_device,
                 },
-                MockStream {
+                tx: MockStream {
                     buf: &device_to_host,
                 },
-                &status,
-                || true,
-            );
+                status: &status,
+                host_present: || true,
+            });
             let inner =
                 EmbassyInterfaceSeam::new(device_id(), in_tx, notify.sender(), out_rx, |bytes| {
                     bytes.fill(0)
@@ -1041,17 +1049,16 @@ mod tests {
             .extend(frame[..n].iter().copied());
 
         block_on(async {
-            let device = UsbAutoDevice::new(
-                device_id(),
-                MockStream {
+            let device = UsbAutoDevice::new(UsbAutoDeviceInput {
+                rx: MockStream {
                     buf: &host_to_device,
                 },
-                MockStream {
+                tx: MockStream {
                     buf: &device_to_host,
                 },
-                &status,
-                || true,
-            );
+                status: &status,
+                host_present: || true,
+            });
             let seam =
                 EmbassyInterfaceSeam::new(device_id(), in_tx, notify.sender(), out_rx, |bytes| {
                     bytes.fill(0)
@@ -1093,20 +1100,19 @@ mod tests {
         let (_out_tx, out_rx) = leaked_grant_lane::<DEVICE_SLOT>(1);
 
         block_on(async {
-            let device = UsbAutoDevice::new(
-                device_id(),
-                ScriptedReader {
+            let device = UsbAutoDevice::new(UsbAutoDeviceInput {
+                rx: ScriptedReader {
                     actions: &read_actions,
                     calls: &read_calls,
                     cancellations: &read_cancellations,
                 },
-                ScriptedWriter {
+                tx: ScriptedWriter {
                     actions: &write_actions,
                     cancellations: &write_cancellations,
                 },
-                &status,
-                || true,
-            );
+                status: &status,
+                host_present: || true,
+            });
             let seam =
                 EmbassyInterfaceSeam::new(device_id(), in_tx, notify.sender(), out_rx, |bytes| {
                     bytes.fill(0)

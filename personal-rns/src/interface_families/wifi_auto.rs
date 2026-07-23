@@ -6,5 +6,5 @@ pub use prns_interfaces_tokio::wifi_auto::{
 
 #[cfg(all(feature = "embassy-host", not(feature = "tokio-host")))]
 pub use prns_interfaces_embassy::wifi_auto::{
-    AutoWifi, AutoWifiShared, AutoWifiStatus, WifiMemberStatus,
+    AutoWifi, AutoWifiSegment, AutoWifiShared, AutoWifiStatus, AutoWifiTopology, WifiMemberStatus,
 };

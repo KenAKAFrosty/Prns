@@ -1,1 +1,1 @@
-pub use prns_interfaces_embassy::lora::{LoRaControl, LoRaInterface};
+pub use prns_interfaces_embassy::lora::{LoRaControl, LoRaInterface, LoRaInterfaceInput};

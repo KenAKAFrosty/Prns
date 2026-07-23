@@ -20,6 +20,22 @@ pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// A connection idle past [`SOCKET_TIMEOUT`] is dropped for reconnect, while [`KEEP_ALIVE`] prevents a quiet live link from reaching that timeout.
 pub const SOCKET_TIMEOUT: Duration = Duration::from_secs(24);
 pub const KEEP_ALIVE: Duration = Duration::from_secs(5);
+
+pub struct TcpSocketBuffers<'a> {
+    pub rx: &'a mut [u8],
+    pub tx: &'a mut [u8],
+}
+
+pub struct TcpClientInput<'a> {
+    pub stack: Stack<'a>,
+    pub target: IpEndpoint,
+    pub channel_tag: &'a [u8],
+    pub bitrate: BitrateBps,
+    pub reconnect_policy: ReconnectPolicy,
+    pub socket_buffers: TcpSocketBuffers<'a>,
+    pub status: &'a EmbassyInterfaceStatus,
+}
+
 pub struct TcpClient<'a> {
     id: InterfaceId,
     stack: Stack<'a>,
@@ -39,29 +55,25 @@ impl<'a> TcpClient<'a> {
     }
 
     #[must_use]
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "embedded serve-loop internals pass the loop's split-borrowed locals; bundling awaits an on-hardware validation pass"
-    )]
-    pub fn new(
-        stack: Stack<'a>,
-        target: IpEndpoint,
-        tag: &'a [u8],
-        bitrate: BitrateBps,
-        reconnect_policy: ReconnectPolicy,
-        rx_buffer: &'a mut [u8],
-        tx_buffer: &'a mut [u8],
-        status: &'a EmbassyInterfaceStatus,
-    ) -> Self {
-        Self {
-            id: Self::interface_id(tag),
+    pub fn new(input: TcpClientInput<'a>) -> Self {
+        let TcpClientInput {
             stack,
             target,
-            tag,
+            channel_tag,
             bitrate,
             reconnect_policy,
-            rx_buffer,
-            tx_buffer,
+            socket_buffers,
+            status,
+        } = input;
+        Self {
+            id: Self::interface_id(channel_tag),
+            stack,
+            target,
+            tag: channel_tag,
+            bitrate,
+            reconnect_policy,
+            rx_buffer: socket_buffers.rx,
+            tx_buffer: socket_buffers.tx,
             status,
         }
     }

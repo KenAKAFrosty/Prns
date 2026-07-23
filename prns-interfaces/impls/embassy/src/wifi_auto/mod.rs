@@ -4,7 +4,7 @@ use ::core::cell::Cell;
 use ::core::net::Ipv6Addr;
 
 use embassy_futures::join::join;
-use embassy_futures::select::{select, select3, select4, Either, Either3, Either4};
+use embassy_futures::select::{select, select4, Either, Either4};
 use embassy_net::udp::{RecvError, UdpMetadata, UdpSocket};
 use embassy_net::{IpAddress, Stack};
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex};
@@ -288,18 +288,24 @@ impl<const MEMBERS: usize> InterfaceStatus for AutoWifiStatus<MEMBERS> {
     }
 }
 
+pub struct AutoWifiSegment<'a> {
+    pub stack: Stack<'a>,
+    pub discovery: UdpSocket<'a>,
+    pub data: UdpSocket<'a>,
+    pub mac: [u8; 6],
+}
+
+pub struct AutoWifiTopology<'a> {
+    pub primary: AutoWifiSegment<'a>,
+    pub secondary: Option<AutoWifiSegment<'a>>,
+}
+
 pub struct AutoWifi<'a, const MEMBERS: usize> {
-    stack: Stack<'a>,
-    discovery: UdpSocket<'a>,
-    data: UdpSocket<'a>,
+    primary: AutoWifiSegment<'a>,
+    secondary: Option<AutoWifiSegment<'a>>,
     brain: contract::FixedAutoInterfaceProtocol<MEMBERS>,
     status: AutoWifiStatus<MEMBERS>,
     bitrate: BitrateBps,
-    secondary_stack: Option<Stack<'a>>,
-    secondary_discovery: Option<UdpSocket<'a>>,
-    secondary_data: Option<UdpSocket<'a>>,
-    /// Must be derived from the secondary link-local address because peers validate the token against the beacon source.
-    secondary_token: Option<[u8; 32]>,
 }
 
 impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
@@ -309,42 +315,17 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
     }
 
     #[must_use]
-    pub fn new(
-        stack: Stack<'a>,
-        discovery: UdpSocket<'a>,
-        data: UdpSocket<'a>,
-        mac: [u8; 6],
-        shared: &'static AutoWifiShared<MEMBERS>,
-    ) -> Self {
+    pub fn new(topology: AutoWifiTopology<'a>, shared: &'static AutoWifiShared<MEMBERS>) -> Self {
+        let brain =
+            contract::FixedAutoInterfaceProtocol::new(MacAddress::new(topology.primary.mac));
         Self {
-            stack,
-            discovery,
-            data,
-            brain: contract::FixedAutoInterfaceProtocol::new(MacAddress::new(mac)),
+            primary: topology.primary,
+            secondary: topology.secondary,
+            brain,
             status: AutoWifiStatus::new(shared),
             bitrate: contract::WIFI_LAN_BITRATE_BPS
                 .min(contract::WIFI_EMBEDDED_BITRATE_CEILING_BPS),
-            secondary_stack: None,
-            secondary_discovery: None,
-            secondary_data: None,
-            secondary_token: None,
         }
-    }
-
-    #[must_use]
-    pub fn with_secondary_netif(
-        mut self,
-        stack: Stack<'a>,
-        discovery: UdpSocket<'a>,
-        data: UdpSocket<'a>,
-        mac: [u8; 6],
-    ) -> Self {
-        let link_local = contract::link_local_from_mac(MacAddress::new(mac));
-        self.secondary_stack = Some(stack);
-        self.secondary_discovery = Some(discovery);
-        self.secondary_data = Some(data);
-        self.secondary_token = Some(*contract::peering_token(&link_local).as_bytes());
-        self
     }
 
     #[must_use]
@@ -361,13 +342,15 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
     ) where
         M: RawMutex + 'static,
     {
-        wait_for_stack(&self.stack, self.status).await;
+        wait_for_stack(&self.primary.stack, self.status).await;
         let primary_ok = self
+            .primary
             .discovery
             .bind(contract::DEFAULT_DISCOVERY_PORT)
             .is_ok()
-            && self.data.bind(contract::DEFAULT_DATA_PORT).is_ok()
+            && self.primary.data.bind(contract::DEFAULT_DATA_PORT).is_ok()
             && self
+                .primary
                 .stack
                 .join_multicast_group(IpAddress::Ipv6(contract::DISCOVERY_GROUP))
                 .is_ok();
@@ -380,25 +363,23 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
             return;
         }
 
-        let secondary_configured = self.secondary_stack.is_some();
-        let secondary_ok = if let (Some(stack), Some(discovery), Some(data)) = (
-            self.secondary_stack.as_ref(),
-            self.secondary_discovery.as_mut(),
-            self.secondary_data.as_mut(),
-        ) {
-            wait_for_secondary_stack(stack, self.status).await
-                && discovery.bind(contract::DEFAULT_DISCOVERY_PORT).is_ok()
-                && data.bind(contract::DEFAULT_DATA_PORT).is_ok()
-                && stack
+        let secondary_configured = self.secondary.is_some();
+        let secondary_ok = if let Some(segment) = self.secondary.as_mut() {
+            wait_for_secondary_stack(&segment.stack, self.status).await
+                && segment
+                    .discovery
+                    .bind(contract::DEFAULT_DISCOVERY_PORT)
+                    .is_ok()
+                && segment.data.bind(contract::DEFAULT_DATA_PORT).is_ok()
+                && segment
+                    .stack
                     .join_multicast_group(IpAddress::Ipv6(contract::DISCOVERY_GROUP))
                     .is_ok()
         } else {
             false
         };
         if !secondary_ok {
-            self.secondary_stack = None;
-            self.secondary_discovery = None;
-            self.secondary_data = None;
+            self.secondary = None;
         }
         crate::diagnostic_log::debug!(
             "wifi-auto: secondary segment {}",
@@ -416,7 +397,10 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
         let mut peer_on_secondary: [bool; MEMBERS] = [false; MEMBERS];
 
         let token = *self.brain.our_peering_token().as_bytes();
-        let secondary_token = self.secondary_token;
+        let secondary_token = self.secondary.as_ref().map(|segment| {
+            let link_local = contract::link_local_from_mac(MacAddress::new(segment.mac));
+            *contract::peering_token(&link_local).as_bytes()
+        });
         let mut beacon = Ticker::every(BEACON_INTERVAL);
         let mut fanout_start = 0;
         let mut discovery_buf = [0u8; 64];
@@ -436,14 +420,17 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
             }
             match select(
                 select4(
-                    self.discovery.recv_from(&mut discovery_buf),
-                    self.data.recv_from(&mut data_buf[..]),
+                    self.primary.discovery.recv_from(&mut discovery_buf),
+                    self.primary.data.recv_from(&mut data_buf[..]),
                     beacon.next(),
                     fleet.next_outbound(),
                 ),
-                select3(
-                    recv_or_pending(&self.secondary_discovery, &mut sec_discovery_buf),
-                    recv_or_pending(&self.secondary_data, &mut sec_data_buf[..]),
+                select(
+                    next_secondary_datagram(
+                        &self.secondary,
+                        &mut sec_discovery_buf,
+                        &mut sec_data_buf[..],
+                    ),
                     self.status.wait_until_disabled(),
                 ),
             )
@@ -487,9 +474,9 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                     let sends = with_timeout(
                         SEND_TIMEOUT,
                         join(
-                            send_beacon(Some(&self.discovery), Some(&token)),
+                            send_beacon(Some(&self.primary.discovery), Some(&token)),
                             send_beacon(
-                                self.secondary_discovery.as_ref(),
+                                self.secondary.as_ref().map(|segment| &segment.discovery),
                                 secondary_token.as_ref(),
                             ),
                         ),
@@ -519,8 +506,8 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                             fanout_start = (fanout_start + 1) % MEMBERS;
                         }
                         let mut sender = UdpFanoutSender {
-                            primary: &self.data,
-                            secondary: self.secondary_data.as_ref(),
+                            primary: &self.primary.data,
+                            secondary: self.secondary.as_ref().map(|segment| &segment.data),
                             peers: &peers,
                             peer_on_secondary: &peer_on_secondary,
                             status: self.status,
@@ -530,7 +517,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                         let _ = select(self.status.wait_until_disabled(), dispatch).await;
                     }
                 }
-                Either::Second(Either3::First(received)) => {
+                Either::Second(Either::First(SecondaryDatagram::Discovery(received))) => {
                     if let Ok((len, meta)) = received {
                         if let IpAddress::Ipv6(src) = meta.endpoint.addr {
                             ingest_beacon(
@@ -550,7 +537,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                         }
                     }
                 }
-                Either::Second(Either3::Second(received)) => {
+                Either::Second(Either::First(SecondaryDatagram::Data(received))) => {
                     if let Ok((len, meta)) = received {
                         if let IpAddress::Ipv6(src) = meta.endpoint.addr {
                             route_inbound(
@@ -564,19 +551,33 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                         }
                     }
                 }
-                Either::Second(Either3::Third(())) => {}
+                Either::Second(Either::Second(())) => {}
             }
         }
     }
 }
 
-async fn recv_or_pending(
-    socket: &Option<UdpSocket<'_>>,
-    buf: &mut [u8],
-) -> Result<(usize, UdpMetadata), RecvError> {
-    match socket {
-        Some(socket) => socket.recv_from(buf).await,
-        None => ::core::future::pending().await,
+enum SecondaryDatagram {
+    Discovery(Result<(usize, UdpMetadata), RecvError>),
+    Data(Result<(usize, UdpMetadata), RecvError>),
+}
+
+async fn next_secondary_datagram(
+    segment: &Option<AutoWifiSegment<'_>>,
+    discovery_buf: &mut [u8],
+    data_buf: &mut [u8],
+) -> SecondaryDatagram {
+    let Some(segment) = segment else {
+        return ::core::future::pending().await;
+    };
+    match select(
+        segment.discovery.recv_from(discovery_buf),
+        segment.data.recv_from(data_buf),
+    )
+    .await
+    {
+        Either::First(received) => SecondaryDatagram::Discovery(received),
+        Either::Second(received) => SecondaryDatagram::Data(received),
     }
 }
 

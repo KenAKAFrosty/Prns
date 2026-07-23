@@ -30,10 +30,10 @@ use personal_rns::engine::{
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::IdentitySigner;
 use personal_rns::interfaces::bluetooth_auto::{Endpoint, LinkCapabilities, Nrf52Host, BLE_HW_MTU};
-use personal_rns::interfaces::lora::{channel_tag, DEFAULT_915_PROFILE};
+use personal_rns::interfaces::lora::DEFAULT_915_PROFILE;
 use personal_rns::interfaces::usb_auto::{WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID};
-use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus};
-use personal_rns::lora::LoRaInterface;
+use personal_rns::interfaces::{ConnectionState, InterfaceStatus};
+use personal_rns::lora::{LoRaInterface, LoRaInterfaceInput};
 use personal_rns::radios::sx126x::{BoardConfig, Sx126x, TcxoVoltage};
 use personal_rns::reactor::embassy::{EmbassyHost, EmbassyInterfaceStatus};
 use personal_rns::reactor::interface_seam::Interface;
@@ -42,7 +42,7 @@ use personal_rns::runtime::{
     RequestHandlerRegistration,
 };
 use personal_rns::storage::StorageLayout;
-use personal_rns::usb_auto::UsbAutoDevice;
+use personal_rns::usb_auto::{UsbAutoDevice, UsbAutoDeviceInput};
 use personal_rns::usb_auto::{WebUsbAutoClass, WebUsbAutoState, WEBUSB_AUTO_PACKET_SIZE};
 
 use super::bluetooth_auto::{
@@ -210,18 +210,24 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
 
     let mut reactor_lanes = ReactorLanes::new();
     let lora_profile = DEFAULT_915_PROFILE;
-    let lora_id = InterfaceId::from_channel_tag(InterfaceKind::LoRa, &channel_tag(&lora_profile));
+    let lora_id = LoRaInterface::<
+        ExclusiveDevice<Spim<'static>, Output<'static>, Delay>,
+        Input<'static>,
+        Input<'static>,
+        Output<'static>,
+        Delay,
+    >::interface_id(&lora_profile);
     static LORA_STATUS: StaticCell<EmbassyInterfaceStatus> = StaticCell::new();
     let lora_status: &'static EmbassyInterfaceStatus = LORA_STATUS.init(
         EmbassyInterfaceStatus::new(lora_id, ConnectionState::Initializing),
     );
-    let lora = LoRaInterface::new(
+    let lora = LoRaInterface::new(LoRaInterfaceInput {
         radio,
-        lora_profile,
-        &LORA_CONTROL,
-        lora_status,
-        LIFECYCLE.dyn_sender(),
-    );
+        profile: lora_profile,
+        control: &LORA_CONTROL,
+        status: lora_status,
+        lifecycle: LIFECYCLE.dyn_sender(),
+    });
 
     let (usb_tx, usb_rx) = class.split();
     static USB_STATUS: StaticCell<EmbassyInterfaceStatus> = StaticCell::new();
@@ -229,7 +235,12 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
         USB_INTERFACE_ID,
         ConnectionState::Initializing,
     ));
-    let usb_dev = UsbAutoDevice::new(USB_INTERFACE_ID, usb_rx, usb_tx, usb_status, || true);
+    let usb_dev = UsbAutoDevice::new(UsbAutoDeviceInput {
+        rx: usb_rx,
+        tx: usb_tx,
+        status: usb_status,
+        host_present: || true,
+    });
 
     let lora_lane = reactor_lanes
         .claim_interface(&LORA_REACTOR_LANE, lora.descriptor())

@@ -15,24 +15,26 @@ pub(super) fn build_tcp(
 )> {
     let addr = HOPSPOT_TCP_TARGET.parse::<::core::net::SocketAddr>().ok()?;
     let target = IpEndpoint::new(addr.ip().into(), addr.port());
-    let tag = HOPSPOT_TCP_TARGET.as_bytes();
-    let id = TcpClient::interface_id(tag);
+    let channel_tag = HOPSPOT_TCP_TARGET.as_bytes();
+    let id = TcpClient::interface_id(channel_tag);
     let status: &'static EmbassyInterfaceStatus = mk_static!(
         EmbassyInterfaceStatus,
         EmbassyInterfaceStatus::new(id, ConnectionState::Initializing)
     );
     let rx_buffer: &'static mut [u8] = mk_static!([u8; TCP_SOCKET_BUF], [0u8; TCP_SOCKET_BUF]);
     let tx_buffer: &'static mut [u8] = mk_static!([u8; TCP_SOCKET_BUF], [0u8; TCP_SOCKET_BUF]);
-    let tcp = TcpClient::new(
+    let tcp = TcpClient::new(TcpClientInput {
         stack,
         target,
-        tag,
-        TCP_BITRATE_BPS,
-        ReconnectPolicy::STANDARD,
-        rx_buffer,
-        tx_buffer,
+        channel_tag,
+        bitrate: TCP_BITRATE_BPS,
+        reconnect_policy: ReconnectPolicy::STANDARD,
+        socket_buffers: TcpSocketBuffers {
+            rx: rx_buffer,
+            tx: tx_buffer,
+        },
         status,
-    );
+    });
     Some((tcp, status, id))
 }
 
@@ -68,68 +70,71 @@ pub(super) fn build_wifi(
 
     // Opportunistic station uplink: only a configured SSID stands a station netif up and runs
     // the connect loop; otherwise the keepalive task just owns the controller, no scanning.
-    let station_segment: Option<(Stack<'static>, UdpSocket<'static>, UdpSocket<'static>)> =
-        if config.has_station() {
-            let link_local = wifi_auto_contract::link_local_from_mac(MacAddress::new(mac));
-            // Dual-stack: the v6 link-local carries WiFi-auto's discovery/data UDP; v4 over DHCP gives
-            // the board a routable address to dial a Reticulum TCP node by ip:port.
-            let mut net_config = NetConfig::dhcpv4(DhcpConfig::default());
-            net_config.ipv6 = ConfigV6::Static(StaticConfigV6 {
-                address: Ipv6Cidr::new(link_local, 64),
-                gateway: None,
-                dns_servers: Default::default(),
-            });
-            let resources = mk_static!(StackResources<6>, StackResources::new());
-            let seed = {
-                let mut bytes = [0u8; 8];
-                Rng::new().read(&mut bytes);
-                u64::from_le_bytes(bytes)
-            };
-            let (stack, runner) = embassy_net::new(interfaces.station, net_config, resources, seed);
-            let discovery = {
-                static RX_META: ConstStaticCell<[PacketMetadata; 8]> =
-                    ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
-                static RX_BUF: ConstStaticCell<[u8; 128]> = ConstStaticCell::new([0u8; 128]);
-                static TX_META: ConstStaticCell<[PacketMetadata; 8]> =
-                    ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
-                static TX_BUF: ConstStaticCell<[u8; 128]> = ConstStaticCell::new([0u8; 128]);
-                UdpSocket::new(
-                    stack,
-                    RX_META.take(),
-                    RX_BUF.take(),
-                    TX_META.take(),
-                    TX_BUF.take(),
-                )
-            };
-            let data = {
-                static RX_META: ConstStaticCell<[PacketMetadata; 8]> =
-                    ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
-                static RX_BUF: ConstStaticCell<[u8; 1280]> = ConstStaticCell::new([0u8; 1280]);
-                static TX_META: ConstStaticCell<[PacketMetadata; 8]> =
-                    ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
-                static TX_BUF: ConstStaticCell<[u8; 1280]> = ConstStaticCell::new([0u8; 1280]);
-                UdpSocket::new(
-                    stack,
-                    RX_META.take(),
-                    RX_BUF.take(),
-                    TX_META.take(),
-                    TX_BUF.take(),
-                )
-            };
-            let wifi_status = AutoWifiStatus::new(&WIFI_SHARED);
-            spawner.spawn(net_task(runner).expect("net task fits"));
-            spawner.spawn(
-                wifi_connect_task(controller, wifi_status, config.clone(), ap_enabled)
-                    .expect("wifi connect task fits"),
-            );
-            Some((stack, discovery, data))
-        } else {
-            spawner.spawn(
-                wifi_radio_keepalive_task(controller).expect("wifi radio keepalive task fits"),
-            );
-            None
+    let station_segment: Option<AutoWifiSegment<'static>> = if config.has_station() {
+        let link_local = wifi_auto_contract::link_local_from_mac(MacAddress::new(mac));
+        // Dual-stack: the v6 link-local carries WiFi-auto's discovery/data UDP; v4 over DHCP gives
+        // the board a routable address to dial a Reticulum TCP node by ip:port.
+        let mut net_config = NetConfig::dhcpv4(DhcpConfig::default());
+        net_config.ipv6 = ConfigV6::Static(StaticConfigV6 {
+            address: Ipv6Cidr::new(link_local, 64),
+            gateway: None,
+            dns_servers: Default::default(),
+        });
+        let resources = mk_static!(StackResources<6>, StackResources::new());
+        let seed = {
+            let mut bytes = [0u8; 8];
+            Rng::new().read(&mut bytes);
+            u64::from_le_bytes(bytes)
         };
-    let tcp_stack = station_segment.as_ref().map(|(s, _, _)| *s);
+        let (stack, runner) = embassy_net::new(interfaces.station, net_config, resources, seed);
+        let discovery = {
+            static RX_META: ConstStaticCell<[PacketMetadata; 8]> =
+                ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
+            static RX_BUF: ConstStaticCell<[u8; 128]> = ConstStaticCell::new([0u8; 128]);
+            static TX_META: ConstStaticCell<[PacketMetadata; 8]> =
+                ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
+            static TX_BUF: ConstStaticCell<[u8; 128]> = ConstStaticCell::new([0u8; 128]);
+            UdpSocket::new(
+                stack,
+                RX_META.take(),
+                RX_BUF.take(),
+                TX_META.take(),
+                TX_BUF.take(),
+            )
+        };
+        let data = {
+            static RX_META: ConstStaticCell<[PacketMetadata; 8]> =
+                ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
+            static RX_BUF: ConstStaticCell<[u8; 1280]> = ConstStaticCell::new([0u8; 1280]);
+            static TX_META: ConstStaticCell<[PacketMetadata; 8]> =
+                ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
+            static TX_BUF: ConstStaticCell<[u8; 1280]> = ConstStaticCell::new([0u8; 1280]);
+            UdpSocket::new(
+                stack,
+                RX_META.take(),
+                RX_BUF.take(),
+                TX_META.take(),
+                TX_BUF.take(),
+            )
+        };
+        let wifi_status = AutoWifiStatus::new(&WIFI_SHARED);
+        spawner.spawn(net_task(runner).expect("net task fits"));
+        spawner.spawn(
+            wifi_connect_task(controller, wifi_status, config.clone(), ap_enabled)
+                .expect("wifi connect task fits"),
+        );
+        Some(AutoWifiSegment {
+            stack,
+            discovery,
+            data,
+            mac,
+        })
+    } else {
+        spawner
+            .spawn(wifi_radio_keepalive_task(controller).expect("wifi radio keepalive task fits"));
+        None
+    };
+    let tcp_stack = station_segment.as_ref().map(|segment| segment.stack);
 
     // In explicit SoftAP mode, the AP is the primary WiFi-auto segment and the station (if any) folds
     // in as the opportunistic secondary. The AP link-local is the station MAC + 1 (build_ap_netif
@@ -177,18 +182,30 @@ pub(super) fn build_wifi(
                 TX_BUF.take(),
             )
         };
-        let mut wifi = AutoWifi::new(ap_stack, ap_discovery, ap_data, ap_mac, &WIFI_SHARED);
-        if let Some((s, d, dt)) = station_segment {
-            // The station segment beacons over the station MAC's link-local (the address it sends from),
-            // not the AP's — so the peering token validates against the source the peer actually sees.
-            wifi = wifi.with_secondary_netif(s, d, dt, mac);
-        }
+        let wifi = AutoWifi::new(
+            AutoWifiTopology {
+                primary: AutoWifiSegment {
+                    stack: ap_stack,
+                    discovery: ap_discovery,
+                    data: ap_data,
+                    mac: ap_mac,
+                },
+                secondary: station_segment,
+            },
+            &WIFI_SHARED,
+        );
         return (Some(wifi), tcp_stack, Some(esp_now));
     }
 
     match station_segment {
-        Some((s, d, dt)) => {
-            let wifi = AutoWifi::new(s, d, dt, mac, &WIFI_SHARED);
+        Some(primary) => {
+            let wifi = AutoWifi::new(
+                AutoWifiTopology {
+                    primary,
+                    secondary: None,
+                },
+                &WIFI_SHARED,
+            );
             (Some(wifi), tcp_stack, Some(esp_now))
         }
         None => (None, None, Some(esp_now)),
