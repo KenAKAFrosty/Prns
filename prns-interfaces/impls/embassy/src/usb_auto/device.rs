@@ -9,11 +9,17 @@ use ::embassy_usb::{msos, Builder, Handler};
 pub const WEBUSB_AUTO_PACKET_SIZE: u16 = 64;
 
 #[derive(Debug)]
-pub struct WebUsbAutoError;
+pub enum WebUsbAutoError {
+    Disconnected,
+    PacketTooLarge,
+}
 
 impl embedded_io_async::Error for WebUsbAutoError {
     fn kind(&self) -> embedded_io_async::ErrorKind {
-        embedded_io_async::ErrorKind::Other
+        match self {
+            Self::Disconnected => embedded_io_async::ErrorKind::NotConnected,
+            Self::PacketTooLarge => embedded_io_async::ErrorKind::OutOfMemory,
+        }
     }
 }
 
@@ -100,12 +106,19 @@ impl<'d, D: UsbDriver<'d>> embedded_io_async::ErrorType for WebUsbAutoRx<'d, D> 
 impl<'d, D: UsbDriver<'d>> embedded_io_async::Read for WebUsbAutoRx<'d, D> {
     async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
         loop {
-            match self.read_ep.read(buf).await {
-                Ok(n) => return Ok(n),
-                Err(EndpointError::Disabled) => self.read_ep.wait_enabled().await,
-                Err(_) => return Err(WebUsbAutoError),
+            if let Some(n) = endpoint_read(self.read_ep.read(buf).await)? {
+                return Ok(n);
             }
         }
+    }
+}
+
+fn endpoint_read(result: Result<usize, EndpointError>) -> Result<Option<usize>, WebUsbAutoError> {
+    match result {
+        Ok(0) => Ok(None),
+        Ok(n) => Ok(Some(n)),
+        Err(EndpointError::Disabled) => Err(WebUsbAutoError::Disconnected),
+        Err(EndpointError::BufferOverflow) => Err(WebUsbAutoError::PacketTooLarge),
     }
 }
 
@@ -122,12 +135,35 @@ impl<'d, D: UsbDriver<'d>> embedded_io_async::Write for WebUsbAutoTx<'d, D> {
         let len = core::cmp::min(buf.len(), self.write_ep.info().max_packet_size as usize);
         match self.write_ep.write(&buf[..len]).await {
             Ok(()) => Ok(len),
-            Err(EndpointError::BufferOverflow) => unreachable!(),
-            Err(_) => Err(WebUsbAutoError),
+            Err(EndpointError::Disabled) => Err(WebUsbAutoError::Disconnected),
+            Err(EndpointError::BufferOverflow) => Err(WebUsbAutoError::PacketTooLarge),
         }
     }
 
     async fn flush(&mut self) -> Result<(), Self::Error> {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zero_length_usb_packets_are_transport_idle_not_stream_eof() {
+        assert!(matches!(endpoint_read(Ok(0)), Ok(None)));
+        assert!(matches!(endpoint_read(Ok(17)), Ok(Some(17))));
+    }
+
+    #[test]
+    fn endpoint_failures_preserve_disconnect_and_capacity_meaning() {
+        assert!(matches!(
+            endpoint_read(Err(EndpointError::Disabled)),
+            Err(WebUsbAutoError::Disconnected)
+        ));
+        assert!(matches!(
+            endpoint_read(Err(EndpointError::BufferOverflow)),
+            Err(WebUsbAutoError::PacketTooLarge)
+        ));
     }
 }

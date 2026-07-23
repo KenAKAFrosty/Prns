@@ -3,7 +3,7 @@ use embassy_sync::channel::Sender;
 
 use crate::interfaces::{FrameSink, InterfaceId, PacketPhyStats};
 use crate::reactor::grant::{FrameTarget, GrantConsumer, GrantProducer};
-use crate::reactor::interface_seam::InterfaceSeam;
+use crate::reactor::interface_seam::{InterfaceSeam, OutboundDisposition};
 
 use super::{EmbassyGrantConsumer, EmbassyGrantProducer};
 
@@ -71,6 +71,10 @@ impl<M: RawMutex, const NOTIFY: usize, const FRAME: usize> InterfaceSeam
     async fn next_outbound(&mut self) -> &[u8] {
         self.outbound.release();
         self.outbound.peek().await.frame()
+    }
+
+    fn complete_outbound(&mut self, _disposition: OutboundDisposition) {
+        self.outbound.release();
     }
 }
 

@@ -7,6 +7,21 @@ pub use prns_core::interfaces::{
     MAX_WIRE_FRAME_LEN,
 };
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OutboundDropReason {
+    Disabled,
+    Disconnected,
+    TimedOut,
+    TransportFailure,
+    Rejected,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OutboundDisposition {
+    Sent,
+    Dropped(OutboundDropReason),
+}
+
 /// One interface's side of the reactor boundary: inbound frames accumulate in [`inbound_sink`](Self::inbound_sink) and cross on [`commit_inbound`](Self::commit_inbound), and [`next_outbound`](Self::next_outbound) parks until the reactor has a frame for this interface to transmit. An outbound frame arrives already committed: the engine wrote it into the lane's slot and let go in its own synchronous step before `next_outbound` resolves, so the returned borrow points into the lane, never into the engine, and holding it across the transmit await pins nothing.
 #[allow(async_fn_in_trait)]
 pub trait InterfaceSeam {
@@ -36,8 +51,9 @@ pub trait InterfaceSeam {
         self.next_inbound(frame).await;
     }
 
-    /// Borrowed in place; the borrow releases on the following call.
     async fn next_outbound(&mut self) -> &[u8];
+
+    fn complete_outbound(&mut self, _disposition: OutboundDisposition) {}
 
     /// A further frame already committed for this interface, if one is waiting. Never parks; the borrow contract matches [`next_outbound`](Self::next_outbound). Serve loops use it to coalesce a burst that queued behind the frame being written into one wire write; the default never offers one, so a seam without it simply never batches.
     fn try_next_outbound(&mut self) -> Option<&[u8]> {
