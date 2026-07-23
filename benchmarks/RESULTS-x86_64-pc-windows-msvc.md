@@ -89,6 +89,8 @@ Stream a 64 MiB incompressible resource with compression disabled.
 
 1. **RNS 1.4.0 (compiled) → Prns** — The original published macOS and Windows suites both settled this cell near 16.6 MB/s, while its one-segment control beat RNS↔RNS. RNS 1.4.0 splits 64 MiB into 65 protocol segments, prepares each successor in a background thread, and polls successor readiness in 50 ms increments when a proof arrives first. Prns's fast one-segment receiver repeatedly exposes that stock-sender handoff; this is a multi-segment pipeline interaction, not evidence that Prns is slow at receiving a segment.
 
+> Both implementations carry the same 64 MiB in 65 authenticated protocol segments. RNS 1.4.0 fills 64 maximum-efficient segments and ends with a 64-byte tail; Prns keeps the first 63 at that ceiling and balances the final pair. The protocol-valid rebalance avoids an RNS 1.4.0 receive-side handoff race in which the proof leaves before the retiring receiver is removed and that one untagged tail part can be skipped.
+
 #### Maximum resource segment (v7)
 
 Repeated transfer of one maximum-efficient resource segment.

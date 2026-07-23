@@ -236,15 +236,32 @@ impl PrnsNodeHandle {
             .checked_add(block_len)
             .ok_or(ResourceSendError::UnrepresentableLength)?;
         let total_segments = stream_total_len.div_ceil(segment_size).max(1);
+        let final_stream_len = stream_total_len % segment_size;
+        let rebalance_final_pair =
+            total_segments > 1 && final_stream_len != 0 && final_stream_len < segment_size / 2;
         let mut remaining = total_len;
         let mut in_flight: VecDeque<PendingSegment> = VecDeque::with_capacity(ENGINE_SEGMENT_LANES);
         let mut transferred = 0u64;
         let mut physical_transferred = 0u64;
         for segment_index in 1..=total_segments {
-            let capacity = if segment_index == 1 {
-                segment_size.saturating_sub(block_len)
+            let stream_remaining = remaining + if segment_index == 1 { block_len } else { 0 };
+            // RNS emits a proof before removing the completed incoming segment. A very small
+            // successor can therefore cross while the peer still has both receivers registered;
+            // its single untagged part may be consumed by the retiring receiver and not retried
+            // before the link goes stale. Keep the reference's full-sized leading segments, but
+            // split a sub-half-segment tail evenly across the final pair.
+            let segment_stream_len = if rebalance_final_pair && segment_index == total_segments - 1
+            {
+                stream_remaining
+                    .div_ceil(2)
+                    .max(if segment_index == 1 { block_len } else { 0 })
             } else {
-                segment_size
+                stream_remaining.min(segment_size)
+            };
+            let capacity = if segment_index == 1 {
+                segment_stream_len.saturating_sub(block_len)
+            } else {
+                segment_stream_len
             };
             let this_segment = remaining.min(capacity);
             remaining -= this_segment;

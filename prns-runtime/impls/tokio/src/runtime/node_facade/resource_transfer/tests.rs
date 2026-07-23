@@ -20,9 +20,9 @@ fn handle() -> (PrnsNodeHandle, UnboundedReceiver<HostCommand>) {
 const LINK: LinkId = LinkId::new([5; 16]);
 
 #[tokio::test]
-async fn send_resource_drains_a_source_into_proven_segments() {
+async fn send_resource_keeps_full_leading_segments_and_balances_a_tiny_tail() {
     let (prns, mut command_rx) = handle();
-    let total_len = MAX_EFFICIENT_SIZE as u64 + 100;
+    let total_len = 2 * MAX_EFFICIENT_SIZE as u64 + 100;
     let payload: std::vec::Vec<u8> = (0..total_len).map(|i| i as u8).collect();
 
     let drainer = tokio::spawn(async move {
@@ -58,13 +58,16 @@ async fn send_resource_drains_a_source_into_proven_segments() {
         .expect("the stream completes");
     let got = drainer.await.unwrap();
 
-    assert_eq!(got.len(), 2, "a payload one segment over splits in two");
-    assert_eq!((got[0].0, got[0].1), (1, 2));
-    assert_eq!((got[1].0, got[1].1), (2, 2));
+    assert_eq!(got.len(), 3, "the payload needs three protocol segments");
+    assert_eq!((got[0].0, got[0].1), (1, 3));
+    assert_eq!((got[1].0, got[1].1), (2, 3));
+    assert_eq!((got[2].0, got[2].1), (3, 3));
     assert_eq!(got[0].2.len(), MAX_EFFICIENT_SIZE);
-    assert_eq!(got[1].2.len(), 100);
+    assert_eq!(got[1].2.len(), (MAX_EFFICIENT_SIZE + 100).div_ceil(2));
+    assert_eq!(got[2].2.len(), (MAX_EFFICIENT_SIZE + 100) / 2);
     let mut reassembled = got[0].2.clone();
     reassembled.extend_from_slice(&got[1].2);
+    reassembled.extend_from_slice(&got[2].2);
     assert_eq!(
         reassembled, payload,
         "the segments reassemble to the source"
