@@ -492,6 +492,7 @@ impl From<&RespondFailure> for RuntimeOperationOutcome {
         match failure {
             RespondFailure::Rejected(_) => Self::Rejected,
             RespondFailure::WriteFailed => Self::WriteFailed,
+            RespondFailure::Resource(inner) => Self::from(inner),
         }
     }
 }
