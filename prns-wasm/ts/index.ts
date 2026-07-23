@@ -27,7 +27,7 @@ type BrandedBigInt<Name extends string> = bigint & Brand<Name>;
 
 export const INTERFACE_ID_LENGTH = 8;
 export const DESTINATION_HASH_LENGTH = 16;
-export const MIN_ENTROPY_BYTES = 64;
+export const MIN_ENTROPY_BYTES = 128;
 export const BLE_IDENTITY_LENGTH = 16;
 
 export type IdentitySecretKey = BrandedBytes<"IdentitySecretKey">;
@@ -73,6 +73,7 @@ export type RuntimeOperation =
   | "register-interface"
   | "remove-interface"
   | "register-destination"
+  | "register-node-page"
   | "announce"
   | "ingest"
   | "drain-events"
@@ -363,11 +364,16 @@ export type PrnsWasmModule = {
   usbAutoDataFrame(packet: PacketFrame): Uint8Array;
 };
 
+export type RuntimeRegisterNodePageOptions = {
+  appData?: Uint8Array;
+};
+
 export type PrnsRuntimeBinding = {
   registerInterface(options: RuntimeRegisterInterfaceInput): InterfaceId;
   removeInterface(options: RuntimeRemoveInterfaceInput): boolean;
   bluetoothIdentity(): Uint8Array;
   registerSingleDestination(options: RuntimeRegisterSingleDestinationOptions): DestinationHash;
+  registerNodePage(options: RuntimeRegisterNodePageOptions): DestinationHash;
   announce(options: RuntimeAnnounceOptions): bigint;
   ingest(options: RuntimeIngestOptions): void;
   drainEvents(): unknown[];
@@ -2285,6 +2291,17 @@ export class Prns {
       );
     } catch (error) {
       return runtimeRejected("register-destination", error);
+    }
+  }
+
+  registerNodePage(appData: Uint8Array): DestinationRegistrationOutcome {
+    try {
+      return Tag(
+        "Registered",
+        destinationHash(this.#runtime.registerNodePage({ appData })),
+      );
+    } catch (error) {
+      return runtimeRejected("register-node-page", error);
     }
   }
 

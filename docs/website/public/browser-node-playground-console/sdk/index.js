@@ -4,7 +4,7 @@ export { Tag, from, match, match_into };
 export { AutoWifiController, AutoWifiInterface, parseBrowserGatewayCatalog, validateBrowserGatewayUrl, } from "./auto_wifi.js";
 export const INTERFACE_ID_LENGTH = 8;
 export const DESTINATION_HASH_LENGTH = 16;
-export const MIN_ENTROPY_BYTES = 64;
+export const MIN_ENTROPY_BYTES = 128;
 export const BLE_IDENTITY_LENGTH = 16;
 export class PrnsValidationError extends Error {
     code;
@@ -1270,6 +1270,14 @@ export class Prns {
         }
         catch (error) {
             return runtimeRejected("register-destination", error);
+        }
+    }
+    registerNodePage(appData) {
+        try {
+            return Tag("Registered", destinationHash(this.#runtime.registerNodePage({ appData })));
+        }
+        catch (error) {
+            return runtimeRejected("register-node-page", error);
         }
     }
     announce(destination) {

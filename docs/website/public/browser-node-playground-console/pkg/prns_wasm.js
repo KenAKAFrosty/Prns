@@ -126,6 +126,19 @@ export class PrnsRuntime {
      * @param {any} options
      * @returns {Uint8Array}
      */
+    registerNodePage(options) {
+        const ret = wasm.prnsruntime_registerNodePage(this.__wbg_ptr, options);
+        if (ret[3]) {
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        return v1;
+    }
+    /**
+     * @param {any} options
+     * @returns {Uint8Array}
+     */
     registerSingleDestination(options) {
         const ret = wasm.prnsruntime_registerSingleDestination(this.__wbg_ptr, options);
         if (ret[3]) {

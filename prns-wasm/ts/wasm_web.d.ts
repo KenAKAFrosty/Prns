@@ -13,6 +13,7 @@ export declare class PrnsRuntime implements PrnsRuntimeBinding {
   removeInterface: PrnsRuntimeBinding["removeInterface"];
   bluetoothIdentity: PrnsRuntimeBinding["bluetoothIdentity"];
   registerSingleDestination: PrnsRuntimeBinding["registerSingleDestination"];
+  registerNodePage: PrnsRuntimeBinding["registerNodePage"];
   announce: PrnsRuntimeBinding["announce"];
   ingest: PrnsRuntimeBinding["ingest"];
   drainEvents: PrnsRuntimeBinding["drainEvents"];

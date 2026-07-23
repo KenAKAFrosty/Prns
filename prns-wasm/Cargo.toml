@@ -20,6 +20,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 js-sys = "0.3"
 personal-rns = { path = "../personal-rns", default-features = false, features = ["alloc"] }
+personal-hopspot-core = { path = "../personal-hopspot/core", default-features = false }
 wasm-bindgen = "0.2"
 zeroize = { version = "1", default-features = false, features = ["derive"] }
 

@@ -42,6 +42,7 @@ import {
 } from "./view.js";
 
 const POLL_INTERVAL_MS = 250;
+const NODE_PAGE_DISPLAY_NAME = "Prns Browser Playground";
 const WASM_BINARY_PATH = "./pkg/prns_wasm_bg.wasm";
 
 type StartupOutcome = Tagged<"Running", BrowserPlayground> | StartupFailure;
@@ -50,6 +51,7 @@ class BrowserPlayground {
   readonly #view: PlaygroundView;
   readonly #prns: Prns;
   readonly #destination: DestinationHash;
+  readonly #pageDestination: DestinationHash;
   #autoWifi: AutoWifiState = Tag("Waiting");
   #usb: UsbState = Tag("Waiting");
   #snapshot: PrnsSnapshot | undefined;
@@ -61,10 +63,12 @@ class BrowserPlayground {
     view: PlaygroundView,
     prns: Prns,
     destination: DestinationHash,
+    pageDestination: DestinationHash,
   ) {
     this.#view = view;
     this.#prns = prns;
     this.#destination = destination;
+    this.#pageDestination = pageDestination;
   }
 
   static async start(view: PlaygroundView): Promise<StartupOutcome> {
@@ -93,10 +97,17 @@ class BrowserPlayground {
     if (registered.tag !== "Registered") {
       return registered;
     }
+    const pageRegistered = created.data.registerNodePage(
+      new TextEncoder().encode(NODE_PAGE_DISPLAY_NAME),
+    );
+    if (pageRegistered.tag !== "Registered") {
+      return pageRegistered;
+    }
     const playground = new BrowserPlayground(
       view,
       created.data,
       registered.data,
+      pageRegistered.data,
     );
     playground.#run();
     return Tag("Running", playground);
@@ -133,6 +144,11 @@ class BrowserPlayground {
       "Runtime",
       "Browser node runtime ready",
       `${LXMF_DELIVERY_DISPLAY_NAME} · lxmf.delivery ${hex(this.#destination)}`,
+    );
+    this.#view.record(
+      "Node page",
+      "Serving /page/index.mu over Reticulum",
+      `${NODE_PAGE_DISPLAY_NAME} · nomadnetwork.node ${hex(this.#pageDestination)}`,
     );
     this.#view.bindControls({
       startAutoWifi: () => this.#startAutoWifi(),
@@ -346,12 +362,17 @@ class BrowserPlayground {
     if ((this.#snapshot?.interfaces.length ?? 0) === 0) {
       return;
     }
-    const outcome = this.#prns.announce(this.#destination);
+    this.#announceDestination("LXMF delivery", this.#destination);
+    this.#announceDestination("Node page", this.#pageDestination);
+  }
+
+  #announceDestination(label: string, destination: DestinationHash): void {
+    const outcome = this.#prns.announce(destination);
     switch (outcome.tag) {
       case "Queued":
         this.#view.record(
           "Announce",
-          "LXMF delivery announce queued",
+          `${label} announce queued`,
           `Command ${outcome.data.toString()}`,
         );
         return;
@@ -360,14 +381,14 @@ class BrowserPlayground {
       case "InsufficientEntropy":
         this.#view.record(
           "Failure",
-          "LXMF delivery announce was not queued",
+          `${label} announce was not queued`,
           describeEntropyFailure(outcome),
         );
         return;
       case "RuntimeRejected":
         this.#view.record(
           "Failure",
-          "LXMF delivery announce was rejected",
+          `${label} announce was rejected`,
           describeRuntimeRejected(outcome),
         );
         return;

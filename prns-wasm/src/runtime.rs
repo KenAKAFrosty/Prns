@@ -3,13 +3,17 @@ use core::convert::TryFrom;
 use js_sys::{Array, Object};
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, Directive, EngineCommand,
-    EngineReaction, EngineState, FanTarget, InstantMillis, IssuedCommand, RatchetPolicy,
+    EngineReaction, EngineState, FanTarget, InstantMillis, IssuedCommand, Journaled,
+    RatchetPolicy, Respond, RespondPayload,
 };
 use personal_rns::interfaces::bluetooth_auto as bluetooth_contract;
 use personal_rns::interfaces::{
     AnnounceBandwidthCap, BitrateBps, Capabilities, InboundPacket, InterfaceCapabilities,
     InterfaceCommonPolicy, InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceMode,
 };
+use personal_rns::routing::links::request::RequestId;
+use personal_rns::routing::links::LinkId;
+use personal_rns::routing::request_handlers::{RequestPathHash, RequestPolicy};
 use personal_rns::routing::upstream_app_destinations::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::routing::warmth::Departure;
 use personal_rns::storage::GrowableHeap;
@@ -51,6 +55,7 @@ pub struct PrnsRuntime {
     outbound: Vec<OutboundFrame>,
     next_command_id: u64,
     ble_identity: Option<bluetooth_contract::BleIdentity>,
+    node_page: bool,
 }
 
 #[wasm_bindgen]
@@ -76,6 +81,7 @@ impl PrnsRuntime {
             outbound: Vec::new(),
             next_command_id: 0,
             ble_identity,
+            node_page: false,
         })
     }
 
@@ -172,6 +178,48 @@ impl PrnsRuntime {
         Ok(destination.as_bytes().to_vec())
     }
 
+    #[wasm_bindgen(js_name = registerNodePage)]
+    pub fn register_node_page(&mut self, options: JsValue) -> Result<Vec<u8>, JsValue> {
+        let mut app_data = optional_bytes(&options, "appData")?.unwrap_or_default();
+        let Some(identity) = self.engine.held_identity_hashes().first().copied() else {
+            return Err(JsValue::from_str("runtime has no held identity"));
+        };
+        let derived = personal_rns::routing::announce::derive_single_destination_hash(
+            &identity,
+            personal_hopspot_core::node_pages::NODE_APP_NAME,
+            personal_hopspot_core::node_pages::NODE_ASPECTS,
+        )
+        .map_err(|error| JsValue::from_str(&format!("node page name is invalid: {error:?}")))?;
+        if !app_data.is_empty() {
+            app_data.push(b' ');
+        }
+        let tag = derived.as_bytes();
+        app_data.extend_from_slice(format!("{:02x}{:02x}", tag[0], tag[1]).as_bytes());
+        let destination = self
+            .engine
+            .register_single_destination(
+                &identity,
+                personal_hopspot_core::node_pages::NODE_APP_NAME,
+                personal_hopspot_core::node_pages::NODE_ASPECTS,
+                &app_data,
+                ProofStrategy::ProveNone,
+                LinkRequestPolicy::AcceptAll,
+                RatchetPolicy::NoRatchets,
+            )
+            .map_err(|error| {
+                JsValue::from_str(&format!("node page registration failed: {error:?}"))
+            })?;
+        self.engine
+            .register_request_handler(
+                &destination,
+                personal_hopspot_core::node_pages::INDEX_PATH,
+                RequestPolicy::AllowAll,
+            )
+            .map_err(|error| JsValue::from_str(&format!("node page handler failed: {error:?}")))?;
+        self.node_page = true;
+        Ok(destination.as_bytes().to_vec())
+    }
+
     #[wasm_bindgen(js_name = announce)]
     pub fn announce(&mut self, options: JsValue) -> Result<u64, JsValue> {
         let destination = required_bytes(&options, "destination")?;
@@ -209,6 +257,9 @@ impl PrnsRuntime {
             |_offer: &personal_rns::routing::links::resources::ResourceOffer| false;
         let interfaces_snapshot = self.interfaces.clone();
         let mut reactions = Vec::new();
+        let node_page = self.node_page;
+        let index_path = RequestPathHash::of(personal_hopspot_core::node_pages::INDEX_PATH);
+        let mut page_requests: Vec<(LinkId, RequestId)> = Vec::new();
         self.engine.ingest_packet_into(
             packet,
             personal_rns::engine::IngestIo {
@@ -217,10 +268,44 @@ impl PrnsRuntime {
                 fill_entropy: &mut |out| entropy.fill(out),
                 should_prove: &mut should_prove,
                 should_accept_resource: &mut should_accept_resource,
-                sink: &mut |reaction| reactions.push(capture_reaction(reaction)),
+                sink: &mut |reaction| {
+                    if let EngineReaction::Journaled(Journaled::RequestReceived {
+                        link_id,
+                        request_id,
+                        path_hash,
+                        ..
+                    }) = &reaction
+                    {
+                        if node_page && *path_hash == index_path {
+                            page_requests.push((*link_id, *request_id));
+                        }
+                    }
+                    reactions.push(capture_reaction(reaction));
+                },
             },
         );
         self.apply_captured(reactions);
+        for (link_id, request_id) in page_requests {
+            let id = self.mint_command_id();
+            let mut respond_reactions = Vec::new();
+            self.engine.ingest_command_into(
+                IssuedCommand {
+                    id,
+                    command: EngineCommand::Respond(Respond {
+                        link_id,
+                        request_id,
+                        payload: RespondPayload::StaticBytes(
+                            personal_hopspot_core::node_pages::INDEX_PAGE.as_bytes(),
+                        ),
+                    }),
+                },
+                personal_rns::interfaces::AttachedInterfaces::new(&interfaces_snapshot),
+                InstantMillis(now_ms),
+                &mut |out| entropy.fill(out),
+                &mut |reaction| respond_reactions.push(capture_reaction(reaction)),
+            );
+            self.apply_captured(respond_reactions);
+        }
         Ok(())
     }
 

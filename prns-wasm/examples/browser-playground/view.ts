@@ -30,6 +30,7 @@ export type ActivityKind =
   | "Auto Wi-Fi"
   | "USB Auto"
   | "Announce"
+  | "Node page"
   | "Network"
   | "Route"
   | "Failure";
