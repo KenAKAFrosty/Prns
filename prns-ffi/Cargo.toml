@@ -44,7 +44,7 @@ log = { version = "0.4", optional = true, default-features = false }
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSNetServices"] }
 objc2-core-bluetooth = "0.3"
-objc2-core-foundation = { version = "0.3", features = ["CFStream", "dispatch2", "CFRunLoop", "CFString", "CFDictionary"] }
+objc2-core-foundation = { version = "0.3", features = ["CFStream", "dispatch2", "CFRunLoop", "CFDate", "CFString", "CFDictionary"] }
 objc2-io-kit = { version = "0.3.2", default-features = false, features = ["std", "libc", "serial"] }
 dispatch2 = "0.3"
 

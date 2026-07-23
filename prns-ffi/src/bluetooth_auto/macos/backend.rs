@@ -132,7 +132,7 @@ enum DialTaskOutcome {
 }
 
 pub struct MacosBleBackend {
-    _keepalive: sync_mpsc::Sender<()>,
+    _native_thread: NativeThread,
     events: tokio_mpsc::UnboundedReceiver<Event>,
     psm: Psm,
     seen: HashSet<[u8; 6]>,
@@ -145,14 +145,38 @@ pub struct MacosBleBackend {
     queue: DispatchRetained<DispatchQueue>,
 }
 
+struct NativeThread {
+    keepalive: Option<sync_mpsc::Sender<()>>,
+    join: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Drop for NativeThread {
+    fn drop(&mut self) {
+        self.keepalive.take();
+        if let Some(join) = self.join.take() {
+            let _ = join.join();
+        }
+    }
+}
+
+/// Restoration-aware CoreBluetooth managers whose delegates and serial queue already exist, while
+/// radio authorization, service publication, and L2CAP readiness remain asynchronous.
+pub struct PreparedMacosBleBackend {
+    native_thread: NativeThread,
+    events: tokio_mpsc::UnboundedReceiver<Event>,
+    peripherals: PeripheralTable,
+    restored: RestoredPeripherals,
+    handles: Handles,
+}
+
 impl MacosBleBackend {
     #[cfg(target_os = "ios")]
     pub const MAX_PEERS: usize = 7;
     #[cfg(target_os = "macos")]
     pub const MAX_PEERS: usize = 8;
 
-    pub async fn new(identity: BleIdentity) -> Result<Self, MacosBleError> {
-        let (events_tx, mut events_rx) = tokio_mpsc::unbounded_channel::<Event>();
+    pub async fn prepare(identity: BleIdentity) -> Result<PreparedMacosBleBackend, MacosBleError> {
+        let (events_tx, events_rx) = tokio_mpsc::unbounded_channel::<Event>();
         let (keepalive, shutdown_rx) = sync_mpsc::channel::<()>();
         let (handles_tx, handles_rx) = oneshot::channel::<Handles>();
         let peripherals: PeripheralTable = Arc::new(Mutex::new(HashMap::new()));
@@ -161,69 +185,117 @@ impl MacosBleBackend {
         let peripherals_for_thread = peripherals.clone();
         let restored_for_thread = restored.clone();
 
-        std::thread::spawn(move || {
-            let queue = DispatchQueue::new("com.personal.prns.ble", None);
+        let join = std::thread::Builder::new()
+            .name("prns-corebluetooth".into())
+            .spawn(move || {
+                let queue = DispatchQueue::new("com.personal.prns.ble", None);
 
-            let central_delegate =
-                CentralDelegate::new(central_events, peripherals_for_thread, restored_for_thread);
-            let central_proto = ProtocolObject::from_ref(&*central_delegate);
-            #[cfg(target_os = "ios")]
-            let central_options = Some(central_manager_options());
-            #[cfg(not(target_os = "ios"))]
-            let central_options: Option<Retained<NSDictionary<NSString, AnyObject>>> = None;
-            // SAFETY: the delegate and dispatch queue are retained for at least as long as the
-            // manager, and every Objective-C argument has the framework-declared type.
-            let central: Retained<CBCentralManager> = unsafe {
-                CBCentralManager::initWithDelegate_queue_options(
-                    CBCentralManager::alloc(),
-                    Some(central_proto),
-                    Some(&queue),
-                    central_options.as_deref(),
-                )
-            };
+                let central_delegate = CentralDelegate::new(
+                    central_events,
+                    peripherals_for_thread,
+                    restored_for_thread,
+                );
+                let central_proto = ProtocolObject::from_ref(&*central_delegate);
+                #[cfg(target_os = "ios")]
+                let central_options = Some(central_manager_options());
+                #[cfg(not(target_os = "ios"))]
+                let central_options: Option<
+                    Retained<NSDictionary<NSString, AnyObject>>,
+                > = None;
+                // SAFETY: the delegate and dispatch queue are retained for at least as long as the
+                // manager, and every Objective-C argument has the framework-declared type.
+                let central: Retained<CBCentralManager> = unsafe {
+                    CBCentralManager::initWithDelegate_queue_options(
+                        CBCentralManager::alloc(),
+                        Some(central_proto),
+                        Some(&queue),
+                        central_options.as_deref(),
+                    )
+                };
 
-            let peripheral_delegate = PeripheralDelegate::new(events_tx, queue.clone(), identity);
-            let peripheral_proto = ProtocolObject::from_ref(&*peripheral_delegate);
-            #[cfg(target_os = "ios")]
-            let peripheral_options = Some(peripheral_manager_options());
-            #[cfg(not(target_os = "ios"))]
-            let peripheral_options: Option<
-                Retained<NSDictionary<NSString, AnyObject>>,
-            > = None;
-            // SAFETY: the delegate and dispatch queue are retained for at least as long as the
-            // manager, and every Objective-C argument has the framework-declared type.
-            let _peripheral: Retained<CBPeripheralManager> = unsafe {
-                CBPeripheralManager::initWithDelegate_queue_options(
-                    CBPeripheralManager::alloc(),
-                    Some(peripheral_proto),
-                    Some(&queue),
-                    peripheral_options.as_deref(),
-                )
-            };
+                let peripheral_delegate =
+                    PeripheralDelegate::new(events_tx, queue.clone(), identity);
+                let peripheral_proto = ProtocolObject::from_ref(&*peripheral_delegate);
+                #[cfg(target_os = "ios")]
+                let peripheral_options = Some(peripheral_manager_options());
+                #[cfg(not(target_os = "ios"))]
+                let peripheral_options: Option<
+                    Retained<NSDictionary<NSString, AnyObject>>,
+                > = None;
+                // SAFETY: the delegate and dispatch queue are retained for at least as long as the
+                // manager, and every Objective-C argument has the framework-declared type.
+                let peripheral: Retained<CBPeripheralManager> = unsafe {
+                    CBPeripheralManager::initWithDelegate_queue_options(
+                        CBPeripheralManager::alloc(),
+                        Some(peripheral_proto),
+                        Some(&queue),
+                        peripheral_options.as_deref(),
+                    )
+                };
 
-            let _ = handles_tx.send(Handles {
-                central: SendCentralManager(central.clone()),
-                central_delegate: SendCentralDelegate(central_delegate.clone()),
-                peripheral_delegate: SendPeripheralDelegate(peripheral_delegate.clone()),
-                queue: queue.clone(),
-            });
+                let _ = handles_tx.send(Handles {
+                    central: SendCentralManager(central.clone()),
+                    central_delegate: SendCentralDelegate(central_delegate.clone()),
+                    peripheral_delegate: SendPeripheralDelegate(peripheral_delegate.clone()),
+                    queue: queue.clone(),
+                });
 
-            let _ = shutdown_rx.recv();
-            let _hold = (central, central_delegate, peripheral_delegate, _peripheral);
-        });
+                let _ = shutdown_rx.recv();
+                let _hold = (central, central_delegate, peripheral_delegate, peripheral);
+            })
+            .map_err(|_| MacosBleError::Closed)?;
+        let native_thread = NativeThread {
+            keepalive: Some(keepalive),
+            join: Some(join),
+        };
 
         let handles = handles_rx.await.map_err(|_| MacosBleError::Closed)?;
+        // Manager creation has completed. Do not await radio authorization or publication here:
+        // callers use `ready` after installing the rest of their lifecycle supervision.
+        Ok(PreparedMacosBleBackend {
+            native_thread,
+            events: events_rx,
+            peripherals,
+            restored,
+            handles,
+        })
+    }
+
+    pub async fn new(identity: BleIdentity) -> Result<Self, MacosBleError> {
+        Self::prepare(identity).await?.ready().await
+    }
+
+    pub fn psm(&self) -> Psm {
+        self.psm
+    }
+
+    pub async fn next_sighting(&mut self) -> Option<BleAddress> {
+        loop {
+            match self.events.recv().await? {
+                Event::Sighting { address, .. } => {
+                    if self.seen.insert(*address.octets()) {
+                        return Some(address);
+                    }
+                }
+                _ => continue,
+            }
+        }
+    }
+}
+
+impl PreparedMacosBleBackend {
+    pub async fn ready(mut self) -> Result<MacosBleBackend, MacosBleError> {
         let Handles {
             central,
             central_delegate,
             peripheral_delegate,
             queue,
-        } = handles;
+        } = self.handles;
 
         let readiness = tokio::time::timeout(POWER_ON_TIMEOUT, async {
             let mut readiness = StartupReadiness::default();
             loop {
-                match events_rx.recv().await {
+                match self.events.recv().await {
                     Some(Event::CentralPowered) => readiness.note_central_powered(),
                     Some(Event::GattServicePublished) => {
                         readiness.note_gatt_service_published();
@@ -265,36 +337,19 @@ impl MacosBleBackend {
             "bluetooth: central powered, GATT service published, L2CAP listener on PSM {:#06x}",
             psm.get()
         );
-        Ok(Self {
-            _keepalive: keepalive,
-            events: events_rx,
+        Ok(MacosBleBackend {
+            _native_thread: self.native_thread,
+            events: self.events,
             psm,
             seen: HashSet::new(),
             central,
             central_delegate,
             peripheral_delegate,
-            peripherals,
-            restored,
+            peripherals: self.peripherals,
+            restored: self.restored,
             dials: JoinSet::new(),
             queue,
         })
-    }
-
-    pub fn psm(&self) -> Psm {
-        self.psm
-    }
-
-    pub async fn next_sighting(&mut self) -> Option<BleAddress> {
-        loop {
-            match self.events.recv().await? {
-                Event::Sighting { address, .. } => {
-                    if self.seen.insert(*address.octets()) {
-                        return Some(address);
-                    }
-                }
-                _ => continue,
-            }
-        }
     }
 }
 
@@ -473,5 +528,29 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
             });
         }
         self.peripheral_delegate.0.clear_closed_peer(address);
+    }
+}
+
+#[cfg(test)]
+mod native_thread_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[test]
+    fn dropping_owner_stops_and_joins_native_thread() {
+        let exited = Arc::new(AtomicBool::new(false));
+        let exited_on_thread = exited.clone();
+        let (keepalive, shutdown_rx) = sync_mpsc::channel::<()>();
+        let join = std::thread::spawn(move || {
+            let _ = shutdown_rx.recv();
+            exited_on_thread.store(true, Ordering::Release);
+        });
+        let owner = NativeThread {
+            keepalive: Some(keepalive),
+            join: Some(join),
+        };
+
+        drop(owner);
+        assert!(exited.load(Ordering::Acquire));
     }
 }

@@ -18,16 +18,16 @@ pub struct UsbMuxAutoDevice {
     id: InterfaceId,
     node_tag: NodeTag,
     status: TokioInterfaceStatus,
-    port: u16,
+    listener: TcpListener,
 }
 
 impl UsbMuxAutoDevice {
-    pub fn new(id: InterfaceId, port: u16) -> Self {
+    pub fn with_listener(id: InterfaceId, listener: TcpListener) -> Self {
         Self {
             id,
             node_tag: contract::node_tag_for(id),
             status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
-            port,
+            listener,
         }
     }
 
@@ -49,21 +49,12 @@ impl Interface for UsbMuxAutoDevice {
     }
 
     async fn run<Seam: InterfaceSeam>(self, mut seam: Seam) {
-        let listener = match TcpListener::bind(("0.0.0.0", self.port)).await {
-            Ok(listener) => listener,
-            Err(error) => {
-                eprintln!("usbmux-auto: bind :{} failed: {error}", self.port);
-                self.status.set_connection(ConnectionState::Failed);
-                drain_disabled(&self.status, &mut seam).await;
-                return;
-            }
-        };
-
         println!(
             "usbmux-auto: listening on :{} for USB Auto over a usbmux/iProxy stream",
-            self.port
+            USBMUX_AUTO_PORT
         );
         self.status.set_connection(ConnectionState::Disconnected);
+        let listener = self.listener;
 
         loop {
             if !self.status.is_enabled() {

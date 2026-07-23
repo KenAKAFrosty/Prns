@@ -10,6 +10,7 @@
 		ABCDEF0123456789ABCD0017 /* PersonalHopspotApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABCDEF0123456789ABCD0011 /* PersonalHopspotApp.swift */; };
 		ABCDEF0123456789ABCD0018 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABCDEF0123456789ABCD0012 /* ContentView.swift */; };
 		ABCDEF0123456789ABCD0019 /* HopspotBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABCDEF0123456789ABCD0013 /* HopspotBridge.swift */; };
+		ABCDEF0123456789ABCD001D /* EngineController.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABCDEF0123456789ABCD001E /* EngineController.swift */; };
 		ABCDEF0123456789ABCD001A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = ABCDEF0123456789ABCD0014 /* Assets.xcassets */; };
 		ABCDEF0123456789ABCD001B /* THIRD_PARTY_NOTICES.md in Resources */ = {isa = PBXBuildFile; fileRef = ABCDEF0123456789ABCD001C /* THIRD_PARTY_NOTICES.md */; };
 /* End PBXBuildFile section */
@@ -23,6 +24,7 @@
 		ABCDEF0123456789ABCD0015 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		ABCDEF0123456789ABCD0016 /* PersonalHopspot-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "PersonalHopspot-Bridging-Header.h"; sourceTree = "<group>"; };
 		ABCDEF0123456789ABCD001C /* THIRD_PARTY_NOTICES.md */ = {isa = PBXFileReference; lastKnownFileType = text; path = ../../../../../THIRD_PARTY_NOTICES.md; sourceTree = "<group>"; };
+		ABCDEF0123456789ABCD001E /* EngineController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineController.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -58,6 +60,7 @@
 				ABCDEF0123456789ABCD0011 /* PersonalHopspotApp.swift */,
 				ABCDEF0123456789ABCD0012 /* ContentView.swift */,
 				ABCDEF0123456789ABCD0013 /* HopspotBridge.swift */,
+				ABCDEF0123456789ABCD001E /* EngineController.swift */,
 				ABCDEF0123456789ABCD0016 /* PersonalHopspot-Bridging-Header.h */,
 				ABCDEF0123456789ABCD0014 /* Assets.xcassets */,
 				ABCDEF0123456789ABCD0015 /* Info.plist */,
@@ -162,6 +165,7 @@
 				ABCDEF0123456789ABCD0017 /* PersonalHopspotApp.swift in Sources */,
 				ABCDEF0123456789ABCD0018 /* ContentView.swift in Sources */,
 				ABCDEF0123456789ABCD0019 /* HopspotBridge.swift in Sources */,
+				ABCDEF0123456789ABCD001D /* EngineController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -261,7 +265,7 @@
 					"$(inherited)",
 					"$(SRCROOT)/../rust/target/x86_64-apple-ios/release",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 0.1.0;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-lpersonal_hopspot_ios",
@@ -318,7 +322,7 @@
 					"$(inherited)",
 					"$(SRCROOT)/../rust/target/x86_64-apple-ios/release",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 0.1.0;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-lpersonal_hopspot_ios",

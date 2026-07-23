@@ -364,6 +364,17 @@ jobs:
       - name: build — hopspot desktop face (macOS)
         run: cargo build --locked
         working-directory: personal-hopspot/desktop
+      - name: simulator — hopspot iOS application
+        run: |
+          rustup target add aarch64-apple-ios-sim x86_64-apple-ios
+          python3 validation/run.py run --suite ios-simulator
+      - name: upload iOS simulator evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ios-simulator-${{ github.sha }}
+          path: validation-artifacts/results/ios-simulator
+          if-no-files-found: error
 
   windows-desktop:
     # The Hopspot desktop face is the cross-platform proving ground, and nothing else in CI builds on

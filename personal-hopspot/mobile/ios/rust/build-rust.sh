@@ -1,5 +1,4 @@
 #!/bin/bash
-#WIP NEEDS REVIEW
 set -euo pipefail
 
 export PATH="$HOME/.cargo/bin:$PATH"

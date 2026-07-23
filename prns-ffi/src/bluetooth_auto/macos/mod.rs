@@ -30,7 +30,7 @@ use central::CentralDelegate;
 use gatt_link::GattLink;
 use peripheral::PeripheralDelegate;
 
-pub use backend::MacosBleBackend;
+pub use backend::{MacosBleBackend, PreparedMacosBleBackend};
 pub use gatt_link::{GattSink, GattSource};
 
 type PeripheralTable = Arc<Mutex<HashMap<CoreBluetoothPeerId, (SendPeripheral, Option<i8>)>>>;

@@ -21,6 +21,7 @@ heapless = { version = "0.8", default-features = false }
 # The async runtime + a TCP listener: RNS TCP framing is the serial HDLC framing, so the
 # reactor's serial interface serves a TCP connection directly — `accept` standing in for `open`.
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util"] }
+libc = "0.2"
 
 # The native CoreBluetooth BLE backend (objc2), shared with the macOS desktop face. iOS-only:
 # the staticlib builds for iOS device + simulator (both `target_os = "ios"`), where this supplies
@@ -38,3 +39,6 @@ unsafe_op_in_unsafe_fn = "deny"
 
 [lints.clippy]
 undocumented_unsafe_blocks = "deny"
+
+[dev-dependencies]
+tempfile = "3"

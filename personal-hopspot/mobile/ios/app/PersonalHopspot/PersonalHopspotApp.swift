@@ -1,4 +1,3 @@
-//WIP NEEDS REVIEW
 import SwiftUI
 import UIKit
 
@@ -7,18 +6,28 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
-        hopspot_start_engine()
+        Task { @MainActor in
+            EngineController.shared.launch(options: launchOptions)
+        }
         return true
+    }
+
+    func applicationWillTerminate(_ application: UIApplication) {
+        MainActor.assumeIsolated {
+            EngineController.shared.stopSynchronously()
+        }
     }
 }
 
 @main
 struct PersonalHopspotApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @StateObject private var engine = EngineController.shared
 
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environmentObject(engine)
         }
     }
 }
