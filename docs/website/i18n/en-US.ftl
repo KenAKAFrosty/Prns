@@ -4,7 +4,7 @@ nav-crates = Crates
 nav-api = API Reference
 
 # Footer
-footer-tagline = Brought to you by the Personal team.
+footer-tagline = Brought to you by the Personal/Prns team.
 
 # Landing
 # `landing-kicker` is the full eyebrow, used as-is by every non-English locale.

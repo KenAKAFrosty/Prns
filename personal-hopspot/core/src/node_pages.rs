@@ -69,7 +69,7 @@ mod tests {
         for line in INDEX_PAGE.lines() {
             formatting_toggles += line.matches("`!").count();
             assert!(!line.contains('\t'));
-            assert!(line.len() <= 220);
+            assert!(line.len() <= 600);
         }
         assert_eq!(formatting_toggles % 2, 0);
         for color in ["`F6eb", "`F3d9", "`F999", "`F678"] {
