@@ -1,0 +1,155 @@
+use personal_rns::engine::RatchetPolicy;
+use personal_rns::identity::in_memory::InMemoryNodeIdentity;
+use personal_rns::identity::IdentitySigner;
+use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::routing::announce::{derive_single_destination_hash, ExpandNameError};
+use personal_rns::routing::links::resources::ResourceStrategy;
+use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
+use personal_rns::runtime::{PreConfiguredDestination, RequestHandlerRegistration};
+use personal_rns::wire::DestinationHash;
+
+use crate::node_pages;
+
+const DELIVERY_APP_NAME: &str = "lxmf";
+const DELIVERY_ASPECTS: &[&str] = &["delivery"];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HopspotDestinationHashes {
+    pub delivery: DestinationHash,
+    pub node_page: DestinationHash,
+}
+
+pub struct HopspotDestinationSet<'a> {
+    identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
+    delivery_announce_app_data: &'a [u8],
+    node_announce_app_data: &'a [u8],
+}
+
+impl<'a> HopspotDestinationSet<'a> {
+    #[must_use]
+    pub fn new(
+        identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
+        delivery_announce_app_data: &'a [u8],
+        node_announce_app_data: &'a [u8],
+    ) -> Self {
+        Self {
+            identity,
+            delivery_announce_app_data,
+            node_announce_app_data,
+        }
+    }
+
+    pub fn destination_hashes(&self) -> Result<HopspotDestinationHashes, ExpandNameError> {
+        let signer = InMemoryNodeIdentity::from_secret_key_bytes(&self.identity);
+        let identity_hash = signer.identity_hash();
+        Ok(HopspotDestinationHashes {
+            delivery: derive_single_destination_hash(
+                &identity_hash,
+                DELIVERY_APP_NAME,
+                DELIVERY_ASPECTS,
+            )?,
+            node_page: derive_single_destination_hash(
+                &identity_hash,
+                node_pages::NODE_APP_NAME,
+                node_pages::NODE_ASPECTS,
+            )?,
+        })
+    }
+
+    #[must_use]
+    pub fn into_preconfigured_destinations(self) -> [PreConfiguredDestination<'a>; 2] {
+        [
+            PreConfiguredDestination::Single {
+                app_name: DELIVERY_APP_NAME,
+                aspects: DELIVERY_ASPECTS,
+                identity: self.identity.clone(),
+                announce_app_data: self.delivery_announce_app_data,
+                proof: ProofStrategy::ProveAll,
+                link_requests: LinkRequestPolicy::AcceptAll,
+                ratchet: RatchetPolicy::Ratcheted,
+                resource_strategy: ResourceStrategy::AcceptNone,
+                request_handlers: RequestHandlerRegistration::None,
+            },
+            PreConfiguredDestination::Single {
+                app_name: node_pages::NODE_APP_NAME,
+                aspects: node_pages::NODE_ASPECTS,
+                identity: self.identity,
+                announce_app_data: self.node_announce_app_data,
+                proof: ProofStrategy::ProveNone,
+                link_requests: LinkRequestPolicy::AcceptAll,
+                ratchet: RatchetPolicy::NoRatchets,
+                resource_strategy: ResourceStrategy::AcceptNone,
+                request_handlers: RequestHandlerRegistration::NodeRouteSet,
+            },
+        ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const DELIVERY_DATA: &[u8] = b"delivery";
+    const NODE_DATA: &[u8] = b"node";
+
+    fn destinations() -> HopspotDestinationSet<'static> {
+        HopspotDestinationSet::new(
+            Zeroizing::new([7; IDENTITY_SECRET_KEY_LEN]),
+            DELIVERY_DATA,
+            NODE_DATA,
+        )
+    }
+
+    #[test]
+    fn hashes_name_both_hopspot_destinations() {
+        let hashes = destinations().destination_hashes().unwrap();
+        assert_ne!(hashes.delivery, hashes.node_page);
+        assert_eq!(hashes, destinations().destination_hashes().unwrap());
+    }
+
+    #[test]
+    fn hashes_match_the_materialized_destinations() {
+        let expected = destinations().destination_hashes().unwrap();
+        let [delivery, node_page] = destinations().into_preconfigured_destinations();
+        assert_eq!(
+            HopspotDestinationHashes {
+                delivery: delivery.destination_hash().unwrap(),
+                node_page: node_page.destination_hash().unwrap(),
+            },
+            expected
+        );
+    }
+
+    #[test]
+    fn destination_policies_are_owned_as_one_set() {
+        let [delivery, node_page] = destinations().into_preconfigured_destinations();
+        assert!(matches!(
+            delivery,
+            PreConfiguredDestination::Single {
+                app_name: DELIVERY_APP_NAME,
+                aspects: DELIVERY_ASPECTS,
+                announce_app_data: DELIVERY_DATA,
+                proof: ProofStrategy::ProveAll,
+                link_requests: LinkRequestPolicy::AcceptAll,
+                ratchet: RatchetPolicy::Ratcheted,
+                resource_strategy: ResourceStrategy::AcceptNone,
+                request_handlers: RequestHandlerRegistration::None,
+                ..
+            }
+        ));
+        assert!(matches!(
+            node_page,
+            PreConfiguredDestination::Single {
+                app_name: node_pages::NODE_APP_NAME,
+                aspects: node_pages::NODE_ASPECTS,
+                announce_app_data: NODE_DATA,
+                proof: ProofStrategy::ProveNone,
+                link_requests: LinkRequestPolicy::AcceptAll,
+                ratchet: RatchetPolicy::NoRatchets,
+                resource_strategy: ResourceStrategy::AcceptNone,
+                request_handlers: RequestHandlerRegistration::NodeRouteSet,
+                ..
+            }
+        ));
+    }
+}

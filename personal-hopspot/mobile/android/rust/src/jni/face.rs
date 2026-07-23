@@ -1,11 +1,12 @@
 use jni::objects::{JByteBuffer, JClass, JString};
 use jni::sys::{jboolean, jint, jlong, jlongArray, jstring};
 use jni::JNIEnv;
-use personal_hopspot_core::{BatteryPercent, BatteryState, InputEvent, UiAction};
+use personal_hopspot_core::{
+    BatteryPercent, BatteryState, MobileActionCode, MobileInputCode, MOBILE_RGBA_BYTES,
+};
 
 use crate::engine::{rpc_key_hex, runtime_health};
 use crate::face::HopspotFace;
-use crate::framebuffer::ARGB_BYTES;
 
 #[cfg(all(target_os = "android", target_arch = "arm"))]
 #[no_mangle]
@@ -18,10 +19,6 @@ pub extern "C" fn dl_iterate_phdr(
     0
 }
 
-const INPUT_SHORT_PRESS: jint = 0;
-const INPUT_LONG_PRESS: jint = 1;
-const ACTION_NONE: jint = 0;
-const ACTION_ANNOUNCE: jint = 1;
 const HEALTH_FIELD_COUNT: i32 = 11;
 
 #[cfg(target_os = "android")]
@@ -87,25 +84,16 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativePostInput(
     // outlives this call (Kotlin frees only via `nativeFree`), and `as_mut`
     // yields `None` for a null pointer rather than dereferencing it.
     let Some(face) = (unsafe { (handle as usize as *mut HopspotFace).as_mut() }) else {
-        return ACTION_NONE;
+        return MobileActionCode::None.code();
     };
-    let event = match code {
-        INPUT_LONG_PRESS => InputEvent::LongPress,
-        INPUT_SHORT_PRESS => InputEvent::ShortPress,
-        _ => InputEvent::ShortPress,
+    let event = match MobileInputCode::decode(code) {
+        Ok(event) => event,
+        Err(error) => {
+            log::warn!("rejected unknown mobile input code {}", error.code());
+            return MobileActionCode::None.code();
+        }
     };
-    match face.post_input(event) {
-        UiAction::Announce => ACTION_ANNOUNCE,
-        UiAction::None
-        | UiAction::OledOff
-        | UiAction::Sleep
-        | UiAction::Wake
-        | UiAction::ToggleSelectedInterface
-        | UiAction::OpenDocs
-        | UiAction::OpenLoRaEditor
-        | UiAction::SetLoRaProfile(_)
-        | UiAction::SwapRadioMode => ACTION_NONE,
-    }
+    MobileActionCode::encode(face.post_input(event)).code()
 }
 
 #[no_mangle]
@@ -201,12 +189,12 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeRender(
     let Ok(capacity) = env.get_direct_buffer_capacity(&buffer) else {
         return;
     };
-    if address.is_null() || capacity < ARGB_BYTES {
+    if address.is_null() || capacity < MOBILE_RGBA_BYTES {
         return;
     }
     // SAFETY: `address`/`capacity` describe the JVM-owned direct buffer, pinned for
     // the duration of this call; we just checked it is non-null and at least
-    // `ARGB_BYTES` long, and nothing else aliases it while we render into it.
+    // `MOBILE_RGBA_BYTES` long, and nothing else aliases it while we render into it.
     let out = unsafe { core::slice::from_raw_parts_mut(address, capacity) };
     face.render(out);
 }

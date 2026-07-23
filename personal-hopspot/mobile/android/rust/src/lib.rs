@@ -1,7 +1,6 @@
 mod bridge;
 mod engine;
 mod face;
-mod framebuffer;
 mod jni;
 mod mdns;
 
@@ -10,5 +9,8 @@ use prns_ffi::wifi_aware::android as wifi_aware;
 use prns_ffi::wifi_direct::android as wifi_direct;
 
 pub use face::HopspotFace;
-pub use framebuffer::{ARGB_BYTES, PANEL_HEIGHT, PANEL_WIDTH};
 pub use jni::*;
+pub use personal_hopspot_core::{
+    MOBILE_PANEL_HEIGHT as PANEL_HEIGHT, MOBILE_PANEL_WIDTH as PANEL_WIDTH,
+    MOBILE_RGBA_BYTES as RGBA_BYTES,
+};

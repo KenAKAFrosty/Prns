@@ -16,11 +16,7 @@ use nrf_softdevice::Softdevice;
 
 use personal_hopspot_core as hopspot;
 use personal_rns::bluetooth_auto::{BluetoothAuto, BluetoothAutoStatus};
-use personal_rns::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
-};
-use personal_rns::identity::in_memory::InMemoryNodeIdentity;
-use personal_rns::identity::IdentitySigner;
+use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand};
 use personal_rns::interfaces::bluetooth_auto::{Endpoint, LinkCapabilities, Nrf52Host, BLE_HW_MTU};
 use personal_rns::interfaces::lora::DEFAULT_915_PROFILE;
 use personal_rns::interfaces::usb_auto::{WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID};
@@ -28,10 +24,7 @@ use personal_rns::interfaces::{ConnectionState, InterfaceStatus};
 use personal_rns::lora::{LoRaInterface, LoRaInterfaceInput};
 use personal_rns::reactor::embassy::{EmbassyHost, EmbassyInterfaceStatus};
 use personal_rns::reactor::interface_seam::Interface;
-use personal_rns::runtime::{
-    Fleet, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe,
-    RequestHandlerRegistration,
-};
+use personal_rns::runtime::{Fleet, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe};
 use personal_rns::storage::StorageLayout;
 use personal_rns::usb_auto::{UsbAutoDevice, UsbAutoDeviceInput};
 use personal_rns::usb_auto::{WebUsbAutoClass, WebUsbAutoState, WEBUSB_AUTO_PACKET_SIZE};
@@ -141,28 +134,21 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
     } = face;
 
     let transport_secret = node_identity.transport_secret();
-    let self_destination = {
-        let signer = InMemoryNodeIdentity::from_secret_key_bytes(node_identity.secret());
-        let name = personal_rns::routing::announce::expand_name("lxmf", &["delivery"])
-            .expect("valid name");
-        personal_rns::routing::announce::derive_destination_hash(&signer.identity_hash(), &name)
-    };
-    let node_page_destination = {
-        let signer = InMemoryNodeIdentity::from_secret_key_bytes(node_identity.secret());
-        let name = personal_rns::routing::announce::expand_name(
-            hopspot::node_pages::NODE_APP_NAME,
-            hopspot::node_pages::NODE_ASPECTS,
-        )
-        .expect("valid name");
-        personal_rns::routing::announce::derive_destination_hash(&signer.identity_hash(), &name)
-    };
+    let destination_secret = node_identity.into_destination_secret();
+    let destination_hashes = hopspot::HopspotDestinationSet::new(
+        destination_secret.clone(),
+        ANNOUNCE_APP_DATA,
+        NODE_ANNOUNCE_APP_DATA,
+    )
+    .destination_hashes()
+    .expect("the hopspot destination names are valid");
+    let self_destination = destination_hashes.delivery;
+    let node_page_destination = destination_hashes.node_page;
     let seed = self_destination.as_bytes();
     ENTROPY_STATE.store(
         u32::from_le_bytes([seed[0], seed[1], seed[2], seed[3]]) | 1,
         core::sync::atomic::Ordering::Relaxed,
     );
-    let destination_secret = node_identity.into_destination_secret();
-
     let mut reactor_lanes = ReactorLanes::new();
     let lora_profile = DEFAULT_915_PROFILE;
     let lora_id = LoRaInterface::<
@@ -222,32 +208,12 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
         &NODE,
         PrnsNodeRecipe {
             transport_identity: Some(transport_secret),
-            pre_configured_destinations: [
-                PreConfiguredDestination::Single {
-                    resource_strategy:
-                        personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
-                    app_name: "lxmf",
-                    aspects: &["delivery"],
-                    identity: destination_secret.clone(),
-                    announce_app_data: ANNOUNCE_APP_DATA,
-                    proof: personal_rns::routing::ProofStrategy::ProveAll,
-                    link_requests: personal_rns::routing::LinkRequestPolicy::AcceptAll,
-                    ratchet: RatchetPolicy::Ratcheted,
-                    request_handlers: RequestHandlerRegistration::None,
-                },
-                PreConfiguredDestination::Single {
-                    resource_strategy:
-                        personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
-                    app_name: hopspot::node_pages::NODE_APP_NAME,
-                    aspects: hopspot::node_pages::NODE_ASPECTS,
-                    identity: destination_secret,
-                    announce_app_data: NODE_ANNOUNCE_APP_DATA,
-                    proof: personal_rns::routing::ProofStrategy::ProveNone,
-                    link_requests: personal_rns::routing::LinkRequestPolicy::AcceptAll,
-                    ratchet: RatchetPolicy::NoRatchets,
-                    request_handlers: RequestHandlerRegistration::NodeRouteSet,
-                },
-            ],
+            pre_configured_destinations: hopspot::HopspotDestinationSet::new(
+                destination_secret,
+                ANNOUNCE_APP_DATA,
+                NODE_ANNOUNCE_APP_DATA,
+            )
+            .into_preconfigured_destinations(),
             app_state: (),
             storage: crate::storage::TechoStorage,
             routes: hopspot::node_pages::NodePageRoutes,

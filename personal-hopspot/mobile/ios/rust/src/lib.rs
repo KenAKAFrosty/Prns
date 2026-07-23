@@ -1,18 +1,15 @@
 mod cards;
 mod engine;
 mod face;
-mod framebuffer;
 mod usbmux;
 
 pub use face::HopspotFace;
-pub use framebuffer::{PANEL_HEIGHT, PANEL_WIDTH, RGBA_BYTES};
+pub use personal_hopspot_core::{
+    MOBILE_PANEL_HEIGHT as PANEL_HEIGHT, MOBILE_PANEL_WIDTH as PANEL_WIDTH,
+    MOBILE_RGBA_BYTES as RGBA_BYTES,
+};
 
-use personal_hopspot_core::{BatteryPercent, BatteryState, InputEvent, UiAction};
-
-const INPUT_SHORT_PRESS: i32 = 0;
-const INPUT_LONG_PRESS: i32 = 1;
-const ACTION_NONE: i32 = 0;
-const ACTION_ANNOUNCE: i32 = 1;
+use personal_hopspot_core::{BatteryPercent, BatteryState, MobileActionCode, MobileInputCode};
 
 #[no_mangle]
 pub extern "C" fn hopspot_start_engine() {
@@ -46,25 +43,13 @@ pub unsafe extern "C" fn hopspot_post_input(handle: *mut HopspotFace, code: i32)
     // SAFETY: the caller contract guarantees either null or unique access to a live HopspotFace for
     // this call; `as_mut` handles null without dereferencing it.
     let Some(face) = (unsafe { handle.as_mut() }) else {
-        return ACTION_NONE;
+        return MobileActionCode::None.code();
     };
-    let event = match code {
-        INPUT_LONG_PRESS => InputEvent::LongPress,
-        INPUT_SHORT_PRESS => InputEvent::ShortPress,
-        _ => InputEvent::ShortPress,
+    let event = match MobileInputCode::decode(code) {
+        Ok(event) => event,
+        Err(_) => return MobileActionCode::None.code(),
     };
-    match face.post_input(event) {
-        UiAction::Announce => ACTION_ANNOUNCE,
-        UiAction::None
-        | UiAction::OledOff
-        | UiAction::Sleep
-        | UiAction::Wake
-        | UiAction::ToggleSelectedInterface
-        | UiAction::OpenLoRaEditor
-        | UiAction::OpenDocs
-        | UiAction::SetLoRaProfile(_)
-        | UiAction::SwapRadioMode => ACTION_NONE,
-    }
+    MobileActionCode::encode(face.post_input(event)).code()
 }
 
 #[no_mangle]

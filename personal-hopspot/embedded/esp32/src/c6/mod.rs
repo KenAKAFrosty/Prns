@@ -13,7 +13,7 @@ use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Timer};
 use static_cell::StaticCell;
 
-use personal_rns::engine::{IssuedCommand, RatchetPolicy};
+use personal_rns::engine::IssuedCommand;
 #[cfg(feature = "bluetooth-auto")]
 use personal_rns::interfaces::bluetooth_auto::{BleIdentity, BLE_HW_MTU};
 use personal_rns::interfaces::usb_auto::device_descriptor;
@@ -24,8 +24,8 @@ use personal_rns::reactor::embassy::{
 use personal_rns::reactor::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
 use personal_rns::runtime::{
     minimum_interface_store_capacity, minimum_reactor_notification_capacity, CompletionPool,
-    EmbassyInterfaceStore, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle,
-    PrnsNodeRecipe, ReactorLaneSet, RequestHandlerRegistration, StaticReactorLane,
+    EmbassyInterfaceStore, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe, ReactorLaneSet,
+    StaticReactorLane,
 };
 use personal_rns::usb_auto::{UsbAutoDevice, UsbAutoDeviceInput};
 

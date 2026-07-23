@@ -5,12 +5,15 @@
 extern crate std;
 
 mod battery;
+mod destinations;
 mod flash_identity;
 mod identity;
+mod mobile;
 pub mod node_pages;
 mod screen;
 
 pub use battery::{BatteryGauge, BatteryPercent, BatterySource, BatteryState, NoBattery};
+pub use destinations::{HopspotDestinationHashes, HopspotDestinationSet};
 pub use flash_identity::{
     bootstrap_flash_ble_identity, bootstrap_flash_node_identity, FlashIdentityError,
 };
@@ -22,6 +25,11 @@ pub use identity::{
 pub use identity::{
     HopspotNodeIdentity, IdentityBootstrap, IdentityPersistence, IdentityStorageName,
     BLE_IDENTITY_STORAGE, NODE_IDENTITY_STORAGE,
+};
+pub use mobile::{
+    InvalidMobileInputCode, MobileActionCode, MobileEngineFailure, MobileEngineState,
+    MobileInputCode, MobileRgbaFrameBuffer, MOBILE_DARK_RGBA, MOBILE_LIT_RGBA, MOBILE_PANEL_HEIGHT,
+    MOBILE_PANEL_WIDTH, MOBILE_PIXEL_COUNT, MOBILE_RGBA_BYTES,
 };
 pub use screen::{
     card_label, render, splash, tcp_card_label, AccessPointState, Card, CardActivityTracker,

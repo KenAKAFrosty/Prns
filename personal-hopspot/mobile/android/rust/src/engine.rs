@@ -8,23 +8,17 @@ use std::time::Instant;
 
 use personal_hopspot_core::{
     card_label, generate_host_ble_identity, generate_host_node_identity, load_host_ble_identity,
-    load_host_node_identity, CardKind, CardLabel, IdentityPersistence, BLE_IDENTITY_STORAGE,
-    NODE_IDENTITY_STORAGE,
+    load_host_node_identity, CardKind, CardLabel, HopspotDestinationSet, IdentityPersistence,
+    BLE_IDENTITY_STORAGE, NODE_IDENTITY_STORAGE,
 };
 use personal_rns::bluetooth_auto::{BluetoothAuto, BluetoothAutoStatus};
-use personal_rns::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
-};
+use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand};
 use personal_rns::interfaces::bluetooth_auto::{
     AndroidHost, Endpoint, LinkCapabilities, BLE_HW_MTU,
 };
 use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus};
 use personal_rns::reactor::tokio::TokioInterfaceStatus;
-use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
-use personal_rns::runtime::{
-    Manual, PreConfiguredDestination, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe,
-    RequestHandlerRegistration, RuntimeHealth,
-};
+use personal_rns::runtime::{Manual, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe, RuntimeHealth};
 use personal_rns::shared_instance::rns_rpc::{SharedInstanceCredentials, SharedInstanceRpcServer};
 use personal_rns::shared_instance::SharedInstanceServer;
 use personal_rns::storage::GrowableHeap;
@@ -45,8 +39,6 @@ const ANDROID_PORT: &str = "android-usb";
 const LOCAL_RNS_PORT: u16 = 37428;
 const RPC_PORT: u16 = LOCAL_RNS_PORT + 1;
 
-const ANNOUNCE_APP_NAME: &str = "lxmf";
-const ANNOUNCE_ASPECTS: &[&str] = &["delivery"];
 const ANNOUNCE_APP_DATA: &[u8] = b"personal-hopspot";
 const NODE_ANNOUNCE_APP_DATA: &[u8] = b"personal-hopspot";
 
@@ -378,43 +370,20 @@ fn run_engine(
         ble.set_local_identity(ble_identity);
 
         let destination_secret = node_identity.into_destination_secret();
-        let hopspot_transport_node_destination = PreConfiguredDestination::Single {
-            resource_strategy:
-                personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
-            app_name: ANNOUNCE_APP_NAME,
-            aspects: ANNOUNCE_ASPECTS,
-            identity: destination_secret.clone(),
-            announce_app_data: ANNOUNCE_APP_DATA,
-            proof: ProofStrategy::ProveAll,
-            link_requests: LinkRequestPolicy::AcceptAll,
-            ratchet: RatchetPolicy::Ratcheted,
-            request_handlers: RequestHandlerRegistration::None,
-        };
-        let destination = hopspot_transport_node_destination
-            .destination_hash()
-            .expect("the lxmf.delivery name is valid");
-        let hopspot_node_page_destination = PreConfiguredDestination::Single {
-            resource_strategy:
-                personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
-            app_name: personal_hopspot_core::node_pages::NODE_APP_NAME,
-            aspects: personal_hopspot_core::node_pages::NODE_ASPECTS,
-            identity: destination_secret,
-            announce_app_data: NODE_ANNOUNCE_APP_DATA,
-            proof: ProofStrategy::ProveNone,
-            link_requests: LinkRequestPolicy::AcceptAll,
-            ratchet: RatchetPolicy::NoRatchets,
-            request_handlers: RequestHandlerRegistration::NodeRouteSet,
-        };
-        let node_page_destination = hopspot_node_page_destination
-            .destination_hash()
-            .expect("the nomadnetwork.node name is valid");
+        let destinations = HopspotDestinationSet::new(
+            destination_secret,
+            ANNOUNCE_APP_DATA,
+            NODE_ANNOUNCE_APP_DATA,
+        );
+        let destination_hashes = destinations
+            .destination_hashes()
+            .expect("the hopspot destination names are valid");
+        let destination = destination_hashes.delivery;
+        let node_page_destination = destination_hashes.node_page;
 
         let node = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: Some(transport_secret),
-            pre_configured_destinations: [
-                hopspot_transport_node_destination,
-                hopspot_node_page_destination,
-            ],
+            pre_configured_destinations: destinations.into_preconfigured_destinations(),
             app_state: (),
             storage: GrowableHeap,
             routes: personal_hopspot_core::node_pages::NodePageRoutes,

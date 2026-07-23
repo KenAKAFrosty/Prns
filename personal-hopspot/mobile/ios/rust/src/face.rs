@@ -1,8 +1,9 @@
 use heapless::Vec as HVec;
 use personal_hopspot_core::{
     render, snapshots_to_cards, snapshots_to_interface_menu_details, splash, AccessPointState,
-    BatteryState, Card, CardActivityTracker, DisplayPowerControl, InputEvent, RenderFrame,
-    ScreenContent, SplashContent, UiAction, UiConfiguration, UiNotice, UiState,
+    BatteryState, Card, CardActivityTracker, DisplayPowerControl, InputEvent,
+    MobileRgbaFrameBuffer, RenderFrame, ScreenContent, SplashContent, UiAction, UiConfiguration,
+    UiNotice, UiState,
 };
 use personal_rns::interfaces::InterfaceSnapshot;
 use personal_rns::storage::{GrowableHeap, StorageLayout};
@@ -12,8 +13,6 @@ use crate::cards::MAX_CARDS;
 use crate::engine::{
     classify, interface_snapshots, sleep_interfaces, toggle_interface, wake_interfaces,
 };
-use crate::framebuffer::FrameBuffer;
-
 const NOTICE_TIMEOUT: Duration = Duration::from_millis(900);
 
 fn ui_state() -> UiState {
@@ -26,7 +25,7 @@ fn ui_state() -> UiState {
 
 pub struct HopspotFace {
     state: UiState,
-    framebuffer: FrameBuffer,
+    framebuffer: MobileRgbaFrameBuffer,
     battery: BatteryState,
     activity: CardActivityTracker<MAX_CARDS>,
     activity_started: Instant,
@@ -37,7 +36,7 @@ impl HopspotFace {
     pub fn new() -> Self {
         Self {
             state: ui_state(),
-            framebuffer: FrameBuffer::new(),
+            framebuffer: MobileRgbaFrameBuffer::new(),
             battery: BatteryState::Unknown,
             activity: CardActivityTracker::new(),
             activity_started: Instant::now(),
@@ -167,13 +166,13 @@ impl Default for HopspotFace {
 mod tests {
     use super::*;
     use crate::cards::dummy_cards;
-    use crate::framebuffer::{DARK_RGBA, RGBA_BYTES};
+    use personal_hopspot_core::{MOBILE_DARK_RGBA, MOBILE_RGBA_BYTES};
 
     impl HopspotFace {
         fn detached() -> Self {
             Self {
                 state: ui_state(),
-                framebuffer: FrameBuffer::new(),
+                framebuffer: MobileRgbaFrameBuffer::new(),
                 battery: BatteryState::Unknown,
                 activity: CardActivityTracker::new(),
                 activity_started: Instant::now(),
@@ -183,7 +182,7 @@ mod tests {
     }
 
     fn fresh_buffer() -> Vec<u8> {
-        vec![0u8; RGBA_BYTES]
+        vec![0u8; MOBILE_RGBA_BYTES]
     }
 
     #[test]
@@ -191,7 +190,7 @@ mod tests {
         let mut face = HopspotFace::detached();
         let mut out = fresh_buffer();
         face.render_cards(&dummy_cards(), &[], &mut out);
-        assert!(out.chunks_exact(4).any(|px| px != DARK_RGBA));
+        assert!(out.chunks_exact(4).any(|px| px != MOBILE_DARK_RGBA));
     }
 
     #[test]
@@ -199,7 +198,7 @@ mod tests {
         let mut face = HopspotFace::detached();
         let mut out = fresh_buffer();
         face.render_cards(&[], &[], &mut out);
-        assert!(out.chunks_exact(4).any(|px| px != DARK_RGBA));
+        assert!(out.chunks_exact(4).any(|px| px != MOBILE_DARK_RGBA));
     }
 
     #[test]
