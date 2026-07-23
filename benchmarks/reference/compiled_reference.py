@@ -12,7 +12,11 @@ import sys
 
 
 REFERENCE_DIR = Path(__file__).resolve().parent
-OBJECT_CACHE = REFERENCE_DIR / ".object-cache" / "pyximport"
+PROOF_DIR = REFERENCE_DIR / ".object-cache"
+if os.name == "nt":
+    OBJECT_CACHE = Path.home() / ".prns-oc"
+else:
+    OBJECT_CACHE = PROOF_DIR / "pyximport"
 
 
 def first_line(command: list[str]) -> str:
@@ -69,7 +73,8 @@ def load_compiled_rns():
         "compiler": first_line([os.environ.get("CC", "cc"), "--version"]),
         "object_cache": str(OBJECT_CACHE),
     }
-    (OBJECT_CACHE.parent / "proof.json").write_text(
+    PROOF_DIR.mkdir(parents=True, exist_ok=True)
+    (PROOF_DIR / "proof.json").write_text(
         json.dumps(proof, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     print("REFERENCE_PROOF " + json.dumps(proof, sort_keys=True), flush=True)

@@ -753,12 +753,36 @@ fn command_exists(program: &str) -> bool {
         return Command::new("where")
             .arg("cl.exe")
             .output()
-            .is_ok_and(|output| output.status.success());
+            .is_ok_and(|output| output.status.success())
+            || vswhere_finds_msvc();
     }
     Command::new(program)
         .arg("--version")
         .output()
         .is_ok_and(|output| output.status.success())
+}
+
+#[cfg(windows)]
+fn vswhere_finds_msvc() -> bool {
+    let program_files_x86 = std::env::var("ProgramFiles(x86)")
+        .unwrap_or_else(|_| r"C:\Program Files (x86)".into());
+    let vswhere = Path::new(&program_files_x86)
+        .join(r"Microsoft Visual Studio\Installer\vswhere.exe");
+    Command::new(vswhere)
+        .args([
+            "-latest",
+            "-products",
+            "*",
+            "-requires",
+            "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+            "-property",
+            "installationPath",
+        ])
+        .output()
+        .is_ok_and(|output| {
+            output.status.success()
+                && !String::from_utf8_lossy(&output.stdout).trim().is_empty()
+        })
 }
 
 #[cfg(target_os = "macos")]
