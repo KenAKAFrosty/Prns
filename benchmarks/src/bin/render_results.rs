@@ -1149,7 +1149,7 @@ mod tests {
         );
         assert!(output.contains("RNS 1.4.0 (compiled) → Prns<sup>1</sup>"));
         assert!(output.contains("**Cell context**"));
-        assert!(output.contains("Published macOS and Windows suites"));
+        assert!(output.contains("Prns returns proofs sooner"));
     }
 
     #[test]

@@ -44,7 +44,7 @@ Sustained delivery of small messages over one established link.
 
 **Cell context**
 
-1. **RNS 1.4.0 (compiled) → Prns** — Published macOS and Windows suites both show this direction below the RNS↔RNS diagonal. It combines RNS's sender/receipt loop with Prns's link-data receive/proof-return path; the opposite mixed row reverses both roles, so mixed cells are compositions rather than interpolations. The cross-host repeat localizes the effect to this directional interop seam, but the current evidence does not assign the cost to one endpoint.
+1. **RNS 1.4.0 (compiled) → Prns** — Prns returns proofs sooner, but RNS’s benchmark sender polls receipts every 0.5 ms. Prompt Prns proofs arrive in small batches, causing many poll/sleep/refill cycles. Stock’s slower proofs coalesce into larger batches, amortizing that loop better.
 
 ### Packets
 
@@ -70,7 +70,11 @@ Four concurrent small requests with asynchronous 1–4 KiB resource responses ov
 | Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 534293/534293 · 3/3 samples | 6.3k/s | 0.64 / 0.85 ms | i 17.8 MiB / r 45.2 MiB |
 | RNS 1.4.0 (compiled) → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 191080/191080 · 3/3 samples | 2.1k/s | 1.62 / 3.78 ms | i 334.6 MiB / r 37.5 MiB |
 | RNS 1.4.0 (compiled) → RNS 1.4.0 (compiled) | <img src="assets/check.svg" width="14" alt="conformant" /> 95147/95147 · 3/3 samples | 1.1k/s | 1.48 / 14.69 ms | i 288.3 MiB / r 341.3 MiB |
-| Prns → RNS 1.4.0 (compiled) | <img src="assets/check.svg" width="14" alt="conformant" /> 90149/90149 · 3/3 samples | 982/s | 1.11 / 251.69 ms | i 7.6 MiB / r 346.0 MiB |
+| Prns → RNS 1.4.0 (compiled)<sup>1</sup> | <img src="assets/check.svg" width="14" alt="conformant" /> 90149/90149 · 3/3 samples | 982/s | 1.11 / 251.69 ms | i 7.6 MiB / r 346.0 MiB |
+
+**Cell context**
+
+1. **Prns → RNS 1.4.0 (compiled)** — RNS sends a resource advertisement before registering that resource internally. Prns can return the first pull so quickly that RNS drops it. Prns then waits for its 250 ms retry deadline. The published 251.69 ms p99 is the fingerprint of this race.
 
 ### Resources
 
@@ -87,7 +91,7 @@ Stream a 64 MiB incompressible resource with compression disabled.
 
 **Cell context**
 
-1. **RNS 1.4.0 (compiled) → Prns** — The original published macOS and Windows suites both settled this cell near 16.6 MB/s, while its one-segment control beat RNS↔RNS. RNS 1.4.0 splits 64 MiB into 65 protocol segments, prepares each successor in a background thread, and polls successor readiness in 50 ms increments when a proof arrives first. Prns's fast one-segment receiver repeatedly exposes that stock-sender handoff; this is a multi-segment pipeline interaction, not evidence that Prns is slow at receiving a segment.
+1. **RNS 1.4.0 (compiled) → Prns** — RNS prepares the next 1 MiB segment in a background thread. Prns proves the current segment before that preparation completes, making RNS enter a coarse 50 ms polling loop. A slower stock receiver gives preparation enough time to finish, avoiding that cliff.
 
 > Both implementations carry the same 64 MiB in 65 authenticated protocol segments. RNS 1.4.0 fills 64 maximum-efficient segments and ends with a 64-byte tail; Prns keeps the first 63 at that ceiling and balances the final pair. The protocol-valid rebalance avoids an RNS 1.4.0 receive-side handoff race in which the proof leaves before the retiring receiver is removed and that one untagged tail part can be skipped.
 
@@ -104,7 +108,7 @@ Stream the 64 MiB resource with both endpoint TCP interfaces explicitly configur
 
 **Cell context**
 
-1. **RNS 1.4.0 (compiled) → Prns** — This controlled row retains the RNS-sender/Prns-receiver segment-handoff interaction identified by the default-policy cell and exposes a second RNS 1.4.0 race more often: a successor advertisement is sent immediately before that successor is registered as an outgoing resource, so a fast first pull can be discarded. Prns recognizes RNS's freshly encrypted retry for the already-active resource and refreshes the pull, preserving exact delivery at the cost of an advertisement-timeout pause when the race occurs. Compare this result with both the default 64 MiB row and the one-segment control.
+1. **RNS 1.4.0 (compiled) → Prns** — RNS prepares the next 1 MiB segment in a background thread. Prns proves the current segment before that preparation completes, making RNS enter a coarse 50 ms polling loop. A slower stock receiver gives preparation enough time to finish, avoiding that cliff.
 
 > Controlled computational comparison: identical workload and protocol, with only TCP bitrate policy changed.
 

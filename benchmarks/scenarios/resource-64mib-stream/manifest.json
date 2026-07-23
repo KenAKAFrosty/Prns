@@ -17,7 +17,7 @@
         "initiator": "rns-1.4.0-compiled",
         "responder": "personal-rns"
       },
-      "text": "The original published macOS and Windows suites both settled this cell near 16.6 MB/s, while its one-segment control beat RNS↔RNS. RNS 1.4.0 splits 64 MiB into 65 protocol segments, prepares each successor in a background thread, and polls successor readiness in 50 ms increments when a proof arrives first. Prns's fast one-segment receiver repeatedly exposes that stock-sender handoff; this is a multi-segment pipeline interaction, not evidence that Prns is slow at receiving a segment."
+      "text": "RNS prepares the next 1 MiB segment in a background thread. Prns proves the current segment before that preparation completes, making RNS enter a coarse 50 ms polling loop. A slower stock receiver gives preparation enough time to finish, avoiding that cliff."
     }
   ],
   "description": "A single large resource transferred whole, over and over, for a fixed wall-time - the multi-segment bulk mechanism. Each logical transfer is 64 MiB sliced into 65 segments no larger than MAX_EFFICIENT_SIZE, sent one at a time, hash-proved, and application-acknowledged before another logical transfer begins. The payload repeats one shared deterministic maximum-size block, allowing Prns to stream with bounded memory while both participants transmit identical bytes. Compression is disabled on both stacks.",

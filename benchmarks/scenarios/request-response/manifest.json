@@ -8,6 +8,16 @@
   "primary_metric": "requests_per_sec",
   "headline": true,
   "notes": [],
+  "cell_notes": [
+    {
+      "subject": {
+        "path": "direct",
+        "initiator": "personal-rns",
+        "responder": "rns-1.4.0-compiled"
+      },
+      "text": "RNS sends a resource advertisement before registering that resource internally. Prns can return the first pull so quickly that RNS drops it. Prns then waits for its 250 ms retry deadline. The published 251.69 ms p99 is the fingerprint of this race."
+    }
+  ],
   "description": "Four concurrent request/reply round trips use four pre-established links at the manifest-owned standard 500-byte RNS MTU. Deterministic 32–128 byte requests remain below the link MDU, while deterministic 1–4 KiB responses unambiguously use the documented asynchronous resource-response path on both stacks. Each link holds its response lane through Resource proof settlement before transmitting its next response; the four links remain independently concurrent. That preserves realistic small requests without sleeps, blocking handlers, private queue inspection, reference mutation, or latency shims. Requests per second is the primary comparison; fractional-millisecond p50 and p99 wall-clock RTT run from request issue through complete response settlement.",
   "roles": [
     "responder",
