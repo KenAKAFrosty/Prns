@@ -8,13 +8,11 @@ use embedded_graphics::text::{Baseline, Text};
 use crate::screen::{Card, CardKind, Liveness, LocalDocsAccess};
 
 use super::glyphs::{
-    draw_arrow, draw_clock, draw_global_icon, draw_interface_icon, draw_lightning, draw_link,
-    draw_offline_icon, draw_person,
+    draw_arrow, draw_clock, draw_global_icon, draw_interface_icon, draw_link, draw_offline_icon,
+    draw_person,
 };
 use super::layout::*;
-use super::metrics::{
-    draw_compact_number, fmt_activity_age, fmt_bytes, fmt_count, fmt_rate_bytes_per_sec,
-};
+use super::metrics::{draw_compact_number, fmt_activity_age, fmt_bytes, fmt_count};
 use super::primitives::{fill, line, stroke};
 
 fn name_font(kind: CardKind) -> &'static MonoFont<'static> {
@@ -138,14 +136,6 @@ pub(in crate::screen) fn draw_card_with_selection<D: DrawTarget<Color = BinaryCo
         BinaryColor::On,
     );
 
-    draw_lightning(display, 2, live_y + 1);
-    let rate = fmt_rate_bytes_per_sec(card.rate_bytes_per_sec);
-    draw_compact_number(
-        display,
-        rate.as_str(),
-        Point::new(8, live_y),
-        BinaryColor::On,
-    );
     draw_clock(display, ACTIVITY_ICON_X, live_y + 1);
     let age = fmt_activity_age(card.last_activity_secs);
     draw_compact_number(

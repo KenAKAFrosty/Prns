@@ -161,22 +161,6 @@ pub(in crate::screen) fn draw_link<D: DrawTarget<Color = BinaryColor>>(
         .draw(display);
 }
 
-pub(in crate::screen) fn draw_lightning<D: DrawTarget<Color = BinaryColor>>(
-    display: &mut D,
-    x: i32,
-    y: i32,
-) {
-    draw_pattern_colored(
-        display,
-        x,
-        y,
-        &[
-            "   # ", "  #  ", " ####", "  #  ", " #   ", "#    ", "     ",
-        ],
-        BinaryColor::On,
-    );
-}
-
 pub(in crate::screen) fn draw_clock<D: DrawTarget<Color = BinaryColor>>(
     display: &mut D,
     x: i32,

@@ -32,7 +32,7 @@ fn card_stacks_traffic_and_moves_peers_right() {
     assert_eq!(display.get_pixel(Point::new(42, 14)), None);
     assert_eq!(display.get_pixel(Point::new(35, 23)), Some(BinaryColor::On));
     assert_eq!(display.get_pixel(Point::new(37, 23)), None);
-    assert_eq!(display.get_pixel(Point::new(5, 32)), Some(BinaryColor::On));
+    assert_eq!(display.get_pixel(Point::new(5, 32)), None);
     assert_eq!(display.get_pixel(Point::new(38, 32)), Some(BinaryColor::On));
 }
 

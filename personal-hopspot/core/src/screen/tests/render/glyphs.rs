@@ -135,15 +135,6 @@ fn link_icon_reads_as_chain_glyph() {
 }
 
 #[test]
-fn lightning_icon_reads_as_rate_glyph() {
-    let mut display = MockDisplay::new();
-
-    draw_lightning(&mut display, 0, 0);
-
-    display.assert_pattern(&["   # ", "  #  ", " ####", "  #  ", " #   ", "#    "]);
-}
-
-#[test]
 fn clock_icon_reads_as_activity_age_glyph() {
     let mut display = MockDisplay::new();
 

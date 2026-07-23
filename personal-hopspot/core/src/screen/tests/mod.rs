@@ -15,9 +15,7 @@ use crate::battery::{BatteryPercent, BatteryState};
 use super::limits::{build_limit_rows, LimitValue};
 use super::model::InterfaceMenuDetailKind;
 use super::render::cards::draw_card_with_selection;
-use super::render::glyphs::{
-    draw_battery, draw_clock, draw_interface_icon, draw_lightning, draw_link, draw_person,
-};
+use super::render::glyphs::{draw_battery, draw_clock, draw_interface_icon, draw_link, draw_person};
 use super::render::layout::{
     ACTIVITY_TEXT_X, CARD_H, CARD_SLOT_STEP, CARD_TOP, FIRST_CARD_WITH_GLOBAL_TOP,
     FOOTER_FOURTH_LINE_OFFSET, FOOTER_SECOND_LINE_OFFSET, GLOBAL_BACKING_H, GLOBAL_BACKING_X,
