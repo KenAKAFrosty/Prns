@@ -11,6 +11,26 @@ entrypoint = ["bash", "tools/build/android.sh"]
 requires = ["bash", "cargo"]
 
 [[task]]
+id = "build.napi"
+summary = "Build the Node.js native addon and its generated TypeScript definitions."
+domain = "build"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci"]
+entrypoint = ["bash", "tools/build/napi.sh", "build"]
+requires = ["bash", "cargo", "node", "npm"]
+
+[[task]]
+id = "build.napi.test"
+summary = "Build the Node.js native addon in debug and run its JavaScript test suite."
+domain = "build"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci"]
+entrypoint = ["bash", "tools/build/napi.sh", "test"]
+requires = ["bash", "cargo", "node", "npm"]
+
+[[task]]
 id = "build.wasm-docs.stage"
 summary = "Build and stage the browser transport playground into the documentation site."
 domain = "build"

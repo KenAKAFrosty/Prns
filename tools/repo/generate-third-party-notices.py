@@ -25,6 +25,9 @@ GRAPHS = (
     ("desktop Windows", "personal-hopspot/desktop/Cargo.toml", "x86_64-pc-windows-msvc"),
     ("Android", "personal-hopspot/mobile/android/rust/Cargo.toml", "aarch64-linux-android"),
     ("iOS", "personal-hopspot/mobile/ios/rust/Cargo.toml", "aarch64-apple-ios"),
+    ("Node addon Linux", "prns-napi/Cargo.toml", "x86_64-unknown-linux-gnu"),
+    ("Node addon macOS", "prns-napi/Cargo.toml", "aarch64-apple-darwin"),
+    ("Node addon Windows", "prns-napi/Cargo.toml", "x86_64-pc-windows-msvc"),
     ("nRF52840", "personal-hopspot/embedded/nrf52840/Cargo.toml", "thumbv7em-none-eabihf"),
     (
         "ESP32-C6",
@@ -82,6 +85,9 @@ NPM = (
     ("pako 2.2.0", "Zlib", "release/licenses/pako-Zlib.txt"),
     ("spark-md5 3.0.2", "MIT", "release/licenses/spark-md5-MIT.txt"),
     ("tslib 2.8.1", "0BSD", "docs/website/node_modules/tslib/LICENSE.txt"),
+)
+VENDORED = (
+    ("libdbus 1.14.4", "AFL-2.1", "release/licenses/libdbus-AFL-2.1.txt", "Node addon Linux"),
 )
 
 
@@ -171,6 +177,17 @@ def notice_bundle() -> str:
             )
             notice["packages"].add(package)
             notice["graphs"].add("website JavaScript")
+        for package, identifier, relative, graph in VENDORED:
+            path = ROOT / relative
+            if not path.is_file():
+                raise RuntimeError(f"vendored notice source {relative} is missing")
+            text = normalized_notice_text(path.read_text(encoding="utf-8"))
+            notice = notices.setdefault(
+                (identifier, text),
+                {"name": identifier, "packages": set(), "graphs": set()},
+            )
+            notice["packages"].add(package)
+            notice["graphs"].add(graph)
     nordic = [key for key in notices if key[0] == "LicenseRef-Nordic-SoftDevice"]
     if len(nordic) != 1:
         raise RuntimeError("Nordic SoftDevice notice was not generated exactly once")
@@ -195,6 +212,14 @@ def notice_bundle() -> str:
             "- `atob-lite 2.0.0` — `MIT`",
             "- `pako 2.2.0` — `MIT AND Zlib`",
             "- `tslib 2.8.1` — `0BSD`",
+        ]
+    )
+    lines.extend(["", "## Node addon vendored native code", ""])
+    lines.extend(
+        [
+            "- `libdbus 1.14.4` — `AFL-2.1` alternative selected from its "
+            "`AFL-2.1 OR GPL-2.0-or-later` dual license; built from the source vendored by "
+            "`libdbus-sys` and statically linked into the Linux `personal-rns` Node addon.",
         ]
     )
     lines.extend(["", "## Android Maven runtime", ""])
