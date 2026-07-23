@@ -30,8 +30,8 @@ impl RequestRoute<Responder> for Echo {
     const POLICY: RoutePolicy = RoutePolicy::AllowAll;
     async fn handle(mut cx: RequestContext<'_, Responder>) -> Result<(), Decline> {
         let asked = cx.data;
-        let _ = cx.write(asked);
-        cx.respond(b"-pong")
+        let _ = cx.write_packed(asked);
+        cx.respond_packed(b"-pong")
     }
 }
 

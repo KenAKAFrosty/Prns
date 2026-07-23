@@ -472,6 +472,10 @@ impl<S: StorageLayout> EngineState<S> {
                 );
             }
             CommandOutcome::OwesRespond { id, respond } => {
+                let data_len = match &respond.payload {
+                    crate::engine::RespondPayload::Packed(data) => data.len(),
+                    crate::engine::RespondPayload::StaticBytes(_) => 0,
+                };
                 let mut iv = [0u8; ENCRYPTION_IV_LEN];
                 fill_entropy(&mut iv);
                 let settlement = match self.active_link_interface(&respond.link_id) {
@@ -497,7 +501,7 @@ impl<S: StorageLayout> EngineState<S> {
                         sink(EngineReaction::Directive(Directive::EmitFrame {
                             target: fire_on,
                             size_hint: link_data_frame_ceiling(
-                                RESPONSE_WIRE_OVERHEAD + response_data_wire_len(respond.data.len()),
+                                RESPONSE_WIRE_OVERHEAD + response_data_wire_len(data_len),
                             ),
                             fill: &mut fill,
                         }));
@@ -519,7 +523,7 @@ impl<S: StorageLayout> EngineState<S> {
             }
             CommandOutcome::OwesResourceResponse { id, respond } => {
                 wake_schedule_changes =
-                    self.ingest_send_borrowed_response_into(id, &respond, now, fill_entropy, sink);
+                    self.ingest_send_static_response_into(id, &respond, now, fill_entropy, sink);
             }
             CommandOutcome::RespondRejected { id, rejection } => {
                 settle(

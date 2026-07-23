@@ -1,7 +1,7 @@
 //! RNS 1.4.0 `Resource(data, link)` plus `Resource.advertise`.
 
 use crate::engine::{Directive, EngineReaction, EngineState, InstantMillis, Journaled};
-use crate::engine::{SendResourceFailure, SendResourceRejection, Settlement};
+use crate::engine::{RespondFailure, SendResourceFailure, SendResourceRejection, Settlement};
 use crate::interfaces::InterfaceId;
 use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome};
 use crate::routing::ingress::{DataPacket, IgnoreReason, IngestPacketOutcome};
@@ -10,7 +10,10 @@ use crate::routing::links::data::{
     link_data_frame_ceiling, link_raw_frame_ceiling, write_link_packet, write_link_raw_packet,
     LINK_MDU,
 };
-use crate::routing::links::request::response_envelope_prefix;
+use crate::routing::links::request::{
+    response_envelope_prefix, write_packed_binary_header, MAX_PACKED_BINARY_HEADER_LEN,
+    RESPONSE_WIRE_OVERHEAD,
+};
 use crate::routing::links::resources::advertisement::{
     write_hashmap_update_plaintext, ResourceAdvertisement, ResourceFlags,
 };
@@ -69,6 +72,20 @@ pub(crate) enum ResourceProofClassification {
     NotALocalLink,
 }
 
+pub(crate) fn resource_settlement(
+    correlation: ResourceCorrelation,
+    result: Result<(), SendResourceFailure>,
+) -> Settlement {
+    match correlation {
+        ResourceCorrelation::Response(_) => {
+            Settlement::Respond(result.map_err(RespondFailure::Resource))
+        }
+        ResourceCorrelation::Unsolicited | ResourceCorrelation::Request { .. } => {
+            Settlement::SendResource(result)
+        }
+    }
+}
+
 impl<S: StorageLayout> EngineState<S> {
     pub fn ingest_send_resource_into<F>(
         &mut self,
@@ -89,10 +106,10 @@ impl<S: StorageLayout> EngineState<S> {
         )
     }
 
-    pub fn ingest_send_borrowed_response_into<F>(
+    pub fn ingest_send_static_response_into<F>(
         &mut self,
         id: crate::engine::CommandId,
-        respond: &crate::engine::RespondBorrowed,
+        respond: &crate::engine::Respond,
         now: InstantMillis,
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
@@ -100,20 +117,40 @@ impl<S: StorageLayout> EngineState<S> {
     where
         F: FnMut(&mut [u8]),
     {
-        let envelope = response_envelope_prefix(&respond.request_id);
+        let crate::engine::RespondPayload::StaticBytes(data) = &respond.payload else {
+            sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                id,
+                settlement: Settlement::Respond(Err(crate::engine::RespondFailure::WriteFailed)),
+            }));
+            return crate::engine::WakeSchedules::UNCHANGED;
+        };
+        let data = *data;
+        let response_envelope = response_envelope_prefix(&respond.request_id);
+        let mut envelope = [0u8; RESPONSE_WIRE_OVERHEAD + MAX_PACKED_BINARY_HEADER_LEN];
+        envelope[..RESPONSE_WIRE_OVERHEAD].copy_from_slice(&response_envelope);
+        let Ok(binary_header_len) =
+            write_packed_binary_header(data.len(), &mut envelope[RESPONSE_WIRE_OVERHEAD..])
+        else {
+            sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                id,
+                settlement: Settlement::Respond(Err(crate::engine::RespondFailure::WriteFailed)),
+            }));
+            return crate::engine::WakeSchedules::UNCHANGED;
+        };
+        let envelope_len = RESPONSE_WIRE_OVERHEAD + binary_header_len;
         self.ingest_send_resource_segment_enveloped(
             &ResourceSend {
                 id,
                 link_id: respond.link_id,
                 body: ResourceBody {
-                    data: respond.data,
+                    data,
                     compressed_candidate: None,
                     metadata: ResourceMetadata::None,
                 },
                 correlation: ResourceCorrelation::Response(respond.request_id),
             },
-            ResourceSegment::whole((envelope.len() + respond.data.len()) as u64),
-            &envelope,
+            ResourceSegment::whole((envelope_len + data.len()) as u64),
+            &envelope[..envelope_len],
             now,
             fill_entropy,
             sink,
@@ -167,7 +204,7 @@ impl<S: StorageLayout> EngineState<S> {
         let settle = |sink: &mut dyn FnMut(EngineReaction<'_>), failure| {
             sink(EngineReaction::Journaled(Journaled::CommandSettled {
                 id,
-                settlement: Settlement::SendResource(Err(failure)),
+                settlement: resource_settlement(correlation, Err(failure)),
             }));
         };
         if segment_index == 0 || total_segments == 0 || segment_index > total_segments {
@@ -425,13 +462,18 @@ impl<S: StorageLayout> EngineState<S> {
             return Resolved(IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid));
         }
         let id = state.command_id;
+        let correlation = state.correlation;
         let last_segment = state.segment_index >= state.total_segments;
         self.outgoing_resources.remove(&link_id, &hash);
         if last_segment {
             self.outgoing_assemblies.clear(&link_id);
         }
         self.links.note_inbound(&link_id, arrived_at);
-        Resolved(IngestPacketOutcome::ResourceDelivered { id, link_id })
+        Resolved(IngestPacketOutcome::ResourceDelivered {
+            id,
+            link_id,
+            correlation,
+        })
     }
 
     /// RNS 1.4.0 `Resource._rejected`; sealed, and behind the duplicate filter.
@@ -469,11 +511,17 @@ impl<S: StorageLayout> EngineState<S> {
         if self.outgoing_resources.state(index).status.is_staged() {
             return IngestPacketOutcome::Ignored(IgnoreReason::Superseded);
         }
-        let id = self.outgoing_resources.state(index).command_id;
+        let state = self.outgoing_resources.state(index);
+        let id = state.command_id;
+        let correlation = state.correlation;
         self.outgoing_resources.remove(&link_id, &hash);
         self.outgoing_assemblies.clear(&link_id);
         self.links.note_inbound(&link_id, arrived_at);
-        IngestPacketOutcome::ResourceRejectedByPeer { id, link_id }
+        IngestPacketOutcome::ResourceRejectedByPeer {
+            id,
+            link_id,
+            correlation,
+        }
     }
 
     /// RNS 1.4.0 `Resource.request`: parts go back raw (slices of the sealed stream,  no token around them).
@@ -704,14 +752,19 @@ impl<S: StorageLayout> EngineState<S> {
         error: BuildOutgoingResourceError,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) {
-        let id = self.outgoing_resources.state(index).command_id;
+        let state = self.outgoing_resources.state(index);
+        let id = state.command_id;
+        let correlation = state.correlation;
         let hash = *self.outgoing_resources.hash_at(index);
         self.outgoing_resources.remove(link_id, &hash);
         sink(EngineReaction::Journaled(Journaled::CommandSettled {
             id,
-            settlement: Settlement::SendResource(Err(SendResourceFailure::Rejected(
-                SendResourceRejection::Build(error),
-            ))),
+            settlement: resource_settlement(
+                correlation,
+                Err(SendResourceFailure::Rejected(SendResourceRejection::Build(
+                    error,
+                ))),
+            ),
         }));
     }
 
@@ -847,11 +900,16 @@ impl<S: StorageLayout> EngineState<S> {
                     .set_timeout_at(index, Some(advertised_deadline(now, rtt_ms)));
             }
             AdvertisementWriteOutcome::DidNotWrite => {
-                let id = self.outgoing_resources.state(index).command_id;
+                let state = self.outgoing_resources.state(index);
+                let id = state.command_id;
+                let correlation = state.correlation;
                 self.outgoing_resources.remove(link_id, &hash);
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
                     id,
-                    settlement: Settlement::SendResource(Err(SendResourceFailure::WriteFailed)),
+                    settlement: resource_settlement(
+                        correlation,
+                        Err(SendResourceFailure::WriteFailed),
+                    ),
                 }));
             }
         }
@@ -865,12 +923,17 @@ impl<S: StorageLayout> EngineState<S> {
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) {
         while let Some(index) = self.outgoing_resources.staged_index(link_id) {
-            let id = self.outgoing_resources.state(index).command_id;
+            let state = self.outgoing_resources.state(index);
+            let id = state.command_id;
+            let correlation = state.correlation;
             let hash = *self.outgoing_resources.hash_at(index);
             self.outgoing_resources.remove(link_id, &hash);
             sink(EngineReaction::Journaled(Journaled::CommandSettled {
                 id,
-                settlement: Settlement::SendResource(Err(SendResourceFailure::PredecessorFailed)),
+                settlement: resource_settlement(
+                    correlation,
+                    Err(SendResourceFailure::PredecessorFailed),
+                ),
             }));
         }
     }
@@ -890,7 +953,9 @@ impl<S: StorageLayout> EngineState<S> {
         let Some(index) = self.outgoing_resources.lookup(link_id, hash) else {
             return;
         };
-        let id = self.outgoing_resources.state(index).command_id;
+        let state = self.outgoing_resources.state(index);
+        let id = state.command_id;
+        let correlation = state.correlation;
         self.outgoing_resources.remove(link_id, hash);
         self.outgoing_assemblies.clear(link_id);
         if let ActiveLinkLookup::Active(link) = self.links.active_view(link_id) {
@@ -930,7 +995,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
         sink(EngineReaction::Journaled(Journaled::CommandSettled {
             id,
-            settlement: Settlement::SendResource(Err(failure)),
+            settlement: resource_settlement(correlation, Err(failure)),
         }));
         self.fail_staged_continuation(link_id, sink);
     }
@@ -1539,17 +1604,24 @@ mod tests {
     }
 
     #[test]
-    fn a_borrowed_response_builds_byte_identical_to_a_prepacked_response() {
-        use crate::engine::RespondBorrowed;
+    fn a_static_bytes_response_builds_byte_identical_to_a_prepacked_response() {
+        use crate::engine::{Respond, RespondPayload};
         use crate::routing::links::request::{
-            write_response_plaintext, RequestId, RESPONSE_WIRE_OVERHEAD,
+            packed_binary_len, write_packed_binary_header, write_response_plaintext, RequestId,
+            MAX_PACKED_BINARY_HEADER_LEN, RESPONSE_WIRE_OVERHEAD,
         };
 
         let page: &'static [u8] = case1_plaintext().leak();
         let request_id = RequestId([0x5A; 16]);
 
-        let mut prepacked = std::vec![0u8; RESPONSE_WIRE_OVERHEAD + page.len()];
-        let packed_len = write_response_plaintext(&request_id, page, &mut prepacked).unwrap();
+        let mut packed_page = std::vec![0u8; packed_binary_len(page.len()).unwrap()];
+        let mut header = [0u8; MAX_PACKED_BINARY_HEADER_LEN];
+        let header_len = write_packed_binary_header(page.len(), &mut header).unwrap();
+        packed_page[..header_len].copy_from_slice(&header[..header_len]);
+        packed_page[header_len..].copy_from_slice(page);
+        let mut prepacked = std::vec![0u8; RESPONSE_WIRE_OVERHEAD + packed_page.len()];
+        let packed_len =
+            write_response_plaintext(&request_id, &packed_page, &mut prepacked).unwrap();
         prepacked.truncate(packed_len);
 
         let mut host_lane = sender_with_active_link();
@@ -1583,39 +1655,39 @@ mod tests {
             },
         );
 
-        let mut borrowed_lane = sender_with_active_link();
-        let mut borrowed_capture = SendCapture {
+        let mut static_lane = sender_with_active_link();
+        let mut static_capture = SendCapture {
             frames: std::vec::Vec::new(),
             settlements: std::vec::Vec::new(),
         };
-        borrowed_lane.ingest_send_borrowed_response_into(
+        static_lane.ingest_send_static_response_into(
             CommandId(7),
-            &RespondBorrowed {
+            &Respond {
                 link_id: link_id(),
                 request_id,
-                data: page,
+                payload: RespondPayload::StaticBytes(page),
             },
             InstantMillis(1_500),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
             &mut |reaction| match reaction {
                 EngineReaction::Directive(Directive::EmitFrame { target, fill, .. }) => {
                     if let Some(frame) = filled_frame(fill) {
-                        borrowed_capture.frames.push((target, frame));
+                        static_capture.frames.push((target, frame));
                     }
                 }
                 EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
-                    borrowed_capture.settlements.push((id, settlement));
+                    static_capture.settlements.push((id, settlement));
                 }
                 _ => {}
             },
         );
 
         assert!(host_capture.settlements.is_empty());
-        assert!(borrowed_capture.settlements.is_empty());
+        assert!(static_capture.settlements.is_empty());
         assert_eq!(host_capture.frames.len(), 1);
-        assert_eq!(host_capture.frames, borrowed_capture.frames);
+        assert_eq!(host_capture.frames, static_capture.frames);
 
-        let (_, frame) = &borrowed_capture.frames[0];
+        let (_, frame) = &static_capture.frames[0];
         let (header, payload) = WirePacketHeader::parse(frame).unwrap();
         assert_eq!(header.context, WireContext::ResourceAdvertisement);
         let mut sealed = payload.to_vec();
@@ -1626,60 +1698,69 @@ mod tests {
         assert_eq!(advertisement.request_id, Some(request_id));
         assert_eq!(
             advertisement.data_size,
-            (RESPONSE_WIRE_OVERHEAD + page.len()) as u64
+            (RESPONSE_WIRE_OVERHEAD + packed_page.len()) as u64
         );
     }
 
     #[test]
-    fn respond_borrowed_picks_the_packet_rung_or_the_resource_rung() {
-        use crate::engine::{CommandOutcome, RespondBorrowed};
-        use crate::routing::links::request::RequestId;
+    fn static_bytes_respond_picks_the_packet_rung_or_the_resource_rung() {
+        use crate::engine::{CommandOutcome, Respond, RespondPayload};
+        use crate::routing::links::request::{write_packed_binary_header, RequestId};
 
         let request_id = RequestId([0x5A; 16]);
         let engine = sender_with_active_link();
 
         let small: &'static [u8] = &[0xC4, 0x02, b'o', b'k'];
-        match engine.ingest_respond_borrowed(
+        match engine.ingest_respond(
             CommandId(1),
-            RespondBorrowed {
+            Respond {
                 link_id: link_id(),
                 request_id,
-                data: small,
+                payload: RespondPayload::StaticBytes(small),
             },
         ) {
             CommandOutcome::OwesRespond { id, respond } => {
                 assert_eq!(id, CommandId(1));
                 assert_eq!(respond.link_id, link_id());
                 assert_eq!(respond.request_id, request_id);
-                assert_eq!(respond.data.as_slice(), small);
+                let RespondPayload::Packed(data) = respond.payload else {
+                    panic!("packet response should be packed");
+                };
+                let mut header = [0u8; MAX_PACKED_BINARY_HEADER_LEN];
+                let header_len = write_packed_binary_header(small.len(), &mut header).unwrap();
+                assert_eq!(&data[..header_len], &header[..header_len]);
+                assert_eq!(&data[header_len..], small);
             }
             other => panic!("expected the packet rung, got {other:?}"),
         }
 
         let big: &'static [u8] = case1_plaintext().leak();
         assert!(matches!(
-            engine.ingest_respond_borrowed(
+            engine.ingest_respond(
                 CommandId(2),
-                RespondBorrowed {
+                Respond {
                     link_id: link_id(),
                     request_id,
-                    data: big,
+                    payload: RespondPayload::StaticBytes(big),
                 },
             ),
             CommandOutcome::OwesResourceResponse {
                 id: CommandId(2),
-                respond: RespondBorrowed { data, .. },
+                respond: Respond {
+                    payload: RespondPayload::StaticBytes(data),
+                    ..
+                },
             } if core::ptr::eq(data, big)
         ));
 
         let linkless = EngineState::<TestStorageLayout>::default();
         assert!(matches!(
-            linkless.ingest_respond_borrowed(
+            linkless.ingest_respond(
                 CommandId(3),
-                RespondBorrowed {
+                Respond {
                     link_id: link_id(),
                     request_id,
-                    data: small,
+                    payload: RespondPayload::StaticBytes(small),
                 },
             ),
             CommandOutcome::RespondRejected {

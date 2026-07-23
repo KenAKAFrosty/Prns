@@ -15,25 +15,33 @@ use super::request_router::{
     dispatch_request, Decline, InboundRequest, ResponseCapacityExceeded, ResponseSink, RouteSet,
 };
 
+#[allow(clippy::large_enum_variant)]
 enum RunnerResponse {
     Buffered(RespondData),
-    Borrowed(&'static [u8]),
+    StaticBytes(&'static [u8]),
 }
 
 impl ResponseSink for RunnerResponse {
-    fn put(&mut self, bytes: &[u8]) -> Result<(), ResponseCapacityExceeded> {
+    fn put_packed(&mut self, bytes: &[u8]) -> Result<(), ResponseCapacityExceeded> {
         match self {
             RunnerResponse::Buffered(body) => body
                 .extend_from_slice(bytes)
                 .map_err(|()| ResponseCapacityExceeded),
-            RunnerResponse::Borrowed(_) => Err(ResponseCapacityExceeded),
+            RunnerResponse::StaticBytes(_) => Err(ResponseCapacityExceeded),
         }
     }
 
-    fn put_borrowed(&mut self, bytes: &'static [u8]) -> Result<(), ResponseCapacityExceeded> {
+    fn put_bytes(&mut self, bytes: &[u8]) -> Result<(), ResponseCapacityExceeded> {
+        match self {
+            RunnerResponse::Buffered(body) => ResponseSink::put_bytes(body, bytes),
+            RunnerResponse::StaticBytes(_) => Err(ResponseCapacityExceeded),
+        }
+    }
+
+    fn put_static_bytes(&mut self, bytes: &'static [u8]) -> Result<(), ResponseCapacityExceeded> {
         match self {
             RunnerResponse::Buffered(body) if body.is_empty() => {
-                *self = RunnerResponse::Borrowed(bytes);
+                *self = RunnerResponse::StaticBytes(bytes);
                 Ok(())
             }
             _ => Err(ResponseCapacityExceeded),
@@ -135,10 +143,10 @@ async fn dispatch<
     match dispatch_request::<St, R>(state, request.path_hash, inbound, &mut body).await {
         Ok(()) => match body {
             RunnerResponse::Buffered(body) => {
-                commands.respond_owned(responder, body);
+                commands.respond_owned_packed(responder, body);
             }
-            RunnerResponse::Borrowed(bytes) => {
-                commands.respond_borrowed(responder, bytes);
+            RunnerResponse::StaticBytes(bytes) => {
+                commands.respond_static_bytes(responder, bytes);
             }
         },
         Err(Decline::Ignore | Decline::ResponseTooLarge) => {}
@@ -166,7 +174,7 @@ mod tests {
 
         async fn handle(mut context: RequestContext<'_, ()>) -> Result<(), Decline> {
             let destination = context.destination;
-            context.respond(destination.as_bytes())
+            context.respond_packed(destination.as_bytes())
         }
     }
 
@@ -195,7 +203,7 @@ mod tests {
         const POLICY: RoutePolicy = RoutePolicy::AllowAll;
 
         async fn handle(mut context: RequestContext<'_, ()>) -> Result<(), Decline> {
-            context.respond_borrowed(&PAGE)
+            context.respond_static_bytes(&PAGE)
         }
     }
 
@@ -241,13 +249,16 @@ mod tests {
         let Ok(issued) = channel.try_receive() else {
             panic!("response command");
         };
-        let EngineCommand::RespondBorrowed(response) = issued.command else {
-            panic!("respond borrowed command");
+        let EngineCommand::Respond(response) = issued.command else {
+            panic!("respond command");
         };
         assert_eq!(response.link_id, LinkId::new([1; 16]));
         assert_eq!(response.request_id, RequestId([2; 16]));
-        assert_eq!(response.data.as_ptr(), PAGE.as_ptr());
-        assert_eq!(response.data.len(), PAGE.len());
+        let crate::engine::RespondPayload::StaticBytes(data) = response.payload else {
+            panic!("static response");
+        };
+        assert_eq!(data.as_ptr(), PAGE.as_ptr());
+        assert_eq!(data.len(), PAGE.len());
     }
 
     #[test]
@@ -280,6 +291,9 @@ mod tests {
         let EngineCommand::Respond(response) = issued.command else {
             panic!("respond command");
         };
-        assert_eq!(response.data.as_slice(), destination.as_bytes());
+        let crate::engine::RespondPayload::Packed(data) = response.payload else {
+            panic!("packed response");
+        };
+        assert_eq!(data.as_slice(), destination.as_bytes());
     }
 }

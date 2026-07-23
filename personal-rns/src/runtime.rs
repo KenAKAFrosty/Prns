@@ -43,9 +43,9 @@ pub use prns_runtime_tokio::runtime::{
     PrepareFlushError, PreparedFlush, PreparedResourceReceiver, PrnsNode, PrnsNodeHandle,
     RatchetSeedReport, RegionFlush, RegisterRequestRouteError, RequestPathError,
     ResourceAdmissionPeer, ResourceOfferAdmission, ResourceOfferMonitor, ResourceProgress,
-    ResourceReceipt, ResourceReceiveError, ResourceSendError, RouteSeedProgress, RouteSeedReport,
-    SegmentCompression, SharedInstanceIdentityError, StreamId, Subscription, TunnelSeedReport,
-    AUTO_COMPRESS_MAX_LEN,
+    ResourceReceipt, ResourceReceiveError, ResourceSendError, ResponseSendError, RouteSeedProgress,
+    RouteSeedReport, SegmentCompression, SharedInstanceIdentityError, StreamId, Subscription,
+    TunnelSeedReport, AUTO_COMPRESS_MAX_LEN,
 };
 
 #[cfg(all(feature = "rnx", feature = "tokio-host"))]

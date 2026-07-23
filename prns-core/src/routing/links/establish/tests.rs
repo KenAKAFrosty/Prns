@@ -2146,7 +2146,9 @@ fn a_request_passes_the_allow_gate_only_after_the_peer_identifies() {
         EngineCommand::Respond(Respond {
             link_id,
             request_id,
-            data: RespondData::from_slice(&[0xC4, 0x02, b'o', b'k']).unwrap(),
+            payload: crate::engine::RespondPayload::Packed(
+                RespondData::from_slice(&[0xC4, 0x02, b'o', b'k']).unwrap(),
+            ),
         }),
         2_600,
         0xA9,

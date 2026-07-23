@@ -116,9 +116,7 @@ pub trait PrnsNodeApi {
         data: &[u8],
     ) -> Result<PacketReceiptDelivered, SendError<SendSinglePacketFailure>>;
 
-    /// Answer a request with `body`. Returns `false` once the node has stopped (or, on embedded, if
-    /// `body` exceeds the single-packet MDU the inline responder can carry).
-    fn respond(&self, responder: RespondToken, body: &[u8]) -> bool;
+    fn respond_packed(&self, responder: RespondToken, packed: &[u8]) -> bool;
 
     /// Sever an active link. Returns `false` once the node has stopped.
     fn close_link(&self, link_id: LinkId) -> bool;

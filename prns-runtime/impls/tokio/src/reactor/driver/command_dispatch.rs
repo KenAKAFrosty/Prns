@@ -226,7 +226,7 @@ where
                 if let Some(completion) = respond.completion.take() {
                     journal.register_completion(respond.id, completion);
                 }
-                let data = respond.data.as_slice();
+                let data = respond.packed.as_slice();
                 let as_packet = engine
                     .response_fits_packet(&respond.link_id, data)
                     .then(|| RespondData::from_slice(data).ok())
@@ -238,7 +238,7 @@ where
                             command: EngineCommand::Respond(Respond {
                                 link_id: respond.link_id,
                                 request_id: respond.request_id,
-                                data,
+                                payload: crate::engine::RespondPayload::Packed(data),
                             }),
                         },
                         topology.interfaces.view(),

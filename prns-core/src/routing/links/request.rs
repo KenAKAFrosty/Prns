@@ -6,7 +6,7 @@
 
 use crate::crypto::sha256;
 use crate::engine::{
-    CommandId, CommandOutcome, RequestResponseTimeout, Respond, RespondBorrowed, RespondData,
+    CommandId, CommandOutcome, RequestResponseTimeout, Respond, RespondData, RespondPayload,
     RespondRejection, SendRequest, SendRequestRejection, MAX_RESPOND_DATA_LEN,
     MAX_SEND_REQUEST_DATA_LEN,
 };
@@ -52,7 +52,10 @@ const FIXARRAY_3: u8 = 0x93;
 const FIXARRAY_2: u8 = 0x92;
 const FLOAT_64: u8 = 0xCB;
 const BIN_8: u8 = 0xC4;
+const BIN_16: u8 = 0xC5;
+const BIN_32: u8 = 0xC6;
 const NIL: u8 = 0xC0;
+pub const MAX_PACKED_BINARY_HEADER_LEN: usize = 5;
 
 /// RNS 1.4.0 `packet.getTruncatedHash()`, naming the request in its response.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -149,6 +152,54 @@ pub fn parse_request_plaintext(
 pub enum ResponsePlaintextError {
     BufferTooShort,
     Malformed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PackBinaryError {
+    BufferTooShort,
+    LengthOutOfRange,
+}
+
+pub const fn packed_binary_header_len(byte_len: usize) -> Option<usize> {
+    match byte_len {
+        0..=0xFF => Some(2),
+        0x100..=0xFFFF => Some(3),
+        0x1_0000..=0xFFFF_FFFF => Some(5),
+        _ => None,
+    }
+}
+
+pub const fn packed_binary_len(byte_len: usize) -> Option<usize> {
+    match packed_binary_header_len(byte_len) {
+        Some(header_len) => header_len.checked_add(byte_len),
+        None => None,
+    }
+}
+
+pub fn write_packed_binary_header(
+    byte_len: usize,
+    output: &mut [u8],
+) -> Result<usize, PackBinaryError> {
+    let header_len = packed_binary_header_len(byte_len).ok_or(PackBinaryError::LengthOutOfRange)?;
+    if output.len() < header_len {
+        return Err(PackBinaryError::BufferTooShort);
+    }
+    match header_len {
+        2 => {
+            output[0] = BIN_8;
+            output[1] = byte_len as u8;
+        }
+        3 => {
+            output[0] = BIN_16;
+            output[1..3].copy_from_slice(&(byte_len as u16).to_be_bytes());
+        }
+        5 => {
+            output[0] = BIN_32;
+            output[1..5].copy_from_slice(&(byte_len as u32).to_be_bytes());
+        }
+        _ => unreachable!(),
+    }
+    Ok(header_len)
 }
 
 /// `umsgpack.packb([request_id, response])`.
@@ -294,52 +345,50 @@ impl<S: StorageLayout> EngineState<S> {
                     rejection: RespondRejection::LinkNotActive,
                 }
             }
-            Some(LinkPhase::Active { .. }) => CommandOutcome::OwesRespond { id, respond },
-        }
-    }
-
-    pub fn ingest_respond_borrowed(
-        &self,
-        id: CommandId,
-        respond: RespondBorrowed,
-    ) -> CommandOutcome {
-        match self.links.phase_for(&respond.link_id) {
-            None => CommandOutcome::RespondRejected {
-                id,
-                rejection: RespondRejection::NoSuchLink,
-            },
-            Some(LinkPhase::Pending { .. } | LinkPhase::Handshake { .. }) => {
-                CommandOutcome::RespondRejected {
-                    id,
-                    rejection: RespondRejection::LinkNotActive,
-                }
-            }
-            Some(LinkPhase::Active { .. }) => {
-                let as_packet = self
-                    .response_fits_packet(&respond.link_id, respond.data)
-                    .then(|| RespondData::from_slice(respond.data).ok())
-                    .flatten();
-                match as_packet {
-                    Some(data) => CommandOutcome::OwesRespond {
+            Some(LinkPhase::Active { .. }) => match &respond.payload {
+                RespondPayload::Packed(_) => CommandOutcome::OwesRespond { id, respond },
+                RespondPayload::StaticBytes(bytes) => {
+                    let bytes = *bytes;
+                    let Some(packed_len) = packed_binary_len(bytes.len()) else {
+                        return CommandOutcome::OwesResourceResponse { id, respond };
+                    };
+                    if !self.response_data_len_fits_packet(&respond.link_id, packed_len) {
+                        return CommandOutcome::OwesResourceResponse { id, respond };
+                    }
+                    let mut header = [0u8; MAX_PACKED_BINARY_HEADER_LEN];
+                    let Ok(header_len) = write_packed_binary_header(bytes.len(), &mut header)
+                    else {
+                        return CommandOutcome::OwesResourceResponse { id, respond };
+                    };
+                    let mut data = RespondData::new();
+                    if data.extend_from_slice(&header[..header_len]).is_err()
+                        || data.extend_from_slice(bytes).is_err()
+                    {
+                        return CommandOutcome::OwesResourceResponse { id, respond };
+                    }
+                    CommandOutcome::OwesRespond {
                         id,
                         respond: Respond {
                             link_id: respond.link_id,
                             request_id: respond.request_id,
-                            data,
+                            payload: RespondPayload::Packed(data),
                         },
-                    },
-                    None => CommandOutcome::OwesResourceResponse { id, respond },
+                    }
                 }
-            }
+            },
         }
     }
 
     pub fn response_fits_packet(&self, link_id: &LinkId, data: &[u8]) -> bool {
+        self.response_data_len_fits_packet(link_id, data.len())
+    }
+
+    pub fn response_data_len_fits_packet(&self, link_id: &LinkId, data_len: usize) -> bool {
         let Some(LinkPhase::Active { mtu, .. }) = self.links.phase_for(link_id) else {
             return false;
         };
-        let data_len = if data.is_empty() { 1 } else { data.len() };
-        RESPONSE_WIRE_OVERHEAD + data_len <= link_mdu(*mtu) && data.len() <= MAX_RESPOND_DATA_LEN
+        let wire_data_len = response_data_wire_len(data_len);
+        RESPONSE_WIRE_OVERHEAD + wire_data_len <= link_mdu(*mtu) && data_len <= MAX_RESPOND_DATA_LEN
     }
 
     pub fn request_fits_packet(&self, link_id: &LinkId, data: &[u8]) -> bool {
@@ -457,10 +506,12 @@ impl<S: StorageLayout> EngineState<S> {
         else {
             return Err(LinkRequestWriteError::LinkVanished);
         };
+        let RespondPayload::Packed(data) = &respond.payload else {
+            return Err(LinkRequestWriteError::PayloadTooLong);
+        };
         let mut plaintext = [0u8; WRAPPED_PLAINTEXT_CAP];
-        let plain_len =
-            write_response_plaintext(&respond.request_id, &respond.data, &mut plaintext)
-                .map_err(|_| LinkRequestWriteError::BufferTooShort)?;
+        let plain_len = write_response_plaintext(&respond.request_id, data, &mut plaintext)
+            .map_err(|_| LinkRequestWriteError::BufferTooShort)?;
         if plain_len > link_mdu(*mtu) {
             return Err(LinkRequestWriteError::PayloadTooLong);
         }
@@ -730,7 +781,9 @@ mod tests {
             let respond = Respond {
                 link_id,
                 request_id: RequestId([0x7E; 16]),
-                data: RespondData::from_slice(&std::vec![0xBB; data_len]).unwrap(),
+                payload: RespondPayload::Packed(
+                    RespondData::from_slice(&std::vec![0xBB; data_len]).unwrap(),
+                ),
             };
             let mut buf = [0u8; 600];
             engine_with_an_active_link_at(link_id, 300)
@@ -740,6 +793,27 @@ mod tests {
         assert_eq!(
             respond(mdu - RESPONSE_WIRE_OVERHEAD + 1).map(|_| ()),
             Err(LinkRequestWriteError::PayloadTooLong),
+        );
+    }
+
+    #[test]
+    fn binary_headers_select_the_smallest_message_pack_width() {
+        for (byte_len, expected) in [
+            (0, &[0xC4, 0][..]),
+            (u8::MAX as usize, &[0xC4, 0xFF][..]),
+            (u8::MAX as usize + 1, &[0xC5, 0x01, 0x00][..]),
+            (u16::MAX as usize, &[0xC5, 0xFF, 0xFF][..]),
+            (u16::MAX as usize + 1, &[0xC6, 0x00, 0x01, 0x00, 0x00][..]),
+        ] {
+            let mut output = [0u8; MAX_PACKED_BINARY_HEADER_LEN];
+            let written = write_packed_binary_header(byte_len, &mut output).unwrap();
+            assert_eq!(&output[..written], expected);
+            assert_eq!(packed_binary_header_len(byte_len), Some(expected.len()));
+            assert_eq!(packed_binary_len(byte_len), Some(expected.len() + byte_len));
+        }
+        assert_eq!(
+            write_packed_binary_header(256, &mut [0u8; 2]),
+            Err(PackBinaryError::BufferTooShort)
         );
     }
 

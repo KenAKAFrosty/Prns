@@ -27,7 +27,7 @@ impl RequestRoute<RequestServer> for BenchSizedRequestRoute {
                 .response_bytes
                 .fetch_add(wanted as u64, Ordering::Relaxed);
         }
-        cx.respond(&framed)
+        cx.respond_packed(&framed)
     }
 }
 

@@ -243,7 +243,7 @@ pub struct RespondAnyHostCommand {
     pub id: CommandId,
     pub link_id: LinkId,
     pub request_id: RequestId,
-    pub data: HostResourcePayload,
+    pub packed: HostResourcePayload,
     pub compressed_candidate: Option<HostResourcePayload>,
     /// Present when the caller must not issue another response Resource on this
     /// link until the packet write or Resource proof has settled.

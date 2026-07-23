@@ -37,7 +37,7 @@ pub use node_facade::{
     PreparedResourceReceiver, PrnsNode, PrnsNodeHandle, RatchetSeedReport, RegionFlush,
     RegisterRequestRouteError, RequestPathError, ResourceAdmissionPeer, ResourceOfferAdmission,
     ResourceOfferMonitor, ResourceProgress, ResourceReceipt, ResourceReceiveError,
-    ResourceSendError, RouteSeedProgress, RouteSeedReport, SegmentCompression,
+    ResourceSendError, ResponseSendError, RouteSeedProgress, RouteSeedReport, SegmentCompression,
     SharedInstanceIdentityError, StreamId, TunnelSeedReport, AUTO_COMPRESS_MAX_LEN,
 };
 #[cfg(feature = "rnx")]

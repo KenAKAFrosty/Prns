@@ -16,7 +16,9 @@ use crate::routing::links::handshake::{
 };
 use crate::routing::links::request::RequestId;
 use crate::routing::links::resources::table::AcceptedResource;
-use crate::routing::links::resources::{ResourceFailureCause, ResourceHash, ResourcePartRequest};
+use crate::routing::links::resources::{
+    ResourceCorrelation, ResourceFailureCause, ResourceHash, ResourcePartRequest,
+};
 use crate::routing::links::LinkId;
 use crate::routing::path_requests::seen::PathRequestIdBytes;
 use crate::routing::proof::{ProofIngest, ProofObligation};
@@ -167,6 +169,7 @@ pub enum IngestPacketOutcome<'p> {
     ResourceDelivered {
         id: CommandId,
         link_id: LinkId,
+        correlation: ResourceCorrelation,
     },
     OwesResourcePull {
         link_id: LinkId,
@@ -192,6 +195,7 @@ pub enum IngestPacketOutcome<'p> {
     ResourceRejectedByPeer {
         id: CommandId,
         link_id: LinkId,
+        correlation: ResourceCorrelation,
     },
     TransportedLinkRequest {
         header: WirePacketHeader,

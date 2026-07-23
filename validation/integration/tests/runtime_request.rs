@@ -34,8 +34,8 @@ impl RequestRoute<Responder> for Echo {
     const POLICY: RoutePolicy = RoutePolicy::AllowAll;
     async fn handle(mut cx: RequestContext<'_, Responder>) -> Result<(), Decline> {
         let asked = cx.data;
-        let _ = cx.write(asked);
-        cx.respond(b"-pong")
+        let _ = cx.write_packed(asked);
+        cx.respond_packed(b"-pong")
     }
 }
 
@@ -44,7 +44,7 @@ impl RequestRoute<Responder> for Fat {
     const PATH: &'static str = "/test/fat";
     const POLICY: RoutePolicy = RoutePolicy::AllowAll;
     async fn handle(mut cx: RequestContext<'_, Responder>) -> Result<(), Decline> {
-        cx.respond(&fat_body())
+        cx.respond_packed(&fat_body())
     }
 }
 
@@ -424,13 +424,20 @@ async fn the_hopspot_node_page_serves_over_tcp() {
             .request(link_id, RequestPathHash::of(node_pages::INDEX_PATH), b"")
             .await
             .expect("the page request round-trips");
+        let mut header =
+            [0u8; personal_rns::routing::links::request::MAX_PACKED_BINARY_HEADER_LEN];
+        let header_len = personal_rns::routing::links::request::write_packed_binary_header(
+            node_pages::INDEX_PAGE.len(),
+            &mut header,
+        )
+        .unwrap();
         assert_eq!(
-            page.as_slice(),
-            &node_pages::INDEX_RESPONSE[..],
+            &page[..header_len],
+            &header[..header_len],
             "the node serves the whole micron index as one msgpack bin value",
         );
         assert_eq!(
-            &page[3..],
+            &page[header_len..],
             node_pages::INDEX_PAGE.as_bytes(),
             "the bin payload is the page byte-for-byte",
         );

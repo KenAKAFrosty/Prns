@@ -1,3 +1,5 @@
+use personal_rns::routing::links::request::{packed_binary_len, RESPONSE_WIRE_OVERHEAD};
+use personal_rns::routing::links::resources::sealed_transfer_len;
 use personal_rns::routing::request_handlers::RequestPathHash;
 use personal_rns::runtime::request_router::{
     Decline, RequestContext, RequestRoute, RoutePolicy, RouteSet,
@@ -8,27 +10,12 @@ pub const NODE_ASPECTS: &[&str] = &["node"];
 pub const INDEX_PATH: &str = "/page/index.mu";
 pub const INDEX_PAGE: &str = include_str!("node_pages/index.mu");
 
-pub const INDEX_RESPONSE_LEN: usize = 3 + INDEX_PAGE.len();
-pub static INDEX_RESPONSE: [u8; INDEX_RESPONSE_LEN] = index_response();
-
-const MSGPACK_BIN16: u8 = 0xC5;
-
-const _: () = assert!(INDEX_PAGE.len() > u8::MAX as usize);
-const _: () = assert!(INDEX_PAGE.len() <= u16::MAX as usize);
-
-const fn index_response() -> [u8; INDEX_RESPONSE_LEN] {
-    let page = INDEX_PAGE.as_bytes();
-    let mut response = [0u8; INDEX_RESPONSE_LEN];
-    response[0] = MSGPACK_BIN16;
-    response[1] = (page.len() >> 8) as u8;
-    response[2] = page.len() as u8;
-    let mut index = 0;
-    while index < page.len() {
-        response[3 + index] = page[index];
-        index += 1;
-    }
-    response
-}
+pub const INDEX_PACKED_RESPONSE_LEN: usize = match packed_binary_len(INDEX_PAGE.len()) {
+    Some(len) => len,
+    None => panic!("index page exceeds MessagePack binary limits"),
+};
+pub const INDEX_RESPONSE_TRANSFER_BYTES: usize =
+    sealed_transfer_len(RESPONSE_WIRE_OVERHEAD + INDEX_PACKED_RESPONSE_LEN);
 
 pub struct NodeIndexPage;
 
@@ -37,7 +24,7 @@ impl<S> RequestRoute<S> for NodeIndexPage {
     const POLICY: RoutePolicy = RoutePolicy::AllowAll;
 
     async fn handle(mut context: RequestContext<'_, S>) -> Result<(), Decline> {
-        context.respond_borrowed(&INDEX_RESPONSE)
+        context.respond_static_bytes(INDEX_PAGE.as_bytes())
     }
 }
 
@@ -64,18 +51,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_index_response_is_the_page_as_one_msgpack_bin() {
-        assert_eq!(INDEX_RESPONSE[0], MSGPACK_BIN16);
+    fn the_index_response_capacity_matches_the_page() {
         assert_eq!(
-            u16::from_be_bytes([INDEX_RESPONSE[1], INDEX_RESPONSE[2]]) as usize,
-            INDEX_PAGE.len()
+            INDEX_PACKED_RESPONSE_LEN,
+            packed_binary_len(INDEX_PAGE.len()).unwrap()
         );
-        assert_eq!(&INDEX_RESPONSE[3..], INDEX_PAGE.as_bytes());
+        assert_eq!(
+            INDEX_RESPONSE_TRANSFER_BYTES,
+            sealed_transfer_len(RESPONSE_WIRE_OVERHEAD + INDEX_PACKED_RESPONSE_LEN)
+        );
     }
 
     #[test]
     fn the_index_page_is_balanced_micron() {
-        assert!(INDEX_PAGE.is_ascii() == false);
+        assert!(!INDEX_PAGE.is_ascii());
         let mut formatting_toggles = 0usize;
         for line in INDEX_PAGE.lines() {
             formatting_toggles += line.matches("`!").count();

@@ -25,7 +25,7 @@ pub use link::{
 pub use path::{PathFound, PathRequestId, RequestPath, RequestPathFailure, PATH_REQUEST_ID_LEN};
 pub use request::{
     AllowRequester, AllowRequesterFailure, AllowRequesterRejection, RequestResponseTimeout,
-    Respond, RespondBorrowed, RespondData, RespondFailure, RespondRejection, SendRequest,
+    Respond, RespondData, RespondFailure, RespondPayload, RespondRejection, SendRequest,
     SendRequestData, SendRequestFailure, SendRequestRejection, MAX_RESPOND_DATA_LEN,
     MAX_SEND_REQUEST_DATA_LEN,
 };
@@ -71,7 +71,6 @@ pub enum EngineCommand {
     Identify(Identify),
     SendRequest(SendRequest),
     Respond(Respond),
-    RespondBorrowed(RespondBorrowed),
     CloseLink(CloseLink),
     SetResourceStrategy(SetResourceStrategy),
     AllowRequester(AllowRequester),
@@ -139,7 +138,7 @@ pub enum CommandOutcome {
     },
     OwesResourceResponse {
         id: CommandId,
-        respond: RespondBorrowed,
+        respond: Respond,
     },
     RespondRejected {
         id: CommandId,
@@ -271,7 +270,6 @@ impl<S: StorageLayout> EngineState<S> {
             EngineCommand::Identify(identify) => self.ingest_identify(id, identify),
             EngineCommand::SendRequest(request) => self.ingest_send_request(id, request),
             EngineCommand::Respond(respond) => self.ingest_respond(id, respond),
-            EngineCommand::RespondBorrowed(respond) => self.ingest_respond_borrowed(id, respond),
             EngineCommand::CloseLink(close) => self.ingest_close_link(id, close),
             EngineCommand::SetResourceStrategy(set) => self.ingest_set_resource_strategy(id, set),
             EngineCommand::AllowRequester(allow) => self.ingest_allow_requester_command(id, allow),

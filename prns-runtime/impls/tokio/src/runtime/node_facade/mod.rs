@@ -44,6 +44,7 @@ pub use persistence::{
     PrepareFlushError, PreparedFlush, RatchetSeedReport, RegionFlush, RouteSeedProgress,
     RouteSeedReport, TunnelSeedReport,
 };
+pub use request_response::ResponseSendError;
 pub use resource_admission::{ResourceAdmissionPeer, ResourceOfferAdmission, ResourceOfferMonitor};
 pub use resource_transfer::{
     PreparedResourceReceiver, ResourceProgress, ResourceReceipt, ResourceReceiveError,
@@ -243,8 +244,8 @@ impl super::PrnsNodeApi for PrnsNodeHandle {
         self.send_single_packet(destination, data).await
     }
 
-    fn respond(&self, responder: RespondToken, body: &[u8]) -> bool {
-        self.respond(responder, body).is_some()
+    fn respond_packed(&self, responder: RespondToken, packed: &[u8]) -> bool {
+        self.respond_packed(responder, packed).is_some()
     }
 
     fn close_link(&self, link_id: LinkId) -> bool {

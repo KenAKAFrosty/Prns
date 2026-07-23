@@ -147,7 +147,7 @@ fn respond_fetch(
 ) -> Result<(), Decline> {
     let mut encoded = [0u8; 2];
     let len = write_fetch_reply(reply, &mut encoded).map_err(|_| Decline::Ignore)?;
-    context.respond(&encoded[..len])
+    context.respond_packed(&encoded[..len])
 }
 
 pub async fn run(args: RncpArgs) -> Result<(), RncpError> {

@@ -14,9 +14,9 @@ or MeshChat user who finds the node can open it like any other node page. Pressi
 a hopspot announces this node destination alongside the usual `lxmf.delivery` one.
 
 The page lives in `core/src/node_pages/index.mu` and is served as `&'static` bytes straight
-from flash — no filesystem, no buffering, works on a microcontroller. `core/src/node_pages.rs`
-is the reference example for static serving over Reticulum's request/response mechanism: a
-`RequestRoute` that answers with `respond_borrowed`, a named `RouteSet`, and the destination
+from flash, with no filesystem or duplicate prepacked copy. `core/src/node_pages.rs` is the
+reference example for static serving over Reticulum's request/response mechanism: a
+`RequestRoute` that answers with `respond_static_bytes`, a named `RouteSet`, and the destination
 constants, all registered through the node recipe on every face.
 
 ## Workspaces and toolchains

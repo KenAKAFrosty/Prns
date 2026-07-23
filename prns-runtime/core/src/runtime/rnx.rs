@@ -265,7 +265,7 @@ impl<State> RnxEncodeSink for ContextSink<'_, '_, State> {
     type Error = ResponseCapacityExceeded;
 
     fn put(&mut self, bytes: &[u8]) -> Result<(), Self::Error> {
-        self.0.write(bytes).map(|_| ())
+        self.0.write_packed(bytes).map(|_| ())
     }
 }
 

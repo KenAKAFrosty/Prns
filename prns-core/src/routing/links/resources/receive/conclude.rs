@@ -1701,7 +1701,7 @@ mod seam_tests {
         let settled_send = feed(&mut responder, proof, 2_300);
         assert!(matches!(
             settled_send.settlements[0],
-            (CommandId(21), Settlement::SendResource(Ok(()))),
+            (CommandId(21), Settlement::Respond(Ok(()))),
         ));
 
         let advertisement = advertise_response_segment_from(

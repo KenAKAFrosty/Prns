@@ -105,7 +105,7 @@ async fn dispatch<St, R: RouteSet<St>>(
     match dispatch_request::<St, R>(state, request.path_hash, inbound, &mut body).await {
         Ok(()) => {
             let _response_guard = response_lane.lock().await;
-            if let Err(error) = commands.respond_owned_settled(responder, body).await {
+            if let Err(error) = commands.respond_owned_packed_settled(responder, body).await {
                 eprintln!(
                     "REQUEST_RESPONSE_FAILURE link_id={:?} error={error}",
                     link_id.as_bytes()

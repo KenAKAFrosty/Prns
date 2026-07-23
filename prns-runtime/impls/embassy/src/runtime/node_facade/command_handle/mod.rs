@@ -8,7 +8,7 @@ use portable_atomic::{AtomicU64, Ordering};
 
 use crate::engine::{
     CloseLink, CommandId, EngineCommand, IssuedCommand, PacketReceiptDelivered, Respond,
-    RespondBorrowed, RespondData, SendSinglePacket, SendSinglePacketFailure,
+    RespondData, RespondPayload, SendSinglePacket, SendSinglePacketFailure,
     SendSinglePacketPayload, Settlement,
 };
 use crate::routing::links::LinkId;
@@ -155,28 +155,28 @@ impl<'a, M: RawMutex, const COMMANDS: usize, const N: usize> PrnsNodeHandle<'a, 
     }
 
     /// Responds inline; returns `false` when the body exceeds the link MDU or the command lane is full.
-    pub fn respond(&self, responder: RespondToken, body: &[u8]) -> bool {
-        match RespondData::from_slice(body) {
-            Ok(data) => self.respond_owned(responder, data),
+    pub fn respond_packed(&self, responder: RespondToken, packed: &[u8]) -> bool {
+        match RespondData::from_slice(packed) {
+            Ok(data) => self.respond_owned_packed(responder, data),
             Err(_) => false,
         }
     }
 
     /// Moves a prebuilt response into the command lane, returning `false` when full.
-    pub fn respond_owned(&self, responder: RespondToken, data: RespondData) -> bool {
+    pub fn respond_owned_packed(&self, responder: RespondToken, data: RespondData) -> bool {
         self.issue(EngineCommand::Respond(Respond {
             link_id: responder.link_id,
             request_id: responder.request_id,
-            data,
+            payload: RespondPayload::Packed(data),
         }))
         .is_some()
     }
 
-    pub fn respond_borrowed(&self, responder: RespondToken, data: &'static [u8]) -> bool {
-        self.issue(EngineCommand::RespondBorrowed(RespondBorrowed {
+    pub fn respond_static_bytes(&self, responder: RespondToken, data: &'static [u8]) -> bool {
+        self.issue(EngineCommand::Respond(Respond {
             link_id: responder.link_id,
             request_id: responder.request_id,
-            data,
+            payload: RespondPayload::StaticBytes(data),
         }))
         .is_some()
     }
@@ -219,8 +219,8 @@ impl<M: RawMutex, const COMMANDS: usize, const N: usize> PrnsNodeApi
         self.send_single_packet(destination, data).await
     }
 
-    fn respond(&self, responder: RespondToken, body: &[u8]) -> bool {
-        self.respond(responder, body)
+    fn respond_packed(&self, responder: RespondToken, packed: &[u8]) -> bool {
+        self.respond_packed(responder, packed)
     }
 
     fn close_link(&self, link_id: LinkId) -> bool {

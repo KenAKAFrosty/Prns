@@ -4,7 +4,10 @@ use crate::engine::RequestResponseTimeout;
 use crate::engine::Settlement;
 use crate::reactor::compression;
 use crate::reactor::driver::HostCommand;
-use crate::routing::links::request::{parse_response_plaintext, RequestId};
+use crate::routing::links::request::{
+    parse_response_plaintext, write_packed_binary_header, RequestId, MAX_PACKED_BINARY_HEADER_LEN,
+    RESPONSE_WIRE_OVERHEAD,
+};
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::runtime::request_router::RespondToken;
@@ -71,7 +74,7 @@ async fn request_preserves_an_explicit_response_timeout() {
 }
 
 #[tokio::test]
-async fn respond_returns_the_links_round_trip() {
+async fn respond_packed_returns_the_links_round_trip() {
     let (handle, _command_rx) = handle();
     let token = RespondToken {
         link_id: LinkId::new([1; 16]),
@@ -79,7 +82,7 @@ async fn respond_returns_the_links_round_trip() {
         rtt: RttMillis::new(99),
     };
     assert_eq!(
-        handle.respond(token, b"answer"),
+        handle.respond_packed(token, b"answer"),
         Some(RttMillis::new(99)),
         "respond surfaces the rtt the request arrived on",
     );
@@ -94,12 +97,15 @@ async fn a_large_response_carries_a_bz2_candidate() {
         rtt: RttMillis::new(50),
     };
     let body = std::vec![42u8; RESPONSE_PACKET_CEILING + 4096];
-    assert_eq!(handle.respond(token, &body), Some(RttMillis::new(50)));
+    assert_eq!(
+        handle.respond_packed(token, &body),
+        Some(RttMillis::new(50))
+    );
     let Some(HostCommand::RespondAny(respond)) = command_rx.recv().await else {
         panic!("expected a RespondAny command");
     };
     let (enclosed_request, enclosed_body) =
-        parse_response_plaintext(respond.data.as_slice()).expect("stock RNS response envelope");
+        parse_response_plaintext(respond.packed.as_slice()).expect("stock RNS response envelope");
     assert_eq!(enclosed_request, token.request_id);
     assert_eq!(enclosed_body, body);
     assert_eq!(
@@ -107,7 +113,7 @@ async fn a_large_response_carries_a_bz2_candidate() {
             .compressed_candidate
             .as_ref()
             .map(|candidate| candidate.as_slice().to_vec()),
-        compression::compress_if_smaller(respond.data.as_slice()),
+        compression::compress_if_smaller(respond.packed.as_slice()),
         "a response past the packet ceiling rides a bz2 candidate matching the codec",
     );
     assert!(respond.compressed_candidate.is_some(), "a run compresses");
@@ -122,7 +128,7 @@ async fn a_packet_sized_response_skips_compression() {
         rtt: RttMillis::new(50),
     };
     let body = std::vec![42u8; RESPONSE_PACKET_CEILING];
-    handle.respond(token, &body);
+    handle.respond_packed(token, &body);
     let Some(HostCommand::RespondAny(respond)) = command_rx.recv().await else {
         panic!("expected a RespondAny command");
     };
@@ -141,7 +147,8 @@ async fn a_settled_resource_response_waits_for_its_proof() {
         rtt: RttMillis::new(33),
     };
     let body = std::vec![0xA5u8; RESPONSE_PACKET_CEILING + 1024];
-    let responding = tokio::spawn(async move { handle.respond_owned_settled(token, body).await });
+    let responding =
+        tokio::spawn(async move { handle.respond_owned_packed_settled(token, body).await });
 
     let Some(HostCommand::RespondAny(mut response)) = command_rx.recv().await else {
         panic!("a resource response reaches the host driver");
@@ -154,7 +161,68 @@ async fn a_settled_resource_response_waits_for_its_proof() {
         .completion
         .take()
         .expect("settled response carries completion")
-        .send(Settlement::SendResource(Ok(())))
+        .send(Settlement::Respond(Ok(())))
         .expect("route awaits completion");
     assert_eq!(responding.await.unwrap().unwrap(), RttMillis::new(33));
+}
+
+#[tokio::test]
+async fn respond_bytes_adds_message_pack_binary_framing() {
+    let (handle, mut command_rx) = handle();
+    let token = RespondToken {
+        link_id: LinkId::new([9; 16]),
+        request_id: RequestId([10; 16]),
+        rtt: RttMillis::new(34),
+    };
+    assert_eq!(
+        handle.respond_bytes(token, b"hello"),
+        Some(RttMillis::new(34))
+    );
+    let Some(HostCommand::RespondAny(respond)) = command_rx.recv().await else {
+        panic!("expected a RespondAny command");
+    };
+    assert_eq!(
+        respond.packed.as_slice(),
+        &[0xC4, 5, b'h', b'e', b'l', b'l', b'o']
+    );
+}
+
+#[tokio::test]
+async fn respond_bytes_streaming_reads_a_bounded_source_into_a_response_resource() {
+    let (handle, mut command_rx) = handle();
+    let token = RespondToken {
+        link_id: LinkId::new([11; 16]),
+        request_id: RequestId([12; 16]),
+        rtt: RttMillis::new(35),
+    };
+    let bytes = std::vec![0xA5; RESPONSE_PACKET_CEILING + 1];
+    let byte_len = bytes.len() as u64;
+    let responding = tokio::spawn(async move {
+        handle
+            .respond_bytes_streaming(token, byte_len, std::io::Cursor::new(bytes))
+            .await
+    });
+    let Some(HostCommand::SendResourceSegment(segment)) = command_rx.recv().await else {
+        panic!("expected a response resource segment");
+    };
+    let mut binary_header = [0u8; MAX_PACKED_BINARY_HEADER_LEN];
+    let binary_header_len =
+        write_packed_binary_header(RESPONSE_PACKET_CEILING + 1, &mut binary_header).unwrap();
+    assert_eq!(segment.request_id, Some(token.request_id));
+    assert_eq!(
+        segment.data.len(),
+        RESPONSE_WIRE_OVERHEAD + binary_header_len + RESPONSE_PACKET_CEILING + 1
+    );
+    let (request_id, packed) = parse_response_plaintext(segment.data.as_slice()).unwrap();
+    assert_eq!(request_id, token.request_id);
+    assert_eq!(
+        &packed[..binary_header_len],
+        &binary_header[..binary_header_len]
+    );
+    assert!(packed[binary_header_len..].iter().all(|byte| *byte == 0xA5));
+    segment
+        .completion
+        .send(Settlement::Respond(Ok(())))
+        .unwrap();
+    assert_eq!(responding.await.unwrap().unwrap(), token.rtt);
 }

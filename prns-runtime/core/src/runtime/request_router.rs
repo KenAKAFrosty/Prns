@@ -1,6 +1,8 @@
 use crate::engine::InstantMillis;
 use crate::identity::IdentityHash;
-use crate::routing::links::request::RequestId;
+use crate::routing::links::request::{
+    packed_binary_len, write_packed_binary_header, RequestId, MAX_PACKED_BINARY_HEADER_LEN,
+};
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::{RequestPathHash, RequestPolicy};
 use crate::units::RttMillis;
@@ -44,10 +46,12 @@ pub enum Decline {
 }
 
 pub trait ResponseSink {
-    fn put(&mut self, bytes: &[u8]) -> Result<(), ResponseCapacityExceeded>;
+    fn put_packed(&mut self, bytes: &[u8]) -> Result<(), ResponseCapacityExceeded>;
 
-    fn put_borrowed(&mut self, bytes: &'static [u8]) -> Result<(), ResponseCapacityExceeded> {
-        self.put(bytes)
+    fn put_bytes(&mut self, bytes: &[u8]) -> Result<(), ResponseCapacityExceeded>;
+
+    fn put_static_bytes(&mut self, bytes: &'static [u8]) -> Result<(), ResponseCapacityExceeded> {
+        self.put_bytes(bytes)
     }
 }
 
@@ -56,14 +60,38 @@ pub struct ResponseCapacityExceeded;
 
 #[cfg(feature = "alloc")]
 impl ResponseSink for alloc::vec::Vec<u8> {
-    fn put(&mut self, bytes: &[u8]) -> Result<(), ResponseCapacityExceeded> {
+    fn put_packed(&mut self, bytes: &[u8]) -> Result<(), ResponseCapacityExceeded> {
+        self.extend_from_slice(bytes);
+        Ok(())
+    }
+
+    fn put_bytes(&mut self, bytes: &[u8]) -> Result<(), ResponseCapacityExceeded> {
+        let mut header = [0u8; MAX_PACKED_BINARY_HEADER_LEN];
+        let header_len = write_packed_binary_header(bytes.len(), &mut header)
+            .map_err(|_| ResponseCapacityExceeded)?;
+        self.reserve(header_len + bytes.len());
+        self.extend_from_slice(&header[..header_len]);
         self.extend_from_slice(bytes);
         Ok(())
     }
 }
 
 impl<const N: usize> ResponseSink for heapless::Vec<u8, N> {
-    fn put(&mut self, bytes: &[u8]) -> Result<(), ResponseCapacityExceeded> {
+    fn put_packed(&mut self, bytes: &[u8]) -> Result<(), ResponseCapacityExceeded> {
+        self.extend_from_slice(bytes)
+            .map_err(|_| ResponseCapacityExceeded)
+    }
+
+    fn put_bytes(&mut self, bytes: &[u8]) -> Result<(), ResponseCapacityExceeded> {
+        let packed_len = packed_binary_len(bytes.len()).ok_or(ResponseCapacityExceeded)?;
+        if self.capacity() - self.len() < packed_len {
+            return Err(ResponseCapacityExceeded);
+        }
+        let mut header = [0u8; MAX_PACKED_BINARY_HEADER_LEN];
+        let header_len = write_packed_binary_header(bytes.len(), &mut header)
+            .map_err(|_| ResponseCapacityExceeded)?;
+        self.extend_from_slice(&header[..header_len])
+            .map_err(|_| ResponseCapacityExceeded)?;
         self.extend_from_slice(bytes)
             .map_err(|_| ResponseCapacityExceeded)
     }
@@ -128,21 +156,26 @@ pub struct RequestContext<'a, S> {
 }
 
 impl<S> RequestContext<'_, S> {
-    pub fn respond(&mut self, bytes: &[u8]) -> Result<(), Decline> {
-        self.sink.put(bytes).map_err(|_| Decline::ResponseTooLarge)
-    }
-
-    pub fn respond_borrowed(&mut self, bytes: &'static [u8]) -> Result<(), Decline> {
+    pub fn respond_packed(&mut self, bytes: &[u8]) -> Result<(), Decline> {
         self.sink
-            .put_borrowed(bytes)
+            .put_packed(bytes)
             .map_err(|_| Decline::ResponseTooLarge)
     }
 
-    /// Append `bytes` without finishing, to assemble a multi-part body straight into the grant;
-    /// finish with a bare `Ok(())`. An advanced path for constrained targets or perf: if
-    /// unsure, reach for [`respond`](Self::respond).
-    pub fn write(&mut self, bytes: &[u8]) -> Result<&mut Self, ResponseCapacityExceeded> {
-        self.sink.put(bytes)?;
+    pub fn respond_bytes(&mut self, bytes: &[u8]) -> Result<(), Decline> {
+        self.sink
+            .put_bytes(bytes)
+            .map_err(|_| Decline::ResponseTooLarge)
+    }
+
+    pub fn respond_static_bytes(&mut self, bytes: &'static [u8]) -> Result<(), Decline> {
+        self.sink
+            .put_static_bytes(bytes)
+            .map_err(|_| Decline::ResponseTooLarge)
+    }
+
+    pub fn write_packed(&mut self, bytes: &[u8]) -> Result<&mut Self, ResponseCapacityExceeded> {
+        self.sink.put_packed(bytes)?;
         Ok(self)
     }
 
@@ -261,7 +294,7 @@ mod tests {
         const PATH: &'static str = "/health";
         const POLICY: RoutePolicy = RoutePolicy::AllowAll;
         async fn handle(mut cx: RequestContext<'_, App>) -> Result<(), Decline> {
-            cx.respond(b"ok")
+            cx.respond_packed(b"ok")
         }
     }
 
@@ -271,7 +304,7 @@ mod tests {
         const POLICY: RoutePolicy = RoutePolicy::AllowAll;
         async fn handle(mut cx: RequestContext<'_, App>) -> Result<(), Decline> {
             let greeting = cx.state.greeting;
-            cx.respond(greeting)
+            cx.respond_packed(greeting)
         }
     }
 
@@ -291,7 +324,7 @@ mod tests {
         const PATH: &'static str = "/ack";
         const POLICY: RoutePolicy = RoutePolicy::AllowAll;
         async fn handle(mut cx: RequestContext<'_, App>) -> Result<(), Decline> {
-            cx.respond(&[])
+            cx.respond_packed(&[])
         }
     }
 
@@ -309,6 +342,17 @@ mod tests {
         assert_eq!(registrations[2].1.seed_list(), &[ADMIN]);
         assert_eq!(registrations[0].1.engine_policy(), RequestPolicy::AllowAll);
         assert!(registrations[0].1.seed_list().is_empty());
+    }
+
+    #[test]
+    fn raw_byte_sinks_frame_atomically() {
+        let mut exact = heapless::Vec::<u8, 7>::new();
+        exact.put_bytes(b"hello").unwrap();
+        assert_eq!(exact.as_slice(), &[0xC4, 5, b'h', b'e', b'l', b'l', b'o']);
+
+        let mut short = heapless::Vec::<u8, 6>::new();
+        assert_eq!(short.put_bytes(b"hello"), Err(ResponseCapacityExceeded));
+        assert!(short.is_empty());
     }
 
     #[cfg(feature = "alloc")]

@@ -294,8 +294,8 @@ where
         self.handle.establish_link_with_rtt(destination).await
     }
 
-    pub fn respond(&self, responder: RespondToken, body: &[u8]) -> Option<RttMillis> {
-        self.handle.respond(responder, body)
+    pub fn respond_packed(&self, responder: RespondToken, packed: &[u8]) -> Option<RttMillis> {
+        self.handle.respond_packed(responder, packed)
     }
 
     pub fn close_link(&self, link_id: LinkId) -> bool {

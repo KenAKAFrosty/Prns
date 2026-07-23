@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{mpsc, oneshot};
 
-use crate::engine::{SendResourceFailure, Settlement};
+use crate::engine::{RespondFailure, SendResourceFailure, Settlement};
 use crate::reactor::compression;
 use crate::reactor::driver::{
     HostCommand, HostResourceMetadata, HostResourcePayload, ResourceInbound,
@@ -98,11 +98,17 @@ pub(super) struct ResourceStreamOptions {
 
 async fn settle_sent_segment(
     settled: oneshot::Receiver<Settlement>,
+    answers_request: bool,
 ) -> Result<(), ResourceSendError> {
-    match settled.await {
-        Ok(Settlement::SendResource(Ok(()))) => Ok(()),
-        Ok(Settlement::SendResource(Err(failure))) => Err(ResourceSendError::Rejected(failure)),
-        Ok(_) | Err(_) => Err(ResourceSendError::NodeStopped),
+    match (answers_request, settled.await) {
+        (false, Ok(Settlement::SendResource(Ok(())))) | (true, Ok(Settlement::Respond(Ok(())))) => {
+            Ok(())
+        }
+        (false, Ok(Settlement::SendResource(Err(failure))))
+        | (true, Ok(Settlement::Respond(Err(RespondFailure::Resource(failure))))) => {
+            Err(ResourceSendError::Rejected(failure))
+        }
+        (_, Ok(_) | Err(_)) => Err(ResourceSendError::NodeStopped),
     }
 }
 
@@ -294,7 +300,7 @@ impl PrnsNodeHandle {
             };
             if in_flight.len() == ENGINE_SEGMENT_LANES {
                 if let Some(pending) = in_flight.pop_front() {
-                    settle_sent_segment(pending.settled).await?;
+                    settle_sent_segment(pending.settled, answers_request.is_some()).await?;
                     transferred = transferred.saturating_add(pending.logical_len);
                     physical_transferred =
                         physical_transferred.saturating_add(pending.physical_len);
@@ -340,7 +346,7 @@ impl PrnsNodeHandle {
             });
         }
         for pending in in_flight {
-            settle_sent_segment(pending.settled).await?;
+            settle_sent_segment(pending.settled, answers_request.is_some()).await?;
             transferred = transferred.saturating_add(pending.logical_len);
             physical_transferred = physical_transferred.saturating_add(pending.physical_len);
             if let Some(progress) = &progress {

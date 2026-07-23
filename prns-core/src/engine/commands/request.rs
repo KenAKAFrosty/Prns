@@ -8,7 +8,7 @@ use crate::routing::request_handlers::RequestPathHash;
 use crate::units::DurationMillis;
 use crate::wire::DestinationHash;
 
-use super::{EngineCommand, PacketReceiptDelivered, Settleable, Settlement};
+use super::{EngineCommand, PacketReceiptDelivered, SendResourceFailure, Settleable, Settlement};
 
 pub const MAX_SEND_REQUEST_DATA_LEN: usize =
     link_mdu(crate::wire::BROADCAST_MTU) - REQUEST_WIRE_OVERHEAD;
@@ -50,19 +50,18 @@ pub const MAX_RESPOND_DATA_LEN: usize =
 
 pub type RespondData = HeaplessVec<u8, MAX_RESPOND_DATA_LEN>;
 
-/// Msgpack'd `[request_id, data]`. Fire-and-forget, like the reference's response packet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::large_enum_variant)]
+pub enum RespondPayload {
+    Packed(RespondData),
+    StaticBytes(&'static [u8]),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Respond {
     pub link_id: LinkId,
     pub request_id: RequestId,
-    pub data: RespondData,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RespondBorrowed {
-    pub link_id: LinkId,
-    pub request_id: RequestId,
-    pub data: &'static [u8],
+    pub payload: RespondPayload,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,6 +74,7 @@ pub enum RespondRejection {
 pub enum RespondFailure {
     Rejected(RespondRejection),
     WriteFailed,
+    Resource(SendResourceFailure),
 }
 
 /// RNS 1.4.0 `Destination.register_request_handler(..., allowed_list=…)`, mutated at runtime.

@@ -1,16 +1,19 @@
+use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::sync::oneshot;
 
 use crate::engine::RequestResponseTimeout;
 use crate::engine::RespondFailure;
 use crate::engine::SendRequestFailure;
-use crate::engine::SendResourceFailure;
 use crate::engine::Settlement;
 use crate::reactor::compression;
 use crate::reactor::driver::{
     HostCommand, HostResourcePayload, RequestAnyHostCommand, RespondAnyHostCommand,
 };
 use crate::routing::links::data::LINK_MDU;
-use crate::routing::links::request::{write_response_plaintext, RESPONSE_WIRE_OVERHEAD};
+use crate::routing::links::request::{
+    packed_binary_len, response_envelope_prefix, write_packed_binary_header,
+    write_response_plaintext, MAX_PACKED_BINARY_HEADER_LEN, RESPONSE_WIRE_OVERHEAD,
+};
 use crate::routing::links::resources::MAX_EFFICIENT_SIZE;
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
@@ -24,21 +27,25 @@ use super::PrnsNodeHandle;
 const RESPONSE_PACKET_CEILING: usize = LINK_MDU - RESPONSE_WIRE_OVERHEAD;
 
 #[derive(Debug)]
-pub(crate) enum ResponseSettlementError {
+pub enum ResponseSendError {
+    Source(std::io::Error),
+    UnrepresentableLength,
     NodeStopped,
     CompressionTask,
-    Respond(RespondFailure),
-    Resource(SendResourceFailure),
+    Rejected(RespondFailure),
     UnexpectedSettlement,
 }
 
-impl std::fmt::Display for ResponseSettlementError {
+impl std::fmt::Display for ResponseSendError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Source(error) => write!(f, "could not read the response source: {error}"),
+            Self::UnrepresentableLength => {
+                f.write_str("the response length cannot be represented on the wire")
+            }
             Self::NodeStopped => f.write_str("the node stopped before the response settled"),
             Self::CompressionTask => f.write_str("the response compression task stopped"),
-            Self::Respond(error) => write!(f, "response packet failed: {error:?}"),
-            Self::Resource(error) => write!(f, "response resource failed: {error:?}"),
+            Self::Rejected(error) => write!(f, "response failed: {error:?}"),
             Self::UnexpectedSettlement => f.write_str("response returned an unrelated settlement"),
         }
     }
@@ -97,20 +104,20 @@ impl PrnsNodeHandle {
         }
     }
 
-    fn send_response(
+    fn send_packed_response(
         &self,
         responder: RespondToken,
-        data: HostResourcePayload,
+        packed: HostResourcePayload,
     ) -> Option<RttMillis> {
         let id = self.mint();
-        if data.len() <= RESPONSE_PACKET_CEILING {
+        if packed.len() <= RESPONSE_PACKET_CEILING {
             return self
                 .commands
                 .send(HostCommand::RespondAny(RespondAnyHostCommand {
                     id,
                     link_id: responder.link_id,
                     request_id: responder.request_id,
-                    data,
+                    packed,
                     compressed_candidate: None,
                     completion: None,
                 }))
@@ -120,27 +127,27 @@ impl PrnsNodeHandle {
         if self.commands.is_closed() {
             return None;
         }
-        let packed_capacity = RESPONSE_WIRE_OVERHEAD.checked_add(data.len().max(1))?;
-        let mut packed = std::vec![0u8; packed_capacity];
-        let packed_len = write_response_plaintext(
+        let response_capacity = RESPONSE_WIRE_OVERHEAD.checked_add(packed.len().max(1))?;
+        let mut response = std::vec![0u8; response_capacity];
+        let response_len = write_response_plaintext(
             &responder.request_id,
-            data.as_slice(),
-            packed.as_mut_slice(),
+            packed.as_slice(),
+            response.as_mut_slice(),
         )
         .ok()?;
-        packed.truncate(packed_len);
-        let data = HostResourcePayload::from(packed);
-        if data.len() > MAX_EFFICIENT_SIZE {
+        response.truncate(response_len);
+        let packed = HostResourcePayload::from(response);
+        if packed.len() > MAX_EFFICIENT_SIZE {
             let handle = self.clone();
             let link_id = responder.link_id;
             let request_id = responder.request_id;
             tokio::spawn(async move {
-                let total_len = data.len() as u64;
+                let total_len = packed.len() as u64;
                 let _ = handle
                     .send_resource_streaming(
                         link_id,
                         total_len,
-                        std::io::Cursor::new(data),
+                        std::io::Cursor::new(packed),
                         ResourceStreamOptions {
                             packed_metadata: None,
                             compression: SegmentCompression::AUTO,
@@ -156,10 +163,10 @@ impl PrnsNodeHandle {
         let link_id = responder.link_id;
         let request_id = responder.request_id;
         tokio::spawn(async move {
-            let Ok((data, compressed_candidate)) = tokio::task::spawn_blocking(move || {
-                let candidate = compression::compress_if_smaller(data.as_slice())
+            let Ok((packed, compressed_candidate)) = tokio::task::spawn_blocking(move || {
+                let candidate = compression::compress_if_smaller(packed.as_slice())
                     .map(HostResourcePayload::from);
-                (data, candidate)
+                (packed, candidate)
             })
             .await
             else {
@@ -169,7 +176,7 @@ impl PrnsNodeHandle {
                 id,
                 link_id,
                 request_id,
-                data,
+                packed,
                 compressed_candidate,
                 completion: None,
             }));
@@ -178,48 +185,125 @@ impl PrnsNodeHandle {
     }
 
     /// Answer a request via its token, returning the link's round trip (the request arrived over it) — or `None` if the node has stopped before the answer could be queued.
-    pub fn respond(&self, responder: RespondToken, body: &[u8]) -> Option<RttMillis> {
-        self.send_response(responder, body.to_vec().into())
+    pub fn respond_packed(&self, responder: RespondToken, packed: &[u8]) -> Option<RttMillis> {
+        self.send_packed_response(responder, packed.to_vec().into())
     }
 
-    pub fn respond_owned(
+    pub fn respond_owned_packed(
         &self,
         responder: RespondToken,
-        body: std::vec::Vec<u8>,
+        packed: std::vec::Vec<u8>,
     ) -> Option<RttMillis> {
-        self.send_response(responder, body.into())
+        self.send_packed_response(responder, packed.into())
     }
 
-    /// Queue a response and hold the caller until its packet write or Resource proof settles.
-    /// The request router uses this to serialize Resource responses per link: a requester may
-    /// issue its next request immediately after sending the previous Resource proof, before this
-    /// node has processed that proof and released the one-resource-per-link lane.
-    pub(crate) async fn respond_owned_settled(
+    pub fn respond_bytes(&self, responder: RespondToken, bytes: &[u8]) -> Option<RttMillis> {
+        let mut packed = std::vec::Vec::with_capacity(packed_binary_len(bytes.len())?);
+        let mut header = [0u8; MAX_PACKED_BINARY_HEADER_LEN];
+        let header_len = write_packed_binary_header(bytes.len(), &mut header).ok()?;
+        packed.extend_from_slice(&header[..header_len]);
+        packed.extend_from_slice(bytes);
+        self.respond_owned_packed(responder, packed)
+    }
+
+    pub fn respond_owned_bytes(
         &self,
         responder: RespondToken,
-        body: std::vec::Vec<u8>,
-    ) -> Result<RttMillis, ResponseSettlementError> {
+        bytes: std::vec::Vec<u8>,
+    ) -> Option<RttMillis> {
+        let packed_len = packed_binary_len(bytes.len())?;
+        let mut packed = std::vec::Vec::with_capacity(packed_len);
+        let mut header = [0u8; MAX_PACKED_BINARY_HEADER_LEN];
+        let header_len = write_packed_binary_header(bytes.len(), &mut header).ok()?;
+        packed.extend_from_slice(&header[..header_len]);
+        packed.extend_from_slice(&bytes);
+        self.respond_owned_packed(responder, packed)
+    }
+
+    pub async fn respond_bytes_streaming(
+        &self,
+        responder: RespondToken,
+        byte_len: u64,
+        mut source: impl AsyncRead + Unpin,
+    ) -> Result<RttMillis, ResponseSendError> {
+        let byte_len_usize =
+            usize::try_from(byte_len).map_err(|_| ResponseSendError::UnrepresentableLength)?;
+        let packed_len =
+            packed_binary_len(byte_len_usize).ok_or(ResponseSendError::UnrepresentableLength)?;
+        if packed_len <= RESPONSE_PACKET_CEILING {
+            let mut bytes = std::vec![0u8; byte_len_usize];
+            source
+                .read_exact(&mut bytes)
+                .await
+                .map_err(ResponseSendError::Source)?;
+            let mut packed = std::vec::Vec::with_capacity(packed_len);
+            let mut header = [0u8; MAX_PACKED_BINARY_HEADER_LEN];
+            let header_len = write_packed_binary_header(byte_len_usize, &mut header)
+                .map_err(|_| ResponseSendError::UnrepresentableLength)?;
+            packed.extend_from_slice(&header[..header_len]);
+            packed.extend_from_slice(&bytes);
+            return self.respond_owned_packed_settled(responder, packed).await;
+        }
+
+        let mut header = [0u8; MAX_PACKED_BINARY_HEADER_LEN];
+        let header_len = write_packed_binary_header(byte_len_usize, &mut header)
+            .map_err(|_| ResponseSendError::UnrepresentableLength)?;
+        let mut prefix = std::vec::Vec::with_capacity(RESPONSE_WIRE_OVERHEAD + header_len);
+        prefix.extend_from_slice(&response_envelope_prefix(&responder.request_id));
+        prefix.extend_from_slice(&header[..header_len]);
+        let response_len = u64::try_from(prefix.len())
+            .ok()
+            .and_then(|prefix_len| prefix_len.checked_add(byte_len))
+            .ok_or(ResponseSendError::UnrepresentableLength)?;
+        self.send_resource_streaming(
+            responder.link_id,
+            response_len,
+            std::io::Cursor::new(prefix).chain(source),
+            ResourceStreamOptions {
+                packed_metadata: None,
+                compression: SegmentCompression::AUTO,
+                answers_request: Some(responder.request_id),
+                progress: None,
+            },
+        )
+        .await
+        .map_err(|error| match error {
+            ResourceSendError::Source(error) => ResponseSendError::Source(error),
+            ResourceSendError::UnrepresentableLength => ResponseSendError::UnrepresentableLength,
+            ResourceSendError::Rejected(error) => {
+                ResponseSendError::Rejected(RespondFailure::Resource(error))
+            }
+            ResourceSendError::NodeStopped => ResponseSendError::NodeStopped,
+        })?;
+        Ok(responder.rtt)
+    }
+
+    pub(crate) async fn respond_owned_packed_settled(
+        &self,
+        responder: RespondToken,
+        packed: std::vec::Vec<u8>,
+    ) -> Result<RttMillis, ResponseSendError> {
         let id = self.mint();
-        let data = HostResourcePayload::from(body);
-        if data.len() > RESPONSE_PACKET_CEILING {
+        let packed = HostResourcePayload::from(packed);
+        if packed.len() > RESPONSE_PACKET_CEILING {
             let packed_capacity = RESPONSE_WIRE_OVERHEAD
-                .checked_add(data.len().max(1))
-                .ok_or(ResponseSettlementError::UnexpectedSettlement)?;
-            let mut packed = std::vec![0u8; packed_capacity];
-            let packed_len = write_response_plaintext(
+                .checked_add(packed.len().max(1))
+                .ok_or(ResponseSendError::UnrepresentableLength)?;
+            let mut response = std::vec![0u8; packed_capacity];
+            let response_len = write_response_plaintext(
                 &responder.request_id,
-                data.as_slice(),
-                packed.as_mut_slice(),
+                packed.as_slice(),
+                response.as_mut_slice(),
             )
-            .map_err(|_| ResponseSettlementError::UnexpectedSettlement)?;
-            packed.truncate(packed_len);
-            let data = HostResourcePayload::from(packed);
-            if data.len() > MAX_EFFICIENT_SIZE {
+            .map_err(|_| ResponseSendError::UnexpectedSettlement)?;
+            response.truncate(response_len);
+            let packed = HostResourcePayload::from(response);
+            if packed.len() > MAX_EFFICIENT_SIZE {
                 return self
                     .send_resource_streaming(
                         responder.link_id,
-                        data.len() as u64,
-                        std::io::Cursor::new(data),
+                        packed.len() as u64,
+                        std::io::Cursor::new(packed),
                         ResourceStreamOptions {
                             packed_metadata: None,
                             compression: SegmentCompression::AUTO,
@@ -231,25 +315,27 @@ impl PrnsNodeHandle {
                     .map(|()| responder.rtt)
                     .map_err(|error| match error {
                         ResourceSendError::Rejected(error) => {
-                            ResponseSettlementError::Resource(error)
+                            ResponseSendError::Rejected(RespondFailure::Resource(error))
                         }
-                        ResourceSendError::Source(_)
-                        | ResourceSendError::UnrepresentableLength
-                        | ResourceSendError::NodeStopped => ResponseSettlementError::NodeStopped,
+                        ResourceSendError::Source(error) => ResponseSendError::Source(error),
+                        ResourceSendError::UnrepresentableLength => {
+                            ResponseSendError::UnrepresentableLength
+                        }
+                        ResourceSendError::NodeStopped => ResponseSendError::NodeStopped,
                     });
             }
-            let (data, compressed_candidate) = tokio::task::spawn_blocking(move || {
-                let candidate = compression::compress_if_smaller(data.as_slice())
+            let (packed, compressed_candidate) = tokio::task::spawn_blocking(move || {
+                let candidate = compression::compress_if_smaller(packed.as_slice())
                     .map(HostResourcePayload::from);
-                (data, candidate)
+                (packed, candidate)
             })
             .await
-            .map_err(|_| ResponseSettlementError::CompressionTask)?;
+            .map_err(|_| ResponseSendError::CompressionTask)?;
             return self
-                .send_response_command_settled(id, responder, data, compressed_candidate)
+                .send_response_command_settled(id, responder, packed, compressed_candidate)
                 .await;
         }
-        self.send_response_command_settled(id, responder, data, None)
+        self.send_response_command_settled(id, responder, packed, None)
             .await
     }
 
@@ -257,28 +343,25 @@ impl PrnsNodeHandle {
         &self,
         id: crate::engine::CommandId,
         responder: RespondToken,
-        data: HostResourcePayload,
+        packed: HostResourcePayload,
         compressed_candidate: Option<HostResourcePayload>,
-    ) -> Result<RttMillis, ResponseSettlementError> {
+    ) -> Result<RttMillis, ResponseSendError> {
         let (completion, settled) = oneshot::channel();
         self.commands
             .send(HostCommand::RespondAny(RespondAnyHostCommand {
                 id,
                 link_id: responder.link_id,
                 request_id: responder.request_id,
-                data,
+                packed,
                 compressed_candidate,
                 completion: Some(completion),
             }))
-            .map_err(|_| ResponseSettlementError::NodeStopped)?;
+            .map_err(|_| ResponseSendError::NodeStopped)?;
         match settled.await {
-            Ok(Settlement::Respond(Ok(())) | Settlement::SendResource(Ok(()))) => Ok(responder.rtt),
-            Ok(Settlement::Respond(Err(error))) => Err(ResponseSettlementError::Respond(error)),
-            Ok(Settlement::SendResource(Err(error))) => {
-                Err(ResponseSettlementError::Resource(error))
-            }
-            Ok(_) => Err(ResponseSettlementError::UnexpectedSettlement),
-            Err(_) => Err(ResponseSettlementError::NodeStopped),
+            Ok(Settlement::Respond(Ok(()))) => Ok(responder.rtt),
+            Ok(Settlement::Respond(Err(error))) => Err(ResponseSendError::Rejected(error)),
+            Ok(_) => Err(ResponseSendError::UnexpectedSettlement),
+            Err(_) => Err(ResponseSendError::NodeStopped),
         }
     }
 }
