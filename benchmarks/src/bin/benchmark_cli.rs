@@ -6,7 +6,7 @@ use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 
 const USAGE: &str = "usage: cargo benchmark [--smoke] [--publish] [--energy] [--resume RUN_ID]";
-const HELP: &str = "Prns benchmark qualification\n\n  cargo benchmark             run all 20 cells × 3 isolated samples locally\n  cargo benchmark --smoke     check every direction quickly, without publishable data\n  cargo benchmark --resume ID continue a compatible interrupted local suite\n  cargo benchmark --publish   require a clean tree, run, then publish atomically\n  cargo benchmark --energy    require platform energy evidence\n\nRust/Cargo, uv, and a native C compiler are required. Generated local runs are ignored.";
+const HELP: &str = "Prns benchmark qualification\n\n  cargo benchmark             run all 34 cells × 3 isolated samples locally\n  cargo benchmark --smoke     check every endpoint pairing and relay profile quickly, without publishable data\n  cargo benchmark --resume ID continue a compatible interrupted local suite\n  cargo benchmark --publish   require a clean tree, run, then publish atomically\n  cargo benchmark --energy    require platform energy evidence\n\nRust/Cargo, uv, and a native C compiler are required. Generated local runs are ignored.";
 
 #[derive(Default)]
 struct Options {
@@ -120,13 +120,13 @@ fn run() -> Result<(), CliError> {
 
     println!("Prns benchmark qualification");
     println!("  suite       {suite_id}");
-    println!("  matrix      5 scenarios × 4 directions");
+    println!("  matrix      7 endpoint scenarios × 4 pairings + 3 relay scenarios × 2 relays");
     println!(
         "  sampling    {}",
         if options.smoke {
             "one 500 ms smoke sample per cell"
         } else {
-            "three counterbalanced 30 s samples per cell (~30–45 minutes)"
+            "three counterbalanced 30 s samples per cell (~50–70 minutes)"
         }
     );
     println!(
@@ -289,6 +289,8 @@ fn build_harness(root: &Path) -> Result<(), CliError> {
                 "--bin",
                 "participant_node",
                 "--bin",
+                "raw_transport_driver",
+                "--bin",
                 "benchmark_runner",
                 "--bin",
                 "render_results",
@@ -388,6 +390,7 @@ fn read_suite(run_dir: &Path) -> Result<CompletedSuite, CliError> {
 }
 
 fn validate_completed_suite(suite: &CompletedSuite, options: &Options) -> Result<(), CliError> {
+    let expected_cells = release_cell_count();
     if suite.schema != 1 || !suite.complete || !suite.failures.is_empty() {
         return Err(CliError::Evidence(format!(
             "suite {} is incomplete: {:?}",
@@ -412,12 +415,14 @@ fn validate_completed_suite(suite: &CompletedSuite, options: &Options) -> Result
     if !options.smoke
         && (suite.samples_per_cell != 3
             || suite.duration_ms != 30_000
-            || suite.selected_cells != 20
-            || suite.matrix_cells != 20
+            || suite.selected_cells != expected_cells
+            || suite.matrix_cells != expected_cells
             || !suite.reference_verified)
     {
         return Err(CliError::Evidence(
-            "release suite lacks the complete 20-cell matrix or compiled-reference proof".into(),
+            format!(
+                "release suite lacks the complete {expected_cells}-cell matrix or compiled-reference proof"
+            ),
         ));
     }
     if options.publish && suite.source_dirty {
@@ -461,9 +466,20 @@ fn resume_compatible(
         && suite.schema == 1
         && suite.samples_per_cell == 3
         && suite.duration_ms == 30_000
-        && suite.matrix_cells == 20
+        && suite.matrix_cells == release_cell_count()
         && suite.source_commit == current_commit
         && suite.source_fingerprint == current_fingerprint
+}
+
+fn release_cell_count() -> usize {
+    benchmarks::load_catalog()
+        .expect("validated benchmark catalog")
+        .into_iter()
+        .map(|manifest| match manifest.topology {
+            benchmarks::ScenarioTopology::Direct => 4,
+            benchmarks::ScenarioTopology::Relay => 2,
+        })
+        .sum()
 }
 
 fn promote(root: &Path, run_dir: &Path, suite: &CompletedSuite) -> Result<(), CliError> {
@@ -886,6 +902,7 @@ mod tests {
     use super::*;
 
     fn completed_suite() -> CompletedSuite {
+        let cells = release_cell_count();
         CompletedSuite {
             schema: 1,
             suite_id: uuid::Uuid::new_v4().to_string(),
@@ -894,8 +911,8 @@ mod tests {
             source_dirty: false,
             samples_per_cell: 3,
             duration_ms: 30_000,
-            selected_cells: 20,
-            matrix_cells: 20,
+            selected_cells: cells,
+            matrix_cells: cells,
             complete: true,
             host: Some("test-host".into()),
             energy_available: false,

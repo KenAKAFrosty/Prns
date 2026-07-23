@@ -8,6 +8,16 @@
   "primary_metric": "delivered_per_sec",
   "headline": true,
   "notes": [],
+  "cell_notes": [
+    {
+      "subject": {
+        "path": "direct",
+        "initiator": "rns-1.4.0-compiled",
+        "responder": "personal-rns"
+      },
+      "text": "Published macOS and Windows suites both show this direction below the RNS↔RNS diagonal. It combines RNS's sender/receipt loop with Prns's link-data receive/proof-return path; the opposite mixed row reverses both roles, so mixed cells are compositions rather than interpolations. The cross-host repeat localizes the effect to this directional interop seam, but the current evidence does not assign the cost to one endpoint."
+    }
+  ],
   "description": "One link saturated with windowed small single-packet sends for a fixed wall-time - the same data shape as single-packet-throughput carried by the other mechanism: a session key amortizes the per-message crypto that singles pay per packet, while ProveAll still proves every delivery. The contrast between the two firehoses is the measurement.",
   "roles": [
     "responder",

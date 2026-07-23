@@ -1,0 +1,40 @@
+{
+  "name": "resource-64mib-stream-unleashed",
+  "version": 1,
+  "order": 7,
+  "title": "64 MiB resource stream · 1 Gbps policy",
+  "category": "Resources",
+  "summary": "Stream the 64 MiB resource with both endpoint TCP interfaces explicitly configured for the 1 Gbps MTU tier.",
+  "primary_metric": "goodput_bytes_per_sec",
+  "headline": true,
+  "notes": [
+    "Controlled computational comparison: identical workload and protocol, with only TCP bitrate policy changed."
+  ],
+  "cell_notes": [
+    {
+      "subject": {
+        "path": "direct",
+        "initiator": "rns-1.4.0-compiled",
+        "responder": "personal-rns"
+      },
+      "text": "This controlled row retains the RNS-sender/Prns-receiver segment-handoff interaction identified by the default-policy cell. A higher MTU can change how often successor preparation wins the race, but it does not remove RNS 1.4.0's 50 ms readiness-polling path; compare this result with both the default 64 MiB row and the one-segment control."
+    }
+  ],
+  "description": "The 64 MiB incompressible resource stream repeated with both real initiator and responder TCP interfaces explicitly configured for 1 Gbps. That policy selects the 524,288-byte interface MTU tier on both stacks. Compression remains disabled and every segment remains encrypted, hash-proved, assembled, and application-acknowledged; this is the controlled counterpart to the default-policy result.",
+  "roles": [
+    "responder",
+    "initiator"
+  ],
+  "profile": {
+    "mechanism": "resource",
+    "payload_len": 67108864,
+    "window": 1,
+    "tcp_bitrate_bps": 1000000000,
+    "duration_ms": 30000,
+    "drain_timeout_ms": 30000,
+    "compression": "off",
+    "size_seed": 6840346605343539201
+  },
+  "conformance_rule": "exact-resource",
+  "conformance": "Every sent stream settles, receives its ordered application acknowledgement, and is received with exact application-byte totals and zero failures; each transfer is a sequence of hash-proved segments assembled by original_hash before the whole is counted."
+}

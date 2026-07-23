@@ -12,9 +12,10 @@ use std::time::Duration;
 
 use benchmarks::{
     energy_unavailable_hint, load_host, load_manifest, load_or_create_submitter_id, scenario_dir,
-    write_rows, Axis, ConformanceRule, DeviceId, PowerMeter, ResultRow, ScenarioManifest, Subject,
-    SubmitterId, RESULT_SCHEMA_VERSION,
+    write_rows, Axis, ConformanceRule, DeviceId, PowerMeter, ResultRow, ScenarioManifest,
+    ScenarioTopology, Subject, SubmitterId, RESULT_SCHEMA_VERSION,
 };
+use personal_rns::interfaces::{hardware_mtu_for_bitrate, tcp};
 
 use arguments::{parse_args, Args, RunnerCommand};
 use implementation::{implementation, Implementation};
@@ -74,14 +75,185 @@ fn run(args: Args) {
         eprintln!("FAIL release-build-required: run target/release/benchmark_runner or pass --smoke for a non-publishing check");
         std::process::exit(2);
     }
-    run_direct(&args);
+    run_scenario(&args);
 }
 
-fn run_direct(args: &Args) {
+fn run_scenario(args: &Args) {
     let manifest = scenario_dir(args.scenario.as_str()).join("manifest.json");
     assert!(manifest.exists(), "no manifest at {}", manifest.display());
     let manifest_data = load_manifest(args.scenario).expect("validated scenario manifest");
-    run_interop(args, &manifest_data, &manifest);
+    match manifest_data.topology {
+        ScenarioTopology::Direct => {
+            assert!(
+                args.relay.is_none(),
+                "--relay is only valid for relay-topology scenarios"
+            );
+            run_interop(args, &manifest_data, &manifest);
+        }
+        ScenarioTopology::Relay => run_transport(args, &manifest_data, &manifest),
+    }
+}
+
+fn raw_driver_command() -> Command {
+    let mut path = std::env::current_exe().expect("current benchmark executable");
+    path.set_file_name(format!(
+        "raw_transport_driver{}",
+        std::env::consts::EXE_SUFFIX
+    ));
+    assert!(
+        path.exists(),
+        "raw transport driver missing at {}",
+        path.display()
+    );
+    Command::new(path)
+}
+
+fn power_meter() -> (Option<PowerMeter>, Option<f64>) {
+    let meter = PowerMeter::detect();
+    if meter.is_none() {
+        println!("{}", energy_unavailable_hint());
+        if std::env::var_os("BENCHMARK_REQUIRE_ENERGY").as_deref()
+            == Some(std::ffi::OsStr::new("1"))
+        {
+            eprintln!("FAIL energy-required: no usable platform energy meter was detected");
+            std::process::exit(2);
+        }
+    }
+    let idle_watts = meter
+        .as_ref()
+        .map(|meter| meter.idle_watts(Duration::from_millis(1500)));
+    (meter, idle_watts)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RelayTcpPolicy {
+    bitrate_bps: u64,
+    mtu_bytes: usize,
+}
+
+fn relay_tcp_policy(line: &str) -> RelayTcpPolicy {
+    let value = |key: &str| {
+        line.split_whitespace()
+            .find_map(|field| field.strip_prefix(&format!("{key}=")))
+            .unwrap_or_else(|| panic!("relay READY is missing {key}: {line}"))
+    };
+    RelayTcpPolicy {
+        bitrate_bps: value("bitrate_bps")
+            .parse()
+            .unwrap_or_else(|error| panic!("relay READY has invalid bitrate: {error}")),
+        mtu_bytes: value("mtu_bytes")
+            .parse()
+            .unwrap_or_else(|error| panic!("relay READY has invalid MTU: {error}")),
+    }
+}
+
+fn expected_relay_tcp_policy(manifest: &ScenarioManifest, relay_slug: &str) -> RelayTcpPolicy {
+    let bitrate_bps = manifest
+        .profile
+        .tcp_bitrate_bps
+        .unwrap_or_else(|| match relay_slug {
+            "personal-rns" => tcp::TCP_BITRATE_ESTIMATE.get(),
+            "rns-1.4.0-compiled" => 10_000_000,
+            other => panic!("unknown relay implementation {other:?}"),
+        });
+    RelayTcpPolicy {
+        bitrate_bps,
+        mtu_bytes: hardware_mtu_for_bitrate(bitrate_bps)
+            .expect("benchmark TCP bitrate selects an RNS MTU tier"),
+    }
+}
+
+fn run_transport(args: &Args, manifest_data: &ScenarioManifest, manifest: &std::path::Path) {
+    let relay_slug = args.relay.as_deref().unwrap_or("personal-rns");
+    let relay_impl = implementation(relay_slug);
+    let relay_command = relay_impl
+        .interop_command()
+        .unwrap_or_else(|| panic!("implementation {:?} has no participant", relay_impl.name()));
+    let subject = Subject::Direct {
+        initiator: "benchmark-wire-driver".into(),
+        responder: "benchmark-wire-driver".into(),
+        relay: Some(relay_impl.slug().into()),
+    };
+    let pairing_label = format!("{} relay", relay_impl.label());
+    let (meter, idle_watts) = power_meter();
+
+    let mut relay = spawn_role(relay_command, manifest, "relay", "127.0.0.1:0", args);
+    let ready = await_line(&relay, "READY", Duration::from_secs(30));
+    let relay_policy = relay_tcp_policy(&ready);
+    let expected_policy = expected_relay_tcp_policy(manifest_data, relay_impl.slug());
+    assert_eq!(
+        relay_policy,
+        expected_policy,
+        "{} reported a TCP policy that does not match {}",
+        relay_impl.label(),
+        manifest_data.name
+    );
+    println!(
+        "RELAY_POLICY bitrate_bps={} mtu_bytes={}",
+        relay_policy.bitrate_bps, relay_policy.mtu_bytes
+    );
+    let addresses = ready
+        .split_whitespace()
+        .find_map(|field| field.strip_prefix("addr="))
+        .expect("relay READY carries both addresses")
+        .to_string();
+    let mut driver_command = raw_driver_command();
+    if args.smoke {
+        driver_command.env("BENCHMARK_SMOKE", "1");
+    }
+    let mut driver = spawn_role(driver_command, manifest, "wire-driver", &addresses, args);
+    await_line(&driver, "READY", Duration::from_secs(10));
+    await_line(
+        &driver,
+        "HARNESS",
+        Duration::from_secs(if args.smoke { 10 } else { 30 }),
+    );
+    await_line(&driver, "MEASURE_READY", Duration::from_secs(30));
+    println!("STARTUP_ATTEMPT stage=relay-readiness attempt=1 result=pass");
+
+    relay.mark_measurement_start();
+    driver.mark_measurement_start();
+    let bracket = meter.as_ref().map(|meter| meter.start());
+    driver.start_measurement();
+    let scenario_duration_ms = args
+        .duration_ms
+        .unwrap_or(manifest_data.profile.duration_ms);
+    let window = Duration::from_millis(
+        scenario_duration_ms + manifest_data.profile.drain_timeout_ms + 30_000,
+    );
+    await_line(&driver, "MEASURE_DONE", window);
+    driver.mark_measurement_end();
+    relay.mark_measurement_end();
+    let energy = bracket.map(|bracket| bracket.finish());
+    let driver_result = await_line(&driver, "RESULT", Duration::from_secs(10));
+    let result = format!(
+        "{driver_result} relay_bitrate_bps={} relay_mtu_bytes={}",
+        relay_policy.bitrate_bps, relay_policy.mtu_bytes
+    );
+    let driver_metrics = driver.finalize();
+    relay.stop();
+    let relay_metrics = relay.finalize();
+
+    let conformant = file_results(
+        args,
+        manifest_data.version,
+        manifest_data.conformance_rule,
+        subject,
+        &pairing_label,
+        CollectedRun {
+            result: &result,
+            responder_result: &result,
+            wire_line: None,
+            energy,
+            idle_watts,
+            initiator: driver_metrics,
+            responder: process::RoleMetrics::default(),
+            relay: Some(relay_metrics),
+        },
+    );
+    if !conformant {
+        std::process::exit(2);
+    }
 }
 
 fn run_interop(args: &Args, manifest_data: &ScenarioManifest, manifest: &std::path::Path) {
@@ -107,19 +279,7 @@ fn run_interop(args: &Args, manifest_data: &ScenarioManifest, manifest: &std::pa
             .unwrap_or_else(|| panic!("implementation {:?} has no participant", subject.name()))
     };
 
-    let meter = PowerMeter::detect();
-    if meter.is_none() {
-        println!("{}", energy_unavailable_hint());
-        if std::env::var_os("BENCHMARK_REQUIRE_ENERGY").as_deref()
-            == Some(std::ffi::OsStr::new("1"))
-        {
-            eprintln!("FAIL energy-required: no usable platform energy meter was detected");
-            std::process::exit(2);
-        }
-    }
-    let idle_watts = meter
-        .as_ref()
-        .map(|m| m.idle_watts(Duration::from_millis(1500)));
+    let (meter, idle_watts) = power_meter();
     let mut responder = spawn_role(
         interop_command(&responder_impl),
         manifest,
@@ -231,7 +391,11 @@ fn result_metric(line: &str, key: &str) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{result_metric, MeasurementPhase, PhaseTracker};
+    use super::{
+        expected_relay_tcp_policy, relay_tcp_policy, result_metric, MeasurementPhase, PhaseTracker,
+        RelayTcpPolicy,
+    };
+    use benchmarks::{load_manifest, ScenarioId};
 
     #[test]
     fn measurement_barrier_has_one_valid_phase_order() {
@@ -254,5 +418,43 @@ mod tests {
         let result = "RESULT sent=4 settled=4 payload_bytes=268435456 failures=0";
         assert_eq!(result_metric(result, "settled"), 4);
         assert_eq!(result_metric(result, "payload_bytes"), 268_435_456);
+    }
+
+    #[test]
+    fn relay_ready_policy_is_typed_and_manifest_checked() {
+        assert_eq!(
+            relay_tcp_policy(
+                "READY role=relay addr=127.0.0.1:1>127.0.0.1:2 \
+                 bitrate_bps=1000000000 mtu_bytes=524288"
+            ),
+            RelayTcpPolicy {
+                bitrate_bps: 1_000_000_000,
+                mtu_bytes: 524_288,
+            }
+        );
+        let practical = load_manifest(ScenarioId::RawTransportThroughput).expect("manifest");
+        assert_eq!(
+            expected_relay_tcp_policy(&practical, "personal-rns"),
+            RelayTcpPolicy {
+                bitrate_bps: 500_000_000,
+                mtu_bytes: 131_072,
+            }
+        );
+        assert_eq!(
+            expected_relay_tcp_policy(&practical, "rns-1.4.0-compiled"),
+            RelayTcpPolicy {
+                bitrate_bps: 10_000_000,
+                mtu_bytes: 8_192,
+            }
+        );
+        let unleashed =
+            load_manifest(ScenarioId::TransportResourceThroughputUnleashed).expect("manifest");
+        assert_eq!(
+            expected_relay_tcp_policy(&unleashed, "rns-1.4.0-compiled"),
+            RelayTcpPolicy {
+                bitrate_bps: 1_000_000_000,
+                mtu_bytes: 524_288,
+            }
+        );
     }
 }

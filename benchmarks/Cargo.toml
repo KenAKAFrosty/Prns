@@ -80,6 +80,11 @@ path = "src/bin/participant_node/main.rs"
 bench = false
 
 [[bin]]
+name = "raw_transport_driver"
+path = "src/bin/raw_transport_driver.rs"
+bench = false
+
+[[bin]]
 name = "benchmark_runner"
 path = "src/bin/benchmark_runner/main.rs"
 bench = false

@@ -1,7 +1,9 @@
+use std::collections::BTreeSet;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
+use crate::results::Subject;
 use serde::{Deserialize, Serialize};
 
 pub const IMPLEMENTATIONS: [&str; 2] = ["personal-rns", "rns-1.4.0-compiled"];
@@ -16,17 +18,28 @@ pub enum ScenarioId {
     LinkMessageThroughput,
     RequestResponse,
     ResourceMaxSegment,
+    ResourceMaxSegmentUnleashed,
     #[serde(rename = "resource-64mib-stream")]
     Resource64mibStream,
+    #[serde(rename = "resource-64mib-stream-unleashed")]
+    Resource64mibStreamUnleashed,
+    RawTransportThroughput,
+    TransportResourceThroughput,
+    TransportResourceThroughputUnleashed,
 }
 
 impl ScenarioId {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 10] = [
         Self::SinglePacketThroughput,
         Self::LinkMessageThroughput,
         Self::RequestResponse,
         Self::ResourceMaxSegment,
+        Self::ResourceMaxSegmentUnleashed,
         Self::Resource64mibStream,
+        Self::Resource64mibStreamUnleashed,
+        Self::RawTransportThroughput,
+        Self::TransportResourceThroughput,
+        Self::TransportResourceThroughputUnleashed,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -35,8 +48,29 @@ impl ScenarioId {
             Self::LinkMessageThroughput => "link-message-throughput",
             Self::RequestResponse => "request-response",
             Self::ResourceMaxSegment => "resource-max-segment",
+            Self::ResourceMaxSegmentUnleashed => "resource-max-segment-unleashed",
             Self::Resource64mibStream => "resource-64mib-stream",
+            Self::Resource64mibStreamUnleashed => "resource-64mib-stream-unleashed",
+            Self::RawTransportThroughput => "raw-transport-throughput",
+            Self::TransportResourceThroughput => "transport-resource-throughput",
+            Self::TransportResourceThroughputUnleashed => "transport-resource-throughput-unleashed",
         }
+    }
+
+    pub const fn is_transport(self) -> bool {
+        matches!(
+            self,
+            Self::RawTransportThroughput
+                | Self::TransportResourceThroughput
+                | Self::TransportResourceThroughputUnleashed
+        )
+    }
+
+    pub const fn is_transport_resource(self) -> bool {
+        matches!(
+            self,
+            Self::TransportResourceThroughput | Self::TransportResourceThroughputUnleashed
+        )
     }
 }
 
@@ -64,6 +98,16 @@ pub enum ConformanceRule {
     ExactLink,
     ExactRequest,
     ExactResource,
+    ExactTransport,
+    ExactTransportResource,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ScenarioTopology {
+    #[default]
+    Direct,
+    Relay,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,11 +122,21 @@ pub struct ScenarioManifest {
     pub headline: bool,
     #[serde(default)]
     pub notes: Vec<String>,
+    #[serde(default)]
+    pub cell_notes: Vec<ScenarioCellNote>,
     pub description: String,
     pub roles: Vec<String>,
+    #[serde(default)]
+    pub topology: ScenarioTopology,
     pub profile: WorkloadProfile,
     pub conformance_rule: ConformanceRule,
     pub conformance: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScenarioCellNote {
+    pub subject: Subject,
+    pub text: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -107,6 +161,10 @@ pub struct WorkloadProfile {
     pub request_links: usize,
     #[serde(default)]
     pub link_mtu: usize,
+    #[serde(default)]
+    pub transport_link_mtu: usize,
+    #[serde(default)]
+    pub tcp_bitrate_bps: Option<u64>,
     pub duration_ms: u64,
     #[serde(default = "default_drain_timeout_ms")]
     pub drain_timeout_ms: u64,
@@ -199,9 +257,9 @@ pub fn load_catalog() -> Result<Vec<ScenarioManifest>, CatalogError> {
         .iter()
         .map(|manifest| manifest.order)
         .collect::<Vec<_>>();
-    if orders != vec![1, 2, 3, 4, 5] {
+    if orders != (1..=ScenarioId::ALL.len() as u32).collect::<Vec<_>>() {
         return Err(CatalogError::Invalid(format!(
-            "scenario order must be exactly 1..=5, found {orders:?}"
+            "scenario order must be contiguous from one, found {orders:?}"
         )));
     }
     let directories = std::fs::read_dir(scenarios_dir())
@@ -214,7 +272,8 @@ pub fn load_catalog() -> Result<Vec<ScenarioManifest>, CatalogError> {
         .count();
     if directories != ScenarioId::ALL.len() {
         return Err(CatalogError::Invalid(format!(
-            "expected exactly five scenario directories, found {directories}"
+            "expected exactly {} scenario directories, found {directories}",
+            ScenarioId::ALL.len()
         )));
     }
     Ok(manifests)
@@ -249,7 +308,13 @@ fn validate_manifest(manifest: &ScenarioManifest, path: &Path) -> Result<(), Cat
         ScenarioId::SinglePacketThroughput => "single",
         ScenarioId::LinkMessageThroughput => "link",
         ScenarioId::RequestResponse => "request",
-        ScenarioId::ResourceMaxSegment | ScenarioId::Resource64mibStream => "resource",
+        ScenarioId::ResourceMaxSegment
+        | ScenarioId::ResourceMaxSegmentUnleashed
+        | ScenarioId::Resource64mibStream
+        | ScenarioId::Resource64mibStreamUnleashed => "resource",
+        ScenarioId::RawTransportThroughput => "transport",
+        ScenarioId::TransportResourceThroughput
+        | ScenarioId::TransportResourceThroughputUnleashed => "transport-resource",
     };
     if manifest.profile.mechanism != expected_mechanism {
         return Err(CatalogError::Invalid(format!(
@@ -261,8 +326,14 @@ fn validate_manifest(manifest: &ScenarioManifest, path: &Path) -> Result<(), Cat
         ScenarioId::SinglePacketThroughput => ConformanceRule::ExactSingle,
         ScenarioId::LinkMessageThroughput => ConformanceRule::ExactLink,
         ScenarioId::RequestResponse => ConformanceRule::ExactRequest,
-        ScenarioId::ResourceMaxSegment | ScenarioId::Resource64mibStream => {
-            ConformanceRule::ExactResource
+        ScenarioId::ResourceMaxSegment
+        | ScenarioId::ResourceMaxSegmentUnleashed
+        | ScenarioId::Resource64mibStream
+        | ScenarioId::Resource64mibStreamUnleashed => ConformanceRule::ExactResource,
+        ScenarioId::RawTransportThroughput => ConformanceRule::ExactTransport,
+        ScenarioId::TransportResourceThroughput
+        | ScenarioId::TransportResourceThroughputUnleashed => {
+            ConformanceRule::ExactTransportResource
         }
     };
     if manifest.conformance_rule != expected_conformance {
@@ -294,6 +365,143 @@ fn validate_manifest(manifest: &ScenarioManifest, path: &Path) -> Result<(), Cat
             "{} must keep its request envelope below the 383-byte encrypted MDU and every response above it",
             manifest.name
         )));
+    }
+    let expected_topology = if manifest.name.is_transport() {
+        ScenarioTopology::Relay
+    } else {
+        ScenarioTopology::Direct
+    };
+    if manifest.topology != expected_topology {
+        return Err(CatalogError::Invalid(format!(
+            "{} must use topology {expected_topology:?}",
+            manifest.name
+        )));
+    }
+    if manifest.name.is_transport() && manifest.roles != ["wire-driver", "relay"] {
+        return Err(CatalogError::Invalid(format!(
+            "{} must declare wire-driver and relay roles",
+            manifest.name
+        )));
+    }
+    let mut annotated_subjects = BTreeSet::new();
+    for note in &manifest.cell_notes {
+        if note.text.trim().is_empty() {
+            return Err(CatalogError::Invalid(format!(
+                "{} has an empty cell note",
+                manifest.name
+            )));
+        }
+        if !annotated_subjects.insert(note.subject.file_slug()) {
+            return Err(CatalogError::Invalid(format!(
+                "{} annotates subject {} more than once",
+                manifest.name,
+                note.subject.file_slug()
+            )));
+        }
+        let valid_subject = match (&note.subject, manifest.topology) {
+            (
+                Subject::Direct {
+                    initiator,
+                    responder,
+                    relay: None,
+                },
+                ScenarioTopology::Direct,
+            ) => {
+                IMPLEMENTATIONS.contains(&initiator.as_str())
+                    && IMPLEMENTATIONS.contains(&responder.as_str())
+            }
+            (
+                Subject::Direct {
+                    initiator,
+                    responder,
+                    relay: Some(relay),
+                },
+                ScenarioTopology::Relay,
+            ) => {
+                initiator == "benchmark-wire-driver"
+                    && responder == "benchmark-wire-driver"
+                    && IMPLEMENTATIONS.contains(&relay.as_str())
+            }
+            _ => false,
+        };
+        if !valid_subject {
+            return Err(CatalogError::Invalid(format!(
+                "{} has a cell note for subject {} outside its {:?} topology",
+                manifest.name,
+                note.subject.file_slug(),
+                manifest.topology
+            )));
+        }
+    }
+    if manifest.name == ScenarioId::RawTransportThroughput
+        && (manifest.profile.window != 256
+            || manifest.profile.payload_min != 60
+            || manifest.profile.payload_max != 420
+            || manifest.profile.duration_ms != 30_000
+            || manifest.profile.drain_timeout_ms != 30_000
+            || manifest.profile.size_seed != DEFAULT_SIZE_SEED
+            || manifest.profile.link_mtu != 0)
+    {
+        return Err(CatalogError::Invalid(format!(
+            "{} fixes a 30-second issue/drain profile, 256-frame directional windows, the shared seed, and 60–420-byte payloads without a fixed MTU",
+            manifest.name
+        )));
+    }
+    if manifest.name.is_transport_resource()
+        && (manifest.profile.window != 16
+            || manifest.profile.payload_len != 0
+            || manifest.profile.payload_min != 0
+            || manifest.profile.payload_max != 0
+            || manifest.profile.duration_ms != 30_000
+            || manifest.profile.drain_timeout_ms != 30_000
+            || manifest.profile.size_seed != DEFAULT_SIZE_SEED
+            || manifest.profile.link_mtu != 0
+            || manifest.profile.transport_link_mtu != 524_288
+            || manifest.profile.payload_shape != "effective-mtu")
+    {
+        return Err(CatalogError::Invalid(format!(
+            "{} fixes a 30-second issue/drain profile, 16-frame directional windows, the shared seed, and a maximum requested transported-link MTU",
+            manifest.name
+        )));
+    }
+    if !manifest.name.is_transport_resource() && manifest.profile.transport_link_mtu != 0 {
+        return Err(CatalogError::Invalid(format!(
+            "{} does not own a transported-link MTU request",
+            manifest.name
+        )));
+    }
+    match manifest.name {
+        ScenarioId::RawTransportThroughput
+        | ScenarioId::ResourceMaxSegment
+        | ScenarioId::Resource64mibStream
+        | ScenarioId::TransportResourceThroughput => {
+            if manifest.profile.tcp_bitrate_bps.is_some() {
+                return Err(CatalogError::Invalid(format!(
+                    "{} must preserve each implementation's default TCP bitrate policy",
+                    manifest.name
+                )));
+            }
+        }
+        ScenarioId::ResourceMaxSegmentUnleashed
+        | ScenarioId::Resource64mibStreamUnleashed
+        | ScenarioId::TransportResourceThroughputUnleashed => {
+            if manifest.profile.tcp_bitrate_bps != Some(1_000_000_000) {
+                return Err(CatalogError::Invalid(format!(
+                    "{} must explicitly configure a 1 Gbps TCP bitrate policy",
+                    manifest.name
+                )));
+            }
+        }
+        ScenarioId::SinglePacketThroughput
+        | ScenarioId::LinkMessageThroughput
+        | ScenarioId::RequestResponse => {
+            if manifest.profile.tcp_bitrate_bps.is_some() {
+                return Err(CatalogError::Invalid(format!(
+                    "{} does not own a TCP bitrate override",
+                    manifest.name
+                )));
+            }
+        }
     }
     Ok(())
 }
@@ -364,6 +572,31 @@ mod tests {
                 .map(|manifest| manifest.name)
                 .collect::<Vec<_>>(),
             ScenarioId::ALL
+        );
+    }
+
+    #[test]
+    fn cell_notes_are_typed_unique_subject_annotations() {
+        let mut manifest =
+            load_manifest(ScenarioId::LinkMessageThroughput).expect("annotated manifest");
+        assert_eq!(manifest.cell_notes.len(), 1);
+        assert_eq!(
+            manifest.cell_notes[0].subject,
+            Subject::Direct {
+                initiator: "rns-1.4.0-compiled".into(),
+                responder: "personal-rns".into(),
+                relay: None,
+            }
+        );
+
+        manifest.cell_notes.push(manifest.cell_notes[0].clone());
+        let path = scenarios_dir()
+            .join(manifest.name.as_str())
+            .join("manifest.json");
+        let error = validate_manifest(&manifest, &path).expect_err("duplicate cell note");
+        assert!(
+            error.to_string().contains("more than once"),
+            "unexpected validation error: {error}"
         );
     }
 

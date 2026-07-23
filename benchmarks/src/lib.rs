@@ -6,8 +6,8 @@ pub mod microscope;
 mod results;
 pub use catalog::{
     deterministic_payload, load_catalog, load_manifest, scenarios_dir, CatalogError,
-    ConformanceRule, ScenarioId, ScenarioManifest, SizeSequence, WorkloadProfile,
-    DEFAULT_SIZE_SEED, IMPLEMENTATIONS,
+    ConformanceRule, ScenarioCellNote, ScenarioId, ScenarioManifest, ScenarioTopology,
+    SizeSequence, WorkloadProfile, DEFAULT_SIZE_SEED, IMPLEMENTATIONS,
 };
 pub use energy::{unavailable_hint as energy_unavailable_hint, PowerMeter};
 pub use results::{

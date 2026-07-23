@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 
 use benchmarks::{
     load_all_rows, load_catalog, load_host, load_implementations, scenario_dir, Axis,
-    ImplementationDescriptor, ImplementationRole, ResultRow, Subject, RESULT_SCHEMA_VERSION,
+    ImplementationDescriptor, ImplementationRole, ResultRow, ScenarioCellNote, ScenarioTopology,
+    Subject, RESULT_SCHEMA_VERSION,
 };
 
 const PASS_ICON: &str = r#"<img src="assets/check.svg" width="14" alt="conformant" />"#;
@@ -160,16 +161,29 @@ fn render_qualification(out: &mut String, rows: &[ResultRow]) {
                 .count()
         })
         .sum::<usize>();
+    let expected_cells = expected_cell_count();
+    let expected_samples = expected_cells * 3;
     let _ = write!(
         out,
-        "\n> **Qualification: {status}.** {}/20 cells; {conformant_samples}/60 conformant samples; exact source `{commit}`; source tree {}.\n",
+        "\n> **Qualification: {status}.** {}/{expected_cells} cells; {conformant_samples}/{expected_samples} conformant samples; exact source `{commit}`; source tree {}.\n",
         aggregates.len(),
         if clean { "clean" } else { "dirty or unknown" }
     );
 }
 
+fn expected_cell_count() -> usize {
+    load_catalog()
+        .expect("validated benchmark catalog")
+        .into_iter()
+        .map(|manifest| match manifest.topology {
+            ScenarioTopology::Direct => 4,
+            ScenarioTopology::Relay => 2,
+        })
+        .sum()
+}
+
 fn qualification_complete(aggregates: &[Aggregate]) -> bool {
-    aggregates.len() == 20
+    aggregates.len() == expected_cell_count()
         && aggregates
             .iter()
             .all(|item| item.samples == 3 && item.conformant() == Some(true))
@@ -191,7 +205,7 @@ fn render_machine_and_method(out: &mut String, host: &str) {
         let _ = writeln!(out, "{cpu}; {cores}; {memory}; {os}.\n");
     }
     out.push_str(
-        "Release binaries run over loopback for 30 seconds per sample, three samples per cell. Tables show median throughput and latency; memory is the maximum peak RSS. Energy is optional: it is metered processor energy minus a fresh idle baseline (macOS CPU Power; Linux RAPL package) and appears only when all three samples are positive. Packet/request energy is per delivery; resource energy is normalized per application MiB. Initiator/responder energy is the combined package measurement attributed by each role's CPU-time share. A check means every sample satisfied the scenario's accounting rule.\n",
+        "Release binaries run over loopback for 30 seconds per sample, three samples per cell. Endpoint scenarios cover all four initiator/responder pairings; relay scenarios cover both implementations behind the same fixed bidirectional wire driver. Default-policy rows preserve each implementation's normal TCP bitrate and MTU policy. The controlled 1 Gbps resource rows change only that interface policy, both for real endpoint transfers and for transported-resource switching; the tiny raw SINGLE relay scenario remains default-policy-only. Tables show median throughput and latency; memory is the maximum peak RSS. Energy is optional: it is metered processor energy minus a fresh idle baseline (macOS CPU Power; Linux RAPL package) and appears only when all three samples are positive. Packet/request energy is per delivery; resource energy is normalized per application MiB. Initiator/responder energy is the combined package measurement attributed by each role's CPU-time share. Relay-scenario package energy is explicitly whole-cell energy; only CPU and RSS are relay-isolated. A check means every sample satisfied the scenario's accounting rule.\n",
     );
 }
 
@@ -307,14 +321,26 @@ fn render_headline(
     qualification_complete: bool,
 ) {
     out.push_str("\n## At a glance\n\n| Scenario | Prns | Reference | Prns / reference |\n|---|---:|---:|---:|\n");
-    for scenario in load_catalog().expect("validated benchmark catalog") {
-        let scenario = scenario.name.as_str();
+    for scenario_manifest in load_catalog().expect("validated benchmark catalog") {
+        let scenario = scenario_manifest.name.as_str();
         let manifest = Manifest::load(scenario);
-        let ours = diagonal(aggregates, scenario, "personal-rns");
+        let ours = comparison_subject(
+            aggregates,
+            scenario,
+            "personal-rns",
+            scenario_manifest.topology,
+        );
         let reference = implementations
             .iter()
             .filter(|implementation| implementation.role == ImplementationRole::Reference)
-            .find_map(|implementation| diagonal(aggregates, scenario, &implementation.slug));
+            .find_map(|implementation| {
+                comparison_subject(
+                    aggregates,
+                    scenario,
+                    &implementation.slug,
+                    scenario_manifest.topology,
+                )
+            });
         let ours_value = ours.and_then(|row| primary_value(row, &manifest));
         let reference_value = reference.and_then(|row| primary_value(row, &manifest));
         assert!(
@@ -342,18 +368,39 @@ fn render_headline(
     );
 }
 
-fn diagonal<'a>(
+fn comparison_subject<'a>(
     aggregates: &'a [Aggregate],
     scenario: &str,
     implementation: &str,
+    topology: ScenarioTopology,
 ) -> Option<&'a Aggregate> {
     aggregates.iter().find(|aggregate| {
-        aggregate.scenario == scenario
-            && matches!(
-                &aggregate.subject,
-                Subject::Direct { initiator, responder, relay: None }
-                    if initiator == implementation && responder == implementation
-            )
+        if aggregate.scenario != scenario {
+            return false;
+        }
+        match (&aggregate.subject, topology) {
+            (
+                Subject::Direct {
+                    initiator,
+                    responder,
+                    relay: None,
+                },
+                ScenarioTopology::Direct,
+            ) => initiator == implementation && responder == implementation,
+            (
+                Subject::Direct {
+                    initiator,
+                    responder,
+                    relay: Some(relay),
+                },
+                ScenarioTopology::Relay,
+            ) => {
+                initiator == "benchmark-wire-driver"
+                    && responder == "benchmark-wire-driver"
+                    && relay == implementation
+            }
+            _ => false,
+        }
     })
 }
 
@@ -383,6 +430,11 @@ fn render_scenario(
         "\n#### {} (v{version})\n\n{}\n\n",
         manifest.title, manifest.summary
     );
+    if manifest.topology == ScenarioTopology::Relay {
+        render_transport_table(out, manifest, rows, implementations);
+        render_manifest_notes(out, manifest, rows, implementations);
+        return;
+    }
 
     let columns = Columns::for_rows(rows);
     out.push_str("| Subject | Conformance");
@@ -429,7 +481,7 @@ fn render_scenario(
         let _ = write!(
             out,
             "| {} | {}",
-            subject_label(&row.subject, implementations),
+            annotated_subject_label(&row.subject, manifest, implementations),
             conformance_cell(row)
         );
         if columns.rate {
@@ -508,8 +560,118 @@ fn render_scenario(
         }
         out.push_str(" |\n");
     }
+    render_manifest_notes(out, manifest, rows, implementations);
+}
+
+fn render_manifest_notes(
+    out: &mut String,
+    manifest: &Manifest,
+    rows: &[&Aggregate],
+    implementations: &[ImplementationDescriptor],
+) {
+    let visible_cell_notes = manifest
+        .cell_notes
+        .iter()
+        .enumerate()
+        .filter(|(_, note)| rows.iter().any(|row| row.subject == note.subject))
+        .collect::<Vec<_>>();
+    if !visible_cell_notes.is_empty() {
+        out.push_str("\n**Cell context**\n");
+        for (index, note) in visible_cell_notes {
+            let _ = writeln!(
+                out,
+                "\n{}. **{}** — {}",
+                index + 1,
+                subject_label(&note.subject, implementations),
+                note.text
+            );
+        }
+    }
     for note in &manifest.notes {
         let _ = writeln!(out, "\n> {note}");
+    }
+}
+
+fn render_transport_table(
+    out: &mut String,
+    manifest: &Manifest,
+    rows: &[&Aggregate],
+    implementations: &[ImplementationDescriptor],
+) {
+    out.push_str(
+        "| Relay | TCP policy / MTU | Link MTU / payload | Conformance | Payload | Frames | Wire in / out | Relay CPU | Relay peak RSS | Harness headroom |\n\
+         |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n",
+    );
+    let mut sorted = rows.to_vec();
+    sorted.sort_by(|left, right| {
+        throughput_value(right)
+            .total_cmp(&throughput_value(left))
+            .then_with(|| left.subject.file_slug().cmp(&right.subject.file_slug()))
+    });
+    for row in sorted {
+        let wire = match (
+            row.median(Axis::Throughput, "ingress_wire_bytes_per_sec"),
+            row.median(Axis::Throughput, "egress_wire_bytes_per_sec"),
+        ) {
+            (Some(ingress), Some(egress)) => {
+                format!(
+                    "{} / {}",
+                    bytes_cell(Some(ingress)),
+                    bytes_cell(Some(egress))
+                )
+            }
+            _ => "—".into(),
+        };
+        let headroom = match (
+            row.median(Axis::Throughput, "harness_carried_payload_bytes_per_sec"),
+            row.median(Axis::Throughput, "carried_payload_bytes_per_sec"),
+            row.median(Axis::Conformance, "harness_headroom"),
+        ) {
+            (Some(harness), Some(carried), Some(1.0)) if carried > 0.0 => {
+                format!("{:.2}×", harness / carried)
+            }
+            _ => "—".into(),
+        };
+        let tcp_policy = match (
+            row.median(Axis::Conformance, "relay_bitrate_bps"),
+            row.median(Axis::Conformance, "relay_mtu_bytes"),
+        ) {
+            (Some(bitrate), Some(mtu)) => {
+                format!("{} / {:.0} KiB", bitrate_cell(bitrate), mtu / 1024.0)
+            }
+            _ => "—".into(),
+        };
+        let link_shape = match (
+            row.median(Axis::Conformance, "negotiated_link_mtu_bytes"),
+            row.median(Axis::Conformance, "resource_payload_bytes_per_frame"),
+        ) {
+            (Some(mtu), Some(payload)) => {
+                format!("{:.0} / {:.0} KiB", mtu / 1024.0, payload / 1024.0)
+            }
+            _ => "—".into(),
+        };
+        let _ = writeln!(
+            out,
+            "| {} | {tcp_policy} | {link_shape} | {} | {} | {} | {wire} | {} | {} | {headroom} |",
+            annotated_subject_label(&row.subject, manifest, implementations),
+            conformance_cell(row),
+            bytes_cell(row.median(Axis::Throughput, "carried_payload_bytes_per_sec")),
+            rate_cell(row.median(Axis::Throughput, "forwarded_frames_per_sec")),
+            row.median(Axis::Energy, "relay_cpu_seconds")
+                .map(|value| format!("{value:.2} s"))
+                .unwrap_or_else(|| "—".into()),
+            row.maximum(Axis::Memory, "relay_peak_rss_bytes")
+                .map(|value| format!("{:.1} MiB", value / 1_048_576.0))
+                .unwrap_or_else(|| "—".into()),
+        );
+    }
+}
+
+fn bitrate_cell(bps: f64) -> String {
+    if bps >= 1_000_000_000.0 {
+        format!("{:.0} Gbps", bps / 1_000_000_000.0)
+    } else {
+        format!("{:.0} Mbps", bps / 1_000_000.0)
     }
 }
 
@@ -534,7 +696,12 @@ impl Columns {
         Self {
             rate: has(
                 Axis::Throughput,
-                &["delivered_per_sec", "requests_per_sec", "cycles_per_sec"],
+                &[
+                    "delivered_per_sec",
+                    "requests_per_sec",
+                    "cycles_per_sec",
+                    "forwarded_frames_per_sec",
+                ],
             ),
             goodput: has(Axis::Throughput, &["goodput_bytes_per_sec"]),
             latency: has(Axis::Latency, &["rtt_p50_ms", "rtt_p99_ms"]),
@@ -569,6 +736,13 @@ fn subject_label(subject: &Subject, implementations: &[ImplementationDescriptor]
             initiator,
             responder,
             relay: Some(relay),
+        } if initiator == "benchmark-wire-driver" && responder == "benchmark-wire-driver" => {
+            format!("{} relay", label(relay))
+        }
+        Subject::Direct {
+            initiator,
+            responder,
+            relay: Some(relay),
         } => format!(
             "{} → {} via {}",
             label(initiator),
@@ -578,10 +752,26 @@ fn subject_label(subject: &Subject, implementations: &[ImplementationDescriptor]
     }
 }
 
+fn annotated_subject_label(
+    subject: &Subject,
+    manifest: &Manifest,
+    implementations: &[ImplementationDescriptor],
+) -> String {
+    let label = subject_label(subject, implementations);
+    manifest
+        .cell_notes
+        .iter()
+        .position(|note| &note.subject == subject)
+        .map_or(label.clone(), |index| {
+            format!("{label}<sup>{}</sup>", index + 1)
+        })
+}
+
 fn throughput_value(row: &Aggregate) -> f64 {
     row.median(Axis::Throughput, "delivered_per_sec")
         .or_else(|| row.median(Axis::Throughput, "requests_per_sec"))
         .or_else(|| row.median(Axis::Throughput, "cycles_per_sec"))
+        .or_else(|| row.median(Axis::Throughput, "carried_payload_bytes_per_sec"))
         .or_else(|| row.median(Axis::Throughput, "goodput_bytes_per_sec"))
         .unwrap_or(f64::NEG_INFINITY)
 }
@@ -741,7 +931,7 @@ fn render_legends(
             );
         }
     }
-    out.push_str("\n## Metric legend\n\nConformance is clean samples and exact delivered/sent accounting. Rows are ordered by median throughput, never by memory or energy. Rate is median settled operations per second. Goodput is median application bytes per second. RTT is median p50/p99 settlement latency. Peak RSS shows the largest initiator (`i`) and responder (`r`) process peaks across samples. Energy shows optional initiator/responder attribution of median net processor energy and appears only with three positive-baseline samples: per delivery for packets/requests, per application MiB for resources.\n");
+    out.push_str("\n## Metric legend\n\nConformance is clean samples and exact delivered/sent accounting. Rows are ordered by median throughput, never by memory or energy. Rate is median settled operations per second. Goodput is median application bytes per second. Relay scenarios report carried opaque payload bytes, forwarded frames, HDLC-framed TCP wire rates, relay-only CPU/RSS, and direct-driver headroom; transported-resource rows additionally expose negotiated link MTU and payload bytes per part. RTT is median p50/p99 settlement latency. Peak RSS shows the largest initiator (`i`) and responder (`r`) process peaks across samples. Energy shows optional initiator/responder attribution of median net processor energy and appears only with three positive-baseline samples: per delivery for packets/requests, per application MiB for resources. Relay-scenario energy is whole-cell package energy, never relay-only energy.\n");
 }
 
 struct Manifest {
@@ -752,6 +942,8 @@ struct Manifest {
     primary_metric: String,
     payload_len: u64,
     notes: Vec<String>,
+    cell_notes: Vec<ScenarioCellNote>,
+    topology: ScenarioTopology,
 }
 
 impl Manifest {
@@ -792,6 +984,8 @@ impl Manifest {
                 .to_string(),
             payload_len: json["profile"]["payload_len"].as_u64().unwrap_or(0),
             notes: strings("notes"),
+            cell_notes: serde_json::from_value(json["cell_notes"].clone()).unwrap_or_default(),
+            topology: serde_json::from_value(json["topology"].clone()).unwrap_or_default(),
         }
     }
 }
@@ -933,5 +1127,114 @@ mod tests {
             primary_value(&aggregates[0], &Manifest::load("request-response")),
             Some(6_001.0),
         );
+    }
+
+    #[test]
+    fn cell_notes_mark_the_exact_subject_and_render_beneath_the_table() {
+        let mut result = row(0, Axis::Throughput, "delivered_per_sec", Some(20.0));
+        result.scenario = "link-message-throughput".into();
+        result.subject = Subject::Direct {
+            initiator: "rns-1.4.0-compiled".into(),
+            responder: "personal-rns".into(),
+            relay: None,
+        };
+        let aggregates = aggregate(&[result]);
+        let refs = aggregates.iter().collect::<Vec<_>>();
+        let mut output = String::new();
+        render_scenario(
+            &mut output,
+            &Manifest::load("link-message-throughput"),
+            &refs,
+            &load_implementations(),
+        );
+        assert!(output.contains("RNS 1.4.0 (compiled) → Prns<sup>1</sup>"));
+        assert!(output.contains("**Cell context**"));
+        assert!(output.contains("Published macOS and Windows suites"));
+    }
+
+    #[test]
+    fn transport_rendering_uses_relay_subjects_and_exposes_ceiling_evidence() {
+        let mut rows = Vec::new();
+        for relay in ["personal-rns", "rns-1.4.0-compiled"] {
+            for sample in 0..3 {
+                for (axis, metric, value) in [
+                    (Axis::Conformance, "settled_clean", 1.0),
+                    (Axis::Conformance, "sent", 100.0),
+                    (Axis::Conformance, "delivered", 100.0),
+                    (Axis::Conformance, "harness_headroom", 1.0),
+                    (Axis::Conformance, "relay_bitrate_bps", 1_000_000_000.0),
+                    (Axis::Conformance, "relay_mtu_bytes", 524_288.0),
+                    (Axis::Conformance, "negotiated_link_mtu_bytes", 524_288.0),
+                    (
+                        Axis::Conformance,
+                        "resource_payload_bytes_per_frame",
+                        524_268.0,
+                    ),
+                    (
+                        Axis::Throughput,
+                        "carried_payload_bytes_per_sec",
+                        1_000_000.0,
+                    ),
+                    (Axis::Throughput, "forwarded_frames_per_sec", 4_000.0),
+                    (Axis::Throughput, "ingress_wire_bytes_per_sec", 1_500_000.0),
+                    (Axis::Throughput, "egress_wire_bytes_per_sec", 1_400_000.0),
+                    (
+                        Axis::Throughput,
+                        "harness_carried_payload_bytes_per_sec",
+                        1_500_000.0,
+                    ),
+                    (Axis::Energy, "relay_cpu_seconds", 2.5),
+                    (Axis::Memory, "relay_peak_rss_bytes", 8_388_608.0),
+                ] {
+                    let mut result = row(sample, axis, metric, Some(value));
+                    result.scenario = "transport-resource-throughput-unleashed".into();
+                    result.scenario_version = 1;
+                    result.subject = Subject::Direct {
+                        initiator: "benchmark-wire-driver".into(),
+                        responder: "benchmark-wire-driver".into(),
+                        relay: Some(relay.into()),
+                    };
+                    rows.push(result);
+                }
+            }
+        }
+        let aggregates = aggregate(&rows);
+        let refs = aggregates.iter().collect::<Vec<_>>();
+        let mut output = String::new();
+        render_scenario(
+            &mut output,
+            &Manifest::load("transport-resource-throughput-unleashed"),
+            &refs,
+            &load_implementations(),
+        );
+        for expected in [
+            "Prns relay",
+            "RNS 1.4.0 (compiled) relay",
+            "| TCP policy / MTU | Link MTU / payload | Conformance | Payload | Frames |",
+            "1 Gbps / 512 KiB",
+            "512 / 512 KiB",
+            "1.00 MB/s",
+            "4.0k/s",
+            "2.50 s",
+            "8.0 MiB",
+            "1.50×",
+        ] {
+            assert!(
+                output.contains(expected),
+                "missing {expected:?} in {output}"
+            );
+        }
+        assert!(comparison_subject(
+            &aggregates,
+            "transport-resource-throughput-unleashed",
+            "personal-rns",
+            ScenarioTopology::Relay,
+        )
+        .is_some());
+
+        let mut qualification = String::new();
+        render_qualification(&mut qualification, &rows);
+        assert!(qualification.contains("/34 cells"));
+        assert!(qualification.contains("/102 conformant samples"));
     }
 }

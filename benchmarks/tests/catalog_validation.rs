@@ -3,11 +3,11 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use benchmarks::{
-    load_all_rows, load_catalog, load_implementations, Subject, IMPLEMENTATIONS,
+    load_all_rows, load_catalog, load_implementations, ScenarioTopology, Subject, IMPLEMENTATIONS,
     RESULT_SCHEMA_VERSION,
 };
 type HostScenario = (String, String);
-type PairingSample = (String, String, u32);
+type SubjectSample = (String, u32);
 
 fn benchmark_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf()
@@ -46,6 +46,10 @@ fn scenario_directories_and_manifests_are_unique_and_complete() {
             "{slug} lacks headline status"
         );
         assert!(manifest["notes"].is_array(), "{slug} lacks concise notes");
+        assert!(
+            manifest["cell_notes"].is_null() || manifest["cell_notes"].is_array(),
+            "{slug} has malformed cell notes"
+        );
     }
     assert_eq!(
         slugs,
@@ -54,7 +58,7 @@ fn scenario_directories_and_manifests_are_unique_and_complete() {
             .into_iter()
             .map(|manifest| manifest.name.as_str().to_string())
             .collect(),
-        "the public suite is deliberately limited to five core scenarios"
+        "the public suite catalog and scenario directories must agree"
     );
 }
 
@@ -103,9 +107,14 @@ fn every_committed_result_is_schema_v2_and_matches_its_path() {
             responder,
             relay,
         } = &row.subject;
-        assert!(relay.is_none(), "the release suite has no relay subjects");
-        assert!(IMPLEMENTATIONS.contains(&initiator.as_str()));
-        assert!(IMPLEMENTATIONS.contains(&responder.as_str()));
+        if let Some(relay) = relay {
+            assert_eq!(initiator, "benchmark-wire-driver");
+            assert_eq!(responder, "benchmark-wire-driver");
+            assert!(IMPLEMENTATIONS.contains(&relay.as_str()));
+        } else {
+            assert!(IMPLEMENTATIONS.contains(&initiator.as_str()));
+            assert!(IMPLEMENTATIONS.contains(&responder.as_str()));
+        }
     }
     for jsonl in jsonl_files(&benchmark_dir().join("results")) {
         let filename = jsonl
@@ -132,22 +141,14 @@ fn every_committed_result_is_schema_v2_and_matches_its_path() {
 }
 
 #[test]
-fn every_published_host_has_the_complete_four_way_three_sample_matrix() {
-    let mut cells: BTreeMap<HostScenario, BTreeSet<PairingSample>> = BTreeMap::new();
+fn every_published_scenario_has_its_complete_topology_matrix() {
+    let mut cells: BTreeMap<HostScenario, BTreeSet<SubjectSample>> = BTreeMap::new();
     for row in load_all_rows() {
-        let Subject::Direct {
-            initiator,
-            responder,
-            relay: None,
-        } = row.subject
-        else {
-            panic!("release results must be direct, unrelayed pairings");
-        };
-        cells.entry((row.host, row.scenario)).or_default().insert((
-            initiator,
-            responder,
-            row.sample_index,
-        ));
+        let slug = row.subject.file_slug();
+        cells
+            .entry((row.host, row.scenario))
+            .or_default()
+            .insert((slug, row.sample_index));
     }
     assert!(!cells.is_empty(), "at least one host publishes results");
     let hosts = cells
@@ -161,19 +162,43 @@ fn every_published_host_has_the_complete_four_way_three_sample_matrix() {
                 .get(&(host.clone(), scenario.clone()))
                 .cloned()
                 .unwrap_or_default();
-            let expected = IMPLEMENTATIONS
-                .iter()
-                .flat_map(|initiator| {
-                    IMPLEMENTATIONS.iter().flat_map(move |responder| {
-                        (0..3).map(move |sample| {
-                            ((*initiator).to_string(), (*responder).to_string(), sample)
-                        })
+            // Historical immutable suites may predate a newly added scenario. Once a
+            // scenario is present, however, its topology must be complete.
+            if observed.is_empty() {
+                continue;
+            }
+            let subjects = match manifest.topology {
+                ScenarioTopology::Direct => IMPLEMENTATIONS
+                    .iter()
+                    .flat_map(|initiator| {
+                        IMPLEMENTATIONS
+                            .iter()
+                            .map(move |responder| Subject::Direct {
+                                initiator: (*initiator).into(),
+                                responder: (*responder).into(),
+                                relay: None,
+                            })
                     })
+                    .collect::<Vec<_>>(),
+                ScenarioTopology::Relay => IMPLEMENTATIONS
+                    .iter()
+                    .map(|relay| Subject::Direct {
+                        initiator: "benchmark-wire-driver".into(),
+                        responder: "benchmark-wire-driver".into(),
+                        relay: Some((*relay).into()),
+                    })
+                    .collect::<Vec<_>>(),
+            };
+            let expected = subjects
+                .into_iter()
+                .flat_map(|subject| {
+                    let slug = subject.file_slug();
+                    (0..3).map(move |sample| (slug.clone(), sample))
                 })
                 .collect::<BTreeSet<_>>();
             assert_eq!(
                 observed, expected,
-                "{host}/{scenario} must publish all four pairings with three samples"
+                "{host}/{scenario} must publish its complete topology with three samples"
             );
         }
     }
@@ -197,14 +222,22 @@ fn jsonl_files(root: &Path) -> Vec<PathBuf> {
 
 #[test]
 fn typed_subjects_round_trip() {
-    let subject = Subject::Direct {
-        initiator: "a".into(),
-        responder: "b".into(),
-        relay: None,
-    };
-    let json = serde_json::to_string(&subject).expect("serialize subject");
-    assert_eq!(
-        serde_json::from_str::<Subject>(&json).expect("deserialize subject"),
-        subject
-    );
+    for subject in [
+        Subject::Direct {
+            initiator: "a".into(),
+            responder: "b".into(),
+            relay: None,
+        },
+        Subject::Direct {
+            initiator: "benchmark-wire-driver".into(),
+            responder: "benchmark-wire-driver".into(),
+            relay: Some("personal-rns".into()),
+        },
+    ] {
+        let json = serde_json::to_string(&subject).expect("serialize subject");
+        assert_eq!(
+            serde_json::from_str::<Subject>(&json).expect("deserialize subject"),
+            subject
+        );
+    }
 }

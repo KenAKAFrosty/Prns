@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use benchmarks::{load_catalog, ResultRow, ScenarioId, IMPLEMENTATIONS};
+use benchmarks::{load_catalog, ResultRow, ScenarioId, ScenarioTopology, Subject, IMPLEMENTATIONS};
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 
@@ -14,11 +14,20 @@ struct Cell {
     scenario_version: u32,
     initiator: &'static str,
     responder: &'static str,
+    relay: Option<&'static str>,
 }
 
 impl Cell {
+    fn subject(&self) -> Subject {
+        Subject::Direct {
+            initiator: self.initiator.into(),
+            responder: self.responder.into(),
+            relay: self.relay.map(str::to_string),
+        }
+    }
+
     fn subject_slug(&self) -> String {
-        format!("{}--{}", self.initiator, self.responder)
+        self.subject().file_slug()
     }
 }
 
@@ -61,6 +70,8 @@ struct EvidenceSample {
     scenario: String,
     initiator: String,
     responder: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    relay: Option<String>,
     status: String,
     attempts: u32,
     startup_attempts: u32,
@@ -129,22 +140,36 @@ impl SampleExecution {
 
 fn matrix() -> Result<Vec<Cell>, String> {
     let catalog = load_catalog().map_err(|error| error.to_string())?;
-    Ok(catalog
-        .into_iter()
-        .flat_map(|manifest| {
-            IMPLEMENTATIONS.into_iter().flat_map(move |initiator| {
-                IMPLEMENTATIONS.into_iter().map({
-                    let scenario = manifest.name;
-                    move |responder| Cell {
-                        scenario,
-                        scenario_version: manifest.version,
-                        initiator,
-                        responder,
+    let mut cells = Vec::new();
+    for manifest in catalog {
+        match manifest.topology {
+            ScenarioTopology::Direct => {
+                for initiator in IMPLEMENTATIONS {
+                    for responder in IMPLEMENTATIONS {
+                        cells.push(Cell {
+                            scenario: manifest.name,
+                            scenario_version: manifest.version,
+                            initiator,
+                            responder,
+                            relay: None,
+                        });
                     }
-                })
-            })
-        })
-        .collect())
+                }
+            }
+            ScenarioTopology::Relay => {
+                for relay in IMPLEMENTATIONS {
+                    cells.push(Cell {
+                        scenario: manifest.name,
+                        scenario_version: manifest.version,
+                        initiator: "benchmark-wire-driver",
+                        responder: "benchmark-wire-driver",
+                        relay: Some(relay),
+                    });
+                }
+            }
+        }
+    }
+    Ok(cells)
 }
 
 fn counterbalanced_schedule(cell_count: usize, samples: u32) -> Vec<ScheduledSample> {
@@ -198,7 +223,9 @@ pub(super) fn run(args: SuiteArgs) {
         args.samples
     );
     println!("participants: Prns and compiled RNS 1.4.0 reference");
-    println!("matrix: every scenario runs all four initiator/responder pairings");
+    println!(
+        "matrix: endpoint scenarios use four pairings; relay scenarios use two relay subjects"
+    );
     println!("isolation: one cell at a time; samples run in counterbalanced rounds");
     println!("pass rule: every selected cell must run and conform; energy is optional evidence");
     for (index, cell) in all_cells
@@ -206,13 +233,17 @@ pub(super) fn run(args: SuiteArgs) {
         .enumerate()
         .filter(|(index, _)| selected.contains(index))
     {
-        println!(
-            "{:>2}. {:<28} initiator={} responder={}",
-            index + 1,
-            cell.scenario,
-            cell.initiator,
-            cell.responder
-        );
+        if let Some(relay) = cell.relay {
+            println!("{:>2}. {:<28} relay={relay}", index + 1, cell.scenario,);
+        } else {
+            println!(
+                "{:>2}. {:<28} initiator={} responder={}",
+                index + 1,
+                cell.scenario,
+                cell.initiator,
+                cell.responder
+            );
+        }
     }
     if args.dry_run {
         return;
@@ -369,6 +400,7 @@ pub(super) fn run(args: SuiteArgs) {
             scenario: cell.scenario.to_string(),
             initiator: cell.initiator.into(),
             responder: cell.responder.into(),
+            relay: cell.relay.map(str::to_string),
             status: execution.status.into(),
             attempts: execution.attempts,
             startup_attempts: execution.startup_attempts,
@@ -504,10 +536,6 @@ fn run_sample(
     command
         .arg("run")
         .arg(cell.scenario.as_str())
-        .arg("--initiator")
-        .arg(cell.initiator)
-        .arg("--responder")
-        .arg(cell.responder)
         .arg("--duration-ms")
         .arg(args.duration_ms.to_string())
         .arg("--sample-index")
@@ -516,14 +544,31 @@ fn run_sample(
         .arg(format!("{suite_id}-{}", scheduled.cell_index + 1))
         .env("BENCHMARK_RESULTS_DIR", output)
         .env("BENCHMARK_SUITE_ID", suite_id);
+    if let Some(relay) = cell.relay {
+        command.arg("--relay").arg(relay);
+    } else {
+        command
+            .arg("--initiator")
+            .arg(cell.initiator)
+            .arg("--responder")
+            .arg(cell.responder);
+    }
     if args.smoke {
         command.arg("--smoke");
     }
+    let subject_option = cell
+        .relay
+        .map(|relay| format!("--relay {relay}"))
+        .unwrap_or_else(|| {
+            format!(
+                "--initiator {} --responder {}",
+                cell.initiator, cell.responder
+            )
+        });
     let command_text = format!(
-        "benchmark_runner run {} --initiator {} --responder {} --duration-ms {} --sample-index {} --run-id {}-{}{}",
+        "benchmark_runner run {} {} --duration-ms {} --sample-index {} --run-id {}-{}{}",
         cell.scenario,
-        cell.initiator,
-        cell.responder,
+        subject_option,
         args.duration_ms,
         scheduled.sample_index,
         suite_id,
@@ -611,6 +656,9 @@ fn sample_is_complete(
             rows.iter().any(|row| {
                 row.sample_index == sample
                     && row.run_id == format!("{suite_id}-{}", cell_index + 1)
+                    && row.scenario == cell.scenario.as_str()
+                    && row.scenario_version == cell.scenario_version
+                    && row.subject.file_slug() == cell.subject_slug()
                     && row.metric == "settled_clean"
                     && row.value == Some(1.0)
             })
@@ -695,7 +743,12 @@ fn validate_suite(
         }
         let energy_samples = rows
             .iter()
-            .filter(|row| row.metric == "package_joules_raw" && row.value.is_some())
+            .filter(|row| {
+                matches!(
+                    row.metric.as_str(),
+                    "package_joules_raw" | "whole_cell_package_joules_raw"
+                ) && row.value.is_some()
+            })
             .map(|row| row.sample_index)
             .collect::<BTreeSet<_>>();
         if require_energy && energy_samples != expected_samples {
@@ -707,7 +760,10 @@ fn validate_suite(
                     .collect::<Vec<_>>()
             ));
         }
-        if cell.initiator == "rns-1.4.0-compiled" || cell.responder == "rns-1.4.0-compiled" {
+        if cell.initiator == "rns-1.4.0-compiled"
+            || cell.responder == "rns-1.4.0-compiled"
+            || cell.relay == Some("rns-1.4.0-compiled")
+        {
             let proved_samples = rows
                 .iter()
                 .filter(|row| {
@@ -729,9 +785,12 @@ fn validate_suite(
             }
         }
         hosts.extend(rows.iter().map(|row| row.host.clone()));
-        energy_available |= rows
-            .iter()
-            .any(|row| row.metric == "package_joules_raw" && row.value.is_some());
+        energy_available |= rows.iter().any(|row| {
+            matches!(
+                row.metric.as_str(),
+                "package_joules_raw" | "whole_cell_package_joules_raw"
+            ) && row.value.is_some()
+        });
         reference_verified |= rows.iter().any(|row| {
             row.provenance
                 .get("reference_rns")
@@ -906,37 +965,61 @@ mod tests {
     #[test]
     fn release_matrix_is_manifest_owned_and_complete() {
         let cells = matrix().expect("catalog-backed matrix");
-        assert_eq!(cells.len(), 20);
+        assert_eq!(cells.len(), 34);
         for scenario in load_catalog().expect("catalog") {
             let subjects = cells
                 .iter()
                 .filter(|cell| cell.scenario == scenario.name)
                 .map(Cell::subject_slug)
                 .collect::<BTreeSet<_>>();
+            let expected = match scenario.topology {
+                ScenarioTopology::Direct => 4,
+                ScenarioTopology::Relay => 2,
+            };
             assert_eq!(
                 subjects.len(),
-                4,
-                "{} has a complete 2×2 matrix",
+                expected,
+                "{} has its complete topology matrix",
                 scenario.name
             );
+        }
+        for scenario in [
+            ScenarioId::RawTransportThroughput,
+            ScenarioId::TransportResourceThroughput,
+            ScenarioId::TransportResourceThroughputUnleashed,
+        ] {
+            let raw = cells
+                .iter()
+                .filter(|cell| cell.scenario == scenario)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                raw.iter()
+                    .filter_map(|cell| cell.relay)
+                    .collect::<BTreeSet<_>>(),
+                IMPLEMENTATIONS.into_iter().collect()
+            );
+            assert!(raw.iter().all(|cell| {
+                cell.initiator == "benchmark-wire-driver"
+                    && cell.responder == "benchmark-wire-driver"
+            }));
         }
     }
 
     #[test]
     fn three_rounds_are_counterbalanced_and_complete() {
-        let schedule = counterbalanced_schedule(20, 3);
-        assert_eq!(schedule.len(), 60);
+        let schedule = counterbalanced_schedule(34, 3);
+        assert_eq!(schedule.len(), 102);
         for sample in 0..3 {
             let cells = schedule
                 .iter()
                 .filter(|entry| entry.sample_index == sample)
                 .map(|entry| entry.cell_index)
                 .collect::<BTreeSet<_>>();
-            assert_eq!(cells, (0..20).collect());
+            assert_eq!(cells, (0..34).collect());
         }
         assert_eq!(schedule[0].cell_index, 0);
-        assert_eq!(schedule[20].cell_index, 19);
-        assert_eq!(schedule[40].cell_index, 10);
+        assert_eq!(schedule[34].cell_index, 33);
+        assert_eq!(schedule[68].cell_index, 17);
     }
 
     #[test]
@@ -954,11 +1037,7 @@ mod tests {
             sample_index: 0,
             scenario: cell.scenario.to_string(),
             scenario_version: cell.scenario_version,
-            subject: benchmarks::Subject::Direct {
-                initiator: cell.initiator.into(),
-                responder: cell.responder.into(),
-                relay: None,
-            },
+            subject: cell.subject(),
             commit: "0123456789abcdef0123456789abcdef01234567".into(),
             toolchain: "rustc test".into(),
             host: "test-host".into(),
@@ -979,6 +1058,52 @@ mod tests {
     }
 
     #[test]
+    fn relay_resume_requires_the_exact_relay_identity() {
+        let root = temporary("relay-resume");
+        let cell = matrix()
+            .expect("matrix")
+            .into_iter()
+            .find(|cell| {
+                cell.scenario == ScenarioId::RawTransportThroughput
+                    && cell.relay == Some("personal-rns")
+            })
+            .expect("Prns relay cell");
+        let path = root
+            .join("test-host")
+            .join(cell.scenario.as_str())
+            .join(format!("{}.jsonl", cell.subject_slug()));
+        std::fs::create_dir_all(path.parent().expect("result parent")).expect("result tree");
+        let mut row = benchmarks::ResultRow {
+            schema_version: benchmarks::RESULT_SCHEMA_VERSION,
+            run_id: "suite-1-21".into(),
+            sample_index: 0,
+            scenario: cell.scenario.to_string(),
+            scenario_version: cell.scenario_version,
+            subject: benchmarks::Subject::Direct {
+                initiator: "benchmark-wire-driver".into(),
+                responder: "benchmark-wire-driver".into(),
+                relay: Some("rns-1.4.0-compiled".into()),
+            },
+            commit: "0123456789abcdef0123456789abcdef01234567".into(),
+            toolchain: "rustc test".into(),
+            host: "test-host".into(),
+            axis: benchmarks::Axis::Conformance,
+            metric: "settled_clean".into(),
+            value: Some(1.0),
+            unit: "bool".into(),
+            device_id: None,
+            submitter_id: None,
+            provenance: BTreeMap::new(),
+        };
+        std::fs::write(&path, serde_json::to_string(&row).unwrap() + "\n").unwrap();
+        assert!(!sample_is_complete(&root, &cell, 20, 0, "suite-1"));
+        row.subject = cell.subject();
+        std::fs::write(&path, serde_json::to_string(&row).unwrap() + "\n").unwrap();
+        assert!(sample_is_complete(&root, &cell, 20, 0, "suite-1"));
+        std::fs::remove_dir_all(root).expect("remove relay resume fixture");
+    }
+
+    #[test]
     fn resumed_evidence_retains_the_original_attempt_and_command() {
         let previous = EvidenceSample {
             ordinal: 1,
@@ -987,6 +1112,7 @@ mod tests {
             scenario: "single-packet-throughput".into(),
             initiator: "personal-rns".into(),
             responder: "personal-rns".into(),
+            relay: None,
             status: "pass".into(),
             attempts: 1,
             startup_attempts: 4,
@@ -1017,8 +1143,8 @@ mod tests {
             source_dirty: true,
             samples_per_cell: 3,
             duration_ms: 30_000,
-            selected_cells: 20,
-            matrix_cells: 20,
+            selected_cells: 34,
+            matrix_cells: 34,
             complete: false,
             host: None,
             energy_available: false,
@@ -1042,6 +1168,7 @@ mod tests {
             scenario: "single-packet-throughput".into(),
             initiator: "personal-rns".into(),
             responder: "personal-rns".into(),
+            relay: None,
             status: "pass".into(),
             attempts: 1,
             startup_attempts: 0,

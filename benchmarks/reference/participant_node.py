@@ -106,7 +106,70 @@ def free_port():
     return port
 
 
-def interface_block(wire, role, addr, fixed_mtu=None):
+def relay_blocks(profile):
+    port_a, port_b = free_port(), free_port()
+    while port_b == port_a:
+        port_b = free_port()
+    bitrate = profile.get("tcp_bitrate_bps")
+    bitrate_line = f"    bitrate = {bitrate}\n" if bitrate else ""
+    block = (
+        "  [[Relay Side A]]\n"
+        "    type = TCPServerInterface\n"
+        "    enabled = True\n"
+        "    listen_ip = 127.0.0.1\n"
+        f"    listen_port = {port_a}\n"
+        + bitrate_line
+        + "  [[Relay Side B]]\n"
+        + "    type = TCPServerInterface\n"
+        + "    enabled = True\n"
+        + "    listen_ip = 127.0.0.1\n"
+        + f"    listen_port = {port_b}\n"
+        + bitrate_line
+    )
+    return block, f"127.0.0.1:{port_a}>127.0.0.1:{port_b}"
+
+
+def run_relay(profile):
+    block, ready_addr = relay_blocks(profile)
+    configdir = tempfile.mkdtemp(prefix="rns-raw-transport-relay-")
+    config = (
+        "[reticulum]\n"
+        "  enable_transport = True\n"
+        "  share_instance = No\n"
+        "  panic_on_interface_error = No\n"
+        "[logging]\n"
+        f"  loglevel = {os.environ.get('RNS_BENCH_LOGLEVEL', '0')}\n"
+        "[interfaces]\n" + block
+    )
+    with open(os.path.join(configdir, "config"), "w") as f:
+        f.write(config)
+    RNS.Reticulum(configdir=configdir)
+    relay_interfaces = [
+        interface
+        for interface in RNS.Transport.interfaces
+        if getattr(interface, "name", None) in ("Relay Side A", "Relay Side B")
+    ]
+    policies = {
+        (int(interface.bitrate), int(interface.HW_MTU))
+        for interface in relay_interfaces
+    }
+    if len(relay_interfaces) != 2 or len(policies) != 1:
+        sys.exit(
+            "reference relay TCP policy did not resolve identically on both benchmark sides"
+        )
+    bitrate_bps, mtu_bytes = policies.pop()
+    print(
+        f"READY role=relay addr={ready_addr} "
+        f"bitrate_bps={bitrate_bps} mtu_bytes={mtu_bytes}",
+        flush=True,
+    )
+    command = sys.stdin.readline().strip()
+    if command != "STOP":
+        sys.exit(f"expected STOP relay command, received {command!r}")
+    os._exit(0)
+
+
+def interface_block(wire, role, addr, fixed_mtu=None, tcp_bitrate_bps=None):
     """One role's interface config plus the address its READY line should carry. UDP is
     symmetric (the orchestrator pre-assigns both ends as local>peer, the reference's
     fixed listen/forward model); TCP keeps the listen-then-connect flow."""
@@ -126,6 +189,9 @@ def interface_block(wire, role, addr, fixed_mtu=None):
     if role == "responder":
         port = free_port()
         mtu_line = f"    fixed_mtu = {fixed_mtu}\n" if fixed_mtu else ""
+        bitrate_line = (
+            f"    bitrate = {tcp_bitrate_bps}\n" if tcp_bitrate_bps else ""
+        )
         return (
             "  [[Bench TCP Server]]\n"
             "    type = TCPServerInterface\n"
@@ -133,9 +199,11 @@ def interface_block(wire, role, addr, fixed_mtu=None):
             "    listen_ip = 127.0.0.1\n"
             f"    listen_port = {port}\n"
             + mtu_line
+            + bitrate_line
         ), f"127.0.0.1:{port}"
     host, port = addr.rsplit(":", 1)
     mtu_line = f"    fixed_mtu = {fixed_mtu}\n" if fixed_mtu else ""
+    bitrate_line = f"    bitrate = {tcp_bitrate_bps}\n" if tcp_bitrate_bps else ""
     return (
         "  [[Bench TCP Client]]\n"
         "    type = TCPClientInterface\n"
@@ -143,6 +211,7 @@ def interface_block(wire, role, addr, fixed_mtu=None):
         f"    target_host = {host}\n"
         f"    target_port = {port}\n"
         + mtu_line
+        + bitrate_line
     ), addr
 
 
@@ -950,10 +1019,18 @@ def main():
 
     mechanism = manifest["profile"]["mechanism"]
     wire = manifest["profile"].get("wire", "tcp")
+    if role == "relay":
+        if mechanism not in ("transport", "transport-resource"):
+            sys.exit("reference relay role requires a transport mechanism")
+        run_relay(manifest["profile"])
     if role not in ("responder", "initiator"):
         sys.exit(usage)
     block, ready_addr = interface_block(
-        wire, role, addr, manifest["profile"].get("link_mtu")
+        wire,
+        role,
+        addr,
+        manifest["profile"].get("link_mtu"),
+        manifest["profile"].get("tcp_bitrate_bps"),
     )
     responders = {
         "single": respond,

@@ -2,6 +2,7 @@ pub(super) struct Args {
     pub(super) scenario: benchmarks::ScenarioId,
     pub(super) initiator: String,
     pub(super) responder: String,
+    pub(super) relay: Option<String>,
     pub(super) duration_ms: Option<u64>,
     pub(super) sample_index: u32,
     pub(super) run_id: String,
@@ -24,7 +25,7 @@ pub(super) enum RunnerCommand {
     Suite(SuiteArgs),
 }
 
-const USAGE: &str = "usage:\n  benchmark_runner run <scenario> [--initiator personal-rns] [--responder rns-1.4.0-compiled] [options]\n  benchmark_runner suite release [--samples 3] [--duration-ms 30000] [--output DIR] [--suite-id ID] [--only-cells 7,9,10] [--dry-run|--smoke]";
+const USAGE: &str = "usage:\n  benchmark_runner run <scenario> [--initiator personal-rns] [--responder rns-1.4.0-compiled] [--relay personal-rns] [options]\n  benchmark_runner suite release [--samples 3] [--duration-ms 30000] [--output DIR] [--suite-id ID] [--only-cells 7,9,10] [--dry-run|--smoke]";
 
 pub(super) fn parse_args() -> RunnerCommand {
     let mut arguments = std::env::args().skip(1);
@@ -46,6 +47,7 @@ fn parse_run(values: Vec<String>) -> RunnerCommand {
         scenario,
         initiator: "personal-rns".into(),
         responder: "personal-rns".into(),
+        relay: None,
         duration_ms: None,
         sample_index: 0,
         run_id: uuid::Uuid::new_v4().to_string(),
@@ -62,6 +64,7 @@ fn parse_run(values: Vec<String>) -> RunnerCommand {
         match flag.as_str() {
             "--initiator" => args.initiator = value(&mut values, "--initiator"),
             "--responder" => args.responder = value(&mut values, "--responder"),
+            "--relay" => args.relay = Some(value(&mut values, "--relay")),
             "--duration-ms" => {
                 args.duration_ms = Some(
                     value(&mut values, "--duration-ms")

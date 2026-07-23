@@ -22,8 +22,8 @@ use personal_rns::engine::{
     SendSinglePacketPayload, SendToLink, SendToLinkFailure, SendToLinkPayload, Settlement,
 };
 use personal_rns::interfaces::{
-    tcp, ConfiguredInterfacePolicy, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId,
-    InterfaceKind, MtuPolicy, ReportsStatus,
+    tcp, BitrateBps, ConfiguredInterfacePolicy, EffectiveInterfacePolicy, InterfaceDescriptor,
+    InterfaceId, InterfaceKind, MtuPolicy, ReportsStatus,
 };
 use personal_rns::reactor::interface_seam::{Interface, InterfaceSeam};
 use personal_rns::reactor::reconnect::ReconnectPolicy;
@@ -51,6 +51,7 @@ use tokio::io::AsyncRead;
 use tokio::sync::mpsc;
 
 const TCP_INTERFACE_ID: InterfaceId = InterfaceId::new([0xBE; 8]);
+const RELAY_SECOND_INTERFACE_ID: InterfaceId = InterfaceId::new([0xBF; 8]);
 
 /// The optimization profile this binary was built under, tagged onto every measuring `RESULT` line
 /// so a perf consumer can refuse a debug build: unoptimized crypto runs ~10x slower, so a debug
@@ -120,7 +121,7 @@ const DRAIN_GRACE: Duration = Duration::from_secs(5);
 
 fn benchmark_tcp_policy(profile: &Profile) -> EffectiveInterfacePolicy {
     tcp::configured_policy(ConfiguredInterfacePolicy {
-        bitrate: Some(tcp::TCP_BITRATE_ESTIMATE),
+        bitrate: profile.tcp_bitrate_bps.map(BitrateBps::guess),
         mtu: (profile.link_mtu > 0).then(|| MtuPolicy::fixed(profile.link_mtu)),
         ..ConfiguredInterfacePolicy::default()
     })
@@ -268,6 +269,21 @@ async fn await_startup_go() {
     .expect("startup gate task");
 }
 
+async fn await_stop() {
+    tokio::task::spawn_blocking(|| {
+        use std::io::BufRead as _;
+
+        let mut command = String::new();
+        std::io::stdin()
+            .lock()
+            .read_line(&mut command)
+            .expect("read relay stop command");
+        assert_eq!(command.trim(), "STOP", "expected STOP relay command");
+    })
+    .await
+    .expect("relay stop task");
+}
+
 fn collection_target_receiver() -> tokio::sync::oneshot::Receiver<(u64, u64)> {
     let (send, receive) = tokio::sync::oneshot::channel();
     std::thread::spawn(move || {
@@ -388,6 +404,11 @@ async fn scenario_main() {
             .expect("parse manifest");
     let duration = Duration::from_millis(duration_override.unwrap_or(manifest.profile.duration_ms));
 
+    if role == "relay" {
+        run_relay(&manifest, &addr).await;
+        return;
+    }
+
     match manifest.name {
         ScenarioId::SinglePacketThroughput | ScenarioId::LinkMessageThroughput => {
             run_runtime_endpoint(&manifest, &role, &addr, duration).await;
@@ -395,8 +416,16 @@ async fn scenario_main() {
         ScenarioId::RequestResponse => {
             run_request_endpoint(&manifest, &role, &addr, duration).await;
         }
-        ScenarioId::ResourceMaxSegment | ScenarioId::Resource64mibStream => {
+        ScenarioId::ResourceMaxSegment
+        | ScenarioId::ResourceMaxSegmentUnleashed
+        | ScenarioId::Resource64mibStream
+        | ScenarioId::Resource64mibStreamUnleashed => {
             run_resource_endpoint(&manifest, &role, &addr, duration).await;
+        }
+        ScenarioId::RawTransportThroughput
+        | ScenarioId::TransportResourceThroughput
+        | ScenarioId::TransportResourceThroughputUnleashed => {
+            panic!("raw transport only supports the relay role")
         }
     }
 }
@@ -404,6 +433,49 @@ async fn scenario_main() {
 use link_channel::run_runtime_endpoint;
 use request::run_request_endpoint;
 use resource::run_resource_endpoint;
+
+async fn run_relay(manifest: &Manifest, addr: &str) {
+    assert!(
+        manifest.name.is_transport(),
+        "the relay role belongs to raw transport"
+    );
+    let policy = benchmark_tcp_policy(&manifest.profile);
+    let bitrate_bps = policy.bitrate.get();
+    let mtu_bytes = policy
+        .mtu
+        .resolve(policy.bitrate)
+        .expect("TCP benchmark policy selects an MTU tier");
+    let side_a = BenchTcpListener::bind_with_id(TCP_INTERFACE_ID, addr, policy)
+        .await
+        .expect("binds relay side A");
+    let side_b = BenchTcpListener::bind_with_id(RELAY_SECOND_INTERFACE_ID, "127.0.0.1:0", policy)
+        .await
+        .expect("binds relay side B");
+    let addr_a = side_a.local_addr().expect("relay side A address");
+    let addr_b = side_b.local_addr().expect("relay side B address");
+    let node = PrnsNode::new(PrnsNodeRecipe {
+        transport_identity: Some(generate_identity_secret()),
+        pre_configured_destinations: std::iter::empty::<PreConfiguredDestination<'static>>(),
+        app_state: (),
+        storage: NodeStorage::default(),
+        routes: routes![],
+        on_event: |_: PrnsEvent<'_>, _: &()| {},
+        interfaces: |node: &PrnsNodeHandle| {
+            node.add_interface(side_a);
+            node.add_interface(side_b);
+        },
+    });
+
+    println!(
+        "READY role=relay addr={addr_a}>{addr_b} bitrate_bps={bitrate_bps} mtu_bytes={mtu_bytes}"
+    );
+    tokio::select! {
+        result = node.run() => {
+            result.expect("relay node remains healthy");
+        }
+        () = await_stop() => {}
+    }
+}
 
 async fn build_responder_node<St, R, F>(
     single: PreConfiguredDestination<'static>,

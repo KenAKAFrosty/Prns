@@ -1,0 +1,31 @@
+{
+  "name": "transport-resource-throughput-unleashed",
+  "version": 1,
+  "order": 10,
+  "title": "Transported resource throughput · 1 Gbps policy",
+  "category": "Transport",
+  "summary": "Relay the identical transported-resource workload with both relay TCP interfaces explicitly configured for the 1 Gbps MTU tier.",
+  "primary_metric": "carried_payload_bytes_per_sec",
+  "headline": true,
+  "notes": [
+    "Controlled computational comparison: identical transported link and driver, with only TCP bitrate policy changed."
+  ],
+  "description": "The transported-resource relay workload repeated with both relay TCP interfaces explicitly configured for 1 Gbps, selecting the 524,288-byte MTU tier. The fixed wire driver establishes one genuine transported link before timing and then drives balanced full-duplex LINK/DATA frames in RESOURCE context. This isolates the large-frame switching ceiling from the default policy most deployments use.",
+  "roles": [
+    "wire-driver",
+    "relay"
+  ],
+  "topology": "relay",
+  "profile": {
+    "mechanism": "transport-resource",
+    "window": 16,
+    "transport_link_mtu": 524288,
+    "tcp_bitrate_bps": 1000000000,
+    "duration_ms": 30000,
+    "drain_timeout_ms": 30000,
+    "size_seed": 6840346605343539201,
+    "payload_shape": "effective-mtu"
+  },
+  "conformance_rule": "exact-transport-resource",
+  "conformance": "A valid transported link is established before timing; every issued LINK/RESOURCE frame is forwarded once, in order and byte-exact, in both directions, with exact directional payload totals and zero missing, duplicate, corrupt, reordered, unexpected, or timed-out frames."
+}

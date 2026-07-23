@@ -1,0 +1,31 @@
+{
+  "name": "raw-transport-throughput",
+  "version": 1,
+  "order": 8,
+  "title": "Raw transport throughput",
+  "category": "Transport",
+  "summary": "Balanced bidirectional switching of opaque packets through a pure transport node.",
+  "primary_metric": "carried_payload_bytes_per_sec",
+  "headline": true,
+  "notes": [
+    "Announce signing and verification happen before measurement; the timed path switches opaque transport data.",
+    "This practical profile preserves each implementation's normal TCP policy: 500 Mbps for Prns and 10 Mbps for compiled RNS 1.4.0."
+  ],
+  "description": "A fixed raw-wire driver establishes one warm route in each direction through the relay under test, then keeps 256 unique SINGLE/DATA frames outstanding per direction over open HDLC-framed TCP. Payload sizes follow the shared deterministic 60–420 byte sequence. The relay hashes for deduplication, books reverse routes, refreshes route activity, rewrites the transport header, and performs real framing and TCP I/O, but never decrypts or re-encrypts the opaque payload.",
+  "roles": [
+    "wire-driver",
+    "relay"
+  ],
+  "topology": "relay",
+  "profile": {
+    "mechanism": "transport",
+    "window": 256,
+    "duration_ms": 30000,
+    "drain_timeout_ms": 30000,
+    "payload_min": 60,
+    "payload_max": 420,
+    "size_seed": 6840346605343539201
+  },
+  "conformance_rule": "exact-transport",
+  "conformance": "Both directions forward nonzero traffic; sent and carried frame and payload-byte totals match exactly per direction; duplicate, corrupt, reordered, unexpected data, and drain-timeout counts are zero; publishable performance additionally requires at least 25% raw-driver headroom."
+}

@@ -1,0 +1,29 @@
+{
+  "name": "resource-max-segment-unleashed",
+  "version": 1,
+  "order": 5,
+  "title": "Maximum resource segment · 1 Gbps policy",
+  "category": "Resources",
+  "summary": "Repeat maximum-efficient resource transfers with both endpoint TCP interfaces explicitly configured for the 1 Gbps MTU tier.",
+  "primary_metric": "goodput_bytes_per_sec",
+  "headline": true,
+  "notes": [
+    "Controlled computational comparison: identical workload and protocol, with only TCP bitrate policy changed."
+  ],
+  "description": "The resource-max-segment workload repeated with both real initiator and responder TCP interfaces explicitly configured for 1 Gbps. That policy selects the 524,288-byte interface MTU tier on both stacks. Transfers still use the normal encrypted, hash-proved, application-acknowledged resource path; this is the controlled counterpart to the default-policy result, not a claim about typical deployment configuration.",
+  "roles": [
+    "responder",
+    "initiator"
+  ],
+  "profile": {
+    "mechanism": "resource",
+    "payload_len": 1048575,
+    "window": 1,
+    "tcp_bitrate_bps": 1000000000,
+    "duration_ms": 30000,
+    "drain_timeout_ms": 30000,
+    "size_seed": 6840346605343539201
+  },
+  "conformance_rule": "exact-resource",
+  "conformance": "Every sent transfer settles, receives its ordered application acknowledgement, and is received with exact application-byte totals and zero failures; the receiver hash-proves each resource before settlement."
+}

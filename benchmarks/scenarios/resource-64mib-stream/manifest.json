@@ -1,13 +1,23 @@
 {
   "name": "resource-64mib-stream",
   "version": 8,
-  "order": 5,
+  "order": 6,
   "title": "64 MiB resource stream",
   "category": "Resources",
   "summary": "Stream a 64 MiB incompressible resource with compression disabled.",
   "primary_metric": "goodput_bytes_per_sec",
   "headline": true,
   "notes": [],
+  "cell_notes": [
+    {
+      "subject": {
+        "path": "direct",
+        "initiator": "rns-1.4.0-compiled",
+        "responder": "personal-rns"
+      },
+      "text": "The original published macOS and Windows suites both settled this cell near 16.6 MB/s, while its one-segment control beat RNS↔RNS. RNS 1.4.0 splits 64 MiB into 65 protocol segments, prepares each successor in a background thread, and polls successor readiness in 50 ms increments when a proof arrives first. Prns's fast one-segment receiver repeatedly exposes that stock-sender handoff; this is a multi-segment pipeline interaction, not evidence that Prns is slow at receiving a segment."
+    }
+  ],
   "description": "A single large resource transferred whole, over and over, for a fixed wall-time - the multi-segment bulk mechanism. Each logical transfer is 64 MiB sliced into MAX_EFFICIENT_SIZE segments, sent one at a time, hash-proved, and application-acknowledged before another logical transfer begins. The payload repeats one shared deterministic maximum-size block, allowing Prns to stream with bounded memory while both participants transmit identical bytes. Compression is disabled on both stacks.",
   "roles": [
     "responder",

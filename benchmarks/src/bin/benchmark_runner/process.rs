@@ -13,6 +13,7 @@ pub(super) struct RoleProcess {
     peak_rss_bytes: std::sync::Arc<std::sync::Mutex<u64>>,
 }
 
+#[derive(Default)]
 pub(super) struct RoleMetrics {
     pub(super) cpu_seconds: f64,
     pub(super) peak_rss_bytes: u64,
@@ -87,6 +88,11 @@ impl RoleProcess {
             .write_all(b"START\n")
             .expect("send measurement command");
         self.stdin.flush().expect("flush measurement command");
+    }
+
+    pub(super) fn stop(&mut self) {
+        self.stdin.write_all(b"STOP\n").expect("send stop command");
+        self.stdin.flush().expect("flush stop command");
     }
 
     pub(super) fn set_collection_target(&mut self, transfers: u64, bytes: u64) {

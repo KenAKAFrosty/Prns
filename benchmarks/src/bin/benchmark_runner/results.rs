@@ -1,5 +1,6 @@
 use super::process::RoleMetrics;
 use super::*;
+use personal_rns::wire::{HEADER_MIN_LEN, IFAC_MIN_LEN};
 use std::collections::BTreeMap;
 
 fn rustc_host_triple() -> String {
@@ -25,6 +26,7 @@ fn command_line(program: &str, args: &[&str]) -> Option<String> {
 fn rate_metric(scenario: benchmarks::ScenarioId) -> &'static str {
     match scenario {
         benchmarks::ScenarioId::RequestResponse => "requests_per_sec",
+        scenario if scenario.is_transport() => "forwarded_frames_per_sec",
         _ => "delivered_per_sec",
     }
 }
@@ -135,6 +137,7 @@ struct Conformance<'a> {
     responder_delivered: f64,
     result: &'a str,
     responder_result: &'a str,
+    require_harness_headroom: bool,
 }
 
 fn scenario_conforms(input: &Conformance<'_>) -> bool {
@@ -148,6 +151,7 @@ fn scenario_conforms(input: &Conformance<'_>) -> bool {
         responder_delivered,
         result,
         responder_result,
+        require_harness_headroom,
     } = input;
     let exact_delivery = sent > 0.0
         && sent == delivered
@@ -179,6 +183,54 @@ fn scenario_conforms(input: &Conformance<'_>) -> bool {
             let received_bytes = field(responder_result, "payload_bytes").unwrap_or(f64::NAN);
             exact_delivery && sent_bytes == received_bytes
         }
+        ConformanceRule::ExactTransport | ConformanceRule::ExactTransportResource => {
+            let exact = |left, right| {
+                field(result, left).unwrap_or(f64::NAN) == field(result, right).unwrap_or(f64::NAN)
+            };
+            let shape_is_exact = match rule {
+                ConformanceRule::ExactTransport => field(result, "proofs") == Some(sent),
+                ConformanceRule::ExactTransportResource => {
+                    let negotiated_mtu =
+                        field(result, "negotiated_link_mtu_bytes").unwrap_or(f64::NAN);
+                    let payload =
+                        field(result, "resource_payload_bytes_per_frame").unwrap_or(f64::NAN);
+                    field(result, "proofs") == Some(0.0)
+                        && negotiated_mtu > 0.0
+                        && negotiated_mtu <= field(result, "relay_mtu_bytes").unwrap_or(f64::NAN)
+                        && payload + (HEADER_MIN_LEN + IFAC_MIN_LEN) as f64 == negotiated_mtu
+                }
+                ConformanceRule::ExactSingle
+                | ConformanceRule::ExactLink
+                | ConformanceRule::ExactRequest
+                | ConformanceRule::ExactResource => unreachable!("transport rules only"),
+            };
+            exact_delivery
+                && shape_is_exact
+                && field(result, "relay_bitrate_bps").is_some_and(|value| value > 0.0)
+                && field(result, "relay_mtu_bytes").is_some_and(|value| value > 0.0)
+                && field(result, "sent_a_to_b").is_some_and(|value| value > 0.0)
+                && field(result, "sent_b_to_a").is_some_and(|value| value > 0.0)
+                && exact("sent_a_to_b", "carried_a_to_b")
+                && exact("sent_b_to_a", "carried_b_to_a")
+                && exact("sent_payload_bytes", "carried_payload_bytes")
+                && exact("sent_payload_bytes_a_to_b", "carried_payload_bytes_a_to_b")
+                && exact("sent_payload_bytes_b_to_a", "carried_payload_bytes_b_to_a")
+                && [
+                    "duplicates",
+                    "corrupt",
+                    "reordered",
+                    "unexpected",
+                    "missing",
+                    "timed_out_frames",
+                    "drain_timeouts",
+                    "outstanding",
+                ]
+                .into_iter()
+                .all(|metric| field(result, metric) == Some(0.0))
+                && (!require_harness_headroom
+                    || field(result, "harness_calibration_ms") == Some(2_000.0))
+                && (!require_harness_headroom || field(result, "harness_headroom") == Some(1.0))
+        }
     }
 }
 
@@ -207,15 +259,18 @@ pub(super) fn file_results(
     let delivered = field(result, "delivered")
         .or_else(|| field(result, "settled"))
         .or_else(|| field(result, "cycles"))
+        .or_else(|| field(result, "carried"))
         .unwrap_or(0.0);
     let timeouts = field(result, "timeouts")
         .or_else(|| field(result, "failures"))
+        .or_else(|| field(result, "drain_timeouts"))
         .unwrap_or(f64::NAN);
     let raced = field(result, "raced").unwrap_or(0.0);
     let culled = field(result, "culled").unwrap_or(0.0);
     let responder_delivered = field(responder_result, "delivered")
         .or_else(|| field(responder_result, "received"))
         .or_else(|| field(responder_result, "served"))
+        .or_else(|| field(responder_result, "carried"))
         .unwrap_or(0.0);
     let died = field(result, "died").unwrap_or(0.0) > 0.0;
     let settled_clean = !died
@@ -229,6 +284,7 @@ pub(super) fn file_results(
             responder_delivered,
             result,
             responder_result,
+            require_harness_headroom: !args.smoke,
         });
     if died {
         eprintln!(
@@ -245,6 +301,16 @@ pub(super) fn file_results(
         );
     }
     if !settled_clean {
+        if matches!(
+            conformance_rule,
+            ConformanceRule::ExactTransport | ConformanceRule::ExactTransportResource
+        ) && !args.smoke
+            && field(result, "harness_headroom") != Some(1.0)
+        {
+            eprintln!(
+                "FAIL harness_headroom: direct driver calibration did not exceed relay carried-payload throughput by 25%"
+            );
+        }
         eprintln!(
             "verdict: strict scenario accounting failed: sent={sent} delivered={delivered} \
              responder={responder_delivered} timeouts={timeouts} raced={raced} culled={culled}"
@@ -281,19 +347,26 @@ pub(super) fn file_results(
     let delivered_per_sec = field(result, "delivered_per_sec")
         .or_else(|| field(result, "requests_per_sec"))
         .or_else(|| field(result, "cycles_per_sec"))
+        .or_else(|| field(result, "forwarded_frames_per_sec"))
         .or_else(|| elapsed_seconds.map(|seconds| delivered / seconds));
     let rate_metric = rate_metric(args.scenario);
     let rtt_p50_ms = field(result, "rtt_p50_ms").or_else(|| field(result, "transfer_p50_ms"));
     let rtt_p99_ms = field(result, "rtt_p99_ms").or_else(|| field(result, "transfer_p99_ms"));
-    let application_payload_bytes = field(result, "payload_bytes").or_else(|| {
-        match (
-            field(result, "request_bytes"),
-            field(result, "response_bytes"),
-        ) {
-            (Some(requests), Some(responses)) => Some(requests + responses),
-            _ => None,
-        }
-    });
+    let application_payload_bytes = field(result, "payload_bytes")
+        .or_else(|| field(result, "carried_payload_bytes"))
+        .or_else(|| {
+            match (
+                field(result, "request_bytes"),
+                field(result, "response_bytes"),
+            ) {
+                (Some(requests), Some(responses)) => Some(requests + responses),
+                _ => None,
+            }
+        });
+    let is_transport = matches!(
+        conformance_rule,
+        ConformanceRule::ExactTransport | ConformanceRule::ExactTransportResource
+    );
 
     let mut rows = vec![
         row(
@@ -374,31 +447,126 @@ pub(super) fn file_results(
             rtt_p99_ms.filter(|_| !died && perf_valid),
             "ms",
         ),
-        row(
-            Axis::Memory,
-            "initiator_peak_rss_bytes",
-            Some(initiator_rss as f64).filter(|_| perf_valid),
-            "bytes",
-        ),
-        row(
-            Axis::Memory,
-            "responder_peak_rss_bytes",
-            Some(responder_rss as f64).filter(|_| perf_valid),
-            "bytes",
-        ),
-        row(
-            Axis::Energy,
-            "initiator_cpu_seconds",
-            Some(initiator_cpu),
-            "s",
-        ),
-        row(
-            Axis::Energy,
-            "responder_cpu_seconds",
-            Some(responder_cpu),
-            "s",
-        ),
     ];
+    if is_transport {
+        rows.extend([
+            row(
+                Axis::Throughput,
+                "carried_payload_bytes_per_sec",
+                field(result, "carried_payload_bytes_per_sec")
+                    .filter(|_| !died && perf_valid && settled_clean),
+                "B/s",
+            ),
+            row(
+                Axis::Throughput,
+                "ingress_wire_bytes_per_sec",
+                field(result, "ingress_wire_bytes_per_sec")
+                    .filter(|_| !died && perf_valid && settled_clean),
+                "B/s",
+            ),
+            row(
+                Axis::Throughput,
+                "egress_wire_bytes_per_sec",
+                field(result, "egress_wire_bytes_per_sec")
+                    .filter(|_| !died && perf_valid && settled_clean),
+                "B/s",
+            ),
+            row(
+                Axis::Throughput,
+                "harness_carried_payload_bytes_per_sec",
+                field(result, "harness_carried_payload_bytes_per_sec"),
+                "B/s",
+            ),
+            row(
+                Axis::Conformance,
+                "harness_headroom",
+                field(result, "harness_headroom"),
+                "bool",
+            ),
+            row(
+                Axis::Conformance,
+                "harness_calibration_ms",
+                field(result, "harness_calibration_ms"),
+                "ms",
+            ),
+            row(
+                Axis::Conformance,
+                "relay_bitrate_bps",
+                field(result, "relay_bitrate_bps"),
+                "bps",
+            ),
+            row(
+                Axis::Conformance,
+                "relay_mtu_bytes",
+                field(result, "relay_mtu_bytes"),
+                "bytes",
+            ),
+            row(
+                Axis::Memory,
+                "wire_driver_peak_rss_bytes",
+                Some(initiator_rss as f64).filter(|_| perf_valid),
+                "bytes",
+            ),
+            row(
+                Axis::Energy,
+                "wire_driver_cpu_seconds",
+                Some(initiator_cpu),
+                "s",
+            ),
+        ]);
+        for (metric, unit) in [
+            ("sent_a_to_b", "frames"),
+            ("carried_a_to_b", "frames"),
+            ("sent_b_to_a", "frames"),
+            ("carried_b_to_a", "frames"),
+            ("proofs", "frames"),
+            ("sent_payload_bytes", "bytes"),
+            ("carried_payload_bytes", "bytes"),
+            ("sent_payload_bytes_a_to_b", "bytes"),
+            ("carried_payload_bytes_a_to_b", "bytes"),
+            ("sent_payload_bytes_b_to_a", "bytes"),
+            ("carried_payload_bytes_b_to_a", "bytes"),
+            ("duplicates", "frames"),
+            ("corrupt", "frames"),
+            ("reordered", "frames"),
+            ("unexpected", "frames"),
+            ("missing", "frames"),
+            ("timed_out_frames", "frames"),
+            ("drain_timeouts", "frames"),
+            ("outstanding", "frames"),
+            ("negotiated_link_mtu_bytes", "bytes"),
+            ("resource_payload_bytes_per_frame", "bytes"),
+        ] {
+            rows.push(row(Axis::Conformance, metric, field(result, metric), unit));
+        }
+    } else {
+        rows.extend([
+            row(
+                Axis::Memory,
+                "initiator_peak_rss_bytes",
+                Some(initiator_rss as f64).filter(|_| perf_valid),
+                "bytes",
+            ),
+            row(
+                Axis::Memory,
+                "responder_peak_rss_bytes",
+                Some(responder_rss as f64).filter(|_| perf_valid),
+                "bytes",
+            ),
+            row(
+                Axis::Energy,
+                "initiator_cpu_seconds",
+                Some(initiator_cpu),
+                "s",
+            ),
+            row(
+                Axis::Energy,
+                "responder_cpu_seconds",
+                Some(responder_cpu),
+                "s",
+            ),
+        ]);
+    }
     if let Some(relay) = &relay {
         rows.push(row(
             Axis::Memory,
@@ -431,7 +599,11 @@ pub(super) fn file_results(
             .map(|bytes| net_joules * 1_000.0 / (bytes / 1_048_576.0));
         rows.push(row(
             Axis::Energy,
-            "package_joules_raw",
+            if is_transport {
+                "whole_cell_package_joules_raw"
+            } else {
+                "package_joules_raw"
+            },
             Some(raw_joules),
             "J",
         ));
@@ -443,15 +615,23 @@ pub(super) fn file_results(
         ));
         rows.push(row(
             Axis::Energy,
-            "net_joules",
+            if is_transport {
+                "whole_cell_net_joules"
+            } else {
+                "net_joules"
+            },
             measurable.then_some(net_joules),
             "J",
         ));
         rows.push(row(
             Axis::Energy,
-            "net_millijoules_per_delivered",
+            if is_transport {
+                "whole_cell_net_millijoules_per_forwarded"
+            } else {
+                "net_millijoules_per_delivered"
+            },
             per_delivered_mj,
-            "mJ/msg",
+            if is_transport { "mJ/frame" } else { "mJ/msg" },
         ));
         let total_cpu = initiator_cpu + responder_cpu;
         let initiator_share = if total_cpu > 0.0 {
@@ -459,41 +639,58 @@ pub(super) fn file_results(
         } else {
             0.5
         };
-        rows.push(row(
-            Axis::Energy,
-            "initiator_net_millijoules_per_delivered",
-            per_delivered_mj.map(|mj| mj * initiator_share),
-            "mJ/msg",
-        ));
-        rows.push(row(
-            Axis::Energy,
-            "responder_net_millijoules_per_delivered",
-            per_delivered_mj.map(|mj| mj * (1.0 - initiator_share)),
-            "mJ/msg",
-        ));
-        rows.push(row(
-            Axis::Energy,
-            "initiator_net_millijoules_per_mebibyte",
-            per_mib_mj.map(|mj| mj * initiator_share),
-            "mJ/MiB",
-        ));
-        rows.push(row(
-            Axis::Energy,
-            "responder_net_millijoules_per_mebibyte",
-            per_mib_mj.map(|mj| mj * (1.0 - initiator_share)),
-            "mJ/MiB",
-        ));
+        if is_transport {
+            rows.push(row(
+                Axis::Energy,
+                "whole_cell_net_millijoules_per_mebibyte",
+                per_mib_mj,
+                "mJ/MiB",
+            ));
+        } else {
+            rows.push(row(
+                Axis::Energy,
+                "initiator_net_millijoules_per_delivered",
+                per_delivered_mj.map(|mj| mj * initiator_share),
+                "mJ/msg",
+            ));
+            rows.push(row(
+                Axis::Energy,
+                "responder_net_millijoules_per_delivered",
+                per_delivered_mj.map(|mj| mj * (1.0 - initiator_share)),
+                "mJ/msg",
+            ));
+            rows.push(row(
+                Axis::Energy,
+                "initiator_net_millijoules_per_mebibyte",
+                per_mib_mj.map(|mj| mj * initiator_share),
+                "mJ/MiB",
+            ));
+            rows.push(row(
+                Axis::Energy,
+                "responder_net_millijoules_per_mebibyte",
+                per_mib_mj.map(|mj| mj * (1.0 - initiator_share)),
+                "mJ/MiB",
+            ));
+        }
         if measurable {
             let combined = per_delivered_mj.unwrap_or(f64::NAN);
-            println!(
-                "\nSUMMARY energy raw={raw_joules:.1}J over {wall_seconds:.1}s \
-                 (idle {idle_watts:.2}W) | net={net_joules:.1}J | {combined:.2} mJ/msg \
-                 (initiator {:.2} / responder {:.2}, by cpu {:.0}%/{:.0}%)",
-                combined * initiator_share,
-                combined * (1.0 - initiator_share),
-                initiator_share * 100.0,
-                (1.0 - initiator_share) * 100.0,
-            );
+            if is_transport {
+                println!(
+                    "\nSUMMARY whole-cell energy raw={raw_joules:.1}J over {wall_seconds:.1}s \
+                     (idle {idle_watts:.2}W) | net={net_joules:.1}J | \
+                     {combined:.2} mJ/forwarded-frame (not relay-only)",
+                );
+            } else {
+                println!(
+                    "\nSUMMARY energy raw={raw_joules:.1}J over {wall_seconds:.1}s \
+                     (idle {idle_watts:.2}W) | net={net_joules:.1}J | {combined:.2} mJ/msg \
+                     (initiator {:.2} / responder {:.2}, by cpu {:.0}%/{:.0}%)",
+                    combined * initiator_share,
+                    combined * (1.0 - initiator_share),
+                    initiator_share * 100.0,
+                    (1.0 - initiator_share) * 100.0,
+                );
+            }
         } else {
             println!(
                 "\nSUMMARY energy raw={raw_joules:.1}J over {wall_seconds:.1}s ran BELOW the \
@@ -530,15 +727,22 @@ pub(super) fn file_results(
     println!(
         "\nSUMMARY scenario={} pairing={pairing_label} host={}\n\
          SUMMARY conformance sent={sent:.0} delivered={delivered:.0} \
-         responder_seen={responder_delivered:.0} timed_out={timeouts:.0} raced={raced:.0} locally_culled={culled:.0} settled_clean={}\n\
-         SUMMARY initiator cpu={initiator_cpu:.2}s peak_rss={:.1}MiB | \
-         responder cpu={responder_cpu:.2}s peak_rss={:.1}MiB",
-        args.scenario,
-        stamp.host,
-        settled_clean,
-        initiator_rss as f64 / (1024.0 * 1024.0),
-        responder_rss as f64 / (1024.0 * 1024.0),
+         responder_seen={responder_delivered:.0} timed_out={timeouts:.0} raced={raced:.0} locally_culled={culled:.0} settled_clean={}",
+        args.scenario, stamp.host, settled_clean,
     );
+    if is_transport {
+        println!(
+            "SUMMARY wire-driver cpu={initiator_cpu:.2}s peak_rss={:.1}MiB",
+            initiator_rss as f64 / (1024.0 * 1024.0),
+        );
+    } else {
+        println!(
+            "SUMMARY initiator cpu={initiator_cpu:.2}s peak_rss={:.1}MiB | \
+             responder cpu={responder_cpu:.2}s peak_rss={:.1}MiB",
+            initiator_rss as f64 / (1024.0 * 1024.0),
+            responder_rss as f64 / (1024.0 * 1024.0),
+        );
+    }
     if let Some(relay) = &relay {
         println!(
             "SUMMARY relay cpu={:.2}s peak_rss={:.1}MiB",
@@ -592,6 +796,7 @@ mod tests {
             responder_delivered: 2_143.0,
             result: "RESULT attempted=2156 payload_bytes=500000",
             responder_result: "RESULT delivered=2143 payload_bytes=500000",
+            require_harness_headroom: true,
         }));
         assert!(!scenario_conforms(&Conformance {
             rule: ConformanceRule::ExactLink,
@@ -603,6 +808,7 @@ mod tests {
             responder_delivered: 2_156.0,
             result: "RESULT attempted=2156",
             responder_result: "RESULT delivered=2156",
+            require_harness_headroom: true,
         }));
     }
 
@@ -618,6 +824,7 @@ mod tests {
             responder_delivered: 99.0,
             result: "RESULT sent=100 delivered=99 timeouts=1",
             responder_result: "RESULT delivered=99",
+            require_harness_headroom: true,
         }));
     }
 
@@ -633,8 +840,17 @@ mod tests {
             responder_delivered: 40.0,
             result: "RESULT expected_response_bytes=120000 response_bytes=120000 request_window=4 request_links=4",
             responder_result: "RESULT served=40 response_bytes=120000",
+            require_harness_headroom: true,
         };
         assert!(scenario_conforms(&valid));
+        assert!(!scenario_conforms(&Conformance {
+            delivered: 19.0,
+            ..valid
+        }));
+        assert!(!scenario_conforms(&Conformance {
+            responder_delivered: 19.0,
+            ..valid
+        }));
         assert!(!scenario_conforms(&Conformance {
             result: "RESULT expected_response_bytes=120000 response_bytes=119999 request_window=4 request_links=4",
             ..valid
@@ -653,6 +869,106 @@ mod tests {
             responder_delivered: 1.0,
             result: "RESULT payload_bytes=67108864",
             responder_result: "RESULT received=1 payload_bytes=67108864",
+            require_harness_headroom: true,
         }));
+    }
+
+    #[test]
+    fn transport_conformance_requires_exact_bidirectional_accounting_and_headroom() {
+        let valid = Conformance {
+            rule: ConformanceRule::ExactTransport,
+            sent: 20.0,
+            delivered: 20.0,
+            timeouts: 0.0,
+            raced: 0.0,
+            culled: 0.0,
+            responder_delivered: 20.0,
+            result: "RESULT sent=20 carried=20 proofs=20 relay_bitrate_bps=1000000000 relay_mtu_bytes=524288 sent_a_to_b=10 carried_a_to_b=10 sent_b_to_a=10 carried_b_to_a=10 sent_payload_bytes=4000 carried_payload_bytes=4000 sent_payload_bytes_a_to_b=2000 carried_payload_bytes_a_to_b=2000 sent_payload_bytes_b_to_a=2000 carried_payload_bytes_b_to_a=2000 missing=0 duplicates=0 corrupt=0 reordered=0 unexpected=0 timed_out_frames=0 drain_timeouts=0 outstanding=0 harness_calibration_ms=2000 harness_headroom=1",
+            responder_result: "RESULT carried=20",
+            require_harness_headroom: true,
+        };
+        assert!(scenario_conforms(&valid));
+        for (healthy, broken) in [
+            ("proofs=20", "proofs=19"),
+            ("relay_bitrate_bps=1000000000", "relay_bitrate_bps=0"),
+            ("relay_mtu_bytes=524288", "relay_mtu_bytes=0"),
+            ("sent_a_to_b=10", "sent_a_to_b=0"),
+            ("carried_a_to_b=10", "carried_a_to_b=9"),
+            ("sent_b_to_a=10", "sent_b_to_a=0"),
+            ("carried_b_to_a=10", "carried_b_to_a=9"),
+            ("carried_payload_bytes=4000", "carried_payload_bytes=3999"),
+            (
+                "carried_payload_bytes_a_to_b=2000",
+                "carried_payload_bytes_a_to_b=1999",
+            ),
+            (
+                "carried_payload_bytes_b_to_a=2000",
+                "carried_payload_bytes_b_to_a=1999",
+            ),
+            ("duplicates=0", "duplicates=1"),
+            ("corrupt=0", "corrupt=1"),
+            ("reordered=0", "reordered=1"),
+            ("unexpected=0", "unexpected=1"),
+            ("missing=0", "missing=1"),
+            ("timed_out_frames=0", "timed_out_frames=1"),
+            ("drain_timeouts=0", "drain_timeouts=1"),
+            ("outstanding=0", "outstanding=1"),
+            ("harness_calibration_ms=2000", "harness_calibration_ms=1999"),
+            ("harness_headroom=1", "harness_headroom=0"),
+        ] {
+            let result = valid.result.replacen(healthy, broken, 1);
+            assert!(
+                !scenario_conforms(&Conformance {
+                    result: &result,
+                    ..valid
+                }),
+                "{broken} must fail"
+            );
+        }
+        assert!(scenario_conforms(&Conformance {
+            result: &valid
+                .result
+                .replace("harness_headroom=1", "harness_headroom=0")
+                .replace("harness_calibration_ms=2000", "harness_calibration_ms=100"),
+            require_harness_headroom: false,
+            ..valid
+        }));
+    }
+
+    #[test]
+    fn transported_resource_conformance_requires_negotiated_mtu_and_no_data_proofs() {
+        let valid = Conformance {
+            rule: ConformanceRule::ExactTransportResource,
+            sent: 20.0,
+            delivered: 20.0,
+            timeouts: 0.0,
+            raced: 0.0,
+            culled: 0.0,
+            responder_delivered: 20.0,
+            result: "RESULT sent=20 carried=20 proofs=0 relay_bitrate_bps=1000000000 relay_mtu_bytes=524288 negotiated_link_mtu_bytes=524288 resource_payload_bytes_per_frame=524268 sent_a_to_b=10 carried_a_to_b=10 sent_b_to_a=10 carried_b_to_a=10 sent_payload_bytes=10485360 carried_payload_bytes=10485360 sent_payload_bytes_a_to_b=5242680 carried_payload_bytes_a_to_b=5242680 sent_payload_bytes_b_to_a=5242680 carried_payload_bytes_b_to_a=5242680 missing=0 duplicates=0 corrupt=0 reordered=0 unexpected=0 timed_out_frames=0 drain_timeouts=0 outstanding=0 harness_calibration_ms=2000 harness_headroom=1",
+            responder_result: "RESULT carried=20",
+            require_harness_headroom: true,
+        };
+        assert!(scenario_conforms(&valid));
+        for (healthy, broken) in [
+            ("proofs=0", "proofs=20"),
+            (
+                "negotiated_link_mtu_bytes=524288",
+                "negotiated_link_mtu_bytes=524287",
+            ),
+            (
+                "resource_payload_bytes_per_frame=524268",
+                "resource_payload_bytes_per_frame=524267",
+            ),
+        ] {
+            let result = valid.result.replacen(healthy, broken, 1);
+            assert!(
+                !scenario_conforms(&Conformance {
+                    result: &result,
+                    ..valid
+                }),
+                "{broken} must fail"
+            );
+        }
     }
 }
