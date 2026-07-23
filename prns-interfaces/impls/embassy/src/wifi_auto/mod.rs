@@ -1,26 +1,60 @@
+mod fanout;
+
 use ::core::cell::Cell;
 use ::core::net::Ipv6Addr;
 
+use embassy_futures::join::join;
 use embassy_futures::select::{select, select3, select4, Either, Either3, Either4};
 use embassy_net::udp::{RecvError, UdpMetadata, UdpSocket};
 use embassy_net::{IpAddress, Stack};
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex};
 use embassy_sync::blocking_mutex::CriticalSectionMutex;
 use embassy_sync::signal::Signal;
-use embassy_time::{with_timeout, Duration, Ticker};
+use embassy_time::{with_timeout, Duration, Instant, Ticker};
 use portable_atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
-use prns_core::engine::FanTarget;
 use prns_core::interfaces::wifi_auto as contract;
 use prns_core::interfaces::{
     BitrateBps, ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus, MacAddress,
 };
-use prns_runtime::reactor::grant::FrameTarget;
 use prns_runtime::runtime::EmbassyFleet as Fleet;
 
+use fanout::{dispatch_fanout, send_beacon, FanoutPlan, UdpFanoutSender};
+
 const BEACON_INTERVAL: Duration = Duration::from_millis(1600);
-/// WiFi and BLE coexistence can stall a full WiFi TX buffer indefinitely, so lossy UDP sends are bounded rather than freezing beacons and receive handling.
 const SEND_TIMEOUT: Duration = Duration::from_millis(300);
+
+async fn wait_for_stack<const MEMBERS: usize>(stack: &Stack<'_>, status: AutoWifiStatus<MEMBERS>) {
+    loop {
+        if !status.is_enabled() {
+            status.wait_until_enabled().await;
+        }
+        match select(stack.wait_config_up(), status.wait_until_disabled()).await {
+            Either::First(()) => return,
+            Either::Second(()) => {}
+        }
+    }
+}
+
+async fn wait_for_secondary_stack<const MEMBERS: usize>(
+    stack: &Stack<'_>,
+    status: AutoWifiStatus<MEMBERS>,
+) -> bool {
+    loop {
+        if !status.is_enabled() {
+            status.wait_until_enabled().await;
+        }
+        match select(
+            with_timeout(Duration::from_secs(10), stack.wait_config_up()),
+            status.wait_until_disabled(),
+        )
+        .await
+        {
+            Either::First(result) => return result.is_ok(),
+            Either::Second(()) => {}
+        }
+    }
+}
 
 /// The reusable slot's peer id uses a critical-section cell so cross-core readers see it coherently.
 pub struct WifiMemberStatus {
@@ -89,6 +123,7 @@ pub struct AutoWifiShared<const MEMBERS: usize> {
     enabled: AtomicBool,
     enabled_changed: Signal<CriticalSectionRawMutex, bool>,
     radio_enabled_changed: Signal<CriticalSectionRawMutex, bool>,
+    lifecycle: AtomicU8,
     peers: AtomicU32,
     members: [WifiMemberStatus; MEMBERS],
 }
@@ -101,6 +136,7 @@ impl<const MEMBERS: usize> AutoWifiShared<MEMBERS> {
             enabled: AtomicBool::new(true),
             enabled_changed: Signal::new(),
             radio_enabled_changed: Signal::new(),
+            lifecycle: AtomicU8::new(ConnectionState::Initializing.as_u8()),
             peers: AtomicU32::new(0),
             members: [const { WifiMemberStatus::new() }; MEMBERS],
         }
@@ -193,6 +229,12 @@ impl<const MEMBERS: usize> AutoWifiStatus<MEMBERS> {
         self.shared.peers.store(count as u32, Ordering::Relaxed);
     }
 
+    fn set_lifecycle(&self, connection: ConnectionState) {
+        self.shared
+            .lifecycle
+            .store(connection.as_u8(), Ordering::Relaxed);
+    }
+
     pub fn members(&self) -> impl Iterator<Item = &'static WifiMemberStatus> {
         self.shared
             .members
@@ -208,11 +250,24 @@ impl<const MEMBERS: usize> InterfaceStatus for AutoWifiStatus<MEMBERS> {
 
     fn connection(&self) -> ConnectionState {
         if !self.is_enabled() {
-            ConnectionState::Disabled
-        } else if self.shared.peers.load(Ordering::Relaxed) > 0 {
+            return ConnectionState::Disabled;
+        }
+        let lifecycle = ConnectionState::from_u8(self.shared.lifecycle.load(Ordering::Relaxed));
+        match lifecycle {
+            ConnectionState::Initializing
+            | ConnectionState::Degraded
+            | ConnectionState::Reconnecting
+            | ConnectionState::Failed
+            | ConnectionState::Unknown => lifecycle,
             ConnectionState::Connected
-        } else {
-            ConnectionState::Disconnected
+            | ConnectionState::Disconnected
+            | ConnectionState::Disabled => {
+                if self.shared.peers.load(Ordering::Relaxed) > 0 {
+                    ConnectionState::Connected
+                } else {
+                    ConnectionState::Disconnected
+                }
+            }
         }
     }
 
@@ -306,8 +361,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
     ) where
         M: RawMutex + 'static,
     {
-        // Wait for link and IPv6 configuration because a multicast join can fail before the interface is up.
-        self.stack.wait_config_up().await;
+        wait_for_stack(&self.stack, self.status).await;
         let primary_ok = self
             .discovery
             .bind(contract::DEFAULT_DISCOVERY_PORT)
@@ -322,19 +376,17 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
             if primary_ok { "up" } else { "down" }
         );
         if !primary_ok {
+            self.status.set_lifecycle(ConnectionState::Failed);
             return;
         }
 
-        // A secondary netif is best-effort so its failure cannot wedge the primary station segment.
+        let secondary_configured = self.secondary_stack.is_some();
         let secondary_ok = if let (Some(stack), Some(discovery), Some(data)) = (
             self.secondary_stack.as_ref(),
             self.secondary_discovery.as_mut(),
             self.secondary_data.as_mut(),
         ) {
-            // Bound secondary configuration so a stalled SoftAP cannot wedge the primary segment.
-            embassy_time::with_timeout(Duration::from_secs(10), stack.wait_config_up())
-                .await
-                .is_ok()
+            wait_for_secondary_stack(stack, self.status).await
                 && discovery.bind(contract::DEFAULT_DISCOVERY_PORT).is_ok()
                 && data.bind(contract::DEFAULT_DATA_PORT).is_ok()
                 && stack
@@ -352,16 +404,21 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
             "wifi-auto: secondary segment {}",
             if secondary_ok { "up" } else { "down" }
         );
+        self.status
+            .set_lifecycle(if secondary_configured && !secondary_ok {
+                ConnectionState::Degraded
+            } else {
+                ConnectionState::Disconnected
+            });
 
         let mut peers: [Option<Ipv6Addr>; MEMBERS] = [None; MEMBERS];
         let mut ids: [InterfaceId; MEMBERS] = [InterfaceId::new([0u8; 8]); MEMBERS];
         let mut peer_on_secondary: [bool; MEMBERS] = [false; MEMBERS];
 
         let token = *self.brain.our_peering_token().as_bytes();
-        // Never send the primary token over the secondary link-local address; peers would reject every beacon.
         let secondary_token = self.secondary_token;
         let mut beacon = Ticker::every(BEACON_INTERVAL);
-        let mut now_ms: u64 = 0;
+        let mut fanout_start = 0;
         let mut discovery_buf = [0u8; 64];
         let mut sec_discovery_buf = [0u8; 64];
 
@@ -405,7 +462,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                                 self.bitrate,
                                 src,
                                 &discovery_buf[..len],
-                                now_ms,
+                                Instant::now().as_millis(),
                                 false,
                             )
                             .await;
@@ -427,48 +484,22 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                     }
                 }
                 Either::First(Either4::Third(())) => {
-                    now_ms = now_ms.wrapping_add(BEACON_INTERVAL.as_millis());
-                    let primary_sent = matches!(
-                        with_timeout(
-                            SEND_TIMEOUT,
-                            self.discovery.send_to(
-                                &token,
-                                (
-                                    IpAddress::Ipv6(contract::DISCOVERY_GROUP),
-                                    contract::DEFAULT_DISCOVERY_PORT,
-                                ),
+                    let sends = with_timeout(
+                        SEND_TIMEOUT,
+                        join(
+                            send_beacon(Some(&self.discovery), Some(&token)),
+                            send_beacon(
+                                self.secondary_discovery.as_ref(),
+                                secondary_token.as_ref(),
                             ),
-                        )
-                        .await,
-                        Ok(Ok(()))
+                        ),
                     );
-                    let mut secondary_sent = false;
-                    if let Some(secondary) = self.secondary_discovery.as_ref() {
-                        match with_timeout(
-                            SEND_TIMEOUT,
-                            secondary.send_to(
-                                secondary_token.as_ref().unwrap_or(&token),
-                                (
-                                    IpAddress::Ipv6(contract::DISCOVERY_GROUP),
-                                    contract::DEFAULT_DISCOVERY_PORT,
-                                ),
-                            ),
-                        )
-                        .await
-                        {
-                            Ok(Ok(())) => secondary_sent = true,
-                            Ok(Err(e)) => crate::diagnostic_log::debug!(
-                                "wifi-auto: sec beacon send err: {e:?}"
-                            ),
-                            Err(_) => {
-                                crate::diagnostic_log::debug!("wifi-auto: sec beacon send timeout")
-                            }
-                        }
+                    if matches!(
+                        select(self.status.wait_until_disabled(), sends).await,
+                        Either::First(())
+                    ) {
+                        continue;
                     }
-                    crate::diagnostic_log::debug!(
-                        "wifi-auto: tx beacon pri={primary_sent} sec={secondary_sent} has_sec={}",
-                        self.secondary_discovery.is_some()
-                    );
                     retire_stale(
                         &mut self.brain,
                         &mut peers,
@@ -476,44 +507,27 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                         &mut peer_on_secondary,
                         &self.status,
                         &fleet,
-                        now_ms,
+                        Instant::now().as_millis(),
                     )
                     .await;
                 }
                 Either::First(Either4::Fourth(outbound)) => {
                     if !outbound.is_empty() {
-                        for slot in 0..MEMBERS {
-                            let Some(peer) = peers[slot] else { continue };
-                            let selected = match outbound.target() {
-                                FrameTarget::Direct(id) => ids[slot] == id,
-                                FrameTarget::Fan(FanTarget::Only(id)) => ids[slot] == id,
-                                FrameTarget::Fan(FanTarget::All) => true,
-                                FrameTarget::Fan(FanTarget::AllExcept(id)) => ids[slot] != id,
-                            };
-                            if !selected {
-                                continue;
-                            }
-                            let socket = if peer_on_secondary[slot] {
-                                self.secondary_data.as_ref()
-                            } else {
-                                Some(&self.data)
-                            };
-                            if let Some(socket) = socket {
-                                if matches!(
-                                    with_timeout(
-                                        SEND_TIMEOUT,
-                                        socket.send_to(
-                                            outbound.bytes(),
-                                            (IpAddress::Ipv6(peer), contract::DEFAULT_DATA_PORT),
-                                        ),
-                                    )
-                                    .await,
-                                    Ok(Ok(()))
-                                ) {
-                                    self.status.member(slot).add_tx(outbound.len() as u64);
-                                }
-                            }
+                        let mut plan =
+                            FanoutPlan::new(outbound.target(), &peers, &ids, fanout_start);
+                        if MEMBERS > 0 {
+                            fanout_start = (fanout_start + 1) % MEMBERS;
                         }
+                        let mut sender = UdpFanoutSender {
+                            primary: &self.data,
+                            secondary: self.secondary_data.as_ref(),
+                            peers: &peers,
+                            peer_on_secondary: &peer_on_secondary,
+                            status: self.status,
+                            bytes: outbound.bytes(),
+                        };
+                        let dispatch = dispatch_fanout(&mut plan, &mut sender, SEND_TIMEOUT);
+                        let _ = select(self.status.wait_until_disabled(), dispatch).await;
                     }
                 }
                 Either::Second(Either3::First(received)) => {
@@ -529,7 +543,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                                 self.bitrate,
                                 src,
                                 &sec_discovery_buf[..len],
-                                now_ms,
+                                Instant::now().as_millis(),
                                 true,
                             )
                             .await;
@@ -590,15 +604,11 @@ async fn ingest_beacon<
     on_secondary: bool,
 ) {
     let verdict = brain.ingest_discovery_datagram(src, bytes, now_ms);
-    crate::diagnostic_log::debug!(
-        "wifi-auto: rx beacon src={src} sec={on_secondary} len={} peer={}",
-        bytes.len(),
-        matches!(verdict, contract::BeaconVerdict::Peer(_))
-    );
     let contract::BeaconVerdict::Peer(addr) = verdict else {
         return;
     };
-    if peers.contains(&Some(addr)) {
+    if let Some(slot) = peers.iter().position(|peer| *peer == Some(addr)) {
+        peer_on_secondary[slot] = on_secondary;
         return;
     }
     let Some(slot) = peers.iter().position(Option::is_none) else {
@@ -709,6 +719,11 @@ mod tests {
     use embassy_futures::{block_on, join::join3};
 
     static SHARED: AutoWifiShared<1> = AutoWifiShared::new(InterfaceId::new([0x5B; 8]));
+    static LIFECYCLE_SHARED: AutoWifiShared<1> = AutoWifiShared::new(InterfaceId::new([0x5C; 8]));
+
+    fn id(suffix: u8) -> InterfaceId {
+        InterfaceId::new([InterfaceKind::WifiPeer as u8, 0, 0, 0, 0, 0, 0, suffix])
+    }
 
     #[test]
     fn enabled_state_changes_wake_all_waiters() {
@@ -728,5 +743,25 @@ mod tests {
             )
             .await;
         });
+    }
+
+    #[test]
+    fn aggregate_status_preserves_initialization_degradation_and_failure() {
+        let status = AutoWifiStatus::new(&LIFECYCLE_SHARED);
+
+        assert_eq!(status.connection(), ConnectionState::Initializing);
+        status.set_lifecycle(ConnectionState::Disconnected);
+        assert_eq!(status.connection(), ConnectionState::Disconnected);
+        status.member(0).assign(id(1));
+        status.republish_peer_count();
+        assert_eq!(status.connection(), ConnectionState::Connected);
+        status.set_lifecycle(ConnectionState::Degraded);
+        assert_eq!(status.connection(), ConnectionState::Degraded);
+        status.disable();
+        assert_eq!(status.connection(), ConnectionState::Disabled);
+        status.enable();
+        assert_eq!(status.connection(), ConnectionState::Degraded);
+        status.set_lifecycle(ConnectionState::Failed);
+        assert_eq!(status.connection(), ConnectionState::Failed);
     }
 }
