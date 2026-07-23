@@ -14,6 +14,7 @@ use personal_rns::crypto::{
     x25519_diffie_hellman, x25519_public_key, Ed25519SecretKey, TokenKey, X25519SecretKey,
 };
 use personal_rns::identity::ENCRYPTION_IV_LEN;
+#[cfg(not(windows))]
 use pprof::criterion::{Output, PProfProfiler};
 
 use benchmarks::microscope::{Cycle, Forward, PAYLOAD_LEN};
@@ -187,9 +188,16 @@ fn forward_path(c: &mut Criterion) {
     group.finish();
 }
 
+#[cfg(not(windows))]
 criterion_group! {
     name = benches;
     config = Criterion::default().with_profiler(PProfProfiler::new(100, Output::Flamegraph(None)));
+    targets = single_cycle, settle_depth, primitives, forward_path
+}
+#[cfg(windows)]
+criterion_group! {
+    name = benches;
+    config = Criterion::default();
     targets = single_cycle, settle_depth, primitives, forward_path
 }
 criterion_main!(benches);

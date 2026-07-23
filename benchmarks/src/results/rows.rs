@@ -65,6 +65,7 @@ fn write_rows_at(root: &Path, host: &str, scenario: &str, impl_slug: &str, rows:
         .unwrap_or_else(|e| panic!("write staged result {}: {e}", temp.display()));
     file.sync_all()
         .unwrap_or_else(|e| panic!("sync staged result {}: {e}", temp.display()));
+    drop(file);
     commit_temp(&temp, &path)
         .unwrap_or_else(|e| panic!("commit {} to {}: {e}", temp.display(), path.display()));
     #[cfg(unix)]
@@ -223,6 +224,20 @@ mod tests {
             submitter_id: None,
             provenance: BTreeMap::new(),
         }
+    }
+
+    #[test]
+    fn a_later_sample_replaces_the_committed_result_file() {
+        let root =
+            std::env::temp_dir().join(format!("benchmark-row-test-{}", uuid::Uuid::new_v4()));
+        write_rows_at(&root, "host", "scenario", "a--b", &[row("valid", 0, 1.0)]);
+        write_rows_at(&root, "host", "scenario", "a--b", &[row("valid", 1, 1.0)]);
+        let rows = load_rows_from(&root.join("host/scenario/a--b.jsonl"));
+        assert_eq!(
+            rows.iter().map(|row| row.sample_index).collect::<Vec<_>>(),
+            vec![0, 1]
+        );
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
