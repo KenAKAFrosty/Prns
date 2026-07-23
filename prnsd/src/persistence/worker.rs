@@ -1,4 +1,5 @@
 use core::time::Duration;
+use std::future;
 use std::sync::{Arc, Mutex};
 
 use personal_rns::identity::vault::FileVault;
@@ -9,6 +10,8 @@ use personal_rns::runtime::{
 };
 use personal_rns::wire::DestinationHash;
 use prnsd_control::ManagedProcess;
+
+use crate::shutdown::ShutdownSignal;
 
 struct PersistenceStorage {
     store: FileStore,
@@ -49,11 +52,11 @@ impl PersistenceWorker {
         }
     }
 
-    async fn run(mut self, managed: Option<&ManagedProcess>) {
+    async fn run(mut self, managed: Option<&ManagedProcess>, shutdown: Option<ShutdownSignal>) {
         let mut ticker = tokio::time::interval(self.interval);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         ticker.tick().await;
-        let shutdown = shutdown_signal(managed);
+        let shutdown = shutdown_signal(managed, shutdown);
         tokio::pin!(shutdown);
         let mut rotations_open = true;
         loop {
@@ -180,29 +183,29 @@ impl PersistenceWorker {
 pub(super) async fn run_until_shutdown(
     persistence: Option<PersistenceWorker>,
     managed: Option<&ManagedProcess>,
+    shutdown: Option<ShutdownSignal>,
 ) {
     match persistence {
-        Some(persistence) => persistence.run(managed).await,
+        Some(persistence) => persistence.run(managed, shutdown).await,
         None => {
-            shutdown_signal(managed).await;
+            shutdown_signal(managed, shutdown).await;
             tracing::info!(event = "daemon_shutdown");
         }
     }
 }
 
-async fn shutdown_signal(managed: Option<&ManagedProcess>) {
-    match managed {
-        Some(managed) => {
-            tokio::select! {
-                () = managed_shutdown_signal(managed) => {}
-                () = operating_system_shutdown_signal() => {}
-            }
-        }
-        None => operating_system_shutdown_signal().await,
+async fn shutdown_signal(managed: Option<&ManagedProcess>, shutdown: Option<ShutdownSignal>) {
+    tokio::select! {
+        () = managed_shutdown_signal(managed) => {}
+        () = operating_system_shutdown_signal() => {}
+        () = tray_shutdown_signal(shutdown) => {}
     }
 }
 
-async fn managed_shutdown_signal(managed: &ManagedProcess) {
+async fn managed_shutdown_signal(managed: Option<&ManagedProcess>) {
+    let Some(managed) = managed else {
+        return future::pending().await;
+    };
     let mut interval = tokio::time::interval(Duration::from_millis(100));
     loop {
         interval.tick().await;
@@ -214,6 +217,13 @@ async fn managed_shutdown_signal(managed: &ManagedProcess) {
                 return;
             }
         }
+    }
+}
+
+async fn tray_shutdown_signal(shutdown: Option<ShutdownSignal>) {
+    match shutdown {
+        Some(shutdown) => shutdown.requested().await,
+        None => future::pending().await,
     }
 }
 

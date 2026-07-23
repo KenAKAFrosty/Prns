@@ -42,7 +42,7 @@ path = "src/main.rs"
 required-features = ["tokio-host", "observability"]
 
 [features]
-default = ["tokio-host", "observability"]
+default = ["tokio-host", "observability", "tray"]
 alloc = ["personal-rns/alloc"]
 std = ["alloc", "personal-rns/std"]
 tokio-host = [
@@ -81,6 +81,7 @@ observability = [
     "dep:tracing-log",
     "dep:tracing-subscriber",
 ]
+tray = ["dep:ksni", "dep:tao", "dep:tray-icon"]
 otlp = [
     "observability",
     "personal-rns/runtime-metrics",
@@ -108,6 +109,13 @@ opentelemetry = { version = "0.32", optional = true, default-features = false, f
 opentelemetry-otlp = { version = "0.32", optional = true, default-features = false, features = ["http-proto", "metrics", "reqwest-blocking-client", "reqwest-rustls-webpki-roots", "trace"] }
 opentelemetry_sdk = { version = "0.32", optional = true, default-features = false, features = ["metrics", "trace"] }
 tracing-opentelemetry = { version = "0.33", optional = true, default-features = false }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ksni = { version = "0.3.6", optional = true, default-features = false, features = ["blocking", "tokio"] }
+
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+tao = { version = "0.34", optional = true, default-features = false }
+tray-icon = { version = "0.21.3", optional = true, default-features = false }
 
 [profile.release]
 codegen-units = 1

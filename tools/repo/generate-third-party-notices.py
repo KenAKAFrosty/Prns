@@ -17,7 +17,9 @@ OUTPUT = ROOT / "THIRD_PARTY_NOTICES.md"
 ABOUT = ROOT / "about.toml"
 GRAPHS = (
     ("engine", "Cargo.toml", "x86_64-unknown-linux-gnu"),
-    ("daemon", "prnsd/Cargo.toml", "x86_64-unknown-linux-gnu"),
+    ("daemon Linux", "prnsd/Cargo.toml", "x86_64-unknown-linux-gnu"),
+    ("daemon macOS", "prnsd/Cargo.toml", "aarch64-apple-darwin"),
+    ("daemon Windows", "prnsd/Cargo.toml", "x86_64-pc-windows-msvc"),
     ("desktop Linux", "personal-hopspot/desktop/Cargo.toml", "x86_64-unknown-linux-gnu"),
     ("desktop macOS", "personal-hopspot/desktop/Cargo.toml", "aarch64-apple-darwin"),
     ("desktop Windows", "personal-hopspot/desktop/Cargo.toml", "x86_64-pc-windows-msvc"),

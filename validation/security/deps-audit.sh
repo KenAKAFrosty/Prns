@@ -14,7 +14,9 @@ fi
 
 graphs=(
     "engine|Cargo.toml|x86_64-unknown-linux-gnu"
-    "daemon|prnsd/Cargo.toml|x86_64-unknown-linux-gnu"
+    "daemon-linux|prnsd/Cargo.toml|x86_64-unknown-linux-gnu"
+    "daemon-macos|prnsd/Cargo.toml|aarch64-apple-darwin"
+    "daemon-windows|prnsd/Cargo.toml|x86_64-pc-windows-msvc"
     "desktop-linux|personal-hopspot/desktop/Cargo.toml|x86_64-unknown-linux-gnu"
     "desktop-macos|personal-hopspot/desktop/Cargo.toml|aarch64-apple-darwin"
     "desktop-windows|personal-hopspot/desktop/Cargo.toml|x86_64-pc-windows-msvc"

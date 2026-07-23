@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tomllib
 from typing import Iterator
 
 
@@ -23,6 +24,8 @@ BASELINE = ROOT / "audits" / "unsafe-snapshot.json"
 GRAPHS = (
     ("engine", "Cargo.toml", "x86_64-unknown-linux-gnu"),
     ("daemon-linux", "prnsd/Cargo.toml", "x86_64-unknown-linux-gnu"),
+    ("daemon-macos", "prnsd/Cargo.toml", "aarch64-apple-darwin"),
+    ("daemon-windows", "prnsd/Cargo.toml", "x86_64-pc-windows-msvc"),
     ("desktop-linux", "personal-hopspot/desktop/Cargo.toml", "x86_64-unknown-linux-gnu"),
     ("desktop-macos", "personal-hopspot/desktop/Cargo.toml", "aarch64-apple-darwin"),
     ("desktop-windows", "personal-hopspot/desktop/Cargo.toml", "x86_64-pc-windows-msvc"),
@@ -47,7 +50,10 @@ GRAPHS = (
     ("wasm", "prns-wasm/Cargo.toml", "wasm32-unknown-unknown"),
 )
 UNSAFE_EXCEPTIONS = {
+    "prns-core",
     "prns-ffi",
+    "prns-runtime",
+    "prns-runtime-embassy",
     "personal-hopspot-android",
     "personal-hopspot-ios",
     "t-echo",
@@ -200,10 +206,9 @@ def assert_first_party_policy(package: dict, manifest_path: Path) -> None:
     name = package["name"]
     targets = [target for target in package["targets"] if target["kind"][0] in {"lib", "bin", "cdylib", "staticlib"}]
     if name in UNSAFE_EXCEPTIONS:
-        manifest = manifest_path.read_text(encoding="utf-8")
-        if 'unsafe_op_in_unsafe_fn = "deny"' not in manifest:
+        if not lint_policy_declared(manifest_path, "rust", "unsafe_op_in_unsafe_fn"):
             raise RuntimeError(f"unsafe exception {name} does not deny unsafe_op_in_unsafe_fn")
-        if 'undocumented_unsafe_blocks = "deny"' not in manifest:
+        if not lint_policy_declared(manifest_path, "clippy", "undocumented_unsafe_blocks"):
             raise RuntimeError(f"unsafe exception {name} does not deny undocumented unsafe blocks")
         return
     for target in targets:
@@ -211,6 +216,25 @@ def assert_first_party_policy(package: dict, manifest_path: Path) -> None:
         if "#![forbid(unsafe_code)]" not in source:
             relative = Path(target["src_path"]).relative_to(ROOT)
             raise RuntimeError(f"shipped first-party target lacks forbid(unsafe_code): {relative}")
+
+
+def lint_policy_declared(manifest_path: Path, group: str, lint: str) -> bool:
+    """Accept an explicit lint or a workspace lint the package actually inherits."""
+    manifest = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
+    lints = manifest.get("lints", {})
+    if lints.get(group, {}).get(lint) == "deny":
+        return True
+    if lints.get("workspace") is not True:
+        return False
+
+    for directory in manifest_path.parents:
+        candidate = directory / "Cargo.toml"
+        if not candidate.is_file():
+            continue
+        workspace = tomllib.loads(candidate.read_text(encoding="utf-8")).get("workspace")
+        if workspace is not None:
+            return workspace.get("lints", {}).get(group, {}).get(lint) == "deny"
+    return False
 
 
 def build_snapshot() -> dict:

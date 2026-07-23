@@ -47,3 +47,6 @@ unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
 significant_drop_in_scrutinee = "warn"
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"

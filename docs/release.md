@@ -57,6 +57,21 @@ reattach without starting another process, and Ctrl-C detaches without stopping
 the daemon. Set `PRNSD_STATE_DIR` to create an isolated session for testing or
 advanced multi-instance use.
 
+Release builds include the default `tray` feature. Once the daemon is ready,
+the Prns mark appears in the macOS, Windows, or Linux system tray with a
+`Stop prnsd` action. That action uses the normal graceful shutdown path,
+including the final persistence flush. A missing desktop session or Linux
+StatusNotifier watcher only disables the tray and records `tray_unavailable`;
+it does not prevent `prnsd` from running.
+
+Native service packages and other deliberately headless builds can omit the UI
+dependencies:
+
+```sh
+cargo build --manifest-path prnsd/Cargo.toml --release --no-default-features \
+  --features tokio-host,observability
+```
+
 The default state directories are:
 
 - Linux: `${XDG_STATE_HOME:-~/.local/state}/prnsd`

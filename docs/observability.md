@@ -95,6 +95,12 @@ RUST_LOG=debug,prns.runtime=info cargo prnsd restart
 
 The built executable accepts the same lifecycle commands without Cargo. `prnsd run` is the explicit foreground mode for terminals and future native service managers. The portable managed session survives terminal exit, but does not start at login or boot and does not restart after a crash.
 
+The default `tray` feature publishes the Prns mark after daemon readiness on macOS, Windows, and
+Linux. Its `Stop prnsd` menu action enters the same graceful persistence and background-task
+shutdown path as `prnsd stop`. Tray setup is best-effort: headless sessions continue normally and
+emit `tray_unavailable` when the platform tray service is absent. Service-oriented builds can omit
+it with `--no-default-features --features tokio-host,observability`.
+
 OTLP metrics and traces are a non-default build feature. Export starts only when an endpoint is configured for that signal and `OTEL_SDK_DISABLED` is not `true`.
 
 The exporter uses OTLP/HTTP protobuf. `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` and `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` can replace the common endpoint per signal. `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_TRACES_SAMPLER`, and `OTEL_SDK_DISABLED` are also honored.
@@ -113,7 +119,7 @@ Structured events remain on stderr for journald, Grafana Alloy, Vector, Fluent B
 | `tracing` | Structured Tokio events and bounded operation spans | Provides fields, context, filtering, JSON output, and sampled OTLP traces |
 | `runtime-metrics` | Exact cumulative counters, gauges, and snapshots | Remains unsampled and exporter-independent |
 
-The default `prnsd/observability` feature provides human or JSON output and bridges portable `log` records into the tracing subscriber, giving the daemon one local output path rather than duplicate streams. The non-default `prnsd/otlp` feature additionally enables runtime metrics and OTLP metric and trace export. Logs remain on stderr.
+The default `prnsd/observability` feature provides human or JSON output and bridges portable `log` records into the tracing subscriber, giving the daemon one local output path rather than duplicate streams. The independent default `prnsd/tray` feature provides the system-tray integration described above. The non-default `prnsd/otlp` feature additionally enables runtime metrics and OTLP metric and trace export. Logs remain on stderr.
 
 There is no span per packet, frame, crypto operation, or resource segment. Spans cover bounded calls such as requests, sends, links, resources, persistence, and individual interface connection attempts.
 

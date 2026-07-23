@@ -12,6 +12,16 @@
       "target": "x86_64-unknown-linux-gnu"
     },
     {
+      "manifest": "prnsd/Cargo.toml",
+      "name": "daemon-macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "manifest": "prnsd/Cargo.toml",
+      "name": "daemon-windows",
+      "target": "x86_64-pc-windows-msvc"
+    },
+    {
       "manifest": "personal-hopspot/desktop/Cargo.toml",
       "name": "desktop-linux",
       "target": "x86_64-unknown-linux-gnu"
@@ -80,6 +90,7 @@
     },
     {
       "graphs": {
+        "daemon-macos": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -102,6 +113,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -146,6 +159,12 @@
           "std"
         ],
         "daemon-linux": [
+          "std"
+        ],
+        "daemon-macos": [
+          "std"
+        ],
+        "daemon-windows": [
           "std"
         ],
         "desktop-linux": [
@@ -257,6 +276,16 @@
           "auto",
           "default",
           "wincon"
+        ],
+        "daemon-macos": [
+          "auto",
+          "default",
+          "wincon"
+        ],
+        "daemon-windows": [
+          "auto",
+          "default",
+          "wincon"
         ]
       },
       "name": "anstream",
@@ -273,6 +302,14 @@
     {
       "graphs": {
         "daemon-linux": [
+          "default",
+          "std"
+        ],
+        "daemon-macos": [
+          "default",
+          "std"
+        ],
+        "daemon-windows": [
           "default",
           "std"
         ]
@@ -293,6 +330,14 @@
         "daemon-linux": [
           "default",
           "utf8"
+        ],
+        "daemon-macos": [
+          "default",
+          "utf8"
+        ],
+        "daemon-windows": [
+          "default",
+          "utf8"
         ]
       },
       "name": "anstyle-parse",
@@ -308,7 +353,9 @@
     },
     {
       "graphs": {
-        "daemon-linux": []
+        "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": []
       },
       "name": "anstyle-query",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -323,6 +370,22 @@
     },
     {
       "graphs": {
+        "daemon-windows": []
+      },
+      "name": "anstyle-wincon",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 2,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 2
+      },
+      "version": "3.0.11"
+    },
+    {
+      "graphs": {
+        "daemon-linux": [],
         "desktop-linux": []
       },
       "name": "async-broadcast",
@@ -338,6 +401,7 @@
     },
     {
       "graphs": {
+        "daemon-linux": [],
         "desktop-linux": []
       },
       "name": "async-recursion",
@@ -353,7 +417,9 @@
     },
     {
       "graphs": {
-        "daemon-linux": []
+        "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": []
       },
       "name": "async-trait",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -385,6 +451,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -476,6 +544,16 @@
     {
       "graphs": {
         "daemon-linux": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "daemon-macos": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "daemon-windows": [
           "alloc",
           "default",
           "std"
@@ -630,7 +708,15 @@
     {
       "graphs": {
         "android": [],
-        "daemon-linux": [],
+        "daemon-linux": [
+          "default"
+        ],
+        "daemon-macos": [
+          "default"
+        ],
+        "daemon-windows": [
+          "default"
+        ],
         "desktop-linux": [
           "default"
         ],
@@ -678,6 +764,18 @@
     {
       "graphs": {
         "daemon-linux": [
+          "serde",
+          "serde_core",
+          "std"
+        ],
+        "daemon-macos": [
+          "serde",
+          "serde_core",
+          "std"
+        ],
+        "daemon-windows": [
+          "serde",
+          "serde_core",
           "std"
         ],
         "esp32-c6": [
@@ -743,6 +841,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -769,6 +869,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -795,6 +897,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -819,6 +923,29 @@
     },
     {
       "graphs": {
+        "daemon-macos": [
+          "alloc",
+          "std"
+        ]
+      },
+      "name": "block2",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 42,
+        "externs": 23,
+        "functions": 6,
+        "impls": 6,
+        "tokens": 79
+      },
+      "version": "0.5.1"
+    },
+    {
+      "graphs": {
+        "daemon-macos": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "desktop-macos": [
           "alloc",
           "default",
@@ -919,6 +1046,12 @@
         "daemon-linux": [
           "uuid"
         ],
+        "daemon-macos": [
+          "uuid"
+        ],
+        "daemon-windows": [
+          "uuid"
+        ],
         "desktop-linux": [
           "uuid"
         ],
@@ -951,7 +1084,9 @@
     },
     {
       "graphs": {
-        "daemon-linux": []
+        "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": []
       },
       "name": "btleplug",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -970,6 +1105,12 @@
           "uuid"
         ],
         "daemon-linux": [
+          "uuid"
+        ],
+        "daemon-macos": [
+          "uuid"
+        ],
+        "daemon-windows": [
           "uuid"
         ],
         "desktop-linux": [
@@ -1072,6 +1213,14 @@
           "default",
           "std"
         ],
+        "daemon-macos": [
+          "default",
+          "std"
+        ],
+        "daemon-windows": [
+          "default",
+          "std"
+        ],
         "desktop-linux": [
           "default",
           "std"
@@ -1136,6 +1285,14 @@
           "std"
         ],
         "daemon-linux": [
+          "default",
+          "std"
+        ],
+        "daemon-macos": [
+          "default",
+          "std"
+        ],
+        "daemon-windows": [
           "default",
           "std"
         ],
@@ -1205,6 +1362,12 @@
         "daemon-linux": [
           "default"
         ],
+        "daemon-macos": [
+          "default"
+        ],
+        "daemon-windows": [
+          "default"
+        ],
         "desktop-linux": [
           "default"
         ],
@@ -1247,6 +1410,12 @@
           "block-padding"
         ],
         "daemon-linux": [
+          "block-padding"
+        ],
+        "daemon-macos": [
+          "block-padding"
+        ],
+        "daemon-windows": [
           "block-padding"
         ],
         "desktop-linux": [
@@ -1327,6 +1496,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -1352,6 +1523,7 @@
     {
       "graphs": {
         "daemon-linux": [],
+        "daemon-macos": [],
         "desktop-linux": []
       },
       "name": "cfg_aliases",
@@ -1371,6 +1543,12 @@
           "block-padding"
         ],
         "daemon-linux": [
+          "block-padding"
+        ],
+        "daemon-macos": [
+          "block-padding"
+        ],
+        "daemon-windows": [
           "block-padding"
         ],
         "desktop-linux": [
@@ -1426,6 +1604,26 @@
           "std",
           "suggestions",
           "usage"
+        ],
+        "daemon-macos": [
+          "color",
+          "default",
+          "derive",
+          "error-context",
+          "help",
+          "std",
+          "suggestions",
+          "usage"
+        ],
+        "daemon-windows": [
+          "color",
+          "default",
+          "derive",
+          "error-context",
+          "help",
+          "std",
+          "suggestions",
+          "usage"
         ]
       },
       "name": "clap",
@@ -1442,6 +1640,22 @@
     {
       "graphs": {
         "daemon-linux": [
+          "color",
+          "error-context",
+          "help",
+          "std",
+          "suggestions",
+          "usage"
+        ],
+        "daemon-macos": [
+          "color",
+          "error-context",
+          "help",
+          "std",
+          "suggestions",
+          "usage"
+        ],
+        "daemon-windows": [
           "color",
           "error-context",
           "help",
@@ -1465,6 +1679,12 @@
       "graphs": {
         "daemon-linux": [
           "default"
+        ],
+        "daemon-macos": [
+          "default"
+        ],
+        "daemon-windows": [
+          "default"
         ]
       },
       "name": "clap_derive",
@@ -1480,7 +1700,9 @@
     },
     {
       "graphs": {
-        "daemon-linux": []
+        "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": []
       },
       "name": "clap_lex",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -1514,6 +1736,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -1538,7 +1762,9 @@
     },
     {
       "graphs": {
-        "daemon-linux": []
+        "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": []
       },
       "name": "colorchoice",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -1573,6 +1799,9 @@
     },
     {
       "graphs": {
+        "daemon-linux": [
+          "std"
+        ],
         "desktop-linux": [
           "std"
         ]
@@ -1624,6 +1853,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -1674,6 +1905,10 @@
     },
     {
       "graphs": {
+        "daemon-macos": [
+          "default",
+          "link"
+        ],
         "desktop-macos": [
           "default",
           "link"
@@ -1692,6 +1927,9 @@
     },
     {
       "graphs": {
+        "daemon-macos": [
+          "link"
+        ],
         "desktop-macos": [
           "default",
           "link"
@@ -1707,6 +1945,41 @@
         "tokens": 13
       },
       "version": "0.8.7"
+    },
+    {
+      "graphs": {
+        "daemon-macos": [
+          "default",
+          "link"
+        ]
+      },
+      "name": "core-graphics",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 212,
+        "externs": 17,
+        "functions": 6,
+        "impls": 0,
+        "tokens": 245
+      },
+      "version": "0.25.0"
+    },
+    {
+      "graphs": {
+        "daemon-macos": [
+          "link"
+        ]
+      },
+      "name": "core-graphics-types",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 9,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 9
+      },
+      "version": "0.2.0"
     },
     {
       "graphs": {
@@ -1761,6 +2034,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -1782,6 +2057,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -1806,6 +2083,14 @@
           "std"
         ],
         "daemon-linux": [
+          "default",
+          "std"
+        ],
+        "daemon-macos": [
+          "default",
+          "std"
+        ],
+        "daemon-windows": [
           "default",
           "std"
         ],
@@ -1861,6 +2146,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -1913,7 +2200,57 @@
     },
     {
       "graphs": {
+        "daemon-macos": [
+          "default",
+          "std"
+        ],
+        "daemon-windows": [
+          "default",
+          "std"
+        ]
+      },
+      "name": "crossbeam-channel",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 43,
+        "externs": 0,
+        "functions": 18,
+        "impls": 7,
+        "tokens": 68
+      },
+      "version": "0.5.16"
+    },
+    {
+      "graphs": {
+        "android": [
+          "default",
+          "std"
+        ],
         "daemon-linux": [
+          "default",
+          "std"
+        ],
+        "daemon-macos": [
+          "default",
+          "std"
+        ],
+        "daemon-windows": [
+          "default",
+          "std"
+        ],
+        "desktop-linux": [
+          "default",
+          "std"
+        ],
+        "desktop-macos": [
+          "default",
+          "std"
+        ],
+        "desktop-windows": [
+          "default",
+          "std"
+        ],
+        "ios": [
           "default",
           "std"
         ]
@@ -1931,7 +2268,35 @@
     },
     {
       "graphs": {
+        "android": [
+          "alloc",
+          "std"
+        ],
         "daemon-linux": [
+          "alloc",
+          "std"
+        ],
+        "daemon-macos": [
+          "alloc",
+          "std"
+        ],
+        "daemon-windows": [
+          "alloc",
+          "std"
+        ],
+        "desktop-linux": [
+          "alloc",
+          "std"
+        ],
+        "desktop-macos": [
+          "alloc",
+          "std"
+        ],
+        "desktop-windows": [
+          "alloc",
+          "std"
+        ],
+        "ios": [
           "alloc",
           "std"
         ]
@@ -1949,13 +2314,20 @@
     },
     {
       "graphs": {
+        "android": [
+          "default",
+          "std"
+        ],
         "desktop-linux": [
+          "default",
           "std"
         ],
         "desktop-macos": [
+          "default",
           "std"
         ],
         "desktop-windows": [
+          "default",
           "std"
         ]
       },
@@ -1973,6 +2345,18 @@
     {
       "graphs": {
         "daemon-linux": [
+          "default",
+          "std"
+        ],
+        "daemon-macos": [
+          "default",
+          "std"
+        ],
+        "daemon-windows": [
+          "default",
+          "std"
+        ],
+        "ios": [
           "default",
           "std"
         ]
@@ -1994,6 +2378,12 @@
           "std"
         ],
         "daemon-linux": [
+          "std"
+        ],
+        "daemon-macos": [
+          "std"
+        ],
+        "daemon-windows": [
           "std"
         ],
         "desktop-linux": [],
@@ -2024,6 +2414,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -2050,6 +2442,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -2080,6 +2474,16 @@
           "zeroize"
         ],
         "daemon-linux": [
+          "digest",
+          "precomputed-tables",
+          "zeroize"
+        ],
+        "daemon-macos": [
+          "digest",
+          "precomputed-tables",
+          "zeroize"
+        ],
+        "daemon-windows": [
           "digest",
           "precomputed-tables",
           "zeroize"
@@ -2149,6 +2553,7 @@
     {
       "graphs": {
         "daemon-linux": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-windows": [],
         "engine": []
@@ -2224,6 +2629,14 @@
           "default",
           "suggestions"
         ],
+        "daemon-macos": [
+          "default",
+          "suggestions"
+        ],
+        "daemon-windows": [
+          "default",
+          "suggestions"
+        ],
         "desktop-linux": [
           "default",
           "suggestions"
@@ -2335,6 +2748,14 @@
           "strsim",
           "suggestions"
         ],
+        "daemon-macos": [
+          "strsim",
+          "suggestions"
+        ],
+        "daemon-windows": [
+          "strsim",
+          "suggestions"
+        ],
         "desktop-linux": [
           "strsim",
           "suggestions"
@@ -2437,6 +2858,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -2492,7 +2915,9 @@
     },
     {
       "graphs": {
-        "daemon-linux": []
+        "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": []
       },
       "name": "dashmap",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -2508,6 +2933,16 @@
     {
       "graphs": {
         "daemon-linux": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "daemon-macos": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "daemon-windows": [
           "alloc",
           "default",
           "std"
@@ -2602,6 +3037,12 @@
         "daemon-linux": [
           "default"
         ],
+        "daemon-macos": [
+          "default"
+        ],
+        "daemon-windows": [
+          "default"
+        ],
         "desktop-macos": [
           "default"
         ],
@@ -2630,6 +3071,20 @@
           "std"
         ],
         "daemon-linux": [
+          "alloc",
+          "block-buffer",
+          "core-api",
+          "default",
+          "std"
+        ],
+        "daemon-macos": [
+          "alloc",
+          "block-buffer",
+          "core-api",
+          "default",
+          "std"
+        ],
+        "daemon-windows": [
           "alloc",
           "block-buffer",
           "core-api",
@@ -2712,6 +3167,16 @@
           "default",
           "mac"
         ],
+        "daemon-macos": [
+          "block-api",
+          "default",
+          "mac"
+        ],
+        "daemon-windows": [
+          "block-api",
+          "default",
+          "mac"
+        ],
         "desktop-linux": [
           "block-api",
           "default",
@@ -2778,6 +3243,14 @@
     },
     {
       "graphs": {
+        "daemon-macos": [
+          "alloc",
+          "block2",
+          "default",
+          "libc",
+          "objc2",
+          "std"
+        ],
         "desktop-macos": [
           "alloc",
           "block2",
@@ -2864,6 +3337,14 @@
           "default",
           "std"
         ],
+        "daemon-macos": [
+          "default",
+          "std"
+        ],
+        "daemon-windows": [
+          "default",
+          "std"
+        ],
         "desktop-linux": [
           "default",
           "std"
@@ -2937,6 +3418,12 @@
         "daemon-linux": [
           "default"
         ],
+        "daemon-macos": [
+          "default"
+        ],
+        "daemon-windows": [
+          "default"
+        ],
         "desktop-linux": [
           "default"
         ],
@@ -2975,6 +3462,14 @@
     },
     {
       "graphs": {
+        "daemon-macos": [
+          "default",
+          "std"
+        ],
+        "daemon-windows": [
+          "default",
+          "std"
+        ],
         "desktop-macos": [
           "default",
           "std"
@@ -2999,6 +3494,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -3028,6 +3525,14 @@
           "zeroize"
         ],
         "daemon-linux": [
+          "fast",
+          "zeroize"
+        ],
+        "daemon-macos": [
+          "fast",
+          "zeroize"
+        ],
+        "daemon-windows": [
           "fast",
           "zeroize"
         ],
@@ -3085,10 +3590,23 @@
     },
     {
       "graphs": {
+        "android": [],
         "daemon-linux": [
           "std",
           "use_std"
-        ]
+        ],
+        "daemon-macos": [
+          "std",
+          "use_std"
+        ],
+        "daemon-windows": [
+          "std",
+          "use_std"
+        ],
+        "desktop-linux": [],
+        "desktop-macos": [],
+        "desktop-windows": [],
+        "ios": []
       },
       "name": "either",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -3191,6 +3709,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -3257,6 +3777,20 @@
           "udp"
         ],
         "daemon-linux": [
+          "medium-ethernet",
+          "multicast",
+          "proto-ipv6",
+          "tcp",
+          "udp"
+        ],
+        "daemon-macos": [
+          "medium-ethernet",
+          "multicast",
+          "proto-ipv6",
+          "tcp",
+          "udp"
+        ],
+        "daemon-windows": [
           "medium-ethernet",
           "multicast",
           "proto-ipv6",
@@ -3334,6 +3868,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -3358,6 +3894,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -3423,6 +3961,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -3445,6 +3985,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -3469,6 +4011,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -3493,6 +4037,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -3543,6 +4089,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -3569,6 +4117,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -3752,6 +4302,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -3784,6 +4336,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -3808,6 +4362,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -3855,6 +4411,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -3878,6 +4436,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -3902,6 +4462,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -3925,6 +4487,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -3949,6 +4513,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -3972,6 +4538,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -3993,9 +4561,15 @@
     },
     {
       "graphs": {
+        "android": [],
+        "desktop-linux": [],
+        "desktop-macos": [],
+        "desktop-windows": [],
+        "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-tbeam": [],
+        "ios": [],
         "nrf52840": []
       },
       "name": "embedded-storage",
@@ -4044,6 +4618,10 @@
     },
     {
       "graphs": {
+        "daemon-linux": [
+          "default",
+          "std"
+        ],
         "desktop-linux": [
           "default",
           "std"
@@ -4062,6 +4640,9 @@
     },
     {
       "graphs": {
+        "daemon-linux": [
+          "serde"
+        ],
         "desktop-linux": [
           "serde"
         ]
@@ -4079,6 +4660,7 @@
     },
     {
       "graphs": {
+        "daemon-linux": [],
         "desktop-linux": []
       },
       "name": "enumflags2_derive",
@@ -4164,6 +4746,8 @@
     },
     {
       "graphs": {
+        "daemon-linux": [],
+        "daemon-macos": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "esp32-c6": [],
@@ -4189,6 +4773,10 @@
           "std"
         ],
         "daemon-linux": [
+          "default",
+          "std"
+        ],
+        "daemon-macos": [
           "default",
           "std"
         ],
@@ -4984,6 +5572,11 @@
     },
     {
       "graphs": {
+        "daemon-linux": [
+          "default",
+          "parking",
+          "std"
+        ],
         "desktop-linux": [
           "default",
           "parking",
@@ -5003,6 +5596,10 @@
     },
     {
       "graphs": {
+        "daemon-linux": [
+          "default",
+          "std"
+        ],
         "desktop-linux": [
           "default",
           "std"
@@ -5022,6 +5619,16 @@
     {
       "graphs": {
         "daemon-linux": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "daemon-macos": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "daemon-windows": [
           "alloc",
           "default",
           "std"
@@ -5064,6 +5671,7 @@
     },
     {
       "graphs": {
+        "daemon-macos": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": []
@@ -5113,6 +5721,12 @@
     },
     {
       "graphs": {
+        "daemon-macos": [
+          "any_impl",
+          "default",
+          "miniz_oxide",
+          "rust_backend"
+        ],
         "desktop-linux": [
           "any_impl",
           "default",
@@ -5228,6 +5842,16 @@
           "async",
           "futures-core",
           "futures-sink"
+        ],
+        "daemon-macos": [
+          "async",
+          "futures-core",
+          "futures-sink"
+        ],
+        "daemon-windows": [
+          "async",
+          "futures-core",
+          "futures-sink"
         ]
       },
       "name": "flume",
@@ -5248,6 +5872,14 @@
           "std"
         ],
         "daemon-linux": [
+          "default",
+          "std"
+        ],
+        "daemon-macos": [
+          "default",
+          "std"
+        ],
+        "daemon-windows": [
           "default",
           "std"
         ],
@@ -5297,7 +5929,65 @@
     },
     {
       "graphs": {
+        "daemon-macos": [
+          "default",
+          "std"
+        ]
+      },
+      "name": "foreign-types",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 2,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 4
+      },
+      "version": "0.5.0"
+    },
+    {
+      "graphs": {
+        "daemon-macos": [
+          "std"
+        ]
+      },
+      "name": "foreign-types-macros",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 5,
+        "externs": 0,
+        "functions": 1,
+        "impls": 4,
+        "tokens": 11
+      },
+      "version": "0.2.4"
+    },
+    {
+      "graphs": {
+        "daemon-macos": []
+      },
+      "name": "foreign-types-shared",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 3,
+        "impls": 0,
+        "tokens": 5
+      },
+      "version": "0.3.1"
+    },
+    {
+      "graphs": {
         "daemon-linux": [
+          "alloc",
+          "std"
+        ],
+        "daemon-macos": [
+          "alloc",
+          "std"
+        ],
+        "daemon-windows": [
           "alloc",
           "std"
         ]
@@ -5347,6 +6037,22 @@
           "std"
         ],
         "daemon-linux": [
+          "alloc",
+          "async-await",
+          "default",
+          "executor",
+          "futures-executor",
+          "std"
+        ],
+        "daemon-macos": [
+          "alloc",
+          "async-await",
+          "default",
+          "executor",
+          "futures-executor",
+          "std"
+        ],
+        "daemon-windows": [
           "alloc",
           "async-await",
           "default",
@@ -5438,6 +6144,20 @@
           "sink",
           "std"
         ],
+        "daemon-macos": [
+          "alloc",
+          "default",
+          "futures-sink",
+          "sink",
+          "std"
+        ],
+        "daemon-windows": [
+          "alloc",
+          "default",
+          "futures-sink",
+          "sink",
+          "std"
+        ],
         "desktop-linux": [
           "alloc",
           "default",
@@ -5518,6 +6238,16 @@
           "default",
           "std"
         ],
+        "daemon-macos": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "daemon-windows": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "desktop-linux": [
           "alloc",
           "default",
@@ -5584,6 +6314,15 @@
           "std"
         ],
         "daemon-linux": [
+          "default",
+          "std"
+        ],
+        "daemon-macos": [
+          "default",
+          "std"
+        ],
+        "daemon-windows": [
+          "default",
           "std"
         ],
         "desktop-linux": [
@@ -5630,6 +6369,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -5655,6 +6396,15 @@
           "std"
         ],
         "daemon-linux": [
+          "default",
+          "std"
+        ],
+        "daemon-macos": [
+          "default",
+          "std"
+        ],
+        "daemon-windows": [
+          "default",
           "std"
         ],
         "desktop-linux": [
@@ -5701,6 +6451,13 @@
     },
     {
       "graphs": {
+        "daemon-linux": [
+          "alloc",
+          "fastrand",
+          "futures-io",
+          "parking",
+          "std"
+        ],
         "desktop-linux": [
           "alloc",
           "fastrand",
@@ -5724,6 +6481,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -5753,6 +6512,16 @@
           "std"
         ],
         "daemon-linux": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "daemon-macos": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "daemon-windows": [
           "alloc",
           "default",
           "std"
@@ -5809,6 +6578,14 @@
           "std"
         ],
         "daemon-linux": [
+          "alloc",
+          "std"
+        ],
+        "daemon-macos": [
+          "alloc",
+          "std"
+        ],
+        "daemon-windows": [
           "alloc",
           "std"
         ],
@@ -5904,6 +6681,39 @@
           "async-await",
           "async-await-macro",
           "channel",
+          "default",
+          "futures-channel",
+          "futures-io",
+          "futures-macro",
+          "futures-sink",
+          "io",
+          "memchr",
+          "sink",
+          "slab",
+          "std"
+        ],
+        "daemon-macos": [
+          "alloc",
+          "async-await",
+          "async-await-macro",
+          "channel",
+          "default",
+          "futures-channel",
+          "futures-io",
+          "futures-macro",
+          "futures-sink",
+          "io",
+          "memchr",
+          "sink",
+          "slab",
+          "std"
+        ],
+        "daemon-windows": [
+          "alloc",
+          "async-await",
+          "async-await-macro",
+          "channel",
+          "default",
           "futures-channel",
           "futures-io",
           "futures-macro",
@@ -6087,6 +6897,12 @@
         "daemon-linux": [
           "more_lengths"
         ],
+        "daemon-macos": [
+          "more_lengths"
+        ],
+        "daemon-windows": [
+          "more_lengths"
+        ],
         "desktop-linux": [
           "more_lengths"
         ],
@@ -6134,7 +6950,15 @@
         "android": [
           "std"
         ],
-        "daemon-linux": [],
+        "daemon-linux": [
+          "std"
+        ],
+        "daemon-macos": [
+          "std"
+        ],
+        "daemon-windows": [
+          "std"
+        ],
         "desktop-linux": [
           "std"
         ],
@@ -6164,6 +6988,12 @@
     {
       "graphs": {
         "daemon-linux": [
+          "std"
+        ],
+        "daemon-macos": [
+          "std"
+        ],
+        "daemon-windows": [
           "std"
         ],
         "engine": [
@@ -6200,6 +7030,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -6238,6 +7070,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -6283,6 +7117,12 @@
       "graphs": {
         "daemon-linux": [
           "raw"
+        ],
+        "daemon-macos": [
+          "raw"
+        ],
+        "daemon-windows": [
+          "raw"
         ]
       },
       "name": "hashbrown",
@@ -6298,6 +7138,8 @@
     },
     {
       "graphs": {
+        "daemon-linux": [],
+        "daemon-macos": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "esp32-c6": [],
@@ -6320,6 +7162,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -6346,6 +7190,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -6392,6 +7238,8 @@
     {
       "graphs": {
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
@@ -6436,6 +7284,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -6462,6 +7312,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -6486,7 +7338,9 @@
     },
     {
       "graphs": {
-        "daemon-linux": []
+        "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": []
       },
       "name": "home",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -6549,6 +7403,14 @@
         "daemon-linux": [
           "default",
           "std"
+        ],
+        "daemon-macos": [
+          "default",
+          "std"
+        ],
+        "daemon-windows": [
+          "default",
+          "std"
         ]
       },
       "name": "http",
@@ -6565,6 +7427,14 @@
     {
       "graphs": {
         "daemon-linux": [
+          "default",
+          "std"
+        ],
+        "daemon-macos": [
+          "default",
+          "std"
+        ],
+        "daemon-windows": [
           "default",
           "std"
         ]
@@ -6584,6 +7454,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
@@ -6622,7 +7494,9 @@
     },
     {
       "graphs": {
-        "daemon-linux": []
+        "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": []
       },
       "name": "icu_collections",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -6638,6 +7512,12 @@
     {
       "graphs": {
         "daemon-linux": [
+          "zerovec"
+        ],
+        "daemon-macos": [
+          "zerovec"
+        ],
+        "daemon-windows": [
           "zerovec"
         ]
       },
@@ -6656,6 +7536,12 @@
       "graphs": {
         "daemon-linux": [
           "compiled_data"
+        ],
+        "daemon-macos": [
+          "compiled_data"
+        ],
+        "daemon-windows": [
+          "compiled_data"
         ]
       },
       "name": "icu_normalizer",
@@ -6671,7 +7557,9 @@
     },
     {
       "graphs": {
-        "daemon-linux": []
+        "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": []
       },
       "name": "icu_normalizer_data",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -6688,6 +7576,12 @@
       "graphs": {
         "daemon-linux": [
           "compiled_data"
+        ],
+        "daemon-macos": [
+          "compiled_data"
+        ],
+        "daemon-windows": [
+          "compiled_data"
         ]
       },
       "name": "icu_properties",
@@ -6703,7 +7597,9 @@
     },
     {
       "graphs": {
-        "daemon-linux": []
+        "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": []
       },
       "name": "icu_properties_data",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -6719,6 +7615,12 @@
     {
       "graphs": {
         "daemon-linux": [
+          "baked"
+        ],
+        "daemon-macos": [
+          "baked"
+        ],
+        "daemon-windows": [
           "baked"
         ]
       },
@@ -6737,6 +7639,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -6762,6 +7666,16 @@
           "alloc",
           "compiled_data",
           "std"
+        ],
+        "daemon-macos": [
+          "alloc",
+          "compiled_data",
+          "std"
+        ],
+        "daemon-windows": [
+          "alloc",
+          "compiled_data",
+          "std"
         ]
       },
       "name": "idna",
@@ -6778,6 +7692,12 @@
     {
       "graphs": {
         "daemon-linux": [
+          "compiled_data"
+        ],
+        "daemon-macos": [
+          "compiled_data"
+        ],
+        "daemon-windows": [
           "compiled_data"
         ]
       },
@@ -6796,6 +7716,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -6818,6 +7740,12 @@
     {
       "graphs": {
         "daemon-linux": [
+          "link-local"
+        ],
+        "daemon-macos": [
+          "link-local"
+        ],
+        "daemon-windows": [
           "link-local"
         ]
       },
@@ -6857,6 +7785,14 @@
     },
     {
       "graphs": {
+        "daemon-linux": [
+          "default",
+          "std"
+        ],
+        "daemon-macos": [
+          "default",
+          "std"
+        ],
         "desktop-linux": [
           "default",
           "std"
@@ -6916,6 +7852,12 @@
           "block-padding"
         ],
         "daemon-linux": [
+          "block-padding"
+        ],
+        "daemon-macos": [
+          "block-padding"
+        ],
+        "daemon-windows": [
           "block-padding"
         ],
         "desktop-linux": [
@@ -7002,6 +7944,14 @@
           "default",
           "std"
         ],
+        "daemon-macos": [
+          "default",
+          "std"
+        ],
+        "daemon-windows": [
+          "default",
+          "std"
+        ],
         "desktop-linux": [
           "default",
           "std"
@@ -7046,6 +7996,12 @@
       "graphs": {
         "daemon-linux": [
           "default"
+        ],
+        "daemon-macos": [
+          "default"
+        ],
+        "daemon-windows": [
+          "default"
         ]
       },
       "name": "is_terminal_polyfill",
@@ -7063,6 +8019,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": []
@@ -7100,6 +8058,8 @@
     {
       "graphs": {
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "engine": [],
         "esp32-c6": [],
@@ -7228,6 +8188,18 @@
     },
     {
       "graphs": {
+        "daemon-macos": [
+          "default",
+          "serde",
+          "unicode-segmentation",
+          "webdriver"
+        ],
+        "daemon-windows": [
+          "default",
+          "serde",
+          "unicode-segmentation",
+          "webdriver"
+        ],
         "desktop-macos": [
           "default",
           "serde",
@@ -7254,6 +8226,10 @@
     },
     {
       "graphs": {
+        "daemon-linux": [
+          "blocking",
+          "tokio"
+        ],
         "desktop-linux": [
           "blocking",
           "tokio"
@@ -7273,6 +8249,8 @@
     {
       "graphs": {
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": []
@@ -7294,6 +8272,12 @@
           "rust-allocator"
         ],
         "daemon-linux": [
+          "rust-allocator"
+        ],
+        "daemon-macos": [
+          "rust-allocator"
+        ],
+        "daemon-windows": [
           "rust-allocator"
         ],
         "desktop-linux": [
@@ -7340,6 +8324,16 @@
           "std"
         ],
         "daemon-linux": [
+          "default",
+          "extra_traits",
+          "std"
+        ],
+        "daemon-macos": [
+          "default",
+          "extra_traits",
+          "std"
+        ],
+        "daemon-windows": [
           "default",
           "extra_traits",
           "std"
@@ -7463,8 +8457,13 @@
           "elf",
           "errno",
           "general",
+          "if_ether",
           "ioctl",
-          "no_std"
+          "net",
+          "netlink",
+          "no_std",
+          "prctl",
+          "xdp"
         ],
         "desktop-linux": [
           "auxvec",
@@ -7503,7 +8502,9 @@
     },
     {
       "graphs": {
-        "daemon-linux": []
+        "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": []
       },
       "name": "litemap",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -7520,6 +8521,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -7547,6 +8550,14 @@
           "default"
         ],
         "daemon-linux": [
+          "atomic_usize",
+          "default"
+        ],
+        "daemon-macos": [
+          "atomic_usize",
+          "default"
+        ],
+        "daemon-windows": [
           "atomic_usize",
           "default"
         ],
@@ -7589,12 +8600,15 @@
     {
       "graphs": {
         "esp32-c6": [
+          "release_max_level_info",
           "std"
         ],
         "esp32-s3-heltec": [
+          "release_max_level_info",
           "std"
         ],
         "esp32-s3-tbeam": [
+          "release_max_level_info",
           "std"
         ]
       },
@@ -7615,6 +8629,12 @@
           "std"
         ],
         "daemon-linux": [
+          "std"
+        ],
+        "daemon-macos": [
+          "std"
+        ],
+        "daemon-windows": [
           "std"
         ],
         "nrf52840": [
@@ -7662,6 +8682,14 @@
           "std"
         ],
         "daemon-linux": [
+          "default",
+          "std"
+        ],
+        "daemon-macos": [
+          "default",
+          "std"
+        ],
+        "daemon-windows": [
           "default",
           "std"
         ],
@@ -7752,6 +8780,12 @@
         "daemon-linux": [
           "map"
         ],
+        "daemon-macos": [
+          "map"
+        ],
+        "daemon-windows": [
+          "map"
+        ],
         "desktop-linux": [
           "map"
         ],
@@ -7832,6 +8866,8 @@
     {
       "graphs": {
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": []
@@ -7875,6 +8911,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": []
@@ -7893,6 +8931,18 @@
     {
       "graphs": {
         "daemon-linux": [
+          "async",
+          "default",
+          "log",
+          "logging"
+        ],
+        "daemon-macos": [
+          "async",
+          "default",
+          "log",
+          "logging"
+        ],
+        "daemon-windows": [
           "async",
           "default",
           "log",
@@ -7937,6 +8987,16 @@
           "std"
         ],
         "daemon-linux": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "daemon-macos": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "daemon-windows": [
           "alloc",
           "default",
           "std"
@@ -8033,6 +9093,12 @@
     },
     {
       "graphs": {
+        "daemon-macos": [
+          "default",
+          "simd",
+          "simd-adler32",
+          "with-alloc"
+        ],
         "desktop-linux": [
           "default",
           "simd",
@@ -8086,6 +9152,20 @@
           "os-poll"
         ],
         "daemon-linux": [
+          "default",
+          "log",
+          "net",
+          "os-ext",
+          "os-poll"
+        ],
+        "daemon-macos": [
+          "default",
+          "log",
+          "net",
+          "os-ext",
+          "os-poll"
+        ],
+        "daemon-windows": [
           "default",
           "log",
           "net",
@@ -8208,6 +9288,12 @@
     },
     {
       "graphs": {
+        "daemon-macos": [
+          "gtk"
+        ],
+        "daemon-windows": [
+          "gtk"
+        ],
         "desktop-macos": [
           "gtk"
         ],
@@ -8230,6 +9316,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -8262,6 +9350,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -8306,6 +9396,18 @@
           "gateway"
         ],
         "daemon-linux": [
+          "android-extra",
+          "apple-system-configuration-extra",
+          "default",
+          "gateway"
+        ],
+        "daemon-macos": [
+          "android-extra",
+          "apple-system-configuration-extra",
+          "default",
+          "gateway"
+        ],
+        "daemon-windows": [
           "android-extra",
           "apple-system-configuration-extra",
           "default",
@@ -8447,6 +9549,10 @@
         "daemon-linux": [
           "process",
           "signal"
+        ],
+        "daemon-macos": [
+          "process",
+          "signal"
         ]
       },
       "name": "nix",
@@ -8546,6 +9652,14 @@
           "default",
           "std"
         ],
+        "daemon-macos": [
+          "default",
+          "std"
+        ],
+        "daemon-windows": [
+          "default",
+          "std"
+        ],
         "desktop-linux": [
           "default",
           "std"
@@ -8580,6 +9694,14 @@
           "default",
           "std"
         ],
+        "daemon-macos": [
+          "default",
+          "std"
+        ],
+        "daemon-windows": [
+          "default",
+          "std"
+        ],
         "desktop-linux": [
           "default",
           "std"
@@ -8607,6 +9729,8 @@
     {
       "graphs": {
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-macos": [],
         "ios": []
       },
@@ -8650,6 +9774,14 @@
           "i128",
           "std"
         ],
+        "daemon-macos": [
+          "i128",
+          "std"
+        ],
+        "daemon-windows": [
+          "i128",
+          "std"
+        ],
         "desktop-linux": [
           "i128",
           "std"
@@ -8682,6 +9814,16 @@
           "std"
         ],
         "daemon-linux": [
+          "default",
+          "i128",
+          "std"
+        ],
+        "daemon-macos": [
+          "default",
+          "i128",
+          "std"
+        ],
+        "daemon-windows": [
           "default",
           "i128",
           "std"
@@ -8769,7 +9911,8 @@
     },
     {
       "graphs": {
-        "daemon-linux": []
+        "daemon-linux": [],
+        "daemon-macos": []
       },
       "name": "num_threads",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -8807,6 +9950,48 @@
     },
     {
       "graphs": {
+        "daemon-macos": [
+          "alloc",
+          "std"
+        ]
+      },
+      "name": "objc-sys",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 3,
+        "externs": 11,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 14
+      },
+      "version": "0.3.5"
+    },
+    {
+      "graphs": {
+        "daemon-macos": [
+          "alloc",
+          "default",
+          "std"
+        ]
+      },
+      "name": "objc2",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 520,
+        "externs": 24,
+        "functions": 111,
+        "impls": 247,
+        "tokens": 943
+      },
+      "version": "0.5.2"
+    },
+    {
+      "graphs": {
+        "daemon-macos": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "desktop-macos": [
           "alloc",
           "default",
@@ -8831,6 +10016,34 @@
     },
     {
       "graphs": {
+        "daemon-macos": [
+          "NSApplication",
+          "NSButton",
+          "NSCell",
+          "NSColor",
+          "NSControl",
+          "NSEvent",
+          "NSGraphics",
+          "NSImage",
+          "NSMenu",
+          "NSMenuItem",
+          "NSOpenGLView",
+          "NSPasteboard",
+          "NSResponder",
+          "NSRunningApplication",
+          "NSScreen",
+          "NSStatusBar",
+          "NSStatusBarButton",
+          "NSStatusItem",
+          "NSTrackingArea",
+          "NSUserActivity",
+          "NSView",
+          "NSWindow",
+          "alloc",
+          "bitflags",
+          "objc2-core-foundation",
+          "std"
+        ],
         "desktop-macos": [
           "NSApplication",
           "NSButton",
@@ -8867,6 +10080,62 @@
     },
     {
       "graphs": {
+        "daemon-macos": [
+          "CBAdvertisementData",
+          "CBAttribute",
+          "CBCentralManager",
+          "CBCentralManagerConstants",
+          "CBCharacteristic",
+          "CBDescriptor",
+          "CBManager",
+          "CBPeer",
+          "CBPeripheral",
+          "CBService",
+          "CBUUID",
+          "alloc",
+          "bitflags",
+          "std"
+        ]
+      },
+      "name": "objc2-core-bluetooth",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 160,
+        "impls": 107,
+        "tokens": 270
+      },
+      "version": "0.2.2"
+    },
+    {
+      "graphs": {
+        "daemon-macos": [
+          "CBATTRequest",
+          "CBAdvertisementData",
+          "CBAttribute",
+          "CBCentral",
+          "CBCentralManager",
+          "CBCentralManagerConstants",
+          "CBCharacteristic",
+          "CBDefines",
+          "CBDescriptor",
+          "CBError",
+          "CBL2CAPChannel",
+          "CBManager",
+          "CBPeer",
+          "CBPeripheral",
+          "CBPeripheralManager",
+          "CBPeripheralManagerConstants",
+          "CBService",
+          "CBUUID",
+          "alloc",
+          "bitflags",
+          "default",
+          "dispatch2",
+          "objc2-core-foundation",
+          "std"
+        ],
         "desktop-macos": [
           "CBATTRequest",
           "CBAdvertisementData",
@@ -8933,6 +10202,61 @@
     },
     {
       "graphs": {
+        "daemon-macos": [
+          "CFArray",
+          "CFAttributedString",
+          "CFAvailability",
+          "CFBag",
+          "CFBinaryHeap",
+          "CFBitVector",
+          "CFBundle",
+          "CFByteOrder",
+          "CFCGTypes",
+          "CFCalendar",
+          "CFCharacterSet",
+          "CFData",
+          "CFDate",
+          "CFDateFormatter",
+          "CFDictionary",
+          "CFError",
+          "CFFileDescriptor",
+          "CFFileSecurity",
+          "CFLocale",
+          "CFMachPort",
+          "CFMessagePort",
+          "CFNotificationCenter",
+          "CFNumber",
+          "CFNumberFormatter",
+          "CFPlugIn",
+          "CFPlugInCOM",
+          "CFPreferences",
+          "CFPropertyList",
+          "CFRunLoop",
+          "CFSet",
+          "CFSocket",
+          "CFStream",
+          "CFString",
+          "CFStringEncodingExt",
+          "CFStringTokenizer",
+          "CFTimeZone",
+          "CFTree",
+          "CFURL",
+          "CFURLAccess",
+          "CFURLEnumerator",
+          "CFUUID",
+          "CFUserNotification",
+          "CFUtilities",
+          "CFXMLNode",
+          "CFXMLParser",
+          "alloc",
+          "bitflags",
+          "block2",
+          "default",
+          "dispatch2",
+          "libc",
+          "objc2",
+          "std"
+        ],
         "desktop-macos": [
           "CFArray",
           "CFAttributedString",
@@ -9057,6 +10381,12 @@
     },
     {
       "graphs": {
+        "daemon-macos": [
+          "CGDirectDisplay",
+          "alloc",
+          "bitflags",
+          "std"
+        ],
         "desktop-macos": [
           "CGDirectDisplay",
           "alloc",
@@ -9077,6 +10407,24 @@
     },
     {
       "graphs": {
+        "daemon-macos": [
+          "CWChannel",
+          "CWConfiguration",
+          "CWInterface",
+          "CWNetwork",
+          "CWNetworkProfile",
+          "CWWiFiClient",
+          "CoreWLANConstants",
+          "CoreWLANTypes",
+          "CoreWLANUtil",
+          "alloc",
+          "bitflags",
+          "default",
+          "objc2-core-foundation",
+          "objc2-security",
+          "objc2-security-foundation",
+          "std"
+        ],
         "desktop-macos": [
           "CWChannel",
           "CWConfiguration",
@@ -9109,6 +10457,10 @@
     },
     {
       "graphs": {
+        "daemon-macos": [
+          "alloc",
+          "std"
+        ],
         "desktop-macos": [
           "alloc",
           "std"
@@ -9131,6 +10483,214 @@
     },
     {
       "graphs": {
+        "daemon-macos": [
+          "NSArray",
+          "NSData",
+          "NSDictionary",
+          "NSEnumerator",
+          "NSError",
+          "NSObject",
+          "NSString",
+          "NSUUID",
+          "NSValue",
+          "alloc",
+          "bitflags",
+          "block2",
+          "std"
+        ]
+      },
+      "name": "objc2-foundation",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 180,
+        "externs": 51,
+        "functions": 5293,
+        "impls": 2321,
+        "tokens": 7910
+      },
+      "version": "0.2.2"
+    },
+    {
+      "graphs": {
+        "daemon-macos": [
+          "FoundationErrors",
+          "FoundationLegacySwiftCompatibility",
+          "NSAffineTransform",
+          "NSAppleEventDescriptor",
+          "NSAppleEventManager",
+          "NSAppleScript",
+          "NSArchiver",
+          "NSArray",
+          "NSAttributedString",
+          "NSAutoreleasePool",
+          "NSBackgroundActivityScheduler",
+          "NSBundle",
+          "NSByteCountFormatter",
+          "NSByteOrder",
+          "NSCache",
+          "NSCalendar",
+          "NSCalendarDate",
+          "NSCharacterSet",
+          "NSClassDescription",
+          "NSCoder",
+          "NSComparisonPredicate",
+          "NSCompoundPredicate",
+          "NSConnection",
+          "NSData",
+          "NSDate",
+          "NSDateComponentsFormatter",
+          "NSDateFormatter",
+          "NSDateInterval",
+          "NSDateIntervalFormatter",
+          "NSDebug",
+          "NSDecimal",
+          "NSDecimalNumber",
+          "NSDictionary",
+          "NSDistantObject",
+          "NSDistributedLock",
+          "NSDistributedNotificationCenter",
+          "NSEnergyFormatter",
+          "NSEnumerator",
+          "NSError",
+          "NSException",
+          "NSExpression",
+          "NSExtensionContext",
+          "NSExtensionItem",
+          "NSExtensionRequestHandling",
+          "NSFileCoordinator",
+          "NSFileHandle",
+          "NSFileManager",
+          "NSFilePresenter",
+          "NSFileVersion",
+          "NSFileWrapper",
+          "NSFormatter",
+          "NSGarbageCollector",
+          "NSGeometry",
+          "NSHFSFileTypes",
+          "NSHTTPCookie",
+          "NSHTTPCookieStorage",
+          "NSHashTable",
+          "NSHost",
+          "NSISO8601DateFormatter",
+          "NSIndexPath",
+          "NSIndexSet",
+          "NSInflectionRule",
+          "NSInvocation",
+          "NSItemProvider",
+          "NSJSONSerialization",
+          "NSKeyValueCoding",
+          "NSKeyValueObserving",
+          "NSKeyValueSharedObservers",
+          "NSKeyedArchiver",
+          "NSLengthFormatter",
+          "NSLinguisticTagger",
+          "NSListFormatter",
+          "NSLocale",
+          "NSLocalizedNumberFormatRule",
+          "NSLock",
+          "NSMapTable",
+          "NSMassFormatter",
+          "NSMeasurement",
+          "NSMeasurementFormatter",
+          "NSMetadata",
+          "NSMetadataAttributes",
+          "NSMethodSignature",
+          "NSMorphology",
+          "NSNetServices",
+          "NSNotification",
+          "NSNotificationQueue",
+          "NSNull",
+          "NSNumberFormatter",
+          "NSObjCRuntime",
+          "NSObject",
+          "NSObjectScripting",
+          "NSOperation",
+          "NSOrderedCollectionChange",
+          "NSOrderedCollectionDifference",
+          "NSOrderedSet",
+          "NSOrthography",
+          "NSPathUtilities",
+          "NSPersonNameComponents",
+          "NSPersonNameComponentsFormatter",
+          "NSPointerArray",
+          "NSPointerFunctions",
+          "NSPort",
+          "NSPortCoder",
+          "NSPortMessage",
+          "NSPortNameServer",
+          "NSPredicate",
+          "NSProcessInfo",
+          "NSProgress",
+          "NSPropertyList",
+          "NSProtocolChecker",
+          "NSProxy",
+          "NSRange",
+          "NSRegularExpression",
+          "NSRelativeDateTimeFormatter",
+          "NSRunLoop",
+          "NSScanner",
+          "NSScriptClassDescription",
+          "NSScriptCoercionHandler",
+          "NSScriptCommand",
+          "NSScriptCommandDescription",
+          "NSScriptExecutionContext",
+          "NSScriptKeyValueCoding",
+          "NSScriptObjectSpecifiers",
+          "NSScriptStandardSuiteCommands",
+          "NSScriptSuiteRegistry",
+          "NSScriptWhoseTests",
+          "NSSet",
+          "NSSortDescriptor",
+          "NSSpellServer",
+          "NSStream",
+          "NSString",
+          "NSTask",
+          "NSTermOfAddress",
+          "NSTextCheckingResult",
+          "NSThread",
+          "NSTimeZone",
+          "NSTimer",
+          "NSURL",
+          "NSURLAuthenticationChallenge",
+          "NSURLCache",
+          "NSURLConnection",
+          "NSURLCredential",
+          "NSURLCredentialStorage",
+          "NSURLDownload",
+          "NSURLError",
+          "NSURLHandle",
+          "NSURLProtectionSpace",
+          "NSURLProtocol",
+          "NSURLRequest",
+          "NSURLResponse",
+          "NSURLSession",
+          "NSUUID",
+          "NSUbiquitousKeyValueStore",
+          "NSUndoManager",
+          "NSUnit",
+          "NSUserActivity",
+          "NSUserDefaults",
+          "NSUserNotification",
+          "NSUserScriptTask",
+          "NSValue",
+          "NSValueTransformer",
+          "NSXMLDTD",
+          "NSXMLDTDNode",
+          "NSXMLDocument",
+          "NSXMLElement",
+          "NSXMLNode",
+          "NSXMLNodeOptions",
+          "NSXMLParser",
+          "NSXPCConnection",
+          "NSZone",
+          "alloc",
+          "bitflags",
+          "block2",
+          "default",
+          "libc",
+          "objc2-core-foundation",
+          "std"
+        ],
         "desktop-macos": [
           "FoundationErrors",
           "FoundationLegacySwiftCompatibility",
@@ -9503,6 +11063,12 @@
     },
     {
       "graphs": {
+        "daemon-macos": [
+          "alloc",
+          "libc",
+          "serial",
+          "std"
+        ],
         "desktop-macos": [
           "alloc",
           "libc",
@@ -9529,6 +11095,10 @@
     },
     {
       "graphs": {
+        "daemon-macos": [
+          "SecBase",
+          "objc2"
+        ],
         "desktop-macos": [
           "SecBase",
           "objc2"
@@ -9547,6 +11117,9 @@
     },
     {
       "graphs": {
+        "daemon-macos": [
+          "SFAuthorization"
+        ],
         "desktop-macos": [
           "SFAuthorization"
         ]
@@ -9564,6 +11137,14 @@
     },
     {
       "graphs": {
+        "daemon-macos": [
+          "SCDynamicStore",
+          "SCDynamicStoreKey",
+          "SCNetworkConfiguration",
+          "SCPreferences",
+          "SCSchemaDefinitions",
+          "bitflags"
+        ],
         "desktop-macos": [
           "SCDynamicStore",
           "SCDynamicStoreKey",
@@ -9632,6 +11213,18 @@
           "race",
           "std"
         ],
+        "daemon-macos": [
+          "alloc",
+          "default",
+          "race",
+          "std"
+        ],
+        "daemon-windows": [
+          "alloc",
+          "default",
+          "race",
+          "std"
+        ],
         "desktop-linux": [
           "alloc",
           "default",
@@ -9671,6 +11264,24 @@
     },
     {
       "graphs": {
+        "daemon-windows": [
+          "default"
+        ]
+      },
+      "name": "once_cell_polyfill",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "1.70.2"
+    },
+    {
+      "graphs": {
+        "daemon-linux": [],
         "desktop-linux": []
       },
       "name": "ordered-stream",
@@ -9750,6 +11361,7 @@
     },
     {
       "graphs": {
+        "daemon-linux": [],
         "desktop-linux": []
       },
       "name": "parking",
@@ -9765,7 +11377,26 @@
     },
     {
       "graphs": {
-        "daemon-linux": []
+        "daemon-windows": [
+          "default"
+        ]
+      },
+      "name": "parking_lot",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 40,
+        "externs": 0,
+        "functions": 27,
+        "impls": 19,
+        "tokens": 86
+      },
+      "version": "0.12.5"
+    },
+    {
+      "graphs": {
+        "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": []
       },
       "name": "parking_lot_core",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -9800,6 +11431,7 @@
     },
     {
       "graphs": {
+        "daemon-linux": [],
         "desktop-linux": []
       },
       "name": "pastey",
@@ -9816,6 +11448,14 @@
     {
       "graphs": {
         "daemon-linux": [
+          "alloc",
+          "std"
+        ],
+        "daemon-macos": [
+          "alloc",
+          "std"
+        ],
+        "daemon-windows": [
           "alloc",
           "std"
         ]
@@ -9848,15 +11488,27 @@
     },
     {
       "graphs": {
-        "android": [],
-        "desktop-linux": [],
-        "desktop-macos": [],
-        "desktop-windows": [],
-        "engine": [],
+        "android": [
+          "host"
+        ],
+        "desktop-linux": [
+          "host"
+        ],
+        "desktop-macos": [
+          "host"
+        ],
+        "desktop-windows": [
+          "host"
+        ],
+        "engine": [
+          "default"
+        ],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-tbeam": [],
-        "ios": [],
+        "ios": [
+          "host"
+        ],
         "nrf52840": []
       },
       "name": "personal-hopspot-core",
@@ -9926,11 +11578,11 @@
       "name": "personal-hopspot-esp32",
       "source": "personal-hopspot/embedded/esp32",
       "unsafe": {
-        "blocks": 8,
+        "blocks": 9,
         "externs": 0,
         "functions": 1,
         "impls": 1,
-        "tokens": 10
+        "tokens": 11
       },
       "version": "0.1.0"
     },
@@ -9954,7 +11606,10 @@
         "android": [
           "alloc",
           "bluetooth-auto",
+          "flash",
           "log",
+          "parallel-persistence",
+          "parallel-resource-hash",
           "shared-instance",
           "std",
           "tokio-host",
@@ -9993,10 +11648,73 @@
           "websocket",
           "wifi-auto"
         ],
+        "daemon-macos": [
+          "alloc",
+          "ax25",
+          "backbone",
+          "bluetooth-auto",
+          "browser-rendezvous",
+          "config",
+          "i2p",
+          "interface-discovery",
+          "interface-discovery-archive",
+          "kiss",
+          "log",
+          "parallel-persistence",
+          "parallel-resource-hash",
+          "pipe",
+          "rnode",
+          "rnx",
+          "serial",
+          "shared-instance",
+          "signed-artifact",
+          "std",
+          "tcp",
+          "tokio-host",
+          "tracing",
+          "udp",
+          "usb",
+          "weave",
+          "websocket",
+          "wifi-auto"
+        ],
+        "daemon-windows": [
+          "alloc",
+          "ax25",
+          "backbone",
+          "bluetooth-auto",
+          "browser-rendezvous",
+          "config",
+          "i2p",
+          "interface-discovery",
+          "interface-discovery-archive",
+          "kiss",
+          "log",
+          "parallel-persistence",
+          "parallel-resource-hash",
+          "pipe",
+          "rnode",
+          "rnx",
+          "serial",
+          "shared-instance",
+          "signed-artifact",
+          "std",
+          "tcp",
+          "tokio-host",
+          "tracing",
+          "udp",
+          "usb",
+          "weave",
+          "websocket",
+          "wifi-auto"
+        ],
         "desktop-linux": [
           "alloc",
           "bluetooth-auto",
+          "flash",
           "log",
+          "parallel-persistence",
+          "parallel-resource-hash",
           "serial",
           "shared-instance",
           "std",
@@ -10009,7 +11727,10 @@
         "desktop-macos": [
           "alloc",
           "bluetooth-auto",
+          "flash",
           "log",
+          "parallel-persistence",
+          "parallel-resource-hash",
           "serial",
           "shared-instance",
           "std",
@@ -10022,7 +11743,10 @@
         "desktop-windows": [
           "alloc",
           "bluetooth-auto",
+          "flash",
           "log",
+          "parallel-persistence",
+          "parallel-resource-hash",
           "serial",
           "shared-instance",
           "std",
@@ -10035,6 +11759,7 @@
         "engine": [
           "alloc",
           "default",
+          "flash",
           "std",
           "std-sync-host"
         ],
@@ -10044,6 +11769,7 @@
           "embassy-host",
           "esp-now",
           "external-alloc",
+          "flash",
           "log",
           "lora",
           "tcp",
@@ -10056,6 +11782,7 @@
           "embassy-host",
           "esp-now",
           "external-alloc",
+          "flash",
           "log",
           "lora",
           "tcp",
@@ -10068,6 +11795,7 @@
           "embassy-host",
           "esp-now",
           "external-alloc",
+          "flash",
           "log",
           "lora",
           "tcp",
@@ -10077,6 +11805,9 @@
         "ios": [
           "alloc",
           "bluetooth-auto",
+          "flash",
+          "parallel-persistence",
+          "parallel-resource-hash",
           "std",
           "tcp",
           "tokio-host",
@@ -10085,6 +11816,7 @@
         "nrf52840": [
           "bluetooth-auto",
           "embassy-host",
+          "flash",
           "lora",
           "usb"
         ],
@@ -10101,7 +11833,7 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.2.7"
+      "version": "0.2.8"
     },
     {
       "graphs": {
@@ -10141,6 +11873,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -10181,6 +11915,10 @@
     },
     {
       "graphs": {
+        "daemon-macos": [
+          "default",
+          "serde"
+        ],
         "desktop-macos": [
           "default",
           "serde"
@@ -10203,6 +11941,7 @@
     },
     {
       "graphs": {
+        "daemon-macos": [],
         "desktop-macos": []
       },
       "name": "png",
@@ -10245,6 +11984,16 @@
           "default",
           "fallback"
         ],
+        "daemon-macos": [
+          "critical-section",
+          "default",
+          "fallback"
+        ],
+        "daemon-windows": [
+          "critical-section",
+          "default",
+          "fallback"
+        ],
         "desktop-linux": [
           "critical-section",
           "default",
@@ -10283,6 +12032,7 @@
         ],
         "ios": [
           "critical-section",
+          "default",
           "fallback"
         ],
         "nrf52840": [
@@ -10346,6 +12096,12 @@
       "graphs": {
         "daemon-linux": [
           "zerovec"
+        ],
+        "daemon-macos": [
+          "zerovec"
+        ],
+        "daemon-windows": [
+          "zerovec"
         ]
       },
       "name": "potential_utf",
@@ -10362,6 +12118,8 @@
     {
       "graphs": {
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-macos": [],
         "ios": []
       },
@@ -10379,6 +12137,14 @@
     {
       "graphs": {
         "daemon-linux": [
+          "simd",
+          "std"
+        ],
+        "daemon-macos": [
+          "simd",
+          "std"
+        ],
+        "daemon-windows": [
           "simd",
           "std"
         ],
@@ -10400,7 +12166,9 @@
     },
     {
       "graphs": {
-        "daemon-linux": []
+        "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": []
       },
       "name": "prns-config",
       "source": "prns-config",
@@ -10411,13 +12179,16 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.2.7"
+      "version": "0.2.8"
     },
     {
       "graphs": {
         "android": [
           "alloc",
           "embassy-host",
+          "flash",
+          "parallel-persistence",
+          "parallel-resource-hash",
           "shared-instance-rpc",
           "std",
           "tokio-host"
@@ -10436,9 +12207,40 @@
           "std",
           "tokio-host"
         ],
+        "daemon-macos": [
+          "alloc",
+          "embassy-host",
+          "i2p",
+          "interface-discovery",
+          "interface-discovery-archive",
+          "parallel-persistence",
+          "parallel-resource-hash",
+          "rnx",
+          "shared-instance-rpc",
+          "signed-artifact",
+          "std",
+          "tokio-host"
+        ],
+        "daemon-windows": [
+          "alloc",
+          "embassy-host",
+          "i2p",
+          "interface-discovery",
+          "interface-discovery-archive",
+          "parallel-persistence",
+          "parallel-resource-hash",
+          "rnx",
+          "shared-instance-rpc",
+          "signed-artifact",
+          "std",
+          "tokio-host"
+        ],
         "desktop-linux": [
           "alloc",
           "embassy-host",
+          "flash",
+          "parallel-persistence",
+          "parallel-resource-hash",
           "shared-instance-rpc",
           "std",
           "tokio-host"
@@ -10446,6 +12248,9 @@
         "desktop-macos": [
           "alloc",
           "embassy-host",
+          "flash",
+          "parallel-persistence",
+          "parallel-resource-hash",
           "shared-instance-rpc",
           "std",
           "tokio-host"
@@ -10453,6 +12258,9 @@
         "desktop-windows": [
           "alloc",
           "embassy-host",
+          "flash",
+          "parallel-persistence",
+          "parallel-resource-hash",
           "shared-instance-rpc",
           "std",
           "tokio-host"
@@ -10460,6 +12268,7 @@
         "engine": [
           "alloc",
           "default",
+          "flash",
           "std",
           "std-sync-host",
           "test-support"
@@ -10468,6 +12277,7 @@
           "alloc",
           "embassy-host",
           "external-alloc",
+          "flash",
           "std",
           "tokio-host"
         ],
@@ -10475,6 +12285,7 @@
           "alloc",
           "embassy-host",
           "external-alloc",
+          "flash",
           "std",
           "tokio-host"
         ],
@@ -10482,18 +12293,23 @@
           "alloc",
           "embassy-host",
           "external-alloc",
+          "flash",
           "std",
           "tokio-host"
         ],
         "ios": [
           "alloc",
           "embassy-host",
+          "flash",
+          "parallel-persistence",
+          "parallel-resource-hash",
           "std",
           "tokio-host"
         ],
         "nrf52840": [
           "alloc",
           "embassy-host",
+          "flash",
           "std",
           "tokio-host"
         ],
@@ -10504,17 +12320,23 @@
       "name": "prns-core",
       "source": "prns-core",
       "unsafe": {
-        "blocks": 0,
+        "blocks": 1,
         "externs": 0,
         "functions": 0,
         "impls": 0,
-        "tokens": 0
+        "tokens": 1
       },
-      "version": "0.2.7"
+      "version": "0.2.8"
     },
     {
       "graphs": {
         "android": [
+          "log"
+        ],
+        "daemon-macos": [
+          "log"
+        ],
+        "daemon-windows": [
           "log"
         ],
         "desktop-macos": [
@@ -10530,11 +12352,11 @@
       "name": "prns-ffi",
       "source": "prns-ffi",
       "unsafe": {
-        "blocks": 110,
+        "blocks": 100,
         "externs": 3,
         "functions": 0,
-        "impls": 23,
-        "tokens": 167
+        "impls": 22,
+        "tokens": 156
       },
       "version": "0.1.0"
     },
@@ -10547,6 +12369,20 @@
           "wifi-auto"
         ],
         "daemon-linux": [
+          "bluetooth-auto",
+          "log",
+          "tcp",
+          "usb",
+          "wifi-auto"
+        ],
+        "daemon-macos": [
+          "bluetooth-auto",
+          "log",
+          "tcp",
+          "usb",
+          "wifi-auto"
+        ],
+        "daemon-windows": [
           "bluetooth-auto",
           "log",
           "tcp",
@@ -10624,7 +12460,7 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.2.7"
+      "version": "0.2.8"
     },
     {
       "graphs": {
@@ -10640,6 +12476,50 @@
           "wifi-direct"
         ],
         "daemon-linux": [
+          "ax25",
+          "backbone",
+          "bluetooth-auto",
+          "browser-rendezvous",
+          "config",
+          "i2p",
+          "interface-discovery",
+          "kiss",
+          "log",
+          "pipe",
+          "rnode",
+          "serial",
+          "shared-instance",
+          "tcp",
+          "tracing",
+          "udp",
+          "usb",
+          "weave",
+          "websocket",
+          "wifi-auto"
+        ],
+        "daemon-macos": [
+          "ax25",
+          "backbone",
+          "bluetooth-auto",
+          "browser-rendezvous",
+          "config",
+          "i2p",
+          "interface-discovery",
+          "kiss",
+          "log",
+          "pipe",
+          "rnode",
+          "serial",
+          "shared-instance",
+          "tcp",
+          "tracing",
+          "udp",
+          "usb",
+          "weave",
+          "websocket",
+          "wifi-auto"
+        ],
+        "daemon-windows": [
           "ax25",
           "backbone",
           "bluetooth-auto",
@@ -10735,7 +12615,7 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.2.7"
+      "version": "0.2.8"
     },
     {
       "graphs": {
@@ -10745,6 +12625,22 @@
           "std"
         ],
         "daemon-linux": [
+          "alloc",
+          "interface-discovery",
+          "interface-discovery-archive",
+          "rns-management",
+          "rnx",
+          "std"
+        ],
+        "daemon-macos": [
+          "alloc",
+          "interface-discovery",
+          "interface-discovery-archive",
+          "rns-management",
+          "rnx",
+          "std"
+        ],
+        "daemon-windows": [
           "alloc",
           "interface-discovery",
           "interface-discovery-archive",
@@ -10802,13 +12698,13 @@
       "name": "prns-runtime",
       "source": "prns-runtime/core",
       "unsafe": {
-        "blocks": 0,
+        "blocks": 2,
         "externs": 0,
         "functions": 0,
         "impls": 0,
-        "tokens": 0
+        "tokens": 2
       },
-      "version": "0.2.7"
+      "version": "0.2.8"
     },
     {
       "graphs": {
@@ -10816,6 +12712,16 @@
           "log"
         ],
         "daemon-linux": [
+          "alloc",
+          "log",
+          "rnx"
+        ],
+        "daemon-macos": [
+          "alloc",
+          "log",
+          "rnx"
+        ],
+        "daemon-windows": [
           "alloc",
           "log",
           "rnx"
@@ -10847,17 +12753,18 @@
       "name": "prns-runtime-embassy",
       "source": "prns-runtime/impls/embassy",
       "unsafe": {
-        "blocks": 0,
+        "blocks": 2,
         "externs": 0,
         "functions": 0,
         "impls": 0,
-        "tokens": 0
+        "tokens": 2
       },
-      "version": "0.2.7"
+      "version": "0.2.8"
     },
     {
       "graphs": {
         "android": [
+          "parallel-persistence",
           "rns-management"
         ],
         "daemon-linux": [
@@ -10867,22 +12774,41 @@
           "rnx",
           "tracing"
         ],
+        "daemon-macos": [
+          "interface-discovery",
+          "parallel-persistence",
+          "rns-management",
+          "rnx",
+          "tracing"
+        ],
+        "daemon-windows": [
+          "interface-discovery",
+          "parallel-persistence",
+          "rns-management",
+          "rnx",
+          "tracing"
+        ],
         "desktop-linux": [
+          "parallel-persistence",
           "rns-management",
           "tracing"
         ],
         "desktop-macos": [
+          "parallel-persistence",
           "rns-management",
           "tracing"
         ],
         "desktop-windows": [
+          "parallel-persistence",
           "rns-management",
           "tracing"
         ],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-tbeam": [],
-        "ios": [],
+        "ios": [
+          "parallel-persistence"
+        ],
         "nrf52840": []
       },
       "name": "prns-runtime-tokio",
@@ -10894,7 +12820,7 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.2.7"
+      "version": "0.2.8"
     },
     {
       "graphs": {
@@ -10918,7 +12844,24 @@
           "default",
           "observability",
           "std",
-          "tokio-host"
+          "tokio-host",
+          "tray"
+        ],
+        "daemon-macos": [
+          "alloc",
+          "default",
+          "observability",
+          "std",
+          "tokio-host",
+          "tray"
+        ],
+        "daemon-windows": [
+          "alloc",
+          "default",
+          "observability",
+          "std",
+          "tokio-host",
+          "tray"
         ]
       },
       "name": "prnsd",
@@ -10930,11 +12873,13 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.2.7"
+      "version": "0.2.8"
     },
     {
       "graphs": {
-        "daemon-linux": []
+        "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": []
       },
       "name": "prnsd-control",
       "source": "prnsd/control",
@@ -10949,6 +12894,7 @@
     },
     {
       "graphs": {
+        "daemon-linux": [],
         "desktop-linux": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
@@ -11002,6 +12948,14 @@
           "proc-macro"
         ],
         "daemon-linux": [
+          "default",
+          "proc-macro"
+        ],
+        "daemon-macos": [
+          "default",
+          "proc-macro"
+        ],
+        "daemon-windows": [
           "default",
           "proc-macro"
         ],
@@ -11160,6 +13114,9 @@
     },
     {
       "graphs": {
+        "daemon-macos": [
+          "default"
+        ],
         "desktop-macos": [
           "default"
         ],
@@ -11185,6 +13142,14 @@
           "proc-macro"
         ],
         "daemon-linux": [
+          "default",
+          "proc-macro"
+        ],
+        "daemon-macos": [
+          "default",
+          "proc-macro"
+        ],
+        "daemon-windows": [
           "default",
           "proc-macro"
         ],
@@ -11300,6 +13265,24 @@
           "std",
           "std_rng",
           "thread_rng"
+        ],
+        "daemon-macos": [
+          "alloc",
+          "default",
+          "os_rng",
+          "small_rng",
+          "std",
+          "std_rng",
+          "thread_rng"
+        ],
+        "daemon-windows": [
+          "alloc",
+          "default",
+          "os_rng",
+          "small_rng",
+          "std",
+          "std_rng",
+          "thread_rng"
         ]
       },
       "name": "rand",
@@ -11316,6 +13299,12 @@
     {
       "graphs": {
         "daemon-linux": [
+          "std"
+        ],
+        "daemon-macos": [
+          "std"
+        ],
+        "daemon-windows": [
           "std"
         ],
         "engine": [
@@ -11358,6 +13347,8 @@
           "std"
         ],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -11383,6 +13374,14 @@
     {
       "graphs": {
         "daemon-linux": [
+          "os_rng",
+          "std"
+        ],
+        "daemon-macos": [
+          "os_rng",
+          "std"
+        ],
+        "daemon-windows": [
           "os_rng",
           "std"
         ],
@@ -11423,7 +13422,14 @@
     },
     {
       "graphs": {
-        "daemon-linux": []
+        "android": [],
+        "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
+        "desktop-linux": [],
+        "desktop-macos": [],
+        "desktop-windows": [],
+        "ios": []
       },
       "name": "rayon",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -11438,7 +13444,14 @@
     },
     {
       "graphs": {
-        "daemon-linux": []
+        "android": [],
+        "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
+        "desktop-linux": [],
+        "desktop-macos": [],
+        "desktop-windows": [],
+        "ios": []
       },
       "name": "rayon-core",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -11537,6 +13550,22 @@
           "nfa-thompson",
           "std",
           "syntax"
+        ],
+        "daemon-macos": [
+          "alloc",
+          "dfa-build",
+          "dfa-search",
+          "nfa-thompson",
+          "std",
+          "syntax"
+        ],
+        "daemon-windows": [
+          "alloc",
+          "dfa-build",
+          "dfa-search",
+          "nfa-thompson",
+          "std",
+          "syntax"
         ]
       },
       "name": "regex-automata",
@@ -11570,6 +13599,12 @@
     {
       "graphs": {
         "daemon-linux": [
+          "std"
+        ],
+        "daemon-macos": [
+          "std"
+        ],
+        "daemon-windows": [
           "std"
         ],
         "desktop-linux": [
@@ -11735,6 +13770,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -11773,6 +13810,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -11798,6 +13837,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -11837,6 +13878,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -11865,6 +13908,16 @@
           "alloc",
           "default",
           "fs",
+          "net",
+          "process",
+          "std"
+        ],
+        "daemon-macos": [
+          "alloc",
+          "default",
+          "fs",
+          "net",
+          "process",
           "std"
         ],
         "desktop-linux": [
@@ -11985,6 +14038,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -12114,6 +14169,14 @@
           "default",
           "std"
         ],
+        "daemon-macos": [
+          "default",
+          "std"
+        ],
+        "daemon-windows": [
+          "default",
+          "std"
+        ],
         "desktop-linux": [
           "default",
           "std"
@@ -12195,6 +14258,18 @@
           "serde_derive",
           "std"
         ],
+        "daemon-macos": [
+          "default",
+          "derive",
+          "serde_derive",
+          "std"
+        ],
+        "daemon-windows": [
+          "default",
+          "derive",
+          "serde_derive",
+          "std"
+        ],
         "desktop-linux": [
           "default",
           "derive",
@@ -12259,6 +14334,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": []
@@ -12297,6 +14374,16 @@
           "std"
         ],
         "daemon-linux": [
+          "alloc",
+          "result",
+          "std"
+        ],
+        "daemon-macos": [
+          "alloc",
+          "result",
+          "std"
+        ],
+        "daemon-windows": [
           "alloc",
           "result",
           "std"
@@ -12366,6 +14453,12 @@
         "daemon-linux": [
           "default"
         ],
+        "daemon-macos": [
+          "default"
+        ],
+        "daemon-windows": [
+          "default"
+        ],
         "desktop-linux": [
           "default"
         ],
@@ -12408,6 +14501,14 @@
           "default",
           "std"
         ],
+        "daemon-macos": [
+          "default",
+          "std"
+        ],
+        "daemon-windows": [
+          "default",
+          "std"
+        ],
         "desktop-linux": [
           "default",
           "std"
@@ -12430,6 +14531,7 @@
     },
     {
       "graphs": {
+        "daemon-linux": [],
         "desktop-linux": []
       },
       "name": "serde_repr",
@@ -12464,6 +14566,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -12487,6 +14591,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -12511,6 +14617,14 @@
         "daemon-linux": [
           "default",
           "std"
+        ],
+        "daemon-macos": [
+          "default",
+          "std"
+        ],
+        "daemon-windows": [
+          "default",
+          "std"
         ]
       },
       "name": "sha1",
@@ -12528,6 +14642,14 @@
       "graphs": {
         "android": [],
         "daemon-linux": [
+          "default",
+          "std"
+        ],
+        "daemon-macos": [
+          "default",
+          "std"
+        ],
+        "daemon-windows": [
           "default",
           "std"
         ],
@@ -12560,6 +14682,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -12589,6 +14713,8 @@
     {
       "graphs": {
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": []
@@ -12607,6 +14733,14 @@
     {
       "graphs": {
         "daemon-linux": [
+          "default",
+          "std"
+        ],
+        "daemon-macos": [
+          "default",
+          "std"
+        ],
+        "daemon-windows": [
           "default",
           "std"
         ]
@@ -12652,6 +14786,7 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
         "desktop-linux": [],
         "desktop-macos": []
       },
@@ -12670,6 +14805,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -12691,6 +14828,25 @@
         "tokens": 0
       },
       "version": "2.2.0"
+    },
+    {
+      "graphs": {
+        "daemon-macos": [
+          "const-generics",
+          "default",
+          "std"
+        ]
+      },
+      "name": "simd-adler32",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 8,
+        "externs": 0,
+        "functions": 28,
+        "impls": 0,
+        "tokens": 36
+      },
+      "version": "0.3.10"
     },
     {
       "graphs": {
@@ -12731,6 +14887,12 @@
           "std"
         ],
         "daemon-linux": [
+          "std"
+        ],
+        "daemon-macos": [
+          "std"
+        ],
+        "daemon-windows": [
           "std"
         ],
         "desktop-linux": [
@@ -12801,7 +14963,19 @@
     {
       "graphs": {
         "daemon-linux": [
-          "const_generics"
+          "const_generics",
+          "const_new",
+          "union"
+        ],
+        "daemon-macos": [
+          "const_generics",
+          "const_new",
+          "union"
+        ],
+        "daemon-windows": [
+          "const_generics",
+          "const_new",
+          "union"
         ]
       },
       "name": "smallvec",
@@ -12827,6 +15001,24 @@
           "socket-udp"
         ],
         "daemon-linux": [
+          "async",
+          "medium-ethernet",
+          "multicast",
+          "proto-ipv6",
+          "socket",
+          "socket-tcp",
+          "socket-udp"
+        ],
+        "daemon-macos": [
+          "async",
+          "medium-ethernet",
+          "multicast",
+          "proto-ipv6",
+          "socket",
+          "socket-tcp",
+          "socket-udp"
+        ],
+        "daemon-windows": [
           "async",
           "medium-ethernet",
           "multicast",
@@ -12921,7 +15113,9 @@
     },
     {
       "graphs": {
-        "daemon-linux": []
+        "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": []
       },
       "name": "socket-pktinfo",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -12940,6 +15134,12 @@
           "all"
         ],
         "daemon-linux": [
+          "all"
+        ],
+        "daemon-macos": [
+          "all"
+        ],
+        "daemon-windows": [
           "all"
         ],
         "desktop-linux": [
@@ -13024,6 +15224,28 @@
           "once",
           "rwlock",
           "spin_mutex"
+        ],
+        "daemon-macos": [
+          "barrier",
+          "default",
+          "lazy",
+          "lock_api",
+          "lock_api_crate",
+          "mutex",
+          "once",
+          "rwlock",
+          "spin_mutex"
+        ],
+        "daemon-windows": [
+          "barrier",
+          "default",
+          "lazy",
+          "lock_api",
+          "lock_api_crate",
+          "mutex",
+          "once",
+          "rwlock",
+          "spin_mutex"
         ]
       },
       "name": "spin",
@@ -13080,6 +15302,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -13108,6 +15332,8 @@
     {
       "graphs": {
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": []
@@ -13127,12 +15353,15 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-tbeam": [],
+        "ios": [],
         "nrf52840": []
       },
       "name": "static_cell",
@@ -13165,6 +15394,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -13273,6 +15504,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -13395,6 +15628,32 @@
           "visit-mut"
         ],
         "daemon-linux": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "fold",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit",
+          "visit-mut"
+        ],
+        "daemon-macos": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "fold",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit",
+          "visit-mut"
+        ],
+        "daemon-windows": [
           "clone-impls",
           "default",
           "derive",
@@ -13584,6 +15843,46 @@
     {
       "graphs": {
         "daemon-linux": [
+          "clone-impls",
+          "default",
+          "derive",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro"
+        ],
+        "daemon-macos": [
+          "clone-impls",
+          "default",
+          "derive",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro"
+        ]
+      },
+      "name": "syn",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 39,
+        "externs": 0,
+        "functions": 2,
+        "impls": 3,
+        "tokens": 78
+      },
+      "version": "3.0.3"
+    },
+    {
+      "graphs": {
+        "daemon-linux": [
+          "default",
+          "proc-macro"
+        ],
+        "daemon-macos": [
+          "default",
+          "proc-macro"
+        ],
+        "daemon-windows": [
           "default",
           "proc-macro"
         ],
@@ -13620,7 +15919,31 @@
     },
     {
       "graphs": {
+        "daemon-macos": [],
+        "daemon-windows": []
+      },
+      "name": "tao",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 511,
+        "externs": 34,
+        "functions": 122,
+        "impls": 72,
+        "tokens": 739
+      },
+      "version": "0.34.8"
+    },
+    {
+      "graphs": {
         "daemon-linux": [
+          "default",
+          "getrandom"
+        ],
+        "daemon-macos": [
+          "default",
+          "getrandom"
+        ],
+        "daemon-windows": [
           "default",
           "getrandom"
         ],
@@ -13678,6 +16001,14 @@
           "default",
           "std"
         ],
+        "daemon-macos": [
+          "default",
+          "std"
+        ],
+        "daemon-windows": [
+          "default",
+          "std"
+        ],
         "desktop-macos": [
           "default",
           "std"
@@ -13716,6 +16047,8 @@
     {
       "graphs": {
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-macos": [],
         "desktop-windows": []
       },
@@ -13733,6 +16066,8 @@
     {
       "graphs": {
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": []
@@ -13751,6 +16086,22 @@
     {
       "graphs": {
         "daemon-linux": [
+          "alloc",
+          "default",
+          "formatting",
+          "local-offset",
+          "parsing",
+          "std"
+        ],
+        "daemon-macos": [
+          "alloc",
+          "default",
+          "formatting",
+          "local-offset",
+          "parsing",
+          "std"
+        ],
+        "daemon-windows": [
           "alloc",
           "default",
           "formatting",
@@ -13801,6 +16152,8 @@
     {
       "graphs": {
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-macos": [],
         "ios": []
       },
@@ -13818,6 +16171,14 @@
     {
       "graphs": {
         "daemon-linux": [
+          "formatting",
+          "parsing"
+        ],
+        "daemon-macos": [
+          "formatting",
+          "parsing"
+        ],
+        "daemon-windows": [
           "formatting",
           "parsing"
         ],
@@ -13858,6 +16219,12 @@
     {
       "graphs": {
         "daemon-linux": [
+          "zerovec"
+        ],
+        "daemon-macos": [
+          "zerovec"
+        ],
+        "daemon-windows": [
           "zerovec"
         ]
       },
@@ -13913,6 +16280,51 @@
           "sync",
           "time",
           "tokio-macros",
+          "tracing",
+          "windows-sys"
+        ],
+        "daemon-macos": [
+          "bytes",
+          "default",
+          "fs",
+          "io-std",
+          "io-util",
+          "libc",
+          "macros",
+          "mio",
+          "net",
+          "process",
+          "rt",
+          "rt-multi-thread",
+          "signal",
+          "signal-hook-registry",
+          "socket2",
+          "sync",
+          "time",
+          "tokio-macros",
+          "tracing",
+          "windows-sys"
+        ],
+        "daemon-windows": [
+          "bytes",
+          "default",
+          "fs",
+          "io-std",
+          "io-util",
+          "libc",
+          "macros",
+          "mio",
+          "net",
+          "process",
+          "rt",
+          "rt-multi-thread",
+          "signal",
+          "signal-hook-registry",
+          "socket2",
+          "sync",
+          "time",
+          "tokio-macros",
+          "tracing",
           "windows-sys"
         ],
         "desktop-linux": [
@@ -14067,6 +16479,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -14095,6 +16509,18 @@
           "time",
           "tokio-util"
         ],
+        "daemon-macos": [
+          "default",
+          "sync",
+          "time",
+          "tokio-util"
+        ],
+        "daemon-windows": [
+          "default",
+          "sync",
+          "time",
+          "tokio-util"
+        ],
         "desktop-linux": [
           "default",
           "time"
@@ -14114,6 +16540,16 @@
     {
       "graphs": {
         "daemon-linux": [
+          "connect",
+          "handshake",
+          "stream"
+        ],
+        "daemon-macos": [
+          "connect",
+          "handshake",
+          "stream"
+        ],
+        "daemon-windows": [
           "connect",
           "handshake",
           "stream"
@@ -14149,6 +16585,12 @@
       "graphs": {
         "daemon-linux": [
           "default"
+        ],
+        "daemon-macos": [
+          "default"
+        ],
+        "daemon-windows": [
+          "default"
         ]
       },
       "name": "tokio-util",
@@ -14164,6 +16606,11 @@
     },
     {
       "graphs": {
+        "daemon-linux": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "desktop-linux": [
           "alloc",
           "default",
@@ -14221,6 +16668,9 @@
     },
     {
       "graphs": {
+        "daemon-linux": [
+          "parse"
+        ],
         "desktop-linux": [
           "parse"
         ]
@@ -14238,6 +16688,11 @@
     },
     {
       "graphs": {
+        "daemon-linux": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "desktop-linux": [
           "alloc",
           "default",
@@ -14278,6 +16733,18 @@
           "std",
           "tracing-attributes"
         ],
+        "daemon-macos": [
+          "attributes",
+          "default",
+          "std",
+          "tracing-attributes"
+        ],
+        "daemon-windows": [
+          "attributes",
+          "default",
+          "std",
+          "tracing-attributes"
+        ],
         "desktop-linux": [
           "attributes",
           "default",
@@ -14311,6 +16778,8 @@
     {
       "graphs": {
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": []
@@ -14329,6 +16798,16 @@
     {
       "graphs": {
         "daemon-linux": [
+          "default",
+          "once_cell",
+          "std"
+        ],
+        "daemon-macos": [
+          "default",
+          "once_cell",
+          "std"
+        ],
+        "daemon-windows": [
           "default",
           "once_cell",
           "std"
@@ -14367,6 +16846,16 @@
           "log-tracer",
           "std"
         ],
+        "daemon-macos": [
+          "default",
+          "log-tracer",
+          "std"
+        ],
+        "daemon-windows": [
+          "default",
+          "log-tracer",
+          "std"
+        ],
         "desktop-linux": [
           "default",
           "log-tracer",
@@ -14396,7 +16885,9 @@
     },
     {
       "graphs": {
-        "daemon-linux": []
+        "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": []
       },
       "name": "tracing-serde",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -14412,6 +16903,42 @@
     {
       "graphs": {
         "daemon-linux": [
+          "alloc",
+          "ansi",
+          "env-filter",
+          "fmt",
+          "json",
+          "matchers",
+          "nu-ansi-term",
+          "once_cell",
+          "registry",
+          "serde",
+          "serde_json",
+          "sharded-slab",
+          "std",
+          "thread_local",
+          "tracing",
+          "tracing-serde"
+        ],
+        "daemon-macos": [
+          "alloc",
+          "ansi",
+          "env-filter",
+          "fmt",
+          "json",
+          "matchers",
+          "nu-ansi-term",
+          "once_cell",
+          "registry",
+          "serde",
+          "serde_json",
+          "sharded-slab",
+          "std",
+          "thread_local",
+          "tracing",
+          "tracing-serde"
+        ],
+        "daemon-windows": [
           "alloc",
           "ansi",
           "env-filter",
@@ -14485,6 +17012,8 @@
     },
     {
       "graphs": {
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-macos": [],
         "desktop-windows": []
       },
@@ -14513,6 +17042,28 @@
           "trouble-host-macros"
         ],
         "daemon-linux": [
+          "central",
+          "default-packet-pool",
+          "default-packet-pool-mtu-255",
+          "derive",
+          "gatt",
+          "log",
+          "peripheral",
+          "scan",
+          "trouble-host-macros"
+        ],
+        "daemon-macos": [
+          "central",
+          "default-packet-pool",
+          "default-packet-pool-mtu-255",
+          "derive",
+          "gatt",
+          "log",
+          "peripheral",
+          "scan",
+          "trouble-host-macros"
+        ],
+        "daemon-windows": [
           "central",
           "default-packet-pool",
           "default-packet-pool-mtu-255",
@@ -14611,6 +17162,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -14632,6 +17185,20 @@
     {
       "graphs": {
         "daemon-linux": [
+          "data-encoding",
+          "handshake",
+          "http",
+          "httparse",
+          "sha1"
+        ],
+        "daemon-macos": [
+          "data-encoding",
+          "handshake",
+          "http",
+          "httparse",
+          "sha1"
+        ],
+        "daemon-windows": [
           "data-encoding",
           "handshake",
           "http",
@@ -14673,6 +17240,12 @@
           "const-generics"
         ],
         "daemon-linux": [
+          "const-generics"
+        ],
+        "daemon-macos": [
+          "const-generics"
+        ],
+        "daemon-windows": [
           "const-generics"
         ],
         "desktop-linux": [
@@ -14781,6 +17354,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -14807,6 +17382,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -14871,6 +17448,14 @@
     {
       "graphs": {
         "daemon-linux": [
+          "default",
+          "std"
+        ],
+        "daemon-macos": [
+          "default",
+          "std"
+        ],
+        "daemon-windows": [
           "default",
           "std"
         ]
@@ -14951,7 +17536,9 @@
     },
     {
       "graphs": {
-        "daemon-linux": []
+        "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": []
       },
       "name": "utf-8",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -14966,7 +17553,9 @@
     },
     {
       "graphs": {
-        "daemon-linux": []
+        "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": []
       },
       "name": "utf8_iter",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -14982,6 +17571,12 @@
     {
       "graphs": {
         "daemon-linux": [
+          "default"
+        ],
+        "daemon-macos": [
+          "default"
+        ],
+        "daemon-windows": [
           "default"
         ]
       },
@@ -15080,6 +17675,21 @@
         "daemon-linux": [
           "default",
           "rng",
+          "serde",
+          "std",
+          "v4"
+        ],
+        "daemon-macos": [
+          "default",
+          "rng",
+          "serde",
+          "std",
+          "v4"
+        ],
+        "daemon-windows": [
+          "default",
+          "rng",
+          "serde",
           "std",
           "v4"
         ]
@@ -15134,6 +17744,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -15160,6 +17772,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -15290,6 +17904,30 @@
     },
     {
       "graphs": {
+        "daemon-windows": [
+          "Devices",
+          "Devices_Bluetooth",
+          "Devices_Bluetooth_Advertisement",
+          "Devices_Bluetooth_GenericAttributeProfile",
+          "Devices_Enumeration",
+          "Devices_Radios",
+          "Devices_WiFiDirect",
+          "Foundation",
+          "Foundation_Collections",
+          "Security",
+          "Security_Credentials",
+          "Storage",
+          "Storage_Streams",
+          "Win32",
+          "Win32_Devices",
+          "Win32_Devices_Communication",
+          "Win32_Devices_DeviceAndDriverInstallation",
+          "Win32_Foundation",
+          "Win32_System",
+          "Win32_System_Com",
+          "default",
+          "std"
+        ],
         "desktop-windows": [
           "Devices",
           "Devices_Bluetooth",
@@ -15328,6 +17966,121 @@
     },
     {
       "graphs": {
+        "daemon-windows": [
+          "Win32",
+          "Win32_Devices",
+          "Win32_Devices_HumanInterfaceDevice",
+          "Win32_Foundation",
+          "Win32_Globalization",
+          "Win32_Graphics",
+          "Win32_Graphics_Dwm",
+          "Win32_Graphics_Gdi",
+          "Win32_System",
+          "Win32_System_Com",
+          "Win32_System_Com_StructuredStorage",
+          "Win32_System_DataExchange",
+          "Win32_System_Diagnostics",
+          "Win32_System_Diagnostics_Debug",
+          "Win32_System_LibraryLoader",
+          "Win32_System_Memory",
+          "Win32_System_Ole",
+          "Win32_System_Registry",
+          "Win32_System_SystemInformation",
+          "Win32_System_SystemServices",
+          "Win32_System_Threading",
+          "Win32_System_WindowsProgramming",
+          "Win32_UI",
+          "Win32_UI_Accessibility",
+          "Win32_UI_Controls",
+          "Win32_UI_HiDpi",
+          "Win32_UI_Input",
+          "Win32_UI_Input_Ime",
+          "Win32_UI_Input_KeyboardAndMouse",
+          "Win32_UI_Input_Pointer",
+          "Win32_UI_Input_Touch",
+          "Win32_UI_Shell",
+          "Win32_UI_TextServices",
+          "Win32_UI_WindowsAndMessaging",
+          "default",
+          "std"
+        ]
+      },
+      "name": "windows",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 146988,
+        "externs": 108928,
+        "functions": 60541,
+        "impls": 10023,
+        "tokens": 326480
+      },
+      "version": "0.61.3"
+    },
+    {
+      "graphs": {
+        "daemon-windows": [
+          "Devices",
+          "Devices_Bluetooth",
+          "Devices_Bluetooth_Advertisement",
+          "Devices_Bluetooth_GenericAttributeProfile",
+          "Devices_Radios",
+          "Foundation",
+          "Foundation_Collections",
+          "Storage",
+          "Storage_Streams",
+          "default",
+          "std"
+        ]
+      },
+      "name": "windows",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 146894,
+        "externs": 108863,
+        "functions": 60541,
+        "impls": 10085,
+        "tokens": 326383
+      },
+      "version": "0.62.2"
+    },
+    {
+      "graphs": {
+        "daemon-windows": []
+      },
+      "name": "windows-collections",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 72,
+        "externs": 68,
+        "functions": 0,
+        "impls": 7,
+        "tokens": 147
+      },
+      "version": "0.2.0"
+    },
+    {
+      "graphs": {
+        "daemon-windows": [
+          "std"
+        ]
+      },
+      "name": "windows-collections",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 72,
+        "externs": 68,
+        "functions": 0,
+        "impls": 7,
+        "tokens": 147
+      },
+      "version": "0.3.2"
+    },
+    {
+      "graphs": {
+        "daemon-windows": [
+          "default",
+          "std"
+        ],
         "desktop-windows": [
           "default",
           "std"
@@ -15346,6 +18099,75 @@
     },
     {
       "graphs": {
+        "daemon-windows": [
+          "default",
+          "std"
+        ]
+      },
+      "name": "windows-core",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 108,
+        "externs": 43,
+        "functions": 54,
+        "impls": 14,
+        "tokens": 220
+      },
+      "version": "0.61.2"
+    },
+    {
+      "graphs": {
+        "daemon-windows": [
+          "std"
+        ]
+      },
+      "name": "windows-core",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 112,
+        "externs": 43,
+        "functions": 54,
+        "impls": 14,
+        "tokens": 224
+      },
+      "version": "0.62.2"
+    },
+    {
+      "graphs": {
+        "daemon-windows": []
+      },
+      "name": "windows-future",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 106,
+        "externs": 72,
+        "functions": 1,
+        "impls": 20,
+        "tokens": 199
+      },
+      "version": "0.2.1"
+    },
+    {
+      "graphs": {
+        "daemon-windows": [
+          "default",
+          "std"
+        ]
+      },
+      "name": "windows-future",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 103,
+        "externs": 72,
+        "functions": 1,
+        "impls": 20,
+        "tokens": 196
+      },
+      "version": "0.3.2"
+    },
+    {
+      "graphs": {
+        "daemon-windows": [],
         "desktop-windows": []
       },
       "name": "windows-implement",
@@ -15361,6 +18183,22 @@
     },
     {
       "graphs": {
+        "daemon-windows": []
+      },
+      "name": "windows-implement",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 7,
+        "externs": 0,
+        "functions": 4,
+        "impls": 0,
+        "tokens": 11
+      },
+      "version": "0.60.2"
+    },
+    {
+      "graphs": {
+        "daemon-windows": [],
         "desktop-windows": []
       },
       "name": "windows-interface",
@@ -15376,6 +18214,37 @@
     },
     {
       "graphs": {
+        "daemon-windows": []
+      },
+      "name": "windows-interface",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 3,
+        "externs": 4,
+        "functions": 3,
+        "impls": 1,
+        "tokens": 12
+      },
+      "version": "0.59.3"
+    },
+    {
+      "graphs": {
+        "daemon-windows": []
+      },
+      "name": "windows-link",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.1.3"
+    },
+    {
+      "graphs": {
+        "daemon-windows": [],
         "desktop-windows": []
       },
       "name": "windows-link",
@@ -15391,6 +18260,42 @@
     },
     {
       "graphs": {
+        "daemon-windows": []
+      },
+      "name": "windows-numerics",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 3,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 3
+      },
+      "version": "0.2.0"
+    },
+    {
+      "graphs": {
+        "daemon-windows": [
+          "std"
+        ]
+      },
+      "name": "windows-numerics",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 3,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 3
+      },
+      "version": "0.3.1"
+    },
+    {
+      "graphs": {
+        "daemon-windows": [
+          "default",
+          "std"
+        ],
         "desktop-windows": [
           "default",
           "std"
@@ -15409,6 +18314,44 @@
     },
     {
       "graphs": {
+        "daemon-windows": [
+          "std"
+        ]
+      },
+      "name": "windows-result",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 15,
+        "externs": 10,
+        "functions": 0,
+        "impls": 2,
+        "tokens": 27
+      },
+      "version": "0.3.4"
+    },
+    {
+      "graphs": {
+        "daemon-windows": [
+          "std"
+        ]
+      },
+      "name": "windows-result",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 15,
+        "externs": 10,
+        "functions": 0,
+        "impls": 2,
+        "tokens": 27
+      },
+      "version": "0.4.1"
+    },
+    {
+      "graphs": {
+        "daemon-windows": [
+          "default",
+          "std"
+        ],
         "desktop-windows": [
           "default",
           "std"
@@ -15427,6 +18370,54 @@
     },
     {
       "graphs": {
+        "daemon-windows": [
+          "std"
+        ]
+      },
+      "name": "windows-strings",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 48,
+        "externs": 0,
+        "functions": 21,
+        "impls": 2,
+        "tokens": 71
+      },
+      "version": "0.4.2"
+    },
+    {
+      "graphs": {
+        "daemon-windows": [
+          "std"
+        ]
+      },
+      "name": "windows-strings",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 48,
+        "externs": 2,
+        "functions": 21,
+        "impls": 2,
+        "tokens": 73
+      },
+      "version": "0.5.1"
+    },
+    {
+      "graphs": {
+        "daemon-windows": [
+          "Win32",
+          "Win32_Foundation",
+          "Win32_NetworkManagement",
+          "Win32_NetworkManagement_IpHelper",
+          "Win32_NetworkManagement_Ndis",
+          "Win32_Networking",
+          "Win32_Networking_WinSock",
+          "Win32_System",
+          "Win32_System_IO",
+          "Win32_System_Memory",
+          "Win32_System_Threading",
+          "default"
+        ],
         "desktop-windows": [
           "Win32",
           "Win32_Foundation",
@@ -15466,6 +18457,25 @@
     },
     {
       "graphs": {
+        "daemon-windows": [
+          "Win32",
+          "Win32_Foundation",
+          "Win32_Globalization",
+          "Win32_Graphics",
+          "Win32_Graphics_Gdi",
+          "Win32_System",
+          "Win32_System_LibraryLoader",
+          "Win32_System_SystemServices",
+          "Win32_UI",
+          "Win32_UI_Accessibility",
+          "Win32_UI_Controls",
+          "Win32_UI_HiDpi",
+          "Win32_UI_Input",
+          "Win32_UI_Input_KeyboardAndMouse",
+          "Win32_UI_Shell",
+          "Win32_UI_WindowsAndMessaging",
+          "default"
+        ],
         "desktop-windows": [
           "Win32",
           "Win32_Devices",
@@ -15513,6 +18523,44 @@
     },
     {
       "graphs": {
+        "daemon-windows": [
+          "Wdk",
+          "Wdk_Foundation",
+          "Wdk_Storage",
+          "Wdk_Storage_FileSystem",
+          "Wdk_System",
+          "Wdk_System_IO",
+          "Win32",
+          "Win32_Devices",
+          "Win32_Devices_Communication",
+          "Win32_Foundation",
+          "Win32_Globalization",
+          "Win32_NetworkManagement",
+          "Win32_NetworkManagement_IpHelper",
+          "Win32_NetworkManagement_Ndis",
+          "Win32_Networking",
+          "Win32_Networking_WinSock",
+          "Win32_Security",
+          "Win32_Security_Authorization",
+          "Win32_Storage",
+          "Win32_Storage_FileSystem",
+          "Win32_System",
+          "Win32_System_Com",
+          "Win32_System_Console",
+          "Win32_System_Diagnostics",
+          "Win32_System_Diagnostics_Debug",
+          "Win32_System_IO",
+          "Win32_System_Memory",
+          "Win32_System_Pipes",
+          "Win32_System_Registry",
+          "Win32_System_SystemInformation",
+          "Win32_System_SystemServices",
+          "Win32_System_Threading",
+          "Win32_System_WindowsProgramming",
+          "Win32_UI",
+          "Win32_UI_Shell",
+          "default"
+        ],
         "desktop-windows": [
           "Wdk",
           "Wdk_Foundation",
@@ -15557,6 +18605,7 @@
     },
     {
       "graphs": {
+        "daemon-windows": [],
         "desktop-windows": []
       },
       "name": "windows-targets",
@@ -15572,6 +18621,7 @@
     },
     {
       "graphs": {
+        "daemon-windows": [],
         "desktop-windows": []
       },
       "name": "windows-targets",
@@ -15587,6 +18637,52 @@
     },
     {
       "graphs": {
+        "daemon-windows": []
+      },
+      "name": "windows-threading",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 12,
+        "externs": 3,
+        "functions": 1,
+        "impls": 2,
+        "tokens": 18
+      },
+      "version": "0.1.0"
+    },
+    {
+      "graphs": {
+        "daemon-windows": []
+      },
+      "name": "windows-threading",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 13,
+        "externs": 3,
+        "functions": 1,
+        "impls": 2,
+        "tokens": 19
+      },
+      "version": "0.2.1"
+    },
+    {
+      "graphs": {
+        "daemon-windows": []
+      },
+      "name": "windows-version",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 5,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 5
+      },
+      "version": "0.1.7"
+    },
+    {
+      "graphs": {
+        "daemon-windows": [],
         "desktop-windows": []
       },
       "name": "windows_x86_64_msvc",
@@ -15602,6 +18698,7 @@
     },
     {
       "graphs": {
+        "daemon-windows": [],
         "desktop-windows": []
       },
       "name": "windows_x86_64_msvc",
@@ -15655,6 +18752,14 @@
     },
     {
       "graphs": {
+        "daemon-linux": [
+          "alloc",
+          "ascii",
+          "binary",
+          "default",
+          "parser",
+          "std"
+        ],
         "desktop-linux": [
           "alloc",
           "ascii",
@@ -15677,7 +18782,9 @@
     },
     {
       "graphs": {
-        "daemon-linux": []
+        "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": []
       },
       "name": "writeable",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -15697,6 +18804,14 @@
           "static_secrets"
         ],
         "daemon-linux": [
+          "precomputed-tables",
+          "static_secrets"
+        ],
+        "daemon-macos": [
+          "precomputed-tables",
+          "static_secrets"
+        ],
+        "daemon-windows": [
           "precomputed-tables",
           "static_secrets"
         ],
@@ -15858,6 +18973,14 @@
         "daemon-linux": [
           "derive",
           "zerofrom"
+        ],
+        "daemon-macos": [
+          "derive",
+          "zerofrom"
+        ],
+        "daemon-windows": [
+          "derive",
+          "zerofrom"
         ]
       },
       "name": "yoke",
@@ -15873,7 +18996,9 @@
     },
     {
       "graphs": {
-        "daemon-linux": []
+        "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": []
       },
       "name": "yoke-derive",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -15888,6 +19013,9 @@
     },
     {
       "graphs": {
+        "daemon-linux": [
+          "tokio"
+        ],
         "desktop-linux": [
           "tokio"
         ]
@@ -15905,6 +19033,9 @@
     },
     {
       "graphs": {
+        "daemon-linux": [
+          "default"
+        ],
         "desktop-linux": [
           "default"
         ]
@@ -15922,6 +19053,7 @@
     },
     {
       "graphs": {
+        "daemon-linux": [],
         "desktop-linux": []
       },
       "name": "zbus_names",
@@ -15982,6 +19114,12 @@
         "daemon-linux": [
           "simd"
         ],
+        "daemon-macos": [
+          "simd"
+        ],
+        "daemon-windows": [
+          "simd"
+        ],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": []
@@ -16016,6 +19154,12 @@
       "graphs": {
         "daemon-linux": [
           "derive"
+        ],
+        "daemon-macos": [
+          "derive"
+        ],
+        "daemon-windows": [
+          "derive"
         ]
       },
       "name": "zerofrom",
@@ -16031,7 +19175,9 @@
     },
     {
       "graphs": {
-        "daemon-linux": []
+        "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": []
       },
       "name": "zerofrom-derive",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -16052,6 +19198,16 @@
           "zeroize_derive"
         ],
         "daemon-linux": [
+          "alloc",
+          "derive",
+          "zeroize_derive"
+        ],
+        "daemon-macos": [
+          "alloc",
+          "derive",
+          "zeroize_derive"
+        ],
+        "daemon-windows": [
           "alloc",
           "derive",
           "zeroize_derive"
@@ -16137,6 +19293,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
@@ -16178,6 +19336,14 @@
         "daemon-linux": [
           "yoke",
           "zerofrom"
+        ],
+        "daemon-macos": [
+          "yoke",
+          "zerofrom"
+        ],
+        "daemon-windows": [
+          "yoke",
+          "zerofrom"
         ]
       },
       "name": "zerotrie",
@@ -16196,6 +19362,14 @@
         "daemon-linux": [
           "derive",
           "yoke"
+        ],
+        "daemon-macos": [
+          "derive",
+          "yoke"
+        ],
+        "daemon-windows": [
+          "derive",
+          "yoke"
         ]
       },
       "name": "zerovec",
@@ -16211,7 +19385,9 @@
     },
     {
       "graphs": {
-        "daemon-linux": []
+        "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": []
       },
       "name": "zerovec-derive",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -16242,7 +19418,9 @@
     },
     {
       "graphs": {
-        "daemon-linux": []
+        "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": []
       },
       "name": "zmij",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -16257,6 +19435,10 @@
     },
     {
       "graphs": {
+        "daemon-linux": [
+          "default",
+          "enumflags2"
+        ],
         "desktop-linux": [
           "default",
           "enumflags2"
@@ -16275,6 +19457,9 @@
     },
     {
       "graphs": {
+        "daemon-linux": [
+          "default"
+        ],
         "desktop-linux": [
           "default"
         ]
@@ -16292,6 +19477,9 @@
     },
     {
       "graphs": {
+        "daemon-linux": [
+          "default"
+        ],
         "desktop-linux": [
           "default"
         ]
@@ -16313,7 +19501,10 @@
     "personal-hopspot-android",
     "personal-hopspot-esp32",
     "personal-hopspot-ios",
+    "prns-core",
     "prns-ffi",
+    "prns-runtime",
+    "prns-runtime-embassy",
     "t-echo"
   ]
 }

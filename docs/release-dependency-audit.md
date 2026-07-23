@@ -9,7 +9,7 @@ commit and hashes of the checked baselines.
 | Graph | Manifest | Shipped target |
 |---|---|---|
 | Engine | `Cargo.toml` | `x86_64-unknown-linux-gnu` |
-| Daemon | `prnsd/Cargo.toml` | `x86_64-unknown-linux-gnu` |
+| Daemon | `prnsd/Cargo.toml` | Linux, macOS, Windows |
 | Desktop | `personal-hopspot/desktop/Cargo.toml` | Linux, macOS, Windows |
 | Android | `personal-hopspot/mobile/android/rust/Cargo.toml` | `aarch64-linux-android` |
 | iOS | `personal-hopspot/mobile/ios/rust/Cargo.toml` | `aarch64-apple-ios` |
@@ -31,8 +31,9 @@ dependencies, and checks advisories, licenses, sources, and bans with cargo-deny
   graphs. The standalone hardware flasher intentionally carries exact-scoped `directories` and
   `serialport` dependencies for its user cache and direct USB operation; that separate graph is
   audited on every published operating system target.
-- Linux no longer instantiates tray-icon's GTK3/GLib path. It uses the blocking StatusNotifier
-  backend in `ksni 0.3.6`; tray-icon remains target-scoped to macOS and Windows.
+- Linux does not instantiate tray-icon's GTK3/GLib path for either `prnsd` or the Hopspot desktop
+  face. Both use the blocking StatusNotifier backend in `ksni 0.3.6`; tray-icon remains
+  target-scoped to macOS and Windows.
 
 The allowlist in `deny.toml` is a permissive-by-default policy: every unlisted expression fails.
 GPL, LGPL, AGPL, and unknown licenses are not accepted. Package-scoped additions are `ksni 0.3.6`
@@ -47,6 +48,8 @@ accepted generally. The SoftDevice source remains restricted to revision
 Every shipped first-party Rust target must declare `#![forbid(unsafe_code)]` unless its package is
 one of these reviewed boundaries:
 
+- `prns-core`, `prns-runtime`, and `prns-runtime-embassy`: documented field-by-field in-place
+  initialization that keeps the large engine and node values off constrained embedded stacks.
 - `prns-ffi`: Objective-C, IOKit, WinRT, SetupAPI, and Windows COM handles.
 - `personal-hopspot-android`: JNI pointers and Java-owned buffers.
 - `personal-hopspot-ios`: the exported C ABI and caller-owned framebuffer.

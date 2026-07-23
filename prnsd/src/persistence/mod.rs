@@ -7,6 +7,8 @@ use personal_rns::runtime::PrnsNodeHandle;
 use personal_rns::wire::DestinationHash;
 use prnsd_control::ManagedProcess;
 
+use crate::shutdown::ShutdownSignal;
+
 mod restore;
 mod worker;
 
@@ -34,6 +36,7 @@ pub(crate) fn prepare_worker(
 pub(crate) async fn run_until_shutdown(
     persistence: Option<PersistenceWorker>,
     managed: Option<&ManagedProcess>,
+    shutdown: Option<ShutdownSignal>,
 ) {
-    worker::run_until_shutdown(persistence, managed).await;
+    worker::run_until_shutdown(persistence, managed, shutdown).await;
 }

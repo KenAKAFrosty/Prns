@@ -16,6 +16,7 @@ use std::path::Path;
 use std::process;
 use std::time::Duration;
 
+use crate::shutdown::ShutdownSignal;
 use crate::{cli, interface_discovery, observability, persistence, services, splash};
 use personal_rns::browser_rendezvous::BrowserRendezvous;
 use personal_rns::config::{SharedInstance, TransportIdentityPolicy};
@@ -37,7 +38,12 @@ use personal_rns::wifi_auto::AutoWifiDevicePolicy;
 use personal_rns::PlanRuntimeContext;
 use prnsd_control::{config_digest, ManagedProcess, ReloadRequest, ReloadResult, ServiceError};
 
-pub(super) async fn run(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
+pub(super) async fn run(
+    cli: cli::DaemonArgs,
+    managed: Option<ManagedProcess>,
+    shutdown: Option<ShutdownSignal>,
+    ready: Option<tokio::sync::oneshot::Sender<()>>,
+) {
     let started = std::time::Instant::now();
     let configuration::LoadedConfiguration {
         directory: config_dir,
@@ -322,6 +328,23 @@ pub(super) async fn run(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
             process::exit(1);
         }
     }
+    if let Some(ready) = ready {
+        let _ = ready.send(());
+    }
+    #[cfg(all(feature = "tray", target_os = "linux"))]
+    let (_tray, shutdown) = match shutdown {
+        Some(shutdown) => (None, Some(shutdown)),
+        None => match crate::tray::start() {
+            Ok((tray, shutdown)) => {
+                tracing::info!(event = "tray_started");
+                (Some(tray), Some(shutdown))
+            }
+            Err(error) => {
+                tracing::warn!(event = "tray_unavailable", error = %error);
+                (None, None)
+            }
+        },
+    };
     let mut interface_failure = None;
     let mut node_failure = false;
     let mut active_plan = plan.clone();
@@ -330,6 +353,7 @@ pub(super) async fn run(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
     let mut persistence_run = Box::pin(persistence::run_until_shutdown(
         persistence,
         managed.as_ref(),
+        shutdown,
     ));
     loop {
         tokio::select! {
