@@ -155,9 +155,9 @@ fn ingress_pressure_events(id: InterfaceId) -> u32 {
         }
         Some(InterfaceKind::LoRa) => LORA_REACTOR_LANE.ingress_pressure_events(),
         #[cfg(feature = "bluetooth-auto")]
-        Some(InterfaceKind::BluetoothAuto | InterfaceKind::BluetoothPeer) => {
-            BLE_REACTOR_LANE.ingress_pressure_events()
-        }
+        Some(InterfaceKind::BluetoothAuto | InterfaceKind::BluetoothPeer) => BLE_REACTOR_LANE
+            .ingress_pressure_events()
+            .saturating_add(BluetoothAutoStatus::new(&BLE_SHARED).ingress_pressure_events()),
         #[cfg(feature = "esp-now")]
         Some(InterfaceKind::EspNow) => ESPNOW_REACTOR_LANE.ingress_pressure_events(),
         _ => 0,

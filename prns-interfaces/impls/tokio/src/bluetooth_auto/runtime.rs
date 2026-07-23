@@ -617,7 +617,7 @@ where
     }
 }
 
-const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+pub(super) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
 async fn prepare_radio<B, const MAX_PEERS: usize>(
     backend: &mut B,
@@ -805,7 +805,7 @@ async fn arm_fast_lane<L: BleLink>(link: &mut L, lane: &L2capPlan) {
 mod tests {
     use std::time::Duration;
 
-    use tokio::sync::mpsc;
+    use tokio::sync::{mpsc, oneshot};
 
     use super::*;
     use prns_core::interfaces::bluetooth_auto::{
@@ -910,6 +910,10 @@ mod tests {
 
     struct LoopbackSink {
         data_tx: mpsc::Sender<std::vec::Vec<u8>>,
+    }
+
+    struct BlockingSink {
+        started: Option<oneshot::Sender<()>>,
     }
 
     struct ColumbaLink {
@@ -1063,6 +1067,17 @@ mod tests {
 
         async fn send_frame(&mut self, frame: &[u8]) -> Result<(), Closed> {
             self.data_tx.send(frame.to_vec()).await.map_err(|_| Closed)
+        }
+    }
+
+    impl BleSink for BlockingSink {
+        type Error = Closed;
+
+        async fn send_frame(&mut self, _frame: &[u8]) -> Result<(), Closed> {
+            if let Some(started) = self.started.take() {
+                let _ = started.send(());
+            }
+            std::future::pending().await
         }
     }
 
@@ -1251,6 +1266,70 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(received, frame);
+    }
+
+    #[tokio::test]
+    async fn a_blocked_peer_does_not_stall_another_peer() {
+        let (slow_data_tx, slow_data_rx) = mpsc::channel(1);
+        let _keep_slow_source_alive = slow_data_tx;
+        let (slow_started_tx, slow_started_rx) = oneshot::channel();
+        let slow_peer = BluetoothPeer::new(
+            BleIdentity::new([1; 16]),
+            LoopbackSource {
+                data_rx: slow_data_rx,
+            },
+            BlockingSink {
+                started: Some(slow_started_tx),
+            },
+        );
+        let (slow_discard_tx, _slow_discard_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
+        let (mut slow_outbound_tx, slow_outbound_rx) = tokio_grant_lane(TEST_FRAME_CAP, 2);
+        let slow_seam = MockSeam {
+            inbound: slow_discard_tx,
+            sink: std::vec::Vec::new(),
+            outbound: slow_outbound_rx,
+        };
+        let slow_task = tokio::spawn(slow_peer.run(slow_seam));
+
+        slow_outbound_tx.try_grant().unwrap().fill(&[0xAA]);
+        slow_outbound_tx.commit();
+        tokio::time::timeout(Duration::from_secs(1), slow_started_rx)
+            .await
+            .unwrap()
+            .unwrap();
+
+        let (fast_data_tx, fast_data_rx) = mpsc::channel(1);
+        let (fast_sink_tx, mut fast_sink_rx) = mpsc::channel(1);
+        let fast_peer = BluetoothPeer::new(
+            BleIdentity::new([2; 16]),
+            LoopbackSource {
+                data_rx: fast_data_rx,
+            },
+            LoopbackSink {
+                data_tx: fast_sink_tx,
+            },
+        );
+        let (fast_capture_tx, mut fast_capture_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
+        let (_fast_outbound_tx, fast_outbound_rx) = tokio_grant_lane(TEST_FRAME_CAP, 2);
+        let fast_seam = MockSeam {
+            inbound: fast_capture_tx,
+            sink: std::vec::Vec::new(),
+            outbound: fast_outbound_rx,
+        };
+        let fast_task = tokio::spawn(fast_peer.run(fast_seam));
+
+        fast_data_tx.send(vec![0x10, 0x20]).await.unwrap();
+        let received = tokio::time::timeout(Duration::from_secs(1), fast_capture_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(received, [0x10, 0x20]);
+        assert!(fast_sink_rx.try_recv().is_err());
+        assert!(!slow_task.is_finished());
+
+        slow_task.abort();
+        fast_task.abort();
     }
 
     #[test]

@@ -12,8 +12,8 @@ use bluer::gatt::local::{
     CharacteristicNotify, CharacteristicNotifyMethod, CharacteristicRead, CharacteristicWrite,
     CharacteristicWriteMethod, Service,
 };
-use bluer::gatt::remote::Characteristic as RemoteCharacteristic;
-use bluer::gatt::{CharacteristicReader, CharacteristicWriter};
+use bluer::gatt::remote::{Characteristic as RemoteCharacteristic, CharacteristicWriteRequest};
+use bluer::gatt::{CharacteristicReader, CharacteristicWriter, WriteOp};
 use bluer::l2cap::{
     Security, SecurityLevel, SeqPacket, SeqPacketListener, Socket, SocketAddr as L2capSocketAddr,
 };
@@ -42,7 +42,7 @@ const L2CAP_SDU_LEN: usize = STREAM_FRAME_PREFIX_LEN + BLE_HW_MTU;
 
 const GATT_FRAGMENT_PAYLOAD: usize = 180;
 const GATT_REASSEMBLY_CAP: usize = 600;
-const GATT_WRITE_INTERVAL: Duration = Duration::from_millis(15);
+const GATT_HALF_OPEN_TIMEOUT: Duration = super::runtime::HANDSHAKE_TIMEOUT;
 
 const SCAN_STOP_POLL: Duration = Duration::from_millis(20);
 const SCAN_STOP_ATTEMPTS: usize = 25;
@@ -50,7 +50,7 @@ const SCAN_STOP_ATTEMPTS: usize = 25;
 const RESWEEP_INTERVAL: Duration = Duration::from_secs(5);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const L2CAP_UPGRADE_TIMEOUT: Duration = Duration::from_secs(5);
-const DISCOVERY_RETRY_INTERVAL: Duration = Duration::from_secs(5);
+const CONTROL_PLANE_RETRY_INTERVAL: Duration = Duration::from_secs(5);
 const DISCOVERY_DEGRADED_AFTER: Duration = Duration::from_secs(15);
 
 const EATT_BLOCKED_REASON: &str = "BlueZ GATT Channels >1; set Channels=1";
@@ -165,6 +165,13 @@ fn uuid_of(uuid: BleUuid) -> Uuid {
     }
 }
 
+fn acknowledged_write() -> CharacteristicWriteRequest {
+    CharacteristicWriteRequest {
+        op_type: WriteOp::Request,
+        ..CharacteristicWriteRequest::default()
+    }
+}
+
 fn native_characteristic(
     uuid: Uuid,
     control_handle: CharacteristicControlHandle,
@@ -243,16 +250,59 @@ fn columba_identity_characteristic(identity: BleIdentity) -> Characteristic {
     }
 }
 
-#[derive(Default)]
 struct PendingHalves {
+    opened_at: Instant,
     reader: Option<CharacteristicReader>,
     writer: Option<CharacteristicWriter>,
 }
 
-#[derive(Default)]
 struct PendingData {
+    opened_at: Instant,
     writer: Option<CharacteristicWriter>,
     reader: Option<CharacteristicReader>,
+}
+
+struct AwaitingDataReader {
+    opened_at: Instant,
+    sender: oneshot::Sender<CharacteristicReader>,
+}
+
+impl PendingHalves {
+    fn new() -> Self {
+        Self {
+            opened_at: Instant::now(),
+            reader: None,
+            writer: None,
+        }
+    }
+
+    fn expired(&self, now: Instant) -> bool {
+        now.saturating_duration_since(self.opened_at) >= GATT_HALF_OPEN_TIMEOUT
+    }
+}
+
+impl PendingData {
+    fn new() -> Self {
+        Self {
+            opened_at: Instant::now(),
+            writer: None,
+            reader: None,
+        }
+    }
+
+    fn expired(&self, now: Instant) -> bool {
+        now.saturating_duration_since(self.opened_at) >= GATT_HALF_OPEN_TIMEOUT
+    }
+}
+
+impl AwaitingDataReader {
+    fn expired(&self, now: Instant) -> bool {
+        now.saturating_duration_since(self.opened_at) >= GATT_HALF_OPEN_TIMEOUT
+    }
+}
+
+fn can_admit_address<T>(entries: &HashMap<Address, T>, address: Address) -> bool {
+    entries.contains_key(&address) || entries.len() < BluerBackend::MAX_PEERS
 }
 
 #[derive(Default)]
@@ -322,6 +372,9 @@ enum Observed {
         address: Address,
         half: Half,
     },
+    DiscoveryEnded,
+    GattServerEnded,
+    GattRetry,
     Connected(Address, Result<BluerLink, BluerError>),
     Resweep,
     Idle,
@@ -393,11 +446,12 @@ pub struct BluerBackend {
     columba_tx_control: Option<Pin<Box<CharacteristicControl>>>,
     pending_columba: HashMap<Address, PendingHalves>,
     pending_data: HashMap<Address, PendingData>,
-    awaiting_data_reader: HashMap<Address, oneshot::Sender<CharacteristicReader>>,
+    awaiting_data_reader: HashMap<Address, AwaitingDataReader>,
     listener: Option<Arc<SeqPacketListener>>,
     l2cap_router: Arc<std::sync::Mutex<AcceptRouter<SeqPacket>>>,
     _accept_task: Option<tokio::task::JoinHandle<()>>,
     advertisement: AdvertisementState,
+    gatt_retry_at: Option<Instant>,
     _application: Option<ApplicationHandle>,
     blocked: Option<&'static str>,
 }
@@ -449,6 +503,7 @@ impl BluerBackend {
             l2cap_router: Arc::new(std::sync::Mutex::new(AcceptRouter::new())),
             _accept_task: None,
             advertisement: AdvertisementState::Off,
+            gatt_retry_at: None,
             _application: None,
             blocked,
         })
@@ -546,11 +601,18 @@ impl BluerBackend {
         if self.advertisement.is_published() {
             return Ok(());
         }
+        if let Some(retry_at) = self.gatt_retry_at {
+            if Instant::now() < retry_at {
+                return Ok(());
+            }
+            self.gatt_retry_at = None;
+        }
         self.ensure_gatt_server().await?;
         let advertisement = self.adapter.advertise(Self::advertisement()).await?;
         self.advertisement = AdvertisementState::Published {
             _handle: advertisement,
         };
+        self.gatt_retry_at = None;
         crate::diagnostic_log::debug!(
             "bluetooth: advertising Reticulum BLE, control PSM {:#x}, listener {}",
             self.psm.get(),
@@ -643,6 +705,25 @@ impl BluerBackend {
         self.connecting.clear();
         self.connects = FuturesUnordered::new();
         self.resweep_next = 0;
+        self.gatt_retry_at = None;
+    }
+
+    fn prune_half_open_gatt(&mut self, now: Instant) {
+        self.pending.retain(|_, pending| !pending.expired(now));
+        self.pending_columba
+            .retain(|_, pending| !pending.expired(now));
+        self.pending_data.retain(|_, pending| !pending.expired(now));
+        self.awaiting_data_reader
+            .retain(|_, pending| !pending.expired(now));
+    }
+
+    fn recover_gatt_server(&mut self) {
+        let resume_advertising = self.advertisement.wants_airtime();
+        self.advertisement.stop();
+        self.stop_gatt_server();
+        if resume_advertising {
+            self.advertisement.want();
+        }
     }
 
     async fn start_discovery(&mut self) -> Result<(), BluerError> {
@@ -671,7 +752,7 @@ impl BluerBackend {
                 self.discovery_health = DiscoveryHealth::default();
             }
             Err(error) => {
-                self.discovery_health.retry_at = Some(now + DISCOVERY_RETRY_INTERVAL);
+                self.discovery_health.retry_at = Some(now + CONTROL_PLANE_RETRY_INTERVAL);
                 let failing_since = *self.discovery_health.failing_since.get_or_insert(now);
                 if !self.discovery_health.warned
                     && now.duration_since(failing_since) >= DISCOVERY_DEGRADED_AFTER
@@ -699,8 +780,11 @@ impl BluerBackend {
             PeerProtocol::Native => &mut self.pending,
             PeerProtocol::Columba => &mut self.pending_columba,
         };
+        if !can_admit_address(pending, address) {
+            return None;
+        }
         let ready = {
-            let entry = pending.entry(address).or_default();
+            let entry = pending.entry(address).or_insert_with(PendingHalves::new);
             match half {
                 Half::Reader(reader) => entry.reader = Some(reader),
                 Half::Writer(writer) => entry.writer = Some(writer),
@@ -713,6 +797,7 @@ impl BluerBackend {
         let Some(PendingHalves {
             reader: Some(reader),
             writer: Some(writer),
+            ..
         }) = pending.remove(&address)
         else {
             return None;
@@ -739,14 +824,25 @@ impl BluerBackend {
     }
 
     fn take_server_data(&mut self, address: Address) -> ServerData {
-        let data = self.pending_data.remove(&address).unwrap_or_default();
+        let data = self
+            .pending_data
+            .remove(&address)
+            .unwrap_or_else(PendingData::new);
         match data.writer {
             Some(writer) => {
                 let reader = match data.reader {
                     Some(reader) => DataRead::Ready(reader),
                     None => {
                         let (tx, rx) = oneshot::channel();
-                        self.awaiting_data_reader.insert(address, tx);
+                        if can_admit_address(&self.awaiting_data_reader, address) {
+                            self.awaiting_data_reader.insert(
+                                address,
+                                AwaitingDataReader {
+                                    opened_at: Instant::now(),
+                                    sender: tx,
+                                },
+                            );
+                        }
                         DataRead::Pending(rx)
                     }
                 };
@@ -759,14 +855,24 @@ impl BluerBackend {
     fn admit_data_half(&mut self, address: Address, half: Half) {
         match half {
             Half::Writer(writer) => {
-                self.pending_data.entry(address).or_default().writer = Some(writer);
+                if can_admit_address(&self.pending_data, address) {
+                    self.pending_data
+                        .entry(address)
+                        .or_insert_with(PendingData::new)
+                        .writer = Some(writer);
+                }
             }
             Half::Reader(reader) => match self.awaiting_data_reader.remove(&address) {
-                Some(tx) => {
-                    let _ = tx.send(reader);
+                Some(pending) => {
+                    let _ = pending.sender.send(reader);
                 }
                 None => {
-                    self.pending_data.entry(address).or_default().reader = Some(reader);
+                    if can_admit_address(&self.pending_data, address) {
+                        self.pending_data
+                            .entry(address)
+                            .or_insert_with(PendingData::new)
+                            .reader = Some(reader);
+                    }
                 }
             },
         }
@@ -779,6 +885,13 @@ where
 {
     match stream {
         Some(stream) => stream.next().await,
+        None => core::future::pending().await,
+    }
+}
+
+async fn retry_or_pending(retry_at: Option<Instant>) {
+    match retry_at {
+        Some(retry_at) => tokio::time::sleep_until(retry_at.into()).await,
         None => core::future::pending().await,
     }
 }
@@ -967,7 +1080,10 @@ impl BleBackend<{ BluerBackend::MAX_PEERS }> for BluerBackend {
 
     async fn next_event(&mut self) -> BleEvent<BluerLink> {
         loop {
+            self.prune_half_open_gatt(Instant::now());
             if let Err(error) = self.reconcile_advertisement().await {
+                self.gatt_retry_at
+                    .get_or_insert(Instant::now() + CONTROL_PLANE_RETRY_INTERVAL);
                 crate::diagnostic_log::warn!("bluetooth: advertising unavailable: {error:?}");
             }
             let want_discovery =
@@ -985,10 +1101,12 @@ impl BleBackend<{ BluerBackend::MAX_PEERS }> for BluerBackend {
                 let columba_rx_control = self.columba_rx_control.as_mut();
                 let columba_tx_control = self.columba_tx_control.as_mut();
                 let connects = &mut self.connects;
+                let gatt_retry_at = self.gatt_retry_at;
                 tokio::select! {
                     event = next_or_pending(discovery) => match event {
                         Some(AdapterEvent::DeviceAdded(address)) => Observed::Candidate(address),
-                        _ => Observed::Idle,
+                        Some(_) => Observed::Idle,
+                        None => Observed::DiscoveryEnded,
                     },
                     event = next_or_pending(control) => match event {
                         Some(CharacteristicControlEvent::Write(request)) => {
@@ -1007,7 +1125,7 @@ impl BleBackend<{ BluerBackend::MAX_PEERS }> for BluerBackend {
                             address: writer.device_address(),
                             half: Half::Writer(writer),
                         },
-                        None => Observed::Idle,
+                        None => Observed::GattServerEnded,
                     },
                     event = next_or_pending(columba_rx_control) => match event {
                         Some(CharacteristicControlEvent::Write(request)) => {
@@ -1021,7 +1139,8 @@ impl BleBackend<{ BluerBackend::MAX_PEERS }> for BluerBackend {
                                 Err(_) => Observed::Idle,
                             }
                         }
-                        _ => Observed::Idle,
+                        Some(_) => Observed::Idle,
+                        None => Observed::GattServerEnded,
                     },
                     event = next_or_pending(columba_tx_control) => match event {
                         Some(CharacteristicControlEvent::Notify(writer)) => Observed::Greeting {
@@ -1029,7 +1148,8 @@ impl BleBackend<{ BluerBackend::MAX_PEERS }> for BluerBackend {
                             address: writer.device_address(),
                             half: Half::Writer(writer),
                         },
-                        _ => Observed::Idle,
+                        Some(_) => Observed::Idle,
+                        None => Observed::GattServerEnded,
                     },
                     event = next_or_pending(data_control) => match event {
                         Some(CharacteristicControlEvent::Write(request)) => {
@@ -1046,9 +1166,10 @@ impl BleBackend<{ BluerBackend::MAX_PEERS }> for BluerBackend {
                             address: writer.device_address(),
                             half: Half::Writer(writer),
                         },
-                        None => Observed::Idle,
+                        None => Observed::GattServerEnded,
                     },
                     (target, result) = next_connect(connects) => Observed::Connected(target, result),
+                    () = retry_or_pending(gatt_retry_at) => Observed::GattRetry,
                     () = tokio::time::sleep(RESWEEP_INTERVAL), if want_discovery => Observed::Resweep,
                 }
             };
@@ -1074,6 +1195,7 @@ impl BleBackend<{ BluerBackend::MAX_PEERS }> for BluerBackend {
                     address,
                     half,
                 } => {
+                    self.prune_half_open_gatt(Instant::now());
                     if let Some(link) = self.admit_greeting(protocol, address, half) {
                         let peer_rssi = self.peer_rssi(address).await;
                         crate::diagnostic_log::debug!("bluetooth: inbound link from {address}");
@@ -1085,8 +1207,20 @@ impl BleBackend<{ BluerBackend::MAX_PEERS }> for BluerBackend {
                     }
                 }
                 Observed::DataHalf { address, half } => {
+                    self.prune_half_open_gatt(Instant::now());
                     self.admit_data_half(address, half);
                 }
+                Observed::DiscoveryEnded => {
+                    let now = Instant::now();
+                    self.discovery = None;
+                    self.discovery_health.retry_at = Some(now + CONTROL_PLANE_RETRY_INTERVAL);
+                    self.discovery_health.failing_since.get_or_insert(now);
+                }
+                Observed::GattServerEnded => {
+                    self.recover_gatt_server();
+                    self.gatt_retry_at = Some(Instant::now() + CONTROL_PLANE_RETRY_INTERVAL);
+                }
+                Observed::GattRetry => self.gatt_retry_at = None,
                 Observed::Connected(target, result) => {
                     self.connecting.remove(&target);
                     match result {
@@ -1273,7 +1407,15 @@ impl BleLink for DialedLink {
     async fn control_send(&mut self, msg: &Control) -> Result<(), BluerError> {
         let mut buf = [0u8; CONTROL_MAX_LEN];
         let len = msg.encode(&mut buf).ok_or(BluerError::ControlPduTooLarge)?;
-        match self.control.write(&buf[..len]).await {
+        let written = match self.peer_protocol {
+            PeerProtocol::Native => {
+                self.control
+                    .write_ext(&buf[..len], &acknowledged_write())
+                    .await
+            }
+            PeerProtocol::Columba => self.control.write(&buf[..len]).await,
+        };
+        match written {
             Ok(()) => {
                 crate::diagnostic_log::debug!("bluetooth: {} <- {msg:?}", self.peer_address);
                 Ok(())
@@ -1389,10 +1531,14 @@ impl BleLink for DialedLink {
                     self.peer_address
                 );
                 let (rx, tx) = match (self.data_notify, self.data) {
-                    (Some(data_notify), Some(data)) => {
-                        (GattRx::Notify(data_notify), GattTx::Remote(data))
-                    }
-                    _ => (GattRx::Notify(self.notify), GattTx::Remote(self.control)),
+                    (Some(data_notify), Some(data)) => (
+                        GattRx::Notify(data_notify),
+                        GattTx::remote(self.peer_protocol, data),
+                    ),
+                    _ => (
+                        GattRx::Notify(self.notify),
+                        GattTx::remote(self.peer_protocol, self.control),
+                    ),
                 };
                 (
                     BluerSource::Gatt(Box::new(GattSource {
@@ -1644,8 +1790,18 @@ enum GattRx {
 }
 
 enum GattTx {
-    Remote(RemoteCharacteristic),
+    RemoteRequest(RemoteCharacteristic),
+    RemoteCommand(RemoteCharacteristic),
     Writer(CharacteristicWriter),
+}
+
+impl GattTx {
+    fn remote(peer_protocol: PeerProtocol, characteristic: RemoteCharacteristic) -> Self {
+        match peer_protocol {
+            PeerProtocol::Native => Self::RemoteRequest(characteristic),
+            PeerProtocol::Columba => Self::RemoteCommand(characteristic),
+        }
+    }
 }
 
 pub struct GattSource {
@@ -1689,32 +1845,11 @@ impl BleSource for GattSource {
 
 pub struct GattSink {
     tx: GattTx,
-    pacer: GattPacer,
-}
-
-struct GattPacer {
-    next_write: tokio::time::Instant,
-}
-
-impl GattPacer {
-    fn new() -> Self {
-        Self {
-            next_write: tokio::time::Instant::now(),
-        }
-    }
-
-    async fn wait(&mut self) {
-        tokio::time::sleep_until(self.next_write).await;
-        self.next_write = tokio::time::Instant::now() + GATT_WRITE_INTERVAL;
-    }
 }
 
 impl GattSink {
     fn new(tx: GattTx) -> Self {
-        Self {
-            tx,
-            pacer: GattPacer::new(),
-        }
+        Self { tx }
     }
 }
 
@@ -1725,9 +1860,11 @@ impl BleSink for GattSink {
         let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
         for fragment in fragments_of(frame, GATT_FRAGMENT_PAYLOAD) {
             let n = fragment.encode(&mut buf).ok_or(BluerError::FrameTooLarge)?;
-            self.pacer.wait().await;
             match &mut self.tx {
-                GattTx::Remote(remote) => {
+                GattTx::RemoteRequest(remote) => {
+                    remote.write_ext(&buf[..n], &acknowledged_write()).await?;
+                }
+                GattTx::RemoteCommand(remote) => {
                     remote.write(&buf[..n]).await?;
                 }
                 GattTx::Writer(writer) => {
@@ -1768,20 +1905,33 @@ mod tests {
         );
     }
 
-    #[tokio::test(start_paused = true)]
-    async fn gatt_pacer_spaces_consecutive_writes() {
-        let mut pacer = GattPacer::new();
-        let started = tokio::time::Instant::now();
+    #[test]
+    fn native_gatt_uses_remote_acknowledgements() {
+        assert_eq!(acknowledged_write().op_type, WriteOp::Request);
+    }
 
-        pacer.wait().await;
-        assert_eq!(tokio::time::Instant::now(), started);
-        assert!(tokio::time::timeout(Duration::ZERO, pacer.wait())
-            .await
-            .is_err());
+    #[test]
+    fn half_open_gatt_state_expires_on_monotonic_time() {
+        let opened_at = Instant::now();
+        let pending = PendingHalves {
+            opened_at,
+            reader: None,
+            writer: None,
+        };
 
-        tokio::time::advance(GATT_WRITE_INTERVAL).await;
-        pacer.wait().await;
-        assert_eq!(tokio::time::Instant::now(), started + GATT_WRITE_INTERVAL);
+        assert!(!pending.expired(opened_at + GATT_HALF_OPEN_TIMEOUT - Duration::from_nanos(1)));
+        assert!(pending.expired(opened_at + GATT_HALF_OPEN_TIMEOUT));
+    }
+
+    #[test]
+    fn half_open_gatt_admission_is_bounded_by_peer_capacity() {
+        let mut entries = HashMap::new();
+        for byte in 0..BluerBackend::MAX_PEERS {
+            entries.insert(Address::new([byte as u8; 6]), ());
+        }
+
+        assert!(can_admit_address(&entries, Address::new([0; 6])));
+        assert!(!can_admit_address(&entries, Address::new([0xff; 6])));
     }
 
     #[test]

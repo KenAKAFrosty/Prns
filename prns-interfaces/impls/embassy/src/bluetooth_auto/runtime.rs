@@ -108,6 +108,7 @@ pub struct BluetoothAutoShared<const MEMBERS: usize> {
     failed: AtomicBool,
     failure_reason: CriticalSectionMutex<Cell<Option<&'static str>>>,
     peers: AtomicU32,
+    ingress_pressure_events: AtomicU32,
     members: [BluetoothMemberStatus; MEMBERS],
 }
 
@@ -122,6 +123,7 @@ impl<const MEMBERS: usize> BluetoothAutoShared<MEMBERS> {
             failed: AtomicBool::new(false),
             failure_reason: CriticalSectionMutex::new(Cell::new(None)),
             peers: AtomicU32::new(0),
+            ingress_pressure_events: AtomicU32::new(0),
             members: [const { BluetoothMemberStatus::new() }; MEMBERS],
         }
     }
@@ -134,8 +136,22 @@ pub struct BluetoothAutoStatus<const MEMBERS: usize> {
 
 impl<const MEMBERS: usize> BluetoothAutoStatus<MEMBERS> {
     #[must_use]
-    pub fn new(shared: &'static BluetoothAutoShared<MEMBERS>) -> Self {
+    pub const fn new(shared: &'static BluetoothAutoShared<MEMBERS>) -> Self {
         Self { shared }
+    }
+
+    #[cfg(feature = "bluetooth-auto-trouble")]
+    pub(crate) fn note_ingress_pressure(&self) {
+        let _ = self.shared.ingress_pressure_events.fetch_update(
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+            |count| Some(count.saturating_add(1)),
+        );
+    }
+
+    #[must_use]
+    pub fn ingress_pressure_events(&self) -> u32 {
+        self.shared.ingress_pressure_events.load(Ordering::Relaxed)
     }
 
     fn mark_up(&self) {

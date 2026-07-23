@@ -13,6 +13,7 @@ use embassy_sync_07::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::{with_timeout, Duration, Timer};
 use heapless_09::Vec as GattVec;
 use portable_atomic::{AtomicBool, Ordering};
+use trouble_host::att::{AttClient, AttReq};
 use trouble_host::prelude::*;
 
 use prns_core::interfaces::bluetooth_auto::{
@@ -32,6 +33,7 @@ use super::connection_slots::{
     ConnectionSlotWorkerLease, ReadyConnectionSlot, ReadyConnectionSlotParts,
 };
 use super::frame_pool::{FrameLease, SharedFramePool};
+use super::runtime::BluetoothAutoStatus;
 
 #[cfg(target_arch = "riscv32")]
 pub const PEER_CAPACITY: usize = 8;
@@ -56,12 +58,7 @@ const GATT_FRAGMENT_PAYLOAD: usize = 120;
 #[cfg(not(target_arch = "riscv32"))]
 const GATT_FRAGMENT_PAYLOAD: usize = 180;
 
-/// Gives the controller time to put each GATT fragment on air before queuing the next.
-#[cfg(target_arch = "riscv32")]
-const NOTIFY_PACING: Duration = Duration::from_millis(30);
-#[cfg(not(target_arch = "riscv32"))]
-const NOTIFY_PACING: Duration = Duration::from_millis(15);
-const NOTIFY_TIMEOUT: Duration = Duration::from_secs(2);
+const GATT_OPERATION_TIMEOUT: Duration = Duration::from_secs(2);
 /// A bounded connect scan frees the slot and lets policy back off when a whitelisted peer is absent.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(6);
 const GATT_SETUP_TIMEOUT: Duration = Duration::from_secs(6);
@@ -325,10 +322,11 @@ pub struct BleHub {
     scan_enabled: Signal<BridgeMutex, bool>,
     radio_enabled: AtomicBool,
     local_address: BlockingMutex<BridgeMutex, Cell<[u8; 6]>>,
+    status: BluetoothAutoStatus<PEER_CAPACITY>,
 }
 
 impl BleHub {
-    pub const fn new() -> Self {
+    pub const fn new(status: BluetoothAutoStatus<PEER_CAPACITY>) -> Self {
         Self {
             slots: [const { SlotChannels::new() }; PEER_CAPACITY],
             connection_slots: ConnectionSlotPool::new(),
@@ -344,6 +342,7 @@ impl BleHub {
             scan_enabled: Signal::new(),
             radio_enabled: AtomicBool::new(false),
             local_address: BlockingMutex::new(Cell::new([0; 6])),
+            status,
         }
     }
 
@@ -360,6 +359,10 @@ impl BleHub {
         }
     }
 
+    fn note_ingress_pressure(&self) {
+        self.status.note_ingress_pressure();
+    }
+
     pub fn backend(&'static self) -> EmbeddedBleBackend {
         EmbeddedBleBackend {
             hub: self,
@@ -369,12 +372,6 @@ impl BleHub {
             dial_request: self.dial_request.sender(),
             seen: heapless::Vec::new(),
         }
-    }
-}
-
-impl Default for BleHub {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -743,21 +740,54 @@ fn l2cap_config() -> L2capChannelConfig {
     }
 }
 
+#[derive(Debug, Eq, PartialEq)]
+enum InboundFrameAdmission {
+    Queued,
+    PoolFull,
+    QueueFull,
+}
+
 fn try_queue_inbound_frame(
     pool: &'static BleFramePool,
     queue: &Sender<'static, BridgeMutex, BleFrameLease, FRAME_QUEUE_DEPTH>,
     frame: &[u8],
-) {
+) -> Result<InboundFrameAdmission, super::frame_pool::FramePoolError> {
     let lease = match pool.try_lease() {
         Ok(Some(lease)) => lease,
-        Ok(None) => return,
-        Err(error) => {
-            crate::diagnostic_log::warn!("ble callback frame lease failed: {error:?}");
-            return;
-        }
+        Ok(None) => return Ok(InboundFrameAdmission::PoolFull),
+        Err(error) => return Err(error),
     };
-    if lease.try_fill(frame).is_ok() {
-        let _ = queue.try_send(lease);
+    lease.try_fill(frame)?;
+    if queue.try_send(lease).is_err() {
+        return Ok(InboundFrameAdmission::QueueFull);
+    }
+    Ok(InboundFrameAdmission::Queued)
+}
+
+async fn queue_inbound_frame(
+    pool: &'static BleFramePool,
+    queue: &Sender<'static, BridgeMutex, BleFrameLease, FRAME_QUEUE_DEPTH>,
+    frame: &[u8],
+) -> Result<(), super::frame_pool::FramePoolError> {
+    let lease = pool.lease().await?;
+    lease.fill(frame).await?;
+    queue.send(lease).await;
+    Ok(())
+}
+
+fn note_inbound_admission(
+    hub: &BleHub,
+    result: Result<InboundFrameAdmission, super::frame_pool::FramePoolError>,
+) {
+    match result {
+        Ok(InboundFrameAdmission::Queued) => {}
+        Ok(InboundFrameAdmission::PoolFull | InboundFrameAdmission::QueueFull) => {
+            hub.note_ingress_pressure();
+        }
+        Err(error) => {
+            hub.note_ingress_pressure();
+            crate::diagnostic_log::warn!("ble inbound frame admission failed: {error:?}");
+        }
     }
 }
 
@@ -905,6 +935,10 @@ async fn serve_peripheral<T: TroubleTransport>(
                 GattConnectionEvent::Disconnected { .. } => break,
                 GattConnectionEvent::Gatt { event } => {
                     if let GattEvent::Write(write) = &event {
+                        let acknowledged = matches!(
+                            write.payload().incoming(),
+                            AttClient::Request(AttReq::Write { .. })
+                        );
                         if peer_protocol == PeerProtocol::Native && write.handle() == control.handle
                         {
                             if let Some(message) = Control::decode(write.data()) {
@@ -917,11 +951,29 @@ async fn serve_peripheral<T: TroubleTransport>(
                         {
                             if let Some(fragment) = Fragment::decode(write.data()) {
                                 if let Some(frame) = reassembler.absorb(&fragment) {
-                                    try_queue_inbound_frame(
-                                        &hub.inbound_frames,
-                                        &data_in_tx,
-                                        frame,
-                                    );
+                                    if acknowledged {
+                                        if let Err(error) = queue_inbound_frame(
+                                            &hub.inbound_frames,
+                                            &data_in_tx,
+                                            frame,
+                                        )
+                                        .await
+                                        {
+                                            hub.note_ingress_pressure();
+                                            crate::diagnostic_log::warn!(
+                                                "ble acknowledged frame admission failed: {error:?}"
+                                            );
+                                        }
+                                    } else {
+                                        note_inbound_admission(
+                                            hub,
+                                            try_queue_inbound_frame(
+                                                &hub.inbound_frames,
+                                                &data_in_tx,
+                                                frame,
+                                            ),
+                                        );
+                                    }
                                 }
                             }
                         }
@@ -945,7 +997,8 @@ async fn serve_peripheral<T: TroubleTransport>(
             if let Some(len) = message.encode(&mut buf) {
                 let mut value = GattVec::<u8, GATT_VALUE_CAP>::new();
                 let _ = value.extend_from_slice(&buf[..len]);
-                let _ = with_timeout(NOTIFY_TIMEOUT, control.notify(connection, &value)).await;
+                let _ =
+                    with_timeout(GATT_OPERATION_TIMEOUT, control.notify(connection, &value)).await;
             }
         }
     };
@@ -992,13 +1045,15 @@ async fn serve_peripheral<T: TroubleTransport>(
                         PeerProtocol::Native => data,
                         PeerProtocol::Columba => columba_tx,
                     };
-                    match with_timeout(NOTIFY_TIMEOUT, characteristic.notify(connection, &value))
-                        .await
+                    match with_timeout(
+                        GATT_OPERATION_TIMEOUT,
+                        characteristic.notify(connection, &value),
+                    )
+                    .await
                     {
                         Ok(Ok(())) => {}
                         _ => break,
                     }
-                    Timer::after(NOTIFY_PACING).await;
                 }
             },
         }
@@ -1138,7 +1193,14 @@ async fn serve_central<T: TroubleTransport>(
                     Either::Second(notification) => {
                         if let Some(fragment) = Fragment::decode(notification.as_ref()) {
                             if let Some(frame) = reassembler.absorb(&fragment) {
-                                try_queue_inbound_frame(&hub.inbound_frames, &data_in_tx, frame);
+                                note_inbound_admission(
+                                    hub,
+                                    try_queue_inbound_frame(
+                                        &hub.inbound_frames,
+                                        &data_in_tx,
+                                        frame,
+                                    ),
+                                );
                             }
                         }
                     }
@@ -1148,7 +1210,10 @@ async fn serve_central<T: TroubleTransport>(
                 let notification = data_listener.next().await;
                 if let Some(fragment) = Fragment::decode(notification.as_ref()) {
                     if let Some(frame) = reassembler.absorb(&fragment) {
-                        try_queue_inbound_frame(&hub.inbound_frames, &data_in_tx, frame);
+                        note_inbound_admission(
+                            hub,
+                            try_queue_inbound_frame(&hub.inbound_frames, &data_in_tx, frame),
+                        );
                     }
                 }
             },
@@ -1159,7 +1224,7 @@ async fn serve_central<T: TroubleTransport>(
         if peer_protocol == PeerProtocol::Columba {
             let identity = slot.identity_out.receive().await;
             let _ = with_timeout(
-                NOTIFY_TIMEOUT,
+                GATT_OPERATION_TIMEOUT,
                 client.write_characteristic(&control, identity.as_bytes()),
             )
             .await;
@@ -1170,8 +1235,8 @@ async fn serve_central<T: TroubleTransport>(
             let mut buf = [0u8; CONTROL_MAX_LEN];
             if let Some(len) = message.encode(&mut buf) {
                 let _ = with_timeout(
-                    NOTIFY_TIMEOUT,
-                    client.write_characteristic_without_response(&control, &buf[..len]),
+                    GATT_OPERATION_TIMEOUT,
+                    client.write_characteristic(&control, &buf[..len]),
                 )
                 .await;
             }
@@ -1225,16 +1290,26 @@ async fn serve_central<T: TroubleTransport>(
                     let Some(len) = fragment.encode(&mut buf) else {
                         continue;
                     };
-                    match with_timeout(
-                        NOTIFY_TIMEOUT,
-                        client.write_characteristic_without_response(&data, &buf[..len]),
-                    )
-                    .await
-                    {
+                    let written = match peer_protocol {
+                        PeerProtocol::Native => {
+                            with_timeout(
+                                GATT_OPERATION_TIMEOUT,
+                                client.write_characteristic(&data, &buf[..len]),
+                            )
+                            .await
+                        }
+                        PeerProtocol::Columba => {
+                            with_timeout(
+                                GATT_OPERATION_TIMEOUT,
+                                client.write_characteristic_without_response(&data, &buf[..len]),
+                            )
+                            .await
+                        }
+                    };
+                    match written {
                         Ok(Ok(())) => {}
                         _ => break,
                     }
-                    Timer::after(NOTIFY_PACING).await;
                 }
             },
         }
@@ -1493,5 +1568,70 @@ pub async fn host_runner<T: TroubleTransport>(
             crate::diagnostic_log::warn!("ble host runner exited: {error:?}");
             Timer::after(Duration::from_millis(100)).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use core::future::Future;
+    use core::pin::pin;
+    use core::task::{Context, Poll, Waker};
+
+    use prns_core::interfaces::InterfaceId;
+
+    use super::*;
+    use crate::bluetooth_auto::BluetoothAutoShared;
+
+    #[test]
+    fn acknowledged_admission_waits_for_owned_capacity() {
+        static POOL: BleFramePool = BleFramePool::new();
+        static QUEUE: Channel<BridgeMutex, BleFrameLease, FRAME_QUEUE_DEPTH> = Channel::new();
+
+        let mut held = heapless_09::Vec::<_, PEER_CAPACITY>::new();
+        for _ in 0..PEER_CAPACITY {
+            let lease = POOL.try_lease().unwrap().unwrap();
+            assert!(held.push(lease).is_ok());
+        }
+
+        let sender = QUEUE.sender();
+        let mut admission = pin!(queue_inbound_frame(&POOL, &sender, b"frame"));
+        let mut context = Context::from_waker(Waker::noop());
+        assert!(matches!(
+            admission.as_mut().poll(&mut context),
+            Poll::Pending
+        ));
+
+        drop(held.pop());
+        embassy_futures::block_on(admission.as_mut()).unwrap();
+        drop(QUEUE.try_receive().unwrap());
+    }
+
+    #[test]
+    fn unacknowledged_admission_reports_pool_pressure() {
+        static POOL: BleFramePool = BleFramePool::new();
+        static QUEUE: Channel<BridgeMutex, BleFrameLease, FRAME_QUEUE_DEPTH> = Channel::new();
+
+        let mut held = heapless_09::Vec::<_, PEER_CAPACITY>::new();
+        for _ in 0..PEER_CAPACITY {
+            let lease = POOL.try_lease().unwrap().unwrap();
+            assert!(held.push(lease).is_ok());
+        }
+
+        assert_eq!(
+            try_queue_inbound_frame(&POOL, &QUEUE.sender(), b"frame"),
+            Ok(InboundFrameAdmission::PoolFull)
+        );
+    }
+
+    #[test]
+    fn legacy_pressure_reaches_status() {
+        static SHARED: BluetoothAutoShared<PEER_CAPACITY> =
+            BluetoothAutoShared::new(InterfaceId::new([0x55; 8]));
+
+        let status = BluetoothAutoStatus::new(&SHARED);
+        let hub = BleHub::new(status);
+        note_inbound_admission(&hub, Ok(InboundFrameAdmission::QueueFull));
+
+        assert_eq!(status.ingress_pressure_events(), 1);
     }
 }

@@ -4,7 +4,7 @@ use embassy_executor::Spawner;
 use embassy_futures::join::join;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex as BridgeMutex;
 use esp_radio::ble::controller::BleConnector;
-use personal_rns::bluetooth_auto::{BluetoothAuto, BluetoothAutoShared};
+use personal_rns::bluetooth_auto::{BluetoothAuto, BluetoothAutoShared, BluetoothAutoStatus};
 use personal_rns::interfaces::bluetooth_auto::{
     encode_advertisement, BleIdentity, BleRoleCapabilities, Endpoint, Esp32Host, LinkCapabilities,
     Psm, BLE_HW_MTU, MAX_ADVERTISEMENT_LEN,
@@ -189,7 +189,7 @@ pub async fn run(
     let columba_identity_uuid = bluetooth_auto::columba_identity_uuid();
 
     static HUB: StaticCell<BleHub> = StaticCell::new();
-    let hub: &'static BleHub = HUB.init(BleHub::new());
+    let hub: &'static BleHub = HUB.init(BleHub::new(BluetoothAutoStatus::new(shared)));
     hub.set_local_address(address);
 
     let supervisor = BluetoothAuto::new(
