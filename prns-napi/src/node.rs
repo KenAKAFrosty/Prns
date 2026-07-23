@@ -11,7 +11,7 @@ use personal_rns::engine::{
 };
 use personal_rns::interfaces::shared_instance as shared_instance_contract;
 use personal_rns::interfaces::BitrateBps;
-use personal_rns::reactor::reconnect::ReconnectPolicy;
+use personal_rns::manifold::reconnect::ReconnectPolicy;
 use personal_rns::routing::request_handlers::RequestPolicy;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::request_router::RespondToken;
