@@ -1497,7 +1497,7 @@ mod loop_tests {
     }
 
     #[test]
-    fn a_readvertised_transfer_is_a_duplicate_not_exhausted_capacity() {
+    fn a_reencrypted_readvertisement_refreshes_the_active_pull() {
         let mut receiver = engine_with_active_link();
         accept_everything(&mut receiver);
         let names = six_names();
@@ -1511,7 +1511,10 @@ mod loop_tests {
         let re_encrypted_retry = crafted_partial_advertisement(&names, 6, 0xD2);
         assert_eq!(
             ingest(&mut receiver, &re_encrypted_retry, 2_100),
-            IngestPacketOutcome::Ignored(IgnoreReason::Duplicate),
+            IngestPacketOutcome::OwesResourcePull {
+                link_id: link_id(),
+                hash: ResourceHash::new([0xAB; 32]),
+            },
         );
         assert_eq!(receiver.incoming_resources.len(), 1);
     }

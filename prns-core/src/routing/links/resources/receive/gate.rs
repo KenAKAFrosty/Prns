@@ -225,7 +225,12 @@ impl<S: StorageLayout> EngineState<S> {
                 | AcceptIncomingResourceError::TooManyParts,
             ) => return IngestPacketOutcome::Ignored(IgnoreReason::CapacityExhausted),
             Err(AcceptIncomingResourceError::AlreadyReceiving) => {
-                return IngestPacketOutcome::Ignored(IgnoreReason::Duplicate)
+                // RNS 1.4.0 sends an advertisement immediately before registering the outgoing
+                // resource, so a fast first pull can reach it in that gap and be discarded. Its
+                // watchdog rebuilds each advertisement retry with a fresh IV; packet dedup sees
+                // a new frame, while this table recognizes the active resource. Refreshing the
+                // pull here closes that race without admitting a second transfer.
+                return IngestPacketOutcome::OwesResourcePull { link_id, hash };
             }
             Err(
                 AcceptIncomingResourceError::HashmapTooLong
@@ -322,7 +327,7 @@ mod tests {
     use crate::routing::links::resources::receive::tests_support::*;
     use crate::routing::links::resources::ResourceHash;
     use crate::routing::links::resources::{ResourceBody, ResourceMetadata, ResourceSend};
-    use crate::wire::WireContext;
+    use crate::wire::{WireContext, BROADCAST_MTU};
 
     use crate::engine::Journaled;
     use crate::routing::links::resources::control::parse_part_request_plaintext;
@@ -1023,15 +1028,38 @@ mod tests {
     }
 
     #[test]
-    fn a_duplicate_advertisement_is_filtered() {
+    fn a_reencrypted_advertisement_retry_refreshes_only_the_active_pull() {
         let mut receiver = engine_with_active_link();
         accept_everything(&mut receiver);
         let advertisement = advertisement_frame(&four_part_payload(), None);
         let first = feed(&mut receiver, &advertisement, 2_000);
-        let second = feed(&mut receiver, &advertisement, 2_100);
+        let (header, payload) = WirePacketHeader::parse(&advertisement).unwrap();
+        let mut sealed = payload.to_vec();
+        let plaintext = link_key().open_in_place(&mut sealed).unwrap();
+        let mut refreshed = std::vec![0u8; BROADCAST_MTU];
+        let refreshed_len = write_link_packet(
+            &link_id(),
+            &link_key(),
+            BROADCAST_MTU,
+            header.context,
+            plaintext,
+            &[0xE3; 16],
+            &mut refreshed,
+        )
+        .unwrap();
+        refreshed.truncate(refreshed_len);
+        let reencrypted_retry = feed(&mut receiver, &refreshed, 2_100);
+        let identical_retry = feed(&mut receiver, &refreshed, 2_200);
 
         assert_eq!(first.frames.len(), 1);
-        assert!(second.frames.is_empty());
+        assert_eq!(reencrypted_retry.frames.len(), 1);
+        assert!(identical_retry.frames.is_empty());
         assert_eq!(receiver.incoming_resources.len(), 1);
+
+        let hash = *receiver.incoming_resources.hash_at(0);
+        receiver.retire_incoming_resource(&link_id(), &hash);
+        let after_retirement = feed(&mut receiver, &refreshed, 2_300);
+        assert!(after_retirement.frames.is_empty());
+        assert!(receiver.incoming_resources.is_empty());
     }
 }

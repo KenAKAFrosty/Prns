@@ -17,7 +17,7 @@
         "initiator": "rns-1.4.0-compiled",
         "responder": "personal-rns"
       },
-      "text": "This controlled row retains the RNS-sender/Prns-receiver segment-handoff interaction identified by the default-policy cell. A higher MTU can change how often successor preparation wins the race, but it does not remove RNS 1.4.0's 50 ms readiness-polling path; compare this result with both the default 64 MiB row and the one-segment control."
+      "text": "This controlled row retains the RNS-sender/Prns-receiver segment-handoff interaction identified by the default-policy cell and exposes a second RNS 1.4.0 race more often: a successor advertisement is sent immediately before that successor is registered as an outgoing resource, so a fast first pull can be discarded. Prns recognizes RNS's freshly encrypted retry for the already-active resource and refreshes the pull, preserving exact delivery at the cost of an advertisement-timeout pause when the race occurs. Compare this result with both the default 64 MiB row and the one-segment control."
     }
   ],
   "description": "The 64 MiB incompressible resource stream repeated with both real initiator and responder TCP interfaces explicitly configured for 1 Gbps. That policy selects the 524,288-byte interface MTU tier on both stacks. Compression remains disabled and every segment remains encrypted, hash-proved, assembled, and application-acknowledged; this is the controlled counterpart to the default-policy result.",
