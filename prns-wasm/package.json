@@ -10,7 +10,7 @@
     "build:wasm": "cargo build --locked --target wasm32-unknown-unknown && wasm-bindgen target/wasm32-unknown-unknown/debug/prns_wasm.wasm --target web --out-dir smoke/pkg",
     "build:browser": "npm run build:wasm && npm run build:smoke",
     "build:playground": "npm run build:playground:wasm && npm run build:playground:ts",
-    "build:playground:wasm": "cargo build --locked --target wasm32-unknown-unknown && wasm-bindgen target/wasm32-unknown-unknown/debug/prns_wasm.wasm --target web --out-dir target/browser-playground/pkg",
+    "build:playground:wasm": "cargo build --locked --release --target wasm32-unknown-unknown && wasm-bindgen target/wasm32-unknown-unknown/release/prns_wasm.wasm --target web --out-dir target/browser-playground/pkg",
     "build:playground:ts": "tsc -p examples/browser-playground/tsconfig.json",
     "build:smoke": "tsc -p tsconfig.json",
     "stage:docs": "../tools/prns build wasm-docs stage",

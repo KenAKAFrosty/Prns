@@ -50,6 +50,9 @@ Build it and stage its static assets into the documentation site:
 ./tools/prns build wasm-docs stage
 ```
 
+The staged playground uses the size-optimized release WASM profile. `build:browser` remains the
+faster debug build for local smoke work.
+
 Serve the documentation public directory from the repo root:
 
 ```sh

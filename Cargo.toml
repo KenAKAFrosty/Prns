@@ -45,3 +45,7 @@ significant_drop_in_scrutinee = "warn"
 
 [workspace.lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(mutants)'] }
+
+[profile.release]
+codegen-units = 1
+lto = "fat"

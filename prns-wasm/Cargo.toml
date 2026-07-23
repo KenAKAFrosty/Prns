@@ -23,6 +23,11 @@ personal-rns = { path = "../personal-rns", default-features = false, features = 
 wasm-bindgen = "0.2"
 zeroize = { version = "1", default-features = false, features = ["derive"] }
 
+[profile.release]
+codegen-units = 1
+lto = "fat"
+panic = "abort"
+
 [lints.clippy]
 dbg_macro = "deny"
 todo = "deny"

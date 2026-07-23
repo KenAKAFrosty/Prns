@@ -17,7 +17,7 @@ env:
   CARGO_TERM_COLOR: always
   # Warnings fail the build for *our* crates. Cargo applies `--cap-lints allow` to
   # registry dependencies, so this never breaks on third-party warnings.
-  RUSTFLAGS: "-D warnings"
+  RUSTFLAGS: "-D warnings --cfg aes_armv8"
 
 jobs:
   fmt:

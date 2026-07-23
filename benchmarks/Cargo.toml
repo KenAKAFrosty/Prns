@@ -13,7 +13,9 @@ autobins = false
 # Builds participant_node on the fixed embedded layout (Esp32S3) instead of the default
 # unbounded GrowableHeap — lets the suite measure the on-device storage profile on-host.
 [features]
+default = ["parallel-persistence", "parallel-resource-hash"]
 fixed-storage = ["personal-rns/external-alloc", "dep:allocator-api2"]
+parallel-persistence = ["personal-rns/parallel-persistence"]
 parallel-resource-hash = ["personal-rns/parallel-resource-hash"]
 dhat-heap = ["dep:dhat"]
 # Explicit opt-in for the deterministic microscope that needs an installed Valgrind runner.

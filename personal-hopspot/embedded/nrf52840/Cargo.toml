@@ -50,7 +50,7 @@ codegen-units = 1
 debug = 2
 debug-assertions = false
 incremental = false
-lto = "thin"
+lto = "fat"
 opt-level = "s"
 overflow-checks = false
 

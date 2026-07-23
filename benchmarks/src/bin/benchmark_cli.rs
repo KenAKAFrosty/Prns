@@ -305,7 +305,7 @@ fn benchmark_rustflags() -> String {
         flags.push(' ');
     }
     flags.push_str("-C target-cpu=native");
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(target_arch = "aarch64")]
     flags.push_str(" --cfg aes_armv8");
     flags
 }

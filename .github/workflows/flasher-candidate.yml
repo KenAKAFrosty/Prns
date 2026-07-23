@@ -36,7 +36,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
-  RUSTFLAGS: "-D warnings"
+  RUSTFLAGS: "-D warnings --cfg aes_armv8"
   RUSTUP_TOOLCHAIN: 1.96.0
 
 jobs:
@@ -227,7 +227,7 @@ jobs:
           - os: macos-14
             target: aarch64-apple-darwin
             binary: target/aarch64-apple-darwin/release/hopspot-flash
-            rustflags: -D warnings
+            rustflags: -D warnings --cfg aes_armv8
           - os: macos-15-intel
             target: x86_64-apple-darwin
             binary: target/x86_64-apple-darwin/release/hopspot-flash
@@ -239,7 +239,7 @@ jobs:
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             binary: target/aarch64-unknown-linux-gnu/release/hopspot-flash
-            rustflags: -D warnings
+            rustflags: -D warnings --cfg aes_armv8
           - os: windows-2025
             target: x86_64-pc-windows-msvc
             binary: target/x86_64-pc-windows-msvc/release/hopspot-flash.exe

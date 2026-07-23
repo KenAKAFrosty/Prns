@@ -109,6 +109,10 @@ opentelemetry-otlp = { version = "0.32", optional = true, default-features = fal
 opentelemetry_sdk = { version = "0.32", optional = true, default-features = false, features = ["metrics", "trace"] }
 tracing-opentelemetry = { version = "0.33", optional = true, default-features = false }
 
+[profile.release]
+codegen-units = 1
+lto = "fat"
+
 [lints.clippy]
 dbg_macro = "deny"
 todo = "deny"
