@@ -6,8 +6,9 @@
 
 use crate::crypto::sha256;
 use crate::engine::{
-    CommandId, CommandOutcome, RequestResponseTimeout, Respond, RespondRejection, SendRequest,
-    SendRequestRejection, MAX_RESPOND_DATA_LEN, MAX_SEND_REQUEST_DATA_LEN,
+    CommandId, CommandOutcome, RequestResponseTimeout, Respond, RespondBorrowed, RespondData,
+    RespondRejection, SendRequest, SendRequestRejection, MAX_RESPOND_DATA_LEN,
+    MAX_SEND_REQUEST_DATA_LEN,
 };
 use crate::engine::{EngineState, InstantMillis};
 use crate::identity::IdentitySigningPublicKey;
@@ -182,6 +183,15 @@ pub fn write_response_plaintext(
     Ok(total)
 }
 
+pub fn response_envelope_prefix(request_id: &RequestId) -> [u8; RESPONSE_WIRE_OVERHEAD] {
+    let mut prefix = [0u8; RESPONSE_WIRE_OVERHEAD];
+    prefix[0] = FIXARRAY_2;
+    prefix[1] = BIN_8;
+    prefix[2] = TRUNCATED_HASH_BYTE_LEN as u8;
+    prefix[3..].copy_from_slice(request_id.as_bytes());
+    prefix
+}
+
 pub fn parse_response_plaintext(
     plaintext: &[u8],
 ) -> Result<(RequestId, &[u8]), ResponsePlaintextError> {
@@ -285,6 +295,42 @@ impl<S: StorageLayout> EngineState<S> {
                 }
             }
             Some(LinkPhase::Active { .. }) => CommandOutcome::OwesRespond { id, respond },
+        }
+    }
+
+    pub fn ingest_respond_borrowed(
+        &self,
+        id: CommandId,
+        respond: RespondBorrowed,
+    ) -> CommandOutcome {
+        match self.links.phase_for(&respond.link_id) {
+            None => CommandOutcome::RespondRejected {
+                id,
+                rejection: RespondRejection::NoSuchLink,
+            },
+            Some(LinkPhase::Pending { .. } | LinkPhase::Handshake { .. }) => {
+                CommandOutcome::RespondRejected {
+                    id,
+                    rejection: RespondRejection::LinkNotActive,
+                }
+            }
+            Some(LinkPhase::Active { .. }) => {
+                let as_packet = self
+                    .response_fits_packet(&respond.link_id, respond.data)
+                    .then(|| RespondData::from_slice(respond.data).ok())
+                    .flatten();
+                match as_packet {
+                    Some(data) => CommandOutcome::OwesRespond {
+                        id,
+                        respond: Respond {
+                            link_id: respond.link_id,
+                            request_id: respond.request_id,
+                            data,
+                        },
+                    },
+                    None => CommandOutcome::OwesResourceResponse { id, respond },
+                }
+            }
         }
     }
 
@@ -440,6 +486,15 @@ mod tests {
     use crate::routing::links::table::LinkActivation;
 
     const PATH_HASH: RequestPathHash = RequestPathHash::new([0x5A; 16]);
+
+    #[test]
+    fn the_response_envelope_prefix_matches_the_packed_response_head() {
+        let id = RequestId([0x5A; 16]);
+        let mut buf = [0u8; 64];
+        let total = write_response_plaintext(&id, &[0xA3, b'a', b'b', b'c'], &mut buf).unwrap();
+        assert_eq!(response_envelope_prefix(&id), buf[..RESPONSE_WIRE_OVERHEAD]);
+        assert_eq!(total, RESPONSE_WIRE_OVERHEAD + 4);
+    }
 
     #[test]
     fn the_request_pack_is_byte_identical_to_umsgpack() {

@@ -112,6 +112,18 @@ pub fn build_outgoing_resource(
     body: &ResourceBody<'_>,
     key: &LinkKey,
     seal_iv: &[u8; 16],
+    fresh_nonce: impl FnMut() -> [u8; RESOURCE_NONCE_LEN],
+    sdu: usize,
+    regions: BuildRegions<'_>,
+) -> Result<BuiltResource, BuildOutgoingResourceError> {
+    build_outgoing_resource_enveloped(&[], body, key, seal_iv, fresh_nonce, sdu, regions)
+}
+
+pub fn build_outgoing_resource_enveloped(
+    envelope: &[u8],
+    body: &ResourceBody<'_>,
+    key: &LinkKey,
+    seal_iv: &[u8; 16],
     mut fresh_nonce: impl FnMut() -> [u8; RESOURCE_NONCE_LEN],
     sdu: usize,
     regions: BuildRegions<'_>,
@@ -138,7 +150,8 @@ pub fn build_outgoing_resource(
         ResourceMetadata::Packed(packed) => (&metadata_prefix[1..], packed),
         ResourceMetadata::None | ResourceMetadata::SentInFirstSegment { .. } => (&[], &[]),
     };
-    let uncompressed_stream_len = block_prefix.len() + block_packed.len() + plaintext.len();
+    let uncompressed_stream_len =
+        block_prefix.len() + block_packed.len() + envelope.len() + plaintext.len();
     if uncompressed_stream_len > MAX_EFFICIENT_SIZE {
         return Err(BuildOutgoingResourceError::DataTooLarge);
     }
@@ -148,14 +161,20 @@ pub fn build_outgoing_resource(
     let stream_nonce = fresh_nonce();
     let winner = winning_candidate(compressed_candidate, uncompressed_stream_len);
     let compressed_chunks: [&[u8]; 2];
-    let uncompressed_chunks: [&[u8]; 4];
+    let uncompressed_chunks: [&[u8]; 5];
     let (stream_chunks, compression): (&[&[u8]], _) = match winner {
         Some(candidate) => {
             compressed_chunks = [&stream_nonce, candidate];
             (&compressed_chunks[..], ResourceCompression::Bz2)
         }
         None => {
-            uncompressed_chunks = [&stream_nonce, block_prefix, block_packed, plaintext];
+            uncompressed_chunks = [
+                &stream_nonce,
+                block_prefix,
+                block_packed,
+                envelope,
+                plaintext,
+            ];
             (&uncompressed_chunks[..], ResourceCompression::Uncompressed)
         }
     };
@@ -169,7 +188,7 @@ pub fn build_outgoing_resource(
     }
 
     let sealed = &transfer[..sealed_transfer_len];
-    let uncompressed_stream = [block_prefix, block_packed, plaintext];
+    let uncompressed_stream = [block_prefix, block_packed, envelope, plaintext];
     for _ in 0..SALT_REROLL_CAP {
         let salt_nonce = SaltNonce::new(fresh_nonce());
         let (hashmap_outcome, digests) = hashmap_and_digest(

@@ -45,6 +45,10 @@ pub enum Decline {
 
 pub trait ResponseSink {
     fn put(&mut self, bytes: &[u8]) -> Result<(), ResponseCapacityExceeded>;
+
+    fn put_borrowed(&mut self, bytes: &'static [u8]) -> Result<(), ResponseCapacityExceeded> {
+        self.put(bytes)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -126,6 +130,12 @@ pub struct RequestContext<'a, S> {
 impl<S> RequestContext<'_, S> {
     pub fn respond(&mut self, bytes: &[u8]) -> Result<(), Decline> {
         self.sink.put(bytes).map_err(|_| Decline::ResponseTooLarge)
+    }
+
+    pub fn respond_borrowed(&mut self, bytes: &'static [u8]) -> Result<(), Decline> {
+        self.sink
+            .put_borrowed(bytes)
+            .map_err(|_| Decline::ResponseTooLarge)
     }
 
     /// Append `bytes` without finishing, to assemble a multi-part body straight into the grant;

@@ -11,7 +11,35 @@ use crate::units::RttMillis;
 use crate::wire::DestinationHash;
 
 use super::node_facade::PrnsNodeHandle;
-use super::request_router::{dispatch_request, Decline, InboundRequest, RouteSet};
+use super::request_router::{
+    dispatch_request, Decline, InboundRequest, ResponseCapacityExceeded, ResponseSink, RouteSet,
+};
+
+enum RunnerResponse {
+    Buffered(RespondData),
+    Borrowed(&'static [u8]),
+}
+
+impl ResponseSink for RunnerResponse {
+    fn put(&mut self, bytes: &[u8]) -> Result<(), ResponseCapacityExceeded> {
+        match self {
+            RunnerResponse::Buffered(body) => body
+                .extend_from_slice(bytes)
+                .map_err(|()| ResponseCapacityExceeded),
+            RunnerResponse::Borrowed(_) => Err(ResponseCapacityExceeded),
+        }
+    }
+
+    fn put_borrowed(&mut self, bytes: &'static [u8]) -> Result<(), ResponseCapacityExceeded> {
+        match self {
+            RunnerResponse::Buffered(body) if body.is_empty() => {
+                *self = RunnerResponse::Borrowed(bytes);
+                Ok(())
+            }
+            _ => Err(ResponseCapacityExceeded),
+        }
+    }
+}
 
 pub(super) struct RunnerRequest<const N: usize> {
     destination: DestinationHash,
@@ -103,11 +131,16 @@ async fn dispatch<
         &request.data,
     );
     let responder = inbound.respond_token();
-    let mut body = RespondData::new();
+    let mut body = RunnerResponse::Buffered(RespondData::new());
     match dispatch_request::<St, R>(state, request.path_hash, inbound, &mut body).await {
-        Ok(()) => {
-            commands.respond_owned(responder, body);
-        }
+        Ok(()) => match body {
+            RunnerResponse::Buffered(body) => {
+                commands.respond_owned(responder, body);
+            }
+            RunnerResponse::Borrowed(bytes) => {
+                commands.respond_borrowed(responder, bytes);
+            }
+        },
         Err(Decline::Ignore | Decline::ResponseTooLarge) => {}
         Err(Decline::CloseLink) => {
             commands.close_link(responder.link_id);
@@ -151,6 +184,70 @@ mod tests {
                 Err(Decline::Ignore)
             }
         }
+    }
+
+    struct StaticPage;
+    struct StaticRoutes;
+    static PAGE: [u8; 1200] = [0x21; 1200];
+
+    impl RequestRoute<()> for StaticPage {
+        const PATH: &'static str = "/page";
+        const POLICY: RoutePolicy = RoutePolicy::AllowAll;
+
+        async fn handle(mut context: RequestContext<'_, ()>) -> Result<(), Decline> {
+            context.respond_borrowed(&PAGE)
+        }
+    }
+
+    impl RouteSet<()> for StaticRoutes {
+        const REGISTRATIONS: &'static [(&'static str, RoutePolicy)] =
+            &[(StaticPage::PATH, StaticPage::POLICY)];
+
+        async fn dispatch(
+            context: RequestContext<'_, ()>,
+            path_hash: RequestPathHash,
+        ) -> Result<(), Decline> {
+            if path_hash == RequestPathHash::of(StaticPage::PATH) {
+                StaticPage::handle(context).await
+            } else {
+                Err(Decline::Ignore)
+            }
+        }
+    }
+
+    #[test]
+    fn dispatch_hands_a_borrowed_body_to_the_borrowed_lane() {
+        type M = CriticalSectionRawMutex;
+        let channel = Channel::<M, crate::engine::IssuedCommand, 1>::new();
+        let completions = crate::runtime::CompletionPool::<M, 1>::new();
+        let handle = PrnsNodeHandle::new(channel.sender(), &completions);
+        let request = RunnerRequest {
+            destination: DestinationHash::new([0x5A; 16]),
+            link_id: LinkId::new([1; 16]),
+            request_id: RequestId([2; 16]),
+            requester: None,
+            path_hash: RequestPathHash::of("/page"),
+            requested_at: InstantMillis(3),
+            rtt: RttMillis::new(4),
+            data: HeaplessVec::<u8, 16>::new(),
+        };
+
+        block_on(dispatch::<(), StaticRoutes, M, 1, 1, 16>(
+            &(),
+            handle,
+            request,
+        ));
+
+        let Ok(issued) = channel.try_receive() else {
+            panic!("response command");
+        };
+        let EngineCommand::RespondBorrowed(response) = issued.command else {
+            panic!("respond borrowed command");
+        };
+        assert_eq!(response.link_id, LinkId::new([1; 16]));
+        assert_eq!(response.request_id, RequestId([2; 16]));
+        assert_eq!(response.data.as_ptr(), PAGE.as_ptr());
+        assert_eq!(response.data.len(), PAGE.len());
     }
 
     #[test]

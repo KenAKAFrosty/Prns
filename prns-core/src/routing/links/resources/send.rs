@@ -10,12 +10,13 @@ use crate::routing::links::data::{
     link_data_frame_ceiling, link_raw_frame_ceiling, write_link_packet, write_link_raw_packet,
     LINK_MDU,
 };
+use crate::routing::links::request::response_envelope_prefix;
 use crate::routing::links::resources::advertisement::{
     write_hashmap_update_plaintext, ResourceAdvertisement, ResourceFlags,
 };
 use crate::routing::links::resources::build_outgoing::{
-    build_outgoing_resource, seal_staged_resource, winning_candidate, BuildOutgoingResourceError,
-    SealedStagedResource, STAGED_STREAM_OFFSET,
+    build_outgoing_resource_enveloped, seal_staged_resource, winning_candidate,
+    BuildOutgoingResourceError, SealedStagedResource, STAGED_STREAM_OFFSET,
 };
 use crate::routing::links::resources::control::{
     parse_cancel_plaintext, parse_part_request_plaintext, parse_proof_plaintext,
@@ -26,10 +27,10 @@ use crate::routing::links::resources::table::{
     OutgoingResourceStatus, PartSendOutcome, TrackLane, TrackOutgoingResourceError, TrackedCommand,
 };
 use crate::routing::links::resources::{
-    resource_sdu, ResourceCorrelation, ResourceHash, ResourceMetadata, ResourcePartRequest,
-    ResourceSegment, ResourceSend, HASHMAP_MAX_LEN, MAP_HASH_LEN, MAX_ADVERTISEMENT_RETRIES,
-    PART_REQUEST_MAX_RETRIES, PER_RETRY_DELAY_MS, PROCESSING_GRACE_MS, PROOF_TIMEOUT_FACTOR,
-    RESOURCE_HASH_LEN, RESOURCE_NONCE_LEN, SENDER_GRACE_MS,
+    resource_sdu, ResourceBody, ResourceCorrelation, ResourceHash, ResourceMetadata,
+    ResourcePartRequest, ResourceSegment, ResourceSend, HASHMAP_MAX_LEN, MAP_HASH_LEN,
+    MAX_ADVERTISEMENT_RETRIES, PART_REQUEST_MAX_RETRIES, PER_RETRY_DELAY_MS, PROCESSING_GRACE_MS,
+    PROOF_TIMEOUT_FACTOR, RESOURCE_HASH_LEN, RESOURCE_NONCE_LEN, SENDER_GRACE_MS,
 };
 use crate::routing::links::table::{ActiveLinkLookup, LinkPhase};
 use crate::routing::links::LinkId;
@@ -88,6 +89,37 @@ impl<S: StorageLayout> EngineState<S> {
         )
     }
 
+    pub fn ingest_send_borrowed_response_into<F>(
+        &mut self,
+        id: crate::engine::CommandId,
+        respond: &crate::engine::RespondBorrowed,
+        now: InstantMillis,
+        fill_entropy: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) -> crate::engine::WakeSchedules
+    where
+        F: FnMut(&mut [u8]),
+    {
+        let envelope = response_envelope_prefix(&respond.request_id);
+        self.ingest_send_resource_segment_enveloped(
+            &ResourceSend {
+                id,
+                link_id: respond.link_id,
+                body: ResourceBody {
+                    data: respond.data,
+                    compressed_candidate: None,
+                    metadata: ResourceMetadata::None,
+                },
+                correlation: ResourceCorrelation::Response(respond.request_id),
+            },
+            ResourceSegment::whole((envelope.len() + respond.data.len()) as u64),
+            &envelope,
+            now,
+            fill_entropy,
+            sink,
+        )
+    }
+
     /// Segment 1 of a split records its hash as the chain's `original_hash`; every later segment re-advertises it, so the host threads no hashes of its own.
     ///
     /// `total_data_size` is the whole transfer's uncompressed DATA length. The engine adds the metadata block on top, and RNS 1.4.0 advertises the sum (the `d` field) on every segment, never the segment's own size.
@@ -97,6 +129,21 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         send: &ResourceSend<'_>,
         segment: ResourceSegment,
+        now: InstantMillis,
+        fill_entropy: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) -> crate::engine::WakeSchedules
+    where
+        F: FnMut(&mut [u8]),
+    {
+        self.ingest_send_resource_segment_enveloped(send, segment, &[], now, fill_entropy, sink)
+    }
+
+    fn ingest_send_resource_segment_enveloped<F>(
+        &mut self,
+        send: &ResourceSend<'_>,
+        segment: ResourceSegment,
+        envelope: &[u8],
         now: InstantMillis,
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
@@ -206,23 +253,30 @@ impl<S: StorageLayout> EngineState<S> {
             segment,
         };
         let raw_stages = lane == TrackLane::Staged
-            && winning_candidate(body.compressed_candidate, data.len()).is_none();
+            && winning_candidate(body.compressed_candidate, envelope.len() + data.len()).is_none();
         let tracked = if raw_stages {
             let mut stream_nonce = [0u8; RESOURCE_NONCE_LEN];
             fill_entropy(&mut stream_nonce);
             self.outgoing_resources
-                .stage_raw(command, body.metadata.travels(), data.len(), |transfer| {
-                    transfer[16..STAGED_STREAM_OFFSET].copy_from_slice(&stream_nonce);
-                    transfer[STAGED_STREAM_OFFSET..STAGED_STREAM_OFFSET + data.len()]
-                        .copy_from_slice(data);
-                })
+                .stage_raw(
+                    command,
+                    body.metadata.travels(),
+                    envelope.len() + data.len(),
+                    |transfer| {
+                        transfer[16..STAGED_STREAM_OFFSET].copy_from_slice(&stream_nonce);
+                        let stream_start = STAGED_STREAM_OFFSET + envelope.len();
+                        transfer[STAGED_STREAM_OFFSET..stream_start].copy_from_slice(envelope);
+                        transfer[stream_start..stream_start + data.len()].copy_from_slice(data);
+                    },
+                )
                 .map(RowLanding::Raw)
         } else {
             let mut seal_iv = [0u8; 16];
             fill_entropy(&mut seal_iv);
             self.outgoing_resources
                 .track_built(command, lane, |regions| {
-                    build_outgoing_resource(
+                    build_outgoing_resource_enveloped(
+                        envelope,
                         &body,
                         key,
                         &seal_iv,
@@ -1482,6 +1536,157 @@ mod tests {
             ),
         ));
         assert!(engine.outgoing_resources.is_empty());
+    }
+
+    #[test]
+    fn a_borrowed_response_builds_byte_identical_to_a_prepacked_response() {
+        use crate::engine::RespondBorrowed;
+        use crate::routing::links::request::{
+            write_response_plaintext, RequestId, RESPONSE_WIRE_OVERHEAD,
+        };
+
+        let page: &'static [u8] = case1_plaintext().leak();
+        let request_id = RequestId([0x5A; 16]);
+
+        let mut prepacked = std::vec![0u8; RESPONSE_WIRE_OVERHEAD + page.len()];
+        let packed_len = write_response_plaintext(&request_id, page, &mut prepacked).unwrap();
+        prepacked.truncate(packed_len);
+
+        let mut host_lane = sender_with_active_link();
+        let mut host_capture = SendCapture {
+            frames: std::vec::Vec::new(),
+            settlements: std::vec::Vec::new(),
+        };
+        host_lane.ingest_send_resource_into(
+            &ResourceSend {
+                id: CommandId(7),
+                link_id: link_id(),
+                body: ResourceBody {
+                    data: &prepacked,
+                    compressed_candidate: None,
+                    metadata: ResourceMetadata::None,
+                },
+                correlation: ResourceCorrelation::Response(request_id),
+            },
+            InstantMillis(1_500),
+            &mut |bytes: &mut [u8]| bytes.fill(0xA5),
+            &mut |reaction| match reaction {
+                EngineReaction::Directive(Directive::EmitFrame { target, fill, .. }) => {
+                    if let Some(frame) = filled_frame(fill) {
+                        host_capture.frames.push((target, frame));
+                    }
+                }
+                EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
+                    host_capture.settlements.push((id, settlement));
+                }
+                _ => {}
+            },
+        );
+
+        let mut borrowed_lane = sender_with_active_link();
+        let mut borrowed_capture = SendCapture {
+            frames: std::vec::Vec::new(),
+            settlements: std::vec::Vec::new(),
+        };
+        borrowed_lane.ingest_send_borrowed_response_into(
+            CommandId(7),
+            &RespondBorrowed {
+                link_id: link_id(),
+                request_id,
+                data: page,
+            },
+            InstantMillis(1_500),
+            &mut |bytes: &mut [u8]| bytes.fill(0xA5),
+            &mut |reaction| match reaction {
+                EngineReaction::Directive(Directive::EmitFrame { target, fill, .. }) => {
+                    if let Some(frame) = filled_frame(fill) {
+                        borrowed_capture.frames.push((target, frame));
+                    }
+                }
+                EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
+                    borrowed_capture.settlements.push((id, settlement));
+                }
+                _ => {}
+            },
+        );
+
+        assert!(host_capture.settlements.is_empty());
+        assert!(borrowed_capture.settlements.is_empty());
+        assert_eq!(host_capture.frames.len(), 1);
+        assert_eq!(host_capture.frames, borrowed_capture.frames);
+
+        let (_, frame) = &borrowed_capture.frames[0];
+        let (header, payload) = WirePacketHeader::parse(frame).unwrap();
+        assert_eq!(header.context, WireContext::ResourceAdvertisement);
+        let mut sealed = payload.to_vec();
+        let opened = link_key().open_in_place(&mut sealed).unwrap();
+        let advertisement = ResourceAdvertisement::parse(opened).unwrap();
+        assert!(advertisement.flags.is_response);
+        assert!(!advertisement.flags.compressed);
+        assert_eq!(advertisement.request_id, Some(request_id));
+        assert_eq!(
+            advertisement.data_size,
+            (RESPONSE_WIRE_OVERHEAD + page.len()) as u64
+        );
+    }
+
+    #[test]
+    fn respond_borrowed_picks_the_packet_rung_or_the_resource_rung() {
+        use crate::engine::{CommandOutcome, RespondBorrowed};
+        use crate::routing::links::request::RequestId;
+
+        let request_id = RequestId([0x5A; 16]);
+        let engine = sender_with_active_link();
+
+        let small: &'static [u8] = &[0xC4, 0x02, b'o', b'k'];
+        match engine.ingest_respond_borrowed(
+            CommandId(1),
+            RespondBorrowed {
+                link_id: link_id(),
+                request_id,
+                data: small,
+            },
+        ) {
+            CommandOutcome::OwesRespond { id, respond } => {
+                assert_eq!(id, CommandId(1));
+                assert_eq!(respond.link_id, link_id());
+                assert_eq!(respond.request_id, request_id);
+                assert_eq!(respond.data.as_slice(), small);
+            }
+            other => panic!("expected the packet rung, got {other:?}"),
+        }
+
+        let big: &'static [u8] = case1_plaintext().leak();
+        assert!(matches!(
+            engine.ingest_respond_borrowed(
+                CommandId(2),
+                RespondBorrowed {
+                    link_id: link_id(),
+                    request_id,
+                    data: big,
+                },
+            ),
+            CommandOutcome::OwesResourceResponse {
+                id: CommandId(2),
+                respond: RespondBorrowed { data, .. },
+            } if core::ptr::eq(data, big)
+        ));
+
+        let linkless = EngineState::<TestStorageLayout>::default();
+        assert!(matches!(
+            linkless.ingest_respond_borrowed(
+                CommandId(3),
+                RespondBorrowed {
+                    link_id: link_id(),
+                    request_id,
+                    data: small,
+                },
+            ),
+            CommandOutcome::RespondRejected {
+                id: CommandId(3),
+                ..
+            }
+        ));
     }
 
     pub(crate) struct InboundCapture {

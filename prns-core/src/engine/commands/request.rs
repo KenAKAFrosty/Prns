@@ -59,6 +59,13 @@ pub struct Respond {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RespondBorrowed {
+    pub link_id: LinkId,
+    pub request_id: RequestId,
+    pub data: &'static [u8],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RespondRejection {
     NoSuchLink,
     LinkNotActive,

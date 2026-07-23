@@ -517,6 +517,10 @@ impl<S: StorageLayout> EngineState<S> {
                 settle(sink, id, settlement);
                 wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
             }
+            CommandOutcome::OwesResourceResponse { id, respond } => {
+                wake_schedule_changes =
+                    self.ingest_send_borrowed_response_into(id, &respond, now, fill_entropy, sink);
+            }
             CommandOutcome::RespondRejected { id, rejection } => {
                 settle(
                     sink,

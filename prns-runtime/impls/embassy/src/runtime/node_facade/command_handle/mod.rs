@@ -8,7 +8,8 @@ use portable_atomic::{AtomicU64, Ordering};
 
 use crate::engine::{
     CloseLink, CommandId, EngineCommand, IssuedCommand, PacketReceiptDelivered, Respond,
-    RespondData, SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload, Settlement,
+    RespondBorrowed, RespondData, SendSinglePacket, SendSinglePacketFailure,
+    SendSinglePacketPayload, Settlement,
 };
 use crate::routing::links::LinkId;
 use crate::wire::DestinationHash;
@@ -164,6 +165,15 @@ impl<'a, M: RawMutex, const COMMANDS: usize, const N: usize> PrnsNodeHandle<'a, 
     /// Moves a prebuilt response into the command lane, returning `false` when full.
     pub fn respond_owned(&self, responder: RespondToken, data: RespondData) -> bool {
         self.issue(EngineCommand::Respond(Respond {
+            link_id: responder.link_id,
+            request_id: responder.request_id,
+            data,
+        }))
+        .is_some()
+    }
+
+    pub fn respond_borrowed(&self, responder: RespondToken, data: &'static [u8]) -> bool {
+        self.issue(EngineCommand::RespondBorrowed(RespondBorrowed {
             link_id: responder.link_id,
             request_id: responder.request_id,
             data,
