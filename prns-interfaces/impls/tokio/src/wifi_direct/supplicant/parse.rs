@@ -1,15 +1,9 @@
 use prns_core::interfaces::channel_rendezvous::{ChannelCommitment, WifiChannel};
+use prns_core::interfaces::wifi_direct::SUPPLICANT_SERVICE_INSTANCE;
 use prns_core::interfaces::MacAddress;
 
-const BONJOUR_PTR_QUERY: &[u8] = &[
-    0x05, 0x5f, 0x70, 0x72, 0x6e, 0x73, 0xc0, 0x0c, 0x00, 0x0c, 0x01,
-];
-const BONJOUR_PTR_RESPONSE: &[u8] = &[0x04, 0x50, 0x72, 0x6e, 0x73, 0xc0, 0x27];
-const SD_PTR_QUERY_TLV: &[u8] = &[
-    0x0d, 0x00, 0x01, 0x01, 0x05, 0x5f, 0x70, 0x72, 0x6e, 0x73, 0xc0, 0x0c, 0x00, 0x0c, 0x01,
-];
-const SERVICE_MARKER_HEX: &str = "5f70726e73";
-const QUERY_TYPE_MARKER_HEX: &str = "c00c000c01";
+use crate::wifi_direct::service_discovery;
+
 const BROADCAST_ADDRESS: &str = "00:00:00:00:00:00";
 
 pub fn hex(bytes: &[u8]) -> String {
@@ -22,17 +16,18 @@ pub fn hex(bytes: &[u8]) -> String {
 }
 
 pub fn advertise_service_command() -> String {
+    let response = service_discovery::ptr_response(SUPPLICANT_SERVICE_INSTANCE).unwrap_or_default();
     format!(
         "P2P_SERVICE_ADD bonjour {} {}",
-        hex(BONJOUR_PTR_QUERY),
-        hex(BONJOUR_PTR_RESPONSE)
+        hex(service_discovery::BONJOUR_PTR_QUERY),
+        hex(&response)
     )
 }
 
 pub fn discover_service_command() -> String {
     format!(
         "P2P_SERV_DISC_REQ {BROADCAST_ADDRESS} {}",
-        hex(SD_PTR_QUERY_TLV)
+        hex(service_discovery::SD_PTR_QUERY_TLV)
     )
 }
 
@@ -86,10 +81,7 @@ pub fn parse_peer_address(payload: &str) -> Option<MacAddress> {
 }
 
 pub fn service_response_is_prns(payload: &str) -> bool {
-    payload
-        .split_whitespace()
-        .last()
-        .is_some_and(|tlvs| tlvs.contains(SERVICE_MARKER_HEX))
+    service_instance(payload).is_some()
 }
 
 #[cfg(test)]
@@ -117,23 +109,18 @@ pub fn parse_status_commitment(status: &str) -> ChannelCommitment {
 }
 
 pub fn advertise_offer_command(ssid: &str) -> String {
-    let mut rdata = Vec::with_capacity(ssid.len() + 3);
-    rdata.push(ssid.len() as u8);
-    rdata.extend_from_slice(ssid.as_bytes());
-    rdata.push(0xc0);
-    rdata.push(0x27);
+    let rdata = service_discovery::ptr_response(ssid).unwrap_or_default();
     format!(
         "P2P_SERVICE_ADD bonjour {} {}",
-        hex(BONJOUR_PTR_QUERY),
+        hex(service_discovery::BONJOUR_PTR_QUERY),
         hex(&rdata)
     )
 }
 
-pub fn parse_offer_ssid(tlvs: &str) -> Option<String> {
-    let rdata = tlvs.split_once(QUERY_TYPE_MARKER_HEX)?.1;
-    let length = usize::from_str_radix(rdata.get(0..2)?, 16).ok()?;
-    let label = rdata.get(2..2 + length * 2)?;
-    String::from_utf8(decode_hex(label)?).ok()
+pub fn service_instance(payload: &str) -> Option<String> {
+    let tlvs = payload.split_whitespace().last()?;
+    let decoded = decode_hex(tlvs)?;
+    service_discovery::recognized_instance(&decoded).map(str::to_owned)
 }
 
 fn decode_hex(hex: &str) -> Option<Vec<u8>> {
@@ -159,7 +146,8 @@ mod tests {
     fn the_advertise_command_carries_the_prns_bonjour_records() {
         assert_eq!(
             advertise_service_command(),
-            "P2P_SERVICE_ADD bonjour 055f70726e73c00c000c01 0450726e73c027"
+            "P2P_SERVICE_ADD bonjour 055f70726e73c00c000c01 \
+             0f50726e732d737570706c6963616e74c027"
         );
     }
 
@@ -190,7 +178,8 @@ mod tests {
     #[test]
     fn a_service_response_is_recognized_by_its_prns_marker() {
         assert!(service_response_is_prns(
-            "42:00:00:00:00:00 1 0b005f70726e73c00c000c01"
+            "42:00:00:00:00:00 1 \
+             055f70726e73c00c000c010f50726e732d737570706c6963616e74c027"
         ));
         assert!(!service_response_is_prns("42:00:00:00:00:00 1 0b00abcdef"));
     }
@@ -243,16 +232,5 @@ mod tests {
             "P2P_SERVICE_ADD bonjour 055f70726e73c00c000c01 \
              124449524543542d50726e732d62656e636831c027"
         );
-    }
-
-    #[test]
-    fn the_offer_ssid_is_read_back_out_of_a_service_response() {
-        let hosting = "055f70726e73c00c000c01124449524543542d50726e732d62656e636831c027";
-        assert_eq!(
-            parse_offer_ssid(hosting).as_deref(),
-            Some("DIRECT-Prns-bench1")
-        );
-        let forming = "055f70726e73c00c000c010450726e73c027";
-        assert_eq!(parse_offer_ssid(forming).as_deref(), Some("Prns"));
     }
 }

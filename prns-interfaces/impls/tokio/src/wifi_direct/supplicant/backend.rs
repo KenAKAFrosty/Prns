@@ -1,7 +1,9 @@
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::path::Path;
 
-use super::super::wpa::{client_plan, owner_plan, wait_for_go_address, wait_link_local, WpaGroup};
+use super::super::wpa::{
+    client_plan, owner_plan, owner_plan_v6, wait_for_go_address, wait_link_local, WpaGroup,
+};
 use super::ctrl::{WpaCommand, WpaCtrlError, WpaMonitor};
 use super::parse;
 use super::process::{SupplicantLaunchError, SupplicantProcess};
@@ -10,8 +12,8 @@ use prns_core::interfaces::channel_rendezvous::{
     decide, ChannelCommitment, RendezvousOutcome, SocialChannel,
 };
 use prns_core::interfaces::wifi_direct::{
-    host_role, GoIntent, GroupRole, HostRole, Initiative, PeerEvidence, Platform,
-    DEVICE_NAME_MARKER, GROUP_PASSPHRASE, GROUP_SSID_PREFIX,
+    host_role, service_instance_platform, GoIntent, GroupRole, HostRole, Initiative, PeerEvidence,
+    Platform, DEVICE_NAME_MARKER, GROUP_PASSPHRASE, GROUP_SSID_PREFIX,
 };
 use prns_core::interfaces::wifi_direct::{
     Availability, DiscoveryMode, GroupEndReason, WifiDirectBackend, WifiDirectEvent,
@@ -28,7 +30,7 @@ pub struct SupplicantBackend {
     monitor: WpaMonitor,
     p2p_monitor: Option<WpaMonitor>,
     local_address: Option<MacAddress>,
-    peers: HashSet<MacAddress>,
+    peers: HashMap<MacAddress, Platform>,
     group_iface: Option<String>,
     pending_unavailable: Option<&'static str>,
     _process: Option<SupplicantProcess>,
@@ -73,7 +75,7 @@ impl SupplicantBackend {
             monitor,
             p2p_monitor,
             local_address,
-            peers: HashSet::new(),
+            peers: HashMap::new(),
             group_iface: None,
             pending_unavailable: None,
             _process: None,
@@ -99,8 +101,8 @@ impl SupplicantBackend {
         }
     }
 
-    async fn resolve_initiative(&self, peer: MacAddress) -> Initiative {
-        match host_role(Platform::Supplicant, self.peer_platform(peer).await) {
+    fn resolve_initiative(&self, peer: MacAddress, platform: Platform) -> Initiative {
+        match host_role(Platform::Supplicant, platform) {
             HostRole::WeHost => Initiative::Ours,
             HostRole::PeerHosts => Initiative::Theirs,
             HostRole::Tiebreak => match self.local_address {
@@ -166,8 +168,13 @@ impl SupplicantBackend {
                 started.ssid,
                 started.interface
             );
-            wait_for_go_address(&started.interface).await;
-            return Some(WpaGroup::new(GroupRole::Owner, owner_plan()));
+            let plan = if wait_for_go_address(&started.interface).await {
+                owner_plan()
+            } else {
+                let (link_local, scope) = wait_link_local(&started.interface).await?;
+                owner_plan_v6(link_local, scope)
+            };
+            return Some(WpaGroup::new(GroupRole::Owner, plan));
         }
         let (link_local, scope) = wait_link_local(&started.interface).await?;
         Some(WpaGroup::new(
@@ -199,7 +206,11 @@ impl WifiDirectBackend for SupplicantBackend {
             self.pending_unavailable = Some(STA_CHANNEL_UNAVAILABLE);
             return;
         };
-        match self.peer_platform(peer).await {
+        let platform = match self.peers.get(&peer) {
+            Some(platform) => *platform,
+            None => self.peer_platform(peer).await,
+        };
+        match platform {
             Platform::Supplicant => {
                 let _ = self
                     .command
@@ -211,7 +222,19 @@ impl WifiDirectBackend for SupplicantBackend {
     }
 
     async fn accept_invitation(&mut self, peer: MacAddress, intent: GoIntent) {
-        self.form_group(peer, intent).await;
+        let outcome = decide(
+            self.sta_commitment().await,
+            Some(ChannelCommitment::Free),
+            SocialChannel::DEFAULT,
+        );
+        let Some(freq) = group_freq(outcome) else {
+            self.pending_unavailable = Some(STA_CHANNEL_UNAVAILABLE);
+            return;
+        };
+        let _ = self
+            .command
+            .request(&authorize_command(peer, intent, freq))
+            .await;
     }
 
     async fn join_group(&mut self, peer: MacAddress) {
@@ -256,14 +279,20 @@ impl WifiDirectBackend for SupplicantBackend {
                     let Some(peer) = parse::parse_peer_address(&event.payload) else {
                         continue;
                     };
-                    let tlvs = event.payload.split_whitespace().last().unwrap_or_default();
-                    match parse::parse_offer_ssid(tlvs) {
-                        Some(ssid) if ssid.starts_with(GROUP_SSID_PREFIX) => {
+                    let Some(instance) = parse::service_instance(&event.payload) else {
+                        continue;
+                    };
+                    match instance {
+                        ssid if ssid.starts_with(GROUP_SSID_PREFIX) => {
                             return WifiDirectEvent::GroupOffer { peer };
                         }
-                        _ => {
-                            self.peers.insert(peer);
-                            let initiative = self.resolve_initiative(peer).await;
+                        instance => {
+                            let platform = match service_instance_platform(&instance) {
+                                Some(platform) => platform,
+                                None => self.peer_platform(peer).await,
+                            };
+                            self.peers.insert(peer, platform);
+                            let initiative = self.resolve_initiative(peer, platform);
                             return WifiDirectEvent::Sighting {
                                 peer,
                                 evidence: PeerEvidence::ServiceRecord,
@@ -278,8 +307,8 @@ impl WifiDirectBackend for SupplicantBackend {
                     };
                     let is_marker = parse::field(&event.payload, "name")
                         .is_some_and(|name| name.starts_with(DEVICE_NAME_MARKER));
-                    if is_marker && self.peers.insert(peer) {
-                        let initiative = self.resolve_initiative(peer).await;
+                    if is_marker && self.peers.insert(peer, Platform::Supplicant).is_none() {
+                        let initiative = self.resolve_initiative(peer, Platform::Supplicant);
                         return WifiDirectEvent::Sighting {
                             peer,
                             evidence: PeerEvidence::NameMarker,
@@ -289,7 +318,7 @@ impl WifiDirectBackend for SupplicantBackend {
                 }
                 "P2P-DEVICE-LOST" => {
                     if let Some(peer) = parse::parse_peer_address(&event.payload) {
-                        if self.peers.remove(&peer) {
+                        if self.peers.remove(&peer).is_some() {
                             return WifiDirectEvent::PeerGone { peer };
                         }
                     }
@@ -330,6 +359,14 @@ async fn read_local_address(command: &WpaCommand) -> Option<MacAddress> {
 fn go_neg_command(peer: MacAddress, intent: GoIntent, freq: u16) -> String {
     format!(
         "P2P_CONNECT {} pbc go_intent={} freq={freq}",
+        render_mac(peer),
+        intent.wire()
+    )
+}
+
+fn authorize_command(peer: MacAddress, intent: GoIntent, freq: u16) -> String {
+    format!(
+        "P2P_CONNECT {} pbc auth go_intent={} freq={freq}",
         render_mac(peer),
         intent.wire()
     )
@@ -386,6 +423,15 @@ mod tests {
         assert_eq!(
             go_neg_command(peer, GoIntent::PREFER_OWNER, 5180),
             "P2P_CONNECT 42:00:00:00:00:01 pbc go_intent=13 freq=5180"
+        );
+    }
+
+    #[test]
+    fn an_invitation_is_authorized_without_starting_a_second_negotiation() {
+        let peer = MacAddress::new([0x42, 0, 0, 0, 0, 1]);
+        assert_eq!(
+            authorize_command(peer, GoIntent::PREFER_CLIENT, 2412),
+            "P2P_CONNECT 42:00:00:00:00:01 pbc auth go_intent=2 freq=2412"
         );
     }
 

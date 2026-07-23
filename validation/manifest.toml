@@ -398,12 +398,17 @@ artifacts = "validation-artifacts/results/android-runtime-device"
 id = "wifi-direct-hwsim"
 domain = "platform"
 group = "linux-network"
-tiers = ["release", "scheduled"]
+tiers = ["scheduled"]
 platform = "linux"
 toolchain = "stable"
 timeout_seconds = 1800
 command = ["bash", "validation/platforms/wifi-direct-hwsim-smoke.sh"]
-inputs = ["validation/platforms/wifi-direct-hwsim-smoke.sh"]
+inputs = [
+    "validation/platforms/wifi-direct-experimental.md",
+    "validation/platforms/wifi-direct-hwsim-smoke.sh",
+    "prns-core/src/interfaces/wifi_direct",
+    "prns-interfaces/impls/tokio/src/wifi_direct",
+]
 artifacts = "validation-artifacts/results/wifi-direct-hwsim"
 
 [[suite]]

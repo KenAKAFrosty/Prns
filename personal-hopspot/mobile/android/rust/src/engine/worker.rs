@@ -162,7 +162,7 @@ async fn run_engine(input: WorkerInput) -> WorkerExit {
 
     let wifi_direct = WifiDirectAuto::new(
         AndroidWifiDirectBackend::new(platform.wifi_direct),
-        GoIntent::BALANCED,
+        GoIntent::PREFER_OWNER,
     );
     let wd_status = wifi_direct.status();
     handle.supervise(wifi_direct);

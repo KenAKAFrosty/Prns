@@ -50,6 +50,7 @@ echo "[android] dependency, lint, test, and APK gates"
 (
   cd "${android_dir}"
   ./gradlew --no-daemon \
+    :app:verifyExperimentalWifiDirectDisabled \
     :app:verifyReleaseRuntimeDependencies \
     :app:lint \
     :app:test \

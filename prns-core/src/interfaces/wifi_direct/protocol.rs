@@ -9,6 +9,10 @@ pub const DEVICE_NAME_MARKER: &str = "Prns";
 
 pub const SERVICE_TYPE: &str = "_prns._tcp";
 
+pub const NATIVE_SERVICE_INSTANCE: &str = "Prns-native";
+
+pub const SUPPLICANT_SERVICE_INSTANCE: &str = "Prns-supplicant";
+
 pub const GROUP_SSID_PREFIX: &str = "DIRECT-Prns-";
 
 pub const GROUP_PASSPHRASE: &str = "prns-mesh-shared-key";
@@ -51,6 +55,15 @@ pub enum Platform {
     Native,
 }
 
+#[must_use]
+pub fn service_instance_platform(instance: &str) -> Option<Platform> {
+    match instance {
+        SUPPLICANT_SERVICE_INSTANCE => Some(Platform::Supplicant),
+        NATIVE_SERVICE_INSTANCE => Some(Platform::Native),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostRole {
     WeHost,
@@ -58,12 +71,11 @@ pub enum HostRole {
     Tiebreak,
 }
 
-/// A native peer can join a supplicant-hosted group, but a supplicant client cannot reliably join a native group owner, so the supplicant hosts mixed pairs.
 #[must_use]
 pub fn host_role(mine: Platform, peer: Platform) -> HostRole {
     match (mine, peer) {
-        (Platform::Supplicant, Platform::Native) => HostRole::WeHost,
-        (Platform::Native, Platform::Supplicant) => HostRole::PeerHosts,
+        (Platform::Supplicant, Platform::Native) => HostRole::PeerHosts,
+        (Platform::Native, Platform::Supplicant) => HostRole::WeHost,
         (Platform::Supplicant, Platform::Supplicant) | (Platform::Native, Platform::Native) => {
             HostRole::Tiebreak
         }
@@ -98,14 +110,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_supplicant_hosts_for_a_native_peer_and_a_native_defers_to_it() {
+    fn a_native_peer_hosts_for_a_supplicant_and_the_supplicant_defers() {
         assert_eq!(
             host_role(Platform::Supplicant, Platform::Native),
-            HostRole::WeHost
+            HostRole::PeerHosts
         );
         assert_eq!(
             host_role(Platform::Native, Platform::Supplicant),
-            HostRole::PeerHosts
+            HostRole::WeHost
         );
     }
 
@@ -119,5 +131,19 @@ mod tests {
             host_role(Platform::Native, Platform::Native),
             HostRole::Tiebreak
         );
+    }
+
+    #[test]
+    fn service_instances_carry_a_closed_platform_role() {
+        assert_eq!(
+            service_instance_platform(SUPPLICANT_SERVICE_INSTANCE),
+            Some(Platform::Supplicant)
+        );
+        assert_eq!(
+            service_instance_platform(NATIVE_SERVICE_INSTANCE),
+            Some(Platform::Native)
+        );
+        assert_eq!(service_instance_platform(DEVICE_NAME_MARKER), None);
+        assert_eq!(service_instance_platform("Prns-other"), None);
     }
 }

@@ -568,7 +568,7 @@ pub(crate) fn classify(id: InterfaceId) -> Option<(CardKind, CardLabel)> {
         Some(InterfaceKind::LocalServer) => Some((CardKind::Tcp, card_label("Local"))),
         Some(InterfaceKind::LocalClient) => Some((CardKind::Peer, card_label("App"))),
         Some(InterfaceKind::BluetoothAuto) => Some((CardKind::Ble, card_label("BLE"))),
-        Some(InterfaceKind::WifiDirect) => Some((CardKind::Wifi, card_label("WiFi Direct"))),
+        Some(InterfaceKind::WifiDirect) => Some((CardKind::Wifi, card_label("WiFi Direct Lab"))),
         Some(InterfaceKind::WifiAware) => Some((CardKind::Wifi, card_label("WiFi/P2P"))),
         kind => {
             let bytes = id.as_bytes();
@@ -588,6 +588,13 @@ pub(crate) fn classify(id: InterfaceId) -> Option<(CardKind, CardLabel)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wifi_direct_is_presented_as_a_lab_transport() {
+        let id = InterfaceId::from_channel_tag(InterfaceKind::WifiDirect, b"wifi-direct");
+        let (_, label) = classify(id).expect("Wi-Fi Direct has a card");
+        assert_eq!(label.as_str(), "WiFi Direct Lab");
+    }
 
     #[test]
     fn engine_stops_and_restarts_with_the_same_identity() {

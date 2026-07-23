@@ -13,6 +13,12 @@ document have completed evidence for the same commit:
 The deliverable is a signed direct-install APK. Play Store work is outside this
 gate.
 
+Wi-Fi Direct is an experimental transport and is disabled in every Android
+build unless the operator explicitly opts in at build time. It is outside this
+production gate and cannot contribute a passing or failing production result.
+Its current evidence and laboratory boundary are recorded in
+[`wifi-direct-experimental.md`](wifi-direct-experimental.md).
+
 The application must retain version `0.1.0`, build `1`, the shared
 `lxmf.delivery` and `nomadnetwork.node` destinations, and persistent node and
 Bluetooth identities across service restart, process recreation, application
@@ -41,7 +47,8 @@ assembly, and `ANDROID_SERVICE_SMOKE_OK`.
 The gate fails on any nonzero command, dependency drift, lint error, missing
 release library, missing launcher icon, backup-enabled manifest, permission
 contract mismatch, version mismatch, missing foreground service contract, or
-missing third-party notices.
+missing third-party notices. It also fails if the default APK enables the
+experimental Wi-Fi Direct platform link.
 
 Record:
 
@@ -131,8 +138,9 @@ adb -s "${ANDROID_SERIAL}" shell dumpsys activity services org.personal.hopspot
 adb -s "${ANDROID_SERIAL}" logcat -d -v threadtime
 ```
 
-The core engine must remain running. Wi-Fi Direct and Wi-Fi Aware must report
-no permission, BLE must remain inactive, and Wi-Fi Auto, local listeners,
+The core engine must remain running. Wi-Fi Aware must report no permission, BLE
+must remain inactive, the Wi-Fi Direct lab interface must report that the
+experimental transport is disabled, and Wi-Fi Auto, local listeners,
 rendering, and input must remain usable.
 
 Grant only nearby Wi-Fi:
@@ -143,8 +151,8 @@ adb -s "${ANDROID_SERIAL}" shell am force-stop org.personal.hopspot
 adb -s "${ANDROID_SERIAL}" shell am start -W -n org.personal.hopspot/.MainActivity
 ```
 
-Wi-Fi Direct and supported Wi-Fi Aware behavior must recover while BLE remains
-inactive. Then grant Bluetooth:
+Supported Wi-Fi Aware behavior must recover while BLE remains inactive. The
+Wi-Fi Direct lab interface must remain disabled. Then grant Bluetooth:
 
 ```bash
 adb -s "${ANDROID_SERIAL}" shell pm grant org.personal.hopspot android.permission.BLUETOOTH_SCAN
@@ -219,24 +227,22 @@ each supported transport.
 |---|---|
 | BLE Auto | central and peripheral discovery, bidirectional payloads, disconnect, and reconnect |
 | Wi-Fi Auto | Bonjour/LAN discovery and bidirectional payloads |
-| Wi-Fi Direct | discovery, group formation, bidirectional payloads, group removal, and rediscovery |
 | Wi-Fi Aware | discovery, data-path formation, bidirectional payloads, teardown, and recovery when the device reports the feature |
 | USB host | attach, permission grant or denial, bidirectional payloads, detach, and reattach |
 | USB AOA | accessory negotiation, bidirectional payloads, detach, and reattach |
 | Shared instance | a same-signature client binds, obtains running status and RPC credentials, and exchanges traffic |
 
-For Wi-Fi Direct, toggle the interface off and on from the Hopspot UI, put the
-device to sleep and wake it, and repeat group formation. Logs must demonstrate
-that discovery and groups stop while disabled or asleep and recover after
-wake.
+Confirm that `WiFi Direct Lab` remains disconnected with the experimental
+disabled reason throughout the production run. Do not opt in to the transport
+for production evidence.
 
 For unsupported optional transports, attach the `pm list features` evidence
 and mark the row `not exposed by device`. Do not mark it passed.
 
 ### Sustained operation
 
-Run for at least eight hours with BLE Auto and Wi-Fi Auto enabled, Wi-Fi Direct
-cycling at least once per hour, and at least one continuous traffic stream:
+Run for at least eight hours with BLE Auto and Wi-Fi Auto enabled and at least
+one continuous traffic stream:
 
 ```bash
 adb -s "${ANDROID_SERIAL}" shell dumpsys batterystats --reset
@@ -284,7 +290,7 @@ Required scenarios:
 | Process recreation | application relaunches without changing identity |
 | Device restart | application launch retains identity and destinations |
 | Wi-Fi Auto | LAN discovery and bidirectional payloads pass |
-| Wi-Fi Direct | discovery and peer traffic pass when exposed by the device |
+| Wi-Fi Direct lab | remains disabled; the transport is outside the production gate |
 | USB host or AOA | every mode exposed by the device passes attach, traffic, detach, and reattach |
 | BLE | record unavailable below the supported Android BLE host floor unless this build explicitly exposes it |
 | Wi-Fi Aware | record unavailable because Android API 19 does not expose Wi-Fi Aware |
@@ -336,7 +342,7 @@ End timestamp:
 | Device restart |  |  |
 | Identity and destinations |  |  |
 | Wi-Fi Auto |  |  |
-| Wi-Fi Direct |  |  |
+| Wi-Fi Direct lab disabled |  |  |
 | USB host |  |  |
 | USB AOA |  |  |
 | Exposed additional transport |  |  |
@@ -369,7 +375,7 @@ End timestamp:
 | Render and input |  |  |
 | BLE Auto |  |  |
 | Wi-Fi Auto |  |  |
-| Wi-Fi Direct toggle/sleep/wake |  |  |
+| Wi-Fi Direct lab disabled |  |  |
 | Wi-Fi Aware |  |  |
 | USB host |  |  |
 | USB AOA |  |  |
@@ -399,7 +405,8 @@ Android may be marked production-supported only when:
 
 - the build gate passes at the evidenced commit;
 - both required physical-device matrices pass;
-- all device-exposed transports pass;
+- all device-exposed production transports pass;
+- the Wi-Fi Direct lab transport remains disabled;
 - permission denial and later recovery leave the core engine running;
 - service stop, restart, sticky recreation, and native lifecycle agree;
 - identities and destinations remain stable;

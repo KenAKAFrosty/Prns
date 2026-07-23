@@ -32,50 +32,103 @@ class WifiDirectLink(context: Context) {
     private var p2pEnabled = false
     private var discoveryActive = false
     private var discoverPending = false
+    private var running = false
+    private var channelGeneration = 0
 
     private val serviceType = NativeBridge.nativeWifiDirectServiceType()
-    private val instanceName = NativeBridge.nativeWifiDirectDeviceMarker()
-    private val groupSsidPrefix = NativeBridge.nativeWifiDirectGroupSsidPrefix()
-    private val groupSsid = groupSsidPrefix + randomSuffix()
-    private val groupPassphrase = NativeBridge.nativeWifiDirectGroupPassphrase()
-    private var hosting = false
-    private var joining = false
+    private val legacyInstanceName = NativeBridge.nativeWifiDirectDeviceMarker()
+    private val nativeInstanceName = NativeBridge.nativeWifiDirectNativeServiceInstance()
+    private val supplicantInstanceName =
+        NativeBridge.nativeWifiDirectSupplicantServiceInstance()
+    private var forming = false
     private var inGroup = false
-    private var joinDeadlineElapsedMs = 0L
+    private var formationDeadlineElapsedMs = 0L
 
     fun start() {
+        if (running) {
+            return
+        }
+        running = true
         val manager = manager
         if (manager == null) {
             Log.i(TAG, "Wi-Fi P2P service unavailable on this device")
             NativeBridge.nativeWifiDirectAvailability(NativeBridge.WIFI_DIRECT_DISABLED)
             return
         }
-        val channel = manager.initialize(appContext, Looper.getMainLooper()) {
-            Log.w(TAG, "Wi-Fi P2P channel disconnected")
-        }
-        this.channel = channel
-        reportAvailability()
         registerReceiver()
-        advertiseService(manager, channel)
-        setupServiceDiscovery(manager, channel)
+        openChannel(manager)
         handler.post(pollLoop)
     }
 
     fun stop() {
+        val wasForming = forming
+        val wasInGroup = inGroup
+        running = false
+        channelGeneration += 1
         handler.removeCallbacksAndMessages(null)
         receiver?.let { runCatching { appContext.unregisterReceiver(it) } }
         receiver = null
         val manager = manager
         val activeChannel = channel
+        channel = null
         if (manager != null && activeChannel != null) {
             manager.clearLocalServices(activeChannel, null)
             manager.clearServiceRequests(activeChannel, null)
             manager.stopPeerDiscovery(activeChannel, null)
+            manager.cancelConnect(activeChannel, null)
             manager.removeGroup(activeChannel, null)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                activeChannel.close()
+            }
         }
         channel = null
         discoveryActive = false
         discoverPending = false
+        forming = false
+        inGroup = false
+        if (wasForming) {
+            NativeBridge.nativeWifiDirectFormationFailed()
+        }
+        if (wasInGroup) {
+            NativeBridge.nativeWifiDirectGroupLost()
+        }
+        NativeBridge.nativeWifiDirectAvailability(NativeBridge.WIFI_DIRECT_DISABLED)
+    }
+
+    private fun openChannel(manager: WifiP2pManager) {
+        channelGeneration += 1
+        val generation = channelGeneration
+        val opened = manager.initialize(appContext, Looper.getMainLooper()) {
+            onChannelDisconnected(manager, generation)
+        }
+        channel = opened
+        reportAvailability()
+        advertiseService(manager, opened)
+        setupServiceDiscovery(manager, opened)
+    }
+
+    private fun onChannelDisconnected(manager: WifiP2pManager, generation: Int) {
+        if (!running || generation != channelGeneration) {
+            return
+        }
+        Log.w(TAG, "Wi-Fi P2P channel disconnected; reopening")
+        channel = null
+        discoveryActive = false
+        discoverPending = false
+        forming = false
+        if (inGroup) {
+            inGroup = false
+            NativeBridge.nativeWifiDirectGroupLost()
+        }
+        NativeBridge.nativeWifiDirectAvailability(NativeBridge.WIFI_DIRECT_DISABLED)
+        handler.postDelayed(
+            {
+                if (running && generation == channelGeneration && channel == null) {
+                    openChannel(manager)
+                }
+            },
+            CHANNEL_REOPEN_DELAY_MS,
+        )
     }
 
     private fun hasPermission(): Boolean {
@@ -162,10 +215,7 @@ class WifiDirectLink(context: Context) {
         manager.requestConnectionInfo(channel) { info: WifiP2pInfo ->
             if (info.groupFormed) {
                 inGroup = true
-                joining = false
-                if (info.isGroupOwner) {
-                    advertiseGroupOffer(manager, channel)
-                }
+                forming = false
                 val owner = info.groupOwnerAddress?.address ?: return@requestConnectionInfo
                 if (owner.size == 4) {
                     val buffer = ByteBuffer.allocateDirect(4)
@@ -174,8 +224,7 @@ class WifiDirectLink(context: Context) {
                 }
             } else if (inGroup) {
                 inGroup = false
-                hosting = false
-                joining = false
+                forming = false
                 NativeBridge.nativeWifiDirectGroupLost()
             }
         }
@@ -186,7 +235,7 @@ class WifiDirectLink(context: Context) {
             return
         }
         val record = mapOf("role" to "prns")
-        val info = WifiP2pDnsSdServiceInfo.newInstance(instanceName, serviceType, record)
+        val info = WifiP2pDnsSdServiceInfo.newInstance(nativeInstanceName, serviceType, record)
         manager.addLocalService(channel, info, actionListener("addLocalService"))
     }
 
@@ -199,8 +248,13 @@ class WifiDirectLink(context: Context) {
             { instance, registrationType, device ->
                 if (registrationType.startsWith(serviceType)) {
                     when {
-                        instance.startsWith(groupSsidPrefix) -> joinGroup(instance)
-                        instance.startsWith(instanceName) -> pushSighting(device)
+                        instance == supplicantInstanceName -> pushSighting(device, true)
+                        instance == nativeInstanceName -> pushSighting(device, false)
+                        instance == legacyInstanceName ->
+                            pushSighting(
+                                device,
+                                device.deviceName?.startsWith(legacyInstanceName) == true,
+                            )
                     }
                 }
             },
@@ -210,11 +264,10 @@ class WifiDirectLink(context: Context) {
         manager.addServiceRequest(channel, request, actionListener("addServiceRequest"))
     }
 
-    private fun pushSighting(device: WifiP2pDevice) {
+    private fun pushSighting(device: WifiP2pDevice, peerIsSupplicant: Boolean) {
         val octets = macOctets(device.deviceAddress) ?: return
         val buffer = ByteBuffer.allocateDirect(6)
         buffer.put(octets)
-        val peerIsSupplicant = device.deviceName?.startsWith(instanceName) == true
         NativeBridge.nativeWifiDirectSighting(
             buffer,
             peerIsSupplicant,
@@ -235,12 +288,18 @@ class WifiDirectLink(context: Context) {
         if (!hasPermission() || !p2pEnabled) {
             return
         }
-        if (joining && SystemClock.elapsedRealtime() > joinDeadlineElapsedMs) {
-            joining = false
+        if (forming && SystemClock.elapsedRealtime() > formationDeadlineElapsedMs) {
+            forming = false
+            manager.cancelConnect(channel, null)
+            NativeBridge.nativeWifiDirectFormationFailed()
         }
-        val wantDiscovery = NativeBridge.nativeWifiDirectDesiredDiscovery() && !joining
+        NativeBridge.nativeWifiDirectTakeFormationRequest()
+            ?.let(::decodeFormationRequest)
+            ?.let(::formGroup)
+
+        val wantDiscovery = NativeBridge.nativeWifiDirectDesiredDiscovery()
         if (wantDiscovery) {
-            if (!discoveryActive && !discoverPending) {
+            if (!forming && !discoveryActive && !discoverPending) {
                 discoverPending = true
                 manager.discoverServices(channel, object : WifiP2pManager.ActionListener {
                     override fun onSuccess() {
@@ -253,16 +312,14 @@ class WifiDirectLink(context: Context) {
                     }
                 })
             }
-        } else if (discoveryActive || discoverPending) {
+        } else if (!forming && (discoveryActive || discoverPending)) {
             discoverPending = false
             manager.stopPeerDiscovery(channel, actionListener("stopPeerDiscovery"))
         }
 
-        if (NativeBridge.nativeWifiDirectTakeHostRequest()) {
-            hostGroup()
-        }
-
         if (NativeBridge.nativeWifiDirectTakeRemoveGroup()) {
+            forming = false
+            manager.cancelConnect(channel, null)
             manager.removeGroup(channel, actionListener("removeGroup"))
         }
     }
@@ -276,84 +333,51 @@ class WifiDirectLink(context: Context) {
             }
         }
 
-    private fun hostGroup() {
+    private fun formGroup(request: FormationRequest) {
         val manager = manager ?: return
         val channel = channel ?: return
-        if (hosting || !hasPermission() || !p2pEnabled) {
+        if (forming || inGroup || !hasPermission() || !p2pEnabled) {
             return
         }
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-            return
+        forming = true
+        formationDeadlineElapsedMs = SystemClock.elapsedRealtime() + FORMATION_TIMEOUT_MS
+        val config = WifiP2pConfig().apply {
+            deviceAddress = request.peer
+            groupOwnerIntent = request.intent
         }
-        hosting = true
-        val config = WifiP2pConfig.Builder()
-            .setNetworkName(groupSsid)
-            .setPassphrase(groupPassphrase)
-            .build()
-        manager.createGroup(channel, config, object : WifiP2pManager.ActionListener {
-            override fun onSuccess() {
-                Log.i(TAG, "Wi-Fi Direct hosting group $groupSsid")
-            }
-
-            override fun onFailure(reason: Int) {
-                hosting = false
-                Log.w(TAG, "Wi-Fi Direct createGroup failed reason=$reason")
-            }
-        })
-    }
-
-    private fun joinGroup(ssid: String) {
-        val manager = manager ?: return
-        val channel = channel ?: return
-        if (hosting || joining || !hasPermission() || !p2pEnabled) {
-            return
-        }
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-            return
-        }
-        joining = true
-        joinDeadlineElapsedMs = SystemClock.elapsedRealtime() + JOIN_TIMEOUT_MS
-        manager.stopPeerDiscovery(channel, null)
-        val config = WifiP2pConfig.Builder()
-            .setNetworkName(ssid)
-            .setPassphrase(groupPassphrase)
-            .build()
         manager.connect(channel, config, object : WifiP2pManager.ActionListener {
             override fun onSuccess() {
-                Log.i(TAG, "Wi-Fi Direct joining group $ssid")
+                Log.i(TAG, "Wi-Fi Direct group formation started")
             }
 
             override fun onFailure(reason: Int) {
-                joining = false
-                Log.w(TAG, "Wi-Fi Direct connect(join) failed reason=$reason")
+                forming = false
+                NativeBridge.nativeWifiDirectFormationFailed()
+                Log.w(TAG, "Wi-Fi Direct connect failed reason=$reason")
             }
         })
     }
 
-    private fun advertiseGroupOffer(manager: WifiP2pManager, channel: WifiP2pManager.Channel) {
-        val record = mapOf("role" to "prns")
-        val info = WifiP2pDnsSdServiceInfo.newInstance(groupSsid, serviceType, record)
-        manager.clearLocalServices(channel, object : WifiP2pManager.ActionListener {
-            override fun onSuccess() {
-                manager.addLocalService(channel, info, actionListener("advertiseGroupOffer"))
-                Log.i(TAG, "Wi-Fi Direct advertising group offer $groupSsid")
-            }
-
-            override fun onFailure(reason: Int) {
-                Log.w(TAG, "Wi-Fi Direct clearLocalServices failed reason=$reason")
-            }
-        })
+    private fun decodeFormationRequest(encoded: ByteArray): FormationRequest? {
+        if (encoded.size != FORMATION_REQUEST_BYTES) {
+            return null
+        }
+        val intent = encoded[6].toInt() and 0xff
+        if (intent !in 0..15) {
+            return null
+        }
+        val peer = encoded.take(6).joinToString(":") { "%02x".format(it.toInt() and 0xff) }
+        return FormationRequest(peer, intent)
     }
+
+    private data class FormationRequest(val peer: String, val intent: Int)
 
     private companion object {
         private const val TAG = "HopspotWifiDirect"
         private const val POLL_INTERVAL_MS = 1000L
-        private const val JOIN_TIMEOUT_MS = 20_000L
-
-        private fun randomSuffix(): String {
-            val hex = "0123456789abcdef"
-            return (1..6).map { hex.random() }.joinToString("")
-        }
+        private const val FORMATION_TIMEOUT_MS = 30_000L
+        private const val CHANNEL_REOPEN_DELAY_MS = 1_000L
+        private const val FORMATION_REQUEST_BYTES = 7
 
         private fun macOctets(address: String?): ByteArray? {
             val parts = address?.split(":") ?: return null

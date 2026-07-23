@@ -5,7 +5,7 @@ use super::usb::jni_string;
 use super::wifi_aware::ipv4_octets;
 use crate::engine::wd_bridge;
 use jni::objects::{JByteBuffer, JClass};
-use jni::sys::{jboolean, jint, jstring};
+use jni::sys::{jboolean, jbyteArray, jint, jstring};
 use jni::JNIEnv;
 use personal_rns::interfaces::wifi_direct as wifi_direct_contract;
 
@@ -26,27 +26,19 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiDirectDe
 }
 
 #[no_mangle]
-pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiDirectGroupSsidPrefix(
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiDirectNativeServiceInstance(
     env: JNIEnv,
     _class: JClass,
 ) -> jstring {
-    jni_string(env, wifi_direct_contract::GROUP_SSID_PREFIX)
+    jni_string(env, wifi_direct_contract::NATIVE_SERVICE_INSTANCE)
 }
 
 #[no_mangle]
-pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiDirectGroupPassphrase(
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiDirectSupplicantServiceInstance(
     env: JNIEnv,
     _class: JClass,
 ) -> jstring {
-    jni_string(env, wifi_direct_contract::GROUP_PASSPHRASE)
-}
-
-#[no_mangle]
-pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiDirectRendezvousPort(
-    _env: JNIEnv,
-    _class: JClass,
-) -> jint {
-    i32::from(wifi_direct_contract::WIFI_DIRECT_RENDEZVOUS_PORT)
+    jni_string(env, wifi_direct_contract::SUPPLICANT_SERVICE_INSTANCE)
 }
 
 #[no_mangle]
@@ -106,6 +98,14 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiDirectGr
 }
 
 #[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiDirectFormationFailed(
+    _env: JNIEnv,
+    _class: JClass,
+) {
+    wd_bridge().formation_failed();
+}
+
+#[no_mangle]
 pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiDirectGroupLost(
     _env: JNIEnv,
     _class: JClass,
@@ -131,11 +131,18 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiDirectDe
 }
 
 #[no_mangle]
-pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiDirectTakeHostRequest(
-    _env: JNIEnv,
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiDirectTakeFormationRequest(
+    env: JNIEnv,
     _class: JClass,
-) -> jboolean {
-    jboolean::from(wd_bridge().take_host_request())
+) -> jbyteArray {
+    let Some(request) = wd_bridge().take_formation_request() else {
+        return core::ptr::null_mut();
+    };
+    let mut encoded = [0u8; 7];
+    encoded[..6].copy_from_slice(&request.peer.octets());
+    encoded[6] = request.intent.wire();
+    env.byte_array_from_slice(&encoded)
+        .map_or(core::ptr::null_mut(), |array| array.into_raw())
 }
 
 #[no_mangle]

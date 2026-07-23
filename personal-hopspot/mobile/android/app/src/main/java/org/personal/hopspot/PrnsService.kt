@@ -171,7 +171,7 @@ class PrnsService : Service() {
                 null
             }
         }
-        if (wifiDirectLink == null) {
+        if (BuildConfig.EXPERIMENTAL_WIFI_DIRECT && wifiDirectLink == null) {
             Log.i(TAG, "starting WiFi Direct link")
             wifiDirectLink = try {
                 WifiDirectLink(applicationContext).also { it.start() }
@@ -179,6 +179,10 @@ class PrnsService : Service() {
                 Log.e(TAG, "WiFi Direct link failed to start", error)
                 null
             }
+        } else if (!BuildConfig.EXPERIMENTAL_WIFI_DIRECT) {
+            NativeBridge.nativeWifiDirectAvailability(
+                NativeBridge.WIFI_DIRECT_EXPERIMENTAL_DISABLED,
+            )
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && wifiAwareLink == null) {
             Log.i(TAG, "starting WiFi/P2P (Aware) link")

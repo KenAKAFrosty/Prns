@@ -12,6 +12,8 @@ NS_A=prns-wd-a
 NS_B=prns-wd-b
 BUS_A=/tmp/$NS_A.bus
 BUS_B=/tmp/$NS_B.bus
+LOG_A=/tmp/$NS_A.log
+LOG_B=/tmp/$NS_B.log
 WPA_BIN="$(command -v wpa_supplicant || echo /sbin/wpa_supplicant)"
 PIDS=()
 
@@ -22,14 +24,15 @@ cleanup() {
     sleep 0.5
     sudo ip netns del "$NS_A" 2>/dev/null || true
     sudo ip netns del "$NS_B" 2>/dev/null || true
-    sudo rm -f "$BUS_A" "$BUS_B"
+    sudo rm -f "$BUS_A" "$BUS_B" "$LOG_A" "$LOG_B"
+    sudo modprobe -r mac80211_hwsim 2>/dev/null || true
 }
 trap cleanup EXIT
 
 sudo -v
 
 cd "$REPO_ROOT/prns-interfaces/impls/tokio"
-cargo build --example wifi_direct_linux --features wifi-direct
+cargo build --locked --example wifi_direct_linux --features "wifi-direct log"
 
 sudo modprobe -r mac80211_hwsim 2>/dev/null || true
 sudo modprobe mac80211_hwsim radios=2
@@ -95,8 +98,10 @@ PIDS+=($!)
 sleep 1
 
 sudo ip netns exec "$NS_A" env DBUS_SYSTEM_BUS_ADDRESS="unix:path=$BUS_A" RUST_LOG="${RUST_LOG:-info}" \
-    "$EXAMPLE" "$IF_A" announce &
+    "$EXAMPLE" "$IF_A" announce > "$LOG_A" 2>&1 &
 PIDS+=($!)
 
 sudo ip netns exec "$NS_B" env DBUS_SYSTEM_BUS_ADDRESS="unix:path=$BUS_B" RUST_LOG="${RUST_LOG:-info}" \
-    timeout 150 "$EXAMPLE" "$IF_B" expect
+    timeout 150 "$EXAMPLE" "$IF_B" expect 2>&1 | tee "$LOG_B"
+
+echo "WIFI_DIRECT_HWSIM_OK"

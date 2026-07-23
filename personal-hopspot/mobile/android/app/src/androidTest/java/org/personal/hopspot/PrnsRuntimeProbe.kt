@@ -42,36 +42,70 @@ class PrnsRuntimeProbe : Instrumentation() {
     private fun runProbe() {
         val client = context
         val service = ComponentName(TARGET_PACKAGE, "$TARGET_PACKAGE.PrnsService")
-        val startIntent = Intent(ACTION_START).setComponent(service)
+        try {
+            startService(client, service)
+            Thread.sleep(FOREGROUND_SETTLE_MS)
+            sendHome()
+            Thread.sleep(BACKGROUND_SETTLE_MS)
+
+            val first = bindAndQuery(client, service)
+            requireStatusBundle(first, "first bind")
+
+            client.unbindAndRebind(service).also { second ->
+                requireStatusBundle(second, "background rebind")
+            }
+
+            val services = shellOutput("dumpsys activity services $TARGET_PACKAGE")
+            require(services.contains("PrnsService")) {
+                "activity service dump did not show PrnsService while probe was active"
+            }
+
+            val notifications = shellOutput("dumpsys notification --noredact")
+            require(
+                notifications.contains("Personal RNS") ||
+                    notifications.contains("personal_rns_node"),
+            ) {
+                "notification dump did not show the Personal RNS foreground notification"
+            }
+
+            stopService(client, service)
+            startService(client, service)
+            Thread.sleep(FOREGROUND_SETTLE_MS)
+            val restarted = bindAndQuery(client, service)
+            requireStatusBundle(restarted, "restart bind")
+            require(restarted.getString(KEY_RPC_KEY_HEX) == first.getString(KEY_RPC_KEY_HEX)) {
+                "RPC identity changed across service restart"
+            }
+        } finally {
+            client.stopService(Intent().setComponent(service))
+        }
+    }
+
+    private fun startService(context: Context, service: ComponentName) {
+        val intent = Intent(ACTION_START).setComponent(service)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            client.startForegroundService(startIntent)
+            context.startForegroundService(intent)
         } else {
-            client.startService(startIntent)
+            context.startService(intent)
         }
+    }
 
-        Thread.sleep(FOREGROUND_SETTLE_MS)
-        sendHome()
-        Thread.sleep(BACKGROUND_SETTLE_MS)
-
-        val first = bindAndQuery(client, service)
-        requireStatusBundle(first, "first bind")
-
-        client.unbindAndRebind(service).also { second ->
-            requireStatusBundle(second, "background rebind")
+    private fun stopService(context: Context, service: ComponentName) {
+        val intent = Intent(ACTION_STOP).setComponent(service)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.startForegroundService(intent)
+        } else {
+            context.startService(intent)
         }
-
-        val services = shellOutput("dumpsys activity services $TARGET_PACKAGE")
-        require(services.contains("PrnsService")) {
-            "activity service dump did not show PrnsService while probe was active"
+        val stopped = (1..STOP_ATTEMPTS).any {
+            if (!shellOutput("dumpsys activity services $TARGET_PACKAGE").contains("PrnsService")) {
+                true
+            } else {
+                Thread.sleep(STOP_POLL_MS)
+                false
+            }
         }
-
-        val notifications = shellOutput("dumpsys notification --noredact")
-        require(
-            notifications.contains("Personal RNS") ||
-                notifications.contains("personal_rns_node"),
-        ) {
-            "notification dump did not show the Personal RNS foreground notification"
-        }
+        require(stopped) { "PrnsService did not stop" }
     }
 
     private fun requireStatusBundle(status: Bundle, label: String) {
@@ -201,6 +235,7 @@ class PrnsRuntimeProbe : Instrumentation() {
     private companion object {
         const val TARGET_PACKAGE = "org.personal.hopspot"
         const val ACTION_START = "org.personal.hopspot.action.START_PRNS"
+        const val ACTION_STOP = "org.personal.hopspot.action.STOP_PRNS"
         const val ACTION_CLIENT = "org.personal.hopspot.action.BIND_PRNS_CLIENT"
         const val MSG_REGISTER_CLIENT = 1
         const val MSG_STATUS = 5
@@ -232,6 +267,8 @@ class PrnsRuntimeProbe : Instrumentation() {
         const val RPC_PORT = 37429
         const val FOREGROUND_SETTLE_MS = 1_500L
         const val BACKGROUND_SETTLE_MS = 1_500L
+        const val STOP_ATTEMPTS = 50
+        const val STOP_POLL_MS = 100L
         val REQUIRED_STATUS_KEYS = listOf(
             KEY_STATE,
             KEY_RUNNING,

@@ -20,6 +20,21 @@ val productionSigningRequested =
     gradle.startParameter.taskNames.any {
         it.substringAfterLast(':') == "assembleProduction"
     }
+val experimentalWifiDirectDisabledRequested =
+    gradle.startParameter.taskNames.any {
+        it.substringAfterLast(':') == "verifyExperimentalWifiDirectDisabled"
+    }
+val experimentalWifiDirect =
+    providers.gradleProperty("prnsExperimentalWifiDirect").orNull?.also { value ->
+        require(value == "true" || value == "false") {
+            "prnsExperimentalWifiDirect must be true or false"
+        }
+    } ?: "false"
+if (productionSigningRequested || experimentalWifiDirectDisabledRequested) {
+    require(experimentalWifiDirect == "false") {
+        "production validation cannot enable experimental Wi-Fi Direct"
+    }
+}
 if (productionSigningRequested) {
     require(releaseSigningReady) {
         "PRNS_ANDROID_KEYSTORE, PRNS_ANDROID_KEYSTORE_PASSWORD, PRNS_ANDROID_KEY_ALIAS, and PRNS_ANDROID_KEY_PASSWORD are required"
@@ -38,6 +53,9 @@ val syncReleaseNotices by tasks.registering(Copy::class) {
 android {
     namespace = "org.personal.hopspot"
     compileSdk = 34
+    buildFeatures {
+        buildConfig = true
+    }
 
     defaultConfig {
         applicationId = "org.personal.hopspot"
@@ -46,6 +64,7 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         testInstrumentationRunner = "org.personal.hopspot.PrnsRuntimeProbe"
+        buildConfigField("boolean", "EXPERIMENTAL_WIFI_DIRECT", experimentalWifiDirect)
         ndk {
             abiFilters += listOf("armeabi-v7a", "arm64-v8a")
         }
@@ -91,6 +110,8 @@ tasks.named("preBuild").configure {
 tasks.register("assembleProduction") {
     dependsOn("assembleRelease")
 }
+
+tasks.register("verifyExperimentalWifiDirectDisabled")
 
 dependencies {
     implementation(libs.usb.serial)

@@ -3,7 +3,7 @@ mod proxies;
 
 pub use group::WpaGroup;
 pub(crate) use group::{
-    client_plan, owner_plan, role_from_group, wait_for_go_address, wait_link_local,
+    client_plan, owner_plan, owner_plan_v6, role_from_group, wait_for_go_address, wait_link_local,
 };
 pub use proxies::{P2PDeviceProxy, SupplicantProxy, P2P_DEVICE_INTERFACE, SUPPLICANT_SERVICE};
 
@@ -15,11 +15,13 @@ use tokio::sync::mpsc;
 use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
 
 use self::proxies::{GroupProperties, PeerProxy, SupplicantInterfaceProxy};
+use super::service_discovery;
 use prns_core::interfaces::wifi_direct::{
-    Availability, DiscoveryMode, GroupEndReason, WifiDirectBackend, WifiDirectEvent,
+    host_role, GoIntent, GroupRole, HostRole, Initiative, PeerEvidence, Platform,
+    DEVICE_NAME_MARKER, GROUP_SSID_PREFIX, SERVICE_TYPE, SUPPLICANT_SERVICE_INSTANCE,
 };
 use prns_core::interfaces::wifi_direct::{
-    GoIntent, GroupRole, Initiative, PeerEvidence, DEVICE_NAME_MARKER, SERVICE_TYPE,
+    Availability, DiscoveryMode, GroupEndReason, WifiDirectBackend, WifiDirectEvent,
 };
 use prns_core::interfaces::MacAddress;
 
@@ -27,15 +29,6 @@ const BUS_LOST_REASON: &str = "the wpa_supplicant D-Bus connection closed";
 const SUPPLICANT_GONE_REASON: &str = "wpa_supplicant left the bus";
 const NETDEV_ACCESS_REASON: &str =
     "wpa_supplicant D-Bus access denied; add this user to the 'netdev' group and start a fresh login session";
-// These DNS-SD records were captured from Android's WifiP2pDnsSdServiceInfo. The response is RDATA-only because wpa prepends the question echo; registering the full record makes Android parse it twice and reject it.
-const BONJOUR_PTR_QUERY: &[u8] = &[
-    0x05, 0x5f, 0x70, 0x72, 0x6e, 0x73, 0xc0, 0x0c, 0x00, 0x0c, 0x01,
-];
-const BONJOUR_PTR_RESPONSE: &[u8] = &[0x04, 0x50, 0x72, 0x6e, 0x73, 0xc0, 0x27];
-const SD_PTR_QUERY_TLV: &[u8] = &[
-    0x0d, 0x00, 0x01, 0x01, 0x05, 0x5f, 0x70, 0x72, 0x6e, 0x73, 0xc0, 0x0c, 0x00, 0x0c, 0x01,
-];
-const SERVICE_MARKER: &[u8] = b"_prns";
 const FIND_RETRY: Duration = Duration::from_secs(2);
 const FIND_REASSERT_DELAY: Duration = Duration::from_secs(1);
 const RESIGHT_PERIOD: Duration = Duration::from_secs(5);
@@ -43,6 +36,8 @@ const LISTEN_LEASE_SECS: i32 = 30;
 const LISTEN_REASSERT: Duration = Duration::from_secs(25);
 const EXTENDED_LISTEN_PERIOD_MS: i32 = 500;
 const EXTENDED_LISTEN_INTERVAL_MS: i32 = 1_500;
+const GROUP_PROXY_WAIT_ATTEMPTS: usize = 30;
+const GROUP_PROXY_WAIT_STEP: Duration = Duration::from_millis(100);
 
 #[derive(Debug)]
 pub enum WpaP2pError {
@@ -60,6 +55,12 @@ enum PumpEvent {
         path: OwnedObjectPath,
         name: String,
         evidence: PeerEvidence,
+        platform: Platform,
+    },
+    GroupOffer {
+        peer: MacAddress,
+        path: OwnedObjectPath,
+        name: String,
     },
     PeerGone {
         path: OwnedObjectPath,
@@ -74,7 +75,9 @@ enum PumpEvent {
         group_iface: OwnedObjectPath,
     },
     GroupFinished,
-    FormationFailed,
+    FormationFailed {
+        group_iface: Option<OwnedObjectPath>,
+    },
     FormationProgress,
     FindStopped,
     FindRetry,
@@ -86,6 +89,7 @@ struct PeerRecord {
     path: OwnedObjectPath,
     initiative: Initiative,
     evidence: PeerEvidence,
+    platform: Platform,
 }
 
 pub enum WpaP2pBackend {
@@ -114,6 +118,12 @@ impl WpaP2pBackend {
             Err(other) => Err(other),
         }
     }
+}
+
+enum ConnectPurpose {
+    Initiate(GoIntent),
+    Authorize(GoIntent),
+    Join,
 }
 
 pub struct WpaSession {
@@ -183,8 +193,16 @@ impl WpaSession {
         }
         let mut service = HashMap::new();
         service.insert("service_type", Value::from("bonjour"));
-        service.insert("query", Value::from(BONJOUR_PTR_QUERY.to_vec()));
-        service.insert("response", Value::from(BONJOUR_PTR_RESPONSE.to_vec()));
+        service.insert(
+            "query",
+            Value::from(service_discovery::BONJOUR_PTR_QUERY.to_vec()),
+        );
+        service.insert(
+            "response",
+            Value::from(
+                service_discovery::ptr_response(SUPPLICANT_SERVICE_INSTANCE).unwrap_or_default(),
+            ),
+        );
         match p2p.add_service(service).await {
             Ok(()) => {
                 crate::diagnostic_log::debug!("wifi-direct advertising {SERVICE_TYPE} on {ifname}")
@@ -195,7 +213,10 @@ impl WpaSession {
         }
         let _ = p2p.service_discovery_external(0).await;
         let mut query = HashMap::new();
-        query.insert("tlv", Value::from(SD_PTR_QUERY_TLV.to_vec()));
+        query.insert(
+            "tlv",
+            Value::from(service_discovery::SD_PTR_QUERY_TLV.to_vec()),
+        );
         match p2p.service_discovery_request(query).await {
             Ok(reference) => {
                 crate::diagnostic_log::debug!(
@@ -207,7 +228,7 @@ impl WpaSession {
             }
         }
         let (events_tx, events) = mpsc::unbounded_channel();
-        spawn_pump(connection.clone(), events_tx.clone());
+        spawn_pump(connection.clone(), ifname.to_owned(), events_tx.clone());
         let resight = events_tx.clone();
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(RESIGHT_PERIOD);
@@ -242,11 +263,13 @@ impl WpaSession {
         path: OwnedObjectPath,
         name: &str,
         evidence: PeerEvidence,
+        platform: Platform,
     ) -> Initiative {
-        let initiative = if self.local_name.as_str() < name {
-            Initiative::Ours
-        } else {
-            Initiative::Theirs
+        let initiative = match host_role(Platform::Supplicant, platform) {
+            HostRole::WeHost => Initiative::Ours,
+            HostRole::PeerHosts => Initiative::Theirs,
+            HostRole::Tiebreak if self.local_name.as_str() < name => Initiative::Ours,
+            HostRole::Tiebreak => Initiative::Theirs,
         };
         self.peers_by_path.insert(path.clone(), peer);
         self.peers.insert(
@@ -255,6 +278,7 @@ impl WpaSession {
                 path,
                 initiative,
                 evidence,
+                platform,
             },
         );
         initiative
@@ -337,7 +361,27 @@ impl WpaSession {
         }
     }
 
-    async fn connect_toward(&mut self, peer: MacAddress, go_intent: Option<i32>) {
+    async fn disconnect_group_interface(&self, path: OwnedObjectPath) {
+        for _ in 0..GROUP_PROXY_WAIT_ATTEMPTS {
+            let proxy = P2PDeviceProxy::builder(&self.connection)
+                .path(path.clone())
+                .ok()
+                .map(|builder| builder.build());
+            if let Some(build) = proxy {
+                if let Ok(proxy) = build.await {
+                    if proxy.disconnect().await.is_ok() {
+                        return;
+                    }
+                }
+            }
+            tokio::time::sleep(GROUP_PROXY_WAIT_STEP).await;
+        }
+        crate::diagnostic_log::warn!(
+            "wifi-direct group interface {path} could not be disconnected"
+        );
+    }
+
+    async fn connect_toward(&mut self, peer: MacAddress, purpose: ConnectPurpose) {
         if self.forming_with == Some(peer) {
             crate::diagnostic_log::debug!(
                 "wifi-direct already negotiating with {peer:?}; letting it ride"
@@ -352,8 +396,17 @@ impl WpaSession {
         let mut args = HashMap::new();
         args.insert("peer", Value::from(path.into_inner()));
         args.insert("wps_method", Value::from("pbc"));
-        if let Some(intent) = go_intent {
-            args.insert("go_intent", Value::from(intent));
+        match purpose {
+            ConnectPurpose::Initiate(intent) => {
+                args.insert("go_intent", Value::from(i32::from(intent.wire())));
+            }
+            ConnectPurpose::Authorize(intent) => {
+                args.insert("authorize_only", Value::from(true));
+                args.insert("go_intent", Value::from(i32::from(intent.wire())));
+            }
+            ConnectPurpose::Join => {
+                args.insert("join", Value::from(true));
+            }
         }
         match self.p2p.connect(args).await {
             Ok(_generated_pin) => {
@@ -386,13 +439,24 @@ impl WpaSession {
     }
 
     async fn form_group(&mut self, peer: MacAddress, intent: GoIntent) {
-        self.connect_toward(peer, Some(i32::from(intent.wire())))
-            .await;
+        match self.peers.get(&peer).map(|record| record.platform) {
+            Some(Platform::Supplicant) => {
+                self.connect_toward(peer, ConnectPurpose::Initiate(intent))
+                    .await;
+            }
+            Some(Platform::Native) | None => self
+                .queued
+                .push_back(WifiDirectEvent::FormationFailed { peer }),
+        }
     }
 
     async fn accept_invitation(&mut self, peer: MacAddress, intent: GoIntent) {
-        self.connect_toward(peer, Some(i32::from(intent.wire())))
+        self.connect_toward(peer, ConnectPurpose::Authorize(intent))
             .await;
+    }
+
+    async fn join_group(&mut self, peer: MacAddress) {
+        self.connect_toward(peer, ConnectPurpose::Join).await;
     }
 
     async fn remove_group(&mut self) {
@@ -402,15 +466,7 @@ impl WpaSession {
         self.forming_with = None;
         self.formation_active = false;
         if let Some(path) = self.group_iface.take() {
-            let group_device = P2PDeviceProxy::builder(&self.connection)
-                .path(path)
-                .ok()
-                .map(|builder| builder.build());
-            if let Some(build) = group_device {
-                if let Ok(proxy) = build.await {
-                    let _ = proxy.disconnect().await;
-                }
-            }
+            self.disconnect_group_interface(path).await;
         }
         let _ = self.p2p.cancel().await;
     }
@@ -432,8 +488,9 @@ impl WpaSession {
                     path,
                     name,
                     evidence,
+                    platform,
                 }) => {
-                    let initiative = self.record_peer(peer, path, &name, evidence);
+                    let initiative = self.record_peer(peer, path, &name, evidence, platform);
                     if matches!(initiative, Initiative::Theirs) && self.responder_stance() {
                         self.schedule_find_retry(FIND_REASSERT_DELAY);
                     }
@@ -443,6 +500,16 @@ impl WpaSession {
                         initiative,
                     };
                 }
+                Some(PumpEvent::GroupOffer { peer, path, name }) => {
+                    self.record_peer(
+                        peer,
+                        path,
+                        &name,
+                        PeerEvidence::ServiceRecord,
+                        Platform::Native,
+                    );
+                    return WifiDirectEvent::GroupOffer { peer };
+                }
                 Some(PumpEvent::PeerGone { path }) => {
                     if let Some(peer) = self.peers_by_path.remove(&path) {
                         self.peers.remove(&peer);
@@ -450,7 +517,12 @@ impl WpaSession {
                     }
                 }
                 Some(PumpEvent::Invitation { peer, path, name }) => {
-                    self.record_peer(peer, path, &name, PeerEvidence::ServiceRecord);
+                    let platform = if name.starts_with(DEVICE_NAME_MARKER) {
+                        Platform::Supplicant
+                    } else {
+                        Platform::Native
+                    };
+                    self.record_peer(peer, path, &name, PeerEvidence::ServiceRecord, platform);
                     return WifiDirectEvent::Invitation { peer };
                 }
                 Some(PumpEvent::GroupFormed { group, group_iface }) => {
@@ -467,8 +539,11 @@ impl WpaSession {
                         reason: GroupEndReason::LinkLost,
                     };
                 }
-                Some(PumpEvent::FormationFailed) => {
+                Some(PumpEvent::FormationFailed { group_iface }) => {
                     self.formation_active = false;
+                    if let Some(path) = group_iface {
+                        self.disconnect_group_interface(path).await;
+                    }
                     self.schedule_find_retry(FIND_REASSERT_DELAY);
                     if let Some(peer) = self.forming_with.take() {
                         return WifiDirectEvent::FormationFailed { peer };
@@ -541,6 +616,12 @@ impl WifiDirectBackend for WpaP2pBackend {
         }
     }
 
+    async fn join_group(&mut self, peer: MacAddress) {
+        if let Self::Live(session) = self {
+            session.join_group(peer).await;
+        }
+    }
+
     async fn remove_group(&mut self) {
         if let Self::Live(session) = self {
             session.remove_group().await;
@@ -555,7 +636,11 @@ impl WifiDirectBackend for WpaP2pBackend {
     }
 }
 
-fn spawn_pump(connection: zbus::Connection, events: mpsc::UnboundedSender<PumpEvent>) {
+fn spawn_pump(
+    connection: zbus::Connection,
+    base_ifname: String,
+    events: mpsc::UnboundedSender<PumpEvent>,
+) {
     tokio::spawn(async move {
         let Some(mut stream) = p2p_signal_stream(&connection).await else {
             let _ = events.send(PumpEvent::PumpClosed);
@@ -591,6 +676,7 @@ fn spawn_pump(connection: zbus::Connection, events: mpsc::UnboundedSender<PumpEv
                         path,
                         name,
                         evidence: PeerEvidence::NameMarker,
+                        platform: Platform::Supplicant,
                     });
                 }
                 "DeviceLost" => {
@@ -606,17 +692,19 @@ fn spawn_pump(connection: zbus::Connection, events: mpsc::UnboundedSender<PumpEv
                     else {
                         continue;
                     };
-                    let carries_service = response
+                    let Some(tlvs) = response
                         .get("tlvs")
                         .and_then(|value| value.try_clone().ok())
                         .and_then(|value| Vec::<u8>::try_from(value).ok())
-                        .is_some_and(|tlvs| {
-                            tlvs.windows(SERVICE_MARKER.len())
-                                .any(|window| window == SERVICE_MARKER)
-                        });
-                    if !carries_service {
+                    else {
                         continue;
-                    }
+                    };
+                    let Some(instance) = service_discovery::recognized_instance(&tlvs) else {
+                        crate::diagnostic_log::debug!(
+                            "wifi-direct ignored service response tlvs={tlvs:02x?}"
+                        );
+                        continue;
+                    };
                     let Some(peer_path) = response
                         .get("peer_object")
                         .and_then(|value| value.try_clone().ok())
@@ -628,14 +716,24 @@ fn spawn_pump(connection: zbus::Connection, events: mpsc::UnboundedSender<PumpEv
                         continue;
                     };
                     crate::diagnostic_log::debug!(
-                        "wifi-direct service-recognized {name:?} ({peer:?}) via {SERVICE_TYPE}"
+                        "wifi-direct service-recognized {name:?} ({peer:?}) as {instance:?} via {SERVICE_TYPE}"
                     );
-                    let _ = events.send(PumpEvent::Sighting {
-                        peer,
-                        path: peer_path,
-                        name,
-                        evidence: PeerEvidence::ServiceRecord,
-                    });
+                    if instance.starts_with(GROUP_SSID_PREFIX) {
+                        let _ = events.send(PumpEvent::GroupOffer {
+                            peer,
+                            path: peer_path,
+                            name,
+                        });
+                    } else {
+                        let platform = service_discovery::platform(instance, &name);
+                        let _ = events.send(PumpEvent::Sighting {
+                            peer,
+                            path: peer_path,
+                            name,
+                            evidence: PeerEvidence::ServiceRecord,
+                            platform,
+                        });
+                    }
                 }
                 "FindStopped" => {
                     let _ = events.send(PumpEvent::FindStopped);
@@ -659,12 +757,13 @@ fn spawn_pump(connection: zbus::Connection, events: mpsc::UnboundedSender<PumpEv
                     else {
                         continue;
                     };
-                    match formed_group(&connection, &properties).await {
+                    let group_iface = group_interface_path(&properties);
+                    match formed_group(&connection, &properties, &base_ifname).await {
                         Some((group, group_iface)) => {
                             let _ = events.send(PumpEvent::GroupFormed { group, group_iface });
                         }
                         None => {
-                            let _ = events.send(PumpEvent::FormationFailed);
+                            let _ = events.send(PumpEvent::FormationFailed { group_iface });
                         }
                     }
                 }
@@ -679,7 +778,7 @@ fn spawn_pump(connection: zbus::Connection, events: mpsc::UnboundedSender<PumpEv
                 }
                 "GONegotiationFailure" => {
                     crate::diagnostic_log::warn!("wifi-direct GO negotiation failed");
-                    let _ = events.send(PumpEvent::FormationFailed);
+                    let _ = events.send(PumpEvent::FormationFailed { group_iface: None });
                 }
                 "GroupFormationFailure" => {
                     if let Ok((reason,)) = message.body().deserialize::<(String,)>() {
@@ -687,7 +786,7 @@ fn spawn_pump(connection: zbus::Connection, events: mpsc::UnboundedSender<PumpEv
                             "wifi-direct group formation failed: {reason}"
                         );
                     }
-                    let _ = events.send(PumpEvent::FormationFailed);
+                    let _ = events.send(PumpEvent::FormationFailed { group_iface: None });
                 }
                 _ => {}
             }
@@ -728,6 +827,7 @@ async fn peer_identity(
 async fn formed_group(
     connection: &zbus::Connection,
     properties: &HashMap<String, OwnedValue>,
+    base_ifname: &str,
 ) -> Option<(WpaGroup, OwnedObjectPath)> {
     let Some(role_value) = properties.get("role") else {
         crate::diagnostic_log::warn!("wifi-direct GroupStarted carried no role");
@@ -745,42 +845,20 @@ async fn formed_group(
         crate::diagnostic_log::warn!("wifi-direct GroupStarted role {role_string:?} is unknown");
         return None;
     };
-    let Some(iface_value) = properties.get("interface_object") else {
-        crate::diagnostic_log::warn!("wifi-direct GroupStarted carried no interface_object");
+    let group_iface = group_interface_path(properties)?;
+    let Some(ifname) = wait_group_ifname(connection, &group_iface, base_ifname).await else {
+        crate::diagnostic_log::warn!("wifi-direct group interface {group_iface} exposed no Ifname");
         return None;
-    };
-    let Some(group_iface) = iface_value
-        .try_clone()
-        .ok()
-        .and_then(|value| OwnedObjectPath::try_from(value).ok())
-    else {
-        crate::diagnostic_log::warn!("wifi-direct GroupStarted interface_object was not a path");
-        return None;
-    };
-    let ifname = match SupplicantInterfaceProxy::builder(connection)
-        .path(group_iface.clone())
-        .ok()?
-        .build()
-        .await
-    {
-        Ok(proxy) => match proxy.ifname().await {
-            Ok(ifname) => ifname,
-            Err(err) => {
-                crate::diagnostic_log::warn!(
-                    "wifi-direct group interface Ifname read failed: {err}"
-                );
-                return None;
-            }
-        },
-        Err(err) => {
-            crate::diagnostic_log::warn!("wifi-direct group interface proxy build failed: {err}");
-            return None;
-        }
     };
     crate::diagnostic_log::debug!("wifi-direct group started as {role_string} on {ifname}");
     if role == GroupRole::Owner {
-        wait_for_go_address(&ifname).await;
-        return Some((WpaGroup::new(GroupRole::Owner, owner_plan()), group_iface));
+        let plan = if wait_for_go_address(&ifname).await {
+            owner_plan()
+        } else {
+            let (link_local, scope) = wait_link_local(&ifname).await?;
+            owner_plan_v6(link_local, scope)
+        };
+        return Some((WpaGroup::new(GroupRole::Owner, plan), group_iface));
     }
     let (link_local, scope) = wait_link_local(&ifname).await?;
     crate::diagnostic_log::debug!(
@@ -790,6 +868,62 @@ async fn formed_group(
         WpaGroup::new(GroupRole::Client, client_plan(link_local, scope)),
         group_iface,
     ))
+}
+
+fn group_interface_path(properties: &HashMap<String, OwnedValue>) -> Option<OwnedObjectPath> {
+    let value = properties.get("interface_object")?;
+    value
+        .try_clone()
+        .ok()
+        .and_then(|value| OwnedObjectPath::try_from(value).ok())
+}
+
+async fn wait_group_ifname(
+    connection: &zbus::Connection,
+    path: &OwnedObjectPath,
+    base_ifname: &str,
+) -> Option<String> {
+    for _ in 0..GROUP_PROXY_WAIT_ATTEMPTS {
+        let proxy = SupplicantInterfaceProxy::builder(connection)
+            .path(path.clone())
+            .ok()
+            .map(|builder| builder.build());
+        if let Some(build) = proxy {
+            if let Ok(proxy) = build.await {
+                if let Ok(ifname) = proxy.ifname().await {
+                    return Some(ifname);
+                }
+            }
+        }
+        if let Some(ifname) = group_netdev(base_ifname) {
+            return Some(ifname);
+        }
+        tokio::time::sleep(GROUP_PROXY_WAIT_STEP).await;
+    }
+    None
+}
+
+fn group_netdev(base_ifname: &str) -> Option<String> {
+    let base_phy = std::fs::canonicalize(format!("/sys/class/net/{base_ifname}/phy80211")).ok()?;
+    let entries = std::fs::read_dir("/sys/class/net").ok()?;
+    let mut found = None;
+    for entry in entries.flatten() {
+        let name = entry.file_name().into_string().ok()?;
+        if !name.starts_with("p2p-") {
+            continue;
+        }
+        let Ok(phy) = std::fs::canonicalize(entry.path().join("phy80211")) else {
+            continue;
+        };
+        if phy != base_phy {
+            continue;
+        }
+        if found.is_some() {
+            return None;
+        }
+        found = Some(name);
+    }
+    found
 }
 
 fn service_gone(err: &zbus::Error) -> bool {

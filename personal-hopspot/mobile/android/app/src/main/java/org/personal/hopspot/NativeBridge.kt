@@ -149,16 +149,15 @@ object NativeBridge {
     const val WIFI_DIRECT_AVAILABLE = 0
     const val WIFI_DIRECT_DISABLED = 1
     const val WIFI_DIRECT_NO_PERMISSION = 2
+    const val WIFI_DIRECT_EXPERIMENTAL_DISABLED = 3
 
     external fun nativeWifiDirectServiceType(): String
 
     external fun nativeWifiDirectDeviceMarker(): String
 
-    external fun nativeWifiDirectGroupSsidPrefix(): String
+    external fun nativeWifiDirectNativeServiceInstance(): String
 
-    external fun nativeWifiDirectGroupPassphrase(): String
-
-    external fun nativeWifiDirectRendezvousPort(): Int
+    external fun nativeWifiDirectSupplicantServiceInstance(): String
 
     external fun nativeWifiDirectSighting(
         address: ByteBuffer,
@@ -174,13 +173,15 @@ object NativeBridge {
 
     external fun nativeWifiDirectGroupFormed(isOwner: Boolean, ownerAddress: ByteBuffer)
 
+    external fun nativeWifiDirectFormationFailed()
+
     external fun nativeWifiDirectGroupLost()
 
     external fun nativeWifiDirectAvailability(code: Int)
 
     external fun nativeWifiDirectDesiredDiscovery(): Boolean
 
-    external fun nativeWifiDirectTakeHostRequest(): Boolean
+    external fun nativeWifiDirectTakeFormationRequest(): ByteArray?
 
     external fun nativeWifiDirectTakeRemoveGroup(): Boolean
 

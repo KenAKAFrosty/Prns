@@ -48,6 +48,12 @@ pub fn owner_plan() -> DataPlanePlan {
     }
 }
 
+pub fn owner_plan_v6(addr: Ipv6Addr, scope: u32) -> DataPlanePlan {
+    DataPlanePlan::HostRendezvous {
+        local: SegmentAddress::V6LinkLocal { addr, scope },
+    }
+}
+
 pub fn client_plan(link_local: Ipv6Addr, scope: u32) -> DataPlanePlan {
     DataPlanePlan::ResolveOwnerByBeacon {
         local: link_local,
@@ -164,6 +170,12 @@ mod tests {
             owner_plan(),
             DataPlanePlan::HostRendezvous {
                 local: SegmentAddress::V4(GO_ADDRESS)
+            }
+        );
+        assert_eq!(
+            owner_plan_v6(ll, 7),
+            DataPlanePlan::HostRendezvous {
+                local: SegmentAddress::V6LinkLocal { addr: ll, scope: 7 }
             }
         );
         assert_eq!(

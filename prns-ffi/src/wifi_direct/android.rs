@@ -16,9 +16,12 @@ use prns_core::interfaces::MacAddress;
 pub const AVAILABILITY_AVAILABLE: i32 = 0;
 pub const AVAILABILITY_DISABLED: i32 = 1;
 pub const AVAILABILITY_NO_PERMISSION: i32 = 2;
+pub const AVAILABILITY_EXPERIMENTAL_DISABLED: i32 = 3;
 
 const DISABLED_REASON: &str = "Wi-Fi P2P is turned off on this device";
 const NO_PERMISSION_REASON: &str = "Wi-Fi P2P needs the nearby-devices permission";
+const EXPERIMENTAL_DISABLED_REASON: &str = "experimental Wi-Fi P2P is disabled in this build";
+const UNKNOWN_AVAILABILITY_REASON: &str = "Wi-Fi P2P reported an unknown availability state";
 
 pub struct AndroidWifiDirectGroup {
     role: GroupRole,
@@ -57,6 +60,9 @@ enum Event {
         role: GroupRole,
         owner: Ipv4Addr,
     },
+    FormationFailed {
+        peer: MacAddress,
+    },
     GroupLost,
     Availability(Availability),
 }
@@ -68,11 +74,18 @@ struct Desired {
 
 struct Shared {
     desired: Mutex<Desired>,
-    host_requested: Mutex<bool>,
+    formation_requested: Mutex<Option<AndroidWifiDirectFormation>>,
+    forming_with: Mutex<Option<MacAddress>>,
     remove_requested: Mutex<bool>,
     local_name_hash: Mutex<Option<i32>>,
     events: Mutex<VecDeque<Event>>,
     events_ready: Notify,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AndroidWifiDirectFormation {
+    pub peer: MacAddress,
+    pub intent: GoIntent,
 }
 
 pub struct AndroidWifiDirectBridge {
@@ -99,7 +112,8 @@ impl AndroidWifiDirectBridge {
         Self {
             shared: Arc::new(Shared {
                 desired: Mutex::new(Desired::default()),
-                host_requested: Mutex::new(false),
+                formation_requested: Mutex::new(None),
+                forming_with: Mutex::new(None),
                 remove_requested: Mutex::new(false),
                 local_name_hash: Mutex::new(None),
                 events: Mutex::new(VecDeque::new()),
@@ -159,12 +173,27 @@ impl AndroidWifiDirectBridge {
     }
 
     pub fn group_formed(&self, is_owner: bool, owner: Ipv4Addr) {
+        if let Ok(mut slot) = self.shared.forming_with.lock() {
+            *slot = None;
+        }
         let role = if is_owner {
             GroupRole::Owner
         } else {
             GroupRole::Client
         };
         self.push(Event::GroupFormed { role, owner });
+    }
+
+    pub fn formation_failed(&self) {
+        let peer = self
+            .shared
+            .forming_with
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.take());
+        if let Some(peer) = peer {
+            self.push(Event::FormationFailed { peer });
+        }
     }
 
     pub fn group_lost(&self) {
@@ -174,8 +203,12 @@ impl AndroidWifiDirectBridge {
     pub fn availability(&self, code: i32) {
         let availability = match code {
             AVAILABILITY_AVAILABLE => Availability::Available,
+            AVAILABILITY_DISABLED => Availability::Unavailable(DISABLED_REASON),
             AVAILABILITY_NO_PERMISSION => Availability::Unavailable(NO_PERMISSION_REASON),
-            _ => Availability::Unavailable(DISABLED_REASON),
+            AVAILABILITY_EXPERIMENTAL_DISABLED => {
+                Availability::Unavailable(EXPERIMENTAL_DISABLED_REASON)
+            }
+            _ => Availability::Unavailable(UNKNOWN_AVAILABILITY_REASON),
         };
         self.push(Event::Availability(availability));
     }
@@ -197,12 +230,12 @@ impl AndroidWifiDirectBridge {
     }
 
     #[must_use]
-    pub fn take_host_request(&self) -> bool {
+    pub fn take_formation_request(&self) -> Option<AndroidWifiDirectFormation> {
         self.shared
-            .host_requested
+            .formation_requested
             .lock()
-            .map(|mut slot| std::mem::replace(&mut *slot, false))
-            .unwrap_or(false)
+            .ok()
+            .and_then(|mut slot| slot.take())
     }
 
     #[must_use]
@@ -220,9 +253,12 @@ impl AndroidWifiDirectBridge {
         }
     }
 
-    fn request_host(&self) {
-        if let Ok(mut slot) = self.shared.host_requested.lock() {
-            *slot = true;
+    fn request_formation(&self, peer: MacAddress, intent: GoIntent) {
+        if let Ok(mut slot) = self.shared.formation_requested.lock() {
+            *slot = Some(AndroidWifiDirectFormation { peer, intent });
+        }
+        if let Ok(mut slot) = self.shared.forming_with.lock() {
+            *slot = Some(peer);
         }
     }
 
@@ -256,12 +292,12 @@ impl WifiDirectBackend for AndroidWifiDirectBackend {
         Ok(())
     }
 
-    async fn form_group(&mut self, _peer: MacAddress, _intent: GoIntent) {
-        self.bridge.request_host();
+    async fn form_group(&mut self, peer: MacAddress, intent: GoIntent) {
+        self.bridge.request_formation(peer, intent);
     }
 
-    async fn accept_invitation(&mut self, _peer: MacAddress, _intent: GoIntent) {
-        self.bridge.request_host();
+    async fn accept_invitation(&mut self, peer: MacAddress, intent: GoIntent) {
+        self.bridge.request_formation(peer, intent);
     }
 
     async fn remove_group(&mut self) {
@@ -294,6 +330,9 @@ impl WifiDirectBackend for AndroidWifiDirectBackend {
                         group: AndroidWifiDirectGroup { role, owner },
                     };
                 }
+                Some(Event::FormationFailed { peer }) => {
+                    return WifiDirectEvent::FormationFailed { peer };
+                }
                 Some(Event::GroupLost) => {
                     return WifiDirectEvent::GroupLost {
                         reason: prns_core::interfaces::wifi_direct::GroupEndReason::LinkLost,
@@ -325,8 +364,21 @@ mod tests {
         backend
             .form_group(MacAddress::new([0xA1; 6]), GoIntent::BALANCED)
             .await;
-        assert!(bridge.take_host_request());
-        assert!(!bridge.take_host_request());
+        assert_eq!(
+            bridge.take_formation_request(),
+            Some(AndroidWifiDirectFormation {
+                peer: MacAddress::new([0xA1; 6]),
+                intent: GoIntent::BALANCED,
+            })
+        );
+        assert_eq!(bridge.take_formation_request(), None);
+
+        bridge.formation_failed();
+        assert!(matches!(
+            backend.next_event().await,
+            WifiDirectEvent::FormationFailed { peer }
+                if peer == MacAddress::new([0xA1; 6])
+        ));
 
         backend.remove_group().await;
         assert!(bridge.take_remove_group());
@@ -346,6 +398,36 @@ mod tests {
         assert!(matches!(
             event,
             WifiDirectEvent::AvailabilityChanged(Availability::Unavailable(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn the_default_android_build_reports_the_experimental_boundary() {
+        let bridge = AndroidWifiDirectBridge::new();
+        let mut backend = AndroidWifiDirectBackend::new(bridge.clone());
+        bridge.availability(AVAILABILITY_EXPERIMENTAL_DISABLED);
+
+        assert!(matches!(
+            backend.next_event().await,
+            WifiDirectEvent::AvailabilityChanged(Availability::Unavailable(
+                EXPERIMENTAL_DISABLED_REASON
+            ))
+        ));
+    }
+
+    #[tokio::test]
+    async fn an_explicit_supplicant_peer_is_formed_toward_by_the_native_host() {
+        let bridge = AndroidWifiDirectBridge::new();
+        let mut backend = AndroidWifiDirectBackend::new(bridge.clone());
+        bridge.set_local_name_hash(i32::MIN);
+        bridge.sighting([0xA1; 6], true, i32::MAX);
+
+        assert!(matches!(
+            backend.next_event().await,
+            WifiDirectEvent::Sighting {
+                initiative: Initiative::Ours,
+                ..
+            }
         ));
     }
 }

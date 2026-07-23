@@ -13,7 +13,8 @@ pub use policy::{
     WIFI_DIRECT_HW_MTU,
 };
 pub use protocol::{
-    host_role, DataPlanePlan, GoIntent, GroupRole, HostRole, Initiative, PeerEvidence, Platform,
-    SegmentAddress, DEVICE_NAME_MARKER, FAMILY_TAG, GROUP_PASSPHRASE, GROUP_SSID_PREFIX,
-    SERVICE_TYPE, WIFI_DIRECT_BEACON_PORT, WIFI_DIRECT_RENDEZVOUS_PORT,
+    host_role, service_instance_platform, DataPlanePlan, GoIntent, GroupRole, HostRole, Initiative,
+    PeerEvidence, Platform, SegmentAddress, DEVICE_NAME_MARKER, FAMILY_TAG, GROUP_PASSPHRASE,
+    GROUP_SSID_PREFIX, NATIVE_SERVICE_INSTANCE, SERVICE_TYPE, SUPPLICANT_SERVICE_INSTANCE,
+    WIFI_DIRECT_BEACON_PORT, WIFI_DIRECT_RENDEZVOUS_PORT,
 };
