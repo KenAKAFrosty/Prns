@@ -14,6 +14,7 @@ use personal_rns::interfaces::InterfaceId;
 use personal_rns::reactor::embassy::EmbassyTimebase;
 
 pub(crate) const ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x13Personal Hopspot C6\xc0";
+pub(crate) const NODE_ANNOUNCE_APP_DATA: &[u8] = b"Personal Hopspot C6";
 pub(crate) const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"hopsp-c6");
 
 // BLE needs heap for esp-radio's controller + trouble-host's boxed GATT clients/reassemblers; 64 KB

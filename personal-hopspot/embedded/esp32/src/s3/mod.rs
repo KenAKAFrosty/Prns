@@ -207,7 +207,7 @@ type InterfaceStore = EmbassyInterfaceStore<
 /// is why `on_event` is a fn pointer and the host's entropy is a fn pointer, not closures.
 type S3Node = PrnsNode<
     (),
-    (),
+    screen::node_pages::NodePageRoutes,
     for<'a> fn(PrnsEvent<'a>, &()),
     EngineStorageType,
     EmbassyHost<fn(&mut [u8])>,

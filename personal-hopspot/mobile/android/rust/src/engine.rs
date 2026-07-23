@@ -20,7 +20,6 @@ use personal_rns::interfaces::bluetooth_auto::{
 };
 use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus};
 use personal_rns::reactor::tokio::TokioInterfaceStatus;
-use personal_rns::routes;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
     Manual, PreConfiguredDestination, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe,
@@ -49,6 +48,7 @@ const RPC_PORT: u16 = LOCAL_RNS_PORT + 1;
 const ANNOUNCE_APP_NAME: &str = "lxmf";
 const ANNOUNCE_ASPECTS: &[&str] = &["delivery"];
 const ANNOUNCE_APP_DATA: &[u8] = b"personal-hopspot";
+const NODE_ANNOUNCE_APP_DATA: &[u8] = b"personal-hopspot";
 
 struct Engine {
     started_at: Instant,
@@ -64,6 +64,7 @@ struct Engine {
     mdns: AndroidMdnsBridge,
     handle: PrnsNodeHandle,
     destination: DestinationHash,
+    node_page_destination: DestinationHash,
     rpc_key: Vec<u8>,
 }
 
@@ -190,6 +191,12 @@ pub(crate) fn announce() {
         target: AnnounceTarget::AllInterfaces,
         app_data: AnnounceAppData::Registered,
     }));
+    log::info!("hopspot: manual announce -> nomadnetwork.node on every interface");
+    let _ = engine.handle.issue(EngineCommand::AnnounceNow(AnnounceNow {
+        destination: engine.node_page_destination,
+        target: AnnounceTarget::AllInterfaces,
+        app_data: AnnounceAppData::Registered,
+    }));
 }
 
 pub(crate) fn usb_bridge() -> AndroidUsbBridge {
@@ -250,6 +257,7 @@ struct Ready {
     wifi_status: AutoWifiStatus,
     handle: PrnsNodeHandle,
     destination: DestinationHash,
+    node_page_destination: DestinationHash,
     rpc_key: Vec<u8>,
 }
 
@@ -299,6 +307,7 @@ fn spawn_engine() -> Engine {
         mdns,
         handle: ready.handle,
         destination: ready.destination,
+        node_page_destination: ready.node_page_destination,
         rpc_key: ready.rpc_key,
     }
 }
@@ -368,12 +377,13 @@ fn run_engine(
         };
         ble.set_local_identity(ble_identity);
 
+        let destination_secret = node_identity.into_destination_secret();
         let hopspot_transport_node_destination = PreConfiguredDestination::Single {
             resource_strategy:
                 personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
             app_name: ANNOUNCE_APP_NAME,
             aspects: ANNOUNCE_ASPECTS,
-            identity: node_identity.into_destination_secret(),
+            identity: destination_secret.clone(),
             announce_app_data: ANNOUNCE_APP_DATA,
             proof: ProofStrategy::ProveAll,
             link_requests: LinkRequestPolicy::AcceptAll,
@@ -383,13 +393,31 @@ fn run_engine(
         let destination = hopspot_transport_node_destination
             .destination_hash()
             .expect("the lxmf.delivery name is valid");
+        let hopspot_node_page_destination = PreConfiguredDestination::Single {
+            resource_strategy:
+                personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
+            app_name: personal_hopspot_core::node_pages::NODE_APP_NAME,
+            aspects: personal_hopspot_core::node_pages::NODE_ASPECTS,
+            identity: destination_secret,
+            announce_app_data: NODE_ANNOUNCE_APP_DATA,
+            proof: ProofStrategy::ProveNone,
+            link_requests: LinkRequestPolicy::AcceptAll,
+            ratchet: RatchetPolicy::NoRatchets,
+            request_handlers: RequestHandlerRegistration::NodeRouteSet,
+        };
+        let node_page_destination = hopspot_node_page_destination
+            .destination_hash()
+            .expect("the nomadnetwork.node name is valid");
 
         let node = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: Some(transport_secret),
-            pre_configured_destinations: [hopspot_transport_node_destination],
+            pre_configured_destinations: [
+                hopspot_transport_node_destination,
+                hopspot_node_page_destination,
+            ],
             app_state: (),
             storage: GrowableHeap,
-            routes: routes![],
+            routes: personal_hopspot_core::node_pages::NodePageRoutes,
             interfaces: Manual,
             on_event: |_event, _state: &()| {},
         });
@@ -473,6 +501,7 @@ fn run_engine(
             wifi_status,
             handle: handle.clone(),
             destination,
+            node_page_destination,
             rpc_key,
         });
 

@@ -55,7 +55,7 @@ use personal_rns::reactor::interface_seam::Interface;
 
 esp_app_desc!();
 
-use board::{C6Hardware, XiaoEsp32C6, ANNOUNCE_APP_DATA, USB_INTERFACE_ID};
+use board::{C6Hardware, XiaoEsp32C6, ANNOUNCE_APP_DATA, NODE_ANNOUNCE_APP_DATA, USB_INTERFACE_ID};
 
 const USB_LANE: usize = 1;
 const ESPNOW_LANE: usize = cfg!(feature = "esp-now") as usize;
@@ -102,7 +102,7 @@ type InterfaceStore = EmbassyInterfaceStore<
 type C6BleFleet = Fleet<Mtx, BLE_HW_MTU, NOTIFY_CAP, LIFECYCLE_CAP>;
 type Node = PrnsNode<
     (),
-    (),
+    personal_hopspot_core::node_pages::NodePageRoutes,
     for<'a> fn(PrnsEvent<'a>, &()),
     EngineStorageType,
     EmbassyHost<fn(&mut [u8])>,

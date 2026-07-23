@@ -7,6 +7,7 @@ extern crate std;
 mod battery;
 mod flash_identity;
 mod identity;
+pub mod node_pages;
 mod screen;
 
 pub use battery::{BatteryGauge, BatteryPercent, BatterySource, BatteryState, NoBattery};

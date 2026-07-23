@@ -49,7 +49,7 @@ use crate::routing::warmth::FixedDepartedInterfaceTable;
 use crate::storage::{DisplayedStorageLimits, StorageCapacity, StorageLayout};
 
 const MAX_TRACKED_DESTINATIONS: usize = 1024;
-const MAX_UPSTREAM_APP_DESTINATIONS: usize = 1;
+const MAX_UPSTREAM_APP_DESTINATIONS: usize = 2;
 const MAX_HELD_IDENTITIES: usize = 1;
 const MAX_CONCURRENT_LINKS: usize = 6;
 const MAX_OUTSTANDING_RECEIPTS: usize = 8;

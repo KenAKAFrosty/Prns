@@ -27,6 +27,7 @@ const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"heltecv4");
 /// This node's `lxmf.delivery` announce app_data: `msgpack([display_name, stamp_cost])`
 /// = `fixarray(2)` ‖ `bin8("Personal Hopspot HeltecV4")` ‖ `nil`, the shape LXMF apps parse.
 const ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x19Personal Hopspot HeltecV4\xc0";
+const NODE_ANNOUNCE_APP_DATA: &[u8] = b"Personal Hopspot HeltecV4";
 
 const VBAT_DIVIDER_NUM: u32 = 49;
 const VBAT_DIVIDER_DEN: u32 = 10;
@@ -93,6 +94,7 @@ pub struct HeltecBoard;
 
 impl Esp32S3Board for HeltecBoard {
     const ANNOUNCE_APP_DATA: &'static [u8] = ANNOUNCE_APP_DATA;
+    const NODE_ANNOUNCE_APP_DATA: &'static [u8] = NODE_ANNOUNCE_APP_DATA;
     const BOOT_BANNER: &'static str = "HOPSPOT_HELTECV4";
     const USB_INTERFACE_ID: InterfaceId = USB_INTERFACE_ID;
     type Display = HeltecDisplay;

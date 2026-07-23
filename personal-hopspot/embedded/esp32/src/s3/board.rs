@@ -45,6 +45,7 @@ pub(crate) struct S3BoardHardware<D, B> {
 #[allow(async_fn_in_trait)]
 pub(crate) trait Esp32S3Board {
     const ANNOUNCE_APP_DATA: &'static [u8];
+    const NODE_ANNOUNCE_APP_DATA: &'static [u8];
     const BOOT_BANNER: &'static str;
     const USB_INTERFACE_ID: InterfaceId;
     type Display: DrawTarget<Color = BinaryColor>;

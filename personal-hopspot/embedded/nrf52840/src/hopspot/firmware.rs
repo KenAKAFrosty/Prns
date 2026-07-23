@@ -147,11 +147,21 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
             .expect("valid name");
         personal_rns::routing::announce::derive_destination_hash(&signer.identity_hash(), &name)
     };
+    let node_page_destination = {
+        let signer = InMemoryNodeIdentity::from_secret_key_bytes(node_identity.secret());
+        let name = personal_rns::routing::announce::expand_name(
+            hopspot::node_pages::NODE_APP_NAME,
+            hopspot::node_pages::NODE_ASPECTS,
+        )
+        .expect("valid name");
+        personal_rns::routing::announce::derive_destination_hash(&signer.identity_hash(), &name)
+    };
     let seed = self_destination.as_bytes();
     ENTROPY_STATE.store(
         u32::from_le_bytes([seed[0], seed[1], seed[2], seed[3]]) | 1,
         core::sync::atomic::Ordering::Relaxed,
     );
+    let destination_secret = node_identity.into_destination_secret();
 
     let mut reactor_lanes = ReactorLanes::new();
     let lora_profile = DEFAULT_915_PROFILE;
@@ -212,21 +222,35 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
         &NODE,
         PrnsNodeRecipe {
             transport_identity: Some(transport_secret),
-            pre_configured_destinations: [PreConfiguredDestination::Single {
-                resource_strategy:
-                    personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
-                app_name: "lxmf",
-                aspects: &["delivery"],
-                identity: node_identity.into_destination_secret(),
-                announce_app_data: ANNOUNCE_APP_DATA,
-                proof: personal_rns::routing::ProofStrategy::ProveAll,
-                link_requests: personal_rns::routing::LinkRequestPolicy::AcceptAll,
-                ratchet: RatchetPolicy::Ratcheted,
-                request_handlers: RequestHandlerRegistration::None,
-            }],
+            pre_configured_destinations: [
+                PreConfiguredDestination::Single {
+                    resource_strategy:
+                        personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
+                    app_name: "lxmf",
+                    aspects: &["delivery"],
+                    identity: destination_secret.clone(),
+                    announce_app_data: ANNOUNCE_APP_DATA,
+                    proof: personal_rns::routing::ProofStrategy::ProveAll,
+                    link_requests: personal_rns::routing::LinkRequestPolicy::AcceptAll,
+                    ratchet: RatchetPolicy::Ratcheted,
+                    request_handlers: RequestHandlerRegistration::None,
+                },
+                PreConfiguredDestination::Single {
+                    resource_strategy:
+                        personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
+                    app_name: hopspot::node_pages::NODE_APP_NAME,
+                    aspects: hopspot::node_pages::NODE_ASPECTS,
+                    identity: destination_secret,
+                    announce_app_data: NODE_ANNOUNCE_APP_DATA,
+                    proof: personal_rns::routing::ProofStrategy::ProveNone,
+                    link_requests: personal_rns::routing::LinkRequestPolicy::AcceptAll,
+                    ratchet: RatchetPolicy::NoRatchets,
+                    request_handlers: RequestHandlerRegistration::NodeRouteSet,
+                },
+            ],
             app_state: (),
             storage: crate::storage::TechoStorage,
-            routes: personal_rns::routes![],
+            routes: hopspot::node_pages::NodePageRoutes,
             interfaces: personal_rns::runtime::Manual,
             on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
         },
@@ -378,6 +402,11 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
                                 Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
                             let _ = ui_handle.issue(EngineCommand::AnnounceNow(AnnounceNow {
                                 destination: self_destination,
+                                target: AnnounceTarget::AllInterfaces,
+                                app_data: AnnounceAppData::Registered,
+                            }));
+                            let _ = ui_handle.issue(EngineCommand::AnnounceNow(AnnounceNow {
+                                destination: node_page_destination,
                                 target: AnnounceTarget::AllInterfaces,
                                 app_data: AnnounceAppData::Registered,
                             }));

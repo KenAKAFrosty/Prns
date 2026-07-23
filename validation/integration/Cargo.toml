@@ -13,6 +13,7 @@ publish = false
 
 [dependencies]
 personal-rns = { path = "../../personal-rns", default-features = false, features = ["tokio-host", "tcp", "udp", "shared-instance", "wifi-auto", "wifi-direct"] }
+personal-hopspot-core = { path = "../../personal-hopspot/core" }
 
 [dev-dependencies]
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util"] }

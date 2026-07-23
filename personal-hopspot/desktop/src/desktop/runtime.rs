@@ -41,6 +41,7 @@ const USB_BAUD: u32 = 115_200;
 const ANNOUNCE_APP_NAME: &str = "lxmf";
 const ANNOUNCE_ASPECTS: &[&str] = &["delivery"];
 const ANNOUNCE_APP_DATA: &[u8] = b"Personal Hopspot (Desktop)";
+const NODE_ANNOUNCE_APP_DATA: &[u8] = b"Personal Hopspot (Desktop)";
 
 pub(super) fn classify(
     id: InterfaceId,
@@ -84,6 +85,7 @@ pub(super) struct WindowHandles {
     pub(super) tcp_id: Option<InterfaceId>,
     pub(super) tcp_target: Option<String>,
     pub(super) destination: DestinationHash,
+    pub(super) node_page_destination: DestinationHash,
 }
 
 pub fn run() {
@@ -171,12 +173,13 @@ fn run_node(ready_tx: Sender<WindowHandles>) {
         log_identity_persistence("bluetooth", ble_bootstrap.persistence());
         let ble_identity = ble_bootstrap.into_identity();
 
+        let destination_secret = node_identity.into_destination_secret();
         let hopspot_transport_node_destination = PreConfiguredDestination::Single {
             resource_strategy:
                 personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
             app_name: ANNOUNCE_APP_NAME,
             aspects: ANNOUNCE_ASPECTS,
-            identity: node_identity.into_destination_secret(),
+            identity: destination_secret.clone(),
             announce_app_data: ANNOUNCE_APP_DATA,
             proof: ProofStrategy::ProveAll,
             link_requests: LinkRequestPolicy::AcceptAll,
@@ -186,13 +189,31 @@ fn run_node(ready_tx: Sender<WindowHandles>) {
         let destination = hopspot_transport_node_destination
             .destination_hash()
             .expect("the lxmf.delivery name is valid");
+        let hopspot_node_page_destination = PreConfiguredDestination::Single {
+            resource_strategy:
+                personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
+            app_name: screen::node_pages::NODE_APP_NAME,
+            aspects: screen::node_pages::NODE_ASPECTS,
+            identity: destination_secret,
+            announce_app_data: NODE_ANNOUNCE_APP_DATA,
+            proof: ProofStrategy::ProveNone,
+            link_requests: LinkRequestPolicy::AcceptAll,
+            ratchet: RatchetPolicy::NoRatchets,
+            request_handlers: personal_rns::runtime::RequestHandlerRegistration::NodeRouteSet,
+        };
+        let node_page_destination = hopspot_node_page_destination
+            .destination_hash()
+            .expect("the nomadnetwork.node name is valid");
 
         let node = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: Some(transport_secret),
-            pre_configured_destinations: [hopspot_transport_node_destination],
+            pre_configured_destinations: [
+                hopspot_transport_node_destination,
+                hopspot_node_page_destination,
+            ],
             app_state: (),
             storage: GrowableHeap,
-            routes: routes![],
+            routes: screen::node_pages::NodePageRoutes,
             interfaces: Manual,
             on_event: |_event, _state: &()| {},
         });
@@ -311,6 +332,7 @@ fn run_node(ready_tx: Sender<WindowHandles>) {
             tcp_id,
             tcp_target,
             destination,
+            node_page_destination,
         });
 
         match node.run().await {

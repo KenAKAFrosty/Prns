@@ -39,6 +39,7 @@ pub async fn run(spawner: Spawner) {
     crate::identity::log_persistence("Bluetooth", ble_bootstrap.persistence());
     let node_identity = node_bootstrap.into_identity();
     let transport_secret = node_identity.transport_secret();
+    let destination_secret = node_identity.into_destination_secret();
     #[cfg(feature = "bluetooth-auto")]
     let ble_identity = Some(ble_bootstrap.into_identity());
 
@@ -85,21 +86,35 @@ pub async fn run(spawner: Spawner) {
         &NODE,
         PrnsNodeRecipe {
             transport_identity: Some(transport_secret),
-            pre_configured_destinations: [PreConfiguredDestination::Single {
-                resource_strategy:
-                    personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
-                app_name: "lxmf",
-                aspects: &["delivery"],
-                identity: node_identity.into_destination_secret(),
-                announce_app_data: ANNOUNCE_APP_DATA,
-                proof: personal_rns::routing::ProofStrategy::ProveAll,
-                link_requests: personal_rns::routing::LinkRequestPolicy::AcceptAll,
-                ratchet: RatchetPolicy::Ratcheted,
-                request_handlers: RequestHandlerRegistration::None,
-            }],
+            pre_configured_destinations: [
+                PreConfiguredDestination::Single {
+                    resource_strategy:
+                        personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
+                    app_name: "lxmf",
+                    aspects: &["delivery"],
+                    identity: destination_secret.clone(),
+                    announce_app_data: ANNOUNCE_APP_DATA,
+                    proof: personal_rns::routing::ProofStrategy::ProveAll,
+                    link_requests: personal_rns::routing::LinkRequestPolicy::AcceptAll,
+                    ratchet: RatchetPolicy::Ratcheted,
+                    request_handlers: RequestHandlerRegistration::None,
+                },
+                PreConfiguredDestination::Single {
+                    resource_strategy:
+                        personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
+                    app_name: personal_hopspot_core::node_pages::NODE_APP_NAME,
+                    aspects: personal_hopspot_core::node_pages::NODE_ASPECTS,
+                    identity: destination_secret,
+                    announce_app_data: NODE_ANNOUNCE_APP_DATA,
+                    proof: personal_rns::routing::ProofStrategy::ProveNone,
+                    link_requests: personal_rns::routing::LinkRequestPolicy::AcceptAll,
+                    ratchet: RatchetPolicy::NoRatchets,
+                    request_handlers: RequestHandlerRegistration::NodeRouteSet,
+                },
+            ],
             app_state: (),
             storage: C6Storage,
-            routes: personal_rns::routes![],
+            routes: personal_hopspot_core::node_pages::NodePageRoutes,
             interfaces: personal_rns::runtime::Manual,
             on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
         },

@@ -40,6 +40,11 @@ use personal_rns::storage::{DisplayedStorageLimits, StorageCapacity, StorageLayo
 
 pub struct TechoStorage;
 
+const _: () = assert!(
+    personal_hopspot_core::node_pages::INDEX_RESPONSE_LEN + 128
+        <= TechoStorage::RESOURCE_TRANSFER_BYTES
+);
+
 impl TechoStorage {
     const TRACKED_DESTINATIONS: usize = 8;
     const UPSTREAM_APP_DESTINATIONS: usize = 2;
@@ -48,7 +53,7 @@ impl TechoStorage {
     const BLACKHOLE_REASON_BYTES: usize = 0;
     const HELD_ANNOUNCES: usize = 16;
     const HELD_ANNOUNCE_APP_DATA_BYTES: usize = Self::HELD_ANNOUNCES * 64;
-    const RESOURCE_TRANSFER_BYTES: usize = 1024;
+    const RESOURCE_TRANSFER_BYTES: usize = 4096;
     const CHANNEL_REORDER_DEPTH: usize = 2;
     const LINK_MTU: usize = 1024;
     const CHANNEL_MESSAGE_BYTES: usize = channel_mdu(Self::LINK_MTU);

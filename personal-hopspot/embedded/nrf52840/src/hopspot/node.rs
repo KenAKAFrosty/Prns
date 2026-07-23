@@ -36,6 +36,7 @@ const PACKET_PHY_INDEX_BUCKETS: usize =
     personal_rns::routing::dedup::dedup_index_buckets(PACKET_PHY_RETENTION_CAPACITY);
 
 pub(super) const ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x17Personal Hopspot T-Echo\xc0";
+pub(super) const NODE_ANNOUNCE_APP_DATA: &[u8] = b"Personal Hopspot T-Echo";
 
 pub(super) type Mtx = CriticalSectionRawMutex;
 type EngineStorageType = crate::storage::TechoStorage;
@@ -47,7 +48,7 @@ type InterfaceStore = EmbassyInterfaceStore<
 >;
 pub(super) type Node = PrnsNode<
     (),
-    (),
+    personal_hopspot_core::node_pages::NodePageRoutes,
     for<'a> fn(PrnsEvent<'a>, &()),
     EngineStorageType,
     EmbassyHost<fn(&mut [u8])>,

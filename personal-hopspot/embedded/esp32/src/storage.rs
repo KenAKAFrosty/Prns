@@ -19,6 +19,17 @@ pub use riscv::C6Storage;
 #[cfg(target_arch = "riscv32")]
 pub type EngineStorageType = riscv::C6Storage;
 
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+const _: () = assert!(
+    match <EngineStorageType as personal_rns::storage::StorageLayout>::LIMITS
+        .resource_transfer_bytes
+    {
+        personal_rns::storage::StorageCapacity::Fixed(bytes) =>
+            personal_hopspot_core::node_pages::INDEX_RESPONSE_LEN + 128 <= bytes,
+        personal_rns::storage::StorageCapacity::Dynamic => true,
+    }
+);
+
 /// A `Default`-able allocator that places allocations in PSRAM. esp-alloc's own
 /// `ExternalMemory` targets the same region but is not `Default`, which the column recipes
 /// need to build themselves from `StorageLayout`; this thin ZST forwards to it.
@@ -92,13 +103,13 @@ mod riscv {
 
     impl C6Storage {
         const TRACKED_DESTINATIONS: usize = 36;
-        const UPSTREAM_APP_DESTINATIONS: usize = 1;
+        const UPSTREAM_APP_DESTINATIONS: usize = 2;
         const HELD_IDENTITIES: usize = 1;
         const LINKS: usize = 2;
         const PACKET_HASHES: usize = 64;
         const BLACKHOLED_IDENTITIES: usize = 16;
         const BLACKHOLE_REASON_BYTES: usize = 64;
-        const RESOURCE_TRANSFER_BYTES: usize = 1024;
+        const RESOURCE_TRANSFER_BYTES: usize = 4096;
         const CHANNEL_REORDER_DEPTH: usize = 1;
         const LINK_MTU: usize = EMBEDDED_MAX_LINK_MTU;
         const CHANNEL_MESSAGE_BYTES: usize = channel_mdu(Self::LINK_MTU);

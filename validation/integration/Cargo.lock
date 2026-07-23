@@ -143,6 +143,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
+name = "az"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b7e4c2464d97fe331d41de9d5db0def0a96f4d823b8b32a2efd503578988973"
+
+[[package]]
 name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -536,6 +542,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "embedded-graphics"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4e8da660bb0c829b34a56a965490597f82a55e767b91f9543be80ce8ccb416fe"
+dependencies = [
+ "az",
+ "byteorder",
+ "embedded-graphics-core",
+ "float-cmp",
+ "micromath",
+]
+
+[[package]]
+name = "embedded-graphics-core"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "95743bef3ff70fcba3930246c4e6872882bbea0dcc6da2ca860112e0cd4bd09f"
+dependencies = [
+ "az",
+ "byteorder",
+]
+
+[[package]]
 name = "embedded-hal"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -595,6 +624,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "embedded-storage"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a21dea9854beb860f3062d10228ce9b976da520a73474aed3171ec276bc0c032"
+
+[[package]]
 name = "endi"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -634,7 +669,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -669,6 +704,15 @@ name = "fiat-crypto"
 version = "0.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
+
+[[package]]
+name = "float-cmp"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "98de4bbd547a563b716d8dfa9aad1cb19bfab00f4fa09a6a4ed21dbcf44ce9c4"
+dependencies = [
+ "num-traits",
+]
 
 [[package]]
 name = "futures-core"
@@ -980,6 +1024,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "micromath"
+version = "2.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3c8dda44ff03a2f238717214da50f65d5a53b45cd213a7370424ffdb6fae815"
+
+[[package]]
 name = "mio"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1231,6 +1281,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
+name = "personal-hopspot-core"
+version = "0.1.0"
+dependencies = [
+ "embedded-graphics",
+ "embedded-storage",
+ "heapless 0.8.0",
+ "personal-rns",
+]
+
+[[package]]
 name = "personal-rns"
 version = "0.2.8"
 dependencies = [
@@ -1319,6 +1379,7 @@ dependencies = [
  "cfg-if",
  "crc32fast",
  "ed25519-dalek",
+ "embedded-storage",
  "heapless 0.8.0",
  "hkdf",
  "hmac",
@@ -1334,6 +1395,7 @@ dependencies = [
 name = "prns-integration-tests"
 version = "0.2.8"
 dependencies = [
+ "personal-hopspot-core",
  "personal-rns",
  "tokio",
 ]
@@ -1520,7 +1582,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1718,7 +1780,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
