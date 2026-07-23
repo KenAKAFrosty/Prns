@@ -6,7 +6,7 @@
 
 The included local backend uses Grafana's pinned LGTM image: Grafana, Prometheus, Loki, Tempo, and an OpenTelemetry Collector in one disposable container. Its ports bind only to localhost.
 
-Prerequisites are Docker with Compose and the repository's Rust toolchain. On macOS, start Docker Desktop, OrbStack, or Colima first.
+Prerequisites are Docker with Compose and the repository's Rust toolchain. On macOS, start Docker Desktop, OrbStack, or Colima first; on Windows, start Docker Desktop.
 
 ```sh
 cargo observability
@@ -20,6 +20,14 @@ Run the daemon separately with the non-default OTLP feature and point it at the 
 OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 \
 OTEL_METRIC_EXPORT_INTERVAL=5000 \
   cargo prnsd restart --detach --features otlp -- --log-format json
+```
+
+On Windows, set the same variables in PowerShell first:
+
+```powershell
+$env:OTEL_EXPORTER_OTLP_ENDPOINT = 'http://127.0.0.1:4318'
+$env:OTEL_METRIC_EXPORT_INTERVAL = '5000'
+cargo prnsd restart --detach --features otlp -- --log-format json
 ```
 
 To select a Reticulum config directory, put daemon arguments after Cargo's `--` separator:
@@ -77,7 +85,7 @@ The release profile remains the default. Select a development build with `--debu
 
 The managed state directory is `${XDG_STATE_HOME:-~/.local/state}/prnsd` on Linux, `~/Library/Application Support/prnsd` on macOS, and `%LOCALAPPDATA%\prnsd` on Windows. Human output is stored in `prnsd.log`. Selecting `--log-format json` stores the same stable event names and fields in `prnsd.jsonl` for the local Grafana stack. `RUST_LOG` is captured when the daemon starts or restarts. `PRNSD_STATE_DIR` selects an isolated state directory when needed.
 
-Useful `RUST_LOG` filters include `warn`, `info`, and `debug` for broad settings. You can also adjust individual types of messages with `prns.runtime=debug,prns.interface=debug`, etc.
+Useful `RUST_LOG` filters include `warn`, `info`, and `debug` for broad settings. You can also adjust individual subsystems by target: `prns.runtime` carries the runtime's link, announce, and command events; `prns.interface` carries interface configuration and connection-attempt spans; `prnsd` carries the daemon's own lifecycle, persistence, and discovery events; `prns_interfaces_tokio` carries per-connection transport diagnostics. For example: `RUST_LOG=info,prns.runtime=debug,prnsd=debug`.
 
 Invalid filters fail startup. Levels mean: `error` is a hard failure requiring attention even when the daemon can continue, `warn` is failed or degraded side work, `info` is a sparse lifecycle transition, and `debug` carries frequent activity or correlation fields.
 

@@ -272,7 +272,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Number of active bounded-table pressure conditions: route eviction or capacity exhaustion. Interface availability and crypto deferrals do not change Operational state.",
+      "description": "Number of active bounded-table pressure conditions: route eviction or capacity exhaustion. Interface availability and cryptographic-work deferrals do not change Operational state.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -414,7 +414,7 @@
             "uid": "loki"
           },
           "editorMode": "code",
-          "expr": "sum(count_over_time({service_name=\"prnsd\"} | json | event=~\"persistence_failed|ratchet_persistence_failed|persistence_worker_failed|identity_ephemeral|interface_start_failed|config_read_failed|config_parse_failed|shared_instance_refused\" [5m])) or vector(0)",
+          "expr": "sum(count_over_time({service_name=\"prnsd\"} | json | event=~\"persistence_failed|ratchet_persistence_failed|persistence_worker_failed|identity_ephemeral|interface_start_failed|interface_apply_rejected|config_warning|network_identity_failed|managed_ready_failed|shared_instance_refused\" [5m])) or vector(0)",
           "legendFormat": "Host",
           "queryType": "instant",
           "refId": "A"
@@ -566,7 +566,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Route eviction and capacity exhaustion are bounded-table pressure signals. Interface availability and crypto deferrals are deliberately excluded.",
+      "description": "Route eviction and capacity exhaustion are bounded-table pressure signals. Interface availability and cryptographic-work deferrals are deliberately excluded.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1498,6 +1498,240 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
+      "description": "Packets and host commands ingested by the engine, and frames enqueued for egress.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 18,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 32
+      },
+      "id": 33,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(prns_engine_packets_total[$__rate_interval])) or vector(0)",
+          "instant": false,
+          "legendFormat": "packets in",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(prns_engine_commands_total[$__rate_interval])) or vector(0)",
+          "instant": false,
+          "legendFormat": "commands",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(prns_egress_frames_total{outcome=\"enqueued\"}[$__rate_interval])) or vector(0)",
+          "instant": false,
+          "legendFormat": "frames out",
+          "range": true,
+          "refId": "C"
+        }
+      ],
+      "title": "Engine throughput",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Saturation of the offloaded cryptographic worker pool. Sustained depth near the high-water mark or a growing verdict debt means inbound packets are waiting on cryptographic work.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 18,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 32
+      },
+      "id": 34,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max(prns_crypto_queue_depth)",
+          "instant": false,
+          "legendFormat": "depth",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max(prns_crypto_maximum_queue_depth)",
+          "instant": false,
+          "legendFormat": "high water",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max(prns_crypto_packet_verdicts_owed)",
+          "instant": false,
+          "legendFormat": "verdicts owed",
+          "range": true,
+          "refId": "C"
+        }
+      ],
+      "title": "Cryptographic queue",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Cryptographic jobs submitted and completed, with backpressure deferrals when the pool refuses new work.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 18,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 32
+      },
+      "id": 35,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (outcome) (rate(prns_crypto_jobs_total[$__rate_interval]))",
+          "instant": false,
+          "legendFormat": "{{outcome}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(prns_crypto_backpressure_deferrals_total[$__rate_interval]))",
+          "instant": false,
+          "legendFormat": "deferred",
+          "range": true,
+          "refId": "C"
+        }
+      ],
+      "title": "Cryptographic jobs",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "description": "One bounded row per logical interface, including whether it was configured or discovered. Fleet peers roll up beneath their TCP, Wi-Fi, Bluetooth, backbone, WebSocket, or shared-instance supervisor.",
       "fieldConfig": {
         "defaults": {
@@ -1621,7 +1855,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 32
+        "y": 40
       },
       "id": 19,
       "options": {
@@ -1850,7 +2084,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 41
+        "y": 49
       },
       "id": 20,
       "options": {
@@ -1910,7 +2144,7 @@
         "h": 8,
         "w": 10,
         "x": 8,
-        "y": 41
+        "y": 49
       },
       "id": 21,
       "options": {
@@ -1988,7 +2222,7 @@
         "h": 8,
         "w": 6,
         "x": 18,
-        "y": 41
+        "y": 49
       },
       "id": 22,
       "options": {
@@ -2049,7 +2283,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 49
+        "y": 57
       },
       "id": 10,
       "options": {
@@ -2106,7 +2340,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 49
+        "y": 57
       },
       "id": 11,
       "options": {
@@ -2163,7 +2397,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 49
+        "y": 57
       },
       "id": 12,
       "options": {
@@ -2220,7 +2454,7 @@
         "h": 7,
         "w": 8,
         "x": 0,
-        "y": 57
+        "y": 65
       },
       "id": 14,
       "options": {
@@ -2277,7 +2511,7 @@
         "h": 7,
         "w": 8,
         "x": 8,
-        "y": 57
+        "y": 65
       },
       "id": 15,
       "options": {
@@ -2334,7 +2568,7 @@
         "h": 7,
         "w": 8,
         "x": 16,
-        "y": 57
+        "y": 65
       },
       "id": 16,
       "options": {
@@ -2375,7 +2609,7 @@
         "h": 10,
         "w": 8,
         "x": 0,
-        "y": 64
+        "y": 72
       },
       "id": 17,
       "options": {
@@ -2415,7 +2649,7 @@
         "h": 10,
         "w": 16,
         "x": 8,
-        "y": 64
+        "y": 72
       },
       "id": 18,
       "options": {
