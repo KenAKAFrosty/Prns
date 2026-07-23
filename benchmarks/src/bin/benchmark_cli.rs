@@ -780,10 +780,10 @@ fn command_exists(program: &str) -> bool {
 
 #[cfg(windows)]
 fn vswhere_finds_msvc() -> bool {
-    let program_files_x86 = std::env::var("ProgramFiles(x86)")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)".into());
-    let vswhere = Path::new(&program_files_x86)
-        .join(r"Microsoft Visual Studio\Installer\vswhere.exe");
+    let program_files_x86 =
+        std::env::var("ProgramFiles(x86)").unwrap_or_else(|_| r"C:\Program Files (x86)".into());
+    let vswhere =
+        Path::new(&program_files_x86).join(r"Microsoft Visual Studio\Installer\vswhere.exe");
     Command::new(vswhere)
         .args([
             "-latest",
@@ -796,8 +796,7 @@ fn vswhere_finds_msvc() -> bool {
         ])
         .output()
         .is_ok_and(|output| {
-            output.status.success()
-                && !String::from_utf8_lossy(&output.stdout).trim().is_empty()
+            output.status.success() && !String::from_utf8_lossy(&output.stdout).trim().is_empty()
         })
 }
 

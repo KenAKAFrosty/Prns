@@ -202,11 +202,8 @@ mod platform {
                                     );
                                     return;
                                 }
-                                match tokio::time::timeout(
-                                    Duration::from_secs(5),
-                                    started_signal,
-                                )
-                                .await
+                                match tokio::time::timeout(Duration::from_secs(5), started_signal)
+                                    .await
                                 {
                                     Ok(Ok(Ok(()))) => {
                                         tracing::info!(event = "tray_started");

@@ -68,9 +68,13 @@ fn up(compose: &[&str], compose_file: &Path, log_dir: &Path) -> ExitCode {
     println!("Grafana: http://127.0.0.1:3000/d/prns-observability/prns-health");
     println!("OTLP/HTTP: http://127.0.0.1:4318");
     if cfg!(windows) {
-        println!("Daemon: $env:OTEL_EXPORTER_OTLP_ENDPOINT='http://127.0.0.1:4318'; $env:OTEL_METRIC_EXPORT_INTERVAL='5000'; cargo prnsd restart --detach --features otlp -- --log-format json");
+        println!(
+            "Daemon: $env:OTEL_EXPORTER_OTLP_ENDPOINT='http://127.0.0.1:4318'; $env:OTEL_METRIC_EXPORT_INTERVAL='5000'; cargo prnsd restart --detach --features otlp -- --log-format json"
+        );
     } else {
-        println!("Daemon: OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 OTEL_METRIC_EXPORT_INTERVAL=5000 cargo prnsd restart --detach --features otlp -- --log-format json");
+        println!(
+            "Daemon: OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 OTEL_METRIC_EXPORT_INTERVAL=5000 cargo prnsd restart --detach --features otlp -- --log-format json"
+        );
     }
     ExitCode::SUCCESS
 }
@@ -103,7 +107,7 @@ fn compose_command() -> Result<&'static [&'static str], String> {
         Probe::Missing => {
             return Err(String::from(
                 "docker was not found; install Docker Desktop or a compatible Docker engine with Compose",
-            ))
+            ));
         }
         Probe::Failed => {}
     }
