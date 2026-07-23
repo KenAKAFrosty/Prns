@@ -97,9 +97,23 @@ impl TokioInterfaceStatus {
     }
 
     pub fn set_connection(&self, connection: ConnectionState) {
-        self.inner
+        let previous = self
+            .inner
             .connection
-            .store(connection.as_u8(), Ordering::Relaxed);
+            .swap(connection.as_u8(), Ordering::Relaxed);
+        #[cfg(feature = "tracing")]
+        if previous != connection.as_u8() {
+            tracing::info!(
+                target: "prns.interface",
+                event = "interface_connection_changed",
+                interface_id = ?self.inner.id.as_bytes(),
+                interface_kind = ?self.inner.id.kind(),
+                previous = ?ConnectionState::from_u8(previous),
+                connection = ?connection,
+            );
+        }
+        #[cfg(not(feature = "tracing"))]
+        let _ = previous;
     }
 
     pub fn add_rx(&self, bytes: u64) {
