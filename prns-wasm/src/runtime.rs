@@ -295,7 +295,7 @@ impl PrnsRuntime {
                         link_id,
                         request_id,
                         payload: RespondPayload::StaticBytes(
-                            personal_hopspot_core::node_pages::INDEX_PAGE.as_bytes(),
+                            &personal_hopspot_core::node_pages::BROWSER_INDEX_PAGE,
                         ),
                     }),
                 },

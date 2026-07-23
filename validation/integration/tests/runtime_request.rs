@@ -426,7 +426,7 @@ async fn the_hopspot_node_page_serves_over_tcp() {
             .expect("the page request round-trips");
         let mut header = [0u8; personal_rns::routing::links::request::MAX_PACKED_BINARY_HEADER_LEN];
         let header_len = personal_rns::routing::links::request::write_packed_binary_header(
-            node_pages::INDEX_PAGE.len(),
+            node_pages::HOPSPOT_INDEX_PAGE.len(),
             &mut header,
         )
         .unwrap();
@@ -437,7 +437,7 @@ async fn the_hopspot_node_page_serves_over_tcp() {
         );
         assert_eq!(
             &page[header_len..],
-            node_pages::INDEX_PAGE.as_bytes(),
+            &node_pages::HOPSPOT_INDEX_PAGE[..],
             "the bin payload is the page byte-for-byte",
         );
     };

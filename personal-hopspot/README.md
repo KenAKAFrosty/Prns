@@ -13,7 +13,7 @@ the project at `/page/index.mu` on a standard `nomadnetwork.node` destination, s
 or MeshChat user who finds the node can open it like any other node page. Pressing Announce on
 a hopspot announces this node destination alongside the usual `lxmf.delivery` one.
 
-The page lives in `core/src/node_pages/index.mu` and is served as `&'static` bytes straight
+The page lives in `core/src/node_pages/` (head and tail spliced at build time around a line naming what serves it) and is served as `&'static` bytes straight
 from flash, with no filesystem or duplicate prepacked copy. `core/src/node_pages.rs` is the
 reference example for static serving over Reticulum's request/response mechanism: a
 `RequestRoute` that answers with `respond_static_bytes`, a named `RouteSet`, and the destination

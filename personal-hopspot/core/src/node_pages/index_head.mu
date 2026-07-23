@@ -40,6 +40,11 @@ Reads your existing ~/.reticulum config, and stock apps (including the nomadnet 
 The same engine runs on bare-metal microcontrollers, directly inside Android and iOS apps, and in the browser.
 
 >>
+`F6eb•`f `F6eb`!Ready-to-flash embedded nodes`!`f
+>>>
+The Personal Hopspot firmware ships today for a growing catalog of affordable boards: a complete node with on-device controls, a status screen, and flashing from your browser or the CLI.
+
+>>
 `F6eb•`f `F6eb`!New interfaces for the same network`!`f
 >>>
 Auto BLE, Auto USB, improved Auto-Wifi, ESP-NOW (2.4 Ghz broadcast), Wi-Fi Aware/NAN, and WebSocket server/client (including browser client). All alongside every interface you already run.
@@ -69,11 +74,3 @@ MIT / Apache-2.0
 
 `F999"Reticulum is the foundational communication infrastructure of a bright future we can have, as long as we all build it."`f
 
-This node is one small piece of that future.
-
-<
--
-
-`c
-`F678Brought to you by KenAKAFrosty and the Personal/Prns team.`f
-`a
