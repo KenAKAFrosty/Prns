@@ -1,0 +1,237 @@
+name: napi
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "prns-napi/**"
+      - "personal-rns/**"
+      - "prns-core/**"
+      - "prns-config/**"
+      - "prns-ffi/**"
+      - "prns-runtime/**"
+      - "prns-interfaces/**"
+      - ".github/workflows/napi.yml"
+  pull_request:
+    paths:
+      - "prns-napi/**"
+      - "personal-rns/**"
+      - "prns-core/**"
+      - "prns-config/**"
+      - "prns-ffi/**"
+      - "prns-runtime/**"
+      - "prns-interfaces/**"
+      - ".github/workflows/napi.yml"
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: "Full commit SHA this dispatch is expected to run against"
+        required: false
+        default: ""
+      npm_publish:
+        description: "Publish to npm (requires NPM_TOKEN)"
+        required: false
+        default: "false"
+      npm_tag:
+        description: "npm dist-tag for the publish"
+        required: false
+        default: "next"
+
+concurrency:
+  group: napi-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings --cfg aes_armv8"
+
+jobs:
+  napi-clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          workspaces: prns-napi
+      - run: cargo clippy --locked -- -D warnings
+        working-directory: prns-napi
+
+  napi-build:
+    strategy:
+      fail-fast: false
+      matrix:
+        settings:
+          - host: windows-latest
+            target: x86_64-pc-windows-msvc
+            cross: ""
+          - host: windows-latest
+            target: aarch64-pc-windows-msvc
+            cross: ""
+          - host: macos-latest
+            target: aarch64-apple-darwin
+            cross: ""
+          - host: macos-latest
+            target: x86_64-apple-darwin
+            cross: ""
+          - host: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            cross: "--use-napi-cross"
+          - host: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            cross: "--use-napi-cross"
+    name: napi-build (${{ matrix.settings.target }})
+    runs-on: ${{ matrix.settings.host }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          targets: ${{ matrix.settings.target }}
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          workspaces: prns-napi
+          key: ${{ matrix.settings.target }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+      - run: npm ci --ignore-scripts
+        working-directory: prns-napi
+      - run: npm run build -- --target ${{ matrix.settings.target }} ${{ matrix.settings.cross }}
+        working-directory: prns-napi
+      - run: node -e "console.log(process.arch, require('node:fs').readdirSync('.').filter((f) => f.endsWith('.node')))"
+        working-directory: prns-napi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: bindings-${{ matrix.settings.target }}
+          path: prns-napi/*.node
+          if-no-files-found: error
+
+  napi-test:
+    needs: napi-build
+    strategy:
+      fail-fast: false
+      matrix:
+        settings:
+          - host: windows-latest
+            target: x86_64-pc-windows-msvc
+          - host: windows-11-arm
+            target: aarch64-pc-windows-msvc
+          - host: macos-latest
+            target: aarch64-apple-darwin
+          - host: macos-13
+            target: x86_64-apple-darwin
+          - host: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - host: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+    name: napi-test (${{ matrix.settings.target }})
+    runs-on: ${{ matrix.settings.host }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+      - run: npm ci --ignore-scripts
+        working-directory: prns-napi
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: bindings-${{ matrix.settings.target }}
+          path: prns-napi
+      - run: npm test
+        working-directory: prns-napi
+
+  napi-test-linux-slim:
+    needs: napi-build
+    runs-on: ubuntu-latest
+    container: node:24-slim
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - run: npm ci --ignore-scripts
+        working-directory: prns-napi
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: bindings-x86_64-unknown-linux-gnu
+          path: prns-napi
+      - run: npm test
+        working-directory: prns-napi
+
+  napi-release-critical:
+    needs:
+      - napi-clippy
+      - napi-build
+      - napi-test
+      - napi-test-linux-slim
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: require every napi lane to succeed
+        run: |
+          test "${{ needs.napi-clippy.result }}" = success
+          test "${{ needs.napi-build.result }}" = success
+          test "${{ needs.napi-test.result }}" = success
+          test "${{ needs.napi-test-linux-slim.result }}" = success
+
+  napi-publish:
+    needs: napi-release-critical
+    if: github.event_name == 'workflow_dispatch' && inputs.npm_publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - name: enforce dispatch commit custody
+        run: |
+          test -n "${{ inputs.expected_sha }}"
+          test "${{ inputs.expected_sha }}" = "${{ github.sha }}"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+          registry-url: "https://registry.npmjs.org"
+      - run: npm ci --ignore-scripts
+        working-directory: prns-napi
+      - name: assert version custody
+        run: |
+          workspace_version="$(cat VERSION)"
+          package_version="$(node -p "require('./prns-napi/package.json').version")"
+          crate_version="$(grep -m1 '^version = ' prns-napi/Cargo.toml | cut -d'"' -f2)"
+          test "$workspace_version" = "$package_version"
+          test "$workspace_version" = "$crate_version"
+      - run: npx napi create-npm-dirs
+        working-directory: prns-napi
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: bindings-*
+          path: prns-napi/artifacts
+      - run: npx napi artifacts
+        working-directory: prns-napi
+      - name: copy license and readme into platform packages
+        run: |
+          for dir in prns-napi/npm/*/; do
+            cp prns-napi/LICENSE-MIT prns-napi/LICENSE-APACHE "$dir"
+          done
+      - name: publish platform packages
+        run: npx napi pre-publish -t npm
+        working-directory: prns-napi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: publish root package
+        run: npm publish --provenance --access public --tag "${{ inputs.npm_tag }}"
+        working-directory: prns-napi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
