@@ -4,7 +4,9 @@ use std::sync::mpsc as sync_mpsc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use prns_core::interfaces::bluetooth_auto::{AdvertisingMode, BleBackend, BleEvent, Origin};
+use prns_core::interfaces::bluetooth_auto::{
+    AdvertisingMode, BleBackend, BleEvent, DialOutcome, Origin,
+};
 use prns_core::interfaces::bluetooth_auto::{
     BleAddress, BleIdentity, BLE_SERVICE_UUID, COLUMBA_IDENTITY_UUID, COLUMBA_RX_UUID,
     COLUMBA_TX_UUID, NATIVE_CONTROL_UUID, NATIVE_DATA_UUID,
@@ -228,7 +230,7 @@ impl BleBackend<{ WindowsBleBackend::MAX_PEERS }> for WindowsBleBackend {
         }
     }
 
-    async fn dial(&mut self, address: BleAddress) {
+    async fn dial(&mut self, address: BleAddress) -> DialOutcome {
         let address_type = self
             .seen_address_types
             .get(&address)
@@ -249,5 +251,6 @@ impl BleBackend<{ WindowsBleBackend::MAX_PEERS }> for WindowsBleBackend {
                     Err(address)
                 }
             });
+        DialOutcome::Started
     }
 }

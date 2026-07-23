@@ -16,7 +16,7 @@ use tokio::sync::{mpsc as tokio_mpsc, oneshot};
 use tokio::task::JoinSet;
 
 use prns_core::interfaces::bluetooth_auto::{
-    AdvertisingMode, BleBackend, BleEvent, Origin, ScanningMode,
+    AdvertisingMode, BleBackend, BleEvent, DialOutcome, Origin, ScanningMode,
 };
 use prns_core::interfaces::bluetooth_auto::{BleAddress, BleIdentity, Control, Psm};
 
@@ -275,7 +275,7 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
         }
     }
 
-    async fn dial(&mut self, address: BleAddress) {
+    async fn dial(&mut self, address: BleAddress) -> DialOutcome {
         let token = *address.octets();
         let Some((peer_id, peripheral, peer_rssi)) = self.peripherals.lock().ok().and_then(|map| {
             map.iter()
@@ -287,7 +287,7 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
             );
             self.dials
                 .spawn(async move { DialTaskOutcome::Failed { address } });
-            return;
+            return DialOutcome::Started;
         };
         let (control_tx, control_rx) = tokio_mpsc::channel::<Control>(8);
         let (completion_tx, completion_rx) = oneshot::channel::<DialCompletion>();
@@ -367,6 +367,7 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
                 peer_rssi,
             }
         });
+        DialOutcome::Started
     }
 
     async fn on_link_closed(&mut self, address: BleAddress) {

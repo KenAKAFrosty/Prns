@@ -35,8 +35,12 @@ impl<M: RawMutex + 'static> ConnectionSlotState<M> {
         self.owners.fetch_add(1, Ordering::AcqRel);
     }
 
-    fn release(&self) {
+    fn request_close(&self) {
         self.closed.signal(());
+    }
+
+    fn release(&self) {
+        self.request_close();
         if self.owners.fetch_sub(1, Ordering::AcqRel) != 1 {
             return;
         }
@@ -77,6 +81,12 @@ impl<M: RawMutex + 'static, const SLOTS: usize> ConnectionSlotPool<M, SLOTS> {
         self.claim(permit)
             .map(Some)
             .ok_or(ConnectionSlotAcquireError::PermitWithoutAvailableSlot)
+    }
+
+    pub fn request_close(&self, index: usize) {
+        if let Some(slot) = self.slots.get(index) {
+            slot.request_close();
+        }
     }
 
     fn claim(
@@ -177,6 +187,10 @@ pub struct ConnectionSlotWorkerLease<M: RawMutex + 'static> {
 impl<M: RawMutex + 'static> ConnectionSlotWorkerLease<M> {
     pub fn wait_for_close(&self) -> impl core::future::Future<Output = ()> + '_ {
         self.owner.wait_for_close()
+    }
+
+    pub fn request_close(&self) {
+        self.owner.slot.request_close();
     }
 }
 
@@ -371,6 +385,42 @@ mod tests {
                     assert!(matches!(
                         select(worker.wait_for_close(), ready(())).await,
                         Either::Second(())
+                    ));
+                });
+                drop(link);
+                drop(worker);
+            }
+        }
+    }
+
+    #[test]
+    fn explicit_close_requests_wake_workers_without_releasing_capacity() {
+        static POOL: ConnectionSlotPool<CriticalSectionRawMutex, 1> = ConnectionSlotPool::new();
+
+        let lease = POOL.try_acquire().ok().flatten();
+        assert!(lease.is_some());
+        if let Some(lease) = lease {
+            let ConnectionSlotOwners { worker, link } = lease.activate();
+            POOL.request_close(0);
+            block_on(async {
+                assert!(matches!(
+                    select(worker.wait_for_close(), ready(())).await,
+                    Either::First(())
+                ));
+            });
+            assert_eq!(POOL.try_acquire().map(|lease| lease.is_none()), Ok(true));
+            drop(link);
+            drop(worker);
+
+            let reused = POOL.try_acquire().ok().flatten();
+            assert!(reused.is_some());
+            if let Some(reused) = reused {
+                let ConnectionSlotOwners { worker, link } = reused.activate();
+                worker.request_close();
+                block_on(async {
+                    assert!(matches!(
+                        select(worker.wait_for_close(), ready(())).await,
+                        Either::First(())
                     ));
                 });
                 drop(link);

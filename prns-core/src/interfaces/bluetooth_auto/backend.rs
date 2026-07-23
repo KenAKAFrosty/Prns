@@ -43,6 +43,16 @@ pub enum Origin {
     Accepted,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub enum DialOutcome {
+    Started,
+    Busy,
+    UnknownPeer,
+    RadioOff,
+    InvariantViolation,
+}
+
 pub enum BleEvent<L> {
     Sighting {
         address: BleAddress,
@@ -83,7 +93,7 @@ pub trait BleBackend<const MAX_PEERS: usize> {
         Ok(configured)
     }
     async fn next_event(&mut self) -> BleEvent<Self::Link>;
-    async fn dial(&mut self, address: BleAddress);
+    async fn dial(&mut self, address: BleAddress) -> DialOutcome;
     async fn on_link_closed(&mut self, _address: BleAddress) {}
 }
 
