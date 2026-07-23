@@ -1,6 +1,6 @@
 {
   "name": "single-packet-throughput",
-  "version": 4,
+  "version": 5,
   "order": 1,
   "title": "Single-packet throughput",
   "category": "Packets",
@@ -8,7 +8,7 @@
   "primary_metric": "delivered_per_sec",
   "headline": true,
   "notes": [],
-  "description": "A ProveAll destination saturated with windowed SINGLE packets for a fixed wall-time: sustained one-shot message throughput, goodput, and settlement latency from the protocol's own proofs. No link - singles are the protocol's native shape for high-volume small one-shots, each proof carrying the RTT.",
+  "description": "A ProveAll destination saturated with windowed SINGLE packets for a fixed wall-time: sustained one-shot message throughput, goodput, and settlement latency from the protocol's own proofs. No link - singles are the protocol's native shape for high-volume small one-shots, each proof carrying the RTT. The reference participant wakes on receipt callbacks and immediately checks the armed receipt's status, covering proofs that beat callback registration without adding a polling delay.",
   "roles": [
     "responder",
     "initiator"

@@ -578,13 +578,13 @@ mod tests {
     #[test]
     fn cell_notes_are_typed_unique_subject_annotations() {
         let mut manifest =
-            load_manifest(ScenarioId::LinkMessageThroughput).expect("annotated manifest");
+            load_manifest(ScenarioId::RequestResponse).expect("annotated manifest");
         assert_eq!(manifest.cell_notes.len(), 1);
         assert_eq!(
             manifest.cell_notes[0].subject,
             Subject::Direct {
-                initiator: "rns-1.4.0-compiled".into(),
-                responder: "personal-rns".into(),
+                initiator: "personal-rns".into(),
+                responder: "rns-1.4.0-compiled".into(),
                 relay: None,
             }
         );

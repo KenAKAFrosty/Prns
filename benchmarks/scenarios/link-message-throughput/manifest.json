@@ -1,6 +1,6 @@
 {
   "name": "link-message-throughput",
-  "version": 6,
+  "version": 7,
   "order": 2,
   "title": "Link-message throughput",
   "category": "Links",
@@ -8,17 +8,7 @@
   "primary_metric": "delivered_per_sec",
   "headline": true,
   "notes": [],
-  "cell_notes": [
-    {
-      "subject": {
-        "path": "direct",
-        "initiator": "rns-1.4.0-compiled",
-        "responder": "personal-rns"
-      },
-      "text": "Prns returns proofs sooner, but RNS’s benchmark sender polls receipts every 0.5 ms. Prompt Prns proofs arrive in small batches, causing many poll/sleep/refill cycles. Stock’s slower proofs coalesce into larger batches, amortizing that loop better."
-    }
-  ],
-  "description": "One link saturated with windowed small single-packet sends for a fixed wall-time - the same data shape as single-packet-throughput carried by the other mechanism: a session key amortizes the per-message crypto that singles pay per packet, while ProveAll still proves every delivery. The contrast between the two firehoses is the measurement.",
+  "description": "One link saturated with windowed small single-packet sends for a fixed wall-time - the same data shape as single-packet-throughput carried by the other mechanism: a session key amortizes the per-message crypto that singles pay per packet, while ProveAll still proves every delivery. The reference participant wakes on receipt callbacks and immediately checks the armed receipt's status, covering proofs that beat callback registration without adding a polling delay. The contrast between the two firehoses is the measurement.",
   "roles": [
     "responder",
     "initiator"

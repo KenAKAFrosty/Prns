@@ -40,11 +40,7 @@ Sustained delivery of small messages over one established link.
 | Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 6811247/6811247 · 3/3 samples | 75.6k/s | 18.16 MB/s | <1.00 / 1.00 ms | i 25.2 MiB / r 48.3 MiB |
 | Prns → RNS 1.4.0 (compiled) | <img src="assets/check.svg" width="14" alt="conformant" /> 776000/776000 · 3/3 samples | 8.6k/s | 2.07 MB/s | 2.00 / 2.00 ms | i 7.5 MiB / r 262.2 MiB |
 | RNS 1.4.0 (compiled) → RNS 1.4.0 (compiled) | <img src="assets/check.svg" width="14" alt="conformant" /> 427865/427865 · 3/3 samples | 4.7k/s | 1.12 MB/s | 1.00 / 2.00 ms | i 234.4 MiB / r 232.0 MiB |
-| RNS 1.4.0 (compiled) → Prns<sup>1</sup> | <img src="assets/check.svg" width="14" alt="conformant" /> 295616/295616 · 3/3 samples | 3.3k/s | 781.0 kB/s | <1.00 / 1.00 ms | i 226.1 MiB / r 10.7 MiB |
-
-**Cell context**
-
-1. **RNS 1.4.0 (compiled) → Prns** — Prns returns proofs sooner, but RNS’s benchmark sender polls receipts every 0.5 ms. Prompt Prns proofs arrive in small batches, causing many poll/sleep/refill cycles. Stock’s slower proofs coalesce into larger batches, amortizing that loop better.
+| RNS 1.4.0 (compiled) → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 295616/295616 · 3/3 samples | 3.3k/s | 781.0 kB/s | <1.00 / 1.00 ms | i 226.1 MiB / r 10.7 MiB |
 
 ### Packets
 

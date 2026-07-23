@@ -16,6 +16,7 @@ import time
 from collections import deque
 
 import RNS
+from receipt_settlement import ReceiptSettlementWake
 from workload_vectors import (
     DEFAULT_SIZE_SEED,
     SizeSequence,
@@ -299,19 +300,23 @@ def initiate(name, block, profile, duration):
     deadline = started + duration
     drain_deadline = deadline + DRAIN_GRACE
 
-    # Receipts are POLLED, not callback-driven: on localhost the proof can conclude a
-    # receipt before a delivery callback could even be registered, and the reference
-    # never fires callbacks retroactively.
+    settlement = ReceiptSettlementWake()
+
     def send_one():
         state["sent"] += 1
         size = sizes.next_len()
-        return RNS.Packet(destination, scratch[:size]).send(), size
+        receipt = RNS.Packet(destination, scratch[:size]).send()
+        settlement.arm(receipt, RNS.PacketReceipt.SENT)
+        return receipt, size
 
     outstanding = [send_one() for _ in range(profile["window"])]
     streak_limit = max(profile["window"] * 8, 64)
     failure_streak = 0
     died = False
     while outstanding and time.monotonic() < drain_deadline:
+        # Clear before inspecting statuses: a completion racing with the clear is
+        # then caught either by this scan or by its callback setting the event.
+        settlement.clear_before_scan()
         still = []
         settled = 0
         for receipt, size in outstanding:
@@ -337,7 +342,7 @@ def initiate(name, block, profile, duration):
                 still.append((receipt, size))
         outstanding = still
         if settled == 0:
-            time.sleep(0.0005)
+            settlement.wait_until(drain_deadline)
     state["timeouts"] += len(outstanding)
     elapsed_ms = int((time.monotonic() - started) * 1000)
     print("MEASURE_DONE", flush=True)
@@ -447,20 +452,24 @@ def initiate_link(name, block, profile, duration):
     deadline = started + duration
     drain_deadline = deadline + DRAIN_GRACE
 
-    # Receipts are POLLED, not callback-driven: on localhost the proof can conclude a
-    # receipt before a delivery callback could even be registered, and the reference
-    # never fires callbacks retroactively.
+    settlement = ReceiptSettlementWake()
+
     def send_one():
         state["sent"] += 1
         size = sizes.next_len()
         state["sent_bytes"] += size
-        return RNS.Packet(link, scratch[:size]).send(), size
+        receipt = RNS.Packet(link, scratch[:size]).send()
+        settlement.arm(receipt, RNS.PacketReceipt.SENT)
+        return receipt, size
 
     outstanding = [send_one() for _ in range(profile["window"])]
     streak_limit = max(profile["window"] * 8, 64)
     failure_streak = 0
     died = False
     while outstanding and time.monotonic() < drain_deadline:
+        # Clear before inspecting statuses: a completion racing with the clear is
+        # then caught either by this scan or by its callback setting the event.
+        settlement.clear_before_scan()
         still = []
         settled = 0
         for receipt, size in outstanding:
@@ -485,7 +494,7 @@ def initiate_link(name, block, profile, duration):
                 still.append((receipt, size))
         outstanding = still
         if settled == 0:
-            time.sleep(0.0005)
+            settlement.wait_until(drain_deadline)
     state["receipt_unproved"] += len(outstanding)
     elapsed_ms = int((time.monotonic() - started) * 1000)
     print("MEASURE_DONE", flush=True)

@@ -1132,10 +1132,10 @@ mod tests {
     #[test]
     fn cell_notes_mark_the_exact_subject_and_render_beneath_the_table() {
         let mut result = row(0, Axis::Throughput, "delivered_per_sec", Some(20.0));
-        result.scenario = "link-message-throughput".into();
+        result.scenario = "request-response".into();
         result.subject = Subject::Direct {
-            initiator: "rns-1.4.0-compiled".into(),
-            responder: "personal-rns".into(),
+            initiator: "personal-rns".into(),
+            responder: "rns-1.4.0-compiled".into(),
             relay: None,
         };
         let aggregates = aggregate(&[result]);
@@ -1143,13 +1143,13 @@ mod tests {
         let mut output = String::new();
         render_scenario(
             &mut output,
-            &Manifest::load("link-message-throughput"),
+            &Manifest::load("request-response"),
             &refs,
             &load_implementations(),
         );
-        assert!(output.contains("RNS 1.4.0 (compiled) → Prns<sup>1</sup>"));
+        assert!(output.contains("Prns → RNS 1.4.0 (compiled)<sup>1</sup>"));
         assert!(output.contains("**Cell context**"));
-        assert!(output.contains("Prns returns proofs sooner"));
+        assert!(output.contains("RNS sends a resource advertisement"));
     }
 
     #[test]
