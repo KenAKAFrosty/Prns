@@ -12,7 +12,6 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     spawner: Spawner,
     b: Bringup<B::Display, B::Battery>,
 ) {
-    log_heap_footprint("run_core entry (post-bringup, core 0)");
     let mut display = b.display;
     let oled_ok = b.oled_ok;
     let mut battery_source = b.battery;
@@ -171,7 +170,6 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     esp_rtos::start_second_core(b.cpu_ctrl, b.sw_int1, core1_stack, move || {
         static NODE: StaticCell<S3Node> = StaticCell::new();
         let node: &'static mut S3Node = PrnsNode::init_static(&NODE, recipe, reactor_wiring, host);
-        log_heap_footprint("post-construction (engine columns boxed into PSRAM)");
 
         static EXECUTOR: StaticCell<esp_rtos::embassy::Executor> = StaticCell::new();
         EXECUTOR
@@ -607,7 +605,6 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         };
         match radio_mode {
             RadioMode::Ble => {
-                log_heap_footprint("pre-ble-connector (core 0)");
                 let ble_connector = esp_radio::ble::controller::BleConnector::new(
                     b.bt,
                     esp_radio::ble::Config::default()
@@ -615,7 +612,6 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                         .with_max_connections(BLE_PEER_CAPACITY as u8),
                 )
                 .expect("ble connector");
-                log_heap_footprint("post-ble-connector (core 0)");
                 if let Some((identity, fleet)) = ble {
                     spawner.spawn(
                         ble_task(spawner, ble_connector, mac_octets, identity, fleet)

@@ -2,7 +2,6 @@
 
 # Benchmark results
 
-Results are comparable between implementations on the same host. Each page records its machine and method once, then shows a headline comparison and grouped details.
 
 | Host | Machine | Results |
 |---|---|---|
