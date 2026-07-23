@@ -71,7 +71,7 @@ pub(super) async fn run_request_endpoint(
                 manifest.profile.response_max,
             )),
         };
-        let (event_tx, event_rx) = mpsc::unbounded_channel::<Event>();
+        let (event_tx, event_rx) = event_channel(&manifest.profile);
         let on_event = move |event: PrnsEvent<'_>, _state: &RequestServer| {
             let mapped = match event {
                 PrnsEvent::Diagnostic(Diagnostic::LinkEstablished(_)) => Some(Event::LinkUp),
@@ -79,7 +79,7 @@ pub(super) async fn run_request_endpoint(
                 _ => None,
             };
             if let Some(event) = mapped {
-                let _ = event_tx.send(event);
+                send_event(&event_tx, event);
             }
         };
         let (node, bound) = build_responder_node(
@@ -111,7 +111,7 @@ pub(super) async fn run_request_endpoint(
             () = firehose => {}
         }
     } else if role == "initiator" {
-        let (event_tx, event_rx) = mpsc::unbounded_channel::<Event>();
+        let (event_tx, event_rx) = event_channel(&manifest.profile);
         let on_event = move |event: PrnsEvent<'_>, _state: &()| {
             let mapped = match event {
                 PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) => {
@@ -123,7 +123,7 @@ pub(super) async fn run_request_endpoint(
                 _ => None,
             };
             if let Some(event) = mapped {
-                let _ = event_tx.send(event);
+                send_event(&event_tx, event);
             }
         };
         let node = build_initiator_node(single, on_event, manifest, addr).await;
@@ -149,7 +149,7 @@ pub(super) async fn respond_request_runtime(
     served: &AtomicU64,
     response_bytes: &AtomicU64,
     commands: &PrnsNodeHandle,
-    mut events: mpsc::UnboundedReceiver<Event>,
+    mut events: mpsc::Receiver<Event>,
 ) {
     let mut links_up = 0usize;
     let mut measurement_ready = false;
@@ -206,7 +206,7 @@ pub(super) async fn initiate_request_runtime(
     profile: &Profile,
     duration: Duration,
     commands: &PrnsNodeHandle,
-    mut events: mpsc::UnboundedReceiver<Event>,
+    mut events: mpsc::Receiver<Event>,
 ) {
     let destination = loop {
         if let Some(Event::Heard(destination)) = events.recv().await {

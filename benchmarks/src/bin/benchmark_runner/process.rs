@@ -7,10 +7,6 @@ pub(super) struct RoleProcess {
     stdin: std::process::ChildStdin,
     measurement_cpu_start: f64,
     measurement_cpu_end: Option<f64>,
-    #[cfg(target_os = "linux")]
-    cpu_seconds: std::sync::Arc<std::sync::Mutex<f64>>,
-    #[cfg(target_os = "linux")]
-    peak_rss_bytes: std::sync::Arc<std::sync::Mutex<u64>>,
 }
 
 #[derive(Default)]
@@ -48,20 +44,6 @@ pub(super) fn spawn_role(
         }
     });
 
-    #[cfg(target_os = "linux")]
-    {
-        let (cpu_seconds, peak_rss_bytes) = spawn_proc_sampler(child.id());
-        RoleProcess {
-            child,
-            lines,
-            stdin,
-            measurement_cpu_start: 0.0,
-            measurement_cpu_end: None,
-            cpu_seconds,
-            peak_rss_bytes,
-        }
-    }
-    #[cfg(not(target_os = "linux"))]
     RoleProcess {
         child,
         lines,
@@ -117,7 +99,7 @@ impl RoleProcess {
 
     #[cfg(target_os = "linux")]
     fn current_cpu_seconds(&self) -> f64 {
-        *self.cpu_seconds.lock().expect("cpu sample")
+        linux_cpu_seconds(self.child.id())
     }
 
     #[cfg(target_os = "macos")]
@@ -136,14 +118,26 @@ impl RoleProcess {
     }
 
     #[cfg(target_os = "linux")]
-    pub(super) fn finalize(mut self) -> RoleMetrics {
-        let _ = self.child.wait();
-        let total_cpu = *self.cpu_seconds.lock().expect("cpu");
+    pub(super) fn finalize(self) -> RoleMetrics {
+        use std::mem::MaybeUninit;
+
+        let pid = self.child.id() as libc::pid_t;
+        let mut status: libc::c_int = 0;
+        let mut usage = MaybeUninit::<libc::rusage>::zeroed();
+        // SAFETY: pid is this live child, and status and usage are valid writable outputs.
+        let reaped = unsafe { libc::wait4(pid, &mut status, 0, usage.as_mut_ptr()) };
+        if reaped < 0 {
+            return RoleMetrics::default();
+        }
+        // SAFETY: successful wait4 initialized the rusage output.
+        let usage = unsafe { usage.assume_init() };
+        let seconds = |time: libc::timeval| time.tv_sec as f64 + time.tv_usec as f64 / 1_000_000.0;
+        let total_cpu = seconds(usage.ru_utime) + seconds(usage.ru_stime);
         let cpu_seconds = self.measured_cpu_seconds(total_cpu);
-        let peak_rss_bytes = *self.peak_rss_bytes.lock().expect("rss");
         RoleMetrics {
             cpu_seconds,
-            peak_rss_bytes,
+            // Linux reports ru_maxrss in KiB; macOS reports bytes.
+            peak_rss_bytes: usage.ru_maxrss.max(0) as u64 * 1024,
         }
     }
 
@@ -193,44 +187,33 @@ impl RoleProcess {
 }
 
 #[cfg(target_os = "linux")]
-fn spawn_proc_sampler(
-    pid: u32,
-) -> (
-    std::sync::Arc<std::sync::Mutex<f64>>,
-    std::sync::Arc<std::sync::Mutex<u64>>,
-) {
-    let cpu_seconds = std::sync::Arc::new(std::sync::Mutex::new(0.0));
-    let peak_rss_bytes = std::sync::Arc::new(std::sync::Mutex::new(0u64));
-    let cpu = cpu_seconds.clone();
-    let rss = peak_rss_bytes.clone();
+fn linux_cpu_seconds(pid: u32) -> f64 {
     // SAFETY: sysconf is a read-only libc query.
     let ticks_per_second = unsafe { libc::sysconf(libc::_SC_CLK_TCK) }.max(1) as f64;
-    std::thread::spawn(move || loop {
-        let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
-            return;
-        };
-        let after_comm = stat.rsplit(") ").next().unwrap_or("");
-        let fields: Vec<&str> = after_comm.split_whitespace().collect();
-        if let (Some(utime), Some(stime)) = (fields.get(11), fields.get(12)) {
-            let ticks: u64 = utime.parse::<u64>().unwrap_or(0) + stime.parse::<u64>().unwrap_or(0);
-            *cpu.lock().expect("cpu sample") = ticks as f64 / ticks_per_second;
-        }
-        if let Ok(status) = std::fs::read_to_string(format!("/proc/{pid}/status")) {
-            for line in status.lines() {
-                if let Some(kibibytes) = line.strip_prefix("VmHWM:") {
-                    let kibibytes = kibibytes
-                        .trim()
-                        .trim_end_matches(" kB")
-                        .trim()
-                        .parse::<u64>()
-                        .unwrap_or(0);
-                    *rss.lock().expect("rss sample") = kibibytes * 1024;
-                }
-            }
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    });
-    (cpu_seconds, peak_rss_bytes)
+    std::fs::read_to_string(format!("/proc/{pid}/stat"))
+        .ok()
+        .and_then(|stat| linux_cpu_ticks(&stat))
+        .map_or(0.0, |ticks| ticks as f64 / ticks_per_second)
+}
+
+#[cfg(target_os = "linux")]
+fn linux_cpu_ticks(stat: &str) -> Option<u64> {
+    let after_comm = stat.rsplit_once(") ")?.1;
+    let mut fields = after_comm.split_whitespace();
+    let utime = fields.nth(11)?.parse::<u64>().ok()?;
+    let stime = fields.next()?.parse::<u64>().ok()?;
+    Some(utime + stime)
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod linux_tests {
+    use super::linux_cpu_ticks;
+
+    #[test]
+    fn proc_stat_parser_handles_spaces_and_parentheses_in_command_name() {
+        let stat = "42 (bench worker) name) S 1 2 3 4 5 6 7 8 9 10 120 30 0";
+        assert_eq!(linux_cpu_ticks(stat), Some(150));
+    }
 }
 
 #[cfg(target_os = "macos")]

@@ -1,6 +1,6 @@
 {
   "name": "transport-resource-throughput",
-  "version": 1,
+  "version": 2,
   "order": 9,
   "title": "Transported resource throughput",
   "category": "Transport",

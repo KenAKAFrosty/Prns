@@ -1,9 +1,10 @@
+import time
 import unittest
 
 try:
-    from .receipt_settlement import ReceiptSettlementWake
+    from .receipt_settlement import ReceiptSettlementQueue
 except ImportError:
-    from receipt_settlement import ReceiptSettlementWake
+    from receipt_settlement import ReceiptSettlementQueue
 
 
 PENDING = 1
@@ -28,48 +29,67 @@ class FakeReceipt:
         self.timeout_callback = callback
 
 
-class ReceiptSettlementWakeTests(unittest.TestCase):
-    def test_completion_before_callback_registration_wakes_from_status(self):
-        wake = ReceiptSettlementWake()
+class ReceiptSettlementQueueTests(unittest.TestCase):
+    def pop(self, settlements):
+        return settlements.pop_until(time.monotonic() + 0.1)
 
-        wake.arm(FakeReceipt(DELIVERED), PENDING)
+    def test_completion_before_callback_registration_is_queued(self):
+        settlements = ReceiptSettlementQueue()
+        armed = settlements.arm(FakeReceipt(DELIVERED), PENDING, 60)
 
-        self.assertTrue(wake.is_set())
+        self.assertIs(self.pop(settlements), armed)
+        self.assertEqual(armed.context, 60)
 
-    def test_completion_after_registration_wakes_from_callback(self):
-        wake = ReceiptSettlementWake()
+    def test_completion_after_registration_is_queued(self):
+        settlements = ReceiptSettlementQueue()
         receipt = FakeReceipt()
-        wake.arm(receipt, PENDING)
-        self.assertFalse(wake.is_set())
+        armed = settlements.arm(receipt, PENDING)
 
         receipt.status = DELIVERED
         receipt.delivery_callback(receipt)
 
-        self.assertTrue(wake.is_set())
+        self.assertIs(self.pop(settlements), armed)
 
-    def test_completion_during_registration_is_coalesced(self):
-        wake = ReceiptSettlementWake()
+    def test_completion_during_registration_is_queued_once(self):
+        settlements = ReceiptSettlementQueue()
+        receipt = FakeReceipt(settle_while_arming=True)
+        armed = settlements.arm(receipt, PENDING)
 
-        wake.arm(FakeReceipt(settle_while_arming=True), PENDING)
+        self.assertIs(self.pop(settlements), armed)
+        self.assertIsNone(settlements.pop_until(time.monotonic()))
 
-        self.assertTrue(wake.is_set())
-
-    def test_timeout_callback_wakes(self):
-        wake = ReceiptSettlementWake()
+    def test_duplicate_callbacks_are_coalesced(self):
+        settlements = ReceiptSettlementQueue()
         receipt = FakeReceipt()
-        wake.arm(receipt, PENDING)
+        armed = settlements.arm(receipt, PENDING)
+
+        receipt.status = DELIVERED
+        receipt.delivery_callback(receipt)
+        receipt.timeout_callback(receipt)
+
+        self.assertIs(self.pop(settlements), armed)
+        self.assertIsNone(settlements.pop_until(time.monotonic()))
+
+    def test_timeout_callback_is_queued(self):
+        settlements = ReceiptSettlementQueue()
+        receipt = FakeReceipt()
+        armed = settlements.arm(receipt, PENDING)
 
         receipt.status = FAILED
         receipt.timeout_callback(receipt)
 
-        self.assertTrue(wake.is_set())
+        self.assertIs(self.pop(settlements), armed)
 
-    def test_missing_receipt_wakes_for_immediate_failure(self):
-        wake = ReceiptSettlementWake()
+    def test_missing_receipt_is_immediately_queued(self):
+        settlements = ReceiptSettlementQueue()
+        armed = settlements.arm(None, PENDING)
 
-        wake.arm(None, PENDING)
+        self.assertIs(self.pop(settlements), armed)
 
-        self.assertTrue(wake.is_set())
+    def test_wait_deadline_returns_none(self):
+        settlements = ReceiptSettlementQueue()
+
+        self.assertIsNone(settlements.pop_until(time.monotonic() + 0.001))
 
 
 if __name__ == "__main__":

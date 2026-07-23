@@ -1,6 +1,6 @@
 {
   "name": "link-message-throughput",
-  "version": 7,
+  "version": 8,
   "order": 2,
   "title": "Link-message throughput",
   "category": "Links",

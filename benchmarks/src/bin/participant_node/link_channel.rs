@@ -29,8 +29,11 @@ pub(super) async fn run_runtime_endpoint(
         .destination_hash()
         .expect("the bench destination name is valid");
 
-    let (event_tx, event_rx) = mpsc::unbounded_channel::<Event>();
+    let (event_tx, event_rx) = event_channel(&manifest.profile);
     let event_role = role.to_owned();
+    let count_deliveries = role == "responder";
+    let delivery_counters = Arc::new(DeliveryCounters::default());
+    let callback_delivery_counters = delivery_counters.clone();
     let on_event = move |event: PrnsEvent<'_>, _state: &()| {
         let mapped = match event {
             PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) => {
@@ -47,15 +50,23 @@ pub(super) async fn run_runtime_endpoint(
                 Some(Event::Closed)
             }
             PrnsEvent::Message(Message::Delivered(Delivery::Single(delivery))) => {
-                Some(Event::Delivered(delivery.plaintext.len()))
+                if count_deliveries && callback_delivery_counters.record(delivery.plaintext.len()) {
+                    Some(Event::FirstDelivered)
+                } else {
+                    None
+                }
             }
             PrnsEvent::Message(Message::Delivered(Delivery::Link(delivery))) => {
-                Some(Event::Delivered(delivery.plaintext.len()))
+                if count_deliveries && callback_delivery_counters.record(delivery.plaintext.len()) {
+                    Some(Event::FirstDelivered)
+                } else {
+                    None
+                }
             }
             _ => None,
         };
         if let Some(event) = mapped {
-            let _ = event_tx.send(event);
+            send_event(&event_tx, event);
         }
     };
 
@@ -75,10 +86,19 @@ pub(super) async fn run_runtime_endpoint(
                     initiators,
                     &commands,
                     event_rx,
+                    delivery_counters,
                 )
                 .await;
             } else {
-                respond(destination, announce_every, duration, &commands, event_rx).await;
+                respond(
+                    destination,
+                    announce_every,
+                    duration,
+                    &commands,
+                    event_rx,
+                    delivery_counters,
+                )
+                .await;
             }
         };
         tokio::select! {
@@ -113,16 +133,15 @@ async fn respond(
     announce_every: Duration,
     duration: Duration,
     commands: &PrnsNodeHandle,
-    mut events: mpsc::UnboundedReceiver<Event>,
+    mut events: mpsc::Receiver<Event>,
+    delivery_counters: Arc<DeliveryCounters>,
 ) {
     println!("MEASURE_READY");
     let mut announce = tokio::time::interval(announce_every);
     let mut report_at = None;
-    let mut delivered = 0u64;
-    let mut payload_bytes = 0u64;
     loop {
         tokio::select! {
-            _ = announce.tick(), if delivered == 0 => {
+            _ = announce.tick(), if delivery_counters.delivered.load(Ordering::Acquire) == 0 => {
                 if commands
                     .issue(EngineCommand::AnnounceNow(AnnounceNow {
                         destination,
@@ -137,15 +156,14 @@ async fn respond(
             _ = tokio::time::sleep_until(
                 report_at.unwrap_or_else(|| tokio::time::Instant::now() + Duration::from_secs(86_400))
             ) => {
+                let (delivered, payload_bytes) = delivery_counters.snapshot();
                 println!("RESULT delivered={delivered} payload_bytes={payload_bytes}");
                 return;
             }
             event = events.recv() => {
                 match event {
-                    Some(Event::Delivered(bytes)) => {
+                    Some(Event::FirstDelivered) => {
                         report_at.get_or_insert_with(|| tokio::time::Instant::now() + duration + DRAIN_GRACE);
-                        delivered += 1;
-                        payload_bytes += bytes as u64;
                     }
                     None => return,
                     Some(_) => {}
@@ -159,7 +177,7 @@ async fn initiate(
     profile: &Profile,
     duration: Duration,
     commands: &PrnsNodeHandle,
-    mut events: mpsc::UnboundedReceiver<Event>,
+    mut events: mpsc::Receiver<Event>,
 ) {
     let destination = loop {
         match events.recv().await.expect("reactor alive") {
@@ -175,6 +193,9 @@ async fn initiate(
         profile.payload_max,
         profile.payload_len,
     );
+    let mut rtts = ExactMillisHistogram::new(
+        duration.as_millis() as u64 + DRAIN_GRACE.as_millis() as u64 + 1_000,
+    );
     await_measurement_start().await;
     let started = tokio::time::Instant::now();
     let deadline = started + duration;
@@ -182,9 +203,8 @@ async fn initiate(
     let mut delivered = 0u64;
     let mut timeouts = 0u64;
     let mut in_flight = 0usize;
-    let mut sent_sizes: std::collections::HashMap<u64, usize> = std::collections::HashMap::new();
+    let mut sent_sizes = std::collections::HashMap::with_capacity(profile.window);
     let mut delivered_bytes = 0u64;
-    let mut rtts: Vec<u64> = Vec::new();
     let mut send_one =
         |in_flight: &mut usize,
          sent: &mut u64,
@@ -213,13 +233,15 @@ async fn initiate(
         let Ok(Some(event)) = event else { break };
         if let Event::Settled(id, Settlement::SendSinglePacket(result)) = event {
             in_flight -= 1;
-            let size = sent_sizes.remove(&id.0).unwrap_or(0) as u64;
+            let size = sent_sizes
+                .remove(&id.0)
+                .expect("settled benchmark command was registered") as u64;
             match result {
                 Ok(receipt) => {
                     failure_streak = 0;
                     delivered += 1;
                     delivered_bytes += size;
-                    rtts.push(receipt.rtt.millis());
+                    rtts.record(receipt.rtt.millis());
                 }
                 Err(_) => {
                     timeouts += 1;
@@ -241,7 +263,6 @@ async fn initiate(
     let elapsed_ms = started.elapsed().as_millis() as u64;
     println!("MEASURE_DONE");
 
-    rtts.sort_unstable();
     let payload_bytes = delivered_bytes;
     let seconds = (elapsed_ms as f64 / 1000.0).max(f64::EPSILON);
     println!(
@@ -251,8 +272,8 @@ async fn initiate(
          rtt_p50_ms={:.0} rtt_p99_ms={:.0}{} build={BUILD_PROFILE}",
         delivered as f64 / seconds,
         payload_bytes as f64 / seconds,
-        percentile(&rtts, 0.50),
-        percentile(&rtts, 0.99),
+        rtts.percentile(0.50),
+        rtts.percentile(0.99),
         died_marker(died),
     );
 }
@@ -264,15 +285,14 @@ async fn respond_link(
     drain: Duration,
     expected_links: usize,
     commands: &PrnsNodeHandle,
-    mut events: mpsc::UnboundedReceiver<Event>,
+    mut events: mpsc::Receiver<Event>,
+    delivery_counters: Arc<DeliveryCounters>,
 ) {
     let mut links_up = 0usize;
     let mut measurement_ready = false;
     let mut closed_links = 0usize;
     let mut announce = tokio::time::interval(announce_every);
     let mut announcing = true;
-    let mut delivered = 0u64;
-    let mut payload_bytes = 0u64;
     let report_at = tokio::time::Instant::now() + duration + drain + DRAIN_GRACE;
     loop {
         tokio::select! {
@@ -289,6 +309,7 @@ async fn respond_link(
                 }
             }
             _ = tokio::time::sleep_until(report_at) => {
+                let (delivered, payload_bytes) = delivery_counters.snapshot();
                 println!("RESULT delivered={delivered} payload_bytes={payload_bytes}");
                 return;
             }
@@ -302,14 +323,12 @@ async fn respond_link(
                             println!("MEASURE_READY");
                         }
                     }
-                    Some(Event::Delivered(bytes)) => {
-                        delivered += 1;
-                        payload_bytes += bytes as u64;
-                    }
+                    Some(Event::FirstDelivered) => {}
                     Some(Event::Closed) if closed_links + 1 < expected_links => {
                         closed_links += 1;
                     }
                     Some(Event::Closed) | None => {
+                        let (delivered, payload_bytes) = delivery_counters.snapshot();
                         println!("RESULT delivered={delivered} payload_bytes={payload_bytes}");
                         return;
                     }
@@ -324,7 +343,7 @@ async fn initiate_link(
     profile: &Profile,
     duration: Duration,
     commands: &PrnsNodeHandle,
-    mut events: mpsc::UnboundedReceiver<Event>,
+    mut events: mpsc::Receiver<Event>,
 ) {
     let destination = loop {
         match events.recv().await.expect("reactor alive") {
@@ -354,6 +373,9 @@ async fn initiate_link(
         profile.payload_max,
         profile.payload_len,
     );
+    let drain = drain_grace(profile);
+    let mut rtts =
+        ExactMillisHistogram::new(duration.as_millis() as u64 + drain.as_millis() as u64 + 1_000);
     await_measurement_start().await;
     let started = tokio::time::Instant::now();
     let deadline = started + duration;
@@ -364,9 +386,8 @@ async fn initiate_link(
     let mut rejected = 0u64;
     let mut write_failed = 0u64;
     let mut in_flight = 0usize;
-    let mut sent_sizes: std::collections::HashMap<u64, usize> = std::collections::HashMap::new();
+    let mut sent_sizes = std::collections::HashMap::with_capacity(profile.window);
     let mut sent_payload_bytes = 0u64;
-    let mut rtts: Vec<u64> = Vec::new();
     let mut send_one = |in_flight: &mut usize,
                         sent: &mut u64,
                         sent_sizes: &mut std::collections::HashMap<u64, usize>,
@@ -397,11 +418,13 @@ async fn initiate_link(
         let Ok(Some(event)) = event else { break };
         if let Event::Settled(id, Settlement::SendToLink(result)) = event {
             in_flight -= 1;
-            let size = sent_sizes.remove(&id.0).unwrap_or(0) as u64;
+            let size = sent_sizes
+                .remove(&id.0)
+                .expect("settled benchmark command was registered") as u64;
             let replenish = match result {
                 Ok(receipt) => {
                     delivered += 1;
-                    rtts.push(receipt.rtt.millis());
+                    rtts.record(receipt.rtt.millis());
                     true
                 }
                 Err(SendToLinkFailure::Culled) => {
@@ -456,7 +479,6 @@ async fn initiate_link(
         }
     }
 
-    rtts.sort_unstable();
     let payload_bytes = sent_payload_bytes;
     let seconds = (elapsed_ms as f64 / 1000.0).max(f64::EPSILON);
     let attempted = sent + culled + rejected + write_failed;
@@ -469,8 +491,8 @@ async fn initiate_link(
          rtt_p50_ms={:.0} rtt_p99_ms={:.0}{} build={BUILD_PROFILE}",
         delivered as f64 / seconds,
         payload_bytes as f64 / seconds,
-        percentile(&rtts, 0.50),
-        percentile(&rtts, 0.99),
+        rtts.percentile(0.50),
+        rtts.percentile(0.99),
         died_marker(false),
     );
 }

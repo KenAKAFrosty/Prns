@@ -139,6 +139,8 @@ fn run_profile(scenario: &str, expected_bitrate: u64, expected_mtu: u64) {
         "timed_out_frames",
         "drain_timeouts",
         "outstanding",
+        "buffer_pool_misses",
+        "credit_leaks",
     ] {
         assert_eq!(metric(&result, key), 0, "{key}: {result}");
     }

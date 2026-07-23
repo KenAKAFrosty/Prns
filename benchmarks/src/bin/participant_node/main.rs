@@ -119,6 +119,24 @@ fn fanin_listener_id(index: usize) -> InterfaceId {
 }
 const DRAIN_GRACE: Duration = Duration::from_secs(5);
 
+fn event_channel(profile: &Profile) -> (mpsc::Sender<Event>, mpsc::Receiver<Event>) {
+    let capacity = profile
+        .window
+        .saturating_mul(2)
+        .saturating_add(profile.initiator_count.saturating_mul(4))
+        .saturating_add(32);
+    mpsc::channel(capacity)
+}
+
+fn send_event(sender: &mpsc::Sender<Event>, event: Event) {
+    match sender.try_send(event) {
+        Ok(()) | Err(mpsc::error::TrySendError::Closed(_)) => {}
+        Err(mpsc::error::TrySendError::Full(_)) => {
+            panic!("benchmark event queue overflow");
+        }
+    }
+}
+
 fn benchmark_tcp_policy(profile: &Profile) -> EffectiveInterfacePolicy {
     tcp::configured_policy(ConfiguredInterfacePolicy {
         bitrate: profile.tcp_bitrate_bps.map(BitrateBps::guess),
@@ -151,11 +169,32 @@ fn responder_resource_strategy(profile: &Profile) -> ResourceStrategy {
 enum Event {
     Heard(DestinationHash),
     Settled(CommandId, Settlement),
-    Delivered(usize),
+    FirstDelivered,
     LinkUp,
     ResourceIn { link_id: LinkId, bytes: usize },
     ResourceAck(u64),
     Closed,
+}
+
+#[derive(Default)]
+struct DeliveryCounters {
+    delivered: AtomicU64,
+    payload_bytes: AtomicU64,
+}
+
+impl DeliveryCounters {
+    fn record(&self, bytes: usize) -> bool {
+        self.payload_bytes
+            .fetch_add(bytes as u64, Ordering::Relaxed);
+        self.delivered.fetch_add(1, Ordering::Release) == 0
+    }
+
+    fn snapshot(&self) -> (u64, u64) {
+        (
+            self.delivered.load(Ordering::Acquire),
+            self.payload_bytes.load(Ordering::Relaxed),
+        )
+    }
 }
 
 const REQUEST_PATH: &str = "/bench/query";
@@ -332,6 +371,44 @@ fn percentile(sorted: &[u64], p: f64) -> f64 {
     }
     let rank = ((sorted.len() as f64 - 1.0) * p).round() as usize;
     sorted[rank.min(sorted.len() - 1)] as f64
+}
+
+struct ExactMillisHistogram {
+    bins: Vec<u64>,
+    samples: u64,
+}
+
+impl ExactMillisHistogram {
+    fn new(max_millis: u64) -> Self {
+        Self {
+            bins: vec![0; max_millis.saturating_add(1) as usize],
+            samples: 0,
+        }
+    }
+
+    fn record(&mut self, millis: u64) {
+        let bin = self
+            .bins
+            .get_mut(millis as usize)
+            .unwrap_or_else(|| panic!("benchmark RTT {millis}ms exceeds histogram bound"));
+        *bin += 1;
+        self.samples += 1;
+    }
+
+    fn percentile(&self, p: f64) -> f64 {
+        if self.samples == 0 {
+            return f64::NAN;
+        }
+        let rank = ((self.samples as f64 - 1.0) * p).round() as u64;
+        let mut seen = 0u64;
+        for (millis, count) in self.bins.iter().copied().enumerate() {
+            seen += count;
+            if seen > rank {
+                return millis as f64;
+            }
+        }
+        unreachable!("histogram sample count matches its bins")
+    }
 }
 
 fn percentile_f64(sorted: &[f64], p: f64) -> f64 {
@@ -562,7 +639,11 @@ fn died_marker(died: bool) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_resource_ack, percentile_f64, resource_ack_payload};
+    use super::{
+        parse_resource_ack, percentile_f64, resource_ack_payload, send_event, Event,
+        ExactMillisHistogram,
+    };
+    use personal_rns::wire::DestinationHash;
 
     #[test]
     fn request_percentiles_preserve_sub_millisecond_precision() {
@@ -576,5 +657,27 @@ mod tests {
         let payload = resource_ack_payload(42);
         assert_eq!(parse_resource_ack(&payload), Some(42));
         assert_eq!(parse_resource_ack(b"not-a-resource-ack"), None);
+    }
+
+    #[test]
+    fn bounded_event_queue_rejects_overflow_but_allows_teardown_closure() {
+        let (sender, receiver) = tokio::sync::mpsc::channel(1);
+        send_event(&sender, Event::Heard(DestinationHash::new([1; 16])));
+        let overflow = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            send_event(&sender, Event::Heard(DestinationHash::new([2; 16])));
+        }));
+        assert!(overflow.is_err());
+        drop(receiver);
+        send_event(&sender, Event::Heard(DestinationHash::new([3; 16])));
+    }
+
+    #[test]
+    fn integer_histogram_matches_exact_nearest_rank_percentiles() {
+        let mut histogram = ExactMillisHistogram::new(100);
+        for sample in [1, 2, 2, 9, 100] {
+            histogram.record(sample);
+        }
+        assert_eq!(histogram.percentile(0.50), 2.0);
+        assert_eq!(histogram.percentile(0.99), 100.0);
     }
 }

@@ -45,7 +45,7 @@ getrandom = "0.2"
 sysinfo = { version = "0.33", default-features = false, features = ["system"] }
 # Platform sampling for the live runner: macOS reaps each role with `wait4` for its
 # peak RSS + CPU rusage (no /proc), and gates the powermetrics energy path on `geteuid`.
-# Linux keeps reading /proc, so the dep only carries weight off-Linux.
+# Linux reads /proc exactly at CPU bracket boundaries and reaps with wait4.
 libc = "0.2"
 # Stable identity for the result substrate: a per-device and per-submitter UUID stamped on
 # every row, so figures from different machines/people can be joined later (the `host` triple

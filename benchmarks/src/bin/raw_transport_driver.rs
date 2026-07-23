@@ -1,4 +1,3 @@
-use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -9,7 +8,10 @@ use personal_rns::crypto::{Ed25519PublicKey, X25519PublicKey};
 use personal_rns::engine::InstantMillis;
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::IdentitySigner;
-use personal_rns::interfaces::rns_serial_framing::{encode, max_encoded_len, RnsSerialDecoder};
+#[cfg(test)]
+use personal_rns::interfaces::rns_serial_framing::RnsSerialDecoder;
+use personal_rns::interfaces::rns_serial_framing::{encode, max_encoded_len, RnsSerialScanner};
+use personal_rns::interfaces::{FrameSink, FrameSinkError};
 use personal_rns::routing::announce::{
     expand_name, write_announce_wire_packet, Announce, AnnounceEntropy, AnnounceId,
 };
@@ -21,12 +23,89 @@ use personal_rns::routing::links::handshake::{
 use personal_rns::routing::links::{LinkId, LinkMode, MAX_LINK_MTU};
 use personal_rns::wire::{
     ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
-    TransportId, WireContext, WirePacketHeader, BROADCAST_MTU, HEADER_MIN_LEN, IFAC_MIN_LEN,
+    TransportId, WireContext, WirePacketHeader, BROADCAST_MTU, HEADER_MAX_LEN, HEADER_MIN_LEN,
+    IFAC_MIN_LEN,
 };
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::TcpStream;
-use tokio::sync::{mpsc, Semaphore};
+use tokio::sync::{mpsc, Notify, Semaphore};
+
+#[cfg(test)]
+mod allocation_gate {
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::cell::Cell;
+
+    thread_local! {
+        static ENABLED: Cell<bool> = const { Cell::new(false) };
+        static ALLOCATIONS: Cell<u64> = const { Cell::new(0) };
+    }
+
+    pub struct TrackingAllocator;
+
+    fn record_allocation() {
+        ENABLED.with(|enabled| {
+            if enabled.get() {
+                ALLOCATIONS.with(|allocations| allocations.set(allocations.get() + 1));
+            }
+        });
+    }
+
+    unsafe impl GlobalAlloc for TrackingAllocator {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            // SAFETY: this allocator transparently delegates to the process system allocator.
+            let pointer = unsafe { System.alloc(layout) };
+            if !pointer.is_null() {
+                record_allocation();
+            }
+            pointer
+        }
+
+        unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+            // SAFETY: this allocator transparently delegates to the process system allocator.
+            let pointer = unsafe { System.alloc_zeroed(layout) };
+            if !pointer.is_null() {
+                record_allocation();
+            }
+            pointer
+        }
+
+        unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
+            // SAFETY: pointer and layout came from the delegated system allocator.
+            unsafe { System.dealloc(pointer, layout) };
+        }
+
+        unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, size: usize) -> *mut u8 {
+            // SAFETY: pointer and layout came from the delegated system allocator.
+            let pointer = unsafe { System.realloc(pointer, layout, size) };
+            if !pointer.is_null() {
+                record_allocation();
+            }
+            pointer
+        }
+    }
+
+    struct DisableOnDrop;
+
+    impl Drop for DisableOnDrop {
+        fn drop(&mut self) {
+            ENABLED.with(|enabled| enabled.set(false));
+        }
+    }
+
+    pub fn count(run: impl FnOnce()) -> u64 {
+        ALLOCATIONS.with(|allocations| allocations.set(0));
+        ENABLED.with(|enabled| enabled.set(true));
+        let disable = DisableOnDrop;
+        run();
+        drop(disable);
+        ALLOCATIONS.with(Cell::get)
+    }
+}
+
+#[cfg(test)]
+#[global_allocator]
+static TEST_ALLOCATOR: allocation_gate::TrackingAllocator = allocation_gate::TrackingAllocator;
 
 const DRIVER_SLUG: &str = "benchmark-wire-driver";
 const DATA_MAGIC: &[u8; 8] = b"PRNSRAW1";
@@ -35,6 +114,7 @@ const RESOURCE_MAGIC: &[u8; 8] = b"PRNSRES1";
 const FRAME_CAP: usize = MAX_LINK_MTU;
 const READ_CHUNK: usize = 16 * 1024;
 const WRITER_QUEUE: usize = 1024;
+const WRITE_BATCH_BYTES: usize = 64 * 1024;
 const CALIBRATION_SECONDS: u64 = 2;
 const SMOKE_CALIBRATION_MILLIS: u64 = 100;
 
@@ -55,25 +135,103 @@ const B_TO_A: Direction = Direction {
 
 struct FramedReader<R> {
     inner: R,
-    decoder: Box<RnsSerialDecoder<FRAME_CAP>>,
-    pending: VecDeque<Vec<u8>>,
+    scanner: RnsSerialScanner,
+    frame: CappedFrame,
     read_buf: [u8; READ_CHUNK],
+    read_len: usize,
+    read_offset: usize,
+    wire_bytes: u64,
+}
+
+struct CappedFrame {
+    bytes: Vec<u8>,
+}
+
+impl CappedFrame {
+    fn new() -> Self {
+        Self {
+            bytes: Vec::with_capacity(FRAME_CAP),
+        }
+    }
+}
+
+impl FrameSink for CappedFrame {
+    fn clear(&mut self) {
+        self.bytes.clear();
+    }
+
+    fn frame_len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    fn free_capacity(&self) -> usize {
+        FRAME_CAP.saturating_sub(self.bytes.len())
+    }
+
+    fn push(&mut self, byte: u8) -> Result<(), FrameSinkError> {
+        if self.bytes.len() == FRAME_CAP {
+            return Err(FrameSinkError::Full);
+        }
+        self.bytes.push(byte);
+        Ok(())
+    }
+
+    fn extend_from_slice(&mut self, run: &[u8]) -> Result<(), FrameSinkError> {
+        if run.len() > self.free_capacity() {
+            return Err(FrameSinkError::Full);
+        }
+        self.bytes.extend_from_slice(run);
+        Ok(())
+    }
 }
 
 impl<R: AsyncRead + Unpin> FramedReader<R> {
     fn new(inner: R) -> Self {
         Self {
             inner,
-            decoder: Box::new(RnsSerialDecoder::new()),
-            pending: VecDeque::new(),
+            scanner: RnsSerialScanner::new(),
+            frame: CappedFrame::new(),
             read_buf: [0; READ_CHUNK],
+            read_len: 0,
+            read_offset: 0,
+            wire_bytes: 0,
         }
     }
 
-    async fn next(&mut self) -> io::Result<Vec<u8>> {
+    fn reset_wire_bytes(&mut self) {
+        self.wire_bytes = 0;
+    }
+
+    fn wire_bytes(&self) -> u64 {
+        self.wire_bytes
+    }
+
+    async fn next_into(&mut self, output: &mut Vec<u8>) -> io::Result<()> {
         loop {
-            if let Some(frame) = self.pending.pop_front() {
-                return Ok(frame);
+            if self.read_offset < self.read_len {
+                match self.scanner.next_frame_into(
+                    &self.read_buf[..self.read_len],
+                    &mut self.read_offset,
+                    &mut self.frame,
+                ) {
+                    Ok(Some(0)) => {
+                        self.frame.clear();
+                        continue;
+                    }
+                    Ok(Some(_)) => {
+                        output.clear();
+                        std::mem::swap(output, &mut self.frame.bytes);
+                        self.frame.bytes.clear();
+                        return Ok(());
+                    }
+                    Ok(None) => {}
+                    Err(_) => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "relay emitted an oversized HDLC frame",
+                        ));
+                    }
+                }
             }
             let read = self.inner.read(&mut self.read_buf).await?;
             if read == 0 {
@@ -82,11 +240,9 @@ impl<R: AsyncRead + Unpin> FramedReader<R> {
                     "relay TCP stream closed",
                 ));
             }
-            self.decoder.feed_slice(&self.read_buf[..read], |frame| {
-                if !frame.is_empty() {
-                    self.pending.push_back(frame.to_vec());
-                }
-            });
+            self.read_len = read;
+            self.read_offset = 0;
+            self.wire_bytes += read as u64;
         }
     }
 }
@@ -126,13 +282,13 @@ fn make_announce(side: u8) -> (DestinationHash, Vec<u8>) {
     (destination, wire[..len].to_vec())
 }
 
-fn payload_for(direction: Direction, sequence: u64, len: usize, seed: u64) -> Vec<u8> {
+fn write_payload(payload: &mut [u8], direction: Direction, sequence: u64, seed: u64) {
+    let len = payload.len();
     assert!(len >= 17, "raw transport payload carries its identity");
-    let mut payload = vec![0u8; len];
     payload[..8].copy_from_slice(DATA_MAGIC);
     payload[8] = direction.id;
     payload[9..17].copy_from_slice(&sequence.to_be_bytes());
-    let mut state = seed ^ direction.seed_xor ^ sequence.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    let mut state = seed ^ direction.seed_xor;
     for chunk in payload[17..].chunks_mut(8) {
         state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
         let mut word = state;
@@ -141,6 +297,11 @@ fn payload_for(direction: Direction, sequence: u64, len: usize, seed: u64) -> Ve
         word ^= word >> 31;
         chunk.copy_from_slice(&word.to_le_bytes()[..chunk.len()]);
     }
+}
+
+fn payload_for(direction: Direction, sequence: u64, len: usize, seed: u64) -> Vec<u8> {
+    let mut payload = vec![0u8; len];
+    write_payload(&mut payload, direction, sequence, seed);
     payload
 }
 
@@ -154,8 +315,42 @@ fn parse_data_payload(payload: &[u8], seed: u64) -> Option<(Direction, u64)> {
         _ => return None,
     };
     let sequence = u64::from_be_bytes(payload[9..17].try_into().ok()?);
-    (payload == payload_for(direction, sequence, payload.len(), seed))
-        .then_some((direction, sequence))
+    let mut state = seed ^ direction.seed_xor;
+    let valid_tail = payload[17..].chunks(8).all(|chunk| {
+        state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut word = state;
+        word = (word ^ (word >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        word = (word ^ (word >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        word ^= word >> 31;
+        chunk == &word.to_le_bytes()[..chunk.len()]
+    });
+    valid_tail.then_some((direction, sequence))
+}
+
+fn payload_template(direction: Direction, len: usize, seed: u64) -> Vec<u8> {
+    payload_for(direction, 0, len, seed)
+}
+
+fn parse_data_payload_against(
+    payload: &[u8],
+    expected_template: &[u8],
+) -> Option<(Direction, u64)> {
+    if payload.len() < 17
+        || payload.len() > expected_template.len()
+        || payload[..9] != expected_template[..9]
+        || payload[17..] != expected_template[17..payload.len()]
+    {
+        return None;
+    }
+    let direction = match payload[8] {
+        0 => A_TO_B,
+        1 => B_TO_A,
+        _ => return None,
+    };
+    Some((
+        direction,
+        u64::from_be_bytes(payload[9..17].try_into().ok()?),
+    ))
 }
 
 fn resource_payload_template(direction: Direction, len: usize, seed: u64) -> Vec<u8> {
@@ -199,10 +394,14 @@ fn resource_frame_template(
     frame
 }
 
-fn resource_frame(template: &[u8], payload_len: usize, sequence: u64) -> Vec<u8> {
-    let mut frame = template.to_vec();
+fn prepare_resource_frame(frame: &mut Vec<u8>, payload_len: usize, sequence: u64) {
     let payload_offset = frame.len() - payload_len;
     frame[payload_offset + 9..payload_offset + 17].copy_from_slice(&sequence.to_be_bytes());
+}
+
+fn resource_frame(template: &[u8], payload_len: usize, sequence: u64) -> Vec<u8> {
+    let mut frame = template.to_vec();
+    prepare_resource_frame(&mut frame, payload_len, sequence);
     frame
 }
 
@@ -226,15 +425,15 @@ fn parse_resource_payload(payload: &[u8], expected_template: &[u8]) -> Option<(D
     ))
 }
 
-fn data_frame(
+fn prepare_data_frame(
+    frame: &mut Vec<u8>,
     destination: DestinationHash,
     relay: TransportId,
     direction: Direction,
     sequence: u64,
     payload_len: usize,
     seed: u64,
-) -> Vec<u8> {
-    let payload = payload_for(direction, sequence, payload_len, seed);
+) {
     let header = WirePacketHeader {
         ifac_flag: IfacFlag::Open,
         context_flag: ContextFlag::Unset,
@@ -246,19 +445,71 @@ fn data_frame(
         address: destination.to_address(),
         context: WireContext::None,
     };
-    let mut frame = vec![0u8; BROADCAST_MTU];
-    let header_len = header.write(&mut frame).expect("data header fits");
-    frame[header_len..header_len + payload.len()].copy_from_slice(&payload);
-    frame.truncate(header_len + payload.len());
+    frame.resize(HEADER_MAX_LEN + payload_len, 0);
+    let header_len = header.write(frame).expect("data header fits");
+    write_payload(
+        &mut frame[header_len..header_len + payload_len],
+        direction,
+        sequence,
+        seed,
+    );
+    frame.truncate(header_len + payload_len);
+}
+
+fn prepare_data_frame_from_template(
+    frame: &mut Vec<u8>,
+    destination: DestinationHash,
+    relay: TransportId,
+    sequence: u64,
+    payload_len: usize,
+    template: &[u8],
+) {
+    let header = WirePacketHeader {
+        ifac_flag: IfacFlag::Open,
+        context_flag: ContextFlag::Unset,
+        propagation: PropagationType::Transport,
+        destination_type: DestinationType::Single,
+        packet_type: PacketType::Data,
+        hops: 0,
+        transport_id: Some(relay),
+        address: destination.to_address(),
+        context: WireContext::None,
+    };
+    frame.resize(HEADER_MAX_LEN + payload_len, 0);
+    let header_len = header.write(frame).expect("data header fits");
+    let payload = &mut frame[header_len..header_len + payload_len];
+    payload.copy_from_slice(&template[..payload_len]);
+    payload[9..17].copy_from_slice(&sequence.to_be_bytes());
+    frame.truncate(header_len + payload_len);
+}
+
+fn data_frame(
+    destination: DestinationHash,
+    relay: TransportId,
+    direction: Direction,
+    sequence: u64,
+    payload_len: usize,
+    seed: u64,
+) -> Vec<u8> {
+    let mut frame = Vec::with_capacity(BROADCAST_MTU);
+    prepare_data_frame(
+        &mut frame,
+        destination,
+        relay,
+        direction,
+        sequence,
+        payload_len,
+        seed,
+    );
     frame
 }
 
-fn proof_frame(packet_hash: PacketHash, direction: Direction, sequence: u64) -> Vec<u8> {
-    let mut payload = Vec::with_capacity(49);
-    payload.extend_from_slice(PROOF_MAGIC);
-    payload.push(direction.id);
-    payload.extend_from_slice(&sequence.to_be_bytes());
-    payload.extend_from_slice(packet_hash.as_bytes());
+fn prepare_proof_frame(
+    frame: &mut Vec<u8>,
+    packet_hash: PacketHash,
+    direction: Direction,
+    sequence: u64,
+) {
     let header = WirePacketHeader {
         ifac_flag: IfacFlag::Open,
         context_flag: ContextFlag::Unset,
@@ -270,10 +521,19 @@ fn proof_frame(packet_hash: PacketHash, direction: Direction, sequence: u64) -> 
         address: packet_hash.proof_destination().to_address(),
         context: WireContext::None,
     };
-    let mut frame = vec![0u8; BROADCAST_MTU];
-    let header_len = header.write(&mut frame).expect("proof header fits");
-    frame[header_len..header_len + payload.len()].copy_from_slice(&payload);
-    frame.truncate(header_len + payload.len());
+    frame.resize(HEADER_MIN_LEN + 49, 0);
+    let header_len = header.write(frame).expect("proof header fits");
+    let payload = &mut frame[header_len..header_len + 49];
+    payload[..8].copy_from_slice(PROOF_MAGIC);
+    payload[8] = direction.id;
+    payload[9..17].copy_from_slice(&sequence.to_be_bytes());
+    payload[17..].copy_from_slice(packet_hash.as_bytes());
+    frame.truncate(header_len + 49);
+}
+
+fn proof_frame(packet_hash: PacketHash, direction: Direction, sequence: u64) -> Vec<u8> {
+    let mut frame = Vec::with_capacity(BROADCAST_MTU);
+    prepare_proof_frame(&mut frame, packet_hash, direction, sequence);
     frame
 }
 
@@ -296,8 +556,9 @@ async fn relayed_announce(
     expected: DestinationHash,
 ) -> io::Result<TransportId> {
     tokio::time::timeout(Duration::from_secs(15), async {
+        let mut frame = Vec::with_capacity(FRAME_CAP);
         loop {
-            let frame = reader.next().await?;
+            reader.next_into(&mut frame).await?;
             let Ok((header, _)) = WirePacketHeader::parse(&frame) else {
                 continue;
             };
@@ -319,8 +580,9 @@ async fn relayed_announce(
 }
 
 async fn next_non_announce(reader: &mut FramedReader<OwnedReadHalf>) -> io::Result<Vec<u8>> {
+    let mut frame = Vec::with_capacity(FRAME_CAP);
     loop {
-        let frame = reader.next().await?;
+        reader.next_into(&mut frame).await?;
         let Ok((header, _)) = WirePacketHeader::parse(&frame) else {
             return Ok(frame);
         };
@@ -577,12 +839,96 @@ fn validate_returned_proof(
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
+struct OutstandingSlot {
+    sequence: u64,
+    hash: [u8; 32],
+    occupied: bool,
+}
+
+struct Outstanding {
+    slots: Mutex<Vec<OutstandingSlot>>,
+    count: AtomicU64,
+    slot_errors: AtomicU64,
+}
+
+impl Outstanding {
+    fn new(capacity: usize) -> Self {
+        Self {
+            slots: Mutex::new(vec![OutstandingSlot::default(); capacity]),
+            count: AtomicU64::new(0),
+            slot_errors: AtomicU64::new(0),
+        }
+    }
+
+    fn insert(&self, sequence: u64, hash: [u8; 32]) -> bool {
+        let mut slots = self.slots.lock().expect("outstanding ring");
+        let index = sequence as usize % slots.len();
+        let slot = &mut slots[index];
+        if slot.occupied {
+            self.slot_errors.fetch_add(1, Ordering::Relaxed);
+            return false;
+        }
+        *slot = OutstandingSlot {
+            sequence,
+            hash,
+            occupied: true,
+        };
+        self.count.fetch_add(1, Ordering::Release);
+        true
+    }
+
+    fn remove(&self, sequence: u64) -> Option<[u8; 32]> {
+        let mut slots = self.slots.lock().expect("outstanding ring");
+        let index = sequence as usize % slots.len();
+        let slot = &mut slots[index];
+        if !slot.occupied || slot.sequence != sequence {
+            return None;
+        }
+        slot.occupied = false;
+        self.count.fetch_sub(1, Ordering::AcqRel);
+        Some(slot.hash)
+    }
+
+    fn get(&self, sequence: u64) -> Option<[u8; 32]> {
+        let slots = self.slots.lock().expect("outstanding ring");
+        let slot = &slots[sequence as usize % slots.len()];
+        (slot.occupied && slot.sequence == sequence).then_some(slot.hash)
+    }
+
+    fn len(&self) -> usize {
+        self.count.load(Ordering::Acquire) as usize
+    }
+
+    fn is_empty(&self) -> bool {
+        self.count.load(Ordering::Acquire) == 0
+    }
+
+    fn slot_errors(&self) -> u64 {
+        self.slot_errors.load(Ordering::Relaxed)
+    }
+}
+
 struct SharedDirection {
     sent: AtomicU64,
     sent_payload_bytes: AtomicU64,
     generator_done: AtomicBool,
-    outstanding: Mutex<HashMap<u64, [u8; 32]>>,
+    outstanding: Outstanding,
+    buffer_pool_misses: AtomicU64,
+    changed: Notify,
+}
+
+impl SharedDirection {
+    fn new(window: usize) -> Self {
+        Self {
+            sent: AtomicU64::new(0),
+            sent_payload_bytes: AtomicU64::new(0),
+            generator_done: AtomicBool::new(false),
+            outstanding: Outstanding::new(window),
+            buffer_pool_misses: AtomicU64::new(0),
+            changed: Notify::new(),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -592,25 +938,119 @@ struct WriterStats {
     errors: AtomicU64,
 }
 
-async fn socket_writer(
-    mut writer: OwnedWriteHalf,
-    mut receive: mpsc::Receiver<Vec<u8>>,
+#[derive(Clone, Copy)]
+enum RecycleBuffer {
+    Data,
+    Proof,
+}
+
+struct OutboundFrame {
+    bytes: Vec<u8>,
+    recycle: RecycleBuffer,
+}
+
+fn buffer_pool(
+    count: usize,
+    mut make: impl FnMut() -> Vec<u8>,
+) -> (mpsc::Sender<Vec<u8>>, mpsc::Receiver<Vec<u8>>) {
+    let (send, receive) = mpsc::channel(count);
+    for _ in 0..count {
+        send.try_send(make()).expect("new buffer pool has capacity");
+    }
+    (send, receive)
+}
+
+fn writer_buffer(max_frame_len: usize) -> Vec<u8> {
+    let frame_capacity = max_encoded_len(max_frame_len);
+    let capacity = if max_frame_len <= BROADCAST_MTU {
+        frame_capacity.max(WRITE_BATCH_BYTES)
+    } else {
+        frame_capacity
+    };
+    Vec::with_capacity(capacity)
+}
+
+async fn socket_writer<W>(
+    mut writer: W,
+    mut receive: mpsc::Receiver<OutboundFrame>,
     stats: Arc<WriterStats>,
     shutdown_when_done: bool,
-) {
-    while let Some(frame) = receive.recv().await {
-        match write_frame(&mut writer, &frame).await {
-            Ok(framed) => {
-                stats.frames.fetch_add(1, Ordering::Relaxed);
-                stats
-                    .framed_bytes
-                    .fetch_add(framed as u64, Ordering::Relaxed);
-            }
-            Err(_) => {
-                stats.errors.fetch_add(1, Ordering::Relaxed);
+    mut encoded: Vec<u8>,
+    data_pool: Option<mpsc::Sender<Vec<u8>>>,
+    proof_pool: Option<mpsc::Sender<Vec<u8>>>,
+) where
+    W: AsyncWrite + Unpin,
+{
+    let mut pending = None;
+    loop {
+        let mut frame = if let Some(frame) = pending.take() {
+            frame
+        } else {
+            let Some(frame) = receive.recv().await else {
+                break;
+            };
+            frame
+        };
+        encoded.clear();
+        let mut batch_frames = 0u64;
+        let mut encode_failed = false;
+        loop {
+            let reserved = max_encoded_len(frame.bytes.len());
+            if batch_frames > 0 && encoded.len() + reserved > encoded.capacity() {
+                pending = Some(frame);
                 break;
             }
+            if encoded.len() + reserved > encoded.capacity() {
+                stats.errors.fetch_add(1, Ordering::Relaxed);
+                encode_failed = true;
+            } else {
+                let offset = encoded.len();
+                encoded.resize(offset + reserved, 0);
+                match encode(&frame.bytes, &mut encoded[offset..]) {
+                    Ok(encoded_len) => {
+                        encoded.truncate(offset + encoded_len);
+                        batch_frames += 1;
+                    }
+                    Err(_) => {
+                        encoded.truncate(offset);
+                        stats.errors.fetch_add(1, Ordering::Relaxed);
+                        encode_failed = true;
+                    }
+                }
+            }
+            match frame.recycle {
+                RecycleBuffer::Data => {
+                    if let Some(pool) = &data_pool {
+                        let _ = pool.send(frame.bytes).await;
+                    }
+                }
+                RecycleBuffer::Proof => {
+                    if let Some(pool) = &proof_pool {
+                        let _ = pool.send(frame.bytes).await;
+                    }
+                }
+            }
+            if encode_failed {
+                break;
+            }
+            match receive.try_recv() {
+                Ok(next) => frame = next,
+                Err(mpsc::error::TryRecvError::Empty | mpsc::error::TryRecvError::Disconnected) => {
+                    break;
+                }
+            }
         }
+        if encode_failed {
+            break;
+        }
+        if let Err(_) = writer.write_all(&encoded).await {
+            stats.errors.fetch_add(1, Ordering::Relaxed);
+            break;
+        }
+        stats.frames.fetch_add(batch_frames, Ordering::Relaxed);
+        stats
+            .framed_bytes
+            .fetch_add(encoded.len() as u64, Ordering::Relaxed);
     }
     if shutdown_when_done {
         let _ = writer.shutdown().await;
@@ -620,13 +1060,14 @@ async fn socket_writer(
 struct GeneratorContext {
     destination: DestinationHash,
     relay: TransportId,
-    direction: Direction,
     profile: benchmarks::WorkloadProfile,
+    payload_template: Arc<Vec<u8>>,
     deadline: tokio::time::Instant,
 }
 
 async fn generate_direction(
-    send: mpsc::Sender<Vec<u8>>,
+    send: mpsc::Sender<OutboundFrame>,
+    mut buffers: mpsc::Receiver<Vec<u8>>,
     credits: Arc<Semaphore>,
     shared: Arc<SharedDirection>,
     context: GeneratorContext,
@@ -634,8 +1075,8 @@ async fn generate_direction(
     let GeneratorContext {
         destination,
         relay,
-        direction,
         profile,
+        payload_template,
         deadline,
     } = context;
     let mut sizes = SizeSequence::new(
@@ -648,7 +1089,7 @@ async fn generate_direction(
     loop {
         let permit = tokio::select! {
             _ = tokio::time::sleep_until(deadline) => break,
-            permit = credits.clone().acquire_owned() => {
+            permit = credits.acquire() => {
                 match permit {
                     Ok(permit) => permit,
                     Err(_) => break,
@@ -660,27 +1101,46 @@ async fn generate_direction(
             credits.add_permits(1);
             break;
         }
+        let mut frame = tokio::select! {
+            _ = tokio::time::sleep_until(deadline) => {
+                credits.add_permits(1);
+                break;
+            }
+            frame = buffers.recv() => {
+                match frame {
+                    Some(frame) => frame,
+                    None => {
+                        shared.buffer_pool_misses.fetch_add(1, Ordering::Relaxed);
+                        credits.add_permits(1);
+                        break;
+                    }
+                }
+            }
+        };
         let len = sizes.next_len();
-        let frame = data_frame(
+        prepare_data_frame_from_template(
+            &mut frame,
             destination,
             relay,
-            direction,
             sequence,
             len,
-            profile.size_seed,
+            &payload_template,
         );
         let hash = PacketHash::of_wire_packet(&frame).expect("generated data hashes");
-        shared
-            .outstanding
-            .lock()
-            .expect("outstanding map")
-            .insert(sequence, *hash.as_bytes());
-        if send.send(frame).await.is_err() {
-            shared
-                .outstanding
-                .lock()
-                .expect("outstanding map")
-                .remove(&sequence);
+        if !shared.outstanding.insert(sequence, *hash.as_bytes()) {
+            shared.buffer_pool_misses.fetch_add(1, Ordering::Relaxed);
+            credits.add_permits(1);
+            break;
+        }
+        if send
+            .send(OutboundFrame {
+                bytes: frame,
+                recycle: RecycleBuffer::Data,
+            })
+            .await
+            .is_err()
+        {
+            shared.outstanding.remove(sequence);
             credits.add_permits(1);
             break;
         }
@@ -691,6 +1151,7 @@ async fn generate_direction(
         sequence += 1;
     }
     shared.generator_done.store(true, Ordering::Release);
+    shared.changed.notify_waiters();
 }
 
 #[derive(Default)]
@@ -708,37 +1169,35 @@ struct ReaderStats {
 }
 
 struct ReaderContext {
-    side_send: mpsc::Sender<Vec<u8>>,
+    side_send: mpsc::Sender<OutboundFrame>,
+    proof_buffers: mpsc::Receiver<Vec<u8>>,
     incoming_destination: DestinationHash,
     incoming_direction: Direction,
     incoming: Arc<SharedDirection>,
     local_direction: Direction,
     local: Arc<SharedDirection>,
     local_credits: Arc<Semaphore>,
-    seed: u64,
+    incoming_payload_template: Arc<Vec<u8>>,
     drain_timeout: Duration,
 }
 
 async fn consume_side(
     mut reader: FramedReader<OwnedReadHalf>,
-    context: ReaderContext,
+    mut context: ReaderContext,
+    mut frame: Vec<u8>,
 ) -> ReaderStats {
     let mut stats = ReaderStats::default();
     let mut next_incoming = 1u64;
     let mut drain_started = None;
     loop {
-        let incoming_empty = context
-            .incoming
-            .outstanding
-            .lock()
-            .expect("incoming outstanding map")
-            .is_empty();
-        let local_empty = context
-            .local
-            .outstanding
-            .lock()
-            .expect("local outstanding map")
-            .is_empty();
+        let incoming_changed = context.incoming.changed.notified();
+        let local_changed = context.local.changed.notified();
+        tokio::pin!(incoming_changed);
+        tokio::pin!(local_changed);
+        incoming_changed.as_mut().enable();
+        local_changed.as_mut().enable();
+        let incoming_empty = context.incoming.outstanding.is_empty();
+        let local_empty = context.local.outstanding.is_empty();
         let complete = context.incoming.generator_done.load(Ordering::Acquire)
             && context.local.generator_done.load(Ordering::Acquire)
             && stats.carried_data == context.incoming.sent.load(Ordering::Acquire)
@@ -754,23 +1213,37 @@ async fn consume_side(
         {
             drain_started = Some(Instant::now());
         }
-        if drain_started.is_some_and(|started| started.elapsed() >= context.drain_timeout) {
-            stats.drain_timeouts += 1;
-            break;
+        let drain_deadline = drain_started.map(|started| started + context.drain_timeout);
+        enum Wake {
+            Frame(io::Result<()>),
+            StateChanged,
+            DrainTimedOut,
         }
-
-        let frame = match tokio::time::timeout(Duration::from_millis(100), reader.next()).await {
-            Ok(Ok(frame)) => frame,
-            Ok(Err(_)) => {
+        let wake = match drain_deadline {
+            Some(deadline) => tokio::select! {
+                result = reader.next_into(&mut frame) => Wake::Frame(result),
+                () = &mut incoming_changed => Wake::StateChanged,
+                () = &mut local_changed => Wake::StateChanged,
+                () = tokio::time::sleep_until(deadline.into()) => Wake::DrainTimedOut,
+            },
+            None => tokio::select! {
+                result = reader.next_into(&mut frame) => Wake::Frame(result),
+                () = &mut incoming_changed => Wake::StateChanged,
+                () = &mut local_changed => Wake::StateChanged,
+            },
+        };
+        match wake {
+            Wake::Frame(Ok(())) => {}
+            Wake::Frame(Err(_)) => {
                 stats.unexpected += 1;
                 break;
             }
-            Err(_) => continue,
-        };
-        let mut encoded = vec![0u8; max_encoded_len(frame.len())];
-        stats.egress_wire_bytes += encode(&frame, &mut encoded)
-            .expect("a received frame re-encodes for wire accounting")
-            as u64;
+            Wake::StateChanged => continue,
+            Wake::DrainTimedOut => {
+                stats.drain_timeouts += 1;
+                break;
+            }
+        }
         let Ok((header, payload)) = WirePacketHeader::parse(&frame) else {
             stats.corrupt += 1;
             context.local_credits.add_permits(1);
@@ -781,8 +1254,9 @@ async fn consume_side(
                 stats.maintenance_announces += 1;
             }
             PacketType::Data => {
-                let hash = PacketHash::of_wire_packet(&frame).expect("parsed data hashes");
-                let Some((direction, sequence)) = parse_data_payload(payload, context.seed) else {
+                let Some((direction, sequence)) =
+                    parse_data_payload_against(payload, &context.incoming_payload_template)
+                else {
                     stats.corrupt += 1;
                     continue;
                 };
@@ -809,9 +1283,30 @@ async fn consume_side(
                 }
                 stats.carried_data += 1;
                 stats.carried_payload_bytes += payload.len() as u64;
+                let Some(expected_hash) = context.incoming.outstanding.get(sequence) else {
+                    stats.unexpected += 1;
+                    continue;
+                };
+                let Some(mut proof) = context.proof_buffers.recv().await else {
+                    context
+                        .incoming
+                        .buffer_pool_misses
+                        .fetch_add(1, Ordering::Relaxed);
+                    stats.unexpected += 1;
+                    break;
+                };
+                prepare_proof_frame(
+                    &mut proof,
+                    PacketHash::new(expected_hash),
+                    direction,
+                    sequence,
+                );
                 if context
                     .side_send
-                    .send(proof_frame(hash, direction, sequence))
+                    .send(OutboundFrame {
+                        bytes: proof,
+                        recycle: RecycleBuffer::Proof,
+                    })
                     .await
                     .is_err()
                 {
@@ -831,12 +1326,8 @@ async fn consume_side(
                     && direction.id == context.local_direction.id
                     && DestinationHash::from_address(header.address)
                         == PacketHash::new(hash).proof_destination();
-                let expected = context
-                    .local
-                    .outstanding
-                    .lock()
-                    .expect("outstanding map")
-                    .remove(&sequence);
+                let expected = context.local.outstanding.remove(sequence);
+                context.local.changed.notify_waiters();
                 if valid_header && expected == Some(hash) {
                     stats.returned_proofs += 1;
                 } else if expected.is_none() {
@@ -851,17 +1342,18 @@ async fn consume_side(
             }
         }
     }
+    stats.egress_wire_bytes = reader.wire_bytes();
     stats
 }
 
 struct ResourceGeneratorContext {
-    frame_template: Arc<Vec<u8>>,
     payload_len: usize,
     deadline: tokio::time::Instant,
 }
 
 async fn generate_resource_direction(
-    send: mpsc::Sender<Vec<u8>>,
+    send: mpsc::Sender<OutboundFrame>,
+    mut buffers: mpsc::Receiver<Vec<u8>>,
     credits: Arc<Semaphore>,
     shared: Arc<SharedDirection>,
     context: ResourceGeneratorContext,
@@ -870,7 +1362,7 @@ async fn generate_resource_direction(
     loop {
         let permit = tokio::select! {
             _ = tokio::time::sleep_until(context.deadline) => break,
-            permit = credits.clone().acquire_owned() => {
+            permit = credits.acquire() => {
                 match permit {
                     Ok(permit) => permit,
                     Err(_) => break,
@@ -882,18 +1374,37 @@ async fn generate_resource_direction(
             credits.add_permits(1);
             break;
         }
-        let frame = resource_frame(&context.frame_template, context.payload_len, sequence);
-        shared
-            .outstanding
-            .lock()
-            .expect("outstanding map")
-            .insert(sequence, [0; 32]);
-        if send.send(frame).await.is_err() {
-            shared
-                .outstanding
-                .lock()
-                .expect("outstanding map")
-                .remove(&sequence);
+        let mut frame = tokio::select! {
+            _ = tokio::time::sleep_until(context.deadline) => {
+                credits.add_permits(1);
+                break;
+            }
+            frame = buffers.recv() => {
+                match frame {
+                    Some(frame) => frame,
+                    None => {
+                        shared.buffer_pool_misses.fetch_add(1, Ordering::Relaxed);
+                        credits.add_permits(1);
+                        break;
+                    }
+                }
+            }
+        };
+        prepare_resource_frame(&mut frame, context.payload_len, sequence);
+        if !shared.outstanding.insert(sequence, [0; 32]) {
+            shared.buffer_pool_misses.fetch_add(1, Ordering::Relaxed);
+            credits.add_permits(1);
+            break;
+        }
+        if send
+            .send(OutboundFrame {
+                bytes: frame,
+                recycle: RecycleBuffer::Data,
+            })
+            .await
+            .is_err()
+        {
+            shared.outstanding.remove(sequence);
             credits.add_permits(1);
             break;
         }
@@ -904,6 +1415,7 @@ async fn generate_resource_direction(
         sequence += 1;
     }
     shared.generator_done.store(true, Ordering::Release);
+    shared.changed.notify_waiters();
 }
 
 struct ResourceReaderContext {
@@ -919,24 +1431,20 @@ struct ResourceReaderContext {
 async fn consume_resource_side(
     mut reader: FramedReader<OwnedReadHalf>,
     context: ResourceReaderContext,
+    mut frame: Vec<u8>,
 ) -> ReaderStats {
     let mut stats = ReaderStats::default();
     let mut next_incoming = 1u64;
     let mut drain_started = None;
-    let mut encoded = Vec::new();
     loop {
-        let incoming_empty = context
-            .incoming
-            .outstanding
-            .lock()
-            .expect("incoming outstanding map")
-            .is_empty();
-        let local_empty = context
-            .local
-            .outstanding
-            .lock()
-            .expect("local outstanding map")
-            .is_empty();
+        let incoming_changed = context.incoming.changed.notified();
+        let local_changed = context.local.changed.notified();
+        tokio::pin!(incoming_changed);
+        tokio::pin!(local_changed);
+        incoming_changed.as_mut().enable();
+        local_changed.as_mut().enable();
+        let incoming_empty = context.incoming.outstanding.is_empty();
+        let local_empty = context.local.outstanding.is_empty();
         let complete = context.incoming.generator_done.load(Ordering::Acquire)
             && context.local.generator_done.load(Ordering::Acquire)
             && stats.carried_data == context.incoming.sent.load(Ordering::Acquire)
@@ -951,23 +1459,37 @@ async fn consume_resource_side(
         {
             drain_started = Some(Instant::now());
         }
-        if drain_started.is_some_and(|started| started.elapsed() >= context.drain_timeout) {
-            stats.drain_timeouts += 1;
-            break;
+        let drain_deadline = drain_started.map(|started| started + context.drain_timeout);
+        enum Wake {
+            Frame(io::Result<()>),
+            StateChanged,
+            DrainTimedOut,
         }
-
-        let frame = match tokio::time::timeout(Duration::from_millis(100), reader.next()).await {
-            Ok(Ok(frame)) => frame,
-            Ok(Err(_)) => {
+        let wake = match drain_deadline {
+            Some(deadline) => tokio::select! {
+                result = reader.next_into(&mut frame) => Wake::Frame(result),
+                () = &mut incoming_changed => Wake::StateChanged,
+                () = &mut local_changed => Wake::StateChanged,
+                () = tokio::time::sleep_until(deadline.into()) => Wake::DrainTimedOut,
+            },
+            None => tokio::select! {
+                result = reader.next_into(&mut frame) => Wake::Frame(result),
+                () = &mut incoming_changed => Wake::StateChanged,
+                () = &mut local_changed => Wake::StateChanged,
+            },
+        };
+        match wake {
+            Wake::Frame(Ok(())) => {}
+            Wake::Frame(Err(_)) => {
                 stats.unexpected += 1;
                 break;
             }
-            Err(_) => continue,
-        };
-        encoded.resize(max_encoded_len(frame.len()), 0);
-        stats.egress_wire_bytes += encode(&frame, &mut encoded)
-            .expect("a received frame re-encodes for wire accounting")
-            as u64;
+            Wake::StateChanged => continue,
+            Wake::DrainTimedOut => {
+                stats.drain_timeouts += 1;
+                break;
+            }
+        }
         let Ok((header, payload)) = WirePacketHeader::parse(&frame) else {
             stats.corrupt += 1;
             continue;
@@ -998,12 +1520,8 @@ async fn consume_resource_side(
             stats.unexpected += 1;
             continue;
         }
-        let outstanding = context
-            .incoming
-            .outstanding
-            .lock()
-            .expect("outstanding map")
-            .remove(&sequence);
+        let outstanding = context.incoming.outstanding.remove(sequence);
+        context.incoming.changed.notify_waiters();
         if outstanding.is_none() {
             stats.duplicates += 1;
             continue;
@@ -1020,6 +1538,7 @@ async fn consume_resource_side(
         stats.carried_payload_bytes += payload.len() as u64;
         context.incoming_credits.add_permits(1);
     }
+    stats.egress_wire_bytes = reader.wire_bytes();
     stats
 }
 
@@ -1032,11 +1551,50 @@ struct ResourceMeasurement {
     payload_len: usize,
     profile: benchmarks::WorkloadProfile,
     duration: Duration,
-    harness_rate: f64,
+    harness_rates: CalibrationRates,
     harness_calibration_ms: u64,
 }
 
 async fn run_resource_measurement(measurement: ResourceMeasurement) -> io::Result<()> {
+    let ResourceMeasurement {
+        write_a,
+        mut read_a,
+        write_b,
+        mut read_b,
+        link_id,
+        payload_len,
+        profile,
+        duration,
+        harness_rates,
+        harness_calibration_ms,
+    } = measurement;
+    let harness_rate = harness_rates.limiting();
+    let template_a = resource_frame_template(link_id, A_TO_B, payload_len, profile.size_seed);
+    let template_b = resource_frame_template(link_id, B_TO_A, payload_len, profile.size_seed);
+    let (_, expected_a) = WirePacketHeader::parse(&template_a)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "A resource template"))?;
+    let (_, expected_b) = WirePacketHeader::parse(&template_b)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "B resource template"))?;
+    let expected_a = expected_a.to_vec();
+    let expected_b = expected_b.to_vec();
+
+    let (send_a, receive_a) = mpsc::channel(profile.window);
+    let (send_b, receive_b) = mpsc::channel(profile.window);
+    let (data_pool_a, data_buffers_a) = buffer_pool(profile.window, || template_a.clone());
+    let (data_pool_b, data_buffers_b) = buffer_pool(profile.window, || template_b.clone());
+    let encoded_a = writer_buffer(template_a.len());
+    let encoded_b = writer_buffer(template_b.len());
+    let read_frame_a = Vec::with_capacity(template_a.len());
+    let read_frame_b = Vec::with_capacity(template_b.len());
+    let writer_a_stats = Arc::new(WriterStats::default());
+    let writer_b_stats = Arc::new(WriterStats::default());
+    let shared_a = Arc::new(SharedDirection::new(profile.window));
+    let shared_b = Arc::new(SharedDirection::new(profile.window));
+    let credits_a = Arc::new(Semaphore::new(profile.window));
+    let credits_b = Arc::new(Semaphore::new(profile.window));
+    read_a.reset_wire_bytes();
+    read_b.reset_wire_bytes();
+
     println!("MEASURE_READY");
     let mut command = String::new();
     std::io::stdin().read_line(&mut command)?;
@@ -1047,76 +1605,43 @@ async fn run_resource_measurement(measurement: ResourceMeasurement) -> io::Resul
         ));
     }
 
-    let ResourceMeasurement {
-        write_a,
-        read_a,
-        write_b,
-        read_b,
-        link_id,
-        payload_len,
-        profile,
-        duration,
-        harness_rate,
-        harness_calibration_ms,
-    } = measurement;
-    let template_a = Arc::new(resource_frame_template(
-        link_id,
-        A_TO_B,
-        payload_len,
-        profile.size_seed,
-    ));
-    let template_b = Arc::new(resource_frame_template(
-        link_id,
-        B_TO_A,
-        payload_len,
-        profile.size_seed,
-    ));
-    let (_, expected_a) = WirePacketHeader::parse(&template_a)
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "A resource template"))?;
-    let (_, expected_b) = WirePacketHeader::parse(&template_b)
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "B resource template"))?;
-    let expected_a = expected_a.to_vec();
-    let expected_b = expected_b.to_vec();
-
-    let (send_a, receive_a) = mpsc::channel(profile.window);
-    let (send_b, receive_b) = mpsc::channel(profile.window);
-    let writer_a_stats = Arc::new(WriterStats::default());
-    let writer_b_stats = Arc::new(WriterStats::default());
     let writer_a = tokio::spawn(socket_writer(
         write_a,
         receive_a,
         writer_a_stats.clone(),
         false,
+        encoded_a,
+        Some(data_pool_a),
+        None,
     ));
     let writer_b = tokio::spawn(socket_writer(
         write_b,
         receive_b,
         writer_b_stats.clone(),
         false,
+        encoded_b,
+        Some(data_pool_b),
+        None,
     ));
-    let shared_a = Arc::new(SharedDirection::default());
-    let shared_b = Arc::new(SharedDirection::default());
-    let credits_a = Arc::new(Semaphore::new(profile.window));
-    let credits_b = Arc::new(Semaphore::new(profile.window));
     let deadline = tokio::time::Instant::now() + duration;
     let started = Instant::now();
 
     let generator_a = tokio::spawn(generate_resource_direction(
         send_a.clone(),
+        data_buffers_a,
         credits_a.clone(),
         shared_a.clone(),
         ResourceGeneratorContext {
-            frame_template: template_a,
             payload_len,
             deadline,
         },
     ));
     let generator_b = tokio::spawn(generate_resource_direction(
         send_b.clone(),
+        data_buffers_b,
         credits_b.clone(),
         shared_b.clone(),
         ResourceGeneratorContext {
-            frame_template: template_b,
             payload_len,
             deadline,
         },
@@ -1129,9 +1654,10 @@ async fn run_resource_measurement(measurement: ResourceMeasurement) -> io::Resul
             incoming_payload: expected_b,
             incoming: shared_b.clone(),
             local: shared_a.clone(),
-            incoming_credits: credits_b,
+            incoming_credits: credits_b.clone(),
             drain_timeout: Duration::from_millis(profile.drain_timeout_ms),
         },
+        read_frame_a,
     ));
     let consumer_b = tokio::spawn(consume_resource_side(
         read_b,
@@ -1141,9 +1667,10 @@ async fn run_resource_measurement(measurement: ResourceMeasurement) -> io::Resul
             incoming_payload: expected_a,
             incoming: shared_a.clone(),
             local: shared_b.clone(),
-            incoming_credits: credits_a,
+            incoming_credits: credits_a.clone(),
             drain_timeout: Duration::from_millis(profile.drain_timeout_ms),
         },
+        read_frame_b,
     ));
     generator_a.await.expect("A resource generator");
     generator_b.await.expect("B resource generator");
@@ -1181,8 +1708,15 @@ async fn run_resource_measurement(measurement: ResourceMeasurement) -> io::Resul
     let unexpected = reader_a.unexpected + reader_b.unexpected + writer_errors;
     let drain_timeouts = reader_a.drain_timeouts + reader_b.drain_timeouts;
     let maintenance_announces = reader_a.maintenance_announces + reader_b.maintenance_announces;
-    let outstanding = shared_a.outstanding.lock().expect("A outstanding").len()
-        + shared_b.outstanding.lock().expect("B outstanding").len();
+    let outstanding = shared_a.outstanding.len() + shared_b.outstanding.len();
+    let buffer_pool_misses = shared_a.buffer_pool_misses.load(Ordering::Relaxed)
+        + shared_b.buffer_pool_misses.load(Ordering::Relaxed);
+    let slot_errors = shared_a.outstanding.slot_errors() + shared_b.outstanding.slot_errors();
+    let available_credits = credits_a.available_permits() + credits_b.available_permits();
+    let credit_leaks = profile
+        .window
+        .saturating_mul(2)
+        .saturating_sub(available_credits);
     let missing = sent.saturating_sub(carried);
     let timed_out_frames = if drain_timeouts > 0 {
         outstanding as u64
@@ -1199,11 +1733,13 @@ async fn run_resource_measurement(measurement: ResourceMeasurement) -> io::Resul
          sent_payload_bytes_b_to_a={} carried_payload_bytes_b_to_a={} elapsed_ms={} \
          carried_payload_bytes_per_sec={carried_rate:.1} forwarded_frames_per_sec={frame_rate:.1} \
          ingress_wire_bytes_per_sec={:.1} egress_wire_bytes_per_sec={:.1} \
+         harness_source_payload_bytes_per_sec={:.1} \
+         harness_sink_payload_bytes_per_sec={:.1} \
          harness_carried_payload_bytes_per_sec={harness_rate:.1} \
          harness_calibration_ms={harness_calibration_ms} harness_headroom={} \
          missing={} duplicates={} corrupt={} reordered={} unexpected={} timed_out_frames={} \
          drain_timeouts={} outstanding={} maintenance_announces={} negotiated_link_mtu_bytes={} \
-         resource_payload_bytes_per_frame={}",
+         resource_payload_bytes_per_frame={} buffer_pool_misses={} credit_leaks={}",
         if cfg!(debug_assertions) {
             "debug"
         } else {
@@ -1224,28 +1760,34 @@ async fn run_resource_measurement(measurement: ResourceMeasurement) -> io::Resul
         elapsed.as_millis(),
         ingress_wire_bytes as f64 / seconds,
         egress_wire_bytes as f64 / seconds,
+        harness_rates.source,
+        harness_rates.sink,
         u8::from(harness_headroom),
         missing,
         duplicates,
         corrupt,
         reordered,
-        unexpected,
+        unexpected + slot_errors,
         timed_out_frames,
         drain_timeouts,
         outstanding,
         maintenance_announces,
         payload_len + HEADER_MIN_LEN + IFAC_MIN_LEN,
         payload_len,
+        buffer_pool_misses,
+        credit_leaks,
     );
     Ok(())
 }
 
 async fn calibration_generate(
-    send: mpsc::Sender<Vec<u8>>,
+    send: mpsc::Sender<OutboundFrame>,
+    mut buffers: mpsc::Receiver<Vec<u8>>,
     profile: &benchmarks::WorkloadProfile,
     direction: Direction,
     duration: Duration,
-    resource: Option<(Arc<Vec<u8>>, usize)>,
+    resource_payload_len: Option<usize>,
+    raw_payload_template: Arc<Vec<u8>>,
 ) -> u64 {
     let destination = DestinationHash::new([direction.id.wrapping_add(1); 16]);
     let relay = TransportId::new([0x77; 16]);
@@ -1259,26 +1801,34 @@ async fn calibration_generate(
     let mut sequence = 1u64;
     let mut payload_bytes = 0u64;
     while tokio::time::Instant::now() < deadline {
-        let (frame, len) = if let Some((template, payload_len)) = &resource {
-            (
-                resource_frame(template, *payload_len, sequence),
-                *payload_len,
-            )
+        let Some(mut frame) = buffers.recv().await else {
+            break;
+        };
+        let len = if let Some(payload_len) = resource_payload_len {
+            prepare_resource_frame(&mut frame, payload_len, sequence);
+            payload_len
         } else {
             let len = sizes.next_len();
-            (
-                data_frame(
-                    destination,
-                    relay,
-                    direction,
-                    sequence,
-                    len,
-                    profile.size_seed,
-                ),
+            prepare_data_frame_from_template(
+                &mut frame,
+                destination,
+                relay,
+                sequence,
                 len,
-            )
+                &raw_payload_template,
+            );
+            let _ = PacketHash::of_wire_packet(&frame)
+                .expect("calibration source hashes generated data");
+            len
         };
-        if send.send(frame).await.is_err() {
+        if send
+            .send(OutboundFrame {
+                bytes: frame,
+                recycle: RecycleBuffer::Data,
+            })
+            .await
+            .is_err()
+        {
             break;
         }
         payload_bytes += len as u64;
@@ -1287,13 +1837,12 @@ async fn calibration_generate(
     payload_bytes
 }
 
-fn calibration_sink(read: &mut std::net::TcpStream) -> io::Result<u64> {
-    use std::io::Read as _;
-
-    let mut buffer = [0u8; 64 * 1024];
+fn calibration_return_sink(mut stream: std::net::TcpStream) -> io::Result<u64> {
+    stream.set_nonblocking(false)?;
+    let mut buffer = [0u8; READ_CHUNK];
     let mut wire_bytes = 0u64;
     loop {
-        let received = read.read(&mut buffer)?;
+        let received = std::io::Read::read(&mut stream, &mut buffer)?;
         if received == 0 {
             return Ok(wire_bytes);
         }
@@ -1301,20 +1850,210 @@ fn calibration_sink(read: &mut std::net::TcpStream) -> io::Result<u64> {
     }
 }
 
-async fn calibrate(
-    profile: benchmarks::WorkloadProfile,
-    smoke: bool,
+fn calibration_feed(
+    mut stream: std::net::TcpStream,
+    corpus: Arc<CalibrationCorpus>,
+    duration: Duration,
+) -> io::Result<(u64, u64)> {
+    stream.set_nonblocking(false)?;
+    let deadline = Instant::now() + duration;
+    let mut payload_bytes = 0u64;
+    let mut wire_bytes = 0u64;
+    while Instant::now() < deadline {
+        std::io::Write::write_all(&mut stream, &corpus.encoded)?;
+        payload_bytes += corpus.payload_bytes;
+        wire_bytes += corpus.encoded.len() as u64;
+    }
+    stream.shutdown(std::net::Shutdown::Write)?;
+    Ok((payload_bytes, wire_bytes))
+}
+
+struct CalibrationCorpus {
+    encoded: Vec<u8>,
+    payload_bytes: u64,
+    hashes: Vec<[u8; 32]>,
+}
+
+fn calibration_corpus(
+    profile: &benchmarks::WorkloadProfile,
+    direction: Direction,
     resource: Option<(LinkId, usize)>,
-) -> io::Result<f64> {
-    let duration = if smoke {
-        Duration::from_millis(SMOKE_CALIBRATION_MILLIS)
-    } else {
-        Duration::from_secs(CALIBRATION_SECONDS)
+) -> CalibrationCorpus {
+    let count = profile.window.max(1);
+    let destination = DestinationHash::new([direction.id.wrapping_add(1); 16]);
+    let relay = TransportId::new([0x77; 16]);
+    let mut sizes = SizeSequence::new(
+        profile.size_seed,
+        profile.payload_min,
+        profile.payload_max,
+        profile.payload_len,
+    );
+    let resource_template = resource.map(|(link_id, payload_len)| {
+        (
+            resource_frame_template(link_id, direction, payload_len, profile.size_seed),
+            payload_len,
+        )
+    });
+    let raw_template = payload_template(
+        direction,
+        profile.payload_max.max(profile.payload_len).max(17),
+        profile.size_seed,
+    );
+    let mut corpus = CalibrationCorpus {
+        encoded: Vec::new(),
+        payload_bytes: 0,
+        hashes: Vec::with_capacity(count),
     };
-    // Connect each synthetic source directly to its opposite sink. Running both
-    // one-way TCP paths concurrently is the relay-free equivalent of the live
-    // bidirectional workload, without inserting a copy loop that becomes a third
-    // implementation under test.
+    for sequence in 1..=count {
+        let mut frame = Vec::with_capacity(FRAME_CAP);
+        let payload_len = if let Some((template, payload_len)) = &resource_template {
+            frame.extend_from_slice(template);
+            prepare_resource_frame(&mut frame, *payload_len, sequence as u64);
+            *payload_len
+        } else {
+            let payload_len = sizes.next_len();
+            prepare_data_frame_from_template(
+                &mut frame,
+                destination,
+                relay,
+                sequence as u64,
+                payload_len,
+                &raw_template,
+            );
+            payload_len
+        };
+        if resource_template.is_none() {
+            corpus.hashes.push(
+                *PacketHash::of_wire_packet(&frame)
+                    .expect("calibration corpus data hashes")
+                    .as_bytes(),
+            );
+        }
+        let offset = corpus.encoded.len();
+        corpus
+            .encoded
+            .resize(offset + max_encoded_len(frame.len()), 0);
+        let len =
+            encode(&frame, &mut corpus.encoded[offset..]).expect("calibration corpus encodes");
+        corpus.encoded.truncate(offset + len);
+        corpus.payload_bytes += payload_len as u64;
+    }
+    corpus
+}
+
+async fn calibration_consume(
+    read: OwnedReadHalf,
+    return_send: mpsc::Sender<OutboundFrame>,
+    mut proof_buffers: mpsc::Receiver<Vec<u8>>,
+    direction: Direction,
+    raw_payload_template: Arc<Vec<u8>>,
+    resource: Option<(LinkId, Vec<u8>)>,
+    expected_hashes: Arc<Vec<[u8; 32]>>,
+    sequence_count: u64,
+) -> io::Result<(u64, u64, Duration)> {
+    let started = Instant::now();
+    let mut reader = FramedReader::new(read);
+    let mut frame = Vec::with_capacity(FRAME_CAP);
+    let mut expected_sequence = 1u64;
+    let mut payload_bytes = 0u64;
+    loop {
+        match reader.next_into(&mut frame).await {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => break,
+            Err(error) => return Err(error),
+        }
+        let (header, payload) = WirePacketHeader::parse(&frame)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "calibration frame header"))?;
+        if let Some((link_id, expected_payload)) = &resource {
+            let Some((observed_direction, sequence)) =
+                parse_resource_payload(payload, expected_payload)
+            else {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "calibration resource payload",
+                ));
+            };
+            let valid = header.packet_type == PacketType::Data
+                && header.destination_type == DestinationType::Link
+                && LinkId::from_address(header.address) == *link_id
+                && header.context == WireContext::Resource
+                && observed_direction.id == direction.id
+                && sequence == expected_sequence;
+            if !valid {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "calibration resource sequence or header",
+                ));
+            }
+        } else {
+            let Some((observed_direction, sequence)) =
+                parse_data_payload_against(payload, &raw_payload_template)
+            else {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "calibration data payload",
+                ));
+            };
+            let valid = header.packet_type == PacketType::Data
+                && header.destination_type == DestinationType::Single
+                && header.propagation == PropagationType::Transport
+                && header.transport_id.is_some()
+                && observed_direction.id == direction.id
+                && sequence == expected_sequence;
+            if !valid {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "calibration data sequence or header",
+                ));
+            }
+            let expected_hash = expected_hashes
+                .get(sequence.saturating_sub(1) as usize)
+                .copied()
+                .ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidData, "calibration expected hash")
+                })?;
+            let mut proof = proof_buffers.recv().await.ok_or_else(|| {
+                io::Error::new(io::ErrorKind::BrokenPipe, "calibration proof pool closed")
+            })?;
+            prepare_proof_frame(
+                &mut proof,
+                PacketHash::new(expected_hash),
+                direction,
+                sequence,
+            );
+            return_send
+                .send(OutboundFrame {
+                    bytes: proof,
+                    recycle: RecycleBuffer::Proof,
+                })
+                .await
+                .map_err(|_| {
+                    io::Error::new(io::ErrorKind::BrokenPipe, "calibration proof writer closed")
+                })?;
+        }
+        payload_bytes += payload.len() as u64;
+        expected_sequence = if expected_sequence == sequence_count {
+            1
+        } else {
+            expected_sequence + 1
+        };
+    }
+    Ok((payload_bytes, reader.wire_bytes(), started.elapsed()))
+}
+
+#[derive(Clone, Copy)]
+struct CalibrationRates {
+    source: f64,
+    sink: f64,
+}
+
+impl CalibrationRates {
+    fn limiting(self) -> f64 {
+        self.source.min(self.sink)
+    }
+}
+
+async fn calibration_connections() -> io::Result<((TcpStream, TcpStream), (TcpStream, TcpStream))> {
     let listener_a = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let listener_b = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let (client_a, client_b, accepted_a, accepted_b) = tokio::join!(
@@ -1331,55 +2070,69 @@ async fn calibrate(
     let (server_b, _) = accepted_b?;
     server_a.set_nodelay(true)?;
     server_b.set_nodelay(true)?;
-    let (unused_client_read_a, write_a) = client_a.into_split();
-    let (unused_client_read_b, write_b) = client_b.into_split();
-    drop(unused_client_read_a);
-    drop(unused_client_read_b);
-    let sinks = tokio::task::spawn_blocking(move || {
-        let mut server_a = server_a.into_std()?;
-        let mut server_b = server_b.into_std()?;
-        server_a.set_nonblocking(false)?;
-        server_b.set_nonblocking(false)?;
-        std::thread::scope(|scope| {
-            let sink_a = scope.spawn(|| calibration_sink(&mut server_a));
-            let sink_b = scope.spawn(|| calibration_sink(&mut server_b));
-            Ok::<(u64, u64), io::Error>((
-                sink_a.join().expect("calibration A sink thread")?,
-                sink_b.join().expect("calibration B sink thread")?,
-            ))
-        })
-    });
+    Ok(((client_a, client_b), (server_a, server_b)))
+}
+
+async fn calibrate_source(
+    profile: benchmarks::WorkloadProfile,
+    duration: Duration,
+    resource: Option<(LinkId, usize)>,
+) -> io::Result<f64> {
+    let ((client_a, client_b), (server_a, server_b)) = calibration_connections().await?;
+    let (_, write_a) = client_a.into_split();
+    let (_, write_b) = client_b.into_split();
+    let server_a = server_a.into_std()?;
+    let server_b = server_b.into_std()?;
     let profile_a = profile.clone();
     let profile_b = profile.clone();
+    let raw_template_len = profile.payload_max.max(profile.payload_len).max(17);
+    let raw_template_a = Arc::new(payload_template(
+        A_TO_B,
+        raw_template_len,
+        profile.size_seed,
+    ));
+    let raw_template_b = Arc::new(payload_template(
+        B_TO_A,
+        raw_template_len,
+        profile.size_seed,
+    ));
     let queue = if resource.is_some() {
         profile.window
     } else {
         WRITER_QUEUE
     };
-    let (resource_a, resource_b) = resource.map_or((None, None), |(link_id, payload_len)| {
-        (
-            Some((
-                Arc::new(resource_frame_template(
-                    link_id,
-                    A_TO_B,
-                    payload_len,
-                    profile.size_seed,
-                )),
-                payload_len,
-            )),
-            Some((
-                Arc::new(resource_frame_template(
-                    link_id,
-                    B_TO_A,
-                    payload_len,
-                    profile.size_seed,
-                )),
-                payload_len,
-            )),
-        )
-    });
+    let (template_a, template_b, resource_payload_len) = resource.map_or_else(
+        || {
+            (
+                Vec::with_capacity(BROADCAST_MTU),
+                Vec::with_capacity(BROADCAST_MTU),
+                None,
+            )
+        },
+        |(link_id, payload_len)| {
+            let template_a =
+                resource_frame_template(link_id, A_TO_B, payload_len, profile.size_seed);
+            let template_b =
+                resource_frame_template(link_id, B_TO_A, payload_len, profile.size_seed);
+            (template_a, template_b, Some(payload_len))
+        },
+    );
     let (send_a, receive_a) = mpsc::channel(queue);
     let (send_b, receive_b) = mpsc::channel(queue);
+    let (pool_a, buffers_a) = buffer_pool(profile.window, || {
+        if resource_payload_len.is_some() {
+            template_a.clone()
+        } else {
+            Vec::with_capacity(BROADCAST_MTU)
+        }
+    });
+    let (pool_b, buffers_b) = buffer_pool(profile.window, || {
+        if resource_payload_len.is_some() {
+            template_b.clone()
+        } else {
+            Vec::with_capacity(BROADCAST_MTU)
+        }
+    });
     let writer_a_stats = Arc::new(WriterStats::default());
     let writer_b_stats = Arc::new(WriterStats::default());
     let writer_a = tokio::spawn(socket_writer(
@@ -1387,18 +2140,44 @@ async fn calibrate(
         receive_a,
         writer_a_stats.clone(),
         true,
+        writer_buffer(template_a.len()),
+        Some(pool_a),
+        None,
     ));
     let writer_b = tokio::spawn(socket_writer(
         write_b,
         receive_b,
         writer_b_stats.clone(),
         true,
+        writer_buffer(template_b.len()),
+        Some(pool_b),
+        None,
     ));
+    let sink_a = std::thread::spawn(move || calibration_return_sink(server_a));
+    let sink_b = std::thread::spawn(move || calibration_return_sink(server_b));
     let generator_a = tokio::spawn(async move {
-        calibration_generate(send_a, &profile_a, A_TO_B, duration, resource_a).await
+        calibration_generate(
+            send_a,
+            buffers_a,
+            &profile_a,
+            A_TO_B,
+            duration,
+            resource_payload_len,
+            raw_template_a,
+        )
+        .await
     });
     let generator_b = tokio::spawn(async move {
-        calibration_generate(send_b, &profile_b, B_TO_A, duration, resource_b).await
+        calibration_generate(
+            send_b,
+            buffers_b,
+            &profile_b,
+            B_TO_A,
+            duration,
+            resource_payload_len,
+            raw_template_b,
+        )
+        .await
     });
     let join_error = |error| io::Error::other(format!("calibration task: {error}"));
     let (sent_a, sent_b) = tokio::join!(generator_a, generator_b);
@@ -1406,10 +2185,11 @@ async fn calibrate(
     let (writer_a, writer_b) = tokio::join!(writer_a, writer_b);
     writer_a.map_err(join_error)?;
     writer_b.map_err(join_error)?;
-    let (received_a, received_b) = sinks
-        .await
-        .map_err(|error| io::Error::other(format!("calibration sinks: {error}")))??;
-    let received_wire = received_a + received_b;
+    let thread_error = |_| io::Error::other("calibration peer thread panicked");
+    let received_wire =
+        sink_a.join().map_err(thread_error)?? + sink_b.join().map_err(thread_error)??;
+    let written_wire = writer_a_stats.framed_bytes.load(Ordering::Relaxed)
+        + writer_b_stats.framed_bytes.load(Ordering::Relaxed);
     let writer_errors = writer_a_stats.errors.load(Ordering::Relaxed)
         + writer_b_stats.errors.load(Ordering::Relaxed);
     if writer_errors != 0 {
@@ -1418,15 +2198,168 @@ async fn calibrate(
             format!("calibration writers failed {writer_errors} time(s)"),
         ));
     }
-    let written_wire = writer_a_stats.framed_bytes.load(Ordering::Relaxed)
-        + writer_b_stats.framed_bytes.load(Ordering::Relaxed);
     if written_wire != received_wire {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("calibration lost TCP bytes: written={written_wire} received={received_wire}"),
+            format!("calibration source TCP mismatch: written={written_wire} read={received_wire}"),
         ));
     }
-    Ok(sent as f64 / duration.as_secs_f64().max(f64::EPSILON))
+    let seconds = duration.as_secs_f64().max(f64::EPSILON);
+    Ok(sent as f64 / seconds)
+}
+
+async fn calibrate_sink(
+    profile: benchmarks::WorkloadProfile,
+    duration: Duration,
+    resource: Option<(LinkId, usize)>,
+) -> io::Result<f64> {
+    let ((client_a, client_b), (server_a, server_b)) = calibration_connections().await?;
+    let client_a = client_a.into_std()?;
+    let client_b = client_b.into_std()?;
+    let return_read_a = client_a.try_clone()?;
+    let return_read_b = client_b.try_clone()?;
+    let (read_a, return_write_a) = server_a.into_split();
+    let (read_b, return_write_b) = server_b.into_split();
+    let raw_template_len = profile.payload_max.max(profile.payload_len).max(17);
+    let raw_template_a = Arc::new(payload_template(
+        A_TO_B,
+        raw_template_len,
+        profile.size_seed,
+    ));
+    let raw_template_b = Arc::new(payload_template(
+        B_TO_A,
+        raw_template_len,
+        profile.size_seed,
+    ));
+    let corpus_a = Arc::new(calibration_corpus(&profile, A_TO_B, resource));
+    let corpus_b = Arc::new(calibration_corpus(&profile, B_TO_A, resource));
+    let expected_hashes_a = Arc::new(corpus_a.hashes.clone());
+    let expected_hashes_b = Arc::new(corpus_b.hashes.clone());
+    let (expected_a, expected_b) = resource.map_or((None, None), |(link_id, payload_len)| {
+        let template_a = resource_frame_template(link_id, A_TO_B, payload_len, profile.size_seed);
+        let template_b = resource_frame_template(link_id, B_TO_A, payload_len, profile.size_seed);
+        let (_, payload_a) =
+            WirePacketHeader::parse(&template_a).expect("calibration A resource template");
+        let (_, payload_b) =
+            WirePacketHeader::parse(&template_b).expect("calibration B resource template");
+        (
+            Some((link_id, payload_a.to_vec())),
+            Some((link_id, payload_b.to_vec())),
+        )
+    });
+    let (return_send_a, return_receive_a) = mpsc::channel(WRITER_QUEUE);
+    let (return_send_b, return_receive_b) = mpsc::channel(WRITER_QUEUE);
+    let (proof_pool_a, proof_buffers_a) =
+        buffer_pool(profile.window, || Vec::with_capacity(BROADCAST_MTU));
+    let (proof_pool_b, proof_buffers_b) =
+        buffer_pool(profile.window, || Vec::with_capacity(BROADCAST_MTU));
+    let writer_a_stats = Arc::new(WriterStats::default());
+    let writer_b_stats = Arc::new(WriterStats::default());
+    let writer_a = tokio::spawn(socket_writer(
+        return_write_a,
+        return_receive_a,
+        writer_a_stats.clone(),
+        true,
+        writer_buffer(BROADCAST_MTU),
+        None,
+        Some(proof_pool_a),
+    ));
+    let writer_b = tokio::spawn(socket_writer(
+        return_write_b,
+        return_receive_b,
+        writer_b_stats.clone(),
+        true,
+        writer_buffer(BROADCAST_MTU),
+        None,
+        Some(proof_pool_b),
+    ));
+    let consumer_a = tokio::spawn(calibration_consume(
+        read_a,
+        return_send_a,
+        proof_buffers_a,
+        A_TO_B,
+        raw_template_a,
+        expected_a,
+        expected_hashes_a,
+        profile.window as u64,
+    ));
+    let consumer_b = tokio::spawn(calibration_consume(
+        read_b,
+        return_send_b,
+        proof_buffers_b,
+        B_TO_A,
+        raw_template_b,
+        expected_b,
+        expected_hashes_b,
+        profile.window as u64,
+    ));
+    let return_sink_a = std::thread::spawn(move || calibration_return_sink(return_read_a));
+    let return_sink_b = std::thread::spawn(move || calibration_return_sink(return_read_b));
+    let feeder_a = std::thread::spawn(move || calibration_feed(client_a, corpus_a, duration));
+    let feeder_b = std::thread::spawn(move || calibration_feed(client_b, corpus_b, duration));
+    let join_error = |error| io::Error::other(format!("calibration task: {error}"));
+    let thread_error = |_| io::Error::other("calibration peer thread panicked");
+    let (sent_payload_a, sent_wire_a) = feeder_a.join().map_err(thread_error)??;
+    let (sent_payload_b, sent_wire_b) = feeder_b.join().map_err(thread_error)??;
+    let sent_payload = sent_payload_a + sent_payload_b;
+    let sent_wire = sent_wire_a + sent_wire_b;
+    let (received_a, received_b) = tokio::join!(consumer_a, consumer_b);
+    let (received_payload_a, received_wire_a, elapsed_a) = received_a.map_err(join_error)??;
+    let (received_payload_b, received_wire_b, elapsed_b) = received_b.map_err(join_error)??;
+    let received_payload = received_payload_a + received_payload_b;
+    let received_wire = received_wire_a + received_wire_b;
+    let (writer_a, writer_b) = tokio::join!(writer_a, writer_b);
+    writer_a.map_err(join_error)?;
+    writer_b.map_err(join_error)?;
+    let returned_wire = return_sink_a.join().map_err(thread_error)??
+        + return_sink_b.join().map_err(thread_error)??;
+    let written_return_wire = writer_a_stats.framed_bytes.load(Ordering::Relaxed)
+        + writer_b_stats.framed_bytes.load(Ordering::Relaxed);
+    let writer_errors = writer_a_stats.errors.load(Ordering::Relaxed)
+        + writer_b_stats.errors.load(Ordering::Relaxed);
+    if writer_errors != 0 || written_return_wire != returned_wire {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "calibration return mismatch: errors={writer_errors} \
+                 written={written_return_wire} read={returned_wire}"
+            ),
+        ));
+    }
+    if sent_payload != received_payload || sent_wire != received_wire {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "calibration sink mismatch: payload sent={sent_payload} received={received_payload}; \
+                 TCP sent={sent_wire} received={received_wire}"
+            ),
+        ));
+    }
+    if resource.is_none() && returned_wire == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "calibration proof return path carried no bytes",
+        ));
+    }
+    let seconds = elapsed_a.max(elapsed_b).as_secs_f64().max(f64::EPSILON);
+    Ok(received_payload as f64 / seconds)
+}
+
+async fn calibrate(
+    profile: benchmarks::WorkloadProfile,
+    smoke: bool,
+    resource: Option<(LinkId, usize)>,
+) -> io::Result<CalibrationRates> {
+    let duration = if smoke {
+        Duration::from_millis(SMOKE_CALIBRATION_MILLIS)
+    } else {
+        Duration::from_secs(CALIBRATION_SECONDS)
+    };
+    // Run the source and sink halves independently so the synthetic peer cannot
+    // consume the same loopback CPU budget as the driver component being qualified.
+    let source = calibrate_source(profile.clone(), duration, resource).await?;
+    let sink = calibrate_sink(profile, duration, resource).await?;
+    Ok(CalibrationRates { source, sink })
 }
 
 async fn run() -> io::Result<()> {
@@ -1505,14 +2438,18 @@ async fn run() -> io::Result<()> {
             manifest.profile.size_seed,
         )
         .await?;
-        let harness_rate = calibrate(
+        let harness_rates = calibrate(
             manifest.profile.clone(),
             smoke,
             Some((link_id, payload_len)),
         )
         .await?;
+        let harness_rate = harness_rates.limiting();
         println!(
-            "HARNESS carried_payload_bytes_per_sec={harness_rate:.1} calibration_ms={harness_calibration_ms}"
+            "HARNESS source_payload_bytes_per_sec={:.1} sink_payload_bytes_per_sec={:.1} \
+             carried_payload_bytes_per_sec={harness_rate:.1} calibration_ms={harness_calibration_ms}",
+            harness_rates.source,
+            harness_rates.sink,
         );
         return run_resource_measurement(ResourceMeasurement {
             write_a,
@@ -1523,15 +2460,18 @@ async fn run() -> io::Result<()> {
             payload_len,
             profile: manifest.profile,
             duration,
-            harness_rate,
+            harness_rates,
             harness_calibration_ms,
         })
         .await;
     }
 
-    let harness_rate = calibrate(manifest.profile.clone(), smoke, None).await?;
+    let harness_rates = calibrate(manifest.profile.clone(), smoke, None).await?;
+    let harness_rate = harness_rates.limiting();
     println!(
-        "HARNESS carried_payload_bytes_per_sec={harness_rate:.1} calibration_ms={harness_calibration_ms}"
+        "HARNESS source_payload_bytes_per_sec={:.1} sink_payload_bytes_per_sec={:.1} \
+         carried_payload_bytes_per_sec={harness_rate:.1} calibration_ms={harness_calibration_ms}",
+        harness_rates.source, harness_rates.sink,
     );
     warm_direction(
         &mut write_a,
@@ -1560,6 +2500,40 @@ async fn run() -> io::Result<()> {
     )
     .await?;
 
+    let window = manifest.profile.window;
+    let max_payload_len = manifest
+        .profile
+        .payload_max
+        .max(manifest.profile.payload_len);
+    let payload_template_a = Arc::new(payload_template(
+        A_TO_B,
+        max_payload_len,
+        manifest.profile.size_seed,
+    ));
+    let payload_template_b = Arc::new(payload_template(
+        B_TO_A,
+        max_payload_len,
+        manifest.profile.size_seed,
+    ));
+    let (send_a, receive_a) = mpsc::channel(WRITER_QUEUE);
+    let (send_b, receive_b) = mpsc::channel(WRITER_QUEUE);
+    let (data_pool_a, data_buffers_a) = buffer_pool(window, || Vec::with_capacity(BROADCAST_MTU));
+    let (data_pool_b, data_buffers_b) = buffer_pool(window, || Vec::with_capacity(BROADCAST_MTU));
+    let (proof_pool_a, proof_buffers_a) = buffer_pool(window, || Vec::with_capacity(BROADCAST_MTU));
+    let (proof_pool_b, proof_buffers_b) = buffer_pool(window, || Vec::with_capacity(BROADCAST_MTU));
+    let encoded_a = writer_buffer(BROADCAST_MTU);
+    let encoded_b = writer_buffer(BROADCAST_MTU);
+    let read_frame_a = Vec::with_capacity(BROADCAST_MTU);
+    let read_frame_b = Vec::with_capacity(BROADCAST_MTU);
+    let writer_a_stats = Arc::new(WriterStats::default());
+    let writer_b_stats = Arc::new(WriterStats::default());
+    let shared_a = Arc::new(SharedDirection::new(window));
+    let shared_b = Arc::new(SharedDirection::new(window));
+    let credits_a = Arc::new(Semaphore::new(window));
+    let credits_b = Arc::new(Semaphore::new(window));
+    read_a.reset_wire_bytes();
+    read_b.reset_wire_bytes();
+
     println!("MEASURE_READY");
     let mut command = String::new();
     std::io::stdin().read_line(&mut command)?;
@@ -1570,51 +2544,51 @@ async fn run() -> io::Result<()> {
         ));
     }
 
-    let (send_a, receive_a) = mpsc::channel(WRITER_QUEUE);
-    let (send_b, receive_b) = mpsc::channel(WRITER_QUEUE);
-    let writer_a_stats = Arc::new(WriterStats::default());
-    let writer_b_stats = Arc::new(WriterStats::default());
     let writer_a = tokio::spawn(socket_writer(
         write_a,
         receive_a,
         writer_a_stats.clone(),
         false,
+        encoded_a,
+        Some(data_pool_a),
+        Some(proof_pool_a),
     ));
     let writer_b = tokio::spawn(socket_writer(
         write_b,
         receive_b,
         writer_b_stats.clone(),
         false,
+        encoded_b,
+        Some(data_pool_b),
+        Some(proof_pool_b),
     ));
 
-    let shared_a = Arc::new(SharedDirection::default());
-    let shared_b = Arc::new(SharedDirection::default());
-    let credits_a = Arc::new(Semaphore::new(manifest.profile.window));
-    let credits_b = Arc::new(Semaphore::new(manifest.profile.window));
     let deadline = tokio::time::Instant::now() + duration;
     let started = Instant::now();
 
     let generator_a = tokio::spawn(generate_direction(
         send_a.clone(),
+        data_buffers_a,
         credits_a.clone(),
         shared_a.clone(),
         GeneratorContext {
             destination: destination_b,
             relay,
-            direction: A_TO_B,
             profile: manifest.profile.clone(),
+            payload_template: payload_template_a.clone(),
             deadline,
         },
     ));
     let generator_b = tokio::spawn(generate_direction(
         send_b.clone(),
+        data_buffers_b,
         credits_b.clone(),
         shared_b.clone(),
         GeneratorContext {
             destination: destination_a,
             relay,
-            direction: B_TO_A,
             profile: manifest.profile.clone(),
+            payload_template: payload_template_b.clone(),
             deadline,
         },
     ));
@@ -1622,29 +2596,33 @@ async fn run() -> io::Result<()> {
         read_a,
         ReaderContext {
             side_send: send_a.clone(),
+            proof_buffers: proof_buffers_a,
             incoming_destination: destination_a,
             incoming_direction: B_TO_A,
             incoming: shared_b.clone(),
             local_direction: A_TO_B,
             local: shared_a.clone(),
-            local_credits: credits_a,
-            seed: manifest.profile.size_seed,
+            local_credits: credits_a.clone(),
+            incoming_payload_template: payload_template_b,
             drain_timeout: Duration::from_millis(manifest.profile.drain_timeout_ms),
         },
+        read_frame_a,
     ));
     let consumer_b = tokio::spawn(consume_side(
         read_b,
         ReaderContext {
             side_send: send_b.clone(),
+            proof_buffers: proof_buffers_b,
             incoming_destination: destination_b,
             incoming_direction: A_TO_B,
             incoming: shared_a.clone(),
             local_direction: B_TO_A,
             local: shared_b.clone(),
-            local_credits: credits_b,
-            seed: manifest.profile.size_seed,
+            local_credits: credits_b.clone(),
+            incoming_payload_template: payload_template_a,
             drain_timeout: Duration::from_millis(manifest.profile.drain_timeout_ms),
         },
+        read_frame_b,
     ));
     drop(send_a);
     drop(send_b);
@@ -1684,8 +2662,12 @@ async fn run() -> io::Result<()> {
     let unexpected = reader_a.unexpected + reader_b.unexpected + writer_errors;
     let drain_timeouts = reader_a.drain_timeouts + reader_b.drain_timeouts;
     let maintenance_announces = reader_a.maintenance_announces + reader_b.maintenance_announces;
-    let outstanding = shared_a.outstanding.lock().expect("A outstanding").len()
-        + shared_b.outstanding.lock().expect("B outstanding").len();
+    let outstanding = shared_a.outstanding.len() + shared_b.outstanding.len();
+    let buffer_pool_misses = shared_a.buffer_pool_misses.load(Ordering::Relaxed)
+        + shared_b.buffer_pool_misses.load(Ordering::Relaxed);
+    let slot_errors = shared_a.outstanding.slot_errors() + shared_b.outstanding.slot_errors();
+    let available_credits = credits_a.available_permits() + credits_b.available_permits();
+    let credit_leaks = window.saturating_mul(2).saturating_sub(available_credits);
     let missing = sent.saturating_sub(carried);
     let timed_out_frames = if drain_timeouts > 0 {
         outstanding as u64
@@ -1702,10 +2684,13 @@ async fn run() -> io::Result<()> {
          sent_payload_bytes_b_to_a={} carried_payload_bytes_b_to_a={} elapsed_ms={} \
          carried_payload_bytes_per_sec={carried_rate:.1} forwarded_frames_per_sec={frame_rate:.1} \
          ingress_wire_bytes_per_sec={:.1} egress_wire_bytes_per_sec={:.1} \
+         harness_source_payload_bytes_per_sec={:.1} \
+         harness_sink_payload_bytes_per_sec={:.1} \
          harness_carried_payload_bytes_per_sec={harness_rate:.1} \
          harness_calibration_ms={harness_calibration_ms} harness_headroom={} \
          missing={} duplicates={} corrupt={} reordered={} unexpected={} timed_out_frames={} \
-         drain_timeouts={} outstanding={} maintenance_announces={}",
+         drain_timeouts={} outstanding={} maintenance_announces={} buffer_pool_misses={} \
+         credit_leaks={}",
         if cfg!(debug_assertions) {
             "debug"
         } else {
@@ -1727,16 +2712,20 @@ async fn run() -> io::Result<()> {
         elapsed.as_millis(),
         ingress_wire_bytes as f64 / seconds,
         egress_wire_bytes as f64 / seconds,
+        harness_rates.source,
+        harness_rates.sink,
         u8::from(harness_headroom),
         missing,
         duplicates,
         corrupt,
         reordered,
-        unexpected,
+        unexpected + slot_errors,
         timed_out_frames,
         drain_timeouts,
         outstanding,
         maintenance_announces,
+        buffer_pool_misses,
+        credit_leaks,
     );
     Ok(())
 }
@@ -1826,6 +2815,293 @@ mod tests {
         let mut decoded = Vec::new();
         decoder.feed_slice(&encoded[..len], |candidate| decoded = candidate.to_vec());
         assert_eq!(decoded, frame);
+    }
+
+    #[tokio::test]
+    async fn framed_reader_reuses_buffers_and_counts_actual_tcp_bytes() {
+        use tokio::io::AsyncWriteExt as _;
+
+        let first = data_frame(
+            DestinationHash::new([0x11; 16]),
+            TransportId::new([0x22; 16]),
+            A_TO_B,
+            1,
+            60,
+            benchmarks::DEFAULT_SIZE_SEED,
+        );
+        let second = data_frame(
+            DestinationHash::new([0x33; 16]),
+            TransportId::new([0x44; 16]),
+            B_TO_A,
+            2,
+            420,
+            benchmarks::DEFAULT_SIZE_SEED,
+        );
+        let mut encoded = vec![0; max_encoded_len(first.len()) + max_encoded_len(second.len())];
+        let first_len = encode(&first, &mut encoded).unwrap();
+        let second_len = encode(&second, &mut encoded[first_len..]).unwrap();
+        let total = first_len + second_len;
+        let (mut write, read) = tokio::io::duplex(total * 2);
+        write.write_all(&encoded[..total]).await.unwrap();
+        write.shutdown().await.unwrap();
+
+        let mut reader = FramedReader::new(read);
+        let mut frame = Vec::with_capacity(FRAME_CAP);
+        reader.next_into(&mut frame).await.unwrap();
+        assert_eq!(frame, first);
+        let capacity = frame.capacity();
+        reader.next_into(&mut frame).await.unwrap();
+        assert_eq!(frame, second);
+        assert_eq!(frame.capacity(), capacity);
+        assert_eq!(reader.wire_bytes(), total as u64);
+    }
+
+    #[tokio::test]
+    async fn framed_reader_recovers_after_empty_and_oversized_frames() {
+        let valid = data_frame(
+            DestinationHash::new([0x33; 16]),
+            TransportId::new([0x44; 16]),
+            A_TO_B,
+            9,
+            120,
+            benchmarks::DEFAULT_SIZE_SEED,
+        );
+        let mut encoded = vec![0; max_encoded_len(valid.len())];
+        let valid_len = encode(&valid, &mut encoded).unwrap();
+        encoded.truncate(valid_len);
+        let mut wire = Vec::with_capacity(FRAME_CAP + encoded.len() + 8);
+        wire.extend_from_slice(&[0x7e, 0x7e]);
+        wire.push(0x7e);
+        wire.resize(wire.len() + FRAME_CAP + 1, 0x01);
+        wire.push(0x7e);
+        wire.extend_from_slice(&encoded);
+        let expected_wire = wire.len() as u64;
+        let (mut write, read) = tokio::io::duplex(wire.len() + 1);
+        write.write_all(&wire).await.unwrap();
+        write.shutdown().await.unwrap();
+
+        let mut reader = FramedReader::new(read);
+        let mut frame = Vec::with_capacity(FRAME_CAP);
+        let error = reader.next_into(&mut frame).await.unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        reader.next_into(&mut frame).await.unwrap();
+        assert_eq!(frame, valid);
+        assert_eq!(reader.wire_bytes(), expected_wire);
+    }
+
+    #[tokio::test]
+    async fn socket_writer_batches_exactly_and_recycles_both_buffer_classes() {
+        let data = data_frame(
+            DestinationHash::new([0x55; 16]),
+            TransportId::new([0x66; 16]),
+            A_TO_B,
+            11,
+            120,
+            benchmarks::DEFAULT_SIZE_SEED,
+        );
+        let hash = PacketHash::of_wire_packet(&data).unwrap();
+        let proof = proof_frame(hash, A_TO_B, 11);
+        let expected_data = data.clone();
+        let expected_proof = proof.clone();
+        let (send, receive) = mpsc::channel(2);
+        send.send(OutboundFrame {
+            bytes: data,
+            recycle: RecycleBuffer::Data,
+        })
+        .await
+        .unwrap();
+        send.send(OutboundFrame {
+            bytes: proof,
+            recycle: RecycleBuffer::Proof,
+        })
+        .await
+        .unwrap();
+        drop(send);
+        let (data_pool, mut data_buffers) = mpsc::channel(1);
+        let (proof_pool, mut proof_buffers) = mpsc::channel(1);
+        let stats = Arc::new(WriterStats::default());
+        let (write, read) = tokio::io::duplex(WRITE_BATCH_BYTES * 2);
+        let writer = tokio::spawn(socket_writer(
+            write,
+            receive,
+            stats.clone(),
+            true,
+            writer_buffer(BROADCAST_MTU),
+            Some(data_pool),
+            Some(proof_pool),
+        ));
+        let mut reader = FramedReader::new(read);
+        let mut frame = Vec::with_capacity(BROADCAST_MTU);
+        reader.next_into(&mut frame).await.unwrap();
+        assert_eq!(frame, expected_data);
+        reader.next_into(&mut frame).await.unwrap();
+        assert_eq!(frame, expected_proof);
+        writer.await.unwrap();
+        assert!(data_buffers.recv().await.is_some());
+        assert!(proof_buffers.recv().await.is_some());
+        assert_eq!(stats.frames.load(Ordering::Relaxed), 2);
+        assert_eq!(
+            stats.framed_bytes.load(Ordering::Relaxed),
+            reader.wire_bytes()
+        );
+        assert_eq!(stats.errors.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn socket_writer_recycles_a_frame_when_tcp_write_fails() {
+        let frame = data_frame(
+            DestinationHash::new([0x77; 16]),
+            TransportId::new([0x88; 16]),
+            B_TO_A,
+            12,
+            120,
+            benchmarks::DEFAULT_SIZE_SEED,
+        );
+        let (send, receive) = mpsc::channel(1);
+        send.send(OutboundFrame {
+            bytes: frame,
+            recycle: RecycleBuffer::Data,
+        })
+        .await
+        .unwrap();
+        drop(send);
+        let (pool, mut buffers) = mpsc::channel(1);
+        let stats = Arc::new(WriterStats::default());
+        let (write, read) = tokio::io::duplex(1024);
+        drop(read);
+        socket_writer(
+            write,
+            receive,
+            stats.clone(),
+            true,
+            writer_buffer(BROADCAST_MTU),
+            Some(pool),
+            None,
+        )
+        .await;
+        assert!(buffers.recv().await.is_some());
+        assert_eq!(stats.frames.load(Ordering::Relaxed), 0);
+        assert_eq!(stats.errors.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn outstanding_ring_detects_duplicates_and_reuses_sequence_slots() {
+        let outstanding = Outstanding::new(2);
+        assert!(outstanding.insert(1, [1; 32]));
+        assert_eq!(outstanding.get(1), Some([1; 32]));
+        assert!(!outstanding.insert(3, [3; 32]));
+        assert_eq!(outstanding.slot_errors(), 1);
+        assert_eq!(outstanding.remove(1), Some([1; 32]));
+        assert_eq!(outstanding.get(1), None);
+        assert!(outstanding.insert(3, [3; 32]));
+        assert_eq!(outstanding.remove(3), Some([3; 32]));
+        assert!(outstanding.is_empty());
+    }
+
+    #[test]
+    fn calibration_uses_whichever_driver_half_is_slower() {
+        assert_eq!(
+            CalibrationRates {
+                source: 2_000.0,
+                sink: 1_500.0,
+            }
+            .limiting(),
+            1_500.0
+        );
+        assert_eq!(
+            CalibrationRates {
+                source: 1_250.0,
+                sink: 3_000.0,
+            }
+            .limiting(),
+            1_250.0
+        );
+    }
+
+    #[test]
+    fn warmed_driver_encode_decode_generate_validate_path_does_not_allocate() {
+        let destination = DestinationHash::new([0x51; 16]);
+        let relay = TransportId::new([0x52; 16]);
+        let mut frame = Vec::with_capacity(BROADCAST_MTU);
+        let mut encoded = vec![0; max_encoded_len(BROADCAST_MTU)];
+        let payload_template = payload_template(A_TO_B, 420, benchmarks::DEFAULT_SIZE_SEED);
+        prepare_data_frame_from_template(&mut frame, destination, relay, 1, 420, &payload_template);
+        let mut scanner = RnsSerialScanner::new();
+        let mut decoded = CappedFrame::new();
+        let mut proof = Vec::with_capacity(BROADCAST_MTU);
+        let frame_ptr = frame.as_ptr();
+        let encoded_ptr = encoded.as_ptr();
+
+        let payload_len = 524_288 - HEADER_MIN_LEN - IFAC_MIN_LEN;
+        let template = resource_frame_template(
+            LinkId::new([0x53; 16]),
+            B_TO_A,
+            payload_len,
+            benchmarks::DEFAULT_SIZE_SEED,
+        );
+        let mut resource = template.clone();
+        let resource_ptr = resource.as_ptr();
+        let (_, expected_resource_payload) = WirePacketHeader::parse(&template).unwrap();
+        let mut resource_encoded = vec![0; max_encoded_len(resource.len())];
+        let mut resource_scanner = RnsSerialScanner::new();
+        let mut decoded_resource = CappedFrame::new();
+
+        let allocations = allocation_gate::count(|| {
+            for sequence in 2..=4_096 {
+                let payload_len = 60 + sequence as usize % 361;
+                prepare_data_frame_from_template(
+                    &mut frame,
+                    destination,
+                    relay,
+                    sequence,
+                    payload_len,
+                    &payload_template,
+                );
+                let expected_hash = PacketHash::of_wire_packet(&frame).unwrap();
+                let encoded_len = encode(&frame, &mut encoded).unwrap();
+                let mut offset = 0;
+                assert_eq!(
+                    scanner.next_frame_into(&encoded[..encoded_len], &mut offset, &mut decoded,),
+                    Ok(Some(frame.len()))
+                );
+                let (header, payload) = WirePacketHeader::parse(&decoded.bytes).unwrap();
+                assert_eq!(header.packet_type, PacketType::Data);
+                assert_eq!(
+                    parse_data_payload_against(payload, &payload_template)
+                        .map(|(_, observed)| observed),
+                    Some(sequence)
+                );
+                prepare_proof_frame(&mut proof, expected_hash, A_TO_B, sequence);
+                assert!(encode(&proof, &mut encoded).unwrap() > proof.len());
+                assert_eq!(frame.as_ptr(), frame_ptr);
+                assert_eq!(encoded.as_ptr(), encoded_ptr);
+            }
+
+            for sequence in 1..=128 {
+                prepare_resource_frame(&mut resource, payload_len, sequence);
+                let encoded_len = encode(&resource, &mut resource_encoded).unwrap();
+                let mut offset = 0;
+                assert_eq!(
+                    resource_scanner.next_frame_into(
+                        &resource_encoded[..encoded_len],
+                        &mut offset,
+                        &mut decoded_resource,
+                    ),
+                    Ok(Some(resource.len()))
+                );
+                let (_, payload) = WirePacketHeader::parse(&decoded_resource.bytes).unwrap();
+                assert_eq!(
+                    parse_resource_payload(payload, expected_resource_payload)
+                        .map(|(_, observed)| observed),
+                    Some(sequence)
+                );
+                assert_eq!(resource.as_ptr(), resource_ptr);
+            }
+        });
+        assert_eq!(
+            allocations, 0,
+            "warmed driver hot path allocated {allocations} time(s)"
+        );
     }
 
     #[test]

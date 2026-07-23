@@ -16,7 +16,7 @@ import time
 from collections import deque
 
 import RNS
-from receipt_settlement import ReceiptSettlementWake
+from receipt_settlement import ReceiptSettlementQueue
 from workload_vectors import (
     DEFAULT_SIZE_SEED,
     SizeSequence,
@@ -293,6 +293,7 @@ def initiate(name, block, profile, duration):
     scratch = scenario_payload(
         profile, max(profile.get("payload_max", 0), profile.get("payload_len", 0))
     )
+    payloads = tuple(scratch[:size] for size in range(len(scratch) + 1))
     state = {"sent": 0, "delivered": 0, "timeouts": 0, "delivered_bytes": 0}
     rtts = []
     await_measurement_start()
@@ -300,49 +301,44 @@ def initiate(name, block, profile, duration):
     deadline = started + duration
     drain_deadline = deadline + DRAIN_GRACE
 
-    settlement = ReceiptSettlementWake()
+    settlement = ReceiptSettlementQueue()
+    outstanding = {}
 
     def send_one():
         state["sent"] += 1
         size = sizes.next_len()
-        receipt = RNS.Packet(destination, scratch[:size]).send()
-        settlement.arm(receipt, RNS.PacketReceipt.SENT)
-        return receipt, size
+        receipt = RNS.Packet(destination, payloads[size]).send()
+        armed = settlement.arm(receipt, RNS.PacketReceipt.SENT, size)
+        outstanding[id(armed)] = armed
 
-    outstanding = [send_one() for _ in range(profile["window"])]
+    for _ in range(profile["window"]):
+        send_one()
     streak_limit = max(profile["window"] * 8, 64)
     failure_streak = 0
     died = False
     while outstanding and time.monotonic() < drain_deadline:
-        # Clear before inspecting statuses: a completion racing with the clear is
-        # then caught either by this scan or by its callback setting the event.
-        settlement.clear_before_scan()
-        still = []
-        settled = 0
-        for receipt, size in outstanding:
-            status = receipt.status if receipt else RNS.PacketReceipt.FAILED
-            if status == RNS.PacketReceipt.DELIVERED:
-                state["delivered"] += 1
-                state["delivered_bytes"] += size
-                rtts.append(receipt.get_rtt() * 1000.0)
-                settled += 1
-                failure_streak = 0
-                if not died and time.monotonic() < deadline:
-                    still.append(send_one())
-            elif status in (RNS.PacketReceipt.FAILED, RNS.PacketReceipt.CULLED):
-                state["timeouts"] += 1
-                settled += 1
-                failure_streak += 1
-                if not died and failure_streak >= streak_limit:
-                    died = True
-                    print(f"DIED failure_streak={failure_streak}", file=sys.stderr, flush=True)
-                if not died and time.monotonic() < deadline:
-                    still.append(send_one())
-            else:
-                still.append((receipt, size))
-        outstanding = still
-        if settled == 0:
-            settlement.wait_until(drain_deadline)
+        armed = settlement.pop_until(drain_deadline)
+        if armed is None:
+            break
+        outstanding.pop(id(armed), None)
+        receipt = armed.receipt
+        size = armed.context
+        status = receipt.status if receipt else RNS.PacketReceipt.FAILED
+        if status == RNS.PacketReceipt.DELIVERED:
+            state["delivered"] += 1
+            state["delivered_bytes"] += size
+            rtts.append(receipt.get_rtt() * 1000.0)
+            failure_streak = 0
+        elif status in (RNS.PacketReceipt.FAILED, RNS.PacketReceipt.CULLED):
+            state["timeouts"] += 1
+            failure_streak += 1
+            if not died and failure_streak >= streak_limit:
+                died = True
+                print(f"DIED failure_streak={failure_streak}", file=sys.stderr, flush=True)
+        else:
+            sys.exit(f"settlement callback carried pending receipt status {status}")
+        if not died and time.monotonic() < deadline:
+            send_one()
     state["timeouts"] += len(outstanding)
     elapsed_ms = int((time.monotonic() - started) * 1000)
     print("MEASURE_DONE", flush=True)
@@ -440,6 +436,7 @@ def initiate_link(name, block, profile, duration):
     scratch = scenario_payload(
         profile, max(profile.get("payload_max", 0), profile.get("payload_len", 0))
     )
+    payloads = tuple(scratch[:size] for size in range(len(scratch) + 1))
     state = {
         "sent": 0,
         "sent_bytes": 0,
@@ -452,49 +449,43 @@ def initiate_link(name, block, profile, duration):
     deadline = started + duration
     drain_deadline = deadline + DRAIN_GRACE
 
-    settlement = ReceiptSettlementWake()
+    settlement = ReceiptSettlementQueue()
+    outstanding = {}
 
     def send_one():
         state["sent"] += 1
         size = sizes.next_len()
         state["sent_bytes"] += size
-        receipt = RNS.Packet(link, scratch[:size]).send()
-        settlement.arm(receipt, RNS.PacketReceipt.SENT)
-        return receipt, size
+        receipt = RNS.Packet(link, payloads[size]).send()
+        armed = settlement.arm(receipt, RNS.PacketReceipt.SENT, size)
+        outstanding[id(armed)] = armed
 
-    outstanding = [send_one() for _ in range(profile["window"])]
+    for _ in range(profile["window"]):
+        send_one()
     streak_limit = max(profile["window"] * 8, 64)
     failure_streak = 0
     died = False
     while outstanding and time.monotonic() < drain_deadline:
-        # Clear before inspecting statuses: a completion racing with the clear is
-        # then caught either by this scan or by its callback setting the event.
-        settlement.clear_before_scan()
-        still = []
-        settled = 0
-        for receipt, size in outstanding:
-            status = receipt.status if receipt else RNS.PacketReceipt.FAILED
-            if status == RNS.PacketReceipt.DELIVERED:
-                state["receipt_proved"] += 1
-                rtts.append(receipt.get_rtt() * 1000.0)
-                settled += 1
-                failure_streak = 0
-                if not died and time.monotonic() < deadline:
-                    still.append(send_one())
-            elif status in (RNS.PacketReceipt.FAILED, RNS.PacketReceipt.CULLED):
-                state["receipt_unproved"] += 1
-                settled += 1
-                failure_streak += 1
-                if not died and failure_streak >= streak_limit:
-                    died = True
-                    print(f"DIED failure_streak={failure_streak}", file=sys.stderr, flush=True)
-                if not died and time.monotonic() < deadline:
-                    still.append(send_one())
-            else:
-                still.append((receipt, size))
-        outstanding = still
-        if settled == 0:
-            settlement.wait_until(drain_deadline)
+        armed = settlement.pop_until(drain_deadline)
+        if armed is None:
+            break
+        outstanding.pop(id(armed), None)
+        receipt = armed.receipt
+        status = receipt.status if receipt else RNS.PacketReceipt.FAILED
+        if status == RNS.PacketReceipt.DELIVERED:
+            state["receipt_proved"] += 1
+            rtts.append(receipt.get_rtt() * 1000.0)
+            failure_streak = 0
+        elif status in (RNS.PacketReceipt.FAILED, RNS.PacketReceipt.CULLED):
+            state["receipt_unproved"] += 1
+            failure_streak += 1
+            if not died and failure_streak >= streak_limit:
+                died = True
+                print(f"DIED failure_streak={failure_streak}", file=sys.stderr, flush=True)
+        else:
+            sys.exit(f"settlement callback carried pending receipt status {status}")
+        if not died and time.monotonic() < deadline:
+            send_one()
     state["receipt_unproved"] += len(outstanding)
     elapsed_ms = int((time.monotonic() - started) * 1000)
     print("MEASURE_DONE", flush=True)
@@ -909,30 +900,29 @@ def initiate_request(name, block, profile, duration):
         "in_flight": 0,
     }
     rtts = []
-    lock = threading.Lock()
-    settled = threading.Event()
+    state_changed = threading.Condition()
     available_links = deque(links)
     pending_receipts = {}
     started = None
     deadline = None
 
     def on_response(receipt):
-        with lock:
+        with state_changed:
             pending_receipts.pop(id(receipt), None)
             state["delivered"] += 1
             state["in_flight"] -= 1
             available_links.append(receipt.link)
             state["response_bytes"] += len(receipt.response or b"")
             rtts.append((time.monotonic() - receipt.sent_at_wall) * 1000.0)
-        settled.set()
+            state_changed.notify()
 
     def on_failed(receipt):
-        with lock:
+        with state_changed:
             pending_receipts.pop(id(receipt), None)
             state["timeouts"] += 1
             state["in_flight"] -= 1
             available_links.append(receipt.link)
-        settled.set()
+            state_changed.notify()
 
     def send_one(link):
         request_len = max(request_sizes.next_len(), 2)
@@ -962,22 +952,21 @@ def initiate_request(name, block, profile, duration):
     await_measurement_start()
     started = time.monotonic()
     deadline = started + duration
-    with lock:
+    with state_changed:
         for _ in range(profile["window"]):
             send_one(available_links.popleft())
     drain_deadline = deadline + DRAIN_GRACE
-    while time.monotonic() < drain_deadline:
-        with lock:
+    with state_changed:
+        while time.monotonic() < drain_deadline:
             in_flight = state["in_flight"]
             if in_flight < profile["window"] and available_links and time.monotonic() < deadline:
                 send_one(available_links.popleft())
                 continue
             if in_flight == 0:
                 break
-        settled.wait(0.05)
-        settled.clear()
+            state_changed.wait(max(0.0, drain_deadline - time.monotonic()))
     elapsed_ms = int((time.monotonic() - started) * 1000)
-    with lock:
+    with state_changed:
         pending = len(pending_receipts)
         receiving = sum(
             receipt.status == RNS.RequestReceipt.RECEIVING

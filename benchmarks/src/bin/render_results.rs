@@ -599,7 +599,7 @@ fn render_transport_table(
     implementations: &[ImplementationDescriptor],
 ) {
     out.push_str(
-        "| Relay | TCP policy / MTU | Link MTU / payload | Conformance | Payload | Frames | Wire in / out | Relay CPU | Relay peak RSS | Harness headroom |\n\
+        "| Relay | TCP policy / MTU | Link MTU / payload | Conformance | Payload | Frames | Wire in / out | Relay CPU | Relay peak RSS | Harness source / sink / limit |\n\
          |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n",
     );
     let mut sorted = rows.to_vec();
@@ -623,12 +623,21 @@ fn render_transport_table(
             _ => "—".into(),
         };
         let headroom = match (
+            row.median(Axis::Throughput, "harness_source_payload_bytes_per_sec"),
+            row.median(Axis::Throughput, "harness_sink_payload_bytes_per_sec"),
             row.median(Axis::Throughput, "harness_carried_payload_bytes_per_sec"),
             row.median(Axis::Throughput, "carried_payload_bytes_per_sec"),
             row.median(Axis::Conformance, "harness_headroom"),
         ) {
-            (Some(harness), Some(carried), Some(1.0)) if carried > 0.0 => {
-                format!("{:.2}×", harness / carried)
+            (Some(source), Some(sink), Some(harness), Some(carried), Some(1.0))
+                if carried > 0.0 =>
+            {
+                format!(
+                    "{:.2}× / {:.2}× / {:.2}×",
+                    source / carried,
+                    sink / carried,
+                    harness / carried
+                )
             }
             _ => "—".into(),
         };
@@ -931,7 +940,7 @@ fn render_legends(
             );
         }
     }
-    out.push_str("\n## Metric legend\n\nConformance is clean samples and exact delivered/sent accounting. Rows are ordered by median throughput, never by memory or energy. Rate is median settled operations per second. Goodput is median application bytes per second. Relay scenarios report carried opaque payload bytes, forwarded frames, HDLC-framed TCP wire rates, relay-only CPU/RSS, and direct-driver headroom; transported-resource rows additionally expose negotiated link MTU and payload bytes per part. RTT is median p50/p99 settlement latency. Peak RSS shows the largest initiator (`i`) and responder (`r`) process peaks across samples. Energy shows optional initiator/responder attribution of median net processor energy and appears only with three positive-baseline samples: per delivery for packets/requests, per application MiB for resources. Relay-scenario energy is whole-cell package energy, never relay-only energy.\n");
+    out.push_str("\n## Metric legend\n\nConformance is clean samples and exact delivered/sent accounting. Rows are ordered by median throughput, never by memory or energy. Rate is median settled operations per second. Goodput is median application bytes per second. Relay scenarios report carried opaque payload bytes, forwarded frames, actual HDLC-framed TCP wire rates, relay-only CPU/RSS, and full-path driver source/sink/limiting headroom; transported-resource rows additionally expose negotiated link MTU and payload bytes per part. RTT is median p50/p99 settlement latency. Peak RSS shows the largest initiator (`i`) and responder (`r`) process peaks across samples. Energy shows optional initiator/responder attribution of median net processor energy and appears only with three positive-baseline samples: per delivery for packets/requests, per application MiB for resources. Relay-scenario energy is whole-cell package energy, never relay-only energy.\n");
 }
 
 struct Manifest {
@@ -1183,12 +1192,22 @@ mod tests {
                         "harness_carried_payload_bytes_per_sec",
                         1_500_000.0,
                     ),
+                    (
+                        Axis::Throughput,
+                        "harness_source_payload_bytes_per_sec",
+                        1_600_000.0,
+                    ),
+                    (
+                        Axis::Throughput,
+                        "harness_sink_payload_bytes_per_sec",
+                        1_700_000.0,
+                    ),
                     (Axis::Energy, "relay_cpu_seconds", 2.5),
                     (Axis::Memory, "relay_peak_rss_bytes", 8_388_608.0),
                 ] {
                     let mut result = row(sample, axis, metric, Some(value));
                     result.scenario = "transport-resource-throughput-unleashed".into();
-                    result.scenario_version = 1;
+                    result.scenario_version = 2;
                     result.subject = Subject::Direct {
                         initiator: "benchmark-wire-driver".into(),
                         responder: "benchmark-wire-driver".into(),
@@ -1217,7 +1236,7 @@ mod tests {
             "4.0k/s",
             "2.50 s",
             "8.0 MiB",
-            "1.50×",
+            "1.60× / 1.70× / 1.50×",
         ] {
             assert!(
                 output.contains(expected),

@@ -1,6 +1,6 @@
 {
   "name": "transport-resource-throughput-unleashed",
-  "version": 1,
+  "version": 2,
   "order": 10,
   "title": "Transported resource throughput · 1 Gbps policy",
   "category": "Transport",

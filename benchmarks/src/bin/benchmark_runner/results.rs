@@ -224,11 +224,19 @@ fn scenario_conforms(input: &Conformance<'_>) -> bool {
                     "timed_out_frames",
                     "drain_timeouts",
                     "outstanding",
+                    "buffer_pool_misses",
+                    "credit_leaks",
                 ]
                 .into_iter()
                 .all(|metric| field(result, metric) == Some(0.0))
                 && (!require_harness_headroom
                     || field(result, "harness_calibration_ms") == Some(2_000.0))
+                && (!require_harness_headroom
+                    || field(result, "harness_source_payload_bytes_per_sec")
+                        .is_some_and(|value| value > 0.0))
+                && (!require_harness_headroom
+                    || field(result, "harness_sink_payload_bytes_per_sec")
+                        .is_some_and(|value| value > 0.0))
                 && (!require_harness_headroom || field(result, "harness_headroom") == Some(1.0))
         }
     }
@@ -478,6 +486,18 @@ pub(super) fn file_results(
                 "B/s",
             ),
             row(
+                Axis::Throughput,
+                "harness_source_payload_bytes_per_sec",
+                field(result, "harness_source_payload_bytes_per_sec"),
+                "B/s",
+            ),
+            row(
+                Axis::Throughput,
+                "harness_sink_payload_bytes_per_sec",
+                field(result, "harness_sink_payload_bytes_per_sec"),
+                "B/s",
+            ),
+            row(
                 Axis::Conformance,
                 "harness_headroom",
                 field(result, "harness_headroom"),
@@ -534,6 +554,8 @@ pub(super) fn file_results(
             ("timed_out_frames", "frames"),
             ("drain_timeouts", "frames"),
             ("outstanding", "frames"),
+            ("buffer_pool_misses", "frames"),
+            ("credit_leaks", "permits"),
             ("negotiated_link_mtu_bytes", "bytes"),
             ("resource_payload_bytes_per_frame", "bytes"),
         ] {
@@ -883,7 +905,7 @@ mod tests {
             raced: 0.0,
             culled: 0.0,
             responder_delivered: 20.0,
-            result: "RESULT sent=20 carried=20 proofs=20 relay_bitrate_bps=1000000000 relay_mtu_bytes=524288 sent_a_to_b=10 carried_a_to_b=10 sent_b_to_a=10 carried_b_to_a=10 sent_payload_bytes=4000 carried_payload_bytes=4000 sent_payload_bytes_a_to_b=2000 carried_payload_bytes_a_to_b=2000 sent_payload_bytes_b_to_a=2000 carried_payload_bytes_b_to_a=2000 missing=0 duplicates=0 corrupt=0 reordered=0 unexpected=0 timed_out_frames=0 drain_timeouts=0 outstanding=0 harness_calibration_ms=2000 harness_headroom=1",
+            result: "RESULT sent=20 carried=20 proofs=20 relay_bitrate_bps=1000000000 relay_mtu_bytes=524288 sent_a_to_b=10 carried_a_to_b=10 sent_b_to_a=10 carried_b_to_a=10 sent_payload_bytes=4000 carried_payload_bytes=4000 sent_payload_bytes_a_to_b=2000 carried_payload_bytes_a_to_b=2000 sent_payload_bytes_b_to_a=2000 carried_payload_bytes_b_to_a=2000 missing=0 duplicates=0 corrupt=0 reordered=0 unexpected=0 timed_out_frames=0 drain_timeouts=0 outstanding=0 buffer_pool_misses=0 credit_leaks=0 harness_source_payload_bytes_per_sec=2000 harness_sink_payload_bytes_per_sec=1900 harness_calibration_ms=2000 harness_headroom=1",
             responder_result: "RESULT carried=20",
             require_harness_headroom: true,
         };
@@ -913,6 +935,16 @@ mod tests {
             ("timed_out_frames=0", "timed_out_frames=1"),
             ("drain_timeouts=0", "drain_timeouts=1"),
             ("outstanding=0", "outstanding=1"),
+            ("buffer_pool_misses=0", "buffer_pool_misses=1"),
+            ("credit_leaks=0", "credit_leaks=1"),
+            (
+                "harness_source_payload_bytes_per_sec=2000",
+                "harness_source_payload_bytes_per_sec=0",
+            ),
+            (
+                "harness_sink_payload_bytes_per_sec=1900",
+                "harness_sink_payload_bytes_per_sec=0",
+            ),
             ("harness_calibration_ms=2000", "harness_calibration_ms=1999"),
             ("harness_headroom=1", "harness_headroom=0"),
         ] {
@@ -945,7 +977,7 @@ mod tests {
             raced: 0.0,
             culled: 0.0,
             responder_delivered: 20.0,
-            result: "RESULT sent=20 carried=20 proofs=0 relay_bitrate_bps=1000000000 relay_mtu_bytes=524288 negotiated_link_mtu_bytes=524288 resource_payload_bytes_per_frame=524268 sent_a_to_b=10 carried_a_to_b=10 sent_b_to_a=10 carried_b_to_a=10 sent_payload_bytes=10485360 carried_payload_bytes=10485360 sent_payload_bytes_a_to_b=5242680 carried_payload_bytes_a_to_b=5242680 sent_payload_bytes_b_to_a=5242680 carried_payload_bytes_b_to_a=5242680 missing=0 duplicates=0 corrupt=0 reordered=0 unexpected=0 timed_out_frames=0 drain_timeouts=0 outstanding=0 harness_calibration_ms=2000 harness_headroom=1",
+            result: "RESULT sent=20 carried=20 proofs=0 relay_bitrate_bps=1000000000 relay_mtu_bytes=524288 negotiated_link_mtu_bytes=524288 resource_payload_bytes_per_frame=524268 sent_a_to_b=10 carried_a_to_b=10 sent_b_to_a=10 carried_b_to_a=10 sent_payload_bytes=10485360 carried_payload_bytes=10485360 sent_payload_bytes_a_to_b=5242680 carried_payload_bytes_a_to_b=5242680 sent_payload_bytes_b_to_a=5242680 carried_payload_bytes_b_to_a=5242680 missing=0 duplicates=0 corrupt=0 reordered=0 unexpected=0 timed_out_frames=0 drain_timeouts=0 outstanding=0 buffer_pool_misses=0 credit_leaks=0 harness_source_payload_bytes_per_sec=2000 harness_sink_payload_bytes_per_sec=1900 harness_calibration_ms=2000 harness_headroom=1",
             responder_result: "RESULT carried=20",
             require_harness_headroom: true,
         };

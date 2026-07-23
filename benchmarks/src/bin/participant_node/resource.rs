@@ -30,7 +30,7 @@ pub(super) async fn run_resource_endpoint(
         .destination_hash()
         .expect("the bench destination name is valid");
 
-    let (event_tx, event_rx) = mpsc::unbounded_channel::<Event>();
+    let (event_tx, event_rx) = event_channel(&manifest.profile);
     let on_event = move |event: PrnsEvent<'_>, _state: &()| {
         let mapped = match event {
             PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) => {
@@ -70,7 +70,7 @@ pub(super) async fn run_resource_endpoint(
             _ => None,
         };
         if let Some(event) = mapped {
-            let _ = event_tx.send(event);
+            send_event(&event_tx, event);
         }
     };
 
@@ -122,7 +122,7 @@ pub(super) async fn respond_resource_runtime(
     drain: Duration,
     initiator_count: usize,
     commands: &PrnsNodeHandle,
-    mut events: mpsc::UnboundedReceiver<Event>,
+    mut events: mpsc::Receiver<Event>,
     mut collection_target: tokio::sync::oneshot::Receiver<(u64, u64)>,
 ) {
     let mut links_up = 0usize;
@@ -232,7 +232,7 @@ pub(super) async fn initiate_resource_runtime(
     profile: &Profile,
     duration: Duration,
     commands: &PrnsNodeHandle,
-    mut events: mpsc::UnboundedReceiver<Event>,
+    mut events: mpsc::Receiver<Event>,
 ) {
     let destination = loop {
         match events.recv().await.expect("reactor alive") {

@@ -1,6 +1,6 @@
 {
   "name": "raw-transport-throughput",
-  "version": 1,
+  "version": 2,
   "order": 8,
   "title": "Raw transport throughput",
   "category": "Transport",
