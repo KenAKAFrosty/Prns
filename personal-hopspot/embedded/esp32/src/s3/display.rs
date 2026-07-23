@@ -128,6 +128,52 @@ pub(super) fn build_cards(
     })
 }
 
+fn egress_pressure_events(id: InterfaceId) -> u32 {
+    match id.kind() {
+        Some(InterfaceKind::UsbAutoDevice) => USB_REACTOR_LANE.egress_pressure_events(),
+        Some(InterfaceKind::TcpClient) => TCP_REACTOR_LANE.egress_pressure_events(),
+        Some(InterfaceKind::AutoWifi | InterfaceKind::WifiPeer) => {
+            WIFI_REACTOR_LANE.egress_pressure_events()
+        }
+        Some(InterfaceKind::LoRa) => LORA_REACTOR_LANE.egress_pressure_events(),
+        #[cfg(feature = "bluetooth-auto")]
+        Some(InterfaceKind::BluetoothAuto | InterfaceKind::BluetoothPeer) => {
+            BLE_REACTOR_LANE.egress_pressure_events()
+        }
+        #[cfg(feature = "esp-now")]
+        Some(InterfaceKind::EspNow) => ESPNOW_REACTOR_LANE.egress_pressure_events(),
+        _ => 0,
+    }
+}
+
+fn ingress_pressure_events(id: InterfaceId) -> u32 {
+    match id.kind() {
+        Some(InterfaceKind::UsbAutoDevice) => USB_REACTOR_LANE.ingress_pressure_events(),
+        Some(InterfaceKind::TcpClient) => TCP_REACTOR_LANE.ingress_pressure_events(),
+        Some(InterfaceKind::AutoWifi | InterfaceKind::WifiPeer) => {
+            WIFI_REACTOR_LANE.ingress_pressure_events()
+        }
+        Some(InterfaceKind::LoRa) => LORA_REACTOR_LANE.ingress_pressure_events(),
+        #[cfg(feature = "bluetooth-auto")]
+        Some(InterfaceKind::BluetoothAuto | InterfaceKind::BluetoothPeer) => {
+            BLE_REACTOR_LANE.ingress_pressure_events()
+        }
+        #[cfg(feature = "esp-now")]
+        Some(InterfaceKind::EspNow) => ESPNOW_REACTOR_LANE.ingress_pressure_events(),
+        _ => 0,
+    }
+}
+
+pub(super) fn add_reactor_pressure(
+    details: &mut screen::InterfaceMenuDetails,
+    selected_card: Option<&screen::Card>,
+) {
+    if let Some(card) = selected_card {
+        details.push_ingress_pressure(ingress_pressure_events(card.id()));
+        details.push_egress_pressure(egress_pressure_events(card.id()));
+    }
+}
+
 #[cfg(feature = "wifi-auto")]
 pub(super) fn build_interface_menu_details(
     selected_card: Option<&screen::Card>,
@@ -136,7 +182,7 @@ pub(super) fn build_interface_menu_details(
     wifi_config: &HopspotWifiConfig,
     ap_ssid: Option<&str>,
 ) -> screen::InterfaceMenuDetails {
-    match selected_card.map(|card| card.kind()) {
+    let mut details = match selected_card.map(|card| card.kind()) {
         Some(screen::CardKind::Wifi) => {
             let station_ssid = (wifi_config.has_station()
                 && WIFI_STATION_JOINED.load(Ordering::Relaxed))
@@ -155,5 +201,7 @@ pub(super) fn build_interface_menu_details(
             screen::snapshots_to_interface_menu_details(selected_card, snapshots)
         }
         _ => screen::InterfaceMenuDetails::empty(),
-    }
+    };
+    add_reactor_pressure(&mut details, selected_card);
+    details
 }

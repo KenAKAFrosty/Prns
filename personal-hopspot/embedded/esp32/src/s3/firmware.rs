@@ -322,7 +322,11 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 menu_ap_ssid,
             );
             #[cfg(not(feature = "wifi-auto"))]
-            let interface_menu_details = screen::InterfaceMenuDetails::empty();
+            let interface_menu_details = {
+                let mut details = screen::InterfaceMenuDetails::empty();
+                add_reactor_pressure(&mut details, ui_state.selected_card(content.cards));
+                details
+            };
             ui_state.sync(content);
             if notice_until_ms.is_some_and(|until| now_ms >= until) {
                 ui_state.clear_notice();
@@ -362,19 +366,19 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             }
 
             match select3(
-                INTERFACE_STORE.changed(),
                 BUTTON_EVENTS.receive(),
                 render_tick.next(),
+                INTERFACE_STORE.changed(),
             )
             .await
             {
-                Either3::First(()) => {
+                Either3::Third(()) => {
                     settle_after_draw = true;
                 }
-                Either3::Third(()) => {
+                Either3::Second(()) => {
                     ticks_to_battery = ticks_to_battery.saturating_sub(1);
                 }
-                Either3::Second(event) => {
+                Either3::First(event) => {
                     let now_ms = embassy_time::Instant::now().as_millis();
                     if !oled_awake && oled_sleep_at_ms.is_none() {
                         if oled_ok {
@@ -537,8 +541,6 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     };
 
     #[cfg(all(feature = "bluetooth-auto", not(feature = "wifi-auto")))]
-    // Halve the BLE controller task stack (8192 -> 4096; esp-radio's own default hints "4096?") to
-    // reclaim ~4 KiB internal SRAM toward the full radio stack + SoftAP fit.
     let ble_connector = esp_radio::ble::controller::BleConnector::new(
         b.bt,
         esp_radio::ble::Config::default()

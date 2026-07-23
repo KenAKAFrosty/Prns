@@ -1,10 +1,12 @@
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::signal::Signal;
 use embassy_sync::zerocopy_channel;
+use portable_atomic::{AtomicU32, Ordering};
 
 use crate::interfaces::PacketPhyStats;
 use crate::reactor::grant::{
-    FrameSlot, FrameTarget, GrantConsumer, GrantProducer, ReactorLaneReader, ReactorLaneWriter,
+    FrameSlot, FrameTarget, GrantConsumer, GrantProducer, LaneWriteOutcome, ReactorLaneReader,
+    ReactorLaneWriter,
 };
 
 /// Splits caller-owned storage into a zero-copy frame lane.
@@ -20,6 +22,7 @@ pub fn embassy_grant_lane<'a, M: RawMutex, const FRAME: usize>(
             sender,
             granted: false,
             wake: None,
+            pressure_events: None,
         },
         EmbassyGrantConsumer {
             receiver,
@@ -32,11 +35,24 @@ pub struct EmbassyGrantProducer<'a, M: RawMutex, const FRAME: usize> {
     sender: zerocopy_channel::Sender<'a, M, FrameSlot<FRAME>>,
     granted: bool,
     wake: Option<&'a Signal<M, ()>>,
+    pressure_events: Option<&'a AtomicU32>,
 }
 
 impl<'a, M: RawMutex, const FRAME: usize> EmbassyGrantProducer<'a, M, FRAME> {
     pub fn set_outbound_wake(&mut self, wake: &'a Signal<M, ()>) {
         self.wake = Some(wake);
+    }
+
+    pub fn set_pressure_counter(&mut self, pressure_events: &'a AtomicU32) {
+        self.pressure_events = Some(pressure_events);
+    }
+
+    pub(crate) fn note_pressure(&self) {
+        if let Some(pressure_events) = self.pressure_events {
+            let _ = pressure_events.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |count| {
+                Some(count.saturating_add(1))
+            });
+        }
     }
 }
 
@@ -69,19 +85,23 @@ impl<M: RawMutex, const FRAME: usize> GrantProducer<FRAME> for EmbassyGrantProdu
 impl<M: RawMutex + Sync, const FRAME: usize> ReactorLaneWriter
     for EmbassyGrantProducer<'_, M, FRAME>
 {
-    fn try_write(&mut self, target: FrameTarget, frame: &[u8]) -> bool {
+    fn try_write(&mut self, target: FrameTarget, frame: &[u8]) -> LaneWriteOutcome {
         if frame.len() > FRAME {
-            return false;
+            return LaneWriteOutcome::FrameTooLarge {
+                frame_len: frame.len(),
+                capacity: FRAME,
+            };
         }
         let Some(slot) = GrantProducer::try_grant(self) else {
-            return false;
+            self.note_pressure();
+            return LaneWriteOutcome::Full;
         };
         match target {
             FrameTarget::Direct(interface_id) => slot.fill_for(interface_id, frame),
             FrameTarget::Fan(fan) => slot.fill_for_fan(fan, frame),
         }
         GrantProducer::commit(self);
-        true
+        LaneWriteOutcome::Written
     }
 }
 

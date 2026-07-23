@@ -90,11 +90,10 @@ impl<M: RawMutex + 'static, const FRAME: usize, const NOTIFY: usize, const LIFEC
                 capacity: FRAME,
             });
         }
-        let grant = self
-            .wire
-            .inbound
-            .try_grant()
-            .ok_or(InboundDeliveryError::LaneFull)?;
+        let Some(grant) = self.wire.inbound.try_grant() else {
+            self.wire.inbound.note_pressure();
+            return Err(InboundDeliveryError::LaneFull);
+        };
         grant.fill_for(child, bytes);
         self.wire.inbound.commit();
         let _ = self.wire.notify.try_send(child);

@@ -4,7 +4,7 @@ use crate::engine::{EngineReaction, FanTarget, InstantMillis, Journaled};
 use crate::interfaces::InterfaceIfac;
 use crate::interfaces::{InterfaceDescriptor, InterfaceId, InterfaceKind};
 use crate::reactor::announce_pacer::{AnnouncePacer, FixedPacerQueue};
-use crate::reactor::grant::{FrameTarget, ReactorLaneWriter};
+use crate::reactor::grant::{FrameTarget, LaneWriteOutcome, ReactorLaneWriter};
 use crate::reactor::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
 use crate::reactor::kernel::{
     route_reaction as route_engine_reaction, AnnounceDirective, DirectiveEgress,
@@ -20,10 +20,45 @@ fn lane_serves(lane_key: InterfaceId, target: InterfaceId) -> bool {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub enum EgressOutcome {
+    Enqueued,
+    LaneFull {
+        lane: InterfaceId,
+    },
+    FrameTooLarge {
+        lane: InterfaceId,
+        frame_len: usize,
+        capacity: usize,
+    },
+    NoLane,
+}
+
+fn egress_outcome(lane: InterfaceId, outcome: LaneWriteOutcome) -> EgressOutcome {
+    match outcome {
+        LaneWriteOutcome::Written => EgressOutcome::Enqueued,
+        LaneWriteOutcome::Full => EgressOutcome::LaneFull { lane },
+        LaneWriteOutcome::FrameTooLarge {
+            frame_len,
+            capacity,
+        } => EgressOutcome::FrameTooLarge {
+            lane,
+            frame_len,
+            capacity,
+        },
+    }
+}
+
 /// Nonblocking direct and fleet egress.
 pub trait ReactorEgress {
-    fn enqueue(&mut self, target: InterfaceId, bytes: &[u8]);
-    fn enqueue_broadcast(&mut self, supervisor: InterfaceKind, fan: FanTarget, bytes: &[u8]);
+    fn enqueue(&mut self, target: InterfaceId, bytes: &[u8]) -> EgressOutcome;
+    fn enqueue_broadcast(
+        &mut self,
+        supervisor: InterfaceKind,
+        fan: FanTarget,
+        bytes: &[u8],
+    ) -> EgressOutcome;
     fn lane_for(&self, target: InterfaceId) -> Option<InterfaceId> {
         Some(target)
     }
@@ -45,22 +80,27 @@ impl<'a> EmbassyEgress<'a> {
 }
 
 impl ReactorEgress for EmbassyEgress<'_> {
-    fn enqueue(&mut self, target: InterfaceId, bytes: &[u8]) {
+    fn enqueue(&mut self, target: InterfaceId, bytes: &[u8]) -> EgressOutcome {
         for (id, producer) in self.lanes.iter_mut() {
             if lane_serves(*id, target) {
-                let _ = producer.try_write(FrameTarget::Direct(target), bytes);
-                return;
+                return egress_outcome(*id, producer.try_write(FrameTarget::Direct(target), bytes));
             }
         }
+        EgressOutcome::NoLane
     }
 
-    fn enqueue_broadcast(&mut self, supervisor: InterfaceKind, fan: FanTarget, bytes: &[u8]) {
+    fn enqueue_broadcast(
+        &mut self,
+        supervisor: InterfaceKind,
+        fan: FanTarget,
+        bytes: &[u8],
+    ) -> EgressOutcome {
         for (id, producer) in self.lanes.iter_mut() {
             if id.kind() == Some(supervisor) {
-                let _ = producer.try_write(FrameTarget::Fan(fan), bytes);
-                return;
+                return egress_outcome(*id, producer.try_write(FrameTarget::Fan(fan), bytes));
             }
         }
+        EgressOutcome::NoLane
     }
 
     fn lane_for(&self, target: InterfaceId) -> Option<InterfaceId> {
@@ -190,10 +230,12 @@ pub(super) fn enqueue_for_wire(
         Some(entry) => {
             let mut wire = [0u8; EMBEDDED_MAX_WIRE_FRAME_LEN];
             if let Some(masked_len) = entry.context.mask_outbound(bytes, &mut wire) {
-                egress.enqueue(target, &wire[..masked_len]);
+                let _ = egress.enqueue(target, &wire[..masked_len]);
             }
         }
-        None => egress.enqueue(target, bytes),
+        None => {
+            let _ = egress.enqueue(target, bytes);
+        }
     }
 }
 
@@ -211,10 +253,12 @@ pub(super) fn enqueue_broadcast_for_wire(
         Some(entry) => {
             let mut wire = [0u8; EMBEDDED_MAX_WIRE_FRAME_LEN];
             if let Some(masked_len) = entry.context.mask_outbound(bytes, &mut wire) {
-                egress.enqueue_broadcast(supervisor, fan, &wire[..masked_len]);
+                let _ = egress.enqueue_broadcast(supervisor, fan, &wire[..masked_len]);
             }
         }
-        None => egress.enqueue_broadcast(supervisor, fan, bytes),
+        None => {
+            let _ = egress.enqueue_broadcast(supervisor, fan, bytes);
+        }
     }
 }
 
@@ -295,22 +339,27 @@ impl<const LANE_COUNT: usize> PooledEgress<LANE_COUNT> {
 }
 
 impl<const LANE_COUNT: usize> ReactorEgress for PooledEgress<LANE_COUNT> {
-    fn enqueue(&mut self, target: InterfaceId, bytes: &[u8]) {
+    fn enqueue(&mut self, target: InterfaceId, bytes: &[u8]) -> EgressOutcome {
         for (id, producer) in self.lanes.iter_mut() {
             if lane_serves(*id, target) {
-                let _ = producer.try_write(FrameTarget::Direct(target), bytes);
-                return;
+                return egress_outcome(*id, producer.try_write(FrameTarget::Direct(target), bytes));
             }
         }
+        EgressOutcome::NoLane
     }
 
-    fn enqueue_broadcast(&mut self, supervisor: InterfaceKind, fan: FanTarget, bytes: &[u8]) {
+    fn enqueue_broadcast(
+        &mut self,
+        supervisor: InterfaceKind,
+        fan: FanTarget,
+        bytes: &[u8],
+    ) -> EgressOutcome {
         for (id, producer) in self.lanes.iter_mut() {
             if id.kind() == Some(supervisor) {
-                let _ = producer.try_write(FrameTarget::Fan(fan), bytes);
-                return;
+                return egress_outcome(*id, producer.try_write(FrameTarget::Fan(fan), bytes));
             }
         }
+        EgressOutcome::NoLane
     }
 
     fn lane_for(&self, target: InterfaceId) -> Option<InterfaceId> {

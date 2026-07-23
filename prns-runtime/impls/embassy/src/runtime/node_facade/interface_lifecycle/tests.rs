@@ -2,7 +2,7 @@ use super::{Fleet, FleetWire, InboundDeliveryError};
 use crate::engine::FanTarget;
 use crate::interfaces::InterfaceId;
 use crate::reactor::driver::{leaked_grant_lane, InterfaceLifecycle};
-use crate::reactor::grant::{FrameTarget, ReactorLaneWriter};
+use crate::reactor::grant::{FrameTarget, LaneWriteOutcome, ReactorLaneWriter};
 use crate::reactor::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
 use embassy_futures::{block_on, join::join};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -33,13 +33,17 @@ fn next_outbound_releases_the_copied_grant_so_the_depth_one_lane_refills() {
         lifecycle.sender(),
     );
 
-    assert!(outbound_tx.try_write(FrameTarget::Fan(FanTarget::All), b"one"));
+    assert_eq!(
+        outbound_tx.try_write(FrameTarget::Fan(FanTarget::All), b"one"),
+        LaneWriteOutcome::Written
+    );
     let frame = block_on(fleet.next_outbound());
     assert_eq!(frame.target(), FrameTarget::Fan(FanTarget::All));
     assert_eq!(frame.bytes(), b"one");
 
-    assert!(
+    assert_eq!(
         outbound_tx.try_write(FrameTarget::Fan(FanTarget::All), b"two"),
+        LaneWriteOutcome::Written,
         "the depth-1 lane must accept the next frame the instant next_outbound copied the last"
     );
     let frame = block_on(fleet.next_outbound());
@@ -70,7 +74,10 @@ fn an_outbound_commit_wakes_the_supervisor_and_try_next_outbound_drains() {
         "an empty lane drains to nothing"
     );
 
-    assert!(outbound_tx.try_write(FrameTarget::Fan(FanTarget::All), b"hi"));
+    assert_eq!(
+        outbound_tx.try_write(FrameTarget::Fan(FanTarget::All), b"hi"),
+        LaneWriteOutcome::Written
+    );
     block_on(with_timeout(
         Duration::from_millis(50),
         fleet.outbound_ready(),
@@ -169,8 +176,17 @@ fn outbound_capacity_is_enforced_before_a_frame_reaches_the_fleet() {
         lifecycle.sender(),
     );
 
-    assert!(!outbound_tx.try_write(FrameTarget::Fan(FanTarget::All), b"too large"));
+    assert_eq!(
+        outbound_tx.try_write(FrameTarget::Fan(FanTarget::All), b"too large"),
+        LaneWriteOutcome::FrameTooLarge {
+            frame_len: 9,
+            capacity: 8,
+        }
+    );
     assert!(fleet.try_next_outbound().is_none());
-    assert!(outbound_tx.try_write(FrameTarget::Fan(FanTarget::All), b"fits"));
+    assert_eq!(
+        outbound_tx.try_write(FrameTarget::Fan(FanTarget::All), b"fits"),
+        LaneWriteOutcome::Written
+    );
     assert_eq!(fleet.try_next_outbound().unwrap().bytes(), b"fits");
 }

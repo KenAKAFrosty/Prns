@@ -1,5 +1,7 @@
 pub mod connection_slots;
 #[cfg(feature = "bluetooth-auto-trouble")]
+mod cooperative_transport;
+#[cfg(feature = "bluetooth-auto-trouble")]
 mod frame_pool;
 mod runtime;
 
@@ -8,6 +10,8 @@ mod trouble;
 
 pub use runtime::{BluetoothAuto, BluetoothAutoShared, BluetoothAutoStatus, BluetoothMemberStatus};
 
+#[cfg(feature = "bluetooth-auto-trouble")]
+pub use cooperative_transport::CooperativeTransport;
 #[cfg(feature = "bluetooth-auto-trouble")]
 pub use trouble::{
     acceptor, columba_identity_uuid, columba_rx_uuid, columba_tx_uuid, control_uuid, data_uuid,

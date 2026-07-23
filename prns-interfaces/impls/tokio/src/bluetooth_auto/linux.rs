@@ -42,6 +42,7 @@ const L2CAP_SDU_LEN: usize = STREAM_FRAME_PREFIX_LEN + BLE_HW_MTU;
 
 const GATT_FRAGMENT_PAYLOAD: usize = 180;
 const GATT_REASSEMBLY_CAP: usize = 600;
+const GATT_WRITE_INTERVAL: Duration = Duration::from_millis(15);
 
 const SCAN_STOP_POLL: Duration = Duration::from_millis(20);
 const SCAN_STOP_ATTEMPTS: usize = 25;
@@ -1398,7 +1399,7 @@ impl BleLink for DialedLink {
                         rx,
                         reassembler: Reassembler::new(),
                     })),
-                    BluerSink::Gatt(GattSink { tx }),
+                    BluerSink::Gatt(GattSink::new(tx)),
                 )
             }
         }
@@ -1551,7 +1552,7 @@ impl BleLink for AcceptedLink {
                         rx,
                         reassembler: Reassembler::new(),
                     })),
-                    BluerSink::Gatt(GattSink { tx }),
+                    BluerSink::Gatt(GattSink::new(tx)),
                 )
             }
         }
@@ -1688,6 +1689,33 @@ impl BleSource for GattSource {
 
 pub struct GattSink {
     tx: GattTx,
+    pacer: GattPacer,
+}
+
+struct GattPacer {
+    next_write: tokio::time::Instant,
+}
+
+impl GattPacer {
+    fn new() -> Self {
+        Self {
+            next_write: tokio::time::Instant::now(),
+        }
+    }
+
+    async fn wait(&mut self) {
+        tokio::time::sleep_until(self.next_write).await;
+        self.next_write = tokio::time::Instant::now() + GATT_WRITE_INTERVAL;
+    }
+}
+
+impl GattSink {
+    fn new(tx: GattTx) -> Self {
+        Self {
+            tx,
+            pacer: GattPacer::new(),
+        }
+    }
 }
 
 impl BleSink for GattSink {
@@ -1697,6 +1725,7 @@ impl BleSink for GattSink {
         let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
         for fragment in fragments_of(frame, GATT_FRAGMENT_PAYLOAD) {
             let n = fragment.encode(&mut buf).ok_or(BluerError::FrameTooLarge)?;
+            self.pacer.wait().await;
             match &mut self.tx {
                 GattTx::Remote(remote) => {
                     remote.write(&buf[..n]).await?;
@@ -1737,6 +1766,22 @@ mod tests {
             gatt_channels_setting_from_str("[GATT]\nChannels = 3\n\n[GATT]\nChannels = 1\n"),
             Some(EattRisk::Risky)
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn gatt_pacer_spaces_consecutive_writes() {
+        let mut pacer = GattPacer::new();
+        let started = tokio::time::Instant::now();
+
+        pacer.wait().await;
+        assert_eq!(tokio::time::Instant::now(), started);
+        assert!(tokio::time::timeout(Duration::ZERO, pacer.wait())
+            .await
+            .is_err());
+
+        tokio::time::advance(GATT_WRITE_INTERVAL).await;
+        pacer.wait().await;
+        assert_eq!(tokio::time::Instant::now(), started + GATT_WRITE_INTERVAL);
     }
 
     #[test]

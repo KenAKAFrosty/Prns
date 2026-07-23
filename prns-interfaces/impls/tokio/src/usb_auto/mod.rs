@@ -34,6 +34,8 @@ use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
 const FALLBACK_SCAN_INTERVAL: Duration = Duration::from_secs(1);
 /// Repeats the handshake while a newly opened board may still be booting.
 const PROBE_INTERVAL: Duration = Duration::from_millis(500);
+const LIVENESS_PROBE_INTERVAL: Duration = Duration::from_secs(2);
+const LIVENESS_TIMEOUT: Duration = Duration::from_secs(6);
 /// Masks brief CDC close-and-reopen cycles on Android without reporting a disconnected link between handshakes.
 const RECENT_LINK_GRACE: Duration = Duration::from_secs(3);
 /// Backs off a busy or re-enumerating target so failures do not become a once-per-second error storm.
@@ -42,14 +44,34 @@ const OPEN_FAILURE_BACKOFF: Duration = Duration::from_secs(5);
 struct Port {
     id: String,
     key: u64,
-    confirmed: bool,
+    liveness: PortLiveness,
     outbound: TokioGrantProducer,
     inbound: TokioGrantConsumer,
     task: JoinHandle<()>,
 }
 
+#[derive(Default)]
+enum PortLiveness {
+    #[default]
+    Handshaking,
+    Alive(Instant),
+}
+
+impl PortLiveness {
+    fn mark_alive(&mut self, now: Instant) {
+        *self = Self::Alive(now);
+    }
+
+    fn is_alive(&self, now: Instant) -> bool {
+        match self {
+            Self::Handshaking => false,
+            Self::Alive(last_seen) => now.duration_since(*last_seen) < LIVENESS_TIMEOUT,
+        }
+    }
+}
+
 enum PortEvent {
-    Confirmed { id: String },
+    Alive { id: String },
     Closed { id: String },
 }
 
@@ -123,7 +145,8 @@ impl<Scan, Open> UsbAutoHost<Scan, Open> {
         has_pending_open: bool,
         last_confirmed_at: Option<Instant>,
     ) {
-        let connection = if ports.iter().any(|port| port.confirmed) {
+        let now = Instant::now();
+        let connection = if ports.iter().any(|port| port.liveness.is_alive(now)) {
             ConnectionState::Connected
         } else if last_confirmed_at
             .map(|confirmed_at| confirmed_at.elapsed() < RECENT_LINK_GRACE)
@@ -223,10 +246,11 @@ where
                 }
                 Some(event) = events_rx.recv() => {
                     match event {
-                        PortEvent::Confirmed { id } => {
+                        PortEvent::Alive { id } => {
                             if let Some(port) = ports.iter_mut().find(|port| port.id == id) {
-                                port.confirmed = true;
-                                last_confirmed_at = Some(Instant::now());
+                                let now = Instant::now();
+                                port.liveness.mark_alive(now);
+                                last_confirmed_at = Some(now);
                             }
                         }
                         PortEvent::Closed { id } => {
@@ -262,7 +286,7 @@ where
                             ports.push(Port {
                                 id: name,
                                 key,
-                                confirmed: false,
+                                liveness: PortLiveness::default(),
                                 outbound: out_tx,
                                 inbound: in_rx,
                                 task,
@@ -287,8 +311,9 @@ where
                 }
                 Some(key) = port_notify_rx.recv() => Some(key),
                 out = seam.next_outbound() => {
+                    let now = Instant::now();
                     for port in &mut ports {
-                        if port.confirmed {
+                        if port.liveness.is_alive(now) {
                             if let Some(slot) = port.outbound.try_grant() {
                                 slot.fill(out);
                                 port.outbound.commit();
@@ -397,10 +422,20 @@ async fn serve_port<S>(
     let mut frame_buf = [0u8; contract::MAX_FRAMED_BYTES];
     let mut confirmed = false;
     let mut probe = tokio::time::interval(PROBE_INTERVAL);
+    let mut liveness_probe = tokio::time::interval(LIVENESS_PROBE_INTERVAL);
 
     loop {
         tokio::select! {
             _ = probe.tick(), if !confirmed => {
+                let hello = Message::Hello(Capabilities::host());
+                if write_message(&mut stream, &hello, &mut frame_buf, &context.status)
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+            _ = liveness_probe.tick(), if confirmed => {
                 let hello = Message::Hello(Capabilities::host());
                 if write_message(&mut stream, &hello, &mut frame_buf, &context.status)
                     .await
@@ -436,9 +471,11 @@ async fn serve_port<S>(
                                 write_failed = true;
                                 break;
                             }
-                            confirm(&mut confirmed, &id, &context.events);
+                            mark_alive(&mut confirmed, &id, &context.events);
                         }
-                        HostInbound::Confirmed(_) => confirm(&mut confirmed, &id, &context.events),
+                        HostInbound::Confirmed(_) => {
+                            mark_alive(&mut confirmed, &id, &context.events)
+                        }
                         HostInbound::Data(packet) => {
                             if confirmed && !packet.is_empty() {
                                 inbound.grant().await.fill(packet);
@@ -467,11 +504,9 @@ async fn serve_port<S>(
     let _ = context.events.send(PortEvent::Closed { id });
 }
 
-fn confirm(confirmed: &mut bool, id: &str, events: &UnboundedSender<PortEvent>) {
-    if !*confirmed {
-        *confirmed = true;
-        let _ = events.send(PortEvent::Confirmed { id: id.to_string() });
-    }
+fn mark_alive(confirmed: &mut bool, id: &str, events: &UnboundedSender<PortEvent>) {
+    *confirmed = true;
+    let _ = events.send(PortEvent::Alive { id: id.to_string() });
 }
 
 async fn write_message<S>(
@@ -617,6 +652,11 @@ mod tests {
             .expect("the announced frame is in the lane");
         assert_eq!(received.frame(), &inbound_packet);
         in_rx.release();
+
+        read_until(&mut device, &mut decoder, |message| {
+            matches!(message, Message::Hello(_)).then_some(())
+        })
+        .await;
     }
 
     #[test]
@@ -638,6 +678,33 @@ mod tests {
         assert_eq!(status.connection(), ConnectionState::Disconnected);
 
         host.refresh_connection(&[], true, None);
+        assert_eq!(status.connection(), ConnectionState::Reconnecting);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_enumerated_port_becomes_reconnecting_when_liveness_expires() {
+        let open = |_name: String| async {
+            Err::<tokio::io::DuplexStream, io::Error>(io::ErrorKind::NotConnected.into())
+        };
+        let host = UsbAutoHost::new(host_id(), Vec::<String>::new, open, Arc::new(Notify::new()));
+        let status = host.status();
+        let (outbound, _outbound_rx) =
+            tokio_grant_lane(contract::MAX_FRAMED_BYTES, PORT_LANE_DEPTH);
+        let (_inbound_tx, inbound) = tokio_grant_lane(contract::MAX_FRAMED_BYTES, PORT_LANE_DEPTH);
+        let ports = [Port {
+            id: String::from("loopback"),
+            key: 0,
+            liveness: PortLiveness::Alive(Instant::now()),
+            outbound,
+            inbound,
+            task: tokio::spawn(async {}),
+        }];
+
+        host.refresh_connection(&ports, false, None);
+        assert_eq!(status.connection(), ConnectionState::Connected);
+
+        tokio::time::advance(LIVENESS_TIMEOUT).await;
+        host.refresh_connection(&ports, false, None);
         assert_eq!(status.connection(), ConnectionState::Reconnecting);
     }
 

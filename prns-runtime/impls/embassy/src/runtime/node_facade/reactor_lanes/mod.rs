@@ -5,7 +5,7 @@ use embassy_sync::channel::{Receiver, Sender};
 use embassy_sync::signal::Signal;
 use embassy_sync::zerocopy_channel;
 use heapless::Vec as HeaplessVec;
-use portable_atomic::{AtomicBool, Ordering};
+use portable_atomic::{AtomicBool, AtomicU32, Ordering};
 use static_cell::{ConstStaticCell, StaticCell};
 
 use crate::engine::IssuedCommand;
@@ -43,6 +43,8 @@ pub enum LaneClaimError {
 
 pub struct StaticReactorLane<M: RawMutex + 'static, const FRAME: usize, const DEPTH: usize> {
     taken: AtomicBool,
+    ingress_pressure_events: AtomicU32,
+    egress_pressure_events: AtomicU32,
     inbound_buffer: ConstStaticCell<LaneBuffer<FRAME, DEPTH>>,
     inbound_channel: StaticCell<LaneChannel<M, FRAME>>,
     reactor_inbound: StaticCell<EmbassyGrantConsumer<'static, M, FRAME>>,
@@ -58,6 +60,8 @@ impl<M: RawMutex + Sync + 'static, const FRAME: usize, const DEPTH: usize>
     pub const fn new() -> Self {
         Self {
             taken: AtomicBool::new(false),
+            ingress_pressure_events: AtomicU32::new(0),
+            egress_pressure_events: AtomicU32::new(0),
             inbound_buffer: ConstStaticCell::new([const { FrameSlot::empty() }; DEPTH]),
             inbound_channel: StaticCell::new(),
             reactor_inbound: StaticCell::new(),
@@ -83,12 +87,14 @@ impl<M: RawMutex + Sync + 'static, const FRAME: usize, const DEPTH: usize>
         let inbound_channel = self
             .inbound_channel
             .init(zerocopy_channel::Channel::new(self.inbound_buffer.take()));
-        let (interface_inbound, reactor_inbound) = embassy_grant_lane(inbound_channel);
+        let (mut interface_inbound, reactor_inbound) = embassy_grant_lane(inbound_channel);
+        interface_inbound.set_pressure_counter(&self.ingress_pressure_events);
 
         let outbound_channel = self
             .outbound_channel
             .init(zerocopy_channel::Channel::new(self.outbound_buffer.take()));
         let (mut reactor_outbound, interface_outbound) = embassy_grant_lane(outbound_channel);
+        reactor_outbound.set_pressure_counter(&self.egress_pressure_events);
         if let Some(wake) = outbound_wake {
             reactor_outbound.set_outbound_wake(wake);
         }
@@ -102,6 +108,16 @@ impl<M: RawMutex + Sync + 'static, const FRAME: usize, const DEPTH: usize>
             reactor_inbound: self.reactor_inbound.init(reactor_inbound),
             reactor_outbound: self.reactor_outbound.init(reactor_outbound),
         })
+    }
+
+    #[must_use]
+    pub fn ingress_pressure_events(&self) -> u32 {
+        self.ingress_pressure_events.load(Ordering::Relaxed)
+    }
+
+    #[must_use]
+    pub fn egress_pressure_events(&self) -> u32 {
+        self.egress_pressure_events.load(Ordering::Relaxed)
     }
 }
 

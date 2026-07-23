@@ -1,10 +1,12 @@
+use super::super::interface_lifecycle::InboundDeliveryError;
 use super::*;
 use crate::interfaces::{
     AnnounceBandwidthCap, BitrateBps, EgressCapability, IngressCapability, InterfaceCapabilities,
     InterfaceCommonPolicy, InterfaceKind, InterfaceMode, TransportCapability,
 };
-use crate::reactor::grant::{FrameTarget, GrantConsumer, GrantProducer};
+use crate::reactor::grant::{FrameTarget, GrantConsumer, GrantProducer, LaneWriteOutcome};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::channel::Channel;
 
 type Mtx = CriticalSectionRawMutex;
 const FRAME: usize = 64;
@@ -86,7 +88,10 @@ fn heterogeneous_lanes_pair_interface_and_reactor_traffic() {
     reactor_inbound.release();
 
     let reactor_outbound = &mut lanes.egress.lanes[0].1;
-    assert!(reactor_outbound.try_write(FrameTarget::Direct(interface), b"outbound"));
+    assert_eq!(
+        reactor_outbound.try_write(FrameTarget::Direct(interface), b"outbound"),
+        LaneWriteOutcome::Written
+    );
     assert_eq!(outbound.try_peek().unwrap().frame(), b"outbound");
     GrantConsumer::release(&mut outbound);
 }
@@ -105,9 +110,12 @@ fn supervisors_wake_only_for_their_own_heterogeneous_lane() {
         .claim_supervisor(&SECOND, second, &SECOND_WAKE)
         .unwrap();
 
-    assert!(lanes.egress.lanes[0]
-        .1
-        .try_write(FrameTarget::Direct(first), b"wake"));
+    assert_eq!(
+        lanes.egress.lanes[0]
+            .1
+            .try_write(FrameTarget::Direct(first), b"wake"),
+        LaneWriteOutcome::Written
+    );
     assert!(FIRST_WAKE.signaled());
     assert!(!SECOND_WAKE.signaled());
 }
@@ -141,4 +149,43 @@ fn an_interface_cannot_claim_a_lane_smaller_than_its_frame() {
             capacity: 8,
         })
     );
+}
+
+#[test]
+fn a_full_static_lane_retains_egress_pressure_evidence() {
+    static LANE: StaticReactorLane<Mtx, 8, 1> = StaticReactorLane::new();
+    let id = InterfaceId::new(*b"pressure");
+    let mut lanes: ReactorLaneSet<Mtx, 1, 1> = ReactorLaneSet::new();
+    let _interface = lanes.claim_interface(&LANE, descriptor(id, 8)).unwrap();
+    let reactor_outbound = &mut lanes.egress.lanes[0].1;
+
+    assert_eq!(
+        reactor_outbound.try_write(FrameTarget::Direct(id), b"first"),
+        LaneWriteOutcome::Written
+    );
+    assert_eq!(
+        reactor_outbound.try_write(FrameTarget::Direct(id), b"second"),
+        LaneWriteOutcome::Full
+    );
+    assert_eq!(LANE.egress_pressure_events(), 1);
+}
+
+#[test]
+fn a_full_supervisor_lane_retains_ingress_pressure_evidence() {
+    static LANE: StaticReactorLane<Mtx, 8, 1> = StaticReactorLane::new();
+    static WAKE: Signal<Mtx, ()> = Signal::new();
+    static NOTIFY: Channel<Mtx, InterfaceId, 1> = Channel::new();
+    static LIFECYCLE: Channel<Mtx, InterfaceLifecycle, 1> = Channel::new();
+    let supervisor = InterfaceId::new(*b"super___");
+    let member = InterfaceId::new(*b"member__");
+    let mut lanes: ReactorLaneSet<Mtx, 1, 1> = ReactorLaneSet::new();
+    let lane = lanes.claim_supervisor(&LANE, supervisor, &WAKE).unwrap();
+    let mut fleet = lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender());
+
+    assert_eq!(fleet.try_deliver_inbound(member, b"first"), Ok(()));
+    assert_eq!(
+        fleet.try_deliver_inbound(member, b"second"),
+        Err(InboundDeliveryError::LaneFull)
+    );
+    assert_eq!(LANE.ingress_pressure_events(), 1);
 }

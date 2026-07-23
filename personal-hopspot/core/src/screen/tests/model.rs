@@ -74,6 +74,26 @@ fn supervisor_peer_rows_format_count_and_compact_peer_statuses() {
 }
 
 #[test]
+fn egress_pressure_is_hidden_until_a_drop_is_observed() {
+    let mut details = InterfaceMenuDetails::empty();
+    details.push_egress_pressure(0);
+    assert!(details.as_slice().is_empty());
+
+    details.push_egress_pressure(23);
+    assert_eq!(details.as_slice()[0].text(), "Egress drops 23");
+}
+
+#[test]
+fn ingress_pressure_is_hidden_until_a_drop_is_observed() {
+    let mut details = InterfaceMenuDetails::empty();
+    details.push_ingress_pressure(0);
+    assert!(details.as_slice().is_empty());
+
+    details.push_ingress_pressure(17);
+    assert_eq!(details.as_slice()[0].text(), "Ingress drops 17");
+}
+
+#[test]
 fn named_peer_rows_format_single_link_interfaces() {
     let mut details = InterfaceMenuDetails::empty();
     let count = details.push_named_peer("USB", Some(Liveness::Live));

@@ -232,6 +232,8 @@ use configuration::{hopspot_wifi_config, HopspotWifiConfig};
 use connectivity::build_tcp;
 #[cfg(feature = "wifi-auto")]
 use connectivity::{build_wifi, espnow_channel_policy, EspNowAdapter};
+#[cfg(not(feature = "wifi-auto"))]
+use display::add_reactor_pressure;
 #[cfg(feature = "wifi-auto")]
 use display::build_interface_menu_details;
 use display::{build_cards, build_snapshots, button_task};

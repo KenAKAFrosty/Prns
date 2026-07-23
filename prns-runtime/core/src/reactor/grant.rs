@@ -115,6 +115,14 @@ pub trait ReactorLaneReader: Send {
     fn release(&mut self);
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub enum LaneWriteOutcome {
+    Written,
+    Full,
+    FrameTooLarge { frame_len: usize, capacity: usize },
+}
+
 pub trait ReactorLaneWriter: Send {
-    fn try_write(&mut self, target: FrameTarget, frame: &[u8]) -> bool;
+    fn try_write(&mut self, target: FrameTarget, frame: &[u8]) -> LaneWriteOutcome;
 }

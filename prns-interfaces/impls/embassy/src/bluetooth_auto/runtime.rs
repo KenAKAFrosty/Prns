@@ -1200,12 +1200,8 @@ async fn deliver_inbound<
         Ok(0) => {}
         Ok(len) => {
             if let Some(member) = members[index].as_ref() {
-                if fleet
-                    .try_deliver_inbound(member.id, &inbufs[index][..len])
-                    .is_ok()
-                {
-                    status.member(member.slot).add_rx(len as u64);
-                }
+                status.member(member.slot).add_rx(len as u64);
+                let _ = fleet.try_deliver_inbound(member.id, &inbufs[index][..len]);
             }
         }
         Err(()) => {

@@ -12,7 +12,7 @@ use personal_rns::interfaces::bluetooth_auto::{
 use personal_rns::runtime::Fleet;
 use prns_interfaces_embassy::bluetooth_auto::GattCharacteristic;
 use prns_interfaces_embassy::bluetooth_auto::{
-    self, acceptor, dialer, host_runner, serve_slot, BleHub, GattServer,
+    self, acceptor, dialer, host_runner, serve_slot, BleHub, CooperativeTransport, GattServer,
     ReticulumGattCharacteristics, ReticulumGattUuids, TroubleController, TroubleStack,
     GATT_VALUE_CAP, L2CAP_PSM, PEER_CAPACITY,
 };
@@ -25,7 +25,7 @@ use crate::c6::{BLE_PEER_CAPACITY, LIFECYCLE_CAP, NOTIFY_CAP};
 use crate::s3::{BLE_PEER_CAPACITY, LIFECYCLE_CAP, NOTIFY_CAP};
 
 type BleFleet = Fleet<BridgeMutex, BLE_HW_MTU, NOTIFY_CAP, LIFECYCLE_CAP>;
-type Transport = BleConnector<'static>;
+type Transport = CooperativeTransport<BleConnector<'static>>;
 type HostStack = TroubleStack<Transport>;
 
 #[cfg(target_arch = "xtensa")]
@@ -136,7 +136,7 @@ pub async fn run(
     shared: &'static BluetoothAutoShared<BLE_PEER_CAPACITY>,
     spawner: Spawner,
 ) {
-    let controller = TroubleController::<Transport>::new(connector);
+    let controller = TroubleController::<Transport>::new(CooperativeTransport::new(connector));
     static RESOURCES: StaticCell<HostResources<DefaultPacketPool, PEER_CAPACITY, PEER_CAPACITY>> =
         StaticCell::new();
     let resources = RESOURCES.init(HostResources::new());

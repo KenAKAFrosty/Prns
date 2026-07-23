@@ -6,7 +6,9 @@ use crate::reactor::grant::{FrameTarget, GrantConsumer};
 use crate::reactor::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
 
 use super::super::leaked_grant_lane;
-use super::{enqueue_broadcast_for_wire, enqueue_for_wire, PooledEgress};
+use super::{
+    enqueue_broadcast_for_wire, enqueue_for_wire, EgressOutcome, PooledEgress, ReactorEgress,
+};
 
 #[test]
 fn pooled_egress_retag_relabels_a_lane_and_ignores_a_missing_id() {
@@ -24,6 +26,25 @@ fn pooled_egress_retag_relabels_a_lane_and_ignores_a_missing_id() {
     assert_eq!(egress.lanes[0].0, new_id, "the lane carries the new id");
     egress.retag(old_id, new_id);
     assert_eq!(egress.lanes[0].0, new_id, "retagging a gone id is a no-op");
+}
+
+#[test]
+fn pooled_egress_distinguishes_a_full_lane_from_missing_topology() {
+    let id = InterfaceId::new([0x33; 8]);
+    const FRAME: usize = EMBEDDED_MAX_WIRE_FRAME_LEN;
+    let (producer, _consumer) = leaked_grant_lane::<FRAME>(1);
+    let mut egress: PooledEgress<1> = PooledEgress::new();
+    let _ = egress.push(id, std::boxed::Box::leak(std::boxed::Box::new(producer)));
+
+    assert_eq!(egress.enqueue(id, b"first"), EgressOutcome::Enqueued);
+    assert_eq!(
+        egress.enqueue(id, b"second"),
+        EgressOutcome::LaneFull { lane: id }
+    );
+    assert_eq!(
+        egress.enqueue(InterfaceId::new([0x44; 8]), b"missing"),
+        EgressOutcome::NoLane
+    );
 }
 
 #[test]

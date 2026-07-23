@@ -129,6 +129,24 @@ impl InterfaceMenuDetails {
         let _ = self.rows.push(InterfaceMenuDetailRow::info(label, value));
     }
 
+    pub fn push_egress_pressure(&mut self, events: u32) {
+        if events == 0 {
+            return;
+        }
+        let mut value = InterfaceMenuDetailText::new();
+        let _ = write!(value, "{events}");
+        self.push_info("Egress drops", value.as_str());
+    }
+
+    pub fn push_ingress_pressure(&mut self, events: u32) {
+        if events == 0 {
+            return;
+        }
+        let mut value = InterfaceMenuDetailText::new();
+        let _ = write!(value, "{events}");
+        self.push_info("Ingress drops", value.as_str());
+    }
+
     pub(crate) fn push_supervisor_peers<I>(&mut self, peers: I) -> usize
     where
         I: IntoIterator<Item = (InterfaceId, Liveness)>,

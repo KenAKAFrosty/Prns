@@ -92,7 +92,6 @@ const SCAN_WINDOW: Duration = Duration::from_millis(600);
 #[cfg(target_arch = "riscv32")]
 const DISCOVERY_TURN_REST: Duration = Duration::from_millis(20);
 
-/// Shallow per-slot lanes apply backpressure before BLE bursts crowd the USB and engine scheduler.
 const CONTROL_QUEUE_DEPTH: usize = 2;
 const FRAME_QUEUE_DEPTH: usize = 2;
 const FRAME_POOL_CAPACITY: usize = PEER_CAPACITY;

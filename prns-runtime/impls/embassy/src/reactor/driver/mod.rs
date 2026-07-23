@@ -12,7 +12,7 @@ mod test_support;
 #[cfg(any(test, feature = "std"))]
 pub use super::grant_lane::leaked_grant_lane;
 pub use super::grant_lane::{embassy_grant_lane, EmbassyGrantConsumer, EmbassyGrantProducer};
-pub use egress::{EmbassyEgress, PooledEgress, ReactorEgress};
+pub use egress::{EgressOutcome, EmbassyEgress, PooledEgress, ReactorEgress};
 pub use fixed_topology::{run, run_with_deciders, run_with_store, ReactorWiring};
 pub use host::EmbassyHost;
 pub use interface_seam::EmbassyInterfaceSeam;
