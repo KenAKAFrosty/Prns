@@ -5,13 +5,12 @@ use personal_hopspot_core::{
     MobileRgbaFrameBuffer, RenderFrame, ScreenContent, SplashContent, UiAction, UiConfiguration,
     UiNotice, UiState,
 };
-use personal_rns::interfaces::{InterfaceSnapshot, InterfaceStatus};
+use personal_rns::interfaces::InterfaceSnapshot;
 use personal_rns::storage::{GrowableHeap, StorageLayout};
 use std::time::{Duration, Instant};
 
 use crate::engine::{
-    classify, ensure_started, interface_snapshots, sleep_interfaces, toggle_interface,
-    wake_interfaces, wifi_status,
+    classify, interface_snapshots, sleep_interfaces, toggle_interface, wake_interfaces,
 };
 const MAX_CARDS: usize = 16;
 const NOTICE_TIMEOUT: Duration = Duration::from_millis(900);
@@ -35,7 +34,6 @@ pub struct HopspotFace {
 
 impl HopspotFace {
     pub fn new() -> Self {
-        ensure_started();
         Self {
             state: ui_state(),
             framebuffer: MobileRgbaFrameBuffer::new(),
@@ -109,8 +107,7 @@ impl HopspotFace {
     }
 
     fn build_cards_from_snapshots(&self, snapshots: &[InterfaceSnapshot]) -> HVec<Card, MAX_CARDS> {
-        let wifi_id = wifi_status().id();
-        snapshots_to_cards(snapshots, |id| classify(id, wifi_id))
+        snapshots_to_cards(snapshots, classify)
     }
 
     fn render_cards(

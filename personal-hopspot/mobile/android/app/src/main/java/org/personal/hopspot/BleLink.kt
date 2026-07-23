@@ -37,6 +37,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 @TargetApi(Build.VERSION_CODES.Q)
+@SuppressLint("MissingPermission")
 class BleLink(private val context: Context) {
     private val bluetoothManager =
         context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager

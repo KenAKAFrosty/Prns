@@ -3,15 +3,6 @@ package org.personal.hopspot
 import java.nio.ByteBuffer
 
 object NativeBridge {
-    const val INPUT_SHORT_PRESS = 0
-    const val INPUT_LONG_PRESS = 1
-
-    const val ACTION_NONE = 0
-    const val ACTION_ANNOUNCE = 1
-
-    const val PANEL_WIDTH = 64
-    const val PANEL_HEIGHT = 128
-    const val ARGB_BYTES = PANEL_WIDTH * PANEL_HEIGHT * 4
     const val BLE_RADIO_ENABLED = 0x01
     const val BLE_RADIO_ADVERTISING = 0x02
     const val BLE_RADIO_SCANNING = 0x04
@@ -20,7 +11,54 @@ object NativeBridge {
         System.loadLibrary("personal_hopspot_android")
     }
 
-    external fun nativeInit(storageDir: String): Long
+    external fun nativeInit(): Long
+
+    external fun nativeStartEngine(storageDir: String): Int
+
+    external fun nativeStopEngine(): Int
+
+    external fun nativeEngineState(): Int
+
+    external fun nativeEngineLastFailure(): Int
+
+    external fun nativeEngineLastFailureName(): String?
+
+    private external fun nativeInputShortPressCode(): Int
+
+    private external fun nativeInputLongPressCode(): Int
+
+    private external fun nativeActionNoneCode(): Int
+
+    private external fun nativeActionAnnounceCode(): Int
+
+    private external fun nativeEngineStoppedCode(): Int
+
+    private external fun nativeEngineStartingCode(): Int
+
+    private external fun nativeEngineRunningCode(): Int
+
+    private external fun nativeEngineFailedCode(): Int
+
+    private external fun nativePanelWidth(): Int
+
+    private external fun nativePanelHeight(): Int
+
+    private external fun nativeRgbaBytes(): Int
+
+    private external fun nativeRenderIntervalMillis(): Long
+
+    val INPUT_SHORT_PRESS = nativeInputShortPressCode()
+    val INPUT_LONG_PRESS = nativeInputLongPressCode()
+    val ACTION_NONE = nativeActionNoneCode()
+    val ACTION_ANNOUNCE = nativeActionAnnounceCode()
+    val ENGINE_STOPPED = nativeEngineStoppedCode()
+    val ENGINE_STARTING = nativeEngineStartingCode()
+    val ENGINE_RUNNING = nativeEngineRunningCode()
+    val ENGINE_FAILED = nativeEngineFailedCode()
+    val PANEL_WIDTH = nativePanelWidth()
+    val PANEL_HEIGHT = nativePanelHeight()
+    val RGBA_BYTES = nativeRgbaBytes()
+    val RENDER_INTERVAL_MILLIS = nativeRenderIntervalMillis()
 
     external fun nativeFree(handle: Long)
 
@@ -183,7 +221,41 @@ object NativeBridge {
 
     fun runtimeHealth(): PrnsRuntimeHealth =
         PrnsRuntimeHealth.fromNative(nativeRuntimeHealth())
+
+    fun engineState(): PrnsEngineState =
+        PrnsEngineState.fromNative(nativeEngineState())
+
+    fun engineFailure(): PrnsEngineFailure =
+        PrnsEngineFailure(
+            code = nativeEngineLastFailure(),
+            name = nativeEngineLastFailureName() ?: "invalid",
+        )
 }
+
+enum class PrnsEngineState(
+    val wireName: String,
+) {
+    STOPPED("stopped"),
+    STARTING("starting"),
+    RUNNING("running"),
+    FAILED("failed");
+
+    companion object {
+        fun fromNative(code: Int): PrnsEngineState =
+            when (code) {
+                NativeBridge.ENGINE_STOPPED -> STOPPED
+                NativeBridge.ENGINE_STARTING -> STARTING
+                NativeBridge.ENGINE_RUNNING -> RUNNING
+                NativeBridge.ENGINE_FAILED -> FAILED
+                else -> throw IllegalArgumentException("unknown native engine state $code")
+            }
+    }
+}
+
+data class PrnsEngineFailure(
+    val code: Int,
+    val name: String,
+)
 
 data class PrnsRuntimeHealth(
     val runtimeUptimeMs: Long,

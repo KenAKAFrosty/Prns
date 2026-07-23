@@ -1,0 +1,407 @@
+# Android production hardware gate
+
+## Status and release boundary
+
+Android is not production-supported until both hardware columns in this
+document have completed evidence for the same commit:
+
+| Matrix | Required device |
+|---|---|
+| Legacy projector | API 19, 32-bit ARMv7 |
+| Modern mobile | API 33 or newer, 64-bit ARM64 |
+
+The deliverable is a signed direct-install APK. Play Store work is outside this
+gate.
+
+The application must retain version `0.1.0`, build `1`, the shared
+`lxmf.delivery` and `nomadnetwork.node` destinations, and persistent node and
+Bluetooth identities across service restart, process recreation, application
+relaunch, and device restart.
+
+## Build gate
+
+Run from the repository root on Linux:
+
+```bash
+python3 validation/run.py verify
+cargo test --locked --manifest-path personal-hopspot/core/Cargo.toml
+cargo clippy --locked --manifest-path personal-hopspot/core/Cargo.toml --all-targets -- -D warnings
+cargo test --locked --manifest-path personal-hopspot/mobile/android/rust/Cargo.toml
+cargo clippy --locked --manifest-path personal-hopspot/mobile/android/rust/Cargo.toml --all-targets -- -D warnings
+cargo test --locked --manifest-path prns-ffi/Cargo.toml
+cargo clippy --locked --manifest-path prns-ffi/Cargo.toml --all-targets -- -D warnings
+cargo test --locked --manifest-path prns-interfaces/impls/tokio/Cargo.toml --features wifi-direct wifi_direct::runtime::tests::toggle_sleep_and_wake_change_the_aggregate_state
+bash validation/platforms/android-service-smoke.sh
+```
+
+Expected output includes passing Rust tests and Clippy, both Android release
+library builds, successful dependency verification, lint, unit tests, APK
+assembly, and `ANDROID_SERVICE_SMOKE_OK`.
+
+The gate fails on any nonzero command, dependency drift, lint error, missing
+release library, missing launcher icon, backup-enabled manifest, permission
+contract mismatch, version mismatch, missing foreground service contract, or
+missing third-party notices.
+
+Record:
+
+```bash
+git rev-parse HEAD
+rustc -Vv
+java -version
+sha256sum personal-hopspot/mobile/android/app/build/outputs/apk/release/app-release.apk
+${ANDROID_HOME}/build-tools/34.0.0/apksigner verify --verbose --print-certs personal-hopspot/mobile/android/app/build/outputs/apk/release/app-release.apk
+```
+
+Do not install an unsigned or debug APK for production evidence.
+
+Set the four release-signing values and build the production artifact:
+
+```bash
+export PRNS_ANDROID_KEYSTORE=/absolute/path/to/prns-release.jks
+export PRNS_ANDROID_KEYSTORE_PASSWORD='<from the release credential store>'
+export PRNS_ANDROID_KEY_ALIAS='<release alias>'
+export PRNS_ANDROID_KEY_PASSWORD='<from the release credential store>'
+(
+  cd personal-hopspot/mobile/android
+  ./gradlew --no-daemon :app:assembleProduction
+)
+```
+
+`assembleProduction` fails when any credential is absent or the keystore path
+is not a file. Do not commit the keystore, passwords, or generated APK.
+
+## Device inventory
+
+For each device, capture:
+
+```bash
+adb -s "${ANDROID_SERIAL}" shell getprop ro.product.manufacturer
+adb -s "${ANDROID_SERIAL}" shell getprop ro.product.model
+adb -s "${ANDROID_SERIAL}" shell getprop ro.product.device
+adb -s "${ANDROID_SERIAL}" shell getprop ro.build.version.sdk
+adb -s "${ANDROID_SERIAL}" shell getprop ro.build.version.release
+adb -s "${ANDROID_SERIAL}" shell getprop ro.build.fingerprint
+adb -s "${ANDROID_SERIAL}" shell getprop ro.product.cpu.abilist
+adb -s "${ANDROID_SERIAL}" shell pm list features
+```
+
+The legacy device must report API 19 and an ARMv7 ABI. The modern device must
+report API 33 or newer and an ARM64 ABI. Record unavailable optional hardware
+as unavailable before testing; absence is not a pass for a feature the device
+reports.
+
+## Clean installation
+
+Save any existing user data before this step. Then install the signed APK:
+
+```bash
+adb -s "${ANDROID_SERIAL}" uninstall org.personal.hopspot
+adb -s "${ANDROID_SERIAL}" install personal-hopspot/mobile/android/app/build/outputs/apk/release/app-release.apk
+adb -s "${ANDROID_SERIAL}" shell am start -W -n org.personal.hopspot/.MainActivity
+adb -s "${ANDROID_SERIAL}" shell dumpsys package org.personal.hopspot
+adb -s "${ANDROID_SERIAL}" shell dumpsys activity services org.personal.hopspot
+adb -s "${ANDROID_SERIAL}" logcat -d -v threadtime
+```
+
+Expected results:
+
+- installation and launch succeed without a native loader or verifier error;
+- the packaged version is `0.1.0` with version code `1`;
+- the launcher displays the Prns icon;
+- `PrnsService` becomes a foreground service;
+- engine state reaches `running` with failure `none`;
+- the local listener uses port `37428` and RPC uses port `37429`; and
+- logs contain no fatal exception, ANR, native panic, or crash.
+
+## Modern API 33+ ARM64 matrix
+
+### Permission denial and recovery
+
+Begin from a clean install. Deny notification, nearby-device, and Bluetooth
+requests. Query package grants and service state:
+
+API 33 and newer use `NEARBY_WIFI_DEVICES`; API 23 through 32 retain location
+permission for the Wi-Fi APIs, following Android's
+[nearby Wi-Fi permission contract](https://developer.android.com/develop/connectivity/wifi/wifi-permissions).
+
+```bash
+adb -s "${ANDROID_SERIAL}" shell dumpsys package org.personal.hopspot
+adb -s "${ANDROID_SERIAL}" shell dumpsys activity services org.personal.hopspot
+adb -s "${ANDROID_SERIAL}" logcat -d -v threadtime
+```
+
+The core engine must remain running. Wi-Fi Direct and Wi-Fi Aware must report
+no permission, BLE must remain inactive, and Wi-Fi Auto, local listeners,
+rendering, and input must remain usable.
+
+Grant only nearby Wi-Fi:
+
+```bash
+adb -s "${ANDROID_SERIAL}" shell pm grant org.personal.hopspot android.permission.NEARBY_WIFI_DEVICES
+adb -s "${ANDROID_SERIAL}" shell am force-stop org.personal.hopspot
+adb -s "${ANDROID_SERIAL}" shell am start -W -n org.personal.hopspot/.MainActivity
+```
+
+Wi-Fi Direct and supported Wi-Fi Aware behavior must recover while BLE remains
+inactive. Then grant Bluetooth:
+
+```bash
+adb -s "${ANDROID_SERIAL}" shell pm grant org.personal.hopspot android.permission.BLUETOOTH_SCAN
+adb -s "${ANDROID_SERIAL}" shell pm grant org.personal.hopspot android.permission.BLUETOOTH_ADVERTISE
+adb -s "${ANDROID_SERIAL}" shell pm grant org.personal.hopspot android.permission.BLUETOOTH_CONNECT
+adb -s "${ANDROID_SERIAL}" shell am force-stop org.personal.hopspot
+adb -s "${ANDROID_SERIAL}" shell am start -W -n org.personal.hopspot/.MainActivity
+```
+
+BLE must recover without clearing application data or changing identities.
+
+### Foreground, background, stop, and restart
+
+Run the automated foreground probe:
+
+```bash
+ANDROID_SERIAL="${ANDROID_SERIAL}" bash validation/platforms/android-runtime-smoke.sh
+```
+
+Then exercise explicit service shutdown and restart:
+
+```bash
+adb -s "${ANDROID_SERIAL}" shell am startservice -n org.personal.hopspot/.PrnsService -a org.personal.hopspot.action.STOP_PRNS
+adb -s "${ANDROID_SERIAL}" shell dumpsys activity services org.personal.hopspot
+adb -s "${ANDROID_SERIAL}" shell am start-foreground-service -n org.personal.hopspot/.PrnsService -a org.personal.hopspot.action.START_PRNS
+adb -s "${ANDROID_SERIAL}" shell dumpsys activity services org.personal.hopspot
+```
+
+Expected results:
+
+- backgrounding does not stop the foreground service;
+- explicit stop removes the notification and service only after native work
+  has stopped;
+- restart returns to `running` within five seconds;
+- no prior listener remains bound during restart; and
+- the RPC key and both identities remain unchanged.
+
+### Process and device recreation
+
+Record the RPC key and identity fingerprints, then run:
+
+```bash
+adb -s "${ANDROID_SERIAL}" shell am force-stop org.personal.hopspot
+adb -s "${ANDROID_SERIAL}" shell am start -W -n org.personal.hopspot/.MainActivity
+adb -s "${ANDROID_SERIAL}" reboot
+adb -s "${ANDROID_SERIAL}" wait-for-device
+adb -s "${ANDROID_SERIAL}" shell am start -W -n org.personal.hopspot/.MainActivity
+```
+
+The application must return to `running`; the RPC key, node identity,
+Bluetooth identity, and destination hashes must match the original values.
+
+### Rendering and input
+
+Capture video showing the initial screen, short press, long press, menu
+navigation, announce action, backgrounding, and return:
+
+```bash
+adb -s "${ANDROID_SERIAL}" shell screenrecord /sdcard/prns-render-input.mp4
+adb -s "${ANDROID_SERIAL}" pull /sdcard/prns-render-input.mp4
+```
+
+The renderer must update at the shared 33 ms cadence without stretching,
+corruption, stalled input, or crash.
+
+### Transport proofs
+
+Use a second known-good Prns node and record peer logs plus packet counts for
+each supported transport.
+
+| Transport | Required proof |
+|---|---|
+| BLE Auto | central and peripheral discovery, bidirectional payloads, disconnect, and reconnect |
+| Wi-Fi Auto | Bonjour/LAN discovery and bidirectional payloads |
+| Wi-Fi Direct | discovery, group formation, bidirectional payloads, group removal, and rediscovery |
+| Wi-Fi Aware | discovery, data-path formation, bidirectional payloads, teardown, and recovery when the device reports the feature |
+| USB host | attach, permission grant or denial, bidirectional payloads, detach, and reattach |
+| USB AOA | accessory negotiation, bidirectional payloads, detach, and reattach |
+| Shared instance | a same-signature client binds, obtains running status and RPC credentials, and exchanges traffic |
+
+For Wi-Fi Direct, toggle the interface off and on from the Hopspot UI, put the
+device to sleep and wake it, and repeat group formation. Logs must demonstrate
+that discovery and groups stop while disabled or asleep and recover after
+wake.
+
+For unsupported optional transports, attach the `pm list features` evidence
+and mark the row `not exposed by device`. Do not mark it passed.
+
+### Sustained operation
+
+Run for at least eight hours with BLE Auto and Wi-Fi Auto enabled, Wi-Fi Direct
+cycling at least once per hour, and at least one continuous traffic stream:
+
+```bash
+adb -s "${ANDROID_SERIAL}" shell dumpsys batterystats --reset
+adb -s "${ANDROID_SERIAL}" logcat -c
+adb -s "${ANDROID_SERIAL}" logcat -v threadtime
+```
+
+At the end, capture service state, memory, battery, sockets, and logs:
+
+```bash
+adb -s "${ANDROID_SERIAL}" shell dumpsys activity services org.personal.hopspot
+adb -s "${ANDROID_SERIAL}" shell dumpsys meminfo org.personal.hopspot
+adb -s "${ANDROID_SERIAL}" shell dumpsys batterystats org.personal.hopspot
+adb -s "${ANDROID_SERIAL}" shell cat /proc/net/tcp
+adb -s "${ANDROID_SERIAL}" logcat -d -v threadtime
+```
+
+Fail on crash, ANR, native panic, stuck starting state, unexpected failed state,
+unbounded memory growth, dead listener, unrecovered transport, or identity
+change.
+
+## API 19 ARMv7 matrix
+
+Use the ARMv7 release library built with native API floor 21 and the intentional
+projector compatibility path. The Kotlin and Java bytecode must target Java 8.
+
+Run clean install and launch, then capture:
+
+```bash
+adb -s "${ANDROID_SERIAL}" shell am start -W -n org.personal.hopspot/.MainActivity
+adb -s "${ANDROID_SERIAL}" shell dumpsys activity services org.personal.hopspot
+adb -s "${ANDROID_SERIAL}" shell dumpsys meminfo org.personal.hopspot
+adb -s "${ANDROID_SERIAL}" logcat -d -v threadtime
+```
+
+Required scenarios:
+
+| Scenario | Required result |
+|---|---|
+| Install and native load | APK installs; ARMv7 library loads without unresolved symbol or verifier failure |
+| Launch | renderer appears and engine reaches running |
+| Input | short and long presses produce the expected navigation and no unknown-input fallback |
+| Background and return | foreground service remains valid and rendering resumes |
+| Explicit stop and restart | native worker joins, listeners release, and restart reaches running |
+| Process recreation | application relaunches without changing identity |
+| Device restart | application launch retains identity and destinations |
+| Wi-Fi Auto | LAN discovery and bidirectional payloads pass |
+| Wi-Fi Direct | discovery and peer traffic pass when exposed by the device |
+| USB host or AOA | every mode exposed by the device passes attach, traffic, detach, and reattach |
+| BLE | record unavailable below the supported Android BLE host floor unless this build explicitly exposes it |
+| Wi-Fi Aware | record unavailable because Android API 19 does not expose Wi-Fi Aware |
+| Sustained operation | four hours without crash, ANR, dead listener, identity change, or unbounded memory growth |
+
+The API 19 run fails if any API 21-or-newer framework class is loaded on the
+legacy path before its version guard.
+
+## Evidence record
+
+Create a separate file named
+`validation/evidence/android-production-<commit>.md`. Include all fields below.
+
+```text
+# Android production evidence
+
+Commit:
+Source tree clean:
+APK path:
+APK SHA-256:
+Signer certificate SHA-256:
+Version name:
+Version code:
+Rust toolchain:
+JDK:
+Android SDK:
+Android NDK:
+Build gate log:
+
+## API 19 ARMv7 device
+
+Manufacturer:
+Model:
+Device:
+API/release:
+Build fingerprint:
+ABI list:
+Feature list:
+Start timestamp:
+End timestamp:
+
+| Scenario | Result | Evidence paths and timestamps |
+|---|---|---|
+| Clean install and launch |  |  |
+| Render and input |  |  |
+| Background and return |  |  |
+| Explicit stop and restart |  |  |
+| Process recreation |  |  |
+| Device restart |  |  |
+| Identity and destinations |  |  |
+| Wi-Fi Auto |  |  |
+| Wi-Fi Direct |  |  |
+| USB host |  |  |
+| USB AOA |  |  |
+| Exposed additional transport |  |  |
+| Sustained operation |  |  |
+
+## API 33+ ARM64 device
+
+Manufacturer:
+Model:
+Device:
+API/release:
+Build fingerprint:
+ABI list:
+Feature list:
+Start timestamp:
+End timestamp:
+
+| Scenario | Result | Evidence paths and timestamps |
+|---|---|---|
+| Clean install and launch |  |  |
+| Initial full denial |  |  |
+| Nearby-only partial grant |  |  |
+| Later Bluetooth grant |  |  |
+| Foreground and background |  |  |
+| Explicit stop and restart |  |  |
+| Sticky service recreation |  |  |
+| Process recreation |  |  |
+| Device restart |  |  |
+| Identity and destinations |  |  |
+| Render and input |  |  |
+| BLE Auto |  |  |
+| Wi-Fi Auto |  |  |
+| Wi-Fi Direct toggle/sleep/wake |  |  |
+| Wi-Fi Aware |  |  |
+| USB host |  |  |
+| USB AOA |  |  |
+| Shared-instance binding |  |  |
+| Sustained operation |  |  |
+
+## Failures and deviations
+
+None, or list each failure with reproduction steps and disposition.
+
+## Sign-off
+
+Operator:
+Date:
+API 19 ARMv7 production gate:
+API 33+ ARM64 production gate:
+Android production-supported:
+```
+
+Every `pass` entry must link to raw logs, screenshots or video where relevant,
+and exact command output. Redact private keys and payload content, but retain
+stable one-way identity fingerprints so persistence can be compared.
+
+## Acceptance
+
+Android may be marked production-supported only when:
+
+- the build gate passes at the evidenced commit;
+- both required physical-device matrices pass;
+- all device-exposed transports pass;
+- permission denial and later recovery leave the core engine running;
+- service stop, restart, sticky recreation, and native lifecycle agree;
+- identities and destinations remain stable;
+- the direct-install APK is signed and its hash is recorded; and
+- no open failure or unexplained deviation remains.

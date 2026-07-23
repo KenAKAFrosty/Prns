@@ -2,10 +2,11 @@ use jni::objects::{JByteBuffer, JClass, JString};
 use jni::sys::{jboolean, jint, jlong, jlongArray, jstring};
 use jni::JNIEnv;
 use personal_hopspot_core::{
-    BatteryPercent, BatteryState, MobileActionCode, MobileInputCode, MOBILE_RGBA_BYTES,
+    BatteryPercent, BatteryState, MobileActionCode, MobileEngineFailure, MobileEngineState,
+    MobileInputCode, COALESCE_MS, MOBILE_PANEL_HEIGHT, MOBILE_PANEL_WIDTH, MOBILE_RGBA_BYTES,
 };
 
-use crate::engine::{rpc_key_hex, runtime_health};
+use crate::engine::{engine_state, last_failure, rpc_key_hex, runtime_health};
 use crate::face::HopspotFace;
 
 #[cfg(all(target_os = "android", target_arch = "arm"))]
@@ -39,23 +40,165 @@ fn init_logging() {}
 
 #[no_mangle]
 pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeInit(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jlong {
+    init_logging();
+    Box::into_raw(Box::new(HopspotFace::new())) as usize as jlong
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeStartEngine(
     mut env: JNIEnv,
     _class: JClass,
     storage_dir: JString,
-) -> jlong {
+) -> jint {
     init_logging();
     let storage_dir = match env.get_string(&storage_dir) {
         Ok(path) => std::path::PathBuf::from(path.to_string_lossy().into_owned()),
         Err(error) => {
             log::error!("invalid Android storage directory: {error}");
-            return 0;
+            return MobileEngineFailure::StorageConfiguration.code();
         }
     };
-    if let Err(error) = crate::engine::configure_storage_dir(storage_dir) {
-        log::error!("Android engine storage configuration failed: {error:?}");
-        return 0;
-    }
-    Box::into_raw(Box::new(HopspotFace::new())) as usize as jlong
+    crate::engine::start(storage_dir)
+        .err()
+        .map_or(MobileEngineFailure::None.code(), |error| {
+            error.failure().code()
+        })
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeStopEngine(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jint {
+    crate::engine::stop()
+        .err()
+        .map_or(MobileEngineFailure::None.code(), |error| {
+            error.failure().code()
+        })
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeEngineState(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jint {
+    engine_state().code()
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeEngineLastFailure(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jint {
+    last_failure().code()
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeEngineLastFailureName(
+    env: JNIEnv,
+    _class: JClass,
+) -> jstring {
+    env.new_string(last_failure().wire_name())
+        .map_or(core::ptr::null_mut(), JString::into_raw)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeInputShortPressCode(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jint {
+    MobileInputCode::ShortPress as jint
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeInputLongPressCode(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jint {
+    MobileInputCode::LongPress as jint
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeActionNoneCode(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jint {
+    MobileActionCode::None.code()
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeActionAnnounceCode(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jint {
+    MobileActionCode::Announce.code()
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeEngineStoppedCode(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jint {
+    MobileEngineState::Stopped.code()
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeEngineStartingCode(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jint {
+    MobileEngineState::Starting.code()
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeEngineRunningCode(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jint {
+    MobileEngineState::Running.code()
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeEngineFailedCode(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jint {
+    MobileEngineState::Failed.code()
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativePanelWidth(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jint {
+    MOBILE_PANEL_WIDTH as jint
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativePanelHeight(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jint {
+    MOBILE_PANEL_HEIGHT as jint
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeRgbaBytes(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jint {
+    MOBILE_RGBA_BYTES as jint
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeRenderIntervalMillis(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jlong {
+    COALESCE_MS as jlong
 }
 
 #[no_mangle]
@@ -132,20 +275,21 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeRuntimeHealt
     env: JNIEnv,
     _class: JClass,
 ) -> jlongArray {
-    let health = runtime_health();
-    let values = [
-        health_long(health.uptime_millis),
-        jlong::from(health.interface_count),
-        jlong::from(health.online_interface_count),
-        jlong::from(health.local_client_count),
-        jlong::from(health.route_count),
-        jlong::from(health.link_count),
-        jlong::from(health.transported_link_count),
-        health_long(health.rx_bytes),
-        health_long(health.tx_bytes),
-        health_long(health.rx_bps),
-        health_long(health.tx_bps),
-    ];
+    let values = runtime_health().map_or([0; HEALTH_FIELD_COUNT as usize], |health| {
+        [
+            health_long(health.uptime_millis),
+            jlong::from(health.interface_count),
+            jlong::from(health.online_interface_count),
+            jlong::from(health.local_client_count),
+            jlong::from(health.route_count),
+            jlong::from(health.link_count),
+            jlong::from(health.transported_link_count),
+            health_long(health.rx_bytes),
+            health_long(health.tx_bytes),
+            health_long(health.rx_bps),
+            health_long(health.tx_bps),
+        ]
+    });
     let Ok(array) = env.new_long_array(HEALTH_FIELD_COUNT) else {
         return core::ptr::null_mut();
     };
@@ -164,10 +308,9 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeRpcKeyHex(
     env: JNIEnv,
     _class: JClass,
 ) -> jstring {
-    match env.new_string(rpc_key_hex()) {
-        Ok(value) => value.into_raw(),
-        Err(_) => core::ptr::null_mut(),
-    }
+    rpc_key_hex()
+        .and_then(|key| env.new_string(key).ok())
+        .map_or(core::ptr::null_mut(), JString::into_raw)
 }
 
 #[no_mangle]

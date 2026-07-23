@@ -104,6 +104,7 @@ api="$(adb_cmd shell getprop ro.build.version.sdk | tr -d '\r')"
 if [[ "${api}" =~ ^[0-9]+$ ]]; then
   if (( api >= 23 )); then
     adb_cmd shell pm grant org.personal.hopspot.test android.permission.POST_NOTIFICATIONS >/dev/null 2>&1 || true
+    adb_cmd shell pm grant org.personal.hopspot android.permission.ACCESS_COARSE_LOCATION >/dev/null 2>&1 || true
     adb_cmd shell pm grant org.personal.hopspot android.permission.ACCESS_FINE_LOCATION >/dev/null 2>&1 || true
   fi
   if (( api >= 31 )); then
@@ -113,6 +114,7 @@ if [[ "${api}" =~ ^[0-9]+$ ]]; then
   fi
   if (( api >= 33 )); then
     adb_cmd shell pm grant org.personal.hopspot android.permission.POST_NOTIFICATIONS >/dev/null 2>&1 || true
+    adb_cmd shell pm grant org.personal.hopspot android.permission.NEARBY_WIFI_DEVICES >/dev/null 2>&1 || true
   fi
 fi
 

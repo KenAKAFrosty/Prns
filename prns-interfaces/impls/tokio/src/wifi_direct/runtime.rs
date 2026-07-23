@@ -735,6 +735,25 @@ mod tests {
     }
 
     #[test]
+    fn toggle_sleep_and_wake_change_the_aggregate_state() {
+        let status = WifiDirectStatus::new(InterfaceId::new([0xD1; 8]));
+        status.mark_up();
+        assert!(status.is_enabled());
+
+        status.toggle_enabled();
+        assert!(!status.is_enabled());
+        assert_eq!(status.connection(), ConnectionState::Disabled);
+
+        status.enable();
+        assert!(status.is_enabled());
+        assert_eq!(status.connection(), ConnectionState::Disconnected);
+
+        status.disable();
+        assert!(!status.is_enabled());
+        assert_eq!(status.connection(), ConnectionState::Disabled);
+    }
+
+    #[test]
     fn revocation_reads_as_disconnected_with_the_reason_never_failed() {
         let status = WifiDirectStatus::new(InterfaceId::new([0xD1; 8]));
         status.mark_up();

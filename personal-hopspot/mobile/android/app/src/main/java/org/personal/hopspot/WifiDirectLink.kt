@@ -1,6 +1,7 @@
 package org.personal.hopspot
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -19,6 +20,7 @@ import android.os.SystemClock
 import android.util.Log
 import java.nio.ByteBuffer
 
+@SuppressLint("MissingPermission")
 class WifiDirectLink(context: Context) {
     private val appContext = context.applicationContext
     private val manager =

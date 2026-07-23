@@ -294,7 +294,15 @@ platform = "linux"
 toolchain = "stable"
 timeout_seconds = 2400
 command = ["bash", "validation/platforms/android-service-smoke.sh"]
-inputs = ["validation/platforms/android-service-smoke.sh"]
+inputs = [
+    "validation/platforms/android-service-smoke.sh",
+    "validation/platforms/android-production-hardware.md",
+    "personal-hopspot/core/src/mobile.rs",
+    "personal-hopspot/mobile/android/app",
+    "personal-hopspot/mobile/android/rust",
+    "prns-ffi/src/wifi_direct/android.rs",
+    "prns-interfaces/impls/tokio/src/wifi_direct/runtime.rs",
+]
 artifacts = "validation-artifacts/results/android-service"
 
 [[suite]]
@@ -378,7 +386,12 @@ platform = "android-device"
 toolchain = "stable"
 timeout_seconds = 2400
 command = ["bash", "validation/platforms/android-runtime-smoke.sh"]
-inputs = ["validation/platforms/android-runtime-smoke.sh", "validation/platforms/android-service-smoke.sh"]
+inputs = [
+    "validation/platforms/android-runtime-smoke.sh",
+    "validation/platforms/android-service-smoke.sh",
+    "validation/platforms/android-production-hardware.md",
+    "personal-hopspot/mobile/android/app/src/androidTest",
+]
 artifacts = "validation-artifacts/results/android-runtime-device"
 
 [[suite]]

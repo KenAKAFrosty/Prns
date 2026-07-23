@@ -307,3 +307,45 @@ impl WifiDirectBackend for AndroidWifiDirectBackend {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn discovery_and_group_requests_round_trip() {
+        let bridge = AndroidWifiDirectBridge::new();
+        let mut backend = AndroidWifiDirectBackend::new(bridge.clone());
+
+        assert!(backend.set_discovery(DiscoveryMode::On).await.is_ok());
+        assert!(bridge.desired_discovery());
+        assert!(backend.set_discovery(DiscoveryMode::Off).await.is_ok());
+        assert!(!bridge.desired_discovery());
+
+        backend
+            .form_group(MacAddress::new([0xA1; 6]), GoIntent::BALANCED)
+            .await;
+        assert!(bridge.take_host_request());
+        assert!(!bridge.take_host_request());
+
+        backend.remove_group().await;
+        assert!(bridge.take_remove_group());
+        assert!(!bridge.take_remove_group());
+    }
+
+    #[tokio::test]
+    async fn permission_denial_is_a_typed_availability_event() {
+        let bridge = AndroidWifiDirectBridge::new();
+        let mut backend = AndroidWifiDirectBackend::new(bridge.clone());
+        bridge.availability(AVAILABILITY_NO_PERMISSION);
+
+        let event = backend.next_event().await;
+        if let WifiDirectEvent::AvailabilityChanged(Availability::Unavailable(reason)) = &event {
+            assert_eq!(*reason, NO_PERMISSION_REASON);
+        }
+        assert!(matches!(
+            event,
+            WifiDirectEvent::AvailabilityChanged(Availability::Unavailable(_))
+        ));
+    }
+}

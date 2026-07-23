@@ -1,6 +1,8 @@
 package org.personal.hopspot
 
 import android.Manifest
+import android.annotation.SuppressLint
+import android.annotation.TargetApi
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -30,6 +32,8 @@ import java.net.Inet6Address
 import java.net.NetworkInterface
 import java.nio.ByteBuffer
 
+@SuppressLint("MissingPermission")
+@TargetApi(Build.VERSION_CODES.O)
 class WifiAwareLink(context: Context) {
     private val appContext = context.applicationContext
     private val manager =
@@ -280,6 +284,7 @@ class WifiAwareLink(context: Context) {
         }
     }
 
+    @TargetApi(Build.VERSION_CODES.Q)
     private fun openNetwork(
         peer: Int,
         isInitiator: Boolean,
@@ -316,6 +321,7 @@ class WifiAwareLink(context: Context) {
         connectivity.requestNetwork(request, callback)
     }
 
+    @TargetApi(Build.VERSION_CODES.Q)
     private fun onDataPathAvailable(
         peer: Int,
         isInitiator: Boolean,

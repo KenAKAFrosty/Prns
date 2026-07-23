@@ -1,0 +1,612 @@
+mod worker;
+
+use core::fmt::Write as _;
+use std::path::PathBuf;
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, TryRecvError};
+use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::thread;
+use std::time::{Duration, Instant};
+
+use personal_hopspot_core::{
+    card_label, CardKind, CardLabel, MobileEngineFailure, MobileEngineState,
+};
+use personal_rns::bluetooth_auto::BluetoothAutoStatus;
+use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand};
+use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus};
+use personal_rns::reactor::tokio::TokioInterfaceStatus;
+use personal_rns::runtime::{PrnsNodeHandle, RuntimeHealth};
+use personal_rns::wifi_auto::AutoWifiStatus;
+use personal_rns::wifi_aware::WifiAwareStatus;
+use personal_rns::wifi_direct::WifiDirectStatus;
+use personal_rns::wire::DestinationHash;
+use tokio::sync::oneshot;
+
+use crate::bluetooth_auto::AndroidBleBridge;
+use crate::bridge::AndroidUsbBridge;
+use crate::mdns::AndroidMdnsBridge;
+use crate::wifi_aware::AndroidWifiAwareBridge;
+use crate::wifi_direct::AndroidWifiDirectBridge;
+
+const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 8]);
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(5);
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+
+pub(super) const ANDROID_PORT: &str = "android-usb";
+pub(super) const LOCAL_RNS_PORT: u16 = 37428;
+pub(super) const RPC_PORT: u16 = LOCAL_RNS_PORT + 1;
+pub(super) const ANNOUNCE_APP_DATA: &[u8] = b"personal-hopspot";
+pub(super) const NODE_ANNOUNCE_APP_DATA: &[u8] = b"personal-hopspot";
+pub(super) const WORKER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(4);
+
+#[derive(Clone, Copy)]
+pub(super) struct EnginePorts {
+    pub(super) local: u16,
+    pub(super) rpc: u16,
+}
+
+impl EnginePorts {
+    const ANDROID: Self = Self {
+        local: LOCAL_RNS_PORT,
+        rpc: RPC_PORT,
+    };
+
+    #[cfg(test)]
+    const EPHEMERAL: Self = Self { local: 0, rpc: 0 };
+}
+
+pub(super) struct EngineResources {
+    pub(super) started_at: Instant,
+    pub(super) usb_status: TokioInterfaceStatus,
+    pub(super) wifi_status: AutoWifiStatus,
+    pub(super) ble_status: BluetoothAutoStatus,
+    pub(super) wd_status: WifiDirectStatus,
+    pub(super) wa_status: WifiAwareStatus,
+    pub(super) handle: PrnsNodeHandle,
+    pub(super) destination: DestinationHash,
+    pub(super) node_page_destination: DestinationHash,
+    pub(super) rpc_key: Vec<u8>,
+}
+
+#[derive(Clone)]
+pub(super) struct PlatformLinks {
+    pub(super) usb: AndroidUsbBridge,
+    pub(super) ble: AndroidBleBridge,
+    pub(super) wifi_direct: AndroidWifiDirectBridge,
+    pub(super) wifi_aware: AndroidWifiAwareBridge,
+    pub(super) mdns: AndroidMdnsBridge,
+}
+
+impl PlatformLinks {
+    fn new() -> Self {
+        Self {
+            usb: AndroidUsbBridge::new(),
+            ble: AndroidBleBridge::new(),
+            wifi_direct: AndroidWifiDirectBridge::new(),
+            wifi_aware: AndroidWifiAwareBridge::new(),
+            mdns: AndroidMdnsBridge::new(),
+        }
+    }
+}
+
+struct EngineProcess {
+    generation: u64,
+    resources: Option<EngineResources>,
+    platform: PlatformLinks,
+    shutdown_tx: Option<oneshot::Sender<()>>,
+    stopped_rx: Receiver<WorkerExit>,
+    worker: Option<thread::JoinHandle<()>>,
+}
+
+struct EngineManager {
+    state: MobileEngineState,
+    last_failure: MobileEngineFailure,
+    storage_dir: Option<PathBuf>,
+    generation: u64,
+    process: Option<EngineProcess>,
+}
+
+impl EngineManager {
+    fn new() -> Self {
+        Self {
+            state: MobileEngineState::Stopped,
+            last_failure: MobileEngineFailure::None,
+            storage_dir: None,
+            generation: 0,
+            process: None,
+        }
+    }
+
+    fn reap_finished(&mut self) {
+        let finished = match self.process.as_ref() {
+            Some(process) => match process.stopped_rx.try_recv() {
+                Ok(exit) => Some(exit),
+                Err(TryRecvError::Disconnected) => {
+                    Some(WorkerExit::Failed(MobileEngineFailure::WorkerStopped))
+                }
+                Err(TryRecvError::Empty) => None,
+            },
+            None => None,
+        };
+        let Some(mut exit) = finished else {
+            return;
+        };
+        let Some(mut process) = self.process.take() else {
+            return;
+        };
+        if process
+            .worker
+            .take()
+            .is_some_and(|worker| worker.join().is_err())
+        {
+            exit = WorkerExit::Failed(MobileEngineFailure::WorkerStopped);
+        }
+        match exit {
+            WorkerExit::Stopped => {
+                if self.state != MobileEngineState::Stopped {
+                    self.state = MobileEngineState::Failed;
+                    self.last_failure = MobileEngineFailure::WorkerStopped;
+                }
+            }
+            WorkerExit::Failed(failure) => {
+                self.state = MobileEngineState::Failed;
+                self.last_failure = failure;
+            }
+        }
+    }
+}
+
+static ENGINE_MANAGER: OnceLock<Mutex<EngineManager>> = OnceLock::new();
+
+fn lock_manager() -> MutexGuard<'static, EngineManager> {
+    ENGINE_MANAGER
+        .get_or_init(|| Mutex::new(EngineManager::new()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EngineStartError {
+    StorageConfiguration,
+    WorkerSpawn,
+    RuntimeBuild,
+    LocalListenerBind,
+    RpcListenerBind,
+    StartupTimeout,
+    WorkerStopped,
+}
+
+impl EngineStartError {
+    #[must_use]
+    pub(crate) const fn failure(self) -> MobileEngineFailure {
+        match self {
+            Self::StorageConfiguration => MobileEngineFailure::StorageConfiguration,
+            Self::WorkerSpawn => MobileEngineFailure::WorkerSpawn,
+            Self::RuntimeBuild => MobileEngineFailure::RuntimeBuild,
+            Self::LocalListenerBind => MobileEngineFailure::LocalListenerBind,
+            Self::RpcListenerBind => MobileEngineFailure::RpcListenerBind,
+            Self::StartupTimeout => MobileEngineFailure::StartupTimeout,
+            Self::WorkerStopped => MobileEngineFailure::WorkerStopped,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EngineStopError {
+    ShutdownTimeout,
+    WorkerStopped,
+}
+
+impl EngineStopError {
+    #[must_use]
+    pub(crate) const fn failure(self) -> MobileEngineFailure {
+        match self {
+            Self::ShutdownTimeout => MobileEngineFailure::ShutdownTimeout,
+            Self::WorkerStopped => MobileEngineFailure::WorkerStopped,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(super) enum WorkerExit {
+    Stopped,
+    Failed(MobileEngineFailure),
+}
+
+pub(crate) fn start(storage_dir: PathBuf) -> Result<(), EngineStartError> {
+    start_with_ports(storage_dir, EnginePorts::ANDROID)
+}
+
+fn start_with_ports(storage_dir: PathBuf, ports: EnginePorts) -> Result<(), EngineStartError> {
+    let storage_dir = prepare_storage_dir(storage_dir)?;
+    let platform = PlatformLinks::new();
+    let (ready_tx, ready_rx) = mpsc::channel();
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let (stopped_tx, stopped_rx) = mpsc::channel();
+
+    let generation = {
+        let mut manager = lock_manager();
+        manager.reap_finished();
+        if let Some(configured) = manager.storage_dir.as_ref() {
+            if configured != &storage_dir {
+                manager.last_failure = MobileEngineFailure::StorageConfiguration;
+                return Err(EngineStartError::StorageConfiguration);
+            }
+        }
+        if manager.state == MobileEngineState::Running {
+            return Ok(());
+        }
+        if manager.process.is_some() {
+            return Err(EngineStartError::WorkerStopped);
+        }
+        manager.storage_dir = Some(storage_dir.clone());
+        manager.generation = manager.generation.wrapping_add(1);
+        manager.state = MobileEngineState::Starting;
+        manager.last_failure = MobileEngineFailure::None;
+        let generation = manager.generation;
+        let worker_platform = platform.clone();
+        let worker = thread::Builder::new()
+            .name("hopspot-engine".into())
+            .spawn(move || {
+                worker::run(worker::WorkerInput {
+                    storage_dir,
+                    platform: worker_platform,
+                    ready_tx,
+                    shutdown_rx,
+                    stopped_tx,
+                    ports,
+                })
+            })
+            .map_err(|_| {
+                manager.state = MobileEngineState::Failed;
+                manager.last_failure = MobileEngineFailure::WorkerSpawn;
+                EngineStartError::WorkerSpawn
+            })?;
+        manager.process = Some(EngineProcess {
+            generation,
+            resources: None,
+            platform,
+            shutdown_tx: Some(shutdown_tx),
+            stopped_rx,
+            worker: Some(worker),
+        });
+        generation
+    };
+
+    let ready = ready_rx.recv_timeout(STARTUP_TIMEOUT);
+    let mut manager = lock_manager();
+    if manager.generation != generation {
+        return Err(EngineStartError::WorkerStopped);
+    }
+    let Some(process) = manager.process.as_mut() else {
+        return Err(EngineStartError::WorkerStopped);
+    };
+    if process.generation != generation {
+        return Err(EngineStartError::WorkerStopped);
+    }
+    match ready {
+        Ok(Ok(resources)) => {
+            process.resources = Some(resources);
+            manager.state = MobileEngineState::Running;
+            manager.last_failure = MobileEngineFailure::None;
+            Ok(())
+        }
+        Ok(Err(error)) => {
+            manager.state = MobileEngineState::Failed;
+            manager.last_failure = error.failure();
+            Err(error)
+        }
+        Err(RecvTimeoutError::Timeout) => {
+            if let Some(shutdown_tx) = process.shutdown_tx.take() {
+                let _ = shutdown_tx.send(());
+            }
+            manager.state = MobileEngineState::Failed;
+            manager.last_failure = MobileEngineFailure::StartupTimeout;
+            Err(EngineStartError::StartupTimeout)
+        }
+        Err(RecvTimeoutError::Disconnected) => {
+            manager.state = MobileEngineState::Failed;
+            manager.last_failure = MobileEngineFailure::WorkerStopped;
+            Err(EngineStartError::WorkerStopped)
+        }
+    }
+}
+
+fn prepare_storage_dir(storage_dir: PathBuf) -> Result<PathBuf, EngineStartError> {
+    if !storage_dir.is_absolute() {
+        record_configuration_failure();
+        return Err(EngineStartError::StorageConfiguration);
+    }
+    if std::fs::create_dir_all(&storage_dir).is_err() {
+        record_configuration_failure();
+        return Err(EngineStartError::StorageConfiguration);
+    }
+    storage_dir.canonicalize().map_err(|_| {
+        record_configuration_failure();
+        EngineStartError::StorageConfiguration
+    })
+}
+
+fn record_configuration_failure() {
+    let mut manager = lock_manager();
+    if manager.state != MobileEngineState::Running {
+        manager.state = MobileEngineState::Failed;
+    }
+    manager.last_failure = MobileEngineFailure::StorageConfiguration;
+}
+
+pub(crate) fn stop() -> Result<(), EngineStopError> {
+    let mut process = {
+        let mut manager = lock_manager();
+        manager.reap_finished();
+        let Some(process) = manager.process.take() else {
+            manager.state = MobileEngineState::Stopped;
+            return Ok(());
+        };
+        manager.generation = manager.generation.wrapping_add(1);
+        process
+    };
+
+    if let Some(shutdown_tx) = process.shutdown_tx.take() {
+        let _ = shutdown_tx.send(());
+    }
+    let exit = process.stopped_rx.recv_timeout(SHUTDOWN_TIMEOUT);
+    match exit {
+        Ok(exit) => finish_stopped_process(process, exit),
+        Err(RecvTimeoutError::Disconnected) => finish_stopped_process(
+            process,
+            WorkerExit::Failed(MobileEngineFailure::WorkerStopped),
+        ),
+        Err(RecvTimeoutError::Timeout) => {
+            let mut manager = lock_manager();
+            manager.state = MobileEngineState::Failed;
+            manager.last_failure = MobileEngineFailure::ShutdownTimeout;
+            manager.process = Some(process);
+            Err(EngineStopError::ShutdownTimeout)
+        }
+    }
+}
+
+fn finish_stopped_process(
+    mut process: EngineProcess,
+    mut exit: WorkerExit,
+) -> Result<(), EngineStopError> {
+    if process
+        .worker
+        .take()
+        .is_some_and(|worker| worker.join().is_err())
+    {
+        exit = WorkerExit::Failed(MobileEngineFailure::WorkerStopped);
+    }
+    let mut manager = lock_manager();
+    match exit {
+        WorkerExit::Stopped => {
+            manager.state = MobileEngineState::Stopped;
+            Ok(())
+        }
+        WorkerExit::Failed(failure) => {
+            manager.state = MobileEngineState::Failed;
+            manager.last_failure = failure;
+            Err(EngineStopError::WorkerStopped)
+        }
+    }
+}
+
+pub(crate) fn engine_state() -> MobileEngineState {
+    let mut manager = lock_manager();
+    manager.reap_finished();
+    manager.state
+}
+
+pub(crate) fn last_failure() -> MobileEngineFailure {
+    let mut manager = lock_manager();
+    manager.reap_finished();
+    manager.last_failure
+}
+
+pub(crate) fn interface_snapshots() -> Vec<InterfaceSnapshot> {
+    let mut manager = lock_manager();
+    manager.reap_finished();
+    manager
+        .process
+        .as_ref()
+        .and_then(|process| process.resources.as_ref())
+        .map(|resources| resources.handle.interfaces())
+        .unwrap_or_default()
+}
+
+pub(crate) fn runtime_health() -> Option<RuntimeHealth> {
+    let mut manager = lock_manager();
+    manager.reap_finished();
+    let resources = manager.process.as_ref()?.resources.as_ref()?;
+    Some(RuntimeHealth::from_snapshots(
+        resources.started_at.elapsed(),
+        &resources.handle.interfaces(),
+    ))
+}
+
+pub(crate) fn rpc_key_hex() -> Option<String> {
+    let mut manager = lock_manager();
+    manager.reap_finished();
+    let resources = manager.process.as_ref()?.resources.as_ref()?;
+    let mut out = String::with_capacity(64);
+    for byte in &resources.rpc_key {
+        let _ = write!(&mut out, "{byte:02x}");
+    }
+    Some(out)
+}
+
+pub(crate) fn toggle_interface(id: InterfaceId) {
+    let mut manager = lock_manager();
+    manager.reap_finished();
+    let Some(resources) = manager
+        .process
+        .as_ref()
+        .and_then(|process| process.resources.as_ref())
+    else {
+        return;
+    };
+    if id == USB_INTERFACE_ID {
+        resources.usb_status.toggle_enabled();
+    } else if id == resources.wifi_status.id() {
+        resources.wifi_status.toggle_enabled();
+    } else if id.kind() == Some(InterfaceKind::BluetoothAuto) {
+        resources.ble_status.toggle_enabled();
+    } else if id.kind() == Some(InterfaceKind::WifiDirect) {
+        resources.wd_status.toggle_enabled();
+    } else if id.kind() == Some(InterfaceKind::WifiAware) {
+        resources.wa_status.toggle_enabled();
+    }
+}
+
+pub(crate) fn sleep_interfaces() {
+    set_interfaces_enabled(false);
+}
+
+pub(crate) fn wake_interfaces() {
+    set_interfaces_enabled(true);
+}
+
+fn set_interfaces_enabled(enabled: bool) {
+    let mut manager = lock_manager();
+    manager.reap_finished();
+    let Some(resources) = manager
+        .process
+        .as_ref()
+        .and_then(|process| process.resources.as_ref())
+    else {
+        return;
+    };
+    if enabled {
+        resources.usb_status.enable();
+        resources.wifi_status.enable();
+        resources.ble_status.enable();
+        resources.wd_status.enable();
+        resources.wa_status.enable();
+    } else {
+        resources.usb_status.disable();
+        resources.wifi_status.disable();
+        resources.ble_status.disable();
+        resources.wd_status.disable();
+        resources.wa_status.disable();
+    }
+}
+
+pub(crate) fn announce() {
+    let mut manager = lock_manager();
+    manager.reap_finished();
+    let Some(resources) = manager
+        .process
+        .as_ref()
+        .and_then(|process| process.resources.as_ref())
+    else {
+        return;
+    };
+    log::info!("hopspot: manual announce -> lxmf.delivery on every interface");
+    let _ = resources
+        .handle
+        .issue(EngineCommand::AnnounceNow(AnnounceNow {
+            destination: resources.destination,
+            target: AnnounceTarget::AllInterfaces,
+            app_data: AnnounceAppData::Registered,
+        }));
+    log::info!("hopspot: manual announce -> nomadnetwork.node on every interface");
+    let _ = resources
+        .handle
+        .issue(EngineCommand::AnnounceNow(AnnounceNow {
+            destination: resources.node_page_destination,
+            target: AnnounceTarget::AllInterfaces,
+            app_data: AnnounceAppData::Registered,
+        }));
+}
+
+pub(crate) fn usb_bridge() -> AndroidUsbBridge {
+    lock_manager()
+        .process
+        .as_ref()
+        .map(|process| process.platform.usb.clone())
+        .unwrap_or_default()
+}
+
+pub(crate) fn ble_bridge() -> AndroidBleBridge {
+    lock_manager()
+        .process
+        .as_ref()
+        .map(|process| process.platform.ble.clone())
+        .unwrap_or_default()
+}
+
+pub(crate) fn wd_bridge() -> AndroidWifiDirectBridge {
+    lock_manager()
+        .process
+        .as_ref()
+        .map(|process| process.platform.wifi_direct.clone())
+        .unwrap_or_default()
+}
+
+pub(crate) fn wa_bridge() -> AndroidWifiAwareBridge {
+    lock_manager()
+        .process
+        .as_ref()
+        .map(|process| process.platform.wifi_aware.clone())
+        .unwrap_or_default()
+}
+
+pub(crate) fn mdns_bridge() -> AndroidMdnsBridge {
+    lock_manager()
+        .process
+        .as_ref()
+        .map(|process| process.platform.mdns.clone())
+        .unwrap_or_default()
+}
+
+pub(crate) fn classify(id: InterfaceId) -> Option<(CardKind, CardLabel)> {
+    if id == USB_INTERFACE_ID {
+        return Some((CardKind::Usb, card_label("USB")));
+    }
+    match id.kind() {
+        Some(InterfaceKind::AutoWifi) => Some((CardKind::Wifi, card_label("WiFi/LAN"))),
+        Some(InterfaceKind::LocalServer) => Some((CardKind::Tcp, card_label("Local"))),
+        Some(InterfaceKind::LocalClient) => Some((CardKind::Peer, card_label("App"))),
+        Some(InterfaceKind::BluetoothAuto) => Some((CardKind::Ble, card_label("BLE"))),
+        Some(InterfaceKind::WifiDirect) => Some((CardKind::Wifi, card_label("WiFi Direct"))),
+        Some(InterfaceKind::WifiAware) => Some((CardKind::Wifi, card_label("WiFi/P2P"))),
+        kind => {
+            let bytes = id.as_bytes();
+            let (card_kind, tag) = match kind {
+                Some(InterfaceKind::BluetoothPeer) => (CardKind::Ble, "BLE"),
+                Some(InterfaceKind::WifiDirectPeer) => (CardKind::Wifi, "Direct"),
+                Some(InterfaceKind::WifiAwarePeer) => (CardKind::Wifi, "P2P"),
+                _ => (CardKind::Peer, "Peer"),
+            };
+            let mut label = CardLabel::new();
+            let _ = write!(label, "{tag} {:02x}{:02x}", bytes[1], bytes[2]);
+            Some((card_kind, label))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn engine_stops_and_restarts_with_the_same_identity() {
+        let storage_dir =
+            std::env::temp_dir().join(format!("personal-hopspot-android-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&storage_dir);
+
+        start_with_ports(storage_dir.clone(), EnginePorts::EPHEMERAL).unwrap();
+        assert_eq!(engine_state(), MobileEngineState::Running);
+        let first_key = rpc_key_hex().unwrap();
+        stop().unwrap();
+        assert_eq!(engine_state(), MobileEngineState::Stopped);
+
+        start_with_ports(storage_dir.clone(), EnginePorts::EPHEMERAL).unwrap();
+        assert_eq!(engine_state(), MobileEngineState::Running);
+        assert_eq!(rpc_key_hex().unwrap(), first_key);
+        stop().unwrap();
+        assert_eq!(engine_state(), MobileEngineState::Stopped);
+
+        std::fs::remove_dir_all(storage_dir).unwrap();
+    }
+}

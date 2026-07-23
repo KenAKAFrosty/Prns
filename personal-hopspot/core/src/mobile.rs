@@ -85,6 +85,16 @@ impl MobileEngineState {
     pub const fn code(self) -> i32 {
         self as i32
     }
+
+    #[must_use]
+    pub const fn wire_name(self) -> &'static str {
+        match self {
+            Self::Stopped => "stopped",
+            Self::Starting => "starting",
+            Self::Running => "running",
+            Self::Failed => "failed",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,6 +115,21 @@ impl MobileEngineFailure {
     #[must_use]
     pub const fn code(self) -> i32 {
         self as i32
+    }
+
+    #[must_use]
+    pub const fn wire_name(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::StorageConfiguration => "storage_configuration",
+            Self::WorkerSpawn => "worker_spawn",
+            Self::RuntimeBuild => "runtime_build",
+            Self::LocalListenerBind => "local_listener_bind",
+            Self::RpcListenerBind => "rpc_listener_bind",
+            Self::StartupTimeout => "startup_timeout",
+            Self::WorkerStopped => "worker_stopped",
+            Self::ShutdownTimeout => "shutdown_timeout",
+        }
     }
 }
 
@@ -200,6 +225,23 @@ mod tests {
         assert_eq!(
             MobileActionCode::encode(UiAction::Sleep),
             MobileActionCode::None
+        );
+    }
+
+    #[test]
+    fn engine_state_and_failure_names_are_stable() {
+        assert_eq!(MobileEngineState::Stopped.wire_name(), "stopped");
+        assert_eq!(MobileEngineState::Starting.wire_name(), "starting");
+        assert_eq!(MobileEngineState::Running.wire_name(), "running");
+        assert_eq!(MobileEngineState::Failed.wire_name(), "failed");
+        assert_eq!(MobileEngineFailure::None.wire_name(), "none");
+        assert_eq!(
+            MobileEngineFailure::StorageConfiguration.wire_name(),
+            "storage_configuration"
+        );
+        assert_eq!(
+            MobileEngineFailure::ShutdownTimeout.wire_name(),
+            "shutdown_timeout"
         );
     }
 

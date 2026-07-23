@@ -20,3 +20,7 @@ The synchronized pre-change findings and their dispositions are preserved in
 Hardware-only release checks live beside their platform gates. The provisional
 Windows BLE procedure is in
 [`platforms/windows-ble-hardware.md`](platforms/windows-ble-hardware.md).
+The production mobile matrices are in
+[`platforms/android-production-hardware.md`](platforms/android-production-hardware.md)
+and
+[`platforms/ios-production-hardware.md`](platforms/ios-production-hardware.md).

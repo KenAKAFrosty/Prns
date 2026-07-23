@@ -42,14 +42,16 @@ class PrnsService : Service() {
     private var bleLink: BleLink? = null
     private var serviceStartedAtElapsedMs: Long = 0L
     private var lastServiceError: String? = null
+    private var isForeground = false
 
     override fun onCreate() {
         super.onCreate()
         serviceStartedAtElapsedMs = SystemClock.elapsedRealtime()
         createNotificationChannel()
-        startForegroundNow()
-        renderHandle = NativeBridge.nativeInit(filesDir.absolutePath)
-        startPlatformLinks()
+        if (!startForegroundNow()) {
+            return
+        }
+        renderHandle = NativeBridge.nativeInit()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -57,21 +59,32 @@ class PrnsService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        startForegroundNow()
-        startPlatformLinks()
+        if (!startForegroundNow()) {
+            return START_NOT_STICKY
+        }
+        ensureEngineStarted()
         return START_STICKY
     }
 
-    override fun onBind(intent: Intent?): IBinder =
-        if (intent?.action == ACTION_CLIENT) {
+    override fun onBind(intent: Intent?): IBinder {
+        if (isForeground) {
+            ensureEngineStarted()
+        }
+        return if (intent?.action == ACTION_CLIENT) {
             clientMessenger.binder
         } else {
             localBinder
         }
+    }
 
     override fun onDestroy() {
         stopPlatformLinks()
         clientMessengers.clear()
+        val stopFailure = NativeBridge.nativeStopEngine()
+        if (stopFailure != 0) {
+            lastServiceError = "engine_stop:$stopFailure"
+            Log.e(TAG, "native engine shutdown failed with code $stopFailure")
+        }
         if (renderHandle != 0L) {
             NativeBridge.nativeFree(renderHandle)
             renderHandle = 0L
@@ -82,7 +95,8 @@ class PrnsService : Service() {
 
     @Synchronized
     fun refreshPlatformLinks() {
-        startPlatformLinks()
+        stopPlatformLinks()
+        ensureEngineStarted()
     }
 
     @Synchronized
@@ -112,14 +126,68 @@ class PrnsService : Service() {
     }
 
     @Synchronized
+    private fun ensureEngineStarted() {
+        when (NativeBridge.engineState()) {
+            PrnsEngineState.RUNNING -> {
+                startPlatformLinks()
+                refreshNotification()
+                return
+            }
+            PrnsEngineState.STARTING -> return
+            PrnsEngineState.STOPPED -> Unit
+            PrnsEngineState.FAILED -> {
+                val cleanupFailure = NativeBridge.nativeStopEngine()
+                if (cleanupFailure != 0) {
+                    lastServiceError = "engine_cleanup:$cleanupFailure"
+                    refreshNotification()
+                    return
+                }
+            }
+        }
+        val failure = NativeBridge.nativeStartEngine(filesDir.absolutePath)
+        val state = NativeBridge.engineState()
+        if (failure == 0 && state == PrnsEngineState.RUNNING) {
+            lastServiceError = null
+            startPlatformLinks()
+        } else {
+            val typedFailure = NativeBridge.engineFailure()
+            lastServiceError = "engine_start:${typedFailure.name}:${typedFailure.code}"
+            Log.e(TAG, "native engine startup failed: $lastServiceError")
+        }
+        refreshNotification()
+    }
+
+    @Synchronized
     private fun startPlatformLinks() {
+        if (NativeBridge.engineState() != PrnsEngineState.RUNNING) {
+            return
+        }
         if (wifiAutoLink == null) {
             Log.i(TAG, "starting WiFi Auto link")
-            wifiAutoLink = WifiAutoLink(applicationContext).also { it.start() }
+            wifiAutoLink = try {
+                WifiAutoLink(applicationContext).also { it.start() }
+            } catch (error: RuntimeException) {
+                Log.e(TAG, "WiFi Auto link failed to start", error)
+                null
+            }
         }
-        if (wifiAwareLink == null) {
+        if (wifiDirectLink == null) {
+            Log.i(TAG, "starting WiFi Direct link")
+            wifiDirectLink = try {
+                WifiDirectLink(applicationContext).also { it.start() }
+            } catch (error: RuntimeException) {
+                Log.e(TAG, "WiFi Direct link failed to start", error)
+                null
+            }
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && wifiAwareLink == null) {
             Log.i(TAG, "starting WiFi/P2P (Aware) link")
-            wifiAwareLink = WifiAwareLink(applicationContext).also { it.start() }
+            wifiAwareLink = try {
+                WifiAwareLink(applicationContext).also { it.start() }
+            } catch (error: RuntimeException) {
+                Log.e(TAG, "WiFi Aware link failed to start", error)
+                null
+            }
         }
         if (usbLink == null) {
             Log.i(TAG, "starting USB Auto link")
@@ -135,7 +203,12 @@ class PrnsService : Service() {
                 Log.i(TAG, "BLE Auto requires Android 10 or newer")
             } else if (hasBlePermissions()) {
                 Log.i(TAG, "starting BLE Auto link")
-                bleLink = BleLink(applicationContext).also { it.start() }
+                bleLink = try {
+                    BleLink(applicationContext).also { it.start() }
+                } catch (error: RuntimeException) {
+                    Log.e(TAG, "BLE Auto link failed to start", error)
+                    null
+                }
             } else {
                 Log.i(TAG, "BLE permissions not granted; BLE link will start after permission refresh")
             }
@@ -144,15 +217,20 @@ class PrnsService : Service() {
 
     @Synchronized
     private fun stopPlatformLinks() {
-        bleLink?.stop()
+        runCatching { bleLink?.stop() }
+            .onFailure { Log.w(TAG, "BLE Auto link failed to stop", it) }
         bleLink = null
-        usbLink?.stop()
+        runCatching { usbLink?.stop() }
+            .onFailure { Log.w(TAG, "USB Auto link failed to stop", it) }
         usbLink = null
-        wifiAwareLink?.stop()
+        runCatching { wifiAwareLink?.stop() }
+            .onFailure { Log.w(TAG, "WiFi Aware link failed to stop", it) }
         wifiAwareLink = null
-        wifiDirectLink?.stop()
+        runCatching { wifiDirectLink?.stop() }
+            .onFailure { Log.w(TAG, "WiFi Direct link failed to stop", it) }
         wifiDirectLink = null
-        wifiAutoLink?.stop()
+        runCatching { wifiAutoLink?.stop() }
+            .onFailure { Log.w(TAG, "WiFi Auto link failed to stop", it) }
         wifiAutoLink = null
     }
 
@@ -173,9 +251,9 @@ class PrnsService : Service() {
         return permissions.all { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
     }
 
-    private fun startForegroundNow() {
+    private fun startForegroundNow(): Boolean {
         val notification = buildNotification()
-        try {
+        return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 startForeground(
                     NOTIFICATION_ID,
@@ -186,10 +264,14 @@ class PrnsService : Service() {
                 startForeground(NOTIFICATION_ID, notification)
             }
             lastServiceError = null
+            isForeground = true
+            true
         } catch (e: Exception) {
             lastServiceError = "foreground:${e.javaClass.simpleName}"
+            isForeground = false
             Log.e(TAG, "failed to promote PrnsService to foreground", e)
             stopSelf()
+            false
         }
     }
 
@@ -217,13 +299,29 @@ class PrnsService : Service() {
         return builder
             .setSmallIcon(android.R.drawable.stat_notify_sync)
             .setContentTitle("Personal RNS")
-            .setContentText("Local RNS node is running")
+            .setContentText(notificationText())
             .setContentIntent(openIntent)
             .setOngoing(true)
             .setPriority(Notification.PRIORITY_LOW)
             .setShowWhen(false)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopIntent)
             .build()
+    }
+
+    private fun notificationText(): String =
+        when (NativeBridge.engineState()) {
+            PrnsEngineState.STOPPED -> "Local RNS node is stopped"
+            PrnsEngineState.STARTING -> "Local RNS node is starting"
+            PrnsEngineState.RUNNING -> "Local RNS node is running"
+            PrnsEngineState.FAILED -> "Local RNS node failed to start"
+        }
+
+    private fun refreshNotification() {
+        if (!isForeground) {
+            return
+        }
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.notify(NOTIFICATION_ID, buildNotification())
     }
 
     private fun createNotificationChannel() {
@@ -247,6 +345,7 @@ class PrnsService : Service() {
         } else {
             stopForeground(true)
         }
+        isForeground = false
     }
 
     private fun immutablePendingIntentFlags(): Int =
@@ -278,11 +377,15 @@ class PrnsService : Service() {
             return
         }
         val health = NativeBridge.runtimeHealth()
+        val engineState = NativeBridge.engineState()
+        val engineFailure = NativeBridge.engineFailure()
         val reply = Message.obtain(null, MSG_STATUS).apply {
             data = Bundle().apply {
-                putString(KEY_STATE, STATE_RUNNING)
-                putBoolean(KEY_RUNNING, true)
-                putBoolean(KEY_FOREGROUND, true)
+                putString(KEY_STATE, engineState.wireName)
+                putBoolean(KEY_RUNNING, engineState == PrnsEngineState.RUNNING)
+                putBoolean(KEY_FOREGROUND, isForeground)
+                putInt(KEY_LAST_FAILURE_CODE, engineFailure.code)
+                putString(KEY_LAST_FAILURE, engineFailure.name)
                 putString(KEY_INSTANCE_ROLE, INSTANCE_ROLE_SERVER)
                 putInt(KEY_LOCAL_PORT, LOCAL_RNS_PORT)
                 putInt(KEY_RPC_PORT, RPC_PORT)
@@ -344,9 +447,9 @@ class PrnsService : Service() {
         const val KEY_TX_BYTES = "tx_bytes"
         const val KEY_RX_BPS = "rx_bps"
         const val KEY_TX_BPS = "tx_bps"
+        const val KEY_LAST_FAILURE_CODE = "last_failure_code"
+        const val KEY_LAST_FAILURE = "last_failure"
         const val KEY_LAST_ERROR = "last_error"
-
-        const val STATE_RUNNING = "running"
         const val INSTANCE_ROLE_SERVER = "server"
 
         private const val TAG = "PrnsService"

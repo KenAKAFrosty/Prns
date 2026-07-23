@@ -26,13 +26,18 @@ class MainActivity : Activity() {
     private var service: PrnsService? = null
     private var bound = false
     private var hopspotView: HopspotView? = null
+    private var refreshLinksOnConnect = false
+    private var lastPermissionState: List<Boolean>? = null
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
             val local = binder as? PrnsService.LocalBinder ?: return
             service = local.service
             hopspotView?.setService(local.service)
-            local.service.refreshPlatformLinks()
+            if (refreshLinksOnConnect) {
+                refreshLinksOnConnect = false
+                local.service.refreshPlatformLinks()
+            }
         }
 
         override fun onServiceDisconnected(name: ComponentName) {
@@ -44,7 +49,8 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         hopspotView = HopspotView(this).also { setContentView(it) }
-        ensurePermissionsThenStart()
+        startAndBindService()
+        requestMissingPermissions()
     }
 
     override fun onDestroy() {
@@ -59,13 +65,24 @@ class MainActivity : Activity() {
         service = null
     }
 
-    private fun ensurePermissionsThenStart() {
+    override fun onResume() {
+        super.onResume()
+        val current = permissionState()
+        val changed = lastPermissionState?.let { it != current } == true
+        lastPermissionState = current
+        if (changed) {
+            refreshPlatformLinks()
+        }
+    }
+
+    private fun requestMissingPermissions() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            return
+        }
         val needed = runtimePermissions().filter { permission ->
             checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED
         }
-        if (needed.isEmpty()) {
-            startAndBindService()
-        } else {
+        if (needed.isNotEmpty()) {
             requestPermissions(needed.toTypedArray(), PRNS_PERMISSION_REQUEST)
         }
     }
@@ -77,6 +94,7 @@ class MainActivity : Activity() {
         val permissions = mutableListOf<String>()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissions += Manifest.permission.POST_NOTIFICATIONS
+            permissions += Manifest.permission.NEARBY_WIFI_DEVICES
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             permissions += listOf(
@@ -84,8 +102,12 @@ class MainActivity : Activity() {
                 Manifest.permission.BLUETOOTH_ADVERTISE,
                 Manifest.permission.BLUETOOTH_CONNECT,
             )
-        } else {
-            permissions += Manifest.permission.ACCESS_FINE_LOCATION
+        }
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.S_V2) {
+            permissions += listOf(
+                Manifest.permission.ACCESS_COARSE_LOCATION,
+                Manifest.permission.ACCESS_FINE_LOCATION,
+            )
         }
         return permissions
     }
@@ -103,6 +125,24 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun permissionState(): List<Boolean> {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            return emptyList()
+        }
+        return runtimePermissions().map {
+            checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED
+        }
+    }
+
+    private fun refreshPlatformLinks() {
+        val current = service
+        if (current == null) {
+            refreshLinksOnConnect = true
+        } else {
+            current.refreshPlatformLinks()
+        }
+    }
+
     override fun onRequestPermissionsResult(
         requestCode: Int,
         permissions: Array<out String>,
@@ -112,7 +152,8 @@ class MainActivity : Activity() {
         if (requestCode != PRNS_PERMISSION_REQUEST) {
             return
         }
-        startAndBindService()
+        lastPermissionState = permissionState()
+        refreshPlatformLinks()
     }
 
     private companion object {
@@ -128,7 +169,7 @@ private class HopspotView(
         NativeBridge.PANEL_HEIGHT,
         Bitmap.Config.ARGB_8888,
     )
-    private val buffer = ByteBuffer.allocateDirect(NativeBridge.ARGB_BYTES)
+    private val buffer = ByteBuffer.allocateDirect(NativeBridge.RGBA_BYTES)
     private val paint = Paint(Paint.FILTER_BITMAP_FLAG).apply {
         isFilterBitmap = false
         isDither = false
@@ -161,7 +202,7 @@ private class HopspotView(
     private val ticker = object : Runnable {
         override fun run() {
             invalidate()
-            postDelayed(this, FRAME_DELAY_MS)
+            postDelayed(this, NativeBridge.RENDER_INTERVAL_MILLIS)
         }
     }
 
@@ -231,7 +272,6 @@ private class HopspotView(
     private var service: PrnsService? = null
 
     private companion object {
-        private const val FRAME_DELAY_MS = 33L
         private const val BATTERY_EVERY_FRAMES = 30
     }
 }

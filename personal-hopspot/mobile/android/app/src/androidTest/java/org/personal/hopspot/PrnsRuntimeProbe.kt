@@ -83,6 +83,12 @@ class PrnsRuntimeProbe : Instrumentation() {
         }
         require(status.getBoolean(KEY_RUNNING)) { "$label service did not report running" }
         require(status.getBoolean(KEY_FOREGROUND)) { "$label service did not report foreground" }
+        require(status.getInt(KEY_LAST_FAILURE_CODE) == 0) {
+            "$label failure code=${status.getInt(KEY_LAST_FAILURE_CODE)}"
+        }
+        require(status.getString(KEY_LAST_FAILURE) == "none") {
+            "$label failure=${status.getString(KEY_LAST_FAILURE)}"
+        }
         require(status.getString(KEY_INSTANCE_ROLE) == INSTANCE_ROLE_SERVER) {
             "$label instance role=${status.getString(KEY_INSTANCE_ROLE)}"
         }
@@ -218,6 +224,8 @@ class PrnsRuntimeProbe : Instrumentation() {
         const val KEY_TX_BYTES = "tx_bytes"
         const val KEY_RX_BPS = "rx_bps"
         const val KEY_TX_BPS = "tx_bps"
+        const val KEY_LAST_FAILURE_CODE = "last_failure_code"
+        const val KEY_LAST_FAILURE = "last_failure"
         const val STATE_RUNNING = "running"
         const val INSTANCE_ROLE_SERVER = "server"
         const val LOCAL_RNS_PORT = 37428
@@ -228,6 +236,8 @@ class PrnsRuntimeProbe : Instrumentation() {
             KEY_STATE,
             KEY_RUNNING,
             KEY_FOREGROUND,
+            KEY_LAST_FAILURE_CODE,
+            KEY_LAST_FAILURE,
             KEY_INSTANCE_ROLE,
             KEY_LOCAL_PORT,
             KEY_RPC_PORT,

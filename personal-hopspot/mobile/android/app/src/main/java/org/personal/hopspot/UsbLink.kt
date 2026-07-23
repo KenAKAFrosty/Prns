@@ -1,5 +1,6 @@
 package org.personal.hopspot
 
+import android.annotation.SuppressLint
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -93,6 +94,7 @@ class UsbLink(private val context: Context) {
         }
     }
 
+    @SuppressLint("UnspecifiedRegisterReceiverFlag")
     fun start() {
         val filter = IntentFilter().apply {
             addAction(ACTION_USB_PERMISSION)

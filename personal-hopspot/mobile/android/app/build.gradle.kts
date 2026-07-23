@@ -4,6 +4,30 @@ plugins {
 }
 
 val releaseNoticesDirectory = layout.buildDirectory.dir("generated/release-notices/assets")
+val releaseKeystore = providers.environmentVariable("PRNS_ANDROID_KEYSTORE").orNull
+val releaseKeystorePassword =
+    providers.environmentVariable("PRNS_ANDROID_KEYSTORE_PASSWORD").orNull
+val releaseKeyAlias = providers.environmentVariable("PRNS_ANDROID_KEY_ALIAS").orNull
+val releaseKeyPassword = providers.environmentVariable("PRNS_ANDROID_KEY_PASSWORD").orNull
+val releaseSigningReady =
+    listOf(
+        releaseKeystore,
+        releaseKeystorePassword,
+        releaseKeyAlias,
+        releaseKeyPassword,
+    ).all { !it.isNullOrBlank() }
+val productionSigningRequested =
+    gradle.startParameter.taskNames.any {
+        it.substringAfterLast(':') == "assembleProduction"
+    }
+if (productionSigningRequested) {
+    require(releaseSigningReady) {
+        "PRNS_ANDROID_KEYSTORE, PRNS_ANDROID_KEYSTORE_PASSWORD, PRNS_ANDROID_KEY_ALIAS, and PRNS_ANDROID_KEY_PASSWORD are required"
+    }
+    require(file(requireNotNull(releaseKeystore)).isFile) {
+        "PRNS_ANDROID_KEYSTORE does not identify a file"
+    }
+}
 val syncReleaseNotices by tasks.registering(Copy::class) {
     val notices = rootProject.layout.projectDirectory.file("../../../THIRD_PARTY_NOTICES.md")
     from(notices)
@@ -27,19 +51,33 @@ android {
         }
     }
 
+    signingConfigs {
+        if (releaseSigningReady) {
+            create("production") {
+                storeFile = file(requireNotNull(releaseKeystore))
+                storePassword = releaseKeystorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            if (releaseSigningReady) {
+                signingConfig = signingConfigs.getByName("production")
+            }
         }
     }
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
     }
 
     kotlinOptions {
-        jvmTarget = "17"
+        jvmTarget = "1.8"
     }
 
     sourceSets.getByName("main").assets.srcDir(releaseNoticesDirectory)
@@ -48,6 +86,10 @@ android {
 
 tasks.named("preBuild").configure {
     dependsOn(syncReleaseNotices)
+}
+
+tasks.register("assembleProduction") {
+    dependsOn("assembleRelease")
 }
 
 dependencies {

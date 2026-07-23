@@ -115,7 +115,7 @@ pub struct SharedInstanceServer {
     socket_path: Option<String>,
 }
 
-pub(crate) struct BoundSharedInstanceServer {
+pub struct BoundSharedInstanceServer {
     channel_tag: Vec<u8>,
     tcp_listener: Option<TcpListener>,
     policy: EffectiveInterfacePolicy,
@@ -134,7 +134,7 @@ enum BoundAbstractUnix {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SharedInstanceServerBindError {
+pub enum SharedInstanceServerBindError {
     Tcp(std::io::ErrorKind),
     #[cfg(target_os = "linux")]
     AbstractUnix(std::io::ErrorKind),
@@ -199,9 +199,7 @@ impl SharedInstanceServer {
         InterfaceId::from_channel_tag(InterfaceKind::LocalServer, &self.channel_tag)
     }
 
-    pub(crate) async fn bind(
-        self,
-    ) -> Result<BoundSharedInstanceServer, SharedInstanceServerBindError> {
+    pub async fn bind(self) -> Result<BoundSharedInstanceServer, SharedInstanceServerBindError> {
         let tcp_listener = match self.bind_addr {
             Some(bind_addr) => Some(
                 TcpListener::bind(bind_addr.as_str())
