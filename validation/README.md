@@ -16,3 +16,7 @@ operator and CI interface. See `docs/validation.md` for tiers, evidence,
 mutation-triage policy, stock-RNS setup, and exact-SHA release qualification.
 The synchronized pre-change findings and their dispositions are preserved in
 `BASELINE.md`.
+
+Hardware-only release checks live beside their platform gates. The provisional
+Windows BLE procedure is in
+[`platforms/windows-ble-hardware.md`](platforms/windows-ble-hardware.md).

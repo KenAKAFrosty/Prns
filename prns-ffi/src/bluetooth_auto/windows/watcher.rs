@@ -13,11 +13,38 @@ use windows::Devices::Bluetooth::Advertisement::{
 use windows::Devices::Bluetooth::BluetoothAddressType;
 use windows::Foundation::TypedEventHandler;
 
-use super::{guid_of, Event, WindowsBleError};
+use super::{guid_of, Event, ScanIntent, WindowsBleError};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ScanAction {
+    Start,
+    Stop,
+    None,
+}
+
+pub(super) fn scan_action(
+    requested: bool,
+    status: BluetoothLEAdvertisementWatcherStatus,
+) -> ScanAction {
+    if requested
+        && !matches!(
+            status,
+            BluetoothLEAdvertisementWatcherStatus::Started
+                | BluetoothLEAdvertisementWatcherStatus::Stopping
+        )
+    {
+        ScanAction::Start
+    } else if !requested && status == BluetoothLEAdvertisementWatcherStatus::Started {
+        ScanAction::Stop
+    } else {
+        ScanAction::None
+    }
+}
 
 pub(super) fn build_watcher(
     events_tx: tokio_mpsc::UnboundedSender<Event>,
     adverts: Arc<AtomicU64>,
+    scan_intent: ScanIntent,
 ) -> Result<BluetoothLEAdvertisementWatcher, WindowsBleError> {
     let watcher = BluetoothLEAdvertisementWatcher::new()?;
     watcher.SetScanningMode(BluetoothLEScanningMode::Active)?;
@@ -40,19 +67,32 @@ pub(super) fn build_watcher(
         },
     ))?;
 
-    // The OS can Stop/Abort the watcher on a radio hiccup; without this it dies silently and the node
-    // looks dormant forever. Log the cause and restart it. (The handler holds a clone of the watcher,
-    // a deliberate cycle — the watcher is process-lifetime anyway.)
-    let restart = watcher.clone();
     watcher.Stopped(&TypedEventHandler::new(
-        move |_sender: &Option<BluetoothLEAdvertisementWatcher>,
+        move |sender: &Option<BluetoothLEAdvertisementWatcher>,
               args: &Option<BluetoothLEAdvertisementWatcherStoppedEventArgs>| {
             let error = args.as_ref().and_then(|args| args.Error().ok());
+            if !scan_intent.is_requested() {
+                crate::diagnostic_log::debug!(
+                    "bluetooth: advertisement watcher stopped intentionally"
+                );
+                return Ok(());
+            }
             crate::diagnostic_log::warn!(
                 "bluetooth: advertisement watcher stopped (error {error:?}) — restarting"
             );
-            if let Err(err) = restart.Start() {
-                crate::diagnostic_log::error!("bluetooth: watcher restart failed ({err:?})");
+            match sender {
+                Some(watcher) => {
+                    if let Err(error) = watcher.Start() {
+                        crate::diagnostic_log::error!(
+                            "bluetooth: watcher restart failed ({error:?})"
+                        );
+                    }
+                }
+                None => {
+                    crate::diagnostic_log::error!(
+                        "bluetooth: watcher restart failed because WinRT omitted the sender"
+                    );
+                }
             }
             Ok(())
         },
@@ -66,7 +106,8 @@ const SCAN_STALL_TICKS: u32 = 3;
 pub(super) fn spawn_watcher_heartbeat(
     watcher: BluetoothLEAdvertisementWatcher,
     adverts: Arc<AtomicU64>,
-) {
+    scan_intent: ScanIntent,
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(HEARTBEAT_INTERVAL);
         let mut last_seen = adverts.load(Ordering::Relaxed);
@@ -74,6 +115,11 @@ pub(super) fn spawn_watcher_heartbeat(
         loop {
             tick.tick().await;
             let seen = adverts.load(Ordering::Relaxed);
+            if !scan_intent.is_requested() {
+                last_seen = seen;
+                quiet_ticks = 0;
+                continue;
+            }
             let status = match watcher.Status() {
                 Ok(status) => status,
                 Err(error) => {
@@ -110,7 +156,7 @@ pub(super) fn spawn_watcher_heartbeat(
                 quiet_ticks = 0;
             }
         }
-    });
+    })
 }
 
 fn sighting_from(args: &BluetoothLEAdvertisementReceivedEventArgs, target: GUID) -> Option<Event> {

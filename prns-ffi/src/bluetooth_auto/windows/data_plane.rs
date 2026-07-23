@@ -16,7 +16,7 @@ use windows::Devices::Bluetooth::{
 };
 
 use super::central::gatt_write;
-use super::peripheral::notify_local;
+use super::peripheral::{notification_fragment_mtu, notify_local, subscribed_client};
 use super::WindowsBleError;
 
 pub(super) const GATT_FRAGMENT_PAYLOAD: usize = 180;
@@ -193,7 +193,7 @@ impl BleLink for WinGattLink {
                 }
             });
         }
-        let (keepalive, sink_plane, fragment_mtu) = match self.plane {
+        let (keepalive, sink_plane) = match self.plane {
             LinkPlane::Central {
                 data_char,
                 device,
@@ -214,8 +214,8 @@ impl BleLink for WinGattLink {
                     SinkPlane::Central {
                         data_char,
                         _session: sink_session,
+                        fragment_mtu,
                     },
-                    fragment_mtu,
                 )
             }
             LinkPlane::Peripheral {
@@ -228,7 +228,6 @@ impl BleLink for WinGattLink {
                     data_char,
                     data_client,
                 },
-                GATT_FRAGMENT_PAYLOAD,
             ),
         };
         (
@@ -237,11 +236,7 @@ impl BleLink for WinGattLink {
                 closed: self.closed,
                 _keepalive: keepalive,
             },
-            WinGattSink {
-                plane: sink_plane,
-                address: self.address,
-                fragment_mtu,
-            },
+            WinGattSink { plane: sink_plane },
         )
     }
 }
@@ -260,6 +255,7 @@ enum SinkPlane {
     Central {
         data_char: GattCharacteristic,
         _session: GattSession,
+        fragment_mtu: usize,
     },
     Peripheral {
         data_char: GattLocalCharacteristic,
@@ -294,16 +290,21 @@ impl BleSource for WinGattSource {
 
 pub struct WinGattSink {
     plane: SinkPlane,
-    address: BleAddress,
-    fragment_mtu: usize,
 }
 
 impl BleSink for WinGattSink {
     type Error = WindowsBleError;
 
     async fn send_frame(&mut self, frame: &[u8]) -> Result<(), WindowsBleError> {
-        for fragment in fragments_of(frame, self.fragment_mtu) {
-            let mut buf = vec![0u8; self.fragment_mtu + FRAGMENT_SCRATCH];
+        let fragment_mtu = match &self.plane {
+            SinkPlane::Central { fragment_mtu, .. } => *fragment_mtu,
+            SinkPlane::Peripheral { data_client, .. } => {
+                let client = subscribed_client(data_client)?;
+                notification_fragment_mtu(client.MaxNotificationSize()?)?
+            }
+        };
+        for fragment in fragments_of(frame, fragment_mtu) {
+            let mut buf = vec![0u8; fragment_mtu + FRAGMENT_SCRATCH];
             let len = fragment
                 .encode(&mut buf)
                 .ok_or(WindowsBleError::FrameTooLarge)?;

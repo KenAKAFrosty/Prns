@@ -1,11 +1,19 @@
+use std::sync::{Arc, Mutex};
+
 use prns_core::interfaces::bluetooth_auto::{
     fragments_of, BleAddress, BleUuid, BLE_SERVICE_UUID, FRAGMENT_HEADER_LEN, NATIVE_CONTROL_UUID,
     NATIVE_DATA_UUID,
 };
 use windows::core::GUID;
+use windows::Devices::Bluetooth::GenericAttributeProfile::GattCommunicationStatus;
 
 use super::data_plane::{FRAGMENT_SCRATCH, GATT_FRAGMENT_PAYLOAD};
-use super::{address_to_u64, guid_of};
+use super::peripheral::{
+    notification_fragment_mtu, subscribed_client, validate_notification_len,
+    validate_notification_status,
+};
+use super::watcher::{scan_action, ScanAction};
+use super::{address_to_u64, guid_of, ScanIntent, WindowsBleError};
 
 #[test]
 fn service_uuid_maps_to_canonical_guid() {
@@ -75,4 +83,87 @@ fn scratch_buffer_holds_a_max_payload_fragment() {
         fragments += 1;
     }
     assert!(fragments >= 3);
+}
+
+#[test]
+fn scan_intent_round_trips_policy_state() {
+    let intent = ScanIntent::new();
+    assert!(!intent.is_requested());
+    intent.set(true);
+    assert!(intent.is_requested());
+    intent.set(false);
+    assert!(!intent.is_requested());
+}
+
+#[test]
+fn scan_actions_respect_winrt_transitions() {
+    use windows::Devices::Bluetooth::Advertisement::BluetoothLEAdvertisementWatcherStatus;
+
+    assert_eq!(
+        scan_action(true, BluetoothLEAdvertisementWatcherStatus::Created),
+        ScanAction::Start
+    );
+    assert_eq!(
+        scan_action(true, BluetoothLEAdvertisementWatcherStatus::Started),
+        ScanAction::None
+    );
+    assert_eq!(
+        scan_action(true, BluetoothLEAdvertisementWatcherStatus::Stopping),
+        ScanAction::None
+    );
+    assert_eq!(
+        scan_action(false, BluetoothLEAdvertisementWatcherStatus::Started),
+        ScanAction::Stop
+    );
+    assert_eq!(
+        scan_action(false, BluetoothLEAdvertisementWatcherStatus::Stopped),
+        ScanAction::None
+    );
+}
+
+#[test]
+fn notification_mtu_tracks_the_subscriber_and_portable_ceiling() {
+    assert_eq!(notification_fragment_mtu(20).unwrap(), 20);
+    assert_eq!(
+        notification_fragment_mtu(u16::MAX).unwrap(),
+        GATT_FRAGMENT_PAYLOAD
+    );
+    assert!(matches!(
+        notification_fragment_mtu(FRAGMENT_HEADER_LEN as u16),
+        Err(WindowsBleError::InvalidNotificationMtu {
+            available: FRAGMENT_HEADER_LEN
+        })
+    ));
+}
+
+#[test]
+fn notification_size_rejects_oversized_values() {
+    assert!(validate_notification_len(20, 20).is_ok());
+    assert!(matches!(
+        validate_notification_len(21, 20),
+        Err(WindowsBleError::NotificationTooLarge {
+            len: 21,
+            available: 20
+        })
+    ));
+}
+
+#[test]
+fn notification_status_preserves_delivery_failure() {
+    assert!(validate_notification_status(GattCommunicationStatus::Success).is_ok());
+    assert!(matches!(
+        validate_notification_status(GattCommunicationStatus::Unreachable),
+        Err(WindowsBleError::NotificationFailed {
+            status: GattCommunicationStatus::Unreachable
+        })
+    ));
+}
+
+#[test]
+fn a_link_requires_its_exact_subscribed_client() {
+    let slot = Arc::new(Mutex::new(None));
+    assert!(matches!(
+        subscribed_client(&slot),
+        Err(WindowsBleError::MissingSubscribedClient)
+    ));
 }

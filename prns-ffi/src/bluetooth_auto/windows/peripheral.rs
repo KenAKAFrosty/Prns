@@ -1,14 +1,16 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use prns_core::interfaces::bluetooth_auto::{BleAddress, BleIdentity, Control, PeerProtocol};
+use prns_core::interfaces::bluetooth_auto::{
+    BleAddress, BleIdentity, Control, PeerProtocol, BLE_HW_MTU, FRAGMENT_HEADER_LEN,
+};
 use tokio::sync::{mpsc as tokio_mpsc, watch};
 use windows::core::{IInspectable, GUID};
 use windows::Devices::Bluetooth::BluetoothError;
 use windows::Devices::Bluetooth::GenericAttributeProfile::{
-    GattCharacteristicProperties, GattLocalCharacteristic, GattLocalCharacteristicParameters,
-    GattLocalService, GattProtectionLevel, GattSubscribedClient, GattWriteOption,
-    GattWriteRequestedEventArgs,
+    GattCharacteristicProperties, GattCommunicationStatus, GattLocalCharacteristic,
+    GattLocalCharacteristicParameters, GattLocalService, GattProtectionLevel, GattSubscribedClient,
+    GattWriteOption, GattWriteRequestedEventArgs,
 };
 use windows::Foundation::TypedEventHandler;
 
@@ -37,21 +39,57 @@ pub(super) async fn notify_local(
 ) -> Result<(), WindowsBleError> {
     tokio::task::spawn_blocking(move || -> Result<(), WindowsBleError> {
         let buffer = ibuffer_from(&bytes)?;
-        let target = client.lock().ok().and_then(|guard| guard.clone());
-        match target {
-            Some(client) => {
-                characteristic
-                    .NotifyValueForSubscribedClientAsync(&buffer, &client)?
-                    .get()?;
-            }
-            None => {
-                characteristic.NotifyValueAsync(&buffer)?.get()?;
-            }
-        }
+        let target = subscribed_client(&client)?;
+        let available = notification_fragment_mtu(target.MaxNotificationSize()?)?;
+        validate_notification_len(bytes.len(), available)?;
+        let result = characteristic
+            .NotifyValueForSubscribedClientAsync(&buffer, &target)?
+            .get()?;
+        validate_notification_status(result.Status()?)?;
         Ok(())
     })
     .await
     .map_err(|_| WindowsBleError::Closed)?
+}
+
+pub(super) fn notification_fragment_mtu(
+    max_notification_size: u16,
+) -> Result<usize, WindowsBleError> {
+    let available = usize::from(max_notification_size)
+        .min(super::data_plane::GATT_FRAGMENT_PAYLOAD)
+        .min(BLE_HW_MTU);
+    if available <= FRAGMENT_HEADER_LEN {
+        return Err(WindowsBleError::InvalidNotificationMtu { available });
+    }
+    Ok(available)
+}
+
+pub(super) fn validate_notification_len(
+    len: usize,
+    available: usize,
+) -> Result<(), WindowsBleError> {
+    if len > available {
+        return Err(WindowsBleError::NotificationTooLarge { len, available });
+    }
+    Ok(())
+}
+
+pub(super) fn validate_notification_status(
+    status: GattCommunicationStatus,
+) -> Result<(), WindowsBleError> {
+    if status != GattCommunicationStatus::Success {
+        return Err(WindowsBleError::NotificationFailed { status });
+    }
+    Ok(())
+}
+
+pub(super) fn subscribed_client(
+    slot: &ClientSlot,
+) -> Result<GattSubscribedClient, WindowsBleError> {
+    slot.lock()
+        .map_err(|_| WindowsBleError::Closed)?
+        .clone()
+        .ok_or(WindowsBleError::MissingSubscribedClient)
 }
 
 pub(super) fn wire_inbound(

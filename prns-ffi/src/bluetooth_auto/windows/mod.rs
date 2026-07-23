@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 mod backend;
 mod central;
 mod data_plane;
@@ -9,7 +7,7 @@ mod watcher;
 #[cfg(test)]
 mod tests;
 
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use prns_core::interfaces::bluetooth_auto::{BleAddress, BleUuid};
@@ -17,7 +15,7 @@ use windows::core::GUID;
 use windows::Devices::Bluetooth::Advertisement::BluetoothLEAdvertisementWatcher;
 use windows::Devices::Bluetooth::BluetoothAddressType;
 use windows::Devices::Bluetooth::GenericAttributeProfile::{
-    GattLocalCharacteristic, GattServiceProvider,
+    GattCommunicationStatus, GattLocalCharacteristic, GattServiceProvider,
 };
 use windows::Storage::Streams::{DataReader, DataWriter, IBuffer};
 
@@ -38,6 +36,10 @@ pub enum WindowsBleError {
     ControlTooLarge,
     FrameTooLarge,
     WriteFailed,
+    MissingSubscribedClient,
+    InvalidNotificationMtu { available: usize },
+    NotificationTooLarge { len: usize, available: usize },
+    NotificationFailed { status: GattCommunicationStatus },
     MissingColumbaIdentity,
     Winrt(windows::core::Error),
 }
@@ -50,13 +52,31 @@ impl From<windows::core::Error> for WindowsBleError {
 
 struct Radio {
     provider: GattServiceProvider,
-    control: GattLocalCharacteristic,
-    data: GattLocalCharacteristic,
-    columba_rx: GattLocalCharacteristic,
-    columba_tx: GattLocalCharacteristic,
-    columba_identity: GattLocalCharacteristic,
+    _control: GattLocalCharacteristic,
+    _data: GattLocalCharacteristic,
+    _columba_rx: GattLocalCharacteristic,
+    _columba_tx: GattLocalCharacteristic,
+    _columba_identity: GattLocalCharacteristic,
     watcher: BluetoothLEAdvertisementWatcher,
     adverts: Arc<AtomicU64>,
+    scan_intent: ScanIntent,
+}
+
+#[derive(Clone)]
+struct ScanIntent(Arc<AtomicBool>);
+
+impl ScanIntent {
+    fn new() -> Self {
+        Self(Arc::new(AtomicBool::new(false)))
+    }
+
+    fn set(&self, requested: bool) {
+        self.0.store(requested, Ordering::Release);
+    }
+
+    fn is_requested(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
 }
 
 enum Event {
