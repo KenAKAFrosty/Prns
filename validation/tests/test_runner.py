@@ -42,6 +42,13 @@ class RegistryTests(unittest.TestCase):
         errors = runner.validate_manifest(manifest)
         self.assertTrue(any("input is missing" in error for error in errors))
 
+    def test_cargo_manifest_discovery_uses_the_git_source_inventory(self) -> None:
+        git_sources = [runner.ROOT / "Cargo.toml"]
+        with mock.patch.object(
+            runner, "tracked_or_untracked_sources", return_value=git_sources
+        ):
+            self.assertEqual(runner.source_cargo_manifests(), {"Cargo.toml"})
+
     def test_unregistered_interop_asset_is_rejected(self) -> None:
         orphan = runner.ROOT / "validation/interop/peers/runner_self_test_orphan.py"
         orphan.write_text("# temporary registry self-test\n", encoding="utf-8")

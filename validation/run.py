@@ -31,14 +31,6 @@ EVIDENCE_SCHEMA = 1
 VALID_TIERS = {"pr", "release", "scheduled"}
 VALID_PLATFORMS = {"any", "linux", "macos", "windows", "android-device"}
 VALID_TOOLCHAINS = {"stable", "nightly", "kani", "python", "node", "esp"}
-SKIPPED_PARTS = {
-    ".git",
-    ".upstream",
-    "node_modules",
-    "target",
-    "mutants.out",
-    "validation-artifacts",
-}
 
 
 class ValidationError(RuntimeError):
@@ -203,13 +195,11 @@ def validation_asset_inventory() -> set[str]:
 
 
 def source_cargo_manifests() -> set[str]:
-    found = set()
-    for path in ROOT.rglob("Cargo.toml"):
-        relative = path.relative_to(ROOT)
-        if any(part in SKIPPED_PARTS for part in relative.parts):
-            continue
-        found.add(relative.as_posix())
-    return found
+    return {
+        path.relative_to(ROOT).as_posix()
+        for path in tracked_or_untracked_sources()
+        if path.name == "Cargo.toml"
+    }
 
 
 def validate_cargo_workspaces(manifests: set[str]) -> list[str]:
