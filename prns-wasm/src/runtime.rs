@@ -3,8 +3,8 @@ use core::convert::TryFrom;
 use js_sys::{Array, Object};
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, Directive, EngineCommand,
-    EngineReaction, EngineState, FanTarget, InstantMillis, IssuedCommand, Journaled,
-    RatchetPolicy, Respond, RespondPayload,
+    EngineReaction, EngineState, FanTarget, InstantMillis, IssuedCommand, Journaled, RatchetPolicy,
+    Respond, RespondPayload,
 };
 use personal_rns::interfaces::bluetooth_auto as bluetooth_contract;
 use personal_rns::interfaces::{
