@@ -1,35 +1,43 @@
 use ::core::cell::Cell;
 
-use embassy_futures::select::{select3, select4, select_array, Either3, Either4};
+use embassy_futures::join::join_array;
+use embassy_futures::select::{select, select5, select_array, Either, Either5};
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex};
 use embassy_sync::blocking_mutex::CriticalSectionMutex;
 use embassy_sync::signal::Signal;
-use embassy_time::{with_timeout, Duration, Instant};
+use embassy_time::{with_deadline, with_timeout, Duration, Instant};
 use portable_atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
 use prns_core::engine::FanTarget;
 use prns_core::interfaces::bluetooth_auto::{
-    self as contract, BleAddress, BleIdentity, Endpoint, EstablishedPeer, EstablishedTransport,
-    Handshake, HandshakeOutcome, HandshakeRole, L2capPlan, LinkCapabilities, LocalPeer,
+    self as contract, BleAddress, BleIdentity, Control, Endpoint, EstablishedPeer,
+    EstablishedTransport, Handshake, HandshakeOutcome, L2capPlan, LinkCapabilities, LocalPeer,
     PeerProtocol,
 };
 use prns_core::interfaces::bluetooth_auto::{
     role_for, ConnectionPolicy, PolicyAction, PolicyInput,
 };
 use prns_core::interfaces::bluetooth_auto::{
-    AdvertisingMode, BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin, ScanningMode,
+    AdvertisingMode, BleBackend, BleEvent, BleLink, BleSink, BleSource, DialOutcome, Origin,
+    RadioMode, ScanningMode,
 };
 use prns_core::interfaces::{
     BitrateBps, ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus,
 };
 use prns_runtime::reactor::grant::FrameTarget;
-use prns_runtime::runtime::EmbassyFleet as Fleet;
+use prns_runtime::runtime::{EmbassyFleet as Fleet, OutboundFrame};
 
 const DIAL_TRACK: usize = 6;
 
 const ACTION_CAP: usize = 6;
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+const HANDSHAKE_LANES: usize = 2;
+const OUTBOUND_TIMEOUT: Duration = Duration::from_secs(2);
+
+const ACTION_OVERFLOW_REASON: &str = "BLE policy action capacity exceeded";
+const DIAL_INVARIANT_REASON: &str = "BLE dial admission invariant failed";
+const RADIO_CONTROL_REASON: &str = "BLE radio control failed";
 
 pub struct BluetoothMemberStatus {
     id: CriticalSectionMutex<Cell<InterfaceId>>,
@@ -97,6 +105,8 @@ pub struct BluetoothAutoShared<const MEMBERS: usize> {
     enabled: AtomicBool,
     enabled_changed: Signal<CriticalSectionRawMutex, bool>,
     up: AtomicBool,
+    failed: AtomicBool,
+    failure_reason: CriticalSectionMutex<Cell<Option<&'static str>>>,
     peers: AtomicU32,
     members: [BluetoothMemberStatus; MEMBERS],
 }
@@ -109,6 +119,8 @@ impl<const MEMBERS: usize> BluetoothAutoShared<MEMBERS> {
             enabled: AtomicBool::new(true),
             enabled_changed: Signal::new(),
             up: AtomicBool::new(false),
+            failed: AtomicBool::new(false),
+            failure_reason: CriticalSectionMutex::new(Cell::new(None)),
             peers: AtomicU32::new(0),
             members: [const { BluetoothMemberStatus::new() }; MEMBERS],
         }
@@ -128,6 +140,17 @@ impl<const MEMBERS: usize> BluetoothAutoStatus<MEMBERS> {
 
     fn mark_up(&self) {
         self.shared.up.store(true, Ordering::Relaxed);
+    }
+
+    fn mark_failed(&self, reason: &'static str) {
+        self.shared
+            .failure_reason
+            .lock(|slot| slot.set(Some(reason)));
+        self.shared.failed.store(true, Ordering::Relaxed);
+    }
+
+    fn is_failed(&self) -> bool {
+        self.shared.failed.load(Ordering::Relaxed)
     }
 
     pub fn enable(&self) {
@@ -203,6 +226,8 @@ impl<const MEMBERS: usize> InterfaceStatus for BluetoothAutoStatus<MEMBERS> {
     fn connection(&self) -> ConnectionState {
         if !self.is_enabled() {
             ConnectionState::Disabled
+        } else if self.is_failed() {
+            ConnectionState::Failed
         } else if !self.shared.up.load(Ordering::Relaxed) {
             ConnectionState::Initializing
         } else if self.shared.peers.load(Ordering::Relaxed) > 0 {
@@ -227,6 +252,10 @@ impl<const MEMBERS: usize> InterfaceStatus for BluetoothAutoStatus<MEMBERS> {
             .map(|member| member.tx.load(Ordering::Relaxed))
             .sum()
     }
+
+    fn failure_reason(&self) -> Option<&'static str> {
+        self.shared.failure_reason.lock(Cell::get)
+    }
 }
 
 struct Active<L: BleLink> {
@@ -236,6 +265,123 @@ struct Active<L: BleLink> {
     address: BleAddress,
     source: L::Source,
     sink: L::Sink,
+}
+
+struct PendingActions<const CAP: usize> {
+    actions: heapless::Vec<PolicyAction, CAP>,
+    overflowed: bool,
+}
+
+impl<const CAP: usize> PendingActions<CAP> {
+    const fn new() -> Self {
+        Self {
+            actions: heapless::Vec::new(),
+            overflowed: false,
+        }
+    }
+
+    fn push(&mut self, action: PolicyAction) {
+        if self.actions.push(action).is_err() {
+            self.overflowed = true;
+        }
+    }
+
+    fn take(&mut self) -> heapless::Vec<PolicyAction, CAP> {
+        ::core::mem::take(&mut self.actions)
+    }
+
+    fn clear(&mut self) {
+        self.actions.clear();
+        self.overflowed = false;
+    }
+}
+
+enum HandshakeStage {
+    ColumbaReceive,
+    ColumbaSend {
+        identity: BleIdentity,
+    },
+    NativeSend {
+        handshake: Option<Handshake>,
+        control: Control,
+    },
+    NativeReceive {
+        handshake: Option<Handshake>,
+    },
+    NativeReply {
+        handshake: Option<Handshake>,
+        control: Control,
+        outcome: HandshakeOutcome,
+    },
+}
+
+struct PendingHandshake<L: BleLink> {
+    link: L,
+    address: BleAddress,
+    origin: Origin,
+    deadline: Instant,
+    stage: HandshakeStage,
+}
+
+impl<L: BleLink> PendingHandshake<L> {
+    fn new(link: L, origin: Origin, local: LocalPeer) -> Self {
+        let stage = if link.peer_protocol() == PeerProtocol::Columba {
+            HandshakeStage::ColumbaReceive
+        } else {
+            let (handshake, opening) = Handshake::begin(role_for(origin), local, None);
+            match opening {
+                Some(control) => HandshakeStage::NativeSend {
+                    handshake: Some(handshake),
+                    control,
+                },
+                None => HandshakeStage::NativeReceive {
+                    handshake: Some(handshake),
+                },
+            }
+        };
+        Self {
+            address: link.address(),
+            link,
+            origin,
+            deadline: Instant::now() + HANDSHAKE_TIMEOUT,
+            stage,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HandshakeFailure {
+    Timeout,
+    Link,
+    Aborted,
+    InvariantViolation,
+}
+
+struct HandshakeDone<L: BleLink> {
+    address: BleAddress,
+    origin: Origin,
+    outcome: Result<(EstablishedPeer, L), HandshakeFailure>,
+}
+
+enum HandshakeStep<L: BleLink> {
+    Advanced,
+    Done(HandshakeDone<L>),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SendState {
+    NotSelected,
+    Pending,
+    Sent,
+    Failed,
+}
+
+enum SupervisorStep<L: BleLink> {
+    Disabled,
+    Handshake(HandshakeStep<L>),
+    Backend(BleEvent<L>),
+    Inbound(usize, Result<usize, <L::Source as BleSource>::Error>),
+    Outbound,
 }
 
 pub struct BluetoothAuto<B, const MEMBERS: usize> {
@@ -282,21 +428,36 @@ where
     {
         let Self {
             mut backend,
-            local,
+            local: configured_local,
             status,
             bitrate,
         } = self;
+        if let Some(reason) = backend.blocked() {
+            status.mark_failed(reason);
+            ::core::future::pending::<()>().await;
+            return;
+        }
+        let configured_capabilities = configured_local.capabilities;
+        let mut local = configured_local;
+        prepare_radio(&mut backend, &mut local, configured_capabilities, &status).await;
+        if status.is_failed() {
+            let _ = backend.set_radio_mode(RadioMode::Off).await;
+            ::core::future::pending::<()>().await;
+            return;
+        }
         let mut manager = ConnectionPolicy::<MEMBERS, DIAL_TRACK>::new(local);
         let mut members: [Option<Active<B::Link>>; MEMBERS] = [const { None }; MEMBERS];
         let mut inbufs: [[u8; contract::BLE_HW_MTU]; MEMBERS] =
             [[0u8; contract::BLE_HW_MTU]; MEMBERS];
-        let mut pending: heapless::Vec<PolicyAction, ACTION_CAP> = heapless::Vec::new();
+        let mut handshakes: [Option<PendingHandshake<B::Link>>; HANDSHAKE_LANES] =
+            [const { None }; HANDSHAKE_LANES];
+        let mut pending = PendingActions::<ACTION_CAP>::new();
+        let mut outbound_first = false;
         status.mark_up();
-        manager.start(&mut |action| {
-            let _ = pending.push(action);
-        });
+        manager.start(&mut |action| pending.push(action));
         apply_radio(
             &mut pending,
+            &mut manager,
             &status,
             &mut fleet,
             &mut backend,
@@ -305,16 +466,28 @@ where
         .await;
 
         loop {
+            if status.is_failed() {
+                handshakes.fill_with(|| None);
+                pending.clear();
+                disable_members(&status, &mut fleet, &mut backend, &mut members).await;
+                ::core::future::pending::<()>().await;
+                return;
+            }
             if !status.is_enabled() {
+                handshakes.fill_with(|| None);
                 disable_members(&status, &mut fleet, &mut backend, &mut members).await;
                 pending.clear();
                 status.wait_until_enabled().await;
+                local = configured_local;
+                prepare_radio(&mut backend, &mut local, configured_capabilities, &status).await;
+                if status.is_failed() {
+                    continue;
+                }
                 manager = ConnectionPolicy::<MEMBERS, DIAL_TRACK>::new(local);
-                manager.start(&mut |action| {
-                    let _ = pending.push(action);
-                });
+                manager.start(&mut |action| pending.push(action));
                 apply_radio(
                     &mut pending,
+                    &mut manager,
                     &status,
                     &mut fleet,
                     &mut backend,
@@ -323,21 +496,72 @@ where
                 .await;
                 continue;
             }
-            let outcome = select4(
-                backend.next_event(),
-                fleet.outbound_ready(),
-                recv_any(&mut members, &mut inbufs),
-                status.wait_until_disabled(),
+            let step = next_step(
+                &status,
+                &mut backend,
+                &mut handshakes,
+                local,
+                &mut members,
+                &mut inbufs,
+                &fleet,
+                outbound_first,
             )
             .await;
+            outbound_first = !matches!(&step, SupervisorStep::Outbound);
             let now_ms = Instant::now().as_millis();
-            match outcome {
-                Either4::First(BleEvent::Sighting { address, .. }) => {
+            match step {
+                SupervisorStep::Disabled => {}
+                SupervisorStep::Handshake(HandshakeStep::Advanced) => {}
+                SupervisorStep::Handshake(HandshakeStep::Done(HandshakeDone {
+                    address,
+                    origin,
+                    outcome,
+                })) => match outcome {
+                    Ok((established, link)) => {
+                        manager.handle(
+                            PolicyInput::Settled {
+                                address,
+                                origin,
+                                established,
+                                now_ms,
+                            },
+                            &mut |action| pending.push(action),
+                        );
+                        apply_settled(
+                            link,
+                            bitrate,
+                            &mut manager,
+                            &mut pending,
+                            &status,
+                            &mut fleet,
+                            &mut backend,
+                            &mut members,
+                        )
+                        .await;
+                    }
+                    Err(_) => {
+                        manager.handle(
+                            PolicyInput::HandshakeFailed { address, origin },
+                            &mut |action| pending.push(action),
+                        );
+                        apply_radio(
+                            &mut pending,
+                            &mut manager,
+                            &status,
+                            &mut fleet,
+                            &mut backend,
+                            &mut members,
+                        )
+                        .await;
+                    }
+                },
+                SupervisorStep::Backend(BleEvent::Sighting { address, .. }) => {
                     manager.handle(PolicyInput::Sighting { address, now_ms }, &mut |action| {
-                        let _ = pending.push(action);
+                        pending.push(action)
                     });
                     apply_radio(
                         &mut pending,
+                        &mut manager,
                         &status,
                         &mut fleet,
                         &mut backend,
@@ -345,55 +569,35 @@ where
                     )
                     .await;
                 }
-                Either4::First(BleEvent::Inbound(link)) => {
-                    settle_into_fleet(
+                SupervisorStep::Backend(BleEvent::Inbound(link)) => {
+                    queue_handshake(
                         link,
                         Origin::Accepted,
                         local,
-                        bitrate,
                         &mut manager,
-                        &mut pending,
-                        &status,
-                        &mut fleet,
+                        &mut handshakes,
                         &mut backend,
-                        &mut members,
-                        &mut inbufs,
                     )
                     .await;
                 }
-                Either4::First(BleEvent::LinkReady { link, origin, .. }) => {
-                    settle_into_fleet(
+                SupervisorStep::Backend(BleEvent::LinkReady { link, origin, .. }) => {
+                    queue_handshake(
                         link,
                         origin,
                         local,
-                        bitrate,
                         &mut manager,
-                        &mut pending,
-                        &status,
-                        &mut fleet,
+                        &mut handshakes,
                         &mut backend,
-                        &mut members,
-                        &mut inbufs,
                     )
                     .await;
                 }
-                Either4::First(BleEvent::DialFailed { address }) => {
+                SupervisorStep::Backend(BleEvent::DialFailed { address }) => {
                     manager.handle(PolicyInput::DialFailed { address, now_ms }, &mut |action| {
-                        let _ = pending.push(action);
+                        pending.push(action)
                     });
                     apply_radio(
                         &mut pending,
-                        &status,
-                        &mut fleet,
-                        &mut backend,
-                        &mut members,
-                    )
-                    .await;
-                }
-                Either4::Second(()) => {
-                    drain_outbound(
                         &mut manager,
-                        &mut pending,
                         &status,
                         &mut fleet,
                         &mut backend,
@@ -401,7 +605,7 @@ where
                     )
                     .await;
                 }
-                Either4::Third((index, received)) => {
+                SupervisorStep::Inbound(index, received) => {
                     deliver_inbound(
                         index,
                         received.map_err(|_| ()),
@@ -415,59 +619,273 @@ where
                     )
                     .await;
                 }
-                Either4::Fourth(()) => {}
+                SupervisorStep::Outbound => {
+                    let Some(frame) = fleet.try_next_outbound() else {
+                        continue;
+                    };
+                    send_outbound(
+                        &frame,
+                        &mut manager,
+                        &mut pending,
+                        &status,
+                        &mut fleet,
+                        &mut backend,
+                        &mut members,
+                    )
+                    .await;
+                }
             }
         }
     }
 }
 
-/// L2CAP upgrade waits until [`settle_into_fleet`] admits the keeper so a rejected dial-race connection never consumes a radio-contending setup window.
-async fn settle<L: BleLink>(
-    mut link: L,
-    role: HandshakeRole,
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the scheduler owns one borrow per independently wakeable supervisor branch"
+)]
+async fn next_step<
+    B,
+    M: RawMutex + 'static,
+    const FRAME: usize,
+    const NOTIFY: usize,
+    const LIFECYCLE: usize,
+    const MEMBERS: usize,
+>(
+    status: &BluetoothAutoStatus<MEMBERS>,
+    backend: &mut B,
+    handshakes: &mut [Option<PendingHandshake<B::Link>>; HANDSHAKE_LANES],
     local: LocalPeer,
-) -> Option<(EstablishedPeer, L)> {
-    let established = drive_handshake(&mut link, role, local).await?;
-    Some((established, link))
+    members: &mut [Option<Active<B::Link>>; MEMBERS],
+    inbufs: &mut [[u8; contract::BLE_HW_MTU]; MEMBERS],
+    fleet: &Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
+    outbound_first: bool,
+) -> SupervisorStep<B::Link>
+where
+    B: BleBackend<MEMBERS>,
+{
+    if outbound_first {
+        return match select5(
+            status.wait_until_disabled(),
+            fleet.outbound_ready(),
+            advance_handshakes(handshakes, local),
+            backend.next_event(),
+            recv_any(members, inbufs),
+        )
+        .await
+        {
+            Either5::First(()) => SupervisorStep::Disabled,
+            Either5::Second(()) => SupervisorStep::Outbound,
+            Either5::Third(step) => SupervisorStep::Handshake(step),
+            Either5::Fourth(event) => SupervisorStep::Backend(event),
+            Either5::Fifth((index, received)) => SupervisorStep::Inbound(index, received),
+        };
+    }
+    match select5(
+        status.wait_until_disabled(),
+        advance_handshakes(handshakes, local),
+        backend.next_event(),
+        recv_any(members, inbufs),
+        fleet.outbound_ready(),
+    )
+    .await
+    {
+        Either5::First(()) => SupervisorStep::Disabled,
+        Either5::Second(step) => SupervisorStep::Handshake(step),
+        Either5::Third(event) => SupervisorStep::Backend(event),
+        Either5::Fourth((index, received)) => SupervisorStep::Inbound(index, received),
+        Either5::Fifth(()) => SupervisorStep::Outbound,
+    }
 }
 
-async fn drive_handshake<L: BleLink>(
-    link: &mut L,
-    role: HandshakeRole,
+async fn prepare_radio<B, const MEMBERS: usize>(
+    backend: &mut B,
+    local: &mut LocalPeer,
+    configured_capabilities: LinkCapabilities,
+    status: &BluetoothAutoStatus<MEMBERS>,
+) where
+    B: BleBackend<MEMBERS>,
+{
+    if backend.set_radio_mode(RadioMode::On).await.is_err() {
+        status.mark_failed(RADIO_CONTROL_REASON);
+        return;
+    }
+    match backend.local_capabilities(configured_capabilities).await {
+        Ok(capabilities) => local.capabilities = capabilities,
+        Err(_) => status.mark_failed(RADIO_CONTROL_REASON),
+    }
+}
+
+async fn queue_handshake<B, const MEMBERS: usize>(
+    link: B::Link,
+    origin: Origin,
     local: LocalPeer,
-) -> Option<EstablishedPeer> {
-    with_timeout(HANDSHAKE_TIMEOUT, async {
-        if link.peer_protocol() == PeerProtocol::Columba {
-            let identity = link.receive_columba_peer_identity().await.ok()?;
-            if role == HandshakeRole::Dialer {
-                link.send_columba_identity(local.identity).await.ok()?;
-            }
-            return Some(EstablishedPeer {
-                identity,
-                transport: EstablishedTransport::ColumbaGatt,
-                peer_rssi: None,
-            });
+    manager: &mut ConnectionPolicy<MEMBERS, DIAL_TRACK>,
+    handshakes: &mut [Option<PendingHandshake<B::Link>>; HANDSHAKE_LANES],
+    backend: &mut B,
+) where
+    B: BleBackend<MEMBERS>,
+{
+    let address = link.address();
+    match handshakes.iter_mut().find(|entry| entry.is_none()) {
+        Some(entry) if manager.begin_handshake(origin) => {
+            *entry = Some(PendingHandshake::new(link, origin, local));
         }
-        let (mut handshake, opening) = Handshake::begin(role, local, None);
-        if let Some(msg) = opening {
-            link.control_send(&msg).await.ok()?;
+        _ => {
+            drop(link);
+            backend.on_link_closed(address).await;
         }
-        loop {
-            let msg = link.control_recv().await.ok()?;
-            let reaction = handshake.absorb(msg);
-            if let Some(reply) = reaction.reply {
-                link.control_send(&reply).await.ok()?;
-            }
-            match reaction.outcome {
-                HandshakeOutcome::Settled(established) => return Some(established),
-                HandshakeOutcome::Aborted(_) => return None,
-                HandshakeOutcome::Pending => {}
-            }
-        }
-    })
+    }
+}
+
+async fn advance_handshakes<L: BleLink>(
+    handshakes: &mut [Option<PendingHandshake<L>>; HANDSHAKE_LANES],
+    local: LocalPeer,
+) -> HandshakeStep<L> {
+    let [first, second] = handshakes;
+    match select(
+        advance_handshake(first, local),
+        advance_handshake(second, local),
+    )
     .await
-    .ok()
-    .flatten()
+    {
+        Either::First(step) | Either::Second(step) => step,
+    }
+}
+
+async fn advance_handshake<L: BleLink>(
+    pending: &mut Option<PendingHandshake<L>>,
+    local: LocalPeer,
+) -> HandshakeStep<L> {
+    let completion = match pending.as_mut() {
+        Some(pending) => {
+            let deadline = pending.deadline;
+            match with_deadline(deadline, async {
+                let mut next_stage = None;
+                let completion = match &mut pending.stage {
+                    HandshakeStage::ColumbaReceive => {
+                        match pending.link.receive_columba_peer_identity().await {
+                            Ok(identity) if pending.origin == Origin::Dialed => {
+                                next_stage = Some(HandshakeStage::ColumbaSend { identity });
+                                None
+                            }
+                            Ok(identity) => Some(Ok(EstablishedPeer {
+                                identity,
+                                transport: EstablishedTransport::ColumbaGatt,
+                                peer_rssi: None,
+                            })),
+                            Err(_) => Some(Err(HandshakeFailure::Link)),
+                        }
+                    }
+                    HandshakeStage::ColumbaSend { identity } => {
+                        let identity = *identity;
+                        match pending.link.send_columba_identity(local.identity).await {
+                            Ok(()) => Some(Ok(EstablishedPeer {
+                                identity,
+                                transport: EstablishedTransport::ColumbaGatt,
+                                peer_rssi: None,
+                            })),
+                            Err(_) => Some(Err(HandshakeFailure::Link)),
+                        }
+                    }
+                    HandshakeStage::NativeSend { handshake, control } => {
+                        let control = *control;
+                        match pending.link.control_send(&control).await {
+                            Ok(()) => match handshake.take() {
+                                Some(handshake) => {
+                                    next_stage = Some(HandshakeStage::NativeReceive {
+                                        handshake: Some(handshake),
+                                    });
+                                    None
+                                }
+                                None => Some(Err(HandshakeFailure::InvariantViolation)),
+                            },
+                            Err(_) => Some(Err(HandshakeFailure::Link)),
+                        }
+                    }
+                    HandshakeStage::NativeReceive { handshake } => {
+                        match pending.link.control_recv().await {
+                            Ok(control) => match handshake.as_mut() {
+                                Some(active) => {
+                                    let reaction = active.absorb(control);
+                                    match reaction.reply {
+                                        Some(control) => match handshake.take() {
+                                            Some(handshake) => {
+                                                next_stage = Some(HandshakeStage::NativeReply {
+                                                    handshake: Some(handshake),
+                                                    control,
+                                                    outcome: reaction.outcome,
+                                                });
+                                                None
+                                            }
+                                            None => Some(Err(HandshakeFailure::InvariantViolation)),
+                                        },
+                                        None => match reaction.outcome {
+                                            HandshakeOutcome::Pending => None,
+                                            HandshakeOutcome::Settled(established) => {
+                                                Some(Ok(established))
+                                            }
+                                            HandshakeOutcome::Aborted(_) => {
+                                                Some(Err(HandshakeFailure::Aborted))
+                                            }
+                                        },
+                                    }
+                                }
+                                None => Some(Err(HandshakeFailure::InvariantViolation)),
+                            },
+                            Err(_) => Some(Err(HandshakeFailure::Link)),
+                        }
+                    }
+                    HandshakeStage::NativeReply {
+                        handshake,
+                        control,
+                        outcome,
+                    } => {
+                        let control = *control;
+                        let outcome = *outcome;
+                        match pending.link.control_send(&control).await {
+                            Ok(()) => match outcome {
+                                HandshakeOutcome::Pending => match handshake.take() {
+                                    Some(handshake) => {
+                                        next_stage = Some(HandshakeStage::NativeReceive {
+                                            handshake: Some(handshake),
+                                        });
+                                        None
+                                    }
+                                    None => Some(Err(HandshakeFailure::InvariantViolation)),
+                                },
+                                HandshakeOutcome::Settled(established) => Some(Ok(established)),
+                                HandshakeOutcome::Aborted(_) => {
+                                    Some(Err(HandshakeFailure::Aborted))
+                                }
+                            },
+                            Err(_) => Some(Err(HandshakeFailure::Link)),
+                        }
+                    }
+                };
+                if let Some(stage) = next_stage {
+                    pending.stage = stage;
+                }
+                completion
+            })
+            .await
+            {
+                Ok(completion) => completion,
+                Err(_) => Some(Err(HandshakeFailure::Timeout)),
+            }
+        }
+        None => ::core::future::pending().await,
+    };
+    let Some(outcome) = completion else {
+        return HandshakeStep::Advanced;
+    };
+    let Some(pending) = pending.take() else {
+        return HandshakeStep::Advanced;
+    };
+    HandshakeStep::Done(HandshakeDone {
+        address: pending.address,
+        origin: pending.origin,
+        outcome: outcome.map(|established| (established, pending.link)),
+    })
 }
 
 async fn recv_or_pending<L: BleLink>(
@@ -506,6 +924,8 @@ async fn apply_one<
     const MEMBERS: usize,
 >(
     action: PolicyAction,
+    pending: &mut PendingActions<ACTION_CAP>,
+    manager: &mut ConnectionPolicy<MEMBERS, DIAL_TRACK>,
     status: &BluetoothAutoStatus<MEMBERS>,
     fleet: &mut Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
     backend: &mut B,
@@ -514,21 +934,37 @@ async fn apply_one<
     B: BleBackend<MEMBERS>,
 {
     match action {
-        PolicyAction::Dial(address) => backend.dial(address).await,
+        PolicyAction::Dial(address) => match backend.dial(address).await {
+            DialOutcome::Started => {}
+            DialOutcome::Busy | DialOutcome::UnknownPeer | DialOutcome::RadioOff => {
+                manager.handle(
+                    PolicyInput::DialFailed {
+                        address,
+                        now_ms: Instant::now().as_millis(),
+                    },
+                    &mut |action| pending.push(action),
+                );
+            }
+            DialOutcome::InvariantViolation => status.mark_failed(DIAL_INVARIANT_REASON),
+        },
         PolicyAction::Evict { slot, .. } => {
-            if let Some(id) = members[slot].as_ref().map(|member| member.id) {
-                fleet.deregister_member(id).await;
-                let _ = members[slot].take();
+            if let Some(member) = members[slot].take() {
+                fleet.deregister_member(member.id).await;
                 status.member(slot).retire();
                 status.republish_peer_count();
+                backend.on_link_closed(member.address).await;
             }
         }
         PolicyAction::NotifyClosed(address) => backend.on_link_closed(address).await,
         PolicyAction::SetAdvertising(mode) => {
-            let _ = backend.set_advertising(mode).await;
+            if backend.set_advertising(mode).await.is_err() {
+                status.mark_failed(RADIO_CONTROL_REASON);
+            }
         }
         PolicyAction::SetScanning(mode) => {
-            let _ = backend.set_scanning(mode).await;
+            if backend.set_scanning(mode).await.is_err() {
+                status.mark_failed(RADIO_CONTROL_REASON);
+            }
         }
         PolicyAction::Admit { .. } | PolicyAction::Reject { .. } => {}
     }
@@ -542,7 +978,8 @@ async fn apply_radio<
     const LIFECYCLE: usize,
     const MEMBERS: usize,
 >(
-    pending: &mut heapless::Vec<PolicyAction, ACTION_CAP>,
+    pending: &mut PendingActions<ACTION_CAP>,
+    manager: &mut ConnectionPolicy<MEMBERS, DIAL_TRACK>,
     status: &BluetoothAutoStatus<MEMBERS>,
     fleet: &mut Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
     backend: &mut B,
@@ -550,9 +987,22 @@ async fn apply_radio<
 ) where
     B: BleBackend<MEMBERS>,
 {
-    let actions = ::core::mem::take(pending);
-    for action in actions {
-        apply_one(action, status, fleet, backend, members).await;
+    loop {
+        if pending.overflowed {
+            status.mark_failed(ACTION_OVERFLOW_REASON);
+            pending.actions.clear();
+            return;
+        }
+        let actions = pending.take();
+        if actions.is_empty() {
+            return;
+        }
+        for action in actions {
+            apply_one(action, pending, manager, status, fleet, backend, members).await;
+            if status.is_failed() {
+                return;
+            }
+        }
     }
 }
 
@@ -571,8 +1021,12 @@ async fn disable_members<
 ) where
     B: BleBackend<MEMBERS>,
 {
-    let _ = backend.set_advertising(AdvertisingMode::Off).await;
-    let _ = backend.set_scanning(ScanningMode::Off).await;
+    let advertising = backend.set_advertising(AdvertisingMode::Off).await;
+    let scanning = backend.set_scanning(ScanningMode::Off).await;
+    let radio = backend.set_radio_mode(RadioMode::Off).await;
+    if advertising.is_err() || scanning.is_err() || radio.is_err() {
+        status.mark_failed(RADIO_CONTROL_REASON);
+    }
     let mut changed = false;
     for (slot, entry) in members.iter_mut().enumerate() {
         if let Some(id) = entry.as_ref().map(|member| member.id) {
@@ -600,7 +1054,7 @@ async fn close_member<
 >(
     slot: usize,
     manager: &mut ConnectionPolicy<MEMBERS, DIAL_TRACK>,
-    pending: &mut heapless::Vec<PolicyAction, ACTION_CAP>,
+    pending: &mut PendingActions<ACTION_CAP>,
     status: &BluetoothAutoStatus<MEMBERS>,
     fleet: &mut Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
     backend: &mut B,
@@ -622,14 +1076,57 @@ async fn close_member<
             identity: member.identity,
             address: member.address,
         },
-        &mut |action| {
-            let _ = pending.push(action);
-        },
+        &mut |action| pending.push(action),
     );
-    apply_radio(pending, status, fleet, backend, members).await;
+    apply_radio(pending, manager, status, fleet, backend, members).await;
 }
 
-async fn drain_outbound<
+fn selected<L: BleLink>(member: &Active<L>, target: FrameTarget) -> bool {
+    match target {
+        FrameTarget::Direct(id) => member.id == id,
+        FrameTarget::Fan(FanTarget::Only(id)) => member.id == id,
+        FrameTarget::Fan(FanTarget::All) => true,
+        FrameTarget::Fan(FanTarget::AllExcept(id)) => member.id != id,
+    }
+}
+
+async fn send_member<L: BleLink>(
+    member: &mut Option<Active<L>>,
+    state: &mut SendState,
+    frame: &[u8],
+) {
+    if *state != SendState::Pending {
+        return;
+    }
+    let Some(member) = member.as_mut() else {
+        *state = SendState::Failed;
+        return;
+    };
+    *state = if member.sink.send_frame(frame).await.is_ok() {
+        SendState::Sent
+    } else {
+        SendState::Failed
+    };
+}
+
+#[expect(
+    clippy::expect_used,
+    reason = "from_fn runs exactly MEMBERS times over a zip of two [_; MEMBERS] arrays, so the iterator cannot run dry; the disjoint-borrow trick has no panic-free spelling without unsafe"
+)]
+async fn send_members<L: BleLink, const MEMBERS: usize>(
+    members: &mut [Option<Active<L>>; MEMBERS],
+    states: &mut [SendState; MEMBERS],
+    frame: &[u8],
+) {
+    let mut pairs = members.iter_mut().zip(states.iter_mut());
+    let futures: [_; MEMBERS] = ::core::array::from_fn(|_| {
+        let (member, state) = pairs.next().expect("one pair per member slot");
+        send_member(member, state, frame)
+    });
+    join_array(futures).await;
+}
+
+async fn send_outbound<
     B,
     M: RawMutex + 'static,
     const FRAME: usize,
@@ -637,8 +1134,9 @@ async fn drain_outbound<
     const LIFECYCLE: usize,
     const MEMBERS: usize,
 >(
+    frame: &OutboundFrame<FRAME>,
     manager: &mut ConnectionPolicy<MEMBERS, DIAL_TRACK>,
-    pending: &mut heapless::Vec<PolicyAction, ACTION_CAP>,
+    pending: &mut PendingActions<ACTION_CAP>,
     status: &BluetoothAutoStatus<MEMBERS>,
     fleet: &mut Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
     backend: &mut B,
@@ -646,30 +1144,28 @@ async fn drain_outbound<
 ) where
     B: BleBackend<MEMBERS>,
 {
-    while let Some(frame) = fleet.try_next_outbound() {
-        if frame.is_empty() {
-            continue;
-        }
-        for slot in 0..MEMBERS {
-            let selected = match members[slot].as_ref() {
-                Some(member) => match frame.target() {
-                    FrameTarget::Direct(id) => member.id == id,
-                    FrameTarget::Fan(FanTarget::Only(id)) => member.id == id,
-                    FrameTarget::Fan(FanTarget::All) => true,
-                    FrameTarget::Fan(FanTarget::AllExcept(id)) => member.id != id,
-                },
-                None => false,
-            };
-            if !selected {
-                continue;
-            }
-            let sent = match members[slot].as_mut() {
-                Some(member) => member.sink.send_frame(frame.bytes()).await.is_ok(),
-                None => false,
-            };
-            if sent {
-                status.member(slot).add_tx(frame.len() as u64);
-            } else {
+    if frame.is_empty() {
+        return;
+    }
+    let mut states = ::core::array::from_fn(|slot| match members[slot].as_ref() {
+        Some(member) if selected(member, frame.target()) => SendState::Pending,
+        _ => SendState::NotSelected,
+    });
+    let sends = send_members(members, &mut states, frame.bytes());
+    match select(
+        status.wait_until_disabled(),
+        with_timeout(OUTBOUND_TIMEOUT, sends),
+    )
+    .await
+    {
+        Either::First(()) => return,
+        Either::Second(_) => {}
+    }
+    for (slot, state) in states.into_iter().enumerate() {
+        match state {
+            SendState::NotSelected => {}
+            SendState::Sent => status.member(slot).add_tx(frame.len() as u64),
+            SendState::Pending | SendState::Failed => {
                 close_member(slot, manager, pending, status, fleet, backend, members).await;
             }
         }
@@ -691,7 +1187,7 @@ async fn deliver_inbound<
     index: usize,
     received: Result<usize, ()>,
     manager: &mut ConnectionPolicy<MEMBERS, DIAL_TRACK>,
-    pending: &mut heapless::Vec<PolicyAction, ACTION_CAP>,
+    pending: &mut PendingActions<ACTION_CAP>,
     status: &BluetoothAutoStatus<MEMBERS>,
     fleet: &mut Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
     backend: &mut B,
@@ -722,7 +1218,7 @@ async fn deliver_inbound<
     clippy::too_many_arguments,
     reason = "embedded serve-loop internals pass the loop's split-borrowed locals; bundling awaits an on-hardware validation pass"
 )]
-async fn settle_into_fleet<
+async fn apply_settled<
     B,
     M: RawMutex + 'static,
     const FRAME: usize,
@@ -731,73 +1227,24 @@ async fn settle_into_fleet<
     const MEMBERS: usize,
 >(
     link: B::Link,
-    origin: Origin,
-    local: LocalPeer,
     bitrate: BitrateBps,
     manager: &mut ConnectionPolicy<MEMBERS, DIAL_TRACK>,
-    pending: &mut heapless::Vec<PolicyAction, ACTION_CAP>,
+    pending: &mut PendingActions<ACTION_CAP>,
     status: &BluetoothAutoStatus<MEMBERS>,
     fleet: &mut Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
     backend: &mut B,
     members: &mut [Option<Active<B::Link>>; MEMBERS],
-    inbufs: &mut [[u8; contract::BLE_HW_MTU]; MEMBERS],
 ) where
     B: BleBackend<MEMBERS>,
 {
     let address = link.address();
-    let role = role_for(origin);
-    let mut handshake = ::core::pin::pin!(settle(link, role, local));
-    let settled = loop {
-        match select3(
-            handshake.as_mut(),
-            fleet.outbound_ready(),
-            recv_any(members, inbufs),
-        )
-        .await
-        {
-            Either3::First(result) => break result,
-            Either3::Second(()) => {
-                drain_outbound(manager, pending, status, fleet, backend, members).await;
-            }
-            Either3::Third((index, received)) => {
-                deliver_inbound(
-                    index,
-                    received.map_err(|_| ()),
-                    manager,
-                    pending,
-                    status,
-                    fleet,
-                    backend,
-                    members,
-                    inbufs,
-                )
-                .await;
-            }
-        }
-    };
-    let now_ms = Instant::now().as_millis();
-    let Some((established, link)) = settled else {
-        manager.handle(
-            PolicyInput::HandshakeFailed { address, origin },
-            &mut |action| {
-                let _ = pending.push(action);
-            },
-        );
-        apply_radio(pending, status, fleet, backend, members).await;
+    if pending.overflowed {
+        status.mark_failed(ACTION_OVERFLOW_REASON);
+        drop(link);
+        backend.on_link_closed(address).await;
         return;
-    };
-    manager.handle(
-        PolicyInput::Settled {
-            address,
-            origin,
-            established,
-            now_ms,
-        },
-        &mut |action| {
-            let _ = pending.push(action);
-        },
-    );
-    let actions = ::core::mem::take(pending);
+    }
+    let actions = pending.take();
     let mut held = Some(link);
     for action in actions {
         match action {
@@ -831,8 +1278,264 @@ async fn settle_into_fleet<
                     });
                 }
             }
-            PolicyAction::Reject { .. } => held = None,
-            other => apply_one(other, status, fleet, backend, members).await,
+            PolicyAction::Reject { address, .. } => {
+                held = None;
+                backend.on_link_closed(address).await;
+            }
+            other => {
+                apply_one(other, pending, manager, status, fleet, backend, members).await;
+            }
         }
+    }
+    if held.is_some() {
+        drop(held.take());
+        backend.on_link_closed(address).await;
+    }
+    apply_radio(pending, manager, status, fleet, backend, members).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use core::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+
+    use embassy_futures::block_on;
+    use embassy_futures::select::{select, Either};
+    use prns_core::interfaces::bluetooth_auto::{Endpoint, Nrf52Host};
+
+    use super::*;
+
+    const CAPS: LinkCapabilities = LinkCapabilities {
+        l2cap: None,
+        link_mtu: contract::BLE_HW_MTU as u16,
+    };
+
+    #[derive(Debug)]
+    struct MockError;
+
+    #[derive(Clone, Copy)]
+    enum MockSinkMode {
+        Ready,
+        Blocked,
+    }
+
+    struct MockSource;
+
+    struct MockSink {
+        mode: MockSinkMode,
+    }
+
+    struct MockLink {
+        address: BleAddress,
+        protocol: PeerProtocol,
+        incoming: Option<Control>,
+        identity: BleIdentity,
+        track_drop: bool,
+    }
+
+    static DROPS: AtomicUsize = AtomicUsize::new(0);
+
+    impl Drop for MockLink {
+        fn drop(&mut self) {
+            if self.track_drop {
+                DROPS.fetch_add(1, AtomicOrdering::Relaxed);
+            }
+        }
+    }
+
+    impl BleLink for MockLink {
+        type Error = MockError;
+        type Source = MockSource;
+        type Sink = MockSink;
+
+        fn peer_protocol(&self) -> PeerProtocol {
+            self.protocol
+        }
+
+        fn address(&self) -> BleAddress {
+            self.address
+        }
+
+        async fn receive_columba_peer_identity(&mut self) -> Result<BleIdentity, MockError> {
+            Ok(self.identity)
+        }
+
+        async fn send_columba_identity(&mut self, _identity: BleIdentity) -> Result<(), MockError> {
+            Ok(())
+        }
+
+        async fn control_send(&mut self, _msg: &Control) -> Result<(), MockError> {
+            Ok(())
+        }
+
+        async fn control_recv(&mut self) -> Result<Control, MockError> {
+            match self.incoming.take() {
+                Some(control) => Ok(control),
+                None => ::core::future::pending().await,
+            }
+        }
+
+        async fn upgrade(&mut self, _plan: &L2capPlan) -> Result<(), MockError> {
+            Ok(())
+        }
+
+        fn into_data(self) -> (MockSource, MockSink) {
+            (
+                MockSource,
+                MockSink {
+                    mode: MockSinkMode::Ready,
+                },
+            )
+        }
+    }
+
+    impl BleSource for MockSource {
+        type Error = MockError;
+
+        async fn recv_frame(&mut self, _out: &mut [u8]) -> Result<usize, MockError> {
+            ::core::future::pending().await
+        }
+    }
+
+    impl BleSink for MockSink {
+        type Error = MockError;
+
+        async fn send_frame(&mut self, _frame: &[u8]) -> Result<(), MockError> {
+            match self.mode {
+                MockSinkMode::Ready => Ok(()),
+                MockSinkMode::Blocked => ::core::future::pending().await,
+            }
+        }
+    }
+
+    fn local(identity: u8) -> LocalPeer {
+        LocalPeer {
+            identity: BleIdentity::new([identity; 16]),
+            endpoint: Endpoint::Nrf52(Nrf52Host::Nrf52),
+            capabilities: CAPS,
+        }
+    }
+
+    fn link(address: u8, incoming: Option<Control>, track_drop: bool) -> MockLink {
+        MockLink {
+            address: BleAddress::new([address; 6]),
+            protocol: PeerProtocol::Native,
+            incoming,
+            identity: BleIdentity::new([address; 16]),
+            track_drop,
+        }
+    }
+
+    fn active(id: u8, mode: MockSinkMode) -> Active<MockLink> {
+        Active {
+            identity: BleIdentity::new([id; 16]),
+            id: InterfaceId::new([id; 8]),
+            slot: usize::from(id),
+            address: BleAddress::new([id; 6]),
+            source: MockSource,
+            sink: MockSink { mode },
+        }
+    }
+
+    #[test]
+    fn simultaneous_handshakes_let_the_ready_peer_settle() {
+        let local = local(1);
+        let hello = Control::Hello {
+            identity: BleIdentity::new([3; 16]),
+            endpoint: Endpoint::Nrf52(Nrf52Host::Nrf52),
+            capabilities: CAPS,
+            peer_rssi: None,
+        };
+        let mut handshakes = [
+            Some(PendingHandshake::new(
+                link(2, None, false),
+                Origin::Dialed,
+                local,
+            )),
+            Some(PendingHandshake::new(
+                link(3, Some(hello), false),
+                Origin::Accepted,
+                local,
+            )),
+        ];
+
+        block_on(async {
+            assert!(matches!(
+                advance_handshakes(&mut handshakes, local).await,
+                HandshakeStep::Advanced
+            ));
+            assert!(matches!(
+                advance_handshakes(&mut handshakes, local).await,
+                HandshakeStep::Advanced
+            ));
+            let step = advance_handshakes(&mut handshakes, local).await;
+            assert!(matches!(&step, HandshakeStep::Done(_)));
+            if let HandshakeStep::Done(done) = step {
+                assert_eq!(done.address, BleAddress::new([3; 6]));
+                assert_eq!(done.origin, Origin::Accepted);
+                assert!(done.outcome.is_ok());
+            }
+        });
+        assert!(handshakes[0].is_some());
+        assert!(handshakes[1].is_none());
+    }
+
+    #[test]
+    fn cancelling_a_handshake_drops_its_link() {
+        DROPS.store(0, AtomicOrdering::Relaxed);
+        let mut handshakes = [
+            Some(PendingHandshake::new(
+                link(2, None, true),
+                Origin::Dialed,
+                local(1),
+            )),
+            None,
+        ];
+
+        handshakes[0] = None;
+
+        assert_eq!(DROPS.load(AtomicOrdering::Relaxed), 1);
+    }
+
+    #[test]
+    fn blocked_peer_does_not_hide_completed_fanout() {
+        let mut members = [
+            Some(active(0, MockSinkMode::Ready)),
+            Some(active(1, MockSinkMode::Blocked)),
+        ];
+        let mut states = [SendState::Pending, SendState::Pending];
+
+        block_on(async {
+            assert!(matches!(
+                select(send_members(&mut members, &mut states, b"frame"), async {}).await,
+                Either::Second(())
+            ));
+        });
+
+        assert!(matches!(states, [SendState::Sent, SendState::Pending]));
+    }
+
+    #[test]
+    fn policy_action_overflow_is_explicit() {
+        let mut pending = PendingActions::<1>::new();
+        pending.push(PolicyAction::SetAdvertising(AdvertisingMode::On));
+        pending.push(PolicyAction::SetScanning(ScanningMode::On));
+
+        assert!(pending.overflowed);
+        assert_eq!(pending.actions.len(), 1);
+    }
+
+    #[test]
+    fn failed_status_survives_disable_and_reenable() {
+        static SHARED: BluetoothAutoShared<1> = BluetoothAutoShared::new(InterfaceId::new([9; 8]));
+        let status = BluetoothAutoStatus::new(&SHARED);
+        status.mark_up();
+        status.mark_failed(ACTION_OVERFLOW_REASON);
+
+        assert_eq!(status.connection(), ConnectionState::Failed);
+        assert_eq!(status.failure_reason(), Some(ACTION_OVERFLOW_REASON));
+        status.disable();
+        assert_eq!(status.connection(), ConnectionState::Disabled);
+        status.enable();
+        assert_eq!(status.connection(), ConnectionState::Failed);
     }
 }

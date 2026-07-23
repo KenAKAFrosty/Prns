@@ -34,8 +34,8 @@ use prns_core::interfaces::bluetooth_auto::{
     FRAGMENT_HEADER_LEN, NATIVE_CONTROL_UUID, NATIVE_DATA_UUID, STREAM_FRAME_PREFIX_LEN,
 };
 use prns_core::interfaces::bluetooth_auto::{
-    AdvertisingMode, BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin, RadioMode,
-    ScanningMode,
+    AdvertisingMode, BleBackend, BleEvent, BleLink, BleSink, BleSource, DialOutcome, Origin,
+    RadioMode, ScanningMode,
 };
 
 const L2CAP_SDU_LEN: usize = STREAM_FRAME_PREFIX_LEN + BLE_HW_MTU;
@@ -1121,13 +1121,13 @@ impl BleBackend<{ BluerBackend::MAX_PEERS }> for BluerBackend {
         }
     }
 
-    async fn dial(&mut self, address: BleAddress) {
+    async fn dial(&mut self, address: BleAddress) -> DialOutcome {
         if !self.radio_power.is_on() {
-            return;
+            return DialOutcome::RadioOff;
         }
         let target = Address::new(*address.octets());
         if self.connecting.contains(&target) {
-            return;
+            return DialOutcome::Started;
         }
         self.connecting.insert(target);
         let adapter = self.adapter.clone();
@@ -1139,6 +1139,7 @@ impl BleBackend<{ BluerBackend::MAX_PEERS }> for BluerBackend {
                 };
             (target, result)
         }));
+        DialOutcome::Started
     }
 
     async fn on_link_closed(&mut self, address: BleAddress) {

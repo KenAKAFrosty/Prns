@@ -1,5 +1,5 @@
 use prns_core::interfaces::bluetooth_auto::{
-    AdvertisingMode, BleBackend, BleEvent, Origin, RadioMode, ScanningMode,
+    AdvertisingMode, BleBackend, BleEvent, DialOutcome, Origin, RadioMode, ScanningMode,
 };
 use prns_core::interfaces::bluetooth_auto::{BleAddress, LinkCapabilities, Psm};
 
@@ -96,7 +96,8 @@ impl BleBackend<{ AndroidBleBackend::MAX_PEERS }> for AndroidBleBackend {
         }
     }
 
-    async fn dial(&mut self, address: BleAddress) {
+    async fn dial(&mut self, address: BleAddress) -> DialOutcome {
         self.bridge.push_dial(*address.octets());
+        DialOutcome::Started
     }
 }

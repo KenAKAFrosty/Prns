@@ -640,7 +640,9 @@ async fn apply_one<B, const MAX_PEERS: usize>(
     B: BleBackend<MAX_PEERS>,
 {
     match action {
-        PolicyAction::Dial(address) => backend.dial(address).await,
+        PolicyAction::Dial(address) => {
+            let _ = backend.dial(address).await;
+        }
         PolicyAction::Evict { identity, .. } => {
             if let Some(member) = members.remove(&identity) {
                 member.attached.teardown();
@@ -1154,10 +1156,16 @@ mod tests {
             }
         }
 
-        async fn dial(&mut self, address: BleAddress) {
+        async fn dial(
+            &mut self,
+            address: BleAddress,
+        ) -> prns_core::interfaces::bluetooth_auto::DialOutcome {
             let (mine, theirs) = link_pair(self.our_address, address);
             if self.peer_inbound_tx.send(theirs).await.is_ok() {
                 self.dialed = Some(mine);
+                prns_core::interfaces::bluetooth_auto::DialOutcome::Started
+            } else {
+                prns_core::interfaces::bluetooth_auto::DialOutcome::Busy
             }
         }
     }
@@ -1180,7 +1188,10 @@ mod tests {
             let BleEvent::Sighting { address, .. } = backend_a.next_event().await else {
                 unreachable!("the dialer side only sights")
             };
-            backend_a.dial(address).await;
+            assert_eq!(
+                backend_a.dial(address).await,
+                prns_core::interfaces::bluetooth_auto::DialOutcome::Started
+            );
             let BleEvent::LinkReady { mut link, .. } = backend_a.next_event().await else {
                 unreachable!("the dial completes into a link")
             };
@@ -1280,7 +1291,10 @@ mod tests {
             let BleEvent::Sighting { address, .. } = backend_a.next_event().await else {
                 unreachable!("the dialer side only sights")
             };
-            backend_a.dial(address).await;
+            assert_eq!(
+                backend_a.dial(address).await,
+                prns_core::interfaces::bluetooth_auto::DialOutcome::Started
+            );
             let BleEvent::LinkReady { mut link, .. } = backend_a.next_event().await else {
                 unreachable!("the dial completes into a link")
             };
@@ -1342,7 +1356,10 @@ mod tests {
             let BleEvent::Sighting { address, .. } = mac_backend.next_event().await else {
                 unreachable!("mac sights android")
             };
-            mac_backend.dial(address).await;
+            assert_eq!(
+                mac_backend.dial(address).await,
+                prns_core::interfaces::bluetooth_auto::DialOutcome::Started
+            );
             let BleEvent::LinkReady { mut link, .. } = mac_backend.next_event().await else {
                 unreachable!("the dial completes into a link")
             };

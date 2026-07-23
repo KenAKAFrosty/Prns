@@ -29,7 +29,8 @@ use personal_rns::interfaces::bluetooth_auto::{
     CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN, STREAM_FRAME_PREFIX_LEN,
 };
 use personal_rns::interfaces::bluetooth_auto::{
-    AdvertisingMode, BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin, ScanningMode,
+    AdvertisingMode, BleBackend, BleEvent, BleLink, BleSink, BleSource, DialOutcome, Origin,
+    RadioMode, ScanningMode,
 };
 use personal_rns::interfaces::{InterfaceId, InterfaceKind};
 
@@ -313,7 +314,7 @@ struct LinkChannels {
     control_out: Channel<Mtx, Control, CTRL_DEPTH>,
     data_in: Channel<Mtx, FrameBytes, DATA_DEPTH>,
     data_out: Channel<Mtx, FrameBytes, DATA_DEPTH>,
-    identity_in: Channel<Mtx, BleIdentity, 1>,
+    identity_in: Signal<Mtx, BleIdentity>,
     identity_out: Channel<Mtx, BleIdentity, 1>,
     data_plane: Signal<Mtx, L2capPlan>,
     profile_ready: Signal<Mtx, PeerProtocol>,
@@ -333,7 +334,7 @@ impl LinkChannels {
             control_out: Channel::new(),
             data_in: Channel::new(),
             data_out: Channel::new(),
-            identity_in: Channel::new(),
+            identity_in: Signal::new(),
             identity_out: Channel::new(),
             data_plane: Signal::new(),
             profile_ready: Signal::new(),
@@ -364,7 +365,7 @@ impl LinkChannels {
         self.control_out.clear();
         self.data_in.clear();
         self.data_out.clear();
-        self.identity_in.clear();
+        self.identity_in.reset();
         self.identity_out.clear();
     }
 
@@ -375,7 +376,7 @@ impl LinkChannels {
             control_out: self.control_out.sender(),
             data_in: self.data_in.receiver(),
             data_out: self.data_out.sender(),
-            identity_in: self.identity_in.receiver(),
+            identity_in: &self.identity_in,
             identity_out: self.identity_out.sender(),
             data_plane: &self.data_plane,
             plan: L2capPlan::None,
@@ -410,6 +411,7 @@ pub(super) struct BleHub {
     advertise: Signal<Mtx, bool>,
     sightings: Channel<Mtx, SeenPeer, SIGHTING_DEPTH>,
     scan_enabled: Signal<Mtx, bool>,
+    radio_enabled: AtomicBool,
 }
 
 impl BleHub {
@@ -424,6 +426,7 @@ impl BleHub {
             advertise: Signal::new(),
             sightings: Channel::new(),
             scan_enabled: Signal::new(),
+            radio_enabled: AtomicBool::new(false),
         }
     }
 
@@ -492,6 +495,22 @@ impl BleBackend<{ NrfBleBackend::MAX_PEERS }> for NrfBleBackend {
         Ok(())
     }
 
+    async fn set_radio_mode(&mut self, mode: RadioMode) -> Result<(), Closed> {
+        let enabled = mode.is_on();
+        self.hub.radio_enabled.store(enabled, Ordering::Relaxed);
+        if !enabled {
+            self.hub.advertise.signal(false);
+            self.hub.scan_enabled.signal(false);
+            for (index, assign) in self.hub.assign.iter().enumerate() {
+                self.hub.connection_slots.request_close(index);
+                assign.clear();
+            }
+            self.hub.ready.clear();
+            self.hub.dial_failed.clear();
+        }
+        Ok(())
+    }
+
     async fn next_event(&mut self) -> BleEvent<NrfBleLink> {
         match select3(
             self.ready.receive(),
@@ -525,18 +544,30 @@ impl BleBackend<{ NrfBleBackend::MAX_PEERS }> for NrfBleBackend {
         }
     }
 
-    async fn dial(&mut self, address: BleAddress) {
+    async fn dial(&mut self, address: BleAddress) -> DialOutcome {
         let Some(addr) = self.resolve(address) else {
-            return;
+            return DialOutcome::UnknownPeer;
         };
-        let Some(slot) = self.hub.connection_slots.try_acquire() else {
-            return;
+        if !self.hub.radio_enabled.load(Ordering::Relaxed) {
+            return DialOutcome::RadioOff;
+        }
+        let slot = match self.hub.connection_slots.try_acquire() {
+            Ok(Some(slot)) => slot,
+            Ok(None) => return DialOutcome::Busy,
+            Err(_) => return DialOutcome::InvariantViolation,
         };
         let index = slot.index();
-        let _ = self.hub.assign[index].try_send(SlotJob::Dial {
-            address: addr,
-            slot,
-        });
+        if self.hub.assign[index]
+            .try_send(SlotJob::Dial {
+                address: addr,
+                slot,
+            })
+            .is_ok()
+        {
+            DialOutcome::Started
+        } else {
+            DialOutcome::InvariantViolation
+        }
     }
 }
 
@@ -546,7 +577,7 @@ pub(super) struct NrfBleLink {
     control_out: Sender<'static, Mtx, Control, CTRL_DEPTH>,
     data_in: Receiver<'static, Mtx, FrameBytes, DATA_DEPTH>,
     data_out: Sender<'static, Mtx, FrameBytes, DATA_DEPTH>,
-    identity_in: Receiver<'static, Mtx, BleIdentity, 1>,
+    identity_in: &'static Signal<Mtx, BleIdentity>,
     identity_out: Sender<'static, Mtx, BleIdentity, 1>,
     data_plane: &'static Signal<Mtx, L2capPlan>,
     plan: L2capPlan,
@@ -582,7 +613,7 @@ impl BleLink for NrfBleLink {
     }
 
     async fn receive_columba_peer_identity(&mut self) -> Result<BleIdentity, Closed> {
-        match select(self.identity_in.receive(), self.slot.wait_for_close()).await {
+        match select(self.identity_in.wait(), self.slot.wait_for_close()).await {
             Either::First(identity) => Ok(identity),
             Either::Second(()) => Err(Closed),
         }
@@ -724,7 +755,9 @@ async fn serve_peripheral(
                     if slot.peer_protocol().is_none() {
                         slot.set_peer_protocol(PeerProtocol::Native);
                     }
-                    let _ = control_in_tx.try_send(ctrl);
+                    if control_in_tx.try_send(ctrl).is_err() {
+                        worker.request_close();
+                    }
                 }
             }
             ReticulumServiceEvent::ControlCccdWrite { .. } => {}
@@ -743,7 +776,7 @@ async fn serve_peripheral(
                 if slot.peer_protocol().is_none() && value.len() == 16 {
                     let mut bytes = [0u8; 16];
                     bytes.copy_from_slice(&value);
-                    let _ = slot.identity_in.try_send(BleIdentity::new(bytes));
+                    slot.identity_in.signal(BleIdentity::new(bytes));
                     slot.set_peer_protocol(PeerProtocol::Columba);
                 } else if slot.peer_protocol() == Some(PeerProtocol::Columba) {
                     if let Some(fragment) = Fragment::decode(&value) {
@@ -842,33 +875,58 @@ async fn serve_central(
     config.scan_config.timeout = CONNECT_WINDOW_TICKS;
     config.scan_config.interval = CONNECT_SCAN_INTERVAL;
     config.scan_config.window = CONNECT_SCAN_WINDOW;
-    let conn = match central::connect(sd, &config).await {
-        Ok(conn) => conn,
-        Err(_) => {
-            let _ = hub.dial_failed.try_send(addr.bytes());
+    let conn = match select(central::connect(sd, &config), worker.wait_for_close()).await {
+        Either::First(Ok(conn)) => conn,
+        Either::First(Err(_)) => {
+            report_dial_failed(hub, worker, addr.bytes()).await;
             return;
         }
+        Either::Second(()) => return,
     };
-    if let Ok(client) = gatt_client::discover::<NativeReticulumClient>(&conn).await {
+    slot.set_address(addr.bytes());
+    let native = match select(
+        gatt_client::discover::<NativeReticulumClient>(&conn),
+        worker.wait_for_close(),
+    )
+    .await
+    {
+        Either::First(result) => result,
+        Either::Second(()) => return,
+    };
+    if let Ok(client) = native {
         drop(central_radio);
-        serve_native_central(l2cap, hub, addr, slot, link, worker, conn, client).await;
+        serve_native_central(l2cap, hub, slot, link, worker, conn, client).await;
         return;
     }
-    let client = match gatt_client::discover::<ColumbaReticulumClient>(&conn).await {
-        Ok(client) => client,
-        Err(_) => {
-            let _ = hub.dial_failed.try_send(addr.bytes());
+    let client = match select(
+        gatt_client::discover::<ColumbaReticulumClient>(&conn),
+        worker.wait_for_close(),
+    )
+    .await
+    {
+        Either::First(Ok(client)) => client,
+        Either::First(Err(_)) => {
+            report_dial_failed(hub, worker, addr.bytes()).await;
             return;
         }
+        Either::Second(()) => return,
     };
     drop(central_radio);
     serve_columba_central(hub, addr, slot, link, worker, conn, client).await;
 }
 
+async fn report_dial_failed(hub: &BleHub, worker: &BleSlotWorker, address: [u8; 6]) {
+    if !hub.radio_enabled.load(Ordering::Relaxed) {
+        return;
+    }
+    match select(worker.wait_for_close(), hub.dial_failed.send(address)).await {
+        Either::First(()) | Either::Second(()) => {}
+    }
+}
+
 async fn serve_native_central(
     l2cap: &'static l2cap::L2cap<L2capPacket>,
     hub: &'static BleHub,
-    addr: Address,
     slot: &'static LinkChannels,
     link: BleSlotLink,
     worker: &BleSlotWorker,
@@ -877,7 +935,6 @@ async fn serve_native_central(
 ) {
     let _ = client.control_cccd_write(true).await;
     let _ = client.data_cccd_write(true).await;
-    slot.set_address(addr.bytes());
     slot.set_peer_protocol(PeerProtocol::Native);
     hub.ready.send(link.into_ready(Origin::Dialed)).await;
 
@@ -890,7 +947,9 @@ async fn serve_native_central(
     let inbound = gatt_client::run(&conn, &client, |event| match event {
         NativeReticulumClientEvent::ControlNotification(value) => {
             if let Some(ctrl) = Control::decode(&value) {
-                let _ = control_in_tx.try_send(ctrl);
+                if control_in_tx.try_send(ctrl).is_err() {
+                    worker.request_close();
+                }
             }
         }
         NativeReticulumClientEvent::DataNotification(value) => {
@@ -967,17 +1026,16 @@ async fn serve_columba_central(
             BleIdentity::new(bytes)
         }
         _ => {
-            let _ = hub.dial_failed.try_send(addr.bytes());
+            report_dial_failed(hub, worker, addr.bytes()).await;
             return;
         }
     };
     if client.tx_cccd_write(true).await.is_err() {
-        let _ = hub.dial_failed.try_send(addr.bytes());
+        report_dial_failed(hub, worker, addr.bytes()).await;
         return;
     }
-    slot.set_address(addr.bytes());
     slot.set_peer_protocol(PeerProtocol::Columba);
-    let _ = slot.identity_in.try_send(peer_identity);
+    slot.identity_in.signal(peer_identity);
     hub.ready.send(link.into_ready(Origin::Dialed)).await;
 
     let identity = match select(slot.identity_out.receive(), worker.wait_for_close()).await {
@@ -1041,6 +1099,10 @@ pub(super) async fn serve_slot(
     let slot = &hub.slots[idx];
     loop {
         let job = hub.assign[idx].receive().await;
+        if !hub.radio_enabled.load(Ordering::Relaxed) {
+            drop(job);
+            continue;
+        }
         slot.reset();
         match job {
             SlotJob::Accept {
@@ -1069,7 +1131,13 @@ pub(super) async fn acceptor(sd: &'static Softdevice, hub: &'static BleHub) -> !
             enabled = hub.advertise.wait().await;
             continue;
         }
-        let slot = hub.connection_slots.acquire().await;
+        let slot = match hub.connection_slots.acquire().await {
+            Ok(slot) => slot,
+            Err(_) => {
+                Timer::after(Duration::from_millis(500)).await;
+                continue;
+            }
+        };
         let index = slot.index();
 
         let mut adv_buf = [0u8; 31];
@@ -1084,10 +1152,12 @@ pub(super) async fn acceptor(sd: &'static Softdevice, hub: &'static BleHub) -> !
         let advertise = peripheral::advertise_connectable(sd, adv, &adv_config);
         match select(advertise, hub.advertise.wait()).await {
             Either::First(Ok(conn)) => {
-                let _ = hub.assign[index].try_send(SlotJob::Accept {
-                    connection: conn,
-                    slot,
-                });
+                hub.assign[index]
+                    .send(SlotJob::Accept {
+                        connection: conn,
+                        slot,
+                    })
+                    .await;
             }
             Either::First(Err(_)) => {
                 Timer::after(Duration::from_millis(500)).await;
