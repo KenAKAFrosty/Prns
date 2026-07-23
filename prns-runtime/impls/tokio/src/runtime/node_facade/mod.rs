@@ -15,11 +15,11 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot;
 
 use crate::engine::{
-    AnnounceNow, AnnounceNowFailure, CloseLink, CommandId, EngineCommand, EstablishLink,
-    EstablishLinkFailure, Identify, IdentifyFailure, IssuedCommand, LinkEstablished,
-    PacketReceiptDelivered, PathFound, PathRequestId, RequestPath, RequestPathFailure,
-    SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload, Settlement,
-    PATH_REQUEST_ID_LEN,
+    AllowRequester, AllowRequesterFailure, AnnounceNow, AnnounceNowFailure, CloseLink, CommandId,
+    EngineCommand, EstablishLink, EstablishLinkFailure, Identify, IdentifyFailure, IssuedCommand,
+    LinkEstablished, PacketReceiptDelivered, PathFound, PathRequestId, RequestPath,
+    RequestPathFailure, SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload,
+    Settlement, PATH_REQUEST_ID_LEN,
 };
 use crate::identity::IdentityHash;
 use crate::interfaces::InterfaceId;
@@ -209,6 +209,16 @@ impl PrnsNodeHandle {
     ) -> Result<(), SendError<AnnounceNowFailure>> {
         match self.settle(EngineCommand::AnnounceNow(announce)).await {
             Some(Settlement::AnnounceNow(result)) => result.map_err(SendError::Failed),
+            Some(_) | None => Err(SendError::NodeStopped),
+        }
+    }
+
+    pub async fn allow_requester(
+        &self,
+        allow: AllowRequester,
+    ) -> Result<(), SendError<AllowRequesterFailure>> {
+        match self.settle(EngineCommand::AllowRequester(allow)).await {
+            Some(Settlement::AllowRequester(result)) => result.map_err(SendError::Failed),
             Some(_) | None => Err(SendError::NodeStopped),
         }
     }

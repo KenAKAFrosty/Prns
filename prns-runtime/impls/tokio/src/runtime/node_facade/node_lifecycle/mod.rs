@@ -22,7 +22,7 @@ use crate::manifold::driver::{
 };
 use crate::routing::announce::AnnounceObservation;
 use crate::routing::links::LinkId;
-use crate::routing::request_handlers::RequestHandlerError;
+use crate::routing::request_handlers::{RequestHandlerError, RequestPolicy};
 use crate::storage::{StorageLayout, TablePushError};
 use crate::units::RttMillis;
 use crate::wire::DestinationHash;
@@ -239,6 +239,17 @@ where
                 .map_err(RegisterRequestRouteError::Seed)?;
         }
         Ok(())
+    }
+
+    pub fn register_request_path(
+        &mut self,
+        destination: &DestinationHash,
+        path: &str,
+        policy: RequestPolicy,
+    ) -> Result<(), TablePushError> {
+        self.node
+            .engine
+            .register_request_handler(destination, path, policy)
     }
 
     #[must_use]
