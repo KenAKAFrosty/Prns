@@ -86,7 +86,7 @@ where
         self.remove_route_at(row);
     }
 
-    /// Boundary-inclusive: a deadline must be actionable at its own instant or a reactor waking exactly at `expires` busy-spins. The reference culls on a 5s float-time poll, so the boundary is unobservable to parity.
+    /// Boundary-inclusive: a deadline must be actionable at its own instant or a manifold waking exactly at `expires` busy-spins. The reference culls on a 5s float-time poll, so the boundary is unobservable to parity.
     pub fn cull_expired_routes(
         &mut self,
         now: InstantMillis,

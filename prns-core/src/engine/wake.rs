@@ -227,7 +227,7 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     /// Recomputes every schedule from live engine state.
-    /// The reactor never calls this on the hot path; each engine mutation returns a `WakeSchedules` delta that the reactor merges into a cached copy instead.
+    /// The manifold never calls this on the hot path; each engine mutation returns a `WakeSchedules` delta that the manifold merges into a cached copy instead.
     /// This full re-derive is the ground truth for those deltas: debug builds assert the merged cache matches it after every merge, so a mutation that moves a deadline without reporting it in its delta surfaces as a loud divergence instead of a silently missed wake.
     pub fn wake_schedules(&self, interfaces: AttachedInterfaces<'_>) -> WakeSchedules {
         WakeSchedules {

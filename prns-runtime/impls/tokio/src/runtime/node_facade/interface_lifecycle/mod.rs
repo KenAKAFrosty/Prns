@@ -15,11 +15,11 @@ use crate::interfaces::{
     ConnectionView, InterfaceId, InterfaceKind, InterfaceOriginKind, InterfaceSnapshot, Membership,
     ReportsStatus, StatusView,
 };
-use crate::node_introspection::{InterfaceIfacSnapshot, InterfaceInventoryEntry};
-use crate::reactor::driver::{
+use crate::manifold::driver::{
     tokio_grant_lane, AddInterfaceCommand, HostCommand, TokioInterfaceSeam,
 };
-use crate::reactor::interface_seam::{frame_cap_for, Interface};
+use crate::manifold::interface_seam::{frame_cap_for, Interface};
+use crate::node_introspection::{InterfaceIfacSnapshot, InterfaceInventoryEntry};
 
 use super::super::Manual;
 use super::PrnsNodeHandle;
@@ -62,7 +62,7 @@ impl RuntimeIfac {
 impl PrnsNodeHandle {
     /// Attach an interface to the running node and get a handle to tear it back down. Grab any per-interface control handle (`.status()`, a radio's own controls) before calling this, since it takes the interface by value.
     ///
-    /// `I: Send` is the host's bargain: the interface rides to the `run` task inside a `Send` builder closure which mints its run future there, so the future itself never has to be `Send` (what keeps `!Send` interface bodies legal) and the reactor stays `Send` and spawnable.
+    /// `I: Send` is the host's bargain: the interface rides to the `run` task inside a `Send` builder closure which mints its run future there, so the future itself never has to be `Send` (what keeps `!Send` interface bodies legal) and the manifold stays `Send` and spawnable.
     pub fn add_interface<I>(&self, interface: I) -> AttachedInterface
     where
         I: Interface + ReportsStatus + Send + 'static,
@@ -292,7 +292,7 @@ impl PrnsNodeHandle {
         }
     }
 
-    /// Detach the interface with this id (the inverse of [`add_interface`](Self::add_interface)): deregister its lanes on the reactor and stop its run future on the driver. For a supervisor, the driver cascades the stop to every member of its fleet. The routes learned through it stay warm for the departure grace, so a same-identity re-attach (a radio toggled off and on, a retune switched back) restores them; [`forget_interface`](Self::forget_interface) is the detach that drops them at once.
+    /// Detach the interface with this id (the inverse of [`add_interface`](Self::add_interface)): deregister its lanes on the manifold and stop its run future on the driver. For a supervisor, the driver cascades the stop to every member of its fleet. The routes learned through it stay warm for the departure grace, so a same-identity re-attach (a radio toggled off and on, a retune switched back) restores them; [`forget_interface`](Self::forget_interface) is the detach that drops them at once.
     pub fn remove_interface(&self, id: InterfaceId) {
         let _ = self.commands.send(HostCommand::RemoveInterface {
             id,
@@ -369,7 +369,7 @@ impl AttachedInterface {
         self.id
     }
 
-    /// Detach the interface: deregister its lanes on the reactor and stop its run future. Its routes stay warm for the departure grace, so a same-identity re-attach restores them.
+    /// Detach the interface: deregister its lanes on the manifold and stop its run future. Its routes stay warm for the departure grace, so a same-identity re-attach restores them.
     pub fn teardown(self) {
         let _ = self.commands.send(HostCommand::RemoveInterface {
             id: self.id,
@@ -397,7 +397,7 @@ impl AttachedSupervisor {
     }
 }
 
-/// Wire one interface onto the running node: build its grant lanes + seam, hand the reactor the `Send` lane halves, and hand the driver the `Send` builder that mints its run future. `supervisor` records it as a fleet member so the driver cascades teardown.
+/// Wire one interface onto the running node: build its grant lanes + seam, hand the manifold the `Send` lane halves, and hand the driver the `Send` builder that mints its run future. `supervisor` records it as a fleet member so the driver cascades teardown.
 fn attach_interface<I>(
     commands: &UnboundedSender<HostCommand>,
     iface_build: &UnboundedSender<DriverMsg>,
@@ -454,7 +454,7 @@ pub struct Fleet {
     notify_tx: UnboundedSender<InterfaceId>,
     interfaces: Arc<Mutex<HashMap<InterfaceId, RegisteredInterface>>>,
     ifac: Option<RuntimeIfac>,
-    entropy: crate::reactor::driver::TokioEntropy,
+    entropy: crate::manifold::driver::TokioEntropy,
 }
 
 impl Fleet {
@@ -495,7 +495,7 @@ impl Fleet {
         attached
     }
 
-    /// A [`Fleet`] wired to no reactor: member builds and host commands flow into the returned [`DetachedFleet`] tail and go nowhere. For driving a supervisor by hand (unit tests, a bench harness).
+    /// A [`Fleet`] wired to no manifold: member builds and host commands flow into the returned [`DetachedFleet`] tail and go nowhere. For driving a supervisor by hand (unit tests, a bench harness).
     #[must_use]
     pub fn detached(supervisor_id: InterfaceId) -> (Self, DetachedFleet) {
         let (commands, commands_rx) = mpsc::unbounded_channel();
@@ -508,7 +508,7 @@ impl Fleet {
             notify_tx,
             interfaces: Arc::new(Mutex::new(HashMap::new())),
             ifac: None,
-            entropy: crate::reactor::driver::TokioEntropy,
+            entropy: crate::manifold::driver::TokioEntropy,
         };
         let tail = DetachedFleet {
             _commands: commands_rx,
@@ -519,7 +519,7 @@ impl Fleet {
     }
 }
 
-/// The unplugged end of [`Fleet::detached`]: holds the channel tails so the fleet's sends stay deliverable while a hand-driven harness runs. Drop it and sends start failing, like a runtime whose reactor exited.
+/// The unplugged end of [`Fleet::detached`]: holds the channel tails so the fleet's sends stay deliverable while a hand-driven harness runs. Drop it and sends start failing, like a runtime whose manifold exited.
 pub struct DetachedFleet {
     _commands: UnboundedReceiver<HostCommand>,
     _iface_build: UnboundedReceiver<DriverMsg>,
@@ -532,7 +532,7 @@ pub trait InterfaceSupervisor {
     /// The medium this supervisor stands for — the namespace root of its id.
     const KIND: InterfaceKind;
 
-    /// The bytes that uniquely tag this supervisor, typically config-derived (the group it serves); the same rules as [`channel_tag`](crate::reactor::interface_seam::Interface::channel_tag) apply.
+    /// The bytes that uniquely tag this supervisor, typically config-derived (the group it serves); the same rules as [`channel_tag`](crate::manifold::interface_seam::Interface::channel_tag) apply.
     fn channel_tag(&self) -> &[u8];
 
     async fn run(self, fleet: Fleet);

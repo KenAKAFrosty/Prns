@@ -48,23 +48,23 @@ pub async fn run(spawner: Spawner) {
     #[cfg(feature = "bluetooth-auto")]
     let ble_identity = Some(ble_bootstrap.into_identity());
 
-    let mut reactor_lanes = ReactorLanes::new();
-    let usb_lane = reactor_lanes
-        .claim_interface(&USB_REACTOR_LANE, device_descriptor(USB_INTERFACE_ID))
+    let mut manifold_lanes = ManifoldLanes::new();
+    let usb_lane = manifold_lanes
+        .claim_interface(&USB_MANIFOLD_LANE, device_descriptor(USB_INTERFACE_ID))
         .expect("USB lane is available");
     #[cfg(feature = "esp-now")]
-    let espnow_lane = reactor_lanes
-        .claim_interface(&ESPNOW_REACTOR_LANE, espnow.descriptor())
+    let espnow_lane = manifold_lanes
+        .claim_interface(&ESPNOW_MANIFOLD_LANE, espnow.descriptor())
         .expect("ESP-NOW lane is available");
     #[cfg(feature = "bluetooth-auto")]
     let ble_supervisor_lane = ble_identity.as_ref().map(|_| {
-        reactor_lanes
-            .claim_supervisor(&BLE_REACTOR_LANE, BLE_SUPERVISOR_ID, &BLE_OUTBOUND_WAKE)
+        manifold_lanes
+            .claim_supervisor(&BLE_MANIFOLD_LANE, BLE_SUPERVISOR_ID, &BLE_OUTBOUND_WAKE)
             .expect("Bluetooth supervisor lane is available")
     });
 
     let handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
-    let reactor_wiring = reactor_lanes.into_reactor_wiring(
+    let manifold_wiring = manifold_lanes.into_manifold_wiring(
         NOTIFY.receiver(),
         COMMANDS.receiver(),
         LIFECYCLE.receiver(),
@@ -98,10 +98,10 @@ pub async fn run(spawner: Spawner) {
             interfaces: personal_rns::runtime::Manual,
             on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
         },
-        reactor_wiring,
+        manifold_wiring,
         host,
     );
-    spawner.spawn(reactor_task(node).expect("reactor task fits"));
+    spawner.spawn(manifold_task(node).expect("manifold task fits"));
     #[cfg(feature = "bluetooth-auto")]
     if let Some((identity, fleet)) = ble {
         spawner.spawn(

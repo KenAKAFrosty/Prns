@@ -209,7 +209,7 @@ impl<'a> Announce<'a> {
         Ok(announce)
     }
 
-    /// Splits out the Ed25519 verify, the one heavy step, so it can run inline or off the reactor on the crypto pool.
+    /// Splits out the Ed25519 verify, the one heavy step, so it can run inline or off the manifold on the crypto pool.
     pub fn from_wire_unverified(
         header: &WirePacketHeader,
         payload: &'a [u8],
@@ -285,7 +285,7 @@ impl<'a> Announce<'a> {
         Ok((announce, identity_hash))
     }
 
-    /// The heavy step, separated. When available, the crypto pool runs it off the reactor on a [`Self::from_wire_unverified`]-parsed announce, otherwise [`Self::from_wire`] runs both steps inline.
+    /// The heavy step, separated. When available, the crypto pool runs it off the manifold on a [`Self::from_wire_unverified`]-parsed announce, otherwise [`Self::from_wire`] runs both steps inline.
     pub fn signature_is_valid(&self) -> bool {
         // The scratch (16 + BROADCAST_MTU) always fits: the source payload is <= BROADCAST_MTU.
         let mut scratch = [0u8; TRUNCATED_HASH_BYTE_LEN + BROADCAST_MTU];

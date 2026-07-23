@@ -5,8 +5,8 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::engine::{RespondFailure, SendResourceFailure, Settlement};
-use crate::reactor::compression;
-use crate::reactor::driver::{
+use crate::manifold::compression;
+use crate::manifold::driver::{
     HostCommand, HostResourceMetadata, HostResourcePayload, ResourceInbound,
     SendResourceSegmentHostCommand,
 };

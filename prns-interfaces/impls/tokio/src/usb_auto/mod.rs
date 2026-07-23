@@ -25,10 +25,10 @@ use prns_core::interfaces::{
     ConfiguredInterfacePolicy, ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor,
     InterfaceId, InterfaceKind,
 };
-use prns_runtime::reactor::driver::{
+use prns_runtime::manifold::driver::{
     tokio_grant_lane, TokioGrantConsumer, TokioGrantProducer, TokioInterfaceStatus,
 };
-use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
+use prns_runtime::manifold::interface_seam::{Interface, InterfaceSeam};
 
 /// Backstops missed hot-plug events, platforms without a hot-plug source, and ports whose task died without an unplug.
 const FALLBACK_SCAN_INTERVAL: Duration = Duration::from_secs(1);
@@ -544,7 +544,7 @@ impl<Scan, Open> prns_core::interfaces::ReportsStatus for UsbAutoHost<Scan, Open
 mod tests {
     use super::*;
     use prns_core::interfaces::InterfaceStatus;
-    use prns_runtime::reactor::driver::TokioInterfaceSeam;
+    use prns_runtime::manifold::driver::TokioInterfaceSeam;
     use std::time::Duration;
     use tokio::io::AsyncRead;
     use tokio::sync::mpsc::unbounded_channel;

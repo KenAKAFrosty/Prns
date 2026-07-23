@@ -19,7 +19,7 @@ use personal_hopspot_core as screen;
 
 use crate::s3::{
     self, BoardDisplay, BoardFace, Esp32S3Board, S3BoardHardware, S3InterfaceHardware,
-    S3ReactorHardware,
+    S3ManifoldHardware,
 };
 
 /// This board's USB-auto interface id (the always-present top-level wire on pool slot 0).
@@ -362,7 +362,7 @@ impl Esp32S3Board for TBeamSupremeBoard {
                 #[cfg(feature = "bluetooth-auto")]
                 bluetooth: p.BT,
             },
-            reactor: S3ReactorHardware {
+            manifold: S3ManifoldHardware {
                 cpu_control: p.CPU_CTRL,
                 software_interrupt: sw_int1,
                 timebase,

@@ -35,7 +35,7 @@ dhat = { version = "0.3", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
-# The live-scenario participation binary rides the real tokio reactor over real TCP;
+# The live-scenario participation binary rides the real tokio manifold over real TCP;
 # the benchmark runner owns process lifecycle and the line protocol.
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util"] }
 # Fresh per-run identities for the participant nodes (the corpus bins keep fixed ones).
@@ -130,7 +130,7 @@ name = "route_expiry"
 path = "benches/route_expiry.rs"
 harness = false
 
-# --- Interface-lookup crossover: bare linear view vs. the heap reactor's indexed roster ---
+# --- Interface-lookup crossover: bare linear view vs. the heap manifold's indexed roster ---
 [[bench]]
 name = "interface_lookup"
 path = "benches/interface_lookup.rs"

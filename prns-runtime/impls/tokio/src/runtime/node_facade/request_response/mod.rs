@@ -5,8 +5,8 @@ use crate::engine::RequestResponseTimeout;
 use crate::engine::RespondFailure;
 use crate::engine::SendRequestFailure;
 use crate::engine::Settlement;
-use crate::reactor::compression;
-use crate::reactor::driver::{
+use crate::manifold::compression;
+use crate::manifold::driver::{
     HostCommand, HostResourcePayload, RequestAnyHostCommand, RespondAnyHostCommand,
 };
 use crate::routing::links::data::LINK_MDU;

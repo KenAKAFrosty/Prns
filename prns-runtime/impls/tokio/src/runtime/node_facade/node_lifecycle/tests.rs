@@ -20,12 +20,12 @@ use super::{
 async fn node_task_panics_report_their_boundary() {
     assert_eq!(
         run_node_tasks(
-            async { std::panic::panic_any("reactor") },
+            async { std::panic::panic_any("manifold") },
             std::future::pending(),
             std::future::pending(),
         )
         .await,
-        Err(NodeRunError::ReactorPanicked)
+        Err(NodeRunError::ManifoldPanicked)
     );
     assert_eq!(
         run_node_tasks(

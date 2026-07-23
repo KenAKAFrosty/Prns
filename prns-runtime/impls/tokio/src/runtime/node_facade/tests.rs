@@ -5,7 +5,7 @@ use crate::engine::{
     PacketReceiptDelivered, PathFound, Settlement, MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN,
 };
 use crate::identity::IdentityHash;
-use crate::reactor::driver::HostCommand;
+use crate::manifold::driver::HostCommand;
 use crate::routing::links::LinkId;
 use crate::runtime::SendError;
 use crate::wire::DestinationHash;

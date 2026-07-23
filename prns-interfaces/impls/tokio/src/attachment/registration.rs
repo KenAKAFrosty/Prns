@@ -14,7 +14,7 @@ macro_rules! attaches_as_wire {
     (impl[$($generics:tt)*] $ty:ty) => {
         impl<$($generics)*> prns_runtime::runtime::Attachable for $ty
         where
-            Self: prns_runtime::reactor::interface_seam::Interface
+            Self: prns_runtime::manifold::interface_seam::Interface
                 + prns_runtime::interfaces::ReportsStatus
                 + Send
                 + 'static,

@@ -29,7 +29,7 @@ cfg-if = "1.0"
 # runtime seam the host backends bridge into.
 prns-core = { path = "../prns-core", default-features = false, features = ["tokio-host"] }
 # The async runtime the host backends bridge into: channels carry events from the
-# platform's callback world (a GCD queue, a JNI thread) to the reactor; the deadline
+# platform's callback world (a GCD queue, a JNI thread) to the manifold; the deadline
 # timer bounds power-on/connect waits.
 tokio = { version = "1", default-features = false, features = ["rt", "macros", "time", "sync"] }
 log = { version = "0.4", optional = true, default-features = false }

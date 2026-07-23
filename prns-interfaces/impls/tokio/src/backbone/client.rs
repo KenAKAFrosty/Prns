@@ -8,10 +8,10 @@ use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{
     ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind,
 };
-use prns_runtime::reactor::airtime::AirtimeLedger;
-use prns_runtime::reactor::driver::TokioInterfaceStatus;
-use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
-use prns_runtime::reactor::throughput::ThroughputLedger;
+use prns_runtime::manifold::airtime::AirtimeLedger;
+use prns_runtime::manifold::driver::TokioInterfaceStatus;
+use prns_runtime::manifold::interface_seam::{Interface, InterfaceSeam};
+use prns_runtime::manifold::throughput::ThroughputLedger;
 
 pub struct BackboneClientInterface {
     id: InterfaceId,
@@ -227,7 +227,7 @@ impl prns_core::interfaces::ReportsStatus for BackboneClientInterface {
 mod tests {
     use super::*;
     use prns_core::interfaces::rns_serial_framing::{self, RnsSerialDecoder, ESC, FLAG};
-    use prns_runtime::reactor::driver::{tokio_grant_lane, TokioGrantConsumer};
+    use prns_runtime::manifold::driver::{tokio_grant_lane, TokioGrantConsumer};
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::{TcpListener, TcpStream};

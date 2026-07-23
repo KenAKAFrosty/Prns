@@ -9,9 +9,9 @@ use prns_core::interfaces::esp_now::{
     self, ChannelPolicy, EspNowRadio, CHANNEL_TAG_CAP, ESP_NOW_HW_MTU, ESP_NOW_V2_AIR_MTU,
 };
 use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
-use prns_runtime::reactor::driver::EmbassyInterfaceStatus;
-use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
-use prns_runtime::reactor::throughput::ThroughputLedger;
+use prns_runtime::manifold::driver::EmbassyInterfaceStatus;
+use prns_runtime::manifold::interface_seam::{Interface, InterfaceSeam};
+use prns_runtime::manifold::throughput::ThroughputLedger;
 
 pub struct EspNowInterface<'a, R> {
     id: InterfaceId,

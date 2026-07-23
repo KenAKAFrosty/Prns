@@ -21,7 +21,7 @@ embedded-graphics = "0.8"
 heapless = { version = "0.8", default-features = false }
 jni = "0.21"
 log = "0.4"
-# The async runtime + the channels/IO traits the JNI-bridged USB stream rides; the reactor's
+# The async runtime + the channels/IO traits the JNI-bridged USB stream rides; the manifold's
 # USB-auto host multiplexes it like any other stream. The WiFi-auto supervisor rides the same
 # runtime (prns-interfaces-tokio's `wifi-auto` pulls tokio/net + socket2 + if-addrs); the Kotlin side
 # holds the multicast lock so the supervisor's IPv6 link-local multicast crosses.

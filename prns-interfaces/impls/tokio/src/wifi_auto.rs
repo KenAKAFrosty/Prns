@@ -19,10 +19,10 @@ use prns_core::interfaces::{
     ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind,
     InterfaceStatus, TransferRates,
 };
-use prns_runtime::reactor::airtime::{frame_airtime_us, AirtimeLedger};
-use prns_runtime::reactor::driver::TokioInterfaceStatus;
-use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
-use prns_runtime::reactor::throughput::ThroughputLedger;
+use prns_runtime::manifold::airtime::{frame_airtime_us, AirtimeLedger};
+use prns_runtime::manifold::driver::TokioInterfaceStatus;
+use prns_runtime::manifold::interface_seam::{Interface, InterfaceSeam};
+use prns_runtime::manifold::throughput::ThroughputLedger;
 use prns_runtime::runtime::{AttachedInterface, Fleet, InterfaceSupervisor};
 
 const BEACON_INTERVAL: Duration = Duration::from_millis(1600);
@@ -1208,7 +1208,7 @@ impl prns_core::interfaces::ReportsStatus for AutoWifiPeer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prns_runtime::reactor::driver::{tokio_grant_lane, TokioGrantConsumer};
+    use prns_runtime::manifold::driver::{tokio_grant_lane, TokioGrantConsumer};
 
     const TEST_FRAME_CAP: usize = 2_048;
 

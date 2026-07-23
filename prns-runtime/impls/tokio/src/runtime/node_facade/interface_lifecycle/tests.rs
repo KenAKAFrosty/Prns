@@ -12,9 +12,9 @@ use crate::interfaces::{
     InterfaceStatus, InterfaceVitals, Membership, ReportsStatus, StatusView,
 };
 use crate::interfaces::{IfacContext, IfacSize};
+use crate::manifold::driver::{HostCommand, TokioInterfaceStatus};
+use crate::manifold::interface_seam::Interface;
 use crate::node_introspection::{InterfaceIfacSnapshot, InterfaceInventoryEntry};
-use crate::reactor::driver::{HostCommand, TokioInterfaceStatus};
-use crate::reactor::interface_seam::Interface;
 
 use super::super::PrnsNodeHandle;
 use super::{drive_interfaces, DriverMsg, Fleet, RuntimeIfac};
@@ -70,7 +70,7 @@ impl Interface for StatusInterface {
         }
     }
 
-    async fn run<S: crate::reactor::interface_seam::InterfaceSeam>(self, _seam: S) {}
+    async fn run<S: crate::manifold::interface_seam::InterfaceSeam>(self, _seam: S) {}
 }
 
 impl ReportsStatus for StatusInterface {

@@ -9,9 +9,9 @@ use personal_rns::interfaces::tcp;
 #[cfg(target_os = "macos")]
 use personal_rns::interfaces::wifi_auto as wifi_auto_contract;
 use personal_rns::interfaces::{InterfaceId, InterfaceKind};
+use personal_rns::manifold::reconnect::ReconnectPolicy;
+use personal_rns::manifold::tokio::TokioInterfaceStatus;
 use personal_rns::prelude::*;
-use personal_rns::reactor::reconnect::ReconnectPolicy;
-use personal_rns::reactor::tokio::TokioInterfaceStatus;
 use personal_rns::shared_instance::rns_rpc::{
     reticulum_storage_dir, SharedInstanceCredentials, SharedInstanceRpcServer,
 };

@@ -7,7 +7,7 @@ use embassy_time::{with_timeout, Duration};
 use prns_core::engine::FanTarget;
 use prns_core::interfaces::wifi_auto as contract;
 use prns_core::interfaces::InterfaceId;
-use prns_runtime::reactor::grant::FrameTarget;
+use prns_runtime::manifold::grant::FrameTarget;
 
 use super::AutoWifiStatus;
 

@@ -29,7 +29,7 @@ use self::member::{OutboundPacket, WeavePeer, DEVICE_OUTBOUND_DEPTH, PEER_INBOUN
 struct ManagedPeer {
     attached: AttachedInterface,
     inbound: mpsc::Sender<Vec<u8>>,
-    status: prns_runtime::reactor::driver::TokioInterfaceStatus,
+    status: prns_runtime::manifold::driver::TokioInterfaceStatus,
     last_heard: tokio::time::Instant,
 }
 

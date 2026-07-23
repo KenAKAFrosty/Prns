@@ -10,11 +10,11 @@ use prns_core::interfaces::rns_serial_framing::{self, RnsSerialDecoder};
 use prns_core::interfaces::{
     tcp, BitrateBps, ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind,
 };
-use prns_runtime::reactor::airtime::{frame_airtime_us, AirtimeLedger};
-use prns_runtime::reactor::driver::EmbassyInterfaceStatus;
-use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam, EMBEDDED_MAX_LINK_MTU};
-use prns_runtime::reactor::reconnect::ReconnectPolicy;
-use prns_runtime::reactor::throughput::ThroughputLedger;
+use prns_runtime::manifold::airtime::{frame_airtime_us, AirtimeLedger};
+use prns_runtime::manifold::driver::EmbassyInterfaceStatus;
+use prns_runtime::manifold::interface_seam::{Interface, InterfaceSeam, EMBEDDED_MAX_LINK_MTU};
+use prns_runtime::manifold::reconnect::ReconnectPolicy;
+use prns_runtime::manifold::throughput::ThroughputLedger;
 
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// A connection idle past [`SOCKET_TIMEOUT`] is dropped for reconnect, while [`KEEP_ALIVE`] prevents a quiet live link from reaching that timeout.

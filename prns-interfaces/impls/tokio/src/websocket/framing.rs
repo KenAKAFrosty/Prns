@@ -6,10 +6,10 @@ use tokio_tungstenite::WebSocketStream;
 use prns_core::engine::InstantMillis;
 use prns_core::interfaces::websocket;
 use prns_core::interfaces::BitrateBps;
-use prns_runtime::reactor::airtime::{frame_airtime_us, AirtimeLedger};
-use prns_runtime::reactor::driver::TokioInterfaceStatus;
-use prns_runtime::reactor::interface_seam::InterfaceSeam;
-use prns_runtime::reactor::throughput::ThroughputLedger;
+use prns_runtime::manifold::airtime::{frame_airtime_us, AirtimeLedger};
+use prns_runtime::manifold::driver::TokioInterfaceStatus;
+use prns_runtime::manifold::interface_seam::InterfaceSeam;
+use prns_runtime::manifold::throughput::ThroughputLedger;
 
 const SOCKET_BUFFER_LEN: usize = 16 * 1024;
 

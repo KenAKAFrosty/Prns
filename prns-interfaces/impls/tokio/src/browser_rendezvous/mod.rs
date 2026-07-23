@@ -269,7 +269,7 @@ pub struct BrowserRendezvousStatus {
 struct BrowserRendezvousStatusShared {
     role: AtomicU8,
     listeners: AtomicUsize,
-    client: Mutex<Option<prns_runtime::reactor::driver::TokioInterfaceStatus>>,
+    client: Mutex<Option<prns_runtime::manifold::driver::TokioInterfaceStatus>>,
     core_id: Mutex<Option<Arc<Mutex<Option<BrowserRendezvousId>>>>>,
 }
 
@@ -316,7 +316,7 @@ impl BrowserRendezvousStatus {
 
     fn set_client(
         &self,
-        status: prns_runtime::reactor::driver::TokioInterfaceStatus,
+        status: prns_runtime::manifold::driver::TokioInterfaceStatus,
         core_id: Arc<Mutex<Option<BrowserRendezvousId>>>,
     ) {
         if let Ok(mut slot) = self.shared.client.lock() {

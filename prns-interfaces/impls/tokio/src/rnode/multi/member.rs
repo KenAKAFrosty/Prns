@@ -7,10 +7,10 @@ use prns_core::interfaces::{
     ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind,
     PacketPhyStats,
 };
-use prns_runtime::reactor::airtime::{frame_airtime_us, AirtimeLedger};
-use prns_runtime::reactor::driver::TokioInterfaceStatus;
-use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
-use prns_runtime::reactor::throughput::ThroughputLedger;
+use prns_runtime::manifold::airtime::{frame_airtime_us, AirtimeLedger};
+use prns_runtime::manifold::driver::TokioInterfaceStatus;
+use prns_runtime::manifold::interface_seam::{Interface, InterfaceSeam};
+use prns_runtime::manifold::throughput::ThroughputLedger;
 
 pub(super) struct InboundFrame {
     pub(super) payload: Vec<u8>,

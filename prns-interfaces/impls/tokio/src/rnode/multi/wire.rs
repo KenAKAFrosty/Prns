@@ -9,9 +9,9 @@ use prns_core::interfaces::rnode::multi::live::{
 };
 use prns_core::interfaces::rnode::{multi, protocol};
 use prns_core::interfaces::ConnectionState;
-use prns_runtime::reactor::airtime::AirtimeLedger;
-use prns_runtime::reactor::driver::TokioInterfaceStatus;
-use prns_runtime::reactor::throughput::ThroughputLedger;
+use prns_runtime::manifold::airtime::AirtimeLedger;
+use prns_runtime::manifold::driver::TokioInterfaceStatus;
+use prns_runtime::manifold::throughput::ThroughputLedger;
 use prns_runtime::runtime::{AttachedInterface, PrnsNodeHandle};
 
 use crate::byte_stream::deadline::{elapsed_millis, wait_for_deadline};

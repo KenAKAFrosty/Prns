@@ -11,7 +11,7 @@ use esp_hal::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx, UsbSerialJtagTx};
 use esp_hal::Async;
 use personal_rns::engine::InstantMillis;
 use personal_rns::interfaces::InterfaceId;
-use personal_rns::reactor::embassy::EmbassyTimebase;
+use personal_rns::manifold::embassy::EmbassyTimebase;
 
 pub(crate) const ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x13Personal Hopspot C6\xc0";
 pub(crate) const NODE_ANNOUNCE_APP_DATA: &[u8] = b"Personal Hopspot C6";

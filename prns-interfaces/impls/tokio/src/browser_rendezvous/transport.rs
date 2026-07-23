@@ -19,10 +19,10 @@ use prns_core::interfaces::websocket;
 use prns_core::interfaces::{
     ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind,
 };
-use prns_runtime::reactor::airtime::AirtimeLedger;
-use prns_runtime::reactor::driver::TokioInterfaceStatus;
-use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
-use prns_runtime::reactor::throughput::ThroughputLedger;
+use prns_runtime::manifold::airtime::AirtimeLedger;
+use prns_runtime::manifold::driver::TokioInterfaceStatus;
+use prns_runtime::manifold::interface_seam::{Interface, InterfaceSeam};
+use prns_runtime::manifold::throughput::ThroughputLedger;
 
 use crate::reconnect::ReconnectPolicy;
 use crate::websocket::framing;

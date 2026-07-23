@@ -256,7 +256,7 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     /// The contention signal for [`ResourceOpenLane::PoolWhenContended`]: a second incoming
-    /// transfer is in flight, so a worker's chew can overlap the reactor's ingest of the others.
+    /// transfer is in flight, so a worker's chew can overlap the manifold's ingest of the others.
     /// Row existence is the signal, deliberately not slot state: a fast wire lands a whole
     /// segment in one ingest burst, so concurrent transfers' begun-open phases serialize with
     /// the sweeps and rarely coexist even while the transfers themselves do.

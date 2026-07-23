@@ -161,7 +161,10 @@ fn prove_if_proof_directive(
 #[test]
 fn the_app_decider_gates_the_prove_if_proof() {
     let (proved, seen) = prove_if_proof_directive(|_| true);
-    assert!(proved, "the decider agreed, so the reactor answers a proof");
+    assert!(
+        proved,
+        "the decider agreed, so the manifold answers a proof"
+    );
     assert_eq!(seen, b"prove-if", "the decider sees the decrypted content");
 
     let (proved, _) = prove_if_proof_directive(|_| false);

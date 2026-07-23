@@ -6,8 +6,8 @@ use personal_rns::engine::{
 use personal_rns::identity::vault::FileVault;
 use personal_rns::identity::{MarkDestinationUsedOutcome, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::{BitrateBps, InterfaceId};
+use personal_rns::manifold::reconnect::ReconnectPolicy;
 use personal_rns::persistence::{read_tunnels_snapshot, FileStore, PersistedStore, SnapshotRegion};
-use personal_rns::reactor::reconnect::ReconnectPolicy;
 use personal_rns::routes;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{

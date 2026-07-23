@@ -1,4 +1,4 @@
-use super::super::{CompletionPool, Fleet, ReactorLaneSet, StaticReactorLane};
+use super::super::{CompletionPool, Fleet, ManifoldLaneSet, StaticManifoldLane};
 use super::*;
 use crate::engine::test_support::{bytes_from_hex, RNS_1_4_0_ANNOUNCE};
 use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
@@ -6,8 +6,8 @@ use crate::interfaces::{
     AnnounceBandwidthCap, BitrateBps, EgressCapability, IngressCapability, InterfaceCapabilities,
     InterfaceKind, InterfaceMode, TransportCapability,
 };
-use crate::reactor::driver::EmbassyHost;
-use crate::reactor::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
+use crate::manifold::driver::EmbassyHost;
+use crate::manifold::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
 use crate::runtime::Diagnostic;
 use crate::storage::GrowableHeap;
 use embassy_futures::block_on;
@@ -51,8 +51,8 @@ fn a_recipe_node_hears_an_ifac_announce_a_supervisor_stands_a_peer_up_for() {
     let lifecycle: &'static Channel<Mtx, InterfaceLifecycle, 4> = leak(Channel::new());
     let completion: &'static CompletionPool<Mtx, 4> = leak(CompletionPool::new());
 
-    static LANE: StaticReactorLane<Mtx, FRAME, 4> = StaticReactorLane::new();
-    let mut lanes: ReactorLaneSet<Mtx, 1, 4> = ReactorLaneSet::new();
+    static LANE: StaticManifoldLane<Mtx, FRAME, 4> = StaticManifoldLane::new();
+    let mut lanes: ManifoldLaneSet<Mtx, 1, 4> = ManifoldLaneSet::new();
     let supervisor = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, b"test-supervisor");
     let network = IfacContext::derive(Some("fleet-net"), Some("secret"), IfacSize::NARROW).unwrap();
     let supervisor_lane = lanes
@@ -60,7 +60,7 @@ fn a_recipe_node_hears_an_ifac_announce_a_supervisor_stands_a_peer_up_for() {
         .unwrap();
 
     let handle = PrnsNodeHandle::new(commands.sender(), completion);
-    let reactor_wiring = lanes.into_reactor_wiring(
+    let manifold_wiring = lanes.into_manifold_wiring(
         notify.receiver(),
         commands.receiver(),
         lifecycle.receiver(),
@@ -90,7 +90,7 @@ fn a_recipe_node_hears_an_ifac_announce_a_supervisor_stands_a_peer_up_for() {
 
     let node: PrnsNode<_, _, _, _, _, _, 1, 1, 4, 4, 4, 4> = PrnsNode::new(
         recipe,
-        reactor_wiring,
+        manifold_wiring,
         EmbassyHost::new(|bytes: &mut [u8]| bytes.fill(0)),
     );
 

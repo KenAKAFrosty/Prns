@@ -18,14 +18,14 @@ use personal_rns::engine::IssuedCommand;
 use personal_rns::interfaces::bluetooth_auto::{BleIdentity, BLE_HW_MTU};
 use personal_rns::interfaces::usb_auto::device_descriptor;
 use personal_rns::interfaces::{ConnectionState, InterfaceId};
-use personal_rns::reactor::embassy::{
+use personal_rns::manifold::embassy::{
     EmbassyHost, EmbassyInterfaceSeam, EmbassyInterfaceStatus, InterfaceLifecycle,
 };
-use personal_rns::reactor::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
+use personal_rns::manifold::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
 use personal_rns::runtime::{
-    minimum_interface_store_capacity, minimum_reactor_notification_capacity, CompletionPool,
-    EmbassyInterfaceStore, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe, ReactorLaneSet,
-    StaticReactorLane,
+    minimum_interface_store_capacity, minimum_manifold_notification_capacity, CompletionPool,
+    EmbassyInterfaceStore, ManifoldLaneSet, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe,
+    StaticManifoldLane,
 };
 use personal_rns::usb_auto::{UsbAutoDevice, UsbAutoDeviceInput};
 
@@ -51,7 +51,7 @@ use personal_rns::esp_now::EspNowInterface;
 use personal_rns::interfaces::esp_now::{
     self as espnow_core, Channel as EspNowChannel, ChannelPolicy, ESP_NOW_V2_AIR_MTU,
 };
-use personal_rns::reactor::interface_seam::Interface;
+use personal_rns::manifold::interface_seam::Interface;
 
 esp_app_desc!();
 
@@ -67,7 +67,7 @@ pub const BLE_PEER_CAPACITY: usize = EMBEDDED_BLE_PEER_CAPACITY;
 #[cfg(not(feature = "bluetooth-auto"))]
 pub const BLE_PEER_CAPACITY: usize = 0;
 const INTERFACE_CAPACITY: usize = LANE_COUNT + BLE_LANE * BLE_PEER_CAPACITY + 1;
-pub const NOTIFY_CAP: usize = minimum_reactor_notification_capacity(LANE_COUNT, LANE_DEPTH);
+pub const NOTIFY_CAP: usize = minimum_manifold_notification_capacity(LANE_COUNT, LANE_DEPTH);
 const COMMANDS_CAP: usize = 8;
 pub const LIFECYCLE_CAP: usize = 32;
 const COMPLETIONS_CAP: usize = 4;
@@ -114,20 +114,21 @@ type Node = PrnsNode<
     LIFECYCLE_CAP,
     COMPLETIONS_CAP,
 >;
-type ReactorLanes = ReactorLaneSet<Mtx, LANE_COUNT, NOTIFY_CAP>;
+type ManifoldLanes = ManifoldLaneSet<Mtx, LANE_COUNT, NOTIFY_CAP>;
 
 static NOTIFY: Channel<Mtx, InterfaceId, NOTIFY_CAP> = Channel::new();
 static COMMANDS: Channel<Mtx, IssuedCommand, COMMANDS_CAP> = Channel::new();
 static LIFECYCLE: Channel<Mtx, InterfaceLifecycle, LIFECYCLE_CAP> = Channel::new();
 static COMPLETION: CompletionPool<Mtx, COMPLETIONS_CAP> = CompletionPool::new();
 static INTERFACE_STORE: InterfaceStore = EmbassyInterfaceStore::new();
-static USB_REACTOR_LANE: StaticReactorLane<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, LANE_DEPTH> =
-    StaticReactorLane::new();
+static USB_MANIFOLD_LANE: StaticManifoldLane<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, LANE_DEPTH> =
+    StaticManifoldLane::new();
 #[cfg(feature = "esp-now")]
-static ESPNOW_REACTOR_LANE: StaticReactorLane<Mtx, ESP_NOW_V2_AIR_MTU, LANE_DEPTH> =
-    StaticReactorLane::new();
+static ESPNOW_MANIFOLD_LANE: StaticManifoldLane<Mtx, ESP_NOW_V2_AIR_MTU, LANE_DEPTH> =
+    StaticManifoldLane::new();
 #[cfg(feature = "bluetooth-auto")]
-static BLE_REACTOR_LANE: StaticReactorLane<Mtx, BLE_HW_MTU, LANE_DEPTH> = StaticReactorLane::new();
+static BLE_MANIFOLD_LANE: StaticManifoldLane<Mtx, BLE_HW_MTU, LANE_DEPTH> =
+    StaticManifoldLane::new();
 static USB_STATUS: EmbassyInterfaceStatus =
     EmbassyInterfaceStatus::new(USB_INTERFACE_ID, ConnectionState::Initializing);
 #[cfg(feature = "bluetooth-auto")]
@@ -137,8 +138,8 @@ static BLE_SHARED: BluetoothAutoShared<BLE_PEER_CAPACITY> =
 static BLE_OUTBOUND_WAKE: Signal<Mtx, ()> = Signal::new();
 
 #[embassy_executor::task]
-async fn reactor_task(node: &'static mut Node) {
-    node.run_reactor_with_interface_store(&INTERFACE_STORE)
+async fn manifold_task(node: &'static mut Node) {
+    node.run_manifold_with_interface_store(&INTERFACE_STORE)
         .await
 }
 

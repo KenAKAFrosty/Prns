@@ -15,8 +15,8 @@ use prns_core::interfaces::usb_auto::{
 use prns_core::interfaces::{
     ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceStatus,
 };
-use prns_runtime::reactor::driver::EmbassyInterfaceStatus;
-use prns_runtime::reactor::interface_seam::{
+use prns_runtime::manifold::driver::EmbassyInterfaceStatus;
+use prns_runtime::manifold::interface_seam::{
     Interface, InterfaceSeam, OutboundDisposition, OutboundDropReason,
 };
 
@@ -475,8 +475,8 @@ async fn write_message<W: Write>(
 mod tests {
     use super::*;
     use prns_core::interfaces::{FrameSink, InterfaceOriginKind, InterfaceStatus, IFAC_MAX_SIZE};
-    use prns_runtime::reactor::driver::{leaked_grant_lane, EmbassyInterfaceSeam};
-    use prns_runtime::reactor::grant::{GrantConsumer, GrantProducer};
+    use prns_runtime::manifold::driver::{leaked_grant_lane, EmbassyInterfaceSeam};
+    use prns_runtime::manifold::grant::{GrantConsumer, GrantProducer};
 
     use ::core::cell::{Cell, RefCell};
     use ::core::convert::Infallible;
@@ -1070,7 +1070,7 @@ mod tests {
             .await
             {
                 Either::Second(result) => {
-                    assert!(result.is_err(), "pre-handshake data reached the reactor");
+                    assert!(result.is_err(), "pre-handshake data reached the manifold");
                 }
                 Either::First(()) => unreachable!("the device loop never returns"),
             }

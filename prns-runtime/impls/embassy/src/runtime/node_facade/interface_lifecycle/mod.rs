@@ -3,8 +3,8 @@ use embassy_sync::channel::Sender;
 use embassy_sync::signal::Signal;
 
 use crate::interfaces::{InterfaceDescriptor, InterfaceId};
-use crate::reactor::driver::{EmbassyGrantConsumer, EmbassyGrantProducer, InterfaceLifecycle};
-use crate::reactor::grant::{FrameTarget, GrantConsumer, GrantProducer};
+use crate::manifold::driver::{EmbassyGrantConsumer, EmbassyGrantProducer, InterfaceLifecycle};
+use crate::manifold::grant::{FrameTarget, GrantConsumer, GrantProducer};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InboundDeliveryError {

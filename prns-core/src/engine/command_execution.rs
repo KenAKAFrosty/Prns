@@ -32,7 +32,7 @@ use crate::storage::StorageLayout;
 use crate::wire::BROADCAST_MTU;
 
 impl<S: StorageLayout> EngineState<S> {
-    /// Resolves the link's interface only so the grant-first directive can name its target; the reactor must know which lane to offer a slot from before `fill` runs. The write inside `fill` looks the link up again and that second lookup is the authority: a link gone by then fails there as `LinkVanished`.
+    /// Resolves the link's interface only so the grant-first directive can name its target; the manifold must know which lane to offer a slot from before `fill` runs. The write inside `fill` looks the link up again and that second lookup is the authority: a link gone by then fails there as `LinkVanished`.
     fn active_link_interface(&self, link_id: &LinkId) -> Option<InterfaceId> {
         match self.links.phase_for(link_id)? {
             LinkPhase::Active {

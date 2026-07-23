@@ -740,7 +740,7 @@ fn an_ignored_echo_that_cancels_a_rebroadcast_reports_the_emptied_lane() {
     assert_eq!(
         second,
         state.scheduled_announces_wake(),
-        "the ingest delta agrees with a full wake recompute (no reactor drift)",
+        "the ingest delta agrees with a full wake recompute (no manifold drift)",
     );
 }
 

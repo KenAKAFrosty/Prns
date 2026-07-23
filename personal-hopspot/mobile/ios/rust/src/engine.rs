@@ -15,7 +15,7 @@ use personal_rns::bluetooth_auto::BluetoothAutoStatus;
 use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand};
 use personal_rns::interfaces::wifi_auto as wifi_auto_contract;
 use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus};
-use personal_rns::reactor::tokio::TokioInterfaceStatus;
+use personal_rns::manifold::tokio::TokioInterfaceStatus;
 use personal_rns::runtime::{Manual, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe};
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wifi_auto::{AutoWifi, AutoWifiStatus};

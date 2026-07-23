@@ -9,5 +9,5 @@ pub use prns_runtime::{
 pub use prns_runtime::interface_discovery;
 pub use runtime::node_introspection;
 
-pub mod reactor;
+pub mod manifold;
 pub mod runtime;

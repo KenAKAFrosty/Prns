@@ -130,41 +130,41 @@ pub(super) fn build_cards(
 
 fn egress_pressure_events(id: InterfaceId) -> u32 {
     match id.kind() {
-        Some(InterfaceKind::UsbAutoDevice) => USB_REACTOR_LANE.egress_pressure_events(),
-        Some(InterfaceKind::TcpClient) => TCP_REACTOR_LANE.egress_pressure_events(),
+        Some(InterfaceKind::UsbAutoDevice) => USB_MANIFOLD_LANE.egress_pressure_events(),
+        Some(InterfaceKind::TcpClient) => TCP_MANIFOLD_LANE.egress_pressure_events(),
         Some(InterfaceKind::AutoWifi | InterfaceKind::WifiPeer) => {
-            WIFI_REACTOR_LANE.egress_pressure_events()
+            WIFI_MANIFOLD_LANE.egress_pressure_events()
         }
-        Some(InterfaceKind::LoRa) => LORA_REACTOR_LANE.egress_pressure_events(),
+        Some(InterfaceKind::LoRa) => LORA_MANIFOLD_LANE.egress_pressure_events(),
         #[cfg(feature = "bluetooth-auto")]
         Some(InterfaceKind::BluetoothAuto | InterfaceKind::BluetoothPeer) => {
-            BLE_REACTOR_LANE.egress_pressure_events()
+            BLE_MANIFOLD_LANE.egress_pressure_events()
         }
         #[cfg(feature = "esp-now")]
-        Some(InterfaceKind::EspNow) => ESPNOW_REACTOR_LANE.egress_pressure_events(),
+        Some(InterfaceKind::EspNow) => ESPNOW_MANIFOLD_LANE.egress_pressure_events(),
         _ => 0,
     }
 }
 
 fn ingress_pressure_events(id: InterfaceId) -> u32 {
     match id.kind() {
-        Some(InterfaceKind::UsbAutoDevice) => USB_REACTOR_LANE.ingress_pressure_events(),
-        Some(InterfaceKind::TcpClient) => TCP_REACTOR_LANE.ingress_pressure_events(),
+        Some(InterfaceKind::UsbAutoDevice) => USB_MANIFOLD_LANE.ingress_pressure_events(),
+        Some(InterfaceKind::TcpClient) => TCP_MANIFOLD_LANE.ingress_pressure_events(),
         Some(InterfaceKind::AutoWifi | InterfaceKind::WifiPeer) => {
-            WIFI_REACTOR_LANE.ingress_pressure_events()
+            WIFI_MANIFOLD_LANE.ingress_pressure_events()
         }
-        Some(InterfaceKind::LoRa) => LORA_REACTOR_LANE.ingress_pressure_events(),
+        Some(InterfaceKind::LoRa) => LORA_MANIFOLD_LANE.ingress_pressure_events(),
         #[cfg(feature = "bluetooth-auto")]
-        Some(InterfaceKind::BluetoothAuto | InterfaceKind::BluetoothPeer) => BLE_REACTOR_LANE
+        Some(InterfaceKind::BluetoothAuto | InterfaceKind::BluetoothPeer) => BLE_MANIFOLD_LANE
             .ingress_pressure_events()
             .saturating_add(BluetoothAutoStatus::new(&BLE_SHARED).ingress_pressure_events()),
         #[cfg(feature = "esp-now")]
-        Some(InterfaceKind::EspNow) => ESPNOW_REACTOR_LANE.ingress_pressure_events(),
+        Some(InterfaceKind::EspNow) => ESPNOW_MANIFOLD_LANE.ingress_pressure_events(),
         _ => 0,
     }
 }
 
-pub(super) fn add_reactor_pressure(
+pub(super) fn add_manifold_pressure(
     details: &mut screen::InterfaceMenuDetails,
     selected_card: Option<&screen::Card>,
 ) {
@@ -202,6 +202,6 @@ pub(super) fn build_interface_menu_details(
         }
         _ => screen::InterfaceMenuDetails::empty(),
     };
-    add_reactor_pressure(&mut details, selected_card);
+    add_manifold_pressure(&mut details, selected_card);
     details
 }

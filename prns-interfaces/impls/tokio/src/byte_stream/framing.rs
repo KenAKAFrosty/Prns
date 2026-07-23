@@ -17,10 +17,10 @@ use prns_core::interfaces::kiss_framing::{self, KissScanner};
 use prns_core::interfaces::rns_serial_framing::{self, RnsSerialScanner};
 use prns_core::interfaces::{BitrateBps, FrameSink};
 use prns_core::units::DurationMillis;
-use prns_runtime::reactor::airtime::{frame_airtime_us, AirtimeLedger};
-use prns_runtime::reactor::driver::TokioInterfaceStatus;
-use prns_runtime::reactor::interface_seam::InterfaceSeam;
-use prns_runtime::reactor::throughput::ThroughputLedger;
+use prns_runtime::manifold::airtime::{frame_airtime_us, AirtimeLedger};
+use prns_runtime::manifold::driver::TokioInterfaceStatus;
+use prns_runtime::manifold::interface_seam::InterfaceSeam;
+use prns_runtime::manifold::throughput::ThroughputLedger;
 
 pub trait StreamDeframer {
     fn new() -> Self;
@@ -405,7 +405,7 @@ mod tests {
     use super::*;
     use prns_core::interfaces::rns_serial_framing::RnsSerialDecoder;
     use prns_core::interfaces::{ConnectionState, InterfaceId};
-    use prns_runtime::reactor::driver::{tokio_grant_lane, TokioGrantConsumer};
+    use prns_runtime::manifold::driver::{tokio_grant_lane, TokioGrantConsumer};
     use std::pin::Pin;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;

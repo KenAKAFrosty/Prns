@@ -22,8 +22,8 @@ pub use prns_runtime_tokio::node_introspection;
 pub mod from_plan;
 mod interface_families;
 mod lane_guards;
+pub mod manifold;
 pub mod prelude;
-pub mod reactor;
 pub mod runtime;
 
 #[cfg(all(feature = "ax25", feature = "tokio-host"))]

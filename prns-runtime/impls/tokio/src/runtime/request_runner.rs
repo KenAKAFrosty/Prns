@@ -125,7 +125,7 @@ async fn dispatch<St, R: RouteSet<St>>(
 mod tests {
     use super::*;
     use crate::engine::{EngineCommand, IssuedCommand};
-    use crate::reactor::driver::HostCommand;
+    use crate::manifold::driver::HostCommand;
     use crate::routing::request_handlers::RequestPathHash;
     use crate::runtime::request_router::{RequestContext, RoutePolicy};
 

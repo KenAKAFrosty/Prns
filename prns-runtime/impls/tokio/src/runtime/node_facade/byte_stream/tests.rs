@@ -5,8 +5,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use crate::engine::{
     EngineCommand, IssuedCommand, PacketReceiptDelivered, SendToChannelFailure, Settlement,
 };
-use crate::reactor::compression;
-use crate::reactor::driver::{HostCommand, StreamInbound};
+use crate::manifold::compression;
+use crate::manifold::driver::{HostCommand, StreamInbound};
 use crate::routing::links::channel::byte_stream::{parse, MAX_STREAM_CHUNK_LEN, STREAM_DATA_TYPE};
 use crate::routing::links::LinkId;
 use crate::units::RttMillis;

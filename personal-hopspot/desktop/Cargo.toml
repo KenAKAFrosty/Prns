@@ -23,7 +23,7 @@ heapless = { version = "0.8", default-features = false }
 embedded-graphics-simulator = "0.8.0"
 personal-rns = { path = "../../personal-rns", default-features = false, features = ["tokio-host", "tcp", "serial", "usb", "wifi-auto", "shared-instance", "bluetooth-auto", "log", "tracing", "parallel-persistence", "parallel-resource-hash"] }
 sdl2 = "0.38"
-# The async runtime the reactor's USB-auto host rides. Serial opening and USB-only discovery are
+# The async runtime the manifold's USB-auto host rides. Serial opening and USB-only discovery are
 # supplied by personal-rns so the daemon/library and desktop share one reviewed platform boundary.
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util"] }
 tracing-log = "0.2"

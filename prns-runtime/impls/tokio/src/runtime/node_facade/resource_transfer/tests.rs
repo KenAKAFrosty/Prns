@@ -1,8 +1,8 @@
 use tokio::sync::mpsc::{self, UnboundedReceiver};
 
 use crate::engine::{SendResourceFailure, Settlement};
-use crate::reactor::compression;
-use crate::reactor::driver::{HostCommand, ResourceInbound};
+use crate::manifold::compression;
+use crate::manifold::driver::{HostCommand, ResourceInbound};
 use crate::routing::links::resources::{ResourceHash, MAX_EFFICIENT_SIZE};
 use crate::routing::links::LinkId;
 

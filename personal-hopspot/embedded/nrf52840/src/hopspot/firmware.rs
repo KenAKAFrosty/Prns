@@ -22,8 +22,8 @@ use personal_rns::interfaces::lora::DEFAULT_915_PROFILE;
 use personal_rns::interfaces::usb_auto::{WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID};
 use personal_rns::interfaces::{ConnectionState, InterfaceStatus};
 use personal_rns::lora::{LoRaInterface, LoRaInterfaceInput};
-use personal_rns::reactor::embassy::{EmbassyHost, EmbassyInterfaceStatus};
-use personal_rns::reactor::interface_seam::Interface;
+use personal_rns::manifold::embassy::{EmbassyHost, EmbassyInterfaceStatus};
+use personal_rns::manifold::interface_seam::Interface;
 use personal_rns::runtime::{Fleet, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe};
 use personal_rns::storage::StorageLayout;
 use personal_rns::usb_auto::{UsbAutoDevice, UsbAutoDeviceInput};
@@ -47,8 +47,8 @@ const STATS_POLL: Duration = Duration::from_millis(1000);
 const NOTICE_MS: u64 = 900;
 
 #[embassy_executor::task]
-async fn reactor_task(node: &'static mut Node) {
-    node.run_reactor_with_interface_store(&INTERFACE_STORE)
+async fn manifold_task(node: &'static mut Node) {
+    node.run_manifold_with_interface_store(&INTERFACE_STORE)
         .await
 }
 
@@ -149,7 +149,7 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
         u32::from_le_bytes([seed[0], seed[1], seed[2], seed[3]]) | 1,
         core::sync::atomic::Ordering::Relaxed,
     );
-    let mut reactor_lanes = ReactorLanes::new();
+    let mut manifold_lanes = ManifoldLanes::new();
     let lora_profile = DEFAULT_915_PROFILE;
     let lora_id = LoRaInterface::<
         ExclusiveDevice<Spim<'static>, Output<'static>, Delay>,
@@ -183,20 +183,20 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
         host_present: || true,
     });
 
-    let lora_lane = reactor_lanes
-        .claim_interface(&LORA_REACTOR_LANE, lora.descriptor())
+    let lora_lane = manifold_lanes
+        .claim_interface(&LORA_MANIFOLD_LANE, lora.descriptor())
         .expect("LoRa lane is available");
     let ble_supervisor_lane = ble_identity.as_ref().map(|_| {
-        reactor_lanes
-            .claim_supervisor(&BLE_REACTOR_LANE, BLE_SUPERVISOR_ID, &OUTBOUND_WAKE)
+        manifold_lanes
+            .claim_supervisor(&BLE_MANIFOLD_LANE, BLE_SUPERVISOR_ID, &OUTBOUND_WAKE)
             .expect("Bluetooth supervisor lane is available")
     });
-    let usb_lane = reactor_lanes
-        .claim_interface(&USB_REACTOR_LANE, usb_dev.descriptor())
+    let usb_lane = manifold_lanes
+        .claim_interface(&USB_MANIFOLD_LANE, usb_dev.descriptor())
         .expect("USB lane is available");
 
     let handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
-    let reactor_wiring = reactor_lanes.into_reactor_wiring(
+    let manifold_wiring = manifold_lanes.into_manifold_wiring(
         NOTIFY.receiver(),
         COMMANDS.receiver(),
         LIFECYCLE.receiver(),
@@ -220,10 +220,10 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
             interfaces: personal_rns::runtime::Manual,
             on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
         },
-        reactor_wiring,
+        manifold_wiring,
         host,
     );
-    spawner.spawn(reactor_task(node).expect("reactor task fits"));
+    spawner.spawn(manifold_task(node).expect("manifold task fits"));
     let lora_seam = lora_lane.into_seam(NOTIFY.sender(), seeded_entropy);
 
     let usb_seam = usb_lane.into_seam(NOTIFY.sender(), seeded_entropy);

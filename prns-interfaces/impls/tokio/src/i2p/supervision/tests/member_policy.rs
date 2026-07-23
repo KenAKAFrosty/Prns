@@ -2,7 +2,7 @@ use tokio::sync::mpsc;
 
 use prns_core::interfaces::i2p;
 use prns_core::interfaces::{BitrateBps, ConfiguredInterfacePolicy, InterfaceMode, MtuPolicy};
-use prns_runtime::reactor::interface_seam::Interface;
+use prns_runtime::manifold::interface_seam::Interface;
 
 use super::super::super::{I2pPeerAddress, I2pRetryPolicy};
 use super::super::member::{I2pAcceptedPeer, I2pConfiguredPeer};

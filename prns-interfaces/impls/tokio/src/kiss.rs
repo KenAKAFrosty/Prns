@@ -16,10 +16,10 @@ use prns_core::interfaces::kiss_framing;
 use prns_core::interfaces::{
     ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind,
 };
-use prns_runtime::reactor::airtime::{frame_airtime_us, AirtimeLedger};
-use prns_runtime::reactor::driver::TokioInterfaceStatus;
-use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
-use prns_runtime::reactor::throughput::ThroughputLedger;
+use prns_runtime::manifold::airtime::{frame_airtime_us, AirtimeLedger};
+use prns_runtime::manifold::driver::TokioInterfaceStatus;
+use prns_runtime::manifold::interface_seam::{Interface, InterfaceSeam};
+use prns_runtime::manifold::throughput::ThroughputLedger;
 
 /// A real TNC needs the RNS two-second boot window before it will accept configuration bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -436,7 +436,7 @@ mod tests {
     use prns_core::interfaces::kiss::{ReadyTimeout, StationIdInterval, StationIdWireFormat};
     use prns_core::interfaces::kiss_framing::{self, FEND, FESC};
     use prns_core::interfaces::InterfaceStatus;
-    use prns_runtime::reactor::driver::{tokio_grant_lane, TokioGrantConsumer};
+    use prns_runtime::manifold::driver::{tokio_grant_lane, TokioGrantConsumer};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::sync::mpsc::{self, UnboundedSender};
 

@@ -23,7 +23,7 @@ use crate::engine::{
 };
 use crate::identity::IdentityHash;
 use crate::interfaces::InterfaceId;
-use crate::reactor::driver::HostCommand;
+use crate::manifold::driver::HostCommand;
 use crate::routing::links::LinkId;
 use crate::wire::DestinationHash;
 
@@ -61,7 +61,7 @@ pub struct PrnsNodeHandle {
     interfaces: Arc<Mutex<HashMap<InterfaceId, RegisteredInterface>>>,
     store: InterfaceStore,
     resource_admission: resource_admission::ResourceAdmissionRegistry,
-    entropy: crate::reactor::driver::TokioEntropy,
+    entropy: crate::manifold::driver::TokioEntropy,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,7 +84,7 @@ impl PrnsNodeHandle {
             interfaces: Arc::new(Mutex::new(HashMap::new())),
             store: InterfaceStore::new(),
             resource_admission: resource_admission::ResourceAdmissionRegistry::default(),
-            entropy: crate::reactor::driver::TokioEntropy,
+            entropy: crate::manifold::driver::TokioEntropy,
         }
     }
 

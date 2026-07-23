@@ -6,7 +6,7 @@ use tokio::sync::watch;
 use prns_core::interfaces::{
     ConnectionState, InterfaceId, InterfaceStatus, InterfaceVitals, TransferRates,
 };
-use prns_runtime::reactor::driver::TokioInterfaceStatus;
+use prns_runtime::manifold::driver::TokioInterfaceStatus;
 
 use super::super::sam::I2pBase32Address;
 

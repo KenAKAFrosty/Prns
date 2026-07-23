@@ -12,8 +12,8 @@ use crate::engine::{
     EngineCommand, SendToChannel, SendToChannelBody, SendToChannelFailure, Settlement,
     MAX_SEND_TO_CHANNEL_BODY_LEN,
 };
-use crate::reactor::compression;
-use crate::reactor::driver::{HostCommand, StreamInbound};
+use crate::manifold::compression;
+use crate::manifold::driver::{HostCommand, StreamInbound};
 use crate::routing::links::channel::byte_stream::{
     StreamDataHeader, HEADER_LEN, MAX_STREAM_CHUNK_LEN, STREAM_DATA_TYPE,
 };

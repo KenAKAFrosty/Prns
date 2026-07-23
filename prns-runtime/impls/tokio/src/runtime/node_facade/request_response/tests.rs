@@ -2,8 +2,8 @@ use tokio::sync::mpsc::{self, UnboundedReceiver};
 
 use crate::engine::RequestResponseTimeout;
 use crate::engine::Settlement;
-use crate::reactor::compression;
-use crate::reactor::driver::HostCommand;
+use crate::manifold::compression;
+use crate::manifold::driver::HostCommand;
 use crate::routing::links::request::{
     parse_response_plaintext, write_packed_binary_header, RequestId, MAX_PACKED_BINARY_HEADER_LEN,
     RESPONSE_WIRE_OVERHEAD,

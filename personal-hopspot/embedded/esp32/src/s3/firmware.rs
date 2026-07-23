@@ -31,12 +31,12 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         #[cfg(feature = "bluetooth-auto")]
         bluetooth,
     } = hardware.interface_hardware;
-    let S3ReactorHardware {
+    let S3ManifoldHardware {
         cpu_control,
         software_interrupt,
         timebase,
         _rtc,
-    } = hardware.reactor;
+    } = hardware.manifold;
     #[cfg(feature = "wifi-auto")]
     let wifi_config = hopspot_wifi_config();
     #[cfg(feature = "wifi-auto")]
@@ -56,7 +56,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let mut mac_octets = [0u8; 6];
     mac_octets.copy_from_slice(&mac.as_bytes()[..6]);
 
-    let mut reactor_lanes = ReactorLanes::new();
+    let mut manifold_lanes = ManifoldLanes::new();
 
     #[cfg(feature = "lora")]
     let lora_profile = DEFAULT_915_PROFILE;
@@ -150,39 +150,39 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let tcp_cfg = tcp_built.as_ref().map(|(t, _, _)| t.descriptor());
     let has_wifi = wifi.is_some();
 
-    let usb_lane = reactor_lanes
-        .claim_interface(&USB_REACTOR_LANE, device_descriptor(usb_id))
+    let usb_lane = manifold_lanes
+        .claim_interface(&USB_MANIFOLD_LANE, device_descriptor(usb_id))
         .expect("USB lane is available");
     let tcp_lane = tcp_cfg.map(|descriptor| {
-        reactor_lanes
-            .claim_interface(&TCP_REACTOR_LANE, descriptor)
+        manifold_lanes
+            .claim_interface(&TCP_MANIFOLD_LANE, descriptor)
             .expect("TCP lane is available")
     });
     #[cfg(feature = "wifi-auto")]
     let wifi_supervisor_lane = has_wifi.then(|| {
-        reactor_lanes
-            .claim_supervisor(&WIFI_REACTOR_LANE, WIFI_SUPERVISOR_ID, &OUTBOUND_WAKE)
+        manifold_lanes
+            .claim_supervisor(&WIFI_MANIFOLD_LANE, WIFI_SUPERVISOR_ID, &OUTBOUND_WAKE)
             .expect("WiFi supervisor lane is available")
     });
     #[cfg(feature = "lora")]
-    let lora_lane = reactor_lanes
-        .claim_interface(&LORA_REACTOR_LANE, lora_cfg)
+    let lora_lane = manifold_lanes
+        .claim_interface(&LORA_MANIFOLD_LANE, lora_cfg)
         .expect("LoRa lane is available");
     #[cfg(feature = "bluetooth-auto")]
     let ble_supervisor_lane = (radio_mode == RadioMode::Ble && ble_identity.is_some()).then(|| {
-        reactor_lanes
-            .claim_supervisor(&BLE_REACTOR_LANE, BLE_SUPERVISOR_ID, &BLE_OUTBOUND_WAKE)
+        manifold_lanes
+            .claim_supervisor(&BLE_MANIFOLD_LANE, BLE_SUPERVISOR_ID, &BLE_OUTBOUND_WAKE)
             .expect("Bluetooth supervisor lane is available")
     });
     #[cfg(feature = "esp-now")]
     let espnow_lane = espnow_cfg.map(|descriptor| {
-        reactor_lanes
-            .claim_interface(&ESPNOW_REACTOR_LANE, descriptor)
+        manifold_lanes
+            .claim_interface(&ESPNOW_MANIFOLD_LANE, descriptor)
             .expect("ESP-NOW lane is available")
     });
 
     let handle: Handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
-    let reactor_wiring = reactor_lanes.into_reactor_wiring(
+    let manifold_wiring = manifold_lanes.into_manifold_wiring(
         NOTIFY.receiver(),
         COMMANDS.receiver(),
         LIFECYCLE.receiver(),
@@ -193,13 +193,13 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let core1_stack = mk_static!(CpuStack<CORE1_STACK_BYTES>, CpuStack::new());
     esp_rtos::start_second_core(cpu_control, software_interrupt, core1_stack, move || {
         static NODE: StaticCell<S3Node> = StaticCell::new();
-        let node: &'static mut S3Node = PrnsNode::init_static(&NODE, recipe, reactor_wiring, host);
+        let node: &'static mut S3Node = PrnsNode::init_static(&NODE, recipe, manifold_wiring, host);
 
         static EXECUTOR: StaticCell<esp_rtos::embassy::Executor> = StaticCell::new();
         EXECUTOR
             .init(esp_rtos::embassy::Executor::new())
             .run(|spawner| {
-                spawner.spawn(reactor_task(node).expect("reactor task fits"));
+                spawner.spawn(manifold_task(node).expect("manifold task fits"));
             })
     });
 
@@ -345,7 +345,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             #[cfg(not(feature = "wifi-auto"))]
             let interface_menu_details = {
                 let mut details = screen::InterfaceMenuDetails::empty();
-                add_reactor_pressure(&mut details, ui_state.selected_card(content.cards));
+                add_manifold_pressure(&mut details, ui_state.selected_card(content.cards));
                 details
             };
             ui_state.sync(content);
@@ -708,8 +708,8 @@ pub(super) async fn run_core<B: Esp32S3Board>(
 }
 
 #[embassy_executor::task]
-async fn reactor_task(node: &'static mut S3Node) {
-    node.run_reactor_with_interface_store(&INTERFACE_STORE)
+async fn manifold_task(node: &'static mut S3Node) {
+    node.run_manifold_with_interface_store(&INTERFACE_STORE)
         .await
 }
 

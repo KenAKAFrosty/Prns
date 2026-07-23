@@ -19,7 +19,7 @@ personal-rns = { path = "../../../../personal-rns", default-features = false, fe
 embedded-graphics = "0.8"
 heapless = { version = "0.8", default-features = false }
 # The async runtime + a TCP listener: RNS TCP framing is the serial HDLC framing, so the
-# reactor's serial interface serves a TCP connection directly — `accept` standing in for `open`.
+# manifold's serial interface serves a TCP connection directly — `accept` standing in for `open`.
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util"] }
 
 # The native CoreBluetooth BLE backend (objc2), shared with the macOS desktop face. iOS-only:

@@ -19,11 +19,11 @@ use prns_core::interfaces::{
     AirtimeDutyCycle, ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind,
     PacketPhyStats,
 };
-use prns_runtime::reactor::airtime::AirtimeLedger;
-use prns_runtime::reactor::driver::{EmbassyInterfaceStatus, InterfaceLifecycle};
-use prns_runtime::reactor::duty_gate::{DutyGate, DutyVerdict, FixedDutyQueue};
-use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
-use prns_runtime::reactor::throughput::ThroughputLedger;
+use prns_runtime::manifold::airtime::AirtimeLedger;
+use prns_runtime::manifold::driver::{EmbassyInterfaceStatus, InterfaceLifecycle};
+use prns_runtime::manifold::duty_gate::{DutyGate, DutyVerdict, FixedDutyQueue};
+use prns_runtime::manifold::interface_seam::{Interface, InterfaceSeam};
+use prns_runtime::manifold::throughput::ThroughputLedger;
 
 use crate::radios::sx126x::{self, Sx126x};
 

@@ -9,9 +9,9 @@ use static_cell::StaticCell;
 
 use crate::engine::{IssuedCommand, Journaled, MAX_SEND_REQUEST_DATA_LEN};
 use crate::interfaces::{InterfaceDescriptor, InterfaceId, InterfaceIfac};
-use crate::reactor::driver::{run_pooled, InterfaceLifecycle, PooledEgress, PooledWiring};
-use crate::reactor::grant::ReactorLaneReader;
-use crate::reactor::Host;
+use crate::manifold::driver::{run_pooled, InterfaceLifecycle, PooledEgress, PooledWiring};
+use crate::manifold::grant::ManifoldLaneReader;
+use crate::manifold::Host;
 use crate::storage::StorageLayout;
 
 use super::super::request_router::RouteSet;
@@ -24,7 +24,7 @@ use super::command_handle::PrnsNodeHandle;
 use prns_runtime::runtime::placement::assemble_node_in_place;
 use prns_runtime::runtime::{assemble_node, AssembledNode};
 
-pub struct ReactorWiring<
+pub struct ManifoldWiring<
     M,
     const LANE_COUNT: usize,
     const NOTIFY: usize,
@@ -34,7 +34,7 @@ pub struct ReactorWiring<
 > where
     M: RawMutex + 'static,
 {
-    pub(super) inbound: HeaplessVec<(InterfaceId, &'static mut dyn ReactorLaneReader), LANE_COUNT>,
+    pub(super) inbound: HeaplessVec<(InterfaceId, &'static mut dyn ManifoldLaneReader), LANE_COUNT>,
     pub(super) egress: PooledEgress<LANE_COUNT>,
     pub(super) initial: HeaplessVec<InterfaceDescriptor, LANE_COUNT>,
     pub(super) ifacs: HeaplessVec<InterfaceIfac, LANE_COUNT>,
@@ -64,7 +64,7 @@ pub struct PrnsNode<
     M: RawMutex + 'static,
 {
     node: AssembledNode<St, R, F, S>,
-    inbound: HeaplessVec<(InterfaceId, &'static mut dyn ReactorLaneReader), LANE_COUNT>,
+    inbound: HeaplessVec<(InterfaceId, &'static mut dyn ManifoldLaneReader), LANE_COUNT>,
     egress: PooledEgress<LANE_COUNT>,
     notify: Receiver<'static, M, InterfaceId, NOTIFY>,
     commands: Receiver<'static, M, IssuedCommand, COMMANDS>,
@@ -133,7 +133,7 @@ where
 {
     pub fn new<'d, D>(
         recipe: PrnsNodeRecipe<D, St, R, F, Manual, S>,
-        wiring: ReactorWiring<M, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
+        wiring: ManifoldWiring<M, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
         host: H,
     ) -> Self
     where
@@ -191,7 +191,7 @@ where
     pub fn init_static<'d, D>(
         cell: &'static StaticCell<Self>,
         recipe: PrnsNodeRecipe<D, St, R, F, Manual, S>,
-        wiring: ReactorWiring<M, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
+        wiring: ManifoldWiring<M, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
         host: H,
     ) -> &'static mut Self
     where
@@ -200,11 +200,11 @@ where
         const {
             assert!(
                 INTERFACE_CAPACITY >= LANE_COUNT,
-                "PrnsNode INTERFACE_CAPACITY must cover every reactor lane"
+                "PrnsNode INTERFACE_CAPACITY must cover every manifold lane"
             );
         }
         let slot = cell.uninit();
-        let ReactorWiring {
+        let ManifoldWiring {
             inbound,
             egress,
             initial,
@@ -240,7 +240,7 @@ where
 
     pub fn new_with_request_capacity<'d, D>(
         recipe: PrnsNodeRecipe<D, St, R, F, Manual, S>,
-        wiring: ReactorWiring<M, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
+        wiring: ManifoldWiring<M, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
         host: H,
         _capacity: RequestRoutingCapacity<ROUTED_REQUESTS, ROUTED_REQUEST_BYTES>,
     ) -> Self
@@ -252,7 +252,7 @@ where
 
     fn build<'d, D>(
         recipe: PrnsNodeRecipe<D, St, R, F, Manual, S>,
-        wiring: ReactorWiring<M, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
+        wiring: ManifoldWiring<M, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
         host: H,
     ) -> Self
     where
@@ -261,7 +261,7 @@ where
         const {
             assert!(
                 INTERFACE_CAPACITY >= LANE_COUNT,
-                "PrnsNode INTERFACE_CAPACITY must cover every reactor lane"
+                "PrnsNode INTERFACE_CAPACITY must cover every manifold lane"
             );
         }
         let (node, Manual) = assemble_node(recipe);
@@ -291,7 +291,7 @@ where
         self.handle
     }
 
-    /// Runs the reactor with the caller's interface and supervisor tasks.
+    /// Runs the manifold with the caller's interface and supervisor tasks.
     pub async fn run(self, drive: impl Future<Output = ()>) {
         self.run_with_inspection_store(&NoInterfaceInspectionStore, drive)
             .await;
@@ -342,7 +342,7 @@ where
         let request_channel =
             Channel::<M, RunnerRequest<ROUTED_REQUEST_BYTES>, ROUTED_REQUESTS>::new();
         let request_sender = request_channel.sender();
-        let reactor = run_pooled(
+        let manifold = run_pooled(
             &mut engine,
             &mut host,
             PooledWiring {
@@ -365,7 +365,7 @@ where
                 }
                 on_event(PrnsEvent::from(journaled), &state);
             },
-            crate::reactor::decline_all(),
+            crate::manifold::decline_all(),
             store,
         );
         let router =
@@ -374,16 +374,16 @@ where
                 request_channel.receiver(),
                 handle,
             );
-        join(join(reactor, router), drive).await;
+        join(join(manifold, router), drive).await;
     }
 
-    /// Runs only the reactor for boards that schedule interfaces separately.
-    pub async fn run_reactor(&mut self) {
-        self.run_reactor_with_inspection_store(&NoInterfaceInspectionStore)
+    /// Runs only the manifold for boards that schedule interfaces separately.
+    pub async fn run_manifold(&mut self) {
+        self.run_manifold_with_inspection_store(&NoInterfaceInspectionStore)
             .await;
     }
 
-    pub async fn run_reactor_with_interface_store<
+    pub async fn run_manifold_with_interface_store<
         const INTERFACES: usize,
         const PACKET_PHY_CAPACITY: usize,
         const PACKET_PHY_INDEX_BUCKETS: usize,
@@ -399,10 +399,10 @@ where
                 "EmbassyInterfaceStore INTERFACES must cover PrnsNode INTERFACE_CAPACITY"
             );
         }
-        self.run_reactor_with_inspection_store(store).await;
+        self.run_manifold_with_inspection_store(store).await;
     }
 
-    async fn run_reactor_with_inspection_store<Store>(&mut self, store: &Store)
+    async fn run_manifold_with_inspection_store<Store>(&mut self, store: &Store)
     where
         Store: InterfaceInspectionStore,
     {
@@ -427,7 +427,7 @@ where
         let request_channel =
             Channel::<M, RunnerRequest<ROUTED_REQUEST_BYTES>, ROUTED_REQUESTS>::new();
         let request_sender = request_channel.sender();
-        let reactor = run_pooled(
+        let manifold = run_pooled(
             engine,
             host,
             PooledWiring {
@@ -450,7 +450,7 @@ where
                 }
                 on_event(PrnsEvent::from(journaled), state);
             },
-            crate::reactor::decline_all(),
+            crate::manifold::decline_all(),
             store,
         );
         let router =
@@ -459,7 +459,7 @@ where
                 request_channel.receiver(),
                 *handle,
             );
-        join(reactor, router).await;
+        join(manifold, router).await;
     }
 }
 

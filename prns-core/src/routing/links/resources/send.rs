@@ -673,7 +673,7 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     /// The link whose staged continuation owes its deferred seal: the segment ahead of it has served every part and awaits only the proof, so the receiver is busy verifying and this is the window the seal was deferred into.
-    /// The reactor drains this only after yielding because it shares its thread with the interface writers. The served parts must flush to the wire ahead of a multi-millisecond seal.
+    /// The manifold drains this only after yielding because it shares its thread with the interface writers. The served parts must flush to the wire ahead of a multi-millisecond seal.
     pub fn owed_staged_seal_link(&self) -> Option<LinkId> {
         (0..self.outgoing_resources.len()).find_map(|index| {
             let state = self.outgoing_resources.state(index);
@@ -768,7 +768,7 @@ impl<S: StorageLayout> EngineState<S> {
         }));
     }
 
-    /// The owed seal's worker inputs, borrowed for the reactor to copy into a crypto-pool job; [`mark_staged_sealing`](Self::mark_staged_sealing) then parks the row until the verdict.
+    /// The owed seal's worker inputs, borrowed for the manifold to copy into a crypto-pool job; [`mark_staged_sealing`](Self::mark_staged_sealing) then parks the row until the verdict.
     pub fn staged_seal_job_view(&self, link_id: &LinkId) -> Option<StagedSealJobView<'_>> {
         let index = self.outgoing_resources.staged_index(link_id)?;
         let state = self.outgoing_resources.state(index);
@@ -2156,7 +2156,7 @@ mod tests {
         live
     }
 
-    /// Request every live part, then drain the owed seal the way the reactor's yield arm would.
+    /// Request every live part, then drain the owed seal the way the manifold's yield arm would.
     fn serve_live_parts<S: StorageLayout>(
         engine: &mut EngineState<S>,
         live: &ResourceHash,
@@ -2221,7 +2221,7 @@ mod tests {
         assert_eq!(
             engine.outgoing_resources.state(staged).status,
             OutgoingResourceStatus::Staged,
-            "the seal itself waits for the reactor's yielded turn",
+            "the seal itself waits for the manifold's yielded turn",
         );
     }
 

@@ -2,10 +2,10 @@ use tokio::sync::mpsc::{self, UnboundedReceiver};
 
 use crate::engine::InstantMillis;
 use crate::interfaces::{PacketPhyStats, RssiDbm};
+use crate::manifold::driver::HostCommand;
 use crate::node_introspection::{
     AnnounceRateSnapshot, NodeIntrospection, NodeIntrospectionRequest,
 };
-use crate::reactor::driver::HostCommand;
 use crate::routing::dedup::PacketHash;
 use crate::routing::{
     BlackholeExpiry, BlackholeIdentityOutcome, BlackholedIdentity, UnblackholeIdentityOutcome,
@@ -47,7 +47,7 @@ fn inspection_reads_the_runtime_packet_phy_store() {
 
 #[cfg(feature = "runtime-metrics")]
 #[tokio::test]
-async fn metrics_snapshots_are_requested_from_the_reactor() {
+async fn metrics_snapshots_are_requested_from_the_manifold() {
     let (handle, mut command_rx) = handle();
     let expected = RuntimeMetricsSnapshot {
         taken_at: InstantMillis(42),
@@ -67,7 +67,7 @@ async fn metrics_snapshots_are_requested_from_the_reactor() {
 }
 
 #[tokio::test]
-async fn announce_rate_introspection_resolves_its_reactor_snapshot() {
+async fn announce_rate_introspection_resolves_its_manifold_snapshot() {
     let (handle, mut command_rx) = handle();
     let expected = std::vec![AnnounceRateSnapshot {
         destination: DestinationHash::new([0x42; 16]),
@@ -89,7 +89,7 @@ async fn announce_rate_introspection_resolves_its_reactor_snapshot() {
 }
 
 #[tokio::test]
-async fn destination_identity_hash_resolves_its_reactor_snapshot() {
+async fn destination_identity_hash_resolves_its_manifold_snapshot() {
     let (handle, mut command_rx) = handle();
     let identity = crate::identity::IdentityHash::new([0x42; 16]);
     let reading = tokio::spawn(async move { handle.destination_identity_hash(PEER).await });
@@ -134,7 +134,7 @@ async fn destination_identity_query_resolves_public_material() {
 }
 
 #[tokio::test]
-async fn routing_controls_resolve_their_typed_reactor_replies() {
+async fn routing_controls_resolve_their_typed_manifold_replies() {
     let (handle, mut command_rx) = handle();
 
     let dropping = tokio::spawn({
@@ -187,7 +187,7 @@ async fn routing_controls_resolve_their_typed_reactor_replies() {
 }
 
 #[tokio::test]
-async fn routing_controls_report_a_stopped_reactor() {
+async fn routing_controls_report_a_stopped_manifold() {
     let (handle, command_rx) = handle();
     drop(command_rx);
 
@@ -206,7 +206,7 @@ async fn routing_controls_report_a_stopped_reactor() {
 }
 
 #[tokio::test]
-async fn identity_blackhole_capabilities_resolve_typed_reactor_replies() {
+async fn identity_blackhole_capabilities_resolve_typed_manifold_replies() {
     let (handle, mut command_rx) = handle();
     let identity = crate::identity::IdentityHash::new([0x31; 16]);
     let source = crate::identity::IdentityHash::new([0x41; 16]);
@@ -286,7 +286,7 @@ async fn identity_blackhole_capabilities_resolve_typed_reactor_replies() {
 }
 
 #[tokio::test]
-async fn identity_blackhole_capabilities_report_a_stopped_reactor() {
+async fn identity_blackhole_capabilities_report_a_stopped_manifold() {
     let (handle, command_rx) = handle();
     drop(command_rx);
     let identity = crate::identity::IdentityHash::new([0x31; 16]);

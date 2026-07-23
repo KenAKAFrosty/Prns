@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use personal_rns::config::{DaemonPlan, PlannedMedium};
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interface_discovery::DISCOVERED_INTERFACES_FILE;
-use personal_rns::reactor::tokio::TokioHost;
+use personal_rns::manifold::tokio::TokioHost;
 use personal_rns::routing::announce::AnnounceObservation;
 use personal_rns::runtime::PrnsNodeHandle;
 use personal_rns::{TokioDiscoveryEvent, TokioDiscoveryIngress, TokioInterfaceDiscovery};

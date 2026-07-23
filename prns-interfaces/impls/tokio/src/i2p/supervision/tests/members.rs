@@ -10,8 +10,8 @@ use prns_core::interfaces::rns_serial_framing::{self, RnsSerialDecoder};
 use prns_core::interfaces::{
     ConfiguredInterfacePolicy, ConnectionState, FrameSink, InterfaceStatus,
 };
-use prns_runtime::reactor::driver::{tokio_grant_lane, TokioGrantConsumer};
-use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
+use prns_runtime::manifold::driver::{tokio_grant_lane, TokioGrantConsumer};
+use prns_runtime::manifold::interface_seam::{Interface, InterfaceSeam};
 
 use super::super::super::{I2pPeerAddress, I2pRetryPolicy};
 use super::super::member::{I2pAcceptedPeer, I2pConfiguredPeer, I2pMemberEvent};
@@ -65,7 +65,7 @@ fn retry_policy() -> I2pRetryPolicy {
 
 fn mock_seam() -> (
     MockSeam,
-    prns_runtime::reactor::driver::TokioGrantProducer,
+    prns_runtime::manifold::driver::TokioGrantProducer,
     mpsc::UnboundedReceiver<Vec<u8>>,
     Arc<AtomicUsize>,
 ) {

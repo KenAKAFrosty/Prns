@@ -58,7 +58,7 @@ mod riscv {
         NoDestinationIdentityAppData, NoDestinationIdentityTable,
     };
     use personal_rns::identity::held::FixedHeldIdentityTable;
-    use personal_rns::reactor::interface_seam::EMBEDDED_MAX_LINK_MTU;
+    use personal_rns::manifold::interface_seam::EMBEDDED_MAX_LINK_MTU;
     use personal_rns::routing::announce::destination_announce_limit::FixedDestinationAnnounceLimitTable;
     use personal_rns::routing::announce::held::FixedHeldAnnounceTable;
     use personal_rns::routing::announce::interface_announce_limit::FixedInterfaceAnnounceLimitTable;

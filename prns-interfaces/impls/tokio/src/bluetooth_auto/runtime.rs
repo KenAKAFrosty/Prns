@@ -28,8 +28,8 @@ use prns_core::interfaces::{
     ConfiguredInterfacePolicy, ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor,
     InterfaceId, InterfaceKind, InterfaceStatus, TransferRates,
 };
-use prns_runtime::reactor::driver::TokioInterfaceStatus;
-use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam, MAX_WIRE_FRAME_LEN};
+use prns_runtime::manifold::driver::TokioInterfaceStatus;
+use prns_runtime::manifold::interface_seam::{Interface, InterfaceSeam, MAX_WIRE_FRAME_LEN};
 use prns_runtime::runtime::{AttachedInterface, Fleet, InterfaceSupervisor};
 
 struct ClosedSignal {
@@ -812,7 +812,7 @@ mod tests {
         is_keeper, l2cap_arrangement, l2cap_plan, AndroidHost, AppleHost, BleAddress, BlueZHost,
         Control, PeerProtocol, Psm,
     };
-    use prns_runtime::reactor::driver::{tokio_grant_lane, TokioGrantConsumer};
+    use prns_runtime::manifold::driver::{tokio_grant_lane, TokioGrantConsumer};
 
     const TEST_FRAME_CAP: usize = 2_048;
 

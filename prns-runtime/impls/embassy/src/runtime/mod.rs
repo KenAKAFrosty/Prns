@@ -8,7 +8,7 @@ pub use interface_store::{minimum_interface_store_capacity, EmbassyInterfaceStor
 pub(crate) use interface_store::{InterfaceInspectionStore, NoInterfaceInspectionStore};
 pub use node_facade::Fleet as EmbassyFleet;
 pub use node_facade::{
-    minimum_reactor_notification_capacity, CompletionPool, Fleet, InboundDeliveryError,
-    InterfaceLane, LaneClaimError, OutboundFrame, PrnsNode, PrnsNodeHandle, ReactorLaneSet,
-    ReactorWiring, RequestRoutingCapacity, StaticReactorLane, SupervisorLane,
+    minimum_manifold_notification_capacity, CompletionPool, Fleet, InboundDeliveryError,
+    InterfaceLane, LaneClaimError, ManifoldLaneSet, ManifoldWiring, OutboundFrame, PrnsNode,
+    PrnsNodeHandle, RequestRoutingCapacity, StaticManifoldLane, SupervisorLane,
 };

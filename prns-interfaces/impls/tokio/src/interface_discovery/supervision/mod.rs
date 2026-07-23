@@ -19,9 +19,9 @@ use prns_core::interfaces::{IfacContext, IfacSize};
 use prns_core::routing::announce::AnnounceObservation;
 use prns_core::units::{HopCount, InstantMillis};
 use prns_core::wire::DestinationHash;
-use prns_runtime::reactor::driver::{TokioHost, TokioInterfaceStatus};
-use prns_runtime::reactor::interface_seam::Interface;
-use prns_runtime::reactor::Host;
+use prns_runtime::manifold::driver::{TokioHost, TokioInterfaceStatus};
+use prns_runtime::manifold::interface_seam::Interface;
+use prns_runtime::manifold::Host;
 use prns_runtime::runtime::{AttachedInterface, InterfaceAttachmentMetadata, PrnsNodeHandle};
 use tokio::sync::mpsc::{self, error::TrySendError, Receiver, Sender};
 

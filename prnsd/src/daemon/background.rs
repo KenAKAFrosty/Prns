@@ -7,7 +7,7 @@ use personal_rns::config::{ConfiguredInterfaceLifecycle, DaemonPlan};
 use personal_rns::from_plan::{PlanAttachments, PlanRuntimeContext};
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::InterfaceId;
-use personal_rns::reactor::tokio::TokioHost;
+use personal_rns::manifold::tokio::TokioHost;
 use personal_rns::runtime::request_router::RouteSet;
 use personal_rns::runtime::{PrnsEvent, PrnsNode, PrnsNodeHandle};
 use personal_rns::shared_instance::RnsBlackholeFiles;

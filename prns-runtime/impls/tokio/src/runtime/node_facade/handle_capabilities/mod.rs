@@ -4,11 +4,11 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot;
 
 use crate::interfaces::PacketPhyStats;
+use crate::manifold::driver::HostCommand;
 use crate::node_introspection::{
     AnnounceRateSnapshot, DestinationIdentityQuery, DestinationIdentitySnapshot,
     InterfaceInventoryEntry, NodeIntrospection, NodeIntrospectionRequest, RouteSnapshot,
 };
-use crate::reactor::driver::HostCommand;
 use crate::routing::dedup::PacketHash;
 use crate::routing::BlackholedIdentity;
 use crate::wire::{DestinationHash, TransportId};

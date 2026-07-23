@@ -5,15 +5,15 @@ use crate::engine::{BlackholeSeedReport, DestinationIdentitySeedOutcome, Instant
 use crate::identity::vault::IdentityVault;
 use crate::identity::Zeroizing;
 use crate::interfaces::AttachedInterfaces;
+use crate::manifold::driver::{
+    HostCommand, PersistedStateSnapshot, SelfRatchetSnapshot, SelfRatchetsSnapshot, TokioHost,
+};
+use crate::manifold::Host;
 use crate::persistence::{
     read_destination_identities_snapshot, read_routing_table_snapshot, read_self_ratchets_snapshot,
     read_timebase_snapshot, read_tunnels_snapshot, snapshot_fingerprint, write_timebase_snapshot,
     PersistedStore, SnapshotFingerprint, SnapshotRegion, TIMEBASE_SNAPSHOT_LEN,
 };
-use crate::reactor::driver::{
-    HostCommand, PersistedStateSnapshot, SelfRatchetSnapshot, SelfRatchetsSnapshot, TokioHost,
-};
-use crate::reactor::Host;
 use crate::routing::tunnel::SeedTunnelOutcome;
 use crate::routing::BlackholedIdentity;
 use crate::storage::StorageLayout;
@@ -37,7 +37,7 @@ pub(super) fn try_zeroed_buffer(len: usize) -> Option<Vec<u8>> {
 }
 
 impl PrnsNodeHandle {
-    /// A consistent image of every persisted region, serialized on the reactor — the one place a consistent view exists — with the engine instant it was taken at. `None` once the node has stopped.
+    /// A consistent image of every persisted region, serialized on the manifold — the one place a consistent view exists — with the engine instant it was taken at. `None` once the node has stopped.
     pub async fn snapshot_persisted_state(&self) -> Option<PersistedStateSnapshot> {
         let (reply, snapshot) = oneshot::channel();
         if self
@@ -86,7 +86,7 @@ impl PrnsNodeHandle {
             .commit_to_store(store, mark)
     }
 
-    /// Every tracked destination's sealed self-ratchet record, serialized on the reactor. `None` once the node has stopped.
+    /// Every tracked destination's sealed self-ratchet record, serialized on the manifold. `None` once the node has stopped.
     pub async fn snapshot_self_ratchets(&self) -> Option<SelfRatchetsSnapshot> {
         let (reply, snapshot) = oneshot::channel();
         if self

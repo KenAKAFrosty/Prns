@@ -6,7 +6,7 @@ use personal_rns::engine::{
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::BitrateBps;
 use personal_rns::interfaces::InterfaceKind;
-use personal_rns::reactor::reconnect::ReconnectPolicy;
+use personal_rns::manifold::reconnect::ReconnectPolicy;
 use personal_rns::routes;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{

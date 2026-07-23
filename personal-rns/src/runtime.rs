@@ -53,16 +53,16 @@ pub use prns_runtime_tokio::runtime::ProcessCommands;
 
 #[cfg(all(feature = "embassy-host", not(feature = "tokio-host")))]
 pub use prns_runtime_embassy::runtime::{
-    minimum_interface_store_capacity, minimum_reactor_notification_capacity, CompletionPool,
+    minimum_interface_store_capacity, minimum_manifold_notification_capacity, CompletionPool,
     EmbassyFleet, EmbassyInterfaceStore, Fleet, InboundDeliveryError, InterfaceLane,
-    LaneClaimError, OutboundFrame, PrnsNode, PrnsNodeHandle, ReactorLaneSet, ReactorWiring,
-    RequestRoutingCapacity, StaticReactorLane, SupervisorLane,
+    LaneClaimError, ManifoldLaneSet, ManifoldWiring, OutboundFrame, PrnsNode, PrnsNodeHandle,
+    RequestRoutingCapacity, StaticManifoldLane, SupervisorLane,
 };
 
 #[cfg(all(feature = "embassy-host", feature = "tokio-host"))]
 pub use prns_runtime_embassy::runtime::{
-    minimum_interface_store_capacity, minimum_reactor_notification_capacity, CompletionPool,
+    minimum_interface_store_capacity, minimum_manifold_notification_capacity, CompletionPool,
     EmbassyFleet, EmbassyInterfaceStore, InboundDeliveryError, InterfaceLane, LaneClaimError,
-    OutboundFrame, PrnsNode as EmbassyPrnsNode, PrnsNodeHandle as EmbassyPrnsNodeHandle,
-    ReactorLaneSet, ReactorWiring, StaticReactorLane, SupervisorLane,
+    ManifoldLaneSet, ManifoldWiring, OutboundFrame, PrnsNode as EmbassyPrnsNode,
+    PrnsNodeHandle as EmbassyPrnsNodeHandle, StaticManifoldLane, SupervisorLane,
 };

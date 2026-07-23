@@ -24,7 +24,7 @@ use prns_core::interfaces::bluetooth_auto::{
 use prns_core::interfaces::{
     BitrateBps, ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus,
 };
-use prns_runtime::reactor::grant::FrameTarget;
+use prns_runtime::manifold::grant::FrameTarget;
 use prns_runtime::runtime::{EmbassyFleet as Fleet, OutboundFrame};
 
 const DIAL_TRACK: usize = 6;

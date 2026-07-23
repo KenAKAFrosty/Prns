@@ -2,7 +2,7 @@ use tokio::sync::mpsc::{self, UnboundedReceiver};
 
 use crate::engine::InstantMillis;
 use crate::identity::Zeroizing;
-use crate::reactor::driver::{HostCommand, SelfRatchetSnapshot};
+use crate::manifold::driver::{HostCommand, SelfRatchetSnapshot};
 use crate::routing::{BlackholeExpiry, BlackholedIdentity};
 use crate::runtime::{Manual, PreConfiguredDestination, PrnsNodeRecipe};
 use crate::wire::DestinationHash;

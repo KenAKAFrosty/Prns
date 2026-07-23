@@ -6,5 +6,5 @@ pub use prns_runtime::{
     crypto, engine, identity, interfaces, persistence, routes, routing, storage, units, wire,
 };
 
-pub mod reactor;
+pub mod manifold;
 pub mod runtime;

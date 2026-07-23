@@ -78,12 +78,12 @@ pub(crate) fn apply_identity_blackhole_command<S: StorageLayout>(
 }
 
 pub(crate) async fn settle_source<T>(
-    commands: tokio::sync::mpsc::UnboundedSender<crate::reactor::driver::HostCommand>,
+    commands: tokio::sync::mpsc::UnboundedSender<crate::manifold::driver::HostCommand>,
     build: impl FnOnce(oneshot::Sender<T>) -> IdentityBlackholeHostCommand,
 ) -> Result<T, IdentityBlackholeSourceError> {
     let (reply, settled) = oneshot::channel();
     commands
-        .send(crate::reactor::driver::HostCommand::IdentityBlackhole(
+        .send(crate::manifold::driver::HostCommand::IdentityBlackhole(
             build(reply),
         ))
         .map_err(|_| IdentityBlackholeSourceError::NodeStopped)?;
@@ -93,14 +93,14 @@ pub(crate) async fn settle_source<T>(
 }
 
 pub(crate) async fn settle_control<T>(
-    commands: tokio::sync::mpsc::UnboundedSender<crate::reactor::driver::HostCommand>,
+    commands: tokio::sync::mpsc::UnboundedSender<crate::manifold::driver::HostCommand>,
     build: impl FnOnce(
         oneshot::Sender<Result<T, IdentityBlackholeControlError>>,
     ) -> IdentityBlackholeHostCommand,
 ) -> Result<T, IdentityBlackholeControlError> {
     let (reply, settled) = oneshot::channel();
     commands
-        .send(crate::reactor::driver::HostCommand::IdentityBlackhole(
+        .send(crate::manifold::driver::HostCommand::IdentityBlackhole(
             build(reply),
         ))
         .map_err(|_| IdentityBlackholeControlError::NodeStopped)?;

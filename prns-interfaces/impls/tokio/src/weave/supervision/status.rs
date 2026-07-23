@@ -7,7 +7,7 @@ use prns_core::interfaces::weave::{EndpointId, SwitchId};
 use prns_core::interfaces::{
     ConnectionState, InterfaceId, InterfaceStatus, InterfaceVitals, TransferRates,
 };
-use prns_runtime::reactor::driver::TokioInterfaceStatus;
+use prns_runtime::manifold::driver::TokioInterfaceStatus;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]

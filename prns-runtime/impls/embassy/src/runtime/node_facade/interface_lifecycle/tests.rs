@@ -1,9 +1,9 @@
 use super::{Fleet, FleetWire, InboundDeliveryError};
 use crate::engine::FanTarget;
 use crate::interfaces::InterfaceId;
-use crate::reactor::driver::{leaked_grant_lane, InterfaceLifecycle};
-use crate::reactor::grant::{FrameTarget, LaneWriteOutcome, ReactorLaneWriter};
-use crate::reactor::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
+use crate::manifold::driver::{leaked_grant_lane, InterfaceLifecycle};
+use crate::manifold::grant::{FrameTarget, LaneWriteOutcome, ManifoldLaneWriter};
+use crate::manifold::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
 use embassy_futures::{block_on, join::join};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;

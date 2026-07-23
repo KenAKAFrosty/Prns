@@ -6,7 +6,7 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 rust-version.workspace = true
-description = "Runtime-neutral Personal Reticulum node contracts and reactor kernel"
+description = "Runtime-neutral Personal Reticulum node contracts and manifold kernel"
 publish = false
 
 [lib]

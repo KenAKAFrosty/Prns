@@ -33,7 +33,7 @@ stream-compression = ["std"]
 # Fan a resource build's per-part SHA-256 hashmap across a rayon work-stealing pool. Bit-identical output (same names, same slots), so wire format and parity are unchanged; std-only, off by default, so embedded and default builds keep the serial loop.
 parallel-resource-hash = ["std", "dep:rayon"]
 parallel-persistence = ["std", "dep:rayon"]
-# Compiles `engine::test_support` (the shared engine fixtures) outside `cfg(test)` so `prns-runtime`'s reactor tests can drive the same announces and descriptors. Never enabled by a shipping build; `prns-runtime` turns it on as a dev-dependency feature.
+# Compiles `engine::test_support` (the shared engine fixtures) outside `cfg(test)` so `prns-runtime`'s manifold tests can drive the same announces and descriptors. Never enabled by a shipping build; `prns-runtime` turns it on as a dev-dependency feature.
 test-support = ["std"]
 # The host identity vault's OS secret store (`KeyringVault`). Off by default, never built by the core gates; only an opt-in host links it. Pick exactly one Linux secret-service backend: `keyring-zbus` is pure Rust (zbus, no system library, so `cargo build` just works), `keyring-libdbus` links the system libdbus-1 C library (lighter Rust tree, but needs libdbus-1-dev present). macOS Keychain and the Windows Credential Manager ride either backend. There is deliberately no bare `keyring` feature: a feature sharing the dependency's name fuses them and pulls both backends at once; `_keyring-vault` is the internal compile gate the two share, not a knob.
 keyring-zbus = ["_keyring-vault", "keyring/async-secret-service", "keyring/async-io"]

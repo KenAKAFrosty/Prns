@@ -22,7 +22,7 @@ cargo build --locked -p personal-rns --no-default-features --target "${C6_TARGET
 echo "[4/8] core: no_std + alloc (ESP32-C6 / ${C6_TARGET})"
 cargo build --locked -p personal-rns --no-default-features --features alloc --target "${C6_TARGET}"
 
-# The embassy runtime lane (the embassy bind + reactor over the core seam), no
+# The embassy runtime lane (the embassy bind + manifold over the core seam), no
 # embassy-net/LoRa. Host compile-check first (fast), then the real C6 cross-compile
 # the on-board binary depends on.
 echo "[5/8] embassy host runtime (no_std, host compile-check)"

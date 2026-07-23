@@ -1,3 +1,3 @@
-pub use prns_runtime::reactor::reconnect::{
+pub use prns_runtime::manifold::reconnect::{
     ReconnectPolicy, ReconnectPolicyError, ReconnectSchedule,
 };

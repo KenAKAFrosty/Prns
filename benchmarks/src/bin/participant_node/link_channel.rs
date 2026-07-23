@@ -180,7 +180,7 @@ async fn initiate(
     mut events: mpsc::Receiver<Event>,
 ) {
     let destination = loop {
-        match events.recv().await.expect("reactor alive") {
+        match events.recv().await.expect("manifold alive") {
             Event::Heard(destination) => break destination,
             _ => {}
         }
@@ -346,16 +346,16 @@ async fn initiate_link(
     mut events: mpsc::Receiver<Event>,
 ) {
     let destination = loop {
-        match events.recv().await.expect("reactor alive") {
+        match events.recv().await.expect("manifold alive") {
             Event::Heard(destination) => break destination,
             _ => {}
         }
     };
     let establish = commands
         .issue(EngineCommand::EstablishLink(EstablishLink { destination }))
-        .expect("reactor alive");
+        .expect("manifold alive");
     let link_id = loop {
-        match events.recv().await.expect("reactor alive") {
+        match events.recv().await.expect("manifold alive") {
             Event::Settled(id, Settlement::EstablishLink(Ok(established))) if id == establish => {
                 break established.link_id;
             }
@@ -470,7 +470,7 @@ async fn initiate_link(
     let elapsed_ms = started.elapsed().as_millis() as u64;
     println!("MEASURE_DONE");
 
-    assert!(commands.close_link(link_id), "reactor alive");
+    assert!(commands.close_link(link_id), "manifold alive");
     let close_deadline = tokio::time::Instant::now() + drain_grace(profile);
     loop {
         match tokio::time::timeout_at(close_deadline, events.recv()).await {

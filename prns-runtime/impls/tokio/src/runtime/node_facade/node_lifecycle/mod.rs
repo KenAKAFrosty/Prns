@@ -15,9 +15,9 @@ use crate::engine::{
 use crate::identity::held::HoldIdentityError;
 use crate::identity::{IdentityHash, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::InterfaceId;
-use crate::reactor::compression;
-use crate::reactor::driver::{
-    self as reactor_driver, CryptoPoolConfig, Egress, HostCommand, ProvideDecompressedHostCommand,
+use crate::manifold::compression;
+use crate::manifold::driver::{
+    self as manifold_driver, CryptoPoolConfig, Egress, HostCommand, ProvideDecompressedHostCommand,
     TokioHost,
 };
 use crate::routing::announce::AnnounceObservation;
@@ -92,7 +92,7 @@ pub enum RegisterRequestRouteError {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeRunError {
-    ReactorPanicked,
+    ManifoldPanicked,
     RequestRouterPanicked,
     InterfaceDriverPanicked,
 }
@@ -100,7 +100,7 @@ pub enum NodeRunError {
 impl fmt::Display for NodeRunError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ReactorPanicked => formatter.write_str("the node reactor panicked"),
+            Self::ManifoldPanicked => formatter.write_str("the node manifold panicked"),
             Self::RequestRouterPanicked => formatter.write_str("the request router panicked"),
             Self::InterfaceDriverPanicked => formatter.write_str("the interface driver panicked"),
         }
@@ -110,16 +110,16 @@ impl fmt::Display for NodeRunError {
 impl std::error::Error for NodeRunError {}
 
 async fn run_node_tasks(
-    reactor: impl Future<Output = ()>,
+    manifold: impl Future<Output = ()>,
     request_router: impl Future<Output = ()>,
     interface_driver: impl Future<Output = ()>,
 ) -> Result<(), NodeRunError> {
-    let reactor = AssertUnwindSafe(reactor).catch_unwind();
+    let manifold = AssertUnwindSafe(manifold).catch_unwind();
     let request_router = AssertUnwindSafe(request_router).catch_unwind();
     let interface_driver = AssertUnwindSafe(interface_driver).catch_unwind();
-    tokio::pin!(reactor, request_router, interface_driver);
+    tokio::pin!(manifold, request_router, interface_driver);
     tokio::select! {
-        result = &mut reactor => result.map_err(|_| NodeRunError::ReactorPanicked),
+        result = &mut manifold => result.map_err(|_| NodeRunError::ManifoldPanicked),
         result = &mut request_router => result.map_err(|_| NodeRunError::RequestRouterPanicked),
         result = &mut interface_driver => result.map_err(|_| NodeRunError::InterfaceDriverPanicked),
     }
@@ -157,7 +157,7 @@ where
             interfaces: Arc::new(Mutex::new(HashMap::new())),
             store: InterfaceStore::new(),
             resource_admission: super::resource_admission::ResourceAdmissionRegistry::default(),
-            entropy: crate::reactor::driver::TokioEntropy,
+            entropy: crate::manifold::driver::TokioEntropy,
         };
         let (node, interfaces) = assemble_node(build_recipe(handle.clone()));
         interfaces.attach(&handle);
@@ -302,7 +302,7 @@ where
         self.handle.close_link(link_id)
     }
 
-    /// Drive the node until it stops (in practice forever). The reactor and the request runner run joined: every inbound request forks to the runner, while that event, and every other, reaches the recipe's `on_event` with shared `&state`, zero-copy.
+    /// Drive the node until it stops (in practice forever). The manifold and the request runner run joined: every inbound request forks to the runner, while that event, and every other, reaches the recipe's `on_event` with shared `&state`, zero-copy.
     pub async fn run(self) -> Result<(), NodeRunError> {
         let PrnsNode {
             handle,
@@ -331,10 +331,10 @@ where
         let inflate_execution = Arc::new(tokio::sync::Semaphore::new(inflate_workers));
         let admission_decider = handle.resource_admission.clone();
         let admission_cleanup = handle.resource_admission.clone();
-        let reactor = reactor_driver::run_with_store_and_deciders(
+        let manifold = manifold_driver::run_with_store_and_deciders(
             engine,
             host,
-            reactor_driver::ReactorWiring {
+            manifold_driver::ManifoldWiring {
                 interfaces: std::vec::Vec::new(),
                 ifacs: std::vec::Vec::new(),
                 notify: notify_rx,
@@ -424,7 +424,7 @@ where
             },
             store,
             crypto_pool,
-            crate::reactor::AppDeciders {
+            crate::manifold::AppDeciders {
                 should_prove: |_| false,
                 should_accept_resource: move |offer| admission_decider.permits(offer),
             },
@@ -432,7 +432,7 @@ where
         let driver_commands = handle.commands.clone();
         let driver_interfaces = handle.interfaces.clone();
         run_node_tasks(
-            reactor,
+            manifold,
             run_router::<St, R>(&state, req_rx, handle),
             drive_interfaces(
                 std::vec::Vec::new(),

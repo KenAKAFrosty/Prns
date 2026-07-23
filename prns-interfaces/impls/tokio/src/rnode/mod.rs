@@ -26,10 +26,10 @@ use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{
     ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind,
 };
-use prns_runtime::reactor::airtime::{frame_airtime_us, AirtimeLedger};
-use prns_runtime::reactor::driver::TokioInterfaceStatus;
-use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
-use prns_runtime::reactor::throughput::ThroughputLedger;
+use prns_runtime::manifold::airtime::{frame_airtime_us, AirtimeLedger};
+use prns_runtime::manifold::driver::TokioInterfaceStatus;
+use prns_runtime::manifold::interface_seam::{Interface, InterfaceSeam};
+use prns_runtime::manifold::throughput::ThroughputLedger;
 
 /// A freshly opened RNode needs the RNS two-second settle window before it will accept configuration bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -577,7 +577,7 @@ mod tests {
     use prns_core::interfaces::{
         InterfaceStatus, PacketPhyStats, RssiDbm, SignalQualityTenthsPercent, SnrQuarterDb,
     };
-    use prns_runtime::reactor::driver::{tokio_grant_lane, TokioGrantConsumer};
+    use prns_runtime::manifold::driver::{tokio_grant_lane, TokioGrantConsumer};
     use tokio::sync::mpsc::{self, UnboundedSender};
 
     struct MockSeam {

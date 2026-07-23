@@ -13,7 +13,7 @@ use personal_hopspot_core::{
 use personal_rns::bluetooth_auto::BluetoothAutoStatus;
 use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand};
 use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus};
-use personal_rns::reactor::tokio::TokioInterfaceStatus;
+use personal_rns::manifold::tokio::TokioInterfaceStatus;
 use personal_rns::runtime::{PrnsNodeHandle, RuntimeHealth};
 use personal_rns::wifi_auto::AutoWifiStatus;
 use personal_rns::wifi_aware::WifiAwareStatus;

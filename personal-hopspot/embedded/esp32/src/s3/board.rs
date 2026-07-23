@@ -29,7 +29,7 @@ pub(crate) struct S3InterfaceHardware {
     pub(crate) bluetooth: esp_hal::peripherals::BT<'static>,
 }
 
-pub(crate) struct S3ReactorHardware {
+pub(crate) struct S3ManifoldHardware {
     pub(crate) cpu_control: esp_hal::peripherals::CPU_CTRL<'static>,
     pub(crate) software_interrupt: esp_hal::interrupt::software::SoftwareInterrupt<'static, 1>,
     pub(crate) timebase: EmbassyTimebase,
@@ -39,7 +39,7 @@ pub(crate) struct S3ReactorHardware {
 pub(crate) struct S3BoardHardware<D, B> {
     pub(crate) face: BoardFace<D, B>,
     pub(crate) interface_hardware: S3InterfaceHardware,
-    pub(crate) reactor: S3ReactorHardware,
+    pub(crate) manifold: S3ManifoldHardware,
 }
 
 #[allow(async_fn_in_trait)]

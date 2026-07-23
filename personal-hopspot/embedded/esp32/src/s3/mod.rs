@@ -81,16 +81,16 @@ use personal_rns::interfaces::{
     Membership,
 };
 use personal_rns::lora::{LoRaControl, LoRaInterface, LoRaInterfaceInput};
-use personal_rns::radios::sx126x::Sx126x;
-use personal_rns::reactor::embassy::{
+use personal_rns::manifold::embassy::{
     EmbassyHost, EmbassyInterfaceSeam, EmbassyInterfaceStatus, EmbassyTimebase, InterfaceLifecycle,
 };
-use personal_rns::reactor::interface_seam::{Interface, EMBEDDED_MAX_WIRE_FRAME_LEN};
-use personal_rns::reactor::reconnect::ReconnectPolicy;
+use personal_rns::manifold::interface_seam::{Interface, EMBEDDED_MAX_WIRE_FRAME_LEN};
+use personal_rns::manifold::reconnect::ReconnectPolicy;
+use personal_rns::radios::sx126x::Sx126x;
 use personal_rns::runtime::{
-    minimum_interface_store_capacity, minimum_reactor_notification_capacity, CompletionPool,
-    EmbassyInterfaceStore, Fleet, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe,
-    ReactorLaneSet, StaticReactorLane,
+    minimum_interface_store_capacity, minimum_manifold_notification_capacity, CompletionPool,
+    EmbassyInterfaceStore, Fleet, ManifoldLaneSet, PrnsEvent, PrnsNode, PrnsNodeHandle,
+    PrnsNodeRecipe, StaticManifoldLane,
 };
 use personal_rns::storage::StorageLayout;
 use personal_rns::tcp::{TcpClient, TcpClientInput, TcpSocketBuffers};
@@ -106,7 +106,7 @@ use crate::storage::EngineStorageType;
 use personal_hopspot_core as screen;
 
 pub(crate) use board::{
-    BoardDisplay, BoardFace, Esp32S3Board, S3BoardHardware, S3InterfaceHardware, S3ReactorHardware,
+    BoardDisplay, BoardFace, Esp32S3Board, S3BoardHardware, S3InterfaceHardware, S3ManifoldHardware,
 };
 
 esp_app_desc!();
@@ -156,7 +156,7 @@ const HOPSPOT_TCP_TARGET: &str = match option_env!("HOPSPOT_TCP_TARGET") {
     None => "",
 };
 /// The board's claim about its pipe to the LAN node: it sets the declared MTU tier, which the
-/// reactor then clamps to the embedded ceiling. A 2.4 GHz station's honest order of magnitude.
+/// manifold then clamps to the embedded ceiling. A 2.4 GHz station's honest order of magnitude.
 const TCP_BITRATE_BPS: BitrateBps = BitrateBps::guess(65_000_000);
 /// One TCP socket's smoltcp rx/tx buffer — sized for the board's frames, DRAM-frugal over throughput.
 const TCP_SOCKET_BUF: usize = 1_024;
@@ -173,7 +173,7 @@ const INTERFACE_CAPACITY: usize =
 const WIFI_SUPERVISOR_ID: InterfaceId =
     InterfaceId::new([InterfaceKind::AutoWifi as u8, 0, 0, 0, 0, 0, 0, 0]);
 const LANE_DEPTH: usize = 1;
-pub const NOTIFY_CAP: usize = minimum_reactor_notification_capacity(LANE_COUNT, LANE_DEPTH);
+pub const NOTIFY_CAP: usize = minimum_manifold_notification_capacity(LANE_COUNT, LANE_DEPTH);
 const COMMANDS_CAP: usize = 8;
 pub const LIFECYCLE_CAP: usize = 8;
 const COMPLETIONS_CAP: usize = 4;
@@ -215,7 +215,7 @@ type S3Node = PrnsNode<
     LIFECYCLE_CAP,
     COMPLETIONS_CAP,
 >;
-type ReactorLanes = ReactorLaneSet<Mtx, LANE_COUNT, NOTIFY_CAP>;
+type ManifoldLanes = ManifoldLaneSet<Mtx, LANE_COUNT, NOTIFY_CAP>;
 macro_rules! mk_static {
     ($t:ty, $val:expr) => {{
         static CELL: StaticCell<$t> = StaticCell::new();
@@ -236,7 +236,7 @@ use connectivity::build_tcp;
 #[cfg(feature = "wifi-auto")]
 use connectivity::{build_wifi, espnow_channel_policy, EspNowAdapter};
 #[cfg(not(feature = "wifi-auto"))]
-use display::add_reactor_pressure;
+use display::add_manifold_pressure;
 #[cfg(feature = "wifi-auto")]
 use display::build_interface_menu_details;
 use display::{build_cards, build_snapshots, button_task};
@@ -250,19 +250,23 @@ const BLE_SUPERVISOR_ID: InterfaceId =
 static BLE_SHARED: BluetoothAutoShared<BLE_PEER_CAPACITY> =
     BluetoothAutoShared::new(BLE_SUPERVISOR_ID);
 static LORA_CONTROL: LoRaControl = LoRaControl::new();
-static USB_REACTOR_LANE: StaticReactorLane<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, LANE_DEPTH> =
-    StaticReactorLane::new();
-static TCP_REACTOR_LANE: StaticReactorLane<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, LANE_DEPTH> =
-    StaticReactorLane::new();
-static WIFI_REACTOR_LANE: StaticReactorLane<Mtx, { wifi_auto_contract::HARDWARE_MTU }, LANE_DEPTH> =
-    StaticReactorLane::new();
-static LORA_REACTOR_LANE: StaticReactorLane<Mtx, LORA_MAX_PAYLOAD, LANE_DEPTH> =
-    StaticReactorLane::new();
+static USB_MANIFOLD_LANE: StaticManifoldLane<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, LANE_DEPTH> =
+    StaticManifoldLane::new();
+static TCP_MANIFOLD_LANE: StaticManifoldLane<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, LANE_DEPTH> =
+    StaticManifoldLane::new();
+static WIFI_MANIFOLD_LANE: StaticManifoldLane<
+    Mtx,
+    { wifi_auto_contract::HARDWARE_MTU },
+    LANE_DEPTH,
+> = StaticManifoldLane::new();
+static LORA_MANIFOLD_LANE: StaticManifoldLane<Mtx, LORA_MAX_PAYLOAD, LANE_DEPTH> =
+    StaticManifoldLane::new();
 #[cfg(feature = "bluetooth-auto")]
-static BLE_REACTOR_LANE: StaticReactorLane<Mtx, BLE_HW_MTU, LANE_DEPTH> = StaticReactorLane::new();
+static BLE_MANIFOLD_LANE: StaticManifoldLane<Mtx, BLE_HW_MTU, LANE_DEPTH> =
+    StaticManifoldLane::new();
 #[cfg(feature = "esp-now")]
-static ESPNOW_REACTOR_LANE: StaticReactorLane<Mtx, ESP_NOW_V2_AIR_MTU, LANE_DEPTH> =
-    StaticReactorLane::new();
+static ESPNOW_MANIFOLD_LANE: StaticManifoldLane<Mtx, ESP_NOW_V2_AIR_MTU, LANE_DEPTH> =
+    StaticManifoldLane::new();
 
 static NOTIFY: Channel<Mtx, InterfaceId, NOTIFY_CAP> = Channel::new();
 static COMMANDS: Channel<Mtx, personal_rns::engine::IssuedCommand, COMMANDS_CAP> = Channel::new();
@@ -272,7 +276,7 @@ static OUTBOUND_WAKE: Signal<Mtx, ()> = Signal::new();
 static BLE_OUTBOUND_WAKE: Signal<Mtx, ()> = Signal::new();
 static COMPLETION: CompletionPool<Mtx, COMPLETIONS_CAP> = CompletionPool::new();
 static BUTTON_EVENTS: Channel<Mtx, screen::InputEvent, 4> = Channel::new();
-/// Per-interface engine counts the reactor (core 1) pushes into and the render task (core 0) reads —
+/// Per-interface engine counts the manifold (core 1) pushes into and the render task (core 0) reads —
 /// a `CriticalSectionRawMutex` store so the `&'static` shared across cores stays `Sync`. Capacity is a
 /// power of two above the interface ceiling, so a live interface's counts never get dropped.
 static INTERFACE_STORE: InterfaceStore = EmbassyInterfaceStore::new();
@@ -356,7 +360,7 @@ macro_rules! boot_common {
         // slow, so it can overrun the RTC watchdog's ~2s timeout. Disable RWDT/SWD over the boot.
         rtc.rwdt.disable();
         rtc.swd.disable();
-        let timebase = ::personal_rns::reactor::embassy::EmbassyTimebase::start_at(
+        let timebase = ::personal_rns::manifold::embassy::EmbassyTimebase::start_at(
             ::personal_rns::engine::InstantMillis(rtc.current_time_us() / 1000),
         );
         ::esp_println::println!("{} boot — recipe runtime, engine core 1 + I/O core 0", $banner);

@@ -25,8 +25,8 @@ use personal_rns::interfaces::{
     tcp, BitrateBps, ConfiguredInterfacePolicy, EffectiveInterfacePolicy, InterfaceDescriptor,
     InterfaceId, InterfaceKind, MtuPolicy, ReportsStatus,
 };
-use personal_rns::reactor::interface_seam::{Interface, InterfaceSeam};
-use personal_rns::reactor::reconnect::ReconnectPolicy;
+use personal_rns::manifold::interface_seam::{Interface, InterfaceSeam};
+use personal_rns::manifold::reconnect::ReconnectPolicy;
 use personal_rns::routes;
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::links::resources::{ResourceStrategy, MAX_EFFICIENT_SIZE};

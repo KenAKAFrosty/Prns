@@ -235,7 +235,7 @@ pub(super) async fn initiate_resource_runtime(
     mut events: mpsc::Receiver<Event>,
 ) {
     let destination = loop {
-        match events.recv().await.expect("reactor alive") {
+        match events.recv().await.expect("manifold alive") {
             Event::Heard(destination) => break destination,
             _ => {}
         }

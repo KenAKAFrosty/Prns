@@ -1,6 +1,6 @@
 #![cfg_attr(not(any(feature = "std", test)), no_std)]
 #![deny(unsafe_code)]
-#![doc = "Runtime-neutral Personal Reticulum node contracts and reactor kernel"]
+#![doc = "Runtime-neutral Personal Reticulum node contracts and manifold kernel"]
 #![deny(rustdoc::broken_intra_doc_links)]
 
 #[cfg(feature = "alloc")]
@@ -15,5 +15,5 @@ pub use prns_core::{
 };
 
 pub use runtime::node_introspection;
-pub mod reactor;
+pub mod manifold;
 pub mod runtime;
