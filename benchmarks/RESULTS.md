@@ -2,7 +2,7 @@
 
 # Benchmark results
 
-
 | Host | Machine | Results |
 |---|---|---|
 | `aarch64-apple-darwin` | Apple M4 | [view](RESULTS-aarch64-apple-darwin.md) |
+| `x86_64-pc-windows-msvc` | AMD Ryzen 5 5600X 6-Core Processor | [view](RESULTS-x86_64-pc-windows-msvc.md) |
