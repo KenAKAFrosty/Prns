@@ -17,6 +17,7 @@ default-members = [
 exclude = [
     "prnsd",
     "prns-ffi",
+    "prns-napi",
     "prns-wasm",
     "prns-runtime/impls/tokio",
     "prns-runtime/impls/embassy",

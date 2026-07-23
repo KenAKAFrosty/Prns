@@ -1,0 +1,72 @@
+{
+  "name": "personal-rns",
+  "version": "0.2.8",
+  "description": "Node.js bindings for Personal Reticulum: a fast, robust implementation of the Reticulum network stack.",
+  "license": "MIT OR Apache-2.0",
+  "homepage": "https://prns.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/KenAKAFrosty/Prns.git",
+    "directory": "prns-napi"
+  },
+  "bugs": {
+    "url": "https://github.com/KenAKAFrosty/Prns/issues"
+  },
+  "main": "index.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.mjs",
+      "require": "./index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "sideEffects": false,
+  "files": [
+    "index.js",
+    "index.mjs",
+    "index.d.ts",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
+  ],
+  "engines": {
+    "node": ">= 20"
+  },
+  "napi": {
+    "binaryName": "personal-rns",
+    "targets": [
+      "x86_64-pc-windows-msvc",
+      "aarch64-pc-windows-msvc",
+      "x86_64-apple-darwin",
+      "aarch64-apple-darwin",
+      "x86_64-unknown-linux-gnu",
+      "aarch64-unknown-linux-gnu",
+      "x86_64-unknown-linux-musl"
+    ]
+  },
+  "scripts": {
+    "build": "napi build --platform --release",
+    "build:debug": "napi build --platform",
+    "artifacts": "napi artifacts",
+    "create-npm-dirs": "napi create-npm-dirs",
+    "napi-version": "napi version",
+    "test": "tsc -p tests/tsconfig.json && node --test \"tests/dist/*.test.js\""
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "3.7.4",
+    "@types/node": "24.3.0",
+    "typescript": "5.9.2"
+  },
+  "keywords": [
+    "reticulum",
+    "rns",
+    "mesh",
+    "networking",
+    "napi-rs"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

@@ -1,0 +1,37 @@
+mod errors;
+mod events;
+mod marshal;
+mod node;
+mod runtime;
+
+use napi::bindgen_prelude::Buffer;
+use napi::Result;
+use napi_derive::napi;
+
+use crate::errors::{code_err, ErrorCode};
+
+#[napi]
+pub fn version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
+#[napi]
+pub fn generate_identity_secret() -> Result<Buffer, ErrorCode> {
+    personal_rns::try_generate_identity_secret()
+        .map(|secret| Buffer::from(secret.to_vec()))
+        .map_err(|error| {
+            code_err(
+                ErrorCode::Internal,
+                format!("entropy unavailable: {error:?}"),
+            )
+        })
+}
+
+#[napi]
+pub fn request_path_hash(path: String) -> Buffer {
+    Buffer::from(
+        personal_rns::routing::request_handlers::RequestPathHash::of(&path)
+            .as_bytes()
+            .to_vec(),
+    )
+}
