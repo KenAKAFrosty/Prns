@@ -47,16 +47,23 @@ fn role_cleanup_only_selects_a_session_after_its_data_receiver_closes() {
 }
 
 #[test]
-fn native_write_only_selects_acknowledged_atomic_fragments() {
-    let plan = GattWritePlan::from_discovery(CBCharacteristicProperties::Write, 512, 244).unwrap();
+fn native_write_selects_acknowledged_atomic_fragments_when_both_modes_are_advertised() {
+    let plan = GattWritePlan::from_discovery(
+        GattWriteMode::WithResponse,
+        CBCharacteristicProperties::Write | CBCharacteristicProperties::WriteWithoutResponse,
+        512,
+        244,
+    )
+    .unwrap();
 
     assert_eq!(plan.mode(), GattWriteMode::WithResponse);
     assert_eq!(plan.fragment_mtu(), 180);
 }
 
 #[test]
-fn unacknowledged_write_is_preferred_only_when_advertised() {
+fn columba_write_selects_unacknowledged_fragments_when_advertised() {
     let plan = GattWritePlan::from_discovery(
+        GattWriteMode::WithoutResponse,
         CBCharacteristicProperties::Write | CBCharacteristicProperties::WriteWithoutResponse,
         512,
         120,
@@ -70,12 +77,40 @@ fn unacknowledged_write_is_preferred_only_when_advertised() {
 #[test]
 fn unsupported_or_non_fragmentable_characteristics_are_rejected() {
     assert!(matches!(
-        GattWritePlan::from_discovery(CBCharacteristicProperties::Notify, 512, 244),
+        GattWritePlan::from_discovery(
+            GattWriteMode::WithResponse,
+            CBCharacteristicProperties::Notify,
+            512,
+            244
+        ),
         Err(MacosBleError::UnsupportedWriteMode)
     ));
     assert!(matches!(
-        GattWritePlan::from_discovery(CBCharacteristicProperties::Write, 512, 5),
+        GattWritePlan::from_discovery(
+            GattWriteMode::WithResponse,
+            CBCharacteristicProperties::Write,
+            512,
+            5
+        ),
         Err(MacosBleError::InvalidWriteMtu)
+    ));
+    assert!(matches!(
+        GattWritePlan::from_discovery(
+            GattWriteMode::WithResponse,
+            CBCharacteristicProperties::WriteWithoutResponse,
+            512,
+            244
+        ),
+        Err(MacosBleError::UnsupportedWriteMode)
+    ));
+    assert!(matches!(
+        GattWritePlan::from_discovery(
+            GattWriteMode::WithoutResponse,
+            CBCharacteristicProperties::Write,
+            512,
+            244
+        ),
+        Err(MacosBleError::UnsupportedWriteMode)
     ));
 }
 

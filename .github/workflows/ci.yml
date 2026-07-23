@@ -75,6 +75,8 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
       - name: Install Linux desktop link dependency
         run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
+      - name: clippy and test — prns-core external-alloc
+        run: bash validation/native/external-alloc.sh
       # The tokio interface crate: every host interface family above the engine's tokio-host bind,
       # linted/tested/doc'd as the standalone workspace consumers actually build. --all-features is
       # honest here — the per-OS BLE backends live in target tables, so Linux gets BlueR and never

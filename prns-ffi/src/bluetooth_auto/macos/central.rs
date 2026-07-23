@@ -464,7 +464,11 @@ define_class!(
             }
             if let Some(control) = control {
                 let data_target = match data.as_deref() {
-                    Some(data) => match GattWriteTarget::discover(peripheral, data) {
+                    Some(data) => match GattWriteTarget::discover(
+                        peripheral,
+                        data,
+                        GattWriteMode::WithResponse,
+                    ) {
                         Ok(target) => Some(target),
                         Err(error) => {
                             crate::diagnostic_log::warn!(
@@ -506,16 +510,17 @@ define_class!(
                 self.fail_peer(peer_id);
                 return;
             };
-            let write_target = match GattWriteTarget::discover(peripheral, &rx) {
-                Ok(target) => target,
-                Err(error) => {
-                    crate::diagnostic_log::warn!(
+            let write_target =
+                match GattWriteTarget::discover(peripheral, &rx, GattWriteMode::WithoutResponse) {
+                    Ok(target) => target,
+                    Err(error) => {
+                        crate::diagnostic_log::warn!(
                         "bluetooth: Columba RX characteristic cannot be written safely: {error:?}"
                     );
-                    self.fail_peer(peer_id);
-                    return;
-                }
-            };
+                        self.fail_peer(peer_id);
+                        return;
+                    }
+                };
             let Some(()) = self
                 .ivars()
                 .sessions

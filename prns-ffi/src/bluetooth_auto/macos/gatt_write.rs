@@ -56,6 +56,7 @@ impl GattWritePlan {
     pub(super) fn discover(
         peripheral: &CBPeripheral,
         characteristic: &CBCharacteristic,
+        mode: GattWriteMode,
     ) -> Result<Self, MacosBleError> {
         // SAFETY: both immutable queries run during characteristic discovery on the retained
         // peripheral's CoreBluetooth queue.
@@ -73,21 +74,24 @@ impl GattWritePlan {
         let without_response_mtu = unsafe {
             peripheral.maximumWriteValueLengthForType(CBCharacteristicWriteType::WithoutResponse)
         };
-        Self::from_discovery(properties, with_response_mtu, without_response_mtu)
+        Self::from_discovery(mode, properties, with_response_mtu, without_response_mtu)
     }
 
     pub(super) fn from_discovery(
+        mode: GattWriteMode,
         properties: CBCharacteristicProperties,
         with_response_mtu: usize,
         without_response_mtu: usize,
     ) -> Result<Self, MacosBleError> {
-        let mode = if properties.contains(CBCharacteristicProperties::WriteWithoutResponse) {
-            GattWriteMode::WithoutResponse
-        } else if properties.contains(CBCharacteristicProperties::Write) {
-            GattWriteMode::WithResponse
-        } else {
-            return Err(MacosBleError::UnsupportedWriteMode);
+        let supported = match mode {
+            GattWriteMode::WithResponse => properties.contains(CBCharacteristicProperties::Write),
+            GattWriteMode::WithoutResponse => {
+                properties.contains(CBCharacteristicProperties::WriteWithoutResponse)
+            }
         };
+        if !supported {
+            return Err(MacosBleError::UnsupportedWriteMode);
+        }
         let selected_mtu = match mode {
             GattWriteMode::WithResponse => with_response_mtu.min(without_response_mtu),
             GattWriteMode::WithoutResponse => without_response_mtu,
@@ -117,10 +121,11 @@ impl GattWriteTarget {
     pub(super) fn discover(
         peripheral: &CBPeripheral,
         characteristic: &CBCharacteristic,
+        mode: GattWriteMode,
     ) -> Result<Self, MacosBleError> {
         Ok(Self {
             characteristic: SendCharacteristicRef(characteristic.retain()),
-            plan: GattWritePlan::discover(peripheral, characteristic)?,
+            plan: GattWritePlan::discover(peripheral, characteristic, mode)?,
         })
     }
 }
