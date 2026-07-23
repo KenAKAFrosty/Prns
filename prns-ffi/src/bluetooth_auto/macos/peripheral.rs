@@ -65,6 +65,14 @@ struct PeripheralPeerSession {
     data_tx: tokio_mpsc::Sender<Box<[u8]>>,
 }
 
+impl PeripheralPeerSession {
+    fn data_receiver_closed(&self) -> bool {
+        // The control receiver is handshake-only and closes when a link settles. The data
+        // receiver is retained by the attached member for the full lifetime of this role.
+        self.data_tx.is_closed()
+    }
+}
+
 pub(super) struct PeripheralDelegateIvars {
     events: tokio_mpsc::UnboundedSender<Event>,
     characteristic: RefCell<Retained<CBMutableCharacteristic>>,
@@ -74,7 +82,8 @@ pub(super) struct PeripheralDelegateIvars {
     columba_identity_characteristic: RefCell<Retained<CBMutableCharacteristic>>,
     queue: DispatchRetained<DispatchQueue>,
     manager: RefCell<Option<SendPeripheralManager>>,
-    service_published: RefCell<bool>,
+    service_registration_requested: RefCell<bool>,
+    l2cap_publication_requested: RefCell<bool>,
     sessions: RefCell<HashMap<CoreBluetoothPeerId, PeripheralPeerSession>>,
     pending_l2cap: RefCell<HashMap<CoreBluetoothPeerId, PendingL2cap>>,
 }
@@ -94,7 +103,7 @@ define_class!(
             if unsafe { peripheral.state() } == CBManagerState::PoweredOn {
                 *self.ivars().manager.borrow_mut() =
                     Some(SendPeripheralManager(peripheral.retain()));
-                if !*self.ivars().service_published.borrow() {
+                if !*self.ivars().service_registration_requested.borrow() {
                     let control_ref = self.ivars().characteristic.borrow();
                     let data_ref = self.ivars().data_characteristic.borrow();
                     let columba_rx_ref = self.ivars().columba_rx_characteristic.borrow();
@@ -128,11 +137,15 @@ define_class!(
                     // SAFETY: the newly initialized service remains retained while the live manager
                     // registers it on the serial CoreBluetooth queue.
                     unsafe { peripheral.addService(&service) };
-                    *self.ivars().service_published.borrow_mut() = true;
+                    *self.ivars().service_registration_requested.borrow_mut() = true;
                 }
-                // SAFETY: the live peripheral manager is messaged only from its delegate's serial
-                // dispatch queue; the boolean has the generated selector's declared type.
-                unsafe { peripheral.publishL2CAPChannelWithEncryption(false) };
+                if !*self.ivars().l2cap_publication_requested.borrow() {
+                    // SAFETY: the live peripheral manager is messaged only from its delegate's
+                    // serial dispatch queue; the boolean has the generated selector's declared
+                    // type.
+                    unsafe { peripheral.publishL2CAPChannelWithEncryption(false) };
+                    *self.ivars().l2cap_publication_requested.borrow_mut() = true;
+                }
             }
         }
 
@@ -189,33 +202,30 @@ define_class!(
                             mutable.retain();
                     }
                 }
-                *self.ivars().service_published.borrow_mut() = true;
+                *self.ivars().service_registration_requested.borrow_mut() = true;
                 crate::diagnostic_log::debug!(
                     "bluetooth: restored the published Prns GATT service from a background relaunch"
                 );
+                let _ = self.ivars().events.send(Event::GattServicePublished);
             }
         }
 
         #[unsafe(method(peripheralManager:didAddService:error:))]
         fn did_add_service(
             &self,
-            peripheral: &CBPeripheralManager,
+            _peripheral: &CBPeripheralManager,
             _service: &CBService,
             error: Option<&NSError>,
         ) {
             if let Some(error) = error {
                 crate::diagnostic_log::error!("bluetooth: GATT service add FAILED: {error:?}");
+                let _ = self.ivars().events.send(Event::GattServicePublishFailed);
                 return;
             }
             crate::diagnostic_log::debug!(
-                "bluetooth: GATT service added (control characteristic live), starting advertising"
+                "bluetooth: GATT service added (control characteristic live)"
             );
-            let uuid = service_uuid();
-            let services = NSArray::from_slice(&[&*uuid]);
-            let data = advertisement_data(&services);
-            // SAFETY: this live manager is called on its serial delegate queue, and the retained
-            // advertisement dictionary stays alive for the synchronous message.
-            unsafe { peripheral.startAdvertising(Some(&data)) };
+            let _ = self.ivars().events.send(Event::GattServicePublished);
         }
 
         #[unsafe(method(peripheralManagerDidStartAdvertising:error:))]
@@ -242,10 +252,10 @@ define_class!(
         ) {
             if let Some(error) = error {
                 crate::diagnostic_log::error!("bluetooth: L2CAP publish FAILED: {error:?}");
-                let _ = self.ivars().events.send(Event::PublishFailed);
+                let _ = self.ivars().events.send(Event::L2capPublishFailed);
             } else {
                 crate::diagnostic_log::debug!("bluetooth: published L2CAP channel, PSM {psm:#06x}");
-                let _ = self.ivars().events.send(Event::Published { psm });
+                let _ = self.ivars().events.send(Event::L2capPublished { psm });
             }
         }
 
@@ -500,7 +510,8 @@ impl PeripheralDelegate {
             columba_identity_characteristic: RefCell::new(columba_identity_characteristic),
             queue,
             manager: RefCell::new(None),
-            service_published: RefCell::new(false),
+            service_registration_requested: RefCell::new(false),
+            l2cap_publication_requested: RefCell::new(false),
             sessions: RefCell::new(HashMap::new()),
             pending_l2cap: RefCell::new(HashMap::new()),
         });
@@ -644,14 +655,17 @@ impl PeripheralDelegate {
             else {
                 return;
             };
-            if mode.is_on() {
+            // SAFETY: this authoritative CoreBluetooth state query runs on the retained manager's
+            // serial dispatch queue.
+            let is_advertising = unsafe { manager.isAdvertising() };
+            if mode.is_on() && !is_advertising {
                 let uuid = service_uuid();
                 let services = NSArray::from_slice(&[&*uuid]);
                 let data = advertisement_data(&services);
                 // SAFETY: the retained manager is messaged on its serial dispatch queue and the
                 // advertisement dictionary remains live for the synchronous call.
                 unsafe { manager.startAdvertising(Some(&data)) };
-            } else {
+            } else if !mode.is_on() && is_advertising {
                 // SAFETY: the retained manager is messaged only on its serial dispatch queue.
                 unsafe { manager.stopAdvertising() };
                 crate::diagnostic_log::debug!(
@@ -661,21 +675,28 @@ impl PeripheralDelegate {
         });
     }
 
-    pub(super) fn clear_peer(&self, address: BleAddress) {
+    pub(super) fn clear_closed_peer(&self, address: BleAddress) {
         let queue = self.ivars().queue.clone();
         let this = SendPeripheralDelegate(self.retain());
         queue.exec_async(move || {
             let this = this;
+            let mut removed = false;
             this.0
                 .ivars()
                 .sessions
                 .borrow_mut()
-                .retain(|peer_id, _| peer_id.address() != address);
-            this.0
-                .ivars()
-                .pending_l2cap
-                .borrow_mut()
-                .retain(|peer_id, _| peer_id.address() != address);
+                .retain(|peer_id, session| {
+                    let remove = peer_id.address() == address && session.data_receiver_closed();
+                    removed |= remove;
+                    !remove
+                });
+            if removed {
+                this.0
+                    .ivars()
+                    .pending_l2cap
+                    .borrow_mut()
+                    .retain(|peer_id, _| peer_id.address() != address);
+            }
         });
     }
 }

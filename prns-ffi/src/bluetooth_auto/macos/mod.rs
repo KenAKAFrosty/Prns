@@ -2,6 +2,7 @@ mod backend;
 mod central;
 mod data_plane;
 mod gatt_link;
+mod gatt_write;
 mod peripheral;
 
 #[cfg(test)]
@@ -190,11 +191,13 @@ struct SendPeripheralDelegate(Retained<PeripheralDelegate>);
 unsafe impl Send for SendPeripheralDelegate {}
 
 enum Event {
-    Powered,
-    Published {
+    CentralPowered,
+    GattServicePublished,
+    GattServicePublishFailed,
+    L2capPublished {
         psm: u16,
     },
-    PublishFailed,
+    L2capPublishFailed,
     Sighting {
         address: BleAddress,
         rssi: Option<i8>,
@@ -213,4 +216,8 @@ pub enum MacosBleError {
     QueueFull,
     DialFailed,
     MissingColumbaIdentity,
+    UnsupportedWriteMode,
+    InvalidWriteMtu,
+    GattWriteFailed,
+    GattWriteTimeout,
 }

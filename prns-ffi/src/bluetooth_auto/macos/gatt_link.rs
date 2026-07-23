@@ -1,8 +1,7 @@
+use core::time::Duration;
 use std::sync::{Arc, Mutex};
 
 use dispatch2::{DispatchQueue, DispatchRetained};
-use objc2_core_bluetooth::CBCharacteristicWriteType;
-use objc2_foundation::NSData;
 use tokio::sync::{mpsc as tokio_mpsc, oneshot};
 
 use prns_core::interfaces::bluetooth_auto::{
@@ -12,13 +11,15 @@ use prns_core::interfaces::bluetooth_auto::{
 use prns_core::interfaces::bluetooth_auto::{BleLink, BleSink, BleSource};
 
 use super::data_plane::{flush, DataPlane, Outbound, PumpHandle, PumpPtr, L2CAP_SDU_LEN};
+use super::gatt_write::{GattWriteMode, GattWriteRequest, GattWriteTarget};
 use super::peripheral::ListenerCharacteristic;
 use super::{
-    CoreBluetoothPeerId, MacosBleError, SendCharacteristicRef, SendPeripheral,
+    CoreBluetoothPeerId, MacosBleError, SendCentralDelegate, SendCharacteristicRef, SendPeripheral,
     SendPeripheralDelegate,
 };
 
 const GATT_REASSEMBLY_CAP: usize = BLE_HW_MTU;
+const GATT_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 const L2CAP_OUTBOUND_CAP: usize = 8 * L2CAP_SDU_LEN;
 pub(super) enum ControlPlane {
     Listener {
@@ -30,16 +31,21 @@ pub(super) enum ControlPlane {
         peer_id: CoreBluetoothPeerId,
         peripheral: SendPeripheral,
         characteristic: SendCharacteristicRef,
-        data_characteristic: Option<SendCharacteristicRef>,
+        data_characteristic: Option<GattWriteTarget>,
+        central_delegate: SendCentralDelegate,
+        queue: DispatchRetained<DispatchQueue>,
         peripheral_manager: SendPeripheralDelegate,
     },
 }
 
 enum GattWriter {
     Central {
+        peer_id: CoreBluetoothPeerId,
         peripheral: SendPeripheral,
         characteristic: SendCharacteristicRef,
-        fragment_mtu: usize,
+        central_delegate: SendCentralDelegate,
+        queue: DispatchRetained<DispatchQueue>,
+        plan: super::gatt_write::GattWritePlan,
     },
     Listener {
         peer_id: CoreBluetoothPeerId,
@@ -49,11 +55,10 @@ enum GattWriter {
 }
 
 impl GattWriter {
-    fn send(&self, frame: &[u8]) -> Result<(), MacosBleError> {
+    async fn send(&self, frame: &[u8]) -> Result<(), MacosBleError> {
         let fragment_mtu = match self {
-            Self::Central { fragment_mtu, .. } | Self::Listener { fragment_mtu, .. } => {
-                *fragment_mtu
-            }
+            Self::Central { plan, .. } => plan.fragment_mtu(),
+            Self::Listener { fragment_mtu, .. } => *fragment_mtu,
         };
         let mut buf = [0u8; FRAGMENT_HEADER_LEN + BLE_HW_MTU];
         for fragment in fragments_of(frame, fragment_mtu) {
@@ -62,20 +67,24 @@ impl GattWriter {
                 .ok_or(MacosBleError::FrameTooLarge)?;
             match self {
                 GattWriter::Central {
+                    peer_id,
                     peripheral,
                     characteristic,
+                    central_delegate,
+                    queue,
+                    plan,
                     ..
                 } => {
-                    let data = NSData::with_bytes(&buf[..len]);
-                    // SAFETY: the characteristic belongs to this retained peripheral and the
-                    // NSData remains live for the synchronous CoreBluetooth message.
-                    unsafe {
-                        peripheral.0.writeValue_forCharacteristic_type(
-                            &data,
-                            &characteristic.0,
-                            CBCharacteristicWriteType::WithoutResponse,
-                        );
-                    }
+                    central_write(
+                        *peer_id,
+                        peripheral,
+                        characteristic,
+                        central_delegate,
+                        queue,
+                        plan.mode(),
+                        &buf[..len],
+                    )
+                    .await?;
                 }
                 GattWriter::Listener {
                     peer_id, delegate, ..
@@ -93,6 +102,42 @@ impl GattWriter {
             }
         }
         Ok(())
+    }
+}
+
+async fn central_write(
+    peer_id: CoreBluetoothPeerId,
+    peripheral: &SendPeripheral,
+    characteristic: &SendCharacteristicRef,
+    central_delegate: &SendCentralDelegate,
+    queue: &DispatchRetained<DispatchQueue>,
+    mode: GattWriteMode,
+    bytes: &[u8],
+) -> Result<(), MacosBleError> {
+    let (completion_tx, completion_rx) = oneshot::channel();
+    let request = GattWriteRequest::new(
+        SendCharacteristicRef(characteristic.0.clone()),
+        Box::from(bytes),
+        mode,
+        completion_tx,
+    );
+    let peripheral = SendPeripheral(peripheral.0.clone());
+    let delegate = SendCentralDelegate(central_delegate.0.clone());
+    queue.exec_async(move || {
+        let peripheral = peripheral;
+        let delegate = delegate;
+        delegate.0.submit_write(&peripheral.0, peer_id, request);
+    });
+    match tokio::time::timeout(GATT_WRITE_TIMEOUT, completion_rx).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(_)) => Err(MacosBleError::Closed),
+        Err(_) => {
+            crate::diagnostic_log::warn!(
+                "bluetooth: {:02x?} {mode:?} GATT write timed out",
+                peer_id.address().octets()
+            );
+            Err(MacosBleError::GattWriteTimeout)
+        }
     }
 }
 
@@ -126,24 +171,26 @@ impl BleLink for GattLink {
 
     async fn send_columba_identity(&mut self, identity: BleIdentity) -> Result<(), MacosBleError> {
         let ControlPlane::Central {
+            peer_id,
             peripheral,
             characteristic,
+            central_delegate,
+            queue,
             ..
         } = &self.control
         else {
             return Ok(());
         };
-        let data = NSData::with_bytes(identity.as_bytes());
-        // SAFETY: the characteristic was discovered on this retained peripheral, and NSData stays
-        // alive for the duration of the synchronous CoreBluetooth write message.
-        unsafe {
-            peripheral.0.writeValue_forCharacteristic_type(
-                &data,
-                &characteristic.0,
-                CBCharacteristicWriteType::WithResponse,
-            )
-        };
-        Ok(())
+        central_write(
+            *peer_id,
+            peripheral,
+            characteristic,
+            central_delegate,
+            queue,
+            GattWriteMode::WithResponse,
+            identity.as_bytes(),
+        )
+        .await
     }
 
     async fn control_send(&mut self, msg: &Control) -> Result<(), MacosBleError> {
@@ -172,38 +219,23 @@ impl BleLink for GattLink {
                 }
             }
             ControlPlane::Central {
+                peer_id,
                 peripheral,
                 characteristic,
+                central_delegate,
+                queue,
                 ..
             } => {
-                let data = NSData::with_bytes(&buf[..len]);
-                // SAFETY: this retained CoreBluetooth peripheral is accessed only through the
-                // manager's serialized callbacks and exposes this immutable negotiated property.
-                let max = unsafe {
-                    peripheral
-                        .0
-                        .maximumWriteValueLengthForType(CBCharacteristicWriteType::WithResponse)
-                };
-                if max < len {
-                    crate::diagnostic_log::warn!(
-                        "bluetooth: {:02x?} control write {len}B exceeds max single write {max}B (negotiated ATT MTU is small) — CoreBluetooth will use a long/prepared write; the peer GATT server must reassemble it",
-                        self.address.octets()
-                    );
-                } else {
-                    crate::diagnostic_log::debug!(
-                        "bluetooth: {:02x?} control write {len}B fits one ATT packet (max {max}B)",
-                        self.address.octets()
-                    );
-                }
-                // SAFETY: the characteristic belongs to this retained peripheral and `data` is
-                // valid for the full synchronous Objective-C message.
-                unsafe {
-                    peripheral.0.writeValue_forCharacteristic_type(
-                        &data,
-                        &characteristic.0,
-                        CBCharacteristicWriteType::WithResponse,
-                    )
-                };
+                central_write(
+                    *peer_id,
+                    peripheral,
+                    characteristic,
+                    central_delegate,
+                    queue,
+                    GattWriteMode::WithResponse,
+                    &buf[..len],
+                )
+                .await?;
                 crate::diagnostic_log::debug!(
                     "bluetooth: {:02x?} -> {msg:?}",
                     self.address.octets()
@@ -327,21 +359,28 @@ impl BleLink for GattLink {
 fn gatt_writer(control: &ControlPlane) -> Option<GattWriter> {
     match control {
         ControlPlane::Central {
+            peer_id,
             peripheral,
             data_characteristic: Some(data_characteristic),
+            central_delegate,
+            queue,
             ..
-        } => Some(GattWriter::Central {
-            peripheral: SendPeripheral(peripheral.0.clone()),
-            characteristic: SendCharacteristicRef(data_characteristic.0.clone()),
-            // SAFETY: this retained peripheral owns the discovered characteristic and querying its
-            // negotiated maximum does not outlive or mutate either object.
-            fragment_mtu: unsafe {
-                peripheral
-                    .0
-                    .maximumWriteValueLengthForType(CBCharacteristicWriteType::WithoutResponse)
-            }
-            .clamp(FRAGMENT_HEADER_LEN + 1, BLE_HW_MTU),
-        }),
+        } => {
+            crate::diagnostic_log::debug!(
+                "bluetooth: {:02x?} GATT writer selected {:?}, fragment MTU {}B",
+                peer_id.address().octets(),
+                data_characteristic.plan.mode(),
+                data_characteristic.plan.fragment_mtu()
+            );
+            Some(GattWriter::Central {
+                peer_id: *peer_id,
+                peripheral: SendPeripheral(peripheral.0.clone()),
+                characteristic: SendCharacteristicRef(data_characteristic.characteristic.0.clone()),
+                central_delegate: SendCentralDelegate(central_delegate.0.clone()),
+                queue: queue.clone(),
+                plan: data_characteristic.plan,
+            })
+        }
         ControlPlane::Central {
             data_characteristic: None,
             ..
@@ -445,7 +484,7 @@ impl BleSink for GattSink {
             }
         }
         if let Some(gatt) = &self.gatt {
-            return gatt.send(frame);
+            return gatt.send(frame).await;
         }
         Ok(())
     }

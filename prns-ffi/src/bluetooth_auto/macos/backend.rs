@@ -20,7 +20,9 @@ use prns_core::interfaces::bluetooth_auto::{
 };
 use prns_core::interfaces::bluetooth_auto::{BleAddress, BleIdentity, Control, Psm};
 
-use super::central::{CentralDelegate, CentralPeerSession, DialCommand, DialCompletion};
+use super::central::{
+    is_system_connected, CentralDelegate, CentralPeerSession, DialCommand, DialCompletion,
+};
 use super::gatt_link::{ControlPlane, GattLink};
 use super::peripheral::PeripheralDelegate;
 #[cfg(target_os = "ios")]
@@ -33,10 +35,83 @@ use super::{
 const POWER_ON_TIMEOUT: Duration = Duration::from_secs(10);
 const DIAL_TIMEOUT: Duration = Duration::from_secs(15);
 
+#[derive(Default)]
+pub(super) struct StartupReadiness {
+    central_powered: bool,
+    gatt_service_published: bool,
+    l2cap_psm: Option<Psm>,
+}
+
+impl StartupReadiness {
+    pub(super) fn note_central_powered(&mut self) {
+        self.central_powered = true;
+    }
+
+    pub(super) fn note_gatt_service_published(&mut self) {
+        self.gatt_service_published = true;
+    }
+
+    pub(super) fn note_l2cap_published(&mut self, psm: u16) -> Result<(), MacosBleError> {
+        self.l2cap_psm = Some(Psm::new(psm).ok_or(MacosBleError::PublishFailed)?);
+        Ok(())
+    }
+
+    pub(super) fn ready_psm(&self) -> Option<Psm> {
+        (self.central_powered && self.gatt_service_published)
+            .then_some(self.l2cap_psm)
+            .flatten()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum DialAdmission {
+    AttachCentralSession,
+    YieldToSystemConnection,
+}
+
+pub(super) const fn dial_admission(already_system_connected: bool) -> DialAdmission {
+    if already_system_connected {
+        DialAdmission::YieldToSystemConnection
+    } else {
+        DialAdmission::AttachCentralSession
+    }
+}
+
 fn cancel_connection(central: &SendCentralManager, peripheral: &SendPeripheral) {
     // SAFETY: both retained objects remain alive through this call and are messaged only on the
     // CoreBluetooth serial dispatch queue.
     unsafe { central.0.cancelPeripheralConnection(&peripheral.0) };
+}
+
+fn begin_dial(command: DialCommand) {
+    let DialCommand {
+        central,
+        delegate,
+        peripheral,
+        peer_id,
+        session,
+    } = command;
+    if dial_admission(is_system_connected(&central, peer_id))
+        == DialAdmission::YieldToSystemConnection
+    {
+        crate::diagnostic_log::debug!(
+            "bluetooth: yielding dial to {:02x?} — peer is already connected system-wide; inbound session retains connection ownership",
+            peer_id.address().octets()
+        );
+        session.reject();
+        return;
+    }
+    // SAFETY: both retained Objective-C objects stay alive for the delegate assignment, which runs
+    // on the CoreBluetooth serial dispatch queue.
+    unsafe {
+        peripheral.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
+    }
+    if !delegate.begin_session(peer_id, session) {
+        return;
+    }
+    // SAFETY: the retained manager and peripheral are owned by this queue-confined command, and
+    // CoreBluetooth connection calls are serialized on their dispatch queue.
+    unsafe { central.connectPeripheral_options(&peripheral, None) };
 }
 
 struct Handles {
@@ -145,42 +220,64 @@ impl MacosBleBackend {
             queue,
         } = handles;
 
-        loop {
-            match tokio::time::timeout(POWER_ON_TIMEOUT, events_rx.recv()).await {
-                Ok(Some(Event::Published { psm })) => {
-                    let psm = Psm::new(psm).ok_or(MacosBleError::PublishFailed)?;
-                    crate::diagnostic_log::debug!(
-                        "bluetooth: powered on, advertising as Prns, L2CAP listener on PSM {:#06x}",
-                        psm.get()
-                    );
-                    return Ok(Self {
-                        _keepalive: keepalive,
-                        events: events_rx,
-                        psm,
-                        seen: HashSet::new(),
-                        central,
-                        central_delegate,
-                        peripheral_delegate,
-                        peripherals,
-                        restored,
-                        dials: JoinSet::new(),
-                        queue,
-                    });
+        let readiness = tokio::time::timeout(POWER_ON_TIMEOUT, async {
+            let mut readiness = StartupReadiness::default();
+            loop {
+                match events_rx.recv().await {
+                    Some(Event::CentralPowered) => readiness.note_central_powered(),
+                    Some(Event::GattServicePublished) => {
+                        readiness.note_gatt_service_published();
+                    }
+                    Some(Event::L2capPublished { psm }) => {
+                        readiness.note_l2cap_published(psm)?;
+                    }
+                    Some(Event::GattServicePublishFailed) => {
+                        crate::diagnostic_log::error!(
+                            "bluetooth: GATT service publication failed at startup"
+                        );
+                        return Err(MacosBleError::PublishFailed);
+                    }
+                    Some(Event::L2capPublishFailed) => {
+                        crate::diagnostic_log::error!(
+                            "bluetooth: L2CAP publication failed at startup"
+                        );
+                        return Err(MacosBleError::PublishFailed);
+                    }
+                    Some(_) => {}
+                    None => return Err(MacosBleError::Closed),
                 }
-                Ok(Some(Event::PublishFailed)) => {
-                    crate::diagnostic_log::error!("bluetooth: L2CAP publish failed at startup");
-                    return Err(MacosBleError::PublishFailed);
-                }
-                Ok(Some(_)) => continue,
-                Ok(None) => return Err(MacosBleError::Closed),
-                Err(_) => {
-                    crate::diagnostic_log::error!(
-                        "bluetooth: timed out waiting for power-on / L2CAP publish — is Bluetooth on and permission granted?"
-                    );
-                    return Err(MacosBleError::PowerOnTimeout);
+                if let Some(psm) = readiness.ready_psm() {
+                    return Ok(psm);
                 }
             }
-        }
+        })
+        .await;
+        let psm = match readiness {
+            Ok(result) => result?,
+            Err(_) => {
+                crate::diagnostic_log::error!(
+                    "bluetooth: timed out waiting for central power, GATT publication, and L2CAP publication — is Bluetooth on and permission granted?"
+                );
+                return Err(MacosBleError::PowerOnTimeout);
+            }
+        };
+        crate::diagnostic_log::debug!(
+            "bluetooth: central powered, GATT service published, L2CAP listener on PSM {:#06x}",
+            psm.get()
+        );
+        Ok(Self {
+            _keepalive: keepalive,
+            events: events_rx,
+            psm,
+            seen: HashSet::new(),
+            central,
+            central_delegate,
+            peripheral_delegate,
+            peripherals,
+            restored,
+            dials: JoinSet::new(),
+            queue,
+        })
     }
 
     pub fn psm(&self) -> Psm {
@@ -215,12 +312,16 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
         let central = SendCentralManager(self.central.0.clone());
         self.queue.exec_async(move || {
             let central = central;
-            // SAFETY: the retained central manager is only messaged on its serial dispatch queue.
-            unsafe { central.0.stopScan() };
-            if enabled {
+            // SAFETY: this authoritative CoreBluetooth state query runs on the retained manager's
+            // serial dispatch queue.
+            let is_scanning = unsafe { central.0.isScanning() };
+            if enabled && !is_scanning {
                 start_scan(&central.0);
                 crate::diagnostic_log::debug!("bluetooth: scanning for Prns peers");
-            } else {
+            } else if !enabled && is_scanning {
+                // SAFETY: the retained central manager is only messaged on its serial dispatch
+                // queue.
+                unsafe { central.0.stopScan() };
                 crate::diagnostic_log::debug!(
                     "bluetooth: scanning stopped — at connection capacity"
                 );
@@ -301,27 +402,7 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
         };
         crate::diagnostic_log::debug!("bluetooth: dialing {token:02x?} over LE (central role)");
         self.queue.exec_async(move || {
-            let command = command;
-            // SAFETY: both retained Objective-C objects stay alive for the delegate assignment,
-            // which runs on the CoreBluetooth serial dispatch queue.
-            unsafe {
-                command
-                    .peripheral
-                    .setDelegate(Some(ProtocolObject::from_ref(&*command.delegate)));
-            }
-            if !command
-                .delegate
-                .begin_session(command.peer_id, command.session)
-            {
-                return;
-            }
-            // SAFETY: the retained manager and peripheral are both owned by this queued command,
-            // and CoreBluetooth connection calls are serialized on their dispatch queue.
-            unsafe {
-                command
-                    .central
-                    .connectPeripheral_options(&command.peripheral, None);
-            }
+            begin_dial(command);
         });
         let send_peripheral = SendPeripheral(peripheral);
         let send_peripheral_manager = SendPeripheralDelegate(self.peripheral_delegate.0.clone());
@@ -357,6 +438,8 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
                         peripheral: send_peripheral,
                         characteristic: chars.control,
                         data_characteristic: chars.data,
+                        central_delegate: SendCentralDelegate(delegate.0.clone()),
+                        queue: queue.clone(),
                         peripheral_manager: send_peripheral_manager,
                     },
                     control_rx,
@@ -384,10 +467,11 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
                 let central = central;
                 let delegate = delegate;
                 let peripheral = peripheral;
-                delegate.0.remove_session(peer_id);
-                cancel_connection(&central, &peripheral);
+                if delegate.0.remove_closed_session(peer_id) {
+                    cancel_connection(&central, &peripheral);
+                }
             });
         }
-        self.peripheral_delegate.0.clear_peer(address);
+        self.peripheral_delegate.0.clear_closed_peer(address);
     }
 }

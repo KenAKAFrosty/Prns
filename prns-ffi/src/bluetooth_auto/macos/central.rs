@@ -10,23 +10,41 @@ use objc2_core_bluetooth::{
     CBService,
 };
 use objc2_foundation::{
-    NSArray, NSDictionary, NSError, NSNumber, NSObject, NSObjectProtocol, NSString,
+    NSArray, NSData, NSDictionary, NSError, NSNumber, NSObject, NSObjectProtocol, NSString,
 };
 use tokio::sync::{mpsc as tokio_mpsc, oneshot};
 
 use prns_core::interfaces::bluetooth_auto::{BleAddress, BleIdentity, Control, PeerProtocol};
 
+use super::gatt_write::{
+    write_admission, GattWriteAdmission, GattWriteMode, GattWriteRequest, GattWriteTarget,
+    PendingAcknowledgedWrite,
+};
 use super::{
     cbuuid_eq, columba_identity_uuid, columba_rx_uuid, columba_tx_uuid, control_uuid,
-    core_bluetooth_peer_id, data_uuid, service_uuid, start_scan, CoreBluetoothPeerId, Event,
+    core_bluetooth_peer_id, data_uuid, service_uuid, CoreBluetoothPeerId, Event, MacosBleError,
     PeripheralTable, RestoredPeripherals, SendCharacteristicRef, SendPeripheral,
 };
+
+pub(super) fn is_system_connected(
+    central: &CBCentralManager,
+    peer_id: CoreBluetoothPeerId,
+) -> bool {
+    let uuid = service_uuid();
+    let services = NSArray::from_slice(&[&*uuid]);
+    // SAFETY: the live manager is queried on its serial dispatch queue and the retained service
+    // UUID array remains alive for the synchronous CoreBluetooth call.
+    let connected = unsafe { central.retrieveConnectedPeripheralsWithServices(&services) };
+    connected
+        .iter()
+        .any(|peripheral| core_bluetooth_peer_id(&peripheral) == peer_id)
+}
 
 pub(super) struct DialChars {
     pub(super) peer_protocol: PeerProtocol,
     pub(super) peer_identity: Option<BleIdentity>,
     pub(super) control: SendCharacteristicRef,
-    pub(super) data: Option<SendCharacteristicRef>,
+    pub(super) data: Option<GattWriteTarget>,
 }
 
 pub(super) enum DialCompletion {
@@ -44,10 +62,10 @@ enum ColumbaReadiness {
 enum CentralProfile {
     Discovering,
     Native {
-        data: Option<SendCharacteristicRef>,
+        data: Option<GattWriteTarget>,
     },
     Columba {
-        write: SendCharacteristicRef,
+        write: GattWriteTarget,
         notify: SendCharacteristicRef,
         readiness: ColumbaReadiness,
     },
@@ -60,6 +78,8 @@ pub(super) struct CentralPeerSession {
     completion_tx: Option<oneshot::Sender<DialCompletion>>,
     data_tx: tokio_mpsc::Sender<Box<[u8]>>,
     profile: CentralProfile,
+    acknowledged_write: Option<PendingAcknowledgedWrite>,
+    unacknowledged_write: Option<GattWriteRequest>,
 }
 
 impl CentralPeerSession {
@@ -75,14 +95,16 @@ impl CentralPeerSession {
             completion_tx: Some(completion_tx),
             data_tx,
             profile: CentralProfile::Discovering,
+            acknowledged_write: None,
+            unacknowledged_write: None,
         }
     }
 
-    fn select_native(&mut self, data: Option<SendCharacteristicRef>) {
+    fn select_native(&mut self, data: Option<GattWriteTarget>) {
         self.profile = CentralProfile::Native { data };
     }
 
-    fn select_columba(&mut self, write: SendCharacteristicRef, notify: SendCharacteristicRef) {
+    fn select_columba(&mut self, write: GattWriteTarget, notify: SendCharacteristicRef) {
         self.profile = CentralProfile::Columba {
             write,
             notify,
@@ -156,15 +178,16 @@ impl CentralPeerSession {
 
     fn complete_columba(
         &mut self,
-        write: SendCharacteristicRef,
+        write: GattWriteTarget,
         _notify: SendCharacteristicRef,
         identity: BleIdentity,
     ) {
+        let control = SendCharacteristicRef(write.characteristic.0.clone());
         self.complete(DialChars {
             peer_protocol: PeerProtocol::Columba,
             peer_identity: Some(identity),
-            data: Some(SendCharacteristicRef(write.0.clone())),
-            control: write,
+            data: Some(write),
+            control,
         });
     }
 
@@ -181,10 +204,55 @@ impl CentralPeerSession {
         }
     }
 
-    fn reject(mut self) {
+    pub(super) fn reject(mut self) {
         if let Some(completion_tx) = self.completion_tx.take() {
             let _ = completion_tx.send(DialCompletion::Rejected);
         }
+    }
+
+    pub(super) fn data_receiver_closed(&self) -> bool {
+        // The control receiver is handshake-only and closes when a link settles. The data
+        // receiver is retained by the attached member for the full lifetime of this role.
+        self.data_tx.is_closed()
+    }
+
+    fn begin_acknowledged_write(
+        &mut self,
+        pending: PendingAcknowledgedWrite,
+    ) -> Result<(), PendingAcknowledgedWrite> {
+        if self.acknowledged_write.is_some() {
+            return Err(pending);
+        }
+        self.acknowledged_write = Some(pending);
+        Ok(())
+    }
+
+    fn finish_acknowledged_write(
+        &mut self,
+        characteristic: &CBCharacteristic,
+        result: Result<(), MacosBleError>,
+    ) -> bool {
+        let Some(pending) = self.acknowledged_write.as_ref() else {
+            return false;
+        };
+        if !core::ptr::eq(&*pending.characteristic.0, characteristic) {
+            return false;
+        }
+        if let Some(pending) = self.acknowledged_write.take() {
+            pending.complete(result);
+        }
+        true
+    }
+
+    fn hold_unacknowledged_write(
+        &mut self,
+        request: GattWriteRequest,
+    ) -> Result<(), GattWriteRequest> {
+        if self.unacknowledged_write.is_some() {
+            return Err(request);
+        }
+        self.unacknowledged_write = Some(request);
+        Ok(())
     }
 }
 
@@ -219,8 +287,7 @@ define_class!(
             // SAFETY: CoreBluetooth supplied this live manager to its delegate on the configured
             // serial dispatch queue.
             if unsafe { central.state() } == CBManagerState::PoweredOn {
-                let _ = self.ivars().events.send(Event::Powered);
-                start_scan(central);
+                let _ = self.ivars().events.send(Event::CentralPowered);
             }
         }
 
@@ -396,15 +463,25 @@ define_class!(
                 }
             }
             if let Some(control) = control {
-                let data_ref = data
-                    .as_ref()
-                    .map(|data| SendCharacteristicRef(data.retain()));
+                let data_target = match data.as_deref() {
+                    Some(data) => match GattWriteTarget::discover(peripheral, data) {
+                        Ok(target) => Some(target),
+                        Err(error) => {
+                            crate::diagnostic_log::warn!(
+                                "bluetooth: native DATA characteristic cannot be written safely: {error:?}"
+                            );
+                            self.fail_peer(peer_id);
+                            return;
+                        }
+                    },
+                    None => None,
+                };
                 let Some(()) = self
                     .ivars()
                     .sessions
                     .borrow_mut()
                     .get_mut(&peer_id)
-                    .map(|session| session.select_native(data_ref))
+                    .map(|session| session.select_native(data_target))
                 else {
                     return;
                 };
@@ -429,16 +506,23 @@ define_class!(
                 self.fail_peer(peer_id);
                 return;
             };
+            let write_target = match GattWriteTarget::discover(peripheral, &rx) {
+                Ok(target) => target,
+                Err(error) => {
+                    crate::diagnostic_log::warn!(
+                        "bluetooth: Columba RX characteristic cannot be written safely: {error:?}"
+                    );
+                    self.fail_peer(peer_id);
+                    return;
+                }
+            };
             let Some(()) = self
                 .ivars()
                 .sessions
                 .borrow_mut()
                 .get_mut(&peer_id)
                 .map(|session| {
-                    session.select_columba(
-                        SendCharacteristicRef(rx.retain()),
-                        SendCharacteristicRef(tx.retain()),
-                    );
+                    session.select_columba(write_target, SendCharacteristicRef(tx.retain()));
                 })
             else {
                 return;
@@ -540,6 +624,42 @@ define_class!(
                 let _ = session.control_tx.try_send(control);
             }
         }
+
+        #[unsafe(method(peripheral:didWriteValueForCharacteristic:error:))]
+        fn did_write_value(
+            &self,
+            peripheral: &CBPeripheral,
+            characteristic: &CBCharacteristic,
+            error: Option<&NSError>,
+        ) {
+            let peer_id = core_bluetooth_peer_id(peripheral);
+            let result = if let Some(error) = error {
+                crate::diagnostic_log::warn!(
+                    "bluetooth: acknowledged GATT write FAILED for {:02x?}: {error:?}",
+                    peer_id.address().octets()
+                );
+                Err(MacosBleError::GattWriteFailed)
+            } else {
+                Ok(())
+            };
+            let completed = self
+                .ivars()
+                .sessions
+                .borrow_mut()
+                .get_mut(&peer_id)
+                .is_some_and(|session| session.finish_acknowledged_write(characteristic, result));
+            if !completed {
+                crate::diagnostic_log::warn!(
+                    "bluetooth: unexpected acknowledged-write callback for {:02x?}",
+                    peer_id.address().octets()
+                );
+            }
+        }
+
+        #[unsafe(method(peripheralIsReadyToSendWriteWithoutResponse:))]
+        fn is_ready_to_write_without_response(&self, peripheral: &CBPeripheral) {
+            self.drain_unacknowledged_write(peripheral);
+        }
     }
 );
 
@@ -579,7 +699,110 @@ impl CentralDelegate {
         }
     }
 
+    pub(super) fn remove_closed_session(&self, peer_id: CoreBluetoothPeerId) -> bool {
+        let link_closed = self
+            .ivars()
+            .sessions
+            .borrow()
+            .get(&peer_id)
+            .is_some_and(CentralPeerSession::data_receiver_closed);
+        if link_closed {
+            self.remove_session(peer_id);
+        }
+        link_closed
+    }
+
+    pub(super) fn submit_write(
+        &self,
+        peripheral: &CBPeripheral,
+        peer_id: CoreBluetoothPeerId,
+        request: GattWriteRequest,
+    ) {
+        let mut sessions = self.ivars().sessions.borrow_mut();
+        let Some(session) = sessions.get_mut(&peer_id) else {
+            request.complete(Err(MacosBleError::Closed));
+            return;
+        };
+        let can_send_without_response = request.mode == GattWriteMode::WithoutResponse
+            // SAFETY: this connection state query runs on the peripheral's CoreBluetooth queue
+            // and does not mutate the retained peripheral.
+            && unsafe { peripheral.canSendWriteWithoutResponse() };
+        match write_admission(
+            request.mode,
+            session.acknowledged_write.is_some(),
+            session.unacknowledged_write.is_some(),
+            can_send_without_response,
+        ) {
+            GattWriteAdmission::Issue if request.mode == GattWriteMode::WithResponse => {
+                let data = NSData::with_bytes(&request.bytes);
+                let characteristic = request.characteristic.0.clone();
+                let pending = request.into_acknowledged();
+                if let Err(pending) = session.begin_acknowledged_write(pending) {
+                    pending.complete(Err(MacosBleError::QueueFull));
+                    return;
+                }
+                // SAFETY: the write is issued on the peripheral's CoreBluetooth queue, and the
+                // retained characteristic and NSData remain live for the synchronous message.
+                unsafe {
+                    peripheral.writeValue_forCharacteristic_type(
+                        &data,
+                        &characteristic,
+                        GattWriteMode::WithResponse.core_bluetooth_type(),
+                    )
+                };
+            }
+            GattWriteAdmission::Issue => issue_unacknowledged_write(peripheral, request),
+            GattWriteAdmission::WaitForCapacity => {
+                if let Err(request) = session.hold_unacknowledged_write(request) {
+                    request.complete(Err(MacosBleError::QueueFull));
+                }
+            }
+            GattWriteAdmission::Busy => request.complete(Err(MacosBleError::QueueFull)),
+        }
+    }
+
+    fn drain_unacknowledged_write(&self, peripheral: &CBPeripheral) {
+        let peer_id = core_bluetooth_peer_id(peripheral);
+        let request = self
+            .ivars()
+            .sessions
+            .borrow_mut()
+            .get_mut(&peer_id)
+            .and_then(|session| session.unacknowledged_write.take());
+        let Some(request) = request else {
+            return;
+        };
+        if request.receiver_closed() {
+            return;
+        }
+        // SAFETY: the readiness callback and this authoritative re-check both execute on the
+        // peripheral's CoreBluetooth queue.
+        if !unsafe { peripheral.canSendWriteWithoutResponse() } {
+            if let Some(session) = self.ivars().sessions.borrow_mut().get_mut(&peer_id) {
+                if let Err(request) = session.hold_unacknowledged_write(request) {
+                    request.complete(Err(MacosBleError::QueueFull));
+                }
+            }
+            return;
+        }
+        issue_unacknowledged_write(peripheral, request);
+    }
+
     fn fail_peer(&self, peer_id: CoreBluetoothPeerId) {
         self.remove_session(peer_id);
     }
+}
+
+fn issue_unacknowledged_write(peripheral: &CBPeripheral, request: GattWriteRequest) {
+    let data = NSData::with_bytes(&request.bytes);
+    // SAFETY: the write is issued on the peripheral's CoreBluetooth queue; the request retains its
+    // discovered characteristic and NSData remains live for the synchronous message.
+    unsafe {
+        peripheral.writeValue_forCharacteristic_type(
+            &data,
+            &request.characteristic.0,
+            GattWriteMode::WithoutResponse.core_bluetooth_type(),
+        )
+    };
+    request.complete(Ok(()));
 }

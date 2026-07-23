@@ -344,6 +344,9 @@ jobs:
             personal-hopspot/desktop
       - name: Install macOS desktop link dependency
         run: brew install sdl2
+      - name: test — prns-ffi (CoreBluetooth backend)
+        run: cargo test --all-features --all-targets --locked
+        working-directory: prns-ffi
       - name: clippy — prns-ffi (CoreBluetooth backend)
         run: cargo clippy --all-features --all-targets --locked -- -D warnings
         working-directory: prns-ffi
