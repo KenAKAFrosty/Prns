@@ -11,13 +11,15 @@ use ssd1306::mode::BufferedGraphicsMode;
 use ssd1306::prelude::*;
 use ssd1306::{I2CDisplayInterface, Ssd1306};
 
-use personal_rns::interfaces::{ConnectionState, InterfaceId};
+use personal_rns::interfaces::InterfaceId;
 use personal_rns::radios::sx126x::{BoardConfig, Sx126x, TcxoVoltage};
-use personal_rns::reactor::embassy::EmbassyInterfaceStatus;
 
 use personal_hopspot_core as screen;
 
-use crate::s3::{self, Bringup, Esp32S3Board};
+use crate::s3::{
+    self, BoardDisplay, BoardFace, Esp32S3Board, S3BoardHardware, S3InterfaceHardware,
+    S3ReactorHardware,
+};
 
 /// This board's USB-auto interface id (the always-present top-level wire on pool slot 0).
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"heltecv4");
@@ -34,11 +36,6 @@ const VBAT_DIVIDER_DEN: u32 = 10;
 /// terminal voltage up and charging trends it up. Below this the cell is idle, discharging, or full
 /// (flat). Tuned above ADC/load noise (load dips pull the fast average *down*, never up).
 const CHARGE_RISE_MV: u32 = 16;
-
-/// The USB interface's live state, written by the device task (core 0) and read by the render loop
-/// (core 0) — the engine on core 1 reaches it through the lanes, this `static` is a face-side view.
-static USB_STATUS: EmbassyInterfaceStatus =
-    EmbassyInterfaceStatus::new(USB_INTERFACE_ID, ConnectionState::Initializing);
 
 /// The Heltec V4's battery sense: VBAT on a 49:10 divider into ADC1 (GPIO1), gated by GPIO37. The
 /// shared [`BatteryGauge`](screen::BatteryGauge) owns the percentage curve; this reads the divided
@@ -97,12 +94,9 @@ pub struct HeltecBoard;
 impl Esp32S3Board for HeltecBoard {
     const ANNOUNCE_APP_DATA: &'static [u8] = ANNOUNCE_APP_DATA;
     const BOOT_BANNER: &'static str = "HOPSPOT_HELTECV4";
+    const USB_INTERFACE_ID: InterfaceId = USB_INTERFACE_ID;
     type Display = HeltecDisplay;
     type Battery = HeltecBattery;
-
-    fn usb_status() -> &'static EmbassyInterfaceStatus {
-        &USB_STATUS
-    }
 
     fn flush(display: &mut Self::Display) {
         let _ = display.flush();
@@ -114,8 +108,7 @@ impl Esp32S3Board for HeltecBoard {
 
     async fn bringup(
         p: esp_hal::peripherals::Peripherals,
-        _spawner: &Spawner,
-    ) -> Bringup<Self::Display, Self::Battery> {
+    ) -> S3BoardHardware<Self::Display, Self::Battery> {
         let (sw_int1, timebase, rtc) = s3::boot_common!(p, Self::BOOT_BANNER);
 
         // OLED (Heltec V4: Vext active-low gates panel power; pulse RST; I2C0 on 17/18).
@@ -203,22 +196,33 @@ impl Esp32S3Board for HeltecBoard {
             slow_ema_mv: 0,
         };
 
-        Bringup {
-            display,
-            oled_ok,
-            battery,
-            usb_device: p.USB_DEVICE,
-            #[cfg(feature = "lora")]
-            lora_radio,
-            #[cfg(feature = "wifi-auto")]
-            wifi: p.WIFI,
-            button: p.GPIO0,
-            cpu_ctrl: p.CPU_CTRL,
-            sw_int1,
-            timebase,
-            _rtc: rtc,
-            #[cfg(feature = "bluetooth-auto")]
-            bt: p.BT,
+        S3BoardHardware {
+            face: BoardFace {
+                display: BoardDisplay {
+                    device: display,
+                    initialized: oled_ok,
+                },
+                battery,
+                button: Input::new(
+                    p.GPIO0,
+                    InputConfig::default().with_pull(esp_hal::gpio::Pull::Up),
+                ),
+            },
+            interface_hardware: S3InterfaceHardware {
+                usb_device: p.USB_DEVICE,
+                #[cfg(feature = "lora")]
+                lora_radio,
+                #[cfg(feature = "wifi-auto")]
+                wifi: p.WIFI,
+                #[cfg(feature = "bluetooth-auto")]
+                bluetooth: p.BT,
+            },
+            reactor: S3ReactorHardware {
+                cpu_control: p.CPU_CTRL,
+                software_interrupt: sw_int1,
+                timebase,
+                _rtc: rtc,
+            },
         }
     }
 }

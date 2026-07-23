@@ -1,15 +1,8 @@
 use embassy_executor::Spawner;
 use embassy_futures::join::{join, join3, join5};
 use embassy_futures::select::{select3, Either3};
-use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
-use embassy_nrf::interrupt::{self, InterruptExt, Priority};
-use embassy_nrf::nvmc::Nvmc;
-use embassy_nrf::rng::Rng;
-use embassy_nrf::saadc::{self, ChannelConfig, Config as SaadcConfig, Gain, Reference, Saadc};
-use embassy_nrf::spim::{self, Spim};
-use embassy_nrf::usb::vbus_detect::SoftwareVbusDetect;
-use embassy_nrf::usb::Driver;
-use embassy_nrf::{bind_interrupts, config, peripherals, usb};
+use embassy_nrf::gpio::{Input, Output};
+use embassy_nrf::spim::Spim;
 use embassy_time::{Delay, Duration, Timer};
 use embassy_usb::{Builder, Config as UsbConfig};
 use static_cell::StaticCell;
@@ -17,7 +10,6 @@ use static_cell::StaticCell;
 use embedded_graphics::prelude::*;
 use embedded_hal_bus::spi::ExclusiveDevice;
 use epd_waveshare::color::Color as EpdColor;
-use epd_waveshare::epd1in54_v2::Display1in54;
 
 use nrf_softdevice::ble::l2cap;
 use nrf_softdevice::Softdevice;
@@ -34,7 +26,6 @@ use personal_rns::interfaces::lora::DEFAULT_915_PROFILE;
 use personal_rns::interfaces::usb_auto::{WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID};
 use personal_rns::interfaces::{ConnectionState, InterfaceStatus};
 use personal_rns::lora::{LoRaInterface, LoRaInterfaceInput};
-use personal_rns::radios::sx126x::{BoardConfig, Sx126x, TcxoVoltage};
 use personal_rns::reactor::embassy::{EmbassyHost, EmbassyInterfaceStatus};
 use personal_rns::reactor::interface_seam::Interface;
 use personal_rns::runtime::{
@@ -50,6 +41,10 @@ use super::bluetooth_auto::{
     L2capPacket, NrfBleBackend, Server, BLE_SHARED, BLE_SUPERVISOR_ID, HUB, MEMBERS, OUTBOUND_WAKE,
     POOL,
 };
+use super::board::{
+    TechoBoard, TechoControls, TechoDisplayHardware, TechoEarlyHardware, TechoFaceHardware,
+    TechoRuntimeHardware, TechoUsbHardware,
+};
 use super::display::{build_cards, build_snapshots, frame_hash, EinkScreen};
 use super::input;
 use super::node::*;
@@ -57,13 +52,6 @@ use super::node::*;
 const FULL_REFRESH_INTERVAL: u32 = 20;
 const STATS_POLL: Duration = Duration::from_millis(1000);
 const NOTICE_MS: u64 = 900;
-
-bind_interrupts!(struct Irqs {
-    USBD => usb::InterruptHandler<peripherals::USBD>;
-    SPI2 => spim::InterruptHandler<peripherals::SPI2>;
-    TWISPI0 => spim::InterruptHandler<peripherals::TWISPI0>;
-    SAADC => saadc::InterruptHandler;
-});
 
 #[embassy_executor::task]
 async fn reactor_task(node: &'static mut Node) {
@@ -73,38 +61,27 @@ async fn reactor_task(node: &'static mut Node) {
 
 #[allow(clippy::too_many_lines)]
 pub(crate) async fn run(spawner: Spawner) -> ! {
-    let mut nrf_config = config::Config::default();
-    nrf_config.gpiote_interrupt_priority = Priority::P2;
-    nrf_config.time_interrupt_priority = Priority::P2;
-    let p = embassy_nrf::init(nrf_config);
-
-    let (node_bootstrap, ble_bootstrap) = {
-        let mut nvmc = Nvmc::new(p.NVMC);
-        let mut rng = Rng::new_blocking(p.RNG);
-        let mut fill_entropy = |bytes: &mut [u8]| rng.blocking_fill_bytes(bytes);
-        let node_bootstrap = super::identity::bootstrap_node_identity(&mut nvmc, &mut fill_entropy);
-        let ble_bootstrap = super::identity::bootstrap_ble_identity(&mut nvmc, &mut fill_entropy);
-        (node_bootstrap, ble_bootstrap)
-    };
+    let ((node_bootstrap, ble_bootstrap), early_hardware) =
+        TechoBoard::initialize_identities(|nvmc, rng| {
+            let mut fill_entropy = |bytes: &mut [u8]| rng.blocking_fill_bytes(bytes);
+            let node_bootstrap = super::identity::bootstrap_node_identity(nvmc, &mut fill_entropy);
+            let ble_bootstrap = super::identity::bootstrap_ble_identity(nvmc, &mut fill_entropy);
+            (node_bootstrap, ble_bootstrap)
+        });
     let identity_startup_notice =
         super::identity::startup_notice(node_bootstrap.persistence(), ble_bootstrap.persistence());
     let node_identity = node_bootstrap.into_identity();
     let ble_identity = Some(ble_bootstrap.into_identity());
 
-    let _eink_rail = Output::new(p.P0_12, Level::High, OutputDrive::Standard);
-    let mut led = Output::new(p.P1_01, Level::High, OutputDrive::Standard);
-
-    // The SoftDevice reserves P0/P1/P4; keep every app interrupt off those. USB at P2 (matches the
-    // validated bring-up); SPI and SAADC at P3 so a BLE radio event can preempt them.
-    interrupt::USBD.set_priority(Priority::P2);
-    interrupt::SPI2.set_priority(Priority::P3);
-    interrupt::TWISPI0.set_priority(Priority::P3);
-    interrupt::SAADC.set_priority(Priority::P3);
-
-    static SOFTWARE_VBUS: StaticCell<SoftwareVbusDetect> = StaticCell::new();
-    let vbus = SOFTWARE_VBUS.init(SoftwareVbusDetect::new(true, true));
-
-    let usb_driver = Driver::new(p.USBD, Irqs, &*vbus);
+    let TechoEarlyHardware {
+        usb,
+        face,
+        deferred,
+    } = early_hardware;
+    let TechoUsbHardware {
+        driver: usb_driver,
+        vbus,
+    } = usb;
     let mut usb_config = UsbConfig::new(WEBUSB_VENDOR_ID, WEBUSB_PRODUCT_ID);
     usb_config.manufacturer = Some("Stay Personal");
     usb_config.product = Some("Personal Hopspot (T-Echo)");
@@ -131,13 +108,6 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
     );
     let mut usb = builder.build();
 
-    // Battery sense: VBAT on a 2:1 divider into AIN2 (P0.04), sampled by the SAADC against the 3.0 V
-    // internal reference, so VBAT_mV = raw * 6000 / 4096.
-    let mut bat_channel = ChannelConfig::single_ended(p.P0_04);
-    bat_channel.reference = Reference::INTERNAL;
-    bat_channel.gain = Gain::GAIN1_5;
-    let saadc = Saadc::new(p.SAADC, Irqs, SaadcConfig::default(), [bat_channel]);
-
     let sd = Softdevice::enable(&softdevice_config());
     static SERVER: StaticCell<Server> = StaticCell::new();
     let server: &'static Server = SERVER.init(Server::new(sd).unwrap());
@@ -154,46 +124,21 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
         }
     }
 
-    let mut radio_spim_config = spim::Config::default();
-    radio_spim_config.frequency = spim::Frequency::M4;
-    let radio_bus = Spim::new(
-        p.TWISPI0,
-        Irqs,
-        p.P0_19,
-        p.P0_23,
-        p.P0_22,
-        radio_spim_config,
-    );
-    let radio_cs = Output::new(p.P0_24, Level::High, OutputDrive::Standard);
-    let radio_spi = ExclusiveDevice::new(radio_bus, radio_cs, Delay).unwrap();
-    let radio_busy = Input::new(p.P0_17, Pull::None);
-    let radio_dio1 = Input::new(p.P0_20, Pull::None);
-    let radio_reset = Output::new(p.P0_25, Level::High, OutputDrive::Standard);
-    let radio = Sx126x::new(
-        radio_spi,
-        radio_busy,
-        radio_dio1,
-        radio_reset,
-        Delay,
-        BoardConfig {
-            tcxo_voltage: Some(TcxoVoltage::V1_8),
-            use_dcdc: true,
-            rx_boost: true,
-            dio2_as_rf_switch: true,
-        },
-    );
-
-    let mut eink_spim_config = spim::Config::default();
-    eink_spim_config.frequency = spim::Frequency::M4;
-    let eink_bus = Spim::new(p.SPI2, Irqs, p.P0_31, p.P1_06, p.P0_29, eink_spim_config);
-    let eink_cs = Output::new(p.P0_30, Level::High, OutputDrive::Standard);
-    let eink_dc = Output::new(p.P0_28, Level::Low, OutputDrive::Standard);
-    let eink_rst = Output::new(p.P0_02, Level::High, OutputDrive::Standard);
-    let eink_busy = Input::new(p.P0_03, Pull::None);
-    Timer::after(Duration::from_millis(150)).await;
-    let eink_spi = ExclusiveDevice::new(eink_bus, eink_cs, Delay).unwrap();
-    let mut panel = Display1in54::default();
-    let eink = crate::ssd1681::Ssd1681::new(eink_spi, eink_busy, eink_dc, eink_rst, Delay).ok();
+    let TechoRuntimeHardware {
+        radio,
+        display,
+        controls,
+    } = deferred.finish().await;
+    let TechoDisplayHardware {
+        driver: eink,
+        mut panel,
+        _rail: _eink_rail,
+    } = display;
+    let TechoControls { button, frontlight } = controls;
+    let TechoFaceHardware {
+        battery: saadc,
+        status_led: mut led,
+    } = face;
 
     let transport_secret = node_identity.transport_secret();
     let self_destination = {
@@ -311,9 +256,6 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
                 lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender());
             (supervisor, fleet)
         });
-
-    let button = Input::new(p.P1_10, Pull::Up);
-    let frontlight = Output::new(p.P1_11, Level::Low, OutputDrive::Standard);
 
     let usb_fut = usb.run();
 

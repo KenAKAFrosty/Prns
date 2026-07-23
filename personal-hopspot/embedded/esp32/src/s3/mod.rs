@@ -1,3 +1,4 @@
+mod board;
 pub mod boards;
 
 #[cfg(feature = "wifi-auto")]
@@ -7,7 +8,7 @@ use esp_backtrace as _;
 use esp_bootloader_esp_idf::esp_app_desc;
 use esp_hal::clock::CpuClock;
 use esp_hal::efuse::base_mac_address;
-use esp_hal::gpio::{Input, InputConfig, Output, Pull};
+use esp_hal::gpio::{Input, Output};
 use esp_hal::peripherals::USB_DEVICE;
 use esp_hal::rng::Rng;
 #[cfg(feature = "wifi-auto")]
@@ -107,6 +108,10 @@ use prns_interfaces_embassy::bluetooth_auto::PEER_CAPACITY as EMBEDDED_BLE_PEER_
 use crate::storage::EngineStorageType;
 
 use personal_hopspot_core as screen;
+
+pub(crate) use board::{
+    BoardDisplay, BoardFace, Esp32S3Board, S3BoardHardware, S3InterfaceHardware, S3ReactorHardware,
+};
 
 esp_app_desc!();
 
@@ -302,62 +307,6 @@ pub(crate) fn reclaim_dcache_region() {
             esp_alloc::MemoryCapability::Internal.into(),
         ));
     }
-}
-
-/// The SX1262 radio handle, identical on every ESP32-S3 board: the pin *identity* (which GPIO is
-/// SCK/CS/BUSY/…) is erased into `Output`/`Input` by the time the driver holds it, so only the wiring
-/// in [`Esp32S3Board::bringup`] differs — the type the shared core threads does not.
-pub type LoraRadio = Sx126x<
-    ExclusiveDevice<Spi<'static, esp_hal::Async>, Output<'static>, Delay>,
-    Input<'static>,
-    Input<'static>,
-    Output<'static>,
-    Delay,
->;
-
-/// Everything [`Esp32S3Board::bringup`] hands the shared core: the board-built peripherals
-/// (display, battery, radio) plus the leftover singletons. esp-hal singletons can't be partially
-/// moved through a borrow, so the board takes the whole `Peripherals` and returns what is left.
-pub struct Bringup<D, B> {
-    pub display: D,
-    pub oled_ok: bool,
-    pub battery: B,
-    pub usb_device: USB_DEVICE<'static>,
-    #[cfg(feature = "lora")]
-    pub lora_radio: LoraRadio,
-    #[cfg(feature = "wifi-auto")]
-    pub wifi: esp_hal::peripherals::WIFI<'static>,
-    pub button: esp_hal::peripherals::GPIO0<'static>,
-    pub cpu_ctrl: esp_hal::peripherals::CPU_CTRL<'static>,
-    pub sw_int1: esp_hal::interrupt::software::SoftwareInterrupt<'static, 1>,
-    pub timebase: EmbassyTimebase,
-    /// The RTC handle is kept alive for the whole run so its disabled watchdogs stay disabled.
-    pub _rtc: esp_hal::rtc_cntl::Rtc<'static>,
-    #[cfg(feature = "bluetooth-auto")]
-    pub bt: esp_hal::peripherals::BT<'static>,
-}
-
-/// The per-board seam: the ~6% of an ESP32-S3 Hopspot that differs between boards (identity
-/// strings, display driver + flush, battery source, power/pin bring-up). Everything else lives in
-/// [`firmware::run_core`], so a shared-path change can never again rot one board while the other compiles.
-#[allow(async_fn_in_trait)]
-pub trait Esp32S3Board {
-    const ANNOUNCE_APP_DATA: &'static [u8];
-    const BOOT_BANNER: &'static str;
-    type Display: DrawTarget<Color = BinaryColor>;
-    type Battery: screen::BatterySource;
-
-    fn usb_status() -> &'static EmbassyInterfaceStatus;
-    /// Push the framebuffer to the panel — the one display op that is not `embedded-graphics`.
-    fn flush(display: &mut Self::Display);
-    /// Turn the panel driver on/off without changing the retained framebuffer.
-    fn set_display_awake(display: &mut Self::Display, awake: bool);
-    /// Own `Peripherals` (esp-hal singletons can't be partial-moved through a borrow): bring up
-    /// power/display/battery/SX1262, run [`boot_common`], and hand the rest back in [`Bringup`].
-    async fn bringup(
-        p: esp_hal::peripherals::Peripherals,
-        spawner: &Spawner,
-    ) -> Bringup<Self::Display, Self::Battery>;
 }
 
 #[embassy_executor::task]

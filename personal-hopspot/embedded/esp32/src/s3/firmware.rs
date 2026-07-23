@@ -3,18 +3,40 @@ use super::*;
 pub(crate) async fn run<B: Esp32S3Board>(spawner: Spawner) {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let p = esp_hal::init(config);
-    let bringup = B::bringup(p, &spawner).await;
+    let bringup = B::bringup(p).await;
     run_core::<B>(spawner, bringup).await;
 }
 
 #[allow(clippy::too_many_lines)]
 pub(super) async fn run_core<B: Esp32S3Board>(
     spawner: Spawner,
-    b: Bringup<B::Display, B::Battery>,
+    hardware: S3BoardHardware<B::Display, B::Battery>,
 ) {
-    let mut display = b.display;
-    let oled_ok = b.oled_ok;
-    let mut battery_source = b.battery;
+    let BoardFace {
+        display,
+        battery,
+        button,
+    } = hardware.face;
+    let BoardDisplay {
+        device: mut display,
+        initialized: oled_ok,
+    } = display;
+    let mut battery_source = battery;
+    let S3InterfaceHardware {
+        usb_device,
+        #[cfg(feature = "lora")]
+        lora_radio,
+        #[cfg(feature = "wifi-auto")]
+            wifi: wifi_hardware,
+        #[cfg(feature = "bluetooth-auto")]
+        bluetooth,
+    } = hardware.interface_hardware;
+    let S3ReactorHardware {
+        cpu_control,
+        software_interrupt,
+        timebase,
+        _rtc,
+    } = hardware.reactor;
     #[cfg(feature = "wifi-auto")]
     let wifi_config = hopspot_wifi_config();
     #[cfg(feature = "wifi-auto")]
@@ -23,9 +45,12 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let station_configured = false;
     let radio_mode = boot_radio_mode(station_configured);
 
-    let usb_status = B::usb_status();
+    let usb_status: &'static EmbassyInterfaceStatus = mk_static!(
+        EmbassyInterfaceStatus,
+        EmbassyInterfaceStatus::new(B::USB_INTERFACE_ID, ConnectionState::Initializing)
+    );
     let usb_id = usb_status.id();
-    let (usb_rx, usb_tx) = UsbSerialJtag::new(b.usb_device).into_async().split();
+    let (usb_rx, usb_tx) = UsbSerialJtag::new(usb_device).into_async().split();
 
     let mac = base_mac_address();
     let mut mac_octets = [0u8; 6];
@@ -34,7 +59,6 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let mut reactor_lanes = ReactorLanes::new();
 
     #[cfg(feature = "lora")]
-    let lora_radio = b.lora_radio;
     let lora_profile = DEFAULT_915_PROFILE;
     let lora_id = LoRaInterface::<
         ExclusiveDevice<Spi<'static, esp_hal::Async>, Output<'static>, Delay>,
@@ -61,7 +85,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     #[cfg(feature = "wifi-auto")]
     let (wifi, tcp_stack, esp_now) = build_wifi(
         &spawner,
-        b.wifi,
+        wifi_hardware,
         mac_octets,
         &wifi_config,
         radio_mode == RadioMode::AccessPoint,
@@ -170,10 +194,10 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         LIFECYCLE.receiver(),
         handle,
     );
-    let host = EmbassyHost::new_with_timebase(b.timebase, hardware_entropy as fn(&mut [u8]));
+    let host = EmbassyHost::new_with_timebase(timebase, hardware_entropy as fn(&mut [u8]));
 
     let core1_stack = mk_static!(CpuStack<CORE1_STACK_BYTES>, CpuStack::new());
-    esp_rtos::start_second_core(b.cpu_ctrl, b.sw_int1, core1_stack, move || {
+    esp_rtos::start_second_core(cpu_control, software_interrupt, core1_stack, move || {
         static NODE: StaticCell<S3Node> = StaticCell::new();
         let node: &'static mut S3Node = PrnsNode::init_static(&NODE, recipe, reactor_wiring, host);
 
@@ -225,7 +249,6 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             (identity, fleet)
         });
 
-    let button = Input::new(b.button, InputConfig::default().with_pull(Pull::Up));
     spawner.spawn(button_task(button).expect("button task fits"));
 
     let wifi_status = wifi.as_ref().map(|(interface, _)| interface.status());
@@ -546,7 +569,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
 
     #[cfg(all(feature = "bluetooth-auto", not(feature = "wifi-auto")))]
     let ble_connector = esp_radio::ble::controller::BleConnector::new(
-        b.bt,
+        bluetooth,
         esp_radio::ble::Config::default()
             .with_task_stack_size(4096)
             .with_max_connections(BLE_PEER_CAPACITY as u8),
@@ -612,7 +635,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         match radio_mode {
             RadioMode::Ble => {
                 let ble_connector = esp_radio::ble::controller::BleConnector::new(
-                    b.bt,
+                    bluetooth,
                     esp_radio::ble::Config::default()
                         .with_task_stack_size(4096)
                         .with_max_connections(BLE_PEER_CAPACITY as u8),
@@ -651,7 +674,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 }
             }
             RadioMode::AccessPoint => {
-                let _ = (b.bt, ble);
+                let _ = (bluetooth, ble);
                 match (wifi, tcp) {
                     (Some((wifi, wifi_fleet)), Some((tcp, tcp_seam))) => {
                         join(

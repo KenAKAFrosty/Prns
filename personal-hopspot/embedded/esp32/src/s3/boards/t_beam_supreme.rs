@@ -12,13 +12,15 @@ use embedded_graphics::prelude::{OriginDimensions, Point, Size};
 use embedded_graphics::Pixel;
 use embedded_hal_bus::spi::ExclusiveDevice;
 
-use personal_rns::interfaces::{ConnectionState, InterfaceId};
+use personal_rns::interfaces::InterfaceId;
 use personal_rns::radios::sx126x::{BoardConfig, Sx126x, TcxoVoltage};
-use personal_rns::reactor::embassy::EmbassyInterfaceStatus;
 
 use personal_hopspot_core as screen;
 
-use crate::s3::{self, Bringup, Esp32S3Board};
+use crate::s3::{
+    self, BoardDisplay, BoardFace, Esp32S3Board, S3BoardHardware, S3InterfaceHardware,
+    S3ReactorHardware,
+};
 
 /// This board's USB-auto interface id (the always-present top-level wire on pool slot 0).
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"tbeamsup");
@@ -47,11 +49,6 @@ const AXP2101_BATV_H: u8 = 0x34;
 /// PMU status register 1; bit5 ("VBUS good") is set when external USB power is present.
 const AXP2101_STATUS1: u8 = 0x00;
 const AXP2101_VBUS_GOOD: u8 = 0x20;
-
-/// The USB interface's live state, written by the device task (core 0) and read by the render loop
-/// (core 0) — the engine on core 1 reaches it through the lanes, this `static` is a face-side view.
-static USB_STATUS: EmbassyInterfaceStatus =
-    EmbassyInterfaceStatus::new(USB_INTERFACE_ID, ConnectionState::Initializing);
 
 /// Power the SX1262 (ALDO3) and the OLED + sensor bus (ALDO1, ALDO2) on by setting each rail to
 /// 3.3 V and flipping its on/off bit. Read-modify-write so the rest of each register (the voltage
@@ -242,12 +239,9 @@ pub struct TBeamSupremeBoard;
 impl Esp32S3Board for TBeamSupremeBoard {
     const ANNOUNCE_APP_DATA: &'static [u8] = ANNOUNCE_APP_DATA;
     const BOOT_BANNER: &'static str = "HOPSPOT_TBEAM_SUPREME";
+    const USB_INTERFACE_ID: InterfaceId = USB_INTERFACE_ID;
     type Display = Sh1106I2c<TBeamI2c>;
     type Battery = Axp2101Battery<TBeamI2c>;
-
-    fn usb_status() -> &'static EmbassyInterfaceStatus {
-        &USB_STATUS
-    }
 
     fn flush(display: &mut Self::Display) {
         let _ = display.flush();
@@ -259,8 +253,7 @@ impl Esp32S3Board for TBeamSupremeBoard {
 
     async fn bringup(
         p: esp_hal::peripherals::Peripherals,
-        _spawner: &Spawner,
-    ) -> Bringup<Self::Display, Self::Battery> {
+    ) -> S3BoardHardware<Self::Display, Self::Battery> {
         let (sw_int1, timebase, rtc) = s3::boot_common!(p, Self::BOOT_BANNER);
 
         // AXP2101 PMU first (I2C1 on SDA 42 / SCL 41): the LoRa + OLED rails boot OFF, so nothing else
@@ -346,22 +339,33 @@ impl Esp32S3Board for TBeamSupremeBoard {
             )
         };
 
-        Bringup {
-            display,
-            oled_ok,
-            battery,
-            usb_device: p.USB_DEVICE,
-            #[cfg(feature = "lora")]
-            lora_radio,
-            #[cfg(feature = "wifi-auto")]
-            wifi: p.WIFI,
-            button: p.GPIO0,
-            cpu_ctrl: p.CPU_CTRL,
-            sw_int1,
-            timebase,
-            _rtc: rtc,
-            #[cfg(feature = "bluetooth-auto")]
-            bt: p.BT,
+        S3BoardHardware {
+            face: BoardFace {
+                display: BoardDisplay {
+                    device: display,
+                    initialized: oled_ok,
+                },
+                battery,
+                button: Input::new(
+                    p.GPIO0,
+                    InputConfig::default().with_pull(esp_hal::gpio::Pull::Up),
+                ),
+            },
+            interface_hardware: S3InterfaceHardware {
+                usb_device: p.USB_DEVICE,
+                #[cfg(feature = "lora")]
+                lora_radio,
+                #[cfg(feature = "wifi-auto")]
+                wifi: p.WIFI,
+                #[cfg(feature = "bluetooth-auto")]
+                bluetooth: p.BT,
+            },
+            reactor: S3ReactorHardware {
+                cpu_control: p.CPU_CTRL,
+                software_interrupt: sw_int1,
+                timebase,
+                _rtc: rtc,
+            },
         }
     }
 }

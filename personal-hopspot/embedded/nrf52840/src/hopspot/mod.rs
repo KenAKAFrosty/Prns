@@ -1,4 +1,5 @@
 mod bluetooth_auto;
+mod board;
 mod display;
 mod firmware;
 mod identity;

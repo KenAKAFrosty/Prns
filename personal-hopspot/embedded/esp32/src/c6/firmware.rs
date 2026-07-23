@@ -1,21 +1,17 @@
 use super::*;
 
 pub async fn run(spawner: Spawner) {
-    esp_println::logger::init_logger_from_env();
-    esp_alloc::heap_allocator!(size: HEAP_BYTES);
-
-    let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
-    let p = esp_hal::init(config);
-    let (usb_rx, usb_tx) = UsbSerialJtag::new(p.USB_DEVICE).into_async().split();
-
-    let timg0 = TimerGroup::new(p.TIMG0);
-    let sw_int = SoftwareInterruptControl::new(p.SW_INTERRUPT);
-    esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
-
-    let mut rtc = Rtc::new(p.LPWR);
-    rtc.rwdt.disable();
-    rtc.swd.disable();
-    let timebase = EmbassyTimebase::start_at(InstantMillis(rtc.current_time_us() / 1000));
+    let C6Hardware {
+        usb_rx,
+        usb_tx,
+        #[cfg(feature = "esp-now")]
+        wifi,
+        #[cfg(feature = "bluetooth-auto")]
+        bluetooth,
+        mac,
+        timebase,
+        _rtc,
+    } = XiaoEsp32C6::bringup();
 
     #[cfg(feature = "esp-now")]
     let (_espnow_controller, espnow, _espnow_status) = {
@@ -23,7 +19,7 @@ pub async fn run(spawner: Spawner) {
             .with_static_rx_buf_num(4)
             .with_rx_ba_win(3);
         let (controller, interfaces) =
-            esp_radio::wifi::new(p.WIFI, wifi_config).expect("wifi controller");
+            esp_radio::wifi::new(wifi, wifi_config).expect("wifi controller");
         let esp_now_radio = interfaces.esp_now;
         let espnow_status: &'static EmbassyInterfaceStatus = mk_static!(
             EmbassyInterfaceStatus,
@@ -37,17 +33,12 @@ pub async fn run(spawner: Spawner) {
         (controller, espnow, espnow_status)
     };
 
-    let mac = base_mac_address();
     let node_bootstrap = crate::identity::bootstrap_node_identity();
     crate::identity::log_persistence("node", node_bootstrap.persistence());
     let ble_bootstrap = crate::identity::bootstrap_ble_identity();
     crate::identity::log_persistence("Bluetooth", ble_bootstrap.persistence());
     let node_identity = node_bootstrap.into_identity();
     let transport_secret = node_identity.transport_secret();
-    #[cfg(feature = "bluetooth-auto")]
-    let mut mac_octets = [0u8; 6];
-    #[cfg(feature = "bluetooth-auto")]
-    mac_octets.copy_from_slice(&mac.as_bytes()[..6]);
     #[cfg(feature = "bluetooth-auto")]
     let ble_identity = Some(ble_bootstrap.into_identity());
 
@@ -119,8 +110,7 @@ pub async fn run(spawner: Spawner) {
     #[cfg(feature = "bluetooth-auto")]
     if let Some((identity, fleet)) = ble {
         spawner.spawn(
-            ble_task(spawner, p.BT, mac_octets, identity, fleet, &BLE_SHARED)
-                .expect("ble task fits"),
+            ble_task(spawner, bluetooth, mac, identity, fleet, &BLE_SHARED).expect("ble task fits"),
         );
     }
     #[cfg(feature = "esp-now")]

@@ -1,13 +1,10 @@
+mod board;
+
 use esp_backtrace as _;
 use esp_bootloader_esp_idf::esp_app_desc;
-use esp_hal::clock::CpuClock;
-use esp_hal::efuse::base_mac_address;
-use esp_hal::interrupt::software::SoftwareInterruptControl;
 use esp_hal::peripherals::{BT, USB_DEVICE};
 use esp_hal::rng::Rng;
-use esp_hal::rtc_cntl::Rtc;
-use esp_hal::timer::timg::TimerGroup;
-use esp_hal::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx, UsbSerialJtagTx};
+use esp_hal::usb_serial_jtag::{UsbSerialJtagRx, UsbSerialJtagTx};
 use esp_hal::Async;
 
 use embassy_executor::Spawner;
@@ -16,13 +13,13 @@ use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Timer};
 use static_cell::StaticCell;
 
-use personal_rns::engine::{InstantMillis, IssuedCommand, RatchetPolicy};
+use personal_rns::engine::{IssuedCommand, RatchetPolicy};
 #[cfg(feature = "bluetooth-auto")]
 use personal_rns::interfaces::bluetooth_auto::{BleIdentity, BLE_HW_MTU};
 use personal_rns::interfaces::usb_auto::device_descriptor;
 use personal_rns::interfaces::{ConnectionState, InterfaceId};
 use personal_rns::reactor::embassy::{
-    EmbassyHost, EmbassyInterfaceSeam, EmbassyInterfaceStatus, EmbassyTimebase, InterfaceLifecycle,
+    EmbassyHost, EmbassyInterfaceSeam, EmbassyInterfaceStatus, InterfaceLifecycle,
 };
 use personal_rns::reactor::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
 use personal_rns::runtime::{
@@ -58,7 +55,7 @@ use personal_rns::reactor::interface_seam::Interface;
 
 esp_app_desc!();
 
-const ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x13Personal Hopspot C6\xc0";
+use board::{C6Hardware, XiaoEsp32C6, ANNOUNCE_APP_DATA, USB_INTERFACE_ID};
 
 const USB_LANE: usize = 1;
 const ESPNOW_LANE: usize = cfg!(feature = "esp-now") as usize;
@@ -80,18 +77,6 @@ const PACKET_PHY_INDEX_BUCKETS: usize =
     personal_rns::routing::dedup::dedup_index_buckets(PACKET_PHY_RETENTION_CAPACITY);
 #[cfg(feature = "bluetooth-auto")]
 const BLE_START_DELAY: Duration = Duration::from_secs(3);
-// BLE needs heap for esp-radio's controller + trouble-host's boxed GATT clients/reassemblers; 64 KB
-// covers it with margin. Kept off the larger end so the leftover linker `.stack` region stays big
-// enough for the BLE construction transient (the single-core main task runs on `.stack` — esp-rtos
-// gives it no separate task stack, so RAM spent on the heap is RAM taken from that one stack).
-#[cfg(not(any(feature = "bluetooth-auto", feature = "esp-now")))]
-const HEAP_BYTES: usize = 32 * 1024;
-#[cfg(all(feature = "bluetooth-auto", not(feature = "esp-now")))]
-const HEAP_BYTES: usize = 64 * 1024;
-#[cfg(all(feature = "esp-now", not(feature = "bluetooth-auto")))]
-const HEAP_BYTES: usize = 72 * 1024;
-#[cfg(all(feature = "esp-now", feature = "bluetooth-auto"))]
-const HEAP_BYTES: usize = 88 * 1024;
 #[cfg(feature = "bluetooth-auto")]
 fn c6_ble_config() -> esp_radio::ble::Config {
     esp_radio::ble::Config::default()
@@ -101,7 +86,6 @@ fn c6_ble_config() -> esp_radio::ble::Config {
         .with_default_tx_power(esp_radio::ble::TxPower::P20)
 }
 
-const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"hopsp-c6");
 #[cfg(feature = "bluetooth-auto")]
 const BLE_SUPERVISOR_ID: InterfaceId =
     InterfaceId::new([InterfaceKind::BluetoothAuto as u8, 0, 0, 0, 0, 0, 0, 0]);
