@@ -421,7 +421,7 @@ impl PickleRequestEncoder {
     }
 
     fn finish(mut self) -> Vec<u8> {
-        self.bytes.extend_from_slice(&[b'u', b'.']);
+        self.bytes.extend_from_slice(b"u.");
         self.bytes
     }
 

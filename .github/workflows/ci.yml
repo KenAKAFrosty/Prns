@@ -106,11 +106,11 @@ jobs:
       # across all three layers at once. Interface families ride their lane-neutral names, so this
       # also proves the weak-edge forwarding resolves them to the tokio impls.
       - name: clippy — personal-rns umbrella, tokio-host lane + families
-        run: cargo clippy -p personal-rns --features tokio-host,tcp,udp,wifi,shared-instance --all-targets --locked -- -D warnings
+        run: cargo clippy -p personal-rns --features tokio-host,tcp,udp,wifi-auto,shared-instance --all-targets --locked -- -D warnings
       # The same lane-neutral family names on the embassy lane (host-compiled), proving the weak
       # edges resolve them to the embassy impls instead.
       - name: clippy — personal-rns umbrella, embassy-host lane + families
-        run: cargo clippy -p personal-rns --no-default-features --features embassy-host,tcp,wifi,lora,esp-now,ble,usb,usb-device --all-targets --locked -- -D warnings
+        run: cargo clippy -p personal-rns --no-default-features --features embassy-host,tcp,wifi-auto,lora,esp-now,bluetooth-auto,usb --all-targets --locked -- -D warnings
       # The embassy interface crate, host-compiled (no_std enforced by the crate itself); its real
       # cross-builds ride the no-std-embedded job.
       - name: clippy — prns-interfaces-embassy (all features)
@@ -283,10 +283,10 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
       - run: bash validation/platforms/no-std-esp-build.sh
       - name: prns-interfaces-embassy — cross-build (ESP32-C6 / riscv32imac)
-        run: cargo build --locked --target riscv32imac-unknown-none-elf --features "tcp,wifi,lora,esp-now,ble,usb"
+        run: cargo build --locked --target riscv32imac-unknown-none-elf --features "tcp,wifi-auto,lora,esp-now,bluetooth-auto,usb"
         working-directory: prns-interfaces/impls/embassy
       - name: prns-interfaces-embassy — cross-build (nRF52840 / thumbv7em)
-        run: cargo build --locked --target thumbv7em-none-eabihf --features "lora,ble,usb-device"
+        run: cargo build --locked --target thumbv7em-none-eabihf --features "lora,bluetooth-auto,usb"
         working-directory: prns-interfaces/impls/embassy
       - name: t-echo firmware — cross-build (nRF52840 / thumbv7em)
         run: cargo build --release --locked
