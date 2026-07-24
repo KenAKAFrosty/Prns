@@ -30,6 +30,7 @@ use personal_hopspot_core::{
 
 use crate::host_usb::{open_usb_auto_target, scan_usb_auto_targets, HostUsb};
 
+use super::persistence;
 use super::ui::run_window;
 
 pub(super) const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 8]);
@@ -87,16 +88,17 @@ pub(super) struct WindowHandles {
 pub fn run() {
     init_observability();
 
-    let (ready_tx, ready_rx) = mpsc::channel::<WindowHandles>();
+    let (ready_tx, ready_rx) = mpsc::channel::<(WindowHandles, persistence::ShutdownFlush)>();
     std::thread::Builder::new()
         .name("hopspot-node".into())
         .spawn(move || run_node(ready_tx))
         .expect("spawn node thread");
 
-    let handles = ready_rx
+    let (handles, shutdown_flush) = ready_rx
         .recv()
         .expect("the node hands the window its handles before the runtime runs");
     run_window(handles);
+    shutdown_flush.flush_before_exit();
 }
 
 fn init_observability() {
@@ -150,7 +152,7 @@ fn log_identity_persistence(
     }
 }
 
-fn run_node(ready_tx: Sender<WindowHandles>) {
+fn run_node(ready_tx: Sender<(WindowHandles, persistence::ShutdownFlush)>) {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -181,16 +183,37 @@ fn run_node(ready_tx: Sender<WindowHandles>) {
         let destination = destination_hashes.delivery;
         let node_page_destination = destination_hashes.node_page;
 
-        let node = PrnsNode::new(PrnsNodeRecipe {
+        let persistence_storage = persistence::PersistenceStorage::new(&storage_dir);
+        let timeline_origin = persistence_storage.timeline_origin();
+        let (rotated_tx, rotated_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut node = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: Some(transport_secret),
             pre_configured_destinations: destinations.into_preconfigured_destinations(),
             app_state: (),
             storage: GrowableHeap,
             routes: screen::node_pages::NodePageRoutes,
             interfaces: Manual,
-            on_event: |_event, _state: &()| {},
-        });
+            on_event: move |event, _state: &()| {
+                if let PrnsEvent::Diagnostic(Diagnostic::SelfRatchetRotated { destination }) = event
+                {
+                    let _ = rotated_tx.send(destination);
+                }
+            },
+        })
+        .with_timeline_origin(timeline_origin);
+        let restored = persistence_storage.restore(&mut node);
+        tracing::info!(
+            event = "persistence_restored",
+            routes = restored.routes,
+            destinations = restored.destination_identities,
+            tunnels = restored.tunnels,
+            ratchets = restored.ratchets,
+            refused = restored.refused,
+            dropped = restored.dropped,
+        );
         let handle = node.handle();
+        let shutdown_flush =
+            persistence::spawn_worker(handle.clone(), persistence_storage, rotated_rx);
 
         let rescan = Arc::new(Notify::new());
         let usb = UsbAutoHost::new(
@@ -296,17 +319,20 @@ fn run_node(ready_tx: Sender<WindowHandles>) {
             tokio::spawn(abstract_unix_rpc.run());
         }
 
-        let _ = ready_tx.send(WindowHandles {
-            handle: handle.clone(),
-            usb_status,
-            wifi_status,
-            ble_status,
-            tcp_status,
-            tcp_id,
-            tcp_target,
-            destination,
-            node_page_destination,
-        });
+        let _ = ready_tx.send((
+            WindowHandles {
+                handle: handle.clone(),
+                usb_status,
+                wifi_status,
+                ble_status,
+                tcp_status,
+                tcp_id,
+                tcp_target,
+                destination,
+                node_page_destination,
+            },
+            shutdown_flush,
+        ));
 
         match node.run().await {
             Ok(()) => tracing::error!(event = "node_stopped"),
