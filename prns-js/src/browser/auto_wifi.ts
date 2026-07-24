@@ -1,4 +1,4 @@
-import { Tag } from "./casework.js";
+import { Tag } from "../casework.js";
 import type {
   AlreadyActive,
   BitrateBps,

@@ -426,6 +426,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "prns-host"
+version = "0.2.8"
+dependencies = [
+ "prns-runtime",
+]
+
+[[package]]
+name = "prns-host-cooperative"
+version = "0.2.8"
+dependencies = [
+ "prns-host",
+]
+
+[[package]]
 name = "prns-runtime"
 version = "0.2.8"
 dependencies = [
@@ -436,11 +450,13 @@ dependencies = [
 
 [[package]]
 name = "prns-wasm"
-version = "0.1.0"
+version = "0.2.8"
 dependencies = [
  "js-sys",
  "personal-hopspot-core",
  "personal-rns",
+ "prns-host",
+ "prns-host-cooperative",
  "wasm-bindgen",
  "zeroize",
 ]

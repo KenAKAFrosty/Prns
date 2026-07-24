@@ -10,7 +10,7 @@ import {
   interfaceId,
   nowMillis,
   packetFrame,
-} from "../ts/index.js";
+} from "../../prns-js/src/browser/index.js";
 import type {
   BluetoothReassemblerBinding,
   DestinationHash,
@@ -32,7 +32,7 @@ import type {
   UsbAutoDecoderBinding,
   WebSocketConnectOutcome,
   WebSocketSession,
-} from "../ts/index.js";
+} from "../../prns-js/src/browser/index.js";
 
 const IDENTITY_LENGTH = 32;
 const DEFAULT_WEBSOCKET_BITRATE = 1_000_000_000;
@@ -476,6 +476,8 @@ function wasmModule(): PrnsWasmModule {
     PrnsRuntime: MockRuntime,
     UsbAutoDecoder: MockUsbAutoDecoder,
     BluetoothReassembler: MockBluetoothReassembler,
+    hostContractAbi: () => 1,
+    productVersion: () => "0.2.8",
     identitySecretKeyLength: () => IDENTITY_LENGTH,
     bluetoothServiceUuid: () => "00000000-0000-4000-8000-000000000001",
     bluetoothControlUuid: () => "00000000-0000-4000-8000-000000000002",

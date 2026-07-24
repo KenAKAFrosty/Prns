@@ -1,6 +1,6 @@
 [package]
 name = "prns-wasm"
-version = "0.1.0"
+version = "0.2.8"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/KenAKAFrosty/Prns"
@@ -21,6 +21,8 @@ crate-type = ["cdylib", "rlib"]
 js-sys = "0.3"
 personal-rns = { path = "../personal-rns", default-features = false, features = ["alloc"] }
 personal-hopspot-core = { path = "../personal-hopspot/core", default-features = false }
+prns-host = { path = "../prns-host/core" }
+prns-host-cooperative = { path = "../prns-host/impls/cooperative" }
 wasm-bindgen = "0.2"
 zeroize = { version = "1", default-features = false, features = ["derive"] }
 

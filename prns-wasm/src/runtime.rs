@@ -17,12 +17,14 @@ use personal_rns::routing::request_handlers::{RequestPathHash, RequestPolicy};
 use personal_rns::routing::upstream_app_destinations::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::routing::warmth::Departure;
 use personal_rns::storage::GrowableHeap;
+use prns_host::PrnsLimits;
+use prns_host_cooperative::{CooperativeHost, Entropy, MonotonicMillis};
 use wasm_bindgen::prelude::*;
 
 use crate::input::{
     array_to_strings, destination_hash_from_vec, interface_id_from_vec, optional_bytes,
-    optional_u32, parse_interface_kind, require_entropy, required_array, required_bytes,
-    required_string, required_u64, secret_key_from_vec,
+    optional_u32, parse_interface_kind, required_array, required_bytes, required_string,
+    required_u64, secret_key_from_vec,
 };
 use crate::js_translation::{
     interface_kind_name, journaled_to_js, outbound_to_js, set_bytes, set_str, set_u32, set_u64,
@@ -56,6 +58,7 @@ pub struct PrnsRuntime {
     next_command_id: u64,
     ble_identity: Option<bluetooth_contract::BleIdentity>,
     node_page: bool,
+    host: CooperativeHost<()>,
 }
 
 #[wasm_bindgen]
@@ -82,6 +85,7 @@ impl PrnsRuntime {
             next_command_id: 0,
             ble_identity,
             node_page: false,
+            host: CooperativeHost::new(PrnsLimits::balanced()),
         })
     }
 
@@ -90,6 +94,9 @@ impl PrnsRuntime {
         let kind = parse_interface_kind(&required_string(&options, "kind")?)?;
         let channel_tag = required_bytes(&options, "channelTag")?;
         let now_ms = required_u64(&options, "nowMs")?;
+        self.host
+            .observe_time(MonotonicMillis::new(now_ms))
+            .map_err(|error| JsValue::from_str(&format!("host time moved backwards: {error:?}")))?;
         let bitrate = optional_u32(&options, "bitrateBps")?
             .map(u64::from)
             .and_then(BitrateBps::new)
@@ -129,6 +136,9 @@ impl PrnsRuntime {
     pub fn remove_interface(&mut self, options: JsValue) -> Result<bool, JsValue> {
         let interface_id = required_bytes(&options, "interfaceId")?;
         let now_ms = required_u64(&options, "nowMs")?;
+        self.host
+            .observe_time(MonotonicMillis::new(now_ms))
+            .map_err(|error| JsValue::from_str(&format!("host time moved backwards: {error:?}")))?;
         let id = interface_id_from_vec(interface_id)?;
         let before = self.interfaces.len();
         self.interfaces.retain(|interface| interface.id != id);
@@ -225,7 +235,12 @@ impl PrnsRuntime {
         let destination = required_bytes(&options, "destination")?;
         let now_ms = required_u64(&options, "nowMs")?;
         let entropy = required_bytes(&options, "entropy")?;
-        require_entropy(&entropy)?;
+        let entropy = Entropy::try_new(entropy)
+            .map_err(|error| JsValue::from_str(&format!("host entropy rejected: {error:?}")))?;
+        let step = self
+            .host
+            .begin_step(MonotonicMillis::new(now_ms), entropy)
+            .map_err(|error| JsValue::from_str(&format!("host time moved backwards: {error:?}")))?;
         let destination = destination_hash_from_vec(destination)?;
         let id = self.mint_command_id();
         let command = EngineCommand::AnnounceNow(AnnounceNow {
@@ -233,7 +248,7 @@ impl PrnsRuntime {
             target: AnnounceTarget::AllInterfaces,
             app_data: AnnounceAppData::Registered,
         });
-        self.ingest_command(id, command, now_ms, entropy);
+        self.ingest_command(id, command, now_ms, step.entropy.as_bytes().to_vec());
         Ok(id.0)
     }
 
@@ -243,10 +258,15 @@ impl PrnsRuntime {
         let bytes = required_bytes(&options, "bytes")?;
         let now_ms = required_u64(&options, "nowMs")?;
         let entropy = required_bytes(&options, "entropy")?;
-        require_entropy(&entropy)?;
+        let entropy = Entropy::try_new(entropy)
+            .map_err(|error| JsValue::from_str(&format!("host entropy rejected: {error:?}")))?;
+        let step = self
+            .host
+            .begin_step(MonotonicMillis::new(now_ms), entropy)
+            .map_err(|error| JsValue::from_str(&format!("host time moved backwards: {error:?}")))?;
         let source_interface = interface_id_from_vec(interface_id)?;
         let mut bytes = bytes;
-        let mut entropy = EntropyCursor::new(entropy);
+        let mut entropy = EntropyCursor::new(step.entropy.as_bytes().to_vec());
         let packet = InboundPacket {
             arrived_at: InstantMillis(now_ms),
             source_interface,

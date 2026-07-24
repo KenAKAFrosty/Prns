@@ -1,5 +1,9 @@
-import { Tag, from, match, match_into } from "../ts/index.js";
-import type { DataFrom, Tag as Tagged, TagFrom } from "../ts/index.js";
+import { Tag, from, match, match_into } from "../../prns-js/src/browser/index.js";
+import type {
+  DataFrom,
+  Tag as Tagged,
+  TagFrom,
+} from "../../prns-js/src/browser/index.js";
 
 type Creation =
   | Tagged<"Ready", { readonly value: number }>

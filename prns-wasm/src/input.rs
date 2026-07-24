@@ -6,8 +6,6 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use zeroize::Zeroizing;
 
-const DEFAULT_ENTROPY_FLOOR: usize = 64;
-
 fn required_value(object: &JsValue, key: &str) -> Result<JsValue, JsValue> {
     let value = Reflect::get(object, &JsValue::from_str(key))
         .map_err(|_| JsValue::from_str(&format!("failed to read {key}")))?;
@@ -130,15 +128,6 @@ pub(crate) fn interface_id_from_vec(bytes: Vec<u8>) -> Result<InterfaceId, JsVal
     let mut id = [0u8; INTERFACE_ID_LEN];
     id.copy_from_slice(&bytes);
     Ok(InterfaceId::new(id))
-}
-
-pub(crate) fn require_entropy(bytes: &[u8]) -> Result<(), JsValue> {
-    if bytes.len() < DEFAULT_ENTROPY_FLOOR {
-        return Err(JsValue::from_str(
-            "operation requires at least 64 entropy bytes",
-        ));
-    }
-    Ok(())
 }
 
 pub(crate) fn parse_interface_kind(kind: &str) -> Result<InterfaceKind, JsValue> {

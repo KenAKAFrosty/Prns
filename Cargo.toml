@@ -2,6 +2,7 @@
 members = [
     "personal-rns",
     "prns-core",
+    "prns-host/core",
     "prns-flash-manifest",
     "prns-runtime/core",
     "personal-hopspot/core",
@@ -19,6 +20,8 @@ exclude = [
     "prns-ffi",
     "prns-napi",
     "prns-wasm",
+    "prns-host/impls/cooperative",
+    "prns-host/impls/tokio",
     "prns-runtime/impls/tokio",
     "prns-runtime/impls/embassy",
     "prns-interfaces/impls/tokio",

@@ -1,8 +1,24 @@
-import { Tag, from, match, match_into } from "./casework.js";
+import { Tag, from, match, match_into } from "../casework.js";
+import { BoundedAsyncLane, PrnsConsumerError } from "../async_lanes.js";
+import {
+  HOST_CONTRACT_ABI,
+  PRODUCT_VERSION,
+  balancedLimits,
+} from "../contract.js";
+import type {
+  LifecycleState as HostLifecycleState,
+  PrnsLimits as HostLimits,
+} from "../contract.js";
 import { AutoWifiInterface } from "./auto_wifi.js";
 
 export { Tag, from, match, match_into };
-export type { DataFrom, TagFrom } from "./casework.js";
+export {
+  HOST_CONTRACT_ABI,
+  PRODUCT_VERSION,
+  PrnsConsumerError,
+  balancedLimits,
+};
+export type { DataFrom, TagFrom } from "../casework.js";
 export {
   AutoWifiController,
   AutoWifiInterface,
@@ -152,6 +168,16 @@ export type EntropyOutcome = Tag<"Filled", EntropyBytes> | EntropyFailure;
 
 export type PrnsCreateOutcome =
   | Tag<"Ready", Prns>
+  | Tag<"WasmLoadFailed", { readonly detail: string }>
+  | Tag<
+      "ContractMismatch",
+      {
+        readonly requiredAbi: number;
+        readonly actualAbi: number;
+        readonly requiredProductVersion: string;
+        readonly actualProductVersion: string;
+      }
+    >
   | IdentityStoreFailure
   | EntropyFailure
   | RuntimeRejected;
@@ -317,12 +343,11 @@ export type DestinationRegistrationOutcome =
   | RuntimeRejected;
 
 export type AnnounceOutcome =
-  | Tag<"Queued", CommandId>
+  | Tag<"Announced">
+  | Tag<"Busy">
+  | Tag<"NodeStopped">
+  | Tag<"CommandFailed", { readonly detail: string }>
   | EntropyFailure
-  | RuntimeRejected;
-
-export type EventDrainOutcome =
-  | Tag<"Drained", readonly PrnsEvent[]>
   | RuntimeRejected;
 
 export type SnapshotOutcome =
@@ -343,6 +368,8 @@ export type PrnsWasmModule = {
     new(): BluetoothReassemblerBinding;
   };
   identitySecretKeyLength(): number;
+  hostContractAbi(): number;
+  productVersion(): string;
   bluetoothServiceUuid(): string;
   bluetoothControlUuid(): string;
   bluetoothDataUuid(): string;
@@ -451,42 +478,54 @@ export type RuntimeIngestOptions = {
   entropy: EntropyBytes;
 };
 
-export type AnnounceEvent = {
-  type: "announce";
-  destination: DestinationHash;
-  hops: HopCount;
-  sourceInterface: InterfaceId;
-};
+export type AnnounceEvent = Tag<
+  "AnnounceHeard",
+  {
+    readonly destination: DestinationHash;
+    readonly hops: HopCount;
+    readonly sourceInterface: InterfaceId;
+  }
+>;
 
-export type SingleDeliveryEvent = {
-  type: "singleDelivery";
-  destination: DestinationHash;
-  plaintext: Uint8Array;
-  sourceInterface: InterfaceId;
-};
+export type SingleDeliveryEvent = Tag<
+  "SingleDelivery",
+  {
+    readonly destination: DestinationHash;
+    readonly plaintext: Uint8Array;
+    readonly sourceInterface: InterfaceId;
+  }
+>;
 
-export type CommandSettledEvent = {
-  type: "commandSettled";
-  commandId: CommandId;
-  debugSettlement: string;
-};
+type CommandSettledEvent = Tag<
+  "CommandSettled",
+  {
+    readonly commandId: CommandId;
+    readonly debugSettlement: string;
+  }
+>;
 
-export type RouteEvent = {
-  type: "routeExpired" | "routeEvicted" | "routeInterfaceGone" | "routeDropped";
-  destination: DestinationHash;
-};
+export type RouteEvent =
+  | Tag<"RouteExpired", { readonly destination: DestinationHash }>
+  | Tag<"RouteEvicted", { readonly destination: DestinationHash }>
+  | Tag<"RouteInterfaceGone", { readonly destination: DestinationHash }>
+  | Tag<"RouteDropped", { readonly destination: DestinationHash }>;
 
-export type UnknownPrnsEvent = {
-  type: "unknown";
-  raw: unknown;
-};
+export type DiagnosticsDroppedEvent = Tag<
+  "DiagnosticsDropped",
+  { readonly count: bigint }
+>;
 
-export type PrnsEvent =
+export type PrnsApplicationEvent = SingleDeliveryEvent;
+export type PrnsDiagnosticEvent =
+  | AnnounceEvent
+  | RouteEvent
+  | DiagnosticsDroppedEvent;
+export type PrnsEvent = PrnsApplicationEvent | PrnsDiagnosticEvent;
+type ParsedPrnsEvent =
   | AnnounceEvent
   | SingleDeliveryEvent
   | CommandSettledEvent
-  | RouteEvent
-  | UnknownPrnsEvent;
+  | RouteEvent;
 
 export type FanTarget =
   | { type: "all" }
@@ -898,11 +937,12 @@ export class BrowserLocalStorageBleIdentityStore implements StableIdentityStore 
 export type EntropySource = (length: number) => EntropyOutcome;
 
 export type PrnsOptions = {
-  wasm: PrnsWasmModule;
+  wasm?: PrnsWasmModule;
   identityStore?: IdentityStore;
   bleIdentityStore?: StableIdentityStore;
   entropy?: EntropySource;
   now?: () => InstantMillis;
+  limits?: HostLimits;
 };
 
 export type InterfaceSession = {
@@ -2187,6 +2227,14 @@ export class Prns {
   #runtime: PrnsRuntimeBinding;
   #entropy: EntropySource;
   #now: () => InstantMillis;
+  #limits: HostLimits;
+  #events: BoundedAsyncLane<PrnsApplicationEvent>;
+  #diagnostics: BoundedAsyncLane<PrnsDiagnosticEvent>;
+  #pendingAnnounces = new Map<
+    bigint,
+    (outcome: AnnounceOutcome) => void
+  >();
+  #lifecycle: HostLifecycleState = Tag("Running");
 
   private constructor(
     wasm: PrnsWasmModule,
@@ -2194,20 +2242,72 @@ export class Prns {
     entropy: EntropySource,
     now: () => InstantMillis,
     bleIdentityAvailability: BleIdentityAvailability,
+    limits: HostLimits,
   ) {
     this.#runtime = runtime;
     this.#entropy = entropy;
     this.#now = now;
+    this.#limits = limits;
+    this.#events = new BoundedAsyncLane<PrnsApplicationEvent>({
+      name: "ApplicationEvents",
+      maximumValues: limits.applicationEvents,
+      maximumBytes: limits.retainedEventBytes,
+      measure: (event) => event.data.plaintext.length,
+      onRejected: (rejectedEventBytes) =>
+        this.#failBackpressure(rejectedEventBytes),
+      onBeforeNext: () => this.#pumpEvents(),
+    });
+    this.#diagnostics = new BoundedAsyncLane<PrnsDiagnosticEvent>({
+      name: "Diagnostics",
+      maximumValues: limits.diagnostics,
+      maximumBytes: Number.MAX_SAFE_INTEGER,
+      measure: () => 0,
+      gap: (count) => Tag("DiagnosticsDropped", { count }),
+      onBeforeNext: () => this.#pumpEvents(),
+    });
     this.interfaces = new PrnsInterfaces(
-      new RuntimeHost(wasm, runtime, entropy, now, bleIdentityAvailability),
+      new RuntimeHost(
+        wasm,
+        runtime,
+        entropy,
+        now,
+        bleIdentityAvailability,
+        () => this.#pumpEvents(),
+      ),
     );
   }
 
   static async create(options: PrnsOptions): Promise<PrnsCreateOutcome> {
+    const loaded = options.wasm
+      ? Tag("Loaded", options.wasm)
+      : await loadBundledWasm();
+    if (loaded.tag !== "Loaded") {
+      return loaded;
+    }
+    const wasm = loaded.data;
+    let actualAbi: number;
+    let actualProductVersion: string;
+    try {
+      actualAbi = wasm.hostContractAbi();
+      actualProductVersion = wasm.productVersion();
+    } catch (error) {
+      return runtimeRejected("initialize", error);
+    }
+    if (
+      actualAbi !== HOST_CONTRACT_ABI ||
+      actualProductVersion !== PRODUCT_VERSION
+    ) {
+      return Tag("ContractMismatch", {
+        requiredAbi: HOST_CONTRACT_ABI,
+        actualAbi,
+        requiredProductVersion: PRODUCT_VERSION,
+        actualProductVersion,
+      });
+    }
     let identityLength: number;
     try {
       identityLength = positiveInteger(
-        options.wasm.identitySecretKeyLength(),
+        wasm.identitySecretKeyLength(),
         "identity secret key length",
       );
     } catch (error) {
@@ -2266,14 +2366,16 @@ export class Prns {
         ? bleIdentityAvailability.data
         : undefined;
     try {
+      const limits = browserLimits(options.limits ?? balancedLimits());
       return Tag(
         "Ready",
         new Prns(
-          options.wasm,
-          new options.wasm.PrnsRuntime(identity, bleIdentity),
+          wasm,
+          new wasm.PrnsRuntime(identity, bleIdentity),
           options.entropy ?? webCryptoEntropy,
           options.now ?? nowMillis,
           bleIdentityAvailability,
+          limits,
         ),
       );
     } catch (error) {
@@ -2305,33 +2407,47 @@ export class Prns {
     }
   }
 
-  announce(destination: DestinationHash): AnnounceOutcome {
+  announce(destination: DestinationHash): Promise<AnnounceOutcome> {
+    if (this.#lifecycle.tag !== "Running") {
+      return Promise.resolve(Tag("NodeStopped"));
+    }
+    if (this.#pendingAnnounces.size >= this.#limits.pendingCommands) {
+      return Promise.resolve(Tag("Busy"));
+    }
     const entropy = this.#entropyBytes();
     if (entropy.tag !== "Filled") {
-      return entropy;
+      return Promise.resolve(entropy);
     }
+    let id: CommandId;
     try {
-      return Tag(
-        "Queued",
-        commandId(
-          this.#runtime.announce({
-            destination,
-            nowMs: this.#now(),
-            entropy: entropy.data,
-          }),
-        ),
+      id = commandId(
+        this.#runtime.announce({
+          destination,
+          nowMs: this.#now(),
+          entropy: entropy.data,
+        }),
       );
     } catch (error) {
-      return runtimeRejected("announce", error);
+      return Promise.resolve(runtimeRejected("announce", error));
     }
+    return new Promise((resolve) => {
+      this.#pendingAnnounces.set(id, resolve);
+      this.#pumpEvents();
+    });
   }
 
-  drainEvents(): EventDrainOutcome {
-    try {
-      return Tag("Drained", this.#runtime.drainEvents().map(parseEvent));
-    } catch (error) {
-      return runtimeRejected("drain-events", error);
-    }
+  get lifecycle(): HostLifecycleState {
+    return this.#lifecycle;
+  }
+
+  events(): AsyncIterable<PrnsApplicationEvent> {
+    this.#pumpEvents();
+    return this.#events;
+  }
+
+  diagnostics(): AsyncIterable<PrnsDiagnosticEvent> {
+    this.#pumpEvents();
+    return this.#diagnostics;
   }
 
   snapshot(): SnapshotOutcome {
@@ -2345,6 +2461,82 @@ export class Prns {
   #entropyBytes(): EntropyOutcome {
     return fillEntropy(this.#entropy, MIN_ENTROPY_BYTES);
   }
+
+  #pumpEvents(): void {
+    if (this.#lifecycle.tag === "Failed" || this.#lifecycle.tag === "Stopped") {
+      return;
+    }
+    let parsed: ParsedPrnsEvent[];
+    try {
+      parsed = this.#runtime.drainEvents().map(parseEvent);
+    } catch (error) {
+      this.#failContract(describeHostError(error));
+      return;
+    }
+    for (const event of parsed) {
+      match(event, {
+        AnnounceHeard: (data) => {
+          this.#diagnostics.push(Tag("AnnounceHeard", data));
+        },
+        SingleDelivery: (data) => {
+          this.#events.push(Tag("SingleDelivery", data));
+        },
+        CommandSettled: ({ commandId, debugSettlement }) => {
+          const settle = this.#pendingAnnounces.get(commandId);
+          if (!settle) {
+            return;
+          }
+          this.#pendingAnnounces.delete(commandId);
+          settle(
+            debugSettlement.includes("Fail")
+              ? Tag("CommandFailed", { detail: debugSettlement })
+              : Tag("Announced"),
+          );
+        },
+        RouteExpired: (data) => {
+          this.#diagnostics.push(Tag("RouteExpired", data));
+        },
+        RouteEvicted: (data) => {
+          this.#diagnostics.push(Tag("RouteEvicted", data));
+        },
+        RouteInterfaceGone: (data) => {
+          this.#diagnostics.push(Tag("RouteInterfaceGone", data));
+        },
+        RouteDropped: (data) => {
+          this.#diagnostics.push(Tag("RouteDropped", data));
+        },
+      });
+    }
+  }
+
+  #failBackpressure(rejectedEventBytes: number): void {
+    this.#lifecycle = Tag("Failed", {
+      cause: "EventBackpressureExceeded",
+      limits: this.#limits,
+      rejectedEventBytes,
+    });
+    this.#events.finish();
+    this.#diagnostics.finish();
+    this.#settleFailedCommands("application event backpressure exceeded");
+  }
+
+  #failContract(detail: string): void {
+    this.#lifecycle = Tag("Failed", {
+      cause: "ContractViolated",
+      detail,
+    });
+    const error = new Error(detail);
+    this.#events.fail(error);
+    this.#diagnostics.fail(error);
+    this.#settleFailedCommands(detail);
+  }
+
+  #settleFailedCommands(detail: string): void {
+    for (const settle of this.#pendingAnnounces.values()) {
+      settle(Tag("CommandFailed", { detail }));
+    }
+    this.#pendingAnnounces.clear();
+  }
 }
 
 class RuntimeHost {
@@ -2353,6 +2545,7 @@ class RuntimeHost {
   readonly #entropy: EntropySource;
   readonly #now: () => InstantMillis;
   readonly #bleIdentityAvailability: BleIdentityAvailability;
+  readonly #onRuntimeActivity: () => void;
   #activeInterfaces = new Map<
     string,
     {
@@ -2371,12 +2564,14 @@ class RuntimeHost {
     entropy: EntropySource,
     now: () => InstantMillis,
     bleIdentityAvailability: BleIdentityAvailability,
+    onRuntimeActivity: () => void,
   ) {
     this.#wasm = wasm;
     this.#runtime = runtime;
     this.#entropy = entropy;
     this.#now = now;
     this.#bleIdentityAvailability = bleIdentityAvailability;
+    this.#onRuntimeActivity = onRuntimeActivity;
   }
 
   runtimeReadiness(): RuntimeReadyOutcome {
@@ -2463,6 +2658,7 @@ class RuntimeHost {
         nowMs: this.#now(),
         entropy: entropy.data,
       });
+      this.#onRuntimeActivity();
       return Tag("Accepted");
     } catch (error) {
       return runtimeRejected("ingest", error);
@@ -2883,40 +3079,48 @@ function parseFanTarget(raw: unknown): FanTarget {
   );
 }
 
-function parseEvent(raw: unknown): PrnsEvent {
+function parseEvent(raw: unknown): ParsedPrnsEvent {
   const object = record(raw, "PrnsEvent");
   const type = stringField(object, "type");
   switch (type) {
     case "announce":
-      return {
-        type,
+      return Tag("AnnounceHeard", {
         destination: destinationHash(bytesField(object, "destination")),
         hops: hopCount(numberField(object, "hops")),
         sourceInterface: interfaceId(bytesField(object, "sourceInterface")),
-      };
+      });
     case "singleDelivery":
-      return {
-        type,
+      return Tag("SingleDelivery", {
         destination: destinationHash(bytesField(object, "destination")),
         plaintext: copyBytes(bytesField(object, "plaintext")),
         sourceInterface: interfaceId(bytesField(object, "sourceInterface")),
-      };
+      });
     case "commandSettled":
-      return {
-        type,
+      return Tag("CommandSettled", {
         commandId: commandId(bigintField(object, "id")),
         debugSettlement: stringField(object, "settlement"),
-      };
+      });
     case "routeExpired":
-    case "routeEvicted":
-    case "routeInterfaceGone":
-    case "routeDropped":
-      return {
-        type,
+      return Tag("RouteExpired", {
         destination: destinationHash(bytesField(object, "destination")),
-      };
+      });
+    case "routeEvicted":
+      return Tag("RouteEvicted", {
+        destination: destinationHash(bytesField(object, "destination")),
+      });
+    case "routeInterfaceGone":
+      return Tag("RouteInterfaceGone", {
+        destination: destinationHash(bytesField(object, "destination")),
+      });
+    case "routeDropped":
+      return Tag("RouteDropped", {
+        destination: destinationHash(bytesField(object, "destination")),
+      });
     default:
-      return { type: "unknown", raw };
+      throw new PrnsValidationError(
+        "invalid-component",
+        `runtime emitted event outside host contract: ${type}`,
+      );
   }
 }
 
@@ -3914,6 +4118,45 @@ function byteKey(bytes: Uint8Array): string {
 
 function formatOptionalHex(value: number | undefined): string {
   return value === undefined ? "unknown" : value.toString(16).padStart(4, "0");
+}
+
+async function loadBundledWasm(): Promise<
+  | Tag<"Loaded", PrnsWasmModule>
+  | Tag<"WasmLoadFailed", { readonly detail: string }>
+> {
+  const modulePath: string = "../../wasm/prns_wasm.js";
+  try {
+    const imported: unknown = await import(modulePath);
+    const module = record(imported, "bundled WebAssembly module");
+    const initialize = module.default;
+    if (typeof initialize !== "function") {
+      return Tag("WasmLoadFailed", {
+        detail: "bundled WebAssembly module has no initializer",
+      });
+    }
+    await initialize();
+    return Tag("Loaded", imported as PrnsWasmModule);
+  } catch (error) {
+    return Tag("WasmLoadFailed", { detail: describeHostError(error) });
+  }
+}
+
+function browserLimits(limits: HostLimits): HostLimits {
+  return {
+    pendingCommands: positiveInteger(
+      limits.pendingCommands,
+      "pending command limit",
+    ),
+    applicationEvents: positiveInteger(
+      limits.applicationEvents,
+      "application event limit",
+    ),
+    retainedEventBytes: positiveInteger(
+      limits.retainedEventBytes,
+      "retained event byte limit",
+    ),
+    diagnostics: positiveInteger(limits.diagnostics, "diagnostic limit"),
+  };
 }
 
 function delay(ms: number): Promise<void> {

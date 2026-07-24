@@ -6,18 +6,22 @@
     "moduleResolution": "Bundler",
     "baseUrl": ".",
     "paths": {
-      "/pkg/prns_wasm.js": ["./ts/wasm_web.d.ts"]
+      "/pkg/prns_wasm.js": ["../prns-js/src/browser/wasm_web.d.ts"]
     },
     "strict": true,
     "exactOptionalPropertyTypes": true,
     "noUncheckedIndexedAccess": true,
     "verbatimModuleSyntax": true,
     "skipLibCheck": false,
-    "rootDir": ".",
+    "rootDir": "..",
     "outDir": "./smoke/dist",
     "declaration": true,
     "declarationMap": true
   },
-  "include": ["ts/**/*.ts", "smoke/**/*.ts"],
+  "include": [
+    "../prns-js/src/casework.ts",
+    "../prns-js/src/browser/**/*.ts",
+    "smoke/**/*.ts"
+  ],
   "exclude": ["smoke/dist", "smoke/pkg"]
 }

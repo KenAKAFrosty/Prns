@@ -9,7 +9,7 @@ import {
   nowMillis,
   parseBrowserGatewayCatalog,
   validateBrowserGatewayUrl,
-} from "../ts/index.js";
+} from "../../prns-js/src/browser/index.js";
 import type {
   BleIdentity,
   BluetoothReassemblerBinding,
@@ -27,7 +27,7 @@ import type {
   RuntimeRemoveInterfaceInput,
   StableIdentityStore,
   UsbAutoDecoderBinding,
-} from "../ts/index.js";
+} from "../../prns-js/src/browser/index.js";
 
 const IDENTITY_LENGTH = 32;
 const LOCAL_ID = "01010101010101010101010101010101";
@@ -349,6 +349,8 @@ function wasmModule(): PrnsWasmModule {
     PrnsRuntime: MockRuntime,
     UsbAutoDecoder: MockUsbAutoDecoder,
     BluetoothReassembler: MockBluetoothReassembler,
+    hostContractAbi: () => 1,
+    productVersion: () => "0.2.8",
     identitySecretKeyLength: () => IDENTITY_LENGTH,
     bluetoothServiceUuid: () => "service",
     bluetoothControlUuid: () => "control",

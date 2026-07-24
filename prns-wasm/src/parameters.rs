@@ -6,6 +6,16 @@ use personal_rns::interfaces::{BitrateBps, INTERFACE_ID_LEN};
 use personal_rns::wire::TRUNCATED_HASH_BYTE_LEN;
 use wasm_bindgen::prelude::*;
 
+#[wasm_bindgen(js_name = hostContractAbi)]
+pub fn host_contract_abi() -> u32 {
+    prns_host::HOST_CONTRACT_ABI
+}
+
+#[wasm_bindgen(js_name = productVersion)]
+pub fn product_version() -> String {
+    prns_host::HOST_CONTRACT.product_version.to_string()
+}
+
 #[wasm_bindgen(js_name = identitySecretKeyLength)]
 pub fn identity_secret_key_length() -> usize {
     IDENTITY_SECRET_KEY_LEN

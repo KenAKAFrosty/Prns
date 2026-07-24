@@ -16,6 +16,11 @@ pub fn version() -> String {
 }
 
 #[napi]
+pub fn host_contract_abi() -> u32 {
+    prns_host::HOST_CONTRACT_ABI
+}
+
+#[napi]
 pub fn generate_identity_secret() -> Result<Buffer, ErrorCode> {
     personal_rns::try_generate_identity_secret()
         .map(|secret| Buffer::from(secret.to_vec()))

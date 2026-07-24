@@ -1,12 +1,17 @@
 {
   "extends": "../../tsconfig.json",
   "compilerOptions": {
-    "rootDir": "../..",
+    "rootDir": "../../..",
     "rootDirs": [".", "../../target/browser-playground"],
     "outDir": "../../target/browser-playground",
     "declaration": false,
     "declarationMap": false
   },
-  "include": ["../../ts/**/*.ts", "./**/*.ts"],
+  "include": [
+    "../../../prns-js/src/casework.ts",
+    "../../../prns-js/src/contract.ts",
+    "../../../prns-js/src/browser/**/*.ts",
+    "./**/*.ts"
+  ],
   "exclude": []
 }

@@ -7,7 +7,7 @@ import {
   identitySecretKey,
   interfaceId,
   nowMillis,
-} from "../ts/index.js";
+} from "../../prns-js/src/browser/index.js";
 import type {
   BleIdentity,
   BluetoothReassemblerBinding,
@@ -24,7 +24,7 @@ import type {
   RuntimeRemoveInterfaceInput,
   StableIdentityStore,
   UsbAutoDecoderBinding,
-} from "../ts/index.js";
+} from "../../prns-js/src/browser/index.js";
 import type { PacketContentPresentation } from "../examples/browser-playground/presentation.js";
 
 const IDENTITY_LENGTH = 32;
@@ -111,20 +111,19 @@ async function main(): Promise<void> {
     plaintext,
     sourceInterface,
   });
-  const delivered = prns.drainEvents();
-  assert(delivered.tag === "Drained", "single delivery drains");
-  assert(delivered.data.length === 1, "one single delivery drains");
-  const event = delivered.data[0];
-  assert(event?.type === "singleDelivery", "single delivery is typed");
-  assert(bytesEqual(event.destination, destination), "destination is preserved");
+  const delivered = await prns.events()[Symbol.asyncIterator]().next();
+  assert(!delivered.done, "single delivery streams");
+  const event = delivered.value;
+  assert(event.tag === "SingleDelivery", "single delivery is tagged");
+  assert(bytesEqual(event.data.destination, destination), "destination is preserved");
   assert(
-    bytesEqual(event.sourceInterface, sourceInterface),
+    bytesEqual(event.data.sourceInterface, sourceInterface),
     "source interface is preserved",
   );
-  assert(bytesEqual(event.plaintext, plaintext), "plaintext is preserved");
+  assert(bytesEqual(event.data.plaintext, plaintext), "plaintext is preserved");
   plaintext.fill(0);
   assert(
-    new TextDecoder().decode(event.plaintext) === "hello from a single packet",
+    new TextDecoder().decode(event.data.plaintext) === "hello from a single packet",
     "parsed plaintext owns its bytes",
   );
 
@@ -137,14 +136,21 @@ async function main(): Promise<void> {
     },
     { type: "commandSettled", id: 7n, settlement: "Sent" },
     { type: "routeExpired", destination },
-    { type: "futureEvent", value: 1 },
   );
-  const existing = prns.drainEvents();
-  assert(existing.tag === "Drained", "existing events drain");
+  const diagnostics = prns.diagnostics()[Symbol.asyncIterator]();
+  const announce = await diagnostics.next();
+  const route = await diagnostics.next();
+  assert(!announce.done && !route.done, "diagnostics stream");
   assert(
-    existing.data.map((candidate) => candidate.type).join(",") ===
-      "announce,commandSettled,routeExpired,unknown",
-    "existing event cases remain intact",
+    `${announce.value.tag},${route.value.tag}` ===
+      "AnnounceHeard,RouteExpired",
+    "diagnostic cases are tagged and command settlement stays private",
+  );
+
+  runtime.events.push({ type: "futureEvent", value: 1 });
+  assert(
+    await rejects(diagnostics.next()),
+    "unknown raw events are contract failures",
   );
 
   for (const malformed of [
@@ -167,17 +173,28 @@ async function main(): Promise<void> {
       sourceInterface: new Uint8Array(7),
     },
   ]) {
-    runtime.events.push(malformed);
-    const rejected = prns.drainEvents();
+    const malformedPrns = await readyPrns();
+    const malformedRuntime = MockRuntime.latest;
+    assert(malformedRuntime, "malformed runtime exists");
+    const malformedEvents = malformedPrns.events()[Symbol.asyncIterator]();
+    malformedRuntime.events.push(malformed);
     assert(
-      rejected.tag === "RuntimeRejected" &&
-        rejected.data.operation === "drain-events",
+      await rejects(malformedEvents.next()),
       "malformed single delivery is a typed drain failure",
     );
   }
 
   await validatePresentations();
   console.log("event smoke passed");
+}
+
+async function rejects(operation: Promise<unknown>): Promise<boolean> {
+  try {
+    await operation;
+    return false;
+  } catch {
+    return true;
+  }
 }
 
 async function validatePresentations(): Promise<void> {
@@ -246,6 +263,8 @@ function wasmModule(): PrnsWasmModule {
     PrnsRuntime: MockRuntime,
     UsbAutoDecoder: MockUsbAutoDecoder,
     BluetoothReassembler: MockBluetoothReassembler,
+    hostContractAbi: () => 1,
+    productVersion: () => "0.2.8",
     identitySecretKeyLength: () => IDENTITY_LENGTH,
     bluetoothServiceUuid: () => "service",
     bluetoothControlUuid: () => "control",

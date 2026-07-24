@@ -49,6 +49,11 @@ export function describeStartupFailure(outcome: StartupFailure): string {
       return `LXMF display name is ${outcome.data.actual} bytes; the maximum is ${outcome.data.maximum}`;
     case "HostOperationFailed":
       return describeHostOperationFailure(outcome);
+    case "ContractMismatch":
+      return (
+        `Host contract ${outcome.data.actualAbi}/${outcome.data.actualProductVersion} ` +
+        `does not match ${outcome.data.requiredAbi}/${outcome.data.requiredProductVersion}`
+      );
     case "HostApiUnavailable":
       return `${outcome.data.api} is unavailable in this browser`;
     case "IdentityStoreFailed":

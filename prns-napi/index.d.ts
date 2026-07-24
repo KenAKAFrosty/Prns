@@ -188,6 +188,8 @@ export interface DestinationSpec {
 
 export declare function generateIdentitySecret(): Buffer
 
+export declare function hostContractAbi(): number
+
 export interface IdentitySpec {
   secret?: Buffer
   path?: string

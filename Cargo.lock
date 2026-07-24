@@ -2983,6 +2983,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "prns-host"
+version = "0.2.8"
+dependencies = [
+ "prns-runtime",
+]
+
+[[package]]
 name = "prns-interfaces-embassy"
 version = "0.2.8"
 dependencies = [

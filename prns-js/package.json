@@ -1,0 +1,98 @@
+{
+  "name": "personal-rns",
+  "version": "0.2.8",
+  "description": "Correct, robust, fast Personal Reticulum bindings for native JavaScript and browsers.",
+  "license": "MIT OR Apache-2.0",
+  "homepage": "https://prns.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/KenAKAFrosty/Prns.git",
+    "directory": "prns-js"
+  },
+  "bugs": {
+    "url": "https://github.com/KenAKAFrosty/Prns/issues"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "dist-cjs",
+    "native",
+    "wasm",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
+  ],
+  "exports": {
+    ".": {
+      "bun": {
+        "types": "./dist/native/index.d.ts",
+        "import": "./dist/native/index.js",
+        "require": "./dist/native/index.cjs"
+      },
+      "node": {
+        "types": "./dist/native/index.d.ts",
+        "import": "./dist/native/index.js",
+        "require": "./dist/native/index.cjs"
+      },
+      "browser": {
+        "types": "./dist/browser/index.d.ts",
+        "import": "./dist/browser/index.js"
+      },
+      "default": {
+        "types": "./dist/browser/index.d.ts",
+        "import": "./dist/browser/index.js"
+      }
+    },
+    "./native": {
+      "types": "./dist/native/index.d.ts",
+      "import": "./dist/native/index.js",
+      "require": "./dist/native/index.cjs"
+    },
+    "./browser": {
+      "types": "./dist/browser/index.d.ts",
+      "import": "./dist/browser/index.js"
+    },
+    "./casework": {
+      "types": "./dist/casework.d.ts",
+      "import": "./dist/casework.js",
+      "require": "./dist-cjs/casework.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "clean": "node scripts/clean.mjs",
+    "build": "npm run clean && tsc -p tsconfig.json && tsc -p tsconfig.casework-cjs.json && node scripts/stage.mjs",
+    "check": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.casework-cjs.json --noEmit",
+    "test": "npm run build && node --test tests/*.test.mjs",
+    "pack:check": "npm run build && npm pack --dry-run"
+  },
+  "devDependencies": {
+    "@types/node": "24.3.0",
+    "typescript": "5.9.2"
+  },
+  "optionalDependencies": {
+    "personal-rns-darwin-arm64": "0.2.8",
+    "personal-rns-darwin-x64": "0.2.8",
+    "personal-rns-linux-arm64-gnu": "0.2.8",
+    "personal-rns-linux-arm64-musl": "0.2.8",
+    "personal-rns-linux-x64-gnu": "0.2.8",
+    "personal-rns-linux-x64-musl": "0.2.8",
+    "personal-rns-win32-arm64-msvc": "0.2.8",
+    "personal-rns-win32-x64-msvc": "0.2.8"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "reticulum",
+    "rns",
+    "mesh",
+    "networking",
+    "napi",
+    "wasm"
+  ]
+}

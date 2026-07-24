@@ -1,11 +1,9 @@
 {
-  "name": "@personal-rns/prns",
-  "version": "0.1.0",
+  "name": "@personal-rns/wasm-backend",
+  "version": "0.2.8",
   "license": "MIT OR Apache-2.0",
   "private": true,
   "type": "module",
-  "main": "./ts/index.ts",
-  "types": "./ts/index.ts",
   "scripts": {
     "build:wasm": "cargo build --locked --target wasm32-unknown-unknown && wasm-bindgen target/wasm32-unknown-unknown/debug/prns_wasm.wasm --target web --out-dir smoke/pkg",
     "build:browser": "npm run build:wasm && npm run build:smoke",
@@ -15,10 +13,10 @@
     "build:smoke": "tsc -p tsconfig.json",
     "stage:docs": "../tools/prns build wasm-docs stage",
     "check": "tsc -p tsconfig.json --noEmit",
-    "check:casework": "npm run build:smoke && node smoke/dist/smoke/casework-smoke.js",
-    "check:events": "npm run build:smoke && npm run stage:docs && node smoke/dist/smoke/event-smoke.js",
-    "check:auto-wifi": "npm run build:smoke && node smoke/dist/smoke/auto-wifi-smoke.js",
-    "check:websocket": "npm run build:smoke && node smoke/dist/smoke/websocket-smoke.js"
+    "check:casework": "npm run build:smoke && node smoke/dist/prns-wasm/smoke/casework-smoke.js",
+    "check:events": "npm run build:smoke && npm run stage:docs && node smoke/dist/prns-wasm/smoke/event-smoke.js",
+    "check:auto-wifi": "npm run build:smoke && node smoke/dist/prns-wasm/smoke/auto-wifi-smoke.js",
+    "check:websocket": "npm run build:smoke && node smoke/dist/prns-wasm/smoke/websocket-smoke.js"
   },
   "devDependencies": {
     "typescript": "^5.9.3"

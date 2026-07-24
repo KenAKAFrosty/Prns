@@ -10,7 +10,9 @@ import init, {
   bluetoothDialerHello,
   bluetoothHardwareMtu,
   bluetoothServiceUuid,
+  hostContractAbi,
   identitySecretKeyLength,
+  productVersion,
   websocketBitrateBps,
   websocketFrameCap,
   websocketHardwareMtu,
@@ -34,9 +36,10 @@ import {
   entropyBytes,
   hardwareMtu,
   identitySecretKey,
+  match_into,
   nowMillis,
   packetFrame,
-} from "../ts/index.js";
+} from "../../prns-js/src/browser/index.js";
 import type {
   DestinationHash,
   InterfaceSnapshot,
@@ -46,7 +49,7 @@ import type {
   PrnsWasmModule,
   RuntimeRegisterInterfaceInput,
   UsbAutoSession,
-} from "../ts/index.js";
+} from "../../prns-js/src/browser/index.js";
 
 const wasmUrl = new URL("../../pkg/prns_wasm_bg.wasm", import.meta.url);
 
@@ -130,7 +133,7 @@ async function runRuntimeSmoke(): Promise<void> {
   const commandId = runtime.announce({
     destination: smokeDestination,
     nowMs: nowMillis(),
-    entropy: entropyBytes(entropy(64)),
+    entropy: entropyBytes(entropy(128)),
   });
   assert(typeof commandId === "bigint", "command id is bigint");
 
@@ -144,7 +147,7 @@ async function runRuntimeSmoke(): Promise<void> {
     interfaceId,
     bytes: packetFrame(firstFrame.bytes),
     nowMs: nowMillis(),
-    entropy: entropyBytes(entropy(64)),
+    entropy: entropyBytes(entropy(128)),
   });
 
   const events = runtime.drainEvents();
@@ -179,6 +182,8 @@ function wasmModule(): PrnsWasmModule {
     UsbAutoDecoder: UsbAutoDecoder as PrnsWasmModule["UsbAutoDecoder"],
     BluetoothReassembler:
       BluetoothReassembler as PrnsWasmModule["BluetoothReassembler"],
+    hostContractAbi,
+    productVersion,
     identitySecretKeyLength,
     bluetoothServiceUuid,
     bluetoothControlUuid,
@@ -221,15 +226,29 @@ async function connectUsb(): Promise<void> {
   log(`USB Auto opened: interface=${hex(session.interfaceId)}`);
 }
 
-function sendAnnounce(): void {
+async function sendAnnounce(): Promise<void> {
   assert(prns, "Prns is ready");
   assert(destination, "destination is registered");
-  const command = prns.announce(destination);
+  const command = await prns.announce(destination);
   log(
-    command.tag === "Queued"
-      ? `announce queued: command=${command.data.toString()}`
+    command.tag === "Announced"
+      ? "announce settled"
       : `${command.tag}: ${JSON.stringify(command.data)}`,
   );
+}
+
+async function consumeEvents(node: Prns): Promise<void> {
+  for await (const event of node.events()) {
+    eventCount += 1;
+    log(`event ${eventCount}: ${describeEvent(event)}`);
+  }
+}
+
+async function consumeDiagnostics(node: Prns): Promise<void> {
+  for await (const event of node.diagnostics()) {
+    eventCount += 1;
+    log(`diagnostic ${eventCount}: ${describeEvent(event)}`);
+  }
 }
 
 async function closeUsb(): Promise<void> {
@@ -253,15 +272,6 @@ function pollRuntime(): void {
       closeButton.disabled = true;
       announceButton.disabled = true;
     }
-  }
-  const drained = prns.drainEvents();
-  if (drained.tag === "Drained") {
-    for (const event of drained.data) {
-      eventCount += 1;
-      log(`event ${eventCount}: ${describeEvent(event)}`);
-    }
-  } else {
-    log(`${drained.tag}: ${JSON.stringify(drained.data)}`);
   }
   const captured = prns.snapshot();
   if (captured.tag !== "Captured") {
@@ -299,21 +309,22 @@ function describeInterface(snapshot: InterfaceSnapshot): string {
 }
 
 function describeEvent(event: PrnsEvent): string {
-  switch (event.type) {
-    case "announce":
-      return `announce destination=${hex(event.destination)} hops=${event.hops} interface=${hex(event.sourceInterface)}`;
-    case "singleDelivery":
-      return `single delivery destination=${hex(event.destination)} bytes=${event.plaintext.length} interface=${hex(event.sourceInterface)}`;
-    case "commandSettled":
-      return `command settled id=${event.commandId.toString()} ${event.debugSettlement}`;
-    case "routeExpired":
-    case "routeEvicted":
-    case "routeInterfaceGone":
-    case "routeDropped":
-      return `${event.type} destination=${hex(event.destination)}`;
-    case "unknown":
-      return `unknown ${JSON.stringify(event.raw)}`;
-  }
+  return match_into<string>().from<PrnsEvent>(event, {
+    AnnounceHeard: ({ destination, hops, sourceInterface }) =>
+      `announce destination=${hex(destination)} hops=${hops} interface=${hex(sourceInterface)}`,
+    SingleDelivery: ({ destination, plaintext, sourceInterface }) =>
+      `single delivery destination=${hex(destination)} bytes=${plaintext.length} interface=${hex(sourceInterface)}`,
+    RouteExpired: ({ destination }) =>
+      `RouteExpired destination=${hex(destination)}`,
+    RouteEvicted: ({ destination }) =>
+      `RouteEvicted destination=${hex(destination)}`,
+    RouteInterfaceGone: ({ destination }) =>
+      `RouteInterfaceGone destination=${hex(destination)}`,
+    RouteDropped: ({ destination }) =>
+      `RouteDropped destination=${hex(destination)}`,
+    DiagnosticsDropped: ({ count }) =>
+      `diagnostics dropped=${count.toString()}`,
+  });
 }
 
 function hex(bytes: Uint8Array): string {
@@ -338,6 +349,8 @@ try {
   const created = await Prns.create({ wasm: wasmModule() });
   assert(created.tag === "Ready", `Prns creation failed: ${created.tag}`);
   prns = created.data;
+  void consumeEvents(prns);
+  void consumeDiagnostics(prns);
   const registered = prns.registerSingleDestination({
     appName: appName("prns"),
     aspects: [aspect("browser"), aspect("playground")],
@@ -365,7 +378,9 @@ try {
 connectButton.addEventListener("click", () => {
   void connectUsb();
 });
-announceButton.addEventListener("click", sendAnnounce);
+announceButton.addEventListener("click", () => {
+  void sendAnnounce();
+});
 closeButton.addEventListener("click", () => {
   void closeUsb();
 });

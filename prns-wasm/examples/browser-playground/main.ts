@@ -1,5 +1,10 @@
 import init, * as wasm from "./pkg/prns_wasm.js";
-import { BrowserLocalStorageIdentityStore, Prns, Tag } from "./sdk/index.js";
+import {
+  BrowserLocalStorageIdentityStore,
+  Prns,
+  Tag,
+  match,
+} from "./sdk/index.js";
 import type {
   AutoWifiControllerStatus,
   DestinationHash,
@@ -18,7 +23,6 @@ import {
 } from "./lxmf.js";
 import {
   describeAutoWifiFailure,
-  describeEntropyFailure,
   describeHostError,
   describeHostOperationFailure,
   describeRuntimeRejected,
@@ -170,6 +174,8 @@ class BrowserPlayground {
     globalThis.addEventListener("pagehide", () => {
       void this.close();
     });
+    void this.#consumeEvents();
+    void this.#consumeDiagnostics();
     this.#pollTimer = globalThis.setInterval(() => {
       this.#poll();
     }, POLL_INTERVAL_MS);
@@ -365,43 +371,73 @@ class BrowserPlayground {
     if ((this.#snapshot?.interfaces.length ?? 0) === 0) {
       return;
     }
-    this.#announceDestination("LXMF delivery", this.#destination);
-    this.#announceDestination("Node page", this.#pageDestination);
+    void this.#announceDestination("LXMF delivery", this.#destination);
+    void this.#announceDestination("Node page", this.#pageDestination);
   }
 
-  #announceDestination(label: string, destination: DestinationHash): void {
-    const outcome = this.#prns.announce(destination);
-    switch (outcome.tag) {
-      case "Queued":
+  async #announceDestination(
+    label: string,
+    destination: DestinationHash,
+  ): Promise<void> {
+    const outcome = await this.#prns.announce(destination);
+    match(outcome, {
+      Announced: () => {
         this.#view.record(
           "Announce",
-          `${label} announce queued`,
-          `Command ${outcome.data.toString()}`,
+          `${label} announce settled`,
+          null,
         );
-        return;
-      case "HostApiUnavailable":
-      case "EntropySourceFailed":
-      case "InsufficientEntropy":
+      },
+      Busy: () => {
         this.#view.record(
           "Failure",
-          `${label} announce was not queued`,
-          describeEntropyFailure(outcome),
+          `${label} announce was not accepted`,
+          "The pending command limit is full",
         );
-        return;
-      case "RuntimeRejected":
+      },
+      NodeStopped: () => {
+        this.#view.record(
+          "Failure",
+          `${label} announce was not accepted`,
+          "The node is no longer running",
+        );
+      },
+      CommandFailed: ({ detail }) => {
+        this.#view.record(
+          "Failure",
+          `${label} announce failed`,
+          detail,
+        );
+      },
+      HostApiUnavailable: ({ api }) => {
+        this.#view.record(
+          "Failure",
+          `${label} announce was not accepted`,
+          `${api} is unavailable in this browser`,
+        );
+      },
+      EntropySourceFailed: ({ detail }) => {
+        this.#view.record(
+          "Failure",
+          `${label} announce was not accepted`,
+          detail,
+        );
+      },
+      InsufficientEntropy: ({ actual, minimum }) => {
+        this.#view.record(
+          "Failure",
+          `${label} announce was not accepted`,
+          `${actual} bytes received; ${minimum} required`,
+        );
+      },
+      RuntimeRejected: ({ operation, detail }) => {
         this.#view.record(
           "Failure",
           `${label} announce was rejected`,
-          describeRuntimeRejected(outcome),
+          `${operation}: ${detail}`,
         );
-        return;
-      default:
-        this.#view.record(
-          "Failure",
-          "Announce returned an unknown outcome",
-          describeUnknownOutcome("announce", outcome),
-        );
-    }
+      },
+    });
   }
 
   #poll(): void {
@@ -488,25 +524,6 @@ class BrowserPlayground {
   }
 
   #pollRuntime(): void {
-    const drained = this.#prns.drainEvents();
-    switch (drained.tag) {
-      case "Drained":
-        for (const event of drained.data) {
-          this.#recordEvent(event);
-        }
-        break;
-      case "RuntimeRejected":
-        this.#recordRuntimeFailure(
-          "Runtime event drain was rejected",
-          describeRuntimeRejected(drained),
-        );
-        break;
-      default:
-        this.#recordRuntimeFailure(
-          "Runtime returned an unknown event-drain outcome",
-          describeUnknownOutcome("event drain", drained),
-        );
-    }
     const captured = this.#prns.snapshot();
     switch (captured.tag) {
       case "Captured":
@@ -528,86 +545,97 @@ class BrowserPlayground {
     }
   }
 
+  async #consumeEvents(): Promise<void> {
+    try {
+      for await (const event of this.#prns.events()) {
+        if (this.#closed) {
+          return;
+        }
+        this.#recordEvent(event);
+      }
+    } catch (error: unknown) {
+      this.#recordRuntimeFailure(
+        "Runtime application event stream failed",
+        describeHostError(error),
+      );
+    }
+  }
+
+  async #consumeDiagnostics(): Promise<void> {
+    try {
+      for await (const event of this.#prns.diagnostics()) {
+        if (this.#closed) {
+          return;
+        }
+        this.#recordEvent(event);
+      }
+    } catch (error: unknown) {
+      this.#recordRuntimeFailure(
+        "Runtime diagnostic stream failed",
+        describeHostError(error),
+      );
+    }
+  }
+
   #recordEvent(event: PrnsEvent): void {
-    switch (event.type) {
-      case "announce":
+    match(event, {
+      AnnounceHeard: ({ destination, hops, sourceInterface }) => {
         this.#view.record(
           "Network",
           "Announce received",
-          `${hex(event.destination)} · ${event.hops} hop${event.hops === 1 ? "" : "s"} · interface ${hex(event.sourceInterface)}`,
+          `${hex(destination)} · ${hops} hop${hops === 1 ? "" : "s"} · interface ${hex(sourceInterface)}`,
         );
-        return;
-      case "singleDelivery": {
-        const metadata = `destination ${hex(event.destination)} · interface ${hex(event.sourceInterface)}`;
-        const content = presentPacketContent(event.plaintext);
-        switch (content.tag) {
-          case "Empty":
+      },
+      SingleDelivery: ({ destination, plaintext, sourceInterface }) => {
+        const metadata = `destination ${hex(destination)} · interface ${hex(sourceInterface)}`;
+        match(presentPacketContent(plaintext), {
+          Empty: () => {
             this.#view.record(
               "Network",
               "Single packet received",
               `${metadata}\n(empty payload)`,
             );
-            return;
-          case "Text":
+          },
+          Text: ({ value }) => {
             this.#view.record(
               "Network",
               "Single packet received",
-              `${metadata}\n${content.data.value}`,
+              `${metadata}\n${value}`,
             );
-            return;
-          case "Binary":
+          },
+          Binary: ({ byteLength, hexadecimal }) => {
             this.#view.record(
               "Network",
               "Binary single packet received",
-              `${metadata}\n${content.data.byteLength} bytes · ${content.data.hexadecimal}`,
+              `${metadata}\n${byteLength} bytes · ${hexadecimal}`,
             );
-            return;
-          default:
-            this.#view.record(
-              "Failure",
-              "Single packet returned an unknown presentation outcome",
-              describeUnknownOutcome("single packet presentation", content),
-            );
-            return;
-        }
-      }
-      case "commandSettled":
+          },
+        });
+      },
+      DiagnosticsDropped: ({ count }) => {
         this.#view.record(
-          "Announce",
-          `Command ${event.commandId.toString()} settled`,
-          event.debugSettlement,
+          "Runtime",
+          `${count.toString()} diagnostic event${count === 1n ? "" : "s"} dropped`,
+          null,
         );
-        return;
-      case "routeExpired":
-        this.#view.record("Route", "Route expired", hex(event.destination));
-        return;
-      case "routeEvicted":
-        this.#view.record("Route", "Route evicted", hex(event.destination));
-        return;
-      case "routeInterfaceGone":
+      },
+      RouteExpired: ({ destination }) => {
+        this.#view.record("Route", "Route expired", hex(destination));
+      },
+      RouteEvicted: ({ destination }) => {
+        this.#view.record("Route", "Route evicted", hex(destination));
+      },
+      RouteInterfaceGone: ({ destination }) => {
         this.#view.record(
           "Route",
           "Route interface disappeared",
-          hex(event.destination),
+          hex(destination),
         );
-        return;
-      case "routeDropped":
-        this.#view.record("Route", "Route dropped", hex(event.destination));
-        return;
-      case "unknown":
-        this.#view.record(
-          "Runtime",
-          "Runtime emitted an event this playground does not recognize",
-          null,
-        );
-        return;
-      default:
-        this.#view.record(
-          "Failure",
-          "Runtime returned an unknown event",
-          describeUnknownOutcome("runtime event", event),
-        );
-    }
+      },
+      RouteDropped: ({ destination }) => {
+        this.#view.record("Route", "Route dropped", hex(destination));
+      },
+    });
   }
 
   #recordRuntimeFailure(summary: string, detail: string): void {
@@ -700,6 +728,8 @@ function wasmModule(): PrnsWasmModule {
     PrnsRuntime: wasm.PrnsRuntime,
     UsbAutoDecoder: wasm.UsbAutoDecoder,
     BluetoothReassembler: wasm.BluetoothReassembler,
+    hostContractAbi: wasm.hostContractAbi,
+    productVersion: wasm.productVersion,
     identitySecretKeyLength: wasm.identitySecretKeyLength,
     bluetoothServiceUuid: wasm.bluetoothServiceUuid,
     bluetoothControlUuid: wasm.bluetoothControlUuid,

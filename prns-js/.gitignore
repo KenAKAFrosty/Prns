@@ -1,0 +1,5 @@
+/dist-cjs/
+/native/
+/wasm/
+/LICENSE-APACHE
+/LICENSE-MIT

@@ -1,1 +1,1 @@
-export * from "../../../ts/index.js";
+export * from "../../../../prns-js/src/browser/index.js";

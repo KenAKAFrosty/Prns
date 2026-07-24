@@ -33,6 +33,8 @@ export declare class BluetoothReassembler
   absorb: BluetoothReassemblerBinding["absorb"];
 }
 
+export declare function hostContractAbi(): number;
+export declare function productVersion(): string;
 export declare function identitySecretKeyLength(): number;
 export declare function interfaceIdLength(): number;
 export declare function destinationHashLength(): number;
