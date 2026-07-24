@@ -83,6 +83,7 @@ pub struct DestinationSpec {
     #[napi(ts_type = "'single' | 'plain'")]
     pub kind: Option<String>,
     pub identity: Option<IdentitySpec>,
+    pub use_host_identity: Option<bool>,
     pub announce_app_data: Option<Buffer>,
     #[napi(ts_type = "ProofStrategyName")]
     pub proof: Option<String>,
@@ -97,7 +98,8 @@ pub struct DestinationSpec {
 #[napi(object)]
 pub struct NodeOptions {
     pub identity: Option<IdentitySpec>,
-    pub transport: Option<bool>,
+    #[napi(ts_type = "'endpoint' | 'transport'")]
+    pub role: Option<String>,
     pub destinations: Option<Vec<DestinationSpec>>,
     pub event_queue_limit: Option<u32>,
     pub application_event_queue_limit: Option<u32>,
@@ -491,19 +493,27 @@ fn parse_bitrate(value: Option<f64>) -> CodeResult<BitrateBps> {
 }
 
 fn parse_options(options: NodeOptions) -> CodeResult<NodeConfig> {
-    let transport = options.transport.unwrap_or(false);
-    let node_identity = options
-        .identity
-        .as_ref()
-        .map(resolve_identity)
-        .transpose()?;
-    let transport_identity = if transport {
-        Some(node_identity.clone().ok_or_else(|| {
-            code_err(
+    let transport = match options.role.as_deref().unwrap_or("endpoint") {
+        "endpoint" => false,
+        "transport" => true,
+        other => {
+            return Err(code_err(
                 ErrorCode::InvalidArgument,
-                "transport: true requires a node identity",
+                format!("unknown node role {other:?}; expected endpoint or transport"),
+            ))
+        }
+    };
+    let node_identity = match options.identity.as_ref() {
+        Some(identity) => resolve_identity(identity)?,
+        None => try_generate_identity_secret().map_err(|error| {
+            code_err(
+                ErrorCode::Internal,
+                format!("entropy unavailable: {error:?}"),
             )
-        })?)
+        })?,
+    };
+    let transport_identity = if transport {
+        Some(node_identity.clone())
     } else {
         None
     };
@@ -513,14 +523,21 @@ fn parse_options(options: NodeOptions) -> CodeResult<NodeConfig> {
         let single = match kind {
             "plain" => None,
             "single" => {
-                let identity = match &spec.identity {
-                    Some(identity) => resolve_identity(identity)?,
-                    None => try_generate_identity_secret().map_err(|error| {
+                let identity = match (spec.use_host_identity.unwrap_or(false), &spec.identity) {
+                    (true, None) => node_identity.clone(),
+                    (false, Some(identity)) => resolve_identity(identity)?,
+                    (false, None) => try_generate_identity_secret().map_err(|error| {
                         code_err(
                             ErrorCode::Internal,
                             format!("entropy unavailable: {error:?}"),
                         )
                     })?,
+                    (true, Some(_)) => {
+                        return Err(code_err(
+                            ErrorCode::InvalidArgument,
+                            "destination identity cannot be both host and dedicated",
+                        ))
+                    }
                 };
                 let mut request_paths = Vec::new();
                 for path_spec in spec.request_paths.iter().flatten() {
@@ -564,6 +581,12 @@ fn parse_options(options: NodeOptions) -> CodeResult<NodeConfig> {
             return Err(code_err(
                 ErrorCode::InvalidArgument,
                 "requestPaths require a single destination",
+            ));
+        }
+        if single.is_none() && spec.use_host_identity.unwrap_or(false) {
+            return Err(code_err(
+                ErrorCode::InvalidArgument,
+                "plain destinations do not have identities",
             ));
         }
         destinations.push(DestinationConfig {
@@ -708,7 +731,11 @@ pub fn start_node(
             translate::event_to_object(&ctx.env, ctx.value)
         })
         .map_err(|error| code_err(ErrorCode::Internal, format!("{error}")))?;
-    let manager = NodeManager::start(config, EventSink::new(tsfn, queue))?;
+    let manager = NodeManager::start(
+        config,
+        EventSink::new(tsfn, queue),
+        limits.pending_commands(),
+    )?;
     Ok(PrnsNode {
         manager: Arc::new(manager),
         hashes,

@@ -42,12 +42,47 @@ internal static class Native
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    internal struct IdentityConfig
+    {
+        internal nuint StructSize;
+        internal IdentityConfigKind Kind;
+        internal ByteView Secret;
+        internal StringView Path;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct DestinationName
+    {
+        internal nuint StructSize;
+        internal StringView AppName;
+        internal nint Aspects;
+        internal nuint AspectCount;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct DestinationConfig
+    {
+        internal nuint StructSize;
+        internal DestinationConfigKind Kind;
+        internal DestinationName Name;
+        internal DestinationIdentityConfigKind IdentityKind;
+        internal IdentityConfig DedicatedIdentity;
+        internal ByteView AnnounceAppData;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     internal struct HostOptions
     {
         internal nuint StructSize;
         internal uint RequiredAbi;
         internal StringView RequiredProductVersion;
         internal Limits Limits;
+        internal HostRole Role;
+        internal IdentityConfig Identity;
+        internal nint Destinations;
+        internal nuint DestinationCount;
+        internal nint RequiredCapabilities;
+        internal nuint RequiredCapabilityCount;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -57,6 +92,18 @@ internal static class Native
         internal ulong Revision;
         internal LifecyclePhase Phase;
         internal uint Reason;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct CommandResult
+    {
+        internal nuint StructSize;
+        internal CommandOutcomeKind Outcome;
+        internal CommandFailureKind Failure;
+        internal DeliveryEvidenceKind Evidence;
+        internal ulong RttMillis;
+        internal ByteView Value;
+        internal StringView Detail;
     }
 
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
@@ -72,7 +119,91 @@ internal static class Native
     internal static extern Status prns_host_lifecycle(HostHandle host, ref Lifecycle lifecycle);
 
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern Status prns_host_identity_hash(HostHandle host, out ByteView hash);
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern nuint prns_host_destination_count(HostHandle host);
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern Status prns_host_destination_hash(
+        HostHandle host,
+        nuint index,
+        out ByteView hash
+    );
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern unsafe Status prns_host_announce(
+        HostHandle host,
+        ByteView destination,
+        ByteView* interfaceId,
+        out CommandHandle command
+    );
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern Status prns_host_send_single_packet(
+        HostHandle host,
+        ByteView destination,
+        ByteView payload,
+        out CommandHandle command
+    );
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern Status prns_host_close_link(
+        HostHandle host,
+        ByteView linkId,
+        out CommandHandle command
+    );
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern Status prns_host_attach_tcp_server(
+        HostHandle host,
+        StringView bind,
+        BitrateKind bitrateKind,
+        ulong bitrateBps,
+        out CommandHandle command
+    );
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern Status prns_host_attach_tcp_client(
+        HostHandle host,
+        StringView target,
+        BitrateKind bitrateKind,
+        ulong bitrateBps,
+        out CommandHandle command
+    );
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern Status prns_host_attach_udp(
+        HostHandle host,
+        StringView local,
+        StringView peer,
+        BitrateKind bitrateKind,
+        ulong bitrateBps,
+        out CommandHandle command
+    );
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern Status prns_host_detach_interface(
+        HostHandle host,
+        ByteView interfaceId,
+        out CommandHandle command
+    );
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
     internal static extern Status prns_host_stop(HostHandle host);
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern Status prns_command_wait(
+        CommandHandle command,
+        uint timeoutMillis,
+        ref CommandResult result
+    );
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void prns_command_interrupt_wait(CommandHandle command);
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void prns_command_release(nint command);
 
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
     internal static extern Status prns_host_claim_application_events(
@@ -85,6 +216,9 @@ internal static class Native
         HostHandle host,
         out EventStreamHandle stream
     );
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void prns_event_stream_interrupt_wait(EventStreamHandle stream);
 
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
     internal static extern void prns_event_stream_release(nint stream);
@@ -147,6 +281,18 @@ internal static class Native
         out ByteView chunk,
         out byte finished
     );
+}
+
+internal sealed class CommandHandle : SafeHandleZeroOrMinusOneIsInvalid
+{
+    private CommandHandle()
+        : base(true) { }
+
+    protected override bool ReleaseHandle()
+    {
+        Native.prns_command_release(handle);
+        return true;
+    }
 }
 
 internal sealed class HostHandle : SafeHandleZeroOrMinusOneIsInvalid

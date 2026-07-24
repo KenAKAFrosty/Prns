@@ -27,6 +27,7 @@ test("root export selects one native API for ESM and CommonJS", () => {
 test("packaged native API starts, exposes lifecycle, and stops", async () => {
   const created = await esm.Prns.create({
     identity: esm.Tag("GenerateEphemeral"),
+    role: "Endpoint",
   });
   assert.equal(created.tag, "Ready");
   assert.equal(created.data.lifecycle.tag, "Running");

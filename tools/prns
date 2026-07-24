@@ -308,12 +308,18 @@ def run_task(task: dict, arguments: list[str]) -> int:
             f"task {task['id']} supports {task['platforms']}, not host platform {host}"
         )
     command = [*task["entrypoint"], *arguments]
+    display_command = command.copy()
+    # `python` denotes the interpreter already executing this control plane.
+    # That is portable across Unix (`python3`) and Windows (`python.exe`) and
+    # prevents a release task from silently selecting a different interpreter.
+    if command[0] == "python":
+        command[0] = sys.executable
     print(
         f"[tool] task={task['id']} effect={task['effect']} platform={host}; "
         f"{task['summary']}",
         file=sys.stderr,
     )
-    print(f"[tool] command: {shlex.join(command)}", file=sys.stderr)
+    print(f"[tool] command: {shlex.join(display_command)}", file=sys.stderr)
     environment = os.environ.copy()
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
     return subprocess.run(command, cwd=ROOT, env=environment, check=False).returncode

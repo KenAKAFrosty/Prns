@@ -103,12 +103,13 @@ type RawDestination = {
   aspects: string[];
   kind: "single" | "plain";
   identity?: RawIdentity;
+  useHostIdentity?: boolean;
   announceAppData?: Buffer;
 };
 
 type RawNodeOptions = {
   identity?: RawIdentity;
-  transport?: boolean;
+  role?: "endpoint" | "transport";
   destinations?: RawDestination[];
   eventQueueLimit?: number;
   applicationEventQueueLimit?: number;
@@ -890,9 +891,10 @@ function validateCreateOptions(options: PrnsCreateOptions): {
   if (identity !== undefined) {
     raw.identity = identity;
   }
-  if (options.transport !== undefined) {
-    raw.transport = options.transport;
-  }
+  raw.role = casework.match(options.role, {
+    Endpoint: () => "endpoint" as const,
+    Transport: () => "transport" as const,
+  });
   if (options.destinations !== undefined) {
     raw.destinations = options.destinations.map(rawDestination);
   }
@@ -925,12 +927,17 @@ function rawDestination(destination: DestinationConfig): RawDestination {
     Plain: (): RawDestination => ({ appName, aspects, kind: "plain" }),
     Single: ({ identity, announceAppData }): RawDestination => {
       const raw: RawDestination = { appName, aspects, kind: "single" };
-      if (identity !== undefined) {
-        const configuredIdentity = rawIdentity(identity);
-        if (configuredIdentity !== undefined) {
-          raw.identity = configuredIdentity;
-        }
-      }
+      casework.match(identity, {
+        HostIdentity: () => {
+          raw.useHostIdentity = true;
+        },
+        DedicatedIdentity: ({ identity: dedicated }) => {
+          const configuredIdentity = rawIdentity(dedicated);
+          if (configuredIdentity !== undefined) {
+            raw.identity = configuredIdentity;
+          }
+        },
+      });
       if (announceAppData !== undefined) {
         raw.announceAppData = Buffer.from(
           bytes("announceAppData", announceAppData),

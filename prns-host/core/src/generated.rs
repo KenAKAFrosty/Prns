@@ -5,6 +5,7 @@ pub const DESTINATION_HASH_LENGTH: usize = 16;
 pub const IDENTITY_HASH_LENGTH: usize = 16;
 pub const INTERFACE_ID_LENGTH: usize = 8;
 pub const LINK_ID_LENGTH: usize = 16;
+pub const PACKET_HASH_LENGTH: usize = 32;
 pub const REQUEST_ID_LENGTH: usize = 16;
 pub const REQUEST_PATH_HASH_LENGTH: usize = 16;
 pub const RESOURCE_HASH_LENGTH: usize = 32;
@@ -29,6 +30,7 @@ pub enum AbiStatus {
     Stopped = 9,
     BackendFailed = 10,
     Panic = 11,
+    Interrupted = 12,
 }
 
 impl TryFrom<u32> for AbiStatus {
@@ -48,6 +50,7 @@ impl TryFrom<u32> for AbiStatus {
             9 => Ok(Self::Stopped),
             10 => Ok(Self::BackendFailed),
             11 => Ok(Self::Panic),
+            12 => Ok(Self::Interrupted),
             _ => Err(()),
         }
     }
@@ -108,6 +111,192 @@ impl TryFrom<u32> for AbiCapability {
             10 => Ok(Self::BrowserRendezvous),
             11 => Ok(Self::I2p),
             12 => Ok(Self::Weave),
+            _ => Err(()),
+        }
+    }
+}
+
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AbiHostRole {
+    Endpoint = 1,
+    Transport = 2,
+}
+
+impl TryFrom<u32> for AbiHostRole {
+    type Error = ();
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::Endpoint),
+            2 => Ok(Self::Transport),
+            _ => Err(()),
+        }
+    }
+}
+
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AbiIdentityConfigKind {
+    Existing = 1,
+    GenerateEphemeral = 2,
+    LoadOrCreate = 3,
+}
+
+impl TryFrom<u32> for AbiIdentityConfigKind {
+    type Error = ();
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::Existing),
+            2 => Ok(Self::GenerateEphemeral),
+            3 => Ok(Self::LoadOrCreate),
+            _ => Err(()),
+        }
+    }
+}
+
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AbiDestinationConfigKind {
+    Plain = 1,
+    Single = 2,
+}
+
+impl TryFrom<u32> for AbiDestinationConfigKind {
+    type Error = ();
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::Plain),
+            2 => Ok(Self::Single),
+            _ => Err(()),
+        }
+    }
+}
+
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AbiDestinationIdentityConfigKind {
+    HostIdentity = 1,
+    DedicatedIdentity = 2,
+}
+
+impl TryFrom<u32> for AbiDestinationIdentityConfigKind {
+    type Error = ();
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::HostIdentity),
+            2 => Ok(Self::DedicatedIdentity),
+            _ => Err(()),
+        }
+    }
+}
+
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AbiBitrateKind {
+    Auto = 1,
+    BitsPerSecond = 2,
+}
+
+impl TryFrom<u32> for AbiBitrateKind {
+    type Error = ();
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::Auto),
+            2 => Ok(Self::BitsPerSecond),
+            _ => Err(()),
+        }
+    }
+}
+
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AbiCommandOutcomeKind {
+    Announced = 1,
+    PacketDelivered = 2,
+    LinkCloseQueued = 3,
+    InterfaceAttached = 4,
+    InterfaceDetached = 5,
+}
+
+impl TryFrom<u32> for AbiCommandOutcomeKind {
+    type Error = ();
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::Announced),
+            2 => Ok(Self::PacketDelivered),
+            3 => Ok(Self::LinkCloseQueued),
+            4 => Ok(Self::InterfaceAttached),
+            5 => Ok(Self::InterfaceDetached),
+            _ => Err(()),
+        }
+    }
+}
+
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AbiCommandFailureKind {
+    NodeStopped = 1,
+    Busy = 2,
+    PayloadTooLarge = 3,
+    UnknownDestination = 4,
+    NotSingleDestination = 5,
+    AnnounceAppDataTooLong = 6,
+    UnknownInterface = 7,
+    NoRouteToDestination = 8,
+    NotDirectlyReachable = 9,
+    PacketCulled = 10,
+    DeliveryTimedOut = 11,
+    InvalidBitrate = 12,
+    BindFailed = 13,
+    WriteFailed = 14,
+}
+
+impl TryFrom<u32> for AbiCommandFailureKind {
+    type Error = ();
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::NodeStopped),
+            2 => Ok(Self::Busy),
+            3 => Ok(Self::PayloadTooLarge),
+            4 => Ok(Self::UnknownDestination),
+            5 => Ok(Self::NotSingleDestination),
+            6 => Ok(Self::AnnounceAppDataTooLong),
+            7 => Ok(Self::UnknownInterface),
+            8 => Ok(Self::NoRouteToDestination),
+            9 => Ok(Self::NotDirectlyReachable),
+            10 => Ok(Self::PacketCulled),
+            11 => Ok(Self::DeliveryTimedOut),
+            12 => Ok(Self::InvalidBitrate),
+            13 => Ok(Self::BindFailed),
+            14 => Ok(Self::WriteFailed),
+            _ => Err(()),
+        }
+    }
+}
+
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AbiDeliveryEvidenceKind {
+    ExplicitProof = 1,
+    ImplicitProof = 2,
+    Response = 3,
+}
+
+impl TryFrom<u32> for AbiDeliveryEvidenceKind {
+    type Error = ();
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::ExplicitProof),
+            2 => Ok(Self::ImplicitProof),
+            3 => Ok(Self::Response),
             _ => Err(()),
         }
     }

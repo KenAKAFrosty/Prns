@@ -18,6 +18,7 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
 prns-host-core = { package = "prns-host", path = "../../core" }
+prns-host-native = { path = "../../impls/native" }
 
 [lints.clippy]
 dbg_macro = "deny"

@@ -14,6 +14,7 @@ process.env.NAPI_RS_NATIVE_LIBRARY_PATH = resolve(napiRoot, bindings[0]);
 const prns = await import("personal-rns");
 const created = await prns.Prns.create({
   identity: prns.Tag("GenerateEphemeral"),
+  role: "Endpoint",
 });
 assert.equal(created.tag, "Ready");
 assert.equal(created.data.lifecycle.tag, "Running");

@@ -211,7 +211,10 @@ mod tests {
     use alloc::vec;
 
     use super::*;
-    use crate::{DestinationHash, InterfaceId, PrnsLimitsError, SingleDelivery};
+    use crate::{
+        DestinationHash, InterfaceId, LinkId, PrnsLimitsError, ResourceAvailable, ResourceHash,
+        ResourceStreamId, SingleDelivery,
+    };
 
     fn event(bytes: usize) -> ApplicationEvent {
         ApplicationEvent::SingleDelivery(SingleDelivery {
@@ -252,6 +255,35 @@ mod tests {
             LifecycleState::Failed(HostFailure::EventBackpressureExceeded { .. })
         ));
         assert_eq!(queue.pop_application_event(), Some(event(2)));
+    }
+
+    #[test]
+    fn resource_bodies_count_toward_retained_byte_pressure() {
+        let limits = match PrnsLimits::try_new(1, 2, 4, 1) {
+            Ok(limits) => limits,
+            Err(_) => return,
+        };
+        let mut queue = BoundedHostQueue::<()>::new(limits);
+        assert!(queue.transition(LifecycleState::Running).is_ok());
+        let event = ApplicationEvent::ResourceAvailable(ResourceAvailable {
+            stream_id: ResourceStreamId::new(1),
+            link_id: LinkId::new([0; 16]),
+            hash: ResourceHash::new([0; 32]),
+            metadata: None,
+            total_bytes: 5,
+        });
+        let rejected = match queue.push_application_event(event.clone()) {
+            Ok(()) => return,
+            Err(rejected) => rejected,
+        };
+        assert_eq!(*rejected.event, event);
+        assert!(matches!(
+            rejected.failure,
+            HostFailure::EventBackpressureExceeded {
+                rejected_event_bytes: 5,
+                ..
+            }
+        ));
     }
 
     #[test]

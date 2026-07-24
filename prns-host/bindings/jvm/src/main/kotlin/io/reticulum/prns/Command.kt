@@ -1,0 +1,156 @@
+package io.reticulum.prns
+
+import com.sun.jna.Pointer
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+
+sealed interface CommandSettlement
+
+data class CommandSucceeded(val outcome: CommandOutcome) : CommandSettlement
+
+data class CommandFailed(
+    val failure: CommandFailureKind,
+    val detail: String,
+) : CommandSettlement
+
+class Command internal constructor(pointer: Pointer) : AutoCloseable {
+    private val stateLock = ReentrantLock()
+    private val waitLock = ReentrantLock()
+    private var pointer: Pointer? = pointer
+
+    suspend fun await(): CommandSettlement = withContext(Dispatchers.IO) {
+        waitLock.lock()
+        try {
+            val nativePointer = stateLock.withLock {
+                pointer
+                    ?: throw StatusException("command", Status.STOPPED)
+            }
+            suspendCancellableCoroutine { continuation ->
+                continuation.invokeOnCancellation {
+                    NativeApi.library.prns_command_interrupt_wait(nativePointer)
+                }
+                try {
+                    val result = NativeCommandResult()
+                    result.structSize = SizeT(result.size().toLong())
+                    result.write()
+                    val status = Status.fromRawValue(
+                        NativeApi.library.prns_command_wait(
+                            nativePointer,
+                            -1,
+                            result,
+                        ),
+                    ) ?: Status.BACKEND_FAILED
+                    result.read()
+                    when {
+                        !continuation.isActive -> Unit
+                        status == Status.OK -> continuation.resume(
+                            decodeCommandSettlement(result),
+                        )
+                        else -> continuation.resumeWithException(
+                            StatusException("waitCommand", status),
+                        )
+                    }
+                } catch (failure: Throwable) {
+                    if (continuation.isActive) {
+                        continuation.resumeWithException(failure)
+                    }
+                }
+            }
+        } finally {
+            waitLock.unlock()
+        }
+    }
+
+    /**
+     * Waits for this command without a coroutine bridge.
+     *
+     * This is the natural Java entry point. Closing the command from another
+     * thread interrupts the native wait.
+     */
+    fun awaitBlocking(): CommandSettlement = waitLock.withLock {
+        val nativePointer = stateLock.withLock {
+            pointer
+                ?: throw StatusException("command", Status.STOPPED)
+        }
+        val result = NativeCommandResult()
+        result.structSize = SizeT(result.size().toLong())
+        result.write()
+        checkedStatus(
+            NativeApi.library.prns_command_wait(
+                nativePointer,
+                -1,
+                result,
+            ),
+            "waitCommand",
+        )
+        result.read()
+        decodeCommandSettlement(result)
+    }
+
+    override fun close() {
+        val nativePointer = stateLock.withLock {
+            val current = pointer
+            pointer = null
+            current?.let(NativeApi.library::prns_command_interrupt_wait)
+            current
+        }
+        if (nativePointer != null) {
+            waitLock.withLock {
+                NativeApi.library.prns_command_release(nativePointer)
+            }
+        }
+    }
+}
+
+private fun decodeCommandSettlement(result: NativeCommandResult): CommandSettlement {
+    if (result.failure != 0) {
+        return CommandFailed(
+            failure = CommandFailureKind.fromRawValue(result.failure)
+                ?: throw StatusException("decodeCommandFailure", Status.BACKEND_FAILED),
+            detail = copyString(result.detail),
+        )
+    }
+    val value = copyBytes(result.value)
+    val outcome = when (
+        CommandOutcomeKind.fromRawValue(result.outcome)
+            ?: throw StatusException("decodeCommandOutcome", Status.BACKEND_FAILED)
+    ) {
+        CommandOutcomeKind.ANNOUNCED -> CommandOutcomeAnnounced
+        CommandOutcomeKind.PACKET_DELIVERED -> {
+            val evidence = DeliveryEvidenceKind.fromRawValue(result.evidence)
+                ?: throw StatusException("decodeDeliveryEvidence", Status.BACKEND_FAILED)
+            val packetHash = when (evidence) {
+                DeliveryEvidenceKind.RESPONSE -> {
+                    if (value.isNotEmpty()) {
+                        throw StatusException(
+                            "decodeResponseEvidence",
+                            Status.BACKEND_FAILED,
+                        )
+                    }
+                    null
+                }
+                DeliveryEvidenceKind.EXPLICIT_PROOF,
+                DeliveryEvidenceKind.IMPLICIT_PROOF,
+                -> PacketHash(value)
+            }
+            CommandOutcomePacketDelivered(
+                rttMillis = result.rttMillis,
+                evidence = evidence,
+                packetHash = packetHash,
+            )
+        }
+        CommandOutcomeKind.LINK_CLOSE_QUEUED -> CommandOutcomeLinkCloseQueued
+        CommandOutcomeKind.INTERFACE_ATTACHED -> CommandOutcomeInterfaceAttached(
+            InterfaceId(value),
+        )
+        CommandOutcomeKind.INTERFACE_DETACHED -> CommandOutcomeInterfaceDetached(
+            InterfaceId(value),
+        )
+    }
+    return CommandSucceeded(outcome)
+}

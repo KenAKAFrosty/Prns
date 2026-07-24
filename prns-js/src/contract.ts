@@ -15,6 +15,7 @@ import type {
   IdentityConfig,
   IdentityHash,
   IdentitySecret,
+  HostRoleName,
   InterfaceId,
   LinkId,
   PrnsLimits,
@@ -45,9 +46,9 @@ export class PrnsValidationError extends Error {
 
 export type PrnsCreateOptions = {
   readonly identity: IdentityConfig;
+  readonly role: HostRoleName;
   readonly destinations?: readonly DestinationConfig[];
   readonly limits?: PrnsLimits;
-  readonly transport?: boolean;
 };
 
 export type LifecycleState =

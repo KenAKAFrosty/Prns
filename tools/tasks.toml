@@ -92,6 +92,56 @@ entrypoint = ["python3", "tools/repo/generate-host-contract.py", "--check"]
 requires = ["python3"]
 
 [[task]]
+id = "release.host-sdk.versions"
+summary = "Verify every host SDK release surface agrees with VERSION."
+domain = "release"
+effect = "read-only"
+platforms = ["any"]
+audience = ["developer", "ci", "release"]
+entrypoint = ["python", "tools/release/check-host-sdk-versions.py"]
+requires = []
+
+[[task]]
+id = "release.host-sdk.native.package"
+summary = "Assemble one native host target with its ABI header, licenses, pkg-config metadata, and hash manifest."
+domain = "release"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci", "release"]
+entrypoint = ["python", "tools/release/package-host-native.py"]
+requires = ["git"]
+
+[[task]]
+id = "release.host-sdk.dotnet.stage"
+summary = "Stage validated native host artifacts into the NuGet runtime layout."
+domain = "release"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci", "release"]
+entrypoint = ["python", "tools/release/stage-dotnet-runtimes.py"]
+requires = []
+
+[[task]]
+id = "release.host-sdk.python.stage"
+summary = "Stage one exact native host target and project licenses into the Python wheel source tree."
+domain = "release"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci", "release"]
+entrypoint = ["python", "tools/release/stage-python-native.py"]
+requires = []
+
+[[task]]
+id = "release.host-sdk.python.smoke"
+summary = "Install one assembled Python wheel in isolation and exercise its bundled native host."
+domain = "release"
+effect = "read-only"
+platforms = ["any"]
+audience = ["developer", "ci", "release"]
+entrypoint = ["python", "tools/release/smoke-python-wheel.py"]
+requires = []
+
+[[task]]
 id = "repo.notices.generate"
 summary = "Regenerate the repository's locked third-party notice document."
 domain = "repo"

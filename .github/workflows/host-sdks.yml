@@ -1,0 +1,394 @@
+name: host-sdks
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "prns-host/**"
+      - "personal-rns/**"
+      - "prns-core/**"
+      - "prns-config/**"
+      - "prns-ffi/**"
+      - "prns-runtime/**"
+      - "prns-interfaces/**"
+      - "tools/**"
+      - "validation/**"
+      - ".github/workflows/host-sdks.yml"
+  pull_request:
+    paths:
+      - "prns-host/**"
+      - "personal-rns/**"
+      - "prns-core/**"
+      - "prns-config/**"
+      - "prns-ffi/**"
+      - "prns-runtime/**"
+      - "prns-interfaces/**"
+      - "tools/**"
+      - "validation/**"
+      - ".github/workflows/host-sdks.yml"
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: "Full commit SHA approved for publication"
+        required: true
+        type: string
+      publish_pypi:
+        description: "Publish the assembled Python wheels"
+        required: false
+        default: false
+        type: boolean
+      publish_nuget:
+        description: "Publish the assembled NuGet package"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: host-sdks-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings --cfg aes_armv8"
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          components: clippy,rustfmt
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          workspaces: |
+            prns-host/abi/c
+            prns-host/impls/native
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.14"
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
+        with:
+          dotnet-version: 8.0.x
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: 1.26.5
+          cache: false
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: julia-actions/setup-julia@4c0cb0fce8556fdb04a90347310e5db8b1f98fb9
+        with:
+          version: "1.12.6"
+      - uses: swift-actions/setup-swift@7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a
+        with:
+          swift-version: "6.3.3"
+      - run: python tools/prns run release.host-sdk.versions
+      - run: python tools/prns run repo.host-contract.check
+      - run: cargo fmt --manifest-path prns-host/impls/native/Cargo.toml -- --check
+      - run: cargo clippy --manifest-path prns-host/impls/native/Cargo.toml --all-targets --locked -- -D warnings
+      - run: cargo test --manifest-path prns-host/impls/native/Cargo.toml --locked
+      - run: cargo fmt --manifest-path prns-host/abi/c/Cargo.toml -- --check
+      - run: cargo clippy --manifest-path prns-host/abi/c/Cargo.toml --all-targets --locked -- -D warnings
+      - run: cargo test --manifest-path prns-host/abi/c/Cargo.toml --locked
+      - run: cc -std=c11 -Wall -Wextra -Werror -fsyntax-only prns-host/abi/c/tests/header-smoke.c
+      - run: c++ -std=c++17 -Wall -Wextra -Werror -Iprns-host/abi/c/include -include prns_host.h -x c++ -fsyntax-only /dev/null
+      - run: cargo build --manifest-path prns-host/abi/c/Cargo.toml --locked
+      - run: python3 validation/run.py run --suite host-dotnet-contract
+        env:
+          LD_LIBRARY_PATH: ${{ github.workspace }}/prns-host/abi/c/target/debug
+      - run: python3 validation/run.py run --suite host-python-contract
+        env:
+          LD_LIBRARY_PATH: ${{ github.workspace }}/prns-host/abi/c/target/debug
+          PRNS_HOST_LIBRARY: ${{ github.workspace }}/prns-host/abi/c/target/debug/libprns_host.so
+      - run: python3 validation/run.py run --suite host-go-contract
+      - run: python3 validation/run.py run --suite host-swift-contract
+      - run: python3 validation/run.py run --suite host-julia-contract
+      - run: python3 validation/run.py run --suite host-jvm-contract
+      - run: python3 validation/run.py verify
+
+  native:
+    needs: contract
+    strategy:
+      fail-fast: false
+      matrix:
+        settings:
+          - host: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            library: libprns_host.so
+            static: libprns_host.a
+            python: python3
+            wheel: linux_x86_64
+            audit: manylinux_2_34_x86_64
+            upload: repaired/*.whl
+          - host: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            library: libprns_host.so
+            static: libprns_host.a
+            python: python3
+            wheel: linux_aarch64
+            audit: manylinux_2_34_aarch64
+            upload: repaired/*.whl
+          - host: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            library: libprns_host.so
+            static: libprns_host.a
+            python: python3
+            wheel: musllinux_1_2_x86_64
+            audit: ""
+            upload: "*.whl"
+          - host: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            library: libprns_host.so
+            static: libprns_host.a
+            python: python3
+            wheel: musllinux_1_2_aarch64
+            audit: ""
+            upload: "*.whl"
+          - host: macos-15-intel
+            target: x86_64-apple-darwin
+            library: libprns_host.dylib
+            static: libprns_host.a
+            python: python3
+            wheel: macosx_11_0_x86_64
+            audit: ""
+            upload: "*.whl"
+          - host: macos-latest
+            target: aarch64-apple-darwin
+            library: libprns_host.dylib
+            static: libprns_host.a
+            python: python3
+            wheel: macosx_11_0_arm64
+            audit: ""
+            upload: "*.whl"
+          - host: windows-latest
+            target: x86_64-pc-windows-msvc
+            library: prns_host.dll
+            static: prns_host.lib
+            python: python
+            wheel: win_amd64
+            audit: ""
+            upload: "*.whl"
+          - host: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            library: prns_host.dll
+            static: prns_host.lib
+            python: python
+            wheel: win_arm64
+            audit: ""
+            upload: "*.whl"
+    name: native (${{ matrix.settings.target }})
+    runs-on: ${{ matrix.settings.host }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.14"
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          targets: ${{ matrix.settings.target }}
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          workspaces: prns-host/abi/c
+          key: host-sdk-${{ matrix.settings.target }}
+      - name: install musl compiler
+        if: contains(matrix.settings.target, 'musl')
+        run: sudo apt-get update && sudo apt-get install --yes musl-tools
+      - run: cargo build --manifest-path prns-host/abi/c/Cargo.toml --locked --release --target ${{ matrix.settings.target }}
+      - run: >-
+          python tools/prns run release.host-sdk.native.package --
+          --target ${{ matrix.settings.target }}
+          --library prns-host/abi/c/target/${{ matrix.settings.target }}/release/${{ matrix.settings.library }}
+          --library prns-host/abi/c/target/${{ matrix.settings.target }}/release/${{ matrix.settings.static }}
+          --output dist/host-native-${{ matrix.settings.target }}
+          --expected-sha ${{ github.sha }}
+      - run: >-
+          python tools/prns run release.host-sdk.python.stage --
+          --target ${{ matrix.settings.target }}
+          --library prns-host/abi/c/target/${{ matrix.settings.target }}/release/${{ matrix.settings.library }}
+          --package prns-host/bindings/python
+      - run: ${{ matrix.settings.python }} -m pip install build==1.5.0
+      - if: matrix.settings.audit != ''
+        run: >-
+          ${{ matrix.settings.python }} -m pip install
+          auditwheel==6.7.0 patchelf==0.17.2.4
+      - run: ${{ matrix.settings.python }} -m build --wheel
+        working-directory: prns-host/bindings/python
+        env:
+          PRNS_WHEEL_PLATFORM_TAG: ${{ matrix.settings.wheel }}
+      - if: matrix.settings.audit != ''
+        run: >-
+          ${{ matrix.settings.python }} -m auditwheel repair
+          --plat ${{ matrix.settings.audit }}
+          --wheel-dir dist/repaired
+          dist/*.whl
+        working-directory: prns-host/bindings/python
+      - if: matrix.settings.audit != ''
+        run: >-
+          python tools/prns run release.host-sdk.python.smoke --
+          --wheel-dir prns-host/bindings/python/dist/repaired
+      - if: >-
+          matrix.settings.audit == '' &&
+          !contains(matrix.settings.target, 'musl')
+        run: >-
+          python tools/prns run release.host-sdk.python.smoke --
+          --wheel-dir prns-host/bindings/python/dist
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: host-native-${{ matrix.settings.target }}
+          path: dist/host-native-${{ matrix.settings.target }}
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: host-python-${{ matrix.settings.target }}
+          path: prns-host/bindings/python/dist/${{ matrix.settings.upload }}
+          if-no-files-found: error
+
+  android:
+    needs: contract
+    strategy:
+      fail-fast: false
+      matrix:
+        settings:
+          - ndk: arm64-v8a
+            target: aarch64-linux-android
+          - ndk: armeabi-v7a
+            target: armv7-linux-androideabi
+    name: android (${{ matrix.settings.target }})
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.14"
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          targets: ${{ matrix.settings.target }}
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          workspaces: prns-host/abi/c
+          key: host-sdk-${{ matrix.settings.target }}
+      - run: cargo install cargo-ndk --version 4.1.2 --locked
+      - run: >-
+          cargo ndk --target ${{ matrix.settings.ndk }} --platform 24
+          --manifest-path prns-host/abi/c/Cargo.toml
+          build --locked --release
+      - run: >-
+          python tools/prns run release.host-sdk.native.package --
+          --target ${{ matrix.settings.target }}
+          --library prns-host/abi/c/target/${{ matrix.settings.target }}/release/libprns_host.so
+          --library prns-host/abi/c/target/${{ matrix.settings.target }}/release/libprns_host.a
+          --output dist/host-native-${{ matrix.settings.target }}
+          --expected-sha ${{ github.sha }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: host-native-${{ matrix.settings.target }}
+          path: dist/host-native-${{ matrix.settings.target }}
+          if-no-files-found: error
+
+  managed:
+    needs: [native, android]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.14"
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
+        with:
+          dotnet-version: 8.0.x
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: host-native-*
+          path: dist/native
+      - run: >-
+          python tools/prns run release.host-sdk.dotnet.stage --
+          --artifacts dist/native
+          --output prns-host/bindings/dotnet/src/PersonalRns/runtimes
+      - run: >-
+          dotnet pack prns-host/bindings/dotnet/src/PersonalRns/PersonalRns.csproj
+          --configuration Release
+          --output dist/nuget
+          -p:ContinuousIntegrationBuild=true
+          -p:RepositoryCommit=${{ github.sha }}
+      - run: >-
+          ./gradlew publishMavenPublicationToStagingRepository
+          --no-daemon
+          --non-interactive
+        working-directory: prns-host/bindings/jvm
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: host-nuget
+          path: dist/nuget/*.nupkg
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: host-maven
+          path: prns-host/bindings/jvm/build/staging-repository
+          if-no-files-found: error
+
+  publish-python:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.publish_pypi &&
+      inputs.expected_sha == github.sha
+    needs: [native, managed]
+    runs-on: ubuntu-latest
+    environment: host-sdk-release
+    steps:
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.14"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: host-python-*
+          path: dist
+          merge-multiple: true
+      - run: python3 -m pip install twine==6.2.0
+      - run: python3 -m twine upload --non-interactive --skip-existing dist/*.whl
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+
+  publish-dotnet:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.publish_nuget &&
+      inputs.expected_sha == github.sha
+    needs: managed
+    runs-on: ubuntu-latest
+    environment: host-sdk-release
+    steps:
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
+        with:
+          dotnet-version: 8.0.x
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: host-nuget
+          path: dist
+      - run: >-
+          dotnet nuget push "dist/*.nupkg"
+          --source https://api.nuget.org/v3/index.json
+          --api-key "${{ secrets.NUGET_API_KEY }}"
+          --skip-duplicate

@@ -4,8 +4,10 @@ import copy
 from importlib.machinery import SourceFileLoader
 import importlib.util
 import subprocess
+import sys
 import tomllib
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -107,6 +109,19 @@ class TaskRegistryTests(unittest.TestCase):
         task["platforms"] = ["windows" if runner.native_platform() != "windows" else "linux"]
         task["requires"] = ["definitely-not-a-real-prns-command"]
         self.assertTrue(runner.doctor([task]))
+
+    def test_python_entrypoint_reuses_the_control_plane_interpreter(self) -> None:
+        task = {
+            "id": "release.test",
+            "summary": "exercise interpreter selection",
+            "effect": "read-only",
+            "platforms": ["any"],
+            "entrypoint": ["python", "tools/release/check-host-sdk-versions.py"],
+        }
+        completed = subprocess.CompletedProcess([], 0)
+        with mock.patch.object(runner.subprocess, "run", return_value=completed) as run:
+            self.assertEqual(runner.run_task(task, []), 0)
+        self.assertEqual(run.call_args.args[0][0], sys.executable)
 
     def test_verify_output_explains_guarantees(self) -> None:
         result = subprocess.run(

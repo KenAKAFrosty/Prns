@@ -30,7 +30,19 @@ TRIAGE_PATH = ROOT / "validation" / "mutation" / "triage.toml"
 EVIDENCE_SCHEMA = 1
 VALID_TIERS = {"pr", "release", "scheduled"}
 VALID_PLATFORMS = {"any", "linux", "macos", "windows", "android-device"}
-VALID_TOOLCHAINS = {"stable", "nightly", "kani", "python", "node", "dotnet", "esp"}
+VALID_TOOLCHAINS = {
+    "stable",
+    "nightly",
+    "kani",
+    "python",
+    "node",
+    "dotnet",
+    "go",
+    "swift",
+    "julia",
+    "jvm",
+    "esp",
+}
 
 
 class ValidationError(RuntimeError):

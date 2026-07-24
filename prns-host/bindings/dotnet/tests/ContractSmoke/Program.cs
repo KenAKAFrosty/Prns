@@ -43,7 +43,7 @@ if (size != 3)
     throw new InvalidOperationException("Generated exhaustive match returned the wrong case.");
 }
 
-var host = PrnsHost.Create().Match(
+var host = PrnsHost.Create(HostOptions.EphemeralEndpoint).Match(
     ready => ready.Host,
     mismatch =>
         throw new InvalidOperationException(
@@ -60,6 +60,10 @@ await using (host)
     if (host.Lifecycle.Phase != LifecyclePhase.Running)
     {
         throw new InvalidOperationException("A newly created host is not running.");
+    }
+    if (host.IdentityHash.Span.Length != HostContract.IdentityHashLength)
+    {
+        throw new InvalidOperationException("The real host identity hash is unavailable.");
     }
 
     var events = host.ClaimEvents().Match(

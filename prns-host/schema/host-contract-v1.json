@@ -7,6 +7,7 @@
     { "name": "IdentityHash", "length": 16 },
     { "name": "InterfaceId", "length": 8 },
     { "name": "LinkId", "length": 16 },
+    { "name": "PacketHash", "length": 32 },
     { "name": "RequestId", "length": 16 },
     { "name": "RequestPathHash", "length": 16 },
     { "name": "ResourceHash", "length": 32 },
@@ -33,7 +34,8 @@
         { "name": "QueueFull", "value": 8 },
         { "name": "Stopped", "value": 9 },
         { "name": "BackendFailed", "value": 10 },
-        { "name": "Panic", "value": 11 }
+        { "name": "Panic", "value": 11 },
+        { "name": "Interrupted", "value": 12 }
       ]
     },
     {
@@ -59,6 +61,79 @@
         { "name": "BrowserRendezvous", "value": 10 },
         { "name": "I2p", "value": 11 },
         { "name": "Weave", "value": 12 }
+      ]
+    },
+    {
+      "name": "HostRole",
+      "values": [
+        { "name": "Endpoint", "value": 1 },
+        { "name": "Transport", "value": 2 }
+      ]
+    },
+    {
+      "name": "IdentityConfigKind",
+      "values": [
+        { "name": "Existing", "value": 1 },
+        { "name": "GenerateEphemeral", "value": 2 },
+        { "name": "LoadOrCreate", "value": 3 }
+      ]
+    },
+    {
+      "name": "DestinationConfigKind",
+      "values": [
+        { "name": "Plain", "value": 1 },
+        { "name": "Single", "value": 2 }
+      ]
+    },
+    {
+      "name": "DestinationIdentityConfigKind",
+      "values": [
+        { "name": "HostIdentity", "value": 1 },
+        { "name": "DedicatedIdentity", "value": 2 }
+      ]
+    },
+    {
+      "name": "BitrateKind",
+      "values": [
+        { "name": "Auto", "value": 1 },
+        { "name": "BitsPerSecond", "value": 2 }
+      ]
+    },
+    {
+      "name": "CommandOutcomeKind",
+      "values": [
+        { "name": "Announced", "value": 1 },
+        { "name": "PacketDelivered", "value": 2 },
+        { "name": "LinkCloseQueued", "value": 3 },
+        { "name": "InterfaceAttached", "value": 4 },
+        { "name": "InterfaceDetached", "value": 5 }
+      ]
+    },
+    {
+      "name": "CommandFailureKind",
+      "values": [
+        { "name": "NodeStopped", "value": 1 },
+        { "name": "Busy", "value": 2 },
+        { "name": "PayloadTooLarge", "value": 3 },
+        { "name": "UnknownDestination", "value": 4 },
+        { "name": "NotSingleDestination", "value": 5 },
+        { "name": "AnnounceAppDataTooLong", "value": 6 },
+        { "name": "UnknownInterface", "value": 7 },
+        { "name": "NoRouteToDestination", "value": 8 },
+        { "name": "NotDirectlyReachable", "value": 9 },
+        { "name": "PacketCulled", "value": 10 },
+        { "name": "DeliveryTimedOut", "value": 11 },
+        { "name": "InvalidBitrate", "value": 12 },
+        { "name": "BindFailed", "value": 13 },
+        { "name": "WriteFailed", "value": 14 }
+      ]
+    },
+    {
+      "name": "DeliveryEvidenceKind",
+      "values": [
+        { "name": "ExplicitProof", "value": 1 },
+        { "name": "ImplicitProof", "value": 2 },
+        { "name": "Response", "value": 3 }
       ]
     },
     {
@@ -180,6 +255,32 @@
       ]
     },
     {
+      "name": "DestinationIdentityConfig",
+      "cases": [
+        { "name": "HostIdentity", "value": 1, "fields": [] },
+        {
+          "name": "DedicatedIdentity",
+          "value": 2,
+          "fields": [
+            { "name": "identity", "type": "IdentityConfig" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Bitrate",
+      "cases": [
+        { "name": "Auto", "value": 1, "fields": [] },
+        {
+          "name": "BitsPerSecond",
+          "value": 2,
+          "fields": [
+            { "name": "value", "type": "u64" }
+          ]
+        }
+      ]
+    },
+    {
       "name": "DestinationConfig",
       "cases": [
         {
@@ -194,8 +295,98 @@
           "value": 2,
           "fields": [
             { "name": "name", "type": "DestinationName" },
-            { "name": "identity", "type": "IdentityConfig", "optional": true },
+            { "name": "identity", "type": "DestinationIdentityConfig" },
             { "name": "announceAppData", "type": "bytes", "optional": true }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "HostCommand",
+      "cases": [
+        {
+          "name": "Announce",
+          "value": 1,
+          "fields": [
+            { "name": "destination", "type": "DestinationHash" },
+            { "name": "interface", "type": "InterfaceId", "optional": true }
+          ]
+        },
+        {
+          "name": "SendSinglePacket",
+          "value": 2,
+          "fields": [
+            { "name": "destination", "type": "DestinationHash" },
+            { "name": "payload", "type": "bytes" }
+          ]
+        },
+        {
+          "name": "CloseLink",
+          "value": 3,
+          "fields": [
+            { "name": "linkId", "type": "LinkId" }
+          ]
+        },
+        {
+          "name": "AttachTcpServer",
+          "value": 4,
+          "fields": [
+            { "name": "bind", "type": "string" },
+            { "name": "bitrate", "type": "Bitrate" }
+          ]
+        },
+        {
+          "name": "AttachTcpClient",
+          "value": 5,
+          "fields": [
+            { "name": "target", "type": "string" },
+            { "name": "bitrate", "type": "Bitrate" }
+          ]
+        },
+        {
+          "name": "AttachUdp",
+          "value": 6,
+          "fields": [
+            { "name": "local", "type": "string" },
+            { "name": "peer", "type": "string" },
+            { "name": "bitrate", "type": "Bitrate" }
+          ]
+        },
+        {
+          "name": "DetachInterface",
+          "value": 7,
+          "fields": [
+            { "name": "interface", "type": "InterfaceId" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "CommandOutcome",
+      "cases": [
+        { "name": "Announced", "value": 1, "fields": [] },
+        {
+          "name": "PacketDelivered",
+          "value": 2,
+          "fields": [
+            { "name": "rttMillis", "type": "u64" },
+            { "name": "evidence", "type": "DeliveryEvidenceKind" },
+            { "name": "packetHash", "type": "PacketHash", "optional": true }
+          ]
+        },
+        { "name": "LinkCloseQueued", "value": 3, "fields": [] },
+        {
+          "name": "InterfaceAttached",
+          "value": 4,
+          "fields": [
+            { "name": "interface", "type": "InterfaceId" }
+          ]
+        },
+        {
+          "name": "InterfaceDetached",
+          "value": 5,
+          "fields": [
+            { "name": "interface", "type": "InterfaceId" }
           ]
         }
       ]

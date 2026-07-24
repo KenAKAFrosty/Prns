@@ -43,6 +43,7 @@ internal sealed class NativeEventStream<T> : OwnedAsyncStream<T>
     private readonly Channel<T> _channel;
     private readonly Task _pump;
     private int _claimed;
+    private int _disposed;
 
     internal NativeEventStream(EventStreamHandle handle, Func<EventHandle, T> decode)
     {
@@ -88,11 +89,15 @@ internal sealed class NativeEventStream<T> : OwnedAsyncStream<T>
         {
             while (!_stopping.IsCancellationRequested)
             {
-                var status = Native.prns_event_stream_next(_handle, 100, out var @event);
-                if (status is Status.TimedOut or Status.WouldBlock)
+                var status = Native.prns_event_stream_next(
+                    _handle,
+                    Native.NeverTimeout,
+                    out var @event
+                );
+                if (status == Status.Interrupted && _stopping.IsCancellationRequested)
                 {
                     @event?.Dispose();
-                    continue;
+                    break;
                 }
                 if (status == Status.Stopped)
                 {
@@ -119,7 +124,12 @@ internal sealed class NativeEventStream<T> : OwnedAsyncStream<T>
 
     public override async ValueTask DisposeAsync()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
         _stopping.Cancel();
+        Native.prns_event_stream_interrupt_wait(_handle);
         try
         {
             await _pump.ConfigureAwait(false);
@@ -132,9 +142,9 @@ internal sealed class NativeEventStream<T> : OwnedAsyncStream<T>
     }
 }
 
-public sealed class ResourceStream
+public sealed class ResourceStream : IDisposable, IAsyncDisposable
 {
-    private readonly ResourceStreamHandle _handle;
+    private ResourceStreamHandle? _handle;
     private int _claimed;
 
     internal ResourceStream(ResourceStreamHandle handle, ulong totalBytes)
@@ -151,9 +161,23 @@ public sealed class ResourceStream
         {
             return new StreamClaim<ReadOnlyMemory<byte>>.AlreadyClaimed(AsyncLaneName.Resource);
         }
+        var handle =
+            Interlocked.Exchange(ref _handle, null)
+            ?? throw new ObjectDisposedException(nameof(ResourceStream));
         return new StreamClaim<ReadOnlyMemory<byte>>.Claimed(
-            new NativeResourceStream(_handle)
+            new NativeResourceStream(handle)
         );
+    }
+
+    public void Dispose()
+    {
+        Interlocked.Exchange(ref _handle, null)?.Dispose();
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        Dispose();
+        return ValueTask.CompletedTask;
     }
 }
 

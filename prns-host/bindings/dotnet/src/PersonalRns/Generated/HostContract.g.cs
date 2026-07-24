@@ -13,6 +13,7 @@ public static class HostContract
     public const int IdentityHashLength = 16;
     public const int InterfaceIdLength = 8;
     public const int LinkIdLength = 16;
+    public const int PacketHashLength = 32;
     public const int RequestIdLength = 16;
     public const int RequestPathHashLength = 16;
     public const int ResourceHashLength = 32;
@@ -37,6 +38,7 @@ public enum Status : uint
     Stopped = 9,
     BackendFailed = 10,
     Panic = 11,
+    Interrupted = 12,
 }
 
 public enum BackendKind : uint
@@ -60,6 +62,71 @@ public enum Capability : uint
     BrowserRendezvous = 10,
     I2p = 11,
     Weave = 12,
+}
+
+public enum HostRole : uint
+{
+    Endpoint = 1,
+    Transport = 2,
+}
+
+public enum IdentityConfigKind : uint
+{
+    Existing = 1,
+    GenerateEphemeral = 2,
+    LoadOrCreate = 3,
+}
+
+public enum DestinationConfigKind : uint
+{
+    Plain = 1,
+    Single = 2,
+}
+
+public enum DestinationIdentityConfigKind : uint
+{
+    HostIdentity = 1,
+    DedicatedIdentity = 2,
+}
+
+public enum BitrateKind : uint
+{
+    Auto = 1,
+    BitsPerSecond = 2,
+}
+
+public enum CommandOutcomeKind : uint
+{
+    Announced = 1,
+    PacketDelivered = 2,
+    LinkCloseQueued = 3,
+    InterfaceAttached = 4,
+    InterfaceDetached = 5,
+}
+
+public enum CommandFailureKind : uint
+{
+    NodeStopped = 1,
+    Busy = 2,
+    PayloadTooLarge = 3,
+    UnknownDestination = 4,
+    NotSingleDestination = 5,
+    AnnounceAppDataTooLong = 6,
+    UnknownInterface = 7,
+    NoRouteToDestination = 8,
+    NotDirectlyReachable = 9,
+    PacketCulled = 10,
+    DeliveryTimedOut = 11,
+    InvalidBitrate = 12,
+    BindFailed = 13,
+    WriteFailed = 14,
+}
+
+public enum DeliveryEvidenceKind : uint
+{
+    ExplicitProof = 1,
+    ImplicitProof = 2,
+    Response = 3,
 }
 
 public enum LifecyclePhase : uint
@@ -300,6 +367,43 @@ public readonly struct LinkId : IEquatable<LinkId>
     public static bool operator !=(LinkId left, LinkId right) => !left.Equals(right);
 }
 
+public readonly struct PacketHash : IEquatable<PacketHash>
+{
+    private static readonly byte[] Zero = new byte[HostContract.PacketHashLength];
+    private readonly byte[]? _bytes;
+
+    public PacketHash(ReadOnlySpan<byte> bytes)
+    {
+        if (bytes.Length != HostContract.PacketHashLength)
+        {
+            throw new ArgumentException(
+                $"Expected exactly {HostContract.PacketHashLength} bytes.",
+                nameof(bytes)
+            );
+        }
+        _bytes = bytes.ToArray();
+    }
+
+    public ReadOnlySpan<byte> Span => _bytes ?? Zero;
+
+    public bool Equals(PacketHash other) => Span.SequenceEqual(other.Span);
+
+    public override bool Equals(object? value) => value is PacketHash other && Equals(other);
+
+    public override int GetHashCode()
+    {
+        var hash = new HashCode();
+        foreach (var value in Span)
+        {
+            hash.Add(value);
+        }
+        return hash.ToHashCode();
+    }
+
+    public static bool operator ==(PacketHash left, PacketHash right) => left.Equals(right);
+    public static bool operator !=(PacketHash left, PacketHash right) => !left.Equals(right);
+}
+
 public readonly struct RequestId : IEquatable<RequestId>
 {
     private static readonly byte[] Zero = new byte[HostContract.RequestIdLength];
@@ -473,6 +577,48 @@ public abstract record IdentityConfig
         };
 }
 
+public abstract record DestinationIdentityConfig
+{
+    private protected DestinationIdentityConfig() { }
+
+    public sealed record HostIdentity() : DestinationIdentityConfig;
+    public sealed record DedicatedIdentity(
+        IdentityConfig Identity
+    ) : DestinationIdentityConfig;
+
+    public TResult Match<TResult>(
+        Func<DestinationIdentityConfig.HostIdentity, TResult> hostIdentity,
+        Func<DestinationIdentityConfig.DedicatedIdentity, TResult> dedicatedIdentity
+    ) =>
+        this switch
+        {
+            HostIdentity value => hostIdentity(value),
+            DedicatedIdentity value => dedicatedIdentity(value),
+            _ => throw new InvalidOperationException("Unknown contract case."),
+        };
+}
+
+public abstract record Bitrate
+{
+    private protected Bitrate() { }
+
+    public sealed record Auto() : Bitrate;
+    public sealed record BitsPerSecond(
+        ulong Value
+    ) : Bitrate;
+
+    public TResult Match<TResult>(
+        Func<Bitrate.Auto, TResult> auto,
+        Func<Bitrate.BitsPerSecond, TResult> bitsPerSecond
+    ) =>
+        this switch
+        {
+            Auto value => auto(value),
+            BitsPerSecond value => bitsPerSecond(value),
+            _ => throw new InvalidOperationException("Unknown contract case."),
+        };
+}
+
 public abstract record DestinationConfig
 {
     private protected DestinationConfig() { }
@@ -482,7 +628,7 @@ public abstract record DestinationConfig
     ) : DestinationConfig;
     public sealed record Single(
         DestinationName Name,
-        IdentityConfig? Identity,
+        DestinationIdentityConfig Identity,
         ReadOnlyMemory<byte>? AnnounceAppData
     ) : DestinationConfig;
 
@@ -494,6 +640,96 @@ public abstract record DestinationConfig
         {
             Plain value => plain(value),
             Single value => single(value),
+            _ => throw new InvalidOperationException("Unknown contract case."),
+        };
+}
+
+public abstract record HostCommand
+{
+    private protected HostCommand() { }
+
+    public sealed record Announce(
+        DestinationHash Destination,
+        InterfaceId? Interface
+    ) : HostCommand;
+    public sealed record SendSinglePacket(
+        DestinationHash Destination,
+        ReadOnlyMemory<byte> Payload
+    ) : HostCommand;
+    public sealed record CloseLink(
+        LinkId LinkId
+    ) : HostCommand;
+    public sealed record AttachTcpServer(
+        string Bind,
+        Bitrate Bitrate
+    ) : HostCommand;
+    public sealed record AttachTcpClient(
+        string Target,
+        Bitrate Bitrate
+    ) : HostCommand;
+    public sealed record AttachUdp(
+        string Local,
+        string Peer,
+        Bitrate Bitrate
+    ) : HostCommand;
+    public sealed record DetachInterface(
+        InterfaceId Interface
+    ) : HostCommand;
+
+    public TResult Match<TResult>(
+        Func<HostCommand.Announce, TResult> announce,
+        Func<HostCommand.SendSinglePacket, TResult> sendSinglePacket,
+        Func<HostCommand.CloseLink, TResult> closeLink,
+        Func<HostCommand.AttachTcpServer, TResult> attachTcpServer,
+        Func<HostCommand.AttachTcpClient, TResult> attachTcpClient,
+        Func<HostCommand.AttachUdp, TResult> attachUdp,
+        Func<HostCommand.DetachInterface, TResult> detachInterface
+    ) =>
+        this switch
+        {
+            Announce value => announce(value),
+            SendSinglePacket value => sendSinglePacket(value),
+            CloseLink value => closeLink(value),
+            AttachTcpServer value => attachTcpServer(value),
+            AttachTcpClient value => attachTcpClient(value),
+            AttachUdp value => attachUdp(value),
+            DetachInterface value => detachInterface(value),
+            _ => throw new InvalidOperationException("Unknown contract case."),
+        };
+}
+
+public abstract record CommandOutcome
+{
+    private protected CommandOutcome() { }
+
+    public sealed record Announced() : CommandOutcome;
+    public sealed record PacketDelivered(
+        ulong RttMillis,
+        DeliveryEvidenceKind Evidence,
+        PacketHash? PacketHash
+    ) : CommandOutcome;
+    public sealed record LinkCloseQueued() : CommandOutcome;
+    public sealed record InterfaceAttached(
+        InterfaceId Interface
+    ) : CommandOutcome;
+    public sealed record InterfaceDetached(
+        InterfaceId Interface
+    ) : CommandOutcome;
+
+    public TResult Match<TResult>(
+        Func<CommandOutcome.Announced, TResult> announced,
+        Func<CommandOutcome.PacketDelivered, TResult> packetDelivered,
+        Func<CommandOutcome.LinkCloseQueued, TResult> linkCloseQueued,
+        Func<CommandOutcome.InterfaceAttached, TResult> interfaceAttached,
+        Func<CommandOutcome.InterfaceDetached, TResult> interfaceDetached
+    ) =>
+        this switch
+        {
+            Announced value => announced(value),
+            PacketDelivered value => packetDelivered(value),
+            LinkCloseQueued value => linkCloseQueued(value),
+            InterfaceAttached value => interfaceAttached(value),
+            InterfaceDetached value => interfaceDetached(value),
             _ => throw new InvalidOperationException("Unknown contract case."),
         };
 }

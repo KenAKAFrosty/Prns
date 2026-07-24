@@ -1,0 +1,5 @@
+module CPrnsHost [system] {
+    header "include/prns_host.h"
+    link "prns_host"
+    export *
+}

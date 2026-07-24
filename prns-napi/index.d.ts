@@ -179,6 +179,7 @@ export interface DestinationSpec {
   aspects: Array<string>
   kind?: 'single' | 'plain'
   identity?: IdentitySpec
+  useHostIdentity?: boolean
   announceAppData?: Buffer
   proof?: ProofStrategyName
   linkRequests?: LinkRequestPolicyName
@@ -224,7 +225,7 @@ export interface LinkInfo {
 
 export interface NodeOptions {
   identity?: IdentitySpec
-  transport?: boolean
+  role?: 'endpoint' | 'transport'
   destinations?: Array<DestinationSpec>
   eventQueueLimit?: number
   applicationEventQueueLimit?: number

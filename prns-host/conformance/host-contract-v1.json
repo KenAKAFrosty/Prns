@@ -33,6 +33,10 @@
       "Cooperative": 3,
       "Native": 1
     },
+    "BitrateKind": {
+      "Auto": 1,
+      "BitsPerSecond": 2
+    },
     "Capability": {
       "Bluetooth": 7,
       "BrowserRendezvous": 10,
@@ -46,6 +50,42 @@
       "Weave": 12,
       "WebSocket": 9,
       "Wifi": 8
+    },
+    "CommandFailureKind": {
+      "AnnounceAppDataTooLong": 6,
+      "BindFailed": 13,
+      "Busy": 2,
+      "DeliveryTimedOut": 11,
+      "InvalidBitrate": 12,
+      "NoRouteToDestination": 8,
+      "NodeStopped": 1,
+      "NotDirectlyReachable": 9,
+      "NotSingleDestination": 5,
+      "PacketCulled": 10,
+      "PayloadTooLarge": 3,
+      "UnknownDestination": 4,
+      "UnknownInterface": 7,
+      "WriteFailed": 14
+    },
+    "CommandOutcomeKind": {
+      "Announced": 1,
+      "InterfaceAttached": 4,
+      "InterfaceDetached": 5,
+      "LinkCloseQueued": 3,
+      "PacketDelivered": 2
+    },
+    "DeliveryEvidenceKind": {
+      "ExplicitProof": 1,
+      "ImplicitProof": 2,
+      "Response": 3
+    },
+    "DestinationConfigKind": {
+      "Plain": 1,
+      "Single": 2
+    },
+    "DestinationIdentityConfigKind": {
+      "DedicatedIdentity": 2,
+      "HostIdentity": 1
     },
     "DiagnosticEventKind": {
       "AnnounceHeard": 200,
@@ -99,6 +139,15 @@
       "TransferredBytes": 25,
       "UncompressedDataBytes": 17
     },
+    "HostRole": {
+      "Endpoint": 1,
+      "Transport": 2
+    },
+    "IdentityConfigKind": {
+      "Existing": 1,
+      "GenerateEphemeral": 2,
+      "LoadOrCreate": 3
+    },
     "LifecyclePhase": {
       "Failed": 5,
       "Running": 2,
@@ -115,6 +164,7 @@
       "AlreadyClaimed": 5,
       "BackendFailed": 10,
       "ContractMismatch": 2,
+      "Interrupted": 12,
       "InvalidArgument": 1,
       "InvalidHandle": 3,
       "NotReady": 4,
@@ -136,6 +186,7 @@
     "IdentitySecret": 64,
     "InterfaceId": 8,
     "LinkId": 16,
+    "PacketHash": 32,
     "RequestId": 16,
     "RequestPathHash": 16,
     "ResourceHash": 32
@@ -159,9 +210,24 @@
       "ResponseSegment": 103,
       "SingleDelivery": 100
     },
+    "Bitrate": {
+      "Auto": 1,
+      "BitsPerSecond": 2
+    },
+    "CommandOutcome": {
+      "Announced": 1,
+      "InterfaceAttached": 4,
+      "InterfaceDetached": 5,
+      "LinkCloseQueued": 3,
+      "PacketDelivered": 2
+    },
     "DestinationConfig": {
       "Plain": 1,
       "Single": 2
+    },
+    "DestinationIdentityConfig": {
+      "DedicatedIdentity": 2,
+      "HostIdentity": 1
     },
     "DiagnosticEvent": {
       "AnnounceHeard": 200,
@@ -181,6 +247,15 @@
       "RouteExpired": 211,
       "RouteInterfaceGone": 213,
       "SelfRatchetRotated": 208
+    },
+    "HostCommand": {
+      "Announce": 1,
+      "AttachTcpClient": 5,
+      "AttachTcpServer": 4,
+      "AttachUdp": 6,
+      "CloseLink": 3,
+      "DetachInterface": 7,
+      "SendSinglePacket": 2
     },
     "IdentityConfig": {
       "Existing": 1,

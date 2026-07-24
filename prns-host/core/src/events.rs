@@ -85,7 +85,11 @@ impl ApplicationEvent {
             Self::Request(event) => event.data.len(),
             Self::Response(event) => event.data.len(),
             Self::ResponseSegment(event) => event.data.len(),
-            Self::ResourceAvailable(event) => event.metadata.as_ref().map_or(0, Vec::len),
+            Self::ResourceAvailable(event) => event
+                .metadata
+                .as_ref()
+                .map_or(0, Vec::len)
+                .saturating_add(usize::try_from(event.total_bytes).unwrap_or(usize::MAX)),
             Self::ResourceSegment(event) => event
                 .data
                 .len()

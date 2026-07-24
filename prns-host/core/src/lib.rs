@@ -4,6 +4,7 @@
 extern crate alloc;
 
 mod capability;
+mod command;
 mod config;
 mod contract;
 mod delivery;
@@ -16,9 +17,10 @@ mod resource;
 mod types;
 
 pub use capability::{BackendCapabilities, BackendKind, Capability};
+pub use command::{Bitrate, CommandFailure, CommandOutcome, DeliveryEvidence, HostCommand};
 pub use config::{
-    DestinationConfig, DestinationName, DestinationNameError, HostConfig, IdentityConfig,
-    IdentitySecret, SingleDestinationConfig,
+    DestinationConfig, DestinationIdentityConfig, DestinationName, DestinationNameError,
+    HostConfig, HostRole, IdentityConfig, IdentitySecret, SingleDestinationConfig,
 };
 pub use contract::{
     verify_host_contract, HostContract, HostContractMismatch, HOST_CONTRACT, HOST_CONTRACT_ABI,
@@ -30,12 +32,15 @@ pub use events::{
     ResponseSegmentAvailable, SingleDelivery,
 };
 pub use generated::{
-    AbiApplicationEventKind, AbiBackendKind, AbiCapability, AbiDiagnosticEventKind, AbiEventField,
-    AbiLifecyclePhase, AbiLinkClosedReason, AbiStatus, AbiStopReason, BALANCED_APPLICATION_EVENTS,
-    BALANCED_DIAGNOSTICS, BALANCED_PENDING_COMMANDS, BALANCED_RETAINED_EVENT_BYTES,
-    DESTINATION_HASH_LENGTH, HOST_SCHEMA_ABI, HOST_SCHEMA_PRODUCT_VERSION, HOST_SCHEMA_VERSION,
-    IDENTITY_HASH_LENGTH, IDENTITY_SECRET_LENGTH, INTERFACE_ID_LENGTH, LINK_ID_LENGTH,
-    REQUEST_ID_LENGTH, REQUEST_PATH_HASH_LENGTH, RESOURCE_HASH_LENGTH,
+    AbiApplicationEventKind, AbiBackendKind, AbiBitrateKind, AbiCapability, AbiCommandFailureKind,
+    AbiCommandOutcomeKind, AbiDeliveryEvidenceKind, AbiDestinationConfigKind,
+    AbiDestinationIdentityConfigKind, AbiDiagnosticEventKind, AbiEventField, AbiHostRole,
+    AbiIdentityConfigKind, AbiLifecyclePhase, AbiLinkClosedReason, AbiStatus, AbiStopReason,
+    BALANCED_APPLICATION_EVENTS, BALANCED_DIAGNOSTICS, BALANCED_PENDING_COMMANDS,
+    BALANCED_RETAINED_EVENT_BYTES, DESTINATION_HASH_LENGTH, HOST_SCHEMA_ABI,
+    HOST_SCHEMA_PRODUCT_VERSION, HOST_SCHEMA_VERSION, IDENTITY_HASH_LENGTH, IDENTITY_SECRET_LENGTH,
+    INTERFACE_ID_LENGTH, LINK_ID_LENGTH, PACKET_HASH_LENGTH, REQUEST_ID_LENGTH,
+    REQUEST_PATH_HASH_LENGTH, RESOURCE_HASH_LENGTH,
 };
 pub use lifecycle::{
     HostFailure, LifecyclePhase, LifecycleSnapshot, LifecycleState, LifecycleTransitionError,
@@ -50,6 +55,6 @@ pub use resource::{
     ResourceAvailable, ResourceChunk, ResourceReadError, ResourceReader, ResourceStreamId,
 };
 pub use types::{
-    CommandId, DestinationHash, IdentityHash, InterfaceId, LinkId, RequestId, RequestPathHash,
-    ResourceHash,
+    CommandId, DestinationHash, IdentityHash, InterfaceId, LinkId, PacketHash, RequestId,
+    RequestPathHash, ResourceHash,
 };

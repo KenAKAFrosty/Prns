@@ -94,7 +94,7 @@ internal static class EventDecoder
             DiagnosticEventKind.LinkClosed =>
                 new DiagnosticEvent.LinkClosed(
                     new LinkId(Bytes(@event, EventField.LinkId)),
-                    (LinkClosedReason)U64(@event, EventField.Reason)
+                    LinkReason(@event)
                 ),
             DiagnosticEventKind.LinkInterfaceMismatch =>
                 new DiagnosticEvent.LinkInterfaceMismatch(
@@ -160,6 +160,15 @@ internal static class EventDecoder
                 new DiagnosticEvent.DiagnosticsDropped(U128(@event, EventField.DroppedCount)),
             var kind => throw new InvalidDataException($"Unknown diagnostic event kind {kind}."),
         };
+    }
+
+    private static LinkClosedReason LinkReason(EventHandle @event)
+    {
+        var raw = checked((uint)U64(@event, EventField.Reason));
+        var reason = (LinkClosedReason)raw;
+        return Enum.IsDefined(reason)
+            ? reason
+            : throw new InvalidDataException($"Unknown link-close reason {raw}.");
     }
 
     private static byte[] Bytes(EventHandle @event, EventField field)

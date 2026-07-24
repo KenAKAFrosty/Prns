@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "verified_at": "2026-07-23",
+  "verified_at": "2026-07-24",
   "actions": {
     "Swatinem/rust-cache": {
       "resolved_ref": "v2",
@@ -22,6 +22,14 @@
       "resolved_ref": "v4",
       "sha": "d3f86a106a0bac45b974a628896c90dbdf5c8093"
     },
+    "actions/setup-dotnet": {
+      "resolved_ref": "v5.4.0",
+      "sha": "26b0ec14cb23fa6904739307f278c14f94c95bf1"
+    },
+    "actions/setup-go": {
+      "resolved_ref": "v6.5.0",
+      "sha": "924ae3a1cded613372ab5595356fb5720e22ba16"
+    },
     "actions/setup-java": {
       "resolved_ref": "v4",
       "sha": "c1e323688fd81a25caa38c78aa6df2d33d3e20d9"
@@ -29,6 +37,10 @@
     "actions/setup-node": {
       "resolved_ref": "v4",
       "sha": "49933ea5288caeca8642d1e84afbd3f7d6820020"
+    },
+    "actions/setup-python": {
+      "resolved_ref": "v7.0.0",
+      "sha": "5fda3b95a4ea91299a34e894583c3862153e4b97"
     },
     "actions/upload-artifact": {
       "resolved_ref": "v4",
@@ -54,9 +66,17 @@
       "resolved_ref": "stable@2026-07-21",
       "sha": "4cda84d5c5c54efe2404f9d843567869ab1699d4"
     },
+    "julia-actions/setup-julia": {
+      "resolved_ref": "v2.7.0",
+      "sha": "4c0cb0fce8556fdb04a90347310e5db8b1f98fb9"
+    },
     "oven-sh/setup-bun": {
       "resolved_ref": "v2",
       "sha": "0c5077e51419868618aeaa5fe8019c62421857d6"
+    },
+    "swift-actions/setup-swift": {
+      "resolved_ref": "v2.4.0",
+      "sha": "7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a"
     }
   }
 }

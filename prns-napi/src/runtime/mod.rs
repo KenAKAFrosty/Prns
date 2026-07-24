@@ -111,7 +111,7 @@ pub type ControlJob = Box<dyn FnOnce(PrnsNodeHandle) -> BoxedControlFuture + Sen
 struct LiveState {
     ready: Option<oneshot::Receiver<Result<PrnsNodeHandle, String>>>,
     handle: Option<PrnsNodeHandle>,
-    control: mpsc::UnboundedSender<ControlJob>,
+    control: mpsc::Sender<ControlJob>,
     shutdown: oneshot::Sender<()>,
     stopped: oneshot::Receiver<Exit>,
     join: std::thread::JoinHandle<()>,
@@ -131,11 +131,11 @@ pub struct NodeManager {
 }
 
 impl NodeManager {
-    pub fn start(config: NodeConfig, sink: EventSink) -> CodeResult<Self> {
+    pub fn start(config: NodeConfig, sink: EventSink, pending_commands: usize) -> CodeResult<Self> {
         let (ready_tx, ready_rx) = oneshot::channel();
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let (stopped_tx, stopped_rx) = oneshot::channel();
-        let (control_tx, control_rx) = mpsc::unbounded_channel();
+        let (control_tx, control_rx) = mpsc::channel(pending_commands);
         let sequence = THREAD_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let live_sink = sink.clone();
         let join = std::thread::Builder::new()
@@ -235,7 +235,7 @@ impl NodeManager {
         }
     }
 
-    fn control(&self) -> CodeResult<mpsc::UnboundedSender<ControlJob>> {
+    fn control(&self) -> CodeResult<mpsc::Sender<ControlJob>> {
         let state = self.lock();
         match &*state {
             ManagerState::Live(live) if live.handle.is_some() => Ok(live.control.clone()),
@@ -261,9 +261,12 @@ impl NodeManager {
                 let _ = result_tx.send(value);
             })
         });
-        control
-            .send(job)
-            .map_err(|_| code_err(ErrorCode::NodeStopped, "node stopped"))?;
+        control.try_send(job).map_err(|error| match error {
+            mpsc::error::TrySendError::Full(_) => code_err(ErrorCode::Busy, "engine busy"),
+            mpsc::error::TrySendError::Closed(_) => {
+                code_err(ErrorCode::NodeStopped, "node stopped")
+            }
+        })?;
         result_rx
             .await
             .map_err(|_| code_err(ErrorCode::NodeStopped, "node stopped"))
@@ -329,7 +332,7 @@ fn worker(
     sink: EventSink,
     ready_tx: oneshot::Sender<Result<PrnsNodeHandle, String>>,
     shutdown_rx: oneshot::Receiver<()>,
-    control_rx: mpsc::UnboundedReceiver<ControlJob>,
+    control_rx: mpsc::Receiver<ControlJob>,
     stopped_tx: oneshot::Sender<Exit>,
 ) {
     let runtime = match tokio::runtime::Builder::new_multi_thread()
@@ -358,7 +361,7 @@ async fn run_node(
     sink: EventSink,
     ready_tx: oneshot::Sender<Result<PrnsNodeHandle, String>>,
     mut shutdown_rx: oneshot::Receiver<()>,
-    control_rx: mpsc::UnboundedReceiver<ControlJob>,
+    control_rx: mpsc::Receiver<ControlJob>,
 ) -> Exit {
     let aspects = aspect_refs(&config);
     let destinations = build_destinations(&config, &aspects);
@@ -415,7 +418,7 @@ async fn run_node(
     }
 }
 
-async fn control_loop(mut control_rx: mpsc::UnboundedReceiver<ControlJob>, handle: PrnsNodeHandle) {
+async fn control_loop(mut control_rx: mpsc::Receiver<ControlJob>, handle: PrnsNodeHandle) {
     while let Some(job) = control_rx.recv().await {
         tokio::spawn(job(handle.clone()));
     }

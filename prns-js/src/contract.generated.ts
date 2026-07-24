@@ -12,6 +12,7 @@ export const DESTINATION_HASH_LENGTH = 16;
 export const IDENTITY_HASH_LENGTH = 16;
 export const INTERFACE_ID_LENGTH = 8;
 export const LINK_ID_LENGTH = 16;
+export const PACKET_HASH_LENGTH = 32;
 export const REQUEST_ID_LENGTH = 16;
 export const REQUEST_PATH_HASH_LENGTH = 16;
 export const RESOURCE_HASH_LENGTH = 32;
@@ -21,6 +22,7 @@ export type DestinationHash = BrandedBytes<"DestinationHash">;
 export type IdentityHash = BrandedBytes<"IdentityHash">;
 export type InterfaceId = BrandedBytes<"InterfaceId">;
 export type LinkId = BrandedBytes<"LinkId">;
+export type PacketHash = BrandedBytes<"PacketHash">;
 export type RequestId = BrandedBytes<"RequestId">;
 export type RequestPathHash = BrandedBytes<"RequestPathHash">;
 export type ResourceHash = BrandedBytes<"ResourceHash">;
@@ -44,6 +46,15 @@ export type LinkClosedReason =
   | "Timeout"
   | "PeerClosed"
   | "MalformedRtt";
+
+export type HostRoleName =
+  | "Endpoint"
+  | "Transport";
+
+export type DeliveryEvidenceKind =
+  | "ExplicitProof"
+  | "ImplicitProof"
+  | "Response";
 
 export type PrnsLimits = {
   readonly pendingCommands: number;
@@ -86,6 +97,24 @@ export type IdentityConfig =
       }
     >;
 
+export type DestinationIdentityConfig =
+  | Tag<"HostIdentity">
+  | Tag<
+      "DedicatedIdentity",
+      {
+        readonly identity: IdentityConfig;
+      }
+    >;
+
+export type Bitrate =
+  | Tag<"Auto">
+  | Tag<
+      "BitsPerSecond",
+      {
+        readonly value: number;
+      }
+    >;
+
 export type DestinationConfig =
   | Tag<
       "Plain",
@@ -97,8 +126,82 @@ export type DestinationConfig =
       "Single",
       {
         readonly name: DestinationName;
-        readonly identity?: IdentityConfig;
+        readonly identity: DestinationIdentityConfig;
         readonly announceAppData?: Uint8Array;
+      }
+    >;
+
+export type HostCommand =
+  | Tag<
+      "Announce",
+      {
+        readonly destination: DestinationHash;
+        readonly interface?: InterfaceId;
+      }
+    >
+  | Tag<
+      "SendSinglePacket",
+      {
+        readonly destination: DestinationHash;
+        readonly payload: Uint8Array;
+      }
+    >
+  | Tag<
+      "CloseLink",
+      {
+        readonly linkId: LinkId;
+      }
+    >
+  | Tag<
+      "AttachTcpServer",
+      {
+        readonly bind: string;
+        readonly bitrate: Bitrate;
+      }
+    >
+  | Tag<
+      "AttachTcpClient",
+      {
+        readonly target: string;
+        readonly bitrate: Bitrate;
+      }
+    >
+  | Tag<
+      "AttachUdp",
+      {
+        readonly local: string;
+        readonly peer: string;
+        readonly bitrate: Bitrate;
+      }
+    >
+  | Tag<
+      "DetachInterface",
+      {
+        readonly interface: InterfaceId;
+      }
+    >;
+
+export type CommandOutcome =
+  | Tag<"Announced">
+  | Tag<
+      "PacketDelivered",
+      {
+        readonly rttMillis: number;
+        readonly evidence: DeliveryEvidenceKind;
+        readonly packetHash?: PacketHash;
+      }
+    >
+  | Tag<"LinkCloseQueued">
+  | Tag<
+      "InterfaceAttached",
+      {
+        readonly interface: InterfaceId;
+      }
+    >
+  | Tag<
+      "InterfaceDetached",
+      {
+        readonly interface: InterfaceId;
       }
     >;
 

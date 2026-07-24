@@ -1,32 +1,59 @@
-# Prns host contract
+# Personal RNS host contract
 
-`prns-host` is the language-neutral behavioral center of every hosted Prns SDK. It defines the release ABI, semantic configuration, capabilities, lifecycle, bounded command and event lanes, diagnostic gaps, resource streams, and single-owner consumer claims. The canonical machine-readable source is `schema/host-contract-v1.json`; Rust, TypeScript, C, .NET, and portable conformance vectors are generated from it.
+`prns-host` is the language-neutral center of every hosted Personal RNS SDK.
+The canonical schema in `schema/host-contract-v1.json` owns stable
+discriminants, fixed byte widths, semantic configuration, commands, outcomes,
+application events, diagnostics, and resource streams. Deterministic generation
+projects that vocabulary into Rust, TypeScript, C, C#, Python, Go, Swift,
+Kotlin, and Julia.
 
-The implementation is deliberately split into ownership layers:
+The native execution path has one real implementation:
+
+```text
+language package
+    -> idiomatic ownership and async adapter
+        -> versioned C ABI with opaque handles
+            -> native Rust host
+                -> Personal RNS engine
+```
+
+No language binding reimplements routing, Reticulum semantics, queue policy, or
+event meaning. The C capsule is the binary lighthouse: Rust enums, allocators,
+futures, and unwinding never cross it; owned opaque handles, size-prefixed
+structures, fixed-width discriminants, borrowed views, and explicit status
+values do.
+
+## Ownership layers
 
 | Layer | Owns |
 | --- | --- |
-| `prns-host/core` | Stable vocabulary, limits, admission policy, lifecycle, and backend-independent event semantics |
-| `prns-host/impls/cooperative` | Explicit time and entropy for browsers, embedded executors, and caller-driven hosts |
-| `prns-host/impls/tokio` | Blocking and asynchronous native-host scheduling |
-| `prns-host/abi/c` | Stable opaque-handle native capsule and pull-based event/resource ownership |
-| `prns-host/bindings/dotnet` | `SafeHandle`, bounded `Channel<T>`, `IAsyncEnumerable<T>`, sealed records, and exhaustive `Match` |
+| `core` | Stable vocabulary, limits, lifecycle, admission policy, and backend-independent event semantics |
+| `impls/native` | The real threaded/Tokio host, semantic configuration, bounded command submission, and interruptible waits |
+| `impls/cooperative` | Explicit time and entropy for browsers, embedded executors, and caller-driven hosts |
+| `impls/tokio` | Blocking and asynchronous native-host scheduling |
+| `abi/c` | Stable opaque handles, pull-based events/resources, panic containment, and ABI/version gates |
+| `bindings/*` | Idiomatic types, cancellation, deterministic ownership, package metadata, and no new protocol semantics |
 
-A language binding translates this contract; it does not invent another runtime model. Expected outcomes remain explicit unions, application data remains lossless until a declared terminal failure, diagnostics may drop newest with an exact gap count, and every application, diagnostic, or resource stream has one consumer.
+## Ecosystem shape
 
-## Binding shape
+| Ecosystem | Typed cases | Async/event surface | Distribution |
+| --- | --- | --- | --- |
+| TypeScript, Node, Bun, browser | `casework` unions and exhaustive `match()` | `AsyncIterableIterator<T>` | one `personal-rns` npm package with native and browser exports |
+| .NET | sealed records and exhaustive `Match` helpers | `IAsyncEnumerable<T>` | `PersonalRns` NuGet with runtime-specific native assets |
+| Python | frozen variant classes | async iterators | platform wheels containing the native capsule |
+| Go | generated closed interfaces and concrete cases | context-aware pull streams | Go module plus native release archive |
+| Swift | generated enums | `AsyncSequence` | Swift Package plus native release archive/pkg-config |
+| Kotlin, Java, Android | generated sealed interfaces | one-shot Kotlin `Flow` | Maven JAR; Android uses the same API with JNA AAR and per-ABI native assets |
+| Julia | generated abstract types and concrete structs | Julia iteration/tasks | Julia package plus native release archive |
+| C and C++ | fixed enums, structs, and opaque handles | interruptible blocking pull | content-addressed native artifact with header, static/dynamic libraries, and pkg-config |
 
-The same concepts have idiomatic presentations:
-
-| Contract concept | TypeScript | .NET | Python | Swift/Kotlin |
-| --- | --- | --- | --- | --- |
-| Tagged outcome | casework union | sealed record hierarchy | frozen variant classes | enum/sealed hierarchy |
-| Application stream | `AsyncIterableIterator<T>` | `IAsyncEnumerable<T>` | async iterator | `AsyncSequence`/`Flow` |
-| Stream claim | `Claimed \| AlreadyClaimed` | `Claimed<T> \| AlreadyClaimed` | explicit result variant | explicit enum/sealed result |
-| Resource body | claimed chunk stream | claimed `IAsyncEnumerable<ReadOnlyMemory<byte>>` | claimed async byte chunks | claimed async byte chunks |
-| Lifecycle | exhaustive tagged state | exhaustive sealed state | exhaustive variant state | exhaustive enum/sealed state |
-
-Bindings must verify `HOST_CONTRACT_ABI` and product version before creating a node. Backend-specific features appear through capabilities or explicit sub-interfaces, never optional methods that fail later.
+Commands settle as an explicit success or failure case. Cancellation does not
+abandon a blocked foreign thread: each adapter interrupts the native wait and
+joins its ownership boundary before release. Application and diagnostic lanes
+are claimed once. Application data remains lossless inside declared bounds;
+diagnostics may drop newest and report an exact accumulated gap. Resource bodies
+have one consumer and retain their own native handle after the parent event is
+released.
 
 ## Contract workflow
 
@@ -35,16 +62,32 @@ Change the schema first. Generated files are never edited directly.
 ```sh
 ./tools/prns run repo.host-contract.generate
 ./tools/prns run repo.host-contract.check
-cargo test --manifest-path prns-host/abi/c/Cargo.toml
-npm --prefix prns-js test
+python3 tools/release/check-host-sdk-versions.py
+python3 validation/run.py verify
 ```
 
-The generator rejects duplicate names or discriminants, unknown field types, disagreement between event unions and event-kind enums, and product-version disagreement across Rust, npm, C, and .NET packages. CI then compiles the generated C header, exercises the C capsule, type-checks TypeScript, and compiles the .NET exhaustive-match smoke.
+The generator rejects duplicate names or discriminants, unknown field types,
+event-union disagreement, and stale language projections. Registered native
+smokes then exercise real creation, ABI/product mismatch gates, stream
+single-ownership, wait interruption, and command settlement across C, .NET,
+Python, Go, Swift, Kotlin/JVM, and Julia.
 
-## Expansion order
+## Release assets
 
-.NET is the first native binding over the capsule: opaque handles feed a bounded `Channel<T>`, expose `IAsyncEnumerable<T>`, and use generated sealed records plus exhaustive `Match` helpers without changing the host contract.
+`tools/release/package-host-native.py` creates a relocatable target artifact
+containing the generated header, dynamic and static libraries, pkg-config
+metadata, both project licenses, an exact commit, and SHA-256/size records for
+every shipped file. The host SDK workflow builds GNU and musl Linux, macOS,
+Windows, and Android targets. Python wheels and the NuGet package consume those
+same outputs; the Maven staging repository and source-first Go, Swift, and Julia
+packages remain anchored to the identical contract version.
 
-Python follows through the same native capsule with async generators and frozen variants. Swift and Kotlin then reuse the capsule and map the same cases to `AsyncSequence` and `Flow`. Go is mechanically straightforward after the capsule exists, although cancellation and goroutine ownership need a deliberately narrower wrapper than the native Go channel defaults.
+Publication is an explicit, SHA-gated workflow-dispatch action. Building and
+testing never implicitly publish.
 
-Every new binding must pass the same conformance vectors for ABI mismatch, queue pressure, exact diagnostic gaps, second-consumer rejection, lifecycle terminality, and resource ownership before convenience helpers are added.
+## Adding another language
+
+Read [`bindings/README.md`](bindings/README.md). A new adapter starts from the
+generated contract and C ABI, preserves the ownership/cancellation rules, maps
+closed cases to the language's strongest sum-type form, and proves the same live
+smoke before convenience APIs are added.

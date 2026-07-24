@@ -25,6 +25,17 @@ pub enum IdentityConfig {
     LoadOrCreate { path: String },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HostRole {
+    Endpoint,
+    Transport,
+}
+
+pub enum DestinationIdentityConfig {
+    HostIdentity,
+    Dedicated(IdentityConfig),
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DestinationName {
     app_name: String,
@@ -70,7 +81,7 @@ impl DestinationName {
 
 pub struct SingleDestinationConfig {
     pub name: DestinationName,
-    pub identity: IdentityConfig,
+    pub identity: DestinationIdentityConfig,
     pub announce_app_data: Vec<u8>,
 }
 
@@ -81,6 +92,7 @@ pub enum DestinationConfig {
 
 pub struct HostConfig {
     pub identity: IdentityConfig,
+    pub role: HostRole,
     pub destinations: Vec<DestinationConfig>,
     pub required_capabilities: Vec<Capability>,
     pub limits: PrnsLimits,
