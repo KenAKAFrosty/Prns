@@ -200,6 +200,16 @@ struct EventReader {
         return value
     }
 
+    func u16(_ field: EventField) throws -> UInt16 {
+        guard let value = UInt16(exactly: try u64(field)) else {
+            throw StatusFailure(
+                operation: "eventInteger",
+                status: .backendFailed
+            )
+        }
+        return value
+    }
+
     func u128(_ field: EventField) throws -> UInt128 {
         var low: UInt64 = 0
         var high: UInt64 = 0
@@ -385,7 +395,7 @@ func decodeApplicationEvent(_ pointer: OpaquePointer) throws -> ApplicationEvent
     case .channelMessage:
         return .channelMessage(
             linkId: try LinkId(event.bytes(.linkId)),
-            messageType: try event.string(.messageType),
+            messageType: try event.u16(.messageType),
             data: try event.bytes(.data)
         )
     }

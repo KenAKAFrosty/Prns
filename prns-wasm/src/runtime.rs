@@ -2,29 +2,36 @@ use core::convert::TryFrom;
 
 use js_sys::{Array, Object};
 use personal_rns::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceTarget, CloseLink, CommandId, Directive, EngineCommand,
-    EngineReaction, EngineState, FanTarget, InstantMillis, IssuedCommand, Journaled, RatchetPolicy,
-    Respond, RespondPayload, SendSinglePacket, SendSinglePacketPayload,
+    AllowRequester, AnnounceAppData, AnnounceNow, AnnounceTarget, CloseLink, CommandId, Directive,
+    EngineCommand, EngineReaction, EngineState, EstablishLink, FanTarget, Identify, InstantMillis,
+    IssuedCommand, Journaled, PathRequestId, RatchetPolicy, RequestPath, RequestResponseTimeout,
+    Respond, RespondData, RespondPayload, SendRequest, SendRequestData, SendSinglePacket,
+    SendSinglePacketPayload, SendToChannel, SendToChannelBody, SendToLink, SendToLinkPayload,
+    SetResourceStrategy,
 };
 use personal_rns::interfaces::bluetooth_auto as bluetooth_contract;
 use personal_rns::interfaces::{
     AnnounceBandwidthCap, BitrateBps, Capabilities, InboundPacket, InterfaceCapabilities,
     InterfaceCommonPolicy, InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceMode,
 };
+use personal_rns::routing::links::channel::MessageType;
 use personal_rns::routing::links::request::RequestId;
+use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::links::LinkId;
-use personal_rns::routing::request_handlers::RequestPathHash;
+use personal_rns::routing::request_handlers::{RequestPathHash, RequestPolicy};
 use personal_rns::routing::upstream_app_destinations::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::routing::warmth::Departure;
 use personal_rns::storage::GrowableHeap;
+use personal_rns::units::DurationMillis;
 use prns_host::PrnsLimits;
 use prns_host_cooperative::{CooperativeHost, Entropy, MonotonicMillis};
 use wasm_bindgen::prelude::*;
 
 use crate::input::{
-    array_to_strings, destination_hash_from_vec, interface_id_from_vec, link_id_from_vec,
-    optional_bytes, optional_u32, parse_interface_kind, required_array, required_bytes,
-    required_string, required_u64, secret_key_from_vec,
+    array_to_strings, destination_hash_from_vec, identity_hash_from_vec, interface_id_from_vec,
+    link_id_from_vec, optional_array, optional_bytes, optional_u32, optional_u64,
+    parse_interface_kind, request_id_from_vec, request_path_hash_from_vec, required_array,
+    required_bool, required_bytes, required_string, required_u64, secret_key_from_vec,
 };
 use crate::js_translation::{
     interface_kind_name, journaled_to_js, outbound_to_js, set_bytes, set_str, set_u32, set_u64,
@@ -194,6 +201,28 @@ impl PrnsRuntime {
             .map_err(|error| {
                 JsValue::from_str(&format!("destination registration failed: {error:?}"))
             })?;
+        if let Some(handlers) = optional_array(&options, "requestHandlers")? {
+            for handler in handlers.iter() {
+                let path = required_string(&handler, "path")?;
+                let policy = match required_string(&handler, "policy")?.as_str() {
+                    "AllowNone" => RequestPolicy::AllowNone,
+                    "AllowAll" => RequestPolicy::AllowAll,
+                    "AllowList" => RequestPolicy::AllowList,
+                    _ => {
+                        return Err(JsValue::from_str(
+                            "request handler policy must be AllowNone, AllowAll, or AllowList",
+                        ));
+                    }
+                };
+                self.engine
+                    .register_request_handler(&destination, &path, policy)
+                    .map_err(|error| {
+                        JsValue::from_str(&format!(
+                            "request handler registration failed: {error:?}"
+                        ))
+                    })?;
+            }
+        }
         Ok(destination.as_bytes().to_vec())
     }
 
@@ -309,6 +338,189 @@ impl PrnsRuntime {
             EngineCommand::CloseLink(CloseLink { link_id }),
             now_ms,
             step.entropy.as_bytes().to_vec(),
+        );
+        Ok(id.0)
+    }
+
+    #[wasm_bindgen(js_name = establishLink)]
+    pub fn establish_link(&mut self, options: JsValue) -> Result<u64, JsValue> {
+        let destination = destination_hash_from_vec(required_bytes(&options, "destination")?)?;
+        let (now_ms, entropy) = self.command_context(&options)?;
+        let id = self.mint_command_id();
+        self.ingest_command(
+            id,
+            EngineCommand::EstablishLink(EstablishLink { destination }),
+            now_ms,
+            entropy,
+        );
+        Ok(id.0)
+    }
+
+    #[wasm_bindgen(js_name = requestPath)]
+    pub fn request_path(&mut self, options: JsValue) -> Result<u64, JsValue> {
+        let destination = destination_hash_from_vec(required_bytes(&options, "destination")?)?;
+        let (now_ms, entropy) = self.command_context(&options)?;
+        let request_id = entropy
+            .get(..personal_rns::engine::PATH_REQUEST_ID_LEN)
+            .and_then(|bytes| bytes.try_into().ok())
+            .map(PathRequestId::new)
+            .ok_or_else(|| JsValue::from_str("host entropy is too short for a path request"))?;
+        let id = self.mint_command_id();
+        self.ingest_command(
+            id,
+            EngineCommand::RequestPath(RequestPath {
+                destination,
+                id: request_id,
+            }),
+            now_ms,
+            entropy,
+        );
+        Ok(id.0)
+    }
+
+    #[wasm_bindgen(js_name = identify)]
+    pub fn identify(&mut self, options: JsValue) -> Result<u64, JsValue> {
+        let link_id = link_id_from_vec(required_bytes(&options, "linkId")?)?;
+        let identity = identity_hash_from_vec(required_bytes(&options, "identity")?)?;
+        let (now_ms, entropy) = self.command_context(&options)?;
+        let id = self.mint_command_id();
+        self.ingest_command(
+            id,
+            EngineCommand::Identify(Identify { link_id, identity }),
+            now_ms,
+            entropy,
+        );
+        Ok(id.0)
+    }
+
+    #[wasm_bindgen(js_name = sendLinkPacket)]
+    pub fn send_link_packet(&mut self, options: JsValue) -> Result<u64, JsValue> {
+        let link_id = link_id_from_vec(required_bytes(&options, "linkId")?)?;
+        let payload = SendToLinkPayload::from_slice(&required_bytes(&options, "payload")?)
+            .map_err(|_| JsValue::from_str("payload exceeds the link packet limit"))?;
+        let (now_ms, entropy) = self.command_context(&options)?;
+        let id = self.mint_command_id();
+        self.ingest_command(
+            id,
+            EngineCommand::SendToLink(SendToLink { link_id, payload }),
+            now_ms,
+            entropy,
+        );
+        Ok(id.0)
+    }
+
+    #[wasm_bindgen(js_name = request)]
+    pub fn request(&mut self, options: JsValue) -> Result<u64, JsValue> {
+        let link_id = link_id_from_vec(required_bytes(&options, "linkId")?)?;
+        let path_hash = request_path_hash_from_vec(required_bytes(&options, "pathHash")?)?;
+        let data = SendRequestData::from_slice(&required_bytes(&options, "payload")?)
+            .map_err(|_| JsValue::from_str("payload exceeds the request packet limit"))?;
+        let response_timeout = optional_u64(&options, "timeoutMillis")?
+            .map(|millis| RequestResponseTimeout::Exact(DurationMillis(millis)))
+            .unwrap_or(RequestResponseTimeout::LinkDefault);
+        let (now_ms, entropy) = self.command_context(&options)?;
+        let id = self.mint_command_id();
+        self.ingest_command(
+            id,
+            EngineCommand::SendRequest(SendRequest {
+                link_id,
+                path_hash,
+                data,
+                response_timeout,
+            }),
+            now_ms,
+            entropy,
+        );
+        Ok(id.0)
+    }
+
+    #[wasm_bindgen(js_name = respond)]
+    pub fn respond(&mut self, options: JsValue) -> Result<u64, JsValue> {
+        let link_id = link_id_from_vec(required_bytes(&options, "linkId")?)?;
+        let request_id = request_id_from_vec(required_bytes(&options, "requestId")?)?;
+        let payload = RespondData::from_slice(&required_bytes(&options, "payload")?)
+            .map_err(|_| JsValue::from_str("payload exceeds the response packet limit"))?;
+        let _ = required_u64(&options, "requestRttMillis")?;
+        let (now_ms, entropy) = self.command_context(&options)?;
+        let id = self.mint_command_id();
+        self.ingest_command(
+            id,
+            EngineCommand::Respond(Respond {
+                link_id,
+                request_id,
+                payload: RespondPayload::Packed(payload),
+            }),
+            now_ms,
+            entropy,
+        );
+        Ok(id.0)
+    }
+
+    #[wasm_bindgen(js_name = setLinkResourceStrategy)]
+    pub fn set_link_resource_strategy(&mut self, options: JsValue) -> Result<u64, JsValue> {
+        let link_id = link_id_from_vec(required_bytes(&options, "linkId")?)?;
+        let strategy = resource_strategy(&options)?;
+        let (now_ms, entropy) = self.command_context(&options)?;
+        let id = self.mint_command_id();
+        self.ingest_command(
+            id,
+            EngineCommand::SetResourceStrategy(SetResourceStrategy { link_id, strategy }),
+            now_ms,
+            entropy,
+        );
+        Ok(id.0)
+    }
+
+    #[wasm_bindgen(js_name = setDestinationResourceStrategy)]
+    pub fn set_destination_resource_strategy(&mut self, options: JsValue) -> Result<bool, JsValue> {
+        let destination = destination_hash_from_vec(required_bytes(&options, "destination")?)?;
+        let strategy = resource_strategy(&options)?;
+        Ok(self
+            .engine
+            .set_default_resource_strategy(&destination, strategy))
+    }
+
+    #[wasm_bindgen(js_name = sendChannelMessage)]
+    pub fn send_channel_message(&mut self, options: JsValue) -> Result<u64, JsValue> {
+        let link_id = link_id_from_vec(required_bytes(&options, "linkId")?)?;
+        let message_type = u16::try_from(required_u64(&options, "messageType")?)
+            .ok()
+            .map(MessageType)
+            .filter(|kind| !kind.is_system_reserved())
+            .ok_or_else(|| JsValue::from_str("messageType must be an application message type"))?;
+        let body = SendToChannelBody::from_slice(&required_bytes(&options, "payload")?)
+            .map_err(|_| JsValue::from_str("payload exceeds the channel message limit"))?;
+        let (now_ms, entropy) = self.command_context(&options)?;
+        let id = self.mint_command_id();
+        self.ingest_command(
+            id,
+            EngineCommand::SendToChannel(SendToChannel {
+                link_id,
+                message_type,
+                body,
+            }),
+            now_ms,
+            entropy,
+        );
+        Ok(id.0)
+    }
+
+    #[wasm_bindgen(js_name = allowRequester)]
+    pub fn allow_requester(&mut self, options: JsValue) -> Result<u64, JsValue> {
+        let destination = destination_hash_from_vec(required_bytes(&options, "destination")?)?;
+        let path_hash = request_path_hash_from_vec(required_bytes(&options, "pathHash")?)?;
+        let identity = identity_hash_from_vec(required_bytes(&options, "identity")?)?;
+        let (now_ms, entropy) = self.command_context(&options)?;
+        let id = self.mint_command_id();
+        self.ingest_command(
+            id,
+            EngineCommand::AllowRequester(AllowRequester {
+                destination,
+                path_hash,
+                identity,
+            }),
+            now_ms,
+            entropy,
         );
         Ok(id.0)
     }
@@ -481,6 +693,17 @@ impl PrnsRuntime {
 }
 
 impl PrnsRuntime {
+    fn command_context(&mut self, options: &JsValue) -> Result<(u64, Vec<u8>), JsValue> {
+        let now_ms = required_u64(options, "nowMs")?;
+        let entropy = Entropy::try_new(required_bytes(options, "entropy")?)
+            .map_err(|error| JsValue::from_str(&format!("host entropy rejected: {error:?}")))?;
+        let step = self
+            .host
+            .begin_step(MonotonicMillis::new(now_ms), entropy)
+            .map_err(|error| JsValue::from_str(&format!("host time moved backwards: {error:?}")))?;
+        Ok((now_ms, step.entropy.as_bytes().to_vec()))
+    }
+
     fn mint_command_id(&mut self) -> CommandId {
         let id = CommandId(self.next_command_id);
         self.next_command_id = self.next_command_id.saturating_add(1);
@@ -514,6 +737,17 @@ impl PrnsRuntime {
                 CapturedReaction::Outbound(frame) => self.outbound.push(frame),
             }
         }
+    }
+}
+
+fn resource_strategy(options: &JsValue) -> Result<ResourceStrategy, JsValue> {
+    match required_string(options, "strategy")?.as_str() {
+        "refuse" => Ok(ResourceStrategy::AcceptNone),
+        "accept" => Ok(ResourceStrategy::Accept {
+            max_uncompressed_bytes: required_u64(options, "maximumUncompressedBytes")?,
+            accept_compressed: required_bool(options, "acceptCompressed")?,
+        }),
+        _ => Err(JsValue::from_str("strategy must be refuse or accept")),
     }
 }
 

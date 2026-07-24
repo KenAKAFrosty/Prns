@@ -82,12 +82,41 @@ public enum BitrateKind: UInt32, Sendable {
     case bitsPerSecond = 2
 }
 
+public enum ResponseTimeoutKind: UInt32, Sendable {
+    case linkDefault = 1
+    case exact = 2
+}
+
+public enum ResourceCompressionKind: UInt32, Sendable {
+    case auto = 1
+    case never = 2
+}
+
+public enum ResourceStrategyKind: UInt32, Sendable {
+    case refuse = 1
+    case accept = 2
+}
+
+public enum RequestPolicy: UInt32, Sendable {
+    case allowNone = 1
+    case allowAll = 2
+    case allowList = 3
+}
+
 public enum CommandOutcomeKind: UInt32, Sendable {
     case announced = 1
     case packetDelivered = 2
     case linkCloseQueued = 3
     case interfaceAttached = 4
     case interfaceDetached = 5
+    case linkEstablished = 6
+    case pathDiscovered = 7
+    case identified = 8
+    case responseReceived = 9
+    case responseSent = 10
+    case resourceSent = 11
+    case resourceStrategySet = 12
+    case requesterAllowed = 13
 }
 
 public enum CommandFailureKind: UInt32, Sendable {
@@ -108,6 +137,21 @@ public enum CommandFailureKind: UInt32, Sendable {
     case unsupportedByBackend = 15
     case unknownLink = 16
     case linkNotActive = 17
+    case entropyUnavailable = 18
+    case notLinkInitiator = 19
+    case identityNotHeld = 20
+    case unknownRequestHandler = 21
+    case requestPolicyNotAllowList = 22
+    case requestAllowListFull = 23
+    case linkBusy = 24
+    case resourceTableFull = 25
+    case resourceMetadataTooLarge = 26
+    case resourceRejectedByPeer = 27
+    case resourceSequencingFailed = 28
+    case resourcePredecessorFailed = 29
+    case channelWindowFull = 30
+    case channelUntrackable = 31
+    case invalidChannelMessageType = 32
 }
 
 public enum DeliveryEvidenceKind: UInt32, Sendable {
@@ -329,6 +373,16 @@ public struct DestinationName: Hashable, Sendable {
     }
 }
 
+public struct RequestHandlerConfig: Hashable, Sendable {
+    public let path: String
+    public let policy: RequestPolicy
+
+    public init(path: String, policy: RequestPolicy) {
+        self.path = path
+        self.policy = policy
+    }
+}
+
 public protocol ResourceStream: AnyObject, AsyncSequence, Sendable
 where Element == [UInt8] {
     var totalBytes: UInt64 { get }
@@ -351,9 +405,24 @@ public enum Bitrate: Sendable {
     case bitsPerSecond(value: UInt64)
 }
 
+public enum ResponseTimeout: Sendable {
+    case linkDefault
+    case exact(millis: UInt64)
+}
+
+public enum ResourceCompression: Sendable {
+    case auto
+    case never
+}
+
+public enum ResourceStrategy: Sendable {
+    case refuse
+    case accept(maximumUncompressedBytes: UInt64, acceptCompressed: Bool)
+}
+
 public enum DestinationConfig: Sendable {
     case plain(name: DestinationName)
-    case single(name: DestinationName, identity: DestinationIdentityConfig, announceAppData: [UInt8]?)
+    case single(name: DestinationName, identity: DestinationIdentityConfig, announceAppData: [UInt8]?, requestHandlers: [RequestHandlerConfig])
 }
 
 public enum HostCommand: Sendable {
@@ -364,6 +433,17 @@ public enum HostCommand: Sendable {
     case attachTcpClient(target: String, bitrate: Bitrate)
     case attachUdp(local: String, peer: String, bitrate: Bitrate)
     case detachInterface(interface: InterfaceId)
+    case establishLink(destination: DestinationHash)
+    case requestPath(destination: DestinationHash)
+    case identify(linkId: LinkId, identity: IdentityHash)
+    case sendLinkPacket(linkId: LinkId, payload: [UInt8])
+    case request(linkId: LinkId, pathHash: RequestPathHash, payload: [UInt8], timeout: ResponseTimeout)
+    case respond(linkId: LinkId, requestId: RequestId, requestRttMillis: UInt64, payload: [UInt8])
+    case sendResource(linkId: LinkId, payload: [UInt8], packedMetadata: [UInt8]?, compression: ResourceCompression)
+    case setLinkResourceStrategy(linkId: LinkId, strategy: ResourceStrategy)
+    case setDestinationResourceStrategy(destination: DestinationHash, strategy: ResourceStrategy)
+    case sendChannelMessage(linkId: LinkId, messageType: UInt16, payload: [UInt8])
+    case allowRequester(destination: DestinationHash, pathHash: RequestPathHash, identity: IdentityHash)
 }
 
 public enum CommandOutcome: Sendable {
@@ -372,6 +452,14 @@ public enum CommandOutcome: Sendable {
     case linkCloseQueued
     case interfaceAttached(interface: InterfaceId)
     case interfaceDetached(interface: InterfaceId)
+    case linkEstablished(linkId: LinkId, rttMillis: UInt64)
+    case pathDiscovered(hops: UInt8)
+    case identified
+    case responseReceived(data: [UInt8], rttMillis: UInt64)
+    case responseSent(rttMillis: UInt64)
+    case resourceSent
+    case resourceStrategySet
+    case requesterAllowed
 }
 
 public enum CommandFailure: Sendable {
@@ -392,6 +480,21 @@ public enum CommandFailure: Sendable {
     case unsupportedByBackend
     case unknownLink
     case linkNotActive
+    case entropyUnavailable
+    case notLinkInitiator
+    case identityNotHeld
+    case unknownRequestHandler
+    case requestPolicyNotAllowList
+    case requestAllowListFull
+    case linkBusy
+    case resourceTableFull
+    case resourceMetadataTooLarge
+    case resourceRejectedByPeer
+    case resourceSequencingFailed
+    case resourcePredecessorFailed
+    case channelWindowFull
+    case channelUntrackable
+    case invalidChannelMessageType
 }
 
 public enum ApplicationEvent: Sendable {
@@ -402,7 +505,7 @@ public enum ApplicationEvent: Sendable {
     case resourceAvailable(linkId: LinkId, hash: ResourceHash, metadata: [UInt8]?, resource: any ResourceStream)
     case resourceSegment(linkId: LinkId, originalHash: ResourceHash, segmentIndex: UInt64, totalSegments: UInt64, metadata: [UInt8]?, data: [UInt8])
     case resourceNeedsDecompression(linkId: LinkId, hash: ResourceHash, stream: [UInt8], uncompressedDataBytes: UInt64)
-    case channelMessage(linkId: LinkId, messageType: String, data: [UInt8])
+    case channelMessage(linkId: LinkId, messageType: UInt16, data: [UInt8])
 }
 
 public enum DiagnosticEvent: Sendable {

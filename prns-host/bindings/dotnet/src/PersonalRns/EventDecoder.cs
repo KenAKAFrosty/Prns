@@ -64,7 +64,7 @@ internal static class EventDecoder
             ApplicationEventKind.ChannelMessage =>
                 new ApplicationEvent.ChannelMessage(
                     new LinkId(Bytes(@event, EventField.LinkId)),
-                    String(@event, EventField.MessageType),
+                    checked((ushort)U64(@event, EventField.MessageType)),
                     Bytes(@event, EventField.Data)
                 ),
             var kind => throw new InvalidDataException($"Unknown application event kind {kind}."),

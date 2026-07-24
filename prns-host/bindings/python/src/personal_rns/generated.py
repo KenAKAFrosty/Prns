@@ -76,12 +76,37 @@ class BitrateKind(IntEnum):
     AUTO = 1
     BITS_PER_SECOND = 2
 
+class ResponseTimeoutKind(IntEnum):
+    LINK_DEFAULT = 1
+    EXACT = 2
+
+class ResourceCompressionKind(IntEnum):
+    AUTO = 1
+    NEVER = 2
+
+class ResourceStrategyKind(IntEnum):
+    REFUSE = 1
+    ACCEPT = 2
+
+class RequestPolicy(IntEnum):
+    ALLOW_NONE = 1
+    ALLOW_ALL = 2
+    ALLOW_LIST = 3
+
 class CommandOutcomeKind(IntEnum):
     ANNOUNCED = 1
     PACKET_DELIVERED = 2
     LINK_CLOSE_QUEUED = 3
     INTERFACE_ATTACHED = 4
     INTERFACE_DETACHED = 5
+    LINK_ESTABLISHED = 6
+    PATH_DISCOVERED = 7
+    IDENTIFIED = 8
+    RESPONSE_RECEIVED = 9
+    RESPONSE_SENT = 10
+    RESOURCE_SENT = 11
+    RESOURCE_STRATEGY_SET = 12
+    REQUESTER_ALLOWED = 13
 
 class CommandFailureKind(IntEnum):
     NODE_STOPPED = 1
@@ -101,6 +126,21 @@ class CommandFailureKind(IntEnum):
     UNSUPPORTED_BY_BACKEND = 15
     UNKNOWN_LINK = 16
     LINK_NOT_ACTIVE = 17
+    ENTROPY_UNAVAILABLE = 18
+    NOT_LINK_INITIATOR = 19
+    IDENTITY_NOT_HELD = 20
+    UNKNOWN_REQUEST_HANDLER = 21
+    REQUEST_POLICY_NOT_ALLOW_LIST = 22
+    REQUEST_ALLOW_LIST_FULL = 23
+    LINK_BUSY = 24
+    RESOURCE_TABLE_FULL = 25
+    RESOURCE_METADATA_TOO_LARGE = 26
+    RESOURCE_REJECTED_BY_PEER = 27
+    RESOURCE_SEQUENCING_FAILED = 28
+    RESOURCE_PREDECESSOR_FAILED = 29
+    CHANNEL_WINDOW_FULL = 30
+    CHANNEL_UNTRACKABLE = 31
+    INVALID_CHANNEL_MESSAGE_TYPE = 32
 
 class DeliveryEvidenceKind(IntEnum):
     EXPLICIT_PROOF = 1
@@ -304,6 +344,11 @@ class DestinationName:
             raise ValueError("a destination requires a non-empty app name and aspects")
 
 @dataclass(frozen=True, slots=True)
+class RequestHandlerConfig:
+    path: str
+    policy: RequestPolicy
+
+@dataclass(frozen=True, slots=True)
 class IdentityConfigExisting:
     secret: IdentitySecret
 
@@ -332,6 +377,31 @@ class BitrateBitsPerSecond:
     value: int
 
 @dataclass(frozen=True, slots=True)
+class ResponseTimeoutLinkDefault:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class ResponseTimeoutExact:
+    millis: int
+
+@dataclass(frozen=True, slots=True)
+class ResourceCompressionAuto:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class ResourceCompressionNever:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class ResourceStrategyRefuse:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class ResourceStrategyAccept:
+    maximum_uncompressed_bytes: int
+    accept_compressed: bool
+
+@dataclass(frozen=True, slots=True)
 class DestinationConfigPlain:
     name: DestinationName
 
@@ -340,6 +410,7 @@ class DestinationConfigSingle:
     name: DestinationName
     identity: DestinationIdentityConfig
     announce_app_data: bytes | None
+    request_handlers: tuple[RequestHandlerConfig, ...]
 
 @dataclass(frozen=True, slots=True)
 class HostCommandAnnounce:
@@ -376,6 +447,67 @@ class HostCommandDetachInterface:
     interface: InterfaceId
 
 @dataclass(frozen=True, slots=True)
+class HostCommandEstablishLink:
+    destination: DestinationHash
+
+@dataclass(frozen=True, slots=True)
+class HostCommandRequestPath:
+    destination: DestinationHash
+
+@dataclass(frozen=True, slots=True)
+class HostCommandIdentify:
+    link_id: LinkId
+    identity: IdentityHash
+
+@dataclass(frozen=True, slots=True)
+class HostCommandSendLinkPacket:
+    link_id: LinkId
+    payload: bytes
+
+@dataclass(frozen=True, slots=True)
+class HostCommandRequest:
+    link_id: LinkId
+    path_hash: RequestPathHash
+    payload: bytes
+    timeout: ResponseTimeout
+
+@dataclass(frozen=True, slots=True)
+class HostCommandRespond:
+    link_id: LinkId
+    request_id: RequestId
+    request_rtt_millis: int
+    payload: bytes
+
+@dataclass(frozen=True, slots=True)
+class HostCommandSendResource:
+    link_id: LinkId
+    payload: bytes
+    packed_metadata: bytes | None
+    compression: ResourceCompression
+
+@dataclass(frozen=True, slots=True)
+class HostCommandSetLinkResourceStrategy:
+    link_id: LinkId
+    strategy: ResourceStrategy
+
+@dataclass(frozen=True, slots=True)
+class HostCommandSetDestinationResourceStrategy:
+    destination: DestinationHash
+    strategy: ResourceStrategy
+
+@dataclass(frozen=True, slots=True)
+class HostCommandSendChannelMessage:
+    link_id: LinkId
+    message_type: int
+    payload: bytes
+
+@dataclass(frozen=True, slots=True)
+class HostCommandAllowRequester:
+    destination: DestinationHash
+    path_hash: RequestPathHash
+    identity: IdentityHash
+
+@dataclass(frozen=True, slots=True)
 class CommandOutcomeAnnounced:
     pass
 
@@ -396,6 +528,40 @@ class CommandOutcomeInterfaceAttached:
 @dataclass(frozen=True, slots=True)
 class CommandOutcomeInterfaceDetached:
     interface: InterfaceId
+
+@dataclass(frozen=True, slots=True)
+class CommandOutcomeLinkEstablished:
+    link_id: LinkId
+    rtt_millis: int
+
+@dataclass(frozen=True, slots=True)
+class CommandOutcomePathDiscovered:
+    hops: int
+
+@dataclass(frozen=True, slots=True)
+class CommandOutcomeIdentified:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandOutcomeResponseReceived:
+    data: bytes
+    rtt_millis: int
+
+@dataclass(frozen=True, slots=True)
+class CommandOutcomeResponseSent:
+    rtt_millis: int
+
+@dataclass(frozen=True, slots=True)
+class CommandOutcomeResourceSent:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandOutcomeResourceStrategySet:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandOutcomeRequesterAllowed:
+    pass
 
 @dataclass(frozen=True, slots=True)
 class CommandFailureNodeStopped:
@@ -466,6 +632,66 @@ class CommandFailureLinkNotActive:
     pass
 
 @dataclass(frozen=True, slots=True)
+class CommandFailureEntropyUnavailable:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureNotLinkInitiator:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureIdentityNotHeld:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureUnknownRequestHandler:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureRequestPolicyNotAllowList:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureRequestAllowListFull:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureLinkBusy:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureResourceTableFull:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureResourceMetadataTooLarge:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureResourceRejectedByPeer:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureResourceSequencingFailed:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureResourcePredecessorFailed:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureChannelWindowFull:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureChannelUntrackable:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureInvalidChannelMessageType:
+    pass
+
+@dataclass(frozen=True, slots=True)
 class ApplicationEventSingleDelivery:
     destination: DestinationHash
     source_interface: InterfaceId
@@ -521,7 +747,7 @@ class ApplicationEventResourceNeedsDecompression:
 @dataclass(frozen=True, slots=True)
 class ApplicationEventChannelMessage:
     link_id: LinkId
-    message_type: str
+    message_type: int
     data: bytes
 
 @dataclass(frozen=True, slots=True)
@@ -614,9 +840,12 @@ class DiagnosticEventDiagnosticsDropped:
 IdentityConfig: TypeAlias = IdentityConfigExisting | IdentityConfigGenerateEphemeral | IdentityConfigLoadOrCreate
 DestinationIdentityConfig: TypeAlias = DestinationIdentityConfigHostIdentity | DestinationIdentityConfigDedicatedIdentity
 Bitrate: TypeAlias = BitrateAuto | BitrateBitsPerSecond
+ResponseTimeout: TypeAlias = ResponseTimeoutLinkDefault | ResponseTimeoutExact
+ResourceCompression: TypeAlias = ResourceCompressionAuto | ResourceCompressionNever
+ResourceStrategy: TypeAlias = ResourceStrategyRefuse | ResourceStrategyAccept
 DestinationConfig: TypeAlias = DestinationConfigPlain | DestinationConfigSingle
-HostCommand: TypeAlias = HostCommandAnnounce | HostCommandSendSinglePacket | HostCommandCloseLink | HostCommandAttachTcpServer | HostCommandAttachTcpClient | HostCommandAttachUdp | HostCommandDetachInterface
-CommandOutcome: TypeAlias = CommandOutcomeAnnounced | CommandOutcomePacketDelivered | CommandOutcomeLinkCloseQueued | CommandOutcomeInterfaceAttached | CommandOutcomeInterfaceDetached
-CommandFailure: TypeAlias = CommandFailureNodeStopped | CommandFailureBusy | CommandFailurePayloadTooLarge | CommandFailureUnknownDestination | CommandFailureNotSingleDestination | CommandFailureAnnounceAppDataTooLong | CommandFailureUnknownInterface | CommandFailureNoRouteToDestination | CommandFailureNotDirectlyReachable | CommandFailurePacketCulled | CommandFailureDeliveryTimedOut | CommandFailureInvalidBitrate | CommandFailureBindFailed | CommandFailureWriteFailed | CommandFailureUnsupportedByBackend | CommandFailureUnknownLink | CommandFailureLinkNotActive
+HostCommand: TypeAlias = HostCommandAnnounce | HostCommandSendSinglePacket | HostCommandCloseLink | HostCommandAttachTcpServer | HostCommandAttachTcpClient | HostCommandAttachUdp | HostCommandDetachInterface | HostCommandEstablishLink | HostCommandRequestPath | HostCommandIdentify | HostCommandSendLinkPacket | HostCommandRequest | HostCommandRespond | HostCommandSendResource | HostCommandSetLinkResourceStrategy | HostCommandSetDestinationResourceStrategy | HostCommandSendChannelMessage | HostCommandAllowRequester
+CommandOutcome: TypeAlias = CommandOutcomeAnnounced | CommandOutcomePacketDelivered | CommandOutcomeLinkCloseQueued | CommandOutcomeInterfaceAttached | CommandOutcomeInterfaceDetached | CommandOutcomeLinkEstablished | CommandOutcomePathDiscovered | CommandOutcomeIdentified | CommandOutcomeResponseReceived | CommandOutcomeResponseSent | CommandOutcomeResourceSent | CommandOutcomeResourceStrategySet | CommandOutcomeRequesterAllowed
+CommandFailure: TypeAlias = CommandFailureNodeStopped | CommandFailureBusy | CommandFailurePayloadTooLarge | CommandFailureUnknownDestination | CommandFailureNotSingleDestination | CommandFailureAnnounceAppDataTooLong | CommandFailureUnknownInterface | CommandFailureNoRouteToDestination | CommandFailureNotDirectlyReachable | CommandFailurePacketCulled | CommandFailureDeliveryTimedOut | CommandFailureInvalidBitrate | CommandFailureBindFailed | CommandFailureWriteFailed | CommandFailureUnsupportedByBackend | CommandFailureUnknownLink | CommandFailureLinkNotActive | CommandFailureEntropyUnavailable | CommandFailureNotLinkInitiator | CommandFailureIdentityNotHeld | CommandFailureUnknownRequestHandler | CommandFailureRequestPolicyNotAllowList | CommandFailureRequestAllowListFull | CommandFailureLinkBusy | CommandFailureResourceTableFull | CommandFailureResourceMetadataTooLarge | CommandFailureResourceRejectedByPeer | CommandFailureResourceSequencingFailed | CommandFailureResourcePredecessorFailed | CommandFailureChannelWindowFull | CommandFailureChannelUntrackable | CommandFailureInvalidChannelMessageType
 ApplicationEvent: TypeAlias = ApplicationEventSingleDelivery | ApplicationEventRequest | ApplicationEventResponse | ApplicationEventResponseSegment | ApplicationEventResourceAvailable | ApplicationEventResourceSegment | ApplicationEventResourceNeedsDecompression | ApplicationEventChannelMessage
 DiagnosticEvent: TypeAlias = DiagnosticEventAnnounceHeard | DiagnosticEventLinkEstablished | DiagnosticEventPeerIdentified | DiagnosticEventLinkClosed | DiagnosticEventLinkInterfaceMismatch | DiagnosticEventResourceAssembled | DiagnosticEventResourceFailed | DiagnosticEventResourceSendProgress | DiagnosticEventSelfRatchetRotated | DiagnosticEventAnnounceHeldDropped | DiagnosticEventDelivered | DiagnosticEventRouteExpired | DiagnosticEventRouteEvicted | DiagnosticEventRouteInterfaceGone | DiagnosticEventRouteDropped | DiagnosticEventBackendDiagnostic | DiagnosticEventDiagnosticsDropped

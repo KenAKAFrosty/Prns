@@ -345,7 +345,7 @@ function decode_application_event(event::Ptr{Cvoid})
     kind == ApplicationEventKindChannelMessage &&
         return ApplicationEventChannelMessage(
             LinkId(event_bytes(event, EventFieldLinkId)),
-            event_string(event, EventFieldMessageType),
+            UInt16(event_u64(event, EventFieldMessageType)),
             event_bytes(event, EventFieldData),
         )
     throw(StatusFailure(:decode_application_event, StatusBackendFailed))

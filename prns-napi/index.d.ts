@@ -33,7 +33,7 @@ export type PrnsNodeEvent =
   | { type: 'responseSegment'; linkId: Buffer; requestId: Buffer; segmentIndex: number; totalSegments: number; data: Buffer }
   | { type: 'resourceReceived'; linkId: Buffer; hash: Buffer; metadata?: Buffer; data: Buffer }
   | { type: 'resourceSegment'; linkId: Buffer; originalHash: Buffer; segmentIndex: number; totalSegments: number; metadata?: Buffer; data: Buffer }
-  | { type: 'channelMessage'; linkId: Buffer; messageType: string; data: Buffer }
+  | { type: 'channelMessage'; linkId: Buffer; messageType: number; data: Buffer }
   | { type: 'linkEstablished'; linkId: Buffer; rttMillis: number }
   | { type: 'peerIdentified'; linkId: Buffer; identity: Buffer }
   | { type: 'linkClosed'; linkId: Buffer; reason: LinkClosedReasonName }
@@ -61,6 +61,8 @@ export declare class PrnsNode {
   stop(): Promise<void>
   announce(destination: Buffer, options?: AnnounceOptions | undefined | null): Promise<void>
   sendSinglePacket(destination: Buffer, data: Buffer): Promise<PacketReceipt>
+  sendLinkPacket(linkId: Buffer, data: Buffer): Promise<PacketReceipt>
+  sendChannelMessage(linkId: Buffer, messageType: number, data: Buffer): Promise<PacketReceipt>
   establishLink(destination: Buffer): Promise<Buffer>
   establishLinkWithRtt(destination: Buffer): Promise<LinkInfo>
   closeLink(linkId: Buffer): boolean

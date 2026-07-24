@@ -342,7 +342,9 @@ internal fun decodeApplicationEvent(pointer: Pointer): ApplicationEvent {
             )
         ApplicationEventKind.CHANNEL_MESSAGE -> ApplicationEventChannelMessage(
             linkId = LinkId(event.bytes(EventField.LINK_ID)),
-            messageType = event.string(EventField.MESSAGE_TYPE),
+            messageType = event.u64(EventField.MESSAGE_TYPE).also {
+                require(it in 0..0xffff)
+            }.toInt(),
             data = Bytes(event.bytes(EventField.DATA)),
         )
     }

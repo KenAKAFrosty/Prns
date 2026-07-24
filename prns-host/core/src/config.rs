@@ -83,6 +83,20 @@ pub struct SingleDestinationConfig {
     pub name: DestinationName,
     pub identity: DestinationIdentityConfig,
     pub announce_app_data: Vec<u8>,
+    pub request_handlers: Vec<RequestHandlerConfig>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RequestPolicy {
+    AllowNone,
+    AllowAll,
+    AllowList,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RequestHandlerConfig {
+    pub path: String,
+    pub policy: RequestPolicy,
 }
 
 pub enum DestinationConfig {

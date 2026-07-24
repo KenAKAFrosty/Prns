@@ -56,6 +56,11 @@ export type DeliveryEvidenceKind =
   | "ImplicitProof"
   | "Response";
 
+export type RequestPolicy =
+  | "AllowNone"
+  | "AllowAll"
+  | "AllowList";
+
 export type PrnsLimits = {
   readonly pendingCommands: number;
   readonly applicationEvents: number;
@@ -75,6 +80,11 @@ export function balancedLimits(): PrnsLimits {
 export type DestinationName = {
   readonly appName: string;
   readonly aspects: readonly string[];
+};
+
+export type RequestHandlerConfig = {
+  readonly path: string;
+  readonly policy: RequestPolicy;
 };
 
 export type ResourceStream = {
@@ -115,6 +125,29 @@ export type Bitrate =
       }
     >;
 
+export type ResponseTimeout =
+  | Tag<"LinkDefault">
+  | Tag<
+      "Exact",
+      {
+        readonly millis: number;
+      }
+    >;
+
+export type ResourceCompression =
+  | Tag<"Auto">
+  | Tag<"Never">;
+
+export type ResourceStrategy =
+  | Tag<"Refuse">
+  | Tag<
+      "Accept",
+      {
+        readonly maximumUncompressedBytes: number;
+        readonly acceptCompressed: boolean;
+      }
+    >;
+
 export type DestinationConfig =
   | Tag<
       "Plain",
@@ -128,6 +161,7 @@ export type DestinationConfig =
         readonly name: DestinationName;
         readonly identity: DestinationIdentityConfig;
         readonly announceAppData?: Uint8Array;
+        readonly requestHandlers: readonly RequestHandlerConfig[];
       }
     >;
 
@@ -179,6 +213,89 @@ export type HostCommand =
       {
         readonly interface: InterfaceId;
       }
+    >
+  | Tag<
+      "EstablishLink",
+      {
+        readonly destination: DestinationHash;
+      }
+    >
+  | Tag<
+      "RequestPath",
+      {
+        readonly destination: DestinationHash;
+      }
+    >
+  | Tag<
+      "Identify",
+      {
+        readonly linkId: LinkId;
+        readonly identity: IdentityHash;
+      }
+    >
+  | Tag<
+      "SendLinkPacket",
+      {
+        readonly linkId: LinkId;
+        readonly payload: Uint8Array;
+      }
+    >
+  | Tag<
+      "Request",
+      {
+        readonly linkId: LinkId;
+        readonly pathHash: RequestPathHash;
+        readonly payload: Uint8Array;
+        readonly timeout: ResponseTimeout;
+      }
+    >
+  | Tag<
+      "Respond",
+      {
+        readonly linkId: LinkId;
+        readonly requestId: RequestId;
+        readonly requestRttMillis: number;
+        readonly payload: Uint8Array;
+      }
+    >
+  | Tag<
+      "SendResource",
+      {
+        readonly linkId: LinkId;
+        readonly payload: Uint8Array;
+        readonly packedMetadata?: Uint8Array;
+        readonly compression: ResourceCompression;
+      }
+    >
+  | Tag<
+      "SetLinkResourceStrategy",
+      {
+        readonly linkId: LinkId;
+        readonly strategy: ResourceStrategy;
+      }
+    >
+  | Tag<
+      "SetDestinationResourceStrategy",
+      {
+        readonly destination: DestinationHash;
+        readonly strategy: ResourceStrategy;
+      }
+    >
+  | Tag<
+      "SendChannelMessage",
+      {
+        readonly linkId: LinkId;
+        readonly messageType: number;
+        readonly payload: Uint8Array;
+      }
+    >
+  | Tag<
+      "AllowRequester",
+      {
+        readonly destination: DestinationHash;
+        readonly pathHash: RequestPathHash;
+        readonly identity: IdentityHash;
+      }
     >;
 
 export type CommandOutcome =
@@ -203,7 +320,37 @@ export type CommandOutcome =
       {
         readonly interface: InterfaceId;
       }
-    >;
+    >
+  | Tag<
+      "LinkEstablished",
+      {
+        readonly linkId: LinkId;
+        readonly rttMillis: number;
+      }
+    >
+  | Tag<
+      "PathDiscovered",
+      {
+        readonly hops: number;
+      }
+    >
+  | Tag<"Identified">
+  | Tag<
+      "ResponseReceived",
+      {
+        readonly data: Uint8Array;
+        readonly rttMillis: number;
+      }
+    >
+  | Tag<
+      "ResponseSent",
+      {
+        readonly rttMillis: number;
+      }
+    >
+  | Tag<"ResourceSent">
+  | Tag<"ResourceStrategySet">
+  | Tag<"RequesterAllowed">;
 
 export type CommandFailure =
   | Tag<"NodeStopped">
@@ -232,7 +379,22 @@ export type CommandFailure =
     >
   | Tag<"UnsupportedByBackend">
   | Tag<"UnknownLink">
-  | Tag<"LinkNotActive">;
+  | Tag<"LinkNotActive">
+  | Tag<"EntropyUnavailable">
+  | Tag<"NotLinkInitiator">
+  | Tag<"IdentityNotHeld">
+  | Tag<"UnknownRequestHandler">
+  | Tag<"RequestPolicyNotAllowList">
+  | Tag<"RequestAllowListFull">
+  | Tag<"LinkBusy">
+  | Tag<"ResourceTableFull">
+  | Tag<"ResourceMetadataTooLarge">
+  | Tag<"ResourceRejectedByPeer">
+  | Tag<"ResourceSequencingFailed">
+  | Tag<"ResourcePredecessorFailed">
+  | Tag<"ChannelWindowFull">
+  | Tag<"ChannelUntrackable">
+  | Tag<"InvalidChannelMessageType">;
 
 export type ApplicationEvent =
   | Tag<
@@ -306,7 +468,7 @@ export type ApplicationEvent =
       "ChannelMessage",
       {
         readonly linkId: LinkId;
-        readonly messageType: string;
+        readonly messageType: number;
         readonly data: Uint8Array;
       }
     >;

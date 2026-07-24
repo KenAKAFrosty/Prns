@@ -87,12 +87,37 @@ typedef uint32_t PrnsBitrateKind;
 #define PRNS_BITRATE_KIND_AUTO UINT32_C(1)
 #define PRNS_BITRATE_KIND_BITS_PER_SECOND UINT32_C(2)
 
+typedef uint32_t PrnsResponseTimeoutKind;
+#define PRNS_RESPONSE_TIMEOUT_KIND_LINK_DEFAULT UINT32_C(1)
+#define PRNS_RESPONSE_TIMEOUT_KIND_EXACT UINT32_C(2)
+
+typedef uint32_t PrnsResourceCompressionKind;
+#define PRNS_RESOURCE_COMPRESSION_KIND_AUTO UINT32_C(1)
+#define PRNS_RESOURCE_COMPRESSION_KIND_NEVER UINT32_C(2)
+
+typedef uint32_t PrnsResourceStrategyKind;
+#define PRNS_RESOURCE_STRATEGY_KIND_REFUSE UINT32_C(1)
+#define PRNS_RESOURCE_STRATEGY_KIND_ACCEPT UINT32_C(2)
+
+typedef uint32_t PrnsRequestPolicy;
+#define PRNS_REQUEST_POLICY_ALLOW_NONE UINT32_C(1)
+#define PRNS_REQUEST_POLICY_ALLOW_ALL UINT32_C(2)
+#define PRNS_REQUEST_POLICY_ALLOW_LIST UINT32_C(3)
+
 typedef uint32_t PrnsCommandOutcomeKind;
 #define PRNS_COMMAND_OUTCOME_KIND_ANNOUNCED UINT32_C(1)
 #define PRNS_COMMAND_OUTCOME_KIND_PACKET_DELIVERED UINT32_C(2)
 #define PRNS_COMMAND_OUTCOME_KIND_LINK_CLOSE_QUEUED UINT32_C(3)
 #define PRNS_COMMAND_OUTCOME_KIND_INTERFACE_ATTACHED UINT32_C(4)
 #define PRNS_COMMAND_OUTCOME_KIND_INTERFACE_DETACHED UINT32_C(5)
+#define PRNS_COMMAND_OUTCOME_KIND_LINK_ESTABLISHED UINT32_C(6)
+#define PRNS_COMMAND_OUTCOME_KIND_PATH_DISCOVERED UINT32_C(7)
+#define PRNS_COMMAND_OUTCOME_KIND_IDENTIFIED UINT32_C(8)
+#define PRNS_COMMAND_OUTCOME_KIND_RESPONSE_RECEIVED UINT32_C(9)
+#define PRNS_COMMAND_OUTCOME_KIND_RESPONSE_SENT UINT32_C(10)
+#define PRNS_COMMAND_OUTCOME_KIND_RESOURCE_SENT UINT32_C(11)
+#define PRNS_COMMAND_OUTCOME_KIND_RESOURCE_STRATEGY_SET UINT32_C(12)
+#define PRNS_COMMAND_OUTCOME_KIND_REQUESTER_ALLOWED UINT32_C(13)
 
 typedef uint32_t PrnsCommandFailureKind;
 #define PRNS_COMMAND_FAILURE_KIND_NODE_STOPPED UINT32_C(1)
@@ -112,6 +137,21 @@ typedef uint32_t PrnsCommandFailureKind;
 #define PRNS_COMMAND_FAILURE_KIND_UNSUPPORTED_BY_BACKEND UINT32_C(15)
 #define PRNS_COMMAND_FAILURE_KIND_UNKNOWN_LINK UINT32_C(16)
 #define PRNS_COMMAND_FAILURE_KIND_LINK_NOT_ACTIVE UINT32_C(17)
+#define PRNS_COMMAND_FAILURE_KIND_ENTROPY_UNAVAILABLE UINT32_C(18)
+#define PRNS_COMMAND_FAILURE_KIND_NOT_LINK_INITIATOR UINT32_C(19)
+#define PRNS_COMMAND_FAILURE_KIND_IDENTITY_NOT_HELD UINT32_C(20)
+#define PRNS_COMMAND_FAILURE_KIND_UNKNOWN_REQUEST_HANDLER UINT32_C(21)
+#define PRNS_COMMAND_FAILURE_KIND_REQUEST_POLICY_NOT_ALLOW_LIST UINT32_C(22)
+#define PRNS_COMMAND_FAILURE_KIND_REQUEST_ALLOW_LIST_FULL UINT32_C(23)
+#define PRNS_COMMAND_FAILURE_KIND_LINK_BUSY UINT32_C(24)
+#define PRNS_COMMAND_FAILURE_KIND_RESOURCE_TABLE_FULL UINT32_C(25)
+#define PRNS_COMMAND_FAILURE_KIND_RESOURCE_METADATA_TOO_LARGE UINT32_C(26)
+#define PRNS_COMMAND_FAILURE_KIND_RESOURCE_REJECTED_BY_PEER UINT32_C(27)
+#define PRNS_COMMAND_FAILURE_KIND_RESOURCE_SEQUENCING_FAILED UINT32_C(28)
+#define PRNS_COMMAND_FAILURE_KIND_RESOURCE_PREDECESSOR_FAILED UINT32_C(29)
+#define PRNS_COMMAND_FAILURE_KIND_CHANNEL_WINDOW_FULL UINT32_C(30)
+#define PRNS_COMMAND_FAILURE_KIND_CHANNEL_UNTRACKABLE UINT32_C(31)
+#define PRNS_COMMAND_FAILURE_KIND_INVALID_CHANNEL_MESSAGE_TYPE UINT32_C(32)
 
 typedef uint32_t PrnsDeliveryEvidenceKind;
 #define PRNS_DELIVERY_EVIDENCE_KIND_EXPLICIT_PROOF UINT32_C(1)
@@ -256,6 +296,12 @@ typedef struct PrnsDestinationName {
     size_t aspect_count;
 } PrnsDestinationName;
 
+typedef struct PrnsRequestHandlerConfig {
+    size_t struct_size;
+    PrnsStringView path;
+    PrnsRequestPolicy policy;
+} PrnsRequestHandlerConfig;
+
 typedef struct PrnsDestinationConfig {
     size_t struct_size;
     PrnsDestinationConfigKind kind;
@@ -263,6 +309,8 @@ typedef struct PrnsDestinationConfig {
     PrnsDestinationIdentityConfigKind identity_kind;
     PrnsIdentityConfig dedicated_identity;
     PrnsByteView announce_app_data;
+    const PrnsRequestHandlerConfig *request_handlers;
+    size_t request_handler_count;
 } PrnsDestinationConfig;
 
 typedef struct PrnsHostOptions {
@@ -311,6 +359,17 @@ PRNS_HOST_API PrnsStatus prns_host_attach_tcp_server(PrnsHost *host, PrnsStringV
 PRNS_HOST_API PrnsStatus prns_host_attach_tcp_client(PrnsHost *host, PrnsStringView target, PrnsBitrateKind bitrate_kind, uint64_t bitrate_bps, PrnsCommand **out_command);
 PRNS_HOST_API PrnsStatus prns_host_attach_udp(PrnsHost *host, PrnsStringView local, PrnsStringView peer, PrnsBitrateKind bitrate_kind, uint64_t bitrate_bps, PrnsCommand **out_command);
 PRNS_HOST_API PrnsStatus prns_host_detach_interface(PrnsHost *host, PrnsByteView interface_id, PrnsCommand **out_command);
+PRNS_HOST_API PrnsStatus prns_host_establish_link(PrnsHost *host, PrnsByteView destination, PrnsCommand **out_command);
+PRNS_HOST_API PrnsStatus prns_host_request_path(PrnsHost *host, PrnsByteView destination, PrnsCommand **out_command);
+PRNS_HOST_API PrnsStatus prns_host_identify(PrnsHost *host, PrnsByteView link_id, PrnsByteView identity, PrnsCommand **out_command);
+PRNS_HOST_API PrnsStatus prns_host_send_link_packet(PrnsHost *host, PrnsByteView link_id, PrnsByteView payload, PrnsCommand **out_command);
+PRNS_HOST_API PrnsStatus prns_host_request(PrnsHost *host, PrnsByteView link_id, PrnsByteView path_hash, PrnsByteView payload, PrnsResponseTimeoutKind timeout_kind, uint64_t timeout_millis, PrnsCommand **out_command);
+PRNS_HOST_API PrnsStatus prns_host_respond(PrnsHost *host, PrnsByteView link_id, PrnsByteView request_id, uint64_t request_rtt_millis, PrnsByteView payload, PrnsCommand **out_command);
+PRNS_HOST_API PrnsStatus prns_host_send_resource(PrnsHost *host, PrnsByteView link_id, PrnsByteView payload, const PrnsByteView *packed_metadata, PrnsResourceCompressionKind compression_kind, PrnsCommand **out_command);
+PRNS_HOST_API PrnsStatus prns_host_set_link_resource_strategy(PrnsHost *host, PrnsByteView link_id, PrnsResourceStrategyKind strategy_kind, uint64_t maximum_uncompressed_bytes, uint8_t accept_compressed, PrnsCommand **out_command);
+PRNS_HOST_API PrnsStatus prns_host_set_destination_resource_strategy(PrnsHost *host, PrnsByteView destination, PrnsResourceStrategyKind strategy_kind, uint64_t maximum_uncompressed_bytes, uint8_t accept_compressed, PrnsCommand **out_command);
+PRNS_HOST_API PrnsStatus prns_host_send_channel_message(PrnsHost *host, PrnsByteView link_id, uint16_t message_type, PrnsByteView payload, PrnsCommand **out_command);
+PRNS_HOST_API PrnsStatus prns_host_allow_requester(PrnsHost *host, PrnsByteView destination, PrnsByteView path_hash, PrnsByteView identity, PrnsCommand **out_command);
 PRNS_HOST_API PrnsStatus prns_host_stop(PrnsHost *host);
 /* Result views remain valid until prns_command_release. */
 PRNS_HOST_API PrnsStatus prns_command_wait(PrnsCommand *command, uint32_t timeout_millis, PrnsCommandResult *out_result);

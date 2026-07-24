@@ -139,7 +139,7 @@ function execute_tcp(
                     (
                         Ptr{Cvoid},
                         NativeStringView,
-                        UInt32,
+                        UInt16,
                         UInt64,
                         Ref{Ptr{Cvoid}},
                     ),
@@ -229,6 +229,363 @@ function execute(host::Host, value::HostCommandDetachInterface)
     end
 end
 
+function execute_destination_command(symbol::Symbol, host::Host, destination)
+    arena = NativeArena()
+    try
+        native_destination = native_byte_view(arena, destination.bytes)
+        output = Ref{Ptr{Cvoid}}(C_NULL)
+        status = GC.@preserve arena begin
+            with_host_pointer(host) do pointer
+                ccall(
+                    native_symbol(symbol),
+                    UInt32,
+                    (Ptr{Cvoid}, NativeByteView, Ref{Ptr{Cvoid}}),
+                    pointer,
+                    native_destination,
+                    output,
+                )
+            end
+        end
+        submitted_command(status, output)
+    finally
+        close(arena)
+    end
+end
+
+execute(host::Host, value::HostCommandEstablishLink) =
+    execute_destination_command(
+        :prns_host_establish_link,
+        host,
+        value.destination,
+    )
+
+execute(host::Host, value::HostCommandRequestPath) =
+    execute_destination_command(
+        :prns_host_request_path,
+        host,
+        value.destination,
+    )
+
+function execute(host::Host, value::HostCommandIdentify)
+    arena = NativeArena()
+    try
+        link = native_byte_view(arena, value.link_id.bytes)
+        identity = native_byte_view(arena, value.identity.bytes)
+        output = Ref{Ptr{Cvoid}}(C_NULL)
+        status = GC.@preserve arena begin
+            with_host_pointer(host) do pointer
+                ccall(
+                    native_symbol(:prns_host_identify),
+                    UInt32,
+                    (
+                        Ptr{Cvoid},
+                        NativeByteView,
+                        NativeByteView,
+                        Ref{Ptr{Cvoid}},
+                    ),
+                    pointer,
+                    link,
+                    identity,
+                    output,
+                )
+            end
+        end
+        submitted_command(status, output)
+    finally
+        close(arena)
+    end
+end
+
+function execute(host::Host, value::HostCommandSendLinkPacket)
+    arena = NativeArena()
+    try
+        link = native_byte_view(arena, value.link_id.bytes)
+        payload = native_byte_view(arena, value.payload)
+        output = Ref{Ptr{Cvoid}}(C_NULL)
+        status = GC.@preserve arena begin
+            with_host_pointer(host) do pointer
+                ccall(
+                    native_symbol(:prns_host_send_link_packet),
+                    UInt32,
+                    (
+                        Ptr{Cvoid},
+                        NativeByteView,
+                        NativeByteView,
+                        Ref{Ptr{Cvoid}},
+                    ),
+                    pointer,
+                    link,
+                    payload,
+                    output,
+                )
+            end
+        end
+        submitted_command(status, output)
+    finally
+        close(arena)
+    end
+end
+
+function native_response_timeout(value::ResponseTimeout)
+    value isa ResponseTimeoutLinkDefault &&
+        return UInt32(ResponseTimeoutKindLinkDefault), UInt64(0)
+    value isa ResponseTimeoutExact &&
+        return UInt32(ResponseTimeoutKindExact), value.millis
+    throw(ArgumentError("unknown response timeout"))
+end
+
+function execute(host::Host, value::HostCommandRequest)
+    arena = NativeArena()
+    try
+        link = native_byte_view(arena, value.link_id.bytes)
+        path_hash = native_byte_view(arena, value.path_hash.bytes)
+        payload = native_byte_view(arena, value.payload)
+        timeout_kind, timeout_millis = native_response_timeout(value.timeout)
+        output = Ref{Ptr{Cvoid}}(C_NULL)
+        status = GC.@preserve arena begin
+            with_host_pointer(host) do pointer
+                ccall(
+                    native_symbol(:prns_host_request),
+                    UInt32,
+                    (
+                        Ptr{Cvoid},
+                        NativeByteView,
+                        NativeByteView,
+                        NativeByteView,
+                        UInt32,
+                        UInt64,
+                        Ref{Ptr{Cvoid}},
+                    ),
+                    pointer,
+                    link,
+                    path_hash,
+                    payload,
+                    timeout_kind,
+                    timeout_millis,
+                    output,
+                )
+            end
+        end
+        submitted_command(status, output)
+    finally
+        close(arena)
+    end
+end
+
+function execute(host::Host, value::HostCommandRespond)
+    arena = NativeArena()
+    try
+        link = native_byte_view(arena, value.link_id.bytes)
+        request_id = native_byte_view(arena, value.request_id.bytes)
+        payload = native_byte_view(arena, value.payload)
+        output = Ref{Ptr{Cvoid}}(C_NULL)
+        status = GC.@preserve arena begin
+            with_host_pointer(host) do pointer
+                ccall(
+                    native_symbol(:prns_host_respond),
+                    UInt32,
+                    (
+                        Ptr{Cvoid},
+                        NativeByteView,
+                        NativeByteView,
+                        UInt64,
+                        NativeByteView,
+                        Ref{Ptr{Cvoid}},
+                    ),
+                    pointer,
+                    link,
+                    request_id,
+                    value.request_rtt_millis,
+                    payload,
+                    output,
+                )
+            end
+        end
+        submitted_command(status, output)
+    finally
+        close(arena)
+    end
+end
+
+function native_resource_compression(value::ResourceCompression)
+    value isa ResourceCompressionAuto &&
+        return UInt32(ResourceCompressionKindAuto)
+    value isa ResourceCompressionNever &&
+        return UInt32(ResourceCompressionKindNever)
+    throw(ArgumentError("unknown resource compression"))
+end
+
+function execute(host::Host, value::HostCommandSendResource)
+    arena = NativeArena()
+    try
+        link = native_byte_view(arena, value.link_id.bytes)
+        payload = native_byte_view(arena, value.payload)
+        metadata = value.packed_metadata === nothing ?
+            nothing :
+            Ref(native_byte_view(arena, value.packed_metadata))
+        compression = native_resource_compression(value.compression)
+        output = Ref{Ptr{Cvoid}}(C_NULL)
+        status = GC.@preserve arena metadata begin
+            with_host_pointer(host) do pointer
+                ccall(
+                    native_symbol(:prns_host_send_resource),
+                    UInt32,
+                    (
+                        Ptr{Cvoid},
+                        NativeByteView,
+                        NativeByteView,
+                        Ptr{NativeByteView},
+                        UInt32,
+                        Ref{Ptr{Cvoid}},
+                    ),
+                    pointer,
+                    link,
+                    payload,
+                    metadata === nothing ? C_NULL : metadata,
+                    compression,
+                    output,
+                )
+            end
+        end
+        submitted_command(status, output)
+    finally
+        close(arena)
+    end
+end
+
+function native_resource_strategy(value::ResourceStrategy)
+    value isa ResourceStrategyRefuse &&
+        return UInt32(ResourceStrategyKindRefuse), UInt64(0), UInt8(0)
+    value isa ResourceStrategyAccept &&
+        return (
+            UInt32(ResourceStrategyKindAccept),
+            value.maximum_uncompressed_bytes,
+            UInt8(value.accept_compressed),
+        )
+    throw(ArgumentError("unknown resource strategy"))
+end
+
+function execute_resource_strategy(
+    symbol::Symbol,
+    host::Host,
+    target,
+    strategy::ResourceStrategy,
+)
+    arena = NativeArena()
+    try
+        native_target = native_byte_view(arena, target.bytes)
+        strategy_kind, maximum_bytes, accept_compressed =
+            native_resource_strategy(strategy)
+        output = Ref{Ptr{Cvoid}}(C_NULL)
+        status = GC.@preserve arena begin
+            with_host_pointer(host) do pointer
+                ccall(
+                    native_symbol(symbol),
+                    UInt32,
+                    (
+                        Ptr{Cvoid},
+                        NativeByteView,
+                        UInt32,
+                        UInt64,
+                        UInt8,
+                        Ref{Ptr{Cvoid}},
+                    ),
+                    pointer,
+                    native_target,
+                    strategy_kind,
+                    maximum_bytes,
+                    accept_compressed,
+                    output,
+                )
+            end
+        end
+        submitted_command(status, output)
+    finally
+        close(arena)
+    end
+end
+
+execute(host::Host, value::HostCommandSetLinkResourceStrategy) =
+    execute_resource_strategy(
+        :prns_host_set_link_resource_strategy,
+        host,
+        value.link_id,
+        value.strategy,
+    )
+
+execute(host::Host, value::HostCommandSetDestinationResourceStrategy) =
+    execute_resource_strategy(
+        :prns_host_set_destination_resource_strategy,
+        host,
+        value.destination,
+        value.strategy,
+    )
+
+function execute(host::Host, value::HostCommandSendChannelMessage)
+    arena = NativeArena()
+    try
+        link = native_byte_view(arena, value.link_id.bytes)
+        payload = native_byte_view(arena, value.payload)
+        output = Ref{Ptr{Cvoid}}(C_NULL)
+        status = GC.@preserve arena begin
+            with_host_pointer(host) do pointer
+                ccall(
+                    native_symbol(:prns_host_send_channel_message),
+                    UInt32,
+                    (
+                        Ptr{Cvoid},
+                        NativeByteView,
+                        UInt32,
+                        NativeByteView,
+                        Ref{Ptr{Cvoid}},
+                    ),
+                    pointer,
+                    link,
+                    value.message_type,
+                    payload,
+                    output,
+                )
+            end
+        end
+        submitted_command(status, output)
+    finally
+        close(arena)
+    end
+end
+
+function execute(host::Host, value::HostCommandAllowRequester)
+    arena = NativeArena()
+    try
+        destination = native_byte_view(arena, value.destination.bytes)
+        path_hash = native_byte_view(arena, value.path_hash.bytes)
+        identity = native_byte_view(arena, value.identity.bytes)
+        output = Ref{Ptr{Cvoid}}(C_NULL)
+        status = GC.@preserve arena begin
+            with_host_pointer(host) do pointer
+                ccall(
+                    native_symbol(:prns_host_allow_requester),
+                    UInt32,
+                    (
+                        Ptr{Cvoid},
+                        NativeByteView,
+                        NativeByteView,
+                        NativeByteView,
+                        Ref{Ptr{Cvoid}},
+                    ),
+                    pointer,
+                    destination,
+                    path_hash,
+                    identity,
+                    output,
+                )
+            end
+        end
+        submitted_command(status, output)
+    finally
+        close(arena)
+    end
+end
+
 function decode_settlement(value::NativeCommandResult)
     value.failure != 0 && return CommandFailed(
         decode_command_failure(
@@ -271,6 +628,43 @@ function decode_settlement(value::NativeCommandResult)
             CommandOutcomeInterfaceDetached(InterfaceId(copy_view(value.value))),
         )
     end
+    if outcome == CommandOutcomeKindLinkEstablished
+        return CommandSucceeded(
+            CommandOutcomeLinkEstablished(
+                LinkId(copy_view(value.value)),
+                value.rtt_millis,
+            ),
+        )
+    end
+    if outcome == CommandOutcomeKindPathDiscovered
+        bytes = copy_view(value.value)
+        length(bytes) == 1 ||
+            throw(StatusFailure(:decode_path_hops, StatusBackendFailed))
+        return CommandSucceeded(CommandOutcomePathDiscovered(bytes[1]))
+    end
+    if outcome == CommandOutcomeKindIdentified
+        return CommandSucceeded(CommandOutcomeIdentified())
+    end
+    if outcome == CommandOutcomeKindResponseReceived
+        return CommandSucceeded(
+            CommandOutcomeResponseReceived(
+                copy_view(value.value),
+                value.rtt_millis,
+            ),
+        )
+    end
+    if outcome == CommandOutcomeKindResponseSent
+        return CommandSucceeded(CommandOutcomeResponseSent(value.rtt_millis))
+    end
+    if outcome == CommandOutcomeKindResourceSent
+        return CommandSucceeded(CommandOutcomeResourceSent())
+    end
+    if outcome == CommandOutcomeKindResourceStrategySet
+        return CommandSucceeded(CommandOutcomeResourceStrategySet())
+    end
+    if outcome == CommandOutcomeKindRequesterAllowed
+        return CommandSucceeded(CommandOutcomeRequesterAllowed())
+    end
     throw(StatusFailure(:decode_command, StatusBackendFailed))
 end
 
@@ -305,6 +699,35 @@ function decode_command_failure(kind::CommandFailureKind, detail::String)
     kind == CommandFailureKindUnknownLink && return CommandFailureUnknownLink()
     kind == CommandFailureKindLinkNotActive &&
         return CommandFailureLinkNotActive()
+    kind == CommandFailureKindEntropyUnavailable &&
+        return CommandFailureEntropyUnavailable()
+    kind == CommandFailureKindNotLinkInitiator &&
+        return CommandFailureNotLinkInitiator()
+    kind == CommandFailureKindIdentityNotHeld &&
+        return CommandFailureIdentityNotHeld()
+    kind == CommandFailureKindUnknownRequestHandler &&
+        return CommandFailureUnknownRequestHandler()
+    kind == CommandFailureKindRequestPolicyNotAllowList &&
+        return CommandFailureRequestPolicyNotAllowList()
+    kind == CommandFailureKindRequestAllowListFull &&
+        return CommandFailureRequestAllowListFull()
+    kind == CommandFailureKindLinkBusy && return CommandFailureLinkBusy()
+    kind == CommandFailureKindResourceTableFull &&
+        return CommandFailureResourceTableFull()
+    kind == CommandFailureKindResourceMetadataTooLarge &&
+        return CommandFailureResourceMetadataTooLarge()
+    kind == CommandFailureKindResourceRejectedByPeer &&
+        return CommandFailureResourceRejectedByPeer()
+    kind == CommandFailureKindResourceSequencingFailed &&
+        return CommandFailureResourceSequencingFailed()
+    kind == CommandFailureKindResourcePredecessorFailed &&
+        return CommandFailureResourcePredecessorFailed()
+    kind == CommandFailureKindChannelWindowFull &&
+        return CommandFailureChannelWindowFull()
+    kind == CommandFailureKindChannelUntrackable &&
+        return CommandFailureChannelUntrackable()
+    kind == CommandFailureKindInvalidChannelMessageType &&
+        return CommandFailureInvalidChannelMessageType()
     throw(StatusFailure(:decode_command_failure, StatusBackendFailed))
 end
 

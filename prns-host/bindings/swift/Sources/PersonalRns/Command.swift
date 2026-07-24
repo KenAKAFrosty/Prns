@@ -92,6 +92,119 @@ public final class Command: @unchecked Sendable {
                 try arena.bytes(interface.bytes),
                 &output
             )
+        case .establishLink(let destination):
+            status = prns_host_establish_link(
+                host,
+                try arena.bytes(destination.bytes),
+                &output
+            )
+        case .requestPath(let destination):
+            status = prns_host_request_path(
+                host,
+                try arena.bytes(destination.bytes),
+                &output
+            )
+        case .identify(let linkId, let identity):
+            status = prns_host_identify(
+                host,
+                try arena.bytes(linkId.bytes),
+                try arena.bytes(identity.bytes),
+                &output
+            )
+        case .sendLinkPacket(let linkId, let payload):
+            status = prns_host_send_link_packet(
+                host,
+                try arena.bytes(linkId.bytes),
+                try arena.bytes(payload),
+                &output
+            )
+        case .request(let linkId, let pathHash, let payload, let timeout):
+            let nativeTimeout = timeout.native
+            status = prns_host_request(
+                host,
+                try arena.bytes(linkId.bytes),
+                try arena.bytes(pathHash.bytes),
+                try arena.bytes(payload),
+                nativeTimeout.kind,
+                nativeTimeout.millis,
+                &output
+            )
+        case .respond(
+            let linkId,
+            let requestId,
+            let requestRttMillis,
+            let payload
+        ):
+            status = prns_host_respond(
+                host,
+                try arena.bytes(linkId.bytes),
+                try arena.bytes(requestId.bytes),
+                requestRttMillis,
+                try arena.bytes(payload),
+                &output
+            )
+        case .sendResource(
+            let linkId,
+            let payload,
+            let packedMetadata,
+            let compression
+        ):
+            if let packedMetadata {
+                var nativeMetadata = try arena.bytes(packedMetadata)
+                status = prns_host_send_resource(
+                    host,
+                    try arena.bytes(linkId.bytes),
+                    try arena.bytes(payload),
+                    &nativeMetadata,
+                    compression.native,
+                    &output
+                )
+            } else {
+                status = prns_host_send_resource(
+                    host,
+                    try arena.bytes(linkId.bytes),
+                    try arena.bytes(payload),
+                    nil,
+                    compression.native,
+                    &output
+                )
+            }
+        case .setLinkResourceStrategy(let linkId, let strategy):
+            let nativeStrategy = try strategy.native
+            status = prns_host_set_link_resource_strategy(
+                host,
+                try arena.bytes(linkId.bytes),
+                nativeStrategy.kind,
+                nativeStrategy.maximum,
+                nativeStrategy.acceptCompressed,
+                &output
+            )
+        case .setDestinationResourceStrategy(let destination, let strategy):
+            let nativeStrategy = try strategy.native
+            status = prns_host_set_destination_resource_strategy(
+                host,
+                try arena.bytes(destination.bytes),
+                nativeStrategy.kind,
+                nativeStrategy.maximum,
+                nativeStrategy.acceptCompressed,
+                &output
+            )
+        case .sendChannelMessage(let linkId, let messageType, let payload):
+            status = prns_host_send_channel_message(
+                host,
+                try arena.bytes(linkId.bytes),
+                messageType,
+                try arena.bytes(payload),
+                &output
+            )
+        case .allowRequester(let destination, let pathHash, let identity):
+            status = prns_host_allow_requester(
+                host,
+                try arena.bytes(destination.bytes),
+                try arena.bytes(pathHash.bytes),
+                try arena.bytes(identity.bytes),
+                &output
+            )
         }
         try checkedStatus(status, operation: "submitCommand")
         guard let output else {
@@ -220,6 +333,39 @@ public final class Command: @unchecked Sendable {
                     interface: try InterfaceId(copyBytes(value.value))
                 )
             )
+        case .linkEstablished:
+            return .succeeded(
+                .linkEstablished(
+                    linkId: try LinkId(copyBytes(value.value)),
+                    rttMillis: value.rtt_millis
+                )
+            )
+        case .pathDiscovered:
+            let bytes = copyBytes(value.value)
+            guard bytes.count == 1 else {
+                throw StatusFailure(
+                    operation: "decodePathDiscovery",
+                    status: .backendFailed
+                )
+            }
+            return .succeeded(.pathDiscovered(hops: bytes[0]))
+        case .identified:
+            return .succeeded(.identified)
+        case .responseReceived:
+            return .succeeded(
+                .responseReceived(
+                    data: copyBytes(value.value),
+                    rttMillis: value.rtt_millis
+                )
+            )
+        case .responseSent:
+            return .succeeded(.responseSent(rttMillis: value.rtt_millis))
+        case .resourceSent:
+            return .succeeded(.resourceSent)
+        case .resourceStrategySet:
+            return .succeeded(.resourceStrategySet)
+        case .requesterAllowed:
+            return .succeeded(.requesterAllowed)
         }
     }
 
@@ -295,5 +441,87 @@ private func decodeCommandFailure(
         return .unknownLink
     case .linkNotActive:
         return .linkNotActive
+    case .entropyUnavailable:
+        return .entropyUnavailable
+    case .notLinkInitiator:
+        return .notLinkInitiator
+    case .identityNotHeld:
+        return .identityNotHeld
+    case .unknownRequestHandler:
+        return .unknownRequestHandler
+    case .requestPolicyNotAllowList:
+        return .requestPolicyNotAllowList
+    case .requestAllowListFull:
+        return .requestAllowListFull
+    case .linkBusy:
+        return .linkBusy
+    case .resourceTableFull:
+        return .resourceTableFull
+    case .resourceMetadataTooLarge:
+        return .resourceMetadataTooLarge
+    case .resourceRejectedByPeer:
+        return .resourceRejectedByPeer
+    case .resourceSequencingFailed:
+        return .resourceSequencingFailed
+    case .resourcePredecessorFailed:
+        return .resourcePredecessorFailed
+    case .channelWindowFull:
+        return .channelWindowFull
+    case .channelUntrackable:
+        return .channelUntrackable
+    case .invalidChannelMessageType:
+        return .invalidChannelMessageType
+    }
+}
+
+private extension ResponseTimeout {
+    var native: (kind: UInt32, millis: UInt64) {
+        switch self {
+        case .linkDefault:
+            return (ResponseTimeoutKind.linkDefault.rawValue, 0)
+        case .exact(let millis):
+            return (ResponseTimeoutKind.exact.rawValue, millis)
+        }
+    }
+}
+
+private extension ResourceCompression {
+    var native: UInt32 {
+        switch self {
+        case .auto:
+            return ResourceCompressionKind.auto.rawValue
+        case .never:
+            return ResourceCompressionKind.never.rawValue
+        }
+    }
+}
+
+private extension ResourceStrategy {
+    var native: (
+        kind: UInt32,
+        maximum: UInt64,
+        acceptCompressed: UInt8
+    ) {
+        get throws {
+            switch self {
+            case .refuse:
+                return (ResourceStrategyKind.refuse.rawValue, 0, 0)
+            case .accept(
+                let maximumUncompressedBytes,
+                let acceptCompressed
+            ):
+                guard maximumUncompressedBytes > 0 else {
+                    throw StatusFailure(
+                        operation: "marshalResourceStrategy",
+                        status: .invalidArgument
+                    )
+                }
+                return (
+                    ResourceStrategyKind.accept.rawValue,
+                    maximumUncompressedBytes,
+                    acceptCompressed ? 1 : 0
+                )
+            }
+        }
     }
 }

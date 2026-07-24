@@ -16,6 +16,16 @@ export declare class PrnsRuntime implements PrnsRuntimeBinding {
   registerNodePage: PrnsRuntimeBinding["registerNodePage"];
   announce: PrnsRuntimeBinding["announce"];
   sendSinglePacket: PrnsRuntimeBinding["sendSinglePacket"];
+  establishLink: PrnsRuntimeBinding["establishLink"];
+  requestPath: PrnsRuntimeBinding["requestPath"];
+  identify: PrnsRuntimeBinding["identify"];
+  sendLinkPacket: PrnsRuntimeBinding["sendLinkPacket"];
+  request: PrnsRuntimeBinding["request"];
+  respond: PrnsRuntimeBinding["respond"];
+  setLinkResourceStrategy: PrnsRuntimeBinding["setLinkResourceStrategy"];
+  setDestinationResourceStrategy: PrnsRuntimeBinding["setDestinationResourceStrategy"];
+  sendChannelMessage: PrnsRuntimeBinding["sendChannelMessage"];
+  allowRequester: PrnsRuntimeBinding["allowRequester"];
   closeLink: PrnsRuntimeBinding["closeLink"];
   ingest: PrnsRuntimeBinding["ingest"];
   drainEvents: PrnsRuntimeBinding["drainEvents"];

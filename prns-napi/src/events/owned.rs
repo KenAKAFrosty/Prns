@@ -51,7 +51,7 @@ pub enum OwnedEvent {
     },
     ChannelMessage {
         link_id: [u8; 16],
-        message_type: String,
+        message_type: u16,
         data: Vec<u8>,
     },
     LinkEstablished {
@@ -148,9 +148,7 @@ impl OwnedEvent {
                     .saturating_add(metadata.as_ref().map_or(0, Vec::len))
                     .saturating_add(data.len()),
             ),
-            Self::ChannelMessage {
-                message_type, data, ..
-            } => Some(message_type.len().saturating_add(data.len())),
+            Self::ChannelMessage { data, .. } => Some(data.len()),
             _ => None,
         }
     }
@@ -271,7 +269,7 @@ impl OwnedEvent {
                 data,
             } => Some(Self::ChannelMessage {
                 link_id: *link_id.as_bytes(),
-                message_type: format!("{message_type:?}"),
+                message_type: message_type.0,
                 data: data.to_vec(),
             }),
         }

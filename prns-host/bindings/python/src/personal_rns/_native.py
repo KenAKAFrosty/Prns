@@ -52,6 +52,14 @@ class DestinationName(ctypes.Structure):
     ]
 
 
+class RequestHandlerConfig(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("path", StringView),
+        ("policy", ctypes.c_uint32),
+    ]
+
+
 class DestinationConfig(ctypes.Structure):
     _fields_ = [
         ("struct_size", ctypes.c_size_t),
@@ -60,6 +68,8 @@ class DestinationConfig(ctypes.Structure):
         ("identity_kind", ctypes.c_uint32),
         ("dedicated_identity", IdentityConfig),
         ("announce_app_data", ByteView),
+        ("request_handlers", ctypes.POINTER(RequestHandlerConfig)),
+        ("request_handler_count", ctypes.c_size_t),
     ]
 
 
@@ -202,6 +212,81 @@ class NativeLibrary:
             ctypes.POINTER(ctypes.c_void_p),
         ]
         lib.prns_host_detach_interface.restype = ctypes.c_uint32
+        for name in ("prns_host_establish_link", "prns_host_request_path"):
+            function = getattr(lib, name)
+            function.argtypes = [
+                ctypes.c_void_p,
+                ByteView,
+                ctypes.POINTER(ctypes.c_void_p),
+            ]
+            function.restype = ctypes.c_uint32
+        for name in ("prns_host_identify", "prns_host_send_link_packet"):
+            function = getattr(lib, name)
+            function.argtypes = [
+                ctypes.c_void_p,
+                ByteView,
+                ByteView,
+                ctypes.POINTER(ctypes.c_void_p),
+            ]
+            function.restype = ctypes.c_uint32
+        lib.prns_host_request.argtypes = [
+            ctypes.c_void_p,
+            ByteView,
+            ByteView,
+            ByteView,
+            ctypes.c_uint32,
+            ctypes.c_uint64,
+            ctypes.POINTER(ctypes.c_void_p),
+        ]
+        lib.prns_host_request.restype = ctypes.c_uint32
+        lib.prns_host_respond.argtypes = [
+            ctypes.c_void_p,
+            ByteView,
+            ByteView,
+            ctypes.c_uint64,
+            ByteView,
+            ctypes.POINTER(ctypes.c_void_p),
+        ]
+        lib.prns_host_respond.restype = ctypes.c_uint32
+        lib.prns_host_send_resource.argtypes = [
+            ctypes.c_void_p,
+            ByteView,
+            ByteView,
+            ctypes.POINTER(ByteView),
+            ctypes.c_uint32,
+            ctypes.POINTER(ctypes.c_void_p),
+        ]
+        lib.prns_host_send_resource.restype = ctypes.c_uint32
+        for name in (
+            "prns_host_set_link_resource_strategy",
+            "prns_host_set_destination_resource_strategy",
+        ):
+            function = getattr(lib, name)
+            function.argtypes = [
+                ctypes.c_void_p,
+                ByteView,
+                ctypes.c_uint32,
+                ctypes.c_uint64,
+                ctypes.c_uint8,
+                ctypes.POINTER(ctypes.c_void_p),
+            ]
+            function.restype = ctypes.c_uint32
+        lib.prns_host_send_channel_message.argtypes = [
+            ctypes.c_void_p,
+            ByteView,
+            ctypes.c_uint16,
+            ByteView,
+            ctypes.POINTER(ctypes.c_void_p),
+        ]
+        lib.prns_host_send_channel_message.restype = ctypes.c_uint32
+        lib.prns_host_allow_requester.argtypes = [
+            ctypes.c_void_p,
+            ByteView,
+            ByteView,
+            ByteView,
+            ctypes.POINTER(ctypes.c_void_p),
+        ]
+        lib.prns_host_allow_requester.restype = ctypes.c_uint32
         lib.prns_host_stop.argtypes = [ctypes.c_void_p]
         lib.prns_host_stop.restype = ctypes.c_uint32
         lib.prns_command_wait.argtypes = [

@@ -15,11 +15,17 @@ import type {
   DiagnosticEvent,
   HostCommand,
   IdentityConfig,
+  IdentityHash,
   InterfaceId,
   LifecycleState,
   LinkId,
   PrnsCreateOptions,
   PrnsLimits,
+  RequestId,
+  RequestPathHash,
+  ResourceCompression,
+  ResourceStrategy,
+  ResponseTimeout,
 } from "../contract.js";
 import type { StreamClaim } from "../async_lanes.js";
 import type { Tag as Tagged } from "../casework.js";
@@ -86,8 +92,11 @@ export type {
   DeliveryEvidenceKind,
   DestinationConfig,
   DestinationHash,
+  DestinationIdentityConfig,
+  DestinationName,
   DiagnosticEvent,
   HostCommand,
+  HostRoleName,
   IdentityConfig,
   IdentityHash,
   IdentitySecret,
@@ -99,9 +108,14 @@ export type {
   PrnsLimits,
   PrnsValidationCode,
   RequestId,
+  RequestHandlerConfig,
+  RequestPolicy,
   RequestPathHash,
+  ResourceCompression,
   ResourceHash,
+  ResourceStrategy,
   ResourceStream,
+  ResponseTimeout,
 } from "../contract.js";
 export type {
   DataFrom,
@@ -122,6 +136,10 @@ type RawDestination = {
   identity?: RawIdentity;
   useHostIdentity?: boolean;
   announceAppData?: Buffer;
+  requestPaths?: {
+    path: string;
+    policy: "allowNone" | "allowAll" | "allowList";
+  }[];
 };
 
 type RawNodeOptions = {
@@ -145,7 +163,41 @@ type RawNode = {
   sendSinglePacket(
     destination: Buffer,
     data: Buffer,
-  ): Promise<{ rttMillis: number; evidence: string; packetHash?: Buffer }>;
+  ): Promise<RawPacketReceipt>;
+  establishLinkWithRtt(destination: Buffer): Promise<RawLinkInfo>;
+  requestPath(destination: Buffer): Promise<RawPathInfo>;
+  identify(linkId: Buffer, identity: Buffer): Promise<void>;
+  sendLinkPacket(linkId: Buffer, data: Buffer): Promise<RawPacketReceipt>;
+  request(
+    linkId: Buffer,
+    pathHash: Buffer,
+    data: Buffer,
+    options?: { timeoutMillis: number },
+  ): Promise<RawRequestResult>;
+  respond(token: RawRespondToken, data: Buffer): Promise<number>;
+  sendResource(
+    linkId: Buffer,
+    data: Buffer,
+    options: RawSendResourceOptions,
+  ): Promise<void>;
+  setLinkResourceStrategy(
+    linkId: Buffer,
+    strategy: RawResourceStrategy,
+  ): Promise<void>;
+  setResourceStrategy(
+    destination: Buffer,
+    strategy: RawResourceStrategy,
+  ): Promise<boolean>;
+  sendChannelMessage(
+    linkId: Buffer,
+    messageType: number,
+    data: Buffer,
+  ): Promise<RawPacketReceipt>;
+  allowRequester(
+    destination: Buffer,
+    pathHash: Buffer,
+    identity: Buffer,
+  ): Promise<void>;
   closeLink(linkId: Buffer): boolean;
   attachTcpServer(options: {
     bind: string;
@@ -161,6 +213,46 @@ type RawNode = {
     bitrateBps?: number;
   }): Promise<RawInterface>;
 };
+
+type RawPacketReceipt = {
+  rttMillis: number;
+  evidence: string;
+  packetHash?: Buffer;
+};
+
+type RawLinkInfo = {
+  linkId: Buffer;
+  rttMillis: number;
+};
+
+type RawPathInfo = {
+  hops: number;
+};
+
+type RawRequestResult = {
+  data: Buffer;
+  packed: Buffer;
+  rttMillis: number;
+};
+
+type RawRespondToken = {
+  linkId: Buffer;
+  requestId: Buffer;
+  rttMillis: number;
+};
+
+type RawSendResourceOptions = {
+  metadata?: Buffer;
+  compression: "auto" | "never";
+};
+
+type RawResourceStrategy =
+  | { accept: "none" }
+  | {
+      accept: "all";
+      maxUncompressedBytes: number;
+      acceptCompressed: boolean;
+    };
 
 type RawInterface = {
   readonly id: Buffer;
@@ -196,6 +288,30 @@ export type AttachOutcome = CommandSettlementFor<
 >;
 export type DetachInterfaceOutcome = CommandSettlementFor<
   CommandCase<"DetachInterface">
+>;
+export type EstablishLinkOutcome = CommandSettlementFor<
+  CommandCase<"EstablishLink">
+>;
+export type RequestPathOutcome = CommandSettlementFor<
+  CommandCase<"RequestPath">
+>;
+export type IdentifyOutcome = CommandSettlementFor<CommandCase<"Identify">>;
+export type SendLinkPacketOutcome = CommandSettlementFor<
+  CommandCase<"SendLinkPacket">
+>;
+export type RequestOutcome = CommandSettlementFor<CommandCase<"Request">>;
+export type RespondOutcome = CommandSettlementFor<CommandCase<"Respond">>;
+export type SendResourceOutcome = CommandSettlementFor<
+  CommandCase<"SendResource">
+>;
+export type SetResourceStrategyOutcome = CommandSettlementFor<
+  CommandCase<"SetLinkResourceStrategy" | "SetDestinationResourceStrategy">
+>;
+export type SendChannelMessageOutcome = CommandSettlementFor<
+  CommandCase<"SendChannelMessage">
+>;
+export type AllowRequesterOutcome = CommandSettlementFor<
+  CommandCase<"AllowRequester">
 >;
 export type PrnsCreateOutcome =
   | Tagged<"Ready", Prns>
@@ -369,19 +485,7 @@ export class Prns {
               Buffer.from(destination),
               Buffer.from(bytes("payload", payload)),
             );
-            const delivered = {
-              rttMillis: finiteNonNegative("rttMillis", receipt.rttMillis),
-              evidence: deliveryEvidence(receipt.evidence),
-            };
-            return casework.Tag(
-              "PacketDelivered",
-              receipt.packetHash === undefined
-                ? delivered
-                : {
-                    ...delivered,
-                    packetHash: contract.packetHash(receipt.packetHash),
-                  },
-            );
+            return packetDelivered(receipt);
           },
           CloseLink: async ({ linkId }) => {
             if (!this.#raw.closeLink(Buffer.from(linkId))) {
@@ -445,6 +549,153 @@ export class Prns {
             return casework.Tag("InterfaceDetached", {
               interface: interfaceId,
             });
+          },
+          EstablishLink: async ({ destination }) => {
+            const established = await this.#raw.establishLinkWithRtt(
+              Buffer.from(destination),
+            );
+            return casework.Tag("LinkEstablished", {
+              linkId: contract.linkId(established.linkId),
+              rttMillis: finiteNonNegative(
+                "rttMillis",
+                established.rttMillis,
+              ),
+            });
+          },
+          RequestPath: async ({ destination }) => {
+            const path = await this.#raw.requestPath(
+              Buffer.from(destination),
+            );
+            return casework.Tag("PathDiscovered", {
+              hops: finiteNonNegative("hops", path.hops),
+            });
+          },
+          Identify: async ({ linkId, identity }) => {
+            await this.#raw.identify(
+              Buffer.from(linkId),
+              Buffer.from(identity),
+            );
+            return casework.Tag("Identified");
+          },
+          SendLinkPacket: async ({ linkId, payload }) =>
+            packetDelivered(
+              await this.#raw.sendLinkPacket(
+                Buffer.from(linkId),
+                Buffer.from(bytes("payload", payload)),
+              ),
+            ),
+          Request: async ({ linkId, pathHash, payload, timeout }) => {
+            const response = await this.#raw.request(
+              Buffer.from(linkId),
+              Buffer.from(pathHash),
+              Buffer.from(bytes("payload", payload)),
+              rawResponseTimeout(timeout),
+            );
+            return casework.Tag("ResponseReceived", {
+              data: bytes("response data", response.data).slice(),
+              rttMillis: finiteNonNegative(
+                "rttMillis",
+                response.rttMillis,
+              ),
+            });
+          },
+          Respond: async ({
+            linkId,
+            requestId,
+            requestRttMillis,
+            payload,
+          }) => {
+            const rttMillis = await this.#raw.respond(
+              {
+                linkId: Buffer.from(linkId),
+                requestId: Buffer.from(requestId),
+                rttMillis: finiteNonNegative(
+                  "requestRttMillis",
+                  requestRttMillis,
+                ),
+              },
+              Buffer.from(bytes("payload", payload)),
+            );
+            return casework.Tag("ResponseSent", {
+              rttMillis: finiteNonNegative("rttMillis", rttMillis),
+            });
+          },
+          SendResource: async ({
+            linkId,
+            payload,
+            packedMetadata,
+            compression,
+          }) => {
+            const options: RawSendResourceOptions = {
+              compression: rawResourceCompression(compression),
+            };
+            if (packedMetadata !== undefined) {
+              options.metadata = Buffer.from(
+                bytes("packedMetadata", packedMetadata),
+              );
+            }
+            await this.#raw.sendResource(
+              Buffer.from(linkId),
+              Buffer.from(bytes("payload", payload)),
+              options,
+            );
+            return casework.Tag("ResourceSent");
+          },
+          SetLinkResourceStrategy: async ({ linkId, strategy }) => {
+            await this.#raw.setLinkResourceStrategy(
+              Buffer.from(linkId),
+              rawResourceStrategy(strategy),
+            );
+            return casework.Tag("ResourceStrategySet");
+          },
+          SetDestinationResourceStrategy: async ({
+            destination,
+            strategy,
+          }) => {
+            const configured = await this.#raw.setResourceStrategy(
+              Buffer.from(destination),
+              rawResourceStrategy(strategy),
+            );
+            if (!configured) {
+              throw new CommandRejected(
+                casework.Tag("UnknownDestination"),
+              );
+            }
+            return casework.Tag("ResourceStrategySet");
+          },
+          SendChannelMessage: async ({
+            linkId,
+            messageType,
+            payload,
+          }) => {
+            if (
+              !Number.isSafeInteger(messageType) ||
+              messageType < 0 ||
+              messageType > 0xefff
+            ) {
+              throw new CommandRejected(
+                casework.Tag("InvalidChannelMessageType"),
+              );
+            }
+            return packetDelivered(
+              await this.#raw.sendChannelMessage(
+                Buffer.from(linkId),
+                messageType,
+                Buffer.from(bytes("payload", payload)),
+              ),
+            );
+          },
+          AllowRequester: async ({
+            destination,
+            pathHash,
+            identity,
+          }) => {
+            await this.#raw.allowRequester(
+              Buffer.from(destination),
+              Buffer.from(pathHash),
+              Buffer.from(identity),
+            );
+            return casework.Tag("RequesterAllowed");
           },
         },
       );
@@ -524,6 +775,128 @@ export class Prns {
   detachInterface(interfaceId: InterfaceId): Promise<DetachInterfaceOutcome> {
     return this.execute(
       casework.Tag("DetachInterface", { interface: interfaceId }),
+    );
+  }
+
+  establishLink(
+    destination: DestinationHash,
+  ): Promise<EstablishLinkOutcome> {
+    return this.execute(casework.Tag("EstablishLink", { destination }));
+  }
+
+  requestPath(destination: DestinationHash): Promise<RequestPathOutcome> {
+    return this.execute(casework.Tag("RequestPath", { destination }));
+  }
+
+  identify(
+    linkId: LinkId,
+    identity: IdentityHash,
+  ): Promise<IdentifyOutcome> {
+    return this.execute(casework.Tag("Identify", { linkId, identity }));
+  }
+
+  sendLinkPacket(
+    linkId: LinkId,
+    payload: Uint8Array,
+  ): Promise<SendLinkPacketOutcome> {
+    return this.execute(
+      casework.Tag("SendLinkPacket", { linkId, payload }),
+    );
+  }
+
+  request(
+    linkId: LinkId,
+    pathHash: RequestPathHash,
+    payload: Uint8Array,
+    timeout: ResponseTimeout = casework.Tag("LinkDefault"),
+  ): Promise<RequestOutcome> {
+    return this.execute(
+      casework.Tag("Request", { linkId, pathHash, payload, timeout }),
+    );
+  }
+
+  respond(
+    linkId: LinkId,
+    requestId: RequestId,
+    requestRttMillis: number,
+    payload: Uint8Array,
+  ): Promise<RespondOutcome> {
+    return this.execute(
+      casework.Tag("Respond", {
+        linkId,
+        requestId,
+        requestRttMillis,
+        payload,
+      }),
+    );
+  }
+
+  sendResource(
+    linkId: LinkId,
+    payload: Uint8Array,
+    options: {
+      readonly packedMetadata?: Uint8Array;
+      readonly compression?: ResourceCompression;
+    } = {},
+  ): Promise<SendResourceOutcome> {
+    return this.execute(
+      casework.Tag("SendResource", {
+        linkId,
+        payload,
+        compression: options.compression ?? casework.Tag("Auto"),
+        ...(options.packedMetadata === undefined
+          ? {}
+          : { packedMetadata: options.packedMetadata }),
+      }),
+    );
+  }
+
+  setLinkResourceStrategy(
+    linkId: LinkId,
+    strategy: ResourceStrategy,
+  ): Promise<SetResourceStrategyOutcome> {
+    return this.execute(
+      casework.Tag("SetLinkResourceStrategy", { linkId, strategy }),
+    );
+  }
+
+  setDestinationResourceStrategy(
+    destination: DestinationHash,
+    strategy: ResourceStrategy,
+  ): Promise<SetResourceStrategyOutcome> {
+    return this.execute(
+      casework.Tag("SetDestinationResourceStrategy", {
+        destination,
+        strategy,
+      }),
+    );
+  }
+
+  sendChannelMessage(
+    linkId: LinkId,
+    messageType: number,
+    payload: Uint8Array,
+  ): Promise<SendChannelMessageOutcome> {
+    return this.execute(
+      casework.Tag("SendChannelMessage", {
+        linkId,
+        messageType,
+        payload,
+      }),
+    );
+  }
+
+  allowRequester(
+    destination: DestinationHash,
+    pathHash: RequestPathHash,
+    identity: IdentityHash,
+  ): Promise<AllowRequesterOutcome> {
+    return this.execute(
+      casework.Tag("AllowRequester", {
+        destination,
+        pathHash,
+        identity,
+      }),
     );
   }
 
@@ -799,7 +1172,7 @@ function parseRawEvent(raw: unknown): ParsedRawEvent {
         "Application",
         casework.Tag("ChannelMessage", {
           linkId: contract.linkId(bytes("linkId", data.linkId)),
-          messageType: text("messageType", data.messageType),
+          messageType: finiteNonNegative("messageType", data.messageType),
           data: bytes("data", data.data).slice(),
         }),
       ),
@@ -1033,7 +1406,11 @@ function rawDestination(destination: DestinationConfig): RawDestination {
   );
   return casework.match(destination, {
     Plain: (): RawDestination => ({ appName, aspects, kind: "plain" }),
-    Single: ({ identity, announceAppData }): RawDestination => {
+    Single: ({
+      identity,
+      announceAppData,
+      requestHandlers,
+    }): RawDestination => {
       const raw: RawDestination = { appName, aspects, kind: "single" };
       casework.match(identity, {
         HostIdentity: () => {
@@ -1051,6 +1428,14 @@ function rawDestination(destination: DestinationConfig): RawDestination {
           bytes("announceAppData", announceAppData),
         );
       }
+      raw.requestPaths = requestHandlers.map((handler) => ({
+        path: nonEmpty("request handler path", handler.path),
+        policy: casework.match(handler.policy, {
+          AllowNone: () => "allowNone" as const,
+          AllowAll: () => "allowAll" as const,
+          AllowList: () => "allowList" as const,
+        }),
+      }));
       return raw;
     },
   });
@@ -1082,8 +1467,7 @@ function retainedEventBytes(event: ApplicationEvent): number {
     ResourceSegment: ({ data, metadata }) =>
       data.length + (metadata?.length ?? 0),
     ResourceNeedsDecompression: ({ stream }) => stream.length,
-    ChannelMessage: ({ messageType, data }) =>
-      messageType.length + data.length,
+    ChannelMessage: ({ data }) => data.length,
   });
 }
 
@@ -1117,10 +1501,131 @@ function commandFailure(error: unknown): CommandFailure {
   if (details.code === "PRNS_PAYLOAD_TOO_LARGE") {
     return casework.Tag("PayloadTooLarge");
   }
+  if (details.code === "PRNS_NO_ROUTE_TO_DESTINATION") {
+    return casework.Tag("NoRouteToDestination");
+  }
+  if (details.code === "PRNS_NOT_DIRECTLY_REACHABLE") {
+    return casework.Tag("NotDirectlyReachable");
+  }
+  if (details.code === "PRNS_PACKET_CULLED") {
+    return casework.Tag("PacketCulled");
+  }
+  if (
+    details.code === "PRNS_DELIVERY_TIMED_OUT" ||
+    details.code === "PRNS_LINK_TIMEOUT"
+  ) {
+    return casework.Tag("DeliveryTimedOut");
+  }
+  if (details.code === "PRNS_UNKNOWN_LINK") {
+    return casework.Tag("UnknownLink");
+  }
+  if (details.code === "PRNS_LINK_NOT_ACTIVE") {
+    return casework.Tag("LinkNotActive");
+  }
+  if (details.code === "PRNS_ENTROPY_UNAVAILABLE") {
+    return casework.Tag("EntropyUnavailable");
+  }
+  if (details.code === "PRNS_NOT_LINK_INITIATOR") {
+    return casework.Tag("NotLinkInitiator");
+  }
+  if (details.code === "PRNS_IDENTITY_NOT_HELD") {
+    return casework.Tag("IdentityNotHeld");
+  }
+  if (details.code === "PRNS_UNKNOWN_REQUEST_HANDLER") {
+    return casework.Tag("UnknownRequestHandler");
+  }
+  if (details.code === "PRNS_REQUEST_POLICY_NOT_ALLOW_LIST") {
+    return casework.Tag("RequestPolicyNotAllowList");
+  }
+  if (details.code === "PRNS_REQUEST_ALLOW_LIST_FULL") {
+    return casework.Tag("RequestAllowListFull");
+  }
+  if (details.code === "PRNS_LINK_BUSY") {
+    return casework.Tag("LinkBusy");
+  }
+  if (details.code === "PRNS_RESOURCE_TABLE_FULL") {
+    return casework.Tag("ResourceTableFull");
+  }
+  if (details.code === "PRNS_RESOURCE_METADATA_TOO_LARGE") {
+    return casework.Tag("ResourceMetadataTooLarge");
+  }
+  if (details.code === "PRNS_RESOURCE_REJECTED_BY_PEER") {
+    return casework.Tag("ResourceRejectedByPeer");
+  }
+  if (details.code === "PRNS_RESOURCE_SEQUENCING_FAILED") {
+    return casework.Tag("ResourceSequencingFailed");
+  }
+  if (details.code === "PRNS_RESOURCE_PREDECESSOR_FAILED") {
+    return casework.Tag("ResourcePredecessorFailed");
+  }
+  if (details.code === "PRNS_CHANNEL_WINDOW_FULL") {
+    return casework.Tag("ChannelWindowFull");
+  }
+  if (details.code === "PRNS_CHANNEL_UNTRACKABLE") {
+    return casework.Tag("ChannelUntrackable");
+  }
+  if (details.code === "PRNS_INVALID_CHANNEL_MESSAGE_TYPE") {
+    return casework.Tag("InvalidChannelMessageType");
+  }
   if (details.code === "PRNS_ATTACH_FAILED") {
     return casework.Tag("BindFailed", { detail: details.detail });
   }
   return casework.Tag("WriteFailed", { detail: details.detail });
+}
+
+function packetDelivered(receipt: RawPacketReceipt): CommandOutcome {
+  const delivered = {
+    rttMillis: finiteNonNegative("rttMillis", receipt.rttMillis),
+    evidence: deliveryEvidence(receipt.evidence),
+  };
+  return casework.Tag(
+    "PacketDelivered",
+    receipt.packetHash === undefined
+      ? delivered
+      : {
+          ...delivered,
+          packetHash: contract.packetHash(receipt.packetHash),
+        },
+  );
+}
+
+function rawResponseTimeout(
+  timeout: ResponseTimeout,
+): { timeoutMillis: number } | undefined {
+  return casework.match(timeout, {
+    LinkDefault: () => undefined,
+    Exact: ({ millis }) => ({
+      timeoutMillis: nonNegativeInteger("timeout millis", millis),
+    }),
+  });
+}
+
+function rawResourceCompression(
+  compression: ResourceCompression,
+): "auto" | "never" {
+  return casework.match(compression, {
+    Auto: () => "auto" as const,
+    Never: () => "never" as const,
+  });
+}
+
+function rawResourceStrategy(
+  strategy: ResourceStrategy,
+): RawResourceStrategy {
+  return casework.match(strategy, {
+    Refuse: () => ({ accept: "none" as const }),
+    Accept: ({
+      maximumUncompressedBytes,
+      acceptCompressed,
+    }) => ({
+      accept: "all" as const,
+      maxUncompressedBytes: nonNegativeInteger(
+        "maximumUncompressedBytes",
+        maximumUncompressedBytes,
+      ),
+      acceptCompressed,
+    }),
+  });
 }
 
 function deliveryEvidence(value: string): DeliveryEvidenceKind {
@@ -1199,6 +1704,16 @@ function positiveInteger(name: string, value: number): number {
     throw new contract.PrnsValidationError(
       "InvalidLimit",
       `${name} must be a positive safe integer`,
+    );
+  }
+  return value;
+}
+
+function nonNegativeInteger(name: string, value: number): number {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new contract.PrnsValidationError(
+      "InvalidNumber",
+      `${name} must be a non-negative safe integer`,
     );
   }
   return value;

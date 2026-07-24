@@ -215,12 +215,98 @@ impl TryFrom<u32> for AbiBitrateKind {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AbiResponseTimeoutKind {
+    LinkDefault = 1,
+    Exact = 2,
+}
+
+impl TryFrom<u32> for AbiResponseTimeoutKind {
+    type Error = ();
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::LinkDefault),
+            2 => Ok(Self::Exact),
+            _ => Err(()),
+        }
+    }
+}
+
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AbiResourceCompressionKind {
+    Auto = 1,
+    Never = 2,
+}
+
+impl TryFrom<u32> for AbiResourceCompressionKind {
+    type Error = ();
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::Auto),
+            2 => Ok(Self::Never),
+            _ => Err(()),
+        }
+    }
+}
+
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AbiResourceStrategyKind {
+    Refuse = 1,
+    Accept = 2,
+}
+
+impl TryFrom<u32> for AbiResourceStrategyKind {
+    type Error = ();
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::Refuse),
+            2 => Ok(Self::Accept),
+            _ => Err(()),
+        }
+    }
+}
+
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AbiRequestPolicy {
+    AllowNone = 1,
+    AllowAll = 2,
+    AllowList = 3,
+}
+
+impl TryFrom<u32> for AbiRequestPolicy {
+    type Error = ();
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::AllowNone),
+            2 => Ok(Self::AllowAll),
+            3 => Ok(Self::AllowList),
+            _ => Err(()),
+        }
+    }
+}
+
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum AbiCommandOutcomeKind {
     Announced = 1,
     PacketDelivered = 2,
     LinkCloseQueued = 3,
     InterfaceAttached = 4,
     InterfaceDetached = 5,
+    LinkEstablished = 6,
+    PathDiscovered = 7,
+    Identified = 8,
+    ResponseReceived = 9,
+    ResponseSent = 10,
+    ResourceSent = 11,
+    ResourceStrategySet = 12,
+    RequesterAllowed = 13,
 }
 
 impl TryFrom<u32> for AbiCommandOutcomeKind {
@@ -233,6 +319,14 @@ impl TryFrom<u32> for AbiCommandOutcomeKind {
             3 => Ok(Self::LinkCloseQueued),
             4 => Ok(Self::InterfaceAttached),
             5 => Ok(Self::InterfaceDetached),
+            6 => Ok(Self::LinkEstablished),
+            7 => Ok(Self::PathDiscovered),
+            8 => Ok(Self::Identified),
+            9 => Ok(Self::ResponseReceived),
+            10 => Ok(Self::ResponseSent),
+            11 => Ok(Self::ResourceSent),
+            12 => Ok(Self::ResourceStrategySet),
+            13 => Ok(Self::RequesterAllowed),
             _ => Err(()),
         }
     }
@@ -258,6 +352,21 @@ pub enum AbiCommandFailureKind {
     UnsupportedByBackend = 15,
     UnknownLink = 16,
     LinkNotActive = 17,
+    EntropyUnavailable = 18,
+    NotLinkInitiator = 19,
+    IdentityNotHeld = 20,
+    UnknownRequestHandler = 21,
+    RequestPolicyNotAllowList = 22,
+    RequestAllowListFull = 23,
+    LinkBusy = 24,
+    ResourceTableFull = 25,
+    ResourceMetadataTooLarge = 26,
+    ResourceRejectedByPeer = 27,
+    ResourceSequencingFailed = 28,
+    ResourcePredecessorFailed = 29,
+    ChannelWindowFull = 30,
+    ChannelUntrackable = 31,
+    InvalidChannelMessageType = 32,
 }
 
 impl TryFrom<u32> for AbiCommandFailureKind {
@@ -282,6 +391,21 @@ impl TryFrom<u32> for AbiCommandFailureKind {
             15 => Ok(Self::UnsupportedByBackend),
             16 => Ok(Self::UnknownLink),
             17 => Ok(Self::LinkNotActive),
+            18 => Ok(Self::EntropyUnavailable),
+            19 => Ok(Self::NotLinkInitiator),
+            20 => Ok(Self::IdentityNotHeld),
+            21 => Ok(Self::UnknownRequestHandler),
+            22 => Ok(Self::RequestPolicyNotAllowList),
+            23 => Ok(Self::RequestAllowListFull),
+            24 => Ok(Self::LinkBusy),
+            25 => Ok(Self::ResourceTableFull),
+            26 => Ok(Self::ResourceMetadataTooLarge),
+            27 => Ok(Self::ResourceRejectedByPeer),
+            28 => Ok(Self::ResourceSequencingFailed),
+            29 => Ok(Self::ResourcePredecessorFailed),
+            30 => Ok(Self::ChannelWindowFull),
+            31 => Ok(Self::ChannelUntrackable),
+            32 => Ok(Self::InvalidChannelMessageType),
             _ => Err(()),
         }
     }

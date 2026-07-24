@@ -19,11 +19,13 @@ use crate::engine::{
     EngineCommand, EstablishLink, EstablishLinkFailure, Identify, IdentifyFailure, IssuedCommand,
     LinkEstablished, PacketReceiptDelivered, PathFound, PathRequestId, RequestPath,
     RequestPathFailure, SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload,
-    Settlement, PATH_REQUEST_ID_LEN,
+    SendToChannel, SendToChannelBody, SendToChannelFailure, SendToLink, SendToLinkFailure,
+    SendToLinkPayload, Settlement, PATH_REQUEST_ID_LEN,
 };
 use crate::identity::IdentityHash;
 use crate::interfaces::InterfaceId;
 use crate::manifold::driver::HostCommand;
+use crate::routing::links::channel::MessageType;
 use crate::routing::links::LinkId;
 use crate::wire::DestinationHash;
 
@@ -201,6 +203,42 @@ impl PrnsNodeHandle {
             .await
         {
             Some(Settlement::Identify(result)) => result.map_err(SendError::Failed),
+            Some(_) | None => Err(SendError::NodeStopped),
+        }
+    }
+
+    pub async fn send_link_packet(
+        &self,
+        link_id: LinkId,
+        data: &[u8],
+    ) -> Result<PacketReceiptDelivered, SendError<SendToLinkFailure>> {
+        let payload =
+            SendToLinkPayload::from_slice(data).map_err(|()| SendError::PayloadTooLarge)?;
+        match self
+            .settle(EngineCommand::SendToLink(SendToLink { link_id, payload }))
+            .await
+        {
+            Some(Settlement::SendToLink(result)) => result.map_err(SendError::Failed),
+            Some(_) | None => Err(SendError::NodeStopped),
+        }
+    }
+
+    pub async fn send_channel_message(
+        &self,
+        link_id: LinkId,
+        message_type: MessageType,
+        data: &[u8],
+    ) -> Result<PacketReceiptDelivered, SendError<SendToChannelFailure>> {
+        let body = SendToChannelBody::from_slice(data).map_err(|()| SendError::PayloadTooLarge)?;
+        match self
+            .settle(EngineCommand::SendToChannel(SendToChannel {
+                link_id,
+                message_type,
+                body,
+            }))
+            .await
+        {
+            Some(Settlement::SendToChannel(result)) => result.map_err(SendError::Failed),
             Some(_) | None => Err(SendError::NodeStopped),
         }
     }

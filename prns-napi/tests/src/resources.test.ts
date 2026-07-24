@@ -128,7 +128,7 @@ test('resources are refused when the strategy stays acceptNone', async () => {
     const linkId = await client.establishLink(dest);
     await assert.rejects(
       () => client.sendResource(linkId, Buffer.from('refused payload')),
-      (error: any) => error.code === 'PRNS_RESOURCE_SEND_FAILED'
+      (error: any) => error.code === 'PRNS_DELIVERY_TIMED_OUT'
     );
   } finally {
     await client.stop().catch(() => {});

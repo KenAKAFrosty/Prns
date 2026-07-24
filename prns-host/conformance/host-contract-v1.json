@@ -55,27 +55,50 @@
       "AnnounceAppDataTooLong": 6,
       "BindFailed": 13,
       "Busy": 2,
+      "ChannelUntrackable": 31,
+      "ChannelWindowFull": 30,
       "DeliveryTimedOut": 11,
+      "EntropyUnavailable": 18,
+      "IdentityNotHeld": 20,
       "InvalidBitrate": 12,
+      "InvalidChannelMessageType": 32,
+      "LinkBusy": 24,
       "LinkNotActive": 17,
       "NoRouteToDestination": 8,
       "NodeStopped": 1,
       "NotDirectlyReachable": 9,
+      "NotLinkInitiator": 19,
       "NotSingleDestination": 5,
       "PacketCulled": 10,
       "PayloadTooLarge": 3,
+      "RequestAllowListFull": 23,
+      "RequestPolicyNotAllowList": 22,
+      "ResourceMetadataTooLarge": 26,
+      "ResourcePredecessorFailed": 29,
+      "ResourceRejectedByPeer": 27,
+      "ResourceSequencingFailed": 28,
+      "ResourceTableFull": 25,
       "UnknownDestination": 4,
       "UnknownInterface": 7,
       "UnknownLink": 16,
+      "UnknownRequestHandler": 21,
       "UnsupportedByBackend": 15,
       "WriteFailed": 14
     },
     "CommandOutcomeKind": {
       "Announced": 1,
+      "Identified": 8,
       "InterfaceAttached": 4,
       "InterfaceDetached": 5,
       "LinkCloseQueued": 3,
-      "PacketDelivered": 2
+      "LinkEstablished": 6,
+      "PacketDelivered": 2,
+      "PathDiscovered": 7,
+      "RequesterAllowed": 13,
+      "ResourceSent": 11,
+      "ResourceStrategySet": 12,
+      "ResponseReceived": 9,
+      "ResponseSent": 10
     },
     "DeliveryEvidenceKind": {
       "ExplicitProof": 1,
@@ -163,6 +186,23 @@
       "PeerClosed": 2,
       "Timeout": 1
     },
+    "RequestPolicy": {
+      "AllowAll": 2,
+      "AllowList": 3,
+      "AllowNone": 1
+    },
+    "ResourceCompressionKind": {
+      "Auto": 1,
+      "Never": 2
+    },
+    "ResourceStrategyKind": {
+      "Accept": 2,
+      "Refuse": 1
+    },
+    "ResponseTimeoutKind": {
+      "Exact": 2,
+      "LinkDefault": 1
+    },
     "Status": {
       "AlreadyClaimed": 5,
       "BackendFailed": 10,
@@ -221,27 +261,50 @@
       "AnnounceAppDataTooLong": 6,
       "BindFailed": 13,
       "Busy": 2,
+      "ChannelUntrackable": 31,
+      "ChannelWindowFull": 30,
       "DeliveryTimedOut": 11,
+      "EntropyUnavailable": 18,
+      "IdentityNotHeld": 20,
       "InvalidBitrate": 12,
+      "InvalidChannelMessageType": 32,
+      "LinkBusy": 24,
       "LinkNotActive": 17,
       "NoRouteToDestination": 8,
       "NodeStopped": 1,
       "NotDirectlyReachable": 9,
+      "NotLinkInitiator": 19,
       "NotSingleDestination": 5,
       "PacketCulled": 10,
       "PayloadTooLarge": 3,
+      "RequestAllowListFull": 23,
+      "RequestPolicyNotAllowList": 22,
+      "ResourceMetadataTooLarge": 26,
+      "ResourcePredecessorFailed": 29,
+      "ResourceRejectedByPeer": 27,
+      "ResourceSequencingFailed": 28,
+      "ResourceTableFull": 25,
       "UnknownDestination": 4,
       "UnknownInterface": 7,
       "UnknownLink": 16,
+      "UnknownRequestHandler": 21,
       "UnsupportedByBackend": 15,
       "WriteFailed": 14
     },
     "CommandOutcome": {
       "Announced": 1,
+      "Identified": 8,
       "InterfaceAttached": 4,
       "InterfaceDetached": 5,
       "LinkCloseQueued": 3,
-      "PacketDelivered": 2
+      "LinkEstablished": 6,
+      "PacketDelivered": 2,
+      "PathDiscovered": 7,
+      "RequesterAllowed": 13,
+      "ResourceSent": 11,
+      "ResourceStrategySet": 12,
+      "ResponseReceived": 9,
+      "ResponseSent": 10
     },
     "DestinationConfig": {
       "Plain": 1,
@@ -271,18 +334,41 @@
       "SelfRatchetRotated": 208
     },
     "HostCommand": {
+      "AllowRequester": 18,
       "Announce": 1,
       "AttachTcpClient": 5,
       "AttachTcpServer": 4,
       "AttachUdp": 6,
       "CloseLink": 3,
       "DetachInterface": 7,
-      "SendSinglePacket": 2
+      "EstablishLink": 8,
+      "Identify": 10,
+      "Request": 12,
+      "RequestPath": 9,
+      "Respond": 13,
+      "SendChannelMessage": 17,
+      "SendLinkPacket": 11,
+      "SendResource": 14,
+      "SendSinglePacket": 2,
+      "SetDestinationResourceStrategy": 16,
+      "SetLinkResourceStrategy": 15
     },
     "IdentityConfig": {
       "Existing": 1,
       "GenerateEphemeral": 2,
       "LoadOrCreate": 3
+    },
+    "ResourceCompression": {
+      "Auto": 1,
+      "Never": 2
+    },
+    "ResourceStrategy": {
+      "Accept": 2,
+      "Refuse": 1
+    },
+    "ResponseTimeout": {
+      "Exact": 2,
+      "LinkDefault": 1
     }
   }
 }

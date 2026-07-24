@@ -95,6 +95,31 @@ public enum BitrateKind : uint
     BitsPerSecond = 2,
 }
 
+public enum ResponseTimeoutKind : uint
+{
+    LinkDefault = 1,
+    Exact = 2,
+}
+
+public enum ResourceCompressionKind : uint
+{
+    Auto = 1,
+    Never = 2,
+}
+
+public enum ResourceStrategyKind : uint
+{
+    Refuse = 1,
+    Accept = 2,
+}
+
+public enum RequestPolicy : uint
+{
+    AllowNone = 1,
+    AllowAll = 2,
+    AllowList = 3,
+}
+
 public enum CommandOutcomeKind : uint
 {
     Announced = 1,
@@ -102,6 +127,14 @@ public enum CommandOutcomeKind : uint
     LinkCloseQueued = 3,
     InterfaceAttached = 4,
     InterfaceDetached = 5,
+    LinkEstablished = 6,
+    PathDiscovered = 7,
+    Identified = 8,
+    ResponseReceived = 9,
+    ResponseSent = 10,
+    ResourceSent = 11,
+    ResourceStrategySet = 12,
+    RequesterAllowed = 13,
 }
 
 public enum CommandFailureKind : uint
@@ -123,6 +156,21 @@ public enum CommandFailureKind : uint
     UnsupportedByBackend = 15,
     UnknownLink = 16,
     LinkNotActive = 17,
+    EntropyUnavailable = 18,
+    NotLinkInitiator = 19,
+    IdentityNotHeld = 20,
+    UnknownRequestHandler = 21,
+    RequestPolicyNotAllowList = 22,
+    RequestAllowListFull = 23,
+    LinkBusy = 24,
+    ResourceTableFull = 25,
+    ResourceMetadataTooLarge = 26,
+    ResourceRejectedByPeer = 27,
+    ResourceSequencingFailed = 28,
+    ResourcePredecessorFailed = 29,
+    ChannelWindowFull = 30,
+    ChannelUntrackable = 31,
+    InvalidChannelMessageType = 32,
 }
 
 public enum DeliveryEvidenceKind : uint
@@ -554,6 +602,8 @@ public sealed class IdentitySecret : IDisposable
 
 public sealed record DestinationName(string AppName, ImmutableArray<string> Aspects);
 
+public sealed record RequestHandlerConfig(string Path, RequestPolicy Policy);
+
 public abstract record IdentityConfig
 {
     private protected IdentityConfig() { }
@@ -622,6 +672,68 @@ public abstract record Bitrate
         };
 }
 
+public abstract record ResponseTimeout
+{
+    private protected ResponseTimeout() { }
+
+    public sealed record LinkDefault() : ResponseTimeout;
+    public sealed record Exact(
+        ulong Millis
+    ) : ResponseTimeout;
+
+    public TResult Match<TResult>(
+        Func<ResponseTimeout.LinkDefault, TResult> linkDefault,
+        Func<ResponseTimeout.Exact, TResult> exact
+    ) =>
+        this switch
+        {
+            LinkDefault value => linkDefault(value),
+            Exact value => exact(value),
+            _ => throw new InvalidOperationException("Unknown contract case."),
+        };
+}
+
+public abstract record ResourceCompression
+{
+    private protected ResourceCompression() { }
+
+    public sealed record Auto() : ResourceCompression;
+    public sealed record Never() : ResourceCompression;
+
+    public TResult Match<TResult>(
+        Func<ResourceCompression.Auto, TResult> auto,
+        Func<ResourceCompression.Never, TResult> never
+    ) =>
+        this switch
+        {
+            Auto value => auto(value),
+            Never value => never(value),
+            _ => throw new InvalidOperationException("Unknown contract case."),
+        };
+}
+
+public abstract record ResourceStrategy
+{
+    private protected ResourceStrategy() { }
+
+    public sealed record Refuse() : ResourceStrategy;
+    public sealed record Accept(
+        ulong MaximumUncompressedBytes,
+        bool AcceptCompressed
+    ) : ResourceStrategy;
+
+    public TResult Match<TResult>(
+        Func<ResourceStrategy.Refuse, TResult> refuse,
+        Func<ResourceStrategy.Accept, TResult> accept
+    ) =>
+        this switch
+        {
+            Refuse value => refuse(value),
+            Accept value => accept(value),
+            _ => throw new InvalidOperationException("Unknown contract case."),
+        };
+}
+
 public abstract record DestinationConfig
 {
     private protected DestinationConfig() { }
@@ -632,7 +744,8 @@ public abstract record DestinationConfig
     public sealed record Single(
         DestinationName Name,
         DestinationIdentityConfig Identity,
-        ReadOnlyMemory<byte>? AnnounceAppData
+        ReadOnlyMemory<byte>? AnnounceAppData,
+        ImmutableArray<RequestHandlerConfig> RequestHandlers
     ) : DestinationConfig;
 
     public TResult Match<TResult>(
@@ -678,6 +791,56 @@ public abstract record HostCommand
     public sealed record DetachInterface(
         InterfaceId Interface
     ) : HostCommand;
+    public sealed record EstablishLink(
+        DestinationHash Destination
+    ) : HostCommand;
+    public sealed record RequestPath(
+        DestinationHash Destination
+    ) : HostCommand;
+    public sealed record Identify(
+        LinkId LinkId,
+        IdentityHash Identity
+    ) : HostCommand;
+    public sealed record SendLinkPacket(
+        LinkId LinkId,
+        ReadOnlyMemory<byte> Payload
+    ) : HostCommand;
+    public sealed record Request(
+        LinkId LinkId,
+        RequestPathHash PathHash,
+        ReadOnlyMemory<byte> Payload,
+        ResponseTimeout Timeout
+    ) : HostCommand;
+    public sealed record Respond(
+        LinkId LinkId,
+        RequestId RequestId,
+        ulong RequestRttMillis,
+        ReadOnlyMemory<byte> Payload
+    ) : HostCommand;
+    public sealed record SendResource(
+        LinkId LinkId,
+        ReadOnlyMemory<byte> Payload,
+        ReadOnlyMemory<byte>? PackedMetadata,
+        ResourceCompression Compression
+    ) : HostCommand;
+    public sealed record SetLinkResourceStrategy(
+        LinkId LinkId,
+        ResourceStrategy Strategy
+    ) : HostCommand;
+    public sealed record SetDestinationResourceStrategy(
+        DestinationHash Destination,
+        ResourceStrategy Strategy
+    ) : HostCommand;
+    public sealed record SendChannelMessage(
+        LinkId LinkId,
+        ushort MessageType,
+        ReadOnlyMemory<byte> Payload
+    ) : HostCommand;
+    public sealed record AllowRequester(
+        DestinationHash Destination,
+        RequestPathHash PathHash,
+        IdentityHash Identity
+    ) : HostCommand;
 
     public TResult Match<TResult>(
         Func<HostCommand.Announce, TResult> announce,
@@ -686,7 +849,18 @@ public abstract record HostCommand
         Func<HostCommand.AttachTcpServer, TResult> attachTcpServer,
         Func<HostCommand.AttachTcpClient, TResult> attachTcpClient,
         Func<HostCommand.AttachUdp, TResult> attachUdp,
-        Func<HostCommand.DetachInterface, TResult> detachInterface
+        Func<HostCommand.DetachInterface, TResult> detachInterface,
+        Func<HostCommand.EstablishLink, TResult> establishLink,
+        Func<HostCommand.RequestPath, TResult> requestPath,
+        Func<HostCommand.Identify, TResult> identify,
+        Func<HostCommand.SendLinkPacket, TResult> sendLinkPacket,
+        Func<HostCommand.Request, TResult> request,
+        Func<HostCommand.Respond, TResult> respond,
+        Func<HostCommand.SendResource, TResult> sendResource,
+        Func<HostCommand.SetLinkResourceStrategy, TResult> setLinkResourceStrategy,
+        Func<HostCommand.SetDestinationResourceStrategy, TResult> setDestinationResourceStrategy,
+        Func<HostCommand.SendChannelMessage, TResult> sendChannelMessage,
+        Func<HostCommand.AllowRequester, TResult> allowRequester
     ) =>
         this switch
         {
@@ -697,6 +871,17 @@ public abstract record HostCommand
             AttachTcpClient value => attachTcpClient(value),
             AttachUdp value => attachUdp(value),
             DetachInterface value => detachInterface(value),
+            EstablishLink value => establishLink(value),
+            RequestPath value => requestPath(value),
+            Identify value => identify(value),
+            SendLinkPacket value => sendLinkPacket(value),
+            Request value => request(value),
+            Respond value => respond(value),
+            SendResource value => sendResource(value),
+            SetLinkResourceStrategy value => setLinkResourceStrategy(value),
+            SetDestinationResourceStrategy value => setDestinationResourceStrategy(value),
+            SendChannelMessage value => sendChannelMessage(value),
+            AllowRequester value => allowRequester(value),
             _ => throw new InvalidOperationException("Unknown contract case."),
         };
 }
@@ -718,13 +903,39 @@ public abstract record CommandOutcome
     public sealed record InterfaceDetached(
         InterfaceId Interface
     ) : CommandOutcome;
+    public sealed record LinkEstablished(
+        LinkId LinkId,
+        ulong RttMillis
+    ) : CommandOutcome;
+    public sealed record PathDiscovered(
+        byte Hops
+    ) : CommandOutcome;
+    public sealed record Identified() : CommandOutcome;
+    public sealed record ResponseReceived(
+        ReadOnlyMemory<byte> Data,
+        ulong RttMillis
+    ) : CommandOutcome;
+    public sealed record ResponseSent(
+        ulong RttMillis
+    ) : CommandOutcome;
+    public sealed record ResourceSent() : CommandOutcome;
+    public sealed record ResourceStrategySet() : CommandOutcome;
+    public sealed record RequesterAllowed() : CommandOutcome;
 
     public TResult Match<TResult>(
         Func<CommandOutcome.Announced, TResult> announced,
         Func<CommandOutcome.PacketDelivered, TResult> packetDelivered,
         Func<CommandOutcome.LinkCloseQueued, TResult> linkCloseQueued,
         Func<CommandOutcome.InterfaceAttached, TResult> interfaceAttached,
-        Func<CommandOutcome.InterfaceDetached, TResult> interfaceDetached
+        Func<CommandOutcome.InterfaceDetached, TResult> interfaceDetached,
+        Func<CommandOutcome.LinkEstablished, TResult> linkEstablished,
+        Func<CommandOutcome.PathDiscovered, TResult> pathDiscovered,
+        Func<CommandOutcome.Identified, TResult> identified,
+        Func<CommandOutcome.ResponseReceived, TResult> responseReceived,
+        Func<CommandOutcome.ResponseSent, TResult> responseSent,
+        Func<CommandOutcome.ResourceSent, TResult> resourceSent,
+        Func<CommandOutcome.ResourceStrategySet, TResult> resourceStrategySet,
+        Func<CommandOutcome.RequesterAllowed, TResult> requesterAllowed
     ) =>
         this switch
         {
@@ -733,6 +944,14 @@ public abstract record CommandOutcome
             LinkCloseQueued value => linkCloseQueued(value),
             InterfaceAttached value => interfaceAttached(value),
             InterfaceDetached value => interfaceDetached(value),
+            LinkEstablished value => linkEstablished(value),
+            PathDiscovered value => pathDiscovered(value),
+            Identified value => identified(value),
+            ResponseReceived value => responseReceived(value),
+            ResponseSent value => responseSent(value),
+            ResourceSent value => resourceSent(value),
+            ResourceStrategySet value => resourceStrategySet(value),
+            RequesterAllowed value => requesterAllowed(value),
             _ => throw new InvalidOperationException("Unknown contract case."),
         };
 }
@@ -762,6 +981,21 @@ public abstract record CommandFailure
     public sealed record UnsupportedByBackend() : CommandFailure;
     public sealed record UnknownLink() : CommandFailure;
     public sealed record LinkNotActive() : CommandFailure;
+    public sealed record EntropyUnavailable() : CommandFailure;
+    public sealed record NotLinkInitiator() : CommandFailure;
+    public sealed record IdentityNotHeld() : CommandFailure;
+    public sealed record UnknownRequestHandler() : CommandFailure;
+    public sealed record RequestPolicyNotAllowList() : CommandFailure;
+    public sealed record RequestAllowListFull() : CommandFailure;
+    public sealed record LinkBusy() : CommandFailure;
+    public sealed record ResourceTableFull() : CommandFailure;
+    public sealed record ResourceMetadataTooLarge() : CommandFailure;
+    public sealed record ResourceRejectedByPeer() : CommandFailure;
+    public sealed record ResourceSequencingFailed() : CommandFailure;
+    public sealed record ResourcePredecessorFailed() : CommandFailure;
+    public sealed record ChannelWindowFull() : CommandFailure;
+    public sealed record ChannelUntrackable() : CommandFailure;
+    public sealed record InvalidChannelMessageType() : CommandFailure;
 
     public TResult Match<TResult>(
         Func<CommandFailure.NodeStopped, TResult> nodeStopped,
@@ -780,7 +1014,22 @@ public abstract record CommandFailure
         Func<CommandFailure.WriteFailed, TResult> writeFailed,
         Func<CommandFailure.UnsupportedByBackend, TResult> unsupportedByBackend,
         Func<CommandFailure.UnknownLink, TResult> unknownLink,
-        Func<CommandFailure.LinkNotActive, TResult> linkNotActive
+        Func<CommandFailure.LinkNotActive, TResult> linkNotActive,
+        Func<CommandFailure.EntropyUnavailable, TResult> entropyUnavailable,
+        Func<CommandFailure.NotLinkInitiator, TResult> notLinkInitiator,
+        Func<CommandFailure.IdentityNotHeld, TResult> identityNotHeld,
+        Func<CommandFailure.UnknownRequestHandler, TResult> unknownRequestHandler,
+        Func<CommandFailure.RequestPolicyNotAllowList, TResult> requestPolicyNotAllowList,
+        Func<CommandFailure.RequestAllowListFull, TResult> requestAllowListFull,
+        Func<CommandFailure.LinkBusy, TResult> linkBusy,
+        Func<CommandFailure.ResourceTableFull, TResult> resourceTableFull,
+        Func<CommandFailure.ResourceMetadataTooLarge, TResult> resourceMetadataTooLarge,
+        Func<CommandFailure.ResourceRejectedByPeer, TResult> resourceRejectedByPeer,
+        Func<CommandFailure.ResourceSequencingFailed, TResult> resourceSequencingFailed,
+        Func<CommandFailure.ResourcePredecessorFailed, TResult> resourcePredecessorFailed,
+        Func<CommandFailure.ChannelWindowFull, TResult> channelWindowFull,
+        Func<CommandFailure.ChannelUntrackable, TResult> channelUntrackable,
+        Func<CommandFailure.InvalidChannelMessageType, TResult> invalidChannelMessageType
     ) =>
         this switch
         {
@@ -801,6 +1050,21 @@ public abstract record CommandFailure
             UnsupportedByBackend value => unsupportedByBackend(value),
             UnknownLink value => unknownLink(value),
             LinkNotActive value => linkNotActive(value),
+            EntropyUnavailable value => entropyUnavailable(value),
+            NotLinkInitiator value => notLinkInitiator(value),
+            IdentityNotHeld value => identityNotHeld(value),
+            UnknownRequestHandler value => unknownRequestHandler(value),
+            RequestPolicyNotAllowList value => requestPolicyNotAllowList(value),
+            RequestAllowListFull value => requestAllowListFull(value),
+            LinkBusy value => linkBusy(value),
+            ResourceTableFull value => resourceTableFull(value),
+            ResourceMetadataTooLarge value => resourceMetadataTooLarge(value),
+            ResourceRejectedByPeer value => resourceRejectedByPeer(value),
+            ResourceSequencingFailed value => resourceSequencingFailed(value),
+            ResourcePredecessorFailed value => resourcePredecessorFailed(value),
+            ChannelWindowFull value => channelWindowFull(value),
+            ChannelUntrackable value => channelUntrackable(value),
+            InvalidChannelMessageType value => invalidChannelMessageType(value),
             _ => throw new InvalidOperationException("Unknown contract case."),
         };
 }
@@ -857,7 +1121,7 @@ public abstract record ApplicationEvent
     ) : ApplicationEvent;
     public sealed record ChannelMessage(
         LinkId LinkId,
-        string MessageType,
+        ushort MessageType,
         ReadOnlyMemory<byte> Data
     ) : ApplicationEvent;
 

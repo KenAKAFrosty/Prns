@@ -7,31 +7,44 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use personal_rns::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceNowFailure, AnnounceNowRejection, AnnounceTarget,
-    DeliveryEvidence as EngineDeliveryEvidence, DeliveryProof,
-    LinkClosedReason as EngineLinkClosedReason, RouteRemovalCause, SendSinglePacketFailure,
-    SendSinglePacketRejection,
+    AllowRequester, AllowRequesterFailure, AllowRequesterRejection, AnnounceAppData, AnnounceNow,
+    AnnounceNowFailure, AnnounceNowRejection, AnnounceTarget,
+    DeliveryEvidence as EngineDeliveryEvidence, DeliveryProof, EstablishLinkFailure,
+    EstablishLinkRejection, IdentifyFailure, IdentifyRejection,
+    LinkClosedReason as EngineLinkClosedReason, RequestPathFailure, RequestResponseTimeout,
+    RouteRemovalCause, SendRequestFailure, SendRequestRejection, SendResourceFailure,
+    SendResourceRejection, SendSinglePacketFailure, SendSinglePacketRejection,
+    SendToChannelFailure, SendToChannelRejection, SendToLinkFailure, SendToLinkRejection,
+    SetResourceStrategyFailure, SetResourceStrategyRejection,
 };
 use personal_rns::interfaces::BitrateBps;
 use personal_rns::manifold::reconnect::ReconnectPolicy;
 use personal_rns::routing::delivery::Delivery;
+use personal_rns::routing::links::channel::MessageType;
+use personal_rns::routing::request_handlers::RequestPolicy as EngineRequestPolicy;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
-use personal_rns::runtime::{Diagnostic, Message, PrnsEvent};
+use personal_rns::runtime::request_router::RespondToken;
+use personal_rns::runtime::{
+    Diagnostic, Message, PrnsEvent, RequestPathError, ResourceSendError, SegmentCompression,
+};
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::{TcpClientInterface, TcpServer};
 use personal_rns::udp::UdpInterface;
+use personal_rns::units::{DurationMillis, RttMillis};
 use personal_rns::{
     load_or_create_identity_secret, routes, try_generate_identity_secret, AttachedInterface,
     AttachedSupervisor, Manual, PreConfiguredDestination, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe,
-    RatchetPolicy, ResourceStrategy, SendError, Zeroizing, IDENTITY_SECRET_KEY_LEN,
+    RatchetPolicy, ResourceStrategy as EngineResourceStrategy, SendError, Zeroizing,
+    IDENTITY_SECRET_KEY_LEN,
 };
 use prns_host::{
     ApplicationEvent, Bitrate, Capability, ChannelMessage, CommandFailure, CommandOutcome,
     DeliveryEvidence, DestinationConfig, DestinationHash, DestinationIdentityConfig,
     DiagnosticEvent, HostCommand, HostConfig, HostRole, IdentityConfig, IdentityHash, InterfaceId,
-    LinkClosedReason, LinkId, PacketHash, RequestAvailable, RequestId, RequestPathHash,
-    ResourceAvailable, ResourceHash, ResourceNeedsDecompression, ResourceSegmentAvailable,
-    ResourceStreamId, ResponseAvailable, ResponseSegmentAvailable, SingleDelivery,
+    LinkClosedReason, LinkId, PacketHash, RequestAvailable, RequestHandlerConfig, RequestId,
+    RequestPathHash, RequestPolicy, ResourceAvailable, ResourceCompression, ResourceHash,
+    ResourceNeedsDecompression, ResourceSegmentAvailable, ResourceStrategy, ResourceStreamId,
+    ResponseAvailable, ResponseSegmentAvailable, ResponseTimeout, SingleDelivery,
 };
 use tokio::sync::{mpsc, watch};
 
@@ -285,6 +298,7 @@ struct Ready {
 struct ResolvedSingle {
     identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
     announce_app_data: Vec<u8>,
+    request_handlers: Vec<RequestHandlerConfig>,
 }
 
 struct ResolvedDestination {
@@ -336,6 +350,7 @@ fn resolve_config(config: HostConfig) -> Result<ResolvedConfig, NativeStartError
                     single: Some(ResolvedSingle {
                         identity,
                         announce_app_data: single.announce_app_data,
+                        request_handlers: single.request_handlers,
                     }),
                 });
             }
@@ -377,7 +392,7 @@ fn build_destinations<'a>(
                 proof: ProofStrategy::ProveAll,
                 link_requests: LinkRequestPolicy::AcceptAll,
                 ratchet: RatchetPolicy::NoRatchets,
-                resource_strategy: ResourceStrategy::AcceptNone,
+                resource_strategy: EngineResourceStrategy::AcceptNone,
                 request_handlers: personal_rns::runtime::RequestHandlerRegistration::None,
             },
         })
@@ -451,7 +466,7 @@ async fn run(
     let event_sink = Arc::clone(&sink);
     let backpressure = Arc::new(tokio::sync::Notify::new());
     let event_backpressure = Arc::clone(&backpressure);
-    let node = PrnsNode::new(PrnsNodeRecipe {
+    let mut node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: match resolved.role {
             HostRole::Endpoint => None,
             HostRole::Transport => Some(resolved.host_identity.clone()),
@@ -467,6 +482,26 @@ async fn run(
             }
         },
     });
+    for (destination, hash) in resolved.destinations.iter().zip(&destination_hashes) {
+        let Some(single) = &destination.single else {
+            continue;
+        };
+        for handler in &single.request_handlers {
+            if let Err(error) = node.register_request_path(
+                &engine_destination(*hash),
+                &handler.path,
+                engine_request_policy(handler.policy),
+            ) {
+                let failure = NativeStartError::Destination(format!(
+                    "request path {:?}: {error:?}",
+                    handler.path
+                ));
+                let _ = ready_tx.send(Err(failure.clone()));
+                sink.failed(format!("{failure:?}"));
+                return;
+            }
+        }
+    }
     let handle = node.handle();
     sink.running();
     if ready_tx
@@ -627,6 +662,181 @@ async fn execute_command(
                 interface: *interface,
             })
         }
+        HostCommand::EstablishLink { destination } => {
+            let established = handle
+                .establish_link_with_rtt(engine_destination(*destination))
+                .await
+                .map_err(establish_link_failure)?;
+            Ok(CommandOutcome::LinkEstablished {
+                link_id: host_link(established.link_id),
+                rtt_millis: established.rtt_millis,
+            })
+        }
+        HostCommand::RequestPath { destination } => {
+            let found = handle
+                .request_path(engine_destination(*destination))
+                .await
+                .map_err(request_path_failure)?;
+            Ok(CommandOutcome::PathDiscovered { hops: found.hops.0 })
+        }
+        HostCommand::Identify { link_id, identity } => {
+            handle
+                .identify(engine_link(*link_id), engine_identity(*identity))
+                .await
+                .map_err(identify_failure)?;
+            Ok(CommandOutcome::Identified)
+        }
+        HostCommand::SendLinkPacket { link_id, payload } => {
+            let receipt = handle
+                .send_link_packet(engine_link(*link_id), payload)
+                .await
+                .map_err(send_link_failure)?;
+            Ok(delivered_outcome(receipt))
+        }
+        HostCommand::Request {
+            link_id,
+            path_hash,
+            payload,
+            timeout,
+        } => {
+            let timeout = match timeout {
+                ResponseTimeout::LinkDefault => RequestResponseTimeout::LinkDefault,
+                ResponseTimeout::Exact { millis } => {
+                    RequestResponseTimeout::Exact(DurationMillis(*millis))
+                }
+            };
+            let (data, rtt) = handle
+                .request_with_response_timeout(
+                    engine_link(*link_id),
+                    engine_request_path(*path_hash),
+                    payload,
+                    timeout,
+                )
+                .await
+                .map_err(request_failure)?;
+            Ok(CommandOutcome::ResponseReceived {
+                data: unpack_binary(&data).unwrap_or(&data).to_vec(),
+                rtt_millis: rtt.millis(),
+            })
+        }
+        HostCommand::Respond {
+            link_id,
+            request_id,
+            request_rtt_millis,
+            payload,
+        } => {
+            let rtt = handle
+                .respond_owned_bytes(
+                    RespondToken {
+                        link_id: engine_link(*link_id),
+                        request_id: personal_rns::routing::links::request::RequestId(
+                            request_id.into_bytes(),
+                        ),
+                        rtt: RttMillis::new(*request_rtt_millis),
+                    },
+                    payload.clone(),
+                )
+                .ok_or(CommandFailure::NodeStopped)?;
+            Ok(CommandOutcome::ResponseSent {
+                rtt_millis: rtt.millis(),
+            })
+        }
+        HostCommand::SendResource {
+            link_id,
+            payload,
+            packed_metadata,
+            compression,
+        } => {
+            let total_len =
+                u64::try_from(payload.len()).map_err(|_| CommandFailure::PayloadTooLarge)?;
+            let source = std::io::Cursor::new(payload);
+            let compression = match compression {
+                ResourceCompression::Auto => SegmentCompression::AUTO,
+                ResourceCompression::Never => SegmentCompression::Never,
+            };
+            let result = match packed_metadata {
+                Some(metadata) => {
+                    let (progress, _) = mpsc::unbounded_channel();
+                    handle
+                        .send_resource_with_options(
+                            engine_link(*link_id),
+                            total_len,
+                            source,
+                            metadata,
+                            compression,
+                            progress,
+                        )
+                        .await
+                }
+                None => {
+                    handle
+                        .send_resource_with_compression(
+                            engine_link(*link_id),
+                            total_len,
+                            source,
+                            compression,
+                        )
+                        .await
+                }
+            };
+            result.map_err(resource_send_failure)?;
+            Ok(CommandOutcome::ResourceSent)
+        }
+        HostCommand::SetLinkResourceStrategy { link_id, strategy } => {
+            handle
+                .set_link_resource_strategy(
+                    engine_link(*link_id),
+                    engine_resource_strategy(*strategy),
+                )
+                .await
+                .map_err(set_resource_strategy_failure)?;
+            Ok(CommandOutcome::ResourceStrategySet)
+        }
+        HostCommand::SetDestinationResourceStrategy {
+            destination,
+            strategy,
+        } => {
+            if !handle
+                .set_resource_strategy(
+                    engine_destination(*destination),
+                    engine_resource_strategy(*strategy),
+                )
+                .await
+            {
+                return Err(CommandFailure::UnknownDestination);
+            }
+            Ok(CommandOutcome::ResourceStrategySet)
+        }
+        HostCommand::SendChannelMessage {
+            link_id,
+            message_type,
+            payload,
+        } => {
+            let message_type = MessageType(*message_type);
+            if message_type.is_system_reserved() {
+                return Err(CommandFailure::InvalidChannelMessageType);
+            }
+            let receipt = handle
+                .send_channel_message(engine_link(*link_id), message_type, payload)
+                .await
+                .map_err(send_channel_failure)?;
+            Ok(delivered_outcome(receipt))
+        }
+        HostCommand::AllowRequester {
+            destination,
+            path_hash,
+            identity,
+        } => {
+            handle
+                .allow_requester(AllowRequester {
+                    destination: engine_destination(*destination),
+                    path_hash: engine_request_path(*path_hash),
+                    identity: engine_identity(*identity),
+                })
+                .await
+                .map_err(allow_requester_failure)?;
+            Ok(CommandOutcome::RequesterAllowed)
+        }
     }
 }
 
@@ -675,8 +885,243 @@ fn send_failure(error: SendError<SendSinglePacketFailure>) -> CommandFailure {
     }
 }
 
+fn delivered_outcome(receipt: personal_rns::PacketReceiptDelivered) -> CommandOutcome {
+    let evidence = match receipt.evidence {
+        EngineDeliveryEvidence::Proof(DeliveryProof::Explicit(hash)) => {
+            DeliveryEvidence::ExplicitProof(PacketHash::new(*hash.as_bytes()))
+        }
+        EngineDeliveryEvidence::Proof(DeliveryProof::Implicit(hash)) => {
+            DeliveryEvidence::ImplicitProof(PacketHash::new(*hash.as_bytes()))
+        }
+        EngineDeliveryEvidence::Response => DeliveryEvidence::Response,
+    };
+    CommandOutcome::PacketDelivered {
+        rtt_millis: receipt.rtt.millis(),
+        evidence,
+    }
+}
+
+fn establish_link_failure(error: SendError<EstablishLinkFailure>) -> CommandFailure {
+    match error {
+        SendError::NodeStopped => CommandFailure::NodeStopped,
+        SendError::Busy => CommandFailure::Busy,
+        SendError::PayloadTooLarge => CommandFailure::PayloadTooLarge,
+        SendError::Failed(EstablishLinkFailure::Rejected(rejection)) => match rejection {
+            EstablishLinkRejection::NoRouteToDestination => CommandFailure::NoRouteToDestination,
+            EstablishLinkRejection::NotDirectlyReachable => CommandFailure::NotDirectlyReachable,
+        },
+        SendError::Failed(EstablishLinkFailure::WriteFailed(error)) => {
+            CommandFailure::WriteFailed {
+                detail: format!("{error:?}"),
+            }
+        }
+        SendError::Failed(EstablishLinkFailure::Timeout) => CommandFailure::DeliveryTimedOut,
+    }
+}
+
+fn request_path_failure(error: RequestPathError) -> CommandFailure {
+    match error {
+        RequestPathError::EntropyUnavailable => CommandFailure::EntropyUnavailable,
+        RequestPathError::NodeStopped => CommandFailure::NodeStopped,
+        RequestPathError::Failed(RequestPathFailure::Timeout) => CommandFailure::DeliveryTimedOut,
+        RequestPathError::Failed(RequestPathFailure::Culled) => CommandFailure::PacketCulled,
+        RequestPathError::Failed(RequestPathFailure::WriteFailed(error)) => {
+            CommandFailure::WriteFailed {
+                detail: format!("{error:?}"),
+            }
+        }
+    }
+}
+
+fn identify_failure(error: SendError<IdentifyFailure>) -> CommandFailure {
+    match error {
+        SendError::NodeStopped => CommandFailure::NodeStopped,
+        SendError::Busy => CommandFailure::Busy,
+        SendError::PayloadTooLarge => CommandFailure::PayloadTooLarge,
+        SendError::Failed(IdentifyFailure::Rejected(rejection)) => match rejection {
+            IdentifyRejection::NoSuchLink => CommandFailure::UnknownLink,
+            IdentifyRejection::LinkNotActive => CommandFailure::LinkNotActive,
+            IdentifyRejection::NotInitiator => CommandFailure::NotLinkInitiator,
+            IdentifyRejection::IdentityNotHeld => CommandFailure::IdentityNotHeld,
+        },
+        SendError::Failed(IdentifyFailure::WriteFailed) => CommandFailure::WriteFailed {
+            detail: "identity write failed".to_string(),
+        },
+    }
+}
+
+fn send_link_failure(error: SendError<SendToLinkFailure>) -> CommandFailure {
+    match error {
+        SendError::NodeStopped => CommandFailure::NodeStopped,
+        SendError::Busy => CommandFailure::Busy,
+        SendError::PayloadTooLarge => CommandFailure::PayloadTooLarge,
+        SendError::Failed(SendToLinkFailure::Rejected(rejection)) => match rejection {
+            SendToLinkRejection::NoSuchLink => CommandFailure::UnknownLink,
+            SendToLinkRejection::LinkNotActive => CommandFailure::LinkNotActive,
+        },
+        SendError::Failed(SendToLinkFailure::WriteFailed(error)) => CommandFailure::WriteFailed {
+            detail: format!("{error:?}"),
+        },
+        SendError::Failed(SendToLinkFailure::Culled) => CommandFailure::PacketCulled,
+        SendError::Failed(SendToLinkFailure::Timeout) => CommandFailure::DeliveryTimedOut,
+    }
+}
+
+fn request_failure(error: SendError<SendRequestFailure>) -> CommandFailure {
+    match error {
+        SendError::NodeStopped => CommandFailure::NodeStopped,
+        SendError::Busy => CommandFailure::Busy,
+        SendError::PayloadTooLarge => CommandFailure::PayloadTooLarge,
+        SendError::Failed(SendRequestFailure::Rejected(rejection)) => match rejection {
+            SendRequestRejection::NoSuchLink => CommandFailure::UnknownLink,
+            SendRequestRejection::LinkNotActive => CommandFailure::LinkNotActive,
+        },
+        SendError::Failed(SendRequestFailure::WriteFailed) => CommandFailure::WriteFailed {
+            detail: "request write failed".to_string(),
+        },
+        SendError::Failed(SendRequestFailure::Culled) => CommandFailure::PacketCulled,
+        SendError::Failed(SendRequestFailure::Timeout) => CommandFailure::DeliveryTimedOut,
+    }
+}
+
+fn resource_send_failure(error: ResourceSendError) -> CommandFailure {
+    match error {
+        ResourceSendError::Source(error) => CommandFailure::WriteFailed {
+            detail: error.to_string(),
+        },
+        ResourceSendError::UnrepresentableLength => CommandFailure::PayloadTooLarge,
+        ResourceSendError::NodeStopped => CommandFailure::NodeStopped,
+        ResourceSendError::Rejected(SendResourceFailure::Rejected(rejection)) => match rejection {
+            SendResourceRejection::NoSuchLink => CommandFailure::UnknownLink,
+            SendResourceRejection::LinkNotActive => CommandFailure::LinkNotActive,
+            SendResourceRejection::LinkBusy => CommandFailure::LinkBusy,
+            SendResourceRejection::TableFull => CommandFailure::ResourceTableFull,
+            SendResourceRejection::Build(
+                personal_rns::routing::links::resources::build_outgoing::BuildOutgoingResourceError::DataTooLarge,
+            ) => CommandFailure::PayloadTooLarge,
+            SendResourceRejection::Build(
+                personal_rns::routing::links::resources::build_outgoing::BuildOutgoingResourceError::MetadataTooLarge,
+            )
+            | SendResourceRejection::MetadataMisplaced => {
+                CommandFailure::ResourceMetadataTooLarge
+            }
+            SendResourceRejection::Build(error) => CommandFailure::WriteFailed {
+                detail: format!("{error:?}"),
+            },
+        },
+        ResourceSendError::Rejected(SendResourceFailure::WriteFailed) => {
+            CommandFailure::WriteFailed {
+                detail: "resource write failed".to_string(),
+            }
+        }
+        ResourceSendError::Rejected(SendResourceFailure::RejectedByPeer) => {
+            CommandFailure::ResourceRejectedByPeer
+        }
+        ResourceSendError::Rejected(SendResourceFailure::Sequencing) => {
+            CommandFailure::ResourceSequencingFailed
+        }
+        ResourceSendError::Rejected(SendResourceFailure::Timeout) => {
+            CommandFailure::DeliveryTimedOut
+        }
+        ResourceSendError::Rejected(SendResourceFailure::PredecessorFailed) => {
+            CommandFailure::ResourcePredecessorFailed
+        }
+    }
+}
+
+fn set_resource_strategy_failure(error: SendError<SetResourceStrategyFailure>) -> CommandFailure {
+    match error {
+        SendError::NodeStopped => CommandFailure::NodeStopped,
+        SendError::Busy => CommandFailure::Busy,
+        SendError::PayloadTooLarge => CommandFailure::PayloadTooLarge,
+        SendError::Failed(SetResourceStrategyFailure::Rejected(rejection)) => match rejection {
+            SetResourceStrategyRejection::NoSuchLink => CommandFailure::UnknownLink,
+            SetResourceStrategyRejection::LinkNotActive => CommandFailure::LinkNotActive,
+        },
+    }
+}
+
+fn send_channel_failure(error: SendError<SendToChannelFailure>) -> CommandFailure {
+    match error {
+        SendError::NodeStopped => CommandFailure::NodeStopped,
+        SendError::Busy => CommandFailure::Busy,
+        SendError::PayloadTooLarge => CommandFailure::PayloadTooLarge,
+        SendError::Failed(SendToChannelFailure::Rejected(rejection)) => match rejection {
+            SendToChannelRejection::NoSuchLink => CommandFailure::UnknownLink,
+            SendToChannelRejection::LinkNotActive => CommandFailure::LinkNotActive,
+        },
+        SendError::Failed(SendToChannelFailure::WriteFailed(error)) => {
+            CommandFailure::WriteFailed {
+                detail: format!("{error:?}"),
+            }
+        }
+        SendError::Failed(SendToChannelFailure::WindowFull) => CommandFailure::ChannelWindowFull,
+        SendError::Failed(SendToChannelFailure::Untrackable) => CommandFailure::ChannelUntrackable,
+        SendError::Failed(SendToChannelFailure::Timeout) => CommandFailure::DeliveryTimedOut,
+    }
+}
+
+fn allow_requester_failure(error: SendError<AllowRequesterFailure>) -> CommandFailure {
+    match error {
+        SendError::NodeStopped => CommandFailure::NodeStopped,
+        SendError::Busy => CommandFailure::Busy,
+        SendError::PayloadTooLarge => CommandFailure::PayloadTooLarge,
+        SendError::Failed(AllowRequesterFailure::Rejected(rejection)) => match rejection {
+            AllowRequesterRejection::NoSuchHandler => CommandFailure::UnknownRequestHandler,
+            AllowRequesterRejection::NoAllowList => CommandFailure::RequestPolicyNotAllowList,
+            AllowRequesterRejection::AllowListFull => CommandFailure::RequestAllowListFull,
+        },
+    }
+}
+
+fn engine_resource_strategy(strategy: ResourceStrategy) -> EngineResourceStrategy {
+    match strategy {
+        ResourceStrategy::Refuse => EngineResourceStrategy::AcceptNone,
+        ResourceStrategy::Accept {
+            maximum_uncompressed_bytes,
+            accept_compressed,
+        } => EngineResourceStrategy::Accept {
+            max_uncompressed_bytes: maximum_uncompressed_bytes,
+            accept_compressed,
+        },
+    }
+}
+
+fn engine_request_policy(policy: RequestPolicy) -> EngineRequestPolicy {
+    match policy {
+        RequestPolicy::AllowNone => EngineRequestPolicy::AllowNone,
+        RequestPolicy::AllowAll => EngineRequestPolicy::AllowAll,
+        RequestPolicy::AllowList => EngineRequestPolicy::AllowList,
+    }
+}
+
+fn unpack_binary(packed: &[u8]) -> Option<&[u8]> {
+    match packed {
+        [0xc4, len, rest @ ..] if rest.len() == *len as usize => Some(rest),
+        [0xc5, a, b, rest @ ..] if rest.len() == u16::from_be_bytes([*a, *b]) as usize => {
+            Some(rest)
+        }
+        [0xc6, a, b, c, d, rest @ ..]
+            if u32::try_from(rest.len()) == Ok(u32::from_be_bytes([*a, *b, *c, *d])) =>
+        {
+            Some(rest)
+        }
+        _ => None,
+    }
+}
+
 fn engine_destination(value: DestinationHash) -> personal_rns::wire::DestinationHash {
     personal_rns::wire::DestinationHash::new(value.into_bytes())
+}
+
+fn engine_identity(value: IdentityHash) -> personal_rns::identity::IdentityHash {
+    personal_rns::identity::IdentityHash::new(value.into_bytes())
+}
+
+fn engine_request_path(
+    value: RequestPathHash,
+) -> personal_rns::routing::request_handlers::RequestPathHash {
+    personal_rns::routing::request_handlers::RequestPathHash::new(value.into_bytes())
 }
 
 fn engine_interface(value: InterfaceId) -> personal_rns::interfaces::InterfaceId {
@@ -821,7 +1266,7 @@ fn publish_message(sink: &dyn NativeEventSink, message: Message<'_>) -> bool {
             data,
         } => ApplicationEvent::ChannelMessage(ChannelMessage {
             link_id: host_link(link_id),
-            message_type: format!("{message_type:?}"),
+            message_type: message_type.0,
             data: data.to_vec(),
         }),
     };
@@ -918,7 +1363,7 @@ fn translate_diagnostic(diagnostic: Diagnostic) -> DiagnosticEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prns_host::PrnsLimits;
+    use prns_host::{DestinationName, PrnsLimits, SingleDestinationConfig};
 
     struct Sink;
 
@@ -976,6 +1421,55 @@ mod tests {
             CommandWait::Completed(Ok(CommandOutcome::InterfaceDetached { .. }))
         ) {
             return Err("interface did not detach".to_string());
+        }
+        let command = host
+            .submit(HostCommand::SendChannelMessage {
+                link_id: LinkId::new([0; 16]),
+                message_type: 0xf000,
+                payload: Vec::new(),
+            })
+            .map_err(|error| format!("{error:?}"))?;
+        if !matches!(
+            command.wait(Some(Duration::from_secs(2))),
+            CommandWait::Completed(Err(CommandFailure::InvalidChannelMessageType))
+        ) {
+            return Err("reserved channel type did not settle as invalid".to_string());
+        }
+        host.stop();
+        Ok(())
+    }
+
+    #[test]
+    fn configured_host_registers_request_handlers() -> Result<(), String> {
+        let mut config = config();
+        config
+            .destinations
+            .push(DestinationConfig::Single(SingleDestinationConfig {
+                name: DestinationName::try_new("host-test", ["request".to_string()])
+                    .map_err(|error| format!("{error:?}"))?,
+                identity: DestinationIdentityConfig::HostIdentity,
+                announce_app_data: Vec::new(),
+                request_handlers: vec![RequestHandlerConfig {
+                    path: "/echo".to_string(),
+                    policy: RequestPolicy::AllowList,
+                }],
+            }));
+        let host =
+            NativeHost::start(config, Arc::new(Sink)).map_err(|error| format!("{error:?}"))?;
+        let destination = host.destination_hashes()[0];
+        let engine_path = personal_rns::routing::request_handlers::RequestPathHash::of("/echo");
+        let command = host
+            .submit(HostCommand::AllowRequester {
+                destination,
+                path_hash: RequestPathHash::new(*engine_path.as_bytes()),
+                identity: IdentityHash::new([0x44; 16]),
+            })
+            .map_err(|error| format!("{error:?}"))?;
+        if !matches!(
+            command.wait(Some(Duration::from_secs(2))),
+            CommandWait::Completed(Ok(CommandOutcome::RequesterAllowed))
+        ) {
+            return Err("requester was not admitted".to_string());
         }
         host.stop();
         Ok(())

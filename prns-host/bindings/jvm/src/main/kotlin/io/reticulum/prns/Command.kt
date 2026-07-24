@@ -150,6 +150,27 @@ private fun decodeCommandSettlement(result: NativeCommandResult): CommandSettlem
         CommandOutcomeKind.INTERFACE_DETACHED -> CommandOutcomeInterfaceDetached(
             InterfaceId(value),
         )
+        CommandOutcomeKind.LINK_ESTABLISHED -> CommandOutcomeLinkEstablished(
+            LinkId(value),
+            result.rttMillis,
+        )
+        CommandOutcomeKind.PATH_DISCOVERED -> {
+            if (value.size != 1) {
+                throw StatusException("decodePathHops", Status.BACKEND_FAILED)
+            }
+            CommandOutcomePathDiscovered(value[0].toUByte().toInt())
+        }
+        CommandOutcomeKind.IDENTIFIED -> CommandOutcomeIdentified
+        CommandOutcomeKind.RESPONSE_RECEIVED -> CommandOutcomeResponseReceived(
+            Bytes(value),
+            result.rttMillis,
+        )
+        CommandOutcomeKind.RESPONSE_SENT -> CommandOutcomeResponseSent(
+            result.rttMillis,
+        )
+        CommandOutcomeKind.RESOURCE_SENT -> CommandOutcomeResourceSent
+        CommandOutcomeKind.RESOURCE_STRATEGY_SET -> CommandOutcomeResourceStrategySet
+        CommandOutcomeKind.REQUESTER_ALLOWED -> CommandOutcomeRequesterAllowed
     }
     return CommandSucceeded(outcome)
 }
@@ -175,4 +196,19 @@ private fun decodeCommandFailure(
     CommandFailureKind.UNSUPPORTED_BY_BACKEND -> CommandFailureUnsupportedByBackend
     CommandFailureKind.UNKNOWN_LINK -> CommandFailureUnknownLink
     CommandFailureKind.LINK_NOT_ACTIVE -> CommandFailureLinkNotActive
+    CommandFailureKind.ENTROPY_UNAVAILABLE -> CommandFailureEntropyUnavailable
+    CommandFailureKind.NOT_LINK_INITIATOR -> CommandFailureNotLinkInitiator
+    CommandFailureKind.IDENTITY_NOT_HELD -> CommandFailureIdentityNotHeld
+    CommandFailureKind.UNKNOWN_REQUEST_HANDLER -> CommandFailureUnknownRequestHandler
+    CommandFailureKind.REQUEST_POLICY_NOT_ALLOW_LIST -> CommandFailureRequestPolicyNotAllowList
+    CommandFailureKind.REQUEST_ALLOW_LIST_FULL -> CommandFailureRequestAllowListFull
+    CommandFailureKind.LINK_BUSY -> CommandFailureLinkBusy
+    CommandFailureKind.RESOURCE_TABLE_FULL -> CommandFailureResourceTableFull
+    CommandFailureKind.RESOURCE_METADATA_TOO_LARGE -> CommandFailureResourceMetadataTooLarge
+    CommandFailureKind.RESOURCE_REJECTED_BY_PEER -> CommandFailureResourceRejectedByPeer
+    CommandFailureKind.RESOURCE_SEQUENCING_FAILED -> CommandFailureResourceSequencingFailed
+    CommandFailureKind.RESOURCE_PREDECESSOR_FAILED -> CommandFailureResourcePredecessorFailed
+    CommandFailureKind.CHANNEL_WINDOW_FULL -> CommandFailureChannelWindowFull
+    CommandFailureKind.CHANNEL_UNTRACKABLE -> CommandFailureChannelUntrackable
+    CommandFailureKind.INVALID_CHANNEL_MESSAGE_TYPE -> CommandFailureInvalidChannelMessageType
 }

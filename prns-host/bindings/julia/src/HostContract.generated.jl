@@ -78,12 +78,41 @@ end
     BitrateKindBitsPerSecond = 2
 end
 
+@enum ResponseTimeoutKind::UInt32 begin
+    ResponseTimeoutKindLinkDefault = 1
+    ResponseTimeoutKindExact = 2
+end
+
+@enum ResourceCompressionKind::UInt32 begin
+    ResourceCompressionKindAuto = 1
+    ResourceCompressionKindNever = 2
+end
+
+@enum ResourceStrategyKind::UInt32 begin
+    ResourceStrategyKindRefuse = 1
+    ResourceStrategyKindAccept = 2
+end
+
+@enum RequestPolicy::UInt32 begin
+    RequestPolicyAllowNone = 1
+    RequestPolicyAllowAll = 2
+    RequestPolicyAllowList = 3
+end
+
 @enum CommandOutcomeKind::UInt32 begin
     CommandOutcomeKindAnnounced = 1
     CommandOutcomeKindPacketDelivered = 2
     CommandOutcomeKindLinkCloseQueued = 3
     CommandOutcomeKindInterfaceAttached = 4
     CommandOutcomeKindInterfaceDetached = 5
+    CommandOutcomeKindLinkEstablished = 6
+    CommandOutcomeKindPathDiscovered = 7
+    CommandOutcomeKindIdentified = 8
+    CommandOutcomeKindResponseReceived = 9
+    CommandOutcomeKindResponseSent = 10
+    CommandOutcomeKindResourceSent = 11
+    CommandOutcomeKindResourceStrategySet = 12
+    CommandOutcomeKindRequesterAllowed = 13
 end
 
 @enum CommandFailureKind::UInt32 begin
@@ -104,6 +133,21 @@ end
     CommandFailureKindUnsupportedByBackend = 15
     CommandFailureKindUnknownLink = 16
     CommandFailureKindLinkNotActive = 17
+    CommandFailureKindEntropyUnavailable = 18
+    CommandFailureKindNotLinkInitiator = 19
+    CommandFailureKindIdentityNotHeld = 20
+    CommandFailureKindUnknownRequestHandler = 21
+    CommandFailureKindRequestPolicyNotAllowList = 22
+    CommandFailureKindRequestAllowListFull = 23
+    CommandFailureKindLinkBusy = 24
+    CommandFailureKindResourceTableFull = 25
+    CommandFailureKindResourceMetadataTooLarge = 26
+    CommandFailureKindResourceRejectedByPeer = 27
+    CommandFailureKindResourceSequencingFailed = 28
+    CommandFailureKindResourcePredecessorFailed = 29
+    CommandFailureKindChannelWindowFull = 30
+    CommandFailureKindChannelUntrackable = 31
+    CommandFailureKindInvalidChannelMessageType = 32
 end
 
 @enum DeliveryEvidenceKind::UInt32 begin
@@ -289,6 +333,11 @@ struct DestinationName
     aspects::Vector{String}
 end
 
+struct RequestHandlerConfig
+    path::String
+    policy::RequestPolicy
+end
+
 abstract type ResourceStream end
 
 abstract type IdentityConfig end
@@ -322,6 +371,33 @@ struct BitrateBitsPerSecond <: Bitrate
     value::UInt64
 end
 
+abstract type ResponseTimeout end
+
+struct ResponseTimeoutLinkDefault <: ResponseTimeout
+end
+
+struct ResponseTimeoutExact <: ResponseTimeout
+    millis::UInt64
+end
+
+abstract type ResourceCompression end
+
+struct ResourceCompressionAuto <: ResourceCompression
+end
+
+struct ResourceCompressionNever <: ResourceCompression
+end
+
+abstract type ResourceStrategy end
+
+struct ResourceStrategyRefuse <: ResourceStrategy
+end
+
+struct ResourceStrategyAccept <: ResourceStrategy
+    maximum_uncompressed_bytes::UInt64
+    accept_compressed::Bool
+end
+
 abstract type DestinationConfig end
 
 struct DestinationConfigPlain <: DestinationConfig
@@ -332,6 +408,7 @@ struct DestinationConfigSingle <: DestinationConfig
     name::DestinationName
     identity::DestinationIdentityConfig
     announce_app_data::Union{Nothing,Vector{UInt8}}
+    request_handlers::Vector{RequestHandlerConfig}
 end
 
 abstract type HostCommand end
@@ -370,6 +447,67 @@ struct HostCommandDetachInterface <: HostCommand
     interface::InterfaceId
 end
 
+struct HostCommandEstablishLink <: HostCommand
+    destination::DestinationHash
+end
+
+struct HostCommandRequestPath <: HostCommand
+    destination::DestinationHash
+end
+
+struct HostCommandIdentify <: HostCommand
+    link_id::LinkId
+    identity::IdentityHash
+end
+
+struct HostCommandSendLinkPacket <: HostCommand
+    link_id::LinkId
+    payload::Vector{UInt8}
+end
+
+struct HostCommandRequest <: HostCommand
+    link_id::LinkId
+    path_hash::RequestPathHash
+    payload::Vector{UInt8}
+    timeout::ResponseTimeout
+end
+
+struct HostCommandRespond <: HostCommand
+    link_id::LinkId
+    request_id::RequestId
+    request_rtt_millis::UInt64
+    payload::Vector{UInt8}
+end
+
+struct HostCommandSendResource <: HostCommand
+    link_id::LinkId
+    payload::Vector{UInt8}
+    packed_metadata::Union{Nothing,Vector{UInt8}}
+    compression::ResourceCompression
+end
+
+struct HostCommandSetLinkResourceStrategy <: HostCommand
+    link_id::LinkId
+    strategy::ResourceStrategy
+end
+
+struct HostCommandSetDestinationResourceStrategy <: HostCommand
+    destination::DestinationHash
+    strategy::ResourceStrategy
+end
+
+struct HostCommandSendChannelMessage <: HostCommand
+    link_id::LinkId
+    message_type::UInt16
+    payload::Vector{UInt8}
+end
+
+struct HostCommandAllowRequester <: HostCommand
+    destination::DestinationHash
+    path_hash::RequestPathHash
+    identity::IdentityHash
+end
+
 abstract type CommandOutcome end
 
 struct CommandOutcomeAnnounced <: CommandOutcome
@@ -390,6 +528,36 @@ end
 
 struct CommandOutcomeInterfaceDetached <: CommandOutcome
     interface::InterfaceId
+end
+
+struct CommandOutcomeLinkEstablished <: CommandOutcome
+    link_id::LinkId
+    rtt_millis::UInt64
+end
+
+struct CommandOutcomePathDiscovered <: CommandOutcome
+    hops::UInt8
+end
+
+struct CommandOutcomeIdentified <: CommandOutcome
+end
+
+struct CommandOutcomeResponseReceived <: CommandOutcome
+    data::Vector{UInt8}
+    rtt_millis::UInt64
+end
+
+struct CommandOutcomeResponseSent <: CommandOutcome
+    rtt_millis::UInt64
+end
+
+struct CommandOutcomeResourceSent <: CommandOutcome
+end
+
+struct CommandOutcomeResourceStrategySet <: CommandOutcome
+end
+
+struct CommandOutcomeRequesterAllowed <: CommandOutcome
 end
 
 abstract type CommandFailure end
@@ -445,6 +613,51 @@ struct CommandFailureUnknownLink <: CommandFailure
 end
 
 struct CommandFailureLinkNotActive <: CommandFailure
+end
+
+struct CommandFailureEntropyUnavailable <: CommandFailure
+end
+
+struct CommandFailureNotLinkInitiator <: CommandFailure
+end
+
+struct CommandFailureIdentityNotHeld <: CommandFailure
+end
+
+struct CommandFailureUnknownRequestHandler <: CommandFailure
+end
+
+struct CommandFailureRequestPolicyNotAllowList <: CommandFailure
+end
+
+struct CommandFailureRequestAllowListFull <: CommandFailure
+end
+
+struct CommandFailureLinkBusy <: CommandFailure
+end
+
+struct CommandFailureResourceTableFull <: CommandFailure
+end
+
+struct CommandFailureResourceMetadataTooLarge <: CommandFailure
+end
+
+struct CommandFailureResourceRejectedByPeer <: CommandFailure
+end
+
+struct CommandFailureResourceSequencingFailed <: CommandFailure
+end
+
+struct CommandFailureResourcePredecessorFailed <: CommandFailure
+end
+
+struct CommandFailureChannelWindowFull <: CommandFailure
+end
+
+struct CommandFailureChannelUntrackable <: CommandFailure
+end
+
+struct CommandFailureInvalidChannelMessageType <: CommandFailure
 end
 
 abstract type ApplicationEvent end
@@ -504,7 +717,7 @@ end
 
 struct ApplicationEventChannelMessage <: ApplicationEvent
     link_id::LinkId
-    message_type::String
+    message_type::UInt16
     data::Vector{UInt8}
 end
 

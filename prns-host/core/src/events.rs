@@ -61,7 +61,7 @@ pub struct ResourceNeedsDecompression {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChannelMessage {
     pub link_id: LinkId,
-    pub message_type: String,
+    pub message_type: u16,
     pub data: Vec<u8>,
 }
 
@@ -95,9 +95,7 @@ impl ApplicationEvent {
                 .len()
                 .saturating_add(event.metadata.as_ref().map_or(0, Vec::len)),
             Self::ResourceNeedsDecompression(event) => event.stream.len(),
-            Self::ChannelMessage(event) => {
-                event.message_type.len().saturating_add(event.data.len())
-            }
+            Self::ChannelMessage(event) => event.data.len(),
         }
     }
 }

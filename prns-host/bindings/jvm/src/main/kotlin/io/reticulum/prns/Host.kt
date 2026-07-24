@@ -115,6 +115,114 @@ class Host(options: HostOptions) : AutoCloseable {
                         output,
                     )
                 }
+                is HostCommandEstablishLink -> {
+                    NativeApi.library.prns_host_establish_link(
+                        host,
+                        arena.bytes(command.destination.copyBytes()),
+                        output,
+                    )
+                }
+                is HostCommandRequestPath -> {
+                    NativeApi.library.prns_host_request_path(
+                        host,
+                        arena.bytes(command.destination.copyBytes()),
+                        output,
+                    )
+                }
+                is HostCommandIdentify -> {
+                    NativeApi.library.prns_host_identify(
+                        host,
+                        arena.bytes(command.linkId.copyBytes()),
+                        arena.bytes(command.identity.copyBytes()),
+                        output,
+                    )
+                }
+                is HostCommandSendLinkPacket -> {
+                    NativeApi.library.prns_host_send_link_packet(
+                        host,
+                        arena.bytes(command.linkId.copyBytes()),
+                        arena.bytes(command.payload.copyBytes()),
+                        output,
+                    )
+                }
+                is HostCommandRequest -> {
+                    val timeout = command.timeout.native()
+                    NativeApi.library.prns_host_request(
+                        host,
+                        arena.bytes(command.linkId.copyBytes()),
+                        arena.bytes(command.pathHash.copyBytes()),
+                        arena.bytes(command.payload.copyBytes()),
+                        timeout.first,
+                        timeout.second,
+                        output,
+                    )
+                }
+                is HostCommandRespond -> {
+                    NativeApi.library.prns_host_respond(
+                        host,
+                        arena.bytes(command.linkId.copyBytes()),
+                        arena.bytes(command.requestId.copyBytes()),
+                        command.requestRttMillis,
+                        arena.bytes(command.payload.copyBytes()),
+                        output,
+                    )
+                }
+                is HostCommandSendResource -> {
+                    val metadata = command.packedMetadata?.let {
+                        arena.bytesReference(it.copyBytes())
+                    }
+                    NativeApi.library.prns_host_send_resource(
+                        host,
+                        arena.bytes(command.linkId.copyBytes()),
+                        arena.bytes(command.payload.copyBytes()),
+                        metadata,
+                        command.compression.native(),
+                        output,
+                    )
+                }
+                is HostCommandSetLinkResourceStrategy -> {
+                    val strategy = command.strategy.native()
+                    NativeApi.library.prns_host_set_link_resource_strategy(
+                        host,
+                        arena.bytes(command.linkId.copyBytes()),
+                        strategy.kind,
+                        strategy.maximumUncompressedBytes,
+                        strategy.acceptCompressed,
+                        output,
+                    )
+                }
+                is HostCommandSetDestinationResourceStrategy -> {
+                    val strategy = command.strategy.native()
+                    NativeApi.library.prns_host_set_destination_resource_strategy(
+                        host,
+                        arena.bytes(command.destination.copyBytes()),
+                        strategy.kind,
+                        strategy.maximumUncompressedBytes,
+                        strategy.acceptCompressed,
+                        output,
+                    )
+                }
+                is HostCommandSendChannelMessage -> {
+                    require(command.messageType in 0..0xffff) {
+                        "messageType must fit in 16 bits"
+                    }
+                    NativeApi.library.prns_host_send_channel_message(
+                        host,
+                        arena.bytes(command.linkId.copyBytes()),
+                        command.messageType.toShort(),
+                        arena.bytes(command.payload.copyBytes()),
+                        output,
+                    )
+                }
+                is HostCommandAllowRequester -> {
+                    NativeApi.library.prns_host_allow_requester(
+                        host,
+                        arena.bytes(command.destination.copyBytes()),
+                        arena.bytes(command.pathHash.copyBytes()),
+                        arena.bytes(command.identity.copyBytes()),
+                        output,
+                    )
+                }
             }
             checkedStatus(status, "executeCommand")
             Command(requireNotNull(output.value))
@@ -198,6 +306,35 @@ class Host(options: HostOptions) : AutoCloseable {
 private fun Bitrate.native(): Pair<Int, Long> = when (this) {
     BitrateAuto -> BitrateKind.AUTO.rawValue to 0L
     is BitrateBitsPerSecond -> BitrateKind.BITS_PER_SECOND.rawValue to value
+}
+
+private fun ResponseTimeout.native(): Pair<Int, Long> = when (this) {
+    ResponseTimeoutLinkDefault -> ResponseTimeoutKind.LINK_DEFAULT.rawValue to 0L
+    is ResponseTimeoutExact -> ResponseTimeoutKind.EXACT.rawValue to millis
+}
+
+private fun ResourceCompression.native(): Int = when (this) {
+    ResourceCompressionAuto -> ResourceCompressionKind.AUTO.rawValue
+    ResourceCompressionNever -> ResourceCompressionKind.NEVER.rawValue
+}
+
+private data class NativeResourceStrategy(
+    val kind: Int,
+    val maximumUncompressedBytes: Long,
+    val acceptCompressed: Byte,
+)
+
+private fun ResourceStrategy.native(): NativeResourceStrategy = when (this) {
+    ResourceStrategyRefuse -> NativeResourceStrategy(
+        ResourceStrategyKind.REFUSE.rawValue,
+        0L,
+        0,
+    )
+    is ResourceStrategyAccept -> NativeResourceStrategy(
+        ResourceStrategyKind.ACCEPT.rawValue,
+        maximumUncompressedBytes,
+        if (acceptCompressed) 1 else 0,
+    )
 }
 
 private fun <Input, Output> StreamClaim<Input>.map(

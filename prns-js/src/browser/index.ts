@@ -33,9 +33,13 @@ import type {
   LinkId,
   PrnsLimits as HostLimits,
   RequestId,
+  RequestHandlerConfig,
   RequestPathHash,
+  ResourceCompression,
   ResourceHash,
+  ResourceStrategy,
   ResourceStream,
+  ResponseTimeout,
 } from "../contract.js";
 import { MemoryResourceStream } from "../memory_resource.js";
 import { AutoWifiInterface } from "./auto_wifi.js";
@@ -72,9 +76,14 @@ export type {
   InterfaceId,
   LinkId,
   RequestId,
+  RequestHandlerConfig,
+  RequestPolicy,
   RequestPathHash,
+  ResourceCompression,
   ResourceHash,
+  ResourceStrategy,
   ResourceStream,
+  ResponseTimeout,
 } from "../contract.js";
 export {
   AutoWifiController,
@@ -145,6 +154,16 @@ export type RuntimeOperation =
   | "register-node-page"
   | "announce"
   | "send-single-packet"
+  | "establish-link"
+  | "request-path"
+  | "identify"
+  | "send-link-packet"
+  | "request"
+  | "respond"
+  | "set-link-resource-strategy"
+  | "set-destination-resource-strategy"
+  | "send-channel-message"
+  | "allow-requester"
   | "close-link"
   | "ingest"
   | "drain-events"
@@ -406,6 +425,30 @@ export type SendSinglePacketOutcome = CommandSettlementFor<
   CommandCase<"SendSinglePacket">
 >;
 export type CloseLinkOutcome = CommandSettlementFor<CommandCase<"CloseLink">>;
+export type EstablishLinkOutcome = CommandSettlementFor<
+  CommandCase<"EstablishLink">
+>;
+export type RequestPathOutcome = CommandSettlementFor<
+  CommandCase<"RequestPath">
+>;
+export type IdentifyOutcome = CommandSettlementFor<CommandCase<"Identify">>;
+export type SendLinkPacketOutcome = CommandSettlementFor<
+  CommandCase<"SendLinkPacket">
+>;
+export type RequestOutcome = CommandSettlementFor<CommandCase<"Request">>;
+export type RespondOutcome = CommandSettlementFor<CommandCase<"Respond">>;
+export type SendResourceOutcome = CommandSettlementFor<
+  CommandCase<"SendResource">
+>;
+export type SetResourceStrategyOutcome = CommandSettlementFor<
+  CommandCase<"SetLinkResourceStrategy" | "SetDestinationResourceStrategy">
+>;
+export type SendChannelMessageOutcome = CommandSettlementFor<
+  CommandCase<"SendChannelMessage">
+>;
+export type AllowRequesterOutcome = CommandSettlementFor<
+  CommandCase<"AllowRequester">
+>;
 
 export type SnapshotOutcome =
   | Tag<"Captured", PrnsSnapshot>
@@ -460,6 +503,20 @@ export type PrnsRuntimeBinding = {
   registerNodePage(options: RuntimeRegisterNodePageOptions): DestinationHash;
   announce(options: RuntimeAnnounceOptions): bigint;
   sendSinglePacket(options: RuntimeSendSinglePacketOptions): bigint;
+  establishLink(options: RuntimeDestinationCommandOptions): bigint;
+  requestPath(options: RuntimeDestinationCommandOptions): bigint;
+  identify(options: RuntimeIdentifyOptions): bigint;
+  sendLinkPacket(options: RuntimeLinkPayloadOptions): bigint;
+  request(options: RuntimeRequestOptions): bigint;
+  respond(options: RuntimeRespondOptions): bigint;
+  setLinkResourceStrategy(
+    options: RuntimeLinkResourceStrategyOptions,
+  ): bigint;
+  setDestinationResourceStrategy(
+    options: RuntimeDestinationResourceStrategyOptions,
+  ): boolean;
+  sendChannelMessage(options: RuntimeChannelMessageOptions): bigint;
+  allowRequester(options: RuntimeAllowRequesterOptions): bigint;
   closeLink(options: RuntimeCloseLinkOptions): bigint;
   ingest(options: RuntimeIngestOptions): void;
   drainEvents(): unknown[];
@@ -519,6 +576,7 @@ export type RuntimeRegisterSingleDestinationOptions = {
   appName: AppName;
   aspects: readonly Aspect[];
   appData?: AppData;
+  requestHandlers?: readonly RequestHandlerConfig[];
 };
 
 export type RegisterSingleDestinationOptions =
@@ -542,6 +600,65 @@ export type RuntimeCloseLinkOptions = {
   linkId: LinkId;
   nowMs: InstantMillis;
   entropy: EntropyBytes;
+};
+
+type RuntimeCommandContext = {
+  nowMs: InstantMillis;
+  entropy: EntropyBytes;
+};
+
+export type RuntimeDestinationCommandOptions = RuntimeCommandContext & {
+  destination: DestinationHash;
+};
+
+export type RuntimeIdentifyOptions = RuntimeCommandContext & {
+  linkId: LinkId;
+  identity: IdentityHash;
+};
+
+export type RuntimeLinkPayloadOptions = RuntimeCommandContext & {
+  linkId: LinkId;
+  payload: Uint8Array;
+};
+
+export type RuntimeRequestOptions = RuntimeLinkPayloadOptions & {
+  pathHash: RequestPathHash;
+  timeoutMillis?: number;
+};
+
+export type RuntimeRespondOptions = RuntimeLinkPayloadOptions & {
+  requestId: RequestId;
+  requestRttMillis: number;
+};
+
+type RuntimeResourceStrategy =
+  | {
+      strategy: "refuse";
+    }
+  | {
+      strategy: "accept";
+      maximumUncompressedBytes: number;
+      acceptCompressed: boolean;
+    };
+
+export type RuntimeLinkResourceStrategyOptions = RuntimeCommandContext &
+  RuntimeResourceStrategy & {
+    linkId: LinkId;
+  };
+
+export type RuntimeDestinationResourceStrategyOptions =
+  RuntimeResourceStrategy & {
+    destination: DestinationHash;
+  };
+
+export type RuntimeChannelMessageOptions = RuntimeLinkPayloadOptions & {
+  messageType: number;
+};
+
+export type RuntimeAllowRequesterOptions = RuntimeCommandContext & {
+  destination: DestinationHash;
+  pathHash: RequestPathHash;
+  identity: IdentityHash;
 };
 
 export type RuntimeIngestOptions = {
@@ -636,6 +753,20 @@ export type PrnsEvent = PrnsApplicationEvent | PrnsDiagnosticEvent;
 type ParsedPrnsEvent =
   | Tag<"Application", PrnsApplicationEvent>
   | Tag<"Diagnostic", Exclude<PrnsDiagnosticEvent, DiagnosticsDroppedEvent>>
+  | Tag<
+      "CommandResponse",
+      {
+        readonly commandId: CommandId;
+        readonly event: ResponseEvent;
+      }
+    >
+  | Tag<
+      "CommandResponseSegment",
+      {
+        readonly commandId: CommandId;
+        readonly event: ResponseSegmentEvent;
+      }
+    >
   | CommandSettledEvent;
 
 type RawEventType =
@@ -2408,8 +2539,12 @@ export class Prns {
   #diagnostics: BoundedAsyncLane<PrnsDiagnosticEvent>;
   #pendingCommands = new Map<
     bigint,
-    (settlement: CommandSettlement) => void
+    {
+      command: HostCommand;
+      settle: (settlement: CommandSettlement) => void;
+    }
   >();
+  #responseParts = new Map<bigint, Uint8Array[]>();
   #lifecycle: HostLifecycleState = Tag("Running");
 
   private constructor(
@@ -2595,7 +2730,7 @@ export class Prns {
     }
     return match_into<Promise<CommandSettlement>>().from(command, {
       Announce: ({ destination, interface: interfaceId }) =>
-        this.#issueCommand("announce", (entropy) =>
+        this.#issueCommand("announce", command, (entropy) =>
           this.#runtime.announce({
             destination,
             ...(interfaceId === undefined ? {} : { interfaceId }),
@@ -2604,7 +2739,7 @@ export class Prns {
           }),
         ),
       SendSinglePacket: ({ destination, payload }) =>
-        this.#issueCommand("send-single-packet", (entropy) =>
+        this.#issueCommand("send-single-packet", command, (entropy) =>
           this.#runtime.sendSinglePacket({
             destination,
             payload,
@@ -2613,7 +2748,7 @@ export class Prns {
           }),
         ),
       CloseLink: ({ linkId: value }) =>
-        this.#issueCommand("close-link", (entropy) =>
+        this.#issueCommand("close-link", command, (entropy) =>
           this.#runtime.closeLink({
             linkId: value,
             nowMs: this.#now(),
@@ -2628,6 +2763,140 @@ export class Prns {
         commandFailed(Tag("UnsupportedByBackend")),
       DetachInterface: async () =>
         commandFailed(Tag("UnsupportedByBackend")),
+      EstablishLink: ({ destination }) =>
+        this.#issueCommand("establish-link", command, (entropy) =>
+          this.#runtime.establishLink({
+            destination,
+            nowMs: this.#now(),
+            entropy,
+          }),
+        ),
+      RequestPath: ({ destination }) =>
+        this.#issueCommand("request-path", command, (entropy) =>
+          this.#runtime.requestPath({
+            destination,
+            nowMs: this.#now(),
+            entropy,
+          }),
+        ),
+      Identify: ({ linkId: value, identity }) =>
+        this.#issueCommand("identify", command, (entropy) =>
+          this.#runtime.identify({
+            linkId: value,
+            identity,
+            nowMs: this.#now(),
+            entropy,
+          }),
+        ),
+      SendLinkPacket: ({ linkId: value, payload }) =>
+        this.#issueCommand("send-link-packet", command, (entropy) =>
+          this.#runtime.sendLinkPacket({
+            linkId: value,
+            payload,
+            nowMs: this.#now(),
+            entropy,
+          }),
+        ),
+      Request: ({ linkId: value, pathHash, payload, timeout }) =>
+        this.#issueCommand("request", command, (entropy) =>
+          this.#runtime.request({
+            linkId: value,
+            pathHash,
+            payload,
+            nowMs: this.#now(),
+            entropy,
+            ...runtimeResponseTimeout(timeout),
+          }),
+        ),
+      Respond: ({
+        linkId: value,
+        requestId: responseRequestId,
+        requestRttMillis,
+        payload,
+      }) =>
+        this.#issueCommand("respond", command, (entropy) =>
+          this.#runtime.respond({
+            linkId: value,
+            requestId: responseRequestId,
+            requestRttMillis,
+            payload,
+            nowMs: this.#now(),
+            entropy,
+          }),
+        ),
+      SendResource: async () =>
+        commandFailed(Tag("UnsupportedByBackend")),
+      SetLinkResourceStrategy: ({ linkId: value, strategy }) =>
+        this.#issueCommand(
+          "set-link-resource-strategy",
+          command,
+          (entropy) =>
+            this.#runtime.setLinkResourceStrategy({
+              linkId: value,
+              nowMs: this.#now(),
+              entropy,
+              ...runtimeResourceStrategy(strategy),
+            }),
+        ),
+      SetDestinationResourceStrategy: async ({
+        destination,
+        strategy,
+      }) => {
+        try {
+          const configured =
+            this.#runtime.setDestinationResourceStrategy({
+              destination,
+              ...runtimeResourceStrategy(strategy),
+            });
+          return configured
+            ? Tag("Succeeded", Tag("ResourceStrategySet"))
+            : commandFailed(Tag("UnknownDestination"));
+        } catch (error) {
+          return commandFailed(
+            browserCommandFailure(
+              "set-destination-resource-strategy",
+              error,
+            ),
+          );
+        }
+      },
+      SendChannelMessage: ({
+        linkId: value,
+        messageType,
+        payload,
+      }) => {
+        if (
+          !Number.isSafeInteger(messageType) ||
+          messageType < 0 ||
+          messageType > 0xefff
+        ) {
+          return Promise.resolve(
+            commandFailed(Tag("InvalidChannelMessageType")),
+          );
+        }
+        return this.#issueCommand(
+          "send-channel-message",
+          command,
+          (entropy) =>
+            this.#runtime.sendChannelMessage({
+              linkId: value,
+              messageType,
+              payload,
+              nowMs: this.#now(),
+              entropy,
+            }),
+        );
+      },
+      AllowRequester: ({ destination, pathHash, identity }) =>
+        this.#issueCommand("allow-requester", command, (entropy) =>
+          this.#runtime.allowRequester({
+            destination,
+            pathHash,
+            identity,
+            nowMs: this.#now(),
+            entropy,
+          }),
+        ),
     });
   }
 
@@ -2654,6 +2923,129 @@ export class Prns {
 
   closeLink(value: LinkId): Promise<CloseLinkOutcome> {
     return this.execute(Tag("CloseLink", { linkId: value }));
+  }
+
+  establishLink(
+    destination: DestinationHash,
+  ): Promise<EstablishLinkOutcome> {
+    return this.execute(Tag("EstablishLink", { destination }));
+  }
+
+  requestPath(destination: DestinationHash): Promise<RequestPathOutcome> {
+    return this.execute(Tag("RequestPath", { destination }));
+  }
+
+  identify(
+    value: LinkId,
+    identity: IdentityHash,
+  ): Promise<IdentifyOutcome> {
+    return this.execute(Tag("Identify", { linkId: value, identity }));
+  }
+
+  sendLinkPacket(
+    value: LinkId,
+    payload: Uint8Array,
+  ): Promise<SendLinkPacketOutcome> {
+    return this.execute(
+      Tag("SendLinkPacket", { linkId: value, payload }),
+    );
+  }
+
+  request(
+    value: LinkId,
+    pathHash: RequestPathHash,
+    payload: Uint8Array,
+    timeout: ResponseTimeout = Tag("LinkDefault"),
+  ): Promise<RequestOutcome> {
+    return this.execute(
+      Tag("Request", {
+        linkId: value,
+        pathHash,
+        payload,
+        timeout,
+      }),
+    );
+  }
+
+  respond(
+    value: LinkId,
+    responseRequestId: RequestId,
+    requestRttMillis: number,
+    payload: Uint8Array,
+  ): Promise<RespondOutcome> {
+    return this.execute(
+      Tag("Respond", {
+        linkId: value,
+        requestId: responseRequestId,
+        requestRttMillis,
+        payload,
+      }),
+    );
+  }
+
+  sendResource(
+    value: LinkId,
+    payload: Uint8Array,
+    options: {
+      readonly packedMetadata?: Uint8Array;
+      readonly compression?: ResourceCompression;
+    } = {},
+  ): Promise<SendResourceOutcome> {
+    return this.execute(
+      Tag("SendResource", {
+        linkId: value,
+        payload,
+        compression: options.compression ?? Tag("Auto"),
+        ...(options.packedMetadata === undefined
+          ? {}
+          : { packedMetadata: options.packedMetadata }),
+      }),
+    );
+  }
+
+  setLinkResourceStrategy(
+    value: LinkId,
+    strategy: ResourceStrategy,
+  ): Promise<SetResourceStrategyOutcome> {
+    return this.execute(
+      Tag("SetLinkResourceStrategy", { linkId: value, strategy }),
+    );
+  }
+
+  setDestinationResourceStrategy(
+    destination: DestinationHash,
+    strategy: ResourceStrategy,
+  ): Promise<SetResourceStrategyOutcome> {
+    return this.execute(
+      Tag("SetDestinationResourceStrategy", {
+        destination,
+        strategy,
+      }),
+    );
+  }
+
+  sendChannelMessage(
+    value: LinkId,
+    messageType: number,
+    payload: Uint8Array,
+  ): Promise<SendChannelMessageOutcome> {
+    return this.execute(
+      Tag("SendChannelMessage", {
+        linkId: value,
+        messageType,
+        payload,
+      }),
+    );
+  }
+
+  allowRequester(
+    destination: DestinationHash,
+    pathHash: RequestPathHash,
+    identity: IdentityHash,
+  ): Promise<AllowRequesterOutcome> {
+    return this.execute(
+      Tag("AllowRequester", { destination, pathHash, identity }),
+    );
   }
 
   get lifecycle(): HostLifecycleState {
@@ -2684,6 +3076,7 @@ export class Prns {
 
   #issueCommand(
     operation: RuntimeOperation,
+    command: HostCommand,
     issue: (entropy: EntropyBytes) => bigint,
   ): Promise<CommandSettlement> {
     if (this.#lifecycle.tag !== "Running") {
@@ -2695,11 +3088,7 @@ export class Prns {
     const entropy = this.#entropyBytes();
     if (entropy.tag !== "Filled") {
       return Promise.resolve(
-        commandFailed(
-          Tag("WriteFailed", {
-            detail: entropyFailureDetail(entropy),
-          }),
-        ),
+        commandFailed(Tag("EntropyUnavailable")),
       );
     }
     let id: CommandId;
@@ -2711,7 +3100,7 @@ export class Prns {
       );
     }
     return new Promise((settle) => {
-      this.#pendingCommands.set(id, settle);
+      this.#pendingCommands.set(id, { command, settle });
       this.#pumpEvents();
     });
   }
@@ -2735,19 +3124,91 @@ export class Prns {
         Diagnostic: (diagnostic) => {
           this.#diagnostics.push(diagnostic);
         },
+        CommandResponse: ({ commandId: responseCommandId, event }) => {
+          this.#events.push(event);
+          this.#responseParts.set(responseCommandId, [event.data.data]);
+        },
+        CommandResponseSegment: ({
+          commandId: responseCommandId,
+          event,
+        }) => {
+          this.#events.push(event);
+          const parts = this.#responseParts.get(responseCommandId) ?? [];
+          parts.push(event.data.data);
+          this.#responseParts.set(responseCommandId, parts);
+        },
         CommandSettled: ({ commandId, settlement }) => {
           if (settlement === undefined) {
             return;
           }
-          const settle = this.#pendingCommands.get(commandId);
-          if (settle === undefined) {
+          const pending = this.#pendingCommands.get(commandId);
+          if (pending === undefined) {
             return;
           }
           this.#pendingCommands.delete(commandId);
-          settle(settlement);
+          pending.settle(
+            this.#commandSettlement(
+              commandId,
+              pending.command,
+              settlement,
+            ),
+          );
         },
       });
     }
+  }
+
+  #commandSettlement(
+    id: CommandId,
+    command: HostCommand,
+    settlement: CommandSettlement,
+  ): CommandSettlement {
+    if (settlement.tag === "Failed") {
+      this.#responseParts.delete(id);
+      return settlement;
+    }
+    if (command.tag === "Request") {
+      if (settlement.data.tag !== "PacketDelivered") {
+        this.#responseParts.delete(id);
+        return commandFailed(
+          Tag("WriteFailed", {
+            detail: "request settled without delivery evidence",
+          }),
+        );
+      }
+      const parts = this.#responseParts.get(id);
+      this.#responseParts.delete(id);
+      if (parts === undefined) {
+        return commandFailed(
+          Tag("WriteFailed", {
+            detail: "request settled without response data",
+          }),
+        );
+      }
+      return Tag(
+        "Succeeded",
+        Tag("ResponseReceived", {
+          data: concatenateBytes(parts),
+          rttMillis: settlement.data.data.rttMillis,
+        }),
+      );
+    }
+    if (command.tag === "Respond") {
+      if (settlement.data.tag !== "ResponseSent") {
+        return commandFailed(
+          Tag("WriteFailed", {
+            detail: "response settled with an unexpected outcome",
+          }),
+        );
+      }
+      return Tag(
+        "Succeeded",
+        Tag("ResponseSent", {
+          rttMillis: command.data.requestRttMillis,
+        }),
+      );
+    }
+    return settlement;
   }
 
   #failBackpressure(rejectedEventBytes: number): void {
@@ -2773,10 +3234,11 @@ export class Prns {
   }
 
   #settleFailedCommands(detail: string): void {
-    for (const settle of this.#pendingCommands.values()) {
-      settle(commandFailed(Tag("WriteFailed", { detail })));
+    for (const pending of this.#pendingCommands.values()) {
+      pending.settle(commandFailed(Tag("WriteFailed", { detail })));
     }
     this.#pendingCommands.clear();
+    this.#responseParts.clear();
   }
 }
 
@@ -3404,33 +3866,39 @@ function parseEvent(raw: unknown): ParsedPrnsEvent {
       );
     },
     response: (data) => {
-      bigintField(data, "commandId");
+      const responseCommandId = commandId(bigintField(data, "commandId"));
       return Tag(
-        "Application",
-        Tag("Response", {
-          linkId: linkId(bytesField(data, "linkId")),
-          requestId: requestId(bytesField(data, "requestId")),
-          data: copyBytes(bytesField(data, "data")),
-        }),
+        "CommandResponse",
+        {
+          commandId: responseCommandId,
+          event: Tag("Response", {
+            linkId: linkId(bytesField(data, "linkId")),
+            requestId: requestId(bytesField(data, "requestId")),
+            data: copyBytes(bytesField(data, "data")),
+          }),
+        },
       );
     },
     responseSegment: (data) => {
-      bigintField(data, "commandId");
+      const responseCommandId = commandId(bigintField(data, "commandId"));
       return Tag(
-        "Application",
-        Tag("ResponseSegment", {
-          linkId: linkId(bytesField(data, "linkId")),
-          requestId: requestId(bytesField(data, "requestId")),
-          segmentIndex: nonNegativeInteger(
-            numberField(data, "segmentIndex"),
-            "segmentIndex",
-          ),
-          totalSegments: positiveInteger(
-            numberField(data, "totalSegments"),
-            "totalSegments",
-          ),
-          data: copyBytes(bytesField(data, "data")),
-        }),
+        "CommandResponseSegment",
+        {
+          commandId: responseCommandId,
+          event: Tag("ResponseSegment", {
+            linkId: linkId(bytesField(data, "linkId")),
+            requestId: requestId(bytesField(data, "requestId")),
+            segmentIndex: nonNegativeInteger(
+              numberField(data, "segmentIndex"),
+              "segmentIndex",
+            ),
+            totalSegments: positiveInteger(
+              numberField(data, "totalSegments"),
+              "totalSegments",
+            ),
+            data: copyBytes(bytesField(data, "data")),
+          }),
+        },
       );
     },
     channelMessage: (data) =>
@@ -3438,7 +3906,10 @@ function parseEvent(raw: unknown): ParsedPrnsEvent {
         "Application",
         Tag("ChannelMessage", {
           linkId: linkId(bytesField(data, "linkId")),
-          messageType: stringField(data, "messageType"),
+          messageType: nonNegativeInteger(
+            numberField(data, "messageType"),
+            "messageType",
+          ),
           data: copyBytes(bytesField(data, "data")),
         }),
       ),
@@ -3624,6 +4095,49 @@ function parseCommandSettlement(
       ),
     );
   }
+  if (kind === "LinkEstablished") {
+    return Tag(
+      "Succeeded",
+      Tag("LinkEstablished", {
+        linkId: linkId(bytesField(value, "linkId")),
+        rttMillis: nonNegativeInteger(
+          numberField(value, "rttMillis"),
+          "rttMillis",
+        ),
+      }),
+    );
+  }
+  if (kind === "PathDiscovered") {
+    return Tag(
+      "Succeeded",
+      Tag("PathDiscovered", {
+        hops: nonNegativeInteger(numberField(value, "hops"), "hops"),
+      }),
+    );
+  }
+  if (kind === "Identified") {
+    return Tag("Succeeded", Tag("Identified"));
+  }
+  if (kind === "ResponseSent") {
+    return Tag(
+      "Succeeded",
+      Tag("ResponseSent", {
+        rttMillis: nonNegativeInteger(
+          numberField(value, "rttMillis"),
+          "rttMillis",
+        ),
+      }),
+    );
+  }
+  if (kind === "ResourceSent") {
+    return Tag("Succeeded", Tag("ResourceSent"));
+  }
+  if (kind === "ResourceStrategySet") {
+    return Tag("Succeeded", Tag("ResourceStrategySet"));
+  }
+  if (kind === "RequesterAllowed") {
+    return Tag("Succeeded", Tag("RequesterAllowed"));
+  }
   throw new PrnsValidationError(
     "invalid-component",
     `unknown command outcome ${kind}`,
@@ -3682,6 +4196,51 @@ function parseCommandFailure(value: Record<string, unknown>): CommandFailure {
   }
   if (kind === "LinkNotActive") {
     return Tag("LinkNotActive");
+  }
+  if (kind === "EntropyUnavailable") {
+    return Tag("EntropyUnavailable");
+  }
+  if (kind === "NotLinkInitiator") {
+    return Tag("NotLinkInitiator");
+  }
+  if (kind === "IdentityNotHeld") {
+    return Tag("IdentityNotHeld");
+  }
+  if (kind === "UnknownRequestHandler") {
+    return Tag("UnknownRequestHandler");
+  }
+  if (kind === "RequestPolicyNotAllowList") {
+    return Tag("RequestPolicyNotAllowList");
+  }
+  if (kind === "RequestAllowListFull") {
+    return Tag("RequestAllowListFull");
+  }
+  if (kind === "LinkBusy") {
+    return Tag("LinkBusy");
+  }
+  if (kind === "ResourceTableFull") {
+    return Tag("ResourceTableFull");
+  }
+  if (kind === "ResourceMetadataTooLarge") {
+    return Tag("ResourceMetadataTooLarge");
+  }
+  if (kind === "ResourceRejectedByPeer") {
+    return Tag("ResourceRejectedByPeer");
+  }
+  if (kind === "ResourceSequencingFailed") {
+    return Tag("ResourceSequencingFailed");
+  }
+  if (kind === "ResourcePredecessorFailed") {
+    return Tag("ResourcePredecessorFailed");
+  }
+  if (kind === "ChannelWindowFull") {
+    return Tag("ChannelWindowFull");
+  }
+  if (kind === "ChannelUntrackable") {
+    return Tag("ChannelUntrackable");
+  }
+  if (kind === "InvalidChannelMessageType") {
+    return Tag("InvalidChannelMessageType");
   }
   throw new PrnsValidationError(
     "invalid-component",
@@ -4477,19 +5036,54 @@ function browserCommandFailure(
   error: unknown,
 ): CommandFailure {
   const detail = describeHostError(error);
-  if (detail.includes("payload exceeds the single packet limit")) {
+  if (detail.includes("payload exceeds")) {
     return Tag("PayloadTooLarge");
   }
   return Tag("WriteFailed", { detail: `${operation}: ${detail}` });
 }
 
-function entropyFailureDetail(failure: EntropyFailure): string {
-  return match(failure, {
-    HostApiUnavailable: ({ api }) => `${api} is unavailable`,
-    EntropySourceFailed: ({ detail }) => detail,
-    InsufficientEntropy: ({ minimum, actual }) =>
-      `entropy source returned ${actual} bytes; ${minimum} required`,
+function runtimeResponseTimeout(
+  timeout: ResponseTimeout,
+): { timeoutMillis?: number } {
+  return match(timeout, {
+    LinkDefault: () => ({}),
+    Exact: ({ millis }) => ({
+      timeoutMillis: nonNegativeInteger(millis, "timeoutMillis"),
+    }),
   });
+}
+
+function runtimeResourceStrategy(
+  strategy: ResourceStrategy,
+): RuntimeResourceStrategy {
+  return match(strategy, {
+    Refuse: () => ({ strategy: "refuse" as const }),
+    Accept: ({
+      maximumUncompressedBytes,
+      acceptCompressed,
+    }) => ({
+      strategy: "accept" as const,
+      maximumUncompressedBytes: nonNegativeInteger(
+        maximumUncompressedBytes,
+        "maximumUncompressedBytes",
+      ),
+      acceptCompressed,
+    }),
+  });
+}
+
+function concatenateBytes(parts: readonly Uint8Array[]): Uint8Array {
+  const length = parts.reduce(
+    (total, part) => total + part.length,
+    0,
+  );
+  const joined = new Uint8Array(length);
+  let offset = 0;
+  for (const part of parts) {
+    joined.set(part, offset);
+    offset += part.length;
+  }
+  return joined;
 }
 
 function fillEntropy(source: EntropySource, length: number): EntropyOutcome {
@@ -4769,8 +5363,7 @@ function retainedBrowserEventBytes(event: PrnsApplicationEvent): number {
     ResourceSegment: ({ data, metadata }) =>
       data.length + (metadata?.length ?? 0),
     ResourceNeedsDecompression: ({ stream }) => stream.length,
-    ChannelMessage: ({ messageType, data }) =>
-      messageType.length + data.length,
+    ChannelMessage: ({ data }) => data.length,
   });
 }
 

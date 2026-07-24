@@ -295,6 +295,16 @@ public sealed class PrnsHost : IAsyncDisposable
                                 MarshalIdentity(dedicated.Identity, arena)
                             )
                     );
+                    var handlers = single.RequestHandlers.IsDefaultOrEmpty
+                        ? []
+                        : single.RequestHandlers
+                            .Select(handler => new Native.RequestHandlerConfig
+                            {
+                                StructSize = (nuint)Marshal.SizeOf<Native.RequestHandlerConfig>(),
+                                Path = arena.String(handler.Path),
+                                Policy = handler.Policy,
+                            })
+                            .ToArray();
                     return new Native.DestinationConfig
                     {
                         StructSize = (nuint)Marshal.SizeOf<Native.DestinationConfig>(),
@@ -305,6 +315,8 @@ public sealed class PrnsHost : IAsyncDisposable
                         AnnounceAppData = single.AnnounceAppData is { } appData
                             ? arena.Bytes(appData.Span)
                             : default,
+                        RequestHandlers = arena.Array<Native.RequestHandlerConfig>(handlers),
+                        RequestHandlerCount = (nuint)handlers.Length,
                     };
                 }
             );
@@ -403,7 +415,18 @@ public sealed class PrnsHost : IAsyncDisposable
                 server => Submit(server, arena),
                 client => Submit(client, arena),
                 udp => Submit(udp, arena),
-                detach => Submit(detach, arena)
+                detach => Submit(detach, arena),
+                establish => Submit(establish, arena),
+                path => Submit(path, arena),
+                identify => Submit(identify, arena),
+                sendLink => Submit(sendLink, arena),
+                request => Submit(request, arena),
+                respond => Submit(respond, arena),
+                resource => Submit(resource, arena),
+                linkStrategy => Submit(linkStrategy, arena),
+                destinationStrategy => Submit(destinationStrategy, arena),
+                channel => Submit(channel, arena),
+                allow => Submit(allow, arena)
             );
         }
         using (nativeCommand)
@@ -464,6 +487,102 @@ public sealed class PrnsHost : IAsyncDisposable
         InterfaceId interfaceId,
         CancellationToken cancellationToken = default
     ) => ExecuteAsync(new HostCommand.DetachInterface(interfaceId), cancellationToken);
+
+    public ValueTask<CommandSettlement> EstablishLinkAsync(
+        DestinationHash destination,
+        CancellationToken cancellationToken = default
+    ) => ExecuteAsync(new HostCommand.EstablishLink(destination), cancellationToken);
+
+    public ValueTask<CommandSettlement> RequestPathAsync(
+        DestinationHash destination,
+        CancellationToken cancellationToken = default
+    ) => ExecuteAsync(new HostCommand.RequestPath(destination), cancellationToken);
+
+    public ValueTask<CommandSettlement> IdentifyAsync(
+        LinkId linkId,
+        IdentityHash identity,
+        CancellationToken cancellationToken = default
+    ) => ExecuteAsync(new HostCommand.Identify(linkId, identity), cancellationToken);
+
+    public ValueTask<CommandSettlement> SendLinkPacketAsync(
+        LinkId linkId,
+        ReadOnlyMemory<byte> payload,
+        CancellationToken cancellationToken = default
+    ) => ExecuteAsync(new HostCommand.SendLinkPacket(linkId, payload), cancellationToken);
+
+    public ValueTask<CommandSettlement> RequestAsync(
+        LinkId linkId,
+        RequestPathHash pathHash,
+        ReadOnlyMemory<byte> payload,
+        ResponseTimeout timeout,
+        CancellationToken cancellationToken = default
+    ) => ExecuteAsync(new HostCommand.Request(linkId, pathHash, payload, timeout), cancellationToken);
+
+    public ValueTask<CommandSettlement> RespondAsync(
+        LinkId linkId,
+        RequestId requestId,
+        ulong requestRttMillis,
+        ReadOnlyMemory<byte> payload,
+        CancellationToken cancellationToken = default
+    ) =>
+        ExecuteAsync(
+            new HostCommand.Respond(linkId, requestId, requestRttMillis, payload),
+            cancellationToken
+        );
+
+    public ValueTask<CommandSettlement> SendResourceAsync(
+        LinkId linkId,
+        ReadOnlyMemory<byte> payload,
+        ReadOnlyMemory<byte>? packedMetadata,
+        ResourceCompression compression,
+        CancellationToken cancellationToken = default
+    ) =>
+        ExecuteAsync(
+            new HostCommand.SendResource(linkId, payload, packedMetadata, compression),
+            cancellationToken
+        );
+
+    public ValueTask<CommandSettlement> SetLinkResourceStrategyAsync(
+        LinkId linkId,
+        ResourceStrategy strategy,
+        CancellationToken cancellationToken = default
+    ) =>
+        ExecuteAsync(
+            new HostCommand.SetLinkResourceStrategy(linkId, strategy),
+            cancellationToken
+        );
+
+    public ValueTask<CommandSettlement> SetDestinationResourceStrategyAsync(
+        DestinationHash destination,
+        ResourceStrategy strategy,
+        CancellationToken cancellationToken = default
+    ) =>
+        ExecuteAsync(
+            new HostCommand.SetDestinationResourceStrategy(destination, strategy),
+            cancellationToken
+        );
+
+    public ValueTask<CommandSettlement> SendChannelMessageAsync(
+        LinkId linkId,
+        ushort messageType,
+        ReadOnlyMemory<byte> payload,
+        CancellationToken cancellationToken = default
+    ) =>
+        ExecuteAsync(
+            new HostCommand.SendChannelMessage(linkId, messageType, payload),
+            cancellationToken
+        );
+
+    public ValueTask<CommandSettlement> AllowRequesterAsync(
+        DestinationHash destination,
+        RequestPathHash pathHash,
+        IdentityHash identity,
+        CancellationToken cancellationToken = default
+    ) =>
+        ExecuteAsync(
+            new HostCommand.AllowRequester(destination, pathHash, identity),
+            cancellationToken
+        );
 
     private unsafe CommandHandle Submit(HostCommand.Announce command, NativeArena arena)
     {
@@ -558,12 +677,215 @@ public sealed class PrnsHost : IAsyncDisposable
         return Submitted(status, nativeCommand);
     }
 
+    private CommandHandle Submit(HostCommand.EstablishLink command, NativeArena arena)
+    {
+        var status = Native.prns_host_establish_link(
+            _handle,
+            arena.Bytes(command.Destination.Span),
+            out var nativeCommand
+        );
+        return Submitted(status, nativeCommand);
+    }
+
+    private CommandHandle Submit(HostCommand.RequestPath command, NativeArena arena)
+    {
+        var status = Native.prns_host_request_path(
+            _handle,
+            arena.Bytes(command.Destination.Span),
+            out var nativeCommand
+        );
+        return Submitted(status, nativeCommand);
+    }
+
+    private CommandHandle Submit(HostCommand.Identify command, NativeArena arena)
+    {
+        var status = Native.prns_host_identify(
+            _handle,
+            arena.Bytes(command.LinkId.Span),
+            arena.Bytes(command.Identity.Span),
+            out var nativeCommand
+        );
+        return Submitted(status, nativeCommand);
+    }
+
+    private CommandHandle Submit(HostCommand.SendLinkPacket command, NativeArena arena)
+    {
+        var status = Native.prns_host_send_link_packet(
+            _handle,
+            arena.Bytes(command.LinkId.Span),
+            arena.Bytes(command.Payload.Span),
+            out var nativeCommand
+        );
+        return Submitted(status, nativeCommand);
+    }
+
+    private CommandHandle Submit(HostCommand.Request command, NativeArena arena)
+    {
+        var timeout = MarshalResponseTimeout(command.Timeout);
+        var status = Native.prns_host_request(
+            _handle,
+            arena.Bytes(command.LinkId.Span),
+            arena.Bytes(command.PathHash.Span),
+            arena.Bytes(command.Payload.Span),
+            timeout.Kind,
+            timeout.Millis,
+            out var nativeCommand
+        );
+        return Submitted(status, nativeCommand);
+    }
+
+    private CommandHandle Submit(HostCommand.Respond command, NativeArena arena)
+    {
+        var status = Native.prns_host_respond(
+            _handle,
+            arena.Bytes(command.LinkId.Span),
+            arena.Bytes(command.RequestId.Span),
+            command.RequestRttMillis,
+            arena.Bytes(command.Payload.Span),
+            out var nativeCommand
+        );
+        return Submitted(status, nativeCommand);
+    }
+
+    private unsafe CommandHandle Submit(HostCommand.SendResource command, NativeArena arena)
+    {
+        var linkId = arena.Bytes(command.LinkId.Span);
+        var payload = arena.Bytes(command.Payload.Span);
+        var compression = MarshalResourceCompression(command.Compression);
+        if (command.PackedMetadata is { } metadata)
+        {
+            var nativeMetadata = arena.Bytes(metadata.Span);
+            var status = Native.prns_host_send_resource(
+                _handle,
+                linkId,
+                payload,
+                &nativeMetadata,
+                compression,
+                out var nativeCommand
+            );
+            return Submitted(status, nativeCommand);
+        }
+        {
+            var status = Native.prns_host_send_resource(
+                _handle,
+                linkId,
+                payload,
+                null,
+                compression,
+                out var nativeCommand
+            );
+            return Submitted(status, nativeCommand);
+        }
+    }
+
+    private CommandHandle Submit(HostCommand.SetLinkResourceStrategy command, NativeArena arena)
+    {
+        var strategy = MarshalResourceStrategy(command.Strategy);
+        var status = Native.prns_host_set_link_resource_strategy(
+            _handle,
+            arena.Bytes(command.LinkId.Span),
+            strategy.Kind,
+            strategy.Maximum,
+            strategy.AcceptCompressed,
+            out var nativeCommand
+        );
+        return Submitted(status, nativeCommand);
+    }
+
+    private CommandHandle Submit(
+        HostCommand.SetDestinationResourceStrategy command,
+        NativeArena arena
+    )
+    {
+        var strategy = MarshalResourceStrategy(command.Strategy);
+        var status = Native.prns_host_set_destination_resource_strategy(
+            _handle,
+            arena.Bytes(command.Destination.Span),
+            strategy.Kind,
+            strategy.Maximum,
+            strategy.AcceptCompressed,
+            out var nativeCommand
+        );
+        return Submitted(status, nativeCommand);
+    }
+
+    private CommandHandle Submit(HostCommand.SendChannelMessage command, NativeArena arena)
+    {
+        var status = Native.prns_host_send_channel_message(
+            _handle,
+            arena.Bytes(command.LinkId.Span),
+            command.MessageType,
+            arena.Bytes(command.Payload.Span),
+            out var nativeCommand
+        );
+        return Submitted(status, nativeCommand);
+    }
+
+    private CommandHandle Submit(HostCommand.AllowRequester command, NativeArena arena)
+    {
+        var status = Native.prns_host_allow_requester(
+            _handle,
+            arena.Bytes(command.Destination.Span),
+            arena.Bytes(command.PathHash.Span),
+            arena.Bytes(command.Identity.Span),
+            out var nativeCommand
+        );
+        return Submitted(status, nativeCommand);
+    }
+
     private static (BitrateKind Kind, ulong Value) MarshalBitrate(Bitrate bitrate)
     {
         ArgumentNullException.ThrowIfNull(bitrate);
         return bitrate.Match<(BitrateKind Kind, ulong Value)>(
             _ => (BitrateKind.Auto, 0),
             explicitBitrate => (BitrateKind.BitsPerSecond, explicitBitrate.Value)
+        );
+    }
+
+    private static (ResponseTimeoutKind Kind, ulong Millis) MarshalResponseTimeout(
+        ResponseTimeout timeout
+    )
+    {
+        ArgumentNullException.ThrowIfNull(timeout);
+        return timeout.Match<(ResponseTimeoutKind Kind, ulong Millis)>(
+            _ => (ResponseTimeoutKind.LinkDefault, 0),
+            exact => (ResponseTimeoutKind.Exact, exact.Millis)
+        );
+    }
+
+    private static ResourceCompressionKind MarshalResourceCompression(
+        ResourceCompression compression
+    )
+    {
+        ArgumentNullException.ThrowIfNull(compression);
+        return compression.Match(
+            _ => ResourceCompressionKind.Auto,
+            _ => ResourceCompressionKind.Never
+        );
+    }
+
+    private static (
+        ResourceStrategyKind Kind,
+        ulong Maximum,
+        byte AcceptCompressed
+    ) MarshalResourceStrategy(ResourceStrategy strategy)
+    {
+        ArgumentNullException.ThrowIfNull(strategy);
+        return strategy.Match<(
+            ResourceStrategyKind Kind,
+            ulong Maximum,
+            byte AcceptCompressed
+        )>(
+            _ => (ResourceStrategyKind.Refuse, 0, (byte)0),
+            accept =>
+            {
+                ArgumentOutOfRangeException.ThrowIfZero(accept.MaximumUncompressedBytes);
+                return (
+                    ResourceStrategyKind.Accept,
+                    accept.MaximumUncompressedBytes,
+                    accept.AcceptCompressed ? (byte)1 : (byte)0
+                );
+            }
         );
     }
 
@@ -605,6 +927,22 @@ public sealed class PrnsHost : IAsyncDisposable
             CommandOutcomeKind.InterfaceDetached => new CommandOutcome.InterfaceDetached(
                 new InterfaceId(NativeValue.CopyBytes(result.Value))
             ),
+            CommandOutcomeKind.LinkEstablished => new CommandOutcome.LinkEstablished(
+                new LinkId(NativeValue.CopyBytes(result.Value)),
+                result.RttMillis
+            ),
+            CommandOutcomeKind.PathDiscovered => new CommandOutcome.PathDiscovered(
+                DecodeHops(result.Value)
+            ),
+            CommandOutcomeKind.Identified => new CommandOutcome.Identified(),
+            CommandOutcomeKind.ResponseReceived => new CommandOutcome.ResponseReceived(
+                NativeValue.CopyBytes(result.Value),
+                result.RttMillis
+            ),
+            CommandOutcomeKind.ResponseSent => new CommandOutcome.ResponseSent(result.RttMillis),
+            CommandOutcomeKind.ResourceSent => new CommandOutcome.ResourceSent(),
+            CommandOutcomeKind.ResourceStrategySet => new CommandOutcome.ResourceStrategySet(),
+            CommandOutcomeKind.RequesterAllowed => new CommandOutcome.RequesterAllowed(),
             _ => throw new InvalidOperationException("Unknown native command outcome."),
         };
         return new CommandSettlement.Succeeded(outcome);
@@ -637,8 +975,38 @@ public sealed class PrnsHost : IAsyncDisposable
                 new CommandFailure.UnsupportedByBackend(),
             CommandFailureKind.UnknownLink => new CommandFailure.UnknownLink(),
             CommandFailureKind.LinkNotActive => new CommandFailure.LinkNotActive(),
+            CommandFailureKind.EntropyUnavailable => new CommandFailure.EntropyUnavailable(),
+            CommandFailureKind.NotLinkInitiator => new CommandFailure.NotLinkInitiator(),
+            CommandFailureKind.IdentityNotHeld => new CommandFailure.IdentityNotHeld(),
+            CommandFailureKind.UnknownRequestHandler => new CommandFailure.UnknownRequestHandler(),
+            CommandFailureKind.RequestPolicyNotAllowList =>
+                new CommandFailure.RequestPolicyNotAllowList(),
+            CommandFailureKind.RequestAllowListFull =>
+                new CommandFailure.RequestAllowListFull(),
+            CommandFailureKind.LinkBusy => new CommandFailure.LinkBusy(),
+            CommandFailureKind.ResourceTableFull => new CommandFailure.ResourceTableFull(),
+            CommandFailureKind.ResourceMetadataTooLarge =>
+                new CommandFailure.ResourceMetadataTooLarge(),
+            CommandFailureKind.ResourceRejectedByPeer =>
+                new CommandFailure.ResourceRejectedByPeer(),
+            CommandFailureKind.ResourceSequencingFailed =>
+                new CommandFailure.ResourceSequencingFailed(),
+            CommandFailureKind.ResourcePredecessorFailed =>
+                new CommandFailure.ResourcePredecessorFailed(),
+            CommandFailureKind.ChannelWindowFull => new CommandFailure.ChannelWindowFull(),
+            CommandFailureKind.ChannelUntrackable => new CommandFailure.ChannelUntrackable(),
+            CommandFailureKind.InvalidChannelMessageType =>
+                new CommandFailure.InvalidChannelMessageType(),
             _ => throw new InvalidOperationException("Unknown native command failure."),
         };
+    }
+
+    private static byte DecodeHops(Native.ByteView value)
+    {
+        var bytes = NativeValue.CopyBytes(value);
+        return bytes.Length == 1
+            ? bytes[0]
+            : throw new InvalidOperationException("Native path outcome has an invalid shape.");
     }
 
     private static PacketHash? DecodePacketHash(

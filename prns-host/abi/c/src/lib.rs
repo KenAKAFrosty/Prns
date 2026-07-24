@@ -15,12 +15,14 @@ use prns_host_core::{
     AbiCommandFailureKind, AbiCommandOutcomeKind, AbiDeliveryEvidenceKind,
     AbiDestinationConfigKind, AbiDestinationIdentityConfigKind, AbiDiagnosticEventKind,
     AbiEventField, AbiHostRole, AbiIdentityConfigKind, AbiLifecyclePhase, AbiLinkClosedReason,
+    AbiRequestPolicy, AbiResourceCompressionKind, AbiResourceStrategyKind, AbiResponseTimeoutKind,
     AbiStatus, AbiStopReason, ApplicationEvent, Bitrate, BoundedHostQueue, Capability,
     CommandFailure, CommandOutcome, ConsumerLane, DeliveryEvidence, DestinationConfig,
     DestinationHash, DestinationIdentityConfig, DestinationName, DiagnosticEvent, HostCommand,
     HostConfig, HostFailure, HostRole, IdentityConfig, IdentityHash, IdentitySecret, InterfaceId,
-    LifecycleState, LinkClosedReason, LinkId, PrnsLimits as CoreLimits, ResourceAvailable,
-    StopReason, HOST_CONTRACT, HOST_SCHEMA_VERSION,
+    LifecycleState, LinkClosedReason, LinkId, PrnsLimits as CoreLimits, RequestHandlerConfig,
+    RequestId, RequestPathHash, RequestPolicy, ResourceAvailable, ResourceCompression,
+    ResourceStrategy, ResponseTimeout, StopReason, HOST_CONTRACT, HOST_SCHEMA_VERSION,
 };
 use prns_host_native::{
     CommandHandle, CommandWait, NativeEventSink, NativeHost, NativeStartError, NativeSubmitError,
@@ -80,6 +82,14 @@ pub struct PrnsDestinationName {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+pub struct PrnsRequestHandlerConfig {
+    pub struct_size: usize,
+    pub path: PrnsStringView,
+    pub policy: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
 pub struct PrnsDestinationConfig {
     pub struct_size: usize,
     pub kind: u32,
@@ -87,6 +97,8 @@ pub struct PrnsDestinationConfig {
     pub identity_kind: u32,
     pub dedicated_identity: PrnsIdentityConfig,
     pub announce_app_data: PrnsByteView,
+    pub request_handlers: *const PrnsRequestHandlerConfig,
+    pub request_handler_count: usize,
 }
 
 #[repr(C)]
@@ -515,11 +527,28 @@ unsafe fn parse_destination(value: &PrnsDestinationConfig) -> Result<Destination
                     }?)
                 }
             };
+            let request_handlers =
+                unsafe { read_array(value.request_handlers, value.request_handler_count) }?
+                    .iter()
+                    .map(|handler| {
+                        validate_size(handler.struct_size, size_of::<PrnsRequestHandlerConfig>())?;
+                        let path = unsafe { read_string(handler.path) }?.to_string();
+                        let policy = match AbiRequestPolicy::try_from(handler.policy)
+                            .map_err(|_| status(AbiStatus::InvalidArgument))?
+                        {
+                            AbiRequestPolicy::AllowNone => RequestPolicy::AllowNone,
+                            AbiRequestPolicy::AllowAll => RequestPolicy::AllowAll,
+                            AbiRequestPolicy::AllowList => RequestPolicy::AllowList,
+                        };
+                        Ok(RequestHandlerConfig { path, policy })
+                    })
+                    .collect::<Result<Vec<_>, u32>>()?;
             Ok(DestinationConfig::Single(
                 prns_host_core::SingleDestinationConfig {
                     name,
                     identity,
                     announce_app_data: unsafe { read_bytes(value.announce_app_data) }?.to_vec(),
+                    request_handlers,
                 },
             ))
         }
@@ -533,6 +562,39 @@ fn parse_bitrate(kind: u32, bits_per_second: u64) -> Result<Bitrate, u32> {
             Ok(Bitrate::BitsPerSecond(bits_per_second))
         }
         AbiBitrateKind::BitsPerSecond => Err(status(AbiStatus::InvalidArgument)),
+    }
+}
+
+fn parse_response_timeout(kind: u32, millis: u64) -> Result<ResponseTimeout, u32> {
+    match AbiResponseTimeoutKind::try_from(kind).map_err(|_| status(AbiStatus::InvalidArgument))? {
+        AbiResponseTimeoutKind::LinkDefault => Ok(ResponseTimeout::LinkDefault),
+        AbiResponseTimeoutKind::Exact => Ok(ResponseTimeout::Exact { millis }),
+    }
+}
+
+fn parse_resource_compression(kind: u32) -> Result<ResourceCompression, u32> {
+    match AbiResourceCompressionKind::try_from(kind)
+        .map_err(|_| status(AbiStatus::InvalidArgument))?
+    {
+        AbiResourceCompressionKind::Auto => Ok(ResourceCompression::Auto),
+        AbiResourceCompressionKind::Never => Ok(ResourceCompression::Never),
+    }
+}
+
+fn parse_resource_strategy(
+    kind: u32,
+    maximum_uncompressed_bytes: u64,
+    accept_compressed: u8,
+) -> Result<ResourceStrategy, u32> {
+    match AbiResourceStrategyKind::try_from(kind).map_err(|_| status(AbiStatus::InvalidArgument))? {
+        AbiResourceStrategyKind::Refuse => Ok(ResourceStrategy::Refuse),
+        AbiResourceStrategyKind::Accept if maximum_uncompressed_bytes > 0 => {
+            Ok(ResourceStrategy::Accept {
+                maximum_uncompressed_bytes,
+                accept_compressed: accept_compressed != 0,
+            })
+        }
+        AbiResourceStrategyKind::Accept => Err(status(AbiStatus::InvalidArgument)),
     }
 }
 
@@ -969,6 +1031,365 @@ pub unsafe extern "C" fn prns_host_detach_interface(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn prns_host_establish_link(
+    host: *mut PrnsHost,
+    destination: PrnsByteView,
+    out_command: *mut *mut PrnsCommand,
+) -> u32 {
+    catch_status(|| {
+        let destination = match unsafe { read_fixed(destination) } {
+            Ok(destination) => DestinationHash::new(destination),
+            Err(error) => return error,
+        };
+        unsafe {
+            submit_host_command(
+                host,
+                HostCommand::EstablishLink { destination },
+                out_command,
+            )
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn prns_host_request_path(
+    host: *mut PrnsHost,
+    destination: PrnsByteView,
+    out_command: *mut *mut PrnsCommand,
+) -> u32 {
+    catch_status(|| {
+        let destination = match unsafe { read_fixed(destination) } {
+            Ok(destination) => DestinationHash::new(destination),
+            Err(error) => return error,
+        };
+        unsafe { submit_host_command(host, HostCommand::RequestPath { destination }, out_command) }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn prns_host_identify(
+    host: *mut PrnsHost,
+    link_id: PrnsByteView,
+    identity: PrnsByteView,
+    out_command: *mut *mut PrnsCommand,
+) -> u32 {
+    catch_status(|| {
+        let link_id = match unsafe { read_fixed(link_id) } {
+            Ok(link_id) => LinkId::new(link_id),
+            Err(error) => return error,
+        };
+        let identity = match unsafe { read_fixed(identity) } {
+            Ok(identity) => IdentityHash::new(identity),
+            Err(error) => return error,
+        };
+        unsafe {
+            submit_host_command(
+                host,
+                HostCommand::Identify { link_id, identity },
+                out_command,
+            )
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn prns_host_send_link_packet(
+    host: *mut PrnsHost,
+    link_id: PrnsByteView,
+    payload: PrnsByteView,
+    out_command: *mut *mut PrnsCommand,
+) -> u32 {
+    catch_status(|| {
+        let link_id = match unsafe { read_fixed(link_id) } {
+            Ok(link_id) => LinkId::new(link_id),
+            Err(error) => return error,
+        };
+        let payload = match unsafe { read_bytes(payload) } {
+            Ok(payload) => payload.to_vec(),
+            Err(error) => return error,
+        };
+        unsafe {
+            submit_host_command(
+                host,
+                HostCommand::SendLinkPacket { link_id, payload },
+                out_command,
+            )
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn prns_host_request(
+    host: *mut PrnsHost,
+    link_id: PrnsByteView,
+    path_hash: PrnsByteView,
+    payload: PrnsByteView,
+    timeout_kind: u32,
+    timeout_millis: u64,
+    out_command: *mut *mut PrnsCommand,
+) -> u32 {
+    catch_status(|| {
+        let link_id = match unsafe { read_fixed(link_id) } {
+            Ok(link_id) => LinkId::new(link_id),
+            Err(error) => return error,
+        };
+        let path_hash = match unsafe { read_fixed(path_hash) } {
+            Ok(path_hash) => RequestPathHash::new(path_hash),
+            Err(error) => return error,
+        };
+        let payload = match unsafe { read_bytes(payload) } {
+            Ok(payload) => payload.to_vec(),
+            Err(error) => return error,
+        };
+        let timeout = match parse_response_timeout(timeout_kind, timeout_millis) {
+            Ok(timeout) => timeout,
+            Err(error) => return error,
+        };
+        unsafe {
+            submit_host_command(
+                host,
+                HostCommand::Request {
+                    link_id,
+                    path_hash,
+                    payload,
+                    timeout,
+                },
+                out_command,
+            )
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn prns_host_respond(
+    host: *mut PrnsHost,
+    link_id: PrnsByteView,
+    request_id: PrnsByteView,
+    request_rtt_millis: u64,
+    payload: PrnsByteView,
+    out_command: *mut *mut PrnsCommand,
+) -> u32 {
+    catch_status(|| {
+        let link_id = match unsafe { read_fixed(link_id) } {
+            Ok(link_id) => LinkId::new(link_id),
+            Err(error) => return error,
+        };
+        let request_id = match unsafe { read_fixed(request_id) } {
+            Ok(request_id) => RequestId::new(request_id),
+            Err(error) => return error,
+        };
+        let payload = match unsafe { read_bytes(payload) } {
+            Ok(payload) => payload.to_vec(),
+            Err(error) => return error,
+        };
+        unsafe {
+            submit_host_command(
+                host,
+                HostCommand::Respond {
+                    link_id,
+                    request_id,
+                    request_rtt_millis,
+                    payload,
+                },
+                out_command,
+            )
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn prns_host_send_resource(
+    host: *mut PrnsHost,
+    link_id: PrnsByteView,
+    payload: PrnsByteView,
+    packed_metadata: *const PrnsByteView,
+    compression_kind: u32,
+    out_command: *mut *mut PrnsCommand,
+) -> u32 {
+    catch_status(|| {
+        let link_id = match unsafe { read_fixed(link_id) } {
+            Ok(link_id) => LinkId::new(link_id),
+            Err(error) => return error,
+        };
+        let payload = match unsafe { read_bytes(payload) } {
+            Ok(payload) => payload.to_vec(),
+            Err(error) => return error,
+        };
+        let packed_metadata = match unsafe { packed_metadata.as_ref() } {
+            Some(metadata) => match unsafe { read_bytes(*metadata) } {
+                Ok(metadata) => Some(metadata.to_vec()),
+                Err(error) => return error,
+            },
+            None => None,
+        };
+        let compression = match parse_resource_compression(compression_kind) {
+            Ok(compression) => compression,
+            Err(error) => return error,
+        };
+        unsafe {
+            submit_host_command(
+                host,
+                HostCommand::SendResource {
+                    link_id,
+                    payload,
+                    packed_metadata,
+                    compression,
+                },
+                out_command,
+            )
+        }
+    })
+}
+
+unsafe fn submit_resource_strategy_command(
+    host: *mut PrnsHost,
+    link_id: Option<LinkId>,
+    destination: Option<DestinationHash>,
+    strategy_kind: u32,
+    maximum_uncompressed_bytes: u64,
+    accept_compressed: u8,
+    out_command: *mut *mut PrnsCommand,
+) -> u32 {
+    let strategy =
+        match parse_resource_strategy(strategy_kind, maximum_uncompressed_bytes, accept_compressed)
+        {
+            Ok(strategy) => strategy,
+            Err(error) => return error,
+        };
+    let command = match (link_id, destination) {
+        (Some(link_id), None) => HostCommand::SetLinkResourceStrategy { link_id, strategy },
+        (None, Some(destination)) => HostCommand::SetDestinationResourceStrategy {
+            destination,
+            strategy,
+        },
+        _ => return status(AbiStatus::InvalidArgument),
+    };
+    unsafe { submit_host_command(host, command, out_command) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn prns_host_set_link_resource_strategy(
+    host: *mut PrnsHost,
+    link_id: PrnsByteView,
+    strategy_kind: u32,
+    maximum_uncompressed_bytes: u64,
+    accept_compressed: u8,
+    out_command: *mut *mut PrnsCommand,
+) -> u32 {
+    catch_status(|| {
+        let link_id = match unsafe { read_fixed(link_id) } {
+            Ok(link_id) => LinkId::new(link_id),
+            Err(error) => return error,
+        };
+        unsafe {
+            submit_resource_strategy_command(
+                host,
+                Some(link_id),
+                None,
+                strategy_kind,
+                maximum_uncompressed_bytes,
+                accept_compressed,
+                out_command,
+            )
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn prns_host_set_destination_resource_strategy(
+    host: *mut PrnsHost,
+    destination: PrnsByteView,
+    strategy_kind: u32,
+    maximum_uncompressed_bytes: u64,
+    accept_compressed: u8,
+    out_command: *mut *mut PrnsCommand,
+) -> u32 {
+    catch_status(|| {
+        let destination = match unsafe { read_fixed(destination) } {
+            Ok(destination) => DestinationHash::new(destination),
+            Err(error) => return error,
+        };
+        unsafe {
+            submit_resource_strategy_command(
+                host,
+                None,
+                Some(destination),
+                strategy_kind,
+                maximum_uncompressed_bytes,
+                accept_compressed,
+                out_command,
+            )
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn prns_host_send_channel_message(
+    host: *mut PrnsHost,
+    link_id: PrnsByteView,
+    message_type: u16,
+    payload: PrnsByteView,
+    out_command: *mut *mut PrnsCommand,
+) -> u32 {
+    catch_status(|| {
+        let link_id = match unsafe { read_fixed(link_id) } {
+            Ok(link_id) => LinkId::new(link_id),
+            Err(error) => return error,
+        };
+        let payload = match unsafe { read_bytes(payload) } {
+            Ok(payload) => payload.to_vec(),
+            Err(error) => return error,
+        };
+        unsafe {
+            submit_host_command(
+                host,
+                HostCommand::SendChannelMessage {
+                    link_id,
+                    message_type,
+                    payload,
+                },
+                out_command,
+            )
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn prns_host_allow_requester(
+    host: *mut PrnsHost,
+    destination: PrnsByteView,
+    path_hash: PrnsByteView,
+    identity: PrnsByteView,
+    out_command: *mut *mut PrnsCommand,
+) -> u32 {
+    catch_status(|| {
+        let destination = match unsafe { read_fixed(destination) } {
+            Ok(destination) => DestinationHash::new(destination),
+            Err(error) => return error,
+        };
+        let path_hash = match unsafe { read_fixed(path_hash) } {
+            Ok(path_hash) => RequestPathHash::new(path_hash),
+            Err(error) => return error,
+        };
+        let identity = match unsafe { read_fixed(identity) } {
+            Ok(identity) => IdentityHash::new(identity),
+            Err(error) => return error,
+        };
+        unsafe {
+            submit_host_command(
+                host,
+                HostCommand::AllowRequester {
+                    destination,
+                    path_hash,
+                    identity,
+                },
+                out_command,
+            )
+        }
+    })
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn prns_host_stop(host: *mut PrnsHost) -> u32 {
     catch_status(|| {
         let host = match unsafe { required_ref(host) } {
@@ -1035,6 +1456,39 @@ fn cache_command_result(result: Result<CommandOutcome, CommandFailure>) -> Cache
             cached.outcome = AbiCommandOutcomeKind::InterfaceDetached as u32;
             cached.value.extend_from_slice(interface.as_bytes());
         }
+        Ok(CommandOutcome::LinkEstablished {
+            link_id,
+            rtt_millis,
+        }) => {
+            cached.outcome = AbiCommandOutcomeKind::LinkEstablished as u32;
+            cached.rtt_millis = rtt_millis;
+            cached.value.extend_from_slice(link_id.as_bytes());
+        }
+        Ok(CommandOutcome::PathDiscovered { hops }) => {
+            cached.outcome = AbiCommandOutcomeKind::PathDiscovered as u32;
+            cached.value.push(hops);
+        }
+        Ok(CommandOutcome::Identified) => {
+            cached.outcome = AbiCommandOutcomeKind::Identified as u32;
+        }
+        Ok(CommandOutcome::ResponseReceived { data, rtt_millis }) => {
+            cached.outcome = AbiCommandOutcomeKind::ResponseReceived as u32;
+            cached.rtt_millis = rtt_millis;
+            cached.value = data;
+        }
+        Ok(CommandOutcome::ResponseSent { rtt_millis }) => {
+            cached.outcome = AbiCommandOutcomeKind::ResponseSent as u32;
+            cached.rtt_millis = rtt_millis;
+        }
+        Ok(CommandOutcome::ResourceSent) => {
+            cached.outcome = AbiCommandOutcomeKind::ResourceSent as u32;
+        }
+        Ok(CommandOutcome::ResourceStrategySet) => {
+            cached.outcome = AbiCommandOutcomeKind::ResourceStrategySet as u32;
+        }
+        Ok(CommandOutcome::RequesterAllowed) => {
+            cached.outcome = AbiCommandOutcomeKind::RequesterAllowed as u32;
+        }
         Err(failure) => {
             cached.failure = match failure {
                 CommandFailure::NodeStopped => AbiCommandFailureKind::NodeStopped as u32,
@@ -1072,6 +1526,45 @@ fn cache_command_result(result: Result<CommandOutcome, CommandFailure>) -> Cache
                 }
                 CommandFailure::UnknownLink => AbiCommandFailureKind::UnknownLink as u32,
                 CommandFailure::LinkNotActive => AbiCommandFailureKind::LinkNotActive as u32,
+                CommandFailure::EntropyUnavailable => {
+                    AbiCommandFailureKind::EntropyUnavailable as u32
+                }
+                CommandFailure::NotLinkInitiator => AbiCommandFailureKind::NotLinkInitiator as u32,
+                CommandFailure::IdentityNotHeld => AbiCommandFailureKind::IdentityNotHeld as u32,
+                CommandFailure::UnknownRequestHandler => {
+                    AbiCommandFailureKind::UnknownRequestHandler as u32
+                }
+                CommandFailure::RequestPolicyNotAllowList => {
+                    AbiCommandFailureKind::RequestPolicyNotAllowList as u32
+                }
+                CommandFailure::RequestAllowListFull => {
+                    AbiCommandFailureKind::RequestAllowListFull as u32
+                }
+                CommandFailure::LinkBusy => AbiCommandFailureKind::LinkBusy as u32,
+                CommandFailure::ResourceTableFull => {
+                    AbiCommandFailureKind::ResourceTableFull as u32
+                }
+                CommandFailure::ResourceMetadataTooLarge => {
+                    AbiCommandFailureKind::ResourceMetadataTooLarge as u32
+                }
+                CommandFailure::ResourceRejectedByPeer => {
+                    AbiCommandFailureKind::ResourceRejectedByPeer as u32
+                }
+                CommandFailure::ResourceSequencingFailed => {
+                    AbiCommandFailureKind::ResourceSequencingFailed as u32
+                }
+                CommandFailure::ResourcePredecessorFailed => {
+                    AbiCommandFailureKind::ResourcePredecessorFailed as u32
+                }
+                CommandFailure::ChannelWindowFull => {
+                    AbiCommandFailureKind::ChannelWindowFull as u32
+                }
+                CommandFailure::ChannelUntrackable => {
+                    AbiCommandFailureKind::ChannelUntrackable as u32
+                }
+                CommandFailure::InvalidChannelMessageType => {
+                    AbiCommandFailureKind::InvalidChannelMessageType as u32
+                }
             };
         }
     }
@@ -1608,10 +2101,6 @@ pub unsafe extern "C" fn prns_event_bytes(
 fn event_string(event: &PrnsEvent, field: AbiEventField) -> Option<&str> {
     match (&event.value, field) {
         (
-            EventValue::Application(ApplicationEvent::ChannelMessage(value)),
-            AbiEventField::MessageType,
-        ) => Some(&value.message_type),
-        (
             EventValue::Diagnostic(DiagnosticEvent::ResourceFailed { cause, .. }),
             AbiEventField::Cause,
         )
@@ -1672,6 +2161,10 @@ fn link_reason(reason: LinkClosedReason) -> u64 {
 
 fn event_u64(event: &PrnsEvent, field: AbiEventField) -> Option<u64> {
     match (&event.value, field) {
+        (
+            EventValue::Application(ApplicationEvent::ChannelMessage(value)),
+            AbiEventField::MessageType,
+        ) => Some(u64::from(value.message_type)),
         (EventValue::Application(ApplicationEvent::Request(value)), AbiEventField::RttMillis) => {
             Some(value.rtt_millis)
         }

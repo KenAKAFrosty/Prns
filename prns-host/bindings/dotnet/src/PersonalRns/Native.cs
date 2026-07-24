@@ -60,6 +60,14 @@ internal static class Native
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    internal struct RequestHandlerConfig
+    {
+        internal nuint StructSize;
+        internal StringView Path;
+        internal RequestPolicy Policy;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     internal struct DestinationConfig
     {
         internal nuint StructSize;
@@ -68,6 +76,8 @@ internal static class Native
         internal DestinationIdentityConfigKind IdentityKind;
         internal IdentityConfig DedicatedIdentity;
         internal ByteView AnnounceAppData;
+        internal nint RequestHandlers;
+        internal nuint RequestHandlerCount;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -186,6 +196,105 @@ internal static class Native
     internal static extern Status prns_host_detach_interface(
         HostHandle host,
         ByteView interfaceId,
+        out CommandHandle command
+    );
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern Status prns_host_establish_link(
+        HostHandle host,
+        ByteView destination,
+        out CommandHandle command
+    );
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern Status prns_host_request_path(
+        HostHandle host,
+        ByteView destination,
+        out CommandHandle command
+    );
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern Status prns_host_identify(
+        HostHandle host,
+        ByteView linkId,
+        ByteView identity,
+        out CommandHandle command
+    );
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern Status prns_host_send_link_packet(
+        HostHandle host,
+        ByteView linkId,
+        ByteView payload,
+        out CommandHandle command
+    );
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern Status prns_host_request(
+        HostHandle host,
+        ByteView linkId,
+        ByteView pathHash,
+        ByteView payload,
+        ResponseTimeoutKind timeoutKind,
+        ulong timeoutMillis,
+        out CommandHandle command
+    );
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern Status prns_host_respond(
+        HostHandle host,
+        ByteView linkId,
+        ByteView requestId,
+        ulong requestRttMillis,
+        ByteView payload,
+        out CommandHandle command
+    );
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern unsafe Status prns_host_send_resource(
+        HostHandle host,
+        ByteView linkId,
+        ByteView payload,
+        ByteView* packedMetadata,
+        ResourceCompressionKind compressionKind,
+        out CommandHandle command
+    );
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern Status prns_host_set_link_resource_strategy(
+        HostHandle host,
+        ByteView linkId,
+        ResourceStrategyKind strategyKind,
+        ulong maximumUncompressedBytes,
+        byte acceptCompressed,
+        out CommandHandle command
+    );
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern Status prns_host_set_destination_resource_strategy(
+        HostHandle host,
+        ByteView destination,
+        ResourceStrategyKind strategyKind,
+        ulong maximumUncompressedBytes,
+        byte acceptCompressed,
+        out CommandHandle command
+    );
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern Status prns_host_send_channel_message(
+        HostHandle host,
+        ByteView linkId,
+        ushort messageType,
+        ByteView payload,
+        out CommandHandle command
+    );
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern Status prns_host_allow_requester(
+        HostHandle host,
+        ByteView destination,
+        ByteView pathHash,
+        ByteView identity,
         out CommandHandle command
     );
 

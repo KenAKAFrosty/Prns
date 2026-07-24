@@ -50,6 +50,14 @@ match(settlement.data, {
   LinkCloseQueued: confirmLinkClose,
   InterfaceAttached: rememberInterface,
   InterfaceDetached: forgetInterface,
+  LinkEstablished: rememberLink,
+  PathDiscovered: rememberPath,
+  Identified: confirmIdentity,
+  ResponseReceived: receiveResponse,
+  ResponseSent: confirmResponse,
+  ResourceSent: confirmResource,
+  ResourceStrategySet: confirmResourceStrategy,
+  RequesterAllowed: confirmRequester,
 });
 ```
 

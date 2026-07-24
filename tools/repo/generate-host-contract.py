@@ -74,11 +74,14 @@ def validate(schema):
     union_names = set()
     known_types = fixed_names | enum_names | {
         "bytes",
+        "bool",
         "string",
         "u8",
+        "u16",
         "u64",
         "u128",
         "DestinationName",
+        "RequestHandlers",
         "ResourceStream",
     }
     for union in schema["unions"]:
@@ -183,10 +186,13 @@ def rust_output(schema):
 def ts_type(value):
     return {
         "bytes": "Uint8Array",
+        "bool": "boolean",
         "string": "string",
         "u8": "number",
+        "u16": "number",
         "u64": "number",
         "u128": "bigint",
+        "RequestHandlers": "readonly RequestHandlerConfig[]",
     }.get(value, value)
 
 
@@ -249,6 +255,9 @@ def ts_output(schema):
     delivery_evidence = next(
         item for item in schema["enums"] if item["name"] == "DeliveryEvidenceKind"
     )
+    request_policy = next(
+        item for item in schema["enums"] if item["name"] == "RequestPolicy"
+    )
     lines.extend(
         [
             "",
@@ -259,6 +268,8 @@ def ts_output(schema):
             *ts_string_union("HostRoleName", host_role["values"]),
             "",
             *ts_string_union("DeliveryEvidenceKind", delivery_evidence["values"]),
+            "",
+            *ts_string_union("RequestPolicy", request_policy["values"]),
             "",
             "export type PrnsLimits = {",
             "  readonly pendingCommands: number;",
@@ -279,6 +290,11 @@ def ts_output(schema):
             "export type DestinationName = {",
             "  readonly appName: string;",
             "  readonly aspects: readonly string[];",
+            "};",
+            "",
+            "export type RequestHandlerConfig = {",
+            "  readonly path: string;",
+            "  readonly policy: RequestPolicy;",
             "};",
             "",
             "export type ResourceStream = {",
@@ -393,6 +409,12 @@ def c_output(schema):
             "    size_t aspect_count;",
             "} PrnsDestinationName;",
             "",
+            "typedef struct PrnsRequestHandlerConfig {",
+            "    size_t struct_size;",
+            "    PrnsStringView path;",
+            "    PrnsRequestPolicy policy;",
+            "} PrnsRequestHandlerConfig;",
+            "",
             "typedef struct PrnsDestinationConfig {",
             "    size_t struct_size;",
             "    PrnsDestinationConfigKind kind;",
@@ -400,6 +422,8 @@ def c_output(schema):
             "    PrnsDestinationIdentityConfigKind identity_kind;",
             "    PrnsIdentityConfig dedicated_identity;",
             "    PrnsByteView announce_app_data;",
+            "    const PrnsRequestHandlerConfig *request_handlers;",
+            "    size_t request_handler_count;",
             "} PrnsDestinationConfig;",
             "",
             "typedef struct PrnsHostOptions {",
@@ -448,6 +472,17 @@ def c_output(schema):
             "PRNS_HOST_API PrnsStatus prns_host_attach_tcp_client(PrnsHost *host, PrnsStringView target, PrnsBitrateKind bitrate_kind, uint64_t bitrate_bps, PrnsCommand **out_command);",
             "PRNS_HOST_API PrnsStatus prns_host_attach_udp(PrnsHost *host, PrnsStringView local, PrnsStringView peer, PrnsBitrateKind bitrate_kind, uint64_t bitrate_bps, PrnsCommand **out_command);",
             "PRNS_HOST_API PrnsStatus prns_host_detach_interface(PrnsHost *host, PrnsByteView interface_id, PrnsCommand **out_command);",
+            "PRNS_HOST_API PrnsStatus prns_host_establish_link(PrnsHost *host, PrnsByteView destination, PrnsCommand **out_command);",
+            "PRNS_HOST_API PrnsStatus prns_host_request_path(PrnsHost *host, PrnsByteView destination, PrnsCommand **out_command);",
+            "PRNS_HOST_API PrnsStatus prns_host_identify(PrnsHost *host, PrnsByteView link_id, PrnsByteView identity, PrnsCommand **out_command);",
+            "PRNS_HOST_API PrnsStatus prns_host_send_link_packet(PrnsHost *host, PrnsByteView link_id, PrnsByteView payload, PrnsCommand **out_command);",
+            "PRNS_HOST_API PrnsStatus prns_host_request(PrnsHost *host, PrnsByteView link_id, PrnsByteView path_hash, PrnsByteView payload, PrnsResponseTimeoutKind timeout_kind, uint64_t timeout_millis, PrnsCommand **out_command);",
+            "PRNS_HOST_API PrnsStatus prns_host_respond(PrnsHost *host, PrnsByteView link_id, PrnsByteView request_id, uint64_t request_rtt_millis, PrnsByteView payload, PrnsCommand **out_command);",
+            "PRNS_HOST_API PrnsStatus prns_host_send_resource(PrnsHost *host, PrnsByteView link_id, PrnsByteView payload, const PrnsByteView *packed_metadata, PrnsResourceCompressionKind compression_kind, PrnsCommand **out_command);",
+            "PRNS_HOST_API PrnsStatus prns_host_set_link_resource_strategy(PrnsHost *host, PrnsByteView link_id, PrnsResourceStrategyKind strategy_kind, uint64_t maximum_uncompressed_bytes, uint8_t accept_compressed, PrnsCommand **out_command);",
+            "PRNS_HOST_API PrnsStatus prns_host_set_destination_resource_strategy(PrnsHost *host, PrnsByteView destination, PrnsResourceStrategyKind strategy_kind, uint64_t maximum_uncompressed_bytes, uint8_t accept_compressed, PrnsCommand **out_command);",
+            "PRNS_HOST_API PrnsStatus prns_host_send_channel_message(PrnsHost *host, PrnsByteView link_id, uint16_t message_type, PrnsByteView payload, PrnsCommand **out_command);",
+            "PRNS_HOST_API PrnsStatus prns_host_allow_requester(PrnsHost *host, PrnsByteView destination, PrnsByteView path_hash, PrnsByteView identity, PrnsCommand **out_command);",
             "PRNS_HOST_API PrnsStatus prns_host_stop(PrnsHost *host);",
             "/* Result views remain valid until prns_command_release. */",
             "PRNS_HOST_API PrnsStatus prns_command_wait(PrnsCommand *command, uint32_t timeout_millis, PrnsCommandResult *out_result);",
@@ -485,11 +520,14 @@ def c_output(schema):
 def python_type(value):
     return {
         "bytes": "bytes",
+        "bool": "bool",
         "string": "str",
         "u8": "int",
+        "u16": "int",
         "u64": "int",
         "u128": "int",
         "ResourceStream": "Any",
+        "RequestHandlers": "tuple[RequestHandlerConfig, ...]",
     }.get(value, value)
 
 
@@ -576,6 +614,11 @@ def python_output(schema):
             "        if not self.app_name or not self.aspects or any(not value for value in self.aspects):",
             '            raise ValueError("a destination requires a non-empty app name and aspects")',
             "",
+            "@dataclass(frozen=True, slots=True)",
+            "class RequestHandlerConfig:",
+            "    path: str",
+            "    policy: RequestPolicy",
+            "",
         ]
     )
     aliases = []
@@ -604,11 +647,14 @@ def python_output(schema):
 def dotnet_type(value):
     return {
         "bytes": "ReadOnlyMemory<byte>",
+        "bool": "bool",
         "string": "string",
         "u8": "byte",
+        "u16": "ushort",
         "u64": "ulong",
         "u128": "UInt128",
         "ResourceStream": "ResourceStream",
+        "RequestHandlers": "ImmutableArray<RequestHandlerConfig>",
     }.get(value, value)
 
 
@@ -727,6 +773,8 @@ def dotnet_output(schema):
         [
             "public sealed record DestinationName(string AppName, ImmutableArray<string> Aspects);",
             "",
+            "public sealed record RequestHandlerConfig(string Path, RequestPolicy Policy);",
+            "",
         ]
     )
     for union in schema["unions"]:
@@ -777,10 +825,13 @@ def dotnet_output(schema):
 def go_type(value):
     return {
         "bytes": "[]byte",
+        "bool": "bool",
         "string": "string",
         "u8": "uint8",
+        "u16": "uint16",
         "u64": "uint64",
         "u128": "UInt128",
+        "RequestHandlers": "[]RequestHandlerConfig",
     }.get(value, value)
 
 
@@ -841,6 +892,11 @@ def go_output(schema):
             "\tAspects []string",
             "}",
             "",
+            "type RequestHandlerConfig struct {",
+            "\tPath string",
+            "\tPolicy RequestPolicy",
+            "}",
+            "",
             "type ResourceStream interface {",
             "\tTotalBytes() uint64",
             "\tNext(maximumBytes int) ([]byte, bool, error)",
@@ -887,11 +943,14 @@ def go_output(schema):
 def swift_type(value):
     return {
         "bytes": "[UInt8]",
+        "bool": "Bool",
         "string": "String",
         "u8": "UInt8",
+        "u16": "UInt16",
         "u64": "UInt64",
         "u128": "UInt128",
         "ResourceStream": "any ResourceStream",
+        "RequestHandlers": "[RequestHandlerConfig]",
     }.get(value, value)
 
 
@@ -981,6 +1040,16 @@ def swift_output(schema):
             "    }",
             "}",
             "",
+            "public struct RequestHandlerConfig: Hashable, Sendable {",
+            "    public let path: String",
+            "    public let policy: RequestPolicy",
+            "",
+            "    public init(path: String, policy: RequestPolicy) {",
+            "        self.path = path",
+            "        self.policy = policy",
+            "    }",
+            "}",
+            "",
             "public protocol ResourceStream: AnyObject, AsyncSequence, Sendable",
             "where Element == [UInt8] {",
             "    var totalBytes: UInt64 { get }",
@@ -1010,14 +1079,17 @@ def swift_output(schema):
 def kotlin_type(value):
     return {
         "bytes": "Bytes",
+        "bool": "Boolean",
         "string": "String",
         # Kotlin unsigned values compile to name-mangled JVM methods and
         # synthetic constructors, which makes an otherwise shared Kotlin/Java
         # SDK unusable from Java. Int and Long preserve every ABI bit while
         # producing an ordinary, stable JVM surface for both languages.
         "u8": "Int",
+        "u16": "Int",
         "u64": "Long",
         "u128": "BigInteger",
+        "RequestHandlers": "List<RequestHandlerConfig>",
     }.get(value, value)
 
 
@@ -1117,6 +1189,11 @@ def kotlin_output(schema):
             "    val aspects: List<String>,",
             ")",
             "",
+            "data class RequestHandlerConfig(",
+            "    val path: String,",
+            "    val policy: RequestPolicy,",
+            ")",
+            "",
             "interface ResourceStream : AutoCloseable {",
             "    val totalBytes: Long",
             "    fun next(maximumBytes: Int): ResourceChunk",
@@ -1151,10 +1228,13 @@ def kotlin_output(schema):
 def julia_type(value):
     return {
         "bytes": "Vector{UInt8}",
+        "bool": "Bool",
         "string": "String",
         "u8": "UInt8",
+        "u16": "UInt16",
         "u64": "UInt64",
         "u128": "UInt128",
+        "RequestHandlers": "Vector{RequestHandlerConfig}",
     }.get(value, value)
 
 
@@ -1227,6 +1307,11 @@ def julia_output(schema):
             "struct DestinationName",
             "    app_name::String",
             "    aspects::Vector{String}",
+            "end",
+            "",
+            "struct RequestHandlerConfig",
+            "    path::String",
+            "    policy::RequestPolicy",
             "end",
             "",
             "abstract type ResourceStream end",

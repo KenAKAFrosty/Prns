@@ -46,6 +46,7 @@ const (
 	ConfigUnknownDestinationIdentity
 	ConfigInvalidLimits
 	ConfigAllocationFailed
+	ConfigInvalidRequestPolicy
 )
 
 type ConfigError struct {

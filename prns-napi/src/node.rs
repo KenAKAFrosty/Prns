@@ -6,8 +6,13 @@ use napi::threadsafe_function::ThreadsafeCallContext;
 use napi::Result;
 use napi_derive::napi;
 use personal_rns::engine::{
-    AllowRequester, AnnounceAppData, AnnounceNow, AnnounceTarget, DeliveryEvidence, DeliveryProof,
-    EstablishLinkFailure, RatchetPolicy, RequestResponseTimeout,
+    AllowRequester, AllowRequesterFailure, AllowRequesterRejection, AnnounceAppData, AnnounceNow,
+    AnnounceTarget, DeliveryEvidence, DeliveryProof, EstablishLinkFailure, EstablishLinkRejection,
+    IdentifyFailure, IdentifyRejection, RatchetPolicy, RequestPathFailure, RequestResponseTimeout,
+    RespondFailure, RespondRejection, SendRequestFailure, SendRequestRejection,
+    SendResourceFailure, SendResourceRejection, SendToChannelFailure, SendToChannelRejection,
+    SendToLinkFailure, SendToLinkRejection, SetResourceStrategyFailure,
+    SetResourceStrategyRejection,
 };
 use personal_rns::engine::{DropRouteOutcome, RouteSnapshot};
 use personal_rns::identity::{
@@ -19,6 +24,7 @@ use personal_rns::interfaces::{
 };
 use personal_rns::manifold::reconnect::ReconnectPolicy;
 use personal_rns::node_introspection::{DestinationIdentityQuery, NodeIntrospection};
+use personal_rns::routing::links::channel::MessageType;
 use personal_rns::routing::request_handlers::RequestPolicy;
 use personal_rns::routing::{
     BlackholeExpiry, BlackholeIdentityOutcome, BlackholedIdentity, NextHop,
@@ -30,7 +36,9 @@ use personal_rns::runtime::{
     DestinationIdentityRetentionControl, IdentityBlackholeControl, IdentityBlackholeSource,
     RoutingControl, RoutingControlError,
 };
-use personal_rns::runtime::{RequestPathError, SegmentCompression};
+use personal_rns::runtime::{
+    RequestPathError, ResourceSendError, ResponseSendError, SegmentCompression,
+};
 use personal_rns::shared_instance::{SharedInstanceClient, SharedInstanceServer};
 use personal_rns::tcp::{TcpClientInterface, TcpServer};
 use personal_rns::udp::UdpInterface;
@@ -391,22 +399,296 @@ fn parse_request_policy(value: Option<&str>) -> CodeResult<RequestPolicy> {
 
 fn link_error(error: personal_rns::SendError<EstablishLinkFailure>) -> crate::errors::CodeError {
     match error {
-        personal_rns::SendError::Failed(EstablishLinkFailure::Timeout) => {
-            code_err(ErrorCode::LinkTimeout, "link establishment timed out")
+        personal_rns::SendError::NodeStopped => code_err(ErrorCode::NodeStopped, "node stopped"),
+        personal_rns::SendError::Busy => code_err(ErrorCode::Busy, "engine busy"),
+        personal_rns::SendError::PayloadTooLarge => {
+            code_err(ErrorCode::PayloadTooLarge, "payload too large")
         }
-        other => send_error(ErrorCode::LinkFailed, other),
+        personal_rns::SendError::Failed(EstablishLinkFailure::Rejected(rejection)) => {
+            match rejection {
+                EstablishLinkRejection::NoRouteToDestination => {
+                    code_err(ErrorCode::NoRouteToDestination, "no route to destination")
+                }
+                EstablishLinkRejection::NotDirectlyReachable => code_err(
+                    ErrorCode::NotDirectlyReachable,
+                    "destination is not directly reachable",
+                ),
+            }
+        }
+        personal_rns::SendError::Failed(EstablishLinkFailure::WriteFailed(error)) => {
+            code_err(ErrorCode::WriteFailed, format!("{error:?}"))
+        }
+        personal_rns::SendError::Failed(EstablishLinkFailure::Timeout) => {
+            code_err(ErrorCode::DeliveryTimedOut, "link establishment timed out")
+        }
     }
 }
 
 fn path_error(error: RequestPathError) -> crate::errors::CodeError {
     match error {
         RequestPathError::EntropyUnavailable => {
-            code_err(ErrorCode::Internal, "entropy unavailable")
+            code_err(ErrorCode::EntropyUnavailable, "entropy unavailable")
         }
         RequestPathError::NodeStopped => code_err(ErrorCode::NodeStopped, "node stopped"),
-        RequestPathError::Failed(failure) => {
-            code_err(ErrorCode::PathFailed, format!("{failure:?}"))
+        RequestPathError::Failed(RequestPathFailure::WriteFailed(error)) => {
+            code_err(ErrorCode::WriteFailed, format!("{error:?}"))
         }
+        RequestPathError::Failed(RequestPathFailure::Timeout) => {
+            code_err(ErrorCode::DeliveryTimedOut, "path discovery timed out")
+        }
+        RequestPathError::Failed(RequestPathFailure::Culled) => {
+            code_err(ErrorCode::PacketCulled, "path request was culled")
+        }
+    }
+}
+
+fn identify_error(error: personal_rns::SendError<IdentifyFailure>) -> crate::errors::CodeError {
+    match error {
+        personal_rns::SendError::NodeStopped => code_err(ErrorCode::NodeStopped, "node stopped"),
+        personal_rns::SendError::Busy => code_err(ErrorCode::Busy, "engine busy"),
+        personal_rns::SendError::PayloadTooLarge => {
+            code_err(ErrorCode::PayloadTooLarge, "payload too large")
+        }
+        personal_rns::SendError::Failed(IdentifyFailure::Rejected(rejection)) => match rejection {
+            IdentifyRejection::NoSuchLink => code_err(ErrorCode::UnknownLink, "unknown link"),
+            IdentifyRejection::LinkNotActive => {
+                code_err(ErrorCode::LinkNotActive, "link is not active")
+            }
+            IdentifyRejection::NotInitiator => code_err(
+                ErrorCode::NotLinkInitiator,
+                "host did not initiate the link",
+            ),
+            IdentifyRejection::IdentityNotHeld => {
+                code_err(ErrorCode::IdentityNotHeld, "identity is not held")
+            }
+        },
+        personal_rns::SendError::Failed(IdentifyFailure::WriteFailed) => {
+            code_err(ErrorCode::WriteFailed, "identity write failed")
+        }
+    }
+}
+
+fn send_link_error(error: personal_rns::SendError<SendToLinkFailure>) -> crate::errors::CodeError {
+    match error {
+        personal_rns::SendError::NodeStopped => code_err(ErrorCode::NodeStopped, "node stopped"),
+        personal_rns::SendError::Busy => code_err(ErrorCode::Busy, "engine busy"),
+        personal_rns::SendError::PayloadTooLarge => {
+            code_err(ErrorCode::PayloadTooLarge, "payload too large")
+        }
+        personal_rns::SendError::Failed(SendToLinkFailure::Rejected(rejection)) => {
+            match rejection {
+                SendToLinkRejection::NoSuchLink => code_err(ErrorCode::UnknownLink, "unknown link"),
+                SendToLinkRejection::LinkNotActive => {
+                    code_err(ErrorCode::LinkNotActive, "link is not active")
+                }
+            }
+        }
+        personal_rns::SendError::Failed(SendToLinkFailure::WriteFailed(error)) => {
+            code_err(ErrorCode::WriteFailed, format!("{error:?}"))
+        }
+        personal_rns::SendError::Failed(SendToLinkFailure::Culled) => {
+            code_err(ErrorCode::PacketCulled, "packet was culled")
+        }
+        personal_rns::SendError::Failed(SendToLinkFailure::Timeout) => {
+            code_err(ErrorCode::DeliveryTimedOut, "delivery timed out")
+        }
+    }
+}
+
+fn request_error(error: personal_rns::SendError<SendRequestFailure>) -> crate::errors::CodeError {
+    match error {
+        personal_rns::SendError::NodeStopped => code_err(ErrorCode::NodeStopped, "node stopped"),
+        personal_rns::SendError::Busy => code_err(ErrorCode::Busy, "engine busy"),
+        personal_rns::SendError::PayloadTooLarge => {
+            code_err(ErrorCode::PayloadTooLarge, "payload too large")
+        }
+        personal_rns::SendError::Failed(SendRequestFailure::Rejected(rejection)) => match rejection
+        {
+            SendRequestRejection::NoSuchLink => code_err(ErrorCode::UnknownLink, "unknown link"),
+            SendRequestRejection::LinkNotActive => {
+                code_err(ErrorCode::LinkNotActive, "link is not active")
+            }
+        },
+        personal_rns::SendError::Failed(SendRequestFailure::WriteFailed) => {
+            code_err(ErrorCode::WriteFailed, "request write failed")
+        }
+        personal_rns::SendError::Failed(SendRequestFailure::Culled) => {
+            code_err(ErrorCode::PacketCulled, "request was culled")
+        }
+        personal_rns::SendError::Failed(SendRequestFailure::Timeout) => {
+            code_err(ErrorCode::DeliveryTimedOut, "request timed out")
+        }
+    }
+}
+
+fn allow_requester_error(
+    error: personal_rns::SendError<AllowRequesterFailure>,
+) -> crate::errors::CodeError {
+    match error {
+        personal_rns::SendError::NodeStopped => code_err(ErrorCode::NodeStopped, "node stopped"),
+        personal_rns::SendError::Busy => code_err(ErrorCode::Busy, "engine busy"),
+        personal_rns::SendError::PayloadTooLarge => {
+            code_err(ErrorCode::PayloadTooLarge, "payload too large")
+        }
+        personal_rns::SendError::Failed(AllowRequesterFailure::Rejected(rejection)) => {
+            match rejection {
+                AllowRequesterRejection::NoSuchHandler => {
+                    code_err(ErrorCode::UnknownRequestHandler, "unknown request handler")
+                }
+                AllowRequesterRejection::NoAllowList => code_err(
+                    ErrorCode::RequestPolicyNotAllowList,
+                    "request handler does not use an allow list",
+                ),
+                AllowRequesterRejection::AllowListFull => code_err(
+                    ErrorCode::RequestAllowListFull,
+                    "request allow list is full",
+                ),
+            }
+        }
+    }
+}
+
+fn channel_error(error: personal_rns::SendError<SendToChannelFailure>) -> crate::errors::CodeError {
+    match error {
+        personal_rns::SendError::NodeStopped => code_err(ErrorCode::NodeStopped, "node stopped"),
+        personal_rns::SendError::Busy => code_err(ErrorCode::Busy, "engine busy"),
+        personal_rns::SendError::PayloadTooLarge => {
+            code_err(ErrorCode::PayloadTooLarge, "payload too large")
+        }
+        personal_rns::SendError::Failed(SendToChannelFailure::Rejected(rejection)) => {
+            match rejection {
+                SendToChannelRejection::NoSuchLink => {
+                    code_err(ErrorCode::UnknownLink, "unknown link")
+                }
+                SendToChannelRejection::LinkNotActive => {
+                    code_err(ErrorCode::LinkNotActive, "link is not active")
+                }
+            }
+        }
+        personal_rns::SendError::Failed(SendToChannelFailure::WriteFailed(error)) => {
+            code_err(ErrorCode::WriteFailed, format!("{error:?}"))
+        }
+        personal_rns::SendError::Failed(SendToChannelFailure::WindowFull) => {
+            code_err(ErrorCode::ChannelWindowFull, "channel window is full")
+        }
+        personal_rns::SendError::Failed(SendToChannelFailure::Untrackable) => code_err(
+            ErrorCode::ChannelUntrackable,
+            "channel message could not be tracked",
+        ),
+        personal_rns::SendError::Failed(SendToChannelFailure::Timeout) => {
+            code_err(ErrorCode::DeliveryTimedOut, "channel delivery timed out")
+        }
+    }
+}
+
+fn send_resource_failure(failure: SendResourceFailure) -> crate::errors::CodeError {
+    match failure {
+        SendResourceFailure::Rejected(rejection) => match rejection {
+            SendResourceRejection::NoSuchLink => {
+                code_err(ErrorCode::UnknownLink, "unknown link")
+            }
+            SendResourceRejection::LinkNotActive => {
+                code_err(ErrorCode::LinkNotActive, "link is not active")
+            }
+            SendResourceRejection::LinkBusy => {
+                code_err(ErrorCode::LinkBusy, "link is busy")
+            }
+            SendResourceRejection::TableFull => {
+                code_err(ErrorCode::ResourceTableFull, "resource table is full")
+            }
+            SendResourceRejection::Build(
+                personal_rns::routing::links::resources::build_outgoing::BuildOutgoingResourceError::DataTooLarge,
+            ) => code_err(ErrorCode::PayloadTooLarge, "resource is too large"),
+            SendResourceRejection::Build(
+                personal_rns::routing::links::resources::build_outgoing::BuildOutgoingResourceError::MetadataTooLarge,
+            )
+            | SendResourceRejection::MetadataMisplaced => code_err(
+                ErrorCode::ResourceMetadataTooLarge,
+                "resource metadata is too large",
+            ),
+            SendResourceRejection::Build(error) => {
+                code_err(ErrorCode::WriteFailed, format!("{error:?}"))
+            }
+        },
+        SendResourceFailure::WriteFailed => {
+            code_err(ErrorCode::WriteFailed, "resource write failed")
+        }
+        SendResourceFailure::RejectedByPeer => {
+            code_err(ErrorCode::ResourceRejectedByPeer, "resource rejected by peer")
+        }
+        SendResourceFailure::Sequencing => code_err(
+            ErrorCode::ResourceSequencingFailed,
+            "resource sequencing failed",
+        ),
+        SendResourceFailure::Timeout => {
+            code_err(ErrorCode::DeliveryTimedOut, "resource delivery timed out")
+        }
+        SendResourceFailure::PredecessorFailed => code_err(
+            ErrorCode::ResourcePredecessorFailed,
+            "resource predecessor failed",
+        ),
+    }
+}
+
+fn resource_send_error(error: ResourceSendError) -> crate::errors::CodeError {
+    match error {
+        ResourceSendError::Source(error) => code_err(ErrorCode::WriteFailed, error.to_string()),
+        ResourceSendError::UnrepresentableLength => code_err(
+            ErrorCode::PayloadTooLarge,
+            "resource length is not representable",
+        ),
+        ResourceSendError::Rejected(failure) => send_resource_failure(failure),
+        ResourceSendError::NodeStopped => code_err(ErrorCode::NodeStopped, "node stopped"),
+    }
+}
+
+fn respond_failure(failure: RespondFailure) -> crate::errors::CodeError {
+    match failure {
+        RespondFailure::Rejected(RespondRejection::NoSuchLink) => {
+            code_err(ErrorCode::UnknownLink, "unknown link")
+        }
+        RespondFailure::Rejected(RespondRejection::LinkNotActive) => {
+            code_err(ErrorCode::LinkNotActive, "link is not active")
+        }
+        RespondFailure::WriteFailed => code_err(ErrorCode::WriteFailed, "response write failed"),
+        RespondFailure::Resource(failure) => send_resource_failure(failure),
+    }
+}
+
+fn response_send_error(error: ResponseSendError) -> crate::errors::CodeError {
+    match error {
+        ResponseSendError::Source(error) => code_err(ErrorCode::WriteFailed, error.to_string()),
+        ResponseSendError::UnrepresentableLength => code_err(
+            ErrorCode::PayloadTooLarge,
+            "response length is not representable",
+        ),
+        ResponseSendError::NodeStopped => code_err(ErrorCode::NodeStopped, "node stopped"),
+        ResponseSendError::CompressionTask => {
+            code_err(ErrorCode::WriteFailed, "response compression failed")
+        }
+        ResponseSendError::Rejected(failure) => respond_failure(failure),
+        ResponseSendError::UnexpectedSettlement => code_err(
+            ErrorCode::WriteFailed,
+            "response returned an unrelated settlement",
+        ),
+    }
+}
+
+fn resource_strategy_error(
+    error: personal_rns::SendError<SetResourceStrategyFailure>,
+) -> crate::errors::CodeError {
+    match error {
+        personal_rns::SendError::NodeStopped => code_err(ErrorCode::NodeStopped, "node stopped"),
+        personal_rns::SendError::Busy => code_err(ErrorCode::Busy, "engine busy"),
+        personal_rns::SendError::PayloadTooLarge => {
+            code_err(ErrorCode::PayloadTooLarge, "payload too large")
+        }
+        personal_rns::SendError::Failed(SetResourceStrategyFailure::Rejected(
+            SetResourceStrategyRejection::NoSuchLink,
+        )) => code_err(ErrorCode::UnknownLink, "unknown link"),
+        personal_rns::SendError::Failed(SetResourceStrategyFailure::Rejected(
+            SetResourceStrategyRejection::LinkNotActive,
+        )) => code_err(ErrorCode::LinkNotActive, "link is not active"),
     }
 }
 
@@ -790,6 +1072,28 @@ impl PrnsNode {
     ) -> Result<Fallible<PacketReceipt>> {
         Ok(Fallible(
             self.send_single_packet_inner(destination, data).await,
+        ))
+    }
+
+    #[napi(ts_return_type = "Promise<PacketReceipt>")]
+    pub async fn send_link_packet(
+        &self,
+        link_id: Buffer,
+        data: Buffer,
+    ) -> Result<Fallible<PacketReceipt>> {
+        Ok(Fallible(self.send_link_packet_inner(link_id, data).await))
+    }
+
+    #[napi(ts_return_type = "Promise<PacketReceipt>")]
+    pub async fn send_channel_message(
+        &self,
+        link_id: Buffer,
+        message_type: u32,
+        data: Buffer,
+    ) -> Result<Fallible<PacketReceipt>> {
+        Ok(Fallible(
+            self.send_channel_message_inner(link_id, message_type, data)
+                .await,
         ))
     }
 
@@ -1233,7 +1537,7 @@ impl PrnsNode {
         handle
             .identify(link_id, identity)
             .await
-            .map_err(|error| send_error(ErrorCode::IdentifyFailed, error))
+            .map_err(identify_error)
     }
 
     async fn request_inner(
@@ -1270,7 +1574,7 @@ impl PrnsNode {
         let (packed, rtt) = handle
             .request_with_response_timeout(link_id, path_hash, &data, timeout)
             .await
-            .map_err(|error| send_error(ErrorCode::RequestFailed, error))?;
+            .map_err(request_error)?;
         let data = match marshal::unwrap_packed_binary(&packed) {
             Some(inner) => Buffer::from(inner.to_vec()),
             None => Buffer::from(packed.clone()),
@@ -1293,10 +1597,13 @@ impl PrnsNode {
     async fn respond_inner(&self, token: RespondTokenSpec, data: Buffer) -> CodeResult<f64> {
         let token = Self::respond_token(&token)?;
         let handle = self.manager.handle()?;
+        let byte_len = u64::try_from(data.len())
+            .map_err(|_| code_err(ErrorCode::PayloadTooLarge, "response is too large"))?;
         handle
-            .respond_owned_bytes(token, data.to_vec())
+            .respond_bytes_streaming(token, byte_len, std::io::Cursor::new(data.to_vec()))
+            .await
             .map(|rtt| rtt.millis() as f64)
-            .ok_or_else(|| code_err(ErrorCode::NodeStopped, "node stopped"))
+            .map_err(response_send_error)
     }
 
     async fn respond_file_inner(&self, token: RespondTokenSpec, path: String) -> CodeResult<f64> {
@@ -1340,7 +1647,7 @@ impl PrnsNode {
         handle
             .allow_requester(allow)
             .await
-            .map_err(|error| send_error(ErrorCode::AllowFailed, error))
+            .map_err(allow_requester_error)
     }
 
     async fn announce_inner(
@@ -1375,6 +1682,45 @@ impl PrnsNode {
             .send_single_packet(destination, &data)
             .await
             .map_err(|error| send_error(ErrorCode::SendFailed, error))?;
+        Ok(packet_receipt(receipt))
+    }
+
+    async fn send_link_packet_inner(
+        &self,
+        link_id: Buffer,
+        data: Buffer,
+    ) -> CodeResult<PacketReceipt> {
+        let link_id = marshal::link_id(&link_id)?;
+        let handle = self.manager.handle()?;
+        let receipt = handle
+            .send_link_packet(link_id, &data)
+            .await
+            .map_err(send_link_error)?;
+        Ok(packet_receipt(receipt))
+    }
+
+    async fn send_channel_message_inner(
+        &self,
+        link_id: Buffer,
+        message_type: u32,
+        data: Buffer,
+    ) -> CodeResult<PacketReceipt> {
+        let message_type = u16::try_from(message_type)
+            .ok()
+            .map(MessageType)
+            .filter(|kind| !kind.is_system_reserved())
+            .ok_or_else(|| {
+                code_err(
+                    ErrorCode::InvalidChannelMessageType,
+                    "messageType must be an application message type",
+                )
+            })?;
+        let link_id = marshal::link_id(&link_id)?;
+        let handle = self.manager.handle()?;
+        let receipt = handle
+            .send_channel_message(link_id, message_type, &data)
+            .await
+            .map_err(channel_error)?;
         Ok(packet_receipt(receipt))
     }
 
@@ -1554,7 +1900,7 @@ impl PrnsNode {
                 }
             }
         };
-        result.map_err(|error| code_err(ErrorCode::ResourceSendFailed, format!("{error:?}")))
+        result.map_err(resource_send_error)
     }
 
     async fn send_resource_file_inner(
@@ -1614,7 +1960,7 @@ impl PrnsNode {
                 }
             }
         };
-        result.map_err(|error| code_err(ErrorCode::ResourceSendFailed, format!("{error:?}")))
+        result.map_err(resource_send_error)
     }
 
     async fn receive_resource_inner(&self, link_id: Buffer) -> CodeResult<ResourceData> {
@@ -1681,7 +2027,7 @@ impl PrnsNode {
         handle
             .set_link_resource_strategy(link, strategy)
             .await
-            .map_err(|error| send_error(ErrorCode::ResourceStrategyFailed, error))
+            .map_err(resource_strategy_error)
     }
 
     async fn route_inner(&self, destination: Buffer) -> CodeResult<Option<RouteInfo>> {

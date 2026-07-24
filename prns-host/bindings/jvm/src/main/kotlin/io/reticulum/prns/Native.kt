@@ -116,6 +116,18 @@ internal open class NativeDestinationName : Structure() {
     class ByValue : NativeDestinationName(), Structure.ByValue
 }
 
+@Structure.FieldOrder("structSize", "path", "policy")
+internal open class NativeRequestHandlerConfig : Structure() {
+    @JvmField
+    var structSize: SizeT = SizeT()
+
+    @JvmField
+    var path: NativeStringView.ByValue = NativeStringView.ByValue()
+
+    @JvmField
+    var policy: Int = 0
+}
+
 @Structure.FieldOrder(
     "structSize",
     "kind",
@@ -123,6 +135,8 @@ internal open class NativeDestinationName : Structure() {
     "identityKind",
     "dedicatedIdentity",
     "announceAppData",
+    "requestHandlers",
+    "requestHandlerCount",
 )
 internal open class NativeDestinationConfig : Structure() {
     @JvmField
@@ -142,6 +156,12 @@ internal open class NativeDestinationConfig : Structure() {
 
     @JvmField
     var announceAppData: NativeByteView.ByValue = NativeByteView.ByValue()
+
+    @JvmField
+    var requestHandlers: Pointer? = null
+
+    @JvmField
+    var requestHandlerCount: SizeT = SizeT()
 }
 
 @Structure.FieldOrder(
@@ -261,6 +281,83 @@ internal interface PrnsNative : Library {
     fun prns_host_detach_interface(
         host: Pointer,
         interfaceId: NativeByteView.ByValue,
+        command: PointerByReference,
+    ): Int
+    fun prns_host_establish_link(
+        host: Pointer,
+        destination: NativeByteView.ByValue,
+        command: PointerByReference,
+    ): Int
+    fun prns_host_request_path(
+        host: Pointer,
+        destination: NativeByteView.ByValue,
+        command: PointerByReference,
+    ): Int
+    fun prns_host_identify(
+        host: Pointer,
+        linkId: NativeByteView.ByValue,
+        identity: NativeByteView.ByValue,
+        command: PointerByReference,
+    ): Int
+    fun prns_host_send_link_packet(
+        host: Pointer,
+        linkId: NativeByteView.ByValue,
+        payload: NativeByteView.ByValue,
+        command: PointerByReference,
+    ): Int
+    fun prns_host_request(
+        host: Pointer,
+        linkId: NativeByteView.ByValue,
+        pathHash: NativeByteView.ByValue,
+        payload: NativeByteView.ByValue,
+        timeoutKind: Int,
+        timeoutMillis: Long,
+        command: PointerByReference,
+    ): Int
+    fun prns_host_respond(
+        host: Pointer,
+        linkId: NativeByteView.ByValue,
+        requestId: NativeByteView.ByValue,
+        requestRttMillis: Long,
+        payload: NativeByteView.ByValue,
+        command: PointerByReference,
+    ): Int
+    fun prns_host_send_resource(
+        host: Pointer,
+        linkId: NativeByteView.ByValue,
+        payload: NativeByteView.ByValue,
+        packedMetadata: NativeByteView.ByReference?,
+        compressionKind: Int,
+        command: PointerByReference,
+    ): Int
+    fun prns_host_set_link_resource_strategy(
+        host: Pointer,
+        linkId: NativeByteView.ByValue,
+        strategyKind: Int,
+        maximumUncompressedBytes: Long,
+        acceptCompressed: Byte,
+        command: PointerByReference,
+    ): Int
+    fun prns_host_set_destination_resource_strategy(
+        host: Pointer,
+        destination: NativeByteView.ByValue,
+        strategyKind: Int,
+        maximumUncompressedBytes: Long,
+        acceptCompressed: Byte,
+        command: PointerByReference,
+    ): Int
+    fun prns_host_send_channel_message(
+        host: Pointer,
+        linkId: NativeByteView.ByValue,
+        messageType: Short,
+        payload: NativeByteView.ByValue,
+        command: PointerByReference,
+    ): Int
+    fun prns_host_allow_requester(
+        host: Pointer,
+        destination: NativeByteView.ByValue,
+        pathHash: NativeByteView.ByValue,
+        identity: NativeByteView.ByValue,
         command: PointerByReference,
     ): Int
     fun prns_host_stop(host: Pointer): Int
@@ -451,6 +548,22 @@ internal class NativeArena : AutoCloseable {
                 value.announceAppData?.let {
                     result.announceAppData = bytes(it.copyBytes())
                 }
+                if (value.requestHandlers.isNotEmpty()) {
+                    val first = NativeRequestHandlerConfig()
+                    val array = first.toArray(value.requestHandlers.size)
+                    value.requestHandlers.forEachIndexed { index, handler ->
+                        val target = array[index] as NativeRequestHandlerConfig
+                        target.structSize = SizeT(target.size().toLong())
+                        target.path = string(handler.path)
+                        target.policy = handler.policy.rawValue
+                        target.write()
+                        structures += target
+                    }
+                    result.requestHandlers = first.pointer
+                    result.requestHandlerCount =
+                        SizeT(value.requestHandlers.size.toLong())
+                    structures += first
+                }
             }
         }
         result.write()
@@ -484,6 +597,8 @@ internal class NativeArena : AutoCloseable {
                 target.identityKind = native.identityKind
                 target.dedicatedIdentity = native.dedicatedIdentity
                 target.announceAppData = native.announceAppData
+                target.requestHandlers = native.requestHandlers
+                target.requestHandlerCount = native.requestHandlerCount
                 target.write()
                 structures += target
             }

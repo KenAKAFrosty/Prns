@@ -1,8 +1,13 @@
 use js_sys::{Object, Reflect, Uint8Array};
 use personal_rns::engine::{
-    AnnounceNowFailure, AnnounceNowRejection, CloseLinkFailure, CloseLinkRejection,
-    DeliveryEvidence, DeliveryProof, FanTarget, Journaled, LinkClosedReason, RouteRemovalCause,
-    SendSinglePacketFailure, SendSinglePacketRejection, Settlement,
+    AllowRequesterFailure, AllowRequesterRejection, AnnounceNowFailure, AnnounceNowRejection,
+    CloseLinkFailure, CloseLinkRejection, DeliveryEvidence, DeliveryProof, EstablishLinkFailure,
+    EstablishLinkRejection, FanTarget, IdentifyFailure, IdentifyRejection, Journaled,
+    LinkClosedReason, RequestPathFailure, RespondFailure, RespondRejection, RouteRemovalCause,
+    SendRequestFailure, SendRequestRejection, SendResourceFailure, SendResourceRejection,
+    SendSinglePacketFailure, SendSinglePacketRejection, SendToChannelFailure,
+    SendToChannelRejection, SendToLinkFailure, SendToLinkRejection, SetResourceStrategyFailure,
+    SetResourceStrategyRejection, Settlement,
 };
 use personal_rns::interfaces::bluetooth_auto as bluetooth_contract;
 use personal_rns::interfaces::usb_auto;
@@ -112,7 +117,7 @@ pub(crate) fn journaled_to_js(journaled: Journaled<'_>) -> JsValue {
         } => {
             set_str(&object, "type", "channelMessage");
             set_bytes(&object, "linkId", link_id.as_bytes());
-            set_str(&object, "messageType", &format!("{message_type:?}"));
+            set_u64(&object, "messageType", u64::from(message_type.0));
             set_bytes(&object, "data", data);
         }
         Journaled::Delivered(Delivery::Single(delivery)) => {
@@ -262,22 +267,7 @@ fn settlement_to_js(object: &Object, settlement: Settlement) {
             }
         },
         Settlement::SendSinglePacket(Ok(delivered)) => {
-            set_str(object, "result", "succeeded");
-            set_str(object, "kind", "PacketDelivered");
-            set_u64(object, "rttMillis", delivered.rtt.millis());
-            match delivered.evidence {
-                DeliveryEvidence::Proof(DeliveryProof::Explicit(hash)) => {
-                    set_str(object, "evidence", "ExplicitProof");
-                    set_bytes(object, "packetHash", hash.as_bytes());
-                }
-                DeliveryEvidence::Proof(DeliveryProof::Implicit(hash)) => {
-                    set_str(object, "evidence", "ImplicitProof");
-                    set_bytes(object, "packetHash", hash.as_bytes());
-                }
-                DeliveryEvidence::Response => {
-                    set_str(object, "evidence", "Response");
-                }
-            }
+            set_packet_delivered(object, delivered);
         }
         Settlement::SendSinglePacket(Err(failure)) => match failure {
             SendSinglePacketFailure::Rejected(SendSinglePacketRejection::NoRouteToDestination) => {
@@ -311,18 +301,268 @@ fn settlement_to_js(object: &Object, settlement: Settlement) {
         Settlement::CloseLink(Err(CloseLinkFailure::WriteFailed)) => {
             set_command_failure(object, "WriteFailed", Some("link write failed".to_string()));
         }
-        Settlement::SendGroup(_)
-        | Settlement::RequestPath(_)
-        | Settlement::EstablishLink(_)
-        | Settlement::SendToLink(_)
-        | Settlement::Identify(_)
-        | Settlement::SendRequest(_)
-        | Settlement::Respond(_)
-        | Settlement::SendResource(_)
-        | Settlement::SetResourceStrategy(_)
-        | Settlement::SendToChannel(_)
-        | Settlement::AllowRequester(_) => {
+        Settlement::RequestPath(Ok(path)) => {
+            set_str(object, "result", "succeeded");
+            set_str(object, "kind", "PathDiscovered");
+            set_u32(object, "hops", u32::from(path.hops.0));
+        }
+        Settlement::RequestPath(Err(RequestPathFailure::WriteFailed(error))) => {
+            set_command_failure(object, "WriteFailed", Some(format!("{error:?}")));
+        }
+        Settlement::RequestPath(Err(RequestPathFailure::Timeout)) => {
+            set_command_failure(object, "DeliveryTimedOut", None);
+        }
+        Settlement::RequestPath(Err(RequestPathFailure::Culled)) => {
+            set_command_failure(object, "PacketCulled", None);
+        }
+        Settlement::EstablishLink(Ok(link)) => {
+            set_str(object, "result", "succeeded");
+            set_str(object, "kind", "LinkEstablished");
+            set_bytes(object, "linkId", link.link_id.as_bytes());
+            set_u64(object, "rttMillis", link.rtt_millis);
+        }
+        Settlement::EstablishLink(Err(EstablishLinkFailure::Rejected(
+            EstablishLinkRejection::NoRouteToDestination,
+        ))) => {
+            set_command_failure(object, "NoRouteToDestination", None);
+        }
+        Settlement::EstablishLink(Err(EstablishLinkFailure::Rejected(
+            EstablishLinkRejection::NotDirectlyReachable,
+        ))) => {
+            set_command_failure(object, "NotDirectlyReachable", None);
+        }
+        Settlement::EstablishLink(Err(EstablishLinkFailure::WriteFailed(error))) => {
+            set_command_failure(object, "WriteFailed", Some(format!("{error:?}")));
+        }
+        Settlement::EstablishLink(Err(EstablishLinkFailure::Timeout)) => {
+            set_command_failure(object, "DeliveryTimedOut", None);
+        }
+        Settlement::SendToLink(Ok(delivered)) => {
+            set_packet_delivered(object, delivered);
+        }
+        Settlement::SendToLink(Err(SendToLinkFailure::Rejected(
+            SendToLinkRejection::NoSuchLink,
+        ))) => {
+            set_command_failure(object, "UnknownLink", None);
+        }
+        Settlement::SendToLink(Err(SendToLinkFailure::Rejected(
+            SendToLinkRejection::LinkNotActive,
+        ))) => {
+            set_command_failure(object, "LinkNotActive", None);
+        }
+        Settlement::SendToLink(Err(SendToLinkFailure::WriteFailed(error))) => {
+            set_command_failure(object, "WriteFailed", Some(format!("{error:?}")));
+        }
+        Settlement::SendToLink(Err(SendToLinkFailure::Culled)) => {
+            set_command_failure(object, "PacketCulled", None);
+        }
+        Settlement::SendToLink(Err(SendToLinkFailure::Timeout)) => {
+            set_command_failure(object, "DeliveryTimedOut", None);
+        }
+        Settlement::Identify(Ok(())) => {
+            set_str(object, "result", "succeeded");
+            set_str(object, "kind", "Identified");
+        }
+        Settlement::Identify(Err(IdentifyFailure::Rejected(IdentifyRejection::NoSuchLink))) => {
+            set_command_failure(object, "UnknownLink", None);
+        }
+        Settlement::Identify(Err(IdentifyFailure::Rejected(IdentifyRejection::LinkNotActive))) => {
+            set_command_failure(object, "LinkNotActive", None);
+        }
+        Settlement::Identify(Err(IdentifyFailure::Rejected(IdentifyRejection::NotInitiator))) => {
+            set_command_failure(object, "NotLinkInitiator", None);
+        }
+        Settlement::Identify(Err(IdentifyFailure::Rejected(
+            IdentifyRejection::IdentityNotHeld,
+        ))) => {
+            set_command_failure(object, "IdentityNotHeld", None);
+        }
+        Settlement::Identify(Err(IdentifyFailure::WriteFailed)) => {
+            set_command_failure(
+                object,
+                "WriteFailed",
+                Some("identity write failed".to_string()),
+            );
+        }
+        Settlement::SendRequest(Ok(delivered)) => {
+            set_packet_delivered(object, delivered);
+        }
+        Settlement::SendRequest(Err(SendRequestFailure::Rejected(
+            SendRequestRejection::NoSuchLink,
+        ))) => {
+            set_command_failure(object, "UnknownLink", None);
+        }
+        Settlement::SendRequest(Err(SendRequestFailure::Rejected(
+            SendRequestRejection::LinkNotActive,
+        ))) => {
+            set_command_failure(object, "LinkNotActive", None);
+        }
+        Settlement::SendRequest(Err(SendRequestFailure::WriteFailed)) => {
+            set_command_failure(
+                object,
+                "WriteFailed",
+                Some("request write failed".to_string()),
+            );
+        }
+        Settlement::SendRequest(Err(SendRequestFailure::Culled)) => {
+            set_command_failure(object, "PacketCulled", None);
+        }
+        Settlement::SendRequest(Err(SendRequestFailure::Timeout)) => {
+            set_command_failure(object, "DeliveryTimedOut", None);
+        }
+        Settlement::Respond(Ok(())) => {
+            set_str(object, "result", "succeeded");
+            set_str(object, "kind", "ResponseSent");
+            set_u64(object, "rttMillis", 0);
+        }
+        Settlement::Respond(Err(RespondFailure::Rejected(RespondRejection::NoSuchLink))) => {
+            set_command_failure(object, "UnknownLink", None);
+        }
+        Settlement::Respond(Err(RespondFailure::Rejected(RespondRejection::LinkNotActive))) => {
+            set_command_failure(object, "LinkNotActive", None);
+        }
+        Settlement::Respond(Err(RespondFailure::WriteFailed)) => {
+            set_command_failure(
+                object,
+                "WriteFailed",
+                Some("response write failed".to_string()),
+            );
+        }
+        Settlement::Respond(Err(RespondFailure::Resource(failure))) => {
+            set_resource_failure(object, failure);
+        }
+        Settlement::SendResource(Ok(())) => {
+            set_str(object, "result", "succeeded");
+            set_str(object, "kind", "ResourceSent");
+        }
+        Settlement::SendResource(Err(failure)) => {
+            set_resource_failure(object, failure);
+        }
+        Settlement::SetResourceStrategy(Ok(())) => {
+            set_str(object, "result", "succeeded");
+            set_str(object, "kind", "ResourceStrategySet");
+        }
+        Settlement::SetResourceStrategy(Err(SetResourceStrategyFailure::Rejected(
+            SetResourceStrategyRejection::NoSuchLink,
+        ))) => {
+            set_command_failure(object, "UnknownLink", None);
+        }
+        Settlement::SetResourceStrategy(Err(SetResourceStrategyFailure::Rejected(
+            SetResourceStrategyRejection::LinkNotActive,
+        ))) => {
+            set_command_failure(object, "LinkNotActive", None);
+        }
+        Settlement::SendToChannel(Ok(delivered)) => {
+            set_packet_delivered(object, delivered);
+        }
+        Settlement::SendToChannel(Err(SendToChannelFailure::Rejected(
+            SendToChannelRejection::NoSuchLink,
+        ))) => {
+            set_command_failure(object, "UnknownLink", None);
+        }
+        Settlement::SendToChannel(Err(SendToChannelFailure::Rejected(
+            SendToChannelRejection::LinkNotActive,
+        ))) => {
+            set_command_failure(object, "LinkNotActive", None);
+        }
+        Settlement::SendToChannel(Err(SendToChannelFailure::WriteFailed(error))) => {
+            set_command_failure(object, "WriteFailed", Some(format!("{error:?}")));
+        }
+        Settlement::SendToChannel(Err(SendToChannelFailure::WindowFull)) => {
+            set_command_failure(object, "ChannelWindowFull", None);
+        }
+        Settlement::SendToChannel(Err(SendToChannelFailure::Untrackable)) => {
+            set_command_failure(object, "ChannelUntrackable", None);
+        }
+        Settlement::SendToChannel(Err(SendToChannelFailure::Timeout)) => {
+            set_command_failure(object, "DeliveryTimedOut", None);
+        }
+        Settlement::AllowRequester(Ok(())) => {
+            set_str(object, "result", "succeeded");
+            set_str(object, "kind", "RequesterAllowed");
+        }
+        Settlement::AllowRequester(Err(AllowRequesterFailure::Rejected(
+            AllowRequesterRejection::NoSuchHandler,
+        ))) => {
+            set_command_failure(object, "UnknownRequestHandler", None);
+        }
+        Settlement::AllowRequester(Err(AllowRequesterFailure::Rejected(
+            AllowRequesterRejection::NoAllowList,
+        ))) => {
+            set_command_failure(object, "RequestPolicyNotAllowList", None);
+        }
+        Settlement::AllowRequester(Err(AllowRequesterFailure::Rejected(
+            AllowRequesterRejection::AllowListFull,
+        ))) => {
+            set_command_failure(object, "RequestAllowListFull", None);
+        }
+        Settlement::SendGroup(_) => {
             set_str(object, "result", "untracked");
+        }
+    }
+}
+
+fn set_packet_delivered(object: &Object, delivered: personal_rns::engine::PacketReceiptDelivered) {
+    set_str(object, "result", "succeeded");
+    set_str(object, "kind", "PacketDelivered");
+    set_u64(object, "rttMillis", delivered.rtt.millis());
+    match delivered.evidence {
+        DeliveryEvidence::Proof(DeliveryProof::Explicit(hash)) => {
+            set_str(object, "evidence", "ExplicitProof");
+            set_bytes(object, "packetHash", hash.as_bytes());
+        }
+        DeliveryEvidence::Proof(DeliveryProof::Implicit(hash)) => {
+            set_str(object, "evidence", "ImplicitProof");
+            set_bytes(object, "packetHash", hash.as_bytes());
+        }
+        DeliveryEvidence::Response => {
+            set_str(object, "evidence", "Response");
+        }
+    }
+}
+
+fn set_resource_failure(object: &Object, failure: SendResourceFailure) {
+    match failure {
+        SendResourceFailure::Rejected(SendResourceRejection::NoSuchLink) => {
+            set_command_failure(object, "UnknownLink", None);
+        }
+        SendResourceFailure::Rejected(SendResourceRejection::LinkNotActive) => {
+            set_command_failure(object, "LinkNotActive", None);
+        }
+        SendResourceFailure::Rejected(SendResourceRejection::LinkBusy) => {
+            set_command_failure(object, "LinkBusy", None);
+        }
+        SendResourceFailure::Rejected(SendResourceRejection::TableFull) => {
+            set_command_failure(object, "ResourceTableFull", None);
+        }
+        SendResourceFailure::Rejected(SendResourceRejection::Build(
+            personal_rns::routing::links::resources::build_outgoing::BuildOutgoingResourceError::DataTooLarge,
+        )) => {
+            set_command_failure(object, "PayloadTooLarge", None);
+        }
+        SendResourceFailure::Rejected(SendResourceRejection::Build(
+            personal_rns::routing::links::resources::build_outgoing::BuildOutgoingResourceError::MetadataTooLarge,
+        ))
+        | SendResourceFailure::Rejected(SendResourceRejection::MetadataMisplaced) => {
+            set_command_failure(object, "ResourceMetadataTooLarge", None);
+        }
+        SendResourceFailure::Rejected(SendResourceRejection::Build(error)) => {
+            set_command_failure(object, "WriteFailed", Some(format!("{error:?}")));
+        }
+        SendResourceFailure::WriteFailed => {
+            set_command_failure(object, "WriteFailed", Some("resource write failed".to_string()));
+        }
+        SendResourceFailure::RejectedByPeer => {
+            set_command_failure(object, "ResourceRejectedByPeer", None);
+        }
+        SendResourceFailure::Sequencing => {
+            set_command_failure(object, "ResourceSequencingFailed", None);
+        }
+        SendResourceFailure::Timeout => {
+            set_command_failure(object, "DeliveryTimedOut", None);
+        }
+        SendResourceFailure::PredecessorFailed => {
+            set_command_failure(object, "ResourcePredecessorFailed", None);
         }
     }
 }

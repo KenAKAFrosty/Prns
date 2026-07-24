@@ -1,10 +1,15 @@
 use js_sys::{Array, Reflect, Uint8Array};
+use personal_rns::identity::IdentityHash;
 use personal_rns::identity::IDENTITY_SECRET_KEY_LEN;
 use personal_rns::interfaces::{InterfaceId, InterfaceKind, INTERFACE_ID_LEN};
+use personal_rns::routing::links::request::RequestId;
 use personal_rns::routing::links::LinkId;
+use personal_rns::routing::request_handlers::RequestPathHash;
 use personal_rns::wire::{DestinationHash, TRUNCATED_HASH_BYTE_LEN};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
+
+const JS_MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
 use zeroize::Zeroizing;
 
 fn required_value(object: &JsValue, key: &str) -> Result<JsValue, JsValue> {
@@ -32,12 +37,28 @@ pub(crate) fn required_string(object: &JsValue, key: &str) -> Result<String, JsV
         .ok_or_else(|| JsValue::from_str(&format!("{key} must be a string")))
 }
 
+pub(crate) fn required_bool(object: &JsValue, key: &str) -> Result<bool, JsValue> {
+    required_value(object, key)?
+        .as_bool()
+        .ok_or_else(|| JsValue::from_str(&format!("{key} must be a boolean")))
+}
+
 pub(crate) fn required_array(object: &JsValue, key: &str) -> Result<Array, JsValue> {
     let value = required_value(object, key)?;
     if !Array::is_array(&value) {
         return Err(JsValue::from_str(&format!("{key} must be an array")));
     }
     Ok(Array::from(&value))
+}
+
+pub(crate) fn optional_array(object: &JsValue, key: &str) -> Result<Option<Array>, JsValue> {
+    let Some(value) = optional_value(object, key)? else {
+        return Ok(None);
+    };
+    if !Array::is_array(&value) {
+        return Err(JsValue::from_str(&format!("{key} must be an array")));
+    }
+    Ok(Some(Array::from(&value)))
 }
 
 pub(crate) fn required_bytes(object: &JsValue, key: &str) -> Result<Vec<u8>, JsValue> {
@@ -58,7 +79,10 @@ fn bytes_from_value(value: JsValue, key: &str) -> Result<Vec<u8>, JsValue> {
 }
 
 pub(crate) fn required_u64(object: &JsValue, key: &str) -> Result<u64, JsValue> {
-    let value = required_value(object, key)?;
+    u64_from_value(required_value(object, key)?, key)
+}
+
+fn u64_from_value(value: JsValue, key: &str) -> Result<u64, JsValue> {
     let number = value
         .as_f64()
         .ok_or_else(|| JsValue::from_str(&format!("{key} must be a number")))?;
@@ -67,8 +91,8 @@ pub(crate) fn required_u64(object: &JsValue, key: &str) -> Result<u64, JsValue> 
             "{key} must be a non-negative integer"
         )));
     }
-    if number > u64::MAX as f64 {
-        return Err(JsValue::from_str(&format!("{key} is too large")));
+    if number > JS_MAX_SAFE_INTEGER {
+        return Err(JsValue::from_str(&format!("{key} must be a safe integer")));
     }
     Ok(number as u64)
 }
@@ -89,6 +113,12 @@ pub(crate) fn optional_u32(object: &JsValue, key: &str) -> Result<Option<u32>, J
         return Err(JsValue::from_str(&format!("{key} is too large")));
     }
     Ok(Some(number as u32))
+}
+
+pub(crate) fn optional_u64(object: &JsValue, key: &str) -> Result<Option<u64>, JsValue> {
+    optional_value(object, key)?
+        .map(|value| u64_from_value(value, key))
+        .transpose()
 }
 
 pub(crate) fn array_to_strings(values: &Array) -> Result<Vec<String>, JsValue> {
@@ -138,6 +168,33 @@ pub(crate) fn link_id_from_vec(bytes: Vec<u8>) -> Result<LinkId, JsValue> {
     let mut id = [0u8; TRUNCATED_HASH_BYTE_LEN];
     id.copy_from_slice(&bytes);
     Ok(LinkId::new(id))
+}
+
+pub(crate) fn identity_hash_from_vec(bytes: Vec<u8>) -> Result<IdentityHash, JsValue> {
+    if bytes.len() != TRUNCATED_HASH_BYTE_LEN {
+        return Err(JsValue::from_str("identity hash must be 16 bytes"));
+    }
+    let mut hash = [0u8; TRUNCATED_HASH_BYTE_LEN];
+    hash.copy_from_slice(&bytes);
+    Ok(IdentityHash::new(hash))
+}
+
+pub(crate) fn request_id_from_vec(bytes: Vec<u8>) -> Result<RequestId, JsValue> {
+    if bytes.len() != TRUNCATED_HASH_BYTE_LEN {
+        return Err(JsValue::from_str("request id must be 16 bytes"));
+    }
+    let mut id = [0u8; TRUNCATED_HASH_BYTE_LEN];
+    id.copy_from_slice(&bytes);
+    Ok(RequestId(id))
+}
+
+pub(crate) fn request_path_hash_from_vec(bytes: Vec<u8>) -> Result<RequestPathHash, JsValue> {
+    if bytes.len() != TRUNCATED_HASH_BYTE_LEN {
+        return Err(JsValue::from_str("request path hash must be 16 bytes"));
+    }
+    let mut hash = [0u8; TRUNCATED_HASH_BYTE_LEN];
+    hash.copy_from_slice(&bytes);
+    Ok(RequestPathHash::new(hash))
 }
 
 pub(crate) fn parse_interface_kind(kind: &str) -> Result<InterfaceKind, JsValue> {

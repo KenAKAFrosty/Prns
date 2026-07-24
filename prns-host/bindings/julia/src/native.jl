@@ -37,6 +37,12 @@ struct NativeDestinationName
     aspect_count::Csize_t
 end
 
+struct NativeRequestHandlerConfig
+    struct_size::Csize_t
+    path::NativeStringView
+    policy::UInt32
+end
+
 struct NativeDestinationConfig
     struct_size::Csize_t
     kind::UInt32
@@ -44,6 +50,8 @@ struct NativeDestinationConfig
     identity_kind::UInt32
     dedicated_identity::NativeIdentityConfig
     announce_app_data::NativeByteView
+    request_handlers::Ptr{NativeRequestHandlerConfig}
+    request_handler_count::Csize_t
 end
 
 struct NativeHostOptions
@@ -72,14 +80,20 @@ end
 mutable struct NativeArena
     buffers::Vector{Vector{UInt8}}
     string_arrays::Vector{Vector{NativeStringView}}
+    request_handler_arrays::Vector{Vector{NativeRequestHandlerConfig}}
 end
 
-NativeArena() = NativeArena(Vector{UInt8}[], Vector{NativeStringView}[])
+NativeArena() = NativeArena(
+    Vector{UInt8}[],
+    Vector{NativeStringView}[],
+    Vector{NativeRequestHandlerConfig}[],
+)
 
 function Base.close(arena::NativeArena)
     foreach(buffer -> fill!(buffer, 0), arena.buffers)
     empty!(arena.buffers)
     empty!(arena.string_arrays)
+    empty!(arena.request_handler_arrays)
     nothing
 end
 
@@ -223,6 +237,8 @@ function native_destination(arena::NativeArena, value::DestinationConfig)
                 NativeStringView(C_NULL, 0),
             ),
             NativeByteView(C_NULL, 0),
+            C_NULL,
+            0,
         )
     end
     if value isa DestinationConfigSingle
@@ -230,6 +246,15 @@ function native_destination(arena::NativeArena, value::DestinationConfig)
             arena,
             value.identity,
         )
+        request_handlers = NativeRequestHandlerConfig[
+            NativeRequestHandlerConfig(
+                sizeof(NativeRequestHandlerConfig),
+                native_string_view(arena, handler.path),
+                UInt32(handler.policy),
+            )
+            for handler in value.request_handlers
+        ]
+        push!(arena.request_handler_arrays, request_handlers)
         return NativeDestinationConfig(
             sizeof(NativeDestinationConfig),
             UInt32(DestinationConfigKindSingle),
@@ -237,6 +262,8 @@ function native_destination(arena::NativeArena, value::DestinationConfig)
             identity_kind,
             identity,
             native_optional_byte_view(arena, value.announce_app_data),
+            isempty(request_handlers) ? C_NULL : pointer(request_handlers),
+            length(request_handlers),
         )
     end
     throw(ArgumentError("unknown destination configuration"))

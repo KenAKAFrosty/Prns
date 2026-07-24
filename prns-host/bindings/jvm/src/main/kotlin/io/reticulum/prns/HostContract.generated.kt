@@ -116,12 +116,57 @@ enum class BitrateKind(val rawValue: Int) {
     }
 }
 
+enum class ResponseTimeoutKind(val rawValue: Int) {
+    LINK_DEFAULT(1),
+    EXACT(2);
+
+    companion object {
+        fun fromRawValue(value: Int): ResponseTimeoutKind? = entries.firstOrNull { it.rawValue == value }
+    }
+}
+
+enum class ResourceCompressionKind(val rawValue: Int) {
+    AUTO(1),
+    NEVER(2);
+
+    companion object {
+        fun fromRawValue(value: Int): ResourceCompressionKind? = entries.firstOrNull { it.rawValue == value }
+    }
+}
+
+enum class ResourceStrategyKind(val rawValue: Int) {
+    REFUSE(1),
+    ACCEPT(2);
+
+    companion object {
+        fun fromRawValue(value: Int): ResourceStrategyKind? = entries.firstOrNull { it.rawValue == value }
+    }
+}
+
+enum class RequestPolicy(val rawValue: Int) {
+    ALLOW_NONE(1),
+    ALLOW_ALL(2),
+    ALLOW_LIST(3);
+
+    companion object {
+        fun fromRawValue(value: Int): RequestPolicy? = entries.firstOrNull { it.rawValue == value }
+    }
+}
+
 enum class CommandOutcomeKind(val rawValue: Int) {
     ANNOUNCED(1),
     PACKET_DELIVERED(2),
     LINK_CLOSE_QUEUED(3),
     INTERFACE_ATTACHED(4),
-    INTERFACE_DETACHED(5);
+    INTERFACE_DETACHED(5),
+    LINK_ESTABLISHED(6),
+    PATH_DISCOVERED(7),
+    IDENTIFIED(8),
+    RESPONSE_RECEIVED(9),
+    RESPONSE_SENT(10),
+    RESOURCE_SENT(11),
+    RESOURCE_STRATEGY_SET(12),
+    REQUESTER_ALLOWED(13);
 
     companion object {
         fun fromRawValue(value: Int): CommandOutcomeKind? = entries.firstOrNull { it.rawValue == value }
@@ -145,7 +190,22 @@ enum class CommandFailureKind(val rawValue: Int) {
     WRITE_FAILED(14),
     UNSUPPORTED_BY_BACKEND(15),
     UNKNOWN_LINK(16),
-    LINK_NOT_ACTIVE(17);
+    LINK_NOT_ACTIVE(17),
+    ENTROPY_UNAVAILABLE(18),
+    NOT_LINK_INITIATOR(19),
+    IDENTITY_NOT_HELD(20),
+    UNKNOWN_REQUEST_HANDLER(21),
+    REQUEST_POLICY_NOT_ALLOW_LIST(22),
+    REQUEST_ALLOW_LIST_FULL(23),
+    LINK_BUSY(24),
+    RESOURCE_TABLE_FULL(25),
+    RESOURCE_METADATA_TOO_LARGE(26),
+    RESOURCE_REJECTED_BY_PEER(27),
+    RESOURCE_SEQUENCING_FAILED(28),
+    RESOURCE_PREDECESSOR_FAILED(29),
+    CHANNEL_WINDOW_FULL(30),
+    CHANNEL_UNTRACKABLE(31),
+    INVALID_CHANNEL_MESSAGE_TYPE(32);
 
     companion object {
         fun fromRawValue(value: Int): CommandFailureKind? = entries.firstOrNull { it.rawValue == value }
@@ -406,6 +466,11 @@ data class DestinationName(
     val aspects: List<String>,
 )
 
+data class RequestHandlerConfig(
+    val path: String,
+    val policy: RequestPolicy,
+)
+
 interface ResourceStream : AutoCloseable {
     val totalBytes: Long
     fun next(maximumBytes: Int): ResourceChunk
@@ -441,6 +506,29 @@ data class BitrateBitsPerSecond(
     val value: Long
 ) : Bitrate
 
+sealed interface ResponseTimeout
+
+data object ResponseTimeoutLinkDefault : ResponseTimeout
+
+data class ResponseTimeoutExact(
+    val millis: Long
+) : ResponseTimeout
+
+sealed interface ResourceCompression
+
+data object ResourceCompressionAuto : ResourceCompression
+
+data object ResourceCompressionNever : ResourceCompression
+
+sealed interface ResourceStrategy
+
+data object ResourceStrategyRefuse : ResourceStrategy
+
+data class ResourceStrategyAccept(
+    val maximumUncompressedBytes: Long,
+    val acceptCompressed: Boolean
+) : ResourceStrategy
+
 sealed interface DestinationConfig
 
 data class DestinationConfigPlain(
@@ -450,7 +538,8 @@ data class DestinationConfigPlain(
 data class DestinationConfigSingle(
     val name: DestinationName,
     val identity: DestinationIdentityConfig,
-    val announceAppData: Bytes?
+    val announceAppData: Bytes?,
+    val requestHandlers: List<RequestHandlerConfig>
 ) : DestinationConfig
 
 sealed interface HostCommand
@@ -489,6 +578,67 @@ data class HostCommandDetachInterface(
     val `interface`: InterfaceId
 ) : HostCommand
 
+data class HostCommandEstablishLink(
+    val destination: DestinationHash
+) : HostCommand
+
+data class HostCommandRequestPath(
+    val destination: DestinationHash
+) : HostCommand
+
+data class HostCommandIdentify(
+    val linkId: LinkId,
+    val identity: IdentityHash
+) : HostCommand
+
+data class HostCommandSendLinkPacket(
+    val linkId: LinkId,
+    val payload: Bytes
+) : HostCommand
+
+data class HostCommandRequest(
+    val linkId: LinkId,
+    val pathHash: RequestPathHash,
+    val payload: Bytes,
+    val timeout: ResponseTimeout
+) : HostCommand
+
+data class HostCommandRespond(
+    val linkId: LinkId,
+    val requestId: RequestId,
+    val requestRttMillis: Long,
+    val payload: Bytes
+) : HostCommand
+
+data class HostCommandSendResource(
+    val linkId: LinkId,
+    val payload: Bytes,
+    val packedMetadata: Bytes?,
+    val compression: ResourceCompression
+) : HostCommand
+
+data class HostCommandSetLinkResourceStrategy(
+    val linkId: LinkId,
+    val strategy: ResourceStrategy
+) : HostCommand
+
+data class HostCommandSetDestinationResourceStrategy(
+    val destination: DestinationHash,
+    val strategy: ResourceStrategy
+) : HostCommand
+
+data class HostCommandSendChannelMessage(
+    val linkId: LinkId,
+    val messageType: Int,
+    val payload: Bytes
+) : HostCommand
+
+data class HostCommandAllowRequester(
+    val destination: DestinationHash,
+    val pathHash: RequestPathHash,
+    val identity: IdentityHash
+) : HostCommand
+
 sealed interface CommandOutcome
 
 data object CommandOutcomeAnnounced : CommandOutcome
@@ -508,6 +658,32 @@ data class CommandOutcomeInterfaceAttached(
 data class CommandOutcomeInterfaceDetached(
     val `interface`: InterfaceId
 ) : CommandOutcome
+
+data class CommandOutcomeLinkEstablished(
+    val linkId: LinkId,
+    val rttMillis: Long
+) : CommandOutcome
+
+data class CommandOutcomePathDiscovered(
+    val hops: Int
+) : CommandOutcome
+
+data object CommandOutcomeIdentified : CommandOutcome
+
+data class CommandOutcomeResponseReceived(
+    val data: Bytes,
+    val rttMillis: Long
+) : CommandOutcome
+
+data class CommandOutcomeResponseSent(
+    val rttMillis: Long
+) : CommandOutcome
+
+data object CommandOutcomeResourceSent : CommandOutcome
+
+data object CommandOutcomeResourceStrategySet : CommandOutcome
+
+data object CommandOutcomeRequesterAllowed : CommandOutcome
 
 sealed interface CommandFailure
 
@@ -548,6 +724,36 @@ data object CommandFailureUnsupportedByBackend : CommandFailure
 data object CommandFailureUnknownLink : CommandFailure
 
 data object CommandFailureLinkNotActive : CommandFailure
+
+data object CommandFailureEntropyUnavailable : CommandFailure
+
+data object CommandFailureNotLinkInitiator : CommandFailure
+
+data object CommandFailureIdentityNotHeld : CommandFailure
+
+data object CommandFailureUnknownRequestHandler : CommandFailure
+
+data object CommandFailureRequestPolicyNotAllowList : CommandFailure
+
+data object CommandFailureRequestAllowListFull : CommandFailure
+
+data object CommandFailureLinkBusy : CommandFailure
+
+data object CommandFailureResourceTableFull : CommandFailure
+
+data object CommandFailureResourceMetadataTooLarge : CommandFailure
+
+data object CommandFailureResourceRejectedByPeer : CommandFailure
+
+data object CommandFailureResourceSequencingFailed : CommandFailure
+
+data object CommandFailureResourcePredecessorFailed : CommandFailure
+
+data object CommandFailureChannelWindowFull : CommandFailure
+
+data object CommandFailureChannelUntrackable : CommandFailure
+
+data object CommandFailureInvalidChannelMessageType : CommandFailure
 
 sealed interface ApplicationEvent
 
@@ -606,7 +812,7 @@ data class ApplicationEventResourceNeedsDecompression(
 
 data class ApplicationEventChannelMessage(
     val linkId: LinkId,
-    val messageType: String,
+    val messageType: Int,
     val data: Bytes
 ) : ApplicationEvent
 

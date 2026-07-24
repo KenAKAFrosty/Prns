@@ -294,16 +294,22 @@ func decodeApplicationEvent(event nativeEvent) (ApplicationEvent, error) {
 		if err != nil {
 			return nil, err
 		}
-		messageType, err := requiredString(event, EventFieldMessageType)
+		messageType, err := requiredU64(event, EventFieldMessageType)
 		if err != nil {
 			return nil, err
+		}
+		if messageType > uint64(^uint16(0)) {
+			return nil, StatusError{
+				Operation: "decode channel message type",
+				Status:    StatusBackendFailed,
+			}
 		}
 		data, err := requiredBytes(event, EventFieldData)
 		if err != nil {
 			return nil, err
 		}
 		return ApplicationEventChannelMessage{
-			LinkId: linkID, MessageType: messageType, Data: data,
+			LinkId: linkID, MessageType: uint16(messageType), Data: data,
 		}, nil
 	default:
 		return nil, StatusError{

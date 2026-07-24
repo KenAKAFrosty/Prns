@@ -17,10 +17,14 @@ mod resource;
 mod types;
 
 pub use capability::{BackendCapabilities, BackendKind, Capability};
-pub use command::{Bitrate, CommandFailure, CommandOutcome, DeliveryEvidence, HostCommand};
+pub use command::{
+    Bitrate, CommandFailure, CommandOutcome, DeliveryEvidence, HostCommand, ResourceCompression,
+    ResourceStrategy, ResponseTimeout,
+};
 pub use config::{
     DestinationConfig, DestinationIdentityConfig, DestinationName, DestinationNameError,
-    HostConfig, HostRole, IdentityConfig, IdentitySecret, SingleDestinationConfig,
+    HostConfig, HostRole, IdentityConfig, IdentitySecret, RequestHandlerConfig, RequestPolicy,
+    SingleDestinationConfig,
 };
 pub use contract::{
     verify_host_contract, HostContract, HostContractMismatch, HOST_CONTRACT, HOST_CONTRACT_ABI,
@@ -35,8 +39,9 @@ pub use generated::{
     AbiApplicationEventKind, AbiBackendKind, AbiBitrateKind, AbiCapability, AbiCommandFailureKind,
     AbiCommandOutcomeKind, AbiDeliveryEvidenceKind, AbiDestinationConfigKind,
     AbiDestinationIdentityConfigKind, AbiDiagnosticEventKind, AbiEventField, AbiHostRole,
-    AbiIdentityConfigKind, AbiLifecyclePhase, AbiLinkClosedReason, AbiStatus, AbiStopReason,
-    BALANCED_APPLICATION_EVENTS, BALANCED_DIAGNOSTICS, BALANCED_PENDING_COMMANDS,
+    AbiIdentityConfigKind, AbiLifecyclePhase, AbiLinkClosedReason, AbiRequestPolicy,
+    AbiResourceCompressionKind, AbiResourceStrategyKind, AbiResponseTimeoutKind, AbiStatus,
+    AbiStopReason, BALANCED_APPLICATION_EVENTS, BALANCED_DIAGNOSTICS, BALANCED_PENDING_COMMANDS,
     BALANCED_RETAINED_EVENT_BYTES, DESTINATION_HASH_LENGTH, HOST_SCHEMA_ABI,
     HOST_SCHEMA_PRODUCT_VERSION, HOST_SCHEMA_VERSION, IDENTITY_HASH_LENGTH, IDENTITY_SECRET_LENGTH,
     INTERFACE_ID_LENGTH, LINK_ID_LENGTH, PACKET_HASH_LENGTH, REQUEST_ID_LENGTH,

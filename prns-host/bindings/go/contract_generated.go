@@ -104,6 +104,35 @@ const (
 	BitrateKindBitsPerSecond BitrateKind = 2
 )
 
+type ResponseTimeoutKind uint32
+
+const (
+	ResponseTimeoutKindLinkDefault ResponseTimeoutKind = 1
+	ResponseTimeoutKindExact ResponseTimeoutKind = 2
+)
+
+type ResourceCompressionKind uint32
+
+const (
+	ResourceCompressionKindAuto ResourceCompressionKind = 1
+	ResourceCompressionKindNever ResourceCompressionKind = 2
+)
+
+type ResourceStrategyKind uint32
+
+const (
+	ResourceStrategyKindRefuse ResourceStrategyKind = 1
+	ResourceStrategyKindAccept ResourceStrategyKind = 2
+)
+
+type RequestPolicy uint32
+
+const (
+	RequestPolicyAllowNone RequestPolicy = 1
+	RequestPolicyAllowAll RequestPolicy = 2
+	RequestPolicyAllowList RequestPolicy = 3
+)
+
 type CommandOutcomeKind uint32
 
 const (
@@ -112,6 +141,14 @@ const (
 	CommandOutcomeKindLinkCloseQueued CommandOutcomeKind = 3
 	CommandOutcomeKindInterfaceAttached CommandOutcomeKind = 4
 	CommandOutcomeKindInterfaceDetached CommandOutcomeKind = 5
+	CommandOutcomeKindLinkEstablished CommandOutcomeKind = 6
+	CommandOutcomeKindPathDiscovered CommandOutcomeKind = 7
+	CommandOutcomeKindIdentified CommandOutcomeKind = 8
+	CommandOutcomeKindResponseReceived CommandOutcomeKind = 9
+	CommandOutcomeKindResponseSent CommandOutcomeKind = 10
+	CommandOutcomeKindResourceSent CommandOutcomeKind = 11
+	CommandOutcomeKindResourceStrategySet CommandOutcomeKind = 12
+	CommandOutcomeKindRequesterAllowed CommandOutcomeKind = 13
 )
 
 type CommandFailureKind uint32
@@ -134,6 +171,21 @@ const (
 	CommandFailureKindUnsupportedByBackend CommandFailureKind = 15
 	CommandFailureKindUnknownLink CommandFailureKind = 16
 	CommandFailureKindLinkNotActive CommandFailureKind = 17
+	CommandFailureKindEntropyUnavailable CommandFailureKind = 18
+	CommandFailureKindNotLinkInitiator CommandFailureKind = 19
+	CommandFailureKindIdentityNotHeld CommandFailureKind = 20
+	CommandFailureKindUnknownRequestHandler CommandFailureKind = 21
+	CommandFailureKindRequestPolicyNotAllowList CommandFailureKind = 22
+	CommandFailureKindRequestAllowListFull CommandFailureKind = 23
+	CommandFailureKindLinkBusy CommandFailureKind = 24
+	CommandFailureKindResourceTableFull CommandFailureKind = 25
+	CommandFailureKindResourceMetadataTooLarge CommandFailureKind = 26
+	CommandFailureKindResourceRejectedByPeer CommandFailureKind = 27
+	CommandFailureKindResourceSequencingFailed CommandFailureKind = 28
+	CommandFailureKindResourcePredecessorFailed CommandFailureKind = 29
+	CommandFailureKindChannelWindowFull CommandFailureKind = 30
+	CommandFailureKindChannelUntrackable CommandFailureKind = 31
+	CommandFailureKindInvalidChannelMessageType CommandFailureKind = 32
 )
 
 type DeliveryEvidenceKind uint32
@@ -267,6 +319,11 @@ type DestinationName struct {
 	Aspects []string
 }
 
+type RequestHandlerConfig struct {
+	Path string
+	Policy RequestPolicy
+}
+
 type ResourceStream interface {
 	TotalBytes() uint64
 	Next(maximumBytes int) ([]byte, bool, error)
@@ -321,6 +378,47 @@ type BitrateBitsPerSecond struct {
 
 func (BitrateBitsPerSecond) bitrate() {}
 
+type ResponseTimeout interface {
+	responseTimeout()
+}
+
+type ResponseTimeoutLinkDefault struct{}
+
+func (ResponseTimeoutLinkDefault) responseTimeout() {}
+
+type ResponseTimeoutExact struct {
+	Millis uint64
+}
+
+func (ResponseTimeoutExact) responseTimeout() {}
+
+type ResourceCompression interface {
+	resourceCompression()
+}
+
+type ResourceCompressionAuto struct{}
+
+func (ResourceCompressionAuto) resourceCompression() {}
+
+type ResourceCompressionNever struct{}
+
+func (ResourceCompressionNever) resourceCompression() {}
+
+type ResourceStrategy interface {
+	resourceStrategy()
+}
+
+type ResourceStrategyRefuse struct{}
+
+func (ResourceStrategyRefuse) resourceStrategy() {}
+
+type ResourceStrategyAccept struct {
+	MaximumUncompressedBytes uint64
+	AcceptCompressed bool
+}
+
+func (ResourceStrategyAccept) resourceStrategy() {}
+
 type DestinationConfig interface {
 	destinationConfig()
 }
@@ -335,6 +433,7 @@ type DestinationConfigSingle struct {
 	Name DestinationName
 	Identity DestinationIdentityConfig
 	AnnounceAppData *[]byte
+	RequestHandlers []RequestHandlerConfig
 }
 
 func (DestinationConfigSingle) destinationConfig() {}
@@ -391,6 +490,89 @@ type HostCommandDetachInterface struct {
 
 func (HostCommandDetachInterface) hostCommand() {}
 
+type HostCommandEstablishLink struct {
+	Destination DestinationHash
+}
+
+func (HostCommandEstablishLink) hostCommand() {}
+
+type HostCommandRequestPath struct {
+	Destination DestinationHash
+}
+
+func (HostCommandRequestPath) hostCommand() {}
+
+type HostCommandIdentify struct {
+	LinkId LinkId
+	Identity IdentityHash
+}
+
+func (HostCommandIdentify) hostCommand() {}
+
+type HostCommandSendLinkPacket struct {
+	LinkId LinkId
+	Payload []byte
+}
+
+func (HostCommandSendLinkPacket) hostCommand() {}
+
+type HostCommandRequest struct {
+	LinkId LinkId
+	PathHash RequestPathHash
+	Payload []byte
+	Timeout ResponseTimeout
+}
+
+func (HostCommandRequest) hostCommand() {}
+
+type HostCommandRespond struct {
+	LinkId LinkId
+	RequestId RequestId
+	RequestRttMillis uint64
+	Payload []byte
+}
+
+func (HostCommandRespond) hostCommand() {}
+
+type HostCommandSendResource struct {
+	LinkId LinkId
+	Payload []byte
+	PackedMetadata *[]byte
+	Compression ResourceCompression
+}
+
+func (HostCommandSendResource) hostCommand() {}
+
+type HostCommandSetLinkResourceStrategy struct {
+	LinkId LinkId
+	Strategy ResourceStrategy
+}
+
+func (HostCommandSetLinkResourceStrategy) hostCommand() {}
+
+type HostCommandSetDestinationResourceStrategy struct {
+	Destination DestinationHash
+	Strategy ResourceStrategy
+}
+
+func (HostCommandSetDestinationResourceStrategy) hostCommand() {}
+
+type HostCommandSendChannelMessage struct {
+	LinkId LinkId
+	MessageType uint16
+	Payload []byte
+}
+
+func (HostCommandSendChannelMessage) hostCommand() {}
+
+type HostCommandAllowRequester struct {
+	Destination DestinationHash
+	PathHash RequestPathHash
+	Identity IdentityHash
+}
+
+func (HostCommandAllowRequester) hostCommand() {}
+
 type CommandOutcome interface {
 	commandOutcome()
 }
@@ -422,6 +604,48 @@ type CommandOutcomeInterfaceDetached struct {
 }
 
 func (CommandOutcomeInterfaceDetached) commandOutcome() {}
+
+type CommandOutcomeLinkEstablished struct {
+	LinkId LinkId
+	RttMillis uint64
+}
+
+func (CommandOutcomeLinkEstablished) commandOutcome() {}
+
+type CommandOutcomePathDiscovered struct {
+	Hops uint8
+}
+
+func (CommandOutcomePathDiscovered) commandOutcome() {}
+
+type CommandOutcomeIdentified struct{}
+
+func (CommandOutcomeIdentified) commandOutcome() {}
+
+type CommandOutcomeResponseReceived struct {
+	Data []byte
+	RttMillis uint64
+}
+
+func (CommandOutcomeResponseReceived) commandOutcome() {}
+
+type CommandOutcomeResponseSent struct {
+	RttMillis uint64
+}
+
+func (CommandOutcomeResponseSent) commandOutcome() {}
+
+type CommandOutcomeResourceSent struct{}
+
+func (CommandOutcomeResourceSent) commandOutcome() {}
+
+type CommandOutcomeResourceStrategySet struct{}
+
+func (CommandOutcomeResourceStrategySet) commandOutcome() {}
+
+type CommandOutcomeRequesterAllowed struct{}
+
+func (CommandOutcomeRequesterAllowed) commandOutcome() {}
 
 type CommandFailure interface {
 	commandFailure()
@@ -499,6 +723,66 @@ type CommandFailureLinkNotActive struct{}
 
 func (CommandFailureLinkNotActive) commandFailure() {}
 
+type CommandFailureEntropyUnavailable struct{}
+
+func (CommandFailureEntropyUnavailable) commandFailure() {}
+
+type CommandFailureNotLinkInitiator struct{}
+
+func (CommandFailureNotLinkInitiator) commandFailure() {}
+
+type CommandFailureIdentityNotHeld struct{}
+
+func (CommandFailureIdentityNotHeld) commandFailure() {}
+
+type CommandFailureUnknownRequestHandler struct{}
+
+func (CommandFailureUnknownRequestHandler) commandFailure() {}
+
+type CommandFailureRequestPolicyNotAllowList struct{}
+
+func (CommandFailureRequestPolicyNotAllowList) commandFailure() {}
+
+type CommandFailureRequestAllowListFull struct{}
+
+func (CommandFailureRequestAllowListFull) commandFailure() {}
+
+type CommandFailureLinkBusy struct{}
+
+func (CommandFailureLinkBusy) commandFailure() {}
+
+type CommandFailureResourceTableFull struct{}
+
+func (CommandFailureResourceTableFull) commandFailure() {}
+
+type CommandFailureResourceMetadataTooLarge struct{}
+
+func (CommandFailureResourceMetadataTooLarge) commandFailure() {}
+
+type CommandFailureResourceRejectedByPeer struct{}
+
+func (CommandFailureResourceRejectedByPeer) commandFailure() {}
+
+type CommandFailureResourceSequencingFailed struct{}
+
+func (CommandFailureResourceSequencingFailed) commandFailure() {}
+
+type CommandFailureResourcePredecessorFailed struct{}
+
+func (CommandFailureResourcePredecessorFailed) commandFailure() {}
+
+type CommandFailureChannelWindowFull struct{}
+
+func (CommandFailureChannelWindowFull) commandFailure() {}
+
+type CommandFailureChannelUntrackable struct{}
+
+func (CommandFailureChannelUntrackable) commandFailure() {}
+
+type CommandFailureInvalidChannelMessageType struct{}
+
+func (CommandFailureInvalidChannelMessageType) commandFailure() {}
+
 type ApplicationEvent interface {
 	applicationEvent()
 }
@@ -572,7 +856,7 @@ func (ApplicationEventResourceNeedsDecompression) applicationEvent() {}
 
 type ApplicationEventChannelMessage struct {
 	LinkId LinkId
-	MessageType string
+	MessageType uint16
 	Data []byte
 }
 

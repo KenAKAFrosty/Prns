@@ -100,13 +100,50 @@
       ]
     },
     {
+      "name": "ResponseTimeoutKind",
+      "values": [
+        { "name": "LinkDefault", "value": 1 },
+        { "name": "Exact", "value": 2 }
+      ]
+    },
+    {
+      "name": "ResourceCompressionKind",
+      "values": [
+        { "name": "Auto", "value": 1 },
+        { "name": "Never", "value": 2 }
+      ]
+    },
+    {
+      "name": "ResourceStrategyKind",
+      "values": [
+        { "name": "Refuse", "value": 1 },
+        { "name": "Accept", "value": 2 }
+      ]
+    },
+    {
+      "name": "RequestPolicy",
+      "values": [
+        { "name": "AllowNone", "value": 1 },
+        { "name": "AllowAll", "value": 2 },
+        { "name": "AllowList", "value": 3 }
+      ]
+    },
+    {
       "name": "CommandOutcomeKind",
       "values": [
         { "name": "Announced", "value": 1 },
         { "name": "PacketDelivered", "value": 2 },
         { "name": "LinkCloseQueued", "value": 3 },
         { "name": "InterfaceAttached", "value": 4 },
-        { "name": "InterfaceDetached", "value": 5 }
+        { "name": "InterfaceDetached", "value": 5 },
+        { "name": "LinkEstablished", "value": 6 },
+        { "name": "PathDiscovered", "value": 7 },
+        { "name": "Identified", "value": 8 },
+        { "name": "ResponseReceived", "value": 9 },
+        { "name": "ResponseSent", "value": 10 },
+        { "name": "ResourceSent", "value": 11 },
+        { "name": "ResourceStrategySet", "value": 12 },
+        { "name": "RequesterAllowed", "value": 13 }
       ]
     },
     {
@@ -128,7 +165,22 @@
         { "name": "WriteFailed", "value": 14 },
         { "name": "UnsupportedByBackend", "value": 15 },
         { "name": "UnknownLink", "value": 16 },
-        { "name": "LinkNotActive", "value": 17 }
+        { "name": "LinkNotActive", "value": 17 },
+        { "name": "EntropyUnavailable", "value": 18 },
+        { "name": "NotLinkInitiator", "value": 19 },
+        { "name": "IdentityNotHeld", "value": 20 },
+        { "name": "UnknownRequestHandler", "value": 21 },
+        { "name": "RequestPolicyNotAllowList", "value": 22 },
+        { "name": "RequestAllowListFull", "value": 23 },
+        { "name": "LinkBusy", "value": 24 },
+        { "name": "ResourceTableFull", "value": 25 },
+        { "name": "ResourceMetadataTooLarge", "value": 26 },
+        { "name": "ResourceRejectedByPeer", "value": 27 },
+        { "name": "ResourceSequencingFailed", "value": 28 },
+        { "name": "ResourcePredecessorFailed", "value": 29 },
+        { "name": "ChannelWindowFull", "value": 30 },
+        { "name": "ChannelUntrackable", "value": 31 },
+        { "name": "InvalidChannelMessageType", "value": 32 }
       ]
     },
     {
@@ -284,6 +336,40 @@
       ]
     },
     {
+      "name": "ResponseTimeout",
+      "cases": [
+        { "name": "LinkDefault", "value": 1, "fields": [] },
+        {
+          "name": "Exact",
+          "value": 2,
+          "fields": [
+            { "name": "millis", "type": "u64" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ResourceCompression",
+      "cases": [
+        { "name": "Auto", "value": 1, "fields": [] },
+        { "name": "Never", "value": 2, "fields": [] }
+      ]
+    },
+    {
+      "name": "ResourceStrategy",
+      "cases": [
+        { "name": "Refuse", "value": 1, "fields": [] },
+        {
+          "name": "Accept",
+          "value": 2,
+          "fields": [
+            { "name": "maximumUncompressedBytes", "type": "u64" },
+            { "name": "acceptCompressed", "type": "bool" }
+          ]
+        }
+      ]
+    },
+    {
       "name": "DestinationConfig",
       "cases": [
         {
@@ -299,7 +385,8 @@
           "fields": [
             { "name": "name", "type": "DestinationName" },
             { "name": "identity", "type": "DestinationIdentityConfig" },
-            { "name": "announceAppData", "type": "bytes", "optional": true }
+            { "name": "announceAppData", "type": "bytes", "optional": true },
+            { "name": "requestHandlers", "type": "RequestHandlers" }
           ]
         }
       ]
@@ -361,6 +448,100 @@
           "fields": [
             { "name": "interface", "type": "InterfaceId" }
           ]
+        },
+        {
+          "name": "EstablishLink",
+          "value": 8,
+          "fields": [
+            { "name": "destination", "type": "DestinationHash" }
+          ]
+        },
+        {
+          "name": "RequestPath",
+          "value": 9,
+          "fields": [
+            { "name": "destination", "type": "DestinationHash" }
+          ]
+        },
+        {
+          "name": "Identify",
+          "value": 10,
+          "fields": [
+            { "name": "linkId", "type": "LinkId" },
+            { "name": "identity", "type": "IdentityHash" }
+          ]
+        },
+        {
+          "name": "SendLinkPacket",
+          "value": 11,
+          "fields": [
+            { "name": "linkId", "type": "LinkId" },
+            { "name": "payload", "type": "bytes" }
+          ]
+        },
+        {
+          "name": "Request",
+          "value": 12,
+          "fields": [
+            { "name": "linkId", "type": "LinkId" },
+            { "name": "pathHash", "type": "RequestPathHash" },
+            { "name": "payload", "type": "bytes" },
+            { "name": "timeout", "type": "ResponseTimeout" }
+          ]
+        },
+        {
+          "name": "Respond",
+          "value": 13,
+          "fields": [
+            { "name": "linkId", "type": "LinkId" },
+            { "name": "requestId", "type": "RequestId" },
+            { "name": "requestRttMillis", "type": "u64" },
+            { "name": "payload", "type": "bytes" }
+          ]
+        },
+        {
+          "name": "SendResource",
+          "value": 14,
+          "fields": [
+            { "name": "linkId", "type": "LinkId" },
+            { "name": "payload", "type": "bytes" },
+            { "name": "packedMetadata", "type": "bytes", "optional": true },
+            { "name": "compression", "type": "ResourceCompression" }
+          ]
+        },
+        {
+          "name": "SetLinkResourceStrategy",
+          "value": 15,
+          "fields": [
+            { "name": "linkId", "type": "LinkId" },
+            { "name": "strategy", "type": "ResourceStrategy" }
+          ]
+        },
+        {
+          "name": "SetDestinationResourceStrategy",
+          "value": 16,
+          "fields": [
+            { "name": "destination", "type": "DestinationHash" },
+            { "name": "strategy", "type": "ResourceStrategy" }
+          ]
+        },
+        {
+          "name": "SendChannelMessage",
+          "value": 17,
+          "fields": [
+            { "name": "linkId", "type": "LinkId" },
+            { "name": "messageType", "type": "u16" },
+            { "name": "payload", "type": "bytes" }
+          ]
+        },
+        {
+          "name": "AllowRequester",
+          "value": 18,
+          "fields": [
+            { "name": "destination", "type": "DestinationHash" },
+            { "name": "pathHash", "type": "RequestPathHash" },
+            { "name": "identity", "type": "IdentityHash" }
+          ]
         }
       ]
     },
@@ -391,7 +572,41 @@
           "fields": [
             { "name": "interface", "type": "InterfaceId" }
           ]
-        }
+        },
+        {
+          "name": "LinkEstablished",
+          "value": 6,
+          "fields": [
+            { "name": "linkId", "type": "LinkId" },
+            { "name": "rttMillis", "type": "u64" }
+          ]
+        },
+        {
+          "name": "PathDiscovered",
+          "value": 7,
+          "fields": [
+            { "name": "hops", "type": "u8" }
+          ]
+        },
+        { "name": "Identified", "value": 8, "fields": [] },
+        {
+          "name": "ResponseReceived",
+          "value": 9,
+          "fields": [
+            { "name": "data", "type": "bytes" },
+            { "name": "rttMillis", "type": "u64" }
+          ]
+        },
+        {
+          "name": "ResponseSent",
+          "value": 10,
+          "fields": [
+            { "name": "rttMillis", "type": "u64" }
+          ]
+        },
+        { "name": "ResourceSent", "value": 11, "fields": [] },
+        { "name": "ResourceStrategySet", "value": 12, "fields": [] },
+        { "name": "RequesterAllowed", "value": 13, "fields": [] }
       ]
     },
     {
@@ -425,7 +640,22 @@
         },
         { "name": "UnsupportedByBackend", "value": 15, "fields": [] },
         { "name": "UnknownLink", "value": 16, "fields": [] },
-        { "name": "LinkNotActive", "value": 17, "fields": [] }
+        { "name": "LinkNotActive", "value": 17, "fields": [] },
+        { "name": "EntropyUnavailable", "value": 18, "fields": [] },
+        { "name": "NotLinkInitiator", "value": 19, "fields": [] },
+        { "name": "IdentityNotHeld", "value": 20, "fields": [] },
+        { "name": "UnknownRequestHandler", "value": 21, "fields": [] },
+        { "name": "RequestPolicyNotAllowList", "value": 22, "fields": [] },
+        { "name": "RequestAllowListFull", "value": 23, "fields": [] },
+        { "name": "LinkBusy", "value": 24, "fields": [] },
+        { "name": "ResourceTableFull", "value": 25, "fields": [] },
+        { "name": "ResourceMetadataTooLarge", "value": 26, "fields": [] },
+        { "name": "ResourceRejectedByPeer", "value": 27, "fields": [] },
+        { "name": "ResourceSequencingFailed", "value": 28, "fields": [] },
+        { "name": "ResourcePredecessorFailed", "value": 29, "fields": [] },
+        { "name": "ChannelWindowFull", "value": 30, "fields": [] },
+        { "name": "ChannelUntrackable", "value": 31, "fields": [] },
+        { "name": "InvalidChannelMessageType", "value": 32, "fields": [] }
       ]
     },
     {
@@ -510,7 +740,7 @@
           "value": 107,
           "fields": [
             { "name": "linkId", "type": "LinkId" },
-            { "name": "messageType", "type": "string" },
+            { "name": "messageType", "type": "u16" },
             { "name": "data", "type": "bytes" }
           ]
         }

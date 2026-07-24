@@ -217,6 +217,46 @@ func marshalDestination(
 				return result, err
 			}
 		}
+		requestHandlersPointer, err := arena.allocate(
+			len(destination.RequestHandlers),
+			C.sizeof_PrnsRequestHandlerConfig,
+		)
+		if err != nil {
+			return result, err
+		}
+		if len(destination.RequestHandlers) > 0 {
+			requestHandlers := unsafe.Slice(
+				(*C.PrnsRequestHandlerConfig)(requestHandlersPointer),
+				len(destination.RequestHandlers),
+			)
+			for index, handler := range destination.RequestHandlers {
+				path, pathError := arena.stringView(handler.Path)
+				if pathError != nil {
+					return result, pathError
+				}
+				var policy C.PrnsRequestPolicy
+				switch handler.Policy {
+				case RequestPolicyAllowNone:
+					policy = C.PRNS_REQUEST_POLICY_ALLOW_NONE
+				case RequestPolicyAllowAll:
+					policy = C.PRNS_REQUEST_POLICY_ALLOW_ALL
+				case RequestPolicyAllowList:
+					policy = C.PRNS_REQUEST_POLICY_ALLOW_LIST
+				default:
+					return result, ConfigError{
+						Kind:  ConfigInvalidRequestPolicy,
+						Field: "request handler policy",
+					}
+				}
+				requestHandlers[index] = C.PrnsRequestHandlerConfig{
+					struct_size: C.size_t(C.sizeof_PrnsRequestHandlerConfig),
+					path:        path,
+					policy:      policy,
+				}
+			}
+		}
+		result.request_handlers = (*C.PrnsRequestHandlerConfig)(requestHandlersPointer)
+		result.request_handler_count = C.size_t(len(destination.RequestHandlers))
 	default:
 		return result, ConfigError{
 			Kind:  ConfigUnknownDestination,
@@ -369,6 +409,58 @@ func marshalBitrate(value Bitrate) (C.PrnsBitrateKind, C.uint64_t, error) {
 	}
 }
 
+func marshalResponseTimeout(
+	value ResponseTimeout,
+) (C.PrnsResponseTimeoutKind, C.uint64_t, error) {
+	switch timeout := value.(type) {
+	case ResponseTimeoutLinkDefault:
+		return C.PRNS_RESPONSE_TIMEOUT_KIND_LINK_DEFAULT, 0, nil
+	case ResponseTimeoutExact:
+		return C.PRNS_RESPONSE_TIMEOUT_KIND_EXACT, C.uint64_t(timeout.Millis), nil
+	default:
+		return 0, 0, ConfigError{Kind: ConfigUnknownDestination, Field: "response timeout"}
+	}
+}
+
+func marshalResourceCompression(
+	value ResourceCompression,
+) (C.PrnsResourceCompressionKind, error) {
+	switch value.(type) {
+	case ResourceCompressionAuto:
+		return C.PRNS_RESOURCE_COMPRESSION_KIND_AUTO, nil
+	case ResourceCompressionNever:
+		return C.PRNS_RESOURCE_COMPRESSION_KIND_NEVER, nil
+	default:
+		return 0, ConfigError{Kind: ConfigUnknownDestination, Field: "resource compression"}
+	}
+}
+
+func marshalResourceStrategy(
+	value ResourceStrategy,
+) (C.PrnsResourceStrategyKind, C.uint64_t, C.uint8_t, error) {
+	switch strategy := value.(type) {
+	case ResourceStrategyRefuse:
+		return C.PRNS_RESOURCE_STRATEGY_KIND_REFUSE, 0, 0, nil
+	case ResourceStrategyAccept:
+		if strategy.MaximumUncompressedBytes == 0 {
+			return 0, 0, 0, ConfigError{
+				Kind:  ConfigUnknownDestination,
+				Field: "maximum uncompressed resource bytes",
+			}
+		}
+		var acceptCompressed C.uint8_t
+		if strategy.AcceptCompressed {
+			acceptCompressed = 1
+		}
+		return C.PRNS_RESOURCE_STRATEGY_KIND_ACCEPT,
+			C.uint64_t(strategy.MaximumUncompressedBytes),
+			acceptCompressed,
+			nil
+	default:
+		return 0, 0, 0, ConfigError{Kind: ConfigUnknownDestination, Field: "resource strategy"}
+	}
+}
+
 func ffiExecute(host nativeHost, value HostCommand) (nativeCommand, Status, error) {
 	arena := nativeArena{}
 	defer arena.close()
@@ -480,6 +572,202 @@ func ffiExecute(host nativeHost, value HostCommand) (nativeCommand, Status, erro
 		status = Status(C.prns_host_detach_interface(
 			(*C.PrnsHost)(host.pointer),
 			interfaceID,
+			&pointer,
+		))
+	case HostCommandEstablishLink:
+		destination, err := arena.byteView(command.Destination[:])
+		if err != nil {
+			return nativeCommand{}, StatusInvalidArgument, err
+		}
+		status = Status(C.prns_host_establish_link(
+			(*C.PrnsHost)(host.pointer),
+			destination,
+			&pointer,
+		))
+	case HostCommandRequestPath:
+		destination, err := arena.byteView(command.Destination[:])
+		if err != nil {
+			return nativeCommand{}, StatusInvalidArgument, err
+		}
+		status = Status(C.prns_host_request_path(
+			(*C.PrnsHost)(host.pointer),
+			destination,
+			&pointer,
+		))
+	case HostCommandIdentify:
+		linkID, err := arena.byteView(command.LinkId[:])
+		if err != nil {
+			return nativeCommand{}, StatusInvalidArgument, err
+		}
+		identity, err := arena.byteView(command.Identity[:])
+		if err != nil {
+			return nativeCommand{}, StatusInvalidArgument, err
+		}
+		status = Status(C.prns_host_identify(
+			(*C.PrnsHost)(host.pointer),
+			linkID,
+			identity,
+			&pointer,
+		))
+	case HostCommandSendLinkPacket:
+		linkID, err := arena.byteView(command.LinkId[:])
+		if err != nil {
+			return nativeCommand{}, StatusInvalidArgument, err
+		}
+		payload, err := arena.byteView(command.Payload)
+		if err != nil {
+			return nativeCommand{}, StatusInvalidArgument, err
+		}
+		status = Status(C.prns_host_send_link_packet(
+			(*C.PrnsHost)(host.pointer),
+			linkID,
+			payload,
+			&pointer,
+		))
+	case HostCommandRequest:
+		linkID, err := arena.byteView(command.LinkId[:])
+		if err != nil {
+			return nativeCommand{}, StatusInvalidArgument, err
+		}
+		pathHash, err := arena.byteView(command.PathHash[:])
+		if err != nil {
+			return nativeCommand{}, StatusInvalidArgument, err
+		}
+		payload, err := arena.byteView(command.Payload)
+		if err != nil {
+			return nativeCommand{}, StatusInvalidArgument, err
+		}
+		timeoutKind, timeoutMillis, err := marshalResponseTimeout(command.Timeout)
+		if err != nil {
+			return nativeCommand{}, StatusInvalidArgument, err
+		}
+		status = Status(C.prns_host_request(
+			(*C.PrnsHost)(host.pointer),
+			linkID,
+			pathHash,
+			payload,
+			timeoutKind,
+			timeoutMillis,
+			&pointer,
+		))
+	case HostCommandRespond:
+		linkID, err := arena.byteView(command.LinkId[:])
+		if err != nil {
+			return nativeCommand{}, StatusInvalidArgument, err
+		}
+		requestID, err := arena.byteView(command.RequestId[:])
+		if err != nil {
+			return nativeCommand{}, StatusInvalidArgument, err
+		}
+		payload, err := arena.byteView(command.Payload)
+		if err != nil {
+			return nativeCommand{}, StatusInvalidArgument, err
+		}
+		status = Status(C.prns_host_respond(
+			(*C.PrnsHost)(host.pointer),
+			linkID,
+			requestID,
+			C.uint64_t(command.RequestRttMillis),
+			payload,
+			&pointer,
+		))
+	case HostCommandSendResource:
+		linkID, err := arena.byteView(command.LinkId[:])
+		if err != nil {
+			return nativeCommand{}, StatusInvalidArgument, err
+		}
+		payload, err := arena.byteView(command.Payload)
+		if err != nil {
+			return nativeCommand{}, StatusInvalidArgument, err
+		}
+		var metadata *C.PrnsByteView
+		if command.PackedMetadata != nil {
+			view, err := arena.byteView(*command.PackedMetadata)
+			if err != nil {
+				return nativeCommand{}, StatusInvalidArgument, err
+			}
+			metadata = &view
+		}
+		compression, err := marshalResourceCompression(command.Compression)
+		if err != nil {
+			return nativeCommand{}, StatusInvalidArgument, err
+		}
+		status = Status(C.prns_host_send_resource(
+			(*C.PrnsHost)(host.pointer),
+			linkID,
+			payload,
+			metadata,
+			compression,
+			&pointer,
+		))
+	case HostCommandSetLinkResourceStrategy:
+		linkID, err := arena.byteView(command.LinkId[:])
+		if err != nil {
+			return nativeCommand{}, StatusInvalidArgument, err
+		}
+		kind, maximum, compressed, err := marshalResourceStrategy(command.Strategy)
+		if err != nil {
+			return nativeCommand{}, StatusInvalidArgument, err
+		}
+		status = Status(C.prns_host_set_link_resource_strategy(
+			(*C.PrnsHost)(host.pointer),
+			linkID,
+			kind,
+			maximum,
+			compressed,
+			&pointer,
+		))
+	case HostCommandSetDestinationResourceStrategy:
+		destination, err := arena.byteView(command.Destination[:])
+		if err != nil {
+			return nativeCommand{}, StatusInvalidArgument, err
+		}
+		kind, maximum, compressed, err := marshalResourceStrategy(command.Strategy)
+		if err != nil {
+			return nativeCommand{}, StatusInvalidArgument, err
+		}
+		status = Status(C.prns_host_set_destination_resource_strategy(
+			(*C.PrnsHost)(host.pointer),
+			destination,
+			kind,
+			maximum,
+			compressed,
+			&pointer,
+		))
+	case HostCommandSendChannelMessage:
+		linkID, err := arena.byteView(command.LinkId[:])
+		if err != nil {
+			return nativeCommand{}, StatusInvalidArgument, err
+		}
+		payload, err := arena.byteView(command.Payload)
+		if err != nil {
+			return nativeCommand{}, StatusInvalidArgument, err
+		}
+		status = Status(C.prns_host_send_channel_message(
+			(*C.PrnsHost)(host.pointer),
+			linkID,
+			C.uint16_t(command.MessageType),
+			payload,
+			&pointer,
+		))
+	case HostCommandAllowRequester:
+		destination, err := arena.byteView(command.Destination[:])
+		if err != nil {
+			return nativeCommand{}, StatusInvalidArgument, err
+		}
+		pathHash, err := arena.byteView(command.PathHash[:])
+		if err != nil {
+			return nativeCommand{}, StatusInvalidArgument, err
+		}
+		identity, err := arena.byteView(command.Identity[:])
+		if err != nil {
+			return nativeCommand{}, StatusInvalidArgument, err
+		}
+		status = Status(C.prns_host_allow_requester(
+			(*C.PrnsHost)(host.pointer),
+			destination,
+			pathHash,
+			identity,
 			&pointer,
 		))
 	default:

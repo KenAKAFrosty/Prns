@@ -129,6 +129,40 @@ func decodeCommandSettlement(
 		outcome = CommandOutcomeInterfaceDetached{
 			Interface: InterfaceId(result.value),
 		}
+	case CommandOutcomeKindLinkEstablished:
+		if len(result.value) != LinkIdLength {
+			return nil, StatusError{
+				Operation: "decode link establishment",
+				Status:    StatusBackendFailed,
+			}
+		}
+		outcome = CommandOutcomeLinkEstablished{
+			LinkId:    LinkId(result.value),
+			RttMillis: result.rttMillis,
+		}
+	case CommandOutcomeKindPathDiscovered:
+		if len(result.value) != 1 {
+			return nil, StatusError{
+				Operation: "decode path discovery",
+				Status:    StatusBackendFailed,
+			}
+		}
+		outcome = CommandOutcomePathDiscovered{Hops: result.value[0]}
+	case CommandOutcomeKindIdentified:
+		outcome = CommandOutcomeIdentified{}
+	case CommandOutcomeKindResponseReceived:
+		outcome = CommandOutcomeResponseReceived{
+			Data:      result.value,
+			RttMillis: result.rttMillis,
+		}
+	case CommandOutcomeKindResponseSent:
+		outcome = CommandOutcomeResponseSent{RttMillis: result.rttMillis}
+	case CommandOutcomeKindResourceSent:
+		outcome = CommandOutcomeResourceSent{}
+	case CommandOutcomeKindResourceStrategySet:
+		outcome = CommandOutcomeResourceStrategySet{}
+	case CommandOutcomeKindRequesterAllowed:
+		outcome = CommandOutcomeRequesterAllowed{}
 	default:
 		return nil, StatusError{
 			Operation: "decode command outcome",
@@ -174,6 +208,36 @@ func decodeCommandFailure(kind CommandFailureKind, detail string) (CommandFailur
 		return CommandFailureUnknownLink{}, nil
 	case CommandFailureKindLinkNotActive:
 		return CommandFailureLinkNotActive{}, nil
+	case CommandFailureKindEntropyUnavailable:
+		return CommandFailureEntropyUnavailable{}, nil
+	case CommandFailureKindNotLinkInitiator:
+		return CommandFailureNotLinkInitiator{}, nil
+	case CommandFailureKindIdentityNotHeld:
+		return CommandFailureIdentityNotHeld{}, nil
+	case CommandFailureKindUnknownRequestHandler:
+		return CommandFailureUnknownRequestHandler{}, nil
+	case CommandFailureKindRequestPolicyNotAllowList:
+		return CommandFailureRequestPolicyNotAllowList{}, nil
+	case CommandFailureKindRequestAllowListFull:
+		return CommandFailureRequestAllowListFull{}, nil
+	case CommandFailureKindLinkBusy:
+		return CommandFailureLinkBusy{}, nil
+	case CommandFailureKindResourceTableFull:
+		return CommandFailureResourceTableFull{}, nil
+	case CommandFailureKindResourceMetadataTooLarge:
+		return CommandFailureResourceMetadataTooLarge{}, nil
+	case CommandFailureKindResourceRejectedByPeer:
+		return CommandFailureResourceRejectedByPeer{}, nil
+	case CommandFailureKindResourceSequencingFailed:
+		return CommandFailureResourceSequencingFailed{}, nil
+	case CommandFailureKindResourcePredecessorFailed:
+		return CommandFailureResourcePredecessorFailed{}, nil
+	case CommandFailureKindChannelWindowFull:
+		return CommandFailureChannelWindowFull{}, nil
+	case CommandFailureKindChannelUntrackable:
+		return CommandFailureChannelUntrackable{}, nil
+	case CommandFailureKindInvalidChannelMessageType:
+		return CommandFailureInvalidChannelMessageType{}, nil
 	default:
 		return nil, StatusError{
 			Operation: "decode command failure",

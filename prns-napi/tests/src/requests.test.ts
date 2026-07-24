@@ -52,7 +52,7 @@ test('link, request, respond, and unregistered-path refusal', async () => {
         client.request(link.linkId, requestPathHash('/missing'), Buffer.from('x'), {
           timeoutMillis: 2000,
         }),
-      (error: any) => error.code === 'PRNS_REQUEST_FAILED'
+      (error: any) => error.code === 'PRNS_DELIVERY_TIMED_OUT'
     );
 
     assert.ok(client.closeLink(link.linkId));

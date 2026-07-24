@@ -19,6 +19,7 @@ from ._native import (
     Lifecycle,
     Limits as NativeLimits,
     NativeLibrary,
+    RequestHandlerConfig as NativeRequestHandlerConfig,
     StringView,
     bytes_from_view,
 )
@@ -303,6 +304,8 @@ def _marshal_destination(
             0,
             NativeIdentityConfig(),
             ByteView(),
+            ctypes.POINTER(NativeRequestHandlerConfig)(),
+            0,
         )
     if isinstance(destination, g.DestinationConfigSingle):
         identity = destination.identity
@@ -314,6 +317,14 @@ def _marshal_destination(
             dedicated = _marshal_identity(identity.identity, arena)
         else:
             raise TypeError(f"unknown destination identity {type(identity)!r}")
+        request_handlers = [
+            NativeRequestHandlerConfig(
+                ctypes.sizeof(NativeRequestHandlerConfig),
+                arena.string(handler.path),
+                handler.policy,
+            )
+            for handler in destination.request_handlers
+        ]
         return NativeDestinationConfig(
             ctypes.sizeof(NativeDestinationConfig),
             g.DestinationConfigKind.SINGLE,
@@ -321,6 +332,8 @@ def _marshal_destination(
             identity_kind,
             dedicated,
             arena.bytes(destination.announce_app_data or b""),
+            arena.array(NativeRequestHandlerConfig, request_handlers),
+            len(request_handlers),
         )
     raise TypeError(f"unknown destination config {type(destination)!r}")
 
@@ -364,6 +377,36 @@ def _decode_command_failure(
             return g.CommandFailureUnknownLink()
         case g.CommandFailureKind.LINK_NOT_ACTIVE:
             return g.CommandFailureLinkNotActive()
+        case g.CommandFailureKind.ENTROPY_UNAVAILABLE:
+            return g.CommandFailureEntropyUnavailable()
+        case g.CommandFailureKind.NOT_LINK_INITIATOR:
+            return g.CommandFailureNotLinkInitiator()
+        case g.CommandFailureKind.IDENTITY_NOT_HELD:
+            return g.CommandFailureIdentityNotHeld()
+        case g.CommandFailureKind.UNKNOWN_REQUEST_HANDLER:
+            return g.CommandFailureUnknownRequestHandler()
+        case g.CommandFailureKind.REQUEST_POLICY_NOT_ALLOW_LIST:
+            return g.CommandFailureRequestPolicyNotAllowList()
+        case g.CommandFailureKind.REQUEST_ALLOW_LIST_FULL:
+            return g.CommandFailureRequestAllowListFull()
+        case g.CommandFailureKind.LINK_BUSY:
+            return g.CommandFailureLinkBusy()
+        case g.CommandFailureKind.RESOURCE_TABLE_FULL:
+            return g.CommandFailureResourceTableFull()
+        case g.CommandFailureKind.RESOURCE_METADATA_TOO_LARGE:
+            return g.CommandFailureResourceMetadataTooLarge()
+        case g.CommandFailureKind.RESOURCE_REJECTED_BY_PEER:
+            return g.CommandFailureResourceRejectedByPeer()
+        case g.CommandFailureKind.RESOURCE_SEQUENCING_FAILED:
+            return g.CommandFailureResourceSequencingFailed()
+        case g.CommandFailureKind.RESOURCE_PREDECESSOR_FAILED:
+            return g.CommandFailureResourcePredecessorFailed()
+        case g.CommandFailureKind.CHANNEL_WINDOW_FULL:
+            return g.CommandFailureChannelWindowFull()
+        case g.CommandFailureKind.CHANNEL_UNTRACKABLE:
+            return g.CommandFailureChannelUntrackable()
+        case g.CommandFailureKind.INVALID_CHANNEL_MESSAGE_TYPE:
+            return g.CommandFailureInvalidChannelMessageType()
     raise RuntimeError(f"unknown command failure {kind}")
 
 
@@ -438,6 +481,27 @@ class Command:
             decoded = g.CommandOutcomeInterfaceAttached(g.InterfaceId(value))
         elif outcome is g.CommandOutcomeKind.INTERFACE_DETACHED:
             decoded = g.CommandOutcomeInterfaceDetached(g.InterfaceId(value))
+        elif outcome is g.CommandOutcomeKind.LINK_ESTABLISHED:
+            decoded = g.CommandOutcomeLinkEstablished(
+                g.LinkId(value),
+                result.rtt_millis,
+            )
+        elif outcome is g.CommandOutcomeKind.PATH_DISCOVERED:
+            if len(value) != 1:
+                raise RuntimeError("path outcome must contain exactly one hop byte")
+            decoded = g.CommandOutcomePathDiscovered(value[0])
+        elif outcome is g.CommandOutcomeKind.IDENTIFIED:
+            decoded = g.CommandOutcomeIdentified()
+        elif outcome is g.CommandOutcomeKind.RESPONSE_RECEIVED:
+            decoded = g.CommandOutcomeResponseReceived(value, result.rtt_millis)
+        elif outcome is g.CommandOutcomeKind.RESPONSE_SENT:
+            decoded = g.CommandOutcomeResponseSent(result.rtt_millis)
+        elif outcome is g.CommandOutcomeKind.RESOURCE_SENT:
+            decoded = g.CommandOutcomeResourceSent()
+        elif outcome is g.CommandOutcomeKind.RESOURCE_STRATEGY_SET:
+            decoded = g.CommandOutcomeResourceStrategySet()
+        elif outcome is g.CommandOutcomeKind.REQUESTER_ALLOWED:
+            decoded = g.CommandOutcomeRequesterAllowed()
         else:
             raise RuntimeError(f"unknown command outcome {outcome}")
         return CommandSucceeded(decoded)
@@ -719,9 +783,12 @@ def _decode_event(native: NativeLibrary, event):
             _event_u64(native, event, f.UNCOMPRESSED_DATA_BYTES),
         )
     if application is g.ApplicationEventKind.CHANNEL_MESSAGE:
+        message_type = _event_u64(native, event, f.MESSAGE_TYPE)
+        if message_type > 0xFFFF:
+            raise RuntimeError("channel message type exceeds 16 bits")
         return g.ApplicationEventChannelMessage(
             g.LinkId(_event_bytes(native, event, f.LINK_ID)),
-            _event_string(native, event, f.MESSAGE_TYPE),
+            message_type,
             _event_bytes(native, event, f.DATA),
         )
     raise RuntimeError(f"unknown application event {application}")
@@ -996,6 +1063,112 @@ class Host:
                     arena.bytes(command.interface.value),
                     ctypes.byref(handle),
                 )
+            elif isinstance(command, g.HostCommandEstablishLink):
+                status = self._native.library.prns_host_establish_link(
+                    self._handle,
+                    arena.bytes(command.destination.value),
+                    ctypes.byref(handle),
+                )
+            elif isinstance(command, g.HostCommandRequestPath):
+                status = self._native.library.prns_host_request_path(
+                    self._handle,
+                    arena.bytes(command.destination.value),
+                    ctypes.byref(handle),
+                )
+            elif isinstance(command, g.HostCommandIdentify):
+                status = self._native.library.prns_host_identify(
+                    self._handle,
+                    arena.bytes(command.link_id.value),
+                    arena.bytes(command.identity.value),
+                    ctypes.byref(handle),
+                )
+            elif isinstance(command, g.HostCommandSendLinkPacket):
+                status = self._native.library.prns_host_send_link_packet(
+                    self._handle,
+                    arena.bytes(command.link_id.value),
+                    arena.bytes(command.payload),
+                    ctypes.byref(handle),
+                )
+            elif isinstance(command, g.HostCommandRequest):
+                timeout_kind, timeout_millis = _marshal_response_timeout(
+                    command.timeout
+                )
+                status = self._native.library.prns_host_request(
+                    self._handle,
+                    arena.bytes(command.link_id.value),
+                    arena.bytes(command.path_hash.value),
+                    arena.bytes(command.payload),
+                    timeout_kind,
+                    timeout_millis,
+                    ctypes.byref(handle),
+                )
+            elif isinstance(command, g.HostCommandRespond):
+                status = self._native.library.prns_host_respond(
+                    self._handle,
+                    arena.bytes(command.link_id.value),
+                    arena.bytes(command.request_id.value),
+                    command.request_rtt_millis,
+                    arena.bytes(command.payload),
+                    ctypes.byref(handle),
+                )
+            elif isinstance(command, g.HostCommandSendResource):
+                metadata = (
+                    None
+                    if command.packed_metadata is None
+                    else arena.bytes(command.packed_metadata)
+                )
+                status = self._native.library.prns_host_send_resource(
+                    self._handle,
+                    arena.bytes(command.link_id.value),
+                    arena.bytes(command.payload),
+                    None if metadata is None else ctypes.byref(metadata),
+                    _marshal_resource_compression(command.compression),
+                    ctypes.byref(handle),
+                )
+            elif isinstance(command, g.HostCommandSetLinkResourceStrategy):
+                kind, maximum, compressed = _marshal_resource_strategy(
+                    command.strategy
+                )
+                status = self._native.library.prns_host_set_link_resource_strategy(
+                    self._handle,
+                    arena.bytes(command.link_id.value),
+                    kind,
+                    maximum,
+                    compressed,
+                    ctypes.byref(handle),
+                )
+            elif isinstance(command, g.HostCommandSetDestinationResourceStrategy):
+                kind, maximum, compressed = _marshal_resource_strategy(
+                    command.strategy
+                )
+                status = (
+                    self._native.library.prns_host_set_destination_resource_strategy(
+                        self._handle,
+                        arena.bytes(command.destination.value),
+                        kind,
+                        maximum,
+                        compressed,
+                        ctypes.byref(handle),
+                    )
+                )
+            elif isinstance(command, g.HostCommandSendChannelMessage):
+                if not 0 <= command.message_type <= 0xFFFF:
+                    raise ValueError("message type must fit in 16 bits")
+                status = self._native.library.prns_host_send_channel_message(
+                    self._handle,
+                    arena.bytes(command.link_id.value),
+                    command.message_type,
+                    arena.bytes(command.payload),
+                    ctypes.byref(handle),
+                )
+            elif isinstance(command, g.HostCommandAllowRequester):
+                status = self._native.library.prns_host_allow_requester(
+                    self._handle,
+                    arena.bytes(command.destination.value),
+                    arena.bytes(command.path_hash.value),
+                    arena.bytes(command.identity.value),
+                    ctypes.byref(handle),
+                )
             else:
                 raise TypeError(f"unknown host command {type(command)!r}")
             _check(status)
@@ -1046,6 +1219,113 @@ class Host:
     ) -> CommandSettlement:
         return await self.submit(g.HostCommandDetachInterface(interface))
 
+    async def establish_link(
+        self,
+        destination: g.DestinationHash,
+    ) -> CommandSettlement:
+        return await self.submit(g.HostCommandEstablishLink(destination))
+
+    async def request_path(
+        self,
+        destination: g.DestinationHash,
+    ) -> CommandSettlement:
+        return await self.submit(g.HostCommandRequestPath(destination))
+
+    async def identify(
+        self,
+        link_id: g.LinkId,
+        identity: g.IdentityHash,
+    ) -> CommandSettlement:
+        return await self.submit(g.HostCommandIdentify(link_id, identity))
+
+    async def send_link_packet(
+        self,
+        link_id: g.LinkId,
+        payload: bytes,
+    ) -> CommandSettlement:
+        return await self.submit(g.HostCommandSendLinkPacket(link_id, payload))
+
+    async def request(
+        self,
+        link_id: g.LinkId,
+        path_hash: g.RequestPathHash,
+        payload: bytes,
+        timeout: g.ResponseTimeout,
+    ) -> CommandSettlement:
+        return await self.submit(
+            g.HostCommandRequest(link_id, path_hash, payload, timeout)
+        )
+
+    async def respond(
+        self,
+        link_id: g.LinkId,
+        request_id: g.RequestId,
+        request_rtt_millis: int,
+        payload: bytes,
+    ) -> CommandSettlement:
+        return await self.submit(
+            g.HostCommandRespond(
+                link_id,
+                request_id,
+                request_rtt_millis,
+                payload,
+            )
+        )
+
+    async def send_resource(
+        self,
+        link_id: g.LinkId,
+        payload: bytes,
+        packed_metadata: bytes | None,
+        compression: g.ResourceCompression,
+    ) -> CommandSettlement:
+        return await self.submit(
+            g.HostCommandSendResource(
+                link_id,
+                payload,
+                packed_metadata,
+                compression,
+            )
+        )
+
+    async def set_link_resource_strategy(
+        self,
+        link_id: g.LinkId,
+        strategy: g.ResourceStrategy,
+    ) -> CommandSettlement:
+        return await self.submit(
+            g.HostCommandSetLinkResourceStrategy(link_id, strategy)
+        )
+
+    async def set_destination_resource_strategy(
+        self,
+        destination: g.DestinationHash,
+        strategy: g.ResourceStrategy,
+    ) -> CommandSettlement:
+        return await self.submit(
+            g.HostCommandSetDestinationResourceStrategy(destination, strategy)
+        )
+
+    async def send_channel_message(
+        self,
+        link_id: g.LinkId,
+        message_type: int,
+        payload: bytes,
+    ) -> CommandSettlement:
+        return await self.submit(
+            g.HostCommandSendChannelMessage(link_id, message_type, payload)
+        )
+
+    async def allow_requester(
+        self,
+        destination: g.DestinationHash,
+        path_hash: g.RequestPathHash,
+        identity: g.IdentityHash,
+    ) -> CommandSettlement:
+        return await self.submit(
+            g.HostCommandAllowRequester(destination, path_hash, identity)
+        )
+
     def claim_events(self) -> StreamClaim[EventStream[g.ApplicationEvent]]:
         return self._claim(
             self._native.library.prns_host_claim_application_events,
@@ -1095,3 +1375,39 @@ def _marshal_bitrate(bitrate: g.Bitrate) -> tuple[g.BitrateKind, int]:
             raise ValueError("bitrate must be at least 5 bits per second")
         return g.BitrateKind.BITS_PER_SECOND, bitrate.value
     raise TypeError(f"unknown bitrate {type(bitrate)!r}")
+
+
+def _marshal_response_timeout(
+    timeout: g.ResponseTimeout,
+) -> tuple[g.ResponseTimeoutKind, int]:
+    if isinstance(timeout, g.ResponseTimeoutLinkDefault):
+        return g.ResponseTimeoutKind.LINK_DEFAULT, 0
+    if isinstance(timeout, g.ResponseTimeoutExact):
+        return g.ResponseTimeoutKind.EXACT, timeout.millis
+    raise TypeError(f"unknown response timeout {type(timeout)!r}")
+
+
+def _marshal_resource_compression(
+    compression: g.ResourceCompression,
+) -> g.ResourceCompressionKind:
+    if isinstance(compression, g.ResourceCompressionAuto):
+        return g.ResourceCompressionKind.AUTO
+    if isinstance(compression, g.ResourceCompressionNever):
+        return g.ResourceCompressionKind.NEVER
+    raise TypeError(f"unknown resource compression {type(compression)!r}")
+
+
+def _marshal_resource_strategy(
+    strategy: g.ResourceStrategy,
+) -> tuple[g.ResourceStrategyKind, int, bool]:
+    if isinstance(strategy, g.ResourceStrategyRefuse):
+        return g.ResourceStrategyKind.REFUSE, 0, False
+    if isinstance(strategy, g.ResourceStrategyAccept):
+        if strategy.maximum_uncompressed_bytes < 1:
+            raise ValueError("maximum uncompressed resource size must be positive")
+        return (
+            g.ResourceStrategyKind.ACCEPT,
+            strategy.maximum_uncompressed_bytes,
+            strategy.accept_compressed,
+        )
+    raise TypeError(f"unknown resource strategy {type(strategy)!r}")

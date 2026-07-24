@@ -165,17 +165,28 @@ func nativeDestination(
             name: try nativeDestinationName(name, arena: arena),
             identity_kind: 0,
             dedicated_identity: emptyNativeIdentity(),
-            announce_app_data: PrnsByteView(data: nil, length: 0)
+            announce_app_data: PrnsByteView(data: nil, length: 0),
+            request_handlers: nil,
+            request_handler_count: 0
         )
-    case .single(let name, let identity, let announceAppData):
+    case .single(let name, let identity, let announceAppData, let requestHandlers):
         let nativeIdentity = try nativeDestinationIdentity(identity, arena: arena)
+        let handlers = try requestHandlers.map { handler in
+            PrnsRequestHandlerConfig(
+                struct_size: MemoryLayout<PrnsRequestHandlerConfig>.size,
+                path: try arena.string(handler.path),
+                policy: handler.policy.rawValue
+            )
+        }
         return PrnsDestinationConfig(
             struct_size: MemoryLayout<PrnsDestinationConfig>.size,
             kind: DestinationConfigKind.single.rawValue,
             name: try nativeDestinationName(name, arena: arena),
             identity_kind: nativeIdentity.0,
             dedicated_identity: nativeIdentity.1,
-            announce_app_data: try arena.optionalBytes(announceAppData)
+            announce_app_data: try arena.optionalBytes(announceAppData),
+            request_handlers: try arena.array(handlers).map { UnsafePointer($0) },
+            request_handler_count: handlers.count
         )
     }
 }
