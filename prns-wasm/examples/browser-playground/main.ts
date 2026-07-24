@@ -1,5 +1,5 @@
 import init, * as wasm from "./pkg/prns_wasm.js";
-import { Prns, Tag } from "./sdk/index.js";
+import { BrowserLocalStorageIdentityStore, Prns, Tag } from "./sdk/index.js";
 import type {
   AutoWifiControllerStatus,
   DestinationHash,
@@ -84,7 +84,10 @@ class BrowserPlayground {
     }
     let created: PrnsCreateOutcome;
     try {
-      created = await Prns.create({ wasm: wasmModule() });
+      created = await Prns.create({
+        wasm: wasmModule(),
+        identityStore: new BrowserLocalStorageIdentityStore(),
+      });
     } catch (error: unknown) {
       return hostOperationFailed("Create runtime", error);
     }

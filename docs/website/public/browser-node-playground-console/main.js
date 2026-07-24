@@ -1,5 +1,5 @@
 import init, * as wasm from "./pkg/prns_wasm.js";
-import { Prns, Tag } from "./sdk/index.js";
+import { BrowserLocalStorageIdentityStore, Prns, Tag } from "./sdk/index.js";
 import { BROWSER_PLAYGROUND_LXMF_DELIVERY, LXMF_DELIVERY_DISPLAY_NAME, } from "./lxmf.js";
 import { describeAutoWifiFailure, describeEntropyFailure, describeHostError, describeHostOperationFailure, describeRuntimeRejected, describeStartupFailure, describeUnknownOutcome, describeUsbCloseFailure, describeUsbConnectFailure, hostOperationFailed, } from "./outcomes.js";
 import { hex, presentPacketContent } from "./presentation.js";
@@ -39,7 +39,10 @@ class BrowserPlayground {
         }
         let created;
         try {
-            created = await Prns.create({ wasm: wasmModule() });
+            created = await Prns.create({
+                wasm: wasmModule(),
+                identityStore: new BrowserLocalStorageIdentityStore(),
+            });
         }
         catch (error) {
             return hostOperationFailed("Create runtime", error);
