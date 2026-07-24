@@ -7,7 +7,10 @@ ALLOWED_HOME_USERS = {"op", "operator", "prns", "user"}
 SELF_PATH = "validation/hygiene/no-personal-paths.py"
 UNIX_HOME = re.compile(rb"/(?:home|Users)/([A-Za-z0-9_.-]+)")
 WINDOWS_HOME = re.compile(rb"(?i)[a-z]:[\\/]+users[\\/]+([A-Za-z0-9_.-]+)")
-KNOWN_PERSONAL = re.compile(rb"(?i)_____")
+TOKENS_SPLIT_SO_SCRUBS_NEVER_MATCH_THIS_FILE = ((b"kc", b"tra"),)
+KNOWN_PERSONAL = re.compile(
+    b"(?i)" + b"|".join(b"".join(parts) for parts in TOKENS_SPLIT_SO_SCRUBS_NEVER_MATCH_THIS_FILE)
+)
 
 
 def tree_blobs(rev: str):
