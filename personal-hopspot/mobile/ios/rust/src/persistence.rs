@@ -7,16 +7,18 @@ use std::sync::{Arc, Mutex};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
+use personal_rns::identity::vault::FileVault;
 use personal_rns::node_introspection::NodeIntrospection;
 use personal_rns::persistence::FileStore;
 use personal_rns::runtime::request_router::RouteSet;
 use personal_rns::runtime::{
     boot_timeline_origin, DestinationIdentitySeedReport, FlushError, FlushMark, FlushReport,
-    PrepareFlushError, PrnsEvent, PrnsNode, PrnsNodeHandle, RegionFlush, RouteSeedReport,
-    TunnelSeedReport,
+    PrepareFlushError, PrnsEvent, PrnsNode, PrnsNodeHandle, RatchetSeedReport, RegionFlush,
+    RouteSeedReport, TunnelSeedReport,
 };
 use personal_rns::storage::StorageLayout;
 use personal_rns::units::InstantMillis;
+use personal_rns::wire::DestinationHash;
 
 const STORE_DIRECTORY: &str = "prns";
 const WRITE_PROBE: &str = ".write-probe";
@@ -32,10 +34,12 @@ pub(crate) struct RestoreReport {
     pub(crate) routes: RouteSeedReport,
     pub(crate) destination_identities: DestinationIdentitySeedReport,
     pub(crate) tunnels: TunnelSeedReport,
+    pub(crate) ratchets: RatchetSeedReport,
 }
 
 pub(crate) struct PreparedPersistence {
     store: FileStore,
+    vault: FileVault,
 }
 
 impl PreparedPersistence {
@@ -52,7 +56,8 @@ impl PreparedPersistence {
         fs::set_permissions(&store_directory, fs::Permissions::from_mode(0o700))?;
         verify_writable(&store_directory)?;
         Ok(Self {
-            store: FileStore::new(store_directory),
+            store: FileStore::new(&store_directory),
+            vault: FileVault::new(store_directory),
         })
     }
 
@@ -70,6 +75,7 @@ impl PreparedPersistence {
             routes: node.seed_routes_from_store(&self.store),
             destination_identities: node.seed_destination_identities_from_store(&self.store),
             tunnels: node.seed_tunnels_from_store(&self.store),
+            ratchets: node.seed_self_ratchets_from_vault(&self.vault),
         }
     }
 
@@ -77,8 +83,9 @@ impl PreparedPersistence {
         self,
         handle: PrnsNodeHandle,
         changes: tokio::sync::mpsc::UnboundedReceiver<RouteTableChange>,
+        rotated: tokio::sync::mpsc::UnboundedReceiver<DestinationHash>,
     ) -> PersistenceTask {
-        PersistenceTask::start(handle, self.store, changes)
+        PersistenceTask::start(handle, self.store, self.vault, changes, rotated)
     }
 }
 
@@ -99,6 +106,7 @@ fn verify_writable(store_directory: &Path) -> Result<(), std::io::Error> {
 
 struct PersistenceStorage {
     store: FileStore,
+    vault: FileVault,
     mark: FlushMark,
 }
 
@@ -119,14 +127,17 @@ impl PersistenceTask {
     fn start(
         handle: PrnsNodeHandle,
         store: FileStore,
+        vault: FileVault,
         changes: tokio::sync::mpsc::UnboundedReceiver<RouteTableChange>,
+        rotated: tokio::sync::mpsc::UnboundedReceiver<DestinationHash>,
     ) -> Self {
         let storage = Arc::new(Mutex::new(PersistenceStorage {
             store,
+            vault,
             mark: FlushMark::default(),
         }));
         let (shutdown, requested) = tokio::sync::oneshot::channel();
-        let join = tokio::spawn(run(handle, storage, changes, requested));
+        let join = tokio::spawn(run(handle, storage, changes, rotated, requested));
         Self {
             shutdown: Some(shutdown),
             join: Some(join),
@@ -166,17 +177,29 @@ async fn run(
     handle: PrnsNodeHandle,
     storage: Arc<Mutex<PersistenceStorage>>,
     mut changes: tokio::sync::mpsc::UnboundedReceiver<RouteTableChange>,
+    mut rotated: tokio::sync::mpsc::UnboundedReceiver<DestinationHash>,
     mut shutdown: tokio::sync::oneshot::Receiver<()>,
 ) -> FlushOutcome {
     let mut periodic = tokio::time::interval(PERIODIC_FLUSH_INTERVAL);
     periodic.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     periodic.tick().await;
     let mut changes_open = true;
+    let mut rotations_open = true;
     loop {
         tokio::select! {
             biased;
             _ = &mut shutdown => {
-                return flush(&handle, &storage, FlushReason::Shutdown).await;
+                let state = flush(&handle, &storage, FlushReason::Shutdown).await;
+                let ratchets = flush_ratchets(&handle, &storage).await;
+                return combined(state, ratchets);
+            }
+            destination = rotated.recv(), if rotations_open => {
+                match destination {
+                    Some(destination) => {
+                        let _ = flush_ratchet(&handle, &storage, destination).await;
+                    }
+                    None => rotations_open = false,
+                }
             }
             change = changes.recv(), if changes_open => {
                 match change {
@@ -191,6 +214,74 @@ async fn run(
             _ = periodic.tick() => {
                 let _ = flush(&handle, &storage, FlushReason::Periodic).await;
             }
+        }
+    }
+}
+
+const fn combined(state: FlushOutcome, ratchets: FlushOutcome) -> FlushOutcome {
+    match (state, ratchets) {
+        (FlushOutcome::Landed, FlushOutcome::Landed) => FlushOutcome::Landed,
+        (FlushOutcome::NodeStopped, _) | (_, FlushOutcome::NodeStopped) => {
+            FlushOutcome::NodeStopped
+        }
+        _ => FlushOutcome::Failed,
+    }
+}
+
+async fn flush_ratchet(
+    handle: &PrnsNodeHandle,
+    storage: &Arc<Mutex<PersistenceStorage>>,
+    destination: DestinationHash,
+) -> FlushOutcome {
+    let snapshot = match handle.snapshot_self_ratchet(destination).await {
+        Ok(Some(snapshot)) => snapshot,
+        Ok(None) => return FlushOutcome::Landed,
+        Err(PrepareFlushError::NodeStopped) => return FlushOutcome::NodeStopped,
+    };
+    store_into_vault(storage, move |vault| snapshot.store_into(vault)).await
+}
+
+async fn flush_ratchets(
+    handle: &PrnsNodeHandle,
+    storage: &Arc<Mutex<PersistenceStorage>>,
+) -> FlushOutcome {
+    let Some(snapshot) = handle.snapshot_self_ratchets().await else {
+        return FlushOutcome::NodeStopped;
+    };
+    store_into_vault(storage, move |vault| {
+        snapshot.store_into(vault).map(|_| ())
+    })
+    .await
+}
+
+async fn store_into_vault<E: core::fmt::Display + Send + 'static>(
+    storage: &Arc<Mutex<PersistenceStorage>>,
+    store: impl FnOnce(&mut FileVault) -> Result<(), E> + Send + 'static,
+) -> FlushOutcome {
+    let storage = Arc::clone(storage);
+    let committed = tokio::task::spawn_blocking(move || {
+        let mut storage = match storage.lock() {
+            Ok(storage) => storage,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        store(&mut storage.vault)
+    })
+    .await;
+    match committed {
+        Ok(Ok(())) => FlushOutcome::Landed,
+        Ok(Err(error)) => {
+            crate::engine::diagnostic(
+                "persistence",
+                format_args!("state=failed reason=ratchet error={error}"),
+            );
+            FlushOutcome::Failed
+        }
+        Err(error) => {
+            crate::engine::diagnostic(
+                "persistence",
+                format_args!("state=failed reason=ratchet worker_error={error}"),
+            );
+            FlushOutcome::Failed
         }
     }
 }
@@ -235,7 +326,7 @@ async fn flush(
             Ok(storage) => storage,
             Err(poisoned) => poisoned.into_inner(),
         };
-        let PersistenceStorage { store, mark } = &mut *storage;
+        let PersistenceStorage { store, mark, .. } = &mut *storage;
         prepared.commit_to_store(store, mark)
     })
     .await;
@@ -385,6 +476,7 @@ mod tests {
         );
         let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
         let (change_tx, change_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (_rotated_tx, rotated_rx) = tokio::sync::mpsc::unbounded_channel::<DestinationHash>();
         let node_b = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: None,
             pre_configured_destinations: [test_destination(0xB2)],
@@ -407,7 +499,7 @@ mod tests {
         })
         .with_timeline_origin(prepared.timeline_origin());
         let handle_b = node_b.handle();
-        let mut persistence = prepared.start(handle_b, change_rx);
+        let mut persistence = prepared.start(handle_b, change_rx, rotated_rx);
 
         let announce_handle = handle_a.clone();
         let announcer = tokio::spawn(async move {

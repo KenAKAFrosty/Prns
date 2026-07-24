@@ -586,6 +586,7 @@ async fn run_engine(
 
     let (persistence_change_tx, persistence_changes) =
         tokio::sync::mpsc::unbounded_channel::<RouteTableChange>();
+    let (rotated_tx, rotated_rx) = tokio::sync::mpsc::unbounded_channel::<DestinationHash>();
     let timeline_origin = prepared_persistence.timeline_origin();
     let mut node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: Some(transport_secret),
@@ -621,6 +622,9 @@ async fn run_engine(
                 );
                 let _ = persistence_change_tx.send(RouteTableChange::RemovedRoute);
             }
+            PrnsEvent::Diagnostic(Diagnostic::SelfRatchetRotated { destination }) => {
+                let _ = rotated_tx.send(destination);
+            }
             _ => {}
         },
     })
@@ -629,16 +633,19 @@ async fn run_engine(
     diagnostic(
         "persistence",
         format_args!(
-            "state=restored routes={} destinations={} tunnels={} refused={} dropped={}",
+            "state=restored routes={} destinations={} tunnels={} ratchets={} refused={} dropped={}",
             restored.routes.seeded_count,
             restored.destination_identities.seeded_count,
             restored.tunnels.seeded_count,
+            restored.ratchets.seeded_count,
             restored.routes.refused_count
                 + restored.destination_identities.refused_count
-                + restored.tunnels.refused_count,
+                + restored.tunnels.refused_count
+                + restored.ratchets.refused_count,
             restored.routes.dropped_count
                 + restored.destination_identities.dropped_count
                 + restored.tunnels.dropped_count
+                + restored.ratchets.dropped_count
         ),
     );
     let handle = node.handle();
@@ -688,7 +695,8 @@ async fn run_engine(
         destination: destination_hashes.delivery,
         node_page_destination: destination_hashes.node_page,
     };
-    let mut persistence_task = prepared_persistence.start(handle.clone(), persistence_changes);
+    let mut persistence_task =
+        prepared_persistence.start(handle.clone(), persistence_changes, rotated_rx);
     diagnostic(
         "memory",
         format_args!("resident_bytes={}", resident_bytes()),
