@@ -28,7 +28,10 @@ use super::journal_delivery::JournalDispatch;
 pub(super) enum CommandEffect {
     Delta(WakeSchedules),
     RecomputeWakeSchedules,
-    InterfaceAttached { frame_capacity: usize },
+    InterfaceAttached {
+        id: crate::interfaces::InterfaceId,
+        frame_capacity: usize,
+    },
 }
 
 impl CommandEffect {
@@ -337,7 +340,9 @@ where
                 ))
             }
             HostCommand::AddInterface(add) => match topology.attach(engine, add, now) {
-                Some(frame_capacity) => CommandEffect::InterfaceAttached { frame_capacity },
+                Some((id, frame_capacity)) => {
+                    CommandEffect::InterfaceAttached { id, frame_capacity }
+                }
                 None => CommandEffect::UNCHANGED,
             },
             HostCommand::RemoveInterface { id, departure } => {

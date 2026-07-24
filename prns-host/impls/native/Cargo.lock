@@ -631,6 +631,7 @@ dependencies = [
 name = "prns-runtime"
 version = "0.2.8"
 dependencies = [
+ "bzip2",
  "cfg-if",
  "heapless 0.8.0",
  "prns-core",
@@ -654,7 +655,6 @@ dependencies = [
 name = "prns-runtime-tokio"
 version = "0.2.8"
 dependencies = [
- "bzip2",
  "futures-util",
  "getrandom",
  "heapless 0.8.0",

@@ -310,8 +310,9 @@ async fn run_inner<S, H, J, P, A>(
                     CommandEffect::RecomputeWakeSchedules => {
                         wake_schedules = engine.wake_schedules(topology.view());
                     }
-                    CommandEffect::InterfaceAttached { frame_capacity } => {
+                    CommandEffect::InterfaceAttached { id, frame_capacity } => {
                         inbound.grow_frame_capacity(frame_capacity);
+                        inbound.mark_ready(id);
                         wire_scratch.grow(frame_capacity);
                         wake_schedules = engine.wake_schedules(topology.view());
                     }

@@ -5,7 +5,7 @@ use personal_rns::engine::{
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::BitrateBps;
-use personal_rns::interfaces::{InterfaceId, InterfaceKind};
+use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceStatus};
 use personal_rns::manifold::reconnect::ReconnectPolicy;
 use personal_rns::routes;
 use personal_rns::routing::links::resources::ResourceStrategy;
@@ -332,6 +332,7 @@ async fn the_server_stands_up_a_distinct_member_per_client_and_hears_each_on_its
         .await
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
+    let server_status = server.status();
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_s = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
@@ -355,6 +356,7 @@ async fn the_server_stands_up_a_distinct_member_per_client_and_hears_each_on_its
     let _server_sup = commands_s.supervise(server);
 
     let client_a = TcpClientInterface::new(addr.clone(), BITRATE, ReconnectPolicy::STANDARD);
+    let client_a_status = client_a.status();
     let node_a = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [single_a],
@@ -369,6 +371,7 @@ async fn the_server_stands_up_a_distinct_member_per_client_and_hears_each_on_its
     let commands_a = node_a.handle();
 
     let client_b = TcpClientInterface::new(addr, BITRATE, ReconnectPolicy::STANDARD);
+    let client_b_status = client_b.status();
     let node_b = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [single_b],
@@ -407,11 +410,35 @@ async fn the_server_stands_up_a_distinct_member_per_client_and_hears_each_on_its
             let mut member_a: Option<InterfaceId> = None;
             let mut member_b: Option<InterfaceId> = None;
             while member_a.is_none() || member_b.is_none() {
+                let received = tokio::time::timeout(Duration::from_secs(10), heard_rx.recv()).await;
+                let Ok(received) = received else {
+                    let member_connections = server_status
+                        .members()
+                        .into_iter()
+                        .map(|member| {
+                            (
+                                member.id(),
+                                member.connection(),
+                                member.rx_bytes(),
+                                member.tx_bytes(),
+                            )
+                        })
+                        .collect::<std::vec::Vec<_>>();
+                    panic!(
+                        "the server hears both clients within 10s; heard A: {:?}; heard B: {:?}; client A: ({:?}, {}, {}); client B: ({:?}, {}, {}); server members: {:?}",
+                        member_a,
+                        member_b,
+                        client_a_status.connection(),
+                        client_a_status.rx_bytes(),
+                        client_a_status.tx_bytes(),
+                        client_b_status.connection(),
+                        client_b_status.rx_bytes(),
+                        client_b_status.tx_bytes(),
+                        member_connections,
+                    );
+                };
                 let (destination, source_interface) =
-                    tokio::time::timeout(Duration::from_secs(10), heard_rx.recv())
-                        .await
-                        .expect("the server hears both clients within 10s")
-                        .expect("the announce channel stays open");
+                    received.expect("the announce channel stays open");
                 if destination == dest_a {
                     member_a.get_or_insert(source_interface);
                 } else if destination == dest_b {

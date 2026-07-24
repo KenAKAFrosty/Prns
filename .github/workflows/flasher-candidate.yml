@@ -339,7 +339,7 @@ jobs:
           rustc --version | grep -E '^rustc 1\.96\.0 '
           cargo --version | grep -E '^cargo 1\.96\.0 '
           test "$(node --version)" = "v24.18.0"
-          cargo-binstall --version | grep -E '(^| )1\.21\.0($| )'
+          cargo-binstall -V | grep -E '(^| )1\.21\.0($| )'
           dx --version | grep -E '(^| )0\.7\.5($| )'
           espup --version | grep -E '(^| )0\.17\.1($| )'
           rustc +esp -vV | grep -E '^release: 1\.95\.0'

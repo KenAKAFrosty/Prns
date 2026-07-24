@@ -12134,7 +12134,9 @@
     {
       "graphs": {
         "daemon-linux": [],
-        "desktop-linux": []
+        "desktop-linux": [],
+        "desktop-macos": [],
+        "desktop-windows": []
       },
       "name": "pkg-config",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -14343,17 +14345,20 @@
         "desktop-linux": [
           "bundled",
           "default",
-          "static-link"
+          "static-link",
+          "use-pkgconfig"
         ],
         "desktop-macos": [
           "bundled",
           "default",
-          "static-link"
+          "static-link",
+          "use-pkgconfig"
         ],
         "desktop-windows": [
           "bundled",
           "default",
-          "static-link"
+          "static-link",
+          "use-pkgconfig"
         ]
       },
       "name": "sdl2",
@@ -14373,19 +14378,25 @@
           "bundled",
           "cmake",
           "default",
-          "static-link"
+          "pkg-config",
+          "static-link",
+          "use-pkgconfig"
         ],
         "desktop-macos": [
           "bundled",
           "cmake",
           "default",
-          "static-link"
+          "pkg-config",
+          "static-link",
+          "use-pkgconfig"
         ],
         "desktop-windows": [
           "bundled",
           "cmake",
           "default",
-          "static-link"
+          "pkg-config",
+          "static-link",
+          "use-pkgconfig"
         ]
       },
       "name": "sdl2-sys",

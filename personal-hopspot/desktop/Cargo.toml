@@ -60,6 +60,7 @@ prns-ffi = { path = "../../prns-ffi", default-features = false, features = ["log
 # through personal-rns itself.
 [target.'cfg(target_os = "macos")'.dependencies]
 prns-ffi = { path = "../../prns-ffi", default-features = false, features = ["log"] }
+sdl2 = { version = "0.38", features = ["use-pkgconfig"] }
 
 [profile.release]
 codegen-units = 1

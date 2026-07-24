@@ -124,27 +124,35 @@ jobs:
           - host: windows-latest
             target: x86_64-pc-windows-msvc
             cross: ""
+            toolchain: native
           - host: windows-latest
             target: aarch64-pc-windows-msvc
             cross: ""
+            toolchain: native
           - host: macos-latest
             target: aarch64-apple-darwin
             cross: ""
+            toolchain: native
           - host: macos-latest
             target: x86_64-apple-darwin
             cross: ""
+            toolchain: native
           - host: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             cross: "--use-napi-cross"
+            toolchain: napi-cross
           - host: ubuntu-latest
             target: aarch64-unknown-linux-gnu
             cross: "--use-napi-cross"
+            toolchain: napi-cross
           - host: ubuntu-latest
             target: x86_64-unknown-linux-musl
             cross: "--cross-compile"
+            toolchain: zig
           - host: ubuntu-latest
             target: aarch64-unknown-linux-musl
             cross: "--cross-compile"
+            toolchain: zig
     name: napi-build (${{ matrix.settings.target }})
     runs-on: ${{ matrix.settings.host }}
     timeout-minutes: 90
@@ -158,8 +166,8 @@ jobs:
       - uses: ./.github/actions/reproducible-rust
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
-          workspaces: prns-napi
-          key: ${{ matrix.settings.target }}
+          workspaces: prns-napi -> target/${{ matrix.settings.target }}-${{ matrix.settings.toolchain }}
+          key: ${{ matrix.settings.target }}-${{ matrix.settings.toolchain }}
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29
         if: ${{ contains(matrix.settings.target, 'musl') }}
         with:
@@ -175,6 +183,14 @@ jobs:
         working-directory: prns-napi
       - run: npm run build -- --target ${{ matrix.settings.target }} ${{ matrix.settings.cross }}
         working-directory: prns-napi
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/prns-napi/target/${{ matrix.settings.target }}-${{ matrix.settings.toolchain }}
+      - name: enforce the GNU compatibility floor
+        if: ${{ contains(matrix.settings.target, 'linux-gnu') }}
+        run: |
+          highest="$(objdump -T prns-napi/*.node | grep -o 'GLIBC_[0-9.]*' | sort -Vu | tail -1)"
+          test -n "$highest"
+          test "$(printf '%s\n' "$highest" GLIBC_2.17 | sort -V | tail -1)" = GLIBC_2.17
       - run: node -e "console.log(process.arch, require('node:fs').readdirSync('.').filter((f) => f.endsWith('.node')))"
         working-directory: prns-napi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

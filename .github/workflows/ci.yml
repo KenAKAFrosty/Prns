@@ -203,7 +203,7 @@ jobs:
         run: |
           rustc --version | grep -E '^rustc 1\.96\.0 '
           test "$(node --version)" = "v24.18.0"
-          cargo-binstall --version | grep -E '(^| )1\.21\.0($| )'
+          cargo-binstall -V | grep -E '(^| )1\.21\.0($| )'
           dx --version | grep -E '(^| )0\.7\.5($| )'
           cargo test --locked -p prns-flash-manifest -p hopspot-flash
       - name: Shared manifest and standalone CLI lint
@@ -264,6 +264,8 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           submodules: false
+      - name: Install Linux native development packages
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           toolchain: 1.90.0
@@ -316,6 +318,8 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           submodules: false
+      - name: Install Linux native development packages
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           targets: aarch64-linux-android, armv7-linux-androideabi
@@ -377,11 +381,12 @@ jobs:
         run: cargo build --locked
         working-directory: personal-hopspot/desktop
       - name: simulator — hopspot iOS application
+        id: ios-simulator
         run: |
           rustup target add aarch64-apple-ios-sim x86_64-apple-ios
           python3 validation/run.py run --suite ios-simulator
       - name: upload iOS simulator evidence
-        if: always()
+        if: ${{ always() && steps.ios-simulator.outcome != 'skipped' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: ios-simulator-${{ github.sha }}
@@ -436,6 +441,8 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           submodules: false
+      - name: Install Linux native development packages
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86

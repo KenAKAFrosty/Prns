@@ -141,6 +141,66 @@ async fn ifac_members_hear_each_other_and_strangers_stay_outside() {
 }
 
 #[tokio::test]
+async fn a_dynamic_interface_drains_a_frame_queued_before_attachment() {
+    use crate::wire::DestinationHash;
+
+    let source = InterfaceId::new([0xD3; 8]);
+    let mut engine = EngineState::<TestStorageLayout>::default();
+    pin_transport_id(&mut engine, TEST_TRANSPORT_ID);
+
+    let (_notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
+    let (command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
+    let (heard_tx, mut heard_rx) = mpsc::unbounded_channel::<DestinationHash>();
+    let app = move |journaled: Journaled<'_>| {
+        if let Journaled::AnnounceHeard { observation, .. } = journaled {
+            let _ = heard_tx.send(observation.destination);
+        }
+    };
+
+    tokio::spawn(run(
+        engine,
+        TokioHost::new(),
+        ManifoldWiring {
+            interfaces: std::vec![],
+            ifacs: std::vec![],
+            notify: notify_rx,
+            inbound_lanes: std::vec![],
+            commands: command_rx,
+            egress: Egress::new(std::vec![]),
+        },
+        app,
+    ));
+
+    let (mut inbound, inbound_lane) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
+    let (outbound_lane, _outbound) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
+    inbound
+        .try_grant()
+        .unwrap()
+        .fill(&bytes_from_hex(RNS_1_4_0_ANNOUNCE));
+    inbound.commit();
+
+    command_tx
+        .send(HostCommand::AddInterface(AddInterfaceCommand {
+            descriptor: descriptor(source),
+            logical_interface: source,
+            inbound: inbound_lane,
+            egress: outbound_lane,
+            connection: None,
+            ifac: None,
+        }))
+        .unwrap();
+
+    let heard = tokio::time::timeout(Duration::from_secs(2), heard_rx.recv())
+        .await
+        .expect("the pre-attachment frame is drained")
+        .expect("the manifold task is alive");
+    assert_eq!(
+        heard.as_bytes(),
+        bytes_from_hex("16f8a6d3f7d7c5b6f106d293804d7314").as_slice(),
+    );
+}
+
+#[tokio::test]
 async fn dynamic_ifac_state_arrives_and_leaves_with_its_interface() {
     use crate::interfaces::{IfacContext, IfacSize};
     use crate::wire::DestinationHash;

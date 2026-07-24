@@ -66,7 +66,7 @@ impl InterfaceTopology {
         engine: &mut EngineState<S>,
         add: AddInterfaceCommand,
         now: InstantMillis,
-    ) -> Option<usize> {
+    ) -> Option<(InterfaceId, usize)> {
         let AddInterfaceCommand {
             descriptor,
             logical_interface,
@@ -101,7 +101,7 @@ impl InterfaceTopology {
         if let Some(context) = ifac {
             self.ifacs.push(InterfaceIfac { id, context });
         }
-        Some(frame_cap)
+        Some((id, frame_cap))
     }
 
     pub(super) fn detach<S: StorageLayout>(
