@@ -6,7 +6,7 @@ Node.js bindings for [Personal Reticulum](https://prns.dev) — a fast, robust i
 npm install personal-rns
 ```
 
-Prebuilt binaries ship for Windows (x64, arm64), macOS (x64, arm64), and Linux (x64, arm64 glibc; x64 musl). Node.js >= 20.
+Prebuilt binaries ship for Windows (x64, arm64), macOS (x64, arm64), and Linux (x64, arm64 glibc; x64 musl). Node.js >= 20; Bun works out of the box. Wire parity with reference Reticulum 1.4.0 is proven by interop suites in both server and client roles.
 
 ## Quickstart
 
@@ -74,8 +74,16 @@ Programmatic constructors cover the common families:
 | `attachTcpServer({ bind })` / `attachTcpClient({ target })` | TCP |
 | `attachUdp({ local, peer })` | UDP |
 | `attachSharedInstanceServer({ port? })` / `attachSharedInstanceClient({ port? })` | RNS shared instance |
+| `attachAutoWifi()` / `attachAutoBle({ identityPath })` / `attachAutoUsb({ baud? })` | Auto discovery radios |
 
 `attachConfig(configText)` accepts the `[interfaces]` section of a standard RNS config file and stands up every interface it declares — TCP, UDP, serial, KISS, AX.25, RNode, backbone, WebSocket, I2P, and the auto radio families — through the same code paths the `prnsd` daemon uses.
+
+## Beyond packets
+
+- **Links and requests**: `establishLink`, `request(linkId, requestPathHash(path), data)`, and server-side `requestPaths` registration with `respond(event.token, bytes)` / `respondFile` — the RNS request/response pattern end to end.
+- **Resources**: `sendResource(File)` and `receiveResource(File)` move payloads of any size over a link with metadata, optional compression control, and `resourceSendProgress` events; acceptance is governed per destination or per link via `resourceStrategy`.
+- **Observability**: `interfaces()`, `routes()`, `linkCount()`, `announceRates()`, and `destinationIdentity()` read the live node; `dropRoute`, `clearAnnounceQueues`, and the blackhole and retention families manage it.
+- **Backpressure**: a slow event handler can never stall the engine — past `eventQueueLimit` the node sheds diagnostic events and reports the gap with a single `eventOverflow` event, while data-plane events always deliver.
 
 ## License
 
