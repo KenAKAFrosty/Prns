@@ -1,0 +1,212 @@
+#ifndef PRNS_HOST_H
+#define PRNS_HOST_H
+
+#include <stddef.h>
+#include <stdint.h>
+
+#if defined(_WIN32) && defined(PRNS_HOST_BUILD)
+#define PRNS_HOST_API __declspec(dllexport)
+#elif defined(_WIN32)
+#define PRNS_HOST_API __declspec(dllimport)
+#else
+#define PRNS_HOST_API
+#endif
+
+#if defined(__cplusplus)
+extern "C" {
+#endif
+
+#define PRNS_HOST_CONTRACT_ABI UINT32_C(1)
+#define PRNS_HOST_SCHEMA_VERSION UINT32_C(1)
+#define PRNS_DESTINATION_HASH_LENGTH UINT32_C(16)
+#define PRNS_IDENTITY_HASH_LENGTH UINT32_C(16)
+#define PRNS_INTERFACE_ID_LENGTH UINT32_C(8)
+#define PRNS_LINK_ID_LENGTH UINT32_C(16)
+#define PRNS_REQUEST_ID_LENGTH UINT32_C(16)
+#define PRNS_REQUEST_PATH_HASH_LENGTH UINT32_C(16)
+#define PRNS_RESOURCE_HASH_LENGTH UINT32_C(32)
+#define PRNS_IDENTITY_SECRET_LENGTH UINT32_C(64)
+#define PRNS_BALANCED_PENDING_COMMANDS UINT64_C(256)
+#define PRNS_BALANCED_APPLICATION_EVENTS UINT64_C(1024)
+#define PRNS_BALANCED_RETAINED_EVENT_BYTES UINT64_C(8388608)
+#define PRNS_BALANCED_DIAGNOSTICS UINT64_C(1024)
+
+typedef uint32_t PrnsStatus;
+#define PRNS_STATUS_OK UINT32_C(0)
+#define PRNS_STATUS_INVALID_ARGUMENT UINT32_C(1)
+#define PRNS_STATUS_CONTRACT_MISMATCH UINT32_C(2)
+#define PRNS_STATUS_INVALID_HANDLE UINT32_C(3)
+#define PRNS_STATUS_NOT_READY UINT32_C(4)
+#define PRNS_STATUS_ALREADY_CLAIMED UINT32_C(5)
+#define PRNS_STATUS_WOULD_BLOCK UINT32_C(6)
+#define PRNS_STATUS_TIMED_OUT UINT32_C(7)
+#define PRNS_STATUS_QUEUE_FULL UINT32_C(8)
+#define PRNS_STATUS_STOPPED UINT32_C(9)
+#define PRNS_STATUS_BACKEND_FAILED UINT32_C(10)
+#define PRNS_STATUS_PANIC UINT32_C(11)
+
+typedef uint32_t PrnsBackendKind;
+#define PRNS_BACKEND_KIND_NATIVE UINT32_C(1)
+#define PRNS_BACKEND_KIND_BROWSER UINT32_C(2)
+#define PRNS_BACKEND_KIND_COOPERATIVE UINT32_C(3)
+
+typedef uint32_t PrnsCapability;
+#define PRNS_CAPABILITY_LOOPBACK UINT32_C(1)
+#define PRNS_CAPABILITY_TCP_CLIENT UINT32_C(2)
+#define PRNS_CAPABILITY_TCP_SERVER UINT32_C(3)
+#define PRNS_CAPABILITY_UDP UINT32_C(4)
+#define PRNS_CAPABILITY_SERIAL UINT32_C(5)
+#define PRNS_CAPABILITY_USB UINT32_C(6)
+#define PRNS_CAPABILITY_BLUETOOTH UINT32_C(7)
+#define PRNS_CAPABILITY_WIFI UINT32_C(8)
+#define PRNS_CAPABILITY_WEB_SOCKET UINT32_C(9)
+#define PRNS_CAPABILITY_BROWSER_RENDEZVOUS UINT32_C(10)
+#define PRNS_CAPABILITY_I2P UINT32_C(11)
+#define PRNS_CAPABILITY_WEAVE UINT32_C(12)
+
+typedef uint32_t PrnsLifecyclePhase;
+#define PRNS_LIFECYCLE_PHASE_STARTING UINT32_C(1)
+#define PRNS_LIFECYCLE_PHASE_RUNNING UINT32_C(2)
+#define PRNS_LIFECYCLE_PHASE_STOPPING UINT32_C(3)
+#define PRNS_LIFECYCLE_PHASE_STOPPED UINT32_C(4)
+#define PRNS_LIFECYCLE_PHASE_FAILED UINT32_C(5)
+
+typedef uint32_t PrnsStopReason;
+#define PRNS_STOP_REASON_REQUESTED UINT32_C(1)
+#define PRNS_STOP_REASON_BACKEND_EXITED UINT32_C(2)
+
+typedef uint32_t PrnsLinkClosedReason;
+#define PRNS_LINK_CLOSED_REASON_TIMEOUT UINT32_C(1)
+#define PRNS_LINK_CLOSED_REASON_PEER_CLOSED UINT32_C(2)
+#define PRNS_LINK_CLOSED_REASON_MALFORMED_RTT UINT32_C(3)
+
+typedef uint32_t PrnsApplicationEventKind;
+#define PRNS_APPLICATION_EVENT_KIND_SINGLE_DELIVERY UINT32_C(100)
+#define PRNS_APPLICATION_EVENT_KIND_REQUEST UINT32_C(101)
+#define PRNS_APPLICATION_EVENT_KIND_RESPONSE UINT32_C(102)
+#define PRNS_APPLICATION_EVENT_KIND_RESPONSE_SEGMENT UINT32_C(103)
+#define PRNS_APPLICATION_EVENT_KIND_RESOURCE_AVAILABLE UINT32_C(104)
+#define PRNS_APPLICATION_EVENT_KIND_RESOURCE_SEGMENT UINT32_C(105)
+#define PRNS_APPLICATION_EVENT_KIND_RESOURCE_NEEDS_DECOMPRESSION UINT32_C(106)
+#define PRNS_APPLICATION_EVENT_KIND_CHANNEL_MESSAGE UINT32_C(107)
+
+typedef uint32_t PrnsDiagnosticEventKind;
+#define PRNS_DIAGNOSTIC_EVENT_KIND_ANNOUNCE_HEARD UINT32_C(200)
+#define PRNS_DIAGNOSTIC_EVENT_KIND_LINK_ESTABLISHED UINT32_C(201)
+#define PRNS_DIAGNOSTIC_EVENT_KIND_PEER_IDENTIFIED UINT32_C(202)
+#define PRNS_DIAGNOSTIC_EVENT_KIND_LINK_CLOSED UINT32_C(203)
+#define PRNS_DIAGNOSTIC_EVENT_KIND_LINK_INTERFACE_MISMATCH UINT32_C(204)
+#define PRNS_DIAGNOSTIC_EVENT_KIND_RESOURCE_ASSEMBLED UINT32_C(205)
+#define PRNS_DIAGNOSTIC_EVENT_KIND_RESOURCE_FAILED UINT32_C(206)
+#define PRNS_DIAGNOSTIC_EVENT_KIND_RESOURCE_SEND_PROGRESS UINT32_C(207)
+#define PRNS_DIAGNOSTIC_EVENT_KIND_SELF_RATCHET_ROTATED UINT32_C(208)
+#define PRNS_DIAGNOSTIC_EVENT_KIND_ANNOUNCE_HELD_DROPPED UINT32_C(209)
+#define PRNS_DIAGNOSTIC_EVENT_KIND_DELIVERED UINT32_C(210)
+#define PRNS_DIAGNOSTIC_EVENT_KIND_ROUTE_EXPIRED UINT32_C(211)
+#define PRNS_DIAGNOSTIC_EVENT_KIND_ROUTE_EVICTED UINT32_C(212)
+#define PRNS_DIAGNOSTIC_EVENT_KIND_ROUTE_INTERFACE_GONE UINT32_C(213)
+#define PRNS_DIAGNOSTIC_EVENT_KIND_ROUTE_DROPPED UINT32_C(214)
+#define PRNS_DIAGNOSTIC_EVENT_KIND_BACKEND_DIAGNOSTIC UINT32_C(215)
+#define PRNS_DIAGNOSTIC_EVENT_KIND_DIAGNOSTICS_DROPPED UINT32_C(216)
+
+typedef uint32_t PrnsEventField;
+#define PRNS_EVENT_FIELD_DESTINATION UINT32_C(1)
+#define PRNS_EVENT_FIELD_SOURCE_INTERFACE UINT32_C(2)
+#define PRNS_EVENT_FIELD_PLAINTEXT UINT32_C(3)
+#define PRNS_EVENT_FIELD_LINK_ID UINT32_C(4)
+#define PRNS_EVENT_FIELD_REQUEST_ID UINT32_C(5)
+#define PRNS_EVENT_FIELD_REQUESTER UINT32_C(6)
+#define PRNS_EVENT_FIELD_PATH_HASH UINT32_C(7)
+#define PRNS_EVENT_FIELD_RTT_MILLIS UINT32_C(8)
+#define PRNS_EVENT_FIELD_DATA UINT32_C(9)
+#define PRNS_EVENT_FIELD_SEGMENT_INDEX UINT32_C(10)
+#define PRNS_EVENT_FIELD_TOTAL_SEGMENTS UINT32_C(11)
+#define PRNS_EVENT_FIELD_HASH UINT32_C(12)
+#define PRNS_EVENT_FIELD_ORIGINAL_HASH UINT32_C(13)
+#define PRNS_EVENT_FIELD_METADATA UINT32_C(14)
+#define PRNS_EVENT_FIELD_TOTAL_BYTES UINT32_C(15)
+#define PRNS_EVENT_FIELD_STREAM_ID UINT32_C(16)
+#define PRNS_EVENT_FIELD_UNCOMPRESSED_DATA_BYTES UINT32_C(17)
+#define PRNS_EVENT_FIELD_MESSAGE_TYPE UINT32_C(18)
+#define PRNS_EVENT_FIELD_IDENTITY UINT32_C(19)
+#define PRNS_EVENT_FIELD_REASON UINT32_C(20)
+#define PRNS_EVENT_FIELD_ATTACHED_INTERFACE UINT32_C(21)
+#define PRNS_EVENT_FIELD_ARRIVED_ON UINT32_C(22)
+#define PRNS_EVENT_FIELD_TOTAL_SIZE_BYTES UINT32_C(23)
+#define PRNS_EVENT_FIELD_CAUSE UINT32_C(24)
+#define PRNS_EVENT_FIELD_TRANSFERRED_BYTES UINT32_C(25)
+#define PRNS_EVENT_FIELD_PHYSICAL_TRANSFERRED_BYTES UINT32_C(26)
+#define PRNS_EVENT_FIELD_DETAIL UINT32_C(27)
+#define PRNS_EVENT_FIELD_KIND UINT32_C(28)
+#define PRNS_EVENT_FIELD_DROPPED_COUNT UINT32_C(29)
+#define PRNS_EVENT_FIELD_HOPS UINT32_C(30)
+#define PRNS_EVENT_FIELD_STREAM UINT32_C(31)
+
+typedef struct PrnsHost PrnsHost;
+typedef struct PrnsEventStream PrnsEventStream;
+typedef struct PrnsEvent PrnsEvent;
+typedef struct PrnsResourceStream PrnsResourceStream;
+
+typedef struct PrnsByteView {
+    const uint8_t *data;
+    size_t length;
+} PrnsByteView;
+
+typedef struct PrnsStringView {
+    const uint8_t *data;
+    size_t length;
+} PrnsStringView;
+
+typedef struct PrnsContractInfo {
+    size_t struct_size;
+    uint32_t abi;
+    uint32_t schema_version;
+    PrnsStringView product_version;
+} PrnsContractInfo;
+
+typedef struct PrnsLimits {
+    size_t struct_size;
+    size_t pending_commands;
+    size_t application_events;
+    size_t retained_event_bytes;
+    size_t diagnostics;
+} PrnsLimits;
+
+typedef struct PrnsHostOptions {
+    size_t struct_size;
+    uint32_t required_abi;
+    PrnsStringView required_product_version;
+    PrnsLimits limits;
+} PrnsHostOptions;
+
+typedef struct PrnsLifecycle {
+    size_t struct_size;
+    uint64_t revision;
+    PrnsLifecyclePhase phase;
+    uint32_t reason;
+} PrnsLifecycle;
+
+PRNS_HOST_API PrnsStatus prns_contract_info(PrnsContractInfo *out_info);
+PRNS_HOST_API PrnsStatus prns_host_create(const PrnsHostOptions *options, PrnsHost **out_host);
+PRNS_HOST_API void prns_host_release(PrnsHost *host);
+PRNS_HOST_API PrnsStatus prns_host_lifecycle(const PrnsHost *host, PrnsLifecycle *out_lifecycle);
+PRNS_HOST_API PrnsStatus prns_host_stop(PrnsHost *host);
+PRNS_HOST_API PrnsStatus prns_host_claim_application_events(PrnsHost *host, PrnsEventStream **out_stream);
+PRNS_HOST_API PrnsStatus prns_host_claim_diagnostics(PrnsHost *host, PrnsEventStream **out_stream);
+PRNS_HOST_API void prns_event_stream_release(PrnsEventStream *stream);
+PRNS_HOST_API PrnsStatus prns_event_stream_next(PrnsEventStream *stream, uint32_t timeout_millis, PrnsEvent **out_event);
+PRNS_HOST_API void prns_event_release(PrnsEvent *event);
+PRNS_HOST_API uint32_t prns_event_kind(const PrnsEvent *event);
+PRNS_HOST_API PrnsStatus prns_event_bytes(const PrnsEvent *event, PrnsEventField field, PrnsByteView *out_value);
+PRNS_HOST_API PrnsStatus prns_event_string(const PrnsEvent *event, PrnsEventField field, PrnsStringView *out_value);
+PRNS_HOST_API PrnsStatus prns_event_u64(const PrnsEvent *event, PrnsEventField field, uint64_t *out_value);
+PRNS_HOST_API PrnsStatus prns_event_u128(const PrnsEvent *event, PrnsEventField field, uint64_t *out_low, uint64_t *out_high);
+PRNS_HOST_API PrnsStatus prns_event_resource_stream(PrnsEvent *event, PrnsResourceStream **out_stream);
+PRNS_HOST_API void prns_resource_stream_release(PrnsResourceStream *stream);
+PRNS_HOST_API PrnsStatus prns_resource_stream_next(PrnsResourceStream *stream, size_t maximum_bytes, PrnsByteView *out_chunk, uint8_t *out_finished);
+
+#if defined(__cplusplus)
+}
+#endif
+
+#endif

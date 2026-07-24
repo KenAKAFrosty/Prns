@@ -1,0 +1,32 @@
+[package]
+name = "prns-host-c"
+version = "0.2.8"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/KenAKAFrosty/Prns"
+homepage = "https://reticulum.rs"
+rust-version = "1.90"
+description = "Stable C ABI capsule for the Personal Reticulum host contract"
+publish = false
+
+[workspace]
+
+[lib]
+name = "prns_host"
+path = "src/lib.rs"
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+prns-host-core = { package = "prns-host", path = "../../core" }
+
+[lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+significant_drop_in_scrutinee = "warn"
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"

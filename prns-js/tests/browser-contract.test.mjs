@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 
 import {
   HOST_CONTRACT_ABI,
+  DESTINATION_HASH_LENGTH,
   PRODUCT_VERSION,
   Prns,
   Tag,
@@ -26,4 +28,14 @@ test("browser subpath exposes the shared release contract and casework", () => {
     }),
     8,
   );
+});
+
+test("generated JavaScript contract agrees with language-neutral vectors", async () => {
+  const vectors = JSON.parse(
+    await readFile("../prns-host/conformance/host-contract-v1.json", "utf8"),
+  );
+  assert.equal(HOST_CONTRACT_ABI, vectors.abi);
+  assert.equal(PRODUCT_VERSION, vectors.productVersion);
+  assert.equal(DESTINATION_HASH_LENGTH, vectors.fixedBytes.DestinationHash);
+  assert.deepEqual(balancedLimits(), vectors.limits);
 });

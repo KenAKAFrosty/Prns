@@ -55,6 +55,35 @@ env:
   RUSTFLAGS: "-D warnings --cfg aes_armv8"
 
 jobs:
+  host-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          components: clippy,rustfmt
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          workspaces: prns-host/abi/c
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
+        with:
+          dotnet-version: 8.0.x
+      - run: ./tools/prns run repo.host-contract.check
+      - run: cargo fmt --manifest-path prns-host/abi/c/Cargo.toml -- --check
+      - run: cargo clippy --manifest-path prns-host/abi/c/Cargo.toml --all-targets --locked -- -D warnings
+      - run: cargo test --manifest-path prns-host/abi/c/Cargo.toml --locked
+      - run: cc -std=c11 -Wall -Wextra -Werror -fsyntax-only prns-host/abi/c/tests/header-smoke.c
+      - run: npm ci --ignore-scripts
+        working-directory: prns-js
+      - run: npm run check
+        working-directory: prns-js
+      - run: python3 validation/run.py run --suite host-dotnet-contract
+
   napi-clippy:
     runs-on: ubuntu-latest
     steps:

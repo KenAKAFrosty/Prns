@@ -20,6 +20,7 @@ exclude = [
     "prns-ffi",
     "prns-napi",
     "prns-wasm",
+    "prns-host/abi/c",
     "prns-host/impls/cooperative",
     "prns-host/impls/tokio",
     "prns-runtime/impls/tokio",

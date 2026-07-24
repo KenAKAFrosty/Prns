@@ -72,6 +72,26 @@ entrypoint = ["bash", "tools/device/install-prns-webusb-udev.sh"]
 requires = ["bash", "sudo", "udevadm"]
 
 [[task]]
+id = "repo.host-contract.generate"
+summary = "Regenerate every host-contract language artifact from the canonical schema."
+domain = "repo"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "release"]
+entrypoint = ["python3", "tools/repo/generate-host-contract.py"]
+requires = ["python3"]
+
+[[task]]
+id = "repo.host-contract.check"
+summary = "Verify host-contract language artifacts exactly match the canonical schema."
+domain = "repo"
+effect = "read-only"
+platforms = ["any"]
+audience = ["developer", "ci", "release"]
+entrypoint = ["python3", "tools/repo/generate-host-contract.py", "--check"]
+requires = ["python3"]
+
+[[task]]
 id = "repo.notices.generate"
 summary = "Regenerate the repository's locked third-party notice document."
 domain = "repo"

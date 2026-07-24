@@ -1,3 +1,8 @@
+use crate::{
+    DESTINATION_HASH_LENGTH, IDENTITY_HASH_LENGTH, INTERFACE_ID_LENGTH, LINK_ID_LENGTH,
+    REQUEST_ID_LENGTH, REQUEST_PATH_HASH_LENGTH, RESOURCE_HASH_LENGTH,
+};
+
 macro_rules! fixed_bytes {
     ($name:ident, $length:expr) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -24,13 +29,13 @@ macro_rules! fixed_bytes {
     };
 }
 
-fixed_bytes!(DestinationHash, 16);
-fixed_bytes!(IdentityHash, 16);
-fixed_bytes!(InterfaceId, 8);
-fixed_bytes!(LinkId, 16);
-fixed_bytes!(RequestId, 16);
-fixed_bytes!(RequestPathHash, 16);
-fixed_bytes!(ResourceHash, 32);
+fixed_bytes!(DestinationHash, DESTINATION_HASH_LENGTH);
+fixed_bytes!(IdentityHash, IDENTITY_HASH_LENGTH);
+fixed_bytes!(InterfaceId, INTERFACE_ID_LENGTH);
+fixed_bytes!(LinkId, LINK_ID_LENGTH);
+fixed_bytes!(RequestId, REQUEST_ID_LENGTH);
+fixed_bytes!(RequestPathHash, REQUEST_PATH_HASH_LENGTH);
+fixed_bytes!(ResourceHash, RESOURCE_HASH_LENGTH);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CommandId(u64);

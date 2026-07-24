@@ -30,7 +30,7 @@ TRIAGE_PATH = ROOT / "validation" / "mutation" / "triage.toml"
 EVIDENCE_SCHEMA = 1
 VALID_TIERS = {"pr", "release", "scheduled"}
 VALID_PLATFORMS = {"any", "linux", "macos", "windows", "android-device"}
-VALID_TOOLCHAINS = {"stable", "nightly", "kani", "python", "node", "esp"}
+VALID_TOOLCHAINS = {"stable", "nightly", "kani", "python", "node", "dotnet", "esp"}
 
 
 class ValidationError(RuntimeError):
@@ -610,6 +610,8 @@ def tool_versions(suite: dict) -> dict[str, str]:
     if suite.get("toolchain") == "node" or suite.get("group") == "web":
         versions["node"] = command_version(["node", "--version"])
         versions["npm"] = command_version(["npm", "--version"])
+    if suite.get("toolchain") == "dotnet":
+        versions["dotnet"] = command_version(["dotnet", "--version"])
     return versions
 
 

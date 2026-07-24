@@ -6,6 +6,9 @@ cd "$root"
 
 cargo clippy --manifest-path prns-config/Cargo.toml --all-targets --locked -- -D warnings
 cargo test --manifest-path prns-config/Cargo.toml --locked
+cargo clippy --manifest-path prns-host/abi/c/Cargo.toml --all-targets --locked -- -D warnings
+cargo test --manifest-path prns-host/abi/c/Cargo.toml --locked
+cc -std=c11 -Wall -Wextra -Werror -fsyntax-only prns-host/abi/c/tests/header-smoke.c
 cargo clippy --manifest-path prnsd/Cargo.toml --workspace --all-features --all-targets --locked -- -D warnings
 cargo test --manifest-path prnsd/Cargo.toml --workspace --all-features --locked
 cargo clippy --manifest-path prns-runtime/impls/tokio/Cargo.toml --all-features --all-targets --locked -- -D warnings

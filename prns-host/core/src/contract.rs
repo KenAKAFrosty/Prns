@@ -1,6 +1,8 @@
 use alloc::string::String;
 
-pub const HOST_CONTRACT_ABI: u32 = 1;
+use crate::{HOST_SCHEMA_ABI, HOST_SCHEMA_PRODUCT_VERSION};
+
+pub const HOST_CONTRACT_ABI: u32 = HOST_SCHEMA_ABI;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HostContract {
@@ -10,7 +12,7 @@ pub struct HostContract {
 
 pub const HOST_CONTRACT: HostContract = HostContract {
     abi: HOST_CONTRACT_ABI,
-    product_version: env!("CARGO_PKG_VERSION"),
+    product_version: HOST_SCHEMA_PRODUCT_VERSION,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -42,4 +44,14 @@ pub fn verify_host_contract(
         });
     }
     Ok(HOST_CONTRACT)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn product_and_schema_versions_are_one_release() {
+        assert_eq!(HOST_CONTRACT.product_version, env!("CARGO_PKG_VERSION"));
+    }
 }

@@ -1,0 +1,435 @@
+{
+  "schemaVersion": 1,
+  "abi": 1,
+  "productVersion": "0.2.8",
+  "fixedBytes": [
+    { "name": "DestinationHash", "length": 16 },
+    { "name": "IdentityHash", "length": 16 },
+    { "name": "InterfaceId", "length": 8 },
+    { "name": "LinkId", "length": 16 },
+    { "name": "RequestId", "length": 16 },
+    { "name": "RequestPathHash", "length": 16 },
+    { "name": "ResourceHash", "length": 32 },
+    { "name": "IdentitySecret", "length": 64, "secret": true }
+  ],
+  "limits": {
+    "pendingCommands": 256,
+    "applicationEvents": 1024,
+    "retainedEventBytes": 8388608,
+    "diagnostics": 1024
+  },
+  "enums": [
+    {
+      "name": "Status",
+      "values": [
+        { "name": "Ok", "value": 0 },
+        { "name": "InvalidArgument", "value": 1 },
+        { "name": "ContractMismatch", "value": 2 },
+        { "name": "InvalidHandle", "value": 3 },
+        { "name": "NotReady", "value": 4 },
+        { "name": "AlreadyClaimed", "value": 5 },
+        { "name": "WouldBlock", "value": 6 },
+        { "name": "TimedOut", "value": 7 },
+        { "name": "QueueFull", "value": 8 },
+        { "name": "Stopped", "value": 9 },
+        { "name": "BackendFailed", "value": 10 },
+        { "name": "Panic", "value": 11 }
+      ]
+    },
+    {
+      "name": "BackendKind",
+      "values": [
+        { "name": "Native", "value": 1 },
+        { "name": "Browser", "value": 2 },
+        { "name": "Cooperative", "value": 3 }
+      ]
+    },
+    {
+      "name": "Capability",
+      "values": [
+        { "name": "Loopback", "value": 1 },
+        { "name": "TcpClient", "value": 2 },
+        { "name": "TcpServer", "value": 3 },
+        { "name": "Udp", "value": 4 },
+        { "name": "Serial", "value": 5 },
+        { "name": "Usb", "value": 6 },
+        { "name": "Bluetooth", "value": 7 },
+        { "name": "Wifi", "value": 8 },
+        { "name": "WebSocket", "value": 9 },
+        { "name": "BrowserRendezvous", "value": 10 },
+        { "name": "I2p", "value": 11 },
+        { "name": "Weave", "value": 12 }
+      ]
+    },
+    {
+      "name": "LifecyclePhase",
+      "values": [
+        { "name": "Starting", "value": 1 },
+        { "name": "Running", "value": 2 },
+        { "name": "Stopping", "value": 3 },
+        { "name": "Stopped", "value": 4 },
+        { "name": "Failed", "value": 5 }
+      ]
+    },
+    {
+      "name": "StopReason",
+      "values": [
+        { "name": "Requested", "value": 1 },
+        { "name": "BackendExited", "value": 2 }
+      ]
+    },
+    {
+      "name": "LinkClosedReason",
+      "values": [
+        { "name": "Timeout", "value": 1 },
+        { "name": "PeerClosed", "value": 2 },
+        { "name": "MalformedRtt", "value": 3 }
+      ]
+    },
+    {
+      "name": "ApplicationEventKind",
+      "values": [
+        { "name": "SingleDelivery", "value": 100 },
+        { "name": "Request", "value": 101 },
+        { "name": "Response", "value": 102 },
+        { "name": "ResponseSegment", "value": 103 },
+        { "name": "ResourceAvailable", "value": 104 },
+        { "name": "ResourceSegment", "value": 105 },
+        { "name": "ResourceNeedsDecompression", "value": 106 },
+        { "name": "ChannelMessage", "value": 107 }
+      ]
+    },
+    {
+      "name": "DiagnosticEventKind",
+      "values": [
+        { "name": "AnnounceHeard", "value": 200 },
+        { "name": "LinkEstablished", "value": 201 },
+        { "name": "PeerIdentified", "value": 202 },
+        { "name": "LinkClosed", "value": 203 },
+        { "name": "LinkInterfaceMismatch", "value": 204 },
+        { "name": "ResourceAssembled", "value": 205 },
+        { "name": "ResourceFailed", "value": 206 },
+        { "name": "ResourceSendProgress", "value": 207 },
+        { "name": "SelfRatchetRotated", "value": 208 },
+        { "name": "AnnounceHeldDropped", "value": 209 },
+        { "name": "Delivered", "value": 210 },
+        { "name": "RouteExpired", "value": 211 },
+        { "name": "RouteEvicted", "value": 212 },
+        { "name": "RouteInterfaceGone", "value": 213 },
+        { "name": "RouteDropped", "value": 214 },
+        { "name": "BackendDiagnostic", "value": 215 },
+        { "name": "DiagnosticsDropped", "value": 216 }
+      ]
+    },
+    {
+      "name": "EventField",
+      "values": [
+        { "name": "Destination", "value": 1 },
+        { "name": "SourceInterface", "value": 2 },
+        { "name": "Plaintext", "value": 3 },
+        { "name": "LinkId", "value": 4 },
+        { "name": "RequestId", "value": 5 },
+        { "name": "Requester", "value": 6 },
+        { "name": "PathHash", "value": 7 },
+        { "name": "RttMillis", "value": 8 },
+        { "name": "Data", "value": 9 },
+        { "name": "SegmentIndex", "value": 10 },
+        { "name": "TotalSegments", "value": 11 },
+        { "name": "Hash", "value": 12 },
+        { "name": "OriginalHash", "value": 13 },
+        { "name": "Metadata", "value": 14 },
+        { "name": "TotalBytes", "value": 15 },
+        { "name": "StreamId", "value": 16 },
+        { "name": "UncompressedDataBytes", "value": 17 },
+        { "name": "MessageType", "value": 18 },
+        { "name": "Identity", "value": 19 },
+        { "name": "Reason", "value": 20 },
+        { "name": "AttachedInterface", "value": 21 },
+        { "name": "ArrivedOn", "value": 22 },
+        { "name": "TotalSizeBytes", "value": 23 },
+        { "name": "Cause", "value": 24 },
+        { "name": "TransferredBytes", "value": 25 },
+        { "name": "PhysicalTransferredBytes", "value": 26 },
+        { "name": "Detail", "value": 27 },
+        { "name": "Kind", "value": 28 },
+        { "name": "DroppedCount", "value": 29 },
+        { "name": "Hops", "value": 30 },
+        { "name": "Stream", "value": 31 }
+      ]
+    }
+  ],
+  "unions": [
+    {
+      "name": "IdentityConfig",
+      "cases": [
+        {
+          "name": "Existing",
+          "value": 1,
+          "fields": [
+            { "name": "secret", "type": "IdentitySecret" }
+          ]
+        },
+        { "name": "GenerateEphemeral", "value": 2, "fields": [] },
+        {
+          "name": "LoadOrCreate",
+          "value": 3,
+          "fields": [
+            { "name": "path", "type": "string" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "DestinationConfig",
+      "cases": [
+        {
+          "name": "Plain",
+          "value": 1,
+          "fields": [
+            { "name": "name", "type": "DestinationName" }
+          ]
+        },
+        {
+          "name": "Single",
+          "value": 2,
+          "fields": [
+            { "name": "name", "type": "DestinationName" },
+            { "name": "identity", "type": "IdentityConfig", "optional": true },
+            { "name": "announceAppData", "type": "bytes", "optional": true }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ApplicationEvent",
+      "cases": [
+        {
+          "name": "SingleDelivery",
+          "value": 100,
+          "fields": [
+            { "name": "destination", "type": "DestinationHash" },
+            { "name": "sourceInterface", "type": "InterfaceId" },
+            { "name": "plaintext", "type": "bytes" }
+          ]
+        },
+        {
+          "name": "Request",
+          "value": 101,
+          "fields": [
+            { "name": "destination", "type": "DestinationHash" },
+            { "name": "linkId", "type": "LinkId" },
+            { "name": "requestId", "type": "RequestId" },
+            { "name": "requester", "type": "IdentityHash", "optional": true },
+            { "name": "pathHash", "type": "RequestPathHash" },
+            { "name": "rttMillis", "type": "u64" },
+            { "name": "data", "type": "bytes" }
+          ]
+        },
+        {
+          "name": "Response",
+          "value": 102,
+          "fields": [
+            { "name": "linkId", "type": "LinkId" },
+            { "name": "requestId", "type": "RequestId" },
+            { "name": "data", "type": "bytes" }
+          ]
+        },
+        {
+          "name": "ResponseSegment",
+          "value": 103,
+          "fields": [
+            { "name": "linkId", "type": "LinkId" },
+            { "name": "requestId", "type": "RequestId" },
+            { "name": "segmentIndex", "type": "u64" },
+            { "name": "totalSegments", "type": "u64" },
+            { "name": "data", "type": "bytes" }
+          ]
+        },
+        {
+          "name": "ResourceAvailable",
+          "value": 104,
+          "fields": [
+            { "name": "linkId", "type": "LinkId" },
+            { "name": "hash", "type": "ResourceHash" },
+            { "name": "metadata", "type": "bytes", "optional": true },
+            { "name": "resource", "type": "ResourceStream" }
+          ]
+        },
+        {
+          "name": "ResourceSegment",
+          "value": 105,
+          "fields": [
+            { "name": "linkId", "type": "LinkId" },
+            { "name": "originalHash", "type": "ResourceHash" },
+            { "name": "segmentIndex", "type": "u64" },
+            { "name": "totalSegments", "type": "u64" },
+            { "name": "metadata", "type": "bytes", "optional": true },
+            { "name": "data", "type": "bytes" }
+          ]
+        },
+        {
+          "name": "ResourceNeedsDecompression",
+          "value": 106,
+          "fields": [
+            { "name": "linkId", "type": "LinkId" },
+            { "name": "hash", "type": "ResourceHash" },
+            { "name": "stream", "type": "bytes" },
+            { "name": "uncompressedDataBytes", "type": "u64" }
+          ]
+        },
+        {
+          "name": "ChannelMessage",
+          "value": 107,
+          "fields": [
+            { "name": "linkId", "type": "LinkId" },
+            { "name": "messageType", "type": "string" },
+            { "name": "data", "type": "bytes" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "DiagnosticEvent",
+      "cases": [
+        {
+          "name": "AnnounceHeard",
+          "value": 200,
+          "fields": [
+            { "name": "destination", "type": "DestinationHash" },
+            { "name": "hops", "type": "u8" },
+            { "name": "sourceInterface", "type": "InterfaceId" }
+          ]
+        },
+        {
+          "name": "LinkEstablished",
+          "value": 201,
+          "fields": [
+            { "name": "linkId", "type": "LinkId" },
+            { "name": "rttMillis", "type": "u64" }
+          ]
+        },
+        {
+          "name": "PeerIdentified",
+          "value": 202,
+          "fields": [
+            { "name": "linkId", "type": "LinkId" },
+            { "name": "identity", "type": "IdentityHash" }
+          ]
+        },
+        {
+          "name": "LinkClosed",
+          "value": 203,
+          "fields": [
+            { "name": "linkId", "type": "LinkId" },
+            { "name": "reason", "type": "LinkClosedReason" }
+          ]
+        },
+        {
+          "name": "LinkInterfaceMismatch",
+          "value": 204,
+          "fields": [
+            { "name": "linkId", "type": "LinkId" },
+            { "name": "attachedInterface", "type": "InterfaceId" },
+            { "name": "arrivedOn", "type": "InterfaceId" }
+          ]
+        },
+        {
+          "name": "ResourceAssembled",
+          "value": 205,
+          "fields": [
+            { "name": "linkId", "type": "LinkId" },
+            { "name": "originalHash", "type": "ResourceHash" },
+            { "name": "totalSizeBytes", "type": "u64" }
+          ]
+        },
+        {
+          "name": "ResourceFailed",
+          "value": 206,
+          "fields": [
+            { "name": "linkId", "type": "LinkId" },
+            { "name": "hash", "type": "ResourceHash" },
+            { "name": "cause", "type": "string" }
+          ]
+        },
+        {
+          "name": "ResourceSendProgress",
+          "value": 207,
+          "fields": [
+            { "name": "linkId", "type": "LinkId" },
+            { "name": "transferredBytes", "type": "u64" },
+            { "name": "totalBytes", "type": "u64" },
+            { "name": "physicalTransferredBytes", "type": "u64" },
+            { "name": "segmentIndex", "type": "u64" },
+            { "name": "totalSegments", "type": "u64" }
+          ]
+        },
+        {
+          "name": "SelfRatchetRotated",
+          "value": 208,
+          "fields": [
+            { "name": "destination", "type": "DestinationHash" }
+          ]
+        },
+        {
+          "name": "AnnounceHeldDropped",
+          "value": 209,
+          "fields": [
+            { "name": "destination", "type": "DestinationHash" },
+            { "name": "sourceInterface", "type": "InterfaceId" },
+            { "name": "cause", "type": "string" }
+          ]
+        },
+        {
+          "name": "Delivered",
+          "value": 210,
+          "fields": [
+            { "name": "detail", "type": "string" }
+          ]
+        },
+        {
+          "name": "RouteExpired",
+          "value": 211,
+          "fields": [
+            { "name": "destination", "type": "DestinationHash" }
+          ]
+        },
+        {
+          "name": "RouteEvicted",
+          "value": 212,
+          "fields": [
+            { "name": "destination", "type": "DestinationHash" }
+          ]
+        },
+        {
+          "name": "RouteInterfaceGone",
+          "value": 213,
+          "fields": [
+            { "name": "destination", "type": "DestinationHash" }
+          ]
+        },
+        {
+          "name": "RouteDropped",
+          "value": 214,
+          "fields": [
+            { "name": "destination", "type": "DestinationHash" }
+          ]
+        },
+        {
+          "name": "BackendDiagnostic",
+          "value": 215,
+          "fields": [
+            { "name": "kind", "type": "string" },
+            { "name": "detail", "type": "string" }
+          ]
+        },
+        {
+          "name": "DiagnosticsDropped",
+          "value": 216,
+          "fields": [
+            { "name": "count", "type": "u128" }
+          ]
+        }
+      ]
+    }
+  ]
+}

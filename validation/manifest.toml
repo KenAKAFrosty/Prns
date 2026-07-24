@@ -38,6 +38,7 @@ cargo_manifests = [
     "prns-core/Cargo.toml",
     "prns-ffi/Cargo.toml",
     "prns-flash-manifest/Cargo.toml",
+    "prns-host/abi/c/Cargo.toml",
     "prns-host/core/Cargo.toml",
     "prns-host/impls/cooperative/Cargo.toml",
     "prns-host/impls/tokio/Cargo.toml",
@@ -67,6 +68,7 @@ format_manifests = [
     "personal-hopspot/mobile/ios/rust/Cargo.toml",
     "prns-config/Cargo.toml",
     "prns-ffi/Cargo.toml",
+    "prns-host/abi/c/Cargo.toml",
     "prns-interfaces/impls/embassy/Cargo.toml",
     "prns-interfaces/impls/tokio/Cargo.toml",
     "prns-napi/Cargo.toml",
@@ -82,6 +84,43 @@ format_manifests = [
 [[registry.asset_exemptions]]
 path = "prns-wasm/smoke/smoke.ts"
 reason = "Interactive browser-and-device smoke page; the automatable TypeScript smokes are registered suites."
+
+[[suite]]
+id = "host-contract-generated"
+domain = "hygiene"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "python"
+timeout_seconds = 60
+command = ["./tools/prns", "run", "repo.host-contract.check"]
+inputs = [
+  "tools/repo/generate-host-contract.py",
+  "prns-host/schema/host-contract-v1.json",
+  "prns-host/core/src/generated.rs",
+  "prns-host/abi/c/include/prns_host.h",
+  "prns-host/bindings/dotnet/src/PersonalRns/Generated/HostContract.g.cs",
+  "prns-host/conformance/host-contract-v1.json",
+  "prns-js/src/contract.generated.ts",
+]
+artifacts = "validation-artifacts/results/host-contract-generated"
+
+[[suite]]
+id = "host-dotnet-contract"
+domain = "interop"
+group = "deterministic"
+tiers = ["pr", "release", "scheduled"]
+platform = "linux"
+toolchain = "dotnet"
+timeout_seconds = 600
+command = ["bash", "validation/interop/cases/host-dotnet-contract-smoke.sh"]
+inputs = [
+  "validation/interop/cases/host-dotnet-contract-smoke.sh",
+  "prns-host/abi/c",
+  "prns-host/bindings/dotnet",
+  "prns-host/core",
+  "prns-host/schema/host-contract-v1.json",
+]
+artifacts = "validation-artifacts/results/host-dotnet-contract"
 
 [[suite]]
 id = "registry"

@@ -8,6 +8,7 @@ mod config;
 mod contract;
 mod delivery;
 mod events;
+mod generated;
 mod lifecycle;
 mod limits;
 mod queue;
@@ -27,6 +28,14 @@ pub use events::{
     ApplicationEvent, ChannelMessage, DiagnosticBatch, DiagnosticEvent, LinkClosedReason,
     RequestAvailable, ResourceNeedsDecompression, ResourceSegmentAvailable, ResponseAvailable,
     ResponseSegmentAvailable, SingleDelivery,
+};
+pub use generated::{
+    AbiApplicationEventKind, AbiBackendKind, AbiCapability, AbiDiagnosticEventKind, AbiEventField,
+    AbiLifecyclePhase, AbiLinkClosedReason, AbiStatus, AbiStopReason, BALANCED_APPLICATION_EVENTS,
+    BALANCED_DIAGNOSTICS, BALANCED_PENDING_COMMANDS, BALANCED_RETAINED_EVENT_BYTES,
+    DESTINATION_HASH_LENGTH, HOST_SCHEMA_ABI, HOST_SCHEMA_PRODUCT_VERSION, HOST_SCHEMA_VERSION,
+    IDENTITY_HASH_LENGTH, IDENTITY_SECRET_LENGTH, INTERFACE_ID_LENGTH, LINK_ID_LENGTH,
+    REQUEST_ID_LENGTH, REQUEST_PATH_HASH_LENGTH, RESOURCE_HASH_LENGTH,
 };
 pub use lifecycle::{
     HostFailure, LifecyclePhase, LifecycleSnapshot, LifecycleState, LifecycleTransitionError,

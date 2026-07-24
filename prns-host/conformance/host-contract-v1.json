@@ -1,0 +1,191 @@
+{
+  "abi": 1,
+  "contractChecks": [
+    {
+      "outcome": "Compatible",
+      "requiredAbi": 1,
+      "requiredProductVersion": "0.2.8"
+    },
+    {
+      "outcome": "ContractMismatch",
+      "requiredAbi": 2,
+      "requiredProductVersion": "0.2.8"
+    },
+    {
+      "outcome": "ContractMismatch",
+      "requiredAbi": 1,
+      "requiredProductVersion": "0.0.0"
+    }
+  ],
+  "enums": {
+    "ApplicationEventKind": {
+      "ChannelMessage": 107,
+      "Request": 101,
+      "ResourceAvailable": 104,
+      "ResourceNeedsDecompression": 106,
+      "ResourceSegment": 105,
+      "Response": 102,
+      "ResponseSegment": 103,
+      "SingleDelivery": 100
+    },
+    "BackendKind": {
+      "Browser": 2,
+      "Cooperative": 3,
+      "Native": 1
+    },
+    "Capability": {
+      "Bluetooth": 7,
+      "BrowserRendezvous": 10,
+      "I2p": 11,
+      "Loopback": 1,
+      "Serial": 5,
+      "TcpClient": 2,
+      "TcpServer": 3,
+      "Udp": 4,
+      "Usb": 6,
+      "Weave": 12,
+      "WebSocket": 9,
+      "Wifi": 8
+    },
+    "DiagnosticEventKind": {
+      "AnnounceHeard": 200,
+      "AnnounceHeldDropped": 209,
+      "BackendDiagnostic": 215,
+      "Delivered": 210,
+      "DiagnosticsDropped": 216,
+      "LinkClosed": 203,
+      "LinkEstablished": 201,
+      "LinkInterfaceMismatch": 204,
+      "PeerIdentified": 202,
+      "ResourceAssembled": 205,
+      "ResourceFailed": 206,
+      "ResourceSendProgress": 207,
+      "RouteDropped": 214,
+      "RouteEvicted": 212,
+      "RouteExpired": 211,
+      "RouteInterfaceGone": 213,
+      "SelfRatchetRotated": 208
+    },
+    "EventField": {
+      "ArrivedOn": 22,
+      "AttachedInterface": 21,
+      "Cause": 24,
+      "Data": 9,
+      "Destination": 1,
+      "Detail": 27,
+      "DroppedCount": 29,
+      "Hash": 12,
+      "Hops": 30,
+      "Identity": 19,
+      "Kind": 28,
+      "LinkId": 4,
+      "MessageType": 18,
+      "Metadata": 14,
+      "OriginalHash": 13,
+      "PathHash": 7,
+      "PhysicalTransferredBytes": 26,
+      "Plaintext": 3,
+      "Reason": 20,
+      "RequestId": 5,
+      "Requester": 6,
+      "RttMillis": 8,
+      "SegmentIndex": 10,
+      "SourceInterface": 2,
+      "Stream": 31,
+      "StreamId": 16,
+      "TotalBytes": 15,
+      "TotalSegments": 11,
+      "TotalSizeBytes": 23,
+      "TransferredBytes": 25,
+      "UncompressedDataBytes": 17
+    },
+    "LifecyclePhase": {
+      "Failed": 5,
+      "Running": 2,
+      "Starting": 1,
+      "Stopped": 4,
+      "Stopping": 3
+    },
+    "LinkClosedReason": {
+      "MalformedRtt": 3,
+      "PeerClosed": 2,
+      "Timeout": 1
+    },
+    "Status": {
+      "AlreadyClaimed": 5,
+      "BackendFailed": 10,
+      "ContractMismatch": 2,
+      "InvalidArgument": 1,
+      "InvalidHandle": 3,
+      "NotReady": 4,
+      "Ok": 0,
+      "Panic": 11,
+      "QueueFull": 8,
+      "Stopped": 9,
+      "TimedOut": 7,
+      "WouldBlock": 6
+    },
+    "StopReason": {
+      "BackendExited": 2,
+      "Requested": 1
+    }
+  },
+  "fixedBytes": {
+    "DestinationHash": 16,
+    "IdentityHash": 16,
+    "IdentitySecret": 64,
+    "InterfaceId": 8,
+    "LinkId": 16,
+    "RequestId": 16,
+    "RequestPathHash": 16,
+    "ResourceHash": 32
+  },
+  "limits": {
+    "applicationEvents": 1024,
+    "diagnostics": 1024,
+    "pendingCommands": 256,
+    "retainedEventBytes": 8388608
+  },
+  "productVersion": "0.2.8",
+  "schemaVersion": 1,
+  "unions": {
+    "ApplicationEvent": {
+      "ChannelMessage": 107,
+      "Request": 101,
+      "ResourceAvailable": 104,
+      "ResourceNeedsDecompression": 106,
+      "ResourceSegment": 105,
+      "Response": 102,
+      "ResponseSegment": 103,
+      "SingleDelivery": 100
+    },
+    "DestinationConfig": {
+      "Plain": 1,
+      "Single": 2
+    },
+    "DiagnosticEvent": {
+      "AnnounceHeard": 200,
+      "AnnounceHeldDropped": 209,
+      "BackendDiagnostic": 215,
+      "Delivered": 210,
+      "DiagnosticsDropped": 216,
+      "LinkClosed": 203,
+      "LinkEstablished": 201,
+      "LinkInterfaceMismatch": 204,
+      "PeerIdentified": 202,
+      "ResourceAssembled": 205,
+      "ResourceFailed": 206,
+      "ResourceSendProgress": 207,
+      "RouteDropped": 214,
+      "RouteEvicted": 212,
+      "RouteExpired": 211,
+      "RouteInterfaceGone": 213,
+      "SelfRatchetRotated": 208
+    },
+    "IdentityConfig": {
+      "Existing": 1,
+      "GenerateEphemeral": 2,
+      "LoadOrCreate": 3
+    }
+  }
+}
