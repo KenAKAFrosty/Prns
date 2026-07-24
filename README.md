@@ -1,6 +1,5 @@
 # Prns
 
-
 <p align="center">
   <a href="https://prns.dev" target="_blank">
   <img src="docs/website/public/assets/og.png" alt="Prns: a high-performance port of Reticulum (RNS). Runs on any device." width="800" />
@@ -18,15 +17,25 @@ The CI badge reads "no status" to anonymous viewers until the repo is public.
 [![MSRV](https://img.shields.io/badge/MSRV-1.90-orange.svg)](#minimum-supported-rust-version)
 [![no_std](https://img.shields.io/badge/no__std-core-success.svg)](#embedded-and-no_std)
 
-## Getting Started
-Visit the docs website at either https://prns.dev or https://reticulum.rs, or run the docs site locally from source.
+## Getting started
 
-Building a Node.js, Electron, or Tauri application? The full node is on npm as [`personal-rns`](prns-napi/README.md) — the complete engine as a native addon, no daemon required.
+Visit [prns.dev](https://prns.dev) or [reticulum.rs](https://reticulum.rs), or run
+the docs site locally from source.
 
+Building a Node.js, Electron, or Tauri application? The full node is on npm as
+[`personal-rns`](prns-napi/README.md) — the complete engine as a native addon,
+with no daemon required.
+
+## Embedded and `no_std`
+
+`prns-core` supports `no_std` builds from an alloc-free, fixed-capacity profile
+through `no_std + alloc`. The Embassy runtime and interface implementations
+carry the same engine onto ESP32 and nRF52840 firmware targets.
 
 ## Minimum supported Rust version
 
-The workspace builds on Rust **1.90** and newer, and tracks `stable` (pinned in [rust-toolchain.toml](rust-toolchain.toml)). 1.90 is the declared workspace MSRV; the `no_std` core itself compiles on older toolchains.
+The workspace's declared and CI-tested MSRV is Rust **1.90**. Development builds
+use the stable channel configured in [rust-toolchain.toml](rust-toolchain.toml).
 
 ## Contributing
 

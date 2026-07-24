@@ -24,8 +24,8 @@
     "compiled": true,
     "compiler": "unknown",
     "cython": "3.2.8",
-    "native_module": "C:\\_redacted___\\.prns-oc\\lib.win-amd64-cpython-313\\RNS.cp313-win_amd64.pyd",
-    "object_cache": "C:\\_redacted___\\.prns-oc",
+    "native_module": "~/.prns-oc/lib.win-amd64-cpython-313/RNS.cp313-win_amd64.pyd",
+    "object_cache": "~/.prns-oc",
     "python": "3.13.14",
     "rns": "1.4.0"
   },

@@ -25,8 +25,8 @@
     "compiled": true,
     "compiler": "Apple clang version 21.0.0 (clang-2100.1.1.101)",
     "cython": "3.2.8",
-    "native_module": "<_________________>/Documents/StayPersonal/Prns/benchmarks/reference/.object-cache/pyximport/lib.macosx-26.0-arm64-cpython-313/RNS.cpython-313-darwin.so",
-    "object_cache": "<_________________>/Documents/StayPersonal/Prns/benchmarks/reference/.object-cache/pyximport",
+    "native_module": "<repo>/benchmarks/reference/.object-cache/pyximport/lib.macosx-26.0-arm64-cpython-313/RNS.cpython-313-darwin.so",
+    "object_cache": "<repo>/benchmarks/reference/.object-cache/pyximport",
     "python": "3.13.13",
     "rns": "1.4.0"
   },

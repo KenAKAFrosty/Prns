@@ -10,7 +10,8 @@ while IFS= read -r manifest; do
   cargo fmt --manifest-path "${manifest}" --all -- --check
 done < <(
   python3 -c \
-    'from validation.run import MANIFEST_PATH, load_toml; print(*load_toml(MANIFEST_PATH)["registry"]["format_manifests"], sep="\n")'
+    'from validation.run import MANIFEST_PATH, load_toml; print(*load_toml(MANIFEST_PATH)["registry"]["format_manifests"], sep="\n")' \
+    | tr -d '\r'
 )
 
 echo "[docs] intra-doc links (personal-rns)"

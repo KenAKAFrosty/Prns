@@ -304,6 +304,12 @@ pub const PLATFORMS: &[Platform] = &[
         icon: Some("espressif"),
     },
     Platform {
+        name: "RISC-V",
+        group: Group::Microcontroller,
+        tier: Tier::Shipping,
+        icon: Some("riscv"),
+    },
+    Platform {
         name: "nRF52840",
         group: Group::Microcontroller,
         tier: Tier::Shipping,
@@ -503,6 +509,10 @@ pub const LANDING_PLATFORM_CHIPS: &[LandingPlatformChip] = &[
         icon: Some("espressif"),
     },
     LandingPlatformChip {
+        name: "RISC-V",
+        icon: Some("riscv"),
+    },
+    LandingPlatformChip {
         name: "nRF52840",
         icon: Some("nordicsemiconductor"),
     },
@@ -579,3 +589,26 @@ pub const LANDING_PLATFORM_CHIPS: &[LandingPlatformChip] = &[
         icon: Some("fastly"),
     },
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn riscv_is_presented_as_a_shipping_platform() {
+        let platform = PLATFORMS
+            .iter()
+            .find(|platform| platform.name == "RISC-V")
+            .expect("RISC-V should remain in the platform catalog");
+
+        assert!(platform.group == Group::Microcontroller);
+        assert!(platform.tier == Tier::Shipping);
+        assert!(platform.icon == Some("riscv"));
+        assert!(
+            LANDING_PLATFORM_CHIPS
+                .iter()
+                .any(|chip| chip.name == "RISC-V" && chip.icon == Some("riscv")),
+            "RISC-V should remain in the homepage platform marquee"
+        );
+    }
+}

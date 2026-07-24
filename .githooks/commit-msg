@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if grep -qiE '^[[:space:]]*co-authored-by[[:space:]]*:|generated with.*(claude|codex|copilot|cursor|gemini)' "$1"; then
+    echo "✗ commit blocked: attribution trailers are not used in this repository."
+    echo "  The committer owns the commit; remove the trailer and commit again."
+    exit 1
+fi

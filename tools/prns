@@ -186,7 +186,7 @@ def validate_manifest(manifest: dict, *, check_callers: bool = True) -> list[str
                 errors.append(f"invalid Python syntax in {relative}: {error}")
         elif path.suffix == ".sh":
             result = subprocess.run(
-                ["bash", "-n", str(path)],
+                ["bash", "-n", relative],
                 cwd=ROOT,
                 capture_output=True,
                 text=True,
