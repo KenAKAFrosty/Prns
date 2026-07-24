@@ -41,6 +41,12 @@ tasks.test {
     useJUnitPlatform()
 }
 
+tasks.processResources {
+    from(rootProject.file("../../distribution/PACKAGE.md"))
+    from(rootProject.file("../../../LICENSE-APACHE"))
+    from(rootProject.file("../../../LICENSE-MIT"))
+}
+
 publishing {
     publications {
         create<MavenPublication>("maven") {

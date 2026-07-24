@@ -839,7 +839,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1865,17 +1865,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
-name = "personal-rns"
-version = "0.2.8"
-dependencies = [
- "cfg-if",
- "prns-core",
- "prns-interfaces-tokio",
- "prns-runtime",
- "prns-runtime-tokio",
-]
-
-[[package]]
 name = "pin-project"
 version = "1.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2018,7 +2007,7 @@ dependencies = [
 
 [[package]]
 name = "prns-ffi"
-version = "0.1.0"
+version = "0.2.8"
 dependencies = [
  "cfg-if",
  "dispatch2",
@@ -2049,7 +2038,6 @@ dependencies = [
  "log",
  "mdns-sd",
  "netdev",
- "personal-rns",
  "prns-config",
  "prns-core",
  "prns-ffi",
@@ -2074,6 +2062,7 @@ dependencies = [
 name = "prns-runtime"
 version = "0.2.8"
 dependencies = [
+ "bzip2",
  "cfg-if",
  "heapless",
  "prns-core",
@@ -2083,7 +2072,6 @@ dependencies = [
 name = "prns-runtime-tokio"
 version = "0.2.8"
 dependencies = [
- "bzip2",
  "futures-util",
  "getrandom 0.2.17",
  "heapless",
@@ -2309,7 +2297,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2616,7 +2604,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3004,7 +2992,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

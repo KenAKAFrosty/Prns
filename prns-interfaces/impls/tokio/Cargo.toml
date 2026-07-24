@@ -7,7 +7,12 @@ repository = "https://github.com/KenAKAFrosty/Prns"
 homepage = "https://reticulum.rs"
 rust-version = "1.90"
 description = "Tokio host interface implementations for the Personal Reticulum engine"
-publish = false
+documentation = "https://docs.rs/prns-interfaces-tokio"
+readme = "README.md"
+keywords = ["reticulum", "mesh", "networking", "tokio", "interfaces"]
+categories = ["network-programming", "asynchronous"]
+publish = true
+include = ["src/**", "tests/**", "examples/**", "Cargo.toml", "README.md"]
 
 [workspace]
 
@@ -16,14 +21,14 @@ path = "src/lib.rs"
 
 [dependencies]
 cfg-if = "1.0"
-prns-config = { path = "../../../prns-config", optional = true }
+prns-config = { version = "=0.2.8", path = "../../../prns-config", optional = true }
 shlex = { version = "1", optional = true }
 # The permissively licensed Unix transport behind the Prns-owned opaque serial stream.
 # Windows opening and macOS/Windows USB enumeration stay in prns-ffi so platform FFI never
 # leaks into the safe host-interface crate.
 serial2-tokio = { version = "0.1.24", optional = true }
-prns-core = { path = "../../../prns-core", default-features = false, features = ["tokio-host"] }
-prns-runtime = { package = "prns-runtime-tokio", path = "../../../prns-runtime/impls/tokio", default-features = false }
+prns-core = { version = "=0.2.8", path = "../../../prns-core", default-features = false, features = ["tokio-host"] }
+prns-runtime = { package = "prns-runtime-tokio", version = "=0.2.8", path = "../../../prns-runtime/impls/tokio", default-features = false }
 heapless = { version = "0.8", default-features = false }
 tokio = { version = "1", optional = true, default-features = false, features = ["rt", "macros", "sync", "time", "io-util"] }
 socket2 = { version = "0.6", optional = true, features = ["all"] }
@@ -47,10 +52,9 @@ bluer = { version = "0.17", optional = true, features = ["l2cap", "bluetoothd"] 
 zbus = { version = "4", optional = true, default-features = false, features = ["tokio"] }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "windows"))'.dependencies]
-prns-ffi = { path = "../../../prns-ffi", optional = true, default-features = false }
+prns-ffi = { version = "=0.2.8", path = "../../../prns-ffi", optional = true, default-features = false }
 
 [dev-dependencies]
-personal-rns = { path = "../../../personal-rns", default-features = false, features = ["tokio-host"] }
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util", "test-util"] }
 env_logger = "0.11"
 base64 = "0.22"
@@ -59,34 +63,6 @@ tempfile = "3"
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 serial2-tokio = { version = "0.1.24", features = ["unix"] }
-
-[[example]]
-name = "local_shared_instance"
-required-features = ["shared-instance"]
-
-[[example]]
-name = "local_shared_rpc_instance"
-required-features = ["shared-instance"]
-
-[[example]]
-name = "local_transit_daemon"
-required-features = ["shared-instance", "tcp"]
-
-[[example]]
-name = "tcp_server_host"
-required-features = ["tcp"]
-
-[[example]]
-name = "bluetooth_node"
-required-features = ["bluetooth-auto", "log"]
-
-[[example]]
-name = "wifi_direct_linux"
-required-features = ["wifi-direct", "log"]
-
-[[example]]
-name = "wifi_direct_sd_probe"
-required-features = ["wifi-direct", "log"]
 
 [features]
 default = []
@@ -122,3 +98,6 @@ unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
 significant_drop_in_scrutinee = "warn"
+
+[package.metadata.docs.rs]
+all-features = true

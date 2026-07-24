@@ -36,6 +36,24 @@ def main():
     args = parser.parse_args()
 
     version = (ROOT / "VERSION").read_text().strip()
+    catalog = json.loads(
+        (ROOT / "prns-host/distribution/packages.json").read_text()
+    )
+    targets = {
+        target["rust"]: target for target in catalog["nativeTargets"]
+    }
+    if args.target not in targets:
+        raise SystemExit(f"unknown native target: {args.target}")
+    expected_libraries = {
+        targets[args.target]["dynamicLibrary"],
+        targets[args.target]["staticLibrary"],
+    }
+    actual_libraries = {Path(value).name for value in args.library}
+    if actual_libraries != expected_libraries:
+        raise SystemExit(
+            f"{args.target} requires libraries {sorted(expected_libraries)}, "
+            f"got {sorted(actual_libraries)}"
+        )
     schema = json.loads(
         (ROOT / "prns-host/schema/host-contract-v1.json").read_text()
     )
@@ -60,8 +78,13 @@ def main():
     )
     license_apache = output / "LICENSE-APACHE"
     license_mit = output / "LICENSE-MIT"
+    package_readme = output / "PACKAGE.md"
     shutil.copy2(ROOT / "LICENSE-APACHE", license_apache)
     shutil.copy2(ROOT / "LICENSE-MIT", license_mit)
+    shutil.copy2(
+        ROOT / "prns-host" / "distribution" / "PACKAGE.md",
+        package_readme,
+    )
     pkgconfig = lib / "pkgconfig"
     pkgconfig.mkdir(exist_ok=True)
     pkgconfig_file = pkgconfig / "personal-rns.pc"
@@ -80,6 +103,7 @@ def main():
         header,
         license_apache,
         license_mit,
+        package_readme,
         pkgconfig_file,
     ]
     library_names = set()

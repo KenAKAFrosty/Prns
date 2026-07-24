@@ -1,0 +1,224 @@
+{
+  "format": 1,
+  "product": "personal-rns",
+  "versionSource": "VERSION",
+  "contractSource": "prns-host/schema/host-contract-v1.json",
+  "documentation": {
+    "primary": "https://reticulum.rs",
+    "project": "https://prns.dev",
+    "repository": "https://github.com/KenAKAFrosty/Prns",
+    "issues": "https://github.com/KenAKAFrosty/Prns/issues",
+    "security": "https://github.com/KenAKAFrosty/Prns/security/policy"
+  },
+  "nativeTargets": [
+    {
+      "rust": "x86_64-unknown-linux-gnu",
+      "archive": "tar.gz",
+      "dynamicLibrary": "libprns_host.so",
+      "staticLibrary": "libprns_host.a",
+      "dotnetRuntime": "linux-x64",
+      "pythonPlatform": "manylinux_2_34_x86_64",
+      "npmPackage": "personal-rns-linux-x64-gnu",
+      "julia": {
+        "arch": "x86_64",
+        "os": "linux",
+        "libc": "glibc"
+      }
+    },
+    {
+      "rust": "aarch64-unknown-linux-gnu",
+      "archive": "tar.gz",
+      "dynamicLibrary": "libprns_host.so",
+      "staticLibrary": "libprns_host.a",
+      "dotnetRuntime": "linux-arm64",
+      "pythonPlatform": "manylinux_2_34_aarch64",
+      "npmPackage": "personal-rns-linux-arm64-gnu",
+      "julia": {
+        "arch": "aarch64",
+        "os": "linux",
+        "libc": "glibc"
+      }
+    },
+    {
+      "rust": "x86_64-unknown-linux-musl",
+      "archive": "tar.gz",
+      "dynamicLibrary": "libprns_host.so",
+      "staticLibrary": "libprns_host.a",
+      "dotnetRuntime": "linux-musl-x64",
+      "pythonPlatform": "musllinux_1_2_x86_64",
+      "npmPackage": "personal-rns-linux-x64-musl",
+      "julia": {
+        "arch": "x86_64",
+        "os": "linux",
+        "libc": "musl"
+      }
+    },
+    {
+      "rust": "aarch64-unknown-linux-musl",
+      "archive": "tar.gz",
+      "dynamicLibrary": "libprns_host.so",
+      "staticLibrary": "libprns_host.a",
+      "dotnetRuntime": "linux-musl-arm64",
+      "pythonPlatform": "musllinux_1_2_aarch64",
+      "npmPackage": "personal-rns-linux-arm64-musl",
+      "julia": {
+        "arch": "aarch64",
+        "os": "linux",
+        "libc": "musl"
+      }
+    },
+    {
+      "rust": "x86_64-apple-darwin",
+      "archive": "tar.gz",
+      "dynamicLibrary": "libprns_host.dylib",
+      "staticLibrary": "libprns_host.a",
+      "dotnetRuntime": "osx-x64",
+      "pythonPlatform": "macosx_11_0_x86_64",
+      "npmPackage": "personal-rns-darwin-x64",
+      "julia": {
+        "arch": "x86_64",
+        "os": "macos"
+      }
+    },
+    {
+      "rust": "aarch64-apple-darwin",
+      "archive": "tar.gz",
+      "dynamicLibrary": "libprns_host.dylib",
+      "staticLibrary": "libprns_host.a",
+      "dotnetRuntime": "osx-arm64",
+      "pythonPlatform": "macosx_11_0_arm64",
+      "npmPackage": "personal-rns-darwin-arm64",
+      "julia": {
+        "arch": "aarch64",
+        "os": "macos"
+      }
+    },
+    {
+      "rust": "x86_64-pc-windows-msvc",
+      "archive": "zip",
+      "dynamicLibrary": "prns_host.dll",
+      "staticLibrary": "prns_host.lib",
+      "dotnetRuntime": "win-x64",
+      "pythonPlatform": "win_amd64",
+      "npmPackage": "personal-rns-win32-x64-msvc",
+      "julia": {
+        "arch": "x86_64",
+        "os": "windows"
+      }
+    },
+    {
+      "rust": "aarch64-pc-windows-msvc",
+      "archive": "zip",
+      "dynamicLibrary": "prns_host.dll",
+      "staticLibrary": "prns_host.lib",
+      "dotnetRuntime": "win-arm64",
+      "pythonPlatform": "win_arm64",
+      "npmPackage": "personal-rns-win32-arm64-msvc",
+      "julia": {
+        "arch": "aarch64",
+        "os": "windows"
+      }
+    },
+    {
+      "rust": "aarch64-linux-android",
+      "archive": "tar.gz",
+      "dynamicLibrary": "libprns_host.so",
+      "staticLibrary": "libprns_host.a",
+      "androidAbi": "arm64-v8a"
+    },
+    {
+      "rust": "armv7-linux-androideabi",
+      "archive": "tar.gz",
+      "dynamicLibrary": "libprns_host.so",
+      "staticLibrary": "libprns_host.a",
+      "androidAbi": "armeabi-v7a"
+    }
+  ],
+  "rustCrates": [
+    {
+      "name": "prns-core",
+      "manifest": "prns-core/Cargo.toml",
+      "order": 1
+    },
+    {
+      "name": "prns-runtime",
+      "manifest": "prns-runtime/core/Cargo.toml",
+      "order": 2
+    },
+    {
+      "name": "prns-config",
+      "manifest": "prns-config/Cargo.toml",
+      "order": 2
+    },
+    {
+      "name": "prns-ffi",
+      "manifest": "prns-ffi/Cargo.toml",
+      "order": 2
+    },
+    {
+      "name": "prns-runtime-tokio",
+      "manifest": "prns-runtime/impls/tokio/Cargo.toml",
+      "order": 3
+    },
+    {
+      "name": "prns-runtime-embassy",
+      "manifest": "prns-runtime/impls/embassy/Cargo.toml",
+      "order": 3
+    },
+    {
+      "name": "prns-interfaces-tokio",
+      "manifest": "prns-interfaces/impls/tokio/Cargo.toml",
+      "order": 4
+    },
+    {
+      "name": "prns-interfaces-embassy",
+      "manifest": "prns-interfaces/impls/embassy/Cargo.toml",
+      "order": 4
+    },
+    {
+      "name": "personal-rns",
+      "manifest": "personal-rns/Cargo.toml",
+      "order": 5
+    }
+  ],
+  "packages": [
+    {
+      "ecosystem": "npm",
+      "name": "personal-rns",
+      "manifest": "prns-js/package.json"
+    },
+    {
+      "ecosystem": "pypi",
+      "name": "personal-rns",
+      "manifest": "prns-host/bindings/python/pyproject.toml"
+    },
+    {
+      "ecosystem": "nuget",
+      "name": "PersonalRns",
+      "manifest": "prns-host/bindings/dotnet/src/PersonalRns/PersonalRns.csproj"
+    },
+    {
+      "ecosystem": "maven",
+      "name": "io.reticulum:personal-rns",
+      "manifest": "prns-host/bindings/jvm/build.gradle.kts"
+    },
+    {
+      "ecosystem": "go",
+      "name": "github.com/KenAKAFrosty/Prns/prns-host/bindings/go",
+      "manifest": "prns-host/bindings/go/go.mod",
+      "tag": "prns-host/bindings/go/v{version}"
+    },
+    {
+      "ecosystem": "swift",
+      "name": "PersonalRns",
+      "manifest": "Package.swift",
+      "tag": "v{version}"
+    },
+    {
+      "ecosystem": "julia",
+      "name": "PersonalRns",
+      "manifest": "prns-host/bindings/julia/Project.toml",
+      "tag": "PersonalRns-v{version}"
+    }
+  ]
+}

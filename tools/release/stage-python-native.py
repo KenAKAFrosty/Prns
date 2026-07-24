@@ -31,6 +31,11 @@ def main():
             f"expected an existing {expected} for {args.target}, got {source}"
         )
     package = Path(args.package).resolve()
+    if not (
+        (package / "pyproject.toml").is_file()
+        and (package / "src" / "personal_rns" / "_native.py").is_file()
+    ):
+        raise SystemExit("package is not a Personal RNS Python package")
     native = package / "src" / "personal_rns" / "native"
     if native.exists():
         shutil.rmtree(native)
@@ -38,6 +43,11 @@ def main():
     shutil.copy2(source, native / expected)
     shutil.copy2(ROOT / "LICENSE-APACHE", package / "LICENSE-APACHE")
     shutil.copy2(ROOT / "LICENSE-MIT", package / "LICENSE-MIT")
+    package_readme = package / "src" / "personal_rns" / "PACKAGE.md"
+    shutil.copy2(
+        ROOT / "prns-host" / "distribution" / "PACKAGE.md",
+        package_readme,
+    )
 
 
 if __name__ == "__main__":

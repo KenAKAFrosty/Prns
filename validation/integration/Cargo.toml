@@ -16,7 +16,13 @@ personal-rns = { path = "../../personal-rns", default-features = false, features
 personal-hopspot-core = { path = "../../personal-hopspot/core" }
 
 [dev-dependencies]
+env_logger = "0.11"
+futures-util = "0.3"
+prns-core = { path = "../../prns-core" }
+prns-ffi = { path = "../../prns-ffi" }
+prns-interfaces-tokio = { path = "../../prns-interfaces/impls/tokio", features = ["bluetooth-auto", "log", "shared-instance", "tcp", "wifi-direct"] }
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util"] }
+zbus = "4"
 
 [lints.clippy]
 dbg_macro = "deny"

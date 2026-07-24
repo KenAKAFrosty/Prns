@@ -97,12 +97,37 @@ function Base.close(arena::NativeArena)
     nothing
 end
 
+function artifact_native_library()
+    artifacts_toml = normpath(joinpath(@__DIR__, "..", "Artifacts.toml"))
+    isfile(artifacts_toml) || return ""
+    PkgArtifacts.ensure_artifact_installed(
+        "personal_rns",
+        artifacts_toml,
+    )
+    hash = Artifacts.artifact_hash("personal_rns", artifacts_toml)
+    hash === nothing && return ""
+    artifact = Artifacts.artifact_path(hash)
+    roots = [artifact]
+    append!(
+        roots,
+        filter(isdir, readdir(artifact; join=true)),
+    )
+    for root in roots
+        for name in ("libprns_host.so", "libprns_host.dylib", "prns_host.dll")
+            candidate = joinpath(root, "lib", name)
+            isfile(candidate) && return candidate
+        end
+    end
+    ""
+end
+
 function native_library()
     NATIVE_LIBRARY[] != C_NULL && return NATIVE_LIBRARY[]
     configured = get(ENV, "PRNS_HOST_LIBRARY", "")
-    candidate = isempty(configured) ?
-        Libdl.find_library(["prns_host", "libprns_host"]) :
-        configured
+    candidate = configured
+    isempty(candidate) && (candidate = artifact_native_library())
+    isempty(candidate) &&
+        (candidate = Libdl.find_library(["prns_host", "libprns_host"]))
     isempty(candidate) && throw(NativeLibraryUnavailable())
     NATIVE_LIBRARY[] = Libdl.dlopen(candidate)
     NATIVE_LIBRARY[]

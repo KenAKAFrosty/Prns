@@ -7,7 +7,12 @@ repository.workspace = true
 homepage.workspace = true
 rust-version.workspace = true
 description = "Pure Reticulum engine and wire contract for Personal Reticulum"
-publish = false
+documentation = "https://docs.rs/prns-core"
+readme = "README.md"
+keywords = ["reticulum", "mesh", "networking", "no-std", "embedded"]
+categories = ["network-programming", "embedded", "no-std"]
+publish = true
+include = ["src/**", "tests/**", "examples/**", "Cargo.toml", "README.md"]
 
 [lib]
 path = "src/lib.rs"
@@ -88,3 +93,6 @@ serde_json = "1"
 
 [lints]
 workspace = true
+
+[package.metadata.docs.rs]
+all-features = true

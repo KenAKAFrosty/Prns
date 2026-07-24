@@ -1,0 +1,118 @@
+name: host-sdk-stage
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: "Full main-branch commit SHA to stage"
+        required: true
+        type: string
+
+concurrency:
+  group: host-sdk-stage-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  custody:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - run: test "${{ inputs.expected_sha }}" = "${{ github.sha }}"
+      - run: test "${{ github.ref }}" = "refs/heads/main"
+
+  host:
+    needs: custody
+    uses: ./.github/workflows/host-sdks.yml
+
+  javascript:
+    needs: custody
+    uses: ./.github/workflows/napi.yml
+
+  assemble:
+    needs: [host, javascript]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: host-*
+          path: dist/downloads
+      - name: generate Julia artifact bindings
+        shell: bash
+        run: |
+          arguments=()
+          for target in \
+            x86_64-unknown-linux-gnu \
+            aarch64-unknown-linux-gnu \
+            x86_64-unknown-linux-musl \
+            aarch64-unknown-linux-musl \
+            x86_64-apple-darwin \
+            aarch64-apple-darwin \
+            x86_64-pc-windows-msvc \
+            aarch64-pc-windows-msvc
+          do
+            mapfile -t matches < <(
+              find dist/downloads -type f -name "personal-rns-*-${target}.*"
+            )
+            test "${#matches[@]}" -eq 1
+            archive="${matches[0]}"
+            arguments+=(--artifact "$target=$archive")
+          done
+          python tools/prns run release.host-sdk.julia.artifacts -- \
+            "${arguments[@]}" \
+            --output dist/generated/Artifacts.toml
+      - name: package source SDKs
+        run: >-
+          python tools/prns run release.host-sdk.sources.package --
+          --julia-artifacts dist/generated/Artifacts.toml
+          --output dist/sources
+          --expected-sha ${{ github.sha }}
+      - name: package Android jniLibs
+        shell: bash
+        run: |
+          mapfile -t arm64_matches < <(
+            find dist/downloads -type f -path \
+              '*host-native-aarch64-linux-android/lib/libprns_host.so'
+          )
+          mapfile -t armv7_matches < <(
+            find dist/downloads -type f -path \
+              '*host-native-armv7-linux-androideabi/lib/libprns_host.so'
+          )
+          test "${#arm64_matches[@]}" -eq 1
+          test "${#armv7_matches[@]}" -eq 1
+          arm64="${arm64_matches[0]}"
+          armv7="${armv7_matches[0]}"
+          python tools/prns run release.host-sdk.android.package -- \
+            --native "aarch64-linux-android=$arm64" \
+            --native "armv7-linux-androideabi=$armv7" \
+            --output "dist/sources/personal-rns-$(cat VERSION)-android-jni.zip"
+      - name: assemble SHA-bound stage
+        shell: bash
+        run: |
+          arguments=()
+          for artifact in dist/downloads/host-*; do
+            label="$(basename "$artifact")"
+            arguments+=(--artifact "$label=$artifact")
+          done
+          arguments+=(--artifact "host-sources=dist/sources")
+          python tools/prns run release.host-sdk.stage -- \
+            --expected-sha "${{ github.sha }}" \
+            "${arguments[@]}" \
+            --output dist/stage
+      - run: >-
+          python tools/prns run release.host-sdk.stage.verify --
+          --stage dist/stage
+          --expected-sha ${{ github.sha }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: host-sdk-stage-${{ github.sha }}
+          path: dist/stage
+          if-no-files-found: error
+          retention-days: 30

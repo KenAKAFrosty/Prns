@@ -2,7 +2,9 @@
 
 `PersonalRns` is a thin Julia adapter over the stable native host capsule. Its concrete event, command, configuration, and outcome types are generated from the repository’s language-neutral contract. Julia multiple dispatch handles command cases directly, stream claims remain explicit values, and blocking waits can be interrupted without polling.
 
-Install the matching native capsule and set `PRNS_HOST_LIBRARY` when it is not on the platform library path:
+Registry and release-source packages resolve the matching native artifact
+automatically. Source-tree development can set `PRNS_HOST_LIBRARY` to an
+explicit native capsule:
 
 ```julia
 using PersonalRns
@@ -24,4 +26,5 @@ command = execute(
 settlement = wait(command)
 ```
 
-The package is registry-ready. Release automation can replace `PRNS_HOST_LIBRARY` with platform artifacts after the native archives receive their final immutable release URLs and hashes.
+Release automation binds every platform artifact to its immutable archive URL,
+SHA-256 digest, and Julia Git tree hash before packaging this module.

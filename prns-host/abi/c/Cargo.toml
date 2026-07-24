@@ -31,3 +31,8 @@ significant_drop_in_scrutinee = "warn"
 
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+strip = "debuginfo"

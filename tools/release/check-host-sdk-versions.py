@@ -42,6 +42,9 @@ def assignment_version(path):
 
 def main():
     expected = (ROOT / "VERSION").read_text().strip()
+    catalog = json.loads(
+        (ROOT / "prns-host/distribution/packages.json").read_text()
+    )
     schema = json.loads(
         (ROOT / "prns-host/schema/host-contract-v1.json").read_text()
     )
@@ -69,6 +72,12 @@ def main():
             "version"
         ],
     }
+    versions.update(
+        {
+            f"rust:{crate['name']}": cargo_version(ROOT / crate["manifest"])
+            for crate in catalog["rustCrates"]
+        }
+    )
     disagreements = {
         name: version for name, version in versions.items() if version != expected
     }

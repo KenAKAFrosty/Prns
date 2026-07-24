@@ -132,6 +132,31 @@ inputs = [
 artifacts = "validation-artifacts/results/host-dotnet-contract"
 
 [[suite]]
+id = "host-sdk-distribution"
+domain = "hygiene"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "python"
+timeout_seconds = 60
+command = ["./tools/prns", "run", "release.host-sdk.distribution.check"]
+inputs = [
+  "VERSION",
+  "prns-host/distribution/RUST_PACKAGE.md",
+  "prns-host/distribution",
+  "tools/release/check-host-sdk-distribution.py",
+  "personal-rns/Cargo.toml",
+  "prns-config/Cargo.toml",
+  "prns-core/Cargo.toml",
+  "prns-ffi/Cargo.toml",
+  "prns-interfaces/impls/embassy/Cargo.toml",
+  "prns-interfaces/impls/tokio/Cargo.toml",
+  "prns-runtime/core/Cargo.toml",
+  "prns-runtime/impls/embassy/Cargo.toml",
+  "prns-runtime/impls/tokio/Cargo.toml",
+]
+artifacts = "validation-artifacts/results/host-sdk-distribution"
+
+[[suite]]
 id = "host-python-contract"
 domain = "interop"
 group = "deterministic"

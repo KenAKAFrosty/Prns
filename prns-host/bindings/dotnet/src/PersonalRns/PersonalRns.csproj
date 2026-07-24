@@ -9,9 +9,18 @@
     <Authors>Personal RNS contributors</Authors>
     <Description>Correct, robust, fast .NET bindings for Personal Reticulum.</Description>
     <PackageLicenseExpression>MIT OR Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://reticulum.rs</PackageProjectUrl>
     <RepositoryUrl>https://github.com/KenAKAFrosty/Prns</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>reticulum;mesh;networking;rns</PackageTags>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
   </PropertyGroup>
   <ItemGroup>
     <None Include="runtimes/**/*" Pack="true" PackagePath="runtimes/%(RecursiveDir)%(Filename)%(Extension)" />
+    <None Include="../../README.md" Pack="true" PackagePath="README.md" />
+    <None Include="../../../../distribution/PACKAGE.md" Pack="true" PackagePath="PACKAGE.md" />
+    <None Include="../../../../../LICENSE-APACHE" Pack="true" PackagePath="" />
+    <None Include="../../../../../LICENSE-MIT" Pack="true" PackagePath="" />
   </ItemGroup>
 </Project>

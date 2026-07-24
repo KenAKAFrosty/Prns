@@ -1,6 +1,8 @@
 module PersonalRns
 
+using Artifacts
 using Libdl
+import Pkg.Artifacts as PkgArtifacts
 
 include("HostContract.generated.jl")
 include("native.jl")

@@ -1,6 +1,20 @@
 name: host-sdks
 
 on:
+  workflow_call:
+    inputs:
+      expected_sha:
+        required: false
+        type: string
+        default: ""
+      publish_pypi:
+        required: false
+        type: boolean
+        default: false
+      publish_nuget:
+        required: false
+        type: boolean
+        default: false
   push:
     branches: [main]
     paths:
@@ -44,7 +58,7 @@ on:
         type: boolean
 
 concurrency:
-  group: host-sdks-${{ github.ref }}
+  group: host-sdks-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -93,6 +107,7 @@ jobs:
         with:
           swift-version: "6.3.3"
       - run: python tools/prns run release.host-sdk.versions
+      - run: python tools/prns run release.host-sdk.distribution.check
       - run: python tools/prns run repo.host-contract.check
       - run: cargo fmt --manifest-path prns-host/impls/native/Cargo.toml -- --check
       - run: cargo clippy --manifest-path prns-host/impls/native/Cargo.toml --all-targets --locked -- -D warnings
@@ -124,6 +139,7 @@ jobs:
         settings:
           - host: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            archive: tar.gz
             library: libprns_host.so
             static: libprns_host.a
             python: python3
@@ -132,6 +148,7 @@ jobs:
             upload: repaired/*.whl
           - host: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
+            archive: tar.gz
             library: libprns_host.so
             static: libprns_host.a
             python: python3
@@ -140,6 +157,7 @@ jobs:
             upload: repaired/*.whl
           - host: ubuntu-latest
             target: x86_64-unknown-linux-musl
+            archive: tar.gz
             library: libprns_host.so
             static: libprns_host.a
             python: python3
@@ -148,6 +166,7 @@ jobs:
             upload: "*.whl"
           - host: ubuntu-24.04-arm
             target: aarch64-unknown-linux-musl
+            archive: tar.gz
             library: libprns_host.so
             static: libprns_host.a
             python: python3
@@ -156,6 +175,7 @@ jobs:
             upload: "*.whl"
           - host: macos-15-intel
             target: x86_64-apple-darwin
+            archive: tar.gz
             library: libprns_host.dylib
             static: libprns_host.a
             python: python3
@@ -164,6 +184,7 @@ jobs:
             upload: "*.whl"
           - host: macos-latest
             target: aarch64-apple-darwin
+            archive: tar.gz
             library: libprns_host.dylib
             static: libprns_host.a
             python: python3
@@ -172,6 +193,7 @@ jobs:
             upload: "*.whl"
           - host: windows-latest
             target: x86_64-pc-windows-msvc
+            archive: zip
             library: prns_host.dll
             static: prns_host.lib
             python: python
@@ -180,6 +202,7 @@ jobs:
             upload: "*.whl"
           - host: windows-11-arm
             target: aarch64-pc-windows-msvc
+            archive: zip
             library: prns_host.dll
             static: prns_host.lib
             python: python
@@ -200,6 +223,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           targets: ${{ matrix.settings.target }}
+      - uses: ./.github/actions/reproducible-rust
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           workspaces: prns-host/abi/c
@@ -215,6 +239,14 @@ jobs:
           --library prns-host/abi/c/target/${{ matrix.settings.target }}/release/${{ matrix.settings.static }}
           --output dist/host-native-${{ matrix.settings.target }}
           --expected-sha ${{ github.sha }}
+      - name: archive native capsule
+        shell: bash
+        run: >-
+          python tools/prns run release.host-sdk.native.archive --
+          --target ${{ matrix.settings.target }}
+          --source dist/host-native-${{ matrix.settings.target }}
+          --output
+          dist/personal-rns-$(cat VERSION)-${{ matrix.settings.target }}.${{ matrix.settings.archive }}
       - run: >-
           python tools/prns run release.host-sdk.python.stage --
           --target ${{ matrix.settings.target }}
@@ -249,7 +281,9 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: host-native-${{ matrix.settings.target }}
-          path: dist/host-native-${{ matrix.settings.target }}
+          path: |
+            dist/host-native-${{ matrix.settings.target }}
+            dist/personal-rns-*.${{ matrix.settings.archive }}
           if-no-files-found: error
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -265,8 +299,10 @@ jobs:
         settings:
           - ndk: arm64-v8a
             target: aarch64-linux-android
+            archive: tar.gz
           - ndk: armeabi-v7a
             target: armv7-linux-androideabi
+            archive: tar.gz
     name: android (${{ matrix.settings.target }})
     runs-on: ubuntu-latest
     steps:
@@ -279,6 +315,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           targets: ${{ matrix.settings.target }}
+      - uses: ./.github/actions/reproducible-rust
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           workspaces: prns-host/abi/c
@@ -295,10 +332,50 @@ jobs:
           --library prns-host/abi/c/target/${{ matrix.settings.target }}/release/libprns_host.a
           --output dist/host-native-${{ matrix.settings.target }}
           --expected-sha ${{ github.sha }}
+      - name: archive native capsule
+        run: >-
+          python tools/prns run release.host-sdk.native.archive --
+          --target ${{ matrix.settings.target }}
+          --source dist/host-native-${{ matrix.settings.target }}
+          --output
+          dist/personal-rns-$(cat VERSION)-${{ matrix.settings.target }}.${{ matrix.settings.archive }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: host-native-${{ matrix.settings.target }}
-          path: dist/host-native-${{ matrix.settings.target }}
+          path: |
+            dist/host-native-${{ matrix.settings.target }}
+            dist/personal-rns-*.${{ matrix.settings.archive }}
+          if-no-files-found: error
+
+  rust-packages:
+    needs: contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          workspaces: |
+            .
+            prns-config
+            prns-ffi
+            prns-runtime/impls/tokio
+            prns-runtime/impls/embassy
+            prns-interfaces/impls/tokio
+            prns-interfaces/impls/embassy
+      - run: python tools/prns run release.host-sdk.distribution.check
+      - run: >-
+          python tools/prns run release.host-sdk.rust.package --
+          --output dist/rust
+          --expected-sha ${{ github.sha }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: host-rust
+          path: |
+            dist/rust/crates
+            dist/rust/rust-crates.json
           if-no-files-found: error
 
   managed:
@@ -330,6 +407,7 @@ jobs:
           dotnet pack prns-host/bindings/dotnet/src/PersonalRns/PersonalRns.csproj
           --configuration Release
           --output dist/nuget
+          --include-symbols
           -p:ContinuousIntegrationBuild=true
           -p:RepositoryCommit=${{ github.sha }}
       - run: >-
@@ -337,16 +415,57 @@ jobs:
           --no-daemon
           --non-interactive
         working-directory: prns-host/bindings/jvm
+      - name: smoke staged Maven package
+        shell: bash
+        run: |
+          mapfile -t libraries < <(
+            find dist/native -type f -path \
+              '*host-native-x86_64-unknown-linux-gnu*/lib/libprns_host.so'
+          )
+          test "${#libraries[@]}" -eq 1
+          python tools/prns run release.host-sdk.maven.smoke -- \
+            --repository prns-host/bindings/jvm/build/staging-repository \
+            --library "${libraries[0]}"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: host-nuget
-          path: dist/nuget/*.nupkg
+          path: |
+            dist/nuget/*.nupkg
+            dist/nuget/*.snupkg
           if-no-files-found: error
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: host-maven
           path: prns-host/bindings/jvm/build/staging-repository
           if-no-files-found: error
+
+  dotnet-package-smoke:
+    needs: managed
+    strategy:
+      fail-fast: false
+      matrix:
+        host:
+          - ubuntu-latest
+          - ubuntu-24.04-arm
+          - macos-15-intel
+          - macos-latest
+          - windows-latest
+          - windows-11-arm
+    runs-on: ${{ matrix.host }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
+        with:
+          dotnet-version: 8.0.x
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: host-nuget
+          path: dist/nuget
+      - run: >-
+          python tools/prns run release.host-sdk.dotnet.smoke --
+          --package-dir dist/nuget
 
   publish-python:
     if: >-
@@ -356,29 +475,30 @@ jobs:
     needs: [native, managed]
     runs-on: ubuntu-latest
     environment: host-sdk-release
+    permissions:
+      contents: read
+      id-token: write
     steps:
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
-        with:
-          python-version: "3.14"
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           pattern: host-python-*
           path: dist
           merge-multiple: true
-      - run: python3 -m pip install twine==6.2.0
-      - run: python3 -m twine upload --non-interactive --skip-existing dist/*.whl
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+      - uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247
+        with:
+          packages-dir: dist/
 
   publish-dotnet:
     if: >-
       github.event_name == 'workflow_dispatch' &&
       inputs.publish_nuget &&
       inputs.expected_sha == github.sha
-    needs: managed
+    needs: dotnet-package-smoke
     runs-on: ubuntu-latest
     environment: host-sdk-release
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
         with:
@@ -387,8 +507,22 @@ jobs:
         with:
           name: host-nuget
           path: dist
-      - run: >-
-          dotnet nuget push "dist/*.nupkg"
-          --source https://api.nuget.org/v3/index.json
-          --api-key "${{ secrets.NUGET_API_KEY }}"
-          --skip-duplicate
+      - id: nuget-login
+        if: vars.NUGET_USER != ''
+        uses: NuGet/login@ebc737b6fc418a6ca0073cf116ec8dc156d8b81e
+        with:
+          user: ${{ vars.NUGET_USER }}
+      - name: publish NuGet package
+        shell: bash
+        env:
+          TRUSTED_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+          FALLBACK_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          api_key="$TRUSTED_API_KEY"
+          if [[ -z "$api_key" ]]; then
+            api_key="$FALLBACK_API_KEY"
+          fi
+          test -n "$api_key"
+          dotnet nuget push "dist/*.nupkg" \
+            --source https://api.nuget.org/v3/index.json \
+            --api-key "$api_key"

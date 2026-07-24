@@ -1,0 +1,73 @@
+# Host SDK release administration
+
+Staging does not require registry credentials. Public promotion requires the
+following owner-controlled setup.
+
+## GitHub
+
+- Create a protected `host-sdk-release` environment with required approval and
+  allow deployments only from `main`.
+- Protect stable release tags from movement or deletion.
+- Keep fallback credentials environment-scoped. The publishing jobs request
+  GitHub OIDC identities only after the package proofs pass.
+
+## npm
+
+- Create an npm account with two-factor authentication and claim
+  `personal-rns` plus all eight `personal-rns-<platform>` packages listed in
+  `packages.json`.
+- Configure a trusted publisher on each package with GitHub owner
+  `KenAKAFrosty`, repository `Prns`, workflow `napi.yml`, and environment
+  `host-sdk-release`.
+- The workflow uses Node 24 and GitHub OIDC. It does not require `NPM_TOKEN`
+  after trusted publishing is active for all nine packages. A granular
+  `NPM_TOKEN` restricted to those packages may be kept temporarily during
+  rollout, then revoked after the first OIDC publication succeeds.
+
+## PyPI
+
+- Create a PyPI account with two-factor authentication.
+- Create or claim `personal-rns`. A pending trusted publisher may create the
+  project on its first release.
+- Configure GitHub owner `KenAKAFrosty`, repository `Prns`, workflow
+  `host-sdks.yml`, and environment `host-sdk-release` as the trusted publisher.
+- Do not create `PYPI_API_TOKEN`; publication exchanges GitHub OIDC for a
+  short-lived PyPI credential.
+
+## NuGet
+
+- Create a NuGet.org account with two-factor authentication and create or claim
+  `PersonalRns`.
+- When Trusted Publishing is available, configure GitHub owner
+  `KenAKAFrosty`, repository `Prns`, workflow `host-sdks.yml`, and environment
+  `host-sdk-release`. Add the NuGet.org username as the GitHub environment
+  variable `NUGET_USER`.
+- If Trusted Publishing is not yet offered on the account, add a
+  package-scoped push-only API key as the environment secret `NUGET_API_KEY`
+  and leave `NUGET_USER` unset. Remove the secret after migrating to OIDC.
+
+## Maven Central
+
+- Create a Central Portal publisher account.
+- Verify ownership of the `io.reticulum` namespace. If that namespace cannot be
+  verified, change the group ID before the first public publication; a released
+  coordinate cannot be renamed in place.
+- Create a release-only OpenPGP signing key whose public identity is published.
+- Generate a Central Portal user token. Store the token, armored private signing
+  key, and passphrase only in the protected `host-sdk-release` environment when
+  the promotion workflow is enabled.
+
+## crates.io
+
+- Create a crates.io account through GitHub and verify its email address.
+- Confirm ownership of `personal-rns`, then reserve or publish the eight
+  required `prns-*` crates in the dependency order recorded in `packages.json`.
+- Create a crates.io token scoped to publishing the nine named crates and keep
+  it only in the protected release environment.
+
+## Julia, Go, and Swift
+
+- Julia General registration uses the repository owner’s GitHub identity and a
+  Registrator request for the package subdirectory.
+- Go and Swift require no registry accounts. Signed Git tags and immutable
+  GitHub release assets are their distribution authority.

@@ -1,4 +1,3 @@
-#![cfg(feature = "tcp")]
 #![allow(clippy::expect_used)]
 
 use core::time::Duration;

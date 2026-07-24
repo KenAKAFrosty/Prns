@@ -102,6 +102,16 @@ entrypoint = ["python", "tools/release/check-host-sdk-versions.py"]
 requires = []
 
 [[task]]
+id = "release.host-sdk.distribution.check"
+summary = "Verify the canonical host SDK package graph, metadata, target matrix, and shared README projections."
+domain = "release"
+effect = "read-only"
+platforms = ["any"]
+audience = ["developer", "ci", "release"]
+entrypoint = ["python", "tools/release/check-host-sdk-distribution.py"]
+requires = []
+
+[[task]]
 id = "release.host-sdk.native.package"
 summary = "Assemble one native host target with its ABI header, licenses, pkg-config metadata, and hash manifest."
 domain = "release"
@@ -112,6 +122,76 @@ entrypoint = ["python", "tools/release/package-host-native.py"]
 requires = ["git"]
 
 [[task]]
+id = "release.host-sdk.native.archive"
+summary = "Create a deterministic target-native host archive from one packaged capsule."
+domain = "release"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci", "release"]
+entrypoint = ["python", "tools/release/archive-host-native.py"]
+requires = []
+
+[[task]]
+id = "release.host-sdk.stage"
+summary = "Assemble checked host SDK artifacts into one SHA-bound release staging index."
+domain = "release"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci", "release"]
+entrypoint = ["python", "tools/release/stage-host-sdk-release.py"]
+requires = ["git"]
+
+[[task]]
+id = "release.host-sdk.rust.package"
+summary = "Package the complete Rust crate graph and compile a consumer from the normalized staged archives."
+domain = "release"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci", "release"]
+entrypoint = ["python", "tools/release/package-rust-crates.py"]
+requires = ["cargo", "git"]
+
+[[task]]
+id = "release.host-sdk.julia.artifacts"
+summary = "Generate Julia artifact bindings from all staged desktop native archives and their immutable hashes."
+domain = "release"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci", "release"]
+entrypoint = ["python", "tools/release/generate-julia-artifacts.py"]
+requires = ["git"]
+
+[[task]]
+id = "release.host-sdk.sources.package"
+summary = "Create deterministic Go, Swift, and Julia source SDK archives bound to one commit and native artifact set."
+domain = "release"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci", "release"]
+entrypoint = ["python", "tools/release/package-host-source-sdks.py"]
+requires = ["git"]
+
+[[task]]
+id = "release.host-sdk.android.package"
+summary = "Assemble the two Android native host libraries into a deterministic conventional jniLibs archive."
+domain = "release"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci", "release"]
+entrypoint = ["python", "tools/release/package-android-jni.py"]
+requires = []
+
+[[task]]
+id = "release.host-sdk.stage.verify"
+summary = "Verify a complete SHA-bound host SDK stage, its hashes, archive safety, payload hygiene, and ecosystem inventory."
+domain = "release"
+effect = "read-only"
+platforms = ["any"]
+audience = ["developer", "ci", "release"]
+entrypoint = ["python", "tools/release/verify-host-sdk-stage.py"]
+requires = []
+
+[[task]]
 id = "release.host-sdk.dotnet.stage"
 summary = "Stage validated native host artifacts into the NuGet runtime layout."
 domain = "release"
@@ -120,6 +200,16 @@ platforms = ["any"]
 audience = ["developer", "ci", "release"]
 entrypoint = ["python", "tools/release/stage-dotnet-runtimes.py"]
 requires = []
+
+[[task]]
+id = "release.host-sdk.dotnet.smoke"
+summary = "Restore a clean .NET consumer from one staged NuGet package and exercise its bundled native host."
+domain = "release"
+effect = "read-only"
+platforms = ["any"]
+audience = ["developer", "ci", "release"]
+entrypoint = ["python", "tools/release/smoke-dotnet-package.py"]
+requires = ["dotnet"]
 
 [[task]]
 id = "release.host-sdk.python.stage"
@@ -140,6 +230,16 @@ platforms = ["any"]
 audience = ["developer", "ci", "release"]
 entrypoint = ["python", "tools/release/smoke-python-wheel.py"]
 requires = []
+
+[[task]]
+id = "release.host-sdk.maven.smoke"
+summary = "Resolve a clean Java consumer from the staged Maven repository and exercise the paired native host."
+domain = "release"
+effect = "read-only"
+platforms = ["any"]
+audience = ["developer", "ci", "release"]
+entrypoint = ["python", "tools/release/smoke-maven-package.py"]
+requires = ["java"]
 
 [[task]]
 id = "repo.notices.generate"

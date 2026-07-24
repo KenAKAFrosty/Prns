@@ -33,4 +33,4 @@ package-dir = { "" = "src" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-personal_rns = ["py.typed", "native/*"]
+personal_rns = ["py.typed", "native/*", "PACKAGE.md"]

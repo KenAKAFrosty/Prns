@@ -7,7 +7,12 @@ repository.workspace = true
 homepage.workspace = true
 rust-version.workspace = true
 description = "Personal Reticulum: the pure engine, the high-level runtime, and every interface family behind one crate and one prelude"
-publish = false
+documentation = "https://docs.rs/personal-rns"
+readme = "README.md"
+keywords = ["reticulum", "mesh", "networking", "embedded", "no-std"]
+categories = ["network-programming", "embedded", "no-std", "asynchronous"]
+publish = true
+include = ["src/**", "tests/**", "examples/**", "Cargo.toml", "README.md"]
 
 [lib]
 path = "src/lib.rs"
@@ -61,12 +66,15 @@ esp-now = ["prns-interfaces-embassy?/esp-now"]
 
 [dependencies]
 cfg-if = "1.0"
-prns-core = { path = "../prns-core", default-features = false }
-prns-runtime = { path = "../prns-runtime/core", default-features = false }
-prns-runtime-tokio = { path = "../prns-runtime/impls/tokio", optional = true, default-features = false }
-prns-runtime-embassy = { path = "../prns-runtime/impls/embassy", optional = true, default-features = false }
-prns-interfaces-tokio = { path = "../prns-interfaces/impls/tokio", optional = true, default-features = false }
-prns-interfaces-embassy = { path = "../prns-interfaces/impls/embassy", optional = true, default-features = false }
+prns-core = { version = "=0.2.8", path = "../prns-core", default-features = false }
+prns-runtime = { version = "=0.2.8", path = "../prns-runtime/core", default-features = false }
+prns-runtime-tokio = { version = "=0.2.8", path = "../prns-runtime/impls/tokio", optional = true, default-features = false }
+prns-runtime-embassy = { version = "=0.2.8", path = "../prns-runtime/impls/embassy", optional = true, default-features = false }
+prns-interfaces-tokio = { version = "=0.2.8", path = "../prns-interfaces/impls/tokio", optional = true, default-features = false }
+prns-interfaces-embassy = { version = "=0.2.8", path = "../prns-interfaces/impls/embassy", optional = true, default-features = false }
 
 [lints]
 workspace = true
+
+[package.metadata.docs.rs]
+all-features = true

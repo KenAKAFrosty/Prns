@@ -1,0 +1,14 @@
+name: Reproducible Rust paths
+description: Remap checkout, home, and toolchain paths from compiled release artifacts
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        flags="$RUSTFLAGS --remap-path-prefix=$HOME=/build/source --remap-path-prefix=$GITHUB_WORKSPACE=/build/workspace"
+        sysroot="$(rustc --print sysroot)"
+        flags="$flags --remap-path-prefix=$sysroot=/build/toolchain"
+        if test -n "${USERPROFILE:-}"; then
+          flags="$flags --remap-path-prefix=$USERPROFILE=/build/windows-home"
+        fi
+        echo "RUSTFLAGS=$flags" >> "$GITHUB_ENV"
