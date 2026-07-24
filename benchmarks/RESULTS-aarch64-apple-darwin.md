@@ -12,6 +12,11 @@ Release binaries run over loopback for 30 seconds per sample, three samples per 
 
 ## At a glance
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/at-a-glance-aarch64-apple-darwin-dark.svg">
+  <img alt="Bar chart of Prns median throughput as a multiple of RNS 1.4.0 (compiled) for each published scenario" src="assets/at-a-glance-aarch64-apple-darwin-light.svg">
+</picture>
+
 | Scenario | Prns | Reference | Prns / reference |
 |---|---:|---:|---:|
 | Single-packet throughput | 39.6k/s | 1.8k/s | 22.60× |
@@ -140,10 +145,10 @@ Repeat maximum-efficient resource transfers with both endpoint TCP interfaces ex
 
 Balanced bidirectional switching of opaque packets through a pure transport node.
 
-| Relay | TCP policy / MTU | Link MTU / payload | Conformance | Payload | Frames | Wire in / out | Relay CPU | Relay peak RSS | Harness headroom |
+| Relay | TCP policy / MTU | Link MTU / payload | Conformance | Payload | Frames | Wire in / out | Relay CPU | Relay peak RSS | Harness source / sink / limit |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| Prns relay | 500 Mbps / 128 KiB | — | <img src="assets/check.svg" width="14" alt="conformant" /> 39590257/39590257 · 3/3 samples | 106.00 MB/s | 441.7k/s | 154.20 MB/s / 147.14 MB/s | 42.29 s | 48.9 MiB | 1.51× |
-| RNS 1.4.0 (compiled) relay | 10 Mbps / 8 KiB | — | <img src="assets/check.svg" width="14" alt="conformant" /> 4183453/4183453 · 3/3 samples | 11.07 MB/s | 46.1k/s | 16.11 MB/s / 15.37 MB/s | 36.82 s | 320.1 MiB | 14.54× |
+| Prns relay | 500 Mbps / 128 KiB | — | <img src="assets/check.svg" width="14" alt="conformant" /> 39590257/39590257 · 3/3 samples | 106.00 MB/s | 441.7k/s | 154.20 MB/s / 147.14 MB/s | 42.29 s | 48.9 MiB | — |
+| RNS 1.4.0 (compiled) relay | 10 Mbps / 8 KiB | — | <img src="assets/check.svg" width="14" alt="conformant" /> 4183453/4183453 · 3/3 samples | 11.07 MB/s | 46.1k/s | 16.11 MB/s / 15.37 MB/s | 36.82 s | 320.1 MiB | — |
 
 > Announce signing and verification happen before measurement; the timed path switches opaque transport data.
 
@@ -153,10 +158,10 @@ Balanced bidirectional switching of opaque packets through a pure transport node
 
 Relay balanced near-MTU resource parts over one warm transported link using each implementation's default TCP policy.
 
-| Relay | TCP policy / MTU | Link MTU / payload | Conformance | Payload | Frames | Wire in / out | Relay CPU | Relay peak RSS | Harness headroom |
+| Relay | TCP policy / MTU | Link MTU / payload | Conformance | Payload | Frames | Wire in / out | Relay CPU | Relay peak RSS | Harness source / sink / limit |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| Prns relay | 500 Mbps / 128 KiB | 128 / 128 KiB | <img src="assets/check.svg" width="14" alt="conformant" /> 891152/891152 · 3/3 samples | 1290.36 MB/s | 9.8k/s | 1300.76 MB/s / 1300.76 MB/s | 33.04 s | 146.7 MiB | 7.91× |
-| RNS 1.4.0 (compiled) relay | 10 Mbps / 8 KiB | 8 / 8 KiB | <img src="assets/check.svg" width="14" alt="conformant" /> 1616021/1616021 · 3/3 samples | 146.28 MB/s | 17.9k/s | 147.71 MB/s / 147.71 MB/s | 32.34 s | 264.0 MiB | 27.42× |
+| Prns relay | 500 Mbps / 128 KiB | 128 / 128 KiB | <img src="assets/check.svg" width="14" alt="conformant" /> 891152/891152 · 3/3 samples | 1290.36 MB/s | 9.8k/s | 1300.76 MB/s / 1300.76 MB/s | 33.04 s | 146.7 MiB | — |
+| RNS 1.4.0 (compiled) relay | 10 Mbps / 8 KiB | 8 / 8 KiB | <img src="assets/check.svg" width="14" alt="conformant" /> 1616021/1616021 · 3/3 samples | 146.28 MB/s | 17.9k/s | 147.71 MB/s / 147.71 MB/s | 32.34 s | 264.0 MiB | — |
 
 > Default-policy deployment view: Prns and RNS retain their normal TCP bitrate and MTU policy.
 
@@ -164,10 +169,10 @@ Relay balanced near-MTU resource parts over one warm transported link using each
 
 Relay the identical transported-resource workload with both relay TCP interfaces explicitly configured for the 1 Gbps MTU tier.
 
-| Relay | TCP policy / MTU | Link MTU / payload | Conformance | Payload | Frames | Wire in / out | Relay CPU | Relay peak RSS | Harness headroom |
+| Relay | TCP policy / MTU | Link MTU / payload | Conformance | Payload | Frames | Wire in / out | Relay CPU | Relay peak RSS | Harness source / sink / limit |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| Prns relay | 1 Gbps / 512 KiB | 512 / 512 KiB | <img src="assets/check.svg" width="14" alt="conformant" /> 206986/206986 · 3/3 samples | 1201.08 MB/s | 2.3k/s | 1210.58 MB/s / 1210.58 MB/s | 32.77 s | 538.4 MiB | 9.56× |
-| RNS 1.4.0 (compiled) relay | 1 Gbps / 512 KiB | 512 / 512 KiB | <img src="assets/check.svg" width="14" alt="conformant" /> 26788/26788 · 3/3 samples | 155.61 MB/s | 297/s | 156.84 MB/s / 156.84 MB/s | 33.42 s | 208.8 MiB | 74.33× |
+| Prns relay | 1 Gbps / 512 KiB | 512 / 512 KiB | <img src="assets/check.svg" width="14" alt="conformant" /> 206986/206986 · 3/3 samples | 1201.08 MB/s | 2.3k/s | 1210.58 MB/s / 1210.58 MB/s | 32.77 s | 538.4 MiB | — |
+| RNS 1.4.0 (compiled) relay | 1 Gbps / 512 KiB | 512 / 512 KiB | <img src="assets/check.svg" width="14" alt="conformant" /> 26788/26788 · 3/3 samples | 155.61 MB/s | 297/s | 156.84 MB/s / 156.84 MB/s | 33.42 s | 208.8 MiB | — |
 
 > Controlled computational comparison: identical transported link and driver, with only TCP bitrate policy changed.
 
@@ -179,4 +184,4 @@ Relay the identical transported-resource workload with both relay TCP interfaces
 
 ## Metric legend
 
-Conformance is clean samples and exact delivered/sent accounting. Rows are ordered by median throughput, never by memory or energy. Rate is median settled operations per second. Goodput is median application bytes per second. Relay scenarios report carried opaque payload bytes, forwarded frames, HDLC-framed TCP wire rates, relay-only CPU/RSS, and direct-driver headroom; transported-resource rows additionally expose negotiated link MTU and payload bytes per part. RTT is median p50/p99 settlement latency. Peak RSS shows the largest initiator (`i`) and responder (`r`) process peaks across samples. Energy shows optional initiator/responder attribution of median net processor energy and appears only with three positive-baseline samples: per delivery for packets/requests, per application MiB for resources. Relay-scenario energy is whole-cell package energy, never relay-only energy.
+Conformance is clean samples and exact delivered/sent accounting. Rows are ordered by median throughput, never by memory or energy. Rate is median settled operations per second. Goodput is median application bytes per second. Relay scenarios report carried opaque payload bytes, forwarded frames, actual HDLC-framed TCP wire rates, relay-only CPU/RSS, and full-path driver source/sink/limiting headroom; transported-resource rows additionally expose negotiated link MTU and payload bytes per part. RTT is median p50/p99 settlement latency. Peak RSS shows the largest initiator (`i`) and responder (`r`) process peaks across samples. Energy shows optional initiator/responder attribution of median net processor energy and appears only with three positive-baseline samples: per delivery for packets/requests, per application MiB for resources. Relay-scenario energy is whole-cell package energy, never relay-only energy.

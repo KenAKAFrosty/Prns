@@ -10,6 +10,33 @@ use benchmarks::{
 
 const PASS_ICON: &str = r#"<img src="assets/check.svg" width="14" alt="conformant" />"#;
 const FAIL_ICON: &str = r#"<img src="assets/cross.svg" width="14" alt="non-conformant" />"#;
+
+struct ChartTheme {
+    bar: &'static str,
+    ink: &'static str,
+    secondary: &'static str,
+    muted: &'static str,
+    grid: &'static str,
+    axis: &'static str,
+}
+
+const LIGHT_CHART: ChartTheme = ChartTheme {
+    bar: "#2a78d6",
+    ink: "#0b0b0b",
+    secondary: "#52514e",
+    muted: "#898781",
+    grid: "#e1e0d9",
+    axis: "#c3c2b7",
+};
+
+const DARK_CHART: ChartTheme = ChartTheme {
+    bar: "#3987e5",
+    ink: "#ffffff",
+    secondary: "#c3c2b7",
+    muted: "#898781",
+    grid: "#2c2c2a",
+    axis: "#383835",
+};
 fn main() {
     let files = render_all();
     if std::env::args().any(|argument| argument == "--check") {
@@ -58,10 +85,10 @@ fn render_all() -> Vec<(PathBuf, String)> {
     let mut files = Vec::new();
     let mut hosts = Vec::new();
     for (host, rows) in &by_host {
-        files.push((
-            bench_dir().join(format!("RESULTS-{host}.md")),
-            render_host(host, rows, &implementations),
-        ));
+        let mut assets = Vec::new();
+        let body = render_host(host, rows, &implementations, &mut assets);
+        files.push((bench_dir().join(format!("RESULTS-{host}.md")), body));
+        files.append(&mut assets);
         hosts.push((host.clone(), machine_label(host)));
     }
     files.push((bench_dir().join("RESULTS.md"), render_index(&hosts)));
@@ -90,18 +117,19 @@ fn render_host(
     host: &str,
     rows: &[ResultRow],
     implementations: &[ImplementationDescriptor],
+    assets: &mut Vec<(PathBuf, String)>,
 ) -> String {
     let mut out = format!("# Benchmark results — `{host}`\n\n[← All hosts](RESULTS.md)\n");
     render_qualification(&mut out, rows);
     render_machine_and_method(&mut out, host);
 
     let aggregates = aggregate(rows);
-    render_headline(
-        &mut out,
+    let glance = glance_rows(
         &aggregates,
         implementations,
         qualification_complete(&aggregates),
     );
+    render_headline(&mut out, host, &glance, implementations, assets);
 
     let mut grouped: BTreeMap<String, Vec<(Manifest, Vec<&Aggregate>)>> = BTreeMap::new();
     let mut by_scenario: BTreeMap<String, Vec<&Aggregate>> = BTreeMap::new();
@@ -314,13 +342,20 @@ fn median(values: &[f64]) -> Option<f64> {
     })
 }
 
-fn render_headline(
-    out: &mut String,
+struct GlanceRow {
+    title: String,
+    primary_metric: String,
+    ours: Option<f64>,
+    reference: Option<f64>,
+    ratio: Option<f64>,
+}
+
+fn glance_rows(
     aggregates: &[Aggregate],
     implementations: &[ImplementationDescriptor],
     qualification_complete: bool,
-) {
-    out.push_str("\n## At a glance\n\n| Scenario | Prns | Reference | Prns / reference |\n|---|---:|---:|---:|\n");
+) -> Vec<GlanceRow> {
+    let mut rows = Vec::new();
     for scenario_manifest in load_catalog().expect("validated benchmark catalog") {
         let scenario = scenario_manifest.name.as_str();
         let manifest = Manifest::load(scenario);
@@ -350,22 +385,207 @@ fn render_headline(
             scenario,
         );
         let ratio = match (ours_value, reference_value) {
-            (Some(ours), Some(reference)) if reference != 0.0 => {
-                format!("{:.2}×", ours / reference)
-            }
-            _ => "—".into(),
+            (Some(ours), Some(reference)) if reference != 0.0 => Some(ours / reference),
+            _ => None,
         };
+        rows.push(GlanceRow {
+            title: manifest.title,
+            primary_metric: manifest.primary_metric,
+            ours: ours_value,
+            reference: reference_value,
+            ratio,
+        });
+    }
+    rows
+}
+
+fn reference_label(implementations: &[ImplementationDescriptor]) -> String {
+    implementations
+        .iter()
+        .find(|implementation| implementation.role == ImplementationRole::Reference)
+        .map(|implementation| implementation.implementation.clone())
+        .unwrap_or_else(|| "reference".into())
+}
+
+fn render_headline(
+    out: &mut String,
+    host: &str,
+    glance: &[GlanceRow],
+    implementations: &[ImplementationDescriptor],
+    assets: &mut Vec<(PathBuf, String)>,
+) {
+    out.push_str("\n## At a glance\n");
+    let reference = reference_label(implementations);
+    if glance.iter().any(|row| row.ratio.is_some()) {
+        let light = glance_chart_svg(glance, &reference, &LIGHT_CHART);
+        let dark = glance_chart_svg(glance, &reference, &DARK_CHART);
+        assets.push((
+            bench_dir().join(format!("assets/at-a-glance-{host}-light.svg")),
+            light,
+        ));
+        assets.push((
+            bench_dir().join(format!("assets/at-a-glance-{host}-dark.svg")),
+            dark,
+        ));
+        let _ = write!(
+            out,
+            "\n<picture>\n  <source media=\"(prefers-color-scheme: dark)\" srcset=\"assets/at-a-glance-{host}-dark.svg\">\n  <img alt=\"Bar chart of Prns median throughput as a multiple of {reference} for each published scenario\" src=\"assets/at-a-glance-{host}-light.svg\">\n</picture>\n"
+        );
+    }
+    out.push_str("\n| Scenario | Prns | Reference | Prns / reference |\n|---|---:|---:|---:|\n");
+    for row in glance {
+        let ratio = row
+            .ratio
+            .map(|ratio| format!("{ratio:.2}×"))
+            .unwrap_or_else(|| "—".into());
         let _ = writeln!(
             out,
             "| {} | {} | {} | {ratio} |",
-            manifest.title,
-            format_primary(ours_value, &manifest.primary_metric),
-            format_primary(reference_value, &manifest.primary_metric),
+            row.title,
+            format_primary(row.ours, &row.primary_metric),
+            format_primary(row.reference, &row.primary_metric),
         );
     }
     out.push_str(
         "\nA dash means no current three-sample release evidence is published for that scenario.\n",
     );
+}
+
+fn glance_chart_svg(glance: &[GlanceRow], reference: &str, theme: &ChartTheme) -> String {
+    let rows: Vec<(&str, f64)> = glance
+        .iter()
+        .filter_map(|row| row.ratio.map(|ratio| (row.title.as_str(), ratio)))
+        .collect();
+    let max_ratio = rows.iter().map(|(_, ratio)| *ratio).fold(1.0, f64::max);
+
+    let width = 880.0;
+    let row_pitch = 34.0;
+    let bar_height = 20.0;
+    let top = 34.0;
+    let axis_band = 26.0;
+    let height = top + rows.len() as f64 * row_pitch + axis_band;
+    let label_chars = rows
+        .iter()
+        .map(|(title, _)| title.chars().count())
+        .max()
+        .unwrap_or(0);
+    let gutter = (label_chars as f64 * 6.7 + 18.0).max(120.0);
+    let tip_reserve = 54.0;
+    let plot_right = width - 8.0 - tip_reserve;
+    let scale = (plot_right - gutter) / max_ratio;
+    let axis_y = top + rows.len() as f64 * row_pitch + 4.0;
+
+    let mut svg = format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width:.0}\" height=\"{height:.0}\" viewBox=\"0 0 {width:.0} {height:.0}\" role=\"img\" font-family=\"system-ui, -apple-system, 'Segoe UI', sans-serif\">\n"
+    );
+    let _ = writeln!(
+        svg,
+        "  <text x=\"{gutter:.1}\" y=\"17\" font-size=\"12\" fill=\"{}\">Median throughput as a multiple of {} · higher is better</text>",
+        theme.secondary,
+        escape_text(reference),
+    );
+
+    let step = tick_step(max_ratio);
+    let mut tick = step;
+    let mut ticks = vec![1.0_f64];
+    while tick <= max_ratio {
+        if (tick - 1.0).abs() > 1e-9 {
+            ticks.push(tick);
+        }
+        tick += step;
+    }
+    for tick in &ticks {
+        let x = gutter + tick * scale;
+        let color = if (*tick - 1.0).abs() < 1e-9 {
+            theme.axis
+        } else {
+            theme.grid
+        };
+        let _ = writeln!(
+            svg,
+            "  <line x1=\"{x:.1}\" y1=\"{top:.1}\" x2=\"{x:.1}\" y2=\"{axis_y:.1}\" stroke=\"{color}\" stroke-width=\"1\"/>"
+        );
+        let _ = writeln!(
+            svg,
+            "  <text x=\"{x:.1}\" y=\"{:.1}\" font-size=\"11\" fill=\"{}\" text-anchor=\"middle\" font-variant-numeric=\"tabular-nums\">{}×</text>",
+            axis_y + 16.0,
+            theme.muted,
+            tick_label(*tick),
+        );
+    }
+    let _ = writeln!(
+        svg,
+        "  <line x1=\"{gutter:.1}\" y1=\"{top:.1}\" x2=\"{gutter:.1}\" y2=\"{axis_y:.1}\" stroke=\"{}\" stroke-width=\"1\"/>",
+        theme.axis
+    );
+
+    for (index, (title, ratio)) in rows.iter().enumerate() {
+        let bar_y = top + index as f64 * row_pitch + (row_pitch - bar_height) / 2.0;
+        let bar_end = gutter + ratio * scale;
+        let radius = 4.0_f64.min(ratio * scale);
+        let _ = writeln!(
+            svg,
+            "  <text x=\"{:.1}\" y=\"{:.1}\" font-size=\"13\" fill=\"{}\" text-anchor=\"end\">{}</text>",
+            gutter - 10.0,
+            bar_y + bar_height / 2.0 + 4.5,
+            theme.secondary,
+            escape_text(title),
+        );
+        let _ = writeln!(
+            svg,
+            "  <path d=\"M{gutter:.1},{bar_y:.1} L{:.1},{bar_y:.1} Q{bar_end:.1},{bar_y:.1} {bar_end:.1},{:.1} L{bar_end:.1},{:.1} Q{bar_end:.1},{:.1} {:.1},{:.1} L{gutter:.1},{:.1} Z\" fill=\"{}\"/>",
+            bar_end - radius,
+            bar_y + radius,
+            bar_y + bar_height - radius,
+            bar_y + bar_height,
+            bar_end - radius,
+            bar_y + bar_height,
+            bar_y + bar_height,
+            theme.bar,
+        );
+        let _ = writeln!(
+            svg,
+            "  <text x=\"{:.1}\" y=\"{:.1}\" font-size=\"12.5\" font-weight=\"600\" fill=\"{}\">{ratio:.2}×</text>",
+            bar_end + 8.0,
+            bar_y + bar_height / 2.0 + 4.5,
+            theme.ink,
+        );
+    }
+    let _ = writeln!(
+        svg,
+        "  <line x1=\"{gutter:.1}\" y1=\"{axis_y:.1}\" x2=\"{plot_right:.1}\" y2=\"{axis_y:.1}\" stroke=\"{}\" stroke-width=\"1\"/>",
+        theme.axis
+    );
+    svg.push_str("</svg>\n");
+    svg
+}
+
+fn tick_step(max: f64) -> f64 {
+    if max <= 2.0 {
+        0.5
+    } else if max <= 5.0 {
+        1.0
+    } else if max <= 12.0 {
+        2.0
+    } else if max <= 30.0 {
+        5.0
+    } else {
+        10.0
+    }
+}
+
+fn tick_label(tick: f64) -> String {
+    if tick.fract().abs() < 1e-9 {
+        format!("{tick:.0}")
+    } else {
+        format!("{tick:.1}")
+    }
+}
+
+fn escape_text(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 fn comparison_subject<'a>(
@@ -1107,7 +1327,7 @@ mod tests {
             row(0, Axis::Conformance, "delivered", Some(10.0)),
             row(0, Axis::Throughput, "delivered_per_sec", Some(20.0)),
         ];
-        let output = render_host("test-host", &rows, &load_implementations());
+        let output = render_host("test-host", &rows, &load_implementations(), &mut Vec::new());
         assert_eq!(output.matches("## Machine and method").count(), 1);
         assert_eq!(output.matches("## Implementation legend").count(), 1);
         assert_eq!(output.matches("## Metric legend").count(), 1);
@@ -1116,6 +1336,56 @@ mod tests {
             1
         );
         assert!(!output.contains("Each row is one live pairing"));
+    }
+
+    #[test]
+    fn the_glance_chart_ships_light_and_dark_ratio_bars() {
+        let mut rows = Vec::new();
+        for (implementation, rate) in [("personal-rns", 20.0), ("rns-1.4.0-compiled", 5.0)] {
+            for sample in 0..3 {
+                let mut result = row(sample, Axis::Throughput, "delivered_per_sec", Some(rate));
+                result.subject = Subject::Direct {
+                    initiator: implementation.into(),
+                    responder: implementation.into(),
+                    relay: None,
+                };
+                rows.push(result);
+            }
+        }
+        let mut assets = Vec::new();
+        let output = render_host("test-host", &rows, &load_implementations(), &mut assets);
+        assert!(output.contains("<picture>"));
+        assert!(output.contains("assets/at-a-glance-test-host-light.svg"));
+        assert!(output.contains("assets/at-a-glance-test-host-dark.svg"));
+        assert_eq!(assets.len(), 2);
+        for (path, svg) in &assets {
+            assert!(path.ends_with(
+                Path::new("assets").join(format!(
+                    "at-a-glance-test-host-{}.svg",
+                    if svg.contains(LIGHT_CHART.bar) {
+                        "light"
+                    } else {
+                        "dark"
+                    }
+                ))
+            ));
+            assert!(svg.starts_with("<svg xmlns"));
+            assert!(svg.contains(">4.00×<"));
+            assert!(svg.contains("Single-packet throughput"));
+            assert!(svg.contains("higher is better"));
+            assert!(!svg.contains("NaN"));
+        }
+        assert!(assets[0].1.contains(LIGHT_CHART.bar));
+        assert!(assets[1].1.contains(DARK_CHART.bar));
+    }
+
+    #[test]
+    fn hosts_without_ratios_publish_no_chart() {
+        let rows = vec![row(0, Axis::Conformance, "settled_clean", Some(1.0))];
+        let mut assets = Vec::new();
+        let output = render_host("test-host", &rows, &load_implementations(), &mut assets);
+        assert!(!output.contains("<picture>"));
+        assert!(assets.is_empty());
     }
 
     #[test]

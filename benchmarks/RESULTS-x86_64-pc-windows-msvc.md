@@ -12,6 +12,11 @@ Release binaries run over loopback for 30 seconds per sample, three samples per 
 
 ## At a glance
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/at-a-glance-x86_64-pc-windows-msvc-dark.svg">
+  <img alt="Bar chart of Prns median throughput as a multiple of RNS 1.4.0 (compiled) for each published scenario" src="assets/at-a-glance-x86_64-pc-windows-msvc-light.svg">
+</picture>
+
 | Scenario | Prns | Reference | Prns / reference |
 |---|---:|---:|---:|
 | Single-packet throughput | 25.6k/s | 3.4k/s | 7.46× |
@@ -110,4 +115,4 @@ Repeated transfer of one maximum-efficient resource segment.
 
 ## Metric legend
 
-Conformance is clean samples and exact delivered/sent accounting. Rows are ordered by median throughput, never by memory or energy. Rate is median settled operations per second. Goodput is median application bytes per second. Relay scenarios report carried opaque payload bytes, forwarded frames, HDLC-framed TCP wire rates, relay-only CPU/RSS, and direct-driver headroom; transported-resource rows additionally expose negotiated link MTU and payload bytes per part. RTT is median p50/p99 settlement latency. Peak RSS shows the largest initiator (`i`) and responder (`r`) process peaks across samples. Energy shows optional initiator/responder attribution of median net processor energy and appears only with three positive-baseline samples: per delivery for packets/requests, per application MiB for resources. Relay-scenario energy is whole-cell package energy, never relay-only energy.
+Conformance is clean samples and exact delivered/sent accounting. Rows are ordered by median throughput, never by memory or energy. Rate is median settled operations per second. Goodput is median application bytes per second. Relay scenarios report carried opaque payload bytes, forwarded frames, actual HDLC-framed TCP wire rates, relay-only CPU/RSS, and full-path driver source/sink/limiting headroom; transported-resource rows additionally expose negotiated link MTU and payload bytes per part. RTT is median p50/p99 settlement latency. Peak RSS shows the largest initiator (`i`) and responder (`r`) process peaks across samples. Energy shows optional initiator/responder attribution of median net processor energy and appears only with three positive-baseline samples: per delivery for packets/requests, per application MiB for resources. Relay-scenario energy is whole-cell package energy, never relay-only energy.
