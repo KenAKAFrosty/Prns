@@ -4,13 +4,14 @@ use core::cell::RefCell;
 use core::time::Duration;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6};
 use std::string::String;
+use std::sync::mpsc as sync_mpsc;
 use std::thread;
 use std::vec::Vec;
 
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2::{define_class, msg_send, AllocAnyThread, DefinedClass, Message};
-use objc2_core_foundation::CFRunLoop;
+use objc2_core_foundation::{kCFRunLoopDefaultMode, CFRunLoop};
 use objc2_foundation::{
     NSArray, NSData, NSDictionary, NSNetService, NSNetServiceBrowser, NSNetServiceBrowserDelegate,
     NSNetServiceDelegate, NSNumber, NSObject, NSObjectProtocol, NSString,
@@ -172,19 +173,35 @@ impl BrowserDelegate {
 
 pub struct MacosMdnsBackend {
     sightings: tokio_mpsc::UnboundedReceiver<SocketAddr>,
+    _native_thread: NativeMdnsThread,
+}
+
+struct NativeMdnsThread {
+    shutdown: Option<sync_mpsc::Sender<()>>,
+    join: Option<thread::JoinHandle<()>>,
+}
+
+impl Drop for NativeMdnsThread {
+    fn drop(&mut self) {
+        self.shutdown.take();
+        if let Some(join) = self.join.take() {
+            let _ = join.join();
+        }
+    }
 }
 
 impl MacosMdnsBackend {
     pub async fn new(port: u16, txt: &[(&str, &[u8])]) -> Result<Self, MdnsError> {
         let (ready_tx, ready_rx) = oneshot::channel::<bool>();
         let (sightings_tx, sightings_rx) = tokio_mpsc::unbounded_channel::<SocketAddr>();
+        let (shutdown_tx, shutdown_rx) = sync_mpsc::channel::<()>();
         let port = core::ffi::c_int::from(port);
         let txt: Vec<(String, Vec<u8>)> = txt
             .iter()
             .map(|(key, value)| (String::from(*key), value.to_vec()))
             .collect();
 
-        thread::Builder::new()
+        let join = thread::Builder::new()
             .name("hopspot-mdns".into())
             .spawn(move || {
                 let advertiser = AdvertiserDelegate::new(ready_tx);
@@ -218,10 +235,20 @@ impl MacosMdnsBackend {
                     &NSString::from_str(DOMAIN),
                 );
 
-                CFRunLoop::run();
+                while matches!(shutdown_rx.try_recv(), Err(sync_mpsc::TryRecvError::Empty)) {
+                    // SAFETY: the process-global default run-loop mode has static lifetime.
+                    let mode = unsafe { kCFRunLoopDefaultMode };
+                    let _ = CFRunLoop::run_in_mode(mode, 0.1, false);
+                }
+                service.stop();
+                browser.stop();
                 drop((service, advertiser, browser, browser_delegate));
             })
             .map_err(|_| MdnsError::Closed)?;
+        let native_thread = NativeMdnsThread {
+            shutdown: Some(shutdown_tx),
+            join: Some(join),
+        };
 
         match tokio::time::timeout(PUBLISH_TIMEOUT, ready_rx).await {
             Ok(Ok(true)) => {
@@ -230,6 +257,7 @@ impl MacosMdnsBackend {
                 );
                 Ok(Self {
                     sightings: sightings_rx,
+                    _native_thread: native_thread,
                 })
             }
             Ok(Ok(false)) => Err(MdnsError::PublishFailed),
@@ -320,4 +348,31 @@ fn build_txt(pairs: &[(String, Vec<u8>)]) -> Option<Retained<NSData>> {
     let value_refs: Vec<&NSData> = values.iter().map(|value| &**value).collect();
     let dict = NSDictionary::from_slices(&key_refs, &value_refs);
     Some(NSNetService::dataFromTXTRecordDictionary(&dict))
+}
+
+#[cfg(test)]
+mod native_thread_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    #[test]
+    fn dropping_owner_stops_and_joins_native_thread() {
+        let exited = Arc::new(AtomicBool::new(false));
+        let exited_on_thread = exited.clone();
+        let (shutdown, shutdown_rx) = sync_mpsc::channel::<()>();
+        let join = thread::spawn(move || {
+            while matches!(shutdown_rx.try_recv(), Err(sync_mpsc::TryRecvError::Empty)) {
+                thread::yield_now();
+            }
+            exited_on_thread.store(true, Ordering::Release);
+        });
+        let owner = NativeMdnsThread {
+            shutdown: Some(shutdown),
+            join: Some(join),
+        };
+
+        drop(owner);
+        assert!(exited.load(Ordering::Acquire));
+    }
 }

@@ -5,7 +5,8 @@ The iOS face of Personal Hopspot. The shared `personal-hopspot-core` renderer
 identical 64x128 screen here that it draws on the Heltec V4 OLED, the Linux debug
 window, and the Android app. This face adds the platform adapters iOS needs:
 
-- a `DrawTarget` backed by a flat RGBA framebuffer (`rust/src/framebuffer.rs`)
+- the shared mobile `DrawTarget` expanded into a caller-owned RGBA buffer
+  (`rust/src/face.rs`)
 - a single-button input source: every tap is a `ShortPress`, every hold a
   `LongPress` (`rust/src/face.rs` + the `hopspot_post_input` entry point)
 - a real `personal-rns` runtime with WiFi/LAN, Bonjour discovery, BLE Auto, and
@@ -23,19 +24,44 @@ TCP listener while the desktop host still sees one USB Auto byte pipe.
 ## Native ABI — `rust/include/hopspot.h`
 
 ```c
+int32_t      hopspot_start_engine(const char *storage_directory_utf8);
+int32_t      hopspot_stop_engine(void);
+int32_t      hopspot_engine_state(void);
+int32_t      hopspot_engine_last_failure(void);
 HopspotFace *hopspot_init(void);
 void         hopspot_free(HopspotFace *handle);
 int32_t      hopspot_post_input(HopspotFace *handle, int32_t code); // code: 0 tap, 1 hold; returns 0 none, 1 announce
 void         hopspot_render(HopspotFace *handle, uint8_t *ptr, size_t len); // fills width*height*4 RGBA bytes
 uint32_t     hopspot_panel_width(void);
 uint32_t     hopspot_panel_height(void);
+size_t       hopspot_rgba_bytes(void);
+uint32_t     hopspot_render_interval_millis(void);
 ```
 
-The render path is pull-model: `HopspotBridge` owns a heap RGBA buffer, Rust draws
-the current `UiState` into it each frame, and SwiftUI blits it nearest-neighbor
-(`Image(...).interpolation(.none)`) into a `CGImage`. The panel is 64x128; bytes
-are `[R, G, B, A]` per pixel. Panel dimensions come from the two `hopspot_panel_*`
-functions so Rust stays the single source of truth.
+`EngineController` owns the restartable native lifecycle and durable Application
+Support path. `HopspotBridge` owns only a renderer and heap RGBA buffer. Rust
+draws the current `UiState` at the exported cadence, and SwiftUI blits it
+nearest-neighbor (`Image(...).interpolation(.none)`) into a `CGImage`. Dimensions,
+allocation size, and cadence all come from Rust.
+
+Rust keeps runtime persistence in the private `prns/` directory below
+`Application Support/PersonalHopspot`. Startup verifies that directory is
+writable, restores the monotonic timebase, verified routes, destination
+identities, and tunnels, then publishes the engine as running. Accepted
+announces and route removals trigger a debounced snapshot; a quiet five-minute
+checkpoint and a final pre-teardown shutdown flush cover other changes.
+Malformed stored rows are refused and reported without preventing the valid
+remainder from starting.
+
+The opaque 1024×1024 app icon is rendered deterministically from the repository
+favicon:
+
+```sh
+rsvg-convert --background-color '#0b0e13' --width 1024 --height 1024 \
+  --keep-aspect-ratio --format png \
+  --output app/PersonalHopspot/Assets.xcassets/AppIcon.appiconset/AppIcon.png \
+  ../../../docs/website/public/assets/favicon.svg
+```
 
 ## One-time toolchain setup
 
@@ -63,9 +89,14 @@ active `PLATFORM_NAME`/`ARCHS`, so you usually don't run it by hand.
 
 ## Build, install, and launch on the simulator
 
-This is an Apple-Silicon, simulator-only proving ground; build for a **concrete
-arm64 iPad simulator** (a `generic/platform=iOS Simulator` build is universal and
-would also demand an `x86_64` slice we don't build):
+The registered simulator gate selects one concrete available iPhone or iPad and
+supports both arm64 and x86_64 macOS hosts:
+
+```sh
+python3 validation/run.py run --suite ios-simulator
+```
+
+For a manual arm64 build:
 
 ```sh
 SIMID=$(xcrun simctl create "Hopspot-iPad" \
@@ -96,14 +127,15 @@ With the physical iPad connected, trusted, and visible to Xcode:
 
 ```sh
 cd app
+DEVICE_ID=replace-with-device-udid
 xcodebuild -project PersonalHopspot.xcodeproj -scheme PersonalHopspot \
-  -configuration Debug -destination "id=00008027-000E05943E53802E" \
+  -configuration Debug -destination "id=$DEVICE_ID" \
   -derivedDataPath build build
 xcrun devicectl device install app \
-  --device 00008027-000E05943E53802E \
+  --device "$DEVICE_ID" \
   build/Build/Products/Debug-iphoneos/PersonalHopspot.app
 xcrun devicectl device process launch \
-  --device 00008027-000E05943E53802E com.personal.hopspot
+  --device "$DEVICE_ID" com.personal.hopspot
 ```
 
 Start desktop Hopspot normally from the app crate. On macOS, the desktop USB
@@ -130,3 +162,8 @@ From `rust/`:
 ```sh
 cargo test
 ```
+
+The simulator gate is automated, but iOS remains unsupported for release until
+the complete physical iPhone and iPad matrix in
+`validation/platforms/ios-production-hardware.md` has passed and its separate
+record-only evidence commit is present.

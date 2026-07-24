@@ -154,6 +154,7 @@ pub struct AutoWifi {
     settings: AutoWifiSettings,
     status: AutoWifiStatus,
     mdns: Option<UnboundedReceiver<SocketAddr>>,
+    rendezvous_listener: Option<TcpListener>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -349,6 +350,7 @@ impl AutoWifi {
             settings,
             status: AutoWifiStatus::new(id),
             mdns: None,
+            rendezvous_listener: None,
         }
     }
 
@@ -356,6 +358,15 @@ impl AutoWifi {
     #[must_use]
     pub fn with_mdns(mut self, sightings: UnboundedReceiver<SocketAddr>) -> Self {
         self.mdns = Some(sightings);
+        self
+    }
+
+    /// Supplies a rendezvous listener that was bound during an outer lifecycle's startup
+    /// transaction. This lets applications prove the local port is owned before publishing a
+    /// running state, while retaining AutoWifi's normal accept and rebind behavior afterwards.
+    #[must_use]
+    pub fn with_rendezvous_listener(mut self, listener: TcpListener) -> Self {
+        self.rendezvous_listener = Some(listener);
         self
     }
 
@@ -548,9 +559,12 @@ impl InterfaceSupervisor for AutoWifi {
         let mut unicast_buf = [0u8; 64];
         let mut data_buf = [0u8; contract::HARDWARE_MTU];
         let mut rendezvous = if settings.prns_rendezvous_enabled() {
-            TcpListener::bind(("0.0.0.0", contract::TCP_RENDEZVOUS_PORT))
-                .await
-                .ok()
+            match self.rendezvous_listener {
+                Some(listener) => Some(listener),
+                None => TcpListener::bind(("0.0.0.0", contract::TCP_RENDEZVOUS_PORT))
+                    .await
+                    .ok(),
+            }
         } else {
             None
         };

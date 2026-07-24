@@ -1,6 +1,7 @@
 mod cards;
 mod engine;
 mod face;
+mod persistence;
 mod usbmux;
 
 pub use face::HopspotFace;
@@ -9,16 +10,44 @@ pub use personal_hopspot_core::{
     MOBILE_RGBA_BYTES as RGBA_BYTES,
 };
 
-use personal_hopspot_core::{BatteryPercent, BatteryState, MobileActionCode, MobileInputCode};
+use core::ffi::c_char;
+use personal_hopspot_core::{
+    BatteryPercent, BatteryState, MobileActionCode, MobileInputCode, COALESCE_MS,
+};
+
+/// # Safety
+/// `storage_directory_utf8` must be null or point to a NUL-terminated byte string that remains
+/// readable for the duration of this call.
+#[no_mangle]
+pub unsafe extern "C" fn hopspot_start_engine(storage_directory_utf8: *const c_char) -> i32 {
+    if storage_directory_utf8.is_null() {
+        return engine::reject_storage_configuration().code();
+    }
+    // SAFETY: the caller contract requires a readable NUL-terminated string.
+    let storage = unsafe { std::ffi::CStr::from_ptr(storage_directory_utf8) };
+    let Ok(storage) = storage.to_str() else {
+        return engine::reject_storage_configuration().code();
+    };
+    engine::start(std::path::Path::new(storage)).code()
+}
 
 #[no_mangle]
-pub extern "C" fn hopspot_start_engine() {
-    engine::start();
+pub extern "C" fn hopspot_stop_engine() -> i32 {
+    engine::stop().code()
+}
+
+#[no_mangle]
+pub extern "C" fn hopspot_engine_state() -> i32 {
+    engine::state().code()
+}
+
+#[no_mangle]
+pub extern "C" fn hopspot_engine_last_failure() -> i32 {
+    engine::last_failure().code()
 }
 
 #[no_mangle]
 pub extern "C" fn hopspot_init() -> *mut HopspotFace {
-    engine::start();
     Box::into_raw(Box::new(HopspotFace::new()))
 }
 
@@ -108,4 +137,44 @@ pub extern "C" fn hopspot_panel_width() -> u32 {
 #[no_mangle]
 pub extern "C" fn hopspot_panel_height() -> u32 {
     PANEL_HEIGHT as u32
+}
+
+#[no_mangle]
+pub extern "C" fn hopspot_rgba_bytes() -> usize {
+    RGBA_BYTES
+}
+
+#[no_mangle]
+pub extern "C" fn hopspot_render_interval_millis() -> u32 {
+    COALESCE_MS as u32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn face_creation_does_not_start_the_engine() {
+        assert_eq!(hopspot_engine_state(), 0);
+        let face = hopspot_init();
+        assert!(!face.is_null());
+        assert_eq!(hopspot_engine_state(), 0);
+        // SAFETY: `face` is the unique live pointer returned immediately above.
+        unsafe { hopspot_free(face) };
+    }
+
+    #[test]
+    fn unknown_input_is_no_action_and_does_not_mutate_the_ui() {
+        let face = hopspot_init();
+        let mut before = vec![0; RGBA_BYTES];
+        let mut after = vec![0; RGBA_BYTES];
+        // SAFETY: face and both buffers are live and uniquely borrowed for each call.
+        unsafe {
+            hopspot_render(face, before.as_mut_ptr(), before.len());
+            assert_eq!(hopspot_post_input(face, i32::MAX), 0);
+            hopspot_render(face, after.as_mut_ptr(), after.len());
+            hopspot_free(face);
+        }
+        assert_eq!(before, after);
+    }
 }

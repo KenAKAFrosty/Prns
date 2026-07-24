@@ -31,10 +31,51 @@ impl AutoBle {
     ) -> ConfiguredAutoBle {
         ConfiguredAutoBle { identity, policy }
     }
+
+    /// Creates the restoration-aware CoreBluetooth managers immediately while leaving radio
+    /// authorization and service readiness to the attached asynchronous supervisor.
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub async fn prepare(
+        identity: BleIdentity,
+    ) -> Result<PreparedAutoBle, prns_ffi::bluetooth_auto::macos::MacosBleError> {
+        let backend = prns_ffi::bluetooth_auto::macos::MacosBleBackend::prepare(identity).await?;
+        Ok(PreparedAutoBle {
+            identity,
+            policy: prns_runtime::interfaces::bluetooth_auto::defaults_for_bitrate(
+                prns_runtime::interfaces::bluetooth_auto::BLE_BITRATE_GUESS_BPS,
+            )
+            .configured(ConfiguredInterfacePolicy::default()),
+            status: BluetoothAutoStatus::new(),
+            backend: Some(backend),
+        })
+    }
+
+    /// Produces a failed-but-supervised BLE attachment when native manager preparation itself
+    /// cannot be started. The core node and every other transport remain available.
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub fn unavailable(identity: BleIdentity) -> PreparedAutoBle {
+        PreparedAutoBle {
+            identity,
+            policy: prns_runtime::interfaces::bluetooth_auto::defaults_for_bitrate(
+                prns_runtime::interfaces::bluetooth_auto::BLE_BITRATE_GUESS_BPS,
+            )
+            .configured(ConfiguredInterfacePolicy::default()),
+            status: BluetoothAutoStatus::new(),
+            backend: None,
+        }
+    }
 }
 
 pub struct AttachedBle {
     status: BluetoothAutoStatus,
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+pub struct PreparedAutoBle {
+    identity: BleIdentity,
+    policy: EffectiveInterfacePolicy,
+    status: BluetoothAutoStatus,
+    backend: Option<prns_ffi::bluetooth_auto::macos::PreparedMacosBleBackend>,
 }
 
 impl AttachedBle {
@@ -100,6 +141,157 @@ impl Attachable for ConfiguredAutoBle {
             self.policy,
             Some((ifac, network_name)),
         )
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+impl Attachable for PreparedAutoBle {
+    type Attached = AttachedBle;
+
+    fn attach_to(self, handle: &PrnsNodeHandle) -> AttachedBle {
+        let status = self.status.clone();
+        handle.supervise(PreparedPlatformBluetooth {
+            identity: self.identity,
+            policy: self.policy,
+            status: self.status,
+            backend: self.backend,
+        });
+        AttachedBle { status }
+    }
+
+    fn attach_to_with_ifac(
+        self,
+        handle: &PrnsNodeHandle,
+        ifac: IfacContext,
+        network_name: Option<String>,
+    ) -> AttachedBle {
+        let status = self.status.clone();
+        handle.supervise_with_ifac_name(
+            PreparedPlatformBluetooth {
+                identity: self.identity,
+                policy: self.policy,
+                status: self.status,
+                backend: self.backend,
+            },
+            ifac,
+            network_name,
+        );
+        AttachedBle { status }
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+struct PreparedPlatformBluetooth {
+    identity: BleIdentity,
+    policy: EffectiveInterfacePolicy,
+    status: BluetoothAutoStatus,
+    backend: Option<prns_ffi::bluetooth_auto::macos::PreparedMacosBleBackend>,
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+const APPLE_BLE_READINESS_RETRY_DELAY: core::time::Duration = core::time::Duration::from_secs(2);
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+impl ReportsStatus for PreparedPlatformBluetooth {
+    fn status_view(&self) -> Option<prns_runtime::interfaces::StatusView> {
+        let status = self.status.clone();
+        Some(std::sync::Arc::new(move || {
+            std::vec![prns_runtime::interfaces::InterfaceVitals::of(&status)]
+        }))
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+impl InterfaceSupervisor for PreparedPlatformBluetooth {
+    const KIND: InterfaceKind = InterfaceKind::BluetoothAuto;
+
+    fn channel_tag(&self) -> &[u8] {
+        contract::GROUP_ID
+    }
+
+    async fn run(self, fleet: Fleet) {
+        run_prepared_platform_bluetooth(
+            fleet,
+            self.identity,
+            self.status,
+            self.policy,
+            self.backend,
+        )
+        .await;
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+async fn run_prepared_platform_bluetooth(
+    fleet: Fleet,
+    ble_identity: BleIdentity,
+    status: BluetoothAutoStatus,
+    policy: EffectiveInterfacePolicy,
+    backend: Option<prns_ffi::bluetooth_auto::macos::PreparedMacosBleBackend>,
+) {
+    use super::BluetoothAuto;
+    use prns_ffi::bluetooth_auto::macos::MacosBleBackend;
+    use prns_runtime::interfaces::bluetooth_auto::{
+        AppleHost, Endpoint, LinkCapabilities, BLE_HW_MTU,
+    };
+
+    let mut prepared = backend;
+    loop {
+        let candidate = match prepared.take() {
+            Some(backend) => backend,
+            None => match MacosBleBackend::prepare(ble_identity).await {
+                Ok(backend) => backend,
+                Err(error) => {
+                    status.mark_failed(Some("Bluetooth native manager unavailable"));
+                    crate::diagnostic_log::warn!(
+                        "bluetooth manager preparation failed ({error:?}); retrying in {}s",
+                        APPLE_BLE_READINESS_RETRY_DELAY.as_secs()
+                    );
+                    tokio::time::sleep(APPLE_BLE_READINESS_RETRY_DELAY).await;
+                    continue;
+                }
+            },
+        };
+
+        match candidate.ready().await {
+            Ok(backend) => {
+                status.clear_failure();
+                let psm = backend.psm();
+                #[cfg(target_os = "macos")]
+                let endpoint = Endpoint::CoreBluetooth(AppleHost::MacOs);
+                #[cfg(target_os = "ios")]
+                let endpoint = Endpoint::CoreBluetooth(AppleHost::Ios);
+                #[cfg(target_os = "macos")]
+                let l2cap = Some(psm);
+                #[cfg(target_os = "ios")]
+                let l2cap = None;
+                let bluetooth = BluetoothAuto::<_, { MacosBleBackend::MAX_PEERS }>::with_status(
+                    backend,
+                    ble_identity,
+                    endpoint,
+                    LinkCapabilities {
+                        l2cap,
+                        link_mtu: BLE_HW_MTU as u16,
+                    },
+                    status,
+                )
+                .with_policy(policy);
+                crate::diagnostic_log::info!(
+                    "bluetooth: supervising prepared CoreBluetooth backend, local psm {:#06x}",
+                    psm.get()
+                );
+                bluetooth.run(fleet).await;
+                return;
+            }
+            Err(error) => {
+                status.mark_failed(Some("Bluetooth not granted or radio unavailable"));
+                crate::diagnostic_log::warn!(
+                    "bluetooth readiness unavailable ({error:?}); retrying manager preparation in {}s",
+                    APPLE_BLE_READINESS_RETRY_DELAY.as_secs()
+                );
+                tokio::time::sleep(APPLE_BLE_READINESS_RETRY_DELAY).await;
+            }
+        }
     }
 }
 

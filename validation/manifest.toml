@@ -356,6 +356,18 @@ inputs = ["validation/platforms/apple.sh"]
 artifacts = "validation-artifacts/results/apple-platforms"
 
 [[suite]]
+id = "ios-simulator"
+domain = "platform"
+group = "apple"
+tiers = ["pr", "release", "scheduled"]
+platform = "macos"
+toolchain = "stable"
+timeout_seconds = 3600
+command = ["bash", "validation/platforms/ios-simulator.sh"]
+inputs = ["validation/platforms/ios-simulator.sh", "personal-hopspot/mobile/ios/app/PersonalHopspot.xcodeproj/project.pbxproj", "personal-hopspot/mobile/ios/app/PersonalHopspot/Info.plist", "personal-hopspot/mobile/ios/app/PersonalHopspot/Assets.xcassets/AppIcon.appiconset/Contents.json", "personal-hopspot/mobile/ios/app/PersonalHopspot/Assets.xcassets/AppIcon.appiconset/AppIcon.png", "personal-hopspot/mobile/ios/rust/include/hopspot.h"]
+artifacts = "validation-artifacts/results/ios-simulator"
+
+[[suite]]
 id = "windows-desktop"
 domain = "platform"
 group = "windows"

@@ -306,6 +306,13 @@ impl BluetoothAutoStatus {
         }
     }
 
+    pub(crate) fn clear_failure(&self) {
+        self.shared.failed.store(false, Ordering::Relaxed);
+        if let Ok(mut slot) = self.shared.failure_reason.lock() {
+            *slot = None;
+        }
+    }
+
     pub fn enable(&self) {
         self.update_enabled(true);
     }
@@ -862,6 +869,22 @@ mod tests {
 
         tokio::time::sleep(RECENT_MEMBER_GRACE + Duration::from_millis(10)).await;
         assert_eq!(status.connection(), ConnectionState::Disconnected);
+    }
+
+    #[test]
+    fn asynchronous_readiness_can_clear_a_transient_bluetooth_failure() {
+        let status = BluetoothAutoStatus::new();
+        status.mark_failed(Some("Bluetooth not granted or radio unavailable"));
+        assert_eq!(status.connection(), ConnectionState::Failed);
+        assert_eq!(
+            status.failure_reason(),
+            Some("Bluetooth not granted or radio unavailable")
+        );
+
+        status.clear_failure();
+        status.mark_up();
+        assert_eq!(status.connection(), ConnectionState::Disconnected);
+        assert_eq!(status.failure_reason(), None);
     }
 
     struct MockSeam {

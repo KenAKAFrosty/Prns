@@ -1,12 +1,11 @@
-//WIP NEEDS REVIEW
 import SwiftUI
 
 struct ContentView: View {
-    @State private var bridge = HopspotBridge()
+    @EnvironmentObject private var engine: EngineController
+    @StateObject private var bridge = HopspotBridge()
 
     var body: some View {
-        TimelineView(.animation) { _ in
-            let _ = bridge.updateBattery()
+        TimelineView(.periodic(from: .now, by: bridge.renderInterval)) { _ in
             Color.black
                 .overlay {
                     if let frame = bridge.render() {
@@ -19,17 +18,45 @@ struct ContentView: View {
         }
         .ignoresSafeArea()
         .background(Color.black)
+        .overlay(alignment: .top) {
+            lifecycleOverlay
+        }
         .gesture(
             LongPressGesture(minimumDuration: 0.50)
-                .onEnded { _ in bridge.postInput(HopspotBridge.inputLongPress) }
+                .onEnded { _ in bridge.postLongPress() }
                 .exclusively(
                     before: TapGesture()
-                        .onEnded { bridge.postInput(HopspotBridge.inputShortPress) }
+                        .onEnded { bridge.postShortPress() }
                 )
         )
+    }
+
+    @ViewBuilder
+    private var lifecycleOverlay: some View {
+        if engine.isStarting {
+            Label("Starting Hopspot", systemImage: "hourglass")
+                .modifier(LifecycleBadge())
+        } else if engine.isFailed {
+            Label(engine.failureDescription, systemImage: "exclamationmark.triangle.fill")
+                .modifier(LifecycleBadge())
+        }
+    }
+}
+
+private struct LifecycleBadge: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(.black.opacity(0.82), in: Capsule())
+            .padding(.top, 12)
+            .accessibilityAddTraits(.isStaticText)
     }
 }
 
 #Preview {
     ContentView()
+        .environmentObject(EngineController.shared)
 }

@@ -5,8 +5,10 @@
 iOS is not production-supported until a macOS contributor returns both:
 
 1. one commit implementing every requirement in this document; and
-2. a completed evidence record in a separate Markdown file whose commands,
-   logs, screenshots, and hashes identify that exact commit.
+2. a completed record-only evidence commit in a separate Markdown file whose
+   commands, logs, screenshots, and hashes identify the clean implementation
+   commit under test. The record commit is discoverable through Git history;
+   both SHA fields inside the record name the implementation commit.
 
 The deliverable is a signed direct-install build. App Store and TestFlight work
 is outside this gate.
@@ -32,6 +34,19 @@ support location and places it inside the app sandbox on iOS:
 
 Failure to resolve, create, encode, or configure the directory is a typed
 startup failure. It must not fall back to an ephemeral identity.
+
+Rust must keep its runtime snapshots in a private child of that directory. It
+must verify the child is writable before publishing readiness; restore the
+persisted timebase, cryptographically verified routes, eligible destination
+identities, and tunnels at startup; and never replace a corrupt row with
+unverified state. Corrupt rows may be refused without blocking valid state or
+the core engine.
+
+An accepted announce or route removal must schedule a bounded, debounced
+snapshot so learned paths do not depend on receiving a graceful iOS termination
+callback. A low-frequency quiet checkpoint must cover other runtime changes.
+Explicit shutdown must land one final snapshot before removing the interfaces
+whose identifiers and announce records the routes reference.
 
 ### Shared host contract
 
@@ -97,14 +112,16 @@ Startup must:
 3. detect thread-spawn failure;
 4. detect Tokio runtime construction failure;
 5. bind required local listeners before publishing running;
-6. wait no longer than five seconds for readiness; and
-7. enter failed with the exact failure code on every unsuccessful path.
+6. restore valid persisted runtime state before publishing running;
+7. wait no longer than five seconds for readiness; and
+8. enter failed with the exact failure code on every unsuccessful path.
 
-Shutdown must signal the node, interface supervisors, Bonjour task, BLE work,
-USB listener, and local listeners, then wait no longer than five seconds for
-the worker to finish. Report stopped only after that worker has joined. A
-timeout is failed with `shutdown timeout`; it is not stopped and a replacement
-engine must not start while the prior worker remains alive.
+Shutdown must flush persisted runtime state, then signal the node, interface
+supervisors, Bonjour task, BLE work, USB listener, and local listeners, and wait
+no longer than five seconds for the worker to finish. Report stopped only after
+that worker has joined. A timeout is failed with `shutdown timeout`; it is not
+stopped and a replacement engine must not start while the prior worker remains
+alive.
 
 Calling start while running and stop while stopped must be idempotent.
 Starting after a completed stop or recoverable failed start must create a fresh
@@ -191,15 +208,21 @@ test -f "${APP}/Assets.car"
 xcrun simctl install "${SIMULATOR_ID}" "${APP}"
 LAUNCH_OUTPUT="$(xcrun simctl launch --terminate-running-process "${SIMULATOR_ID}" com.personal.hopspot)"
 printf '%s\n' "${LAUNCH_OUTPUT}"
+LAUNCH_PID="$(printf '%s\n' "${LAUNCH_OUTPUT}" | awk -F': ' '/com\.personal\.hopspot:/ {print $2}')"
+[[ "${LAUNCH_PID}" =~ ^[0-9]+$ ]]
 sleep 5
-xcrun simctl spawn "${SIMULATOR_ID}" ps -ax | grep '[ /]PersonalHopspot$'
+xcrun simctl spawn "${SIMULATOR_ID}" launchctl print user/501 > /tmp/personal-hopspot-launchctl.txt
+LAUNCHCTL_LINE="$(grep 'UIKitApplication:com\.personal\.hopspot' /tmp/personal-hopspot-launchctl.txt)"
+test "$(printf '%s\n' "${LAUNCHCTL_LINE}" | awk '{print $1}')" = "${LAUNCH_PID}"
 xcrun simctl io "${SIMULATOR_ID}" screenshot /tmp/personal-hopspot-ios.png
 test -s /tmp/personal-hopspot-ios.png
 ```
 
 Expected output includes `** BUILD SUCCEEDED **`, a launch line containing
-`com.personal.hopspot` and a numeric process identifier, a live
-`PersonalHopspot` process after five seconds, and a nonempty screenshot.
+`com.personal.hopspot` and a numeric process identifier, a matching
+`UIKitApplication` entry from the simulator's per-user launchd domain after
+five seconds, and a nonempty screenshot. Set `LAUNCH_PID` from the numeric
+identifier returned by `simctl launch`.
 
 The gate fails on any nonzero command, missing icon, missing `Assets.car`,
 missing process, empty screenshot, startup state other than running, nonzero
@@ -228,6 +251,7 @@ hardware feature:
 | Background to foreground |  |  | same engine identity and resumed rendering/input |
 | Explicit native stop/start |  |  | joined stop, fresh worker, same identity |
 | Termination and relaunch |  |  | same identity and destinations |
+| Learned-route relaunch |  |  | accepted route flushed, process replaced, same verified route restored |
 | Operating-system restart |  |  | same identity and destinations |
 | CoreBluetooth central restoration |  |  | restoration launch and resumed central state |
 | CoreBluetooth peripheral restoration |  |  | restoration launch and resumed peripheral state |
@@ -246,6 +270,16 @@ initial. Denial must affect only the corresponding transport. It must not
 prevent identity loading, engine startup, rendering, input, USB, or other
 permitted transports.
 
+Separately delay each initial permission-sheet response beyond the backend's
+readiness timeout. BLE and Bonjour may report transient failed attempts, but
+each must retry and become usable in that same process after the sheet is
+approved. A relaunch does not prove recovery from a human-scale prompt delay.
+
+For the later Settings-grant rows, do not reinstall or manually terminate the
+app. iPadOS or iOS may replace the process when a privacy toggle changes. If it
+does, record the operating-system termination and subsequent launch, then prove
+identity continuity and transport recovery from the same installation.
+
 For restoration tests, establish a pending or active Bluetooth operation, move
 the app to the background, and use an operating-system termination/restoration
 scenario consistent with TN3115. Record user force-quit separately; it is not a
@@ -255,6 +289,14 @@ For the sustained run, sample process memory and battery at start, hourly, and
 finish. Fail on crash, native worker loss, unbounded memory growth, thermal
 shutdown, identity change, listener loss that does not recover, or a transport
 remaining falsely online after permission revocation.
+
+During stabilization before the first supported iOS release, the product owner
+may authorize focused requalification after an implementation change. The
+evidence must name the earlier implementation SHA, enumerate every
+carried-forward row, explain why each row is materially unaffected, and run
+every row touched by the change against the new clean SHA. Permission,
+lifecycle, transport, or persistence evidence may not be carried forward across
+a change to the corresponding subsystem.
 
 ## Required commands on each physical device
 
@@ -294,9 +336,14 @@ transport transition, and byte counters relevant to that scenario.
 
 The entire iOS gate fails if any of the following is true:
 
-- the implementation commit does not match the evidence commit;
+- either SHA field in the committed evidence record differs from the clean
+  implementation commit that produced the evidence;
 - the worktree or generated application is dirty or unaccounted for;
 - identity storage derives from `HOME` or falls back to ephemeral material;
+- accepted learned routes are not flushed and restored across process
+  replacement;
+- corrupt persisted rows can block valid state, bypass verification, or crash
+  startup;
 - face creation starts or owns the engine;
 - startup or shutdown can wait without a bound;
 - stopped is reported before the worker and native tasks finish;
@@ -325,7 +372,7 @@ a failed item into a pass.
 # iOS production evidence
 
 Implementation commit:
-Evidence commit:
+Evidence commit: <!-- repeat the clean implementation SHA under test; the containing record-only commit is discoverable in Git history -->
 Contributor:
 Date in UTC:
 Xcode:
