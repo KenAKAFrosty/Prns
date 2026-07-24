@@ -133,7 +133,7 @@ fn remaining_follow_ons_warn_while_blackhole_exchange_does_not() {
         "missing warning code in daemon output:\n{rendered}"
     );
     assert!(
-        rendered.contains(&path.display().to_string()),
+        rendered.contains(&path.display().to_string().replace('\\', "\\\\")),
         "missing config path in daemon output:\n{rendered}"
     );
     assert!(
