@@ -21,7 +21,14 @@ from pathlib import Path
 try:
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover - the workspace MSRV has tomllib
-    import tomli as tomllib
+    try:
+        import tomli as tomllib
+    except ModuleNotFoundError:
+        print(
+            "validation failed: Python 3.11+ (or the tomli package) is required",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -379,12 +386,16 @@ def validate_manifest(manifest: dict, check_tools: bool = False) -> list[str]:
         errors.append(f"stale validation asset exemptions: {sorted(stale_exemptions)!r}")
 
     errors.extend(validate_triage())
-    requirements = (ROOT / "benchmarks/reference/requirements.txt").read_text().strip()
-    lock = (ROOT / "benchmarks/reference/requirements.lock").read_text().splitlines()
-    if requirements != "-r requirements.lock":
-        errors.append("benchmarks/reference/requirements.txt must load requirements.lock")
-    if "rns==1.4.0" not in lock:
-        errors.append("benchmarks/reference/requirements.lock must pin rns==1.4.0")
+    try:
+        requirements = (ROOT / "benchmarks/reference/requirements.txt").read_text().strip()
+        lock = (ROOT / "benchmarks/reference/requirements.lock").read_text().splitlines()
+    except OSError as error:
+        errors.append(f"cannot read benchmark reference pins: {error}")
+    else:
+        if requirements != "-r requirements.lock":
+            errors.append("benchmarks/reference/requirements.txt must load requirements.lock")
+        if "rns==1.4.0" not in lock:
+            errors.append("benchmarks/reference/requirements.lock must pin rns==1.4.0")
 
     required_commands = {suite["command"][0] for suite in suites.values() if suite.get("command")}
     for command in sorted(required_commands):

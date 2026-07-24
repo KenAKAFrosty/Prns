@@ -109,7 +109,7 @@ tiers = ["pr", "release", "scheduled"]
 platform = "any"
 toolchain = "python"
 timeout_seconds = 120
-command = ["./tools/prns", "verify"]
+command = ["python3", "tools/prns", "verify"]
 inputs = ["tools/prns", "tools/tasks.toml", "tools/README.md", ".githooks/pre-push"]
 artifacts = "validation-artifacts/results/tool-registry"
 

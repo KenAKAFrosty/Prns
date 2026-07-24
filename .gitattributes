@@ -2,3 +2,4 @@
 *.sh text eol=lf
 .githooks/* text eol=lf
 tools/prns text eol=lf
+tools/prns.cmd text eol=crlf

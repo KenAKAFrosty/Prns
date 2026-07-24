@@ -99,10 +99,11 @@ corroborated evidence.
 The repository has two deliberate control planes:
 
 - `./tools/prns` discovers and runs supported build, release, device, and
-  repository operations. Start with `./tools/prns list` or explain one task
-  with `./tools/prns explain TASK_ID`.
-- `python3 validation/run.py` discovers and runs tests, proofs, interoperability
-  checks, and release-readiness evidence.
+  repository operations. Start with `./tools/prns list`, explain one task
+  with `./tools/prns explain TASK_ID`, and check host prerequisites with
+  `./tools/prns doctor`.
+- `python3 validation/run.py` (`python` on Windows) discovers and runs tests,
+  proofs, interoperability checks, and release-readiness evidence.
 
 Implementation files below `tools/` are internal. CI and documentation invoke
 named `./tools/prns` tasks so paths can be reorganized without creating another

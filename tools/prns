@@ -17,7 +17,14 @@ from pathlib import Path
 try:
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover - repository Python includes tomllib
-    import tomli as tomllib
+    try:
+        import tomli as tomllib
+    except ModuleNotFoundError:
+        print(
+            "TOOLING_ERROR: Python 3.11+ (or the tomli package) is required",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
 
 
 ROOT = Path(__file__).resolve().parent.parent
