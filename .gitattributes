@@ -1,1 +1,4 @@
 *.mu -text
+*.sh text eol=lf
+.githooks/* text eol=lf
+tools/prns text eol=lf
