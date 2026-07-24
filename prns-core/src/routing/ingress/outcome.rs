@@ -207,7 +207,7 @@ pub enum IngestPacketOutcome<'p> {
     OwesLinkProofVerify,
     LinkActivated {
         link_id: LinkId,
-        rtt_ms: u64,
+        rtt_millis: u64,
     },
     OwesKeepaliveEcho {
         link_id: LinkId,

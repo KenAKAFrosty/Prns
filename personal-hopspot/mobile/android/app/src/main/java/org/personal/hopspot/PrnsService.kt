@@ -163,20 +163,20 @@ class PrnsService : Service() {
             return
         }
         if (wifiAutoLink == null) {
-            Log.i(TAG, "starting WiFi Auto link")
+            Log.i(TAG, "starting Wi-Fi Auto link")
             wifiAutoLink = try {
                 WifiAutoLink(applicationContext).also { it.start() }
             } catch (error: RuntimeException) {
-                Log.e(TAG, "WiFi Auto link failed to start", error)
+                Log.e(TAG, "Wi-Fi Auto link failed to start", error)
                 null
             }
         }
         if (BuildConfig.EXPERIMENTAL_WIFI_DIRECT && wifiDirectLink == null) {
-            Log.i(TAG, "starting WiFi Direct link")
+            Log.i(TAG, "starting Wi-Fi Direct link")
             wifiDirectLink = try {
                 WifiDirectLink(applicationContext).also { it.start() }
             } catch (error: RuntimeException) {
-                Log.e(TAG, "WiFi Direct link failed to start", error)
+                Log.e(TAG, "Wi-Fi Direct link failed to start", error)
                 null
             }
         } else if (!BuildConfig.EXPERIMENTAL_WIFI_DIRECT) {
@@ -185,11 +185,11 @@ class PrnsService : Service() {
             )
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && wifiAwareLink == null) {
-            Log.i(TAG, "starting WiFi/P2P (Aware) link")
+            Log.i(TAG, "starting Wi-Fi Aware link")
             wifiAwareLink = try {
                 WifiAwareLink(applicationContext).also { it.start() }
             } catch (error: RuntimeException) {
-                Log.e(TAG, "WiFi Aware link failed to start", error)
+                Log.e(TAG, "Wi-Fi Aware link failed to start", error)
                 null
             }
         }
@@ -204,17 +204,20 @@ class PrnsService : Service() {
         }
         if (bleLink == null) {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-                Log.i(TAG, "BLE Auto requires Android 10 or newer")
+                Log.i(TAG, "Bluetooth LE Auto requires Android 10 or newer")
             } else if (hasBlePermissions()) {
-                Log.i(TAG, "starting BLE Auto link")
+                Log.i(TAG, "starting Bluetooth LE Auto link")
                 bleLink = try {
                     BleLink(applicationContext).also { it.start() }
                 } catch (error: RuntimeException) {
-                    Log.e(TAG, "BLE Auto link failed to start", error)
+                    Log.e(TAG, "Bluetooth LE Auto link failed to start", error)
                     null
                 }
             } else {
-                Log.i(TAG, "BLE permissions not granted; BLE link will start after permission refresh")
+                Log.i(
+                    TAG,
+                    "Bluetooth permissions not granted; Bluetooth LE link will start after permission refresh",
+                )
             }
         }
     }
@@ -222,19 +225,19 @@ class PrnsService : Service() {
     @Synchronized
     private fun stopPlatformLinks() {
         runCatching { bleLink?.stop() }
-            .onFailure { Log.w(TAG, "BLE Auto link failed to stop", it) }
+            .onFailure { Log.w(TAG, "Bluetooth LE Auto link failed to stop", it) }
         bleLink = null
         runCatching { usbLink?.stop() }
             .onFailure { Log.w(TAG, "USB Auto link failed to stop", it) }
         usbLink = null
         runCatching { wifiAwareLink?.stop() }
-            .onFailure { Log.w(TAG, "WiFi Aware link failed to stop", it) }
+            .onFailure { Log.w(TAG, "Wi-Fi Aware link failed to stop", it) }
         wifiAwareLink = null
         runCatching { wifiDirectLink?.stop() }
-            .onFailure { Log.w(TAG, "WiFi Direct link failed to stop", it) }
+            .onFailure { Log.w(TAG, "Wi-Fi Direct link failed to stop", it) }
         wifiDirectLink = null
         runCatching { wifiAutoLink?.stop() }
-            .onFailure { Log.w(TAG, "WiFi Auto link failed to stop", it) }
+            .onFailure { Log.w(TAG, "Wi-Fi Auto link failed to stop", it) }
         wifiAutoLink = null
     }
 

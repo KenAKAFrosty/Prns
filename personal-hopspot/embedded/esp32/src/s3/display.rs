@@ -13,7 +13,7 @@ fn classify_card(
     } else if id == lora_id {
         Some((screen::CardKind::LoRa, screen::card_label("LoRa")))
     } else if Some(id) == wifi_id {
-        Some((screen::CardKind::Wifi, screen::card_label("WiFi/LAN")))
+        Some((screen::CardKind::Wifi, screen::card_label("Wi-Fi/LAN")))
     } else if Some(id) == espnow_id {
         Some((screen::CardKind::EspNow, screen::card_label("ESP-NOW")))
     } else if Some(id) == tcp_id {

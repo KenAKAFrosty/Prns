@@ -8,6 +8,29 @@ import { test } from 'node:test';
 import { startNode } from '../../index.js';
 import { announceUntilHeard, waitFor, type AnyEvent } from './helpers.js';
 
+test('resource quantity aliases reject conflicting values', () => {
+  assert.throws(
+    () =>
+      startNode(
+        {
+          destinations: [
+            {
+              appName: 'prnsnapi',
+              aspects: ['resalias'],
+              resourceStrategy: {
+                accept: 'all',
+                maxUncompressedBytes: 4_096,
+                maxUncompressedLen: 8_192,
+              },
+            },
+          ],
+        },
+        () => {}
+      ),
+    (error: any) => error.code === 'PRNS_INVALID_ARGUMENT'
+  );
+});
+
 test('resource transfer with metadata and progress events', async () => {
   const serverEvents: AnyEvent[] = [];
   const clientEvents: AnyEvent[] = [];
@@ -18,7 +41,7 @@ test('resource transfer with metadata and progress events', async () => {
         {
           appName: 'prnsnapi',
           aspects: ['res'],
-          resourceStrategy: { accept: 'all' },
+          resourceStrategy: { accept: 'all', maxUncompressedBytes: 1_000_000 },
         },
       ],
     },
@@ -50,12 +73,20 @@ test('resource transfer with metadata and progress events', async () => {
     assert.equal(Buffer.compare(Buffer.from(received.data), payload), 0);
     assert.ok(received.metadata);
     assert.equal(Buffer.compare(Buffer.from(received.metadata), metadata), 0);
-    assert.equal(received.totalSize, payload.length);
+    assert.equal(received.totalSizeBytes, payload.length);
+    assert.equal(received.totalSize, received.totalSizeBytes);
     await waitFor(
       () => clientEvents.some((e) => e.type === 'resourceSendProgress'),
       3000,
       'progress event'
     );
+    const progress = clientEvents.find((e) => e.type === 'resourceSendProgress');
+    assert.ok(progress);
+    assert.equal(progress.transferredBytes, progress.totalBytes);
+    assert.ok(progress.physicalTransferredBytes > 0);
+    assert.equal(progress.transferred, progress.transferredBytes);
+    assert.equal(progress.total, progress.totalBytes);
+    assert.equal(progress.physicalTransferred, progress.physicalTransferredBytes);
 
     const sourcePath = path.join(os.tmpdir(), `prns-napi-res-src-${process.pid}`);
     const sinkPath = path.join(os.tmpdir(), `prns-napi-res-sink-${process.pid}`);
@@ -66,7 +97,8 @@ test('resource transfer with metadata and progress events', async () => {
       await client.sendResourceFile(linkId, sourcePath);
       const fileReceipt = await fileReceiving;
       assert.equal(Buffer.compare(fs.readFileSync(sinkPath), filePayload), 0);
-      assert.ok(fileReceipt.totalSize >= filePayload.length);
+      assert.ok(fileReceipt.totalSizeBytes >= filePayload.length);
+      assert.equal(fileReceipt.totalSize, fileReceipt.totalSizeBytes);
     } finally {
       fs.rmSync(sourcePath, { force: true });
       fs.rmSync(sinkPath, { force: true });

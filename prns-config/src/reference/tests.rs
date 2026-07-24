@@ -1045,7 +1045,7 @@ fn an_rnode_ble_transport_is_supported_and_address_errors_are_focused() {
         "/tmp/rns/config",
         "[interfaces]\n[[Radio]]\ntype = RNodeInterface\nenabled = Yes\nport = ble://RNode 1234\nfrequency = 868000000\nbandwidth = 125000\ntxpower = 7\nspreadingfactor = 8\ncodingrate = 5\n",
     )
-    .expect("named RNode BLE target parses");
+    .expect("named RNode Bluetooth LE target parses");
     assert!(parsed.warnings.is_empty());
 
     let errors = parse_named(

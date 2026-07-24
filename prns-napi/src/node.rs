@@ -40,8 +40,8 @@ use personal_rns::ResourceStrategy;
 use personal_rns::{attach_plan_with_context, PlanOutcome, PlanRuntimeContext};
 use personal_rns::{
     load_or_create_ble_identity, load_or_create_identity_secret, try_generate_identity_secret,
-    AttachedInterface, AttachedSupervisor, AutoBle, AutoUsb, PacketReceiptDelivered, Zeroizing,
-    IDENTITY_SECRET_KEY_LEN,
+    AttachedInterface, AttachedSupervisor, AutoBluetoothLe, AutoUsb, PacketReceiptDelivered,
+    Zeroizing, IDENTITY_SECRET_KEY_LEN,
 };
 
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -70,6 +70,9 @@ pub struct RequestPathSpec {
 pub struct ResourceStrategySpec {
     #[napi(ts_type = "ResourceAcceptName")]
     pub accept: String,
+    /// Maximum accepted uncompressed payload size in bytes.
+    pub max_uncompressed_bytes: Option<f64>,
+    /// Deprecated compatibility alias for `maxUncompressedBytes`.
     pub max_uncompressed_len: Option<f64>,
     pub accept_compressed: Option<bool>,
 }
@@ -102,6 +105,12 @@ pub struct NodeOptions {
 
 #[napi(object)]
 pub struct AutoBleOptions {
+    pub identity_path: Option<String>,
+    pub identity_secret: Option<Buffer>,
+}
+
+#[napi(object)]
+pub struct AutoBluetoothLeOptions {
     pub identity_path: Option<String>,
     pub identity_secret: Option<Buffer>,
 }
@@ -144,6 +153,9 @@ pub struct RespondTokenSpec {
 
 #[napi(object)]
 pub struct RequestOptions {
+    /// Request timeout in milliseconds.
+    pub timeout_millis: Option<f64>,
+    /// Deprecated compatibility alias for `timeoutMillis`.
     pub timeout_ms: Option<f64>,
 }
 
@@ -210,6 +222,8 @@ pub struct ResourceData {
     pub data: Buffer,
     pub metadata: Option<Buffer>,
     pub original_hash: Buffer,
+    pub total_size_bytes: f64,
+    /// Deprecated compatibility alias for `totalSizeBytes`.
     pub total_size: f64,
 }
 
@@ -217,6 +231,8 @@ pub struct ResourceData {
 pub struct ResourceFileReceipt {
     pub metadata: Option<Buffer>,
     pub original_hash: Buffer,
+    pub total_size_bytes: f64,
+    /// Deprecated compatibility alias for `totalSizeBytes`.
     pub total_size: f64,
 }
 
@@ -251,17 +267,29 @@ pub struct RouteInfo {
     pub hops: u32,
     pub via: Option<Buffer>,
     pub interface_id: Buffer,
+    pub learned_at_millis: f64,
+    pub last_relayed_at_millis: f64,
+    pub expires_at_millis: f64,
+    /// Deprecated compatibility alias for `learnedAtMillis`.
     pub learned_at: f64,
+    /// Deprecated compatibility alias for `lastRelayedAtMillis`.
     pub last_relayed_at: f64,
+    /// Deprecated compatibility alias for `expiresAtMillis`.
     pub expires_at: f64,
 }
 
 #[napi(object)]
 pub struct AnnounceRateInfo {
     pub destination: Buffer,
+    pub last_allowed_announce_at_millis: f64,
+    pub blocked_until_millis: f64,
+    pub observed_at_millis: Vec<f64>,
+    /// Deprecated compatibility alias for `lastAllowedAnnounceAtMillis`.
     pub last_allowed_announce_at: f64,
+    /// Deprecated compatibility alias for `blockedUntilMillis`.
     pub blocked_until: f64,
     pub rate_violations: u32,
+    /// Deprecated compatibility alias for `observedAtMillis`.
     pub observed_at: Vec<f64>,
 }
 
@@ -378,24 +406,48 @@ fn path_error(error: RequestPathError) -> crate::errors::CodeError {
     }
 }
 
-const DEFAULT_ACCEPT_MAX_UNCOMPRESSED_LEN: u64 = 64 * 1024 * 1024;
+const DEFAULT_ACCEPT_MAX_UNCOMPRESSED_BYTES: u64 = 64 * 1024 * 1024;
+
+fn compatible_numeric_alias(
+    canonical: Option<f64>,
+    legacy: Option<f64>,
+    canonical_name: &str,
+    legacy_name: &str,
+) -> CodeResult<Option<f64>> {
+    match (canonical, legacy) {
+        (Some(canonical), Some(legacy)) if canonical.to_bits() != legacy.to_bits() => {
+            Err(code_err(
+                ErrorCode::InvalidArgument,
+                format!("{canonical_name} conflicts with legacy {legacy_name}"),
+            ))
+        }
+        (Some(value), _) | (_, Some(value)) => Ok(Some(value)),
+        (None, None) => Ok(None),
+    }
+}
 
 fn parse_resource_strategy(spec: &ResourceStrategySpec) -> CodeResult<ResourceStrategy> {
     match spec.accept.as_str() {
         "none" => Ok(ResourceStrategy::AcceptNone),
         "all" => {
-            let max_uncompressed_len = match spec.max_uncompressed_len {
-                None => DEFAULT_ACCEPT_MAX_UNCOMPRESSED_LEN,
+            let configured_maximum = compatible_numeric_alias(
+                spec.max_uncompressed_bytes,
+                spec.max_uncompressed_len,
+                "maxUncompressedBytes",
+                "maxUncompressedLen",
+            )?;
+            let max_uncompressed_bytes = match configured_maximum {
+                None => DEFAULT_ACCEPT_MAX_UNCOMPRESSED_BYTES,
                 Some(len) if len.is_finite() && len >= 0.0 => len as u64,
                 Some(_) => {
                     return Err(code_err(
                         ErrorCode::InvalidArgument,
-                        "maxUncompressedLen must be a non-negative finite number",
+                        "maxUncompressedBytes must be a non-negative finite number",
                     ))
                 }
             };
             Ok(ResourceStrategy::Accept {
-                max_uncompressed_len,
+                max_uncompressed_bytes,
                 accept_compressed: spec.accept_compressed.unwrap_or(true),
             })
         }
@@ -823,28 +875,25 @@ impl PrnsNode {
     }
 
     #[napi]
+    pub fn attach_auto_bluetooth_le(
+        &self,
+        options: AutoBluetoothLeOptions,
+    ) -> Result<InterfaceHandle, ErrorCode> {
+        self.attach_auto_bluetooth_le_inner(
+            options.identity_path.as_deref(),
+            options.identity_secret.as_deref(),
+            "autoBluetoothLe",
+        )
+    }
+
+    /// Deprecated compatibility alias for `attachAutoBluetoothLe`.
+    #[napi]
     pub fn attach_auto_ble(&self, options: AutoBleOptions) -> Result<InterfaceHandle, ErrorCode> {
-        let identity = match (&options.identity_path, &options.identity_secret) {
-            (Some(path), None) => {
-                load_or_create_ble_identity(Path::new(path)).map_err(|error| {
-                    code_err(
-                        ErrorCode::InvalidIdentityFile,
-                        format!("ble identity file at {path}: {error:?}"),
-                    )
-                })?
-            }
-            (None, Some(secret)) => marshal::ble_identity(secret)?,
-            _ => {
-                return Err(code_err(
-                    ErrorCode::InvalidArgument,
-                    "autoBle requires exactly one of identityPath or identitySecret",
-                ))
-            }
-        };
-        let handle = self.manager.handle()?;
-        let attached = handle.attach(AutoBle::new(identity));
-        let id = attached.id();
-        Ok(InterfaceHandle::from_ble(handle, id))
+        self.attach_auto_bluetooth_le_inner(
+            options.identity_path.as_deref(),
+            options.identity_secret.as_deref(),
+            "autoBle",
+        )
     }
 
     #[napi(ts_return_type = "Promise<void>")]
@@ -962,12 +1011,21 @@ impl PrnsNode {
             Ok(handle) => Ok(NodeIntrospection::announce_rates(&handle)
                 .await
                 .into_iter()
-                .map(|rate| AnnounceRateInfo {
-                    destination: marshal::to_buffer(rate.destination.as_bytes()),
-                    last_allowed_announce_at: rate.last_allowed_announce_at.0 as f64,
-                    blocked_until: rate.blocked_until.0 as f64,
-                    rate_violations: u32::from(rate.rate_violations),
-                    observed_at: rate.observed_at.iter().map(|at| at.0 as f64).collect(),
+                .map(|rate| {
+                    let last_allowed_announce_at_millis = rate.last_allowed_announce_at.0 as f64;
+                    let blocked_until_millis = rate.blocked_until.0 as f64;
+                    let observed_at_millis: Vec<f64> =
+                        rate.observed_at.iter().map(|at| at.0 as f64).collect();
+                    AnnounceRateInfo {
+                        destination: marshal::to_buffer(rate.destination.as_bytes()),
+                        last_allowed_announce_at_millis,
+                        blocked_until_millis,
+                        observed_at_millis: observed_at_millis.clone(),
+                        last_allowed_announce_at: last_allowed_announce_at_millis,
+                        blocked_until: blocked_until_millis,
+                        rate_violations: u32::from(rate.rate_violations),
+                        observed_at: observed_at_millis,
+                    }
                 })
                 .collect()),
             Err(error) => Err(error),
@@ -1060,6 +1118,35 @@ impl PrnsNode {
 }
 
 impl PrnsNode {
+    fn attach_auto_bluetooth_le_inner(
+        &self,
+        identity_path: Option<&str>,
+        identity_secret: Option<&[u8]>,
+        method_name: &str,
+    ) -> Result<InterfaceHandle, ErrorCode> {
+        let identity = match (identity_path, identity_secret) {
+            (Some(path), None) => {
+                load_or_create_ble_identity(Path::new(path)).map_err(|error| {
+                    code_err(
+                        ErrorCode::InvalidIdentityFile,
+                        format!("Bluetooth LE identity file at {path}: {error:?}"),
+                    )
+                })?
+            }
+            (None, Some(secret)) => marshal::ble_identity(secret)?,
+            _ => {
+                return Err(code_err(
+                    ErrorCode::InvalidArgument,
+                    format!("{method_name} requires exactly one of identityPath or identitySecret"),
+                ))
+            }
+        };
+        let handle = self.manager.handle()?;
+        let attached = handle.attach(AutoBluetoothLe::new(identity));
+        let id = attached.id();
+        Ok(InterfaceHandle::from_ble(handle, id))
+    }
+
     async fn establish_link_inner(&self, destination: Buffer) -> CodeResult<LinkInfo> {
         let destination = marshal::destination_hash(&destination)?;
         let handle = self.manager.handle()?;
@@ -1069,7 +1156,7 @@ impl PrnsNode {
             .map_err(link_error)?;
         Ok(LinkInfo {
             link_id: marshal::to_buffer(established.link_id.as_bytes()),
-            rtt_millis: established.rtt_ms as f64,
+            rtt_millis: established.rtt_millis as f64,
         })
     }
 
@@ -1101,14 +1188,23 @@ impl PrnsNode {
     ) -> CodeResult<RequestResult> {
         let link_id = marshal::link_id(&link_id)?;
         let path_hash = marshal::request_path_hash(&path_hash)?;
-        let timeout = match options.and_then(|opts| opts.timeout_ms) {
+        let configured_timeout = match options {
+            Some(options) => compatible_numeric_alias(
+                options.timeout_millis,
+                options.timeout_ms,
+                "timeoutMillis",
+                "timeoutMs",
+            )?,
+            None => None,
+        };
+        let timeout = match configured_timeout {
             Some(ms) if ms.is_finite() && ms >= 0.0 => {
                 RequestResponseTimeout::Exact(DurationMillis(ms as u64))
             }
             Some(_) => {
                 return Err(code_err(
                     ErrorCode::InvalidArgument,
-                    "timeoutMs must be a non-negative finite number",
+                    "timeoutMillis must be a non-negative finite number",
                 ))
             }
             None => RequestResponseTimeout::LinkDefault,
@@ -1339,17 +1435,17 @@ impl PrnsNode {
         tokio::spawn(async move {
             while let Some(progress) = progress_rx.recv().await {
                 let personal_rns::runtime::ResourceProgress {
-                    transferred,
-                    total,
-                    physical_transferred,
+                    transferred_bytes,
+                    total_bytes,
+                    physical_transferred_bytes,
                     segment_index,
                     total_segments,
                 } = progress;
                 sink.emit(OwnedEvent::ResourceSendProgress {
                     link_id,
-                    transferred,
-                    total,
-                    physical_transferred,
+                    transferred_bytes,
+                    total_bytes,
+                    physical_transferred_bytes,
                     segment_index,
                     total_segments,
                 });
@@ -1476,7 +1572,8 @@ impl PrnsNode {
             data: Buffer::from(collected),
             metadata: receipt.metadata.map(Buffer::from),
             original_hash: marshal::to_buffer(receipt.original_hash.as_bytes()),
-            total_size: receipt.total_size as f64,
+            total_size_bytes: receipt.total_size_bytes as f64,
+            total_size: receipt.total_size_bytes as f64,
         })
     }
 
@@ -1500,7 +1597,8 @@ impl PrnsNode {
         Ok(ResourceFileReceipt {
             metadata: receipt.metadata.map(Buffer::from),
             original_hash: marshal::to_buffer(receipt.original_hash.as_bytes()),
-            total_size: receipt.total_size as f64,
+            total_size_bytes: receipt.total_size_bytes as f64,
+            total_size: receipt.total_size_bytes as f64,
         })
     }
 
@@ -1818,6 +1916,9 @@ fn interface_info(snapshot: &InterfaceSnapshot) -> InterfaceInfo {
 }
 
 fn route_info(route: &RouteSnapshot) -> RouteInfo {
+    let learned_at_millis = route.learned_at.0 as f64;
+    let last_relayed_at_millis = route.last_relayed_at.0 as f64;
+    let expires_at_millis = route.expires_at.0 as f64;
     RouteInfo {
         destination: marshal::to_buffer(route.destination.as_bytes()),
         hops: u32::from(route.hops),
@@ -1826,9 +1927,12 @@ fn route_info(route: &RouteSnapshot) -> RouteInfo {
             NextHop::Via(transport) => Some(marshal::to_buffer(transport.as_bytes())),
         },
         interface_id: marshal::to_buffer(route.interface.as_bytes()),
-        learned_at: route.learned_at.0 as f64,
-        last_relayed_at: route.last_relayed_at.0 as f64,
-        expires_at: route.expires_at.0 as f64,
+        learned_at_millis,
+        last_relayed_at_millis,
+        expires_at_millis,
+        learned_at: learned_at_millis,
+        last_relayed_at: last_relayed_at_millis,
+        expires_at: expires_at_millis,
     }
 }
 
@@ -1853,5 +1957,45 @@ fn packet_receipt(receipt: PacketReceiptDelivered) -> PacketReceipt {
         rtt_millis: receipt.rtt.millis() as f64,
         evidence: evidence.to_string(),
         packet_hash,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{compatible_numeric_alias, parse_resource_strategy, ResourceStrategySpec};
+    use personal_rns::routing::links::resources::ResourceStrategy;
+
+    #[test]
+    fn unit_bearing_resource_limit_accepts_the_legacy_alias() {
+        let canonical = ResourceStrategySpec {
+            accept: "all".to_string(),
+            max_uncompressed_bytes: Some(4_096.0),
+            max_uncompressed_len: None,
+            accept_compressed: None,
+        };
+        let legacy = ResourceStrategySpec {
+            accept: "all".to_string(),
+            max_uncompressed_bytes: None,
+            max_uncompressed_len: Some(4_096.0),
+            accept_compressed: None,
+        };
+        let expected = ResourceStrategy::Accept {
+            max_uncompressed_bytes: 4_096,
+            accept_compressed: true,
+        };
+
+        assert_eq!(parse_resource_strategy(&canonical).ok(), Some(expected));
+        assert_eq!(parse_resource_strategy(&legacy).ok(), Some(expected));
+    }
+
+    #[test]
+    fn conflicting_quantity_aliases_are_rejected() {
+        assert!(compatible_numeric_alias(
+            Some(1_000.0),
+            Some(2_000.0),
+            "timeoutMillis",
+            "timeoutMs",
+        )
+        .is_err());
     }
 }

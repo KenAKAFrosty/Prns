@@ -75,7 +75,7 @@ pub enum TokioDiscoveryPublicationEvent<E> {
     },
     Announced {
         interface: InterfaceId,
-        app_data_len: usize,
+        app_data_bytes: usize,
     },
 }
 
@@ -359,14 +359,14 @@ impl TokioInterfaceDiscoveryPublisher {
                     continue;
                 }
             };
-            let app_data_len = framed.len();
+            let app_data_bytes = framed.len();
             let app_data = match AnnounceAppDataBytes::from_slice(&framed) {
                 Ok(app_data) => app_data,
                 Err(()) => {
                     report(TokioDiscoveryPublicationEvent::FramingFailed {
                         interface,
                         failure: TokioDiscoveryPublicationFramingFailure::AppDataTooLong {
-                            actual: app_data_len,
+                            actual: app_data_bytes,
                             maximum: MAX_ANNOUNCE_APP_DATA_LEN,
                         },
                     });
@@ -380,7 +380,7 @@ impl TokioInterfaceDiscoveryPublisher {
             match announced {
                 Ok(()) => report(TokioDiscoveryPublicationEvent::Announced {
                     interface,
-                    app_data_len,
+                    app_data_bytes,
                 }),
                 Err(failure) => {
                     report(TokioDiscoveryPublicationEvent::AnnounceFailed { interface, failure })

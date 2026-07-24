@@ -416,7 +416,7 @@ impl<S: StorageLayout> EngineState<S> {
                     parsed.proof.mtu
                 },
                 signed_data: parsed.signed_data,
-                signed_len: parsed.signed_len,
+                signed_bytes: parsed.signed_bytes,
                 signature: parsed.signature,
             });
             return IngestPacketOutcome::OwesLinkProofVerify;
@@ -476,7 +476,7 @@ impl<S: StorageLayout> EngineState<S> {
         let _ = self.links.set_resource_strategy(&link_id, default_strategy);
         IngestPacketOutcome::LinkActivated {
             link_id,
-            rtt_ms: rtt.millis(),
+            rtt_millis: rtt.millis(),
         }
     }
 

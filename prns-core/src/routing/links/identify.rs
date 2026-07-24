@@ -25,7 +25,7 @@ pub const IDENTIFY_PLAINTEXT_LEN: usize = IDENTITY_PUBLIC_KEY_LEN + Ed25519Signa
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IdentifyDispatch {
-    pub wire_len: usize,
+    pub wire_bytes: usize,
     pub fire_on: InterfaceId,
 }
 
@@ -118,7 +118,7 @@ impl<S: StorageLayout> EngineState<S> {
             .seal(iv, &plaintext, &mut buf[header_len..])
             .map_err(|_| IdentifyWriteError::BufferTooShort)?;
         Ok(IdentifyDispatch {
-            wire_len: header_len + sealed,
+            wire_bytes: header_len + sealed,
             fire_on: *attached_interface,
         })
     }

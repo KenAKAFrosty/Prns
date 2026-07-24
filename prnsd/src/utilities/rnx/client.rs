@@ -117,7 +117,7 @@ async fn execute_remote(
         stdin: args.stdin.as_ref().map(|stdin| stdin.as_bytes().to_vec()),
     })
     .map_err(RnxError::Encode)?;
-    let link_rtt = Duration::from_millis(established.rtt_ms).saturating_mul(4);
+    let link_rtt = Duration::from_millis(established.rtt_millis).saturating_mul(4);
     let response_window = args
         .timeout
         .get()

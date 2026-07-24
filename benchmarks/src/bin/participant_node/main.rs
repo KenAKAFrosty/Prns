@@ -158,7 +158,7 @@ fn segment_compression(profile: &Profile) -> SegmentCompression {
 
 fn responder_resource_strategy(profile: &Profile) -> ResourceStrategy {
     ResourceStrategy::Accept {
-        max_uncompressed_len: 128 * 1024 * 1024,
+        max_uncompressed_bytes: 128 * 1024 * 1024,
         accept_compressed: matches!(
             segment_compression(profile),
             SegmentCompression::Attempt { .. }
@@ -390,7 +390,7 @@ impl ExactMillisHistogram {
         let bin = self
             .bins
             .get_mut(millis as usize)
-            .unwrap_or_else(|| panic!("benchmark RTT {millis}ms exceeds histogram bound"));
+            .unwrap_or_else(|| panic!("benchmark RTT {millis} ms exceeds histogram bound"));
         *bin += 1;
         self.samples += 1;
     }

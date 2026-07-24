@@ -112,17 +112,17 @@ impl<S: StorageLayout> EngineState<S> {
         };
         let policy = if bypasses_strategy {
             GatePolicy::Admit {
-                max_uncompressed_len: (MAX_EFFICIENT_SIZE as u64)
+                max_uncompressed_bytes: (MAX_EFFICIENT_SIZE as u64)
                     .saturating_mul(advertisement.total_segments),
                 accept_compressed: true,
             }
         } else {
             match resource_strategy {
                 ResourceStrategy::Accept {
-                    max_uncompressed_len,
+                    max_uncompressed_bytes,
                     accept_compressed,
                 } => GatePolicy::Admit {
-                    max_uncompressed_len,
+                    max_uncompressed_bytes,
                     accept_compressed,
                 },
                 ResourceStrategy::AcceptIf => GatePolicy::OfferToApp,
@@ -153,19 +153,19 @@ impl<S: StorageLayout> EngineState<S> {
             return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
         }
         if let GatePolicy::Admit {
-            max_uncompressed_len,
+            max_uncompressed_bytes,
             ..
         } = policy
         {
-            if advertisement.data_size > max_uncompressed_len {
+            if advertisement.data_bytes > max_uncompressed_bytes {
                 return IngestPacketOutcome::Ignored(IgnoreReason::StrategyDeclined);
             }
         }
-        let Ok(sealed_transfer_len) = usize::try_from(advertisement.transfer_size) else {
+        let Ok(sealed_transfer_bytes) = usize::try_from(advertisement.transfer_bytes) else {
             return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
         };
         let sdu = resource_sdu(mtu);
-        let part_count = sealed_transfer_len.div_ceil(sdu);
+        let part_count = sealed_transfer_bytes.div_ceil(sdu);
         if part_count == 0 {
             return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
         }
@@ -174,10 +174,10 @@ impl<S: StorageLayout> EngineState<S> {
             salt_nonce: advertisement.salt_nonce,
             compression,
             has_metadata: advertisement.flags.has_metadata,
-            uncompressed_data_len: advertisement.data_size,
+            uncompressed_data_bytes: advertisement.data_bytes,
             segment_index: advertisement.segment_index,
             total_segment_count: advertisement.total_segments,
-            sealed_transfer_len,
+            sealed_transfer_bytes,
             part_count,
             sdu,
             correlation,
@@ -281,7 +281,7 @@ impl<S: StorageLayout> EngineState<S> {
             let mut wrote = false;
             {
                 let mut fill = |slot: &mut [u8]| -> Option<usize> {
-                    let wire_len = write_link_packet(
+                    let wire_bytes = write_link_packet(
                         link_id,
                         key,
                         mtu,
@@ -292,7 +292,7 @@ impl<S: StorageLayout> EngineState<S> {
                     )
                     .ok()?;
                     wrote = true;
-                    Some(wire_len)
+                    Some(wire_bytes)
                 };
                 sink(EngineReaction::Directive(Directive::EmitFrame {
                     target: fire_on,
@@ -310,7 +310,7 @@ impl<S: StorageLayout> EngineState<S> {
 /// What the strategy ladder resolved to: declarative bounds admit inline, `AcceptIf` hands the validated offer up for the host decider's verdict.
 enum GatePolicy {
     Admit {
-        max_uncompressed_len: u64,
+        max_uncompressed_bytes: u64,
         accept_compressed: bool,
     },
     OfferToApp,
@@ -570,8 +570,8 @@ mod tests {
         let part_count = 4usize;
         let names = [0xCDu8; 16];
         let advertisement = ResourceAdvertisement {
-            transfer_size: (part_count * 464) as u64,
-            data_size: 1_000,
+            transfer_bytes: (part_count * 464) as u64,
+            data_bytes: 1_000,
             part_count: part_count as u64,
             hash: ResourceHash::new([0xAB; 32]),
             salt_nonce: SaltNonce::new([0x61; 4]),
@@ -592,7 +592,7 @@ mod tests {
         let mut plaintext = [0u8; 431];
         let plaintext_len = advertisement.write(&mut plaintext).unwrap();
         let mut frame = [0u8; BROADCAST_MTU];
-        let wire_len = write_link_packet(
+        let wire_bytes = write_link_packet(
             &link_id(),
             &link_key(),
             BROADCAST_MTU,
@@ -602,7 +602,7 @@ mod tests {
             &mut frame,
         )
         .unwrap();
-        frame[..wire_len].to_vec()
+        frame[..wire_bytes].to_vec()
     }
 
     #[test]
@@ -649,7 +649,7 @@ mod tests {
 
     fn crafted_split_response_advertisement(
         request_id: crate::routing::links::request::RequestId,
-        data_size: u64,
+        data_bytes: u64,
         total_segments: u64,
     ) -> std::vec::Vec<u8> {
         use crate::routing::links::resources::advertisement::{
@@ -660,8 +660,8 @@ mod tests {
         let part_count = 4usize;
         let names = [0xCDu8; 16];
         let advertisement = ResourceAdvertisement {
-            transfer_size: (part_count * 464) as u64,
-            data_size,
+            transfer_bytes: (part_count * 464) as u64,
+            data_bytes,
             part_count: part_count as u64,
             hash: ResourceHash::new([0xAB; 32]),
             salt_nonce: SaltNonce::new([0x61; 4]),
@@ -682,7 +682,7 @@ mod tests {
         let mut plaintext = [0u8; 431];
         let plaintext_len = advertisement.write(&mut plaintext).unwrap();
         let mut frame = [0u8; BROADCAST_MTU];
-        let wire_len = write_link_packet(
+        let wire_bytes = write_link_packet(
             &link_id(),
             &link_key(),
             BROADCAST_MTU,
@@ -692,7 +692,7 @@ mod tests {
             &mut frame,
         )
         .unwrap();
-        frame[..wire_len].to_vec()
+        frame[..wire_bytes].to_vec()
     }
 
     #[test]
@@ -828,7 +828,7 @@ mod tests {
                 command: EngineCommand::SetResourceStrategy(SetResourceStrategy {
                     link_id: link_id(),
                     strategy: ResourceStrategy::Accept {
-                        max_uncompressed_len: 1 << 20,
+                        max_uncompressed_bytes: 1 << 20,
                         accept_compressed: false,
                     },
                 }),
@@ -856,7 +856,7 @@ mod tests {
                 command: EngineCommand::SetResourceStrategy(SetResourceStrategy {
                     link_id: link_id(),
                     strategy: ResourceStrategy::Accept {
-                        max_uncompressed_len: 100,
+                        max_uncompressed_bytes: 100,
                         accept_compressed: true,
                     },
                 }),
@@ -909,7 +909,7 @@ mod tests {
         assert!(!receiver.incoming_resources.is_empty());
 
         let judged_hash = offers.first().expect("the decider saw the offer").hash;
-        let judged_sealed_len = offers[0].sealed_transfer_len;
+        let judged_sealed_len = offers[0].sealed_transfer_bytes;
         assert!(judged_sealed_len >= payload.len());
         assert_eq!(
             offers,
@@ -917,8 +917,8 @@ mod tests {
                 link_id: link_id(),
                 remote_identity: None,
                 hash: judged_hash,
-                uncompressed_data_len: payload.len() as u64,
-                sealed_transfer_len: judged_sealed_len,
+                uncompressed_data_bytes: payload.len() as u64,
+                sealed_transfer_bytes: judged_sealed_len,
                 part_count: 4,
                 segment_index: 1,
                 total_segment_count: 1,

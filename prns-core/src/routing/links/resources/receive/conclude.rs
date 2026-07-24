@@ -92,7 +92,7 @@ impl<S: StorageLayout> EngineState<S> {
                                 link_id: *link_id,
                                 hash: *hash,
                                 stream,
-                                uncompressed_data_len: state.uncompressed_data_len,
+                                uncompressed_data_bytes: state.uncompressed_data_bytes,
                             },
                         ));
                         true
@@ -218,7 +218,7 @@ impl<S: StorageLayout> EngineState<S> {
             segment_bytes,
         } = segment;
         match self.incoming_assemblies.advance(link_id, segment_bytes) {
-            Some(AssemblyProgress::Complete { total_size }) => {
+            Some(AssemblyProgress::Complete { total_size_bytes }) => {
                 let settled = match correlation {
                     ResourceCorrelation::Response(id) => self.receipts.settle_by_request_id(id),
                     ResourceCorrelation::Request { .. } | ResourceCorrelation::Unsolicited => None,
@@ -234,7 +234,7 @@ impl<S: StorageLayout> EngineState<S> {
                     None => sink(EngineReaction::Journaled(Journaled::ResourceAssembled {
                         link_id: *link_id,
                         original_hash,
-                        total_size,
+                        total_size_bytes,
                     })),
                 }
                 self.incoming_assemblies.clear(link_id);
@@ -318,7 +318,7 @@ impl<S: StorageLayout> EngineState<S> {
         let inflated_whole = if is_split {
             !plaintext.is_empty()
         } else {
-            u64::try_from(plaintext.len()) == Ok(state.uncompressed_data_len)
+            u64::try_from(plaintext.len()) == Ok(state.uncompressed_data_bytes)
         };
         if !inflated_whole {
             self.fail_retired_incoming_resource(
@@ -911,11 +911,11 @@ mod seam_tests {
                     if let EngineReaction::Journaled(Journaled::ResourceNeedsDecompression {
                         hash,
                         stream,
-                        uncompressed_data_len,
+                        uncompressed_data_bytes,
                         ..
                     }) = reaction
                     {
-                        needs = Some((hash, stream.to_vec(), uncompressed_data_len));
+                        needs = Some((hash, stream.to_vec(), uncompressed_data_bytes));
                     }
                 },
             },
@@ -1023,11 +1023,11 @@ mod seam_tests {
                     if let EngineReaction::Journaled(Journaled::ResourceNeedsDecompression {
                         hash,
                         stream,
-                        uncompressed_data_len,
+                        uncompressed_data_bytes,
                         ..
                     }) = reaction
                     {
-                        needs = Some((hash, stream.to_vec(), uncompressed_data_len));
+                        needs = Some((hash, stream.to_vec(), uncompressed_data_bytes));
                     }
                 },
             },
@@ -1531,9 +1531,9 @@ mod seam_tests {
                 }) => segments.push((original_hash, segment_index, total_segments, data.to_vec())),
                 EngineReaction::Journaled(Journaled::ResourceAssembled {
                     original_hash,
-                    total_size,
+                    total_size_bytes,
                     ..
-                }) => assembled.push((original_hash, total_size)),
+                }) => assembled.push((original_hash, total_size_bytes)),
                 _ => {}
             },
         );
@@ -1569,7 +1569,7 @@ mod seam_tests {
             ResourceSegment {
                 index: 1,
                 total_segments: 2,
-                total_data_size: total,
+                total_data_bytes: total,
             },
             2_000,
         );
@@ -1592,7 +1592,7 @@ mod seam_tests {
             ResourceSegment {
                 index: 2,
                 total_segments: 2,
-                total_data_size: total,
+                total_data_bytes: total,
             },
             4_000,
         );
@@ -1662,7 +1662,7 @@ mod seam_tests {
             ResourceSegment {
                 index: 1,
                 total_segments: 2,
-                total_data_size: total,
+                total_data_bytes: total,
             },
             1_900,
         );
@@ -1713,7 +1713,7 @@ mod seam_tests {
             ResourceSegment {
                 index: 2,
                 total_segments: 2,
-                total_data_size: total,
+                total_data_bytes: total,
             },
             2_400,
         );
@@ -1816,7 +1816,7 @@ mod seam_tests {
             crate::routing::links::resources::ResourceSegment {
                 index: 1,
                 total_segments: 2,
-                total_data_size: 4_000,
+                total_data_bytes: 4_000,
             },
             1_900,
         );
@@ -1875,7 +1875,7 @@ mod seam_tests {
             ResourceSegment {
                 index: 1,
                 total_segments: 2,
-                total_data_size: (2 * segment_one.len()) as u64,
+                total_data_bytes: (2 * segment_one.len()) as u64,
             },
             1_900,
         );
@@ -1910,7 +1910,7 @@ mod seam_tests {
             ResourceSegment {
                 index: 2,
                 total_segments: 2,
-                total_data_size: (2 * segment_one.len()) as u64,
+                total_data_bytes: (2 * segment_one.len()) as u64,
             },
             deadline + 100,
         );
@@ -1959,7 +1959,7 @@ mod seam_tests {
                 ResourceSegment {
                     index,
                     total_segments: 2,
-                    total_data_size: total,
+                    total_data_bytes: total,
                 },
                 at,
             );

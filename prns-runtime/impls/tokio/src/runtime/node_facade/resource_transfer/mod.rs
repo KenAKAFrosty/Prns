@@ -12,7 +12,7 @@ use crate::manifold::driver::{
 };
 use crate::routing::links::request::RequestId;
 use crate::routing::links::resources::{
-    sealed_transfer_len, ResourceHash, ResourceStrategy, MAX_EFFICIENT_SIZE, METADATA_PREFIX_LEN,
+    sealed_transfer_bytes, ResourceHash, ResourceStrategy, MAX_EFFICIENT_SIZE, METADATA_PREFIX_LEN,
 };
 use crate::routing::links::LinkId;
 use crate::wire::DestinationHash;
@@ -30,9 +30,9 @@ pub enum ResourceSendError {
 /// RNS 1.4.0 `Resource.AUTO_COMPRESS_MAX_SIZE`
 pub const AUTO_COMPRESS_MAX_LEN: u64 = 64 * 1024 * 1024;
 
-pub(super) const fn resource_segment_decompression_bound(uncompressed_data_len: u64) -> u64 {
-    if uncompressed_data_len < MAX_EFFICIENT_SIZE as u64 {
-        uncompressed_data_len
+pub(super) const fn resource_segment_decompression_bound(uncompressed_data_bytes: u64) -> u64 {
+    if uncompressed_data_bytes < MAX_EFFICIENT_SIZE as u64 {
+        uncompressed_data_bytes
     } else {
         MAX_EFFICIENT_SIZE as u64
     }
@@ -55,16 +55,16 @@ impl SegmentCompression {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResourceReceipt {
     pub original_hash: ResourceHash,
-    pub total_size: u64,
+    pub total_size_bytes: u64,
     /// The transfer's packed metadata (msgpack the app unpacks), when one traveled.
     pub metadata: Option<std::vec::Vec<u8>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResourceProgress {
-    pub transferred: u64,
-    pub total: u64,
-    pub physical_transferred: u64,
+    pub transferred_bytes: u64,
+    pub total_bytes: u64,
+    pub physical_transferred_bytes: u64,
     pub segment_index: u64,
     pub total_segments: u64,
 }
@@ -323,16 +323,16 @@ impl PrnsNodeHandle {
                         physical_transferred.saturating_add(pending.physical_len);
                     if let Some(progress) = &progress {
                         let _ = progress.send(ResourceProgress {
-                            transferred,
-                            total: stream_total_len,
-                            physical_transferred,
+                            transferred_bytes: transferred,
+                            total_bytes: stream_total_len,
+                            physical_transferred_bytes: physical_transferred,
                             segment_index: pending.segment_index,
                             total_segments,
                         });
                     }
                 }
             }
-            let physical_len = sealed_transfer_len(
+            let physical_len = sealed_transfer_bytes(
                 compressed_candidate
                     .as_ref()
                     .map_or(segment_payload_len as usize, HostResourcePayload::len),
@@ -350,7 +350,7 @@ impl PrnsNodeHandle {
                         request_id: answers_request,
                         segment_index,
                         total_segments,
-                        total_data_size: total_len,
+                        total_data_bytes: total_len,
                         completion,
                     },
                 ))
@@ -368,9 +368,9 @@ impl PrnsNodeHandle {
             physical_transferred = physical_transferred.saturating_add(pending.physical_len);
             if let Some(progress) = &progress {
                 let _ = progress.send(ResourceProgress {
-                    transferred,
-                    total: stream_total_len,
-                    physical_transferred,
+                    transferred_bytes: transferred,
+                    total_bytes: stream_total_len,
+                    physical_transferred_bytes: physical_transferred,
                     segment_index: pending.segment_index,
                     total_segments,
                 });
@@ -475,12 +475,12 @@ impl PreparedResourceReceiver {
                 }
                 Some(ResourceInbound::Complete {
                     original_hash,
-                    total_size,
+                    total_size_bytes,
                 }) => {
                     sink.flush().await.map_err(ResourceReceiveError::Sink)?;
                     return Ok(ResourceReceipt {
                         original_hash,
-                        total_size,
+                        total_size_bytes,
                         metadata,
                     });
                 }

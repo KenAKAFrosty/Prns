@@ -38,6 +38,12 @@ test('introspection, routing control, and blackhole surfaces', async () => {
     assert.ok(route);
     assert.equal(route.via ?? null, null);
     assert.equal(route.hops, 1);
+    assert.equal(typeof route.learnedAtMillis, 'number');
+    assert.equal(typeof route.lastRelayedAtMillis, 'number');
+    assert.equal(typeof route.expiresAtMillis, 'number');
+    assert.equal(route.learnedAt, route.learnedAtMillis);
+    assert.equal(route.lastRelayedAt, route.lastRelayedAtMillis);
+    assert.equal(route.expiresAt, route.expiresAtMillis);
 
     const identityHash = await client.destinationIdentityHash(dest);
     assert.ok(identityHash);

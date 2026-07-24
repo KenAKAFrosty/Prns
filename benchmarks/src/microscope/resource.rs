@@ -93,7 +93,7 @@ impl ResourceCycle {
             ResourceStrategy::Accept {
                 // Admits a bulk transfer's total: every segment advertises the original total
                 // (RNS 1.4.0 parity), so the ceiling is the whole resource, not one segment.
-                max_uncompressed_len: 256 * 1024 * 1024,
+                max_uncompressed_bytes: 256 * 1024 * 1024,
                 accept_compressed: false,
             },
         ));
@@ -292,12 +292,12 @@ impl ResourceCycle {
         segment_index: u64,
         total_segments: u64,
         len: usize,
-        total_data_size: u64,
+        total_data_bytes: u64,
         profile: &mut ResourceTransferProfile,
     ) {
         let begun = Instant::now();
         let offer =
-            self.send_resource_offer(id, segment_index, total_segments, len, total_data_size);
+            self.send_resource_offer(id, segment_index, total_segments, len, total_data_bytes);
         profile.sender_offer += begun.elapsed();
         profile.advertisements += 1;
         profile.wire_bytes += offer.len() as u64;
@@ -366,7 +366,7 @@ impl ResourceCycle {
         segment_index: u64,
         total_segments: u64,
         len: usize,
-        total_data_size: u64,
+        total_data_bytes: u64,
     ) -> Vec<u8> {
         let now = self.tick();
         let Self {
@@ -393,7 +393,7 @@ impl ResourceCycle {
             personal_rns::routing::links::resources::ResourceSegment {
                 index: segment_index,
                 total_segments,
-                total_data_size,
+                total_data_bytes,
             },
             now,
             &mut |bytes| initiator_entropy.fill(bytes),

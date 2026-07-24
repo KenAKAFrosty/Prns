@@ -359,7 +359,7 @@ class BleLink(private val context: Context) {
                 NativeBridge.nativeBleControlIn(connId, direct, value.size)
             }
         if (!accepted) {
-            Log.w(TAG, "inbound BLE queue full or closed[$connId] ${value.size}B")
+            Log.w(TAG, "inbound Bluetooth LE queue full or closed[$connId] ${value.size} B")
         }
         return accepted
     }

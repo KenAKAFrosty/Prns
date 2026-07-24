@@ -35,7 +35,7 @@ interfaces-section-hot-note = Prns interfaces are hot-swappable: add, remove, or
 
 interfaces-radio-label = Radios
 interfaces-radio-headline = Proximity links for devices and boards
-interfaces-radio-body = BLE Auto-interface, ESP-NOW, and LoRa bring nearby devices, board fleets, and long-range RF links into one Reticulum mesh.
+interfaces-radio-body = Bluetooth LE Auto-interface, ESP-NOW, and LoRa bring nearby devices, board fleets, and long-range RF links into one Reticulum mesh.
 
 interfaces-lan-label = LAN
 interfaces-lan-headline = Auto-discovered local-link peers

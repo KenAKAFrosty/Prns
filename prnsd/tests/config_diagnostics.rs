@@ -111,6 +111,11 @@ fn remaining_follow_ons_warn_while_blackhole_exchange_does_not() {
                 let ready = line.contains("\"event\":\"daemon_ready\"");
                 lines.push(line);
                 if ready {
+                    while let Ok(line) =
+                        line_receiver.recv_timeout(std::time::Duration::from_millis(200))
+                    {
+                        lines.push(line);
+                    }
                     break;
                 }
             }
@@ -123,6 +128,7 @@ fn remaining_follow_ons_warn_while_blackhole_exchange_does_not() {
     let _ = child.kill();
     child.wait().unwrap();
     reader.join().unwrap();
+    lines.extend(line_receiver.try_iter());
     let rendered = lines.join("\n");
     assert!(
         rendered.contains("\"event\":\"config_warning\""),
@@ -434,15 +440,22 @@ fn an_idle_i2p_interface_constructs_before_ready_without_a_sam_router() {
         let ready = line.contains("\"event\":\"daemon_ready\"");
         lines.push(line);
         if ready {
+            while let Ok(line) = line_rx.recv_timeout(std::time::Duration::from_millis(200)) {
+                lines.push(line);
+            }
             break;
         }
     }
     let _ = child.kill();
     child.wait().unwrap();
     reader.join().unwrap();
+    lines.extend(line_rx.try_iter());
     let rendered = lines.join("\n");
 
-    assert!(rendered.contains("\"event\":\"interface_started\""));
+    assert!(
+        rendered.contains("\"event\":\"interface_started\""),
+        "missing interface-start event in daemon output:\n{rendered}"
+    );
     assert!(rendered.contains("\"medium\":\"i2p\""));
     assert!(rendered.contains("\"event\":\"daemon_ready\""));
     assert!(rendered.contains("\"online\":1"));

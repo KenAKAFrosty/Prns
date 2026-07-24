@@ -41,9 +41,9 @@ export type PrnsNodeEvent =
   | { type: 'selfRatchetRotated'; destination: Buffer }
   | { type: 'announceHeldDropped'; destination: Buffer; sourceInterface: Buffer; cause: string }
   | { type: 'linkInterfaceMismatch'; linkId: Buffer; attachedInterface: Buffer; arrivedOn: Buffer }
-  | { type: 'resourceAssembled'; linkId: Buffer; originalHash: Buffer; totalSize: number }
+  | { type: 'resourceAssembled'; linkId: Buffer; originalHash: Buffer; totalSizeBytes: number; totalSize: number }
   | { type: 'resourceFailed'; linkId: Buffer; hash: Buffer; cause: string }
-  | { type: 'resourceSendProgress'; linkId: Buffer; transferred: number; total: number; physicalTransferred: number; segmentIndex: number; totalSegments: number }
+  | { type: 'resourceSendProgress'; linkId: Buffer; transferredBytes: number; totalBytes: number; physicalTransferredBytes: number; transferred: number; total: number; physicalTransferred: number; segmentIndex: number; totalSegments: number }
   | { type: 'routeExpired' | 'routeEvicted' | 'routeInterfaceGone' | 'routeDropped'; destination: Buffer }
   | { type: 'delivered' | 'message'; detail: string }
   | { type: 'eventOverflow'; droppedDiagnostics: number }
@@ -77,6 +77,8 @@ export declare class PrnsNode {
   attachConfig(configText: string): Promise<ConfigAttachResult>
   attachAutoWifi(): InterfaceHandle
   attachAutoUsb(options?: AutoUsbOptions | undefined | null): InterfaceHandle
+  attachAutoBluetoothLe(options: AutoBluetoothLeOptions): InterfaceHandle
+  /** Deprecated compatibility alias for `attachAutoBluetoothLe`. */
   attachAutoBle(options: AutoBleOptions): InterfaceHandle
   sendResource(linkId: Buffer, data: Buffer, options?: SendResourceOptions | undefined | null): Promise<void>
   sendResourceFile(linkId: Buffer, path: string, options?: SendResourceOptions | undefined | null): Promise<void>
@@ -111,13 +113,24 @@ export interface AnnounceOptions {
 
 export interface AnnounceRateInfo {
   destination: Buffer
+  lastAllowedAnnounceAtMillis: number
+  blockedUntilMillis: number
+  observedAtMillis: Array<number>
+  /** Deprecated compatibility alias for `lastAllowedAnnounceAtMillis`. */
   lastAllowedAnnounceAt: number
+  /** Deprecated compatibility alias for `blockedUntilMillis`. */
   blockedUntil: number
   rateViolations: number
+  /** Deprecated compatibility alias for `observedAtMillis`. */
   observedAt: Array<number>
 }
 
 export interface AutoBleOptions {
+  identityPath?: string
+  identitySecret?: Buffer
+}
+
+export interface AutoBluetoothLeOptions {
   identityPath?: string
   identitySecret?: Buffer
 }
@@ -224,6 +237,9 @@ export interface PathInfo {
 }
 
 export interface RequestOptions {
+  /** Request timeout in milliseconds. */
+  timeoutMillis?: number
+  /** Deprecated compatibility alias for `timeoutMillis`. */
   timeoutMs?: number
 }
 
@@ -244,17 +260,24 @@ export interface ResourceData {
   data: Buffer
   metadata?: Buffer
   originalHash: Buffer
+  totalSizeBytes: number
+  /** Deprecated compatibility alias for `totalSizeBytes`. */
   totalSize: number
 }
 
 export interface ResourceFileReceipt {
   metadata?: Buffer
   originalHash: Buffer
+  totalSizeBytes: number
+  /** Deprecated compatibility alias for `totalSizeBytes`. */
   totalSize: number
 }
 
 export interface ResourceStrategySpec {
   accept: ResourceAcceptName
+  /** Maximum accepted uncompressed payload size in bytes. */
+  maxUncompressedBytes?: number
+  /** Deprecated compatibility alias for `maxUncompressedBytes`. */
   maxUncompressedLen?: number
   acceptCompressed?: boolean
 }
@@ -275,8 +298,14 @@ export interface RouteInfo {
   hops: number
   via?: Buffer
   interfaceId: Buffer
+  learnedAtMillis: number
+  lastRelayedAtMillis: number
+  expiresAtMillis: number
+  /** Deprecated compatibility alias for `learnedAtMillis`. */
   learnedAt: number
+  /** Deprecated compatibility alias for `lastRelayedAtMillis`. */
   lastRelayedAt: number
+  /** Deprecated compatibility alias for `expiresAtMillis`. */
   expiresAt: number
 }
 

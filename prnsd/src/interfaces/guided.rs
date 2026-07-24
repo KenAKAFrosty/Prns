@@ -511,12 +511,12 @@ fn edit_radios(radios: &mut Vec<RNodeMultiRadioDefinition>) -> Result<bool, Inte
         println!("RNodeMulti radio members");
         for (index, radio) in radios.iter().enumerate() {
             println!(
-                "  {}. {} · vport {} · {} Hz · {} Hz · SF{} · CR{} · {} dBm",
+                "  {}. {} · vport {} · {} · {} · SF{} · 4/{} · {} dBm",
                 index + 1,
                 radio.name(),
                 radio.vport(),
-                radio.frequency(),
-                radio.bandwidth(),
+                format_si_frequency(radio.frequency()),
+                format_si_frequency(u64::from(radio.bandwidth())),
                 radio.spreading_factor(),
                 radio.coding_rate(),
                 radio.txpower()
@@ -567,15 +567,15 @@ fn prompt_radio(
     let name = prompt_default("Name", current.map(|radio| radio.name().as_str()))?;
     let vport = parse_default("Vport", current.map(RNodeMultiRadioDefinition::vport))?;
     let frequency = parse_default(
-        "Frequency Hz",
+        "Frequency (Hz)",
         current.map(RNodeMultiRadioDefinition::frequency),
     )?;
     let bandwidth = parse_default(
-        "Bandwidth Hz",
+        "Bandwidth (Hz)",
         current.map(RNodeMultiRadioDefinition::bandwidth),
     )?;
     let txpower = parse_default(
-        "TX power dBm",
+        "Transmit power (dBm)",
         current.map(RNodeMultiRadioDefinition::txpower),
     )?;
     let spreading_factor = parse_default(
@@ -620,6 +620,29 @@ where
         .map_err(|_| InterfacesError::Usage(super::error::InterfacesUsageError::InvalidSelection))
 }
 
+fn format_si_frequency(hertz: u64) -> String {
+    if hertz >= 1_000_000 {
+        format_scaled_quantity(hertz, 1_000_000, 6, "MHz")
+    } else if hertz >= 1_000 {
+        format_scaled_quantity(hertz, 1_000, 3, "kHz")
+    } else {
+        format!("{hertz} Hz")
+    }
+}
+
+fn format_scaled_quantity(value: u64, scale: u64, decimal_places: usize, unit: &str) -> String {
+    let whole = value / scale;
+    let remainder = value % scale;
+    if remainder == 0 {
+        return format!("{whole} {unit}");
+    }
+    let mut fractional = format!("{remainder:0decimal_places$}");
+    while fractional.ends_with('0') {
+        fractional.pop();
+    }
+    format!("{whole}.{fractional} {unit}")
+}
+
 fn display_setting(value: &InterfaceSettingValue) -> String {
     match value {
         InterfaceSettingValue::Bool(value) => if *value { "Yes" } else { "No" }.to_string(),
@@ -638,7 +661,15 @@ mod tests {
     };
     use prns_config::{parse_and_plan, InterfaceKind};
 
-    use super::SettingDraft;
+    use super::{format_si_frequency, SettingDraft};
+
+    #[test]
+    fn radio_frequencies_use_natural_si_units_without_losing_precision() {
+        assert_eq!(format_si_frequency(915_000_000), "915 MHz");
+        assert_eq!(format_si_frequency(868_100_000), "868.1 MHz");
+        assert_eq!(format_si_frequency(125_000), "125 kHz");
+        assert_eq!(format_si_frequency(867), "867 Hz");
+    }
 
     #[test]
     fn configured_settings_sort_before_unset_settings_within_their_category() {

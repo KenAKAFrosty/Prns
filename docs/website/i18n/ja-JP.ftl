@@ -28,7 +28,7 @@ interfaces-section-hot-note = Prns のインターフェースはホットスワ
 
 interfaces-radio-label = 無線
 interfaces-radio-headline = デバイスとボード向けの近距離リンク
-interfaces-radio-body = BLE Auto-interface、ESP-NOW、LoRa が、近くのデバイス、ボード群、長距離リンクをひとつの Reticulum メッシュへつなぎます。
+interfaces-radio-body = Bluetooth LE Auto-interface、ESP-NOW、LoRa が、近くのデバイス、ボード群、長距離リンクをひとつの Reticulum メッシュへつなぎます。
 
 interfaces-lan-label = LAN
 interfaces-lan-headline = 自動発見されるローカルリンクのピア

@@ -201,7 +201,7 @@ mod tests {
             Some(InterfaceKind::LoRa) => Some((CardKind::LoRa, card_label("LoRa"))),
             Some(InterfaceKind::UsbAutoDevice) => Some((CardKind::Usb, card_label("USB"))),
             Some(InterfaceKind::BluetoothAuto) => Some((CardKind::Ble, card_label("BLE"))),
-            Some(InterfaceKind::AutoWifi) => Some((CardKind::Wifi, card_label("WiFi/LAN"))),
+            Some(InterfaceKind::AutoWifi) => Some((CardKind::Wifi, card_label("Wi-Fi/LAN"))),
             _ => None,
         });
 
@@ -267,7 +267,7 @@ mod tests {
         member.membership = Membership::FleetMember { supervisor_id };
 
         let cards: heapless::Vec<Card, 4> = snapshots_to_cards(&[supervisor, member], |id| {
-            (id == supervisor_id).then_some((CardKind::Wifi, card_label("WiFi/LAN")))
+            (id == supervisor_id).then_some((CardKind::Wifi, card_label("Wi-Fi/LAN")))
         });
 
         assert_eq!(cards.len(), 1);
@@ -280,7 +280,7 @@ mod tests {
         let card = Card {
             id: supervisor_id,
             kind: CardKind::Wifi,
-            label: card_label("WiFi/LAN"),
+            label: card_label("Wi-Fi/LAN"),
             liveness: Liveness::Dormant,
             failure_reason: None,
             tx_bytes: 0,
@@ -309,7 +309,7 @@ mod tests {
         member.id = member_id;
         member.membership = Membership::FleetMember { supervisor_id };
         let cards: heapless::Vec<Card, 1> = snapshots_to_cards(&[supervisor, member], |id| {
-            (id == supervisor_id).then_some((CardKind::Wifi, card_label("WiFi/LAN")))
+            (id == supervisor_id).then_some((CardKind::Wifi, card_label("Wi-Fi/LAN")))
         });
 
         let details = wifi_interface_menu_details(

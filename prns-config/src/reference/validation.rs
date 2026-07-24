@@ -845,7 +845,7 @@ fn validate_rnode_ble_target(
         ),
         format!("{interface_path} > {port_key}"),
         Some(port.to_string()),
-        "the RNode BLE target looks like an address but contains an invalid octet",
+        "the RNode Bluetooth LE target looks like an address but contains an invalid octet",
         Some("ble://, ble:// followed by an exact device name, or six hexadecimal octets separated by colons".to_string()),
         format!(
             "set `{port_key} = ble://AA:BB:CC:DD:EE:FF` or `{port_key} = ble://RNode 1234` for [[{}]]",

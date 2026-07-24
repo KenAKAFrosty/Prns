@@ -24,14 +24,14 @@ pub struct InterfaceForwardingPolicy {
 pub struct IngressControlPolicy {
     pub enabled: bool,
     pub max_held_announces: usize,
-    pub new_interface_ms: u64,
+    pub new_interface_millis: u64,
     pub announce_burst_frequency_new: FrequencyMilliHertz,
     pub announce_burst_frequency: FrequencyMilliHertz,
     pub path_request_burst_frequency_new: FrequencyMilliHertz,
     pub path_request_burst_frequency: FrequencyMilliHertz,
-    pub burst_hold_ms: u64,
-    pub burst_penalty_ms: u64,
-    pub held_release_interval_ms: u64,
+    pub burst_hold_millis: u64,
+    pub burst_penalty_millis: u64,
+    pub held_release_interval_millis: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,14 +56,14 @@ impl InterfaceCommonPolicy {
         ingress_control: IngressControlPolicy {
             enabled: true,
             max_held_announces: 256,
-            new_interface_ms: 2 * 60 * 60 * 1_000,
+            new_interface_millis: 2 * 60 * 60 * 1_000,
             announce_burst_frequency_new: FrequencyMilliHertz::new(3_000),
             announce_burst_frequency: FrequencyMilliHertz::new(10_000),
             path_request_burst_frequency_new: FrequencyMilliHertz::new(3_000),
             path_request_burst_frequency: FrequencyMilliHertz::new(8_000),
-            burst_hold_ms: 15_000,
-            burst_penalty_ms: 15_000,
-            held_release_interval_ms: 5_000,
+            burst_hold_millis: 15_000,
+            burst_penalty_millis: 15_000,
+            held_release_interval_millis: 5_000,
         },
         path_request_egress: PathRequestEgressControl {
             enabled: false,

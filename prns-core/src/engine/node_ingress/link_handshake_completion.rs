@@ -32,7 +32,7 @@ impl<S: StorageLayout> EngineState<S> {
             command_id,
             Settlement::EstablishLink(Ok(LinkEstablished {
                 link_id,
-                rtt_ms: rtt.millis(),
+                rtt_millis: rtt.millis(),
             })),
         );
     }

@@ -57,7 +57,7 @@ fn rate_reading(
     now: InstantMillis,
     policy: IngressControlPolicy,
 ) -> RateReading {
-    let limit = if now.0.saturating_sub(row.created_at.0) < policy.new_interface_ms {
+    let limit = if now.0.saturating_sub(row.created_at.0) < policy.new_interface_millis {
         policy.announce_burst_frequency_new.get()
     } else {
         policy.announce_burst_frequency.get()
@@ -142,7 +142,7 @@ impl<C: InterfaceAnnounceLimitTable> InterfaceAnnounceLimits<C> {
         match row.burst {
             BurstState::Bursting { since } => {
                 if reading == RateReading::UnderLimit
-                    && now.0 >= since.0.saturating_add(policy.burst_hold_ms)
+                    && now.0 >= since.0.saturating_add(policy.burst_hold_millis)
                     && row.window_count >= BURST_CLEAR_MIN_SAMPLES
                 {
                     row.burst = BurstState::Calm;
@@ -153,7 +153,7 @@ impl<C: InterfaceAnnounceLimitTable> InterfaceAnnounceLimits<C> {
                 if reading == RateReading::OverLimit {
                     row.burst = BurstState::Bursting { since: now };
                     row.next_held_release_at =
-                        InstantMillis(now.0.saturating_add(policy.burst_penalty_ms));
+                        InstantMillis(now.0.saturating_add(policy.burst_penalty_millis));
                     true
                 } else {
                     false
@@ -193,7 +193,7 @@ impl<C: InterfaceAnnounceLimitTable> InterfaceAnnounceLimits<C> {
             .find(|row| row.interface == interface)
         {
             row.next_held_release_at =
-                InstantMillis(now.0.saturating_add(policy.held_release_interval_ms));
+                InstantMillis(now.0.saturating_add(policy.held_release_interval_millis));
         }
     }
 

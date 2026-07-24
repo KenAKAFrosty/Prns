@@ -118,7 +118,7 @@ pub use prns_interfaces_tokio::interface_menu::DefaultAutoInterfaces;
 pub use usb_auto::AutoUsb;
 
 #[cfg(all(feature = "bluetooth-auto", feature = "tokio-host"))]
-pub use bluetooth_auto::{AttachedBle, AutoBle};
+pub use bluetooth_auto::{AttachedBle, AttachedBluetoothLe, AutoBle, AutoBluetoothLe};
 
 #[cfg(all(feature = "interface-discovery", feature = "tokio-host"))]
 pub use prns_interfaces_tokio::interface_discovery::{

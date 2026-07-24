@@ -25,7 +25,7 @@ test('auto interfaces attach and tear down without hardware', async () => {
     await node.ready();
     const wifi = node.attachAutoWifi();
     const usb = node.attachAutoUsb({ baud: 115200 });
-    const ble = node.attachAutoBle({ identitySecret: Buffer.alloc(16, 0x42) });
+    const ble = node.attachAutoBluetoothLe({ identitySecret: Buffer.alloc(16, 0x42) });
     await sleep(200);
     const interfaces = node.interfaces();
     assert.ok(interfaces.length >= 1);
@@ -41,48 +41,57 @@ test('auto interfaces attach and tear down without hardware', async () => {
 });
 
 test('event overflow drops diagnostics and reports the gap', async () => {
-  const clientEvents: AnyEvent[] = [];
-  const server = startNode(
-    {
-      destinations: Array.from({ length: 65 }, (_, index) => ({
-        appName: 'prnsnapi',
-        aspects: ['overflow', String(index)],
-      })),
-    },
-    () => {}
-  );
+  const events: AnyEvent[] = [];
   let blockFirstAnnounce = true;
-  const client = startNode({ eventQueueLimit: 1 }, (e) => {
-    clientEvents.push(e);
-    if (blockFirstAnnounce && e.type === 'announce') {
+  const node = startNode({ eventQueueLimit: 1 }, (event) => {
+    events.push(event);
+    if (blockFirstAnnounce && event.type === 'announce') {
       blockFirstAnnounce = false;
-      const releaseAt = Date.now() + 400;
+      const releaseAt = Date.now() + 1_500;
       while (Date.now() < releaseAt) {
-        /* Keep the callback queue blocked while Rust emits diagnostics. */
+        /* Keep JavaScript blocked while independent peers emit diagnostics. */
       }
     }
   });
+  const peers = Array.from({ length: 16 }, (_, index) =>
+    startNode(
+      {
+        destinations: [{ appName: 'prnsnapi', aspects: ['overflow', String(index)] }],
+      },
+      () => {}
+    )
+  );
   try {
-    await server.ready();
-    const destinations = server.destinationHashes;
-    await server.attachTcpServer({ bind: '127.0.0.1:14271' });
-    await client.ready();
-    await client.attachTcpClient({ target: '127.0.0.1:14271' });
+    await node.ready();
+    await node.attachTcpServer({ bind: '127.0.0.1:14271' });
+    await Promise.all(
+      peers.map(async (peer) => {
+        await peer.ready();
+        await peer.attachTcpClient({ target: '127.0.0.1:14271' });
+      })
+    );
     await sleep(500);
-    const pending = destinations.slice(0, 64).map((destination) => server.announce(destination));
-    await Promise.all(pending);
+    await Promise.all(peers.map((peer) => peer.announce(peer.destinationHashes[0])));
     await sleep(500);
-    await server.announce(destinations[64]);
+    await node.stop();
     await waitFor(
-      () => clientEvents.some((e) => e.type === 'eventOverflow'),
+      () => events.some((event) => event.type === 'eventOverflow'),
       5000,
       'event overflow'
-    );
-    const overflow = clientEvents.find((e) => e.type === 'eventOverflow');
+    ).catch((error: Error) => {
+      const counts = Object.entries(
+        events.reduce<Record<string, number>>((byType, event) => {
+          byType[event.type] = (byType[event.type] ?? 0) + 1;
+          return byType;
+        }, {})
+      );
+      throw new Error(`${error.message}; received ${JSON.stringify(Object.fromEntries(counts))}`);
+    });
+    const overflow = events.find((event) => event.type === 'eventOverflow');
     assert.ok(overflow, 'missing eventOverflow after diagnostic shedding');
     assert.ok(overflow.droppedDiagnostics >= 1);
   } finally {
-    await client.stop().catch(() => {});
-    await server.stop().catch(() => {});
+    await node.stop().catch(() => {});
+    await Promise.all(peers.map((peer) => peer.stop().catch(() => {})));
   }
 });

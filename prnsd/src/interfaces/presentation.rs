@@ -380,7 +380,7 @@ pub(super) fn friendly_kind(kind: InterfaceKind) -> &'static str {
         InterfaceKind::I2p => "I2P",
         InterfaceKind::Weave => "Weave",
         InterfaceKind::PrnsUsbAuto => "USB Auto",
-        InterfaceKind::PrnsBluetoothAuto => "Bluetooth / BLE Auto",
+        InterfaceKind::PrnsBluetoothAuto => "Bluetooth LE Auto",
         InterfaceKind::PrnsWebSocketClient => "WebSocket client",
         InterfaceKind::PrnsWebSocketServer => "WebSocket server",
     }

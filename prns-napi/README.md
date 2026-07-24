@@ -74,16 +74,22 @@ Programmatic constructors cover the common families:
 | `attachTcpServer({ bind })` / `attachTcpClient({ target })` | TCP |
 | `attachUdp({ local, peer })` | UDP |
 | `attachSharedInstanceServer({ port? })` / `attachSharedInstanceClient({ port? })` | RNS shared instance |
-| `attachAutoWifi()` / `attachAutoBle({ identityPath })` / `attachAutoUsb({ baud? })` | Auto discovery radios |
+| `attachAutoWifi()` / `attachAutoBluetoothLe({ identityPath })` / `attachAutoUsb({ baud? })` | Auto discovery radios |
 
 `attachConfig(configText)` accepts the `[interfaces]` section of a standard RNS config file and stands up every interface it declares — TCP, UDP, serial, KISS, AX.25, RNode, backbone, WebSocket, I2P, and the auto radio families — through the same code paths the `prnsd` daemon uses.
 
 ## Beyond packets
 
 - **Links and requests**: `establishLink`, `request(linkId, requestPathHash(path), data)`, and server-side `requestPaths` registration with `respond(event.token, bytes)` / `respondFile` — the RNS request/response pattern end to end.
-- **Resources**: `sendResource(File)` and `receiveResource(File)` move payloads of any size over a link with metadata, optional compression control, and `resourceSendProgress` events; acceptance is governed per destination or per link via `resourceStrategy`.
+- **Resources**: `sendResource(File)` and `receiveResource(File)` move payloads of any size over a link with metadata, optional compression control, and `resourceSendProgress` events; byte quantities use explicit names such as `totalSizeBytes` and `transferredBytes`, and acceptance is governed per destination or per link via `resourceStrategy`.
 - **Observability**: `interfaces()`, `routes()`, `linkCount()`, `announceRates()`, and `destinationIdentity()` read the live node; `dropRoute`, `clearAnnounceQueues`, and the blackhole and retention families manage it.
 - **Backpressure**: a slow event handler can never stall the engine — past `eventQueueLimit` the node sheds diagnostic events and reports the gap with a single `eventOverflow` event, while data-plane events always deliver.
+
+Public quantities carry their unit in the property name: byte counts use `*Bytes`,
+and durations or timestamps use `*Millis`. The older unsuffixed and `*Ms`
+properties remain accepted or emitted as compatibility aliases throughout the
+0.2.x series; new code should use the unit-bearing names. `attachAutoBle` is
+likewise retained as an alias for the canonical `attachAutoBluetoothLe` name.
 
 ## License
 

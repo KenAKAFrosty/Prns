@@ -50,7 +50,7 @@ pub(super) fn build_wifi(
     Option<Stack<'static>>,
     Option<EspNow<'static>>,
 ) {
-    // Trim WiFi RX buffering from the defaults (static_rx 10, rx_ba_win 6) so the full radio stack +
+    // Trim Wi-Fi RX buffering from the defaults (static_rx 10, rx_ba_win 6) so the full radio stack +
     // SoftAP fits in internal DMA SRAM: each static RX buffer is ~1.6 KiB, internal and never freed,
     // and Reticulum's small frames don't need deep buffering. The captive portal's DNS socket needs
     // AP join-time margin too, so this stays one notch tighter than the earlier 4/3 floor. (The
@@ -72,7 +72,7 @@ pub(super) fn build_wifi(
     // the connect loop; otherwise the keepalive task just owns the controller, no scanning.
     let station_segment: Option<AutoWifiSegment<'static>> = if config.has_station() {
         let link_local = wifi_auto_contract::link_local_from_mac(MacAddress::new(mac));
-        // Dual-stack: the v6 link-local carries WiFi-auto's discovery/data UDP; v4 over DHCP gives
+        // Dual-stack: the v6 link-local carries Wi-Fi Auto's discovery/data UDP; v4 over DHCP gives
         // the board a routable address to dial a Reticulum TCP node by ip:port.
         let mut net_config = NetConfig::dhcpv4(DhcpConfig::default());
         net_config.ipv6 = ConfigV6::Static(StaticConfigV6 {
@@ -136,7 +136,7 @@ pub(super) fn build_wifi(
     };
     let tcp_stack = station_segment.as_ref().map(|segment| segment.stack);
 
-    // In explicit SoftAP mode, the AP is the primary WiFi-auto segment and the station (if any) folds
+    // In explicit SoftAP mode, the AP is the primary Wi-Fi Auto segment and the station (if any) folds
     // in as the opportunistic secondary. The AP link-local is the station MAC + 1 (build_ap_netif
     // derives it from `mac`), and the supervisor hashes its peering token over that AP link-local, so
     // it takes `ap_mac`.
@@ -145,7 +145,7 @@ pub(super) fn build_wifi(
         let mut ap_mac = mac;
         ap_mac[5] = ap_mac[5].wrapping_add(1);
         let ap_stack = build_ap_netif(spawner, interfaces.access_point, mac);
-        // Hand joiners a 192.168.4.x lease with the SoftAP as their default gateway, so their WiFi-auto
+        // Hand joiners a 192.168.4.x lease with the SoftAP as their default gateway, so their Wi-Fi Auto
         // client auto-dials the TCP rendezvous on the gateway (multicast can't cross the SoftAP).
         spawner.spawn(dhcp_server_task(ap_stack).expect("dhcp server task fits"));
         spawner.spawn(dns_server_task(ap_stack).expect("dns server task fits"));
@@ -213,8 +213,8 @@ pub(super) fn build_wifi(
 }
 
 #[cfg(feature = "wifi-auto")]
-/// Hold the WiFi controller alive with no AP association — dropping it would stop the radio — so
-/// ESP-NOW keeps the WiFi MAC up on a fixed channel when no SSID is configured. The radio was started
+/// Hold the Wi-Fi controller alive with no AP association — dropping it would stop the radio — so
+/// ESP-NOW keeps the Wi-Fi MAC up on a fixed channel when no SSID is configured. The radio was started
 /// synchronously by [`build_wifi`] before this task takes the controller.
 #[embassy_executor::task]
 async fn wifi_radio_keepalive_task(_controller: WifiController<'static>) -> ! {
@@ -240,7 +240,7 @@ const ESPNOW_SEND_RETRIES: u8 = 8;
 #[cfg(feature = "wifi-auto")]
 const ESPNOW_SEND_RETRY_DELAY: Duration = Duration::from_millis(5);
 /// The pinned ESP-NOW PHY rate: 802.11g 12 Mbps, QPSK rate-1/2 OFDM. HT/HE *broadcast* RX is
-/// hard-pinned to 1M DSSS by the closed WiFi blob (no public override) so MCS rates transmit but
+/// hard-pinned to 1 Mbps DSSS by the closed Wi-Fi blob (no public override) so MCS rates transmit but
 /// never receive; the legacy OFDM-g family is the broadcast-compatible way to keep OFDM's good
 /// multipath, and 12M is the QPSK-1/2 sweet spot (good range at ~the USB-feed budget).
 ///
@@ -308,8 +308,8 @@ impl espnow_core::EspNowRadio for EspNowAdapter {
     }
 }
 
-/// A node pinned to a WiFi access point is channel-locked to it (ESP-NOW must follow the station's
-/// channel, never retune and break the association); a node with no WiFi configured is free to sit on
+/// A node pinned to a Wi-Fi access point is channel-locked to it (ESP-NOW must follow the station's
+/// channel, never retune and break the association); a node with no Wi-Fi configured is free to sit on
 /// the default rendezvous channel. The locked/free seam a future scan-and-follow layer extends.
 #[cfg(feature = "wifi-auto")]
 pub(super) fn espnow_channel_policy(station_configured: bool) -> ChannelPolicy {

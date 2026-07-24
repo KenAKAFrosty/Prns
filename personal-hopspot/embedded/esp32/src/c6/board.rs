@@ -17,7 +17,7 @@ pub(crate) const ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x13Personal Hopspot C6\xc
 pub(crate) const NODE_ANNOUNCE_APP_DATA: &[u8] = b"Personal Hopspot C6";
 pub(crate) const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"hopsp-c6");
 
-// BLE needs heap for esp-radio's controller + trouble-host's boxed GATT clients/reassemblers; 64 KB
+// Bluetooth LE needs heap for esp-radio's controller + trouble-host's boxed GATT clients/reassemblers; 64 KiB
 // covers it with margin. Kept off the larger end so the leftover linker `.stack` region stays big
 // enough for the BLE construction transient (the single-core main task runs on `.stack` — esp-rtos
 // gives it no separate task stack, so RAM spent on the heap is RAM taken from that one stack).

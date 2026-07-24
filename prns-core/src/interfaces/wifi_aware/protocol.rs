@@ -1,4 +1,4 @@
-/// Distinct from the WiFi Auto and WiFi Direct rendezvous ports so their listeners can coexist.
+/// Distinct from the Wi-Fi Auto and Wi-Fi Direct rendezvous ports so their listeners can coexist.
 pub const AWARE_RENDEZVOUS_PORT: u16 = 42_720;
 
 pub const FAMILY_TAG: &[u8] = b"wifi-aware";

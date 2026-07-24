@@ -201,7 +201,7 @@ mod tests {
             },
         )
         .unwrap();
-        let sealed = &transfer[..built.sealed_transfer_len];
+        let sealed = &transfer[..built.sealed_transfer_bytes];
         let names = &hashmap[..built.part_count * MAP_HASH_LEN];
 
         let mut reassembled = [0u8; 2_048];
@@ -213,7 +213,7 @@ mod tests {
         }
 
         let opened =
-            open_transfer(&link_key(), &mut reassembled[..built.sealed_transfer_len]).unwrap();
+            open_transfer(&link_key(), &mut reassembled[..built.sealed_transfer_bytes]).unwrap();
         assert_eq!(opened, &plaintext[..]);
         let proof = verify_and_prove(opened, &built.salt_nonce, &built.hash).unwrap();
         assert_eq!(proof, built.expected_proof);
@@ -241,7 +241,7 @@ mod tests {
             },
         )
         .unwrap();
-        let sealed = &transfer[..built.sealed_transfer_len];
+        let sealed = &transfer[..built.sealed_transfer_bytes];
         let names = &hashmap[..built.part_count * MAP_HASH_LEN];
         let part = |index: usize| &sealed[index * sdu..((index + 1) * sdu).min(sealed.len())];
 

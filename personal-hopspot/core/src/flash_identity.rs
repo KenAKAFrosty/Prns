@@ -327,9 +327,11 @@ impl<E: core::fmt::Debug> core::fmt::Display for FlashIdentityError<E> {
             }
             Self::BleRecordLength(len) => write!(
                 formatter,
-                "BLE identity record holds {len} bytes, expected {PERSISTED_BLE_IDENTITY_LEN}"
+                "Bluetooth LE identity record holds {len} bytes, expected {PERSISTED_BLE_IDENTITY_LEN}"
             ),
-            Self::EmptyBleRecord => formatter.write_str("BLE identity record is empty"),
+            Self::EmptyBleRecord => {
+                formatter.write_str("Bluetooth LE identity record is empty")
+            }
             Self::InvalidBleRecord(error) => error.fmt(formatter),
             Self::Verification => formatter.write_str("persisted identity verification failed"),
         }

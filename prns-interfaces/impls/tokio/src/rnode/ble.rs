@@ -49,9 +49,9 @@ impl fmt::Display for RNodeBleOperation {
             Self::InitializeManager => "initialize the Bluetooth manager",
             Self::EnumerateAdapters => "enumerate Bluetooth adapters",
             Self::ReadAdapterEvents => "subscribe to Bluetooth adapter events",
-            Self::StartScan => "start the RNode BLE scan",
-            Self::StopScan => "stop the RNode BLE scan",
-            Self::ReadPeripheral => "read a discovered BLE peripheral",
+            Self::StartScan => "start the RNode Bluetooth LE scan",
+            Self::StopScan => "stop the RNode Bluetooth LE scan",
+            Self::ReadPeripheral => "read a discovered Bluetooth LE peripheral",
             Self::ReadPeripheralProperties => "read BLE advertisement properties",
             Self::Connect => "connect to the RNode",
             Self::DiscoverServices => "discover the RNode GATT service",
@@ -134,7 +134,7 @@ impl fmt::Display for RNodeBleError {
             Self::MissingNotifyCharacteristic => formatter.write_str(
                 "the selected device advertises Nordic UART but has no notifying TX characteristic",
             ),
-            Self::Disconnected => formatter.write_str("the RNode BLE connection closed"),
+            Self::Disconnected => formatter.write_str("the RNode Bluetooth LE connection closed"),
             Self::Driver(source) => write!(formatter, "the local RNode byte stream failed: {source}"),
             #[cfg(target_os = "linux")]
             Self::BondStatus(source) => {
@@ -252,7 +252,7 @@ async fn scan(
     )
     .await
     {
-        crate::diagnostic_log::warn!("RNode BLE scan could not stop cleanly: {error}");
+        crate::diagnostic_log::warn!("RNode Bluetooth LE scan could not stop cleanly: {error}");
     }
     match result {
         Ok(result) => result,
@@ -417,7 +417,7 @@ async fn prepare_connection(peripheral: Peripheral) -> Result<DuplexStream, RNod
         .await;
         disconnect(&peripheral).await;
         if let Err(error) = result {
-            crate::diagnostic_log::warn!("RNode BLE byte stream closed: {error}");
+            crate::diagnostic_log::warn!("RNode Bluetooth LE byte stream closed: {error}");
         }
     });
     Ok(driver)
@@ -433,7 +433,9 @@ async fn disconnect(peripheral: &Peripheral) {
     match result {
         Ok(()) | Err(RNodeBleError::DeviceUnavailable(RNodeBleOperation::Disconnect)) => {}
         Err(error) => {
-            crate::diagnostic_log::warn!("RNode BLE disconnect did not complete cleanly: {error}");
+            crate::diagnostic_log::warn!(
+                "RNode Bluetooth LE disconnect did not complete cleanly: {error}"
+            );
         }
     }
 }
@@ -540,13 +542,13 @@ mod tests {
              codingrate = 5\n"
         );
         let plan = parse_and_plan(&config)
-            .expect("RNode BLE config plans")
+            .expect("RNode Bluetooth LE config plans")
             .value;
         let PlannedMedium::Rnode { transport, .. } = &plan.interfaces[0].medium else {
             panic!("RNode transport expected")
         };
         let RNodeTransportPlan::Ble(target) = transport else {
-            panic!("RNode BLE transport expected")
+            panic!("RNode Bluetooth LE transport expected")
         };
         target.clone()
     }

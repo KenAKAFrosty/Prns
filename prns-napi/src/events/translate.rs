@@ -171,12 +171,13 @@ pub fn event_to_object(env: &Env, event: OwnedEvent) -> napi::Result<Object<'sta
         OwnedEvent::ResourceAssembled {
             link_id,
             original_hash,
-            total_size,
+            total_size_bytes,
         } => {
             object.set("type", "resourceAssembled")?;
             object.set("linkId", bytes(&link_id))?;
             object.set("originalHash", Buffer::from(original_hash))?;
-            object.set("totalSize", total_size as f64)?;
+            object.set("totalSizeBytes", total_size_bytes as f64)?;
+            object.set("totalSize", total_size_bytes as f64)?;
         }
         OwnedEvent::ResourceFailed {
             link_id,
@@ -194,17 +195,23 @@ pub fn event_to_object(env: &Env, event: OwnedEvent) -> napi::Result<Object<'sta
         }
         OwnedEvent::ResourceSendProgress {
             link_id,
-            transferred,
-            total,
-            physical_transferred,
+            transferred_bytes,
+            total_bytes,
+            physical_transferred_bytes,
             segment_index,
             total_segments,
         } => {
             object.set("type", "resourceSendProgress")?;
             object.set("linkId", bytes(&link_id))?;
-            object.set("transferred", transferred as f64)?;
-            object.set("total", total as f64)?;
-            object.set("physicalTransferred", physical_transferred as f64)?;
+            object.set("transferredBytes", transferred_bytes as f64)?;
+            object.set("totalBytes", total_bytes as f64)?;
+            object.set(
+                "physicalTransferredBytes",
+                physical_transferred_bytes as f64,
+            )?;
+            object.set("transferred", transferred_bytes as f64)?;
+            object.set("total", total_bytes as f64)?;
+            object.set("physicalTransferred", physical_transferred_bytes as f64)?;
             object.set("segmentIndex", segment_index as f64)?;
             object.set("totalSegments", total_segments as f64)?;
         }

@@ -218,7 +218,7 @@ pub(super) fn draw_footer<D: DrawTarget<Color = BinaryColor>>(
 ) {
     draw_footer_line(
         display,
-        "WifiAP",
+        "Wi-Fi AP",
         top,
         &FONT_6X10,
         FONT_6X10_CHAR_W,

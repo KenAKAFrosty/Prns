@@ -201,7 +201,7 @@ pub fn Landing() -> Element {
                     label: t!("interfaces-radio-label"),
                     headline: t!("interfaces-radio-headline"),
                     body: t!("interfaces-radio-body"),
-                    tags: &["BLE Auto-interface", "ESP-NOW", "LoRa"],
+                    tags: &["Bluetooth LE Auto-interface", "ESP-NOW", "LoRa"],
                 }
                 InterfaceCard {
                     glyph: Medium::Lan,

@@ -6,7 +6,7 @@ use crate::routing::links::resources::table::{
     ResourceBuffers, ResourceRowState, ResourceTable, ResourceTablePushError,
 };
 use crate::routing::links::resources::{
-    max_part_count, sealed_transfer_len, ResourceHash, MAP_HASH_LEN, MAX_EFFICIENT_SIZE,
+    max_part_count, sealed_transfer_bytes, ResourceHash, MAP_HASH_LEN, MAX_EFFICIENT_SIZE,
 };
 use crate::routing::links::LinkId;
 
@@ -30,7 +30,7 @@ pub struct HeapResourceTable<State: ResourceRowState> {
     free_part_flags: Vec<Vec<bool>>,
 }
 
-const HEAP_TRANSFER_CAPACITY: usize = sealed_transfer_len(MAX_EFFICIENT_SIZE);
+const HEAP_TRANSFER_CAPACITY: usize = sealed_transfer_bytes(MAX_EFFICIENT_SIZE);
 const HEAP_PART_CAPACITY: usize = max_part_count(HEAP_TRANSFER_CAPACITY);
 
 impl<State: ResourceRowState> HeapResourceTable<State> {

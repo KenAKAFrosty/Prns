@@ -161,7 +161,7 @@ mod tests {
         RadioConfig::new(RadioConfigInput {
             frequency_hz: 868_000_000,
             bandwidth_hz: 125_000,
-            txpower_dbm: 7,
+            tx_power_dbm: 7,
             spreading_factor: 8,
             coding_rate: 5,
             airtime_limit_short_centi_percent: None,

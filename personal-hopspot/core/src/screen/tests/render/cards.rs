@@ -43,7 +43,7 @@ fn large_link_and_peer_counts_fit_right_column() {
     let card = Card {
         id: InterfaceId::new([0; 8]),
         kind: CardKind::Wifi,
-        label: card_label("WiFi"),
+        label: card_label("Wi-Fi"),
         liveness: Liveness::Live,
         failure_reason: None,
         tx_bytes: 999_999_999,
@@ -102,7 +102,7 @@ fn selected_card_inverts_name_content() {
     let card = Card {
         id: InterfaceId::new([0; 8]),
         kind: CardKind::Wifi,
-        label: card_label("WiFi"),
+        label: card_label("Wi-Fi"),
         liveness: Liveness::Live,
         failure_reason: None,
         tx_bytes: 0,

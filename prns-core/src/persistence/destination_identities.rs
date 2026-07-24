@@ -237,12 +237,12 @@ fn parse_row(bytes: &[u8]) -> Option<(DestinationIdentitySeed<'_>, &[u8])> {
         RETAINED_TAG => (DestinationIdentityRetentionState::Retained, rest),
         _ => return None,
     };
-    let (app_data_len, rest) = rest.split_first_chunk::<APP_DATA_LEN_PREFIX_LEN>()?;
-    let app_data_len = u16::from_le_bytes(*app_data_len) as usize;
-    if rest.len() < app_data_len {
+    let (app_data_bytes, rest) = rest.split_first_chunk::<APP_DATA_LEN_PREFIX_LEN>()?;
+    let app_data_bytes = u16::from_le_bytes(*app_data_bytes) as usize;
+    if rest.len() < app_data_bytes {
         return None;
     }
-    let (app_data, rest) = rest.split_at(app_data_len);
+    let (app_data, rest) = rest.split_at(app_data_bytes);
     let public_keys = IdentityPublicKeys {
         encryption: IdentityEncryptionPublicKey::new(X25519PublicKey(*encryption)),
         signing: IdentitySigningPublicKey::new(Ed25519PublicKey(*signing)),

@@ -113,7 +113,7 @@ fn guid_of(uuid: BleUuid) -> GUID {
     GUID::from_u128(u128::from_be_bytes(bytes))
 }
 
-/// The 48-bit BLE address WinRT works in `u64`s; the sighting kept the low six bytes big-endian, so
+/// The 48-bit Bluetooth LE address WinRT works in `u64`s; the sighting kept the low six bytes big-endian, so
 /// rebuild the same `u64` to reconnect.
 fn address_to_u64(address: BleAddress) -> u64 {
     let o = address.octets();

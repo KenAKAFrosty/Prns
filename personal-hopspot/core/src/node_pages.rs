@@ -1,5 +1,5 @@
 use personal_rns::routing::links::request::{packed_binary_len, RESPONSE_WIRE_OVERHEAD};
-use personal_rns::routing::links::resources::sealed_transfer_len;
+use personal_rns::routing::links::resources::sealed_transfer_bytes;
 use personal_rns::routing::request_handlers::RequestPathHash;
 use personal_rns::runtime::request_router::{
     Decline, RequestContext, RequestRoute, RoutePolicy, RouteSet,
@@ -68,7 +68,7 @@ pub const INDEX_PACKED_RESPONSE_LEN: usize = match packed_binary_len(LARGEST_IND
     None => panic!("index page exceeds MessagePack binary limits"),
 };
 pub const INDEX_RESPONSE_TRANSFER_BYTES: usize =
-    sealed_transfer_len(RESPONSE_WIRE_OVERHEAD + INDEX_PACKED_RESPONSE_LEN);
+    sealed_transfer_bytes(RESPONSE_WIRE_OVERHEAD + INDEX_PACKED_RESPONSE_LEN);
 
 pub struct NodeIndexPage;
 
@@ -113,7 +113,7 @@ mod tests {
         );
         assert_eq!(
             INDEX_RESPONSE_TRANSFER_BYTES,
-            sealed_transfer_len(RESPONSE_WIRE_OVERHEAD + INDEX_PACKED_RESPONSE_LEN)
+            sealed_transfer_bytes(RESPONSE_WIRE_OVERHEAD + INDEX_PACKED_RESPONSE_LEN)
         );
     }
 

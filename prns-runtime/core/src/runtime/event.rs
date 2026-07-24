@@ -66,7 +66,7 @@ pub enum Message<'a> {
         link_id: LinkId,
         hash: ResourceHash,
         stream: &'a [u8],
-        uncompressed_data_len: u64,
+        uncompressed_data_bytes: u64,
     },
     ResourceSegment {
         link_id: LinkId,
@@ -132,7 +132,7 @@ pub enum Diagnostic {
     ResourceAssembled {
         link_id: LinkId,
         original_hash: ResourceHash,
-        total_size: u64,
+        total_size_bytes: u64,
     },
     RouteRemoved {
         destination: DestinationHash,
@@ -202,12 +202,12 @@ impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
                 link_id,
                 hash,
                 stream,
-                uncompressed_data_len,
+                uncompressed_data_bytes,
             } => PrnsEvent::Message(Message::ResourceNeedsDecompression {
                 link_id,
                 hash,
                 stream,
-                uncompressed_data_len,
+                uncompressed_data_bytes,
             }),
             Journaled::ResourceSegmentReceived {
                 link_id,
@@ -285,11 +285,11 @@ impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
             Journaled::ResourceAssembled {
                 link_id,
                 original_hash,
-                total_size,
+                total_size_bytes,
             } => PrnsEvent::Diagnostic(Diagnostic::ResourceAssembled {
                 link_id,
                 original_hash,
-                total_size,
+                total_size_bytes,
             }),
             Journaled::RouteRemoved { destination, cause } => {
                 PrnsEvent::Diagnostic(Diagnostic::RouteRemoved { destination, cause })

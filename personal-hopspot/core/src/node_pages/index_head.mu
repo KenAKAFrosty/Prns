@@ -47,7 +47,7 @@ The Personal Hopspot firmware ships today for a growing catalog of affordable bo
 >>
 `F6eb•`f `F6eb`!New interfaces for the same network`!`f
 >>>
-Auto Bluetooth, Auto USB, improved Auto Wifi, ESP-NOW (2.4 GHz broadcast), Wi-Fi Aware/NAN, and WebSocket server/client (including browser client). All alongside every interface you already run.
+Bluetooth LE Auto-interface, Auto USB, improved Wi-Fi Auto-interface, ESP-NOW (2.4 GHz broadcast), Wi-Fi Aware/NAN, and WebSocket server/client (including browser client). All alongside every interface you already run.
 
 >>
 `F6eb•`f `F6eb`!Built for operators`!`f
@@ -73,4 +73,3 @@ MIT / Apache-2.0
 -∿
 
 `F999"Reticulum is the foundational communication infrastructure of a bright future we can have, as long as we all build it."`f
-

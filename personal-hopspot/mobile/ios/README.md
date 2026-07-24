@@ -9,7 +9,7 @@ window, and the Android app. This face adds the platform adapters iOS needs:
   (`rust/src/face.rs`)
 - a single-button input source: every tap is a `ShortPress`, every hold a
   `LongPress` (`rust/src/face.rs` + the `hopspot_post_input` entry point)
-- a real `personal-rns` runtime with WiFi/LAN, Bonjour discovery, BLE Auto, and
+- a real `personal-rns` runtime with Wi-Fi/LAN, Bonjour discovery, Bluetooth LE Auto, and
   USB Auto over a usbmux-forwarded byte stream
 
 `rust/` is a C-ABI `staticlib` linked straight into the app binary (iOS has no

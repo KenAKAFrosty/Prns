@@ -61,7 +61,7 @@ fn exercise_reemit(data: &[u8]) {
         is_path_response: false,
     };
 
-    let total_len = HEADER_MAX_LEN + announce.wire_len();
+    let total_len = HEADER_MAX_LEN + announce.wire_bytes();
     let mut short_buf = vec![0u8; total_len - 1];
     assert_eq!(
         directive.to_wire(&mut short_buf),

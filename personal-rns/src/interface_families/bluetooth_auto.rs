@@ -1,6 +1,7 @@
 #[cfg(feature = "tokio-host")]
 pub use prns_interfaces_tokio::bluetooth_auto::{
-    AttachedBle, AutoBle, BluetoothAuto, BluetoothAutoStatus, BluetoothPeer, ConfiguredAutoBle,
+    AttachedBle, AttachedBluetoothLe, AutoBle, AutoBluetoothLe, BluetoothAuto, BluetoothAutoStatus,
+    BluetoothPeer, ConfiguredAutoBle, ConfiguredAutoBluetoothLe,
 };
 
 #[cfg(all(feature = "embassy-host", not(feature = "tokio-host")))]

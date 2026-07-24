@@ -100,7 +100,7 @@ impl InterfaceSettingSpec {
             interface_key::ID_CALLSIGN => "ID callsign".to_string(),
             interface_key::ID_INTERVAL => "ID interval".to_string(),
             interface_key::SSID => "SSID".to_string(),
-            interface_key::TXPOWER => "TX power".to_string(),
+            interface_key::TXPOWER => "Transmit power".to_string(),
             interface_key::TXTAIL => "TX tail".to_string(),
             common_key::EC_PR_FREQ => "Egress path-request frequency".to_string(),
             key => key
@@ -830,7 +830,7 @@ impl InterfaceSettingSpec {
                 Some(common.ingress_control.max_held_announces.to_string())
             }
             common_key::IC_BURST_HOLD => Some(concise_decimal(
-                common.ingress_control.burst_hold_ms as f64 / 1_000.0,
+                common.ingress_control.burst_hold_millis as f64 / 1_000.0,
             )),
             common_key::IC_BURST_FREQ_NEW => Some(concise_decimal(
                 common.ingress_control.announce_burst_frequency_new.get() as f64 / 1_000.0,
@@ -852,13 +852,13 @@ impl InterfaceSettingSpec {
                 common.path_request_egress.frequency.get() as f64 / 1_000.0,
             )),
             common_key::IC_NEW_TIME => Some(concise_decimal(
-                common.ingress_control.new_interface_ms as f64 / 1_000.0,
+                common.ingress_control.new_interface_millis as f64 / 1_000.0,
             )),
             common_key::IC_BURST_PENALTY => Some(concise_decimal(
-                common.ingress_control.burst_penalty_ms as f64 / 1_000.0,
+                common.ingress_control.burst_penalty_millis as f64 / 1_000.0,
             )),
             common_key::IC_HELD_RELEASE_INTERVAL => Some(concise_decimal(
-                common.ingress_control.held_release_interval_ms as f64 / 1_000.0,
+                common.ingress_control.held_release_interval_millis as f64 / 1_000.0,
             )),
             interface_key::SPEED => serial_line(planned).map(|line| line.baud().to_string()),
             interface_key::DATABITS => serial_line(planned).map(|line| match line.data_bits() {
@@ -954,7 +954,7 @@ impl InterfaceSettingSpec {
                 _ => None,
             },
             interface_key::TXPOWER => match &planned.medium {
-                PlannedMedium::Rnode { txpower_dbm, .. } => Some(txpower_dbm.to_string()),
+                PlannedMedium::Rnode { tx_power_dbm, .. } => Some(tx_power_dbm.to_string()),
                 _ => None,
             },
             interface_key::AIRTIME_LIMIT_SHORT => match &planned.medium {
@@ -1131,8 +1131,13 @@ impl InterfaceSettingSpec {
             | interface_key::ANNOUNCE_RATE_PENALTY
             | interface_key::CONNECT_TIMEOUT
             | interface_key::ID_INTERVAL => "seconds as a non-negative whole number",
+            interface_key::RESPAWN_DELAY => "seconds as a non-negative number",
             interface_key::ANNOUNCE_INTERVAL => "minutes as a whole number",
             interface_key::IFAC_SIZE => "an IFAC size from 8 through 512 bits",
+            interface_key::FIXED_MTU => "bytes as a non-negative whole number",
+            interface_key::PREAMBLE | interface_key::TXTAIL | interface_key::SLOTTIME => {
+                "milliseconds as a non-negative whole number"
+            }
             interface_key::DISCOVERY_SCOPE => "link, admin, site, organisation, or global",
             interface_key::MULTICAST_ADDRESS_TYPE => "temporary or permanent",
             interface_key::BITRATE | interface_key::SPEED => {
@@ -1169,27 +1174,47 @@ impl InterfaceSettingSpec {
         ) {
             return format!("{value}%");
         }
+        if matches!(
+            self.key.as_str(),
+            interface_key::BITRATE | interface_key::SPEED
+        ) {
+            return value
+                .replace('_', "")
+                .parse::<u64>()
+                .map_or_else(|_| value.to_string(), format_si_bitrate);
+        }
+        if matches!(
+            self.key.as_str(),
+            interface_key::DISCOVERY_FREQUENCY
+                | interface_key::DISCOVERY_BANDWIDTH
+                | interface_key::FREQUENCY
+                | interface_key::BANDWIDTH
+        ) {
+            return value
+                .replace('_', "")
+                .parse::<u64>()
+                .map_or_else(|_| format!("{value} Hz"), format_si_frequency);
+        }
         let unit = match self.key.as_str() {
-            interface_key::BITRATE | interface_key::SPEED => Some("bps"),
             interface_key::ANNOUNCE_RATE_TARGET
             | interface_key::ANNOUNCE_RATE_PENALTY
             | interface_key::CONNECT_TIMEOUT
             | interface_key::ID_INTERVAL
+            | interface_key::RESPAWN_DELAY
             | common_key::IC_BURST_HOLD
             | common_key::IC_NEW_TIME
             | common_key::IC_BURST_PENALTY
             | common_key::IC_HELD_RELEASE_INTERVAL => Some("seconds"),
             interface_key::ANNOUNCE_INTERVAL => Some("minutes"),
             interface_key::IFAC_SIZE => Some("bits"),
-            interface_key::DISCOVERY_FREQUENCY
-            | interface_key::DISCOVERY_BANDWIDTH
-            | interface_key::FREQUENCY
-            | interface_key::BANDWIDTH
-            | common_key::IC_BURST_FREQ_NEW
+            common_key::IC_BURST_FREQ_NEW
             | common_key::IC_BURST_FREQ
             | common_key::IC_PR_BURST_FREQ_NEW
             | common_key::IC_PR_BURST_FREQ
             | common_key::EC_PR_FREQ => Some("Hz"),
+            interface_key::PREAMBLE | interface_key::TXTAIL | interface_key::SLOTTIME => Some("ms"),
+            interface_key::FIXED_MTU => Some("bytes"),
+            interface_key::HEIGHT => Some("m"),
             interface_key::TXPOWER => Some("dBm"),
             _ => None,
         };
@@ -1297,6 +1322,43 @@ fn grouped_integer(value: &str) -> String {
         grouped.push(digit);
     }
     grouped
+}
+
+fn format_si_bitrate(bits_per_second: u64) -> String {
+    if bits_per_second >= 1_000_000_000 {
+        format_scaled_quantity(bits_per_second, 1_000_000_000, 9, "Gbps")
+    } else if bits_per_second >= 1_000_000 {
+        format_scaled_quantity(bits_per_second, 1_000_000, 6, "Mbps")
+    } else if bits_per_second >= 1_000 {
+        format_scaled_quantity(bits_per_second, 1_000, 3, "kbps")
+    } else {
+        format!("{bits_per_second} bps")
+    }
+}
+
+fn format_si_frequency(hertz: u64) -> String {
+    if hertz >= 1_000_000_000 {
+        format_scaled_quantity(hertz, 1_000_000_000, 9, "GHz")
+    } else if hertz >= 1_000_000 {
+        format_scaled_quantity(hertz, 1_000_000, 6, "MHz")
+    } else if hertz >= 1_000 {
+        format_scaled_quantity(hertz, 1_000, 3, "kHz")
+    } else {
+        format!("{hertz} Hz")
+    }
+}
+
+fn format_scaled_quantity(value: u64, scale: u64, decimal_places: usize, unit: &str) -> String {
+    let whole = value / scale;
+    let remainder = value % scale;
+    if remainder == 0 {
+        return format!("{whole} {unit}");
+    }
+    let mut fractional = format!("{remainder:0decimal_places$}");
+    while fractional.ends_with('0') {
+        fractional.pop();
+    }
+    format!("{whole}.{fractional} {unit}")
 }
 
 fn discovery_announcement(planned: &PlannedInterface) -> Option<&crate::DiscoveryAnnouncementPlan> {

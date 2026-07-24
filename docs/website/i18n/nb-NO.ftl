@@ -28,7 +28,7 @@ interfaces-section-hot-note = Prns-interfaces er hot-swappable: legg til, fjern 
 
 interfaces-radio-label = Radioer
 interfaces-radio-headline = Nærhetslenker for enheter og kort
-interfaces-radio-body = BLE Auto-interface, ESP-NOW og LoRa bringer nære enheter, kortflåter og langtrekkende lenker inn i ett RNS-mesh.
+interfaces-radio-body = Bluetooth LE Auto-interface, ESP-NOW og LoRa bringer nære enheter, kortflåter og langtrekkende lenker inn i ett RNS-mesh.
 
 interfaces-lan-label = LAN
 interfaces-lan-headline = Automatisk oppdagede local-link-peers

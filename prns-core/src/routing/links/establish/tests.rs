@@ -115,7 +115,7 @@ fn a_commanded_link_request_frames_tracks_and_arms_the_lane() {
         .dispatched();
 
     assert_eq!(dispatch.fire_on, arrival());
-    let parsed = parse_link_request(&buf[..dispatch.wire_len]).unwrap();
+    let parsed = parse_link_request(&buf[..dispatch.wire_bytes]).unwrap();
     assert_eq!(parsed.destination, peer_destination());
     assert_eq!(parsed.link_id, dispatch.link_id);
     assert_eq!(parsed.mtu, BROADCAST_MTU);
@@ -352,7 +352,7 @@ fn the_initiator_link_activating_marks_its_destination_responsive() {
     );
 
     let mut responder = personal_node_announcer();
-    let (proofs, _, _) = reactions_of(&mut responder, &request[..dispatch.wire_len], 1_100, 0x99);
+    let (proofs, _, _) = reactions_of(&mut responder, &request[..dispatch.wire_bytes], 1_100, 0x99);
     let _ = reactions_of(&mut initiator, &proofs[0], 1_250, 0xA5);
 
     assert_eq!(
@@ -386,7 +386,7 @@ fn a_link_request_for_a_held_destination_owes_its_proof() {
 
     let mut responder = personal_node_announcer();
     let identity = responder.held_identity_hashes()[0];
-    let mut raw = buf[..dispatch.wire_len].to_vec();
+    let mut raw = buf[..dispatch.wire_bytes].to_vec();
     let outcome = responder.ingest_packet_with(
         InboundPacket {
             arrived_at: InstantMillis(2_000),
@@ -401,7 +401,7 @@ fn a_link_request_for_a_held_destination_owes_its_proof() {
     assert_eq!(
         outcome,
         IngestPacketOutcome::OwesLinkProof(AcceptedLinkRequest {
-            request: parse_link_request(&buf[..dispatch.wire_len]).unwrap(),
+            request: parse_link_request(&buf[..dispatch.wire_bytes]).unwrap(),
             identity,
             proof_strategy: crate::routing::upstream_app_destinations::ProofStrategy::ProveNone,
             received_hops: 1,
@@ -409,7 +409,7 @@ fn a_link_request_for_a_held_destination_owes_its_proof() {
         }),
     );
 
-    let mut replay = buf[..dispatch.wire_len].to_vec();
+    let mut replay = buf[..dispatch.wire_bytes].to_vec();
     let replayed = responder.ingest_packet_with(
         InboundPacket {
             arrived_at: InstantMillis(2_100),
@@ -457,7 +457,7 @@ fn an_accept_none_destination_announces_but_refuses_the_link_request() {
         )
         .unwrap();
 
-    let mut raw = buf[..dispatch.wire_len].to_vec();
+    let mut raw = buf[..dispatch.wire_bytes].to_vec();
     let outcome = responder.ingest_packet_with(
         InboundPacket {
             arrived_at: InstantMillis(2_000),
@@ -493,7 +493,7 @@ fn a_link_request_for_an_unknown_destination_stays_ignored() {
         .dispatched();
 
     let mut bystander = EngineState::<TestStorageLayout>::new(second_secret_key());
-    let mut raw = buf[..dispatch.wire_len].to_vec();
+    let mut raw = buf[..dispatch.wire_bytes].to_vec();
     let outcome = bystander.ingest_packet_with(
         InboundPacket {
             arrived_at: InstantMillis(2_000),
@@ -529,7 +529,7 @@ fn the_two_ends_agree_on_the_session_key_through_the_proof() {
 
     let mut responder = personal_node_announcer();
     let mut sent = std::vec::Vec::new();
-    let mut raw = buf[..dispatch.wire_len].to_vec();
+    let mut raw = buf[..dispatch.wire_bytes].to_vec();
     let delta = responder.ingest_packet_into(
         InboundPacket {
             arrived_at: InstantMillis(2_000),
@@ -709,7 +709,7 @@ fn the_full_handshake_activates_both_ends() {
 
     let mut responder = personal_node_announcer();
     let (proofs, journaled, _) =
-        reactions_of(&mut responder, &request[..dispatch.wire_len], 1_100, 0x99);
+        reactions_of(&mut responder, &request[..dispatch.wire_bytes], 1_100, 0x99);
     assert_eq!(proofs.len(), 1);
     assert!(journaled.is_empty());
 
@@ -721,7 +721,7 @@ fn the_full_handshake_activates_both_ends() {
             CommandId(7),
             Settlement::EstablishLink(Ok(LinkEstablished {
                 link_id,
-                rtt_ms: 250,
+                rtt_millis: 250,
             })),
         )],
         "the command settles established with the measured round trip",
@@ -751,7 +751,7 @@ fn the_full_handshake_activates_both_ends() {
             CommandId(u64::MAX),
             Settlement::EstablishLink(Ok(LinkEstablished {
                 link_id,
-                rtt_ms: 500,
+                rtt_millis: 500,
             })),
         )],
         "the responder journals the link up at max(measured, reported)",
@@ -816,7 +816,7 @@ fn a_proof_for_an_unknown_link_is_ignored() {
         .dispatched();
 
     let mut responder = personal_node_announcer();
-    let (proofs, _, _) = reactions_of(&mut responder, &request[..dispatch.wire_len], 1_100, 0x99);
+    let (proofs, _, _) = reactions_of(&mut responder, &request[..dispatch.wire_bytes], 1_100, 0x99);
 
     let mut bystander = EngineState::<TestStorageLayout>::new(second_secret_key());
     let mut raw = proofs[0].clone();
@@ -853,7 +853,7 @@ fn a_tampered_lrrtt_keeps_the_handshake_pending() {
         .dispatched();
 
     let mut responder = personal_node_announcer();
-    let (proofs, _, _) = reactions_of(&mut responder, &request[..dispatch.wire_len], 1_100, 0x99);
+    let (proofs, _, _) = reactions_of(&mut responder, &request[..dispatch.wire_bytes], 1_100, 0x99);
     let (rtts, _, _) = reactions_of(&mut initiator, &proofs[0], 1_250, 0xA5);
 
     let mut tampered = rtts[0].clone();
@@ -889,7 +889,7 @@ fn an_authenticated_but_malformed_lrrtt_tears_the_link_down() {
         .dispatched();
 
     let mut responder = personal_node_announcer();
-    let (_, _, _) = reactions_of(&mut responder, &request[..dispatch.wire_len], 1_100, 0x99);
+    let (_, _, _) = reactions_of(&mut responder, &request[..dispatch.wire_bytes], 1_100, 0x99);
 
     let mut frame = std::vec![0x0Cu8, 0x00];
     frame.extend_from_slice(dispatch.link_id.as_bytes());
@@ -970,7 +970,7 @@ fn link_data_crosses_the_active_link_and_journals_the_delivery() {
     let link_id = dispatch.link_id;
 
     let mut responder = personal_node_announcer();
-    let (proofs, _, _) = reactions_of(&mut responder, &request[..dispatch.wire_len], 1_100, 0x99);
+    let (proofs, _, _) = reactions_of(&mut responder, &request[..dispatch.wire_bytes], 1_100, 0x99);
     let (rtts, _, _) = reactions_of(&mut initiator, &proofs[0], 1_250, 0xA5);
     let (_, _, _) = reactions_of(&mut responder, &rtts[0], 1_600, 0xB5);
 
@@ -1145,7 +1145,7 @@ fn a_prove_all_responder_proves_link_data_the_reference_way() {
     let link_id = dispatch.link_id;
 
     let mut responder = proving_node_announcer(ProofStrategy::ProveAll);
-    let (proofs, _, _) = reactions_of(&mut responder, &request[..dispatch.wire_len], 1_100, 0x99);
+    let (proofs, _, _) = reactions_of(&mut responder, &request[..dispatch.wire_bytes], 1_100, 0x99);
     let (rtts, _, _) = reactions_of(&mut initiator, &proofs[0], 1_250, 0xA5);
     let (_, _, _) = reactions_of(&mut responder, &rtts[0], 1_600, 0xB5);
 
@@ -1236,7 +1236,7 @@ fn a_forged_link_proof_settles_nothing() {
     let link_id = dispatch.link_id;
 
     let mut responder = proving_node_announcer(ProofStrategy::ProveAll);
-    let (proofs, _, _) = reactions_of(&mut responder, &request[..dispatch.wire_len], 1_100, 0x99);
+    let (proofs, _, _) = reactions_of(&mut responder, &request[..dispatch.wire_bytes], 1_100, 0x99);
     let (rtts, _, _) = reactions_of(&mut initiator, &proofs[0], 1_250, 0xA5);
     let (_, _, _) = reactions_of(&mut responder, &rtts[0], 1_600, 0xB5);
 
@@ -1272,7 +1272,7 @@ fn an_unproven_link_send_times_out_at_the_traffic_deadline() {
     let link_id = dispatch.link_id;
 
     let mut responder = personal_node_announcer();
-    let (proofs, _, _) = reactions_of(&mut responder, &request[..dispatch.wire_len], 1_100, 0x99);
+    let (proofs, _, _) = reactions_of(&mut responder, &request[..dispatch.wire_bytes], 1_100, 0x99);
     let (rtts, _, _) = reactions_of(&mut initiator, &proofs[0], 1_250, 0xA5);
     let (_, _, _) = reactions_of(&mut responder, &rtts[0], 1_600, 0xB5);
 
@@ -1318,7 +1318,7 @@ fn the_initiator_never_proves_link_data() {
     let link_id = dispatch.link_id;
 
     let mut responder = proving_node_announcer(ProofStrategy::ProveAll);
-    let (proofs, _, _) = reactions_of(&mut responder, &request[..dispatch.wire_len], 1_100, 0x99);
+    let (proofs, _, _) = reactions_of(&mut responder, &request[..dispatch.wire_bytes], 1_100, 0x99);
     let (rtts, _, _) = reactions_of(&mut initiator, &proofs[0], 1_250, 0xA5);
     let (_, _, _) = reactions_of(&mut responder, &rtts[0], 1_600, 0xB5);
 
@@ -1349,7 +1349,7 @@ fn the_app_decider_gates_the_prove_if_link_proof() {
     let link_id = dispatch.link_id;
 
     let mut responder = proving_node_announcer(ProofStrategy::ProveIf);
-    let (proofs, _, _) = reactions_of(&mut responder, &request[..dispatch.wire_len], 1_100, 0x99);
+    let (proofs, _, _) = reactions_of(&mut responder, &request[..dispatch.wire_bytes], 1_100, 0x99);
     let (rtts, _, _) = reactions_of(&mut initiator, &proofs[0], 1_250, 0xA5);
     let (_, _, _) = reactions_of(&mut responder, &rtts[0], 1_600, 0xB5);
 
@@ -1462,7 +1462,7 @@ fn transported_request_wire(initiator: &mut EngineState<TestStorageLayout>) -> s
             &mut request,
         )
         .dispatched();
-    request[..dispatch.wire_len].to_vec()
+    request[..dispatch.wire_bytes].to_vec()
 }
 
 #[test]
@@ -1694,7 +1694,7 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
 
     let (switched, _, _, _) = ingest_via(
         &mut relay,
-        &request[..dispatch.wire_len],
+        &request[..dispatch.wire_bytes],
         iface_to_a,
         1_100,
         0x20,
@@ -1962,7 +1962,7 @@ fn a_request_passes_the_allow_gate_only_after_the_peer_identifies() {
     let link_id = dispatch.link_id;
 
     let mut responder = personal_node_announcer();
-    let (proofs, _, _) = reactions_of(&mut responder, &request[..dispatch.wire_len], 1_100, 0x99);
+    let (proofs, _, _) = reactions_of(&mut responder, &request[..dispatch.wire_bytes], 1_100, 0x99);
     let (rtts, _, _) = reactions_of(&mut initiator, &proofs[0], 1_250, 0xA5);
     let (_, _, _) = reactions_of(&mut responder, &rtts[0], 1_600, 0xB5);
 
@@ -2241,7 +2241,7 @@ fn the_initiator_identifies_itself_and_the_responder_journals_it() {
     let link_id = dispatch.link_id;
 
     let mut responder = personal_node_announcer();
-    let (proofs, _, _) = reactions_of(&mut responder, &request[..dispatch.wire_len], 1_100, 0x99);
+    let (proofs, _, _) = reactions_of(&mut responder, &request[..dispatch.wire_bytes], 1_100, 0x99);
     let (rtts, _, _) = reactions_of(&mut initiator, &proofs[0], 1_250, 0xA5);
     let (_, _, _) = reactions_of(&mut responder, &rtts[0], 1_600, 0xB5);
 
@@ -2452,7 +2452,7 @@ fn established_pair() -> (
         )
         .dispatched();
     let mut responder = personal_node_announcer();
-    let (proofs, _, _) = reactions_of(&mut responder, &request[..dispatch.wire_len], 1_100, 0x99);
+    let (proofs, _, _) = reactions_of(&mut responder, &request[..dispatch.wire_bytes], 1_100, 0x99);
     let (rtts, _, _) = reactions_of(&mut initiator, &proofs[0], 1_250, 0xA5);
     let (_, _, _) = reactions_of(&mut responder, &rtts[0], 1_600, 0xB5);
     (initiator, responder, dispatch.link_id)
@@ -2476,12 +2476,12 @@ fn a_registered_default_resource_strategy_greets_the_link_at_activation() {
         .dispatched();
     let mut responder = personal_node_announcer();
     let opened_gate = ResourceStrategy::Accept {
-        max_uncompressed_len: 1 << 20,
+        max_uncompressed_bytes: 1 << 20,
         accept_compressed: false,
     };
     assert!(responder.set_default_resource_strategy(&personal_node_destination(), opened_gate));
 
-    let (proofs, _, _) = reactions_of(&mut responder, &request[..dispatch.wire_len], 1_100, 0x99);
+    let (proofs, _, _) = reactions_of(&mut responder, &request[..dispatch.wire_bytes], 1_100, 0x99);
     let (rtts, _, _) = reactions_of(&mut initiator, &proofs[0], 1_250, 0xA5);
     let (_, _, _) = reactions_of(&mut responder, &rtts[0], 1_600, 0xB5);
 
@@ -2795,7 +2795,7 @@ fn a_narrow_interface_negotiates_the_link_mtu_down_end_to_end() {
             &mut request,
         )
         .dispatched();
-    let parsed = parse_link_request(&request[..dispatch.wire_len]).unwrap();
+    let parsed = parse_link_request(&request[..dispatch.wire_bytes]).unwrap();
     assert_eq!(
         parsed.mtu, 300,
         "the initiator signals its interface's ceiling"
@@ -2804,7 +2804,7 @@ fn a_narrow_interface_negotiates_the_link_mtu_down_end_to_end() {
     let mut responder = personal_node_announcer();
     let (proofs, _, _) = reactions_of_on(
         &mut responder,
-        &request[..dispatch.wire_len],
+        &request[..dispatch.wire_bytes],
         1_100,
         0x99,
         AttachedInterfaces::new(&narrow_view()),
@@ -2918,7 +2918,7 @@ fn a_fat_interface_negotiates_up_to_the_engine_ceiling_and_no_further() {
             &mut request,
         )
         .dispatched();
-    let parsed = parse_link_request(&request[..dispatch.wire_len]).unwrap();
+    let parsed = parse_link_request(&request[..dispatch.wire_bytes]).unwrap();
     assert_eq!(
         parsed.mtu, negotiable,
         "a fat interface signals up to the engine ceiling, never past it",
@@ -2927,7 +2927,7 @@ fn a_fat_interface_negotiates_up_to_the_engine_ceiling_and_no_further() {
     let mut responder = personal_node_announcer();
     let (proofs, _, _) = reactions_of_on(
         &mut responder,
-        &request[..dispatch.wire_len],
+        &request[..dispatch.wire_bytes],
         1_100,
         0x99,
         AttachedInterfaces::new(&fat_view()),
@@ -2987,7 +2987,7 @@ fn the_real_usb_descriptors_negotiate_their_declared_ceilings() {
             &mut request,
         )
         .dispatched();
-    let parsed = parse_link_request(&request[..dispatch.wire_len]).unwrap();
+    let parsed = parse_link_request(&request[..dispatch.wire_bytes]).unwrap();
     assert_eq!(
         parsed.mtu,
         MAX_LINK_MTU.min(host.hardware_mtu.unwrap()),
@@ -2997,7 +2997,7 @@ fn the_real_usb_descriptors_negotiate_their_declared_ceilings() {
     let mut responder = personal_node_announcer();
     let (proofs, _, _) = reactions_of_on(
         &mut responder,
-        &request[..dispatch.wire_len],
+        &request[..dispatch.wire_bytes],
         1_100,
         0x99,
         AttachedInterfaces::new(&[device]),

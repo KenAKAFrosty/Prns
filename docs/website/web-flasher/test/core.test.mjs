@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   FlashBridgeError,
+  flashSizeValue,
   jedecFlashSizeBytes,
   md5Hex,
   normalizeChipName,
@@ -141,6 +142,12 @@ test("JEDEC capacity decoding accepts known IDs and fails closed on unknown IDs"
   assert.equal(jedecFlashSizeBytes(0x9940ef), null);
   assert.equal(jedecFlashSizeBytes(0xffffff), null);
   assert.equal(jedecFlashSizeBytes(Number.NaN), null);
+});
+
+test("binary flash capacities use IEC units", () => {
+  assert.equal(flashSizeValue(4 * 1024 * 1024), "4 MiB");
+  assert.equal(flashSizeValue(8 * 1024 * 1024), "8 MiB");
+  assert.equal(flashSizeValue(16 * 1024 * 1024), "16 MiB");
 });
 
 test("every production bridge error has actionable recovery guidance", () => {

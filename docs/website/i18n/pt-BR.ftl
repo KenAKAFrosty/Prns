@@ -28,7 +28,7 @@ interfaces-section-hot-note = As interfaces do Prns são hot-swappable: adicione
 
 interfaces-radio-label = Rádios
 interfaces-radio-headline = Links de proximidade para dispositivos e placas
-interfaces-radio-body = BLE Auto-interface, ESP-NOW e LoRa trazem dispositivos próximos, frotas de placas e links de longo alcance para uma mesma malha RNS.
+interfaces-radio-body = Bluetooth LE Auto-interface, ESP-NOW e LoRa trazem dispositivos próximos, frotas de placas e links de longo alcance para uma mesma malha RNS.
 
 interfaces-lan-label = LAN
 interfaces-lan-headline = Pares de link local descobertos automaticamente

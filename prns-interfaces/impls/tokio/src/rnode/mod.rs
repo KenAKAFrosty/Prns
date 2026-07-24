@@ -619,7 +619,7 @@ mod tests {
         RadioConfig::new(protocol::RadioConfigInput {
             frequency_hz: 868_000_000,
             bandwidth_hz: 125_000,
-            txpower_dbm: 7,
+            tx_power_dbm: 7,
             spreading_factor: 8,
             coding_rate: 5,
             airtime_limit_short_centi_percent: None,
@@ -698,7 +698,7 @@ mod tests {
             &radio.bandwidth_hz().to_be_bytes(),
         )
         .await;
-        write_command(wire, protocol::CMD_TXPOWER, &[radio.txpower_dbm()]).await;
+        write_command(wire, protocol::CMD_TXPOWER, &[radio.tx_power_dbm()]).await;
         write_command(wire, protocol::CMD_SF, &[radio.spreading_factor()]).await;
         write_command(wire, protocol::CMD_CR, &[radio.coding_rate()]).await;
         write_command(wire, protocol::CMD_RADIO_STATE, &[protocol::RADIO_STATE_ON]).await;
@@ -924,7 +924,7 @@ mod tests {
             &radio.bandwidth_hz().to_be_bytes(),
         )
         .await;
-        write_command(&mut device, protocol::CMD_TXPOWER, &[radio.txpower_dbm()]).await;
+        write_command(&mut device, protocol::CMD_TXPOWER, &[radio.tx_power_dbm()]).await;
         write_command(
             &mut device,
             protocol::CMD_SF,

@@ -63,7 +63,7 @@ examples; the manifest remains authoritative.
   triage.
 
 Release-tooling tests live under `tools/tests/`. Product-specific platform and
-WASM tests remain with the product they exercise. Private RPC codec tests and
+WebAssembly tests remain with the product they exercise. Private RPC codec tests and
 Kani harnesses remain source-local, where they can exercise private behavior;
 the registry only supplies focused execution commands.
 

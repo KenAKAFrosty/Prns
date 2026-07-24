@@ -348,7 +348,7 @@ mod tests {
         let mut b = personal_node_announcer();
         let local = personal_node_destination();
         let mut buf = [0u8; BROADCAST_MTU];
-        let PathResponseWriteOutcome::Written { wire_len, .. } = b
+        let PathResponseWriteOutcome::Written { wire_bytes, .. } = b
             .write_path_response_for_upstream(
                 &local,
                 InstantMillis(500),
@@ -359,7 +359,7 @@ mod tests {
             panic!("a local destination is answerable");
         };
 
-        let (header, payload) = WirePacketHeader::parse(&buf[..wire_len]).unwrap();
+        let (header, payload) = WirePacketHeader::parse(&buf[..wire_bytes]).unwrap();
         assert_eq!(header.packet_type, PacketType::Announce);
         assert_eq!(header.context, WireContext::PathResponse);
         assert_eq!(DestinationHash::from_address(header.address), local);
@@ -369,7 +369,7 @@ mod tests {
         );
 
         let mut a: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
-        let mut wire = buf[..wire_len].to_vec();
+        let mut wire = buf[..wire_bytes].to_vec();
         assert!(matches!(
             a.ingest_packet_with(
                 InboundPacket {
@@ -810,7 +810,7 @@ mod tests {
         let mut b = personal_node_announcer();
         let local = personal_node_destination();
         let mut buf = [0u8; BROADCAST_MTU];
-        let PathResponseWriteOutcome::Written { wire_len, .. } = b
+        let PathResponseWriteOutcome::Written { wire_bytes, .. } = b
             .write_path_response_for_upstream(
                 &local,
                 InstantMillis(500),
@@ -829,7 +829,7 @@ mod tests {
             RecursiveOutcome::Opened
         );
 
-        let mut wire = buf[..wire_len].to_vec();
+        let mut wire = buf[..wire_bytes].to_vec();
         assert!(matches!(
             a.ingest_packet_with(
                 InboundPacket {

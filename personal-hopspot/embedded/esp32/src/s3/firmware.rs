@@ -80,7 +80,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         lifecycle: LIFECYCLE.dyn_sender(),
     });
 
-    // The WiFi stack carries both the WiFi-auto UDP and the TCP client, so it stands up before the
+    // The Wi-Fi stack carries both the Wi-Fi Auto UDP and the TCP client, so it stands up before the
     // node moves to core 1 — activating the TCP slot is a core-0-only act.
     #[cfg(feature = "wifi-auto")]
     let (wifi, tcp_stack, esp_now) = build_wifi(
@@ -162,7 +162,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let wifi_supervisor_lane = has_wifi.then(|| {
         manifold_lanes
             .claim_supervisor(&WIFI_MANIFOLD_LANE, WIFI_SUPERVISOR_ID, &OUTBOUND_WAKE)
-            .expect("WiFi supervisor lane is available")
+            .expect("Wi-Fi supervisor lane is available")
     });
     #[cfg(feature = "lora")]
     let lora_lane = manifold_lanes
@@ -226,7 +226,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender());
         (interface, fleet)
     });
-    // The WiFi-auto run loop's two MTU receive buffers live on the heap (the D-cache donation),
+    // The Wi-Fi Auto run loop's two MTU receive buffers live on the heap (the D-cache donation),
     // not on the bounded `#[esp_rtos::main]` stack that run()'s future rides; the alloc-free
     // embassy AutoWifi just borrows them. Leaked: they live for the program's whole life anyway.
     #[cfg(feature = "wifi-auto")]

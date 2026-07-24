@@ -84,7 +84,7 @@ async fn establish_link_resolves_the_link_id_from_the_settlement() {
             completion
                 .send(Settlement::EstablishLink(Ok(LinkEstablished {
                     link_id: LinkId::new([0x42; 16]),
-                    rtt_ms: 11,
+                    rtt_millis: 11,
                 })))
                 .expect("the awaiter is still parked");
         }
@@ -106,7 +106,7 @@ async fn establish_link_with_rtt_preserves_the_full_settlement() {
     let establish = tokio::spawn(async move { issuer.establish_link_with_rtt(PEER).await });
     let established = LinkEstablished {
         link_id: LinkId::new([0x42; 16]),
-        rtt_ms: 11,
+        rtt_millis: 11,
     };
 
     match command_rx.recv().await.expect("the command was issued") {

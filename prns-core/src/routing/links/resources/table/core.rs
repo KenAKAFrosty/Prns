@@ -6,7 +6,7 @@ use crate::routing::links::resources::build_outgoing::{
 };
 use crate::routing::links::resources::streamed_open::OpenProgress;
 use crate::routing::links::resources::{
-    sealed_transfer_len, ResourceCompression, ResourceCorrelation, ResourceHash, ResourceProof,
+    sealed_transfer_bytes, ResourceCompression, ResourceCorrelation, ResourceHash, ResourceProof,
     ResourceSegment, SaltNonce, HASHMAP_MAX_LEN, MAP_HASH_LEN, MAX_EFFICIENT_SIZE,
     PART_TIMEOUT_FACTOR, RESOURCE_NONCE_LEN, WINDOW_MAX_SLOW, WINDOW_MIN, WINDOW_START,
 };
@@ -82,10 +82,10 @@ pub enum IncomingResourceStatus {
 pub struct OutgoingResourceState {
     pub salt_nonce: SaltNonce,
     pub expected_proof: ResourceProof,
-    pub sealed_transfer_len: usize,
+    pub sealed_transfer_bytes: usize,
     /// The nonce-prefixed plaintext length a raw [`Staged`](OutgoingResourceStatus::Staged) row holds until its deferred seal; zero once sealed.
-    pub staged_plaintext_len: usize,
-    pub uncompressed_data_len: u64,
+    pub staged_plaintext_bytes: usize,
+    pub uncompressed_data_bytes: u64,
     pub segment_index: u64,
     pub total_segments: u64,
     pub original_hash: ResourceHash,
@@ -107,9 +107,9 @@ impl Default for OutgoingResourceState {
         Self {
             salt_nonce: SaltNonce::new([0; 4]),
             expected_proof: ResourceProof::new([0; 32]),
-            sealed_transfer_len: 0,
-            staged_plaintext_len: 0,
-            uncompressed_data_len: 0,
+            sealed_transfer_bytes: 0,
+            staged_plaintext_bytes: 0,
+            uncompressed_data_bytes: 0,
             segment_index: 1,
             total_segments: 1,
             original_hash: ResourceHash::new([0; 32]),
@@ -132,10 +132,10 @@ pub struct IncomingResourceState {
     pub salt_nonce: SaltNonce,
     pub compression: ResourceCompression,
     pub has_metadata: bool,
-    pub uncompressed_data_len: u64,
+    pub uncompressed_data_bytes: u64,
     pub segment_index: u64,
     pub total_segments: u64,
-    pub sealed_transfer_len: usize,
+    pub sealed_transfer_bytes: usize,
     pub part_count: usize,
     pub sdu: usize,
     pub received_part_count: usize,
@@ -152,12 +152,12 @@ pub struct IncomingResourceState {
     pub measured_rtt_ms: Option<u64>,
     pub part_timeout_factor: u64,
     pub request_sent_at: Option<InstantMillis>,
-    pub request_sent_byte_len: u64,
+    pub request_sent_bytes: u64,
     pub awaiting_round_first_response: bool,
     pub received_byte_count: u64,
     pub received_byte_count_at_request: u64,
-    pub request_response_byte_rate: u64,
-    pub data_byte_rate: u64,
+    pub request_response_bytes_per_second: u64,
+    pub data_bytes_per_second: u64,
     pub inherited_eifr: Option<u64>,
     pub fast_rate_rounds: u8,
     pub very_slow_rate_rounds: u8,
@@ -168,7 +168,7 @@ impl IncomingResourceState {
     pub fn contiguous_byte_len(&self) -> usize {
         match self.consecutive_completed {
             None => 0,
-            Some(height) => ((height + 1) * self.sdu).min(self.sealed_transfer_len),
+            Some(height) => ((height + 1) * self.sdu).min(self.sealed_transfer_bytes),
         }
     }
 }
@@ -180,10 +180,10 @@ impl Default for IncomingResourceState {
             salt_nonce: SaltNonce::new([0; 4]),
             compression: ResourceCompression::Uncompressed,
             has_metadata: false,
-            uncompressed_data_len: 0,
+            uncompressed_data_bytes: 0,
             segment_index: 1,
             total_segments: 1,
-            sealed_transfer_len: 0,
+            sealed_transfer_bytes: 0,
             part_count: 0,
             sdu: 0,
             received_part_count: 0,
@@ -200,12 +200,12 @@ impl Default for IncomingResourceState {
             measured_rtt_ms: None,
             part_timeout_factor: PART_TIMEOUT_FACTOR,
             request_sent_at: None,
-            request_sent_byte_len: 0,
+            request_sent_bytes: 0,
             awaiting_round_first_response: false,
             received_byte_count: 0,
             received_byte_count_at_request: 0,
-            request_response_byte_rate: 0,
-            data_byte_rate: 0,
+            request_response_bytes_per_second: 0,
+            data_bytes_per_second: 0,
             inherited_eifr: None,
             fast_rate_rounds: 0,
             very_slow_rate_rounds: 0,
@@ -360,9 +360,9 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
                 *self.table.state_mut(index) = OutgoingResourceState {
                     salt_nonce: built.salt_nonce,
                     expected_proof: built.expected_proof,
-                    sealed_transfer_len: built.sealed_transfer_len,
-                    staged_plaintext_len: 0,
-                    uncompressed_data_len: built.uncompressed_data_len,
+                    sealed_transfer_bytes: built.sealed_transfer_bytes,
+                    staged_plaintext_bytes: 0,
+                    uncompressed_data_bytes: built.uncompressed_data_bytes,
                     segment_index: segment.index,
                     total_segments: segment.total_segments,
                     original_hash: built.hash,
@@ -411,7 +411,7 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
                 BuildOutgoingResourceError::DataTooLarge,
             ));
         }
-        if sealed_transfer_len(stream_len) > self.table.transfer_capacity() {
+        if sealed_transfer_bytes(stream_len) > self.table.transfer_capacity() {
             return Err(TrackOutgoingResourceError::Build(
                 BuildOutgoingResourceError::Seal(BufferTooShort),
             ));
@@ -427,7 +427,7 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
 
         prefill(self.table.buffers_mut(index).transfer);
         *self.table.state_mut(index) = OutgoingResourceState {
-            staged_plaintext_len: RESOURCE_NONCE_LEN + stream_len,
+            staged_plaintext_bytes: RESOURCE_NONCE_LEN + stream_len,
             segment_index: segment.index,
             total_segments: segment.total_segments,
             compression: ResourceCompression::Uncompressed,
@@ -495,12 +495,12 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
 
     /// A raw staged row's whole worker input: the reserved IV span, the stream nonce, and the parked stream.
     pub fn staged_plaintext(&self, index: usize) -> &[u8] {
-        let len = 16 + self.table.states()[index].staged_plaintext_len;
+        let len = 16 + self.table.states()[index].staged_plaintext_bytes;
         &self.table.transfer(index)[..len]
     }
 
     pub fn sealed_transfer(&self, index: usize) -> &[u8] {
-        let len = self.table.states()[index].sealed_transfer_len;
+        let len = self.table.states()[index].sealed_transfer_bytes;
         &self.table.transfer(index)[..len]
     }
 
@@ -587,9 +587,9 @@ pub struct AcceptedResource<'a> {
     pub compression: ResourceCompression,
     /// The advertisement's metadata flag: the verified stream opens with a length-prefixed packed block (in this segment if it is the first).
     pub has_metadata: bool,
-    pub uncompressed_data_len: u64,
+    pub uncompressed_data_bytes: u64,
     pub segment_index: u64,
-    pub sealed_transfer_len: usize,
+    pub sealed_transfer_bytes: usize,
     pub sdu: usize,
     pub correlation: ResourceCorrelation,
 
@@ -647,7 +647,7 @@ impl<C: ResourceTable<IncomingResourceState>> IncomingResources<C> {
         link_id: LinkId,
         offer: AcceptedResource<'_>,
     ) -> Result<usize, AcceptIncomingResourceError> {
-        if offer.sealed_transfer_len > self.table.transfer_capacity() {
+        if offer.sealed_transfer_bytes > self.table.transfer_capacity() {
             return Err(AcceptIncomingResourceError::TransferTooLarge);
         }
         if offer.part_count > self.table.part_capacity() {
@@ -676,10 +676,10 @@ impl<C: ResourceTable<IncomingResourceState>> IncomingResources<C> {
                     salt_nonce: offer.salt_nonce,
                     compression: offer.compression,
                     has_metadata: offer.has_metadata,
-                    uncompressed_data_len: offer.uncompressed_data_len,
+                    uncompressed_data_bytes: offer.uncompressed_data_bytes,
                     segment_index: offer.segment_index,
                     total_segments: offer.total_segment_count,
-                    sealed_transfer_len: offer.sealed_transfer_len,
+                    sealed_transfer_bytes: offer.sealed_transfer_bytes,
                     part_count: offer.part_count,
                     sdu: offer.sdu,
                     received_part_count: 0,
@@ -696,12 +696,12 @@ impl<C: ResourceTable<IncomingResourceState>> IncomingResources<C> {
                     measured_rtt_ms: None,
                     part_timeout_factor: PART_TIMEOUT_FACTOR,
                     request_sent_at: None,
-                    request_sent_byte_len: 0,
+                    request_sent_bytes: 0,
                     awaiting_round_first_response: false,
                     received_byte_count: 0,
                     received_byte_count_at_request: 0,
-                    request_response_byte_rate: 0,
-                    data_byte_rate: 0,
+                    request_response_bytes_per_second: 0,
+                    data_bytes_per_second: 0,
                     inherited_eifr: None,
                     fast_rate_rounds: 0,
                     very_slow_rate_rounds: 0,
@@ -784,7 +784,7 @@ impl<C: ResourceTable<IncomingResourceState>> IncomingResources<C> {
             return PlacePartOutcome::WrongLength;
         }
         let offset = at_part_index * state.sdu;
-        if offset + bytes.len() > state.sealed_transfer_len {
+        if offset + bytes.len() > state.sealed_transfer_bytes {
             return PlacePartOutcome::BeyondTransferEnd;
         }
         let buffers = self.table.buffers_mut(index);
@@ -828,7 +828,7 @@ impl<C: ResourceTable<IncomingResourceState>> IncomingResources<C> {
 
     /// Never payload bytes: once complete, the transfer opens in place and the plaintext emerges as a sub-slice.
     pub fn sealed_transfer(&self, index: usize) -> &[u8] {
-        let len = self.table.states()[index].sealed_transfer_len;
+        let len = self.table.states()[index].sealed_transfer_bytes;
         &self.table.transfer(index)[..len]
     }
 
@@ -837,14 +837,14 @@ impl<C: ResourceTable<IncomingResourceState>> IncomingResources<C> {
         &mut self,
         index: usize,
     ) -> (&mut [u8], &mut OpenProgress) {
-        let len = self.table.states()[index].sealed_transfer_len;
+        let len = self.table.states()[index].sealed_transfer_bytes;
         let (transfer, streamed_open) = self.table.transfer_and_streamed_open_mut(index);
         (&mut transfer[..len], streamed_open)
     }
 
     /// The read-only pair for the offload's owed-span scan and job view.
     pub fn transfer_and_streamed_open(&self, index: usize) -> (&[u8], &OpenProgress) {
-        let len = self.table.states()[index].sealed_transfer_len;
+        let len = self.table.states()[index].sealed_transfer_bytes;
         (
             &self.table.transfer(index)[..len],
             self.table.streamed_open(index),
@@ -935,16 +935,16 @@ mod tests {
         ResourceHash::new([byte; 32])
     }
 
-    fn fabricated(hash_byte: u8, sealed_transfer_len: usize, part_count: usize) -> BuiltResource {
+    fn fabricated(hash_byte: u8, sealed_transfer_bytes: usize, part_count: usize) -> BuiltResource {
         BuiltResource {
-            sealed_transfer_len,
+            sealed_transfer_bytes,
             part_count,
             hash: hash(hash_byte),
             salt_nonce: SaltNonce::new([hash_byte; 4]),
             expected_proof: ResourceProof::new([hash_byte; 32]),
             compression: ResourceCompression::Uncompressed,
             has_metadata: false,
-            uncompressed_data_len: sealed_transfer_len as u64,
+            uncompressed_data_bytes: sealed_transfer_bytes as u64,
         }
     }
 
@@ -988,10 +988,10 @@ mod tests {
             salt_nonce: SaltNonce::new([hash_byte; 4]),
             compression: ResourceCompression::Uncompressed,
             has_metadata: false,
-            uncompressed_data_len: 900,
+            uncompressed_data_bytes: 900,
             segment_index: 1,
             total_segment_count: 1,
-            sealed_transfer_len: 980,
+            sealed_transfer_bytes: 980,
             part_count: 3,
             sdu: 464,
             correlation: ResourceCorrelation::Unsolicited,
@@ -1037,7 +1037,7 @@ mod tests {
         let segment = |index, total| ResourceSegment {
             index,
             total_segments: total,
-            total_data_size: 2_000,
+            total_data_bytes: 2_000,
         };
         track_segment(&mut outgoing, 1, 0xAB, segment(1, 3)).unwrap();
 
@@ -1162,7 +1162,7 @@ mod tests {
         );
 
         let mut too_large = offer(0xCD, &[]);
-        too_large.sealed_transfer_len = 1025;
+        too_large.sealed_transfer_bytes = 1025;
         assert_eq!(
             incoming.accept(link_id(1), too_large).unwrap_err(),
             AcceptIncomingResourceError::TransferTooLarge,
@@ -1209,7 +1209,7 @@ mod tests {
         let mut incoming = IncomingResources::<HeapResourceTable<IncomingResourceState>>::default();
         let mut big = offer(0xAB, &[]);
         big.part_count = 100;
-        big.sealed_transfer_len = 100 * 464;
+        big.sealed_transfer_bytes = 100 * 464;
         let index = incoming.accept(link_id(1), big).unwrap();
 
         assert_eq!(

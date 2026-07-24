@@ -164,7 +164,7 @@ async fn a_link_establishes_and_carries_data_across_two_live_manifolds() {
         "one link, two ends",
     );
     assert!(
-        responder_side.rtt_ms >= established.rtt_ms,
+        responder_side.rtt_millis >= established.rtt_millis,
         "the responder takes max(measured, reported)",
     );
 

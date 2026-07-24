@@ -435,7 +435,7 @@ pub enum PlannedMedium {
         transport: RNodeTransportPlan,
         frequency_hz: u64,
         bandwidth_hz: u32,
-        txpower_dbm: i16,
+        tx_power_dbm: i16,
         spreading_factor: u8,
         coding_rate: u8,
         flow_control: ReadyCommandFlowControl,
@@ -711,14 +711,14 @@ pub(super) fn plan_medium(interface: &ReferenceInterface) -> Result<PlannedMediu
                 .ok_or(PlanErrorKind::MissingRequiredField {
                     key: interface_key::CODINGRATE,
                 })?;
-            let txpower_dbm = radio.txpower.ok_or(PlanErrorKind::MissingRequiredField {
+            let tx_power_dbm = radio.txpower.ok_or(PlanErrorKind::MissingRequiredField {
                 key: interface_key::TXPOWER,
             })?;
             Ok(PlannedMedium::Rnode {
                 transport,
                 frequency_hz,
                 bandwidth_hz,
-                txpower_dbm,
+                tx_power_dbm,
                 spreading_factor,
                 coding_rate,
                 flow_control: ready_command_flow_control(*flow_control),

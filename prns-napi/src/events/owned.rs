@@ -85,7 +85,7 @@ pub enum OwnedEvent {
     ResourceAssembled {
         link_id: [u8; 16],
         original_hash: Vec<u8>,
-        total_size: u64,
+        total_size_bytes: u64,
     },
     ResourceFailed {
         link_id: [u8; 16],
@@ -98,9 +98,9 @@ pub enum OwnedEvent {
     },
     ResourceSendProgress {
         link_id: [u8; 16],
-        transferred: u64,
-        total: u64,
-        physical_transferred: u64,
+        transferred_bytes: u64,
+        total_bytes: u64,
+        physical_transferred_bytes: u64,
         segment_index: u64,
         total_segments: u64,
     },
@@ -244,7 +244,7 @@ impl OwnedEvent {
             },
             Diagnostic::LinkEstablished(established) => Self::LinkEstablished {
                 link_id: *established.link_id.as_bytes(),
-                rtt_millis: established.rtt_ms,
+                rtt_millis: established.rtt_millis,
             },
             Diagnostic::PeerIdentified { link_id, identity } => Self::PeerIdentified {
                 link_id: *link_id.as_bytes(),
@@ -286,11 +286,11 @@ impl OwnedEvent {
             Diagnostic::ResourceAssembled {
                 link_id,
                 original_hash,
-                total_size,
+                total_size_bytes,
             } => Self::ResourceAssembled {
                 link_id: *link_id.as_bytes(),
                 original_hash: original_hash.as_bytes().to_vec(),
-                total_size,
+                total_size_bytes,
             },
             Diagnostic::ResourceFailed {
                 link_id,

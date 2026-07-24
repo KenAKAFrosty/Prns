@@ -60,8 +60,8 @@ impl ResourceFlags {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResourceAdvertisement<'a> {
-    pub transfer_size: u64,
-    pub data_size: u64,
+    pub transfer_bytes: u64,
+    pub data_bytes: u64,
     pub part_count: u64,
     pub hash: ResourceHash,
     pub salt_nonce: SaltNonce,
@@ -192,9 +192,9 @@ impl<'a> ResourceAdvertisement<'a> {
     fn write_fields(&self, buf: &mut [u8]) -> Option<usize> {
         let mut at = put(buf, 0, &[FIXMAP_11])?;
         at = put_key(buf, at, b't')?;
-        at = put_uint(buf, at, self.transfer_size)?;
+        at = put_uint(buf, at, self.transfer_bytes)?;
         at = put_key(buf, at, b'd')?;
-        at = put_uint(buf, at, self.data_size)?;
+        at = put_uint(buf, at, self.data_bytes)?;
         at = put_key(buf, at, b'n')?;
         at = put_uint(buf, at, self.part_count)?;
         at = put_key(buf, at, b'h')?;
@@ -230,8 +230,8 @@ impl<'a> ResourceAdvertisement<'a> {
         if reader.byte()? != FIXMAP_11 {
             return None;
         }
-        let mut transfer_size = None;
-        let mut data_size = None;
+        let mut transfer_bytes = None;
+        let mut data_bytes = None;
         let mut part_count = None;
         let mut hash = None;
         let mut salt_nonce = None;
@@ -246,8 +246,8 @@ impl<'a> ResourceAdvertisement<'a> {
                 return None;
             }
             match reader.byte()? {
-                b't' => store(&mut transfer_size, reader.uint()?)?,
-                b'd' => store(&mut data_size, reader.uint()?)?,
+                b't' => store(&mut transfer_bytes, reader.uint()?)?,
+                b'd' => store(&mut data_bytes, reader.uint()?)?,
                 b'n' => store(&mut part_count, reader.uint()?)?,
                 b'h' => store(&mut hash, ResourceHash::new(fixed(reader.bin()?)?))?,
                 b'r' => store(&mut salt_nonce, fixed::<RESOURCE_NONCE_LEN>(reader.bin()?)?)?,
@@ -269,8 +269,8 @@ impl<'a> ResourceAdvertisement<'a> {
             }
         }
         Some(Self {
-            transfer_size: transfer_size?,
-            data_size: data_size?,
+            transfer_bytes: transfer_bytes?,
+            data_bytes: data_bytes?,
             part_count: part_count?,
             hash: hash?,
             salt_nonce: SaltNonce::new(salt_nonce?),
@@ -404,8 +404,8 @@ mod tests {
 
     fn v1_adv(hashmap: &[u8]) -> ResourceAdvertisement<'_> {
         ResourceAdvertisement {
-            transfer_size: 345_678,
-            data_size: 1_048_575,
+            transfer_bytes: 345_678,
+            data_bytes: 1_048_575,
             part_count: 803,
             hash: h(),
             salt_nonce: SaltNonce::new(NONCE),
@@ -432,8 +432,8 @@ mod tests {
     #[test]
     fn a_response_advertisement_names_its_request_back() {
         let adv = ResourceAdvertisement {
-            transfer_size: 431,
-            data_size: 900,
+            transfer_bytes: 431,
+            data_bytes: 900,
             part_count: 2,
             hash: h(),
             salt_nonce: SaltNonce::new(NONCE),
@@ -459,8 +459,8 @@ mod tests {
     fn giant_split_resources_cross_the_u32_size_boundary() {
         let hashmap = full_hashmap();
         let adv = ResourceAdvertisement {
-            transfer_size: 1_048_750,
-            data_size: 5_000_000_000,
+            transfer_bytes: 1_048_750,
+            data_bytes: 5_000_000_000,
             part_count: 2_434,
             hash: h(),
             salt_nonce: SaltNonce::new(NONCE),
@@ -475,7 +475,7 @@ mod tests {
         let n = adv.write(&mut buf).unwrap();
         assert_eq!(&buf[..n], &bytes_from_hex(V3)[..]);
         let parsed = ResourceAdvertisement::parse(&buf[..n]).unwrap();
-        assert_eq!(parsed.data_size, 5_000_000_000);
+        assert_eq!(parsed.data_bytes, 5_000_000_000);
         assert_eq!(parsed.total_segments, 5_000);
         assert!(parsed.flags.split);
     }
@@ -505,9 +505,9 @@ mod tests {
         at = put_key(&mut reversed, at, b'n').unwrap();
         at = put_uint(&mut reversed, at, expected.part_count).unwrap();
         at = put_key(&mut reversed, at, b'd').unwrap();
-        at = put_uint(&mut reversed, at, expected.data_size).unwrap();
+        at = put_uint(&mut reversed, at, expected.data_bytes).unwrap();
         at = put_key(&mut reversed, at, b't').unwrap();
-        at = put_uint(&mut reversed, at, expected.transfer_size).unwrap();
+        at = put_uint(&mut reversed, at, expected.transfer_bytes).unwrap();
         assert_eq!(
             ResourceAdvertisement::parse(&reversed[..at]).unwrap(),
             expected,

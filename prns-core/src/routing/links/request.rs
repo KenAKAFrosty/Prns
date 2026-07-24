@@ -262,7 +262,7 @@ pub fn parse_response_plaintext(
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SendRequestDispatch {
-    pub wire_len: usize,
+    pub wire_bytes: usize,
     pub fire_on: InterfaceId,
     pub request_id: RequestId,
     pub culled: Option<CulledReceipt>,
@@ -270,7 +270,7 @@ pub struct SendRequestDispatch {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RespondDispatch {
-    pub wire_len: usize,
+    pub wire_bytes: usize,
     pub fire_on: InterfaceId,
 }
 
@@ -430,7 +430,7 @@ impl<S: StorageLayout> EngineState<S> {
         if plain_len > link_mdu(*mtu) {
             return Err(LinkRequestWriteError::PayloadTooLong);
         }
-        let (header_len, wire_len) = seal_link_frame(
+        let (header_len, wire_bytes) = seal_link_frame(
             &request.link_id,
             key,
             WireContext::Request,
@@ -444,7 +444,7 @@ impl<S: StorageLayout> EngineState<S> {
             DestinationType::Link,
             &request.link_id.to_address(),
             WireContext::Request,
-            &buf[header_len..wire_len],
+            &buf[header_len..wire_bytes],
         );
         let culled = self.receipts.track(OutstandingReceipt {
             packet_hash,
@@ -456,7 +456,7 @@ impl<S: StorageLayout> EngineState<S> {
         });
 
         Ok(SendRequestDispatch {
-            wire_len,
+            wire_bytes,
             fire_on,
             request_id: RequestId::of_packet(&packet_hash),
             culled,
@@ -515,7 +515,7 @@ impl<S: StorageLayout> EngineState<S> {
         if plain_len > link_mdu(*mtu) {
             return Err(LinkRequestWriteError::PayloadTooLong);
         }
-        let (_, wire_len) = seal_link_frame(
+        let (_, wire_bytes) = seal_link_frame(
             &respond.link_id,
             key,
             WireContext::Response,
@@ -525,7 +525,7 @@ impl<S: StorageLayout> EngineState<S> {
         )
         .ok_or(LinkRequestWriteError::BufferTooShort)?;
         Ok(RespondDispatch {
-            wire_len,
+            wire_bytes,
             fire_on: *attached_interface,
         })
     }

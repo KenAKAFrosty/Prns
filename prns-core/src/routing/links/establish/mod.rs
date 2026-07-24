@@ -62,7 +62,7 @@ impl EstablishLinkEntropy {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LinkRequestDispatch {
-    pub wire_len: usize,
+    pub wire_bytes: usize,
     pub fire_on: InterfaceId,
     pub link_id: LinkId,
 }
@@ -180,7 +180,7 @@ impl<S: StorageLayout> EngineState<S> {
                 buf,
             ),
         };
-        let Ok(wire_len) = request else {
+        let Ok(wire_bytes) = request else {
             return Rejected {
                 rejection: WriteEstablishLinkRejection::Serialize,
             };
@@ -201,7 +201,7 @@ impl<S: StorageLayout> EngineState<S> {
             command_id: id,
         }) {
             Ok(()) => Written(LinkRequestDispatch {
-                wire_len,
+                wire_bytes,
                 fire_on,
                 link_id,
             }),

@@ -408,7 +408,13 @@ async fn flush_rotated_ratchet(
         Ok(None) => return PersistenceFlushStatus::Landed,
         Err(PrepareFlushError::NodeStopped) => return PersistenceFlushStatus::NodeStopped,
     };
-    store_single_ratchet(storage, snapshot, PersistenceTrigger::RatchetRotation, on_event).await
+    store_single_ratchet(
+        storage,
+        snapshot,
+        PersistenceTrigger::RatchetRotation,
+        on_event,
+    )
+    .await
 }
 
 async fn flush_all_ratchets(

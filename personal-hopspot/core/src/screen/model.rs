@@ -11,7 +11,7 @@ pub enum CardKind {
     LoRa,
     EspNow,
     Tcp,
-    /// A fleet member a supervisor stood up (a WiFi/USB peer), not an interface a node configured itself. Renders one font-size down — fits its id tag and reads as subordinate to its parent.
+    /// A fleet member a supervisor stood up (a Wi-Fi/USB peer), not an interface a node configured itself. Renders one font-size down — fits its id tag and reads as subordinate to its parent.
     Peer,
 }
 

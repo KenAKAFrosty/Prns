@@ -12,7 +12,7 @@ use super::write_path_request_wire_packet;
 #[must_use]
 pub enum PathRequestWriteOutcome {
     Written {
-        wire_len: usize,
+        wire_bytes: usize,
         culled: Option<CulledPathRequest>,
     },
     SerializeFailed(WireError),
@@ -27,7 +27,7 @@ impl<S: StorageLayout> EngineState<S> {
         now: InstantMillis,
         buf: &mut [u8],
     ) -> PathRequestWriteOutcome {
-        let wire_len = match write_path_request_wire_packet(
+        let wire_bytes = match write_path_request_wire_packet(
             request.destination,
             self.network_transport_enabled()
                 .then(|| self.transport_id())
@@ -35,7 +35,7 @@ impl<S: StorageLayout> EngineState<S> {
             request.id.as_bytes(),
             buf,
         ) {
-            Ok(wire_len) => wire_len,
+            Ok(wire_bytes) => wire_bytes,
             Err(error) => return PathRequestWriteOutcome::SerializeFailed(error),
         };
 
@@ -47,7 +47,7 @@ impl<S: StorageLayout> EngineState<S> {
         self.recent_path_requests
             .mark_seen_at(request.destination, now);
 
-        PathRequestWriteOutcome::Written { wire_len, culled }
+        PathRequestWriteOutcome::Written { wire_bytes, culled }
     }
 
     pub fn pop_settled_path_request(
@@ -108,12 +108,12 @@ mod tests {
             InstantMillis(1_000),
             &mut buf,
         );
-        let PathRequestWriteOutcome::Written { wire_len, .. } = outcome else {
+        let PathRequestWriteOutcome::Written { wire_bytes, .. } = outcome else {
             panic!("RNS 1.4.0 Transport.request_path emits unconditionally; a live route must not block a refresh");
         };
 
         let (header, _) =
-            WirePacketHeader::parse(&buf[..wire_len]).expect("the emitted packet parses");
+            WirePacketHeader::parse(&buf[..wire_bytes]).expect("the emitted packet parses");
         let path_request_destination = derive_plain_destination_hash(
             &expand_name("rnstransport", &["path", "request"]).expect("the well-known name"),
         );

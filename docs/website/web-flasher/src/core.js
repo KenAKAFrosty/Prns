@@ -13,9 +13,9 @@ const PATH_COMPONENT_PATTERN = /^[A-Za-z0-9._+-]+$/;
 const MOUNT_LABEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/;
 const ESP_PARTS = ["bootloader", "partition-table", "application"];
 const FLASH_SIZE_VALUES = new Map([
-  [4 * 1024 * 1024, "4MB"],
-  [8 * 1024 * 1024, "8MB"],
-  [16 * 1024 * 1024, "16MB"],
+  [4 * 1024 * 1024, "4 MiB"],
+  [8 * 1024 * 1024, "8 MiB"],
+  [16 * 1024 * 1024, "16 MiB"],
 ]);
 const JEDEC_FLASH_CAPACITIES = new Map([
   [0x16, 4 * 1024 * 1024],

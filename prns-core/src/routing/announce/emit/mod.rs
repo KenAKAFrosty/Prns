@@ -44,7 +44,7 @@ pub enum AnnounceWriteFailure {
 #[must_use]
 pub enum CommandedAnnounceWriteOutcome {
     Written {
-        wire_len: usize,
+        wire_bytes: usize,
         ratchet_rotation: RatchetRotation,
     },
     Rejected {
@@ -58,7 +58,7 @@ pub enum CommandedAnnounceWriteOutcome {
 #[must_use]
 pub enum PathResponseWriteOutcome {
     Written {
-        wire_len: usize,
+        wire_bytes: usize,
         ratchet_rotation: RatchetRotation,
     },
     NotUpstream,
@@ -125,8 +125,8 @@ impl<S: StorageLayout> EngineState<S> {
             AnnounceContext::Announcement,
             buf,
         ) {
-            Ok((wire_len, ratchet_rotation)) => Written {
-                wire_len,
+            Ok((wire_bytes, ratchet_rotation)) => Written {
+                wire_bytes,
                 ratchet_rotation,
             },
             Err(AnnounceWriteFailure::Rejected(rejection)) => Rejected { rejection },
@@ -153,8 +153,8 @@ impl<S: StorageLayout> EngineState<S> {
             AnnounceContext::PathResponse,
             buf,
         ) {
-            Ok((wire_len, ratchet_rotation)) => Written {
-                wire_len,
+            Ok((wire_bytes, ratchet_rotation)) => Written {
+                wire_bytes,
                 ratchet_rotation,
             },
             Err(AnnounceWriteFailure::Rejected(_)) => NotUpstream,
@@ -190,7 +190,7 @@ impl<S: StorageLayout> EngineState<S> {
 
         let mut announce_entropy_bytes = [0u8; AnnounceEntropy::LEN];
         fill_entropy(&mut announce_entropy_bytes);
-        let wire_len = frame_announce(
+        let wire_bytes = frame_announce(
             &identity,
             &AnnounceContent {
                 name_hash,
@@ -203,7 +203,7 @@ impl<S: StorageLayout> EngineState<S> {
             buf,
         )
         .map_err(AnnounceWriteFailure::Errored)?;
-        Ok((wire_len, ratchet_rotation))
+        Ok((wire_bytes, ratchet_rotation))
     }
 }
 
@@ -237,7 +237,7 @@ mod tests {
         #[track_caller]
         pub(crate) fn written_len(self) -> usize {
             match self {
-                CommandedAnnounceWriteOutcome::Written { wire_len, .. } => wire_len,
+                CommandedAnnounceWriteOutcome::Written { wire_bytes, .. } => wire_bytes,
                 _ => panic!("expected a written commanded announce"),
             }
         }
@@ -326,10 +326,10 @@ mod tests {
             &mut test_fill_entropy,
             &mut buf,
         );
-        let PathResponseWriteOutcome::Written { wire_len, .. } = outcome else {
+        let PathResponseWriteOutcome::Written { wire_bytes, .. } = outcome else {
             panic!("expected a written path response");
         };
-        assert!(buf[..wire_len].ends_with(REGISTERED_APP_DATA));
+        assert!(buf[..wire_bytes].ends_with(REGISTERED_APP_DATA));
     }
 
     #[test]

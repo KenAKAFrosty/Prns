@@ -204,7 +204,7 @@ fn listener_event(event: PrnsEvent<'_>, state: &ListenerState) {
                 established.link_id,
                 ResourceOfferAdmission {
                     peer,
-                    max_uncompressed_len: MAX_EXECUTION_REQUEST_BYTES as u64,
+                    max_uncompressed_bytes: MAX_EXECUTION_REQUEST_BYTES as u64,
                     accept_compressed: true,
                 },
             );

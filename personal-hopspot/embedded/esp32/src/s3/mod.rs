@@ -136,7 +136,7 @@ const HOPSPOT_CONFIG_SSID_MAX: usize = 32;
 #[cfg(feature = "wifi-auto")]
 const HOPSPOT_CONFIG_PASSWORD_MAX: usize = 64;
 
-/// Fallback WiFi network the board joins as a station, read at build time. Normal flashing writes the
+/// Fallback Wi-Fi network the board joins as a station, read at build time. Normal flashing writes the
 /// same values into the reserved `hopcfg` flash slot so the published firmware artifact can stay
 /// generic.
 const WIFI_SSID: &str = match option_env!("HOPSPOT_WIFI_SSID") {
@@ -149,8 +149,8 @@ const WIFI_PASSWORD: &str = match option_env!("HOPSPOT_WIFI_PASSWORD") {
 };
 
 /// The LAN Reticulum TCP node the board dials (`ip:port`, e.g. `192.168.1.50:4242`), read at build
-/// time like the WiFi creds. Empty (or unparseable) leaves the TCP interface down. No DNS — a
-/// resolved address only. Rides the WiFi stack, so it needs WiFi up.
+/// time like the Wi-Fi credentials. Empty (or unparseable) leaves the TCP interface down. No DNS — a
+/// resolved address only. Rides the Wi-Fi stack, so it needs Wi-Fi up.
 const HOPSPOT_TCP_TARGET: &str = match option_env!("HOPSPOT_TCP_TARGET") {
     Some(target) => target,
     None => "",

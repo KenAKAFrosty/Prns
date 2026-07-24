@@ -34,7 +34,7 @@ impl<S: StorageLayout> EngineState<S> {
             .network_transport_enabled()
             .then(|| self.transport_id())
             .flatten();
-        let Ok(wire_len) =
+        let Ok(wire_bytes) =
             write_path_request_wire_packet(request.destination, transport_id, request.id, &mut buf)
         else {
             return;
@@ -62,7 +62,7 @@ impl<S: StorageLayout> EngineState<S> {
                 }
                 sink(EngineReaction::Directive(Directive::Send {
                     target: descriptor.id,
-                    bytes: &buf[..wire_len],
+                    bytes: &buf[..wire_bytes],
                 }));
             }
         }
