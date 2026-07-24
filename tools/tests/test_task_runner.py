@@ -3,12 +3,13 @@ from __future__ import annotations
 import copy
 from importlib.machinery import SourceFileLoader
 import importlib.util
+from pathlib import Path
+import re
 import subprocess
 import sys
 import tomllib
 import unittest
 from unittest import mock
-from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -87,6 +88,24 @@ class TaskRegistryTests(unittest.TestCase):
             self.assertTrue(task["platforms"])
             self.assertTrue(task["audience"])
 
+    def test_clone_front_door_and_crate_readme_links_stay_local_and_live(self) -> None:
+        for relative in ("README.md", "prnsd/README.md", "personal-rns/README.md"):
+            path = ROOT / relative
+            source = path.read_text(encoding="utf-8")
+            for target in re.findall(r"\]\(([^)]+)\)", source):
+                if (
+                    target.startswith(("#", "/", "mailto:"))
+                    or "://" in target
+                ):
+                    continue
+                local = target.split("#", maxsplit=1)[0]
+                self.assertTrue(
+                    (path.parent / local).exists(),
+                    f"{relative} has a dead local link: {target}",
+                )
+            self.assertNotIn("cargo add prnsd", source)
+            self.assertNotIn("cargo add personal-rns", source)
+
     def test_task_implementation_cannot_cross_domain_boundaries(self) -> None:
         manifest = copy.deepcopy(self.manifest)
         task = next(task for task in manifest["task"] if task["id"] == "build.android")
@@ -135,6 +154,46 @@ class TaskRegistryTests(unittest.TestCase):
         with mock.patch.object(runner.subprocess, "run", return_value=completed) as run:
             self.assertEqual(runner.run_task(task, []), 0)
         self.assertEqual(run.call_args.args[0][0], sys.executable)
+
+    def test_doctor_profiles_cover_each_beginner_outcome(self) -> None:
+        profiles = runner.doctor_profile_map(self.manifest)
+        self.assertEqual(
+            set(profiles),
+            {"getting-started", "node", "rust", "docs", "tests", "benchmarks"},
+        )
+        self.assertEqual(profiles["docs"]["exact_versions"]["dx"], "0.7.5")
+        self.assertEqual(profiles["rust"]["minimum_versions"]["rustc"], "1.90")
+
+    def test_doctor_profile_name_cannot_collide_with_a_task_or_domain(self) -> None:
+        manifest = copy.deepcopy(self.manifest)
+        manifest["doctor_profile"][0]["id"] = "release"
+        errors = runner.validate_manifest(manifest, check_callers=False)
+        self.assertTrue(any("collides with a task ID or domain" in error for error in errors))
+
+    def test_doctor_profile_rejects_old_versions(self) -> None:
+        profile = copy.deepcopy(runner.doctor_profile_map(self.manifest)["rust"])
+        with (
+            mock.patch.object(runner, "command_path", return_value="/test/tool"),
+            mock.patch.object(runner, "command_version", return_value=(1, 0, 0)),
+        ):
+            self.assertFalse(runner.doctor_profile(profile))
+
+    def test_benchmark_doctor_selects_only_the_host_compiler(self) -> None:
+        profile = copy.deepcopy(runner.doctor_profile_map(self.manifest)["benchmarks"])
+        commands = []
+
+        def record(command: str) -> str:
+            commands.append(command)
+            return f"/test/{command}"
+
+        with (
+            mock.patch.object(runner, "native_platform", return_value="macos"),
+            mock.patch.object(runner, "command_path", side_effect=record),
+            mock.patch.object(runner, "command_version", return_value=(99, 0, 0)),
+        ):
+            self.assertTrue(runner.doctor_profile(profile))
+        self.assertIn("cc", commands)
+        self.assertNotIn("cl", commands)
 
     def test_verify_output_explains_guarantees(self) -> None:
         result = subprocess.run(

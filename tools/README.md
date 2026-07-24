@@ -10,7 +10,7 @@ Start with:
 ```console
 ./tools/prns list
 ./tools/prns explain release.candidate.build
-./tools/prns doctor release
+./tools/prns doctor getting-started
 ./tools/prns verify
 ```
 
@@ -23,13 +23,14 @@ registry:
 ```console
 cargo tools list
 cargo tools explain release.candidate.build
-cargo tools doctor release
+cargo tools doctor rust
 cargo tools verify
 ```
 
 For example:
 
 ```console
+cargo tools guide rust
 cargo tools release firmware build -- heltec-v4 target/dev-flash
 cargo tools release source package -- --output target/source.zip
 cargo tools release candidate build -- target/candidate preview KEY_ID
@@ -40,6 +41,12 @@ own any task definitions or setup logic; CI and bootstrap documentation can
 therefore continue to use `./tools/prns` without creating a second command
 system. Product and daemon commands remain separately named under
 `cargo prnsd`.
+
+The declarative doctor profiles are `getting-started`, `node`, `rust`, `docs`,
+`tests`, and `benchmarks`. Profiles check the commands and important versions
+for one outcome, including the platform C compiler where applicable. They print
+setup guidance and never install software. No-argument, task-ID, and domain
+doctor behavior remains available.
 
 The operator interface prints every task's purpose and side-effect class before
 execution. CI invokes the same named tasks and does not call implementation files

@@ -251,7 +251,7 @@ pub fn Landing() -> Element {
                         glyph: UseGlyph::Daemon,
                         headline: t!("start-daemon-headline"),
                         body: t!("start-daemon-body"),
-                        chips: t!("start-daemon-code"),
+                        chips: "cargo prnsd --detach".to_string(),
                         target_label: t!("start-daemon-target"),
                         target: UseCaseTarget::Route(Route::SingleCrate {
                             name: "prnsd".to_string(),
@@ -271,9 +271,11 @@ pub fn Landing() -> Element {
                         glyph: UseGlyph::Build,
                         headline: t!("start-rust-headline"),
                         body: t!("start-rust-body"),
-                        chips: t!("start-rust-code"),
+                        chips: "cargo tools guide rust".to_string(),
                         target_label: t!("start-rust-target"),
-                        target: UseCaseTarget::Route(Route::CratesIndex {}),
+                        target: UseCaseTarget::Route(Route::SingleCrate {
+                            name: "personal-rns".to_string(),
+                        }),
                     }
                 }
             }

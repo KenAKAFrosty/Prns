@@ -89,7 +89,7 @@ class BrowserPlayground {
         this.#view.renderAutoWifi(this.#autoWifi);
         this.#view.renderUsb(this.#usb);
         this.#view.record("Runtime", "Browser node runtime ready", `${LXMF_DELIVERY_DISPLAY_NAME} · lxmf.delivery ${hex(this.#destination)}`);
-        this.#view.record("Node page", "Serving /page/index.mu over Reticulum", `${NODE_PAGE_DISPLAY_NAME} · nomadnetwork.node ${hex(this.#pageDestination)}`);
+        this.#view.record("Node page", "Serving /page/index.mu and /page/quickstart.mu over Reticulum", `${NODE_PAGE_DISPLAY_NAME} · nomadnetwork.node ${hex(this.#pageDestination)}`);
         this.#view.bindControls({
             startAutoWifi: () => this.#startAutoWifi(),
             closeAutoWifi: () => {

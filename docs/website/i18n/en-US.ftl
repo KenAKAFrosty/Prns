@@ -73,9 +73,6 @@ start-section-lead = Choose the path that matches how Prns fits into your work: 
 
 start-daemon-headline = Run a daemon
 start-daemon-body = Install a fast Reticulum daemon for desktops, LXMF apps, backbone VPSs, etc.
-start-daemon-code = Installation
-    Compatibility
-    Benchmarks
 start-daemon-target = Run Prnsd
 
 start-mobile-headline = I'm building a mobile app
@@ -105,9 +102,6 @@ start-web-target = Open playground
 
 start-rust-headline = Build on Reticulum
 start-rust-body = Use the engine and bindings to add mesh networking to apps, tools, services, or games.
-start-rust-code = Quickstart
-    API examples
-    Bindings
 start-rust-target = Choose a developer path
 
 

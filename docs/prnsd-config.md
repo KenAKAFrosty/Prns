@@ -1,7 +1,6 @@
 # Prnsd Configuration
 
 `prnsd` reads the stock Reticulum ConfigObj dialect from one extensionless file named `config`.
-It does not read `config.toml`.
 
 Pass `--config DIR` to use `DIR/config`. Without an override, Unix hosts prefer
 `/etc/reticulum/config`, then `$HOME/.config/reticulum/config`, and finally
@@ -23,99 +22,8 @@ offending value, accepted form, and a concrete correction.
 Disabled interface stanzas are skipped before `type` and medium-specific validation. This makes it
 safe to retain an unavailable or incomplete stanza with `enabled = No`.
 
-## Safe interface editor
-
-`prnsd interfaces` opens a numbered, line-oriented editor when attached to a terminal. The same
-surface is available non-interactively through `list`, `validate`, `add`, `edit`, `enable`,
-`disable`, `remove`, `repair`, and `apply` subcommands. `check` remains a visible alias for
-`validate`. From a checkout, `cargo prnsd interfaces ...` routes
-directly to the same one-shot command without starting the managed daemon. `--config DIR` follows
-the normal config discovery rules and may appear anywhere inside the `interfaces` command.
-
-The guided screen presents configuration validity, managed-daemon state, friendly interface names,
-canonical type names, and enabled state before offering an action. Selecting an interface opens a
-typed settings editor containing every runtime-supported setting applicable to that interface
-kind. Its initial view contains everyday settings plus any configured overrides; `All settings`
-reveals announcement limits, traffic control, and other advanced values without removing them from
-reach. Settings are grouped by connectivity, network access, interface behavior, discovery
-publication, announcement limits, radio, and traffic control. Configured values appear first in
-each group.
-
-Each value is labelled as configured, default, effective, inactive, or required. Defaults and
-effective inherited policy are read from the same planned interface used at startup instead of
-being inferred from the presence of a config line. Selecting a setting shows what it controls, its
-current and default values, accepted units or choices, and any prerequisite that currently leaves
-it inactive. Broad stock keys that parse for every interface but have no runtime effect on the
-selected kind are not offered as new settings. Existing inert values remain visible as preserved,
-unused configuration and can be removed without disturbing unrelated bytes.
-
-Multiple setting changes are validated and previewed as one candidate. RNodeMulti members have
-their own nested add, edit, and remove workflow. Unknown third-party interface types remain opaque
-and are never interpreted or rewritten.
-
-Interactive output uses the Prns terminal palette for headings, success, warnings, errors, and
-prompts. Styling is disabled when output is redirected or `NO_COLOR` is present; nonzero
-`CLICOLOR_FORCE` enables it explicitly. The editor remains line-oriented and never clears the
-terminal. `validate --details` shows exact source locations and diagnostic codes; the default TTY
-view groups concise diagnostics by interface. Non-TTY validation retains detailed plain output for
-automation.
-
-Add and edit accept explicit, typed options for the selected interface kind. Inapplicable options
-are rejected before an edit exists, and every complete candidate is passed through the same
-authoritative planner used by daemon startup. Complete scripted mutations save directly;
-`--dry-run` prints the candidate diff without writing, `remove` requires `--yes` without a terminal,
-and `--apply` requests live application after a successful save. Guided mutations show a diff and
-ask before saving and applying. Passphrases and RPC secrets are redacted from diffs and control
-messages unless `--show-secrets` is explicitly selected for local display.
-
-RNodeMulti creation and radio replacement use a repeatable typed
-`--radio NAME:VPORT:FREQUENCY:BANDWIDTH:TXPOWER:SPREADING_FACTOR:CODING_RATE` option. The parent
-still takes its serial device through `--port`; each emitted child has the canonical required
-RNodeMulti settings and is validated with the complete candidate before it can be saved.
-
-The editor preserves comments, blank lines, ordering, newline style, unknown sections, aliases,
-disabled third-party interfaces, and all unrelated source bytes. It re-reads the source immediately
-before writing to reject concurrent edits. An existing config is copied to
-`config.prns-backup` with its permissions preserved, then the replacement is synced and atomically
-installed from the same directory. Editing an installation that still uses the built-in default
-materializes `DIR/config` as an owner-only file. The command never elevates privileges.
-
-`prnsd interfaces repair --safe` applies only unambiguous semantic repairs, such as disabling an
-invalid enabled interface so the rest of the daemon can start. Guided repair can present choices
-for ambiguous values and interface types. Malformed ConfigObj syntax is reported with its exact
-line and remains untouched. Managed startup never prompts or rewrites configuration; on failure it
-prints the matching repair command.
-
-RNS injects `name`, `selected_interface_mode`, and `configured_bitrate` into its in-memory
-interface dictionaries. They are generated copies, not independent configuration inputs: the
-`[[interface heading]]` supplies the label, `mode` supplies the interface mode, and `bitrate`
-supplies an explicit bitrate override. NomadNet can persist the generated fields when writing an
-interface back to disk. Prns reports them as redundant RNS-generated fields rather than implying
-that the authoritative settings are ignored; guided repair groups them into one explained action,
-and `repair --safe` removes them. Other unknown keys remain conservative guided repairs and are
-preserved by default.
-
-`prnsd interfaces apply` sends only the managed generation, a request identifier, and the expected
-SHA-256 digest through the private control directory. The daemon re-reads its active config path,
-verifies the digest, reparses it, and refuses non-interface changes with `RestartRequired`.
-Unchanged interface units remain running; RNodeMulti members reconcile as one hardware unit;
-changed listeners are detached before their replacements bind. Failure during construction restores
-the previous runtime interface set while leaving the valid on-disk edit intact. Discovery
-publication, bootstrap lifecycle, endpoint reservations, and interface-failure monitoring refresh
-with the accepted plan. No file watcher is installed: saving and applying remain explicit actions.
-
-Live apply is available only to a managed daemon that owns the routing tables. A shared-instance
-client reports that the owning process must apply the change, and an unmanaged foreground process
-cannot receive an external request. Exit status 3 means no managed daemon is running. Semantic
-validity does not require serial hardware, radios, peers, routers, or remote listeners to be online;
-retry-capable interfaces can remain visibly degraded after a valid apply.
 
 ## Daemon behavior
-
-Prnsd applies transport enablement and identity policy independently, shared-instance type/name/data
-and control ports, RPC key, forced shared bitrate, randomized local hop count, link MTU discovery,
-proof form, interface discovery policy, default announce pacing, ingress control, path-request egress
-control, every configured `ic_*` and `ec_pr_freq` value, and authenticated remote management.
 
 `panic_on_interface_error` defaults to `No`. With the default, a failed interface remains visible as
 degraded while retry-capable interfaces continue supervising themselves. Set it to `Yes` to request
@@ -149,40 +57,6 @@ waits 20 seconds before its first pass, retries unavailable paths every minute, 
 minimum). Imported lists are persisted under `storage/blackhole/<source identity>`, reloaded in
 configured order after the local list, and included in this daemon's own published aggregate.
 Shared-instance clients neither publish nor import.
-
-## I2P readiness check
-
-From a source checkout, run `cargo prnsd i2p doctor` before enabling peers on an `I2PInterface`.
-An installed executable provides the same check as `prnsd i2p doctor`. The doctor connects to the
-default SAM bridge at `127.0.0.1:7656`, negotiates SAM 3.1, creates a one-time transient session,
-and immediately releases it. It does not persist or print the generated destination credentials. A
-successful result proves that the router and SAM session path are available; it does not claim that
-the I2P network has finished warming up or that a particular peer is reachable.
-
-Connection failures at the default endpoint distinguish a missing local Java I2P router from a
-router whose local console is available but whose SAM bridge is not accepting connections. Protocol
-and session failures separately identify an incompatible SAM service or a router that is not yet
-ready to create sessions.
-
-Use `cargo prnsd i2p doctor --sam-bridge HOST:PORT` from the checkout, or the equivalent installed
-command, for a custom endpoint. Prnsd refuses non-loopback SAM addresses by default because SAM is
-plaintext and carries I2P destination credentials. Prefer a loopback endpoint or a secure tunnel to
-loopback. `--allow-remote-sam` explicitly acknowledges the risk for a trusted private path; it does
-not add encryption or authentication.
-
-Run `cargo prnsd i2p setup` for a non-mutating guided setup. It detects the native operating system,
-architecture, and Debian-family Linux where applicable; reruns the doctor; prints the appropriate
-official Java I2P installation or SAM-enablement guidance; and emits a validated `I2PInterface`
-stanza to place beneath `[interfaces]`. Add repeatable `--peer NAME_OR_DESTINATION` values and
-`--connectable` to shape that stanza. An outbound-only stanza without peers is valid but remains
-idle. `--open` explicitly opens only the applicable official download page or the local Java I2P
-SAM configuration page.
-
-The setup command does not download or execute installers, add package repositories, elevate
-privileges, install services, edit configuration, or change router and firewall settings. It keeps
-the official artifact, signature, and platform instructions visible for operator review. A
-connectable interface creates persistent I2P destination credentials when Prnsd runs; protect and
-back up the Prns storage containing them.
 
 ## Common interface behavior
 
@@ -268,9 +142,9 @@ status output remains compact and displays only the canonical mode name.
 Enabled interface types without a backend fail with “not available in this build.” RNodeMulti
 remains a local serial-device interface.
 
-## Prns-owned host interface backends
+## Prns-owned daemon interface backends
 
-Prnsd also accepts these canonical interface types, which stock RNS 1.4.0 does not implement:
+Prnsd also accepts these canonical interface types, which stock RNS 1.4.0 does not implement at time of writing:
 
 | Canonical type | Applied configuration |
 | --- | --- |
@@ -292,11 +166,11 @@ WebSocket client and server stanzas may be repeated.
     type = PrnsUsbAuto
     enabled = Yes
 
-  [[Nearby Prns peers]]
+  [[Nearby Bluetooth]]
     type = PrnsBluetoothAuto
     enabled = Yes
 
-  [[WebSocket uplink]]
+  [[WebSocket Remote Endpoint]]
     type = PrnsWebSocketClient
     enabled = Yes
     target = ws://peer.example:4242/prns
@@ -311,8 +185,7 @@ WebSocket client and server stanzas may be repeated.
 
 Stock RNS treats these names as external interface module names. If no matching module file exists,
 it logs the missing module, skips the stanza, finishes bringing up its other interfaces, and keeps
-running. Auto Wi-Fi continues to use stock `AutoInterface`. Wi-Fi Direct and Wi-Fi Aware do not yet
-have accepted config types because Prnsd cannot construct their required platform adapters.
+running (so adding these to your config will not break stock RNS functionality). Auto Wi-Fi continues to use stock `AutoInterface`.
 
 RNode Bluetooth LE uses the stock Nordic UART Service transport and accepts the same three target
 forms as RNS 1.4.0:
@@ -337,7 +210,7 @@ RNodeMulti radios are nested beneath their physical device. Each enabled child r
 
 ```ini
 [interfaces]
-  [[Dual Radio]]
+  [[Dual LoRa]]
     type = RNodeMultiInterface
     enabled = Yes
     port = /dev/ttyACM0
@@ -392,7 +265,7 @@ the parent interface's common policy and IFAC access. Without an attached device
 Recognized settings that belong to planned follow-on work emit `unsupported_setting` warnings at
 their exact source lines. They are never silently ignored:
 
-- `ignore_config_warnings` is not honored; Prnsd always reports configuration problems.
+- `ignore_config_warnings` is not honored; Prnsd always reports configuration problems. Log level and observability tools can provide filters as needed.
 
 Role-inapplicable Backbone settings also warn instead of disappearing. Listener stanzas do not use
 client-only `target_port`, `i2p_tunneled`, `connect_timeout`, or `max_reconnect_tries`; client stanzas
@@ -415,14 +288,151 @@ backend exists.
   logtimestamps = Yes
 
 [interfaces]
-  [[LAN]]
+  [[Auto Wifi LAN]]
     type = AutoInterface
     enabled = Yes
 
-  [[Uplink]]
+  [[Auto USB]]
+    type = PrnsUsbAuto
+    enabled = Yes
+
+  [[Auto Bluetooth]]
+    type = PrnsBleAuto
+    enabled = Yes
+
+  [[TCP Client]]
     type = TCPClientInterface
     enabled = Yes
-    target_host = peer.example.com
+    target_host = endpoint.example.com
     target_port = 4242
     connect_timeout = 5
 ```
+
+
+
+## Safe interface editor
+
+`prnsd interfaces` opens a numbered, line-oriented editor when attached to a terminal.
+
+
+### Non-interactive use
+The same
+surface is available non-interactively through `list`, `validate`, `add`, `edit`, `enable`,
+`disable`, `remove`, `repair`, and `apply` subcommands. `check` remains a visible alias for
+`validate`. From a checkout, `cargo prnsd interfaces ...` routes
+directly to the same one-shot command without starting the managed daemon. `--config DIR` follows
+the normal config discovery rules and may appear anywhere inside the `interfaces` command.
+
+
+### Interactive use
+When used interactively, the guided screen presents configuration validity, managed-daemon state, friendly interface names,
+canonical type names, and enabled state before offering an action.
+
+Selecting an interface opens a
+typed settings editor containing every runtime-supported setting applicable to that interface
+kind. Its initial view contains everyday settings plus any configured overrides; `All settings`
+reveals announcement limits, traffic control, and other advanced values without removing them from
+reach. Settings are grouped by connectivity, network access, interface behavior, discovery
+publication, announcement limits, radio, and traffic control. Configured values appear first in
+each group.
+
+Each value is labelled as configured, default, effective, inactive, or required. Selecting a setting shows what it controls, its
+current and default values, accepted units or choices, and any prerequisite that currently leaves
+it inactive. Existing inert values remain visible as preserved,
+unused configuration and can be removed without disturbing unrelated bytes.
+
+Multiple setting changes are validated and previewed as one candidate. RNodeMulti members have
+their own nested add, edit, and remove workflow. Unknown third-party interface types remain opaque
+and are never interpreted or rewritten.
+
+Interactive output uses the Prns terminal palette for headings, success, warnings, errors, and
+prompts. Styling is disabled when output is redirected or `NO_COLOR` is present; nonzero
+`CLICOLOR_FORCE` enables it explicitly. The editor remains line-oriented and never clears the
+terminal. `validate --details` shows exact source locations and diagnostic codes; the default TTY
+view groups concise diagnostics by interface. Non-TTY validation retains detailed plain output for
+automation.
+
+Add and edit accept explicit, typed options for the selected interface kind. Inapplicable options
+are rejected before an edit exists, and every complete candidate is passed through the same
+authoritative planner used by daemon startup. Complete scripted mutations save directly;
+`--dry-run` prints the candidate diff without writing, `remove` requires `--yes` without a terminal,
+and `--apply` requests live application after a successful save. Guided mutations show a diff and
+ask before saving and applying. Passphrases and RPC secrets are redacted from diffs and control
+messages unless `--show-secrets` is explicitly selected for local display.
+
+RNodeMulti creation and radio replacement use a repeatable typed
+`--radio NAME:VPORT:FREQUENCY:BANDWIDTH:TXPOWER:SPREADING_FACTOR:CODING_RATE` option. The parent
+still takes its serial device through `--port`; each emitted child has the canonical required
+RNodeMulti settings and is validated with the complete candidate before it can be saved.
+
+The editor preserves comments, blank lines, ordering, newline style, unknown sections, aliases,
+disabled third-party interfaces, and all unrelated source bytes. It re-reads the source immediately
+before writing to reject concurrent edits. An existing config is copied to
+`config.prns-backup` with its permissions preserved, then the replacement is synced and atomically
+installed from the same directory. Editing an installation that still uses the built-in default
+materializes `DIR/config` as an owner-only file. The command never elevates privileges.
+
+`prnsd interfaces repair --safe` applies only unambiguous semantic repairs, such as disabling an
+invalid enabled interface so the rest of the daemon can start. Guided repair can present choices
+for ambiguous values and interface types. Malformed ConfigObj syntax is reported with its exact
+line and remains untouched. Managed startup never prompts or rewrites configuration; on failure it
+prints the matching repair command.
+
+RNS injects `name`, `selected_interface_mode`, and `configured_bitrate` into its in-memory
+interface dictionaries. They are generated copies, not independent configuration inputs: the
+`[[interface heading]]` supplies the label, `mode` supplies the interface mode, and `bitrate`
+supplies an explicit bitrate override. NomadNet can persist the generated fields when writing an
+interface back to disk. Prns reports them as redundant RNS-generated fields rather than implying
+that the authoritative settings are ignored; guided repair groups them into one explained action,
+and `repair --safe` removes them. Other unknown keys remain conservative guided repairs and are
+preserved by default.
+
+`prnsd interfaces apply` sends only the managed generation, a request identifier, and the expected
+SHA-256 digest through the private control directory. The daemon re-reads its active config path,
+verifies the digest, reparses it, and refuses non-interface changes with `RestartRequired`.
+Unchanged interface units remain running; RNodeMulti members reconcile as one hardware unit;
+changed listeners are detached before their replacements bind. Failure during construction restores
+the previous runtime interface set while leaving the valid on-disk edit intact. Discovery
+publication, bootstrap lifecycle, endpoint reservations, and interface-failure monitoring refresh
+with the accepted plan. No file watcher is installed: saving and applying remain explicit actions.
+
+Live apply is available only to a managed daemon that owns the routing tables. A shared-instance
+client reports that the owning process must apply the change, and an unmanaged foreground process
+cannot receive an external request. Exit status 3 means no managed daemon is running. Semantic
+validity does not require serial hardware, radios, peers, routers, or remote listeners to be online;
+retry-capable interfaces can remain visibly degraded after a valid apply.
+
+
+
+## I2P readiness check
+
+Run `prnsd i2p doctor` before enabling peers on an `I2PInterface` (from a source code checkout,  `cargo prnsd i2p doctor` also provides the same check). The doctor connects to the
+default SAM bridge at `127.0.0.1:7656`, negotiates SAM 3.1, creates a one-time transient session,
+and immediately releases it. It does not persist or print the generated destination credentials. A
+successful result proves that the router and SAM session path are available; it does not claim that
+the I2P network has finished warming up or that a particular peer is reachable.
+
+Connection failures at the default endpoint distinguish a missing local Java I2P router from a
+router whose local console is available but whose SAM bridge is not accepting connections. Protocol
+and session failures separately identify an incompatible SAM service or a router that is not yet
+ready to create sessions.
+
+Use `cargo prnsd i2p doctor --sam-bridge HOST:PORT` from the checkout, or the equivalent installed
+command, for a custom endpoint. Prnsd refuses non-loopback SAM addresses by default because SAM is
+plaintext and carries I2P destination credentials. Prefer a loopback endpoint or a secure tunnel to
+loopback. `--allow-remote-sam` explicitly acknowledges the risk for a trusted private path; it does
+not add encryption or authentication.
+
+Run `cargo prnsd i2p setup` for a non-mutating guided setup. It detects the native operating system,
+architecture, and Debian-family Linux where applicable; reruns the doctor; prints the appropriate
+official Java I2P installation or SAM-enablement guidance; and emits a validated `I2PInterface`
+stanza to place beneath `[interfaces]`. Add repeatable `--peer NAME_OR_DESTINATION` values and
+`--connectable` to shape that stanza. An outbound-only stanza without peers is valid but remains
+idle. `--open` explicitly opens only the applicable official download page or the local Java I2P
+SAM configuration page.
+
+The setup command does not download or execute installers, add package repositories, elevate
+privileges, install services, edit configuration, or change router and firewall settings. It keeps
+the official artifact, signature, and platform instructions visible for operator review. A
+connectable interface creates persistent I2P destination credentials when Prnsd runs; protect and
+back up the Prns storage containing them.

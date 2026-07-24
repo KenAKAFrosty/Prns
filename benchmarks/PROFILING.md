@@ -48,8 +48,7 @@ Output: `target/criterion/<group>/<bench>/profile/flamegraph.svg`.
 ## 2. samply — interactive Firefox Profiler
 
 Sampling profiler with a rich call-tree + timeline UI. On Linux it uses
-`perf_event_open`; this host has `kernel.perf_event_paranoid = -1`, so **no sudo
-needed**.
+`perf_event_open`; if your host has `kernel.perf_event_paranoid = -1`, then no sudo is needed.
 
 ```sh
 # the Criterion microscope (build first, then point samply at the binary)

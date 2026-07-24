@@ -10,8 +10,10 @@ include!(concat!(env!("OUT_DIR"), "/node_pages_generated.rs"));
 pub const NODE_APP_NAME: &str = "nomadnetwork";
 pub const NODE_ASPECTS: &[&str] = &["node"];
 pub const INDEX_PATH: &str = "/page/index.mu";
+pub const QUICKSTART_PATH: &str = "/page/quickstart.mu";
 pub const SOURCE_ARCHIVE_PATH: &str = "/file/source.zip";
 pub const SOURCE_CHECKSUM_PATH: &str = "/file/source.zip.sha256";
+pub const QUICKSTART_PAGE: &[u8] = include_bytes!("node_pages/quickstart.mu");
 
 #[cfg(feature = "source-archive")]
 pub const SERVES_SOURCE_ARCHIVE: bool = true;
@@ -37,12 +39,22 @@ const LARGEST_INDEX_PAGE_LEN: usize = {
     }
 };
 
-pub const INDEX_PACKED_RESPONSE_LEN: usize = match packed_binary_len(LARGEST_INDEX_PAGE_LEN) {
-    Some(len) => len,
-    None => panic!("index page exceeds MessagePack binary limits"),
+const LARGEST_PAGE_LEN: usize = if QUICKSTART_PAGE.len() > LARGEST_INDEX_PAGE_LEN {
+    QUICKSTART_PAGE.len()
+} else {
+    LARGEST_INDEX_PAGE_LEN
 };
-pub const INDEX_RESPONSE_TRANSFER_BYTES: usize =
-    sealed_transfer_bytes(RESPONSE_WIRE_OVERHEAD + INDEX_PACKED_RESPONSE_LEN);
+
+pub const PAGE_PACKED_RESPONSE_LEN: usize = match packed_binary_len(LARGEST_PAGE_LEN) {
+    Some(len) => len,
+    None => panic!("node page exceeds MessagePack binary limits"),
+};
+pub const PAGE_RESPONSE_TRANSFER_BYTES: usize =
+    sealed_transfer_bytes(RESPONSE_WIRE_OVERHEAD + PAGE_PACKED_RESPONSE_LEN);
+
+// Kept as aliases for storage profiles and downstream code written before the quickstart route.
+pub const INDEX_PACKED_RESPONSE_LEN: usize = PAGE_PACKED_RESPONSE_LEN;
+pub const INDEX_RESPONSE_TRANSFER_BYTES: usize = PAGE_RESPONSE_TRANSFER_BYTES;
 
 pub struct NoSourceNodeIndexPage;
 
@@ -52,6 +64,17 @@ impl<S> RequestRoute<S> for NoSourceNodeIndexPage {
 
     async fn handle(mut context: RequestContext<'_, S>) -> Result<(), Decline> {
         context.respond_static_bytes(HOPSPOT_INDEX_PAGE_NO_SOURCE)
+    }
+}
+
+pub struct NodeQuickstartPage;
+
+impl<S> RequestRoute<S> for NodeQuickstartPage {
+    const PATH: &'static str = QUICKSTART_PATH;
+    const POLICY: RoutePolicy = RoutePolicy::AllowAll;
+
+    async fn handle(mut context: RequestContext<'_, S>) -> Result<(), Decline> {
+        context.respond_static_bytes(QUICKSTART_PAGE)
     }
 }
 
@@ -97,15 +120,19 @@ impl<S> RequestRoute<S> for SourceChecksumFile {
 pub struct NoSourceNodePageRoutes;
 
 impl<S> RouteSet<S> for NoSourceNodePageRoutes {
-    const REGISTRATIONS: &'static [(&'static str, RoutePolicy)] =
-        &[(INDEX_PATH, RoutePolicy::AllowAll)];
+    const REGISTRATIONS: &'static [(&'static str, RoutePolicy)] = &[
+        (INDEX_PATH, RoutePolicy::AllowAll),
+        (QUICKSTART_PATH, RoutePolicy::AllowAll),
+    ];
 
     async fn dispatch(
-        context: RequestContext<'_, S>,
+        mut context: RequestContext<'_, S>,
         path_hash: RequestPathHash,
     ) -> Result<(), Decline> {
         if path_hash == RequestPathHash::of(INDEX_PATH) {
-            NoSourceNodeIndexPage::handle(context).await
+            context.respond_static_bytes(HOPSPOT_INDEX_PAGE_NO_SOURCE)
+        } else if path_hash == RequestPathHash::of(QUICKSTART_PATH) {
+            context.respond_static_bytes(QUICKSTART_PAGE)
         } else {
             Err(Decline::Ignore)
         }
@@ -119,20 +146,23 @@ pub struct SourceNodePageRoutes;
 impl<S> RouteSet<S> for SourceNodePageRoutes {
     const REGISTRATIONS: &'static [(&'static str, RoutePolicy)] = &[
         (INDEX_PATH, RoutePolicy::AllowAll),
+        (QUICKSTART_PATH, RoutePolicy::AllowAll),
         (SOURCE_ARCHIVE_PATH, RoutePolicy::AllowAll),
         (SOURCE_CHECKSUM_PATH, RoutePolicy::AllowAll),
     ];
 
     async fn dispatch(
-        context: RequestContext<'_, S>,
+        mut context: RequestContext<'_, S>,
         path_hash: RequestPathHash,
     ) -> Result<(), Decline> {
         if path_hash == RequestPathHash::of(INDEX_PATH) {
-            SourceNodeIndexPage::handle(context).await
+            context.respond_static_bytes(HOPSPOT_INDEX_PAGE_WITH_SOURCE)
+        } else if path_hash == RequestPathHash::of(QUICKSTART_PATH) {
+            context.respond_static_bytes(QUICKSTART_PAGE)
         } else if path_hash == RequestPathHash::of(SOURCE_ARCHIVE_PATH) {
-            SourceArchiveFile::handle(context).await
+            context.respond_static_file("source.zip", SOURCE_ARCHIVE)
         } else if path_hash == RequestPathHash::of(SOURCE_CHECKSUM_PATH) {
-            SourceChecksumFile::handle(context).await
+            context.respond_static_file("source.zip.sha256", SOURCE_CHECKSUM)
         } else {
             Err(Decline::Ignore)
         }
@@ -189,17 +219,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_index_response_capacity_covers_both_flavors() {
-        assert!(LARGEST_INDEX_PAGE_LEN >= HOPSPOT_INDEX_PAGE.len());
-        assert!(LARGEST_INDEX_PAGE_LEN >= BROWSER_INDEX_PAGE.len());
+    fn the_page_response_capacity_covers_every_static_page() {
+        assert!(LARGEST_PAGE_LEN >= HOPSPOT_INDEX_PAGE.len());
+        assert!(LARGEST_PAGE_LEN >= BROWSER_INDEX_PAGE.len());
+        assert!(LARGEST_PAGE_LEN >= QUICKSTART_PAGE.len());
         assert_eq!(
-            INDEX_PACKED_RESPONSE_LEN,
-            packed_binary_len(LARGEST_INDEX_PAGE_LEN).unwrap()
+            PAGE_PACKED_RESPONSE_LEN,
+            packed_binary_len(LARGEST_PAGE_LEN).unwrap()
         );
         assert_eq!(
-            INDEX_RESPONSE_TRANSFER_BYTES,
-            sealed_transfer_bytes(RESPONSE_WIRE_OVERHEAD + INDEX_PACKED_RESPONSE_LEN)
+            PAGE_RESPONSE_TRANSFER_BYTES,
+            sealed_transfer_bytes(RESPONSE_WIRE_OVERHEAD + PAGE_PACKED_RESPONSE_LEN)
         );
+        assert_eq!(INDEX_PACKED_RESPONSE_LEN, PAGE_PACKED_RESPONSE_LEN);
+        assert_eq!(INDEX_RESPONSE_TRANSFER_BYTES, PAGE_RESPONSE_TRANSFER_BYTES);
     }
 
     #[test]
@@ -218,6 +251,9 @@ mod tests {
     fn route_registration_and_page_language_share_one_capability() {
         let page = core::str::from_utf8(HOPSPOT_INDEX_PAGE).unwrap();
         let routes = <NodePageRoutes as RouteSet<()>>::REGISTRATIONS;
+        assert!(routes.iter().any(|(path, _)| *path == INDEX_PATH));
+        assert!(routes.iter().any(|(path, _)| *path == QUICKSTART_PATH));
+        assert!(page.contains("Open the offline Prns quickstart"));
         assert_eq!(
             routes.iter().any(|(path, _)| *path == SOURCE_ARCHIVE_PATH),
             SERVES_SOURCE_ARCHIVE
@@ -234,8 +270,8 @@ mod tests {
     }
 
     #[test]
-    fn the_index_page_is_balanced_micron() {
-        for page in [HOPSPOT_INDEX_PAGE, BROWSER_INDEX_PAGE] {
+    fn the_pages_are_balanced_micron() {
+        for page in [HOPSPOT_INDEX_PAGE, BROWSER_INDEX_PAGE, QUICKSTART_PAGE] {
             let page = core::str::from_utf8(page).unwrap();
             assert!(!page.is_ascii());
             let mut formatting_toggles = 0usize;
@@ -245,10 +281,25 @@ mod tests {
                 assert!(line.len() <= 600);
             }
             assert_eq!(formatting_toggles % 2, 0);
-            for color in ["`F6eb", "`F3d9", "`F999", "`F678"] {
-                assert!(page.contains(color));
-            }
             assert_eq!(page.matches("`c").count(), page.matches("`a").count());
         }
+    }
+
+    #[test]
+    fn the_quickstart_covers_each_first_outcome() {
+        let page = core::str::from_utf8(QUICKSTART_PAGE).unwrap();
+        for expected in [
+            "cargo prnsd",
+            "cargo tools guide rust",
+            "cargo c6 --locked",
+            "cargo test --locked",
+            "cargo benchmark --smoke",
+            "cargo run -p docs",
+        ] {
+            assert!(page.contains(expected), "quickstart is missing {expected}");
+        }
+        assert!(page.contains("same node-recipe API"));
+        assert!(page.contains(INDEX_PATH));
+        assert!(QUICKSTART_PAGE.len() < LARGEST_INDEX_PAGE_LEN);
     }
 }

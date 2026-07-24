@@ -359,6 +359,17 @@ inputs = ["Cargo.toml", "Cargo.lock"]
 artifacts = "validation-artifacts/results/root-clippy"
 
 [[suite]]
+id = "guide-rust"
+domain = "integration"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 120
+command = ["cargo", "tools", "guide", "rust"]
+inputs = ["Cargo.toml", "Cargo.lock", ".cargo/config.toml", "personal-rns/Cargo.toml", "personal-rns/examples/node_basics.rs", "tools/guide/run-rust-example.py", "tools/prns", "tools/tasks.toml"]
+artifacts = "validation-artifacts/results/guide-rust"
+
+[[suite]]
 id = "external-alloc"
 domain = "native"
 group = "feature-config"
@@ -565,7 +576,7 @@ platform = "linux"
 toolchain = "stable"
 timeout_seconds = 3600
 command = ["bash", "validation/platforms/flasher-web.sh"]
-inputs = ["validation/platforms/flasher-web.sh", "docs/website/package-lock.json"]
+inputs = ["validation/platforms/flasher-web.sh", "docs/website", "README.md", "CONTRIBUTING.md", "docs/getting-started.md", "docs/testing.md", "docs/prnsd-config.md", "docs/prnsd-utilities.md", "docs/validation.md", "docs/observability.md", "prnsd/README.md", "personal-rns/README.md", "benchmarks/README.md", "benchmarks/CONTRIBUTING.md", "benchmarks/PROFILING.md", "tools/README.md"]
 artifacts = "validation-artifacts/results/flasher-web"
 
 [[suite]]

@@ -66,7 +66,6 @@ start-section-lead = Velg veien som passer det du bygger. Hver lander på én cr
 
 start-daemon-headline = Jeg vil kjøre en Reticulum-node
 start-daemon-body = Ferdigbygd daemon. Drop-in for rnsd. Kjør den ved siden av nodene du allerede har.
-start-daemon-code = apt install prnsd
 start-daemon-target = prnsd
 
 start-mobile-headline = Jeg bygger en mobilapp
@@ -96,8 +95,6 @@ start-web-target = Åpne lekeplassen
 
 start-rust-headline = Jeg bygger det inn i en Rust-app
 start-rust-body = En komplett RNS-runtime rett ut av boksen, eller den rene kjernen for å bygge din egen runtime rundt.
-start-rust-code = cargo add prnsd   # complete RNS runtime
-    cargo add personal-rns      # pure core only
 start-rust-target = prnsd or personal-rns
 
 

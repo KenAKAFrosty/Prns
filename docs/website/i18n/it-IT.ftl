@@ -66,7 +66,6 @@ start-section-lead = Scegli il percorso che corrisponde a ciò che stai costruen
 
 start-daemon-headline = Voglio un nodo Reticulum in esecuzione
 start-daemon-body = Daemon precompilato. Drop-in per rnsd. Eseguilo accanto ai nodi che hai già.
-start-daemon-code = apt install prnsd
 start-daemon-target = prnsd
 
 start-mobile-headline = Sto costruendo un'app mobile
@@ -96,8 +95,6 @@ start-web-target = Apri il playground
 
 start-rust-headline = Lo incorporo in un'app Rust
 start-rust-body = Un runtime RNS completo pronto all'uso, oppure il core puro per costruirci intorno il tuo runtime.
-start-rust-code = cargo add prnsd   # complete RNS runtime
-    cargo add personal-rns      # pure core only
 start-rust-target = prnsd or personal-rns
 
 

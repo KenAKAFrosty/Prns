@@ -93,17 +93,20 @@ corroborated evidence.
   practical.
 - Avoid mutating process-global environment in tests when dependencies can be
   passed explicitly.
+- Follow the repository's [verification ladder](docs/testing.md); report the
+  exact commands and host coverage instead of implying unrun platforms passed.
 
 ## Repository operations
 
 The repository has two deliberate control planes:
 
-- `./tools/prns` discovers and runs supported build, release, device, and
-  repository operations. Start with `./tools/prns list`, explain one task
-  with `./tools/prns explain TASK_ID`, and check host prerequisites with
-  `./tools/prns doctor`.
+- `./tools/prns` discovers and runs supported build, guide, release, device,
+  and repository operations. Start with `./tools/prns doctor getting-started`,
+  list tasks with `./tools/prns list`, and explain one with
+  `./tools/prns explain TASK_ID`.
 - `python3 validation/run.py` (`python` on Windows) discovers and runs tests,
-  proofs, interoperability checks, and release-readiness evidence.
+  proofs, interoperability checks, and release-readiness evidence. Use
+  `--platform current` for portable plus current-host suites.
 
 Implementation files below `tools/` are internal. CI and documentation invoke
 named `./tools/prns` tasks so paths can be reorganized without creating another

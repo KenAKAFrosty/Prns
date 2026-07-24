@@ -23,10 +23,13 @@ pub fn TopNav() -> Element {
                     }
                 }
                 nav { class: "hidden items-center gap-6 text-sm text-soft sm:flex",
-                    a {
-                        href: "https://github.com/KenAKAFrosty/Prns/blob/main/CONTRIBUTING.md",
-                        target: "_blank",
-                        rel: "noopener",
+                    Link {
+                        to: Route::GuidesIndex {},
+                        class: "hover:text-accent transition-colors",
+                        "Guides"
+                    }
+                    Link {
+                        to: Route::ContributingPage {},
                         class: "hover:text-accent transition-colors",
                         {t!("nav-contributing")}
                     }

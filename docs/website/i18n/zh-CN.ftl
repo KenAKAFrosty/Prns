@@ -66,7 +66,6 @@ start-section-lead = 选择与你正在构建的东西相匹配的路径。现�
 
 start-daemon-headline = 我想运行一个 Reticulum 节点
 start-daemon-body = 预构建 daemon。rnsd 的 drop-in。把它放在你已有的节点旁边运行。
-start-daemon-code = apt install prnsd
 start-daemon-target = prnsd
 
 start-mobile-headline = 我在构建移动 app
@@ -96,8 +95,6 @@ start-web-target = 打开演示平台
 
 start-rust-headline = 我要嵌入 Rust app
 start-rust-body = 开箱即用的完整 RNS runtime，或用于围绕它构建你自己的 runtime 的纯核心。
-start-rust-code = cargo add prnsd   # complete RNS runtime
-    cargo add personal-rns      # pure core only
 start-rust-target = prnsd or personal-rns
 
 

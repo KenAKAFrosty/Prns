@@ -54,10 +54,13 @@ pub fn Footer() -> Element {
                     }
                     div { class: "flex flex-col gap-4 md:items-end md:pt-1",
                         nav { class: "grid grid-cols-2 gap-x-10 gap-y-3 text-sm text-soft sm:flex sm:items-center sm:justify-end sm:gap-8",
-                            a {
-                                href: "https://github.com/KenAKAFrosty/Prns/blob/main/CONTRIBUTING.md",
-                                target: "_blank",
-                                rel: "noopener",
+                            Link {
+                                to: Route::GuidesIndex {},
+                                class: "hover:text-accent transition-colors",
+                                "Guides"
+                            }
+                            Link {
+                                to: Route::ContributingPage {},
                                 class: "hover:text-accent transition-colors",
                                 {t!("nav-contributing")}
                             }

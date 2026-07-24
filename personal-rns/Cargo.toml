@@ -17,6 +17,10 @@ include = ["src/**", "tests/**", "examples/**", "Cargo.toml", "README.md"]
 [lib]
 path = "src/lib.rs"
 
+[[example]]
+name = "node_basics"
+required-features = ["tokio-host", "tcp", "wifi-auto", "usb", "bluetooth-auto"]
+
 [features]
 default = ["std", "std-sync-host"]
 alloc = ["prns-core/alloc", "prns-runtime/alloc"]
@@ -72,6 +76,9 @@ prns-runtime-tokio = { version = "=0.2.8", path = "../prns-runtime/impls/tokio",
 prns-runtime-embassy = { version = "=0.2.8", path = "../prns-runtime/impls/embassy", optional = true, default-features = false }
 prns-interfaces-tokio = { version = "=0.2.8", path = "../prns-interfaces/impls/tokio", optional = true, default-features = false }
 prns-interfaces-embassy = { version = "=0.2.8", path = "../prns-interfaces/impls/embassy", optional = true, default-features = false }
+
+[dev-dependencies]
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "sync", "time"] }
 
 [lints]
 workspace = true

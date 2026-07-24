@@ -11,31 +11,69 @@
 [![MSRV](https://img.shields.io/badge/MSRV-1.90-orange.svg)](#minimum-supported-rust-version)
 [![no_std](https://img.shields.io/badge/no__std-core-success.svg)](#embedded-and-no_std)
 
-## Getting started
+Prns is a Rust implementation of Reticulum for applications, daemons, browsers,
+phones, and embedded devices. This clone contains the code, essential guides,
+tests, benchmarks, and a locally runnable documentation site.
 
-Visit [prns.dev](https://prns.dev) or [reticulum.rs](https://reticulum.rs).
+## Prerequisites
 
-The clone guides you on its own. With a stable Rust toolchain and Python 3.11
-or newer:
+The common paths need Git, Rust 1.90 or newer, and Python 3.11 or newer. Check
+your machine without installing anything:
 
-- `cargo test` builds and tests the core workspace.
-- `./tools/prns list` discovers every supported build, device, release, and
-  repository operation; `./tools/prns explain TASK_ID` details one, and
-  `./tools/prns doctor` reports what your host is missing.
-- `python3 validation/run.py list` (`python` on Windows) discovers every test,
-  proof, and interoperability suite.
-- `git config core.hooksPath .githooks` enables the repository hooks, once per
-  clone.
+```console
+./tools/prns doctor getting-started
+```
 
-Building a Node.js, Electron, or Tauri application? The full node is on npm as
-[`personal-rns`](prns-napi/README.md) — the complete engine as a native addon,
-with no daemon required.
+On Windows, use `tools\prns.cmd`. First-time dependency downloads may require
+network access, but the instructions and source material are all in this clone.
+
+## What do you want to do?
+
+| Outcome | Start here |
+| --- | --- |
+| Learn the repository | [Getting started](docs/getting-started.md) |
+| Run and inspect a node | [Prnsd guide](prnsd/README.md) |
+| Build a Rust application | [Personal RNS guide](personal-rns/README.md) |
+| Build an embedded node | [Embedded Prns guide](docs/embedded.md) |
+| Test a change | [Testing guide](docs/testing.md) |
+| Measure performance | [Benchmark guide](benchmarks/README.md) |
+| Build the local website | [Website README](docs/website/README.md) |
+| Discover repository operations | [Repository tools](tools/README.md) |
+
+## First commands
+
+Run the safe two-node Rust contract. It creates fresh identities, binds only to
+localhost, observes a real Reticulum announce, and exits:
+
+```console
+cargo tools guide rust
+```
+
+Run the normal core test path:
+
+```console
+cargo test --locked
+```
+
+Serve the documentation site from the clone:
+
+```console
+cargo run -p docs
+```
+
+Enable the repository hooks once per clone:
+
+```console
+git config core.hooksPath .githooks
+```
 
 ## Embedded and `no_std`
 
 `prns-core` supports `no_std` builds from an alloc-free, fixed-capacity profile
 through `no_std + alloc`. The Embassy runtime and interface implementations
-carry the same engine onto ESP32 and nRF52840 firmware targets.
+carry the same engine onto ESP32 and nRF52840 firmware targets. Follow the
+[board-backed embedded guide](docs/embedded.md) to build a real XIAO ESP32-C6
+node and trace the shared node recipe into its hardware obligations.
 
 ## Minimum supported Rust version
 
@@ -44,7 +82,8 @@ use the stable channel configured in [rust-toolchain.toml](rust-toolchain.toml).
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md) and the
+[testing guide](docs/testing.md).
 
 ## Security
 
@@ -59,4 +98,6 @@ Licensed under either of
 
 at your option.
 
-Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in this project by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
+Unless you explicitly state otherwise, any contribution intentionally submitted
+for inclusion in this project by you, as defined in the Apache-2.0 license,
+shall be dual licensed as above, without any additional terms or conditions.

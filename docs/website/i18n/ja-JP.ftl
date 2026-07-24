@@ -66,7 +66,6 @@ start-section-lead = 作っているものに合う道を選んでください�
 
 start-daemon-headline = Reticulum ノードを動かしたい
 start-daemon-body = 事前ビルド済み daemon。rnsd のドロップイン。既存のノードの横で動かせます。
-start-daemon-code = apt install prnsd
 start-daemon-target = prnsd
 
 start-mobile-headline = モバイルアプリを作っている
@@ -96,8 +95,6 @@ start-web-target = プレイグラウンドを開く
 
 start-rust-headline = Rust アプリに組み込みたい
 start-rust-body = そのまま使える完全な RNS runtime、または自分の runtime を組み立てるための純粋なコア。
-start-rust-code = cargo add prnsd   # complete RNS runtime
-    cargo add personal-rns      # pure core only
 start-rust-target = prnsd or personal-rns
 
 

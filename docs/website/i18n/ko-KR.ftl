@@ -66,7 +66,6 @@ start-section-lead = 만들고 있는 것에 맞는 경로를 고르세요. 지�
 
 start-daemon-headline = Reticulum 노드를 실행하고 싶어요
 start-daemon-body = 미리 빌드된 daemon입니다. rnsd의 drop-in입니다. 이미 가지고 있는 노드 옆에서 실행하세요.
-start-daemon-code = apt install prnsd
 start-daemon-target = prnsd
 
 start-mobile-headline = 모바일 앱을 만들고 있어요
@@ -96,8 +95,6 @@ start-web-target = 플레이그라운드 열기
 
 start-rust-headline = Rust 앱에 임베드하고 싶어요
 start-rust-body = 바로 쓸 수 있는 완전한 RNS runtime, 또는 직접 runtime을 둘러 만들 수 있는 순수 코어.
-start-rust-code = cargo add prnsd   # complete RNS runtime
-    cargo add personal-rns      # pure core only
 start-rust-target = prnsd or personal-rns
 
 

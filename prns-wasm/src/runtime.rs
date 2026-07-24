@@ -45,6 +45,7 @@ use crate::parameters::bitrate_bps_u32;
 #[derive(Clone, Copy)]
 enum NodeResponse {
     Index,
+    Quickstart,
     #[cfg(feature = "source-archive")]
     SourceArchive,
     #[cfg(feature = "source-archive")]
@@ -667,6 +668,8 @@ impl PrnsRuntime {
         let mut reactions = Vec::new();
         let node_page = self.node_page;
         let index_path = RequestPathHash::of(personal_hopspot_core::node_pages::INDEX_PATH);
+        let quickstart_path =
+            RequestPathHash::of(personal_hopspot_core::node_pages::QUICKSTART_PATH);
         #[cfg(feature = "source-archive")]
         let source_path =
             RequestPathHash::of(personal_hopspot_core::node_pages::SOURCE_ARCHIVE_PATH);
@@ -692,6 +695,9 @@ impl PrnsRuntime {
                     {
                         if node_page && *path_hash == index_path {
                             page_requests.push((*link_id, *request_id, NodeResponse::Index));
+                        }
+                        if node_page && *path_hash == quickstart_path {
+                            page_requests.push((*link_id, *request_id, NodeResponse::Quickstart));
                         }
                         #[cfg(feature = "source-archive")]
                         if node_page && *path_hash == source_path {
@@ -727,6 +733,9 @@ impl PrnsRuntime {
                         payload: match response {
                             NodeResponse::Index => RespondPayload::StaticBytes(
                                 personal_hopspot_core::node_pages::BROWSER_INDEX_PAGE,
+                            ),
+                            NodeResponse::Quickstart => RespondPayload::StaticBytes(
+                                personal_hopspot_core::node_pages::QUICKSTART_PAGE,
                             ),
                             #[cfg(feature = "source-archive")]
                             NodeResponse::SourceArchive => RespondPayload::StaticFile {

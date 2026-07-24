@@ -163,7 +163,7 @@ class BrowserPlayground {
     );
     this.#view.record(
       "Node page",
-      "Serving /page/index.mu over Reticulum",
+      "Serving /page/index.mu and /page/quickstart.mu over Reticulum",
       `${NODE_PAGE_DISPLAY_NAME} · nomadnetwork.node ${hex(this.#pageDestination)}`,
     );
     this.#view.bindControls({

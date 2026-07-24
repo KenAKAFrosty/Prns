@@ -29,7 +29,8 @@ except ModuleNotFoundError:  # pragma: no cover - repository Python includes tom
 
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST_PATH = ROOT / "tools" / "tasks.toml"
-DOMAIN_ROOTS = tuple(ROOT / "tools" / name for name in ("build", "device", "release", "repo"))
+TOOL_DOMAINS = ("build", "device", "guide", "release", "repo")
+DOMAIN_ROOTS = tuple(ROOT / "tools" / name for name in TOOL_DOMAINS)
 VALID_EFFECTS = {
     "read-only",
     "workspace-write",
@@ -42,8 +43,11 @@ VALID_EFFECTS = {
 VALID_PLATFORMS = {"any", "linux", "macos", "windows"}
 VALID_AUDIENCES = {"developer", "operator", "ci", "release"}
 ID_PATTERN = re.compile(r"[a-z0-9]+(?:[.-][a-z0-9]+)*$")
-INTERNAL_CALL_PATTERN = re.compile(r"(?:^|[\s\"'])\.?/?tools/(?:build|device|release|repo)/")
+INTERNAL_CALL_PATTERN = re.compile(
+    r"(?:^|[\s\"'])\.?/?tools/(?:build|device|guide|release|repo)/"
+)
 LEGACY_CALL_PATTERN = re.compile(r"(?:^|[\s\"'])(?:\./)?scripts/")
+VERSION_PATTERN = re.compile(r"(?<![0-9])([0-9]+)\.([0-9]+)(?:\.([0-9]+))?")
 
 
 class ToolingError(RuntimeError):
@@ -70,6 +74,42 @@ def task_map(manifest: dict) -> dict[str, dict]:
             raise ToolingError(f"duplicate task id {identifier}")
         tasks[identifier] = task
     return tasks
+
+
+def doctor_profile_map(manifest: dict) -> dict[str, dict]:
+    profiles: dict[str, dict] = {}
+    for profile in manifest.get("doctor_profile", []):
+        identifier = profile.get("id")
+        if not isinstance(identifier, str) or not ID_PATTERN.fullmatch(identifier):
+            raise ToolingError(f"invalid doctor profile id {identifier!r}")
+        if identifier in profiles:
+            raise ToolingError(f"duplicate doctor profile id {identifier}")
+        profiles[identifier] = profile
+    return profiles
+
+
+def profile_requirements(
+    profile: dict, *, include_platforms: bool = False
+) -> set[str] | None:
+    declared = profile.get("requires", [])
+    if not isinstance(declared, list) or not all(
+        isinstance(command, str) and command for command in declared
+    ):
+        return None
+    requirements = set(declared)
+    platform_requires = profile.get("platform_requires", {})
+    if not isinstance(platform_requires, dict):
+        return None
+    if set(platform_requires) - (VALID_PLATFORMS - {"any"}):
+        return None
+    for commands in platform_requires.values():
+        if not isinstance(commands, list) or not all(
+            isinstance(command, str) and command for command in commands
+        ):
+            return None
+        if include_platforms:
+            requirements.update(commands)
+    return requirements
 
 
 def implementation_inventory() -> set[str]:
@@ -115,8 +155,38 @@ def validate_manifest(manifest: dict, *, check_callers: bool = True) -> list[str
     errors: list[str] = []
     try:
         tasks = task_map(manifest)
+        profiles = doctor_profile_map(manifest)
     except ToolingError as error:
         return [str(error)]
+
+    task_domains = {task.get("domain") for task in tasks.values()}
+    for identifier, profile in profiles.items():
+        location = f"doctor profile {identifier}"
+        if identifier in tasks or identifier in task_domains:
+            errors.append(f"{location} collides with a task ID or domain")
+        summary = profile.get("summary")
+        if not isinstance(summary, str) or not summary.strip():
+            errors.append(f"{location} needs a summary")
+        requirements = profile_requirements(profile, include_platforms=True)
+        if requirements is None or not requirements:
+            errors.append(f"{location} needs valid command requirements")
+            requirements = set()
+        for field in ("minimum_versions", "exact_versions", "setup"):
+            values = profile.get(field, {})
+            if not isinstance(values, dict) or not all(
+                isinstance(command, str)
+                and command
+                and isinstance(value, str)
+                and value.strip()
+                for command, value in values.items()
+            ):
+                errors.append(f"{location} {field} must be a string map")
+                continue
+            unknown = set(values) - requirements
+            if unknown:
+                errors.append(
+                    f"{location} {field} refers to undeclared commands: {sorted(unknown)!r}"
+                )
 
     registered: set[str] = set()
     for identifier, task in tasks.items():
@@ -143,7 +213,7 @@ def validate_manifest(manifest: dict, *, check_callers: bool = True) -> list[str
         entrypoints = [
             part
             for part in command
-            if any(part.startswith(f"tools/{domain}/") for domain in ("build", "device", "release", "repo"))
+            if any(part.startswith(f"tools/{domain}/") for domain in TOOL_DOMAINS)
         ]
         if len(entrypoints) != 1:
             errors.append(f"{location} must name exactly one tool implementation")
@@ -312,6 +382,94 @@ def doctor(tasks: list[dict]) -> bool:
     return ok
 
 
+def command_path(command: str) -> str | None:
+    if command == "python":
+        return sys.executable
+    return shutil.which(command)
+
+
+def command_version(command: str, path: str) -> tuple[int, int, int] | None:
+    if command == "python":
+        return sys.version_info[:3]
+    arguments = [path, "--version"]
+    if command == "cl":
+        arguments = [path]
+    result = subprocess.run(
+        arguments,
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    match = VERSION_PATTERN.search(f"{result.stdout}\n{result.stderr}")
+    if not match:
+        return None
+    return tuple(int(part or 0) for part in match.groups())
+
+
+def requested_version(value: str) -> tuple[int, int, int]:
+    match = VERSION_PATTERN.fullmatch(value)
+    if not match:
+        raise ToolingError(f"invalid declared version {value!r}")
+    return tuple(int(part or 0) for part in match.groups())
+
+
+def printable_version(version: tuple[int, int, int]) -> str:
+    return ".".join(str(part) for part in version)
+
+
+def doctor_profile(profile: dict) -> bool:
+    host = native_platform()
+    requirements = profile_requirements(profile)
+    if requirements is None:
+        raise ToolingError(f"doctor profile {profile['id']} has invalid requirements")
+    requirements.update(profile.get("platform_requires", {}).get(host, []))
+    minimums = profile.get("minimum_versions", {})
+    exacts = profile.get("exact_versions", {})
+    setup = profile.get("setup", {})
+    ok = True
+    print(f"[doctor] profile={profile['id']} host={host}; {profile['summary']}")
+    for command in sorted(requirements):
+        path = command_path(command)
+        if not path:
+            print(f"[doctor] missing: {command}", file=sys.stderr)
+            if command in setup:
+                print(f"[doctor] setup {command}: {setup[command]}", file=sys.stderr)
+            ok = False
+            continue
+        version = command_version(command, path)
+        required = minimums.get(command)
+        exact = exacts.get(command)
+        if required is not None:
+            wanted = requested_version(required)
+            if version is None or version < wanted:
+                found = "unknown" if version is None else printable_version(version)
+                print(
+                    f"[doctor] version mismatch: {command} needs {required}+; found {found}",
+                    file=sys.stderr,
+                )
+                if command in setup:
+                    print(f"[doctor] setup {command}: {setup[command]}", file=sys.stderr)
+                ok = False
+                continue
+        if exact is not None:
+            wanted = requested_version(exact)
+            if version is None or version != wanted:
+                found = "unknown" if version is None else printable_version(version)
+                print(
+                    f"[doctor] version mismatch: {command} needs exactly {exact}; found {found}",
+                    file=sys.stderr,
+                )
+                if command in setup:
+                    print(f"[doctor] setup {command}: {setup[command]}", file=sys.stderr)
+                ok = False
+                continue
+        suffix = f" ({printable_version(version)})" if version is not None else ""
+        print(f"[doctor] ready: {command} -> {path}{suffix}")
+    print("TOOLING_DOCTOR_OK" if ok else "TOOLING_DOCTOR_FAILED")
+    return ok
+
+
 def run_task(task: dict, arguments: list[str]) -> int:
     host = native_platform()
     if "any" not in task["platforms"] and host not in task["platforms"]:
@@ -358,14 +516,16 @@ def print_help() -> None:
 Supported commands:
   list [--domain NAME] [--effect NAME] [--audience NAME]
   explain TASK_ID
-  doctor [TASK_ID|DOMAIN]
+  doctor [PROFILE|TASK_ID|DOMAIN]
   verify
   run TASK_ID [-- TASK_ARGUMENTS...]
   DOMAIN TASK... [-- TASK_ARGUMENTS...]
 
 Examples:
   ./tools/prns list --domain release
+  ./tools/prns doctor getting-started
   cargo tools explain release.candidate.build
+  cargo tools guide rust
   ./tools/prns doctor release
   cargo tools release candidate verify -- target/candidate
 """
@@ -377,6 +537,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         manifest = load_manifest()
         tasks = task_map(manifest)
+        profiles = doctor_profile_map(manifest)
         if not arguments or arguments[0] in {"-h", "--help", "help"}:
             print_help()
             return 0
@@ -389,7 +550,8 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 f"[tools] Registry: {len(tasks)} supported tasks across "
                 f"{len({task['domain'] for task in tasks.values()})} domains; IDs, summaries, "
-                "platforms, audiences, effects, entrypoints, and requirements are valid."
+                f"platforms, audiences, effects, entrypoints, requirements, and {len(profiles)} "
+                "doctor profiles are valid."
             )
             print(
                 f"[tools] Safety: effects are classified as {', '.join(effects)}; "
@@ -431,9 +593,11 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if command == "doctor":
             if len(arguments) > 1:
-                raise ToolingError("doctor accepts at most one task ID or domain")
+                raise ToolingError("doctor accepts at most one profile, task ID, or domain")
             if not arguments:
                 selected = list(tasks.values())
+            elif arguments[0] in profiles:
+                return 0 if doctor_profile(profiles[arguments[0]]) else 1
             elif arguments[0] in tasks:
                 selected = [tasks[arguments[0]]]
             else:

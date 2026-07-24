@@ -2,6 +2,7 @@ use dioxus::prelude::*;
 use dioxus_i18n::t;
 
 use crate::components::MarkdownBody;
+use crate::repository_docs::repository_markup;
 
 // Mirrors the repo-root CONTRIBUTING.md so the site and the repo never drift.
 const CONTRIBUTING_MD: &str = include_str!("../../../../CONTRIBUTING.md");
@@ -25,13 +26,8 @@ pub fn ContributingPage() -> Element {
 }
 
 fn contributing_markup() -> String {
-    CONTRIBUTING_MD
-        .strip_prefix("# Contributing\n")
-        .unwrap_or(CONTRIBUTING_MD)
-        .replace(
-            "](README.md#license)",
-            "](https://github.com/KenAKAFrosty/Prns/blob/main/README.md#license)",
-        )
+    repository_markup("CONTRIBUTING.md", CONTRIBUTING_MD, true)
+        .unwrap_or_else(|error| format!("Unable to render the canonical guide: {error}"))
 }
 
 #[cfg(test)]
@@ -43,9 +39,6 @@ mod tests {
         let markup = contributing_markup();
 
         assert!(!markup.starts_with("# Contributing"));
-        assert!(!markup.contains("](README.md#license)"));
-        assert!(
-            markup.contains("](https://github.com/KenAKAFrosty/Prns/blob/main/README.md#license)")
-        );
+        assert!(markup.contains("](/#license)"));
     }
 }

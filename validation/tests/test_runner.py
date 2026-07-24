@@ -133,6 +133,25 @@ expires = "yesterday"
         identifiers = [entry["id"] for entry in json.loads(first)["include"]]
         self.assertEqual(identifiers, sorted(identifiers))
 
+    def test_platform_selection_is_explicit_and_host_aware(self) -> None:
+        portable = runner.selected_suites(self.manifest, [], None, None, "any")
+        self.assertTrue(portable)
+        self.assertTrue(all(suite["platform"] == "any" for suite in portable))
+
+        current = runner.selected_suites(self.manifest, [], None, None, "current")
+        self.assertTrue(current)
+        allowed = {"any", runner.native_platform()}
+        self.assertTrue(all(suite["platform"] in allowed for suite in current))
+
+        macos = runner.selected_suites(self.manifest, [], None, None, "macos")
+        self.assertTrue(all(suite["platform"] == "macos" for suite in macos))
+
+    def test_platform_selector_is_available_to_list_matrix_and_run(self) -> None:
+        parser = runner.build_parser()
+        for command in ("list", "matrix", "run"):
+            arguments = parser.parse_args([command, "--platform", "current"])
+            self.assertEqual(arguments.platform, "current")
+
     def test_verification_report_explains_its_guarantees(self) -> None:
         report = "\n".join(runner.verification_report(self.manifest, check_tools=False))
         for guarantee in (

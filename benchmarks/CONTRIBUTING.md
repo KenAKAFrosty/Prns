@@ -1,5 +1,9 @@
 # Benchmark qualification
 
+Start with the concise [benchmark operator guide](README.md) for smoke, full,
+resume, publish, energy, profiling, and interpretation commands. This document
+owns the detailed methodology and publication rules.
+
 This suite answers one release question: how does Prns compare with the compiled RNS 1.4.0 reference on ten core protocol profiles? Seven endpoint scenarios run all four Prns/reference directions; three transport scenarios run each implementation as the relay behind the same fixed wire driver, for a fixed 34-cell matrix.
 
 ## Operator interface

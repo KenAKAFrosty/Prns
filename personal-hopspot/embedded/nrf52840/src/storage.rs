@@ -49,7 +49,7 @@ impl TechoStorage {
     const HELD_ANNOUNCES: usize = 16;
     const HELD_ANNOUNCE_APP_DATA_BYTES: usize = Self::HELD_ANNOUNCES * 64;
     const RESOURCE_TRANSFER_BYTES: usize =
-        personal_hopspot_core::node_pages::INDEX_RESPONSE_TRANSFER_BYTES;
+        personal_hopspot_core::node_pages::PAGE_RESPONSE_TRANSFER_BYTES;
     const CHANNEL_REORDER_DEPTH: usize = 2;
     const LINK_MTU: usize = 1024;
     const CHANNEL_MESSAGE_BYTES: usize = channel_mdu(Self::LINK_MTU);

@@ -2800,6 +2800,7 @@ dependencies = [
  "prns-runtime",
  "prns-runtime-embassy",
  "prns-runtime-tokio",
+ "tokio",
 ]
 
 [[package]]

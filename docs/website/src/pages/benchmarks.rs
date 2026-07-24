@@ -65,6 +65,13 @@ pub fn BenchmarksPage() -> Element {
         }
 
         section { class: "mt-10",
+            p { class: "mb-6",
+                Link {
+                    to: Route::GuidePage { slug: "benchmarks".to_string() },
+                    class: "text-accent hover:underline",
+                    "Run and interpret the benchmarks locally →"
+                }
+            }
             MarkdownBody { source: index_markup() }
         }
     }

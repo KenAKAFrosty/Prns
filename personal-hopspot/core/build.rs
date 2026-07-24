@@ -16,6 +16,7 @@ const SOURCE_ENV: &[&str] = &[
 fn main() {
     println!("cargo:rerun-if-changed=src/node_pages/index_head.mu");
     println!("cargo:rerun-if-changed=src/node_pages/index_tail.mu");
+    println!("cargo:rerun-if-changed=src/node_pages/quickstart.mu");
     println!("cargo:rerun-if-changed=../../VERSION");
     println!("cargo:rerun-if-env-changed=PRNS_BUILD_VERSION");
     println!("cargo:rerun-if-env-changed=PRNS_BUILD_COMMIT");

@@ -2,12 +2,14 @@ use dioxus::prelude::*;
 use dioxus_i18n::t;
 
 use crate::components::MarkdownBody;
+use crate::repository_docs::repository_markup;
 use crate::routes::Route;
 
 struct CrateMeta {
     name: &'static str,
     role_key: &'static str,
     blurb_key: &'static str,
+    source_path: &'static str,
     body: &'static str,
 }
 
@@ -16,13 +18,15 @@ const CRATES: &[CrateMeta] = &[
         name: "personal-rns",
         role_key: "crate-rns-role",
         blurb_key: "crate-rns-blurb",
-        body: include_str!("../../content/crates/personal-rns.md"),
+        source_path: "personal-rns/README.md",
+        body: include_str!("../../../../personal-rns/README.md"),
     },
     CrateMeta {
         name: "prnsd",
         role_key: "crate-rnsd-role",
         blurb_key: "crate-rnsd-blurb",
-        body: include_str!("../../content/crates/prnsd.md"),
+        source_path: "prnsd/README.md",
+        body: include_str!("../../../../prnsd/README.md"),
     },
 ];
 
@@ -62,7 +66,9 @@ pub fn SingleCrate(name: String) -> Element {
     let crate_meta = CRATES.iter().find(|c| c.name == name);
 
     match crate_meta {
-        Some(c) => rsx! {
+        Some(c) => {
+            let markup = repository_markup(c.source_path, c.body, true);
+            rsx! {
             header { class: "mb-8",
                 Link {
                     to: Route::CratesIndex {},
@@ -75,8 +81,13 @@ pub fn SingleCrate(name: String) -> Element {
                 }
                 p { class: "mt-3 text-soft max-w-2xl leading-relaxed", {t!(c.blurb_key)} }
             }
-            MarkdownBody { source: c.body.to_string() }
-        },
+                if let Ok(markup) = markup {
+                    MarkdownBody { source: markup }
+                } else {
+                    p { class: "text-soft", "This canonical README contains an unresolved local link." }
+                }
+            }
+        }
         None => rsx! {
             h1 { class: "text-3xl font-semibold", {t!("crates-not-found")} }
             p { class: "mt-3 text-soft", "{name}" }

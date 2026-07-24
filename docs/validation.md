@@ -1,5 +1,22 @@
 # Validation and release readiness
 
+For the beginner verification ladder, start with
+[Testing changes](testing.md). This document owns the deeper suite registry,
+evidence, proof, interoperability, and release aggregation model.
+
+The `list`, `matrix`, and `run` commands accept an explicit host selector:
+
+```console
+python3 validation/run.py list --platform current
+python3 validation/run.py matrix --tier pr --platform any
+python3 validation/run.py run --tier pr --platform current
+```
+
+`current` selects portable suites plus suites for the detected host. `any`
+selects only portable suites. `linux`, `macos`, `windows`, and
+`android-device` select that exact platform. Explicit incompatible suite runs
+and empty selections fail closed.
+
 Prns keeps tests close to the code that owns their assertions. Unit tests,
 property tests, compile-fail documentation, and private Kani proof bodies stay in
 their crate. The `validation/` tree is the control plane for suites that cross a

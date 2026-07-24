@@ -1,5 +1,49 @@
 schema = 1
 
+[[doctor_profile]]
+id = "getting-started"
+summary = "Check the tools needed to navigate the clone, build Rust code, and run the first node."
+requires = ["cargo", "git", "python", "rustc"]
+minimum_versions = { python = "3.11", rustc = "1.90" }
+setup = { cargo = "Install Rust through rustup: https://rustup.rs/", git = "Install Git with your operating system's package manager.", python = "Install Python 3.11 or newer with your operating system's package manager.", rustc = "Install or update Rust through rustup: https://rustup.rs/" }
+
+[[doctor_profile]]
+id = "node"
+summary = "Check the Rust toolchain needed to build, run, inspect, and control prnsd."
+requires = ["cargo", "rustc"]
+minimum_versions = { rustc = "1.90" }
+setup = { cargo = "Install Rust through rustup: https://rustup.rs/", rustc = "Install or update Rust through rustup: https://rustup.rs/" }
+
+[[doctor_profile]]
+id = "rust"
+summary = "Check the tools needed to build the Rust libraries and run the two-node guide."
+requires = ["cargo", "python", "rustc"]
+minimum_versions = { python = "3.11", rustc = "1.90" }
+setup = { cargo = "Install Rust through rustup: https://rustup.rs/", python = "Install Python 3.11 or newer with your operating system's package manager.", rustc = "Install or update Rust through rustup: https://rustup.rs/" }
+
+[[doctor_profile]]
+id = "docs"
+summary = "Check the exact tools used to build and serve the hosted documentation website."
+requires = ["cargo", "dx", "rustc"]
+minimum_versions = { rustc = "1.90" }
+exact_versions = { dx = "0.7.5" }
+setup = { cargo = "Install Rust through rustup: https://rustup.rs/", dx = "Install the pinned CLI with `cargo install dioxus-cli --version 0.7.5 --locked`.", rustc = "Install or update Rust through rustup: https://rustup.rs/" }
+
+[[doctor_profile]]
+id = "tests"
+summary = "Check the tools needed for the normal Rust and repository validation paths."
+requires = ["cargo", "git", "python", "rustc"]
+minimum_versions = { python = "3.11", rustc = "1.90" }
+setup = { cargo = "Install Rust through rustup: https://rustup.rs/", git = "Install Git with your operating system's package manager.", python = "Install Python 3.11 or newer with your operating system's package manager.", rustc = "Install or update Rust through rustup: https://rustup.rs/" }
+
+[[doctor_profile]]
+id = "benchmarks"
+summary = "Check the Rust, Python, uv, and native compiler tools used by the benchmark harness."
+requires = ["cargo", "python", "rustc", "uv"]
+platform_requires = { linux = ["cc"], macos = ["cc"], windows = ["cl"] }
+minimum_versions = { python = "3.11", rustc = "1.90" }
+setup = { cargo = "Install Rust through rustup: https://rustup.rs/", cc = "Install Xcode Command Line Tools on macOS or a C compiler through your Linux package manager.", cl = "Install the Visual Studio Build Tools C++ workload.", python = "Install Python 3.11 or newer with your operating system's package manager.", rustc = "Install or update Rust through rustup: https://rustup.rs/", uv = "Install uv using the instructions at https://docs.astral.sh/uv/getting-started/installation/." }
+
 [[task]]
 id = "build.android"
 summary = "Cross-compile the Personal RNS core for Android device and emulator targets."
@@ -9,6 +53,16 @@ platforms = ["any"]
 audience = ["developer", "ci"]
 entrypoint = ["bash", "tools/build/android.sh"]
 requires = ["bash", "cargo"]
+
+[[task]]
+id = "guide.rust"
+summary = "Run the bounded two-node Rust API contract over an isolated localhost TCP connection."
+domain = "guide"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci"]
+entrypoint = ["python3", "tools/guide/run-rust-example.py"]
+requires = ["cargo", "python3"]
 
 [[task]]
 id = "build.napi"

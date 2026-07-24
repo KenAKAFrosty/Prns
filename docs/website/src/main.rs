@@ -19,6 +19,8 @@ mod pages;
 #[cfg(not(feature = "embedded-site"))]
 mod platforms;
 #[cfg(not(feature = "embedded-site"))]
+mod repository_docs;
+#[cfg(not(feature = "embedded-site"))]
 mod routes;
 #[cfg(not(feature = "embedded-site"))]
 mod site_mode;

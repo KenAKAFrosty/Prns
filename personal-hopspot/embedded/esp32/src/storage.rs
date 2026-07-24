@@ -25,7 +25,7 @@ const _: () = assert!(
         .resource_transfer_bytes
     {
         personal_rns::storage::StorageCapacity::Fixed(bytes) =>
-            personal_hopspot_core::node_pages::INDEX_RESPONSE_TRANSFER_BYTES <= bytes,
+            personal_hopspot_core::node_pages::PAGE_RESPONSE_TRANSFER_BYTES <= bytes,
         personal_rns::storage::StorageCapacity::Dynamic => true,
     }
 );
@@ -110,7 +110,7 @@ mod riscv {
         const BLACKHOLED_IDENTITIES: usize = 16;
         const BLACKHOLE_REASON_BYTES: usize = 64;
         const RESOURCE_TRANSFER_BYTES: usize =
-            personal_hopspot_core::node_pages::INDEX_RESPONSE_TRANSFER_BYTES;
+            personal_hopspot_core::node_pages::PAGE_RESPONSE_TRANSFER_BYTES;
         const CHANNEL_REORDER_DEPTH: usize = 1;
         const LINK_MTU: usize = EMBEDDED_MAX_LINK_MTU;
         const CHANNEL_MESSAGE_BYTES: usize = channel_mdu(Self::LINK_MTU);

@@ -19,9 +19,9 @@ Prns is high-performance Reticulum with one engine and one API, the same on embe
 
 >>`!Getting started`!
 
-With internet access, visit the docs site to learn more.
+`[Open the offline Prns quickstart`:/page/quickstart.mu]
 
-`B6eb`F222 https://prns.dev `f`b or `B6eb`F222 https://reticulum.rs `f`b
+Full guides: source clone or `B6eb`F222 https://prns.dev `f`b
 
 >>`!Why Prns?`!
 

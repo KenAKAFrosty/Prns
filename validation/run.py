@@ -501,7 +501,13 @@ def validate_tool_versions(manifest: dict) -> list[str]:
     return errors
 
 
-def selected_suites(manifest: dict, identifiers: list[str], domain: str | None, tier: str | None) -> list[dict]:
+def selected_suites(
+    manifest: dict,
+    identifiers: list[str],
+    domain: str | None,
+    tier: str | None,
+    platform: str | None = None,
+) -> list[dict]:
     suites = suite_map(manifest)
     unknown = set(identifiers) - set(suites)
     if unknown:
@@ -511,6 +517,11 @@ def selected_suites(manifest: dict, identifiers: list[str], domain: str | None, 
         selected = [suite for suite in selected if suite["domain"] == domain]
     if tier:
         selected = [suite for suite in selected if tier in suite["tiers"]]
+    if platform == "current":
+        host = native_platform()
+        selected = [suite for suite in selected if suite["platform"] in {"any", host}]
+    elif platform:
+        selected = [suite for suite in selected if suite["platform"] == platform]
     return sorted(selected, key=lambda suite: suite["id"])
 
 
@@ -1076,13 +1087,16 @@ def build_parser() -> argparse.ArgumentParser:
     list_command = subcommands.add_parser("list")
     list_command.add_argument("--domain")
     list_command.add_argument("--tier", choices=sorted(VALID_TIERS))
+    list_command.add_argument("--platform", choices=["current", *sorted(VALID_PLATFORMS)])
     matrix = subcommands.add_parser("matrix")
     matrix.add_argument("--domain")
     matrix.add_argument("--tier", choices=sorted(VALID_TIERS))
+    matrix.add_argument("--platform", choices=["current", *sorted(VALID_PLATFORMS)])
     run = subcommands.add_parser("run")
     run.add_argument("--suite", action="append", default=[])
     run.add_argument("--domain")
     run.add_argument("--tier", choices=sorted(VALID_TIERS))
+    run.add_argument("--platform", choices=["current", *sorted(VALID_PLATFORMS)])
     run.add_argument("--expected-sha")
     run.add_argument("--fuzz-seconds", type=int, default=int(os.environ.get("PRNS_FUZZ_SECONDS", "30")))
     subcommands.add_parser("prepare-oracles")
@@ -1109,7 +1123,9 @@ def main() -> int:
                 print(line)
             print("VALIDATION_REGISTRY_OK")
         elif arguments.command in {"list", "matrix"}:
-            suites = selected_suites(manifest, [], arguments.domain, arguments.tier)
+            suites = selected_suites(
+                manifest, [], arguments.domain, arguments.tier, arguments.platform
+            )
             if arguments.command == "matrix":
                 runners = set()
                 for entry in ci_matrix(suites)["include"]:
@@ -1128,6 +1144,8 @@ def main() -> int:
                     filters.append(f"domain={arguments.domain}")
                 if arguments.tier:
                     filters.append(f"tier={arguments.tier}")
+                if arguments.platform:
+                    filters.append(f"platform={arguments.platform}")
                 print(
                     f"[list] {len(suites)} suites selected"
                     + (f" ({', '.join(filters)})" if filters else "")
@@ -1152,7 +1170,13 @@ def main() -> int:
             errors = validate_manifest(manifest)
             if errors:
                 raise ValidationError("\n".join(errors))
-            suites = selected_suites(manifest, arguments.suite, arguments.domain, arguments.tier)
+            suites = selected_suites(
+                manifest,
+                arguments.suite,
+                arguments.domain,
+                arguments.tier,
+                arguments.platform,
+            )
             if not suites:
                 raise ValidationError("suite selection is empty")
             custody = f"exact SHA {arguments.expected_sha}" if arguments.expected_sha else "development"

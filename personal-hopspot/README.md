@@ -8,12 +8,15 @@ The `core` directory holds the platform-agnostic screen renderer. Each entry und
 
 ## The built-in NomadNet page
 
-Every hopspot serves a small [micron](https://github.com/markqvist/NomadNet) landing page about
-the project at `/page/index.mu` on a standard `nomadnetwork.node` destination, so any NomadNet
-or MeshChat user who finds the node can open it like any other node page. Pressing Announce on
-a hopspot announces this node destination alongside the usual `lxmf.delivery` one.
+Every hopspot serves small [micron](https://github.com/markqvist/NomadNet) pages about the project
+at `/page/index.mu` and `/page/quickstart.mu` on a standard `nomadnetwork.node` destination, so any
+NomadNet or MeshChat user who finds the node can open them like any other node page. The index
+links to the self-contained quickstart, which covers a daemon, a Rust consumer, an actual embedded
+firmware build, tests, and benchmarks without requiring the public website. Pressing Announce on a
+hopspot announces this node destination alongside the usual `lxmf.delivery` one.
 
-The page lives in `core/src/node_pages/` (head and tail spliced at build time around a line naming what serves it) and is served as `&'static` bytes straight
+The pages live in `core/src/node_pages/` (the index head and tail are spliced at build time around
+a line naming what serves it) and are served as `&'static` bytes straight
 from flash, with no filesystem or duplicate prepacked copy. `core/src/node_pages.rs` is the
 reference example for static serving over Reticulum's request/response mechanism: a
 `RequestRoute` that answers with `respond_static_bytes`, a named `RouteSet`, and the destination
