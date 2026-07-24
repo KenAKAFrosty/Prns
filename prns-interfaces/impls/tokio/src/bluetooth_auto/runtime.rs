@@ -306,6 +306,7 @@ impl BluetoothAutoStatus {
         }
     }
 
+    #[cfg(any(target_os = "macos", target_os = "ios", test))]
     pub(crate) fn clear_failure(&self) {
         self.shared.failed.store(false, Ordering::Relaxed);
         if let Ok(mut slot) = self.shared.failure_reason.lock() {
