@@ -17,12 +17,12 @@ test('two nodes exchange a proven single packet over TCP', async () => {
     await server.ready();
     const dest = server.destinationHashes[0];
     const listener = await server.attachTcpServer({ bind: '127.0.0.1:14261' });
-    assert.equal(listener.kind, 'TcpServer');
+    assert.equal(listener.kind, 'tcp-server');
     assert.equal(listener.id.length, 8);
 
     await client.ready();
     const dialer = await client.attachTcpClient({ target: '127.0.0.1:14261' });
-    assert.equal(dialer.kind, 'TcpClient');
+    assert.equal(dialer.kind, 'tcp-client');
 
     await announceUntilHeard(server, dest, clientEvents, 'loopback');
 

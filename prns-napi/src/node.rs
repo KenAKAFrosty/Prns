@@ -10,7 +10,9 @@ use personal_rns::engine::{
     EstablishLinkFailure, RatchetPolicy, RequestResponseTimeout,
 };
 use personal_rns::engine::{DropRouteOutcome, RouteSnapshot};
-use personal_rns::identity::IdentityHash;
+use personal_rns::identity::{
+    IdentityHash, MarkDestinationUsedOutcome, ReleaseDestinationOutcome, RetainDestinationOutcome,
+};
 use personal_rns::interfaces::shared_instance as shared_instance_contract;
 use personal_rns::interfaces::{BitrateBps, ConnectionState, InterfaceSnapshot, Membership};
 use personal_rns::manifold::reconnect::ReconnectPolicy;
@@ -58,11 +60,13 @@ pub struct IdentitySpec {
 #[napi(object)]
 pub struct RequestPathSpec {
     pub path: String,
+    #[napi(ts_type = "RequestPolicyName")]
     pub policy: Option<String>,
 }
 
 #[napi(object)]
 pub struct ResourceStrategySpec {
+    #[napi(ts_type = "ResourceAcceptName")]
     pub accept: String,
     pub max_uncompressed_len: Option<f64>,
     pub accept_compressed: Option<bool>,
@@ -72,11 +76,15 @@ pub struct ResourceStrategySpec {
 pub struct DestinationSpec {
     pub app_name: String,
     pub aspects: Vec<String>,
+    #[napi(ts_type = "'single' | 'plain'")]
     pub kind: Option<String>,
     pub identity: Option<IdentitySpec>,
     pub announce_app_data: Option<Buffer>,
+    #[napi(ts_type = "ProofStrategyName")]
     pub proof: Option<String>,
+    #[napi(ts_type = "LinkRequestPolicyName")]
     pub link_requests: Option<String>,
+    #[napi(ts_type = "RatchetPolicyName")]
     pub ratchet: Option<String>,
     pub resource_strategy: Option<ResourceStrategySpec>,
     pub request_paths: Option<Vec<RequestPathSpec>>,
@@ -109,6 +117,7 @@ pub struct AnnounceOptions {
 #[napi(object)]
 pub struct PacketReceipt {
     pub rtt_millis: f64,
+    #[napi(ts_type = "DeliveryEvidenceName")]
     pub evidence: String,
     pub packet_hash: Option<Buffer>,
 }
@@ -189,6 +198,7 @@ pub struct ConfigAttachResult {
 #[napi(object)]
 pub struct SendResourceOptions {
     pub metadata: Option<Buffer>,
+    #[napi(ts_type = "CompressionName")]
     pub compression: Option<String>,
     pub progress: Option<bool>,
 }
@@ -211,7 +221,9 @@ pub struct ResourceFileReceipt {
 #[napi(object)]
 pub struct InterfaceInfo {
     pub id: Buffer,
+    #[napi(ts_type = "InterfaceKindName")]
     pub kind: Option<String>,
+    #[napi(ts_type = "ConnectionStateName")]
     pub connection: String,
     pub failure_reason: Option<String>,
     pub rx_bytes: f64,
@@ -526,7 +538,7 @@ impl InterfaceHandle {
     fn from_ble(id: personal_rns::interfaces::InterfaceId) -> Self {
         Self {
             id_bytes: *id.as_bytes(),
-            kind_name: id.kind().map(|kind| format!("{kind:?}")),
+            kind_name: id.kind().map(|kind| kind.name().to_string()),
             attachment: Mutex::new(None),
         }
     }
@@ -535,7 +547,7 @@ impl InterfaceHandle {
         let id = attached.id();
         Self {
             id_bytes: *id.as_bytes(),
-            kind_name: id.kind().map(|kind| format!("{kind:?}")),
+            kind_name: id.kind().map(|kind| kind.name().to_string()),
             attachment: Mutex::new(Some(Attachment::Interface(attached))),
         }
     }
@@ -544,7 +556,7 @@ impl InterfaceHandle {
         let id = attached.id();
         Self {
             id_bytes: *id.as_bytes(),
-            kind_name: id.kind().map(|kind| format!("{kind:?}")),
+            kind_name: id.kind().map(|kind| kind.name().to_string()),
             attachment: Mutex::new(Some(Attachment::Supervisor(attached))),
         }
     }
@@ -592,7 +604,7 @@ pub struct PrnsNode {
 #[napi]
 pub fn start_node(
     options: NodeOptions,
-    #[napi(ts_arg_type = "(event: Record<string, any>) => void")] on_event: Function<(), ()>,
+    #[napi(ts_arg_type = "(event: PrnsNodeEvent) => void")] on_event: Function<(), ()>,
 ) -> Result<PrnsNode, ErrorCode> {
     let limit = match options.event_queue_limit {
         None => DEFAULT_EVENT_QUEUE_LIMIT,
@@ -985,7 +997,7 @@ impl PrnsNode {
         Ok(Fallible(self.clear_announce_queues_inner().await))
     }
 
-    #[napi(ts_return_type = "Promise<string>")]
+    #[napi(ts_return_type = "Promise<BlackholeOutcomeName>")]
     pub async fn blackhole_identity(
         &self,
         identity: Buffer,
@@ -996,7 +1008,7 @@ impl PrnsNode {
         ))
     }
 
-    #[napi(ts_return_type = "Promise<string>")]
+    #[napi(ts_return_type = "Promise<UnblackholeOutcomeName>")]
     pub async fn unblackhole_identity(&self, identity: Buffer) -> Result<Fallible<String>> {
         Ok(Fallible(self.unblackhole_identity_inner(identity).await))
     }
@@ -1011,19 +1023,19 @@ impl PrnsNode {
         Ok(Fallible(self.is_blackholed_inner(identity).await))
     }
 
-    #[napi(ts_return_type = "Promise<string>")]
+    #[napi(ts_return_type = "Promise<MarkDestinationUsedOutcomeName>")]
     pub async fn mark_destination_used(&self, destination: Buffer) -> Result<Fallible<String>> {
         Ok(Fallible(
             self.mark_destination_used_inner(destination).await,
         ))
     }
 
-    #[napi(ts_return_type = "Promise<string>")]
+    #[napi(ts_return_type = "Promise<RetainDestinationOutcomeName>")]
     pub async fn retain_destination(&self, destination: Buffer) -> Result<Fallible<String>> {
         Ok(Fallible(self.retain_destination_inner(destination).await))
     }
 
-    #[napi(ts_return_type = "Promise<string>")]
+    #[napi(ts_return_type = "Promise<ReleaseDestinationOutcomeName>")]
     pub async fn release_destination(&self, destination: Buffer) -> Result<Fallible<String>> {
         Ok(Fallible(self.release_destination_inner(destination).await))
     }
@@ -1654,7 +1666,15 @@ impl PrnsNode {
         let handle = self.manager.handle()?;
         DestinationIdentityRetentionControl::mark_destination_used(&handle, destination)
             .await
-            .map(|outcome| format!("{outcome:?}"))
+            .map(|outcome| {
+                match outcome {
+                    MarkDestinationUsedOutcome::Recorded => "recorded",
+                    MarkDestinationUsedOutcome::Refreshed => "refreshed",
+                    MarkDestinationUsedOutcome::Retained => "retained",
+                    MarkDestinationUsedOutcome::NotFound => "notFound",
+                }
+                .to_string()
+            })
             .map_err(|error| code_err(ErrorCode::RetentionFailed, format!("{error:?}")))
     }
 
@@ -1663,7 +1683,14 @@ impl PrnsNode {
         let handle = self.manager.handle()?;
         DestinationIdentityRetentionControl::retain_destination(&handle, destination)
             .await
-            .map(|outcome| format!("{outcome:?}"))
+            .map(|outcome| {
+                match outcome {
+                    RetainDestinationOutcome::Retained => "retained",
+                    RetainDestinationOutcome::AlreadyRetained => "alreadyRetained",
+                    RetainDestinationOutcome::NotFound => "notFound",
+                }
+                .to_string()
+            })
             .map_err(|error| code_err(ErrorCode::RetentionFailed, format!("{error:?}")))
     }
 
@@ -1672,7 +1699,15 @@ impl PrnsNode {
         let handle = self.manager.handle()?;
         DestinationIdentityRetentionControl::release_destination(&handle, destination)
             .await
-            .map(|outcome| format!("{outcome:?}"))
+            .map(|outcome| {
+                match outcome {
+                    ReleaseDestinationOutcome::Released => "released",
+                    ReleaseDestinationOutcome::UseRecorded => "useRecorded",
+                    ReleaseDestinationOutcome::UseRefreshed => "useRefreshed",
+                    ReleaseDestinationOutcome::NotFound => "notFound",
+                }
+                .to_string()
+            })
             .map_err(|error| code_err(ErrorCode::RetentionFailed, format!("{error:?}")))
     }
 
@@ -1753,7 +1788,7 @@ fn connection_name(connection: ConnectionState) -> &'static str {
 fn interface_info(snapshot: &InterfaceSnapshot) -> InterfaceInfo {
     InterfaceInfo {
         id: marshal::to_buffer(snapshot.id.as_bytes()),
-        kind: snapshot.id.kind().map(|kind| format!("{kind:?}")),
+        kind: snapshot.id.kind().map(|kind| kind.name().to_string()),
         connection: connection_name(snapshot.connection).to_string(),
         failure_reason: snapshot.failure_reason.map(str::to_string),
         rx_bytes: snapshot.rx_bytes as f64,

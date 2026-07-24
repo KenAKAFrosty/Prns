@@ -23,14 +23,14 @@ test('introspection, routing control, and blackhole surfaces', async () => {
 
     const interfaces = client.interfaces();
     assert.equal(interfaces.length, 1);
-    assert.equal(interfaces[0].kind, 'TcpClient');
+    assert.equal(interfaces[0].kind, 'tcp-client');
     assert.equal(interfaces[0].connection, 'connected');
     assert.ok(interfaces[0].rxBytes > 0);
 
     const inventory = client.interfaceInventory();
     assert.equal(inventory.length, 1);
     assert.ok(inventory[0].origin.length > 0);
-    assert.equal(inventory[0].interface.kind, 'TcpClient');
+    assert.equal(inventory[0].interface.kind, 'tcp-client');
 
     const routes = await client.routes();
     assert.ok(routes.some((r: any) => bufEq(r.destination, dest)));

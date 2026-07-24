@@ -52,7 +52,7 @@ test('invalid arguments throw synchronously with PRNS codes', () => {
   assert.throws(
     () =>
       startNode(
-        { destinations: [{ appName: 'x', aspects: [], kind: 'nonsense' }] },
+        { destinations: [{ appName: 'x', aspects: [], kind: 'nonsense' as any }] },
         () => {}
       ),
     (error: any) => error.code === 'PRNS_INVALID_ARGUMENT'

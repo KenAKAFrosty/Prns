@@ -28,7 +28,7 @@ test('auto interfaces attach and tear down without hardware', async () => {
     await sleep(200);
     const interfaces = node.interfaces();
     assert.ok(interfaces.length >= 1);
-    assert.ok(usb.kind === 'UsbAuto' || usb.kind === null || typeof usb.kind === 'string');
+    assert.equal(usb.kind ?? null, null);
     assert.ok(usb.teardown());
     assert.ok(wifi.teardown());
   } finally {
