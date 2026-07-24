@@ -84,10 +84,7 @@ impl<C> CooperativeHost<C> {
         Ok(CooperativeStep { now, entropy })
     }
 
-    pub fn observe_time(
-        &mut self,
-        now: MonotonicMillis,
-    ) -> Result<(), TimeMovedBackwards> {
+    pub fn observe_time(&mut self, now: MonotonicMillis) -> Result<(), TimeMovedBackwards> {
         if let Some(previous) = self.last_now {
             if now < previous {
                 return Err(TimeMovedBackwards {

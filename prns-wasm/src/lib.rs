@@ -13,9 +13,8 @@ pub use bluetooth_auto::{
     bluetooth_service_uuid, BluetoothReassembler,
 };
 pub use parameters::{
-    destination_hash_length, identity_secret_key_length, interface_id_length,
-    host_contract_abi, product_version, websocket_bitrate_bps, websocket_frame_cap,
-    websocket_hardware_mtu,
+    destination_hash_length, host_contract_abi, identity_secret_key_length, interface_id_length,
+    product_version, websocket_bitrate_bps, websocket_frame_cap, websocket_hardware_mtu,
 };
 pub use runtime::PrnsRuntime;
 pub use usb_auto::{
