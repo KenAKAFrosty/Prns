@@ -125,6 +125,17 @@ inputs = ["validation/hygiene/fmt-docs.sh", "validation/manifest.toml"]
 artifacts = "validation-artifacts/results/format-docs"
 
 [[suite]]
+id = "personal-path-hygiene"
+domain = "hygiene"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "python"
+timeout_seconds = 300
+command = ["python3", "validation/hygiene/no-personal-paths.py"]
+inputs = ["validation/hygiene/no-personal-paths.py", ".githooks/pre-push"]
+artifacts = "validation-artifacts/results/personal-path-hygiene"
+
+[[suite]]
 id = "dependency-audit"
 domain = "security"
 tiers = ["release", "scheduled"]

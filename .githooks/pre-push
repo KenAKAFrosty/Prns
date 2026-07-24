@@ -8,6 +8,22 @@
 set -euo pipefail
 repo_root="$(git rev-parse --show-toplevel)"
 
+pushed_tips=()
+while read -r _local_ref local_sha _remote_ref _remote_sha; do
+    if [ "${local_sha}" != "0000000000000000000000000000000000000000" ]; then
+        pushed_tips+=("${local_sha}")
+    fi
+done
+
+if [ "${#pushed_tips[@]}" -gt 0 ]; then
+    if ! python3 "${repo_root}/validation/hygiene/no-personal-paths.py" "${pushed_tips[@]}"; then
+        echo ""
+        echo "✗ push blocked by the personal-path gate (see above)."
+        echo "  scrub the offending path or extend the gate's allowlist deliberately."
+        exit 1
+    fi
+fi
+
 if ! bash "${repo_root}/validation/hygiene/fmt-docs.sh"; then
     echo ""
     echo "✗ push blocked by the hygiene gate (see above)."
