@@ -4,7 +4,6 @@ import subprocess
 import sys
 
 ALLOWED_HOME_USERS = {"op", "operator", "prns", "user"}
-SELF_PATH = "validation/hygiene/no-personal-paths.py"
 UNIX_HOME = re.compile(rb"/(?:home|Users)/([A-Za-z0-9_.-]+)")
 WINDOWS_HOME = re.compile(rb"(?i)[a-z]:[\\/]+users[\\/]+([A-Za-z0-9_.-]+)")
 TOKENS_SPLIT_SO_SCRUBS_NEVER_MATCH_THIS_FILE = ((b"kc", b"tra"),)
@@ -13,19 +12,17 @@ KNOWN_PERSONAL = re.compile(
 )
 
 
-def tree_blobs(rev: str):
+def reachable_blobs(revs: list[str]):
     listing = subprocess.run(
-        ["git", "ls-tree", "-r", "-z", rev],
+        ["git", "rev-list", "--objects", "--filter=object:type=blob", *revs],
         capture_output=True,
         check=True,
     ).stdout
-    for entry in listing.split(b"\0"):
-        if not entry:
+    for entry in listing.splitlines():
+        sha, separator, path = entry.partition(b" ")
+        if not separator:
             continue
-        meta, path = entry.split(b"\t", 1)
-        _mode, object_type, sha = meta.split()
-        if object_type == b"blob" and path.decode() != SELF_PATH:
-            yield sha.decode(), path.decode()
+        yield sha.decode(), path.decode()
 
 
 def violations_in(content: bytes):
@@ -38,14 +35,15 @@ def violations_in(content: bytes):
         yield match.group(0).decode(errors="replace")
 
 
-def scan(rev: str) -> int:
+def scan(revs: list[str]) -> int:
     found = 0
+    source = revs[0] if len(revs) == 1 else f"{len(revs)} revisions"
     catter = subprocess.Popen(
         ["git", "cat-file", "--batch"],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
     )
-    for sha, path in tree_blobs(rev):
+    for sha, path in reachable_blobs(revs):
         catter.stdin.write((sha + "\n").encode())
         catter.stdin.flush()
         header = catter.stdout.readline()
@@ -53,7 +51,7 @@ def scan(rev: str) -> int:
         content = catter.stdout.read(size)
         catter.stdout.read(1)
         for token in sorted(set(violations_in(content))):
-            print(f"[personal-path] {rev}:{path}: {token}")
+            print(f"[personal-path] {source}:{path}: {token}")
             found += 1
     catter.stdin.close()
     catter.wait()
@@ -62,7 +60,7 @@ def scan(rev: str) -> int:
 
 def main() -> None:
     revs = sys.argv[1:] or ["HEAD"]
-    total = sum(scan(rev) for rev in revs)
+    total = scan(revs)
     if total:
         raise SystemExit(
             f"personal-path gate: {total} personal path token(s) in tracked content"
