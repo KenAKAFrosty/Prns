@@ -10,6 +10,7 @@ import {
   parseBrowserGatewayCatalog,
   validateBrowserGatewayUrl,
 } from "../../prns-js/src/browser/index.js";
+import { MockRuntimeBase } from "./mock_runtime.js";
 import type {
   BleIdentity,
   BluetoothReassemblerBinding,
@@ -39,7 +40,7 @@ const REMOTE_IDS = [
   "05050505050505050505050505050505",
 ] as const;
 
-class MockRuntime implements PrnsRuntimeBinding {
+class MockRuntime extends MockRuntimeBase {
   static latest: MockRuntime | undefined;
   readonly registered: RuntimeRegisterInterfaceInput[] = [];
   readonly removed: RuntimeRemoveInterfaceInput[] = [];
@@ -47,6 +48,7 @@ class MockRuntime implements PrnsRuntimeBinding {
   readonly #bleIdentity: Uint8Array;
 
   constructor(_identity: IdentitySecretKey, bleIdentity?: BleIdentity) {
+    super();
     MockRuntime.latest = this;
     this.#bleIdentity = bleIdentity ?? new Uint8Array(BLE_IDENTITY_LENGTH);
   }

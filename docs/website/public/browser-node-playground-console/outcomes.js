@@ -62,6 +62,21 @@ export function describeCommandFailure(outcome) {
         UnsupportedByBackend: () => "The active backend does not support this command",
         UnknownLink: () => "The link does not exist",
         LinkNotActive: () => "The link is not active",
+        EntropyUnavailable: () => "The browser entropy source is unavailable",
+        NotLinkInitiator: () => "This node did not initiate the link",
+        IdentityNotHeld: () => "The requested identity is not held by this node",
+        UnknownRequestHandler: () => "The request handler is not registered",
+        RequestPolicyNotAllowList: () => "The request handler does not use an allow list",
+        RequestAllowListFull: () => "The request handler allow list is full",
+        LinkBusy: () => "The link is busy",
+        ResourceTableFull: () => "The resource table is full",
+        ResourceMetadataTooLarge: () => "The resource metadata is too large",
+        ResourceRejectedByPeer: () => "The peer rejected the resource",
+        ResourceSequencingFailed: () => "The resource segment sequence failed",
+        ResourcePredecessorFailed: () => "A preceding resource segment failed",
+        ChannelWindowFull: () => "The channel send window is full",
+        ChannelUntrackable: () => "The channel message cannot be tracked",
+        InvalidChannelMessageType: () => "The channel message type is invalid",
     });
 }
 export function describeSessionFailure(outcome) {

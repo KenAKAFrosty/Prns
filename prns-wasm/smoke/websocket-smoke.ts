@@ -11,6 +11,7 @@ import {
   nowMillis,
   packetFrame,
 } from "../../prns-js/src/browser/index.js";
+import { MockRuntimeBase } from "./mock_runtime.js";
 import type {
   BluetoothReassemblerBinding,
   DestinationHash,
@@ -39,7 +40,7 @@ const DEFAULT_WEBSOCKET_BITRATE = 1_000_000_000;
 const DEFAULT_WEBSOCKET_MTU = 508;
 const WEBSOCKET_FRAME_CAP = 572;
 
-class MockRuntime implements PrnsRuntimeBinding {
+class MockRuntime extends MockRuntimeBase {
   readonly identity: IdentitySecretKey;
   readonly registered: RuntimeRegisterInterfaceInput[] = [];
   readonly removed: RuntimeRemoveInterfaceInput[] = [];
@@ -49,6 +50,7 @@ class MockRuntime implements PrnsRuntimeBinding {
   registerFailure: Error | undefined;
 
   constructor(identity: IdentitySecretKey) {
+    super();
     this.identity = identity;
     lastRuntime = this;
   }

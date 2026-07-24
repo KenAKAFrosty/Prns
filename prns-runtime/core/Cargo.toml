@@ -22,9 +22,11 @@ external-alloc = ["alloc", "prns-core/external-alloc"]
 std = ["alloc", "prns-core/std"]
 runtime-metrics = ["alloc", "prns-core/runtime-metrics"]
 rns-management = ["alloc", "prns-core/shared-instance-rpc"]
+resource-bzip2 = ["std", "dep:bzip2"]
 
 [dependencies]
 prns-core = { path = "../../prns-core", default-features = false }
+bzip2 = { version = "0.6", optional = true }
 cfg-if = "1.0"
 
 heapless = { version = "0.8", default-features = false }

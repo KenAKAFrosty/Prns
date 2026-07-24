@@ -43,6 +43,19 @@ import type {
 } from "../contract.js";
 import { MemoryResourceStream } from "../memory_resource.js";
 import { AutoWifiInterface } from "./auto_wifi.js";
+import {
+  blobResourceSource,
+  byteResourceSource,
+  sendResourceFromSource,
+} from "./resource_send.js";
+import { browserResourceCompressor } from "./resource_compressor.js";
+import type {
+  ResourceSendSettlement,
+  ResourceSource,
+  RuntimeResourcePlanInput,
+  RuntimeResourceSegmentInput,
+  RuntimeResourceSegmentIssueInput,
+} from "./resource_send.js";
 
 export { Tag, from, match, match_into };
 export {
@@ -160,6 +173,7 @@ export type RuntimeOperation =
   | "send-link-packet"
   | "request"
   | "respond"
+  | "send-resource"
   | "set-link-resource-strategy"
   | "set-destination-resource-strategy"
   | "send-channel-message"
@@ -440,6 +454,10 @@ export type RespondOutcome = CommandSettlementFor<CommandCase<"Respond">>;
 export type SendResourceOutcome = CommandSettlementFor<
   CommandCase<"SendResource">
 >;
+export type SendResourceOptions = {
+  readonly packedMetadata?: Uint8Array;
+  readonly compression?: ResourceCompression;
+};
 export type SetResourceStrategyOutcome = CommandSettlementFor<
   CommandCase<"SetLinkResourceStrategy" | "SetDestinationResourceStrategy">
 >;
@@ -509,6 +527,8 @@ export type PrnsRuntimeBinding = {
   sendLinkPacket(options: RuntimeLinkPayloadOptions): bigint;
   request(options: RuntimeRequestOptions): bigint;
   respond(options: RuntimeRespondOptions): bigint;
+  resourceSegmentPlan(options: RuntimeResourcePlanInput): unknown;
+  sendResourceSegment(options: RuntimeResourceSegmentInput): bigint;
   setLinkResourceStrategy(
     options: RuntimeLinkResourceStrategyOptions,
   ): bigint;
@@ -708,6 +728,10 @@ type CommandSettledEvent = Tag<
     readonly settlement?: CommandSettlement;
   }
 >;
+
+type PendingCommand =
+  | Tag<"HostCommand", { readonly command: HostCommand }>
+  | Tag<"ResourceSegment">;
 
 export type RouteEvent = Extract<
   HostDiagnosticEvent,
@@ -1241,6 +1265,7 @@ export type EntropySource = (length: number) => EntropyOutcome;
 
 export type PrnsOptions = {
   wasm?: PrnsWasmModule;
+  resourceCompressionModuleUrl?: URL;
   identityStore?: IdentityStore;
   bleIdentityStore?: StableIdentityStore;
   entropy?: EntropySource;
@@ -2535,12 +2560,13 @@ export class Prns {
   #entropy: EntropySource;
   #now: () => InstantMillis;
   #limits: HostLimits;
+  #resourceCompressionModuleUrl: string;
   #events: BoundedAsyncLane<PrnsApplicationEvent>;
   #diagnostics: BoundedAsyncLane<PrnsDiagnosticEvent>;
   #pendingCommands = new Map<
     bigint,
     {
-      command: HostCommand;
+      pending: PendingCommand;
       settle: (settlement: CommandSettlement) => void;
     }
   >();
@@ -2554,11 +2580,14 @@ export class Prns {
     now: () => InstantMillis,
     bleIdentityAvailability: BleIdentityAvailability,
     limits: HostLimits,
+    resourceCompressionModuleUrl: URL,
   ) {
     this.#runtime = runtime;
     this.#entropy = entropy;
     this.#now = now;
     this.#limits = limits;
+    this.#resourceCompressionModuleUrl =
+      resourceCompressionModuleUrl.href;
     this.#events = new BoundedAsyncLane<PrnsApplicationEvent>({
       name: "ApplicationEvents",
       maximumValues: limits.applicationEvents,
@@ -2687,6 +2716,8 @@ export class Prns {
           options.now ?? nowMillis,
           bleIdentityAvailability,
           limits,
+          options.resourceCompressionModuleUrl ??
+            bundledWasmModuleUrl(),
         ),
       );
     } catch (error) {
@@ -2824,8 +2855,18 @@ export class Prns {
             entropy,
           }),
         ),
-      SendResource: async () =>
-        commandFailed(Tag("UnsupportedByBackend")),
+      SendResource: ({
+        linkId: value,
+        payload,
+        packedMetadata,
+        compression,
+      }) =>
+        this.#sendResourceSource(
+          value,
+          byteResourceSource(payload),
+          compression,
+          packedMetadata,
+        ),
       SetLinkResourceStrategy: ({ linkId: value, strategy }) =>
         this.#issueCommand(
           "set-link-resource-strategy",
@@ -2986,10 +3027,7 @@ export class Prns {
   sendResource(
     value: LinkId,
     payload: Uint8Array,
-    options: {
-      readonly packedMetadata?: Uint8Array;
-      readonly compression?: ResourceCompression;
-    } = {},
+    options: SendResourceOptions = {},
   ): Promise<SendResourceOutcome> {
     return this.execute(
       Tag("SendResource", {
@@ -3000,6 +3038,19 @@ export class Prns {
           ? {}
           : { packedMetadata: options.packedMetadata }),
       }),
+    );
+  }
+
+  sendResourceBlob(
+    value: LinkId,
+    blob: Blob,
+    options: SendResourceOptions = {},
+  ): Promise<SendResourceOutcome> {
+    return this.#sendResourceSource(
+      value,
+      blobResourceSource(blob),
+      options.compression ?? Tag("Auto"),
+      options.packedMetadata,
     );
   }
 
@@ -3079,6 +3130,33 @@ export class Prns {
     command: HostCommand,
     issue: (entropy: EntropyBytes) => bigint,
   ): Promise<CommandSettlement> {
+    return this.#issuePendingCommand(
+      operation,
+      Tag("HostCommand", { command }),
+      issue,
+    );
+  }
+
+  #issueResourceSegment(
+    input: RuntimeResourceSegmentIssueInput,
+  ): Promise<CommandSettlement> {
+    return this.#issuePendingCommand(
+      "send-resource",
+      Tag("ResourceSegment"),
+      (entropy) =>
+        this.#runtime.sendResourceSegment({
+          ...input,
+          nowMs: this.#now(),
+          entropy,
+        }),
+    );
+  }
+
+  #issuePendingCommand(
+    operation: RuntimeOperation,
+    pending: PendingCommand,
+    issue: (entropy: EntropyBytes) => bigint,
+  ): Promise<CommandSettlement> {
     if (this.#lifecycle.tag !== "Running") {
       return Promise.resolve(commandFailed(Tag("NodeStopped")));
     }
@@ -3100,9 +3178,37 @@ export class Prns {
       );
     }
     return new Promise((settle) => {
-      this.#pendingCommands.set(id, { command, settle });
+      this.#pendingCommands.set(id, { pending, settle });
       this.#pumpEvents();
     });
+  }
+
+  #sendResourceSource(
+    value: LinkId,
+    source: ResourceSource,
+    compression: ResourceCompression,
+    packedMetadata: Uint8Array | undefined,
+  ): Promise<ResourceSendSettlement> {
+    if (this.#lifecycle.tag !== "Running") {
+      return Promise.resolve(Tag("Failed", Tag("NodeStopped")));
+    }
+    return sendResourceFromSource(
+      value,
+      source,
+      compression,
+      packedMetadata,
+      {
+        maximumInFlightSegments: this.#limits.pendingCommands,
+        plan: (input) => this.#runtime.resourceSegmentPlan(input),
+        compress: (payload, metadata) =>
+          browserResourceCompressor.compress(
+            payload,
+            metadata,
+            this.#resourceCompressionModuleUrl,
+          ),
+        issue: (input) => this.#issueResourceSegment(input),
+      },
+    );
   }
 
   #pumpEvents(): void {
@@ -3147,11 +3253,15 @@ export class Prns {
           }
           this.#pendingCommands.delete(commandId);
           pending.settle(
-            this.#commandSettlement(
-              commandId,
-              pending.command,
-              settlement,
-            ),
+            match(pending.pending, {
+              HostCommand: ({ command }) =>
+                this.#commandSettlement(
+                  commandId,
+                  command,
+                  settlement,
+                ),
+              ResourceSegment: () => settlement,
+            }),
           );
         },
       });
@@ -5317,9 +5427,9 @@ async function loadBundledWasm(): Promise<
   | Tag<"Loaded", PrnsWasmModule>
   | Tag<"WasmLoadFailed", { readonly detail: string }>
 > {
-  const modulePath: string = "../../wasm/prns_wasm.js";
+  const moduleUrl = bundledWasmModuleUrl();
   try {
-    const imported: unknown = await import(modulePath);
+    const imported: unknown = await import(moduleUrl.href);
     const module = record(imported, "bundled WebAssembly module");
     const initialize = module.default;
     if (typeof initialize !== "function") {
@@ -5332,6 +5442,10 @@ async function loadBundledWasm(): Promise<
   } catch (error) {
     return Tag("WasmLoadFailed", { detail: describeHostError(error) });
   }
+}
+
+function bundledWasmModuleUrl(): URL {
+  return new URL("../../wasm/prns_wasm.js", import.meta.url);
 }
 
 function browserLimits(limits: HostLimits): HostLimits {

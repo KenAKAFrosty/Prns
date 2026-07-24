@@ -7,9 +7,12 @@ pub mod build_outgoing;
 pub mod control;
 pub mod receive;
 pub mod send;
+mod send_plan;
 pub mod serve_outgoing;
 pub mod streamed_open;
 pub mod table;
+
+pub use send_plan::{ResourceSegmentPlan, ResourceSendPlan, ResourceSendPlanError};
 
 use crate::crypto::SHA256_OUTPUT_LEN;
 use crate::engine::CommandId;

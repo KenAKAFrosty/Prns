@@ -639,6 +639,7 @@ command = ["npm", "--prefix", "prns-wasm", "run", "check:events"]
 inputs = [
   "prns-wasm/package.json",
   "prns-wasm/smoke/event-smoke.ts",
+  "prns-wasm/smoke/mock_runtime.ts",
   "tools/build/stage-wasm-docs-browser-playground.sh",
 ]
 artifacts = "validation-artifacts/results/wasm-events"
@@ -652,7 +653,11 @@ platform = "any"
 toolchain = "node"
 timeout_seconds = 600
 command = ["npm", "--prefix", "prns-wasm", "run", "check:auto-wifi"]
-inputs = ["prns-wasm/package.json", "prns-wasm/smoke/auto-wifi-smoke.ts"]
+inputs = [
+  "prns-wasm/package.json",
+  "prns-wasm/smoke/auto-wifi-smoke.ts",
+  "prns-wasm/smoke/mock_runtime.ts",
+]
 artifacts = "validation-artifacts/results/wasm-auto-wifi"
 
 [[suite]]
@@ -664,7 +669,11 @@ platform = "any"
 toolchain = "node"
 timeout_seconds = 600
 command = ["npm", "--prefix", "prns-wasm", "run", "check:websocket"]
-inputs = ["prns-wasm/package.json", "prns-wasm/smoke/websocket-smoke.ts"]
+inputs = [
+  "prns-wasm/package.json",
+  "prns-wasm/smoke/mock_runtime.ts",
+  "prns-wasm/smoke/websocket-smoke.ts",
+]
 artifacts = "validation-artifacts/results/wasm-websocket"
 
 [[suite]]

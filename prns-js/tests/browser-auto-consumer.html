@@ -8,18 +8,100 @@
     <script type="module">
       import { Prns, linkId } from "/prns-js/dist/browser/index.js";
 
+      async function compressionWorkerOutcome(workerUrl, moduleUrl) {
+        const compressionWorker = new Worker(workerUrl, { type: "module" });
+        const compressionPayload = new Uint8Array(4096).fill(5);
+        const compressionMetadata = new Uint8Array(32).fill(6);
+        let detail = "timeout";
+        const compressed = await new Promise((resolve) => {
+          const timeout = setTimeout(() => {
+            resolve(false);
+          }, 5000);
+          compressionWorker.addEventListener("message", (event) => {
+            clearTimeout(timeout);
+            detail = event.data.error ?? "message";
+            resolve(
+              event.data.candidate instanceof ArrayBuffer &&
+                event.data.candidate.byteLength > 0,
+            );
+          }, { once: true });
+          compressionWorker.addEventListener("error", (event) => {
+            clearTimeout(timeout);
+            detail = event.message;
+            resolve(false);
+          }, { once: true });
+          compressionWorker.postMessage(
+            {
+              id: 1,
+              moduleUrl,
+              payload: compressionPayload.buffer,
+              packedMetadata: compressionMetadata.buffer,
+            },
+            [compressionPayload.buffer, compressionMetadata.buffer],
+          );
+        });
+        compressionWorker.terminate();
+        return { compressed, detail };
+      }
+
+      const packagedCompression = await compressionWorkerOutcome(
+        "/prns-js/dist/browser/resource_compression_worker.js",
+        "/prns-js/wasm/prns_wasm.js",
+      );
+      const docsCompression = await compressionWorkerOutcome(
+        "/docs/website/public/browser-node-playground-console/sdk/browser/resource_compression_worker.js",
+        "/docs/website/public/browser-node-playground-console/pkg/prns_wasm.js",
+      );
+      const compression =
+        packagedCompression.compressed && docsCompression.compressed;
+      const compressionDetail =
+        `${packagedCompression.detail}:${docsCompression.detail}`;
+      document.body.dataset.compression =
+        compression ? "Compressed" : "Failed";
+      document.body.dataset.compressionDetail = compressionDetail;
       const outcome = await Prns.create({});
       document.body.dataset.outcome = outcome.tag;
       if (outcome.tag !== "Ready") {
         document.title = "FAIL";
       } else {
-        const closed = await outcome.data.closeLink(linkId(new Uint8Array(16)));
+        const unknownLink = linkId(new Uint8Array(16));
+        const closed = await outcome.data.closeLink(unknownLink);
         document.body.dataset.command = `${closed.tag}:${closed.data.tag}`;
+        const resource = await outcome.data.sendResource(
+          unknownLink,
+          new Uint8Array(4096).fill(7),
+          { packedMetadata: new Uint8Array(32).fill(8) },
+        );
+        document.body.dataset.resource = `${resource.tag}:${resource.data.tag}`;
+        const blob = await outcome.data.sendResourceBlob(
+          unknownLink,
+          new Blob([new Uint8Array(1024).fill(9)]),
+        );
+        document.body.dataset.blob = `${blob.tag}:${blob.data.tag}`;
         document.title =
-          closed.tag === "Failed" && closed.data.tag === "UnknownLink"
+          closed.tag === "Failed" &&
+          closed.data.tag === "UnknownLink" &&
+          resource.tag === "Failed" &&
+          resource.data.tag === "UnknownLink" &&
+          blob.tag === "Failed" &&
+          blob.data.tag === "UnknownLink" &&
+          compression
             ? "PASS"
             : "FAIL";
       }
+      await fetch("/browser-smoke-result", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          title: document.title,
+          outcome: document.body.dataset.outcome,
+          command: document.body.dataset.command,
+          resource: document.body.dataset.resource,
+          blob: document.body.dataset.blob,
+          compression: document.body.dataset.compression,
+          compressionDetail: document.body.dataset.compressionDetail,
+        }),
+      });
     </script>
   </body>
 </html>

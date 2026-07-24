@@ -27,6 +27,7 @@ personal-rns = { path = "../personal-rns", default-features = false, features = 
 personal-hopspot-core = { path = "../personal-hopspot/core", default-features = false }
 prns-host = { path = "../prns-host/core" }
 prns-host-cooperative = { path = "../prns-host/impls/cooperative" }
+prns-runtime = { path = "../prns-runtime/core", default-features = false, features = ["resource-bzip2"] }
 wasm-bindgen = "0.2"
 zeroize = { version = "1", default-features = false, features = ["derive"] }
 

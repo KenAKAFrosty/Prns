@@ -10,6 +10,21 @@
 use std::vec::Vec;
 
 use bzip2::{Compress, Compression, Decompress, Status};
+use prns_core::routing::links::resources::METADATA_PREFIX_LEN;
+
+#[must_use]
+pub fn compress_resource_candidate(data: &[u8], packed_metadata: Option<&[u8]>) -> Option<Vec<u8>> {
+    let Some(packed) = packed_metadata else {
+        return compress_if_smaller(data);
+    };
+    let packed_len = u32::try_from(packed.len()).ok()?;
+    let prefix_start = core::mem::size_of::<u32>().checked_sub(METADATA_PREFIX_LEN)?;
+    let mut composite = Vec::with_capacity(METADATA_PREFIX_LEN + packed.len() + data.len());
+    composite.extend_from_slice(&packed_len.to_be_bytes()[prefix_start..]);
+    composite.extend_from_slice(packed);
+    composite.extend_from_slice(data);
+    compress_if_smaller(&composite)
+}
 
 /// RNS 1.4.0 `Resource.__init__`: `bz2.compress` at level 9 (its default), kept only when
 /// it comes out strictly smaller than the input. `None` is the reference's else-branch: send
@@ -183,6 +198,22 @@ mod tests {
         let data: Vec<u8> = (0..8192u32).map(|i| (i / 32) as u8).collect();
         let stream = compress_if_smaller(&data).expect("long runs compress");
         assert_eq!(decompress_bounded(&stream, data.len() as u64), Ok(data));
+    }
+
+    #[test]
+    fn resource_candidate_compresses_metadata_prefix_and_data_together() {
+        let data = std::vec![7u8; 8192];
+        let packed = b"typed resource metadata";
+        let stream =
+            compress_resource_candidate(&data, Some(packed)).expect("composite compresses");
+        let mut composite = Vec::with_capacity(METADATA_PREFIX_LEN + packed.len() + data.len());
+        composite.extend_from_slice(&(packed.len() as u32).to_be_bytes()[1..]);
+        composite.extend_from_slice(packed);
+        composite.extend_from_slice(&data);
+        assert_eq!(
+            decompress_bounded(&stream, composite.len() as u64),
+            Ok(composite),
+        );
     }
 
     #[test]

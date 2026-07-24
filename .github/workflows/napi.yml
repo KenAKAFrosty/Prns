@@ -368,9 +368,7 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: build and inspect unified root package
-        run: |
-          npm --prefix prns-wasm run build:wasm
-          npm --prefix prns-js run pack:check
+        run: npm --prefix prns-js run pack:check
         env:
           RUSTFLAGS: "-D warnings"
       - name: publish unified root package

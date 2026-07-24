@@ -16,7 +16,10 @@ use personal_rns::interfaces::{
 };
 use personal_rns::routing::links::channel::MessageType;
 use personal_rns::routing::links::request::RequestId;
-use personal_rns::routing::links::resources::ResourceStrategy;
+use personal_rns::routing::links::resources::{
+    ResourceBody, ResourceCorrelation, ResourceMetadata, ResourceSend, ResourceSendPlan,
+    ResourceSendPlanError, ResourceStrategy, MAX_EFFICIENT_SIZE,
+};
 use personal_rns::routing::links::LinkId;
 use personal_rns::routing::request_handlers::{RequestPathHash, RequestPolicy};
 use personal_rns::routing::upstream_app_destinations::{LinkRequestPolicy, ProofStrategy};
@@ -453,6 +456,118 @@ impl PrnsRuntime {
             now_ms,
             entropy,
         );
+        Ok(id.0)
+    }
+
+    #[wasm_bindgen(js_name = resourceSegmentPlan)]
+    pub fn resource_segment_plan(&self, options: JsValue) -> Result<JsValue, JsValue> {
+        let total_data_bytes = required_u64(&options, "totalDataBytes")?;
+        let packed_metadata_bytes = optional_u64(&options, "packedMetadataBytes")?;
+        let segment_index = required_u64(&options, "segmentIndex")?;
+        let plan = match ResourceSendPlan::new(
+            total_data_bytes,
+            packed_metadata_bytes,
+            MAX_EFFICIENT_SIZE as u64,
+        ) {
+            Ok(plan) => plan,
+            Err(error) => {
+                let rejected = Object::new();
+                set_str(&rejected, "type", "rejected");
+                set_str(
+                    &rejected,
+                    "cause",
+                    match error {
+                        ResourceSendPlanError::PackedMetadataLengthOverflow
+                        | ResourceSendPlanError::MetadataDoesNotFit => "metadataTooLarge",
+                        ResourceSendPlanError::TotalLengthOverflow => "payloadTooLarge",
+                        ResourceSendPlanError::ZeroSegmentBytes
+                        | ResourceSendPlanError::SegmentTooLarge => "invalidSegmentSize",
+                    },
+                );
+                return Ok(rejected.into());
+            }
+        };
+        let Some(segment) = plan.segment(segment_index) else {
+            let rejected = Object::new();
+            set_str(&rejected, "type", "rejected");
+            set_str(&rejected, "cause", "invalidSegmentIndex");
+            return Ok(rejected.into());
+        };
+        let ready = Object::new();
+        set_str(&ready, "type", "ready");
+        set_u64(&ready, "totalStreamBytes", plan.total_stream_bytes());
+        set_u64(&ready, "segmentIndex", segment.segment.index);
+        set_u64(&ready, "totalSegments", segment.segment.total_segments);
+        set_u64(&ready, "totalDataBytes", segment.segment.total_data_bytes);
+        set_u64(&ready, "dataStart", segment.data_start);
+        set_u64(&ready, "dataEnd", segment.data_end);
+        set_u64(&ready, "streamBytes", segment.stream_bytes);
+        Ok(ready.into())
+    }
+
+    #[wasm_bindgen(js_name = sendResourceSegment)]
+    pub fn send_resource_segment(&mut self, options: JsValue) -> Result<u64, JsValue> {
+        let link_id = link_id_from_vec(required_bytes(&options, "linkId")?)?;
+        let data = required_bytes(&options, "payload")?;
+        let compressed_candidate = optional_bytes(&options, "compressedCandidate")?;
+        let metadata_kind = required_string(&options, "metadata")?;
+        let packed_metadata = optional_bytes(&options, "packedMetadata")?;
+        let packed_metadata_bytes = optional_u32(&options, "packedMetadataBytes")?;
+        let (metadata, metadata_len) = match (
+            metadata_kind.as_str(),
+            &packed_metadata,
+            packed_metadata_bytes,
+        ) {
+            ("none", None, None) => (ResourceMetadata::None, None),
+            ("packed", Some(packed), None) => {
+                (ResourceMetadata::Packed(packed), Some(packed.len() as u64))
+            }
+            ("sentInFirstSegment", None, Some(packed_len)) => (
+                ResourceMetadata::SentInFirstSegment { packed_len },
+                Some(u64::from(packed_len)),
+            ),
+            _ => {
+                return Err(JsValue::from_str(
+                    "resource segment metadata fields are inconsistent",
+                ));
+            }
+        };
+        let total_data_bytes = required_u64(&options, "totalDataBytes")?;
+        let segment_index = required_u64(&options, "segmentIndex")?;
+        let plan = ResourceSendPlan::new(total_data_bytes, metadata_len, MAX_EFFICIENT_SIZE as u64)
+            .map_err(|error| {
+                JsValue::from_str(&format!("resource send plan rejected: {error:?}"))
+            })?;
+        let segment = plan
+            .segment(segment_index)
+            .ok_or_else(|| JsValue::from_str("resource segment index is outside the send plan"))?;
+        let expected_data_bytes = segment.data_end.saturating_sub(segment.data_start);
+        if data.len() as u64 != expected_data_bytes {
+            return Err(JsValue::from_str(
+                "resource segment payload does not match the send plan",
+            ));
+        }
+        let (now_ms, entropy) = self.command_context(&options)?;
+        let id = self.mint_command_id();
+        let mut entropy = EntropyCursor::new(entropy);
+        let mut reactions = Vec::new();
+        self.engine.ingest_send_resource_segment_into(
+            &ResourceSend {
+                id,
+                link_id,
+                body: ResourceBody {
+                    data: &data,
+                    compressed_candidate: compressed_candidate.as_deref(),
+                    metadata,
+                },
+                correlation: ResourceCorrelation::Unsolicited,
+            },
+            segment.segment,
+            InstantMillis(now_ms),
+            &mut |out| entropy.fill(out),
+            &mut |reaction| reactions.push(capture_reaction(reaction)),
+        );
+        self.apply_captured(reactions);
         Ok(id.0)
     }
 

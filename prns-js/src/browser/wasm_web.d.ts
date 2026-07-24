@@ -22,6 +22,8 @@ export declare class PrnsRuntime implements PrnsRuntimeBinding {
   sendLinkPacket: PrnsRuntimeBinding["sendLinkPacket"];
   request: PrnsRuntimeBinding["request"];
   respond: PrnsRuntimeBinding["respond"];
+  resourceSegmentPlan: PrnsRuntimeBinding["resourceSegmentPlan"];
+  sendResourceSegment: PrnsRuntimeBinding["sendResourceSegment"];
   setLinkResourceStrategy: PrnsRuntimeBinding["setLinkResourceStrategy"];
   setDestinationResourceStrategy: PrnsRuntimeBinding["setDestinationResourceStrategy"];
   sendChannelMessage: PrnsRuntimeBinding["sendChannelMessage"];
@@ -60,6 +62,10 @@ export declare function bluetoothDecodeControl(bytes: Uint8Array): unknown;
 export declare function bluetoothDataFragments(
   packet: PacketFrame,
 ): Uint8Array[];
+export declare function compressResourceCandidate(options: {
+  readonly payload: Uint8Array;
+  readonly packedMetadata?: Uint8Array;
+}): Uint8Array | undefined;
 export declare function websocketBitrateBps(): number;
 export declare function websocketFrameCap(): number;
 export declare function websocketHardwareMtu(): number;

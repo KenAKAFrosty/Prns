@@ -10,6 +10,7 @@ import init, {
   bluetoothDialerHello,
   bluetoothHardwareMtu,
   bluetoothServiceUuid,
+  compressResourceCandidate,
   hostContractAbi,
   identitySecretKeyLength,
   productVersion,
@@ -110,10 +111,53 @@ function runtimeOutbound(raw: unknown): RuntimeOutbound {
 }
 
 async function runRuntimeSmoke(): Promise<void> {
+  const compressed = compressResourceCandidate({
+    payload: new Uint8Array(4096).fill(7),
+  });
+  assert(
+    compressed !== undefined && compressed.length < 4096,
+    "resource compressor keeps a smaller candidate",
+  );
   const identityLength = identitySecretKeyLength();
   const runtime: PrnsRuntimeBinding = new PrnsRuntime(
     identitySecretKey(entropy(identityLength), identityLength),
     entropy(BLE_IDENTITY_LENGTH),
+  );
+  const maximumSegmentBytes = 1024 * 1024 - 1;
+  const boundaryPlan = runtime.resourceSegmentPlan({
+    totalDataBytes: maximumSegmentBytes * 2 + 10,
+    segmentIndex: 2,
+  });
+  assert(
+    typeof boundaryPlan === "object" &&
+      boundaryPlan !== null &&
+      "type" in boundaryPlan &&
+      boundaryPlan.type === "ready",
+    "resource boundary plan is ready",
+  );
+  assert(
+    "totalSegments" in boundaryPlan &&
+      boundaryPlan.totalSegments === 3 &&
+      "dataStart" in boundaryPlan &&
+      boundaryPlan.dataStart === maximumSegmentBytes &&
+      "dataEnd" in boundaryPlan &&
+      typeof boundaryPlan.dataEnd === "number" &&
+      boundaryPlan.dataEnd > boundaryPlan.dataStart,
+    "resource boundary plan balances the tail",
+  );
+  const rejectedPlan = runtime.resourceSegmentPlan({
+    totalDataBytes: 1,
+    segmentIndex: 1,
+    packedMetadataBytes: maximumSegmentBytes + 1,
+  });
+  assert(
+    typeof rejectedPlan === "object" &&
+      rejectedPlan !== null &&
+      "type" in rejectedPlan &&
+      rejectedPlan.type === "rejected" &&
+      "cause" in rejectedPlan &&
+      rejectedPlan.cause === "metadataTooLarge",
+    "resource metadata rejection stays typed",
   );
 
   const interfaceOptions: RuntimeRegisterInterfaceInput = {

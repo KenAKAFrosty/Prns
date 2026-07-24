@@ -62,3 +62,28 @@ match(settlement.data, {
 ```
 
 The compiler requires every declared case. Commands settle their returned promises, expected failures are typed tagged outcomes, and public binary values are semantically branded `Uint8Array` instances. Browser backends return `UnsupportedByBackend` for native interface attachment commands instead of omitting or weakening the common API. A `ResourceAvailable` event owns a `ResourceStream`; its `claim()` method uses the same `Claimed | AlreadyClaimed` contract.
+
+Browser resource sends accept either bytes or a `Blob`. The `Blob` path slices
+the source into bounded segments instead of materializing the whole value:
+
+```ts
+import { Tag, match } from "personal-rns/browser";
+
+const sent = await node.sendResourceBlob(link, file, {
+  compression: Tag("Auto"),
+  packedMetadata,
+});
+if (sent.tag === "Failed") {
+  reportResourceFailure(sent.data);
+  return;
+}
+
+match(sent.data, {
+  ResourceSent: confirmResource,
+});
+```
+
+`Auto` compression runs the shared Rust codec in a dedicated module Worker.
+The send remains correct if Worker startup or compression is unavailable: it
+continues with the uncompressed segment. Planning, metadata placement, segment
+bounds, and wire submission remain in the shared Rust implementation.

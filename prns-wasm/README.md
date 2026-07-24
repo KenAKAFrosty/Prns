@@ -45,6 +45,13 @@ The package exports its zero-dependency `Tag`, `match`, `match_into`, and
 unions. Synchronous branded-value constructors still throw
 `PrnsValidationError` when the caller violates their immediate input contract.
 
+Resource sending has the same settlement contract as the native backend.
+`sendResource` accepts a `Uint8Array`; `sendResourceBlob` incrementally reads a
+browser `Blob`. Both use the Rust resource planner and wire engine compiled into
+WebAssembly. Automatic bzip2 candidate generation runs off the main thread,
+keeps at most two segments in flight, and falls back to the uncompressed segment
+when a Worker is unavailable.
+
 ## Browser Transport Playground
 
 The documentation playground is a plain TypeScript browser application under

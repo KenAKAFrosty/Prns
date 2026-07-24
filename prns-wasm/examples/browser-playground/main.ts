@@ -95,6 +95,10 @@ class BrowserPlayground {
     try {
       created = await Prns.create({
         wasm: wasmModule(),
+        resourceCompressionModuleUrl: new URL(
+          "./pkg/prns_wasm.js",
+          globalThis.location.href,
+        ),
         identityStore: new BrowserLocalStorageIdentityStore(),
       });
     } catch (error: unknown) {

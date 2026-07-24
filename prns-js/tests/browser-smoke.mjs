@@ -1,13 +1,11 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { dirname, extname, resolve } from "node:path";
-import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
-const execute = promisify(execFile);
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryRoot = resolve(packageRoot, "..");
 const chromium = [
@@ -24,9 +22,27 @@ const contentTypes = new Map([
   [".js", "text/javascript; charset=utf-8"],
   [".wasm", "application/wasm"],
 ]);
+let settleBrowserResult;
+const browserResult = new Promise((resolveResult) => {
+  settleBrowserResult = resolveResult;
+});
 const server = createServer(async (request, response) => {
   try {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    if (
+      request.method === "POST" &&
+      url.pathname === "/browser-smoke-result"
+    ) {
+      const chunks = [];
+      for await (const chunk of request) {
+        chunks.push(chunk);
+      }
+      const result = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      response.writeHead(204);
+      response.end();
+      settleBrowserResult(result);
+      return;
+    }
     const path = resolve(repositoryRoot, `.${decodeURIComponent(url.pathname)}`);
     const metadata = await stat(path);
     assert.ok(path.startsWith(`${repositoryRoot}/`) && metadata.isFile());
@@ -45,29 +61,46 @@ await new Promise((resolveListening) => {
   server.listen(0, "127.0.0.1", resolveListening);
 });
 
+let browser;
 try {
   const address = server.address();
   assert.ok(address && typeof address === "object");
   const url =
     `http://127.0.0.1:${address.port}` +
     "/prns-js/tests/browser-auto-consumer.html";
-  const { stdout } = await execute(
+  browser = spawn(
     chromium,
     [
       "--headless=new",
       "--no-sandbox",
       "--disable-dev-shm-usage",
       "--disable-gpu",
-      "--virtual-time-budget=10000",
-      "--dump-dom",
       url,
     ],
-    { maxBuffer: 4 * 1_024 * 1_024 },
+    { stdio: "ignore" },
   );
-  assert.match(stdout, /<title>PASS<\/title>/);
-  assert.match(stdout, /data-outcome="Ready"/);
-  assert.match(stdout, /data-command="Failed:UnknownLink"/);
+  let browserTimeout;
+  const result = await Promise.race([
+    browserResult,
+    new Promise((_, rejectTimeout) => {
+      browserTimeout = setTimeout(
+        () => rejectTimeout(new Error("browser smoke timed out")),
+        20_000,
+      );
+    }),
+  ]);
+  clearTimeout(browserTimeout);
+  assert.deepEqual(result, {
+    title: "PASS",
+    outcome: "Ready",
+    command: "Failed:UnknownLink",
+    resource: "Failed:UnknownLink",
+    blob: "Failed:UnknownLink",
+    compression: "Compressed",
+    compressionDetail: "message:message",
+  });
 } finally {
+  browser?.kill("SIGTERM");
   await new Promise((resolveClosed, rejectClosed) => {
     server.close((error) => {
       if (error) {

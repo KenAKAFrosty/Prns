@@ -22,3 +22,16 @@ pub use usb_auto::{
     usb_auto_host_hello_ack_frame, usb_auto_host_hello_frame, usb_auto_node_tag_for,
     usb_auto_web_usb_product_id, usb_auto_web_usb_vendor_id, UsbAutoDecoder,
 };
+use wasm_bindgen::prelude::*;
+
+#[wasm_bindgen(js_name = compressResourceCandidate)]
+pub fn compress_resource_candidate(options: JsValue) -> Result<Option<Vec<u8>>, JsValue> {
+    let payload = input::required_bytes(&options, "payload")?;
+    let packed_metadata = input::optional_bytes(&options, "packedMetadata")?;
+    Ok(
+        prns_runtime::resource_compression::compress_resource_candidate(
+            &payload,
+            packed_metadata.as_deref(),
+        ),
+    )
+}

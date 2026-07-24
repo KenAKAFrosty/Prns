@@ -26,13 +26,12 @@ tracing = ["dep:tracing"]
 
 [dependencies]
 prns-core = { path = "../../../prns-core", default-features = false, features = ["tokio-host"] }
-prns-runtime = { path = "../../core", default-features = false, features = ["std"] }
+prns-runtime = { path = "../../core", default-features = false, features = ["resource-bzip2"] }
 heapless = { version = "0.8", default-features = false }
 tokio = { version = "1", default-features = false, features = ["rt", "macros", "sync", "time", "io-util"] }
 rtrb = { version = "0.3", default-features = false }
 futures-util = { version = "0.3", default-features = false, features = ["alloc", "sink", "std"] }
 getrandom = { version = "0.2" }
-bzip2 = { version = "0.6" }
 tracing = { version = "0.1", optional = true, default-features = false, features = ["std", "attributes"] }
 shlex = { version = "1", optional = true }
 

@@ -29,14 +29,16 @@ import type {
   UsbAutoDecoderBinding,
 } from "../../prns-js/src/browser/index.js";
 import type { PacketContentPresentation } from "../examples/browser-playground/presentation.js";
+import { MockRuntimeBase } from "./mock_runtime.js";
 
 const IDENTITY_LENGTH = 32;
 
-class MockRuntime implements PrnsRuntimeBinding {
+class MockRuntime extends MockRuntimeBase {
   static latest: MockRuntime | undefined;
   readonly events: unknown[] = [];
 
   constructor(_identity: IdentitySecretKey, _bleIdentity?: BleIdentity) {
+    super();
     MockRuntime.latest = this;
   }
 

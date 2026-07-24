@@ -50,6 +50,17 @@ export class PrnsRuntime {
      * @param {any} options
      * @returns {bigint}
      */
+    allowRequester(options) {
+        const ret = wasm.prnsruntime_allowRequester(this.__wbg_ptr, options);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return BigInt.asUintN(64, ret[0]);
+    }
+    /**
+     * @param {any} options
+     * @returns {bigint}
+     */
     announce(options) {
         const ret = wasm.prnsruntime_announce(this.__wbg_ptr, options);
         if (ret[2]) {
@@ -93,6 +104,28 @@ export class PrnsRuntime {
     drainOutbound() {
         const ret = wasm.prnsruntime_drainOutbound(this.__wbg_ptr);
         return ret;
+    }
+    /**
+     * @param {any} options
+     * @returns {bigint}
+     */
+    establishLink(options) {
+        const ret = wasm.prnsruntime_establishLink(this.__wbg_ptr, options);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return BigInt.asUintN(64, ret[0]);
+    }
+    /**
+     * @param {any} options
+     * @returns {bigint}
+     */
+    identify(options) {
+        const ret = wasm.prnsruntime_identify(this.__wbg_ptr, options);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return BigInt.asUintN(64, ret[0]);
     }
     /**
      * @param {any} options
@@ -174,8 +207,107 @@ export class PrnsRuntime {
      * @param {any} options
      * @returns {bigint}
      */
+    request(options) {
+        const ret = wasm.prnsruntime_request(this.__wbg_ptr, options);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return BigInt.asUintN(64, ret[0]);
+    }
+    /**
+     * @param {any} options
+     * @returns {bigint}
+     */
+    requestPath(options) {
+        const ret = wasm.prnsruntime_requestPath(this.__wbg_ptr, options);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return BigInt.asUintN(64, ret[0]);
+    }
+    /**
+     * @param {any} options
+     * @returns {any}
+     */
+    resourceSegmentPlan(options) {
+        const ret = wasm.prnsruntime_resourceSegmentPlan(this.__wbg_ptr, options);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
+     * @param {any} options
+     * @returns {bigint}
+     */
+    respond(options) {
+        const ret = wasm.prnsruntime_respond(this.__wbg_ptr, options);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return BigInt.asUintN(64, ret[0]);
+    }
+    /**
+     * @param {any} options
+     * @returns {bigint}
+     */
+    sendChannelMessage(options) {
+        const ret = wasm.prnsruntime_sendChannelMessage(this.__wbg_ptr, options);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return BigInt.asUintN(64, ret[0]);
+    }
+    /**
+     * @param {any} options
+     * @returns {bigint}
+     */
+    sendLinkPacket(options) {
+        const ret = wasm.prnsruntime_sendLinkPacket(this.__wbg_ptr, options);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return BigInt.asUintN(64, ret[0]);
+    }
+    /**
+     * @param {any} options
+     * @returns {bigint}
+     */
+    sendResourceSegment(options) {
+        const ret = wasm.prnsruntime_sendResourceSegment(this.__wbg_ptr, options);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return BigInt.asUintN(64, ret[0]);
+    }
+    /**
+     * @param {any} options
+     * @returns {bigint}
+     */
     sendSinglePacket(options) {
         const ret = wasm.prnsruntime_sendSinglePacket(this.__wbg_ptr, options);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return BigInt.asUintN(64, ret[0]);
+    }
+    /**
+     * @param {any} options
+     * @returns {boolean}
+     */
+    setDestinationResourceStrategy(options) {
+        const ret = wasm.prnsruntime_setDestinationResourceStrategy(this.__wbg_ptr, options);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return ret[0] !== 0;
+    }
+    /**
+     * @param {any} options
+     * @returns {bigint}
+     */
+    setLinkResourceStrategy(options) {
+        const ret = wasm.prnsruntime_setLinkResourceStrategy(this.__wbg_ptr, options);
         if (ret[2]) {
             throw takeFromExternrefTable0(ret[1]);
         }
@@ -324,6 +456,23 @@ export function bluetoothServiceUuid() {
     } finally {
         wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
     }
+}
+
+/**
+ * @param {any} options
+ * @returns {Uint8Array | undefined}
+ */
+export function compressResourceCandidate(options) {
+    const ret = wasm.compressResourceCandidate(options);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    let v1;
+    if (ret[0] !== 0) {
+        v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    }
+    return v1;
 }
 
 /**
@@ -493,6 +642,11 @@ export function websocketHardwareMtu() {
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,
+        __wbg___wbindgen_boolean_get_fa956cfa2d1bd751: function(arg0) {
+            const v = arg0;
+            const ret = typeof(v) === 'boolean' ? v : undefined;
+            return isLikeNone(ret) ? 0xFFFFFF : ret ? 1 : 0;
+        },
         __wbg___wbindgen_is_null_ea9085d691f535d3: function(arg0) {
             const ret = arg0 === null;
             return ret;

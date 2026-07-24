@@ -3,6 +3,8 @@ import { BoundedAsyncLane } from "../async_lanes.js";
 import { DESTINATION_HASH_LENGTH, HOST_CONTRACT_ABI, INTERFACE_ID_LENGTH, PRODUCT_VERSION, RESOURCE_HASH_LENGTH, balancedLimits, destinationHash, identityHash, interfaceId, linkId, packetHash, requestId, requestPathHash, resourceHash, } from "../contract.js";
 import { MemoryResourceStream } from "../memory_resource.js";
 import { AutoWifiInterface } from "./auto_wifi.js";
+import { blobResourceSource, byteResourceSource, sendResourceFromSource, } from "./resource_send.js";
+import { browserResourceCompressor } from "./resource_compressor.js";
 export { Tag, from, match, match_into };
 export { DESTINATION_HASH_LENGTH, HOST_CONTRACT_ABI, INTERFACE_ID_LENGTH, PRODUCT_VERSION, RESOURCE_HASH_LENGTH, balancedLimits, destinationHash, identityHash, interfaceId, linkId, packetHash, requestId, requestPathHash, resourceHash, };
 export { AutoWifiController, AutoWifiInterface, parseBrowserGatewayCatalog, validateBrowserGatewayUrl, } from "./auto_wifi.js";
@@ -1221,15 +1223,19 @@ export class Prns {
     #entropy;
     #now;
     #limits;
+    #resourceCompressionModuleUrl;
     #events;
     #diagnostics;
     #pendingCommands = new Map();
+    #responseParts = new Map();
     #lifecycle = Tag("Running");
-    constructor(wasm, runtime, entropy, now, bleIdentityAvailability, limits) {
+    constructor(wasm, runtime, entropy, now, bleIdentityAvailability, limits, resourceCompressionModuleUrl) {
         this.#runtime = runtime;
         this.#entropy = entropy;
         this.#now = now;
         this.#limits = limits;
+        this.#resourceCompressionModuleUrl =
+            resourceCompressionModuleUrl.href;
         this.#events = new BoundedAsyncLane({
             name: "ApplicationEvents",
             maximumValues: limits.applicationEvents,
@@ -1336,7 +1342,8 @@ export class Prns {
             : undefined;
         try {
             const limits = browserLimits(options.limits ?? balancedLimits());
-            return Tag("Ready", new Prns(wasm, new wasm.PrnsRuntime(identity, bleIdentity), options.entropy ?? webCryptoEntropy, options.now ?? nowMillis, bleIdentityAvailability, limits));
+            return Tag("Ready", new Prns(wasm, new wasm.PrnsRuntime(identity, bleIdentity), options.entropy ?? webCryptoEntropy, options.now ?? nowMillis, bleIdentityAvailability, limits, options.resourceCompressionModuleUrl ??
+                bundledWasmModuleUrl()));
         }
         catch (error) {
             return runtimeRejected("initialize", error);
@@ -1366,19 +1373,19 @@ export class Prns {
             return Promise.resolve(commandFailed(Tag("NodeStopped")));
         }
         return match_into().from(command, {
-            Announce: ({ destination, interface: interfaceId }) => this.#issueCommand("announce", (entropy) => this.#runtime.announce({
+            Announce: ({ destination, interface: interfaceId }) => this.#issueCommand("announce", command, (entropy) => this.#runtime.announce({
                 destination,
                 ...(interfaceId === undefined ? {} : { interfaceId }),
                 nowMs: this.#now(),
                 entropy,
             })),
-            SendSinglePacket: ({ destination, payload }) => this.#issueCommand("send-single-packet", (entropy) => this.#runtime.sendSinglePacket({
+            SendSinglePacket: ({ destination, payload }) => this.#issueCommand("send-single-packet", command, (entropy) => this.#runtime.sendSinglePacket({
                 destination,
                 payload,
                 nowMs: this.#now(),
                 entropy,
             })),
-            CloseLink: ({ linkId: value }) => this.#issueCommand("close-link", (entropy) => this.#runtime.closeLink({
+            CloseLink: ({ linkId: value }) => this.#issueCommand("close-link", command, (entropy) => this.#runtime.closeLink({
                 linkId: value,
                 nowMs: this.#now(),
                 entropy,
@@ -1387,6 +1394,86 @@ export class Prns {
             AttachTcpClient: async () => commandFailed(Tag("UnsupportedByBackend")),
             AttachUdp: async () => commandFailed(Tag("UnsupportedByBackend")),
             DetachInterface: async () => commandFailed(Tag("UnsupportedByBackend")),
+            EstablishLink: ({ destination }) => this.#issueCommand("establish-link", command, (entropy) => this.#runtime.establishLink({
+                destination,
+                nowMs: this.#now(),
+                entropy,
+            })),
+            RequestPath: ({ destination }) => this.#issueCommand("request-path", command, (entropy) => this.#runtime.requestPath({
+                destination,
+                nowMs: this.#now(),
+                entropy,
+            })),
+            Identify: ({ linkId: value, identity }) => this.#issueCommand("identify", command, (entropy) => this.#runtime.identify({
+                linkId: value,
+                identity,
+                nowMs: this.#now(),
+                entropy,
+            })),
+            SendLinkPacket: ({ linkId: value, payload }) => this.#issueCommand("send-link-packet", command, (entropy) => this.#runtime.sendLinkPacket({
+                linkId: value,
+                payload,
+                nowMs: this.#now(),
+                entropy,
+            })),
+            Request: ({ linkId: value, pathHash, payload, timeout }) => this.#issueCommand("request", command, (entropy) => this.#runtime.request({
+                linkId: value,
+                pathHash,
+                payload,
+                nowMs: this.#now(),
+                entropy,
+                ...runtimeResponseTimeout(timeout),
+            })),
+            Respond: ({ linkId: value, requestId: responseRequestId, requestRttMillis, payload, }) => this.#issueCommand("respond", command, (entropy) => this.#runtime.respond({
+                linkId: value,
+                requestId: responseRequestId,
+                requestRttMillis,
+                payload,
+                nowMs: this.#now(),
+                entropy,
+            })),
+            SendResource: ({ linkId: value, payload, packedMetadata, compression, }) => this.#sendResourceSource(value, byteResourceSource(payload), compression, packedMetadata),
+            SetLinkResourceStrategy: ({ linkId: value, strategy }) => this.#issueCommand("set-link-resource-strategy", command, (entropy) => this.#runtime.setLinkResourceStrategy({
+                linkId: value,
+                nowMs: this.#now(),
+                entropy,
+                ...runtimeResourceStrategy(strategy),
+            })),
+            SetDestinationResourceStrategy: async ({ destination, strategy, }) => {
+                try {
+                    const configured = this.#runtime.setDestinationResourceStrategy({
+                        destination,
+                        ...runtimeResourceStrategy(strategy),
+                    });
+                    return configured
+                        ? Tag("Succeeded", Tag("ResourceStrategySet"))
+                        : commandFailed(Tag("UnknownDestination"));
+                }
+                catch (error) {
+                    return commandFailed(browserCommandFailure("set-destination-resource-strategy", error));
+                }
+            },
+            SendChannelMessage: ({ linkId: value, messageType, payload, }) => {
+                if (!Number.isSafeInteger(messageType) ||
+                    messageType < 0 ||
+                    messageType > 0xefff) {
+                    return Promise.resolve(commandFailed(Tag("InvalidChannelMessageType")));
+                }
+                return this.#issueCommand("send-channel-message", command, (entropy) => this.#runtime.sendChannelMessage({
+                    linkId: value,
+                    messageType,
+                    payload,
+                    nowMs: this.#now(),
+                    entropy,
+                }));
+            },
+            AllowRequester: ({ destination, pathHash, identity }) => this.#issueCommand("allow-requester", command, (entropy) => this.#runtime.allowRequester({
+                destination,
+                pathHash,
+                identity,
+                nowMs: this.#now(),
+                entropy,
+            })),
         });
     }
     announce(destination, interfaceId) {
@@ -1399,6 +1486,66 @@ export class Prns {
     }
     closeLink(value) {
         return this.execute(Tag("CloseLink", { linkId: value }));
+    }
+    establishLink(destination) {
+        return this.execute(Tag("EstablishLink", { destination }));
+    }
+    requestPath(destination) {
+        return this.execute(Tag("RequestPath", { destination }));
+    }
+    identify(value, identity) {
+        return this.execute(Tag("Identify", { linkId: value, identity }));
+    }
+    sendLinkPacket(value, payload) {
+        return this.execute(Tag("SendLinkPacket", { linkId: value, payload }));
+    }
+    request(value, pathHash, payload, timeout = Tag("LinkDefault")) {
+        return this.execute(Tag("Request", {
+            linkId: value,
+            pathHash,
+            payload,
+            timeout,
+        }));
+    }
+    respond(value, responseRequestId, requestRttMillis, payload) {
+        return this.execute(Tag("Respond", {
+            linkId: value,
+            requestId: responseRequestId,
+            requestRttMillis,
+            payload,
+        }));
+    }
+    sendResource(value, payload, options = {}) {
+        return this.execute(Tag("SendResource", {
+            linkId: value,
+            payload,
+            compression: options.compression ?? Tag("Auto"),
+            ...(options.packedMetadata === undefined
+                ? {}
+                : { packedMetadata: options.packedMetadata }),
+        }));
+    }
+    sendResourceBlob(value, blob, options = {}) {
+        return this.#sendResourceSource(value, blobResourceSource(blob), options.compression ?? Tag("Auto"), options.packedMetadata);
+    }
+    setLinkResourceStrategy(value, strategy) {
+        return this.execute(Tag("SetLinkResourceStrategy", { linkId: value, strategy }));
+    }
+    setDestinationResourceStrategy(destination, strategy) {
+        return this.execute(Tag("SetDestinationResourceStrategy", {
+            destination,
+            strategy,
+        }));
+    }
+    sendChannelMessage(value, messageType, payload) {
+        return this.execute(Tag("SendChannelMessage", {
+            linkId: value,
+            messageType,
+            payload,
+        }));
+    }
+    allowRequester(destination, pathHash, identity) {
+        return this.execute(Tag("AllowRequester", { destination, pathHash, identity }));
     }
     get lifecycle() {
         return this.#lifecycle;
@@ -1422,7 +1569,17 @@ export class Prns {
     #entropyBytes() {
         return fillEntropy(this.#entropy, MIN_ENTROPY_BYTES);
     }
-    #issueCommand(operation, issue) {
+    #issueCommand(operation, command, issue) {
+        return this.#issuePendingCommand(operation, Tag("HostCommand", { command }), issue);
+    }
+    #issueResourceSegment(input) {
+        return this.#issuePendingCommand("send-resource", Tag("ResourceSegment"), (entropy) => this.#runtime.sendResourceSegment({
+            ...input,
+            nowMs: this.#now(),
+            entropy,
+        }));
+    }
+    #issuePendingCommand(operation, pending, issue) {
         if (this.#lifecycle.tag !== "Running") {
             return Promise.resolve(commandFailed(Tag("NodeStopped")));
         }
@@ -1431,9 +1588,7 @@ export class Prns {
         }
         const entropy = this.#entropyBytes();
         if (entropy.tag !== "Filled") {
-            return Promise.resolve(commandFailed(Tag("WriteFailed", {
-                detail: entropyFailureDetail(entropy),
-            })));
+            return Promise.resolve(commandFailed(Tag("EntropyUnavailable")));
         }
         let id;
         try {
@@ -1443,8 +1598,19 @@ export class Prns {
             return Promise.resolve(commandFailed(browserCommandFailure(operation, error)));
         }
         return new Promise((settle) => {
-            this.#pendingCommands.set(id, settle);
+            this.#pendingCommands.set(id, { pending, settle });
             this.#pumpEvents();
+        });
+    }
+    #sendResourceSource(value, source, compression, packedMetadata) {
+        if (this.#lifecycle.tag !== "Running") {
+            return Promise.resolve(Tag("Failed", Tag("NodeStopped")));
+        }
+        return sendResourceFromSource(value, source, compression, packedMetadata, {
+            maximumInFlightSegments: this.#limits.pendingCommands,
+            plan: (input) => this.#runtime.resourceSegmentPlan(input),
+            compress: (payload, metadata) => browserResourceCompressor.compress(payload, metadata, this.#resourceCompressionModuleUrl),
+            issue: (input) => this.#issueResourceSegment(input),
         });
     }
     #pumpEvents() {
@@ -1467,19 +1633,68 @@ export class Prns {
                 Diagnostic: (diagnostic) => {
                     this.#diagnostics.push(diagnostic);
                 },
+                CommandResponse: ({ commandId: responseCommandId, event }) => {
+                    this.#events.push(event);
+                    this.#responseParts.set(responseCommandId, [event.data.data]);
+                },
+                CommandResponseSegment: ({ commandId: responseCommandId, event, }) => {
+                    this.#events.push(event);
+                    const parts = this.#responseParts.get(responseCommandId) ?? [];
+                    parts.push(event.data.data);
+                    this.#responseParts.set(responseCommandId, parts);
+                },
                 CommandSettled: ({ commandId, settlement }) => {
                     if (settlement === undefined) {
                         return;
                     }
-                    const settle = this.#pendingCommands.get(commandId);
-                    if (settle === undefined) {
+                    const pending = this.#pendingCommands.get(commandId);
+                    if (pending === undefined) {
                         return;
                     }
                     this.#pendingCommands.delete(commandId);
-                    settle(settlement);
+                    pending.settle(match(pending.pending, {
+                        HostCommand: ({ command }) => this.#commandSettlement(commandId, command, settlement),
+                        ResourceSegment: () => settlement,
+                    }));
                 },
             });
         }
+    }
+    #commandSettlement(id, command, settlement) {
+        if (settlement.tag === "Failed") {
+            this.#responseParts.delete(id);
+            return settlement;
+        }
+        if (command.tag === "Request") {
+            if (settlement.data.tag !== "PacketDelivered") {
+                this.#responseParts.delete(id);
+                return commandFailed(Tag("WriteFailed", {
+                    detail: "request settled without delivery evidence",
+                }));
+            }
+            const parts = this.#responseParts.get(id);
+            this.#responseParts.delete(id);
+            if (parts === undefined) {
+                return commandFailed(Tag("WriteFailed", {
+                    detail: "request settled without response data",
+                }));
+            }
+            return Tag("Succeeded", Tag("ResponseReceived", {
+                data: concatenateBytes(parts),
+                rttMillis: settlement.data.data.rttMillis,
+            }));
+        }
+        if (command.tag === "Respond") {
+            if (settlement.data.tag !== "ResponseSent") {
+                return commandFailed(Tag("WriteFailed", {
+                    detail: "response settled with an unexpected outcome",
+                }));
+            }
+            return Tag("Succeeded", Tag("ResponseSent", {
+                rttMillis: command.data.requestRttMillis,
+            }));
+        }
+        return settlement;
     }
     #failBackpressure(rejectedEventBytes) {
         this.#lifecycle = Tag("Failed", {
@@ -1502,10 +1717,11 @@ export class Prns {
         this.#settleFailedCommands(detail);
     }
     #settleFailedCommands(detail) {
-        for (const settle of this.#pendingCommands.values()) {
-            settle(commandFailed(Tag("WriteFailed", { detail })));
+        for (const pending of this.#pendingCommands.values()) {
+            pending.settle(commandFailed(Tag("WriteFailed", { detail })));
         }
         this.#pendingCommands.clear();
+        this.#responseParts.clear();
     }
 }
 class RuntimeHost {
@@ -1963,26 +2179,32 @@ function parseEvent(raw) {
                 : request));
         },
         response: (data) => {
-            bigintField(data, "commandId");
-            return Tag("Application", Tag("Response", {
-                linkId: linkId(bytesField(data, "linkId")),
-                requestId: requestId(bytesField(data, "requestId")),
-                data: copyBytes(bytesField(data, "data")),
-            }));
+            const responseCommandId = commandId(bigintField(data, "commandId"));
+            return Tag("CommandResponse", {
+                commandId: responseCommandId,
+                event: Tag("Response", {
+                    linkId: linkId(bytesField(data, "linkId")),
+                    requestId: requestId(bytesField(data, "requestId")),
+                    data: copyBytes(bytesField(data, "data")),
+                }),
+            });
         },
         responseSegment: (data) => {
-            bigintField(data, "commandId");
-            return Tag("Application", Tag("ResponseSegment", {
-                linkId: linkId(bytesField(data, "linkId")),
-                requestId: requestId(bytesField(data, "requestId")),
-                segmentIndex: nonNegativeInteger(numberField(data, "segmentIndex"), "segmentIndex"),
-                totalSegments: positiveInteger(numberField(data, "totalSegments"), "totalSegments"),
-                data: copyBytes(bytesField(data, "data")),
-            }));
+            const responseCommandId = commandId(bigintField(data, "commandId"));
+            return Tag("CommandResponseSegment", {
+                commandId: responseCommandId,
+                event: Tag("ResponseSegment", {
+                    linkId: linkId(bytesField(data, "linkId")),
+                    requestId: requestId(bytesField(data, "requestId")),
+                    segmentIndex: nonNegativeInteger(numberField(data, "segmentIndex"), "segmentIndex"),
+                    totalSegments: positiveInteger(numberField(data, "totalSegments"), "totalSegments"),
+                    data: copyBytes(bytesField(data, "data")),
+                }),
+            });
         },
         channelMessage: (data) => Tag("Application", Tag("ChannelMessage", {
             linkId: linkId(bytesField(data, "linkId")),
-            messageType: stringField(data, "messageType"),
+            messageType: nonNegativeInteger(numberField(data, "messageType"), "messageType"),
             data: copyBytes(bytesField(data, "data")),
         })),
         singleDelivery: (data) => Tag("Application", Tag("SingleDelivery", {
@@ -2082,6 +2304,34 @@ function parseCommandSettlement(value) {
             ? delivered
             : { ...delivered, packetHash: packetHash(hash) }));
     }
+    if (kind === "LinkEstablished") {
+        return Tag("Succeeded", Tag("LinkEstablished", {
+            linkId: linkId(bytesField(value, "linkId")),
+            rttMillis: nonNegativeInteger(numberField(value, "rttMillis"), "rttMillis"),
+        }));
+    }
+    if (kind === "PathDiscovered") {
+        return Tag("Succeeded", Tag("PathDiscovered", {
+            hops: nonNegativeInteger(numberField(value, "hops"), "hops"),
+        }));
+    }
+    if (kind === "Identified") {
+        return Tag("Succeeded", Tag("Identified"));
+    }
+    if (kind === "ResponseSent") {
+        return Tag("Succeeded", Tag("ResponseSent", {
+            rttMillis: nonNegativeInteger(numberField(value, "rttMillis"), "rttMillis"),
+        }));
+    }
+    if (kind === "ResourceSent") {
+        return Tag("Succeeded", Tag("ResourceSent"));
+    }
+    if (kind === "ResourceStrategySet") {
+        return Tag("Succeeded", Tag("ResourceStrategySet"));
+    }
+    if (kind === "RequesterAllowed") {
+        return Tag("Succeeded", Tag("RequesterAllowed"));
+    }
     throw new PrnsValidationError("invalid-component", `unknown command outcome ${kind}`);
 }
 function parseCommandFailure(value) {
@@ -2136,6 +2386,51 @@ function parseCommandFailure(value) {
     }
     if (kind === "LinkNotActive") {
         return Tag("LinkNotActive");
+    }
+    if (kind === "EntropyUnavailable") {
+        return Tag("EntropyUnavailable");
+    }
+    if (kind === "NotLinkInitiator") {
+        return Tag("NotLinkInitiator");
+    }
+    if (kind === "IdentityNotHeld") {
+        return Tag("IdentityNotHeld");
+    }
+    if (kind === "UnknownRequestHandler") {
+        return Tag("UnknownRequestHandler");
+    }
+    if (kind === "RequestPolicyNotAllowList") {
+        return Tag("RequestPolicyNotAllowList");
+    }
+    if (kind === "RequestAllowListFull") {
+        return Tag("RequestAllowListFull");
+    }
+    if (kind === "LinkBusy") {
+        return Tag("LinkBusy");
+    }
+    if (kind === "ResourceTableFull") {
+        return Tag("ResourceTableFull");
+    }
+    if (kind === "ResourceMetadataTooLarge") {
+        return Tag("ResourceMetadataTooLarge");
+    }
+    if (kind === "ResourceRejectedByPeer") {
+        return Tag("ResourceRejectedByPeer");
+    }
+    if (kind === "ResourceSequencingFailed") {
+        return Tag("ResourceSequencingFailed");
+    }
+    if (kind === "ResourcePredecessorFailed") {
+        return Tag("ResourcePredecessorFailed");
+    }
+    if (kind === "ChannelWindowFull") {
+        return Tag("ChannelWindowFull");
+    }
+    if (kind === "ChannelUntrackable") {
+        return Tag("ChannelUntrackable");
+    }
+    if (kind === "InvalidChannelMessageType") {
+        return Tag("InvalidChannelMessageType");
     }
     throw new PrnsValidationError("invalid-component", `unknown command failure ${kind}`);
 }
@@ -2739,17 +3034,38 @@ function commandFailed(failure) {
 }
 function browserCommandFailure(operation, error) {
     const detail = describeHostError(error);
-    if (detail.includes("payload exceeds the single packet limit")) {
+    if (detail.includes("payload exceeds")) {
         return Tag("PayloadTooLarge");
     }
     return Tag("WriteFailed", { detail: `${operation}: ${detail}` });
 }
-function entropyFailureDetail(failure) {
-    return match(failure, {
-        HostApiUnavailable: ({ api }) => `${api} is unavailable`,
-        EntropySourceFailed: ({ detail }) => detail,
-        InsufficientEntropy: ({ minimum, actual }) => `entropy source returned ${actual} bytes; ${minimum} required`,
+function runtimeResponseTimeout(timeout) {
+    return match(timeout, {
+        LinkDefault: () => ({}),
+        Exact: ({ millis }) => ({
+            timeoutMillis: nonNegativeInteger(millis, "timeoutMillis"),
+        }),
     });
+}
+function runtimeResourceStrategy(strategy) {
+    return match(strategy, {
+        Refuse: () => ({ strategy: "refuse" }),
+        Accept: ({ maximumUncompressedBytes, acceptCompressed, }) => ({
+            strategy: "accept",
+            maximumUncompressedBytes: nonNegativeInteger(maximumUncompressedBytes, "maximumUncompressedBytes"),
+            acceptCompressed,
+        }),
+    });
+}
+function concatenateBytes(parts) {
+    const length = parts.reduce((total, part) => total + part.length, 0);
+    const joined = new Uint8Array(length);
+    let offset = 0;
+    for (const part of parts) {
+        joined.set(part, offset);
+        offset += part.length;
+    }
+    return joined;
 }
 function fillEntropy(source, length) {
     let outcome;
@@ -2928,9 +3244,9 @@ function formatOptionalHex(value) {
     return value === undefined ? "unknown" : value.toString(16).padStart(4, "0");
 }
 async function loadBundledWasm() {
-    const modulePath = "../../wasm/prns_wasm.js";
+    const moduleUrl = bundledWasmModuleUrl();
     try {
-        const imported = await import(modulePath);
+        const imported = await import(moduleUrl.href);
         const module = record(imported, "bundled WebAssembly module");
         const initialize = module.default;
         if (typeof initialize !== "function") {
@@ -2944,6 +3260,9 @@ async function loadBundledWasm() {
     catch (error) {
         return Tag("WasmLoadFailed", { detail: describeHostError(error) });
     }
+}
+function bundledWasmModuleUrl() {
+    return new URL("../../wasm/prns_wasm.js", import.meta.url);
 }
 function browserLimits(limits) {
     return {
@@ -2962,7 +3281,7 @@ function retainedBrowserEventBytes(event) {
         ResourceAvailable: ({ resource, metadata }) => resource.totalBytes + (metadata?.length ?? 0),
         ResourceSegment: ({ data, metadata }) => data.length + (metadata?.length ?? 0),
         ResourceNeedsDecompression: ({ stream }) => stream.length,
-        ChannelMessage: ({ messageType, data }) => messageType.length + data.length,
+        ChannelMessage: ({ data }) => data.length,
     });
 }
 function rawEventType(value) {

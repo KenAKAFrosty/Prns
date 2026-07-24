@@ -304,6 +304,10 @@ export type RespondOutcome = CommandSettlementFor<CommandCase<"Respond">>;
 export type SendResourceOutcome = CommandSettlementFor<
   CommandCase<"SendResource">
 >;
+export type SendResourceOptions = {
+  readonly packedMetadata?: Uint8Array;
+  readonly compression?: ResourceCompression;
+};
 export type SetResourceStrategyOutcome = CommandSettlementFor<
   CommandCase<"SetLinkResourceStrategy" | "SetDestinationResourceStrategy">
 >;
@@ -834,10 +838,7 @@ export class Prns {
   sendResource(
     linkId: LinkId,
     payload: Uint8Array,
-    options: {
-      readonly packedMetadata?: Uint8Array;
-      readonly compression?: ResourceCompression;
-    } = {},
+    options: SendResourceOptions = {},
   ): Promise<SendResourceOutcome> {
     return this.execute(
       casework.Tag("SendResource", {

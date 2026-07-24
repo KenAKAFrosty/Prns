@@ -12,7 +12,7 @@ use crate::manifold::driver::{
 };
 use crate::routing::links::request::RequestId;
 use crate::routing::links::resources::{
-    sealed_transfer_bytes, ResourceHash, ResourceStrategy, MAX_EFFICIENT_SIZE, METADATA_PREFIX_LEN,
+    sealed_transfer_bytes, ResourceHash, ResourceSendPlan, ResourceStrategy, MAX_EFFICIENT_SIZE,
 };
 use crate::routing::links::LinkId;
 use crate::wire::DestinationHash;
@@ -236,53 +236,27 @@ impl PrnsNodeHandle {
             segment_size,
             max_in_flight_segments,
         } = options;
-        if segment_size == 0
-            || segment_size > MAX_EFFICIENT_SIZE as u64
-            || max_in_flight_segments == 0
-        {
+        if max_in_flight_segments == 0 {
             return Err(ResourceSendError::UnrepresentableLength);
         }
-        let block_len = match packed_metadata.as_ref() {
-            None => 0,
-            Some(packed) => u64::try_from(packed.len())
-                .ok()
-                .and_then(|len| len.checked_add(METADATA_PREFIX_LEN as u64))
-                .ok_or(ResourceSendError::UnrepresentableLength)?,
-        };
-        let stream_total_len = total_len
-            .checked_add(block_len)
-            .ok_or(ResourceSendError::UnrepresentableLength)?;
-        let total_segments = stream_total_len.div_ceil(segment_size).max(1);
-        let final_stream_len = stream_total_len % segment_size;
-        let rebalance_final_pair =
-            total_segments > 1 && final_stream_len != 0 && final_stream_len < segment_size / 2;
-        let mut remaining = total_len;
+        let packed_metadata_bytes = packed_metadata
+            .as_ref()
+            .map(|packed| u64::try_from(packed.len()))
+            .transpose()
+            .map_err(|_| ResourceSendError::UnrepresentableLength)?;
+        let plan = ResourceSendPlan::new(total_len, packed_metadata_bytes, segment_size)
+            .map_err(|_| ResourceSendError::UnrepresentableLength)?;
+        let stream_total_len = plan.total_stream_bytes();
+        let total_segments = plan.total_segments();
         let mut in_flight: VecDeque<PendingSegment> =
             VecDeque::with_capacity(max_in_flight_segments);
         let mut transferred = 0u64;
         let mut physical_transferred = 0u64;
         for segment_index in 1..=total_segments {
-            let stream_remaining = remaining + if segment_index == 1 { block_len } else { 0 };
-            // RNS emits a proof before removing the completed incoming segment. A very small
-            // successor can therefore cross while the peer still has both receivers registered;
-            // its single untagged part may be consumed by the retiring receiver and not retried
-            // before the link goes stale. Keep the reference's full-sized leading segments, but
-            // split a sub-half-segment tail evenly across the final pair.
-            let segment_stream_len = if rebalance_final_pair && segment_index == total_segments - 1
-            {
-                stream_remaining
-                    .div_ceil(2)
-                    .max(if segment_index == 1 { block_len } else { 0 })
-            } else {
-                stream_remaining.min(segment_size)
-            };
-            let capacity = if segment_index == 1 {
-                segment_stream_len.saturating_sub(block_len)
-            } else {
-                segment_stream_len
-            };
-            let this_segment = remaining.min(capacity);
-            remaining -= this_segment;
+            let segment = plan
+                .segment(segment_index)
+                .ok_or(ResourceSendError::UnrepresentableLength)?;
+            let this_segment = segment.data_end.saturating_sub(segment.data_start);
             if in_flight.len() == max_in_flight_segments {
                 if let Some(pending) = in_flight.pop_front() {
                     settle_sent_segment(pending.settled, answers_request.is_some()).await?;
@@ -308,11 +282,7 @@ impl PrnsNodeHandle {
             let first_segment_block = (segment_index == 1)
                 .then(|| packed_metadata.clone())
                 .flatten();
-            let segment_payload_len = if segment_index == 1 {
-                block_len + this_segment
-            } else {
-                this_segment
-            };
+            let segment_payload_len = segment.stream_bytes;
             let attempt = match compression {
                 SegmentCompression::Attempt {
                     up_to_byte_len: up_to,
@@ -321,21 +291,11 @@ impl PrnsNodeHandle {
             };
             let (chunk, compressed_candidate) = if attempt {
                 tokio::task::spawn_blocking(move || {
-                    let candidate = match &first_segment_block {
-                        Some(packed) => {
-                            let mut composite = Vec::with_capacity(
-                                METADATA_PREFIX_LEN + packed.len() + chunk.len(),
-                            );
-                            composite.extend_from_slice(&(packed.len() as u32).to_be_bytes()[1..]);
-                            composite.extend_from_slice(packed);
-                            composite.extend_from_slice(&chunk);
-                            compression::compress_if_smaller(&composite)
-                                .map(HostResourcePayload::from)
-                        }
-                        None => {
-                            compression::compress_if_smaller(&chunk).map(HostResourcePayload::from)
-                        }
-                    };
+                    let candidate = compression::compress_resource_candidate(
+                        &chunk,
+                        first_segment_block.as_deref(),
+                    )
+                    .map(HostResourcePayload::from);
                     (chunk, candidate)
                 })
                 .await
@@ -366,9 +326,9 @@ impl PrnsNodeHandle {
                         compressed_candidate,
                         metadata,
                         request_id: answers_request,
-                        segment_index,
-                        total_segments,
-                        total_data_bytes: total_len,
+                        segment_index: segment.segment.index,
+                        total_segments: segment.segment.total_segments,
+                        total_data_bytes: segment.segment.total_data_bytes,
                         completion,
                     },
                 ))
