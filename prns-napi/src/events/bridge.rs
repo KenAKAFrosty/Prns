@@ -48,7 +48,7 @@ impl EventSink {
     }
 
     pub fn emit(&self, event: OwnedEvent) {
-        if event.droppable() && self.queued.load(Ordering::Relaxed) > self.limit {
+        if event.droppable() && self.queued.load(Ordering::Relaxed) >= self.limit {
             self.dropped_diagnostics.fetch_add(1, Ordering::Relaxed);
             return;
         }

@@ -1,15 +1,5 @@
 #!/usr/bin/env bash
-# Direction-B TCP parity smoke for the Node addon: stock RNS dials the napi TcpServer.
-#
-# Stands up the Node addon's tcp_server_host driver (a `TcpServer` hosting a ProveAll `hopspot.host`
-# destination it announces), then a stock RNS node whose only interface is a `TCPClientInterface`
-# pointed at it. Reuses `rns_tcp_client_peer.py` unchanged: the stock node hears our announce, sends
-# our destination a single, and the ProveAll proof comes back — one proven round trip through the
-# napi binding's dedicated-thread runtime and event bridge.
-#
-# The reference RNS is the pinned venv (benchmarks/reference; $SMOKE_PYTHON if set). Prints PASS or
-# FAIL and exits accordingly. Set PRNS_NAPI_PREBUILT=1 to skip the npm build when the addon binary
-# already sits in prns-napi/.
+# Stock RNS dials the Node addon's TCP server and proves a packet in both directions.
 set -u
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
@@ -46,14 +36,12 @@ if [ -z "${PRNS_NAPI_PREBUILT:-}" ]; then
         || { echo "FAIL: napi addon build"; exit 1; }
 fi
 
-# 1) Our node: the napi TcpServer hosting a ProveAll destination it announces.
 PORT="$PORT" node "$HOST_DRIVER" > "$HOST_LOG" 2>&1 &
 HOST_PID=$!
 for _ in $(seq 1 100); do grep -q "listening on" "$HOST_LOG" && break; sleep 0.1; done
 grep -q "listening on" "$HOST_LOG" || { echo "FAIL: napi tcp_server_host never bound"; cat "$HOST_LOG"; exit 1; }
 echo "napi TcpServer up"
 
-# 2) Stock RNS, TCPClientInterface dialing us: hear the announce, send a single, await the proof.
 PRNS_TCP_TARGET="127.0.0.1:$PORT" "$VENV_PY" "$CLIENT" > "$CLIENT_LOG" 2>/dev/null &
 CLIENT_PID=$!
 

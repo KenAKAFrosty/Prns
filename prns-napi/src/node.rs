@@ -14,7 +14,9 @@ use personal_rns::identity::{
     IdentityHash, MarkDestinationUsedOutcome, ReleaseDestinationOutcome, RetainDestinationOutcome,
 };
 use personal_rns::interfaces::shared_instance as shared_instance_contract;
-use personal_rns::interfaces::{BitrateBps, ConnectionState, InterfaceSnapshot, Membership};
+use personal_rns::interfaces::{
+    BitrateBps, ConnectionState, InterfaceId, InterfaceSnapshot, Membership,
+};
 use personal_rns::manifold::reconnect::ReconnectPolicy;
 use personal_rns::node_introspection::{DestinationIdentityQuery, NodeIntrospection};
 use personal_rns::routing::request_handlers::RequestPolicy;
@@ -525,6 +527,10 @@ fn parse_options(options: NodeOptions) -> CodeResult<NodeConfig> {
 enum Attachment {
     Interface(AttachedInterface),
     Supervisor(AttachedSupervisor),
+    Ble {
+        handle: personal_rns::PrnsNodeHandle,
+        id: InterfaceId,
+    },
 }
 
 #[napi]
@@ -535,11 +541,11 @@ pub struct InterfaceHandle {
 }
 
 impl InterfaceHandle {
-    fn from_ble(id: personal_rns::interfaces::InterfaceId) -> Self {
+    fn from_ble(handle: personal_rns::PrnsNodeHandle, id: InterfaceId) -> Self {
         Self {
             id_bytes: *id.as_bytes(),
             kind_name: id.kind().map(|kind| kind.name().to_string()),
-            attachment: Mutex::new(None),
+            attachment: Mutex::new(Some(Attachment::Ble { handle, id })),
         }
     }
 
@@ -588,6 +594,10 @@ impl InterfaceHandle {
             }
             Some(Attachment::Supervisor(attached)) => {
                 attached.teardown();
+                true
+            }
+            Some(Attachment::Ble { handle, id }) => {
+                handle.remove_interface(id);
                 true
             }
             None => false,
@@ -834,7 +844,7 @@ impl PrnsNode {
         let handle = self.manager.handle()?;
         let attached = handle.attach(AutoBle::new(identity));
         let id = attached.id();
-        Ok(InterfaceHandle::from_ble(id))
+        Ok(InterfaceHandle::from_ble(handle, id))
     }
 
     #[napi(ts_return_type = "Promise<void>")]
